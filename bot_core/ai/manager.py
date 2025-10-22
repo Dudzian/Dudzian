@@ -17,7 +17,7 @@ import math
 from collections import deque
 from copy import deepcopy
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from os import PathLike
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple, Union
@@ -72,6 +72,12 @@ if not logger.handlers:
     logger.addHandler(handler)
 logger.setLevel(logging.INFO)
 _history_logger = logger.getChild("history")
+
+
+def _utcnow() -> datetime:
+    """Zwróć bieżący czas w strefie UTC."""
+
+    return datetime.now(timezone.utc)
 
 LoggerLike = Union[logging.Logger, logging.LoggerAdapter]
 
@@ -788,6 +794,57 @@ class AIManager:
                 + str(reason)
                 + detail_text
             )
+
+    def _activate_degradation(
+        self,
+        reason: str,
+        *,
+        details: Tuple[str, ...] = (),
+        exceptions: Tuple[BaseException, ...] = (),
+        exception_types: Tuple[str, ...] = (),
+        exception_diagnostics: Tuple[ExceptionDiagnostics, ...] = (),
+        since: datetime | None = None,
+    ) -> None:
+        """Ustaw stan degradacji i zarejestruj zdarzenie w historii."""
+
+        activation_time = since or _utcnow()
+        if self._degraded:
+            self._finalize_degradation_event(ended_at=activation_time)
+        self._degraded = True
+        self._degradation_reason = reason
+        self._degradation_details = details
+        self._degradation_exceptions = exceptions
+        self._degradation_exception_types = exception_types
+        self._degradation_exception_diagnostics = exception_diagnostics
+        self._degradation_since = activation_time
+        event = DegradationEvent(
+            reason=reason,
+            details=details,
+            exception_types=exception_types,
+            exception_diagnostics=exception_diagnostics,
+            started_at=activation_time,
+        )
+        self._degradation_history.append(event)
+
+    def _finalize_degradation_event(self, *, ended_at: datetime | None = None) -> None:
+        if not self._degradation_history:
+            return
+        last = self._degradation_history[-1]
+        if last.ended_at is not None:
+            return
+        self._degradation_history[-1] = last.resolve(ended_at=ended_at)
+
+    def _resolve_degradation(self) -> None:
+        if not self._degraded:
+            return
+        self._degraded = False
+        self._degradation_reason = None
+        self._degradation_details = ()
+        self._degradation_exceptions = ()
+        self._degradation_exception_types = ()
+        self._degradation_exception_diagnostics = ()
+        self._degradation_since = None
+        self._finalize_degradation_event()
 
     # -------------------------- Harmonogram treningów --------------------------
     def _ensure_training_scheduler(self) -> TrainingScheduler:
