@@ -2565,6 +2565,8 @@ def test_auto_trader_records_risk_evaluation_history() -> None:
     assert len(evaluations) == 2
 
     first, second = evaluations
+    assert isinstance(first.get("decision_id"), str)
+    assert first["decision_id"]
     assert first["approved"] is True
     assert first["normalized"] is True
     assert first["service"] == "_RiskServiceResponseStub"
@@ -2578,9 +2580,172 @@ def test_auto_trader_records_risk_evaluation_history() -> None:
     assert second["response"]["value"] is False
     assert second["decision"]["should_trade"] is True
 
+    filtered_by_id = trader.get_risk_evaluations(decision_id=first["decision_id"])
+    assert [entry["decision_id"] for entry in filtered_by_id] == [first["decision_id"]]
+
     evaluations[0]["approved"] = None
     fresh = trader.get_risk_evaluations()
     assert fresh[0]["approved"] is True
+
+
+def test_auto_trader_traces_risk_evaluations_by_decision(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    emitter = _Emitter()
+    gui = _GUI()
+    trader = AutoTrader(
+        emitter,
+        gui,
+        symbol_getter=lambda: "BTCUSDT",
+        enable_auto_trade=False,
+    )
+
+    timestamps = iter([1000.0, 1002.5, 1005.5, 1006.0])
+
+    def _fake_time() -> float:
+        try:
+            return next(timestamps)
+        except StopIteration:  # pragma: no cover - defensive guard for flaky tests
+            return 1006.0
+
+    monkeypatch.setattr("bot_core.auto_trader.app.time.time", _fake_time)
+
+    decision = RiskDecision(should_trade=True, fraction=0.3, state="active")
+
+    class _Service:
+        ...
+
+    service = _Service()
+
+    with trader._decision_audit_scope(decision_id="cycle-trace"):
+        trader._record_risk_evaluation(
+            decision,
+            approved=True,
+            normalized=True,
+            response={"status": "ok"},
+            service=service,
+            error=None,
+        )
+        trader._record_risk_evaluation(
+            RiskDecision(should_trade=False, fraction=0.0, state="blocked", reason="guardrail"),
+            approved=False,
+            normalized=False,
+            response=None,
+            service=None,
+            error=RuntimeError("guardrail-blocked"),
+        )
+
+    timeline = trader.get_risk_evaluation_trace("cycle-trace")
+
+    assert len(timeline) == 2
+    assert timeline[0]["decision_id"] == "cycle-trace"
+    assert isinstance(timeline[0]["timestamp"], datetime)
+    assert timeline[1]["elapsed_since_first_s"] == pytest.approx(2.5)
+    assert timeline[1]["elapsed_since_previous_s"] == pytest.approx(2.5)
+
+    stripped = trader.get_risk_evaluation_trace(
+        "cycle-trace",
+        include_decision=False,
+        include_service=False,
+        include_response=False,
+        include_error=False,
+    )
+
+    assert "decision" not in stripped[0]
+    assert "service" not in stripped[0]
+    assert "response" not in stripped[0]
+    assert "error" not in stripped[1]
+
+    no_errors = trader.get_risk_evaluation_trace("cycle-trace", include_errors=False)
+    assert len(no_errors) == 1
+    assert no_errors[0]["approved"] is True
+
+    assert trader.get_risk_evaluation_trace("missing-id") == ()
+    assert trader.get_risk_evaluation_trace(None) == ()
+
+
+def test_auto_trader_groups_risk_evaluations_by_decision(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    emitter = _Emitter()
+    gui = _GUI()
+    trader = AutoTrader(
+        emitter,
+        gui,
+        symbol_getter=lambda: "ETHUSDT",
+        enable_auto_trade=False,
+    )
+
+    timestamps = iter([2000.0, 2001.0, 2002.0, 2003.0, 2004.0])
+
+    def _fake_time_group() -> float:
+        try:
+            return next(timestamps)
+        except StopIteration:  # pragma: no cover - defensive guard for flaky tests
+            return 2004.0
+
+    monkeypatch.setattr("bot_core.auto_trader.app.time.time", _fake_time_group)
+
+    base_decision = RiskDecision(should_trade=True, fraction=0.2, state="active")
+
+    with trader._decision_audit_scope(decision_id="cycle-alpha"):
+        trader._record_risk_evaluation(
+            base_decision,
+            approved=True,
+            normalized=True,
+            response=True,
+            service=_RiskServiceStub(True),
+            error=None,
+        )
+        trader._record_risk_evaluation(
+            RiskDecision(should_trade=False, fraction=0.0, state="blocked"),
+            approved=False,
+            normalized=False,
+            response=False,
+            service=_RiskServiceStub(False),
+            error=None,
+        )
+
+    with trader._decision_audit_scope(decision_id="cycle-beta"):
+        trader._record_risk_evaluation(
+            base_decision,
+            approved=True,
+            normalized=True,
+            response=True,
+            service=_RiskServiceStub(True),
+            error=None,
+        )
+
+    trader._store_risk_evaluation_entry(
+        {
+            "timestamp": 2004.0,
+            "approved": None,
+            "normalized": None,
+            "decision": base_decision.to_dict(),
+        },
+        reference_time=2004.0,
+    )
+
+    grouped = trader.get_grouped_risk_evaluations(include_unidentified=True)
+
+    assert list(grouped.keys()) == ["cycle-alpha", "cycle-beta", None]
+    assert len(grouped["cycle-alpha"]) == 2
+    assert grouped["cycle-beta"][0]["decision_id"] == "cycle-beta"
+    assert grouped[None][0]["decision_id"] is None
+    assert grouped["cycle-alpha"][0]["timestamp"].tzinfo is timezone.utc
+
+    filtered = trader.get_grouped_risk_evaluations(include_unidentified=False)
+    assert list(filtered.keys()) == ["cycle-alpha", "cycle-beta"]
+
+    beta_only = trader.get_grouped_risk_evaluations(decision_id="cycle-beta")
+    assert list(beta_only.keys()) == ["cycle-beta"]
+    assert len(beta_only["cycle-beta"]) == 1
+
+    raw_timestamps = trader.get_grouped_risk_evaluations(
+        decision_id="cycle-alpha",
+        coerce_timestamps=False,
+    )
+    assert isinstance(raw_timestamps["cycle-alpha"][0]["timestamp"], float)
 
 
 def test_auto_trader_limits_and_clears_risk_history() -> None:
@@ -2703,6 +2868,10 @@ def test_auto_trader_filters_and_summarizes_risk_history() -> None:
     assert summary["error_rate"] == pytest.approx(0.25)
     assert summary["first_timestamp"] <= summary["last_timestamp"]
 
+    sample_decision_id = evaluations[0]["decision_id"]
+    summary_by_id = trader.summarize_risk_evaluations(decision_id=sample_decision_id)
+    assert summary_by_id["total"] == 1
+
 
 def test_auto_trader_risk_history_filters_by_service_and_time(monkeypatch: pytest.MonkeyPatch) -> None:
     emitter = _Emitter()
@@ -2806,9 +2975,12 @@ def test_auto_trader_risk_history_filters_by_service_and_time(monkeypatch: pytes
     assert no_error_summary["total"] == 3
     assert "<unknown>" not in no_error_summary["services"]
 
+    evaluations = trader.get_risk_evaluations()
     df = trader.risk_evaluations_to_dataframe()
     assert len(df) == 4
-    assert {"timestamp", "approved", "normalized", "decision"}.issubset(df.columns)
+    assert {"timestamp", "approved", "normalized", "decision", "decision_id"}.issubset(
+        df.columns
+    )
     assert df.loc[pd.isna(df["service"]), "error"].iloc[0].startswith("RuntimeError")
 
     alpha_df = trader.risk_evaluations_to_dataframe(service="_ServiceAlpha")
@@ -2828,6 +3000,9 @@ def test_auto_trader_risk_history_filters_by_service_and_time(monkeypatch: pytes
     no_error_df = trader.risk_evaluations_to_dataframe(include_errors=False)
     assert len(no_error_df) == 3
     assert no_error_df.get("error").isna().all()
+
+    id_df = trader.risk_evaluations_to_dataframe(decision_id=evaluations[0]["decision_id"])
+    assert id_df["decision_id"].unique().tolist() == [evaluations[0]["decision_id"]]
 
     flattened_df = trader.risk_evaluations_to_dataframe(flatten_decision=True)
     assert {
@@ -2855,7 +3030,11 @@ def test_auto_trader_risk_history_filters_by_service_and_time(monkeypatch: pytes
     subset_flattened_columns = [
         column for column in subset_df.columns if column.startswith("decision_")
     ]
-    assert subset_flattened_columns == ["decision_fraction", "decision_details"]
+    assert subset_flattened_columns == [
+        "decision_id",
+        "decision_fraction",
+        "decision_details",
+    ]
     assert subset_df.loc[0, "decision_fraction"] == pytest.approx(0.42)
     assert subset_df.loc[1, "decision_fraction"] == pytest.approx(0.13)
     assert subset_df.loc[0, "decision_details"]["origin"] == "unit-test"
@@ -2866,6 +3045,7 @@ def test_auto_trader_risk_history_filters_by_service_and_time(monkeypatch: pytes
     )
     assert "decision" not in drop_df.columns
     assert {"decision_should_trade", "decision_fraction"}.issubset(drop_df.columns)
+    assert "decision_id" in drop_df.columns
 
     fill_df = trader.risk_evaluations_to_dataframe(
         flatten_decision=True,
@@ -2886,7 +3066,15 @@ def test_auto_trader_risk_history_filters_by_service_and_time(monkeypatch: pytes
 
     records_snapshot = trader.risk_evaluations_to_records()
     assert len(records_snapshot) == 4
-    assert {"timestamp", "approved", "normalized", "decision", "response", "error"}.issubset(
+    assert {
+        "timestamp",
+        "approved",
+        "normalized",
+        "decision_id",
+        "decision",
+        "response",
+        "error",
+    }.issubset(
         records_snapshot[0].keys()
     )
     assert records_snapshot[0]["decision"]["details"]["origin"] == "unit-test"
@@ -2904,6 +3092,9 @@ def test_auto_trader_risk_history_filters_by_service_and_time(monkeypatch: pytes
         "_ServiceBeta",
         "<unknown>",
     }
+
+    id_records = trader.risk_evaluations_to_records(decision_id=evaluations[0]["decision_id"])
+    assert [entry["decision_id"] for entry in id_records] == [evaluations[0]["decision_id"]]
 
     flattened_records = trader.risk_evaluations_to_records(flatten_decision=True)
     assert {"decision_should_trade", "decision_fraction", "decision_state"}.issubset(
@@ -2926,7 +3117,7 @@ def test_auto_trader_risk_history_filters_by_service_and_time(monkeypatch: pytes
     subset_keys = [
         key for key in subset_records[0].keys() if key.startswith("decision_")
     ]
-    assert subset_keys == ["decision_fraction", "decision_details"]
+    assert subset_keys == ["decision_id", "decision_fraction", "decision_details"]
 
     dropped_records = trader.risk_evaluations_to_records(
         flatten_decision=True,
