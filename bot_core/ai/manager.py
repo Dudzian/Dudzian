@@ -9,6 +9,7 @@ API znany z pierwszych iteracji projektu.
 from __future__ import annotations
 
 import asyncio
+import importlib
 import inspect
 import json
 import logging
@@ -125,12 +126,116 @@ def _safe_mean(values: Iterable[object]) -> Optional[float]:
 
 _AI_IMPORT_ERROR: Optional[BaseException] = None
 _FALLBACK_ACTIVE = False
-try:  # pragma: no cover - w testach zastępujemy _AIModels atrapą
-    from ai_models import AIModels as _DefaultAIModels  # type: ignore
-except Exception as exc:  # pragma: no cover - brak zależności na CI
-    _AI_IMPORT_ERROR = exc
-    _FALLBACK_ACTIVE = True
 
+
+def _bundle_import_errors(primary: BaseException, secondary: BaseException) -> BaseException:
+    """Połącz dwa wyjątki importu w jeden obiekt z zachowaniem kontekstu."""
+
+    try:
+        return ExceptionGroup("AI backend import failed", [primary, secondary])  # type: ignore[name-defined]
+    except NameError:  # pragma: no cover - Python < 3.11
+        secondary.__cause__ = primary  # type: ignore[attr-defined]
+        return secondary
+
+
+def _collect_exception_messages(error: BaseException) -> Tuple[str, ...]:
+    """Zbierz unikalne komunikaty z łańcucha wyjątków w kolejności przyczyn."""
+
+    pieces: List[str] = []
+    for current in _iter_exception_chain(error):
+        message = str(current).strip()
+        if not message:
+            message = current.__class__.__name__
+        else:
+            message = f"{current.__class__.__name__}: {message}"
+        pieces.append(message)
+
+    unique_messages: List[str] = []
+    seen_text: set[str] = set()
+    for piece in pieces:
+        if piece not in seen_text:
+            unique_messages.append(piece)
+            seen_text.add(piece)
+
+    return tuple(unique_messages)
+
+
+def _collect_exception_types(error: BaseException) -> Tuple[str, ...]:
+    """Zwróć krotkę nazw klas wyjątków z zachowaniem kolejności."""
+
+    identifiers: set[str] = set()
+    ordered: List[str] = []
+    for current in _iter_exception_chain(error):
+        name = f"{current.__class__.__module__}.{current.__class__.__qualname__}"
+        if name not in identifiers:
+            ordered.append(name)
+            identifiers.add(name)
+    return tuple(ordered)
+
+
+def _iter_exception_chain(error: BaseException) -> Iterable[BaseException]:
+    """Iteruj po wyjątkach (w tym grupach), zachowując kolejność przyczyn."""
+
+    queue: deque[BaseException] = deque([error])
+    seen: set[int] = set()
+
+    while queue:
+        current = queue.popleft()
+        identifier = id(current)
+        if identifier in seen:
+            continue
+        seen.add(identifier)
+        yield current
+
+        nested = getattr(current, "exceptions", None)
+        if isinstance(nested, Iterable):
+            for child in nested:
+                if isinstance(child, BaseException):
+                    queue.append(child)
+
+        cause = getattr(current, "__cause__", None)
+        if isinstance(cause, BaseException):
+            queue.append(cause)
+
+        context = getattr(current, "__context__", None)
+        suppressed = getattr(current, "__suppress_context__", False)
+        if not suppressed and isinstance(context, BaseException):
+            queue.append(context)
+
+
+def _build_exception_diagnostics(error: BaseException) -> Tuple[ExceptionDiagnostics, ...]:
+    """Zwróć uporządkowaną listę diagnoz wyjątków z łańcucha."""
+
+    diagnostics: List[ExceptionDiagnostics] = []
+    seen: set[Tuple[str, str, str]] = set()
+    for current in _iter_exception_chain(error):
+        module = current.__class__.__module__
+        qualname = current.__class__.__qualname__
+        message = str(current).strip()
+        key = (module, qualname, message)
+        if key in seen:
+            continue
+        seen.add(key)
+        diagnostics.append(ExceptionDiagnostics(module=module, qualname=qualname, message=message))
+    return tuple(diagnostics)
+
+
+def _flatten_exception_messages(error: BaseException) -> str:
+    """Zbuduj zwięzły opis z łańcucha wyjątków importu."""
+
+    return " | ".join(_collect_exception_messages(error))
+
+
+def _is_fallback_degradation(reason: Optional[str]) -> bool:
+    """Sprawdź, czy wskazany powód oznacza degradację przez fallback modeli."""
+
+    if reason is None:
+        return True
+    prefix = reason.split(":", 1)[0].strip()
+    return prefix in {"fallback_ai_models", "backend_validation_failed"}
+
+
+def _build_fallback_ai_models() -> type:
     class _DefaultAIModels:
         """Minimalny model fallback używany w testach bez zależności ML."""
 
@@ -177,6 +282,26 @@ except Exception as exc:  # pragma: no cover - brak zależności na CI
         @staticmethod
         def load_model(path: str) -> "_DefaultAIModels":
             return _joblib_load(Path(path))
+
+    return _DefaultAIModels
+
+
+try:  # pragma: no cover - w testach zastępujemy _AIModels atrapą
+    from ai_models import AIModels as _DefaultAIModels  # type: ignore
+except Exception as exc:  # pragma: no cover - brak zależności na CI
+    try:
+        _kryptolowca_ai_models = importlib.import_module("KryptoLowca.ai_models")
+    except Exception as namespace_exc:
+        _AI_IMPORT_ERROR = _bundle_import_errors(exc, namespace_exc)
+        _FALLBACK_ACTIVE = True
+        _DefaultAIModels = _build_fallback_ai_models()
+    else:
+        try:
+            _DefaultAIModels = getattr(_kryptolowca_ai_models, "AIModels")
+        except AttributeError as attr_exc:
+            _AI_IMPORT_ERROR = _bundle_import_errors(exc, attr_exc)
+            _FALLBACK_ACTIVE = True
+            _DefaultAIModels = _build_fallback_ai_models()
 
 # --- Import funkcji windowize z różnych możliwych miejsc, z bezpiecznym fallbackiem ---
 _default_windowize: Callable[..., Tuple[np.ndarray, np.ndarray]]
@@ -302,6 +427,57 @@ class EnsembleRegistryDiff:
 
     def names(self) -> Tuple[str, ...]:
         return tuple(sorted(set(self.added) | set(self.removed) | set(self.changed)))
+
+
+@dataclass(frozen=True, slots=True)
+class ExceptionDiagnostics:
+    """Struktura opisująca pojedynczy wyjątek z łańcucha degradacji."""
+
+    module: str
+    qualname: str
+    message: str
+
+    @property
+    def type_name(self) -> str:
+        return f"{self.module}.{self.qualname}" if self.module else self.qualname
+
+    @property
+    def formatted(self) -> str:
+        text = self.message.strip()
+        if text:
+            return f"{self.type_name}: {text}"
+        return self.type_name
+
+    def as_dict(self) -> Dict[str, str]:
+        data: Dict[str, str] = {
+            "module": self.module,
+            "qualname": self.qualname,
+            "type": self.type_name,
+            "formatted": self.formatted,
+        }
+        if self.message:
+            data["message"] = self.message
+        return data
+
+
+@dataclass(frozen=True, slots=True)
+class BackendStatus:
+    """Migawka stanu backendu modeli AI."""
+
+    degraded: bool
+    reason: str | None
+    details: Tuple[str, ...] = ()
+    exception_types: Tuple[str, ...] = ()
+    exception_diagnostics: Tuple[ExceptionDiagnostics, ...] = ()
+
+    def as_dict(self) -> Dict[str, object]:
+        return {
+            "degraded": self.degraded,
+            "reason": self.reason,
+            "details": list(self.details),
+            "exception_types": list(self.exception_types),
+            "exception_diagnostics": [diag.as_dict() for diag in self.exception_diagnostics],
+        }
 
 
 @dataclass(slots=True)
@@ -436,8 +612,12 @@ class AIManager:
         self._regime_classifier = MarketRegimeClassifier()
         self._latest_regimes: Dict[str, MarketRegimeAssessment] = {}
         self._regime_histories: Dict[str, RegimeHistory] = {}
-        self._degraded = bool(_AI_IMPORT_ERROR)
+        self._degraded = False
         self._degradation_reason: str | None = None
+        self._degradation_details: Tuple[str, ...] = ()
+        self._degradation_exceptions: Tuple[BaseException, ...] = ()
+        self._degradation_exception_types: Tuple[str, ...] = ()
+        self._degradation_exception_diagnostics: Tuple[ExceptionDiagnostics, ...] = ()
         self._decision_model_repository: ModelRepository | None = None
         self._model_repository: ModelRepository | None = None
         self._repository_models: Dict[str, DecisionModelInference] = {}
@@ -448,12 +628,29 @@ class AIManager:
         self._training_scheduler: TrainingScheduler | None = None
         self._scheduled_training_jobs: Dict[str, ScheduledTrainingJob] = {}
         self._job_artifact_paths: Dict[str, Path] = {}
-        if self._degraded:
-            self._degradation_reason = (
-                "fallback_ai_models"
-                if _AI_IMPORT_ERROR is not None
-                else "backend_validation_failed"
-            )
+        if _AI_IMPORT_ERROR is not None:
+            flattened = _flatten_exception_messages(_AI_IMPORT_ERROR)
+            reason = f"fallback_ai_models: {flattened}" if flattened else "fallback_ai_models"
+            messages = _collect_exception_messages(_AI_IMPORT_ERROR)
+            if messages:
+                details = messages
+            elif flattened:
+                details = (flattened,)
+            else:
+                details = (reason,)
+            self._degraded = True
+            self._degradation_reason = reason
+            self._degradation_details = details
+            self._degradation_exceptions = tuple(_iter_exception_chain(_AI_IMPORT_ERROR))
+            self._degradation_exception_types = _collect_exception_types(_AI_IMPORT_ERROR)
+            self._degradation_exception_diagnostics = _build_exception_diagnostics(_AI_IMPORT_ERROR)
+        elif _FALLBACK_ACTIVE:
+            self._degraded = True
+            self._degradation_reason = "backend_validation_failed"
+            self._degradation_details = ("backend_validation_failed",)
+            self._degradation_exceptions = ()
+            self._degradation_exception_types = ()
+            self._degradation_exception_diagnostics = ()
         try:
             init_signature = inspect.signature(_AIModels.__init__)  # type: ignore[attr-defined]
         except (TypeError, ValueError, AttributeError):
@@ -598,14 +795,54 @@ class AIManager:
 
         return self._degradation_reason
 
+    @property
+    def degradation_details(self) -> Tuple[str, ...]:
+        """Zwraca szczegóły degradacji backendu."""
+
+        return self._degradation_details
+
+    @property
+    def degradation_exceptions(self) -> Tuple[BaseException, ...]:
+        """Zwraca krotkę wyjątków opisujących degradację (jeśli dostępne)."""
+
+        return self._degradation_exceptions
+
+    @property
+    def degradation_exception_types(self) -> Tuple[str, ...]:
+        """Zwraca nazwy klas wyjątków związanych z degradacją."""
+
+        return self._degradation_exception_types
+
+    @property
+    def degradation_exception_diagnostics(self) -> Tuple[ExceptionDiagnostics, ...]:
+        """Zwraca szczegółowe dane wyjątków użyte do diagnostyki backendu."""
+
+        return self._degradation_exception_diagnostics
+
+    def backend_status(self) -> BackendStatus:
+        """Zwraca migawkę stanu backendu modeli AI."""
+
+        return BackendStatus(
+            degraded=self._degraded,
+            reason=self._degradation_reason,
+            details=self._degradation_details,
+            exception_types=self._degradation_exception_types,
+            exception_diagnostics=self._degradation_exception_diagnostics,
+        )
+
     def require_real_models(self) -> None:
         """Zgłasza wyjątek gdy dostępne są tylko fallbackowe modele AI."""
 
         if self._degraded or (not self._decision_inferences and not self._repository_models):
             reason = self._degradation_reason or "AI backend in degraded mode"
+            detail_text = ""
+            if self._degradation_details:
+                joined = " | ".join(self._degradation_details)
+                detail_text = f" (details: {joined})"
             raise RuntimeError(
                 "Real models are required for live trading; current backend is degraded: "
                 + str(reason)
+                + detail_text
             )
 
     # -------------------------- Harmonogram treningów --------------------------
@@ -899,7 +1136,7 @@ class AIManager:
         self._decision_inferences[normalized_name] = inference
         if set_default or self._decision_default_name is None:
             self._decision_default_name = normalized_name
-        quality_ok = self._evaluate_decision_model_quality(inference, normalized_name)
+        quality_ok, quality_details = self._evaluate_decision_model_quality(inference, normalized_name)
         if self._decision_orchestrator is not None:
             try:
                 self._decision_orchestrator.attach_named_inference(
@@ -913,10 +1150,17 @@ class AIManager:
                 )
         self._mark_backend_ready(inference)
         if not quality_ok:
+            message = f"Decision model {normalized_name} failed quality thresholds"
+            details = tuple(quality_details) if quality_details else (message,)
+            error = RuntimeError(message)
             self._degraded = True
-            self._degradation_reason = (
-                f"Decision model {normalized_name} failed quality thresholds"
+            self._degradation_reason = message
+            self._degradation_details = details
+            self._degradation_exceptions = (error,)
+            self._degradation_exception_types = (
+                f"{error.__class__.__module__}.{error.__class__.__qualname__}",
             )
+            self._degradation_exception_diagnostics = _build_exception_diagnostics(error)
         return inference
 
     def ingest_model_repository(
@@ -1304,25 +1548,32 @@ class AIManager:
     def _mark_backend_ready(self, model: Any) -> None:
         if not self._degraded:
             return
-        fallback_reasons = {None, "fallback_ai_models", "backend_validation_failed"}
         if isinstance(model, DecisionModelInference) and getattr(model, "is_ready", False):
-            if self._degradation_reason in fallback_reasons:
+            if _is_fallback_degradation(self._degradation_reason):
                 self._degraded = False
                 self._degradation_reason = None
+                self._degradation_details = ()
+                self._degradation_exceptions = ()
+                self._degradation_exception_types = ()
+                self._degradation_exception_diagnostics = ()
             return
         if _AI_IMPORT_ERROR is not None:
             return
         if getattr(model, "feature_names", None):
-            if self._degradation_reason in fallback_reasons:
+            if _is_fallback_degradation(self._degradation_reason):
                 self._degraded = False
                 self._degradation_reason = None
+                self._degradation_details = ()
+                self._degradation_exceptions = ()
+                self._degradation_exception_types = ()
+                self._degradation_exception_diagnostics = ()
 
     def _evaluate_decision_model_quality(
         self, inference: DecisionModelInference, name: str
-    ) -> bool:
+    ) -> Tuple[bool, Tuple[str, ...]]:
         artifact = getattr(inference, "_artifact", None)
         if artifact is None:
-            return True
+            return True, ()
         metadata = getattr(artifact, "metadata", {}) or {}
         thresholds = metadata.get("quality_thresholds", {}) if isinstance(metadata, Mapping) else {}
         min_directional = float(thresholds.get("min_directional_accuracy", 0.5))
@@ -1352,8 +1603,17 @@ class AIManager:
                 min_directional,
                 max_mae,
             )
-            return False
-        return True
+            details: List[str] = [
+                f"Decision model {name} failed quality thresholds",
+            ]
+            if directional < min_directional:
+                details.append(
+                    f"directional_accuracy={directional:.3f} < min {min_directional:.3f}"
+                )
+            if mae > max_mae:
+                details.append(f"mae={mae:.3f} > max {max_mae:.3f}")
+            return False, tuple(details)
+        return True, ()
 
     def _compose_performance_metrics(
         self,

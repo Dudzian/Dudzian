@@ -14,6 +14,15 @@ Dokument opisuje proces przygotowania kompletu artefaktów OEM dla środowisk
   środowisku (`pip install pyinstaller briefcase`).
 * Zbudowana w trybie `Release` aplikacja Qt (`ui/`) – katalog z binarką i
   zasobami QML (`build/ui/Release` lub analogiczny).
+* Pakiet `KryptoLowca` zainstalowany w tym samym środowisku (np.
+  `pip install -e ./KryptoLowca`), aby moduły `KryptoLowca.*` – w tym
+  `KryptoLowca.ai_models` – były dostępne na ścieżce importu.
+  Stan backendu można weryfikować w narzędziach serwisowych przy użyciu
+  `AIManager.backend_status()`, które zwraca flagę degradacji, szczegóły
+  tekstowe, listę klas wyjątków (`exception_types`) oraz
+  `exception_diagnostics` – uporządkowane rekordy zawierające moduł,
+  kwalifikowaną nazwę typu, komunikat oraz sformatowaną wersję opisu
+  każdego wyjątku (np. brak `KryptoLowca.ai_models`).
 * Plik konfiguracyjny `config/core.yaml` oraz tajemnice potrzebne do walidacji
   licencji OEM.
 * Klucz HMAC (BASE64 lub plaintext) używany do podpisywania manifestów.
