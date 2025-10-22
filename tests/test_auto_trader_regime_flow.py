@@ -127,90 +127,94 @@ def _prepare_guardrail_history(monkeypatch: pytest.MonkeyPatch) -> AutoTrader:
     timestamps = iter([2000.0, 2010.0, 2020.0, 2030.0])
     monkeypatch.setattr("bot_core.auto_trader.app.time.time", lambda: next(timestamps))
 
-    trader._record_risk_evaluation(
-        _decision(
-            ["effective risk cap", "volatility spike"],
-            [
-                GuardrailTrigger(
-                    name="effective_risk",
-                    label="Effective risk cap",
-                    comparator=">=",
-                    threshold=0.8,
-                    unit="ratio",
-                    value=0.83,
-                ),
-                GuardrailTrigger(
-                    name="volatility_ratio",
-                    label="Volatility ratio",
-                    comparator=">=",
-                    threshold=1.2,
-                    unit="ratio",
-                    value=1.25,
-                ),
-            ],
-        ),
-        approved=False,
-        normalized=False,
-        response=False,
-        service=alpha,
-        error=None,
-    )
+    with trader._decision_audit_scope(decision_id="guardrail-alpha-1"):
+        trader._record_risk_evaluation(
+            _decision(
+                ["effective risk cap", "volatility spike"],
+                [
+                    GuardrailTrigger(
+                        name="effective_risk",
+                        label="Effective risk cap",
+                        comparator=">=",
+                        threshold=0.8,
+                        unit="ratio",
+                        value=0.83,
+                    ),
+                    GuardrailTrigger(
+                        name="volatility_ratio",
+                        label="Volatility ratio",
+                        comparator=">=",
+                        threshold=1.2,
+                        unit="ratio",
+                        value=1.25,
+                    ),
+                ],
+            ),
+            approved=False,
+            normalized=False,
+            response=False,
+            service=alpha,
+            error=None,
+        )
 
-    trader._record_risk_evaluation(
-        _decision(
-            ["effective risk cap"],
-            [
-                GuardrailTrigger(
-                    name="effective_risk",
-                    label="Effective risk cap",
-                    comparator=">=",
-                    threshold=0.8,
-                    unit="ratio",
-                    value=0.81,
-                ),
-            ],
-        ),
-        approved=False,
-        normalized=False,
-        response=False,
-        service=alpha,
-        error=None,
-    )
+    with trader._decision_audit_scope(decision_id="guardrail-alpha-2"):
+        trader._record_risk_evaluation(
+            _decision(
+                ["effective risk cap"],
+                [
+                    GuardrailTrigger(
+                        name="effective_risk",
+                        label="Effective risk cap",
+                        comparator=">=",
+                        threshold=0.8,
+                        unit="ratio",
+                        value=0.81,
+                    ),
+                ],
+            ),
+            approved=False,
+            normalized=False,
+            response=False,
+            service=alpha,
+            error=None,
+        )
 
-    trader._record_risk_evaluation(
-        RiskDecision(
-            should_trade=True,
-            fraction=0.5,
-            state="active",
-            details={"origin": "guardrail-test"},
-        ),
-        approved=True,
-        normalized=True,
-        response=True,
-        service=beta,
-        error=None,
-    )
+    with trader._decision_audit_scope(decision_id="guardrail-beta-ok"):
+        trader._record_risk_evaluation(
+            RiskDecision(
+                should_trade=True,
+                fraction=0.5,
+                state="active",
+                details={"origin": "guardrail-test"},
+            ),
+            approved=True,
+            normalized=True,
+            response=True,
+            service=beta,
+            error=None,
+        )
 
-    trader._record_risk_evaluation(
-        _decision(
-            ["effective risk cap", "liquidity pressure"],
-            [
-                GuardrailTrigger(
-                    name="effective_risk",
-                    label="Effective risk cap",
-                    comparator=">=",
-                    threshold=0.8,
-                    unit="score",
-                    value=0.79,
-                ),
-            ],
-        ),
-        approved=False,
-        normalized=False,
-        response=False,
-        service=None,
-        error=RuntimeError("guardrail failure"),
-    )
+    with trader._decision_audit_scope(decision_id="guardrail-unknown-1"):
+        trader._record_risk_evaluation(
+            _decision(
+                ["effective risk cap", "liquidity pressure"],
+                [
+                    GuardrailTrigger(
+                        name="effective_risk",
+                        label="Effective risk cap",
+                        comparator=">=",
+                        threshold=0.8,
+                        unit="score",
+                        value=0.79,
+                    ),
+                ],
+            ),
+            approved=False,
+            normalized=False,
+            response=False,
+            service=None,
+            error=RuntimeError("guardrail failure"),
+        )
 
     return trader
 
@@ -4011,6 +4015,19 @@ def test_auto_trader_decision_timeline_summary(
         },
     }
 
+    evaluations = trader.get_risk_evaluations()
+    assert len(evaluations) == 4
+    sample_decision_id = evaluations[0]["decision_id"]
+    filtered_timeline = trader.summarize_risk_decision_timeline(
+        bucket_s=20,
+        decision_id=sample_decision_id,
+        include_decision_dimensions=True,
+        fill_gaps=True,
+    )
+    assert filtered_timeline["total"] == 1
+    assert filtered_timeline["filters"]["decision_id"] == [sample_decision_id]
+    assert sum(bucket["total"] for bucket in filtered_timeline["buckets"]) == 1
+
     blocked_only = trader.summarize_risk_decision_timeline(
         bucket_s=20,
         decision_state="blocked",
@@ -4122,6 +4139,9 @@ def test_auto_trader_decision_timeline_exports(
         error=RuntimeError("cooldown"),
     )
 
+    evaluations = trader.get_risk_evaluations()
+    target_decision_id = evaluations[0]["decision_id"]
+
     base_records = trader.risk_decision_timeline_to_records(
         bucket_s=20,
         fill_gaps=True,
@@ -4166,6 +4186,21 @@ def test_auto_trader_decision_timeline_exports(
     assert "services" in enriched_records.summary
     assert enriched_records.summary["services"]["_ServiceAlpha"]["evaluations"] == 2
 
+    filtered_records = trader.risk_decision_timeline_to_records(
+        bucket_s=20,
+        decision_id=target_decision_id,
+        include_services=True,
+        include_decision_dimensions=True,
+    )
+    assert isinstance(filtered_records, GuardrailTimelineRecords)
+    assert filtered_records.summary["filters"]["decision_id"] == [target_decision_id]
+    filtered_bucket_totals = [
+        record.get("total", 0)
+        for record in filtered_records
+        if record.get("bucket_type") == "bucket"
+    ]
+    assert sum(filtered_bucket_totals) == 1
+
     df = trader.risk_decision_timeline_to_dataframe(
         bucket_s=20,
         fill_gaps=True,
@@ -4186,6 +4221,16 @@ def test_auto_trader_decision_timeline_exports(
     assert df.loc[0, "start"] == datetime.fromtimestamp(1200.0, tz=timezone.utc)
     assert "states" in df.columns
     assert "services" in df.columns
+
+    filtered_df = trader.risk_decision_timeline_to_dataframe(
+        bucket_s=20,
+        decision_id=target_decision_id,
+        include_services=True,
+        include_decision_dimensions=True,
+    )
+    assert (
+        filtered_df.loc[filtered_df["bucket_type"] == "bucket", "total"].sum() == 1
+    )
 
 
 def test_auto_trader_guardrail_summary(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -4348,6 +4393,7 @@ def test_auto_trader_guardrail_summary(monkeypatch: pytest.MonkeyPatch) -> None:
         "_ServiceAlpha",
         "<unknown>",
     ]
+    assert all(record["decision_id"] for record in records)
     assert records[0]["guardrail_reasons"] == (
         "effective risk cap",
         "volatility spike",
@@ -4439,6 +4485,8 @@ def test_auto_trader_guardrail_summary(monkeypatch: pytest.MonkeyPatch) -> None:
     assert naive_records[0]["timestamp"].tzinfo is None
 
     df = trader.guardrail_events_to_dataframe()
+    assert "decision_id" in df.columns
+    assert df["decision_id"].notna().all()
     assert list(df["service"]) == ["_ServiceAlpha", "_ServiceAlpha", "<unknown>"]
     assert df.loc[0, "guardrail_reason_count"] == 2
     assert df.loc[2, "guardrail_trigger_count"] == 1
@@ -4512,6 +4560,48 @@ def test_auto_trader_guardrail_summary(monkeypatch: pytest.MonkeyPatch) -> None:
 
     empty_df = trader.guardrail_events_to_dataframe(limit=0)
     assert empty_df.empty
+
+
+def test_guardrail_filters_support_decision_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    trader = _prepare_guardrail_history(monkeypatch)
+
+    records = trader.guardrail_events_to_records()
+    assert all(isinstance(record.get("decision_id"), str) for record in records)
+    target_id = records[0]["decision_id"]
+
+    summary = trader.summarize_risk_guardrails(decision_id=target_id)
+    assert summary["guardrail_events"] == 1
+
+    filtered_records = trader.guardrail_events_to_records(decision_id=target_id)
+    assert [entry["decision_id"] for entry in filtered_records] == [target_id]
+
+    df = trader.guardrail_events_to_dataframe(decision_id=target_id)
+    assert df["decision_id"].unique().tolist() == [target_id]
+
+    timeline_summary = trader.summarize_guardrail_timeline(
+        bucket_s=20.0,
+        decision_id=target_id,
+    )
+    assert timeline_summary["filters"]["decision_id"] == [target_id]
+
+    timeline_records = trader.guardrail_timeline_to_records(
+        bucket_s=20.0,
+        decision_id=target_id,
+        include_summary_metadata=True,
+    )
+    assert isinstance(timeline_records, GuardrailTimelineRecords)
+    assert timeline_records.summary["filters"]["decision_id"] == [target_id]
+
+    df_timeline = trader.guardrail_timeline_to_dataframe(
+        bucket_s=20.0,
+        decision_id=target_id,
+    )
+    assert (
+        df_timeline.attrs["guardrail_summary"]["filters"]["decision_id"]
+        == [target_id]
+    )
 
 
 def test_auto_trader_guardrail_timeline_exports(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -5140,6 +5230,119 @@ def test_guardrail_filters_support_missing_label_and_comparator(
     df_bps_unit = trader.guardrail_events_to_dataframe(trigger_unit="bps")
     assert len(df_bps_unit) == 1
     assert df_bps_unit.loc[0, "guardrail_triggers"][0]["unit"] == "bps"
+
+
+def test_guardrail_events_export_roundtrip(monkeypatch: pytest.MonkeyPatch) -> None:
+    trader = _prepare_guardrail_history(monkeypatch)
+
+    payload = trader.export_guardrail_events(
+        include_service=False,
+        include_response=False,
+        include_error=False,
+    )
+
+    assert payload["version"] == 1
+    retention = payload["retention"]
+    assert isinstance(retention["limit"], (int, type(None)))
+    assert retention["ttl_s"] == trader.get_risk_evaluations_ttl()
+    assert payload["filters"]["include_service"] is False
+    assert len(payload["entries"]) == 3
+    assert {entry["decision_id"] for entry in payload["entries"]} == {
+        "guardrail-alpha-1",
+        "guardrail-alpha-2",
+        "guardrail-unknown-1",
+    }
+
+    fresh = AutoTrader(
+        _Emitter(),
+        _GUI(),
+        symbol_getter=lambda: "SOLUSDT",
+        auto_trade_interval_s=0.0,
+        enable_auto_trade=False,
+    )
+
+    assert not fresh.guardrail_events_to_records()
+
+    loaded = fresh.load_guardrail_events(payload)
+    assert loaded == 3
+
+    records = fresh.guardrail_events_to_records()
+    assert len(records) == 3
+    assert {record["decision_id"] for record in records} == {
+        "guardrail-alpha-1",
+        "guardrail-alpha-2",
+        "guardrail-unknown-1",
+    }
+
+
+def test_guardrail_events_dump_and_import(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    trader = _prepare_guardrail_history(monkeypatch)
+    export_path = tmp_path / "guardrail_events.json"
+
+    trader.dump_guardrail_events(export_path, ensure_ascii=True)
+    assert export_path.exists()
+
+    imported = AutoTrader(
+        _Emitter(),
+        _GUI(),
+        symbol_getter=lambda: "SOLUSDT",
+        auto_trade_interval_s=0.0,
+        enable_auto_trade=False,
+    )
+
+    count = imported.import_guardrail_events(export_path)
+    assert count == 3
+
+    summary = imported.summarize_guardrail_timeline(bucket_s=60.0)
+    assert summary["total"] == 3
+
+
+def test_guardrail_event_trace(monkeypatch: pytest.MonkeyPatch) -> None:
+    trader = _prepare_guardrail_history(monkeypatch)
+
+    trace = trader.get_guardrail_event_trace(
+        "guardrail-alpha-1",
+        include_service=False,
+        include_response=False,
+        include_error=False,
+        include_guardrail_dimensions=False,
+    )
+
+    assert len(trace) == 1
+    first = trace[0]
+    assert first["decision_id"] == "guardrail-alpha-1"
+    assert first["step_index"] == 0
+    assert first["elapsed_since_first_s"] == pytest.approx(0.0)
+    assert first["elapsed_since_previous_s"] == pytest.approx(0.0)
+    assert isinstance(first["timestamp"], datetime)
+
+    missing = trader.get_guardrail_event_trace("non-existent")
+    assert missing == ()
+
+
+def test_guardrail_event_grouping(monkeypatch: pytest.MonkeyPatch) -> None:
+    trader = _prepare_guardrail_history(monkeypatch)
+
+    grouped = trader.get_grouped_guardrail_events(
+        include_decision=False,
+        include_service=False,
+        include_response=False,
+        include_error=False,
+        include_guardrail_dimensions=False,
+    )
+
+    assert set(grouped.keys()) == {
+        "guardrail-alpha-1",
+        "guardrail-alpha-2",
+        "guardrail-unknown-1",
+    }
+
+    alpha_records = grouped["guardrail-alpha-1"]
+    assert len(alpha_records) == 1
+    assert alpha_records[0]["decision_id"] == "guardrail-alpha-1"
+    assert "service" not in alpha_records[0]
 
 
 def test_auto_trader_prunes_risk_history_by_ttl(monkeypatch: pytest.MonkeyPatch) -> None:
