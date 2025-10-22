@@ -106,6 +106,7 @@ runtime_entrypoints:
     strategy: ai_autotrader
     risk_profile: balanced
     tags: [desktop, autotrader]
+    trusted_auto_confirm: false
     compliance:
       live_allowed: false
       risk_profiles: [balanced, aggressive]

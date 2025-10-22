@@ -61,6 +61,12 @@ def _require_float(value: Any, *, context: str) -> float:
         raise ValueError(f"{context} must be a number, got: {value!r}") from exc
 
 
+def _maybe_int(value: Any) -> Optional[int]:
+    if value in (None, "", False):
+        return None
+    return int(value)
+
+
 def _normalize_mode(value: Optional[str], *, allowed: Iterable[str], context: str) -> Optional[str]:
     if value is None:
         return None
@@ -85,6 +91,10 @@ class SMSProviderSettings:
     allow_alphanumeric_sender: bool = False
     sender_id: Optional[str] = None
     credential_key: Optional[str] = None  # test expects this field name
+    display_name: Optional[str] = None
+    iso_country_code: Optional[str] = None
+    max_sender_length: Optional[int] = None
+    notes: Optional[str] = None
 
 
 @dataclass
@@ -291,6 +301,10 @@ def _parse_alerts_section(cfg: CoreConfig, alerts: Mapping[str, Any]) -> None:
             allow_alphanumeric_sender=bool(raw.get("allow_alphanumeric_sender", False)),
             sender_id=raw.get("sender_id"),
             credential_key=raw.get("credential_key"),
+            display_name=raw.get("display_name"),
+            iso_country_code=raw.get("iso_country_code"),
+            max_sender_length=_maybe_int(raw.get("max_sender_length")),
+            notes=raw.get("notes"),
         )
 
     # Telegram
@@ -616,6 +630,10 @@ def test_load_core_config_reads_sms_providers(tmp_path: Path) -> None:
               allow_alphanumeric_sender: true
               sender_id: BOT-ORANGE
               credential_key: orange_sms_credentials
+              display_name: Orange Polska (local)
+              iso_country_code: pl
+              max_sender_length: 13
+              notes: Lokalna konfiguracja testowa
           telegram_channels:
             primary:
               chat_id: "123456789"
@@ -656,14 +674,20 @@ def test_load_core_config_reads_sms_providers(tmp_path: Path) -> None:
 
     config = load_core_config(config_path)
 
-email = config.email_channels["ops"]
-assert isinstance(email, EmailChannelSettings)
-assert email.host == "smtp.example.com"
-assert email.port == 587
-assert email.from_address == "bot@example.com"
-assert email.recipients == ("ops@example.com",)
-assert email.credential_secret == "smtp_ops_credentials"
-assert email.use_tls is True
+    sms = config.sms_providers["orange_local"]
+    assert sms.display_name == "Orange Polska (local)"
+    assert sms.iso_country_code == "PL"
+    assert sms.max_sender_length == 13
+    assert sms.notes == "Lokalna konfiguracja testowa"
+
+    email = config.email_channels["ops"]
+    assert isinstance(email, EmailChannelSettings)
+    assert email.host == "smtp.example.com"
+    assert email.port == 587
+    assert email.from_address == "bot@example.com"
+    assert email.recipients == ("ops@example.com",)
+    assert email.credential_secret == "smtp_ops_credentials"
+    assert email.use_tls is True
 
 
 def test_load_core_config_reads_portfolio_inputs(tmp_path: Path) -> None:

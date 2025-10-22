@@ -561,3 +561,96 @@ def test_symbols_module_maps_formats() -> None:
     assert normalize_symbol("BTC/USDT") == "BTC/USDT"
     assert to_exchange_symbol("BTC/USDT") == "BTCUSDT"
     assert to_exchange_symbol("eth-pln") == "ETHPLN"
+
+
+def test_binance_spot_adapter_global_throttle_failover(monkeypatch: pytest.MonkeyPatch) -> None:
+    credentials = ExchangeCredentials(
+        key_id="key", secret="secret", permissions=("read",), environment=Environment.LIVE
+    )
+    adapter = BinanceSpotAdapter(credentials)
+
+    monotonic_now = [1_000.0]
+
+    def fake_monotonic() -> float:
+        return monotonic_now[0]
+
+    monkeypatch.setattr("bot_core.exchanges.binance.spot.time.monotonic", fake_monotonic)
+    monkeypatch.setattr("bot_core.exchanges.binance.spot.time.sleep", lambda *_: None)
+
+    def throttle_urlopen(request: Request, timeout: int = 15):  # type: ignore[override]
+        raise HTTPError(request.full_url, 429, "Too Many Requests", {"Retry-After": "2"}, None)
+
+    monkeypatch.setattr("bot_core.exchanges.binance.spot.urlopen", throttle_urlopen)
+
+    with pytest.raises(ExchangeThrottlingError):
+        adapter._public_request("/api/v3/time")
+
+    status = adapter.failover_status()
+    assert status["throttle_active"] is True
+    assert status["throttle_remaining"] >= pytest.approx(2.0, rel=0.2)
+
+    success_calls = 0
+
+    def success_urlopen(request: Request, timeout: int = 15):  # type: ignore[override]
+        nonlocal success_calls
+        success_calls += 1
+        return _FakeResponse({"serverTime": 1})
+
+    monkeypatch.setattr("bot_core.exchanges.binance.spot.urlopen", success_urlopen)
+
+    with pytest.raises(ExchangeThrottlingError):
+        adapter._public_request("/api/v3/time")
+    assert success_calls == 0
+
+    monotonic_now[0] += 2.5
+    result = adapter._public_request("/api/v3/time")
+    assert result == {"serverTime": 1}
+    assert adapter.failover_status()["throttle_active"] is False
+    assert success_calls == 1
+
+
+def test_binance_spot_adapter_reconnect_cooldown(monkeypatch: pytest.MonkeyPatch) -> None:
+    credentials = ExchangeCredentials(key_id="key", environment=Environment.LIVE)
+    adapter = BinanceSpotAdapter(credentials)
+
+    monotonic_now = [5_000.0]
+
+    def fake_monotonic() -> float:
+        return monotonic_now[0]
+
+    monkeypatch.setattr("bot_core.exchanges.binance.spot.time.monotonic", fake_monotonic)
+    monkeypatch.setattr("bot_core.exchanges.binance.spot.time.sleep", lambda *_: None)
+
+    network_calls = 0
+
+    def failing_urlopen(request: Request, timeout: int = 15):  # type: ignore[override]
+        nonlocal network_calls
+        network_calls += 1
+        raise URLError("network down")
+
+    monkeypatch.setattr("bot_core.exchanges.binance.spot.urlopen", failing_urlopen)
+
+    with pytest.raises(ExchangeNetworkError):
+        adapter._public_request("/api/v3/time")
+    assert network_calls >= 3
+
+    status = adapter.failover_status()
+    assert status["reconnect_required"] is True
+
+    with pytest.raises(ExchangeNetworkError):
+        adapter._public_request("/api/v3/time")
+
+    success_calls = 0
+
+    def success_urlopen(request: Request, timeout: int = 15):  # type: ignore[override]
+        nonlocal success_calls
+        success_calls += 1
+        return _FakeResponse({"serverTime": 2})
+
+    monkeypatch.setattr("bot_core.exchanges.binance.spot.urlopen", success_urlopen)
+    monotonic_now[0] += status["reconnect_remaining"] + 0.5
+
+    result = adapter._public_request("/api/v3/time")
+    assert result == {"serverTime": 2}
+    assert adapter.failover_status()["reconnect_required"] is False
+    assert success_calls == 1

@@ -836,6 +836,10 @@ class SMSProviderSettings:
     allow_alphanumeric_sender: bool = False
     sender_id: str | None = None
     credential_key: str | None = None
+    display_name: str | None = None
+    iso_country_code: str | None = None
+    max_sender_length: int | None = None
+    notes: str | None = None
 
 
 @dataclass(slots=True)
@@ -1050,6 +1054,7 @@ class RuntimeEntrypointConfig:
     risk_profile: str | None = None
     tags: Sequence[str] = field(default_factory=tuple)
     bootstrap: bool = True
+    trusted_auto_confirm: bool = False
 
 
 @dataclass(slots=True)
