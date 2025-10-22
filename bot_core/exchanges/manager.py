@@ -6,7 +6,7 @@ import datetime as dt
 import logging
 import os
 from dataclasses import dataclass
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator, MutableMapping
 from collections import Counter
 from typing import Any, Callable, Dict, List, Mapping, MutableMapping, Optional, Sequence, Tuple
 

@@ -109,6 +109,14 @@ modułową (`bot_core`).
   - Warstwa `PortfolioGovernor` balansująca kapitał między strategiami na podstawie scoringu TCO/SLO i sygnałów alfa.
   - Integracja z DecisionOrchestrator (konsolidacja metadanych decyzji, priorytety wykonania, automatyczne rollbacki).
   - Moduł auto-rebalancingu i korekty parametrów strategii (np. wagi, target volatility) z podpisanymi raportami zmian.
+  - AutoTradeEngine dostarcza telemetrię blokad ryzyka (`auto_risk_freeze`, `auto_risk_freeze_extend`, `auto_risk_unfreeze`) z polami
+    `reason`, `triggered_at`, `last_extension_at`, `released_at`, `frozen_for`, `risk_level`, `risk_score`, co umożliwia operatorom L1/L2 audyt automatycznych
+    blokad i dokumentowanie decyzji hypercare. Powody obejmują `risk_score_threshold`, `risk_level_threshold`,
+    `risk_level_and_score_threshold`, `risk_score_increase`, `risk_level_escalated`, `expiry_near`, `risk_recovered`,
+    `risk_level_recovered`, `risk_score_recovered` oraz `expired`. Manualne alerty (`risk_freeze`, `risk_freeze_extend`,
+    `risk_unfreeze`) raportują spójny zestaw pól (`reason`, `triggered_at`, `last_extension_at`, `released_at`, `frozen_for`,
+    `source_reason`) i obsługują kody `risk_alert`, `risk_limit`, `risk_limit_escalated`, `manual_override` oraz `expired`,
+    aby nadzór operacyjny mógł łatwo korelować blokady z decyzjami operatorów i alertami nadzorczymi.
 - **Strumień Market Intelligence & Stress Labs:**
   - Rozszerzenie danych o depth-of-book, wolumen w czasie rzeczywistym, wskaźniki funding/sentiment (manifesty Parquet/SQLite).
   - Symulator stresowy nowej generacji (`bot_core/risk/stress_lab.py`) obsługujący scenariusze multi-market oraz blackout

@@ -25,6 +25,8 @@ from bot_core.config.models import (
     EnvironmentAIModelConfig,
     EnvironmentAIPipelineScheduleConfig,
     EnvironmentConfig,
+    LiveChecklistDocumentConfig,
+    LiveReadinessChecklistConfig,
     EnvironmentDataSourceConfig,
     EnvironmentDataQualityConfig,
     EnvironmentStreamConfig,
@@ -1217,6 +1219,89 @@ def _load_report_storage(entry: Optional[Mapping[str, Any]]):
         filename_pattern=filename_pattern,
         retention_days=retention_days,
         fsync=fsync,
+    )
+
+
+def _load_live_readiness(entry: Optional[Mapping[str, Any]]):
+    """Mapuje konfigurację checklisty LIVE na dataclass środowiska."""
+
+    if LiveReadinessChecklistConfig is None or not entry:
+        return None
+
+    if not isinstance(entry, Mapping):
+        raise TypeError("Sekcja environment.live_readiness musi być obiektem mapującym")
+
+    def _normalize_string(value: object | None) -> str | None:
+        if value in (None, "", False):
+            return None
+        text = str(value).strip()
+        return text or None
+
+    def _normalize_sequence(value: object | None) -> tuple[str, ...]:
+        if value in (None, "", False):
+            return ()
+        if isinstance(value, str):
+            candidates = [value]
+        else:
+            try:
+                candidates = list(value)  # type: ignore[arg-type]
+            except TypeError:
+                candidates = [value]
+        normalized: list[str] = []
+        for item in candidates:
+            text = str(item).strip()
+            if text:
+                normalized.append(text)
+        return tuple(normalized)
+
+    documents_payload = entry.get("documents") or ()
+    documents: list[LiveChecklistDocumentConfig] = []
+    for raw_doc in documents_payload:
+        if not isinstance(raw_doc, Mapping):
+            continue
+        name = _normalize_string(raw_doc.get("name"))
+        if not name:
+            continue
+        path = _normalize_string(raw_doc.get("path") or raw_doc.get("location"))
+        if not path:
+            raise ValueError(
+                f"Dokument check-listy live '{name}' musi posiadać ścieżkę (path/location)."
+            )
+        sha256 = _normalize_string(raw_doc.get("sha256") or raw_doc.get("checksum"))
+        signature_path = _normalize_string(
+            raw_doc.get("signature_path") or raw_doc.get("signature")
+        )
+        signed = bool(raw_doc.get("signed", False))
+        signed_by = _normalize_sequence(raw_doc.get("signed_by"))
+        signed_at = _normalize_string(raw_doc.get("signed_at"))
+        required_flag = raw_doc.get("required")
+        if required_flag in (None, ""):
+            required = True
+        else:
+            required = bool(required_flag)
+        documents.append(
+            LiveChecklistDocumentConfig(
+                name=name,
+                path=path,
+                sha256=sha256,
+                signature_path=signature_path,
+                signed=signed,
+                signed_by=signed_by,
+                signed_at=signed_at,
+                required=required,
+            )
+        )
+
+    required_documents = _normalize_sequence(entry.get("required_documents"))
+
+    return LiveReadinessChecklistConfig(
+        checklist_id=_normalize_string(entry.get("checklist_id")),
+        signed=bool(entry.get("signed", False)),
+        signed_by=_normalize_sequence(entry.get("signed_by")),
+        signed_at=_normalize_string(entry.get("signed_at")),
+        signature_path=_normalize_string(entry.get("signature_path")),
+        documents=tuple(documents),
+        required_documents=required_documents,
     )
 
 
@@ -3619,6 +3704,10 @@ def load_core_config(path: str | Path) -> CoreConfig:
                 if stream_config.poll_interval is not None:
                     stream_section.setdefault("poll_interval", float(stream_config.poll_interval))
                 adapter_settings["stream"] = stream_section
+        if _env_has("live_readiness"):
+            env_kwargs["live_readiness"] = _load_live_readiness(
+                entry.get("live_readiness")
+            )
         environments[name] = EnvironmentConfig(**env_kwargs)
 
     risk_profiles = {

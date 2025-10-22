@@ -1065,6 +1065,35 @@ environments:
     stream:
       host: 127.0.0.1
       port: 8765
+    live_readiness:
+      checklist_id: stage6-binance-2024q3
+      signed: true
+      signed_by: [compliance, security]
+      signed_at: "2024-06-15T10:00:00Z"
+      signature_path: compliance/live/binance/checklist.sig
+      required_documents: [kyc_2024q3, license_attestation, alerting_playbook]
+      documents:
+        - name: kyc_2024q3
+          path: compliance/live/binance/kyc_packet_2024q3.pdf
+          sha256: 9d2c1fa9c7f83e2f5c4b14326a6d1f0e5b0a5dd4c5ac8b4398a7e63c1a1d778f
+          signature_path: compliance/live/binance/kyc_packet_2024q3.sig
+          signed: true
+          signed_by: [compliance]
+          signed_at: "2024-06-12T09:30:00Z"
+        - name: license_attestation
+          path: compliance/live/binance/license_attestation.pdf
+          sha256: 4bd5a6e0e90af7a1dc5b426ce8039d3c18c1e871d0d8b59a6a489f72c8b23f10
+          signature_path: compliance/live/binance/license_attestation.sig
+          signed: true
+          signed_by: [security]
+          signed_at: "2024-06-13T15:45:00Z"
+        - name: alerting_playbook
+          path: sre/live/binance/alerting_playbook_v2.pdf
+          sha256: 7c3b0d4f74f1e87a3cfa45ea0b2c3d015412ae858dc99c431edc0de0bbf84ce1
+          signature_path: sre/live/binance/alerting_playbook_v2.sig
+          signed: true
+          signed_by: [sre]
+          signed_at: "2024-06-14T18:05:00Z"
 
   binance_futures_paper:
     exchange: binance_futures
@@ -1151,6 +1180,42 @@ environments:
     stream:
       host: 127.0.0.1
       port: 8765
+    live_readiness:
+      checklist_id: stage6-binance-futures-2024q3
+      signed: true
+      signed_by: [compliance, security, sre]
+      signed_at: "2024-06-16T11:20:00Z"
+      signature_path: compliance/live/binance_futures/checklist.sig
+      required_documents: [kyc_2024q3, license_attestation, alerting_playbook, risk_profile_alignment]
+      documents:
+        - name: kyc_2024q3
+          path: compliance/live/binance_futures/kyc_packet_2024q3.pdf
+          sha256: c5abf419f8872bbf6e0ac0f841e77d181ec498c3fd76c0b53f86b6d8d34a6c25
+          signature_path: compliance/live/binance_futures/kyc_packet_2024q3.sig
+          signed: true
+          signed_by: [compliance]
+          signed_at: "2024-06-12T10:00:00Z"
+        - name: license_attestation
+          path: compliance/live/binance_futures/license_attestation.pdf
+          sha256: 6d8307fe89f7ba0644a6d048976dba752ab90829a7a2fd7ed783aaf30b263bdf
+          signature_path: compliance/live/binance_futures/license_attestation.sig
+          signed: true
+          signed_by: [security]
+          signed_at: "2024-06-13T16:15:00Z"
+        - name: alerting_playbook
+          path: sre/live/binance_futures/alerting_playbook_v2.pdf
+          sha256: b33dfd145d4ed7f3f469707e5eb94e2804a6b3f1a6f78ebc9b3a5da0530b6e2f
+          signature_path: sre/live/binance_futures/alerting_playbook_v2.sig
+          signed: true
+          signed_by: [sre]
+          signed_at: "2024-06-15T08:55:00Z"
+        - name: risk_profile_alignment
+          path: risk/live/binance_futures/risk_profile_alignment.pdf
+          sha256: d5f7b0f0554aaebb2c609ead32a1a86f158ab2787d770c8cf2f0a056a3457d9e
+          signature_path: risk/live/binance_futures/risk_profile_alignment.sig
+          signed: true
+          signed_by: [risk]
+          signed_at: "2024-06-15T12:40:00Z"
 
   coinbase_paper:
     exchange: coinbase_spot

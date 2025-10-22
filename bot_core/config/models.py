@@ -631,6 +631,33 @@ class EnvironmentStreamConfig:
 
 
 @dataclass(slots=True)
+class LiveChecklistDocumentConfig:
+    """Metadane pojedynczego dokumentu wymagane do wejścia w tryb live."""
+
+    name: str
+    path: str
+    sha256: str | None = None
+    signature_path: str | None = None
+    signed: bool = False
+    signed_by: Sequence[str] = field(default_factory=tuple)
+    signed_at: str | None = None
+    required: bool = True
+
+
+@dataclass(slots=True)
+class LiveReadinessChecklistConfig:
+    """Opisuje podpisaną checklistę LIVE wraz z wymaganymi dokumentami."""
+
+    checklist_id: str | None = None
+    signed: bool = False
+    signed_by: Sequence[str] = field(default_factory=tuple)
+    signed_at: str | None = None
+    signature_path: str | None = None
+    documents: Sequence[LiveChecklistDocumentConfig] = field(default_factory=tuple)
+    required_documents: Sequence[str] = field(default_factory=tuple)
+
+
+@dataclass(slots=True)
 class EnvironmentConfig:
     """Konfiguracja środowiska (np. live, paper, testnet)."""
     name: str
@@ -659,6 +686,7 @@ class EnvironmentConfig:
     default_controller: str | None = None
     ai: EnvironmentAIConfig | None = None
     stream: EnvironmentStreamConfig | None = None
+    live_readiness: LiveReadinessChecklistConfig | None = None
 
 
 @dataclass(slots=True)
@@ -1166,6 +1194,8 @@ __all__ = [
     "EnvironmentReportStorageConfig",
     "EnvironmentDataQualityConfig",
     "EnvironmentStreamConfig",
+    "LiveChecklistDocumentConfig",
+    "LiveReadinessChecklistConfig",
     "CoverageMonitorTargetConfig",
     "CoverageMonitoringConfig",
     "RiskProfileConfig",

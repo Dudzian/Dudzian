@@ -5,6 +5,8 @@ from __future__ import annotations
 # Zachowujemy minimalne zależności – nowe moduły samodzielnie dbają o konfigurację
 # środowiska (ścieżki repo, logging itp.).
 
+from pathlib import Path
+
 
 def _ensure_repo_root() -> None:
     current_dir = Path(__file__).resolve().parent

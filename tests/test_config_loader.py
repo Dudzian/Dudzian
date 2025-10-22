@@ -1661,4 +1661,60 @@ def test_load_core_config_reads_live_routing(tmp_path: Path) -> None:
     assert config.live_routing.default_route == ("binance_spot", "kraken_spot")
     assert config.live_routing.latency_histogram_buckets == (0.05, 0.1, 0.25)
     assert len(config.live_routing.prometheus_alerts) == 1
+
+
+def test_load_core_config_parses_live_readiness_section(tmp_path: Path) -> None:
+    config_path = tmp_path / "core.yaml"
+    config_path.write_text(
+        textwrap.dedent(
+            """
+            risk_profiles:
+              conservative:
+                max_daily_loss_pct: 0.01
+                max_position_pct: 0.03
+                target_volatility: 0.07
+                max_leverage: 2.0
+                stop_loss_atr_multiple: 1.0
+                max_open_positions: 3
+                hard_drawdown_pct: 0.05
+            environments:
+              binance_live:
+                exchange: binance_spot
+                environment: live
+                keychain_key: binance_live_key
+                data_cache_path: ./var/data/binance_live
+                risk_profile: conservative
+                alert_channels: []
+                instrument_universe: core
+                live_readiness:
+                  checklist_id: stage6-binance
+                  signed: true
+                  signed_by: [compliance, security]
+                  signature_path: compliance/live/binance/checklist.sig
+                  required_documents: [kyc_packet]
+                  documents:
+                    - name: kyc_packet
+                      path: compliance/live/binance/kyc_packet.pdf
+                      sha256: 79b8d3b02b3e29f4c4a0d428c2a7c4de48bd97f49deed19c7ef287c93883bf94
+                      signature_path: compliance/live/binance/kyc_packet.sig
+                      signed: true
+                      signed_by: [compliance]
+            """
+        ),
+        encoding="utf-8",
+    )
+
+    config = load_core_config(config_path)
+
+    env = config.environments["binance_live"]
+    readiness = env.live_readiness
+    assert readiness is not None
+    assert readiness.checklist_id == "stage6-binance"
+    assert readiness.signed is True
+    assert readiness.signed_by == ("compliance", "security")
+    assert readiness.signature_path.endswith("checklist.sig")
+    documents = {doc.name: doc for doc in readiness.documents}
+    assert "kyc_packet" in documents
+    assert documents["kyc_packet"].signed is True
+    assert documents["kyc_packet"].signature_path.endswith("kyc_packet.sig")
 '''

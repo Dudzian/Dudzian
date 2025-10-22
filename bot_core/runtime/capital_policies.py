@@ -237,6 +237,10 @@ class MetricWeightedAllocation:
     def allocation_diagnostics(self) -> Mapping[str, Mapping[str, float]]:
         return {key: dict(value) for key, value in self._last_snapshot.items()}
 
+    @property
+    def metrics(self) -> tuple[MetricWeightRule, ...]:
+        return self._rules
+
     def _fallback_or_equal(
         self,
         schedules: Sequence["_ScheduleContext"],
