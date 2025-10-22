@@ -1,6 +1,8 @@
 """Rozszerzony silnik autotradingu wspierający wiele strategii i reżimy."""
 from __future__ import annotations
 
+import datetime as dt
+import math
 import time
 from collections import deque
 from copy import deepcopy
@@ -315,6 +317,7 @@ class AutoTradeEngine:
             self._maybe_trade()
 
     def _maybe_trade(self) -> None:
+        self._sync_freeze_state()
         closes = self._closes
         if len(closes) < max(self._params.get("fast", 10), self._params.get("slow", 50)) + 2:
             return
