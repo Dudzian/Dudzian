@@ -29,7 +29,7 @@ from typing import Any, Callable, Dict, Mapping, Optional, Protocol, Sequence, c
 import pandas as pd
 
 from bot_core.auto_trader.audit import DecisionAuditLog
-from bot_core.auto_trader.schedule import ScheduleState, TradingSchedule
+from bot_core.auto_trader.schedule import ScheduleOverride, ScheduleState, TradingSchedule
 from bot_core.ai.regime import (
     MarketRegime,
     MarketRegimeAssessment,
@@ -806,6 +806,234 @@ class AutoTrader:
         if isinstance(tz_name, str) and tz_name.strip():
             return TradingSchedule.always_on(mode=self._initial_mode, timezone_name=str(tz_name))
         return TradingSchedule.always_on(mode=self._initial_mode)
+
+    def _emit_schedule_state(self, payload: Mapping[str, object]) -> None:
+        emitter = getattr(self, "emitter", None)
+        if emitter is None:
+            return
+        emit = getattr(emitter, "emit", None)
+        if callable(emit):
+            try:
+                emit("auto_trader.schedule_state", **payload)
+            except Exception:  # pragma: no cover - defensive logging
+                LOGGER.debug("Emitter failed to publish schedule state", exc_info=True)
+
+    def set_work_schedule(
+        self,
+        schedule: TradingSchedule | Mapping[str, object] | None,
+        *,
+        reason: str | None = None,
+    ) -> ScheduleState:
+        """Configure the working schedule for auto-trading."""
+
+        if schedule is None:
+            new_schedule = self._build_default_work_schedule()
+            reason_value = reason or "reset"
+        elif isinstance(schedule, TradingSchedule):
+            new_schedule = schedule
+            reason_value = reason or "update"
+        elif isinstance(schedule, Mapping):
+            new_schedule = TradingSchedule.from_payload(schedule)
+            reason_value = reason or "update"
+        else:
+            raise TypeError("schedule must be a TradingSchedule, mapping payload or None")
+
+        self._work_schedule = new_schedule
+        state = new_schedule.describe()
+        self._schedule_state = state
+        self._schedule_mode = state.mode
+        self._last_schedule_snapshot = (state.mode, state.is_open)
+
+        payload = _serialize_schedule_state(state)
+        payload["reason"] = reason_value
+
+        self._record_decision_audit_stage(
+            "schedule_configured",
+            symbol=_SCHEDULE_SYMBOL,
+            payload=payload,
+        )
+        self._emit_schedule_state(payload)
+        return state
+
+    def add_schedule_override(
+        self,
+        override: ScheduleOverride | Mapping[str, object],
+        *,
+        reason: str | None = None,
+        replace: bool = True,
+    ) -> ScheduleState:
+        """Append a schedule override and broadcast the updated state."""
+
+        if isinstance(override, ScheduleOverride):
+            override_obj = override
+        elif isinstance(override, Mapping):
+            override_obj = ScheduleOverride.from_mapping(override)
+        else:
+            raise TypeError("override must be a ScheduleOverride or mapping payload")
+
+        schedule = getattr(self, "_work_schedule", None)
+        if schedule is None:
+            schedule = self._build_default_work_schedule()
+        updated_schedule = schedule.with_override(override_obj, replace_conflicts=replace)
+        self._work_schedule = updated_schedule
+
+        state = updated_schedule.describe()
+        self._schedule_state = state
+        self._schedule_mode = state.mode
+
+        payload = _serialize_schedule_state(state)
+        payload["reason"] = reason or "override_add"
+        payload["override_added"] = _serialize_schedule_override(override_obj)
+        payload["replace_conflicts"] = bool(replace)
+
+        self._record_decision_audit_stage(
+            "schedule_override_applied",
+            symbol=_SCHEDULE_SYMBOL,
+            payload=payload,
+        )
+        self._emit_schedule_state(payload)
+        return state
+
+    def clear_schedule_overrides(
+        self,
+        labels: str | Sequence[str | None] | None = None,
+        *,
+        reason: str | None = None,
+    ) -> ScheduleState:
+        """Remove schedule overrides (all or selected by label)."""
+
+        schedule = getattr(self, "_work_schedule", None)
+        if schedule is None:
+            schedule = self._build_default_work_schedule()
+
+        cleared_labels: list[str | None] | None
+        if labels is None:
+            cleared_labels = None
+            updated_schedule = schedule.without_overrides()
+            reason_value = reason or "override_reset"
+        else:
+            if isinstance(labels, str):
+                iterable: Sequence[str | None] = (labels,)
+            else:
+                iterable = labels
+            normalized: list[str | None] = []
+            seen: set[str | None] = set()
+            for label in iterable:
+                normalized_label: str | None
+                if label is None:
+                    normalized_label = None
+                else:
+                    normalized_label = str(label)
+                if normalized_label in seen:
+                    continue
+                seen.add(normalized_label)
+                normalized.append(normalized_label)
+            cleared_labels = normalized
+            updated_schedule = schedule.without_overrides(labels=normalized)
+            reason_value = reason or "override_clear"
+
+        self._work_schedule = updated_schedule
+        state = updated_schedule.describe()
+        self._schedule_state = state
+        self._schedule_mode = state.mode
+
+        payload = _serialize_schedule_state(state)
+        payload["reason"] = reason_value
+        if cleared_labels is not None:
+            payload["cleared_labels"] = list(cleared_labels)
+
+        self._record_decision_audit_stage(
+            "schedule_override_cleared",
+            symbol=_SCHEDULE_SYMBOL,
+            payload=payload,
+        )
+        self._emit_schedule_state(payload)
+        return state
+
+    def list_schedule_overrides(
+        self,
+        *labels: str | None,
+        include_past: bool = False,
+        now: datetime | None = None,
+    ) -> list[dict[str, Any]]:
+        """Return serialized overrides for GUI or API clients."""
+
+        schedule = getattr(self, "_work_schedule", None)
+        if schedule is None:
+            schedule = self._build_default_work_schedule()
+            self._work_schedule = schedule
+
+        overrides = schedule.list_overrides(
+            labels=labels or None,
+            include_past=include_past,
+            now=now,
+        )
+        return [_serialize_schedule_override(item) for item in overrides]
+
+    def describe_work_schedule(
+        self,
+        *labels: str | None,
+        include_past_overrides: bool = False,
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
+        """Return a serialisable snapshot of the configured work schedule."""
+
+        schedule = getattr(self, "_work_schedule", None)
+        if schedule is None:
+            schedule = self._build_default_work_schedule()
+            self._work_schedule = schedule
+
+        state = schedule.describe(now)
+        self._schedule_state = state
+        self._schedule_mode = state.mode
+        self._last_schedule_snapshot = (state.mode, state.is_open)
+
+        overrides = schedule.list_overrides(
+            labels=labels or None,
+            include_past=include_past_overrides,
+            now=state.as_of,
+        )
+
+        timezone_label: str | None = schedule.timezone_name
+        tzinfo = state.as_of.tzinfo
+        if timezone_label is None and tzinfo is not None:
+            timezone_label = getattr(tzinfo, "key", None)
+            if timezone_label is None:
+                timezone_label = state.as_of.tzname()
+
+        offset_s: int | None = None
+        if tzinfo is not None:
+            offset = state.as_of.utcoffset()
+            if offset is not None:
+                offset_s = int(offset.total_seconds())
+
+        payload: dict[str, Any] = {
+            "default_mode": schedule.default_mode,
+            "windows": [_serialize_schedule_window(window) for window in schedule.windows],
+            "overrides": [_serialize_schedule_override(item) for item in overrides],
+            "state": _serialize_schedule_state(state),
+        }
+        if timezone_label is not None:
+            payload["timezone"] = timezone_label
+        if offset_s is not None:
+            payload["timezone_offset_s"] = offset_s
+        return payload
+
+    def get_schedule_state(self) -> ScheduleState:
+        schedule = getattr(self, "_work_schedule", None)
+        if schedule is None:
+            schedule = self._build_default_work_schedule()
+            self._work_schedule = schedule
+        state = schedule.describe()
+        self._schedule_state = state
+        self._schedule_mode = state.mode
+        return state
+
+    def is_schedule_open(self) -> bool:
+        state = self._schedule_state
+        if state is None:
+            state = self.get_schedule_state()
+        return state.is_open
 
     @staticmethod
     def _detect_environment_name(bootstrap_context: Any | None) -> str:
