@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from copy import deepcopy
 
 from bot_core.ai.regime import MarketRegime
 from bot_core.events import EmitterAdapter, EventType

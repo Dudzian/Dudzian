@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import deque
+from copy import deepcopy
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Callable, Dict, Mapping, MutableMapping, Tuple
@@ -11,6 +12,12 @@ import numpy as np
 import pandas as pd
 
 from bot_core.ai.config_loader import load_risk_thresholds
+
+
+def _ensure_mapping(value: Any) -> Mapping[str, Any]:
+    """Return ``value`` if it is mapping-like, otherwise an empty mapping."""
+
+    return value if isinstance(value, Mapping) else {}
 
 
 class MarketRegime(str, Enum):
@@ -102,10 +109,45 @@ class MarketRegimeClassifier:
         self._thresholds: Mapping[str, Any] = {}
         self.reload_thresholds()
 
+    @property
+    def thresholds_loader(self) -> Callable[[], Mapping[str, Any]]:
+        """Return the callable used to fetch threshold configuration."""
+
+        return self._thresholds_loader
+
     def reload_thresholds(self) -> None:
         """Reload risk thresholds from the configured loader."""
 
-        self._thresholds = self._thresholds_loader()
+        self._thresholds = _ensure_mapping(
+            deepcopy(dict(self._thresholds_loader()))
+        )
+
+    def thresholds_snapshot(self) -> Mapping[str, Any]:
+        """Return a copy of the currently loaded thresholds."""
+
+        return deepcopy(dict(self._thresholds))
+
+    def metrics_config(self) -> Mapping[str, Any]:
+        """Expose the sanitised metrics configuration."""
+
+        return deepcopy(dict(self._metrics_config()))
+
+    def risk_score_config(self) -> Mapping[str, Any]:
+        """Expose the sanitised risk score configuration."""
+
+        return deepcopy(dict(self._risk_score_config()))
+
+    def _market_regime_config(self) -> Mapping[str, Any]:
+        return _ensure_mapping(self._thresholds.get("market_regime"))
+
+    def _metrics_config(self) -> Mapping[str, Any]:
+        return _ensure_mapping(self._market_regime_config().get("metrics"))
+
+    def _risk_score_config(self) -> Mapping[str, Any]:
+        return _ensure_mapping(self._market_regime_config().get("risk_score"))
+
+    def _risk_level_config(self) -> Mapping[str, Any]:
+        return _ensure_mapping(self._market_regime_config().get("risk_level"))
 
     def assess(
         self,
@@ -497,7 +539,13 @@ class RegimeSummary:
 class RegimeHistory:
     """Utrzymuje okno ruchome klasyfikacji i oblicza wygładzone miary."""
 
-    def __init__(self, *, maxlen: int = 5, decay: float = 0.65) -> None:
+    def __init__(
+        self,
+        *,
+        maxlen: int = 5,
+        decay: float = 0.65,
+        thresholds_loader: Callable[[], Mapping[str, Any]] | None = None,
+    ) -> None:
         if maxlen < 1:
             raise ValueError("maxlen must be at least 1")
         if not (0.0 < decay <= 1.0):
@@ -505,7 +553,44 @@ class RegimeHistory:
         self.maxlen = int(maxlen)
         self.decay = float(decay)
         self._snapshots: deque[RegimeSnapshot] = deque(maxlen=self.maxlen)
-        self._thresholds = load_risk_thresholds()
+        self._thresholds_loader: Callable[[], Mapping[str, Any]] = (
+            thresholds_loader or load_risk_thresholds
+        )
+        self._thresholds: Mapping[str, Any] = {}
+        self.reload_thresholds()
+
+    @property
+    def thresholds_loader(self) -> Callable[[], Mapping[str, Any]]:
+        """Return the callable used to obtain thresholds."""
+
+        return self._thresholds_loader
+
+    def thresholds_snapshot(self) -> Mapping[str, Any]:
+        """Return a copy of the currently active thresholds."""
+
+        return deepcopy(dict(self._thresholds))
+
+    def reload_thresholds(
+        self,
+        *,
+        thresholds: Mapping[str, Any] | None = None,
+        loader: Callable[[], Mapping[str, Any]] | None = None,
+    ) -> None:
+        """Refresh threshold configuration used by history calculations."""
+
+        if thresholds is not None:
+            self._thresholds = _ensure_mapping(deepcopy(dict(thresholds)))
+            return
+
+        active_loader: Callable[[], Mapping[str, Any]] = loader or self._thresholds_loader
+        self._thresholds_loader = active_loader
+        self._thresholds = _ensure_mapping(deepcopy(dict(active_loader())))
+
+    def _market_regime_config(self) -> Mapping[str, Any]:
+        return _ensure_mapping(self._thresholds.get("market_regime"))
+
+    def _risk_level_config(self) -> Mapping[str, Any]:
+        return _ensure_mapping(self._market_regime_config().get("risk_level"))
 
     def __len__(self) -> int:  # pragma: no cover - prosta metoda pomocnicza
         return len(self._snapshots)
@@ -780,8 +865,8 @@ class RegimeHistory:
         skewness_bias = float(np.clip(avg_skewness, -5.0, 5.0))
         kurtosis_excess = float(np.clip(avg_kurtosis, -5.0, 10.0))
         volume_imbalance = float(np.clip(avg_volume_imbalance, -1.0, 1.0))
-        risk_level_cfg = self._thresholds["market_regime"]["risk_level"]
-        scales = risk_level_cfg.get("scales", {})
+        risk_level_cfg = self._risk_level_config()
+        scales = _ensure_mapping(risk_level_cfg.get("scales"))
         skew_scale = float(scales.get("skewness_bias", 1.5)) or 1.5
         kurtosis_scale = float(scales.get("kurtosis_excess", 3.0)) or 3.0
         volume_scale = float(scales.get("volume_imbalance", 0.6)) or 0.6
@@ -1109,8 +1194,8 @@ class RegimeHistory:
         confidence_fragility = float(np.clip(confidence_fragility, 0.0, 1.0))
         vol_trend_intensity = float(max(0.0, volatility_trend))
         drawdown_trend_intensity = float(max(0.0, drawdown_trend))
-        risk_level_cfg = self._thresholds["market_regime"]["risk_level"]
-        scales = risk_level_cfg.get("scales", {})
+        risk_level_cfg = self._risk_level_config()
+        scales = _ensure_mapping(risk_level_cfg.get("scales"))
         skew_scale = float(scales.get("skewness_bias", 1.5)) or 1.5
         kurtosis_scale = float(scales.get("kurtosis_excess", 3.0)) or 3.0
         volume_scale = float(scales.get("volume_imbalance", 0.6)) or 0.6
@@ -1122,7 +1207,7 @@ class RegimeHistory:
             np.clip(abs(volume_imbalance) / volume_scale, 0.0, 1.0)
         )
 
-        critical = risk_level_cfg.get("critical", {})
+        critical = _ensure_mapping(risk_level_cfg.get("critical"))
         if (
             risk_score >= float(critical.get("risk_score", 0.85))
             or risk_trend >= float(critical.get("risk_trend", 0.25))
@@ -1202,7 +1287,7 @@ class RegimeHistory:
             )
         ):
             return RiskLevel.CRITICAL
-        elevated = risk_level_cfg.get("elevated", {})
+        elevated = _ensure_mapping(risk_level_cfg.get("elevated"))
         if (
             risk_score >= float(elevated.get("risk_score", 0.65))
             or risk_trend >= float(elevated.get("risk_trend", 0.08))
@@ -1281,7 +1366,7 @@ class RegimeHistory:
             )
         ):
             return RiskLevel.ELEVATED
-        calm = risk_level_cfg.get("calm", {})
+        calm = _ensure_mapping(risk_level_cfg.get("calm"))
         if (
             risk_score <= float(calm.get("risk_score", 0.25))
             and risk_trend <= float(calm.get("risk_trend", 0.0))
@@ -1321,7 +1406,7 @@ class RegimeHistory:
             <= float(calm.get("volume_imbalance_pressure", 0.45))
         ):
             return RiskLevel.CALM
-        balanced = risk_level_cfg.get("balanced", {})
+        balanced = _ensure_mapping(risk_level_cfg.get("balanced"))
         if (
             risk_score <= float(balanced.get("risk_score", 0.45))
             and risk_trend <= float(balanced.get("risk_trend", 0.05))
@@ -1358,7 +1443,7 @@ class RegimeHistory:
             <= float(balanced.get("volume_imbalance_pressure", 0.55))
         ):
             return RiskLevel.BALANCED
-        watch = risk_level_cfg.get("watch", {})
+        watch = _ensure_mapping(risk_level_cfg.get("watch"))
         if (
             confidence_volatility >= float(watch.get("confidence_volatility", 0.18))
             or (

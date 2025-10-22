@@ -1,10 +1,17 @@
 from __future__ import annotations
 
+from typing import Mapping
+
 import numpy as np
 import pandas as pd
 import pytest
 
-from bot_core.ai.regime import MarketRegime, MarketRegimeClassifier
+from bot_core.ai.regime import (
+    MarketRegime,
+    MarketRegimeClassifier,
+    RegimeHistory,
+    RiskLevel,
+)
 
 
 def _build_dataframe(close: np.ndarray, *, noise: float = 0.0) -> pd.DataFrame:
