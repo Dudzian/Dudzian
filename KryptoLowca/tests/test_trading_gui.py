@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from pathlib import Path
 from textwrap import dedent
@@ -17,6 +18,7 @@ from KryptoLowca.trading_gui import AppState, TradingGUI, TradingSessionControll
 from KryptoLowca.ui import trading as trading_package
 from KryptoLowca.ui.trading import app as trading_app_module
 from bot_core.runtime.metadata import RiskManagerSettings, derive_risk_manager_settings
+from KryptoLowca.exchanges import AdapterError
 
 
 @pytest.fixture
@@ -711,3 +713,56 @@ def test_market_data_interval_invalid_env_falls_back(monkeypatch, tk_root, caplo
     assert any(
         "TRADING_GUI_MARKET_INTERVAL" in record.message for record in caplog.records
     )
+
+
+def test_market_data_adapter_from_env(monkeypatch, tk_root):
+    created: dict[str, object] = {}
+
+    class StubAdapter:
+        async def connect(self) -> None:
+            return None
+
+        async def close(self) -> None:
+            return None
+
+    def fake_create(name: str, **options):
+        created["name"] = name
+        created["options"] = options
+        return StubAdapter()
+
+    monkeypatch.setenv("TRADING_GUI_MARKET_ADAPTER", "bitstamp")
+    monkeypatch.setenv("TRADING_GUI_MARKET_ADAPTER_OPTIONS", json.dumps({"timeout": 3}))
+    monkeypatch.setenv(
+        "TRADING_GUI_MARKET_ADAPTER_KWARGS", json.dumps({"enable_streaming": False})
+    )
+    monkeypatch.setenv("TRADING_GUI_MARKET_COMPLIANCE_ACK", "true")
+    monkeypatch.setattr(trading_app_module, "create_exchange_adapter", fake_create)
+
+    gui = TradingGUI(tk_root, session_controller_factory=DummyController)
+
+    adapter = gui._market_data_adapter_factory(demo_mode=False)
+
+    assert isinstance(adapter, StubAdapter)
+    assert created["name"] == "bitstamp"
+    options = created["options"]
+    assert options["demo_mode"] is False
+    assert options["sandbox"] is False
+    assert options["testnet"] is False
+    assert options["timeout"] == 3
+    assert options["compliance_ack"] is True
+    assert options["adapter_kwargs"]["enable_streaming"] is False
+
+
+def test_market_data_adapter_env_fallback_on_error(monkeypatch, tk_root):
+    monkeypatch.setenv("TRADING_GUI_MARKET_ADAPTER", "bitstamp")
+
+    def fake_create(name: str, **options):
+        raise AdapterError("boom")
+
+    monkeypatch.setattr(trading_app_module, "create_exchange_adapter", fake_create)
+
+    gui = TradingGUI(tk_root, session_controller_factory=DummyController)
+
+    adapter = gui._market_data_adapter_factory(demo_mode=True)
+
+    assert isinstance(adapter, trading_app_module.ZondaAdapter)
