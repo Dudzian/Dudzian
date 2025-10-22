@@ -6,7 +6,7 @@ import math
 import time
 from collections import deque
 from copy import deepcopy
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Deque, Dict, Iterable, List, Mapping, Optional
 
 import numpy as np
@@ -23,6 +23,14 @@ from bot_core.ai.regime import (
 )
 from bot_core.backtest.ma import simulate_trades_ma  # noqa: F401 - zachowaj kompatybilność API
 from bot_core.events import DebounceRule, Event, EventBus, EventType, EmitterAdapter
+
+
+@dataclass
+class _AutoRiskFreezeState:
+    risk_level: RiskLevel | None = None
+    risk_score: float | None = None
+    triggered_at: float = 0.0
+    last_extension_at: float = 0.0
 
 
 @dataclass
@@ -107,6 +115,7 @@ class AutoTradeEngine:
         self._manual_risk_frozen_until: float = 0.0
         self._auto_risk_frozen_until: float = 0.0
         self._auto_risk_frozen: bool = False
+        self._auto_risk_state = _AutoRiskFreezeState()
         self._submit_market = broker_submit_market
         self._regime_classifier = MarketRegimeClassifier()
         self._regime_history = RegimeHistory(
@@ -134,6 +143,7 @@ class AutoTradeEngine:
         self._manual_risk_frozen_until = 0.0
         self._auto_risk_frozen_until = 0.0
         self._auto_risk_frozen = False
+        self._auto_risk_state = _AutoRiskFreezeState()
         self._recompute_risk_freeze_until()
         self.adapter.push_autotrade_status("enabled", detail={"symbol": self.cfg.symbol})  # type: ignore[attr-defined]
 
@@ -230,6 +240,7 @@ class AutoTradeEngine:
             self._regime_history.clear()
             self._auto_risk_frozen = False
             self._auto_risk_frozen_until = 0.0
+            self._auto_risk_state = _AutoRiskFreezeState()
             self._recompute_risk_freeze_until()
 
     def configure_regime_history(
