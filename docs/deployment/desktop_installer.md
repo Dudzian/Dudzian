@@ -19,15 +19,7 @@ python -m venv .venv-desktop
 source .venv-desktop/bin/activate
 pip install --upgrade pip
 pip install -r deploy/packaging/requirements-desktop.txt
-# w środowiskach offline wskaż katalog z lokalnymi kołami, np.:
-# pip install --no-index --find-links dist/ -r deploy/packaging/requirements-desktop.txt
-# a następnie doinstaluj bieżący projekt oraz zależności desktopowe z lokalnego koła
-pip install --no-index --find-links dist/ 'dudzian-bot[desktop]'
 ```
-
-> **Uwaga:** przed dystrybucją artefaktów offline zbuduj pakiet kołowy poleceniem
-> `pip wheel . -w dist/`, aby `pip` mógł rozwiązać zależność `dudzian-bot` bez
-> dostępu do internetu.
 
 ## Kroki
 
