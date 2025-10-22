@@ -811,6 +811,48 @@ def test_load_core_config_reads_portfolio_inputs(tmp_path: Path) -> None:
     assert mr_limits["balanced"].duration_seconds == pytest.approx(1200.0)
 
 
+def test_load_core_config_reads_ai_model_management(tmp_path: Path) -> None:
+    config_path = tmp_path / "core.yaml"
+    config_path.write_text(
+        """
+        risk_profiles: {}
+        instrument_universes: {}
+        environments: {}
+        reporting: {}
+        ai_model_management:
+          repository:
+            path: ./models
+            retention: 7
+          online_min_probability: 0.65
+          models:
+            - name: seq_rl
+              backend: sequential_td
+              feature_window: 16
+              target_horizon: 2
+              top_k_features: 8
+              walk_forward_folds: 6
+              learning_rate: 0.12
+              discount_factor: 0.88
+              min_directional_accuracy: 0.6
+              heuristics: [momentum]
+        """,
+        encoding="utf-8",
+    )
+
+    config = load_core_config(config_path)
+
+    assert config.ai_model_management is not None
+    mgmt = config.ai_model_management
+    assert mgmt.repository.path.endswith("models")
+    assert mgmt.repository.retention == 7
+    assert pytest.approx(mgmt.online_min_probability, rel=0.0, abs=1e-9) == 0.65
+    assert mgmt.models and mgmt.models[0].name == "seq_rl"
+    model = mgmt.models[0]
+    assert model.walk_forward_folds == 6
+    assert model.top_k_features == 8
+    assert model.heuristics == ("momentum",)
+
+
 def test_load_core_config_parses_alert_audit(tmp_path: Path) -> None:
     config_path = tmp_path / "core.yaml"
     config_path.write_text(

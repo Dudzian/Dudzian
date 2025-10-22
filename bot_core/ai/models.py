@@ -111,6 +111,12 @@ class ModelArtifact:
                         model.feature_scalers = scalers
             return model
 
+        if self.backend == "sequential_td":
+            from .sequential import TemporalDifferencePolicy
+
+            model = TemporalDifferencePolicy.from_state(self.feature_names, self.model_state)
+            return model
+
         adapter = get_external_model_adapter(self.backend)
         return adapter.load(self.model_state, self.feature_names, self.metadata)
 
