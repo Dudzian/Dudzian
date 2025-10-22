@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from copy import deepcopy
+from typing import Callable, Mapping
+
 import pytest
 
 import pandas as pd
@@ -115,9 +118,71 @@ def test_regime_history_returns_none_when_empty() -> None:
     assert history.summarise() is None
 
 
+def test_regime_history_reload_thresholds_and_snapshot() -> None:
+    calls = 0
+
+    def _loader() -> dict:
+        nonlocal calls
+        calls += 1
+        return {
+            "market_regime": {
+                "risk_level": {
+                    "critical": {"risk_score": 0.91},
+                    "calm": {"risk_score": 0.2},
+                }
+            }
+        }
+
+    history = RegimeHistory(thresholds_loader=_loader)
+    assert calls == 1
+
+    snapshot = history.thresholds_snapshot()
+    assert snapshot["market_regime"]["risk_level"]["critical"]["risk_score"] == 0.91
+    snapshot["market_regime"]["risk_level"]["critical"]["risk_score"] = 0.5
+    assert (
+        history.thresholds_snapshot()["market_regime"]["risk_level"]["critical"]["risk_score"]
+        == 0.91
+    )
+
+    history.reload_thresholds(
+        thresholds={
+            "market_regime": {
+                "risk_level": {
+                    "critical": {"risk_score": 0.72},
+                    "calm": {"risk_score": 0.15},
+                }
+            }
+        }
+    )
+    updated = history.thresholds_snapshot()
+    assert updated["market_regime"]["risk_level"]["critical"]["risk_score"] == 0.72
+    assert updated["market_regime"]["risk_level"]["calm"]["risk_score"] == 0.15
+
+    history.reload_thresholds()
+    assert calls == 2
+
+
 class _ClassifierStub:
-    def __init__(self, assessments: list[MarketRegimeAssessment]) -> None:
+    def __init__(
+        self,
+        assessments: list[MarketRegimeAssessment],
+        thresholds: Mapping[str, object] | None = None,
+    ) -> None:
         self._queue = assessments
+        self._thresholds = {
+            "market_regime": {
+                "metrics": {},
+                "risk_score": {},
+                "risk_level": {},
+            }
+        }
+
+    @property
+    def thresholds_loader(self) -> Callable[[], Mapping[str, object]]:
+        return lambda: self._thresholds
+
+    def thresholds_snapshot(self) -> Mapping[str, object]:
+        return deepcopy(self._thresholds)
 
     def assess(self, market_data: pd.DataFrame, *, price_col: str = "close", symbol: str | None = None) -> MarketRegimeAssessment:
         assessment = self._queue.pop(0)
@@ -594,3 +659,58 @@ def test_regime_history_recovery_potential_signals_improvement() -> None:
     assert summary.recovery_potential >= 0.2
     assert summary.cooldown_score <= 0.6
     assert summary.severe_event_rate <= 0.7
+
+
+def test_ai_manager_regime_accessors_are_defensive() -> None:
+    symbol = "ETHUSDT"
+    thresholds = {
+        "market_regime": {
+            "metrics": {"volatility": {"zscore": 2.0}},
+            "risk_score": {"weights": {"volatility": 0.5}},
+            "risk_level": {
+                "critical": {"risk_score": 0.9},
+                "calm": {"risk_score": 0.2},
+            },
+        }
+    }
+
+    assessments = [
+        _assessment(symbol, MarketRegime.TREND, risk=0.35, confidence=0.6),
+        _assessment(symbol, MarketRegime.MEAN_REVERSION, risk=0.42, confidence=0.7),
+    ]
+    manager = AIManager()
+    manager._regime_classifier = _ClassifierStub(assessments, thresholds)  # type: ignore[attr-defined]
+
+    data = pd.DataFrame({"close": [100.0, 101.0, 102.0, 103.0, 104.0]})
+    manager.assess_market_regime(symbol, data)
+    manager.assess_market_regime(symbol, data)
+
+    assessment_copy = manager.get_last_regime_assessment(symbol)
+    assert assessment_copy is not None
+    assessment_copy.metrics = dict(assessment_copy.metrics)
+    assessment_copy.metrics["volatility"] = 999.0
+    fresh_assessment = manager.get_last_regime_assessment(symbol)
+    assert fresh_assessment is not None
+    assert fresh_assessment.metrics["volatility"] != 999.0
+
+    summary_one = manager.get_regime_summary(symbol)
+    assert summary_one is not None
+    summary_one.history[0].risk_score = 0.0
+    summary_two = manager.get_regime_summary(symbol)
+    assert summary_two is not None
+    assert summary_two.history[0].risk_score != 0.0
+
+    thresholds_copy = manager.get_regime_thresholds(symbol)
+    thresholds_copy["market_regime"]["risk_level"]["critical"]["risk_score"] = 0.1
+    fresh_thresholds = manager.get_regime_thresholds(symbol)
+    assert (
+        fresh_thresholds["market_regime"]["risk_level"]["critical"]["risk_score"]
+        == thresholds["market_regime"]["risk_level"]["critical"]["risk_score"]
+    )
+
+    global_thresholds = manager.get_regime_thresholds("UNKNOWN")
+    assert global_thresholds is not thresholds_copy
+    assert (
+        global_thresholds["market_regime"]["risk_level"]["critical"]["risk_score"]
+        == thresholds["market_regime"]["risk_level"]["critical"]["risk_score"]
+    )
