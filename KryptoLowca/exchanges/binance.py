@@ -212,9 +212,38 @@ class BinanceTestnetAdapter(RESTWebSocketAdapter):
             raise RuntimeError("Brak poświadczeń – wywołaj authenticate()")
         return {"X-MBX-APIKEY": self._credentials.api_key}
 
+    def _validate_response(self, payload: Dict[str, Any]) -> None:
+        code = payload.get("code")
+        if code not in (None, 0):
+            raise RuntimeError(f"Binance API error {code}: {payload.get('msg')}")
+
     async def fetch_market_data(self, symbol: str) -> MarketPayload:
-        response = await self._request("GET", "/api/v3/ticker/bookTicker", params={"symbol": symbol})
-        return response
+        response: Dict[str, Any] = await self._request(
+            "GET", "/api/v3/ticker/bookTicker", params={"symbol": symbol}
+        )
+        self._validate_response(response)
+        bid = float(response.get("bidPrice", 0.0))
+        ask = float(response.get("askPrice", 0.0))
+        bid_volume = float(response.get("bidQty", 0.0))
+        ask_volume = float(response.get("askQty", 0.0))
+        last_raw = response.get("lastPrice")
+        last_price = float(last_raw) if last_raw is not None else 0.0
+        payload: MarketPayload = {
+            "symbol": response.get("symbol", symbol),
+            "bid": bid,
+            "ask": ask,
+            "bid_volume": bid_volume,
+            "ask_volume": ask_volume,
+            "last": last_price,
+            "raw": response,
+        }
+        payload.update(response)
+        payload["bid"] = bid
+        payload["ask"] = ask
+        payload["bid_volume"] = bid_volume
+        payload["ask_volume"] = ask_volume
+        payload["last"] = last_price
+        return payload
 
     async def stream_market_data(
         self, subscriptions: Iterable[MarketSubscription], callback: Callable[[MarketPayload], Awaitable[None]]
@@ -236,12 +265,13 @@ class BinanceTestnetAdapter(RESTWebSocketAdapter):
             params["newClientOrderId"] = order.client_order_id
         params.update(order.extra_params)
         signed = self._signed_params(params)
-        response = await self._request(
+        response: Dict[str, Any] = await self._request(
             "POST",
             "/api/v3/order",
             params=signed,
             headers=self._auth_headers(),
         )
+        self._validate_response(response)
         return OrderStatus(
             order_id=response.get("orderId", ""),
             status=response.get("status", "UNKNOWN"),
@@ -257,12 +287,13 @@ class BinanceTestnetAdapter(RESTWebSocketAdapter):
         if symbol:
             params["symbol"] = symbol
         signed = self._signed_params(params)
-        response = await self._request(
+        response: Dict[str, Any] = await self._request(
             "GET",
             "/api/v3/order",
             params=signed,
             headers=self._auth_headers(),
         )
+        self._validate_response(response)
         return OrderStatus(
             order_id=str(response.get("orderId", order_id)),
             status=response.get("status", "UNKNOWN"),
@@ -278,12 +309,13 @@ class BinanceTestnetAdapter(RESTWebSocketAdapter):
         if symbol:
             params["symbol"] = symbol
         signed = self._signed_params(params)
-        response = await self._request(
+        response: Dict[str, Any] = await self._request(
             "DELETE",
             "/api/v3/order",
             params=signed,
             headers=self._auth_headers(),
         )
+        self._validate_response(response)
         return OrderStatus(
             order_id=str(response.get("orderId", order_id)),
             status=response.get("status", "CANCELED"),
