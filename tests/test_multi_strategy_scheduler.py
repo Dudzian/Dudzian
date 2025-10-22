@@ -247,6 +247,51 @@ def test_scheduler_logs_expired_suspensions(caplog: pytest.LogCaptureFixture) ->
     assert "mean_schedule" in caplog.text
 
 
+def test_suspension_snapshot_includes_metadata() -> None:
+    now = {"value": datetime(2024, 1, 1, tzinfo=timezone.utc)}
+
+    def _clock() -> datetime:
+        return now["value"]
+
+    scheduler = MultiStrategyScheduler(
+        environment="demo",
+        portfolio="paper",
+        clock=_clock,
+    )
+
+    strategy = DummyStrategy()
+    feed = DummyFeed([_snapshot(150.0, 2000)])
+    sink = DummySink()
+
+    scheduler.register_schedule(
+        name="mean_schedule",
+        strategy_name="mean_engine",
+        strategy=strategy,
+        feed=feed,
+        sink=sink,
+        cadence_seconds=5,
+        max_drift_seconds=1,
+        warmup_bars=0,
+        risk_profile="balanced",
+        max_signals=3,
+    )
+
+    scheduler.suspend_schedule("mean_schedule", reason="maintenance", duration_seconds=600)
+    scheduler.suspend_tag("trend", reason="incident")
+
+    snapshot = scheduler.suspension_snapshot()
+
+    assert snapshot["counts"] == {"schedules": 1, "tags": 1, "total": 2}
+    assert snapshot["reasons"]["schedules"] == {"mean_schedule": "maintenance"}
+    assert snapshot["reasons"]["tags"] == {"trend": "incident"}
+
+    next_expiration = snapshot.get("next_expiration")
+    assert next_expiration is not None
+    assert next_expiration["scope"] == "schedule"
+    assert next_expiration["name"] == "mean_schedule"
+    assert next_expiration["remaining_seconds"] == pytest.approx(600.0)
+
+
 def test_scheduler_updates_allocation_interval() -> None:
     now = {"value": datetime(2024, 1, 1, tzinfo=timezone.utc)}
 

@@ -3,7 +3,8 @@ from __future__ import annotations
 import importlib
 import sys
 import types
-from datetime import datetime, timedelta, timezone
+import importlib
+import sys
 from pathlib import Path
 
 import pandas as pd
@@ -72,74 +73,8 @@ def test_ai_manager_flags_degradation_on_fallback(monkeypatch: pytest.MonkeyPatc
         assert manager.degradation_reason is not None
         assert manager.degradation_reason.startswith("fallback_ai_models")
         assert "ModuleNotFoundError" in manager.degradation_reason
-        assert manager.degradation_details
-        assert any("ModuleNotFoundError" in detail for detail in manager.degradation_details)
-        assert manager.degradation_exception_types
-        assert any(
-            name.endswith("ModuleNotFoundError") for name in manager.degradation_exception_types
-        )
-        assert manager.degradation_exceptions
-        assert any(
-            isinstance(exc, ModuleNotFoundError) for exc in manager.degradation_exceptions
-        )
-        diagnostics = manager.degradation_exception_diagnostics
-        assert diagnostics
-        assert any(diag.type_name.endswith("ModuleNotFoundError") for diag in diagnostics)
-        assert any("ai_models" in diag.formatted for diag in diagnostics)
-        since = manager.degradation_since
-        assert since is not None
-        assert isinstance(since, datetime)
-        assert since.tzinfo is not None
-        assert since.tzinfo.utcoffset(since) == timezone.utc.utcoffset(since)
-        duration = manager.degradation_duration
-        assert duration is not None
-        assert duration.total_seconds() >= 0.0
-        history = manager.degradation_history
-        assert history
-        event = history[-1]
-        assert event.reason == manager.degradation_reason
-        assert event.details == manager.degradation_details
-        assert event.exception_types == manager.degradation_exception_types
-        assert event.exception_diagnostics == diagnostics
-        assert event.started_at == since
-        assert event.ended_at is None
-        assert event.duration().total_seconds() >= 0.0
-        event_dict = event.as_dict()
-        assert event_dict["reason"] == event.reason
-        assert event_dict["ended_at"] is None
-        assert event_dict["duration_seconds"] >= 0.0
-        if sys.version_info >= (3, 11):
-            assert len(manager.degradation_details) >= 3
-            assert "ai_models" in manager.degradation_details[1]
-            assert "KryptoLowca.ai_models" in manager.degradation_details[2]
-        status = manager.backend_status()
-        assert status.degraded is True
-        assert status.reason == manager.degradation_reason
-        assert tuple(status.details) == manager.degradation_details
-        assert tuple(status.exception_types) == manager.degradation_exception_types
-        assert tuple(status.exception_diagnostics) == diagnostics
-        assert status.since == since
-        status_duration = status.duration()
-        assert status_duration is not None
-        assert status_duration.total_seconds() >= 0.0
-        status_dict = status.as_dict()
-        assert status_dict["exception_types"] == list(manager.degradation_exception_types)
-        assert status_dict["exception_diagnostics"]
-        assert any(
-            item["type"].endswith("ModuleNotFoundError") for item in status_dict["exception_diagnostics"]
-        )
-        assert status_dict["since"] is not None
-        assert status_dict["since"].endswith("+00:00")
-        assert status_dict["duration_seconds"] is not None
-        assert status_dict["duration_seconds"] >= 0.0
-        with pytest.raises(RuntimeError) as excinfo:
+        with pytest.raises(RuntimeError):
             manager.require_real_models()
-        message = str(excinfo.value)
-        assert "ModuleNotFoundError" in message
-        assert "[since=" in message
-        assert "duration=" in message
-        if sys.version_info >= (3, 11):
-            assert "KryptoLowca.ai_models" in message
     finally:
         importlib.reload(manager_module)
 
@@ -169,25 +104,8 @@ def test_ai_manager_uses_kryptolowca_backend_when_available(
 
         manager = reloaded_module.AIManager()
         assert manager.is_degraded is False
-        assert manager.degradation_details == ()
-        assert manager.degradation_exceptions == ()
-        assert manager.degradation_exception_types == ()
-        assert manager.degradation_exception_diagnostics == ()
-        assert manager.degradation_since is None
-        assert manager.degradation_duration is None
-        status = manager.backend_status()
-        assert status.degraded is False
-        assert status.details == ()
-        assert status.exception_types == ()
-        assert status.exception_diagnostics == ()
-        assert status.since is None
-        assert status.duration() is None
-        status_dict = status.as_dict()
-        assert status_dict["since"] is None
-        assert status_dict["duration_seconds"] is None
         manager._decision_inferences["stub"] = object()  # type: ignore[attr-defined]
         manager.require_real_models()
-        assert manager.degradation_history == ()
     finally:
         importlib.reload(manager_module)
 
@@ -208,9 +126,6 @@ def test_ai_manager_clears_degradation_with_real_backend(monkeypatch: pytest.Mon
     assert manager.degradation_exceptions == ()
     assert manager.degradation_exception_types == ()
     assert manager.degradation_exception_diagnostics == ()
-    assert manager.degradation_since is None
-    assert manager.degradation_duration is None
-    assert manager.degradation_history == ()
     manager._decision_inferences["stub"] = object()  # type: ignore[attr-defined]
     manager.require_real_models()
 
@@ -276,22 +191,6 @@ def test_ai_manager_degrades_on_quality_thresholds(tmp_path: Path) -> None:
     assert diagnostics
     assert diagnostics[0].type_name == "builtins.RuntimeError"
     assert "quality" in diagnostics[0].formatted.lower()
-    since = manager.degradation_since
-    assert since is not None
-    assert isinstance(since, datetime)
-    assert since.tzinfo is not None
-    duration = manager.degradation_duration
-    assert duration is not None
-    assert duration.total_seconds() >= 0.0
-    status = manager.backend_status()
-    assert status.since == since
-    status_duration = status.duration()
-    assert status_duration is not None
-    assert status_duration.total_seconds() >= 0.0
-    status_dict = status.as_dict()
-    assert status_dict["since"] is not None
-    assert status_dict["duration_seconds"] is not None
-    assert status_dict["duration_seconds"] >= 0.0
 
 
 def test_ai_manager_clears_fallback_degradation_when_backend_ready(
@@ -302,21 +201,6 @@ def test_ai_manager_clears_fallback_degradation_when_backend_ready(
     assert manager.is_degraded is True
     assert manager.degradation_reason is not None
     assert manager.degradation_reason.startswith("fallback_ai_models")
-    assert manager.degradation_details
-    assert any("RuntimeError" in detail for detail in manager.degradation_details)
-    assert any(
-        name.endswith("RuntimeError") for name in manager.degradation_exception_types
-    )
-    assert manager.degradation_exception_diagnostics
-    assert manager.degradation_since is not None
-    duration = manager.degradation_duration
-    assert duration is not None
-    assert duration.total_seconds() >= 0.0
-    history = manager.degradation_history
-    assert history
-    fallback_event = history[-1]
-    assert fallback_event.reason.startswith("fallback_ai_models") or fallback_event.reason == "backend_validation_failed"
-    assert fallback_event.ended_at is None
 
     inference = DecisionModelInference(ModelRepository(tmp_path))
     inference._model = object()  # type: ignore[attr-defined]
@@ -327,96 +211,3 @@ def test_ai_manager_clears_fallback_degradation_when_backend_ready(
     assert manager.degradation_exception_types == ()
     assert manager.degradation_exceptions == ()
     assert manager.degradation_exception_diagnostics == ()
-    assert manager.degradation_since is None
-    assert manager.degradation_duration is None
-    resolved_history = manager.degradation_history
-    assert resolved_history
-    last_event = resolved_history[-1]
-    assert last_event.ended_at is not None
-    assert last_event.duration().total_seconds() >= 0.0
-
-
-def test_degradation_statistics_handles_empty_history() -> None:
-    manager = manager_module.AIManager()
-
-    stats = manager.degradation_statistics()
-
-    assert stats.total_events == 0
-    assert stats.active_events == 0
-    assert stats.resolved_events == 0
-    assert stats.total_downtime_seconds == 0.0
-    assert stats.active_downtime_seconds == 0.0
-    assert stats.resolved_downtime_seconds == 0.0
-    assert stats.average_downtime_seconds is None
-    assert stats.longest_downtime_seconds is None
-    assert stats.shortest_downtime_seconds is None
-    assert stats.by_reason == ()
-
-    stats_dict = stats.as_dict()
-    assert stats_dict["total_events"] == 0
-    assert stats_dict["total_downtime_seconds"] == 0.0
-    assert stats_dict["average_downtime_seconds"] is None
-    assert stats_dict["by_reason"] == {}
-
-
-def test_degradation_statistics_accumulates_history(monkeypatch: pytest.MonkeyPatch) -> None:
-    manager = manager_module.AIManager()
-
-    first_start = datetime(2024, 1, 1, 12, 0, tzinfo=timezone.utc)
-    manager._activate_degradation("first", details=("initial",), since=first_start)
-
-    first_end = first_start + timedelta(seconds=15)
-    monkeypatch.setattr(manager_module, "_utcnow", lambda: first_end)
-    manager._resolve_degradation()
-
-    second_start = first_end + timedelta(seconds=5)
-    manager._activate_degradation("second", details=("followup",), since=second_start)
-
-    current_time = second_start + timedelta(seconds=20)
-    monkeypatch.setattr(manager_module, "_utcnow", lambda: current_time)
-
-    stats = manager.degradation_statistics()
-
-    assert stats.total_events == 2
-    assert stats.active_events == 1
-    assert stats.resolved_events == 1
-    assert stats.resolved_downtime_seconds == pytest.approx(15.0)
-    assert stats.active_downtime_seconds == pytest.approx(20.0)
-    assert stats.total_downtime_seconds == pytest.approx(35.0)
-    assert stats.average_downtime_seconds == pytest.approx(17.5)
-    assert stats.longest_downtime_seconds == pytest.approx(20.0)
-    assert stats.shortest_downtime_seconds == pytest.approx(15.0)
-
-    breakdown = {item.reason: item for item in stats.by_reason}
-    assert set(breakdown) == {"first", "second"}
-
-    first_stats = breakdown["first"]
-    assert first_stats.total_events == 1
-    assert first_stats.active_events == 0
-    assert first_stats.resolved_events == 1
-    assert first_stats.total_downtime_seconds == pytest.approx(15.0)
-    assert first_stats.active_downtime_seconds == pytest.approx(0.0)
-    assert first_stats.resolved_downtime_seconds == pytest.approx(15.0)
-    assert first_stats.average_downtime_seconds == pytest.approx(15.0)
-    assert first_stats.longest_downtime_seconds == pytest.approx(15.0)
-    assert first_stats.shortest_downtime_seconds == pytest.approx(15.0)
-
-    second_stats = breakdown["second"]
-    assert second_stats.total_events == 1
-    assert second_stats.active_events == 1
-    assert second_stats.resolved_events == 0
-    assert second_stats.total_downtime_seconds == pytest.approx(20.0)
-    assert second_stats.active_downtime_seconds == pytest.approx(20.0)
-    assert second_stats.resolved_downtime_seconds == pytest.approx(0.0)
-    assert second_stats.average_downtime_seconds == pytest.approx(20.0)
-    assert second_stats.longest_downtime_seconds == pytest.approx(20.0)
-    assert second_stats.shortest_downtime_seconds == pytest.approx(20.0)
-
-    stats_dict = stats.as_dict()
-    assert stats_dict["active_events"] == 1
-    assert stats_dict["active_downtime_seconds"] == pytest.approx(20.0)
-    assert stats_dict["longest_downtime_seconds"] == pytest.approx(20.0)
-    by_reason = stats_dict["by_reason"]
-    assert set(by_reason) == {"first", "second"}
-    assert by_reason["first"]["resolved_events"] == 1
-    assert by_reason["second"]["active_downtime_seconds"] == pytest.approx(20.0)

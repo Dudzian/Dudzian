@@ -16,6 +16,11 @@ które należy wykonać przed uruchomieniem bota w środowisku lokalnym.
 3. **Zonda** – klucz publiczny i prywatny z włączonymi uprawnieniami do
    pobierania stanu konta oraz składania/anulowania zleceń.
    - Margin należy aktywować w panelu klienta i nadać limit kredytowy.
+4. **nowa_gielda (spot)** – para kluczy REST (`key`, `secret`) z dostępem do danych
+   publicznych i prywatnych zleceń.
+   - Adapter `nowa_gielda_spot` korzysta z osobnych baz URL dla środowisk `live`,
+     `paper` i `testnet`, dlatego generując klucze testowe należy użyć portalu
+     odpowiadającego wybranemu środowisku.
 
 Poświadczenia przechowujemy w zaszyfrowanym magazynie `secrets/desktop.toml`.
 Każdy wpis zawiera identyfikator giełdy (`binance`, `kraken`, `zonda`) oraz
@@ -38,6 +43,11 @@ key = "ZONDA_KEY"
 secret = "ZONDA_SECRET"
 mode = "margin"
 valuation_currency = "PLN"
+
+[nowa_gielda_spot]
+key = "NOWA_GIELDA_KEY"
+secret = "NOWA_GIELDA_SECRET"
+environment = "paper"  # live | paper | testnet
 ```
 
 ## Parametry środowiskowe
@@ -49,11 +59,17 @@ EXCHANGE_ENVIRONMENT=live        # live | testnet | paper
 BINANCE_MARGIN_TYPE=isolated     # cross | isolated
 KRAKEN_ENVIRONMENT=testnet
 ZONDA_ENVIRONMENT=live
+NOWA_GIELDA_ENVIRONMENT=paper
 ```
 
 Zmienne są odczytywane przez warstwę konfiguracyjną i przekazywane do adapterów.
 Jeżeli desktop uruchamiany jest w trybie testnetowym, należy upewnić się, że
 klucze API zostały wygenerowane na odpowiedniej platformie.
+
+W przypadku `nowa_gielda_spot` dodatkowo można zdefiniować allowlistę IP używając
+metody `configure_network()` adaptera. Jeśli operator korzysta z filtrów sieciowych,
+wprowadź adresy IP proxy w konfiguracji startowej bota, aby uniknąć odrzuconych
+połączeń prywatnych endpointów.
 
 ## Health-check i watchdog
 
