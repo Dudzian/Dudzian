@@ -29,6 +29,7 @@ from bot_core.security.signing import build_hmac_signature, canonical_json_bytes
 # OEM (starsze API) – format skrótu i algorytm podpisu
 FINGERPRINT_HASH = "SHA384"
 SIGNATURE_ALGORITHM = "HMAC-SHA384"
+DEFAULT_AUDIT_LOG_PATH = Path("logs/security_admin.log")
 
 # Nowsze API – domyślny "cel" w rejestrze rotacji
 _DEFAULT_PURPOSE = "hardware-fingerprint"
@@ -40,6 +41,56 @@ _HEX_RE = re.compile(r"[^0-9a-f]")
 
 class FingerprintError(RuntimeError):
     """Wyjątek zgłaszany przy problemach z generowaniem/podpisywaniem fingerprintu."""
+
+
+# ---------------------------------------------------------------------------
+# Audyt fingerprintu / instalacji
+# ---------------------------------------------------------------------------
+
+def append_fingerprint_audit(
+    *,
+    event: str,
+    fingerprint: str | None,
+    status: str,
+    key_id: str | None = None,
+    metadata: Mapping[str, Any] | None = None,
+    log_path: str | os.PathLike[str] | Path | None = None,
+) -> Path:
+    """Dodaje wpis JSONL do dziennika bezpieczeństwa instalatora.
+
+    Parametry
+    ---------
+    event:
+        Nazwa zdarzenia (np. ``"installer_run"``).
+    fingerprint:
+        Fingerprint urządzenia – jeżeli nieznany, można przekazać pusty string.
+    status:
+        Status zdarzenia (np. ``"verified"``, ``"failed"``).
+    key_id:
+        Identyfikator klucza HMAC użytego do weryfikacji podpisu.
+    metadata:
+        Dodatkowe informacje diagnostyczne (np. ścieżka do oczekiwanego pliku,
+        komunikat błędu).
+    log_path:
+        Niestandardowa ścieżka logu – domyślnie ``logs/security_admin.log``.
+    """
+
+    destination = Path(log_path).expanduser() if log_path else DEFAULT_AUDIT_LOG_PATH
+    entry: dict[str, Any] = {
+        "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "event": event,
+        "fingerprint": (fingerprint or "").strip(),
+        "status": status,
+    }
+    if key_id:
+        entry["key_id"] = key_id
+    if metadata:
+        entry["metadata"] = dict(metadata)
+
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    with destination.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    return destination
 
 
 # ---------------------------------------------------------------------------
@@ -765,6 +816,7 @@ __all__ = [
     "FingerprintError",
     "FINGERPRINT_HASH",
     "SIGNATURE_ALGORITHM",
+    "append_fingerprint_audit",
     "build_fingerprint_document",
     "get_local_fingerprint",
     "verify_document",

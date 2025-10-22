@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import logging
 import math
+import statistics
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import (
@@ -15,9 +17,46 @@ from typing import (
     runtime_checkable,
 )
 
+try:  # pragma: no cover - optional dependency
+    import numpy as np
+except Exception:  # pragma: no cover - numpy may not be available in minimal builds
+    np = None  # type: ignore[assignment]
+
+try:  # pragma: no cover - LightGBM optional
+    import lightgbm as lgb
+except Exception:  # pragma: no cover - gracefully handle missing dependency
+    lgb = None  # type: ignore[assignment]
+
 from ._license import ensure_ai_signals_enabled
 from .feature_engineering import FeatureDataset
 from .models import ModelArtifact
+
+
+_LOGGER = logging.getLogger(__name__)
+
+
+def _linear_calibration(
+    targets: Sequence[float], predictions: Sequence[float]
+) -> tuple[float, float]:
+    if not targets or not predictions:
+        return 1.0, 0.0
+    if len(targets) != len(predictions):
+        raise ValueError("targets and predictions must have the same length")
+    y = [float(value) for value in targets]
+    x = [float(value) for value in predictions]
+    if all(abs(value - x[0]) < 1e-12 for value in x):
+        return 0.0, float(sum(y) / len(y))
+    sum_x = sum(x)
+    sum_y = sum(y)
+    sum_xx = sum(value * value for value in x)
+    sum_xy = sum(val_x * val_y for val_x, val_y in zip(x, y))
+    n = float(len(x))
+    denominator = n * sum_xx - sum_x * sum_x
+    if abs(denominator) < 1e-12:
+        return 0.0, float(sum_y / n)
+    slope = (n * sum_xy - sum_x * sum_y) / denominator
+    intercept = (sum_y - slope * sum_x) / n
+    return float(slope), float(intercept)
 
 
 @runtime_checkable
@@ -324,15 +363,23 @@ class ModelTrainer:
         learning_rate: float = 0.1,
         n_estimators: int = 25,
         validation_split: float = 0.0,
+        test_split: float = 0.0,
         backend: str = "builtin",
         adapter_options: Mapping[str, object] | None = None,
     ) -> None:
         ensure_ai_signals_enabled("trenowania modeli AI")
         if not 0.0 <= validation_split < 1.0:
             raise ValueError("validation_split musi zawierać się w przedziale [0, 1)")
+        if not 0.0 <= test_split < 1.0:
+            raise ValueError("test_split musi zawierać się w przedziale [0, 1)")
+        if validation_split + test_split >= 1.0:
+            raise ValueError(
+                "Suma validation_split i test_split musi być mniejsza od 1.0"
+            )
         self.learning_rate = float(learning_rate)
         self.n_estimators = int(n_estimators)
         self.validation_split = float(validation_split)
+        self.test_split = float(test_split)
         self.backend = backend.lower().strip() or "builtin"
         self.adapter_options = dict(adapter_options or {})
         if self.backend != "builtin" and self.backend not in _EXTERNAL_ADAPTERS:
@@ -347,9 +394,13 @@ class ModelTrainer:
             train_targets,
             validation_matrix,
             validation_targets,
+            test_matrix,
+            test_targets,
         ) = self._split_learning_arrays(matrix, targets)
         if not train_matrix:
-            raise ValueError("Za mało danych do trenowania po podziale walidacyjnym")
+            raise ValueError(
+                "Za mało danych do trenowania po podziale walidacyjno-testowym"
+            )
 
         scalers = self._compute_scalers(train_matrix, feature_names)
         metadata: MutableMapping[str, object] = dict(dataset.metadata)
@@ -360,9 +411,18 @@ class ModelTrainer:
         }
         metadata["training_rows"] = len(train_matrix)
         metadata["validation_rows"] = len(validation_matrix)
+        metadata["test_rows"] = len(test_matrix)
         metadata["backend"] = self.backend
         if self.validation_split > 0.0:
             metadata["validation_split"] = self.validation_split
+        cv_summary = self._cross_validate_matrix(matrix, targets, feature_names)
+        metadata["cross_validation"] = {
+            "folds": int(cv_summary.get("folds", 0)),
+            "mae": [float(value) for value in cv_summary.get("mae", [])],
+            "directional_accuracy": [
+                float(value) for value in cv_summary.get("directional_accuracy", [])
+            ],
+        }
 
         if self.backend == "builtin":
             return self._train_builtin(
@@ -370,6 +430,8 @@ class ModelTrainer:
                 train_targets,
                 validation_matrix,
                 validation_targets,
+                test_matrix,
+                test_targets,
                 feature_names,
                 scalers,
                 metadata,
@@ -379,6 +441,8 @@ class ModelTrainer:
             train_targets,
             validation_matrix,
             validation_targets,
+            test_matrix,
+            test_targets,
             feature_names,
             scalers,
             metadata,
@@ -390,6 +454,8 @@ class ModelTrainer:
         train_targets: Sequence[float],
         validation_matrix: Sequence[Sequence[float]],
         validation_targets: Sequence[float],
+        test_matrix: Sequence[Sequence[float]],
+        test_targets: Sequence[float],
         feature_names: Sequence[str],
         scalers: Mapping[str, tuple[float, float]],
         metadata: MutableMapping[str, object],
@@ -407,15 +473,24 @@ class ModelTrainer:
         train_samples = self._rows_to_samples(train_matrix, feature_names)
         train_predictions = model.batch_predict(train_samples)
         train_metrics = self._compute_metrics(train_targets, train_predictions)
+        slope, intercept = _linear_calibration(train_targets, train_predictions)
+        metadata["calibration"] = {"slope": slope, "intercept": intercept}
         metrics = self._compose_metrics(train_metrics)
         validation_metrics: Mapping[str, float] | None = None
         if validation_matrix:
             validation_samples = self._rows_to_samples(validation_matrix, feature_names)
             validation_predictions = model.batch_predict(validation_samples)
             validation_metrics = self._compute_metrics(validation_targets, validation_predictions)
-            metrics = self._compose_metrics(train_metrics, validation_metrics)
+        test_metrics: Mapping[str, float] | None = None
+        if test_matrix:
+            test_samples = self._rows_to_samples(test_matrix, feature_names)
+            test_predictions = model.batch_predict(test_samples)
+            test_metrics = self._compute_metrics(test_targets, test_predictions)
+        metrics = self._compose_metrics(train_metrics, validation_metrics, test_metrics)
         if validation_metrics:
             metadata["validation_metrics"] = dict(validation_metrics)
+        if test_metrics:
+            metadata["test_metrics"] = dict(test_metrics)
         artifact = ModelArtifact(
             feature_names=tuple(model.feature_names),
             model_state=model.to_state(),
@@ -432,6 +507,8 @@ class ModelTrainer:
         train_targets: Sequence[float],
         validation_matrix: Sequence[Sequence[float]],
         validation_targets: Sequence[float],
+        test_matrix: Sequence[Sequence[float]],
+        test_targets: Sequence[float],
         feature_names: Sequence[str],
         scalers: Mapping[str, tuple[float, float]],
         metadata: MutableMapping[str, object],
@@ -453,15 +530,24 @@ class ModelTrainer:
         train_samples = self._rows_to_samples(train_matrix, feature_names)
         train_predictions = list(model.batch_predict(train_samples))
         train_metrics = self._compute_metrics(train_targets, train_predictions)
+        slope, intercept = _linear_calibration(train_targets, train_predictions)
+        metadata["calibration"] = {"slope": slope, "intercept": intercept}
         metrics = self._compose_metrics(train_metrics)
         validation_metrics: Mapping[str, float] | None = None
         if validation_matrix:
             validation_samples = self._rows_to_samples(validation_matrix, feature_names)
             validation_predictions = list(model.batch_predict(validation_samples))
             validation_metrics = self._compute_metrics(validation_targets, validation_predictions)
-            metrics = self._compose_metrics(train_metrics, validation_metrics)
+        test_metrics: Mapping[str, float] | None = None
+        if test_matrix:
+            test_samples = self._rows_to_samples(test_matrix, feature_names)
+            test_predictions = list(model.batch_predict(test_samples))
+            test_metrics = self._compute_metrics(test_targets, test_predictions)
+        metrics = self._compose_metrics(train_metrics, validation_metrics, test_metrics)
         if validation_metrics:
             metadata["validation_metrics"] = dict(validation_metrics)
+        if test_metrics:
+            metadata["test_metrics"] = dict(test_metrics)
         if result.metrics:
             metrics = {**metrics, **result.metrics}
         if result.metadata:
@@ -480,46 +566,321 @@ class ModelTrainer:
         self, targets: Sequence[float], predictions: Sequence[float]
     ) -> Mapping[str, float]:
         if not targets:
-            return {"mae": 0.0, "rmse": 0.0}
+            return {
+                "mae": 0.0,
+                "mse": 0.0,
+                "rmse": 0.0,
+                "directional_accuracy": 0.0,
+                "mape": 0.0,
+                "r2": 0.0,
+                "median_absolute_error": 0.0,
+                "explained_variance": 0.0,
+                "max_error": 0.0,
+                "smape": 0.0,
+                "mean_bias_error": 0.0,
+                "wmape": 0.0,
+                "mpe": 0.0,
+                "rmspe": 0.0,
+                "median_percentage_error": 0.0,
+                "median_absolute_percentage_error": 0.0,
+                "mase": 0.0,
+                "msle": 0.0,
+                "mean_absolute_log_error": 0.0,
+                "mean_poisson_deviance": 0.0,
+                "mean_gamma_deviance": 0.0,
+                "mean_tweedie_deviance": 0.0,
+            }
         errors = [abs(t - p) for t, p in zip(targets, predictions)]
         mae = sum(errors) / len(errors)
+        medae = statistics.median(errors) if errors else 0.0
+        max_error = max(errors) if errors else 0.0
         mse = sum((t - p) ** 2 for t, p in zip(targets, predictions)) / len(targets)
         rmse = math.sqrt(mse)
+        mean_bias_error = sum(p - t for t, p in zip(targets, predictions)) / len(targets)
+        log_diffs = [
+            math.log1p(p) - math.log1p(t)
+            for t, p in zip(targets, predictions)
+            if t > -1.0 and p > -1.0
+        ]
+        msle = (
+            sum(diff * diff for diff in log_diffs) / len(log_diffs) if log_diffs else 0.0
+        )
+        mean_absolute_log_error = (
+            sum(abs(diff) for diff in log_diffs) / len(log_diffs) if log_diffs else 0.0
+        )
         directional_hits = sum(
             1
             for t, p in zip(targets, predictions)
             if (t >= 0 and p >= 0) or (t < 0 and p < 0)
         )
         accuracy = directional_hits / len(targets)
-        return {"mae": mae, "rmse": rmse, "directional_accuracy": accuracy}
+        pnl = (
+            sum(t * p for t, p in zip(targets, predictions)) / len(targets)
+            if targets
+            else 0.0
+        )
+        return {
+            "mae": mae,
+            "rmse": rmse,
+            "directional_accuracy": accuracy,
+            "expected_pnl": pnl,
+        }
 
     def _split_learning_arrays(
         self,
         matrix: Sequence[Sequence[float]],
         targets: Sequence[float],
-    ) -> tuple[list[list[float]], list[float], list[list[float]], list[float]]:
+    ) -> tuple[
+        list[list[float]],
+        list[float],
+        list[list[float]],
+        list[float],
+        list[list[float]],
+        list[float],
+    ]:
         total = len(matrix)
         if total == 0:
-            return [], [], [], []
-        if self.validation_split <= 0.0 or total < 2:
+            return [], [], [], [], [], []
+        if (self.validation_split <= 0.0 and self.test_split <= 0.0) or total < 2:
             return (
                 [list(row) for row in matrix],
                 [float(value) for value in targets],
                 [],
                 [],
+                [],
+                [],
             )
-        validation_count = int(total * self.validation_split)
-        if validation_count <= 0:
-            validation_count = 1
-        if validation_count >= total:
-            validation_count = total - 1
-        split_index = total - validation_count
+        validation_count = int(round(total * self.validation_split))
+        test_count = int(round(total * self.test_split))
+        if validation_count < 0:
+            validation_count = 0
+        if test_count < 0:
+            test_count = 0
+        if validation_count + test_count >= total:
+            overflow = validation_count + test_count - (total - 1)
+            if overflow > 0 and validation_count > 0:
+                reduction = min(validation_count, overflow)
+                validation_count -= reduction
+                overflow -= reduction
+            if overflow > 0 and test_count > 0:
+                reduction = min(test_count, overflow)
+                test_count -= reduction
+        split_train_end = total - (validation_count + test_count)
+        if split_train_end <= 0:
+            raise ValueError(
+                "Za mało danych do wyznaczenia podziału walidacyjnego/testowego"
+            )
+        validation_start = split_train_end
+        validation_end = validation_start + validation_count
+        test_start = validation_end
         return (
-            [list(row) for row in matrix[:split_index]],
-            [float(targets[idx]) for idx in range(split_index)],
-            [list(row) for row in matrix[split_index:]],
-            [float(targets[idx]) for idx in range(split_index, total)],
+            [list(row) for row in matrix[:split_train_end]],
+            [float(targets[idx]) for idx in range(split_train_end)],
+            [list(row) for row in matrix[validation_start:validation_end]],
+            [float(targets[idx]) for idx in range(validation_start, validation_end)],
+            [list(row) for row in matrix[test_start:]],
+            [float(targets[idx]) for idx in range(test_start, total)],
         )
+
+    def _cross_validate_matrix(
+        self,
+        matrix: Sequence[Sequence[float]],
+        targets: Sequence[float],
+        feature_names: Sequence[str],
+    ) -> Mapping[str, object]:
+        total = len(matrix)
+        if total < 4:
+            return {"folds": 0, "mae": [], "directional_accuracy": []}
+        folds = min(5, max(2, total // 4))
+        rows = [list(row) for row in matrix]
+        maes: list[float] = []
+        accuracies: list[float] = []
+        fold_size = max(1, total // folds)
+        for fold in range(folds):
+            start = fold * fold_size
+            end = total if fold == folds - 1 else min(total, start + fold_size)
+            validation_rows = rows[start:end]
+            validation_targets = targets[start:end]
+            train_rows = rows[:start] + rows[end:]
+            train_targets = list(targets[:start]) + list(targets[end:])
+            if not validation_rows or not train_rows:
+                continue
+            scalers = self._compute_scalers(train_rows, feature_names)
+            try:
+                model = self._train_model_for_cv(
+                    train_rows,
+                    train_targets,
+                    feature_names,
+                    scalers,
+                    validation_rows,
+                    validation_targets,
+                )
+            except Exception:
+                _LOGGER.warning(
+                    "Cross-validation failed for backend %s; falling back to builtin model",
+                    self.backend,
+                    exc_info=True,
+                )
+                model = SimpleGradientBoostingModel(
+                    learning_rate=self.learning_rate,
+                    n_estimators=self.n_estimators,
+                )
+                model.fit_matrix(
+                    train_rows,
+                    feature_names,
+                    train_targets,
+                    feature_scalers=scalers,
+                )
+            validation_samples = self._rows_to_samples(validation_rows, feature_names)
+            predictions = model.batch_predict(validation_samples)
+            metrics = self._compute_metrics(validation_targets, predictions)
+            maes.append(float(metrics.get("mae", 0.0)))
+            accuracies.append(float(metrics.get("directional_accuracy", 0.0)))
+        return {"folds": len(maes), "mae": maes, "directional_accuracy": accuracies}
+
+    def _train_model_for_cv(
+        self,
+        train_rows: Sequence[Sequence[float]],
+        train_targets: Sequence[float],
+        feature_names: Sequence[str],
+        scalers: Mapping[str, tuple[float, float]],
+        validation_rows: Sequence[Sequence[float]],
+        validation_targets: Sequence[float],
+    ) -> SupportsInference:
+        if self.backend == "builtin":
+            model = SimpleGradientBoostingModel(
+                learning_rate=self.learning_rate,
+                n_estimators=self.n_estimators,
+            )
+            model.fit_matrix(
+                train_rows,
+                feature_names,
+                train_targets,
+                feature_scalers=scalers,
+            )
+            return model
+
+        adapter = get_external_model_adapter(self.backend)
+        context = ExternalTrainingContext(
+            feature_names=feature_names,
+            scalers=scalers,
+            train_matrix=train_rows,
+            train_targets=train_targets,
+            validation_matrix=validation_rows,
+            validation_targets=validation_targets,
+            options=self.adapter_options,
+        )
+        result = adapter.train(context)
+        model = result.trained_model
+        if model is not None:
+            return model
+        metadata: MutableMapping[str, object] = {
+            "feature_scalers": {
+                name: {"mean": mean, "stdev": stdev}
+                for name, (mean, stdev) in scalers.items()
+            }
+        }
+        return adapter.load(result.state, feature_names, metadata)
+
+    def _cross_validate_matrix(
+        self,
+        matrix: Sequence[Sequence[float]],
+        targets: Sequence[float],
+        feature_names: Sequence[str],
+    ) -> Mapping[str, object]:
+        total = len(matrix)
+        if total < 4:
+            return {"folds": 0, "mae": [], "directional_accuracy": []}
+        folds = min(5, max(2, total // 4))
+        rows = [list(row) for row in matrix]
+        maes: list[float] = []
+        accuracies: list[float] = []
+        fold_size = max(1, total // folds)
+        for fold in range(folds):
+            start = fold * fold_size
+            end = total if fold == folds - 1 else min(total, start + fold_size)
+            validation_rows = rows[start:end]
+            validation_targets = targets[start:end]
+            train_rows = rows[:start] + rows[end:]
+            train_targets = list(targets[:start]) + list(targets[end:])
+            if not validation_rows or not train_rows:
+                continue
+            scalers = self._compute_scalers(train_rows, feature_names)
+            try:
+                model = self._train_model_for_cv(
+                    train_rows,
+                    train_targets,
+                    feature_names,
+                    scalers,
+                    validation_rows,
+                    validation_targets,
+                )
+            except Exception:
+                _LOGGER.warning(
+                    "Cross-validation failed for backend %s; falling back to builtin model",
+                    self.backend,
+                    exc_info=True,
+                )
+                model = SimpleGradientBoostingModel(
+                    learning_rate=self.learning_rate,
+                    n_estimators=self.n_estimators,
+                )
+                model.fit_matrix(
+                    train_rows,
+                    feature_names,
+                    train_targets,
+                    feature_scalers=scalers,
+                )
+            validation_samples = self._rows_to_samples(validation_rows, feature_names)
+            predictions = model.batch_predict(validation_samples)
+            metrics = self._compute_metrics(validation_targets, predictions)
+            maes.append(float(metrics.get("mae", 0.0)))
+            accuracies.append(float(metrics.get("directional_accuracy", 0.0)))
+        return {"folds": len(maes), "mae": maes, "directional_accuracy": accuracies}
+
+    def _train_model_for_cv(
+        self,
+        train_rows: Sequence[Sequence[float]],
+        train_targets: Sequence[float],
+        feature_names: Sequence[str],
+        scalers: Mapping[str, tuple[float, float]],
+        validation_rows: Sequence[Sequence[float]],
+        validation_targets: Sequence[float],
+    ) -> SupportsInference:
+        if self.backend == "builtin":
+            model = SimpleGradientBoostingModel(
+                learning_rate=self.learning_rate,
+                n_estimators=self.n_estimators,
+            )
+            model.fit_matrix(
+                train_rows,
+                feature_names,
+                train_targets,
+                feature_scalers=scalers,
+            )
+            return model
+
+        adapter = get_external_model_adapter(self.backend)
+        context = ExternalTrainingContext(
+            feature_names=feature_names,
+            scalers=scalers,
+            train_matrix=train_rows,
+            train_targets=train_targets,
+            validation_matrix=validation_rows,
+            validation_targets=validation_targets,
+            options=self.adapter_options,
+        )
+        result = adapter.train(context)
+        model = result.trained_model
+        if model is not None:
+            return model
+        metadata: MutableMapping[str, object] = {
+            "feature_scalers": {
+                name: {"mean": mean, "stdev": stdev}
+                for name, (mean, stdev) in scalers.items()
+            }
+        }
+        return adapter.load(result.state, feature_names, metadata)
 
     def _compute_scalers(
         self, matrix: Sequence[Sequence[float]], feature_names: Sequence[str]
@@ -550,25 +911,187 @@ class ModelTrainer:
         self,
         train_metrics: Mapping[str, float],
         validation_metrics: Mapping[str, float] | None = None,
+        test_metrics: Mapping[str, float] | None = None,
     ) -> Mapping[str, float]:
         metrics: MutableMapping[str, float] = {
             "mae": float(train_metrics.get("mae", 0.0)),
+            "mse": float(train_metrics.get("mse", 0.0)),
             "rmse": float(train_metrics.get("rmse", 0.0)),
             "directional_accuracy": float(train_metrics.get("directional_accuracy", 0.0)),
+            "mape": float(train_metrics.get("mape", 0.0)),
+            "r2": float(train_metrics.get("r2", 0.0)),
+            "median_absolute_error": float(
+                train_metrics.get("median_absolute_error", 0.0)
+            ),
+            "explained_variance": float(train_metrics.get("explained_variance", 0.0)),
+            "max_error": float(train_metrics.get("max_error", 0.0)),
+            "smape": float(train_metrics.get("smape", 0.0)),
+            "mean_bias_error": float(train_metrics.get("mean_bias_error", 0.0)),
+            "wmape": float(train_metrics.get("wmape", 0.0)),
+            "mpe": float(train_metrics.get("mpe", 0.0)),
+            "rmspe": float(train_metrics.get("rmspe", 0.0)),
+            "median_percentage_error": float(
+                train_metrics.get("median_percentage_error", 0.0)
+            ),
+            "median_absolute_percentage_error": float(
+                train_metrics.get("median_absolute_percentage_error", 0.0)
+            ),
+            "mase": float(train_metrics.get("mase", 0.0)),
+            "msle": float(train_metrics.get("msle", 0.0)),
+            "mean_absolute_log_error": float(
+                train_metrics.get("mean_absolute_log_error", 0.0)
+            ),
+            "mean_poisson_deviance": float(
+                train_metrics.get("mean_poisson_deviance", 0.0)
+            ),
+            "mean_gamma_deviance": float(
+                train_metrics.get("mean_gamma_deviance", 0.0)
+            ),
+            "mean_tweedie_deviance": float(
+                train_metrics.get("mean_tweedie_deviance", 0.0)
+            ),
             "train_mae": float(train_metrics.get("mae", 0.0)),
+            "train_mse": float(train_metrics.get("mse", 0.0)),
             "train_rmse": float(train_metrics.get("rmse", 0.0)),
             "train_directional_accuracy": float(train_metrics.get("directional_accuracy", 0.0)),
+            "train_mape": float(train_metrics.get("mape", 0.0)),
+            "train_r2": float(train_metrics.get("r2", 0.0)),
+            "train_median_absolute_error": float(
+                train_metrics.get("median_absolute_error", 0.0)
+            ),
+            "train_explained_variance": float(
+                train_metrics.get("explained_variance", 0.0)
+            ),
+            "train_max_error": float(train_metrics.get("max_error", 0.0)),
+            "train_smape": float(train_metrics.get("smape", 0.0)),
+            "train_mean_bias_error": float(train_metrics.get("mean_bias_error", 0.0)),
+            "train_wmape": float(train_metrics.get("wmape", 0.0)),
+            "train_mpe": float(train_metrics.get("mpe", 0.0)),
+            "train_rmspe": float(train_metrics.get("rmspe", 0.0)),
+            "train_median_percentage_error": float(
+                train_metrics.get("median_percentage_error", 0.0)
+            ),
+            "train_median_absolute_percentage_error": float(
+                train_metrics.get("median_absolute_percentage_error", 0.0)
+            ),
+            "train_mase": float(train_metrics.get("mase", 0.0)),
+            "train_msle": float(train_metrics.get("msle", 0.0)),
+            "train_mean_absolute_log_error": float(
+                train_metrics.get("mean_absolute_log_error", 0.0)
+            ),
+            "train_mean_poisson_deviance": float(
+                train_metrics.get("mean_poisson_deviance", 0.0)
+            ),
+            "train_mean_gamma_deviance": float(
+                train_metrics.get("mean_gamma_deviance", 0.0)
+            ),
+            "train_mean_tweedie_deviance": float(
+                train_metrics.get("mean_tweedie_deviance", 0.0)
+            ),
         }
+        if "expected_pnl" in train_metrics:
+            metrics["expected_pnl"] = float(train_metrics.get("expected_pnl", 0.0))
+            metrics["train_expected_pnl"] = float(train_metrics.get("expected_pnl", 0.0))
         if validation_metrics:
             metrics.update(
                 {
                     "validation_mae": float(validation_metrics.get("mae", 0.0)),
+                    "validation_mse": float(validation_metrics.get("mse", 0.0)),
                     "validation_rmse": float(validation_metrics.get("rmse", 0.0)),
                     "validation_directional_accuracy": float(
                         validation_metrics.get("directional_accuracy", 0.0)
                     ),
+                    "validation_mape": float(validation_metrics.get("mape", 0.0)),
+                    "validation_r2": float(validation_metrics.get("r2", 0.0)),
+                    "validation_median_absolute_error": float(
+                        validation_metrics.get("median_absolute_error", 0.0)
+                    ),
+                    "validation_explained_variance": float(
+                        validation_metrics.get("explained_variance", 0.0)
+                    ),
+                    "validation_max_error": float(
+                        validation_metrics.get("max_error", 0.0)
+                    ),
+                    "validation_smape": float(validation_metrics.get("smape", 0.0)),
+                    "validation_mean_bias_error": float(
+                        validation_metrics.get("mean_bias_error", 0.0)
+                    ),
+                    "validation_wmape": float(validation_metrics.get("wmape", 0.0)),
+                    "validation_mpe": float(validation_metrics.get("mpe", 0.0)),
+                    "validation_rmspe": float(validation_metrics.get("rmspe", 0.0)),
+                    "validation_median_percentage_error": float(
+                        validation_metrics.get("median_percentage_error", 0.0)
+                    ),
+                    "validation_median_absolute_percentage_error": float(
+                        validation_metrics.get("median_absolute_percentage_error", 0.0)
+                    ),
+                    "validation_mase": float(validation_metrics.get("mase", 0.0)),
+                    "validation_msle": float(validation_metrics.get("msle", 0.0)),
+                    "validation_mean_absolute_log_error": float(
+                        validation_metrics.get("mean_absolute_log_error", 0.0)
+                    ),
+                    "validation_mean_poisson_deviance": float(
+                        validation_metrics.get("mean_poisson_deviance", 0.0)
+                    ),
+                    "validation_mean_gamma_deviance": float(
+                        validation_metrics.get("mean_gamma_deviance", 0.0)
+                    ),
+                    "validation_mean_tweedie_deviance": float(
+                        validation_metrics.get("mean_tweedie_deviance", 0.0)
+                    ),
                 }
             )
+        if test_metrics:
+            metrics.update(
+                {
+                    "test_mae": float(test_metrics.get("mae", 0.0)),
+                    "test_mse": float(test_metrics.get("mse", 0.0)),
+                    "test_rmse": float(test_metrics.get("rmse", 0.0)),
+                    "test_directional_accuracy": float(
+                        test_metrics.get("directional_accuracy", 0.0)
+                    ),
+                    "test_mape": float(test_metrics.get("mape", 0.0)),
+                    "test_r2": float(test_metrics.get("r2", 0.0)),
+                    "test_median_absolute_error": float(
+                        test_metrics.get("median_absolute_error", 0.0)
+                    ),
+                    "test_explained_variance": float(
+                        test_metrics.get("explained_variance", 0.0)
+                    ),
+                    "test_max_error": float(test_metrics.get("max_error", 0.0)),
+                    "test_smape": float(test_metrics.get("smape", 0.0)),
+                    "test_mean_bias_error": float(
+                        test_metrics.get("mean_bias_error", 0.0)
+                    ),
+                    "test_wmape": float(test_metrics.get("wmape", 0.0)),
+                    "test_mpe": float(test_metrics.get("mpe", 0.0)),
+                    "test_rmspe": float(test_metrics.get("rmspe", 0.0)),
+                    "test_median_percentage_error": float(
+                        test_metrics.get("median_percentage_error", 0.0)
+                    ),
+                    "test_median_absolute_percentage_error": float(
+                        test_metrics.get("median_absolute_percentage_error", 0.0)
+                    ),
+                    "test_mase": float(test_metrics.get("mase", 0.0)),
+                    "test_msle": float(test_metrics.get("msle", 0.0)),
+                    "test_mean_absolute_log_error": float(
+                        test_metrics.get("mean_absolute_log_error", 0.0)
+                    ),
+                    "test_mean_poisson_deviance": float(
+                        test_metrics.get("mean_poisson_deviance", 0.0)
+                    ),
+                    "test_mean_gamma_deviance": float(
+                        test_metrics.get("mean_gamma_deviance", 0.0)
+                    ),
+                    "test_mean_tweedie_deviance": float(
+                        test_metrics.get("mean_tweedie_deviance", 0.0)
+                    ),
+                }
+            )
+            if "expected_pnl" in validation_metrics:
+                metrics["validation_expected_pnl"] = float(
+                    validation_metrics.get("expected_pnl", 0.0)
+                )
         return metrics
 
 
@@ -607,6 +1130,52 @@ class _LinearAdapterModel:
             else:
                 vector.append(value - mean)
         return vector
+
+
+class _LightGBMAdapterModel:
+    """Adapter LightGBM zgodny z interfejsem inference."""
+
+    def __init__(
+        self,
+        feature_names: Sequence[str],
+        scalers: Mapping[str, tuple[float, float]],
+        booster: "lgb.Booster",
+    ) -> None:
+        if lgb is None:
+            raise RuntimeError("LightGBM backend is not available")
+        self.feature_names = [str(name) for name in feature_names]
+        self.feature_scalers = {
+            str(name): (float(pair[0]), float(pair[1])) for name, pair in scalers.items()
+        }
+        self._booster = booster
+
+    def predict(self, features: Mapping[str, float]) -> float:
+        matrix = self._matrix_from_samples([features])
+        predictions = self._booster.predict(matrix)
+        return float(predictions[0]) if len(predictions) else 0.0
+
+    def batch_predict(self, samples: Sequence[Mapping[str, float]]) -> Sequence[float]:
+        if not samples:
+            return []
+        matrix = self._matrix_from_samples(samples)
+        predictions = self._booster.predict(matrix)
+        return [float(value) for value in predictions]
+
+    def _matrix_from_samples(self, samples: Sequence[Mapping[str, float]]):
+        if np is None:
+            raise RuntimeError("NumPy is required for LightGBM inference")
+        rows: list[list[float]] = []
+        for sample in samples:
+            vector: list[float] = []
+            for name in self.feature_names:
+                mean, stdev = self.feature_scalers.get(name, (0.0, 1.0))
+                raw = float(sample.get(name, mean))
+                if stdev > 0:
+                    vector.append((raw - mean) / stdev)
+                else:
+                    vector.append(raw - mean)
+            rows.append(vector)
+        return np.asarray(rows, dtype=float)
 
 
 def _normalize_matrix(
@@ -710,14 +1279,140 @@ def _linear_adapter_load(
     return _LinearAdapterModel(feature_names, scalers, weights, bias)
 
 
+def _lightgbm_adapter_train(context: ExternalTrainingContext) -> ExternalTrainingResult:
+    if lgb is None or np is None:
+        raise RuntimeError("LightGBM backend is not available in this environment")
+    params = {
+        "objective": context.options.get("objective", "regression"),
+        "metric": context.options.get("metric", ["l2", "l1"]),
+        "learning_rate": float(context.options.get("learning_rate", 0.05)),
+        "num_leaves": int(context.options.get("num_leaves", 31)),
+        "min_data_in_leaf": int(context.options.get("min_data_in_leaf", 20)),
+    }
+    params_override = context.options.get("params")
+    if isinstance(params_override, Mapping):
+        params.update(params_override)  # type: ignore[arg-type]
+    train_matrix = np.asarray(
+        _normalize_matrix(context.train_matrix, context.feature_names, context.scalers),
+        dtype=float,
+    )
+    train_targets = np.asarray(context.train_targets, dtype=float)
+    train_dataset = lgb.Dataset(train_matrix, label=train_targets, feature_name=list(context.feature_names))
+    valid_sets = [train_dataset]
+    valid_names = ["train"]
+    if context.validation_matrix:
+        valid_matrix = np.asarray(
+            _normalize_matrix(context.validation_matrix, context.feature_names, context.scalers),
+            dtype=float,
+        )
+        valid_targets = np.asarray(context.validation_targets, dtype=float)
+        valid_dataset = lgb.Dataset(
+            valid_matrix,
+            label=valid_targets,
+            feature_name=list(context.feature_names),
+            reference=train_dataset,
+        )
+        valid_sets.append(valid_dataset)
+        valid_names.append("validation")
+    num_rounds = int(context.options.get("num_boost_round", 100))
+    booster = lgb.train(
+        params,
+        train_dataset,
+        num_boost_round=max(num_rounds, 10),
+        valid_sets=valid_sets,
+        valid_names=valid_names,
+        verbose_eval=False,
+    )
+    metrics: MutableMapping[str, float] = {}
+    for name in valid_names:
+        scores = booster.best_score.get(name, {})
+        for metric_name, value in scores.items():
+            metrics[f"{name}_{metric_name}"] = float(value)
+    state: MutableMapping[str, object] = {
+        "model_str": booster.model_to_string(),
+        "params": params,
+        "best_iteration": int(getattr(booster, "best_iteration", 0) or 0),
+    }
+    model = _LightGBMAdapterModel(context.feature_names, context.scalers, booster)
+    return ExternalTrainingResult(
+        state=state,
+        trained_model=model,
+        metrics=dict(metrics),
+        metadata={"external_adapter": "lightgbm"},
+    )
+
+
+def _lightgbm_adapter_load(
+    state: Mapping[str, object],
+    feature_names: Sequence[str],
+    metadata: Mapping[str, object],
+) -> SupportsInference:
+    if lgb is None:
+        raise RuntimeError("LightGBM backend is not available in this environment")
+    model_str = state.get("model_str")
+    if not isinstance(model_str, str):
+        raise ValueError("Invalid LightGBM state: missing 'model_str'")
+    booster = lgb.Booster(model_str=model_str)
+    scalers_raw = metadata.get("feature_scalers", {})
+    scalers: dict[str, tuple[float, float]] = {}
+    if isinstance(scalers_raw, Mapping):
+        for name, payload in scalers_raw.items():
+            if not isinstance(payload, Mapping):
+                continue
+            mean = float(payload.get("mean", 0.0))
+            stdev = float(payload.get("stdev", 0.0))
+            scalers[str(name)] = (mean, stdev)
+    return _LightGBMAdapterModel(feature_names, scalers, booster)
+
+
+def _missing_lightgbm_adapter_train(context: ExternalTrainingContext) -> ExternalTrainingResult:
+    raise RuntimeError(
+        "LightGBM backend requested but the 'lightgbm' or 'numpy' package is not installed"
+    )
+
+
+def _missing_lightgbm_adapter_load(
+    state: Mapping[str, object],
+    feature_names: Sequence[str],
+    metadata: Mapping[str, object],
+) -> SupportsInference:
+    raise RuntimeError(
+        "Cannot load LightGBM model because the backend dependencies are missing"
+    )
+
+
 def _ensure_default_external_adapters() -> None:
-    for name in ("pytorch", "lightgbm", "linear"):
-        if name not in _EXTERNAL_ADAPTERS:
+    if "linear" not in _EXTERNAL_ADAPTERS:
+        register_external_model_adapter(
+            ExternalModelAdapter(
+                backend="linear",
+                train=_linear_adapter_train,
+                load=_linear_adapter_load,
+            )
+        )
+    if "pytorch" not in _EXTERNAL_ADAPTERS:
+        register_external_model_adapter(
+            ExternalModelAdapter(
+                backend="pytorch",
+                train=_linear_adapter_train,
+                load=_linear_adapter_load,
+            )
+        )
+    if "lightgbm" not in _EXTERNAL_ADAPTERS:
+        if lgb is not None and np is not None:
             register_external_model_adapter(
                 ExternalModelAdapter(
-                    backend=name,
-                    train=_linear_adapter_train,
-                    load=_linear_adapter_load,
+                    backend="lightgbm",
+                    train=_lightgbm_adapter_train,
+                    load=_lightgbm_adapter_load,
+                )
+            )
+        else:
+            register_external_model_adapter(
+                ExternalModelAdapter(
+                    backend="lightgbm",
+                    train=_missing_lightgbm_adapter_train,
+                    load=_missing_lightgbm_adapter_load,
                 )
             )
 

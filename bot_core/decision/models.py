@@ -3,7 +3,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Literal, Mapping, MutableMapping, Sequence
+from typing import Mapping, MutableMapping, Sequence
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
