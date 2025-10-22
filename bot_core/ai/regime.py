@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import deque
+from copy import deepcopy
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Callable, Dict, Mapping, MutableMapping, Tuple
@@ -11,6 +12,12 @@ import numpy as np
 import pandas as pd
 
 from bot_core.ai.config_loader import load_risk_thresholds
+
+
+def _ensure_mapping(value: Any) -> Mapping[str, Any]:
+    """Return ``value`` if it is mapping-like, otherwise an empty mapping."""
+
+    return value if isinstance(value, Mapping) else {}
 
 
 class MarketRegime(str, Enum):
@@ -102,10 +109,45 @@ class MarketRegimeClassifier:
         self._thresholds: Mapping[str, Any] = {}
         self.reload_thresholds()
 
+    @property
+    def thresholds_loader(self) -> Callable[[], Mapping[str, Any]]:
+        """Return the callable used to fetch threshold configuration."""
+
+        return self._thresholds_loader
+
     def reload_thresholds(self) -> None:
         """Reload risk thresholds from the configured loader."""
 
-        self._thresholds = self._thresholds_loader()
+        self._thresholds = _ensure_mapping(
+            deepcopy(dict(self._thresholds_loader()))
+        )
+
+    def thresholds_snapshot(self) -> Mapping[str, Any]:
+        """Return a copy of the currently loaded thresholds."""
+
+        return deepcopy(dict(self._thresholds))
+
+    def metrics_config(self) -> Mapping[str, Any]:
+        """Expose the sanitised metrics configuration."""
+
+        return deepcopy(dict(self._metrics_config()))
+
+    def risk_score_config(self) -> Mapping[str, Any]:
+        """Expose the sanitised risk score configuration."""
+
+        return deepcopy(dict(self._risk_score_config()))
+
+    def _market_regime_config(self) -> Mapping[str, Any]:
+        return _ensure_mapping(self._thresholds.get("market_regime"))
+
+    def _metrics_config(self) -> Mapping[str, Any]:
+        return _ensure_mapping(self._market_regime_config().get("metrics"))
+
+    def _risk_score_config(self) -> Mapping[str, Any]:
+        return _ensure_mapping(self._market_regime_config().get("risk_score"))
+
+    def _risk_level_config(self) -> Mapping[str, Any]:
+        return _ensure_mapping(self._market_regime_config().get("risk_level"))
 
     def assess(
         self,
@@ -147,6 +189,192 @@ class MarketRegimeClassifier:
             symbol=symbol,
         )
 
+    def _compute_metrics(
+        self,
+        market_data: pd.DataFrame,
+        close: pd.Series,
+        returns: pd.Series,
+    ) -> Mapping[str, float]:
+        market_cfg = self._thresholds.get("market_regime", {})
+        if not isinstance(market_cfg, Mapping):
+            market_cfg = {}
+        metrics_cfg = market_cfg.get("metrics", {})
+        if not isinstance(metrics_cfg, Mapping):
+            metrics_cfg = {}
+        short_span_min = int(metrics_cfg.get("short_span_min", 5))
+        short_span_divisor = int(metrics_cfg.get("short_span_divisor", 3))
+        long_span_min = int(metrics_cfg.get("long_span_min", 10))
+        window = min(self.trend_window, close.size)
+        short = close.ewm(span=max(short_span_min, window // short_span_divisor), adjust=False).mean()
+        long = close.ewm(span=max(long_span_min, window), adjust=False).mean()
+        trend_strength = float(np.abs(short.iloc[-1] - long.iloc[-1]) / (np.abs(long.iloc[-1]) + 1e-12))
+
+        volatility = float(np.nan_to_num(returns.std(), nan=0.0, posinf=0.0, neginf=0.0))
+        momentum = float(
+            np.nan_to_num(returns.tail(window).mean(), nan=0.0, posinf=0.0, neginf=0.0)
+        )
+        autocorr_raw = returns.autocorr(lag=1)
+        autocorr = float(np.nan_to_num(autocorr_raw if autocorr_raw is not None else 0.0, nan=0.0))
+
+        if {"high", "low"}.issubset(market_data.columns):
+            intraday_series = (
+                (market_data["high"] - market_data["low"])
+                .div(close)
+                .rolling(self.daily_window)
+                .mean()
+            )
+            intraday_series = intraday_series.dropna()
+            if intraday_series.empty:
+                intraday_vol = float(
+                    np.nan_to_num(
+                        (market_data["high"] - market_data["low"]).div(close).abs().mean(),
+                        nan=0.0,
+                    )
+                )
+            else:
+                intraday_vol = float(np.nan_to_num(intraday_series.iloc[-1], nan=0.0))
+        else:
+            intraday_vol = float(
+                np.nan_to_num(returns.tail(self.daily_window).abs().mean(), nan=0.0)
+            )
+
+        drawdown = float(
+            np.nan_to_num((close.cummax() - close).div(close.cummax() + 1e-12).max(), nan=0.0)
+        )
+        volatility_window = min(max(self.daily_window * 5, self.trend_window), returns.size)
+        rolling_vol = returns.rolling(volatility_window, min_periods=max(volatility_window // 2, 10)).std()
+        rolling_clean = rolling_vol.dropna()
+        baseline_vol = (
+            float(np.nan_to_num(rolling_clean.iloc[-1], nan=0.0, posinf=0.0, neginf=0.0))
+            if not rolling_clean.empty
+            else volatility
+        )
+        volatility_ratio = float(volatility / (baseline_vol + 1e-12)) if baseline_vol else 1.0
+
+        if "volume" in market_data.columns:
+            volume_series = market_data["volume"].astype(float).sort_index()
+            short_vol_ma = volume_series.rolling(self.daily_window, min_periods=1).mean()
+            long_window = max(self.daily_window * 3, 1)
+            long_vol_ma = volume_series.rolling(long_window, min_periods=1).mean()
+            volume_trend = float(
+                np.nan_to_num(
+                    (short_vol_ma.iloc[-1] - long_vol_ma.iloc[-1])
+                    / (np.abs(long_vol_ma.iloc[-1]) + 1e-12),
+                    nan=0.0,
+                    posinf=0.0,
+                    neginf=0.0,
+                )
+            )
+        else:
+            volume_trend = 0.0
+
+        skewness = float(np.nan_to_num(returns.skew(), nan=0.0, posinf=0.0, neginf=0.0))
+        kurtosis = float(np.nan_to_num(returns.kurt(), nan=0.0, posinf=0.0, neginf=0.0))
+
+        if "volume" in market_data.columns:
+            volume_series = market_data["volume"].astype(float).reindex(close.index)
+            change = returns.reindex(volume_series.index, method="ffill").fillna(0.0)
+            positive_volume = float(
+                np.nan_to_num(volume_series.where(change > 0.0).mean(), nan=0.0)
+            )
+            negative_volume = float(
+                np.nan_to_num(volume_series.where(change <= 0.0).mean(), nan=0.0)
+            )
+            denom = np.abs(positive_volume) + np.abs(negative_volume) + 1e-12
+            volume_imbalance = float(np.nan_to_num((positive_volume - negative_volume) / denom))
+        else:
+            volume_imbalance = 0.0
+
+        metrics: MutableMapping[str, float] = {
+            "trend_strength": trend_strength,
+            "volatility": volatility,
+            "momentum": momentum,
+            "autocorr": autocorr,
+            "intraday_vol": intraday_vol,
+            "drawdown": drawdown,
+            "volatility_ratio": volatility_ratio,
+            "volume_trend": volume_trend,
+            "return_skew": skewness,
+            "return_kurtosis": kurtosis,
+            "volume_imbalance": volume_imbalance,
+        }
+        return metrics
+
+    def _score_regimes(self, metrics: Mapping[str, float]) -> Mapping[MarketRegime, float]:
+        trend_strength = float(metrics.get("trend_strength", 0.0))
+        momentum_metric = float(metrics.get("momentum", 0.0))
+        intraday_metric = float(metrics.get("intraday_vol", 0.0))
+        autocorr_metric = float(metrics.get("autocorr", 0.0))
+        volume_metric = float(metrics.get("volume_trend", 0.0))
+
+        trend_norm = trend_strength / (self.trend_strength_threshold + 1e-12)
+        momentum_norm = momentum_metric / (self.momentum_threshold + 1e-12)
+        intraday_norm = intraday_metric / (self.intraday_threshold + 1e-12)
+        autocorr_norm = -autocorr_metric / (abs(self.autocorr_threshold) + 1e-12)
+        volume_norm = max(0.0, volume_metric) / (self.volume_trend_threshold + 1e-12)
+
+        range_bias = max(0.0, 1.0 - min(1.0, abs(trend_norm)))
+        balanced_momentum = max(0.0, 1.0 - min(1.0, abs(momentum_norm)))
+        intraday_clamped = max(0.0, min(1.0, intraday_norm))
+
+        trend_score = float(
+            np.clip(0.6 * max(0.0, min(1.0, trend_norm)) + 0.3 * max(0.0, momentum_norm) + 0.1 * min(1.0, volume_norm), 0.0, 1.0)
+        )
+        daily_score = float(
+            np.clip(0.55 * intraday_clamped + 0.3 * range_bias + 0.15 * balanced_momentum, 0.0, 1.0)
+        )
+        mean_reversion_score = float(
+            np.clip(
+                0.55 * max(0.0, min(1.0, autocorr_norm))
+                + 0.25 * range_bias
+                + 0.2 * max(0.0, 1.0 - intraday_clamped),
+                0.0,
+                1.0,
+            )
+        )
+
+        return {
+            MarketRegime.TREND: trend_score,
+            MarketRegime.DAILY: daily_score,
+            MarketRegime.MEAN_REVERSION: mean_reversion_score,
+        }
+
+    def _compute_risk_score(self, metrics: Mapping[str, float]) -> float:
+        market_cfg = self._thresholds.get("market_regime", {})
+        if not isinstance(market_cfg, Mapping):
+            market_cfg = {}
+        score_cfg = market_cfg.get("risk_score", {})
+        if not isinstance(score_cfg, Mapping):
+            score_cfg = {}
+        volatility_component = min(
+            1.0, float(metrics.get("volatility", 0.0)) / self.volatility_threshold
+        )
+        intraday_component = min(
+            1.0,
+            float(metrics.get("intraday_vol", 0.0))
+            / (self.intraday_threshold * float(score_cfg.get("intraday_multiplier", 1.5))),
+        )
+        drawdown_component = min(
+            1.0,
+            float(metrics.get("drawdown", 0.0)) / float(score_cfg.get("drawdown_threshold", 0.2)),
+        )
+        volatility_ratio_component = min(1.0, float(metrics.get("volatility_ratio", 1.0)))
+        volume_component = min(
+            1.0,
+            abs(float(metrics.get("volume_trend", 0.0))) / self.volume_trend_threshold,
+        )
+        return float(
+            np.clip(
+                float(score_cfg.get("volatility_weight", 0.35)) * volatility_component
+                + float(score_cfg.get("intraday_weight", 0.25)) * intraday_component
+                + float(score_cfg.get("drawdown_weight", 0.2)) * drawdown_component
+                + float(score_cfg.get("volatility_mix_weight", 0.2))
+                * max(volatility_ratio_component, volume_component),
+                0.0,
+                1.0,
+            )
+        )
+
 
 @dataclass(frozen=True)
 class RegimeStrategyWeights:
@@ -176,145 +404,6 @@ class RegimeStrategyWeights:
         if total == 0.0:
             return {name: 0.0 for name in allocation}
         return {name: float(value) / total for name, value in allocation.items()}
-
-    def _compute_metrics(
-        self,
-        market_data: pd.DataFrame,
-        close: pd.Series,
-        returns: pd.Series,
-    ) -> Mapping[str, float]:
-        metrics_cfg = self._thresholds["market_regime"]["metrics"]
-        short_span_min = int(metrics_cfg.get("short_span_min", 5))
-        short_span_divisor = int(metrics_cfg.get("short_span_divisor", 3))
-        long_span_min = int(metrics_cfg.get("long_span_min", 10))
-        window = min(self.trend_window, close.size)
-        short = close.ewm(span=max(short_span_min, window // short_span_divisor), adjust=False).mean()
-        long = close.ewm(span=max(long_span_min, window), adjust=False).mean()
-        trend_strength = float(np.abs(short.iloc[-1] - long.iloc[-1]) / (np.abs(long.iloc[-1]) + 1e-12))
-
-        volatility = float(returns.std())
-        momentum = float(returns.tail(window).mean())
-        autocorr = float(returns.autocorr(lag=1) or 0.0)
-
-        if {"high", "low"}.issubset(market_data.columns):
-            intraday_series = (
-                (market_data["high"] - market_data["low"])
-                .div(close)
-                .rolling(self.daily_window)
-                .mean()
-            )
-            intraday_series = intraday_series.dropna()
-            if intraday_series.empty:
-                intraday_vol = float((market_data["high"] - market_data["low"]).div(close).abs().mean())
-            else:
-                intraday_vol = float(intraday_series.iloc[-1])
-        else:
-            intraday_vol = float(returns.tail(self.daily_window).abs().mean())
-
-        drawdown = float((close.cummax() - close).div(close.cummax() + 1e-12).max())
-        volatility_window = min(max(self.daily_window * 5, self.trend_window), returns.size)
-        rolling_vol = returns.rolling(volatility_window, min_periods=max(volatility_window // 2, 10)).std()
-        rolling_clean = rolling_vol.dropna()
-        baseline_vol = float(rolling_clean.iloc[-1]) if not rolling_clean.empty else volatility
-        volatility_ratio = float(volatility / (baseline_vol + 1e-12)) if baseline_vol else 1.0
-
-        if "volume" in market_data.columns:
-            volume_series = market_data["volume"].astype(float).sort_index()
-            short_vol_ma = volume_series.rolling(self.daily_window, min_periods=1).mean()
-            long_window = max(self.daily_window * 3, 1)
-            long_vol_ma = volume_series.rolling(long_window, min_periods=1).mean()
-            volume_trend = float(
-                (short_vol_ma.iloc[-1] - long_vol_ma.iloc[-1]) / (np.abs(long_vol_ma.iloc[-1]) + 1e-12)
-            )
-        else:
-            volume_trend = 0.0
-
-        skewness = float(np.nan_to_num(returns.skew(), nan=0.0, posinf=0.0, neginf=0.0))
-        kurtosis = float(np.nan_to_num(returns.kurt(), nan=0.0, posinf=0.0, neginf=0.0))
-
-        if "volume" in market_data.columns:
-            volume_series = market_data["volume"].astype(float).reindex(close.index)
-            change = returns.reindex(volume_series.index, method="ffill").fillna(0.0)
-            positive_volume = volume_series.where(change > 0.0).mean()
-            negative_volume = volume_series.where(change <= 0.0).mean()
-            denom = np.abs(positive_volume) + np.abs(negative_volume) + 1e-12
-            volume_imbalance = float(np.nan_to_num((positive_volume - negative_volume) / denom))
-        else:
-            volume_imbalance = 0.0
-
-        metrics: MutableMapping[str, float] = {
-            "trend_strength": trend_strength,
-            "volatility": volatility,
-            "momentum": momentum,
-            "autocorr": autocorr,
-            "intraday_vol": intraday_vol,
-            "drawdown": drawdown,
-            "volatility_ratio": volatility_ratio,
-            "volume_trend": volume_trend,
-            "return_skew": skewness,
-            "return_kurtosis": kurtosis,
-            "volume_imbalance": volume_imbalance,
-        }
-        return metrics
-
-    def _score_regimes(self, metrics: Mapping[str, float]) -> Mapping[MarketRegime, float]:
-        trend_norm = metrics["trend_strength"] / (self.trend_strength_threshold + 1e-12)
-        momentum_norm = metrics["momentum"] / (self.momentum_threshold + 1e-12)
-        intraday_norm = metrics["intraday_vol"] / (self.intraday_threshold + 1e-12)
-        autocorr_norm = -metrics["autocorr"] / (abs(self.autocorr_threshold) + 1e-12)
-        volume_norm = max(0.0, metrics.get("volume_trend", 0.0)) / (self.volume_trend_threshold + 1e-12)
-
-        range_bias = max(0.0, 1.0 - min(1.0, abs(trend_norm)))
-        balanced_momentum = max(0.0, 1.0 - min(1.0, abs(momentum_norm)))
-        intraday_clamped = max(0.0, min(1.0, intraday_norm))
-
-        trend_score = float(
-            np.clip(0.6 * max(0.0, min(1.0, trend_norm)) + 0.3 * max(0.0, momentum_norm) + 0.1 * min(1.0, volume_norm), 0.0, 1.0)
-        )
-        daily_score = float(
-            np.clip(0.55 * intraday_clamped + 0.3 * range_bias + 0.15 * balanced_momentum, 0.0, 1.0)
-        )
-        mean_reversion_score = float(
-            np.clip(
-                0.55 * max(0.0, min(1.0, autocorr_norm))
-                + 0.25 * range_bias
-                + 0.2 * max(0.0, 1.0 - intraday_clamped),
-                0.0,
-                1.0,
-            )
-        )
-
-        return {
-            MarketRegime.TREND: trend_score,
-            MarketRegime.DAILY: daily_score,
-            MarketRegime.MEAN_REVERSION: mean_reversion_score,
-        }
-
-    def _compute_risk_score(self, metrics: Mapping[str, float]) -> float:
-        score_cfg = self._thresholds["market_regime"]["risk_score"]
-        volatility_component = min(1.0, metrics["volatility"] / self.volatility_threshold)
-        intraday_component = min(
-            1.0,
-            metrics["intraday_vol"]
-            / (self.intraday_threshold * float(score_cfg.get("intraday_multiplier", 1.5))),
-        )
-        drawdown_component = min(1.0, metrics["drawdown"] / float(score_cfg.get("drawdown_threshold", 0.2)))
-        volatility_ratio_component = min(1.0, metrics.get("volatility_ratio", 1.0))
-        volume_component = min(
-            1.0,
-            abs(metrics.get("volume_trend", 0.0)) / self.volume_trend_threshold,
-        )
-        return float(
-            np.clip(
-                float(score_cfg.get("volatility_weight", 0.35)) * volatility_component
-                + float(score_cfg.get("intraday_weight", 0.25)) * intraday_component
-                + float(score_cfg.get("drawdown_weight", 0.2)) * drawdown_component
-                + float(score_cfg.get("volatility_mix_weight", 0.2))
-                * max(volatility_ratio_component, volume_component),
-                0.0,
-                1.0,
-            )
-        )
 
 
 @dataclass(slots=True)
@@ -450,7 +539,13 @@ class RegimeSummary:
 class RegimeHistory:
     """Utrzymuje okno ruchome klasyfikacji i oblicza wygładzone miary."""
 
-    def __init__(self, *, maxlen: int = 5, decay: float = 0.65) -> None:
+    def __init__(
+        self,
+        *,
+        maxlen: int = 5,
+        decay: float = 0.65,
+        thresholds_loader: Callable[[], Mapping[str, Any]] | None = None,
+    ) -> None:
         if maxlen < 1:
             raise ValueError("maxlen must be at least 1")
         if not (0.0 < decay <= 1.0):
@@ -458,7 +553,44 @@ class RegimeHistory:
         self.maxlen = int(maxlen)
         self.decay = float(decay)
         self._snapshots: deque[RegimeSnapshot] = deque(maxlen=self.maxlen)
-        self._thresholds = load_risk_thresholds()
+        self._thresholds_loader: Callable[[], Mapping[str, Any]] = (
+            thresholds_loader or load_risk_thresholds
+        )
+        self._thresholds: Mapping[str, Any] = {}
+        self.reload_thresholds()
+
+    @property
+    def thresholds_loader(self) -> Callable[[], Mapping[str, Any]]:
+        """Return the callable used to obtain thresholds."""
+
+        return self._thresholds_loader
+
+    def thresholds_snapshot(self) -> Mapping[str, Any]:
+        """Return a copy of the currently active thresholds."""
+
+        return deepcopy(dict(self._thresholds))
+
+    def reload_thresholds(
+        self,
+        *,
+        thresholds: Mapping[str, Any] | None = None,
+        loader: Callable[[], Mapping[str, Any]] | None = None,
+    ) -> None:
+        """Refresh threshold configuration used by history calculations."""
+
+        if thresholds is not None:
+            self._thresholds = _ensure_mapping(deepcopy(dict(thresholds)))
+            return
+
+        active_loader: Callable[[], Mapping[str, Any]] = loader or self._thresholds_loader
+        self._thresholds_loader = active_loader
+        self._thresholds = _ensure_mapping(deepcopy(dict(active_loader())))
+
+    def _market_regime_config(self) -> Mapping[str, Any]:
+        return _ensure_mapping(self._thresholds.get("market_regime"))
+
+    def _risk_level_config(self) -> Mapping[str, Any]:
+        return _ensure_mapping(self._market_regime_config().get("risk_level"))
 
     def __len__(self) -> int:  # pragma: no cover - prosta metoda pomocnicza
         return len(self._snapshots)
@@ -733,8 +865,8 @@ class RegimeHistory:
         skewness_bias = float(np.clip(avg_skewness, -5.0, 5.0))
         kurtosis_excess = float(np.clip(avg_kurtosis, -5.0, 10.0))
         volume_imbalance = float(np.clip(avg_volume_imbalance, -1.0, 1.0))
-        risk_level_cfg = self._thresholds["market_regime"]["risk_level"]
-        scales = risk_level_cfg.get("scales", {})
+        risk_level_cfg = self._risk_level_config()
+        scales = _ensure_mapping(risk_level_cfg.get("scales"))
         skew_scale = float(scales.get("skewness_bias", 1.5)) or 1.5
         kurtosis_scale = float(scales.get("kurtosis_excess", 3.0)) or 3.0
         volume_scale = float(scales.get("volume_imbalance", 0.6)) or 0.6
@@ -1062,8 +1194,8 @@ class RegimeHistory:
         confidence_fragility = float(np.clip(confidence_fragility, 0.0, 1.0))
         vol_trend_intensity = float(max(0.0, volatility_trend))
         drawdown_trend_intensity = float(max(0.0, drawdown_trend))
-        risk_level_cfg = self._thresholds["market_regime"]["risk_level"]
-        scales = risk_level_cfg.get("scales", {})
+        risk_level_cfg = self._risk_level_config()
+        scales = _ensure_mapping(risk_level_cfg.get("scales"))
         skew_scale = float(scales.get("skewness_bias", 1.5)) or 1.5
         kurtosis_scale = float(scales.get("kurtosis_excess", 3.0)) or 3.0
         volume_scale = float(scales.get("volume_imbalance", 0.6)) or 0.6
@@ -1075,7 +1207,7 @@ class RegimeHistory:
             np.clip(abs(volume_imbalance) / volume_scale, 0.0, 1.0)
         )
 
-        critical = risk_level_cfg.get("critical", {})
+        critical = _ensure_mapping(risk_level_cfg.get("critical"))
         if (
             risk_score >= float(critical.get("risk_score", 0.85))
             or risk_trend >= float(critical.get("risk_trend", 0.25))
@@ -1155,7 +1287,7 @@ class RegimeHistory:
             )
         ):
             return RiskLevel.CRITICAL
-        elevated = risk_level_cfg.get("elevated", {})
+        elevated = _ensure_mapping(risk_level_cfg.get("elevated"))
         if (
             risk_score >= float(elevated.get("risk_score", 0.65))
             or risk_trend >= float(elevated.get("risk_trend", 0.08))
@@ -1234,7 +1366,7 @@ class RegimeHistory:
             )
         ):
             return RiskLevel.ELEVATED
-        calm = risk_level_cfg.get("calm", {})
+        calm = _ensure_mapping(risk_level_cfg.get("calm"))
         if (
             risk_score <= float(calm.get("risk_score", 0.25))
             and risk_trend <= float(calm.get("risk_trend", 0.0))
@@ -1274,7 +1406,7 @@ class RegimeHistory:
             <= float(calm.get("volume_imbalance_pressure", 0.45))
         ):
             return RiskLevel.CALM
-        balanced = risk_level_cfg.get("balanced", {})
+        balanced = _ensure_mapping(risk_level_cfg.get("balanced"))
         if (
             risk_score <= float(balanced.get("risk_score", 0.45))
             and risk_trend <= float(balanced.get("risk_trend", 0.05))
@@ -1311,7 +1443,7 @@ class RegimeHistory:
             <= float(balanced.get("volume_imbalance_pressure", 0.55))
         ):
             return RiskLevel.BALANCED
-        watch = risk_level_cfg.get("watch", {})
+        watch = _ensure_mapping(risk_level_cfg.get("watch"))
         if (
             confidence_volatility >= float(watch.get("confidence_volatility", 0.18))
             or (

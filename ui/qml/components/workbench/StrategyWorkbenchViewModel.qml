@@ -1,19 +1,17 @@
 import QtQuick
 
-import "./StrategyWorkbenchPresets.js" as Presets
-
 QtObject {
     id: root
     objectName: "strategyWorkbenchViewModel"
 
-    // Zależności przekazywane z okna aplikacji
+    // External dependencies injected from parent QML
     property var appController: null
     property var strategyController: null
     property var riskModel: null
     property var riskHistoryModel: null
     property var licenseController: null
 
-    // Dane agregowane dla paneli roboczych
+    // Aggregated state exposed to the UI
     property var schedulerEntries: []
     property var exchangeConnections: []
     property var aiConfiguration: ({})
@@ -21,76 +19,224 @@ QtObject {
     property var riskSnapshot: ({})
     property var runtimeStatus: ({})
     property var licenseStatus: ({})
-    property var instrumentDetails: ({})
-    property var controlState: defaultControlState()
 
-    // Obsługa trybów demonstracyjnych
-    readonly property var demoPresets: Presets.createPresets()
+    // Demo mode metadata
     property bool demoModeActive: false
     property string demoModeId: ""
     property string demoModeTitle: ""
     property string demoModeDescription: ""
-
-    function defaultControlState() {
-        return {
-            schedulerRunning: false,
-            offlineMode: false,
-            automationRunning: false,
-            lastActionMessage: "",
-            lastActionSuccess: true,
-            lastActionAt: "",
-            lastRiskRefreshAt: "",
-            nextRiskRefreshDueAt: "",
-            manualRefreshCount: 0,
+    property var demoPresets: [
+        {
+            id: "momentum",
+            title: qsTr("Momentum Pro"),
+            description: qsTr("Zestaw presetów momentum dla rynku krypto – automatyczne balansowanie ryzyka i szybkie przełączanie profili."),
+            schedulerEntries: [
+                {
+                    name: "Momentum Alpha",
+                    enabled: true,
+                    scheduleCount: 4,
+                    timezone: "UTC",
+                    nextRun: "2024-05-18T09:00:00Z",
+                    notes: qsTr("Aktywne okna 1m/5m z trailing stop")
+                },
+                {
+                    name: "Momentum Beta",
+                    enabled: true,
+                    scheduleCount: 2,
+                    timezone: "UTC",
+                    nextRun: "2024-05-18T10:15:00Z",
+                    notes: qsTr("Agregacja multi-venue, target delta 0.3")
+                }
+            ],
+            exchangeConnections: [
+                {
+                    exchange: "BINANCE",
+                    symbol: "BTC/USDT",
+                    venueSymbol: "BTCUSDT",
+                    status: qsTr("Demo: połączenie symulacyjne"),
+                    offline: false,
+                    automationRunning: true,
+                    fpsTarget: 120
+                },
+                {
+                    exchange: "COINBASE",
+                    symbol: "ETH/USD",
+                    venueSymbol: "ETHUSD",
+                    status: qsTr("Demo: monitorowanie danych order book"),
+                    offline: false,
+                    automationRunning: true,
+                    fpsTarget: 90
+                }
+            ],
+            aiConfiguration: {
+                policy: "momentum",
+                decision_window: "PT15S",
+                risk_profile: "growth",
+                overrides: [
+                    { profile: "intraday", maxDrawdown: 0.04, takeProfit: 0.012 },
+                    { profile: "swing", maxDrawdown: 0.06, takeProfit: 0.028 }
+                ],
+                features: ["ema12", "ema26", "vwap", "macro_feed"],
+                modelRevision: "2024.04-momentum"
+            },
+            portfolioSummary: {
+                entryCount: 64,
+                minValue: 92500,
+                maxValue: 132400,
+                latestValue: 129800,
+                profileLabel: "Momentum",
+                maxDrawdown: 0.083,
+                averageDrawdown: 0.031,
+                maxLeverage: 2.4,
+                averageLeverage: 1.7,
+                anyBreach: false,
+                totalBreaches: 0
+            },
+            riskSnapshot: {
+                profileLabel: "Momentum",
+                currentDrawdown: 0.021,
+                maxDailyLoss: 0.055,
+                usedLeverage: 1.68,
+                generatedAt: "2024-05-18T08:55:12Z",
+                exposures: [
+                    { code: "XBT_PERP", current: 0.62, max: 0.8, threshold: 0.75, breach: false },
+                    { code: "ETH_PERP", current: 0.48, max: 0.7, threshold: 0.65, breach: false },
+                    { code: "ALT_BASKET", current: 0.31, max: 0.55, threshold: 0.5, breach: false }
+                ]
+            },
+            runtimeStatus: {
+                connection: qsTr("Demo: połączenie symulacyjne"),
+                reduceMotion: false,
+                offlineMode: false,
+                offlineDaemonStatus: qsTr("Aktywny symulator"),
+                automationRunning: true,
+                performanceGuard: { fpsTarget: 120, jankThresholdMs: 12.0, maxOverlayCount: 3 },
+                riskRefresh: { enabled: true, intervalSeconds: 30, nextRefreshInSeconds: 18 }
+            },
+            licenseStatus: {
+                active: true,
+                edition: "OEM Demo",
+                licenseId: "DEMO-MOMENTUM",
+                holderName: "Core Labs QA",
+                maintenanceActive: true,
+                modules: ["momentum", "portfolio", "scheduler"],
+                runtime: ["desktop-shell", "scheduler-engine"]
+            }
+        },
+        {
+            id: "hedge",
+            title: qsTr("Market Neutral"),
+            description: qsTr("Tryb prezentacyjny dla funduszy market-neutral – pokazuje balancing delta i zabezpieczenia krzyżowe."),
+            schedulerEntries: [
+                {
+                    name: "Delta Hedge",
+                    enabled: true,
+                    scheduleCount: 6,
+                    timezone: "Europe/Warsaw",
+                    nextRun: "2024-05-18T09:05:00+02:00",
+                    notes: qsTr("Rebalans co 10 minut z limitem slippage 2 bps")
+                },
+                {
+                    name: "Gamma Overlay",
+                    enabled: false,
+                    scheduleCount: 1,
+                    timezone: "Europe/Warsaw",
+                    nextRun: "2024-05-18T12:00:00+02:00",
+                    notes: qsTr("Opcjonalna noga opcyjna do pokazu")
+                }
+            ],
+            exchangeConnections: [
+                {
+                    exchange: "OKX",
+                    symbol: "BTC/USDT",
+                    venueSymbol: "BTC-USDT-SWAP",
+                    status: qsTr("Demo: kanał hedge aktywny"),
+                    offline: false,
+                    automationRunning: true,
+                    fpsTarget: 75
+                },
+                {
+                    exchange: "DERIBIT",
+                    symbol: "BTC-PERP",
+                    venueSymbol: "BTC-PERPETUAL",
+                    status: qsTr("Demo: opcje zabezpieczające"),
+                    offline: false,
+                    automationRunning: false,
+                    fpsTarget: 60
+                }
+            ],
+            aiConfiguration: {
+                policy: "market_neutral",
+                decision_window: "PT1M",
+                risk_profile: "conservative",
+                overrides: [
+                    { profile: "hedge", maxDrawdown: 0.025, takeProfit: 0.006 }
+                ],
+                features: ["zscore", "spread_mean", "inventory_skew"],
+                modelRevision: "2024.03-neutral"
+            },
+            portfolioSummary: {
+                entryCount: 48,
+                minValue: 198000,
+                maxValue: 205600,
+                latestValue: 203450,
+                profileLabel: "Neutral",
+                maxDrawdown: 0.019,
+                averageDrawdown: 0.011,
+                maxLeverage: 1.2,
+                averageLeverage: 0.9,
+                anyBreach: false,
+                totalBreaches: 0
+            },
+            riskSnapshot: {
+                profileLabel: "Neutral",
+                currentDrawdown: 0.008,
+                maxDailyLoss: 0.02,
+                usedLeverage: 0.95,
+                generatedAt: "2024-05-18T07:42:10Z",
+                exposures: [
+                    { code: "BTC_DELTA", current: 0.05, max: 0.1, threshold: 0.08, breach: false },
+                    { code: "ETH_DELTA", current: -0.01, max: 0.08, threshold: 0.08, breach: false },
+                    { code: "BASIS_SPREAD", current: 0.12, max: 0.25, threshold: 0.2, breach: false }
+                ]
+            },
+            runtimeStatus: {
+                connection: qsTr("Demo: tryb market neutral"),
+                reduceMotion: false,
+                offlineMode: false,
+                offlineDaemonStatus: qsTr("Stabilny"),
+                automationRunning: true,
+                performanceGuard: { fpsTarget: 75, jankThresholdMs: 16.0, maxOverlayCount: 2 },
+                riskRefresh: { enabled: true, intervalSeconds: 45, nextRefreshInSeconds: 22 }
+            },
+            licenseStatus: {
+                active: true,
+                edition: "OEM Enterprise",
+                licenseId: "DEMO-HEDGE",
+                holderName: "Core Labs Hedge Demo",
+                maintenanceActive: true,
+                modules: ["hedge", "risk", "scheduler"],
+                runtime: ["desktop-shell", "risk-service"]
+            }
         }
-    }
-
-    function normalizeControlState(state) {
-        return Object.assign({}, defaultControlState(), state || {})
-    }
-
-    function updateControlState(state) {
-        controlState = normalizeControlState(state)
-    }
-
-    function mergeControlState(overrides) {
-        const base = normalizeControlState(controlState)
-        updateControlState(Object.assign({}, base, overrides || {}))
-    }
-
-    function updateDemoRuntimeStatus(overrides) {
-        const current = runtimeStatus || {}
-        const next = Object.assign({}, current, overrides || {})
-        if (overrides && overrides.riskRefresh) {
-            const baseRefresh = current.riskRefresh || {}
-            next.riskRefresh = Object.assign({}, baseRefresh, overrides.riskRefresh)
-        }
-        runtimeStatus = next
-    }
+    ]
 
     function activateDemoMode(id) {
-        const preset = Presets.findPreset(demoPresets, id)
+        var preset = findDemoPreset(id)
         if (!preset)
             return false
-        applyDemoPreset(Presets.clonePreset(preset))
-        return true
-    }
-
-    function applyDemoPreset(preset) {
         demoModeActive = true
         demoModeId = preset.id
         demoModeTitle = preset.title
         demoModeDescription = preset.description
-
-        schedulerEntries = preset.schedulerEntries || []
-        exchangeConnections = preset.exchangeConnections || []
-        aiConfiguration = preset.aiConfiguration || ({})
-        portfolioSummary = preset.portfolioSummary || ({})
-        riskSnapshot = preset.riskSnapshot || ({})
-        runtimeStatus = preset.runtimeStatus || ({})
-        licenseStatus = preset.licenseStatus || ({})
-        instrumentDetails = preset.instrumentDetails || computeInstrumentDetails()
-        updateControlState(preset.controlState)
+        schedulerEntries = preset.schedulerEntries
+        exchangeConnections = preset.exchangeConnections
+        aiConfiguration = preset.aiConfiguration
+        portfolioSummary = preset.portfolioSummary
+        riskSnapshot = preset.riskSnapshot
+        runtimeStatus = preset.runtimeStatus
+        licenseStatus = preset.licenseStatus
+        return true
     }
 
     function disableDemoMode() {
@@ -100,8 +246,17 @@ QtObject {
         demoModeId = ""
         demoModeTitle = ""
         demoModeDescription = ""
-        updateControlState(defaultControlState())
         refreshFromLive()
+    }
+
+    function findDemoPreset(id) {
+        if (!id)
+            return null
+        for (var i = 0; i < demoPresets.length; ++i) {
+            if (demoPresets[i].id === id)
+                return demoPresets[i]
+        }
+        return null
     }
 
     function refreshFromLive() {
@@ -114,23 +269,21 @@ QtObject {
         riskSnapshot = computeRiskSnapshot()
         runtimeStatus = computeRuntimeStatus()
         licenseStatus = computeLicenseStatus()
-        instrumentDetails = computeInstrumentDetails()
-        controlState = computeControlState()
     }
 
     function computeSchedulerEntries() {
         if (!strategyController || typeof strategyController.schedulerList !== "function")
             return []
-        const list = strategyController.schedulerList() || []
+        var list = strategyController.schedulerList() || []
         return list.map(function(item) {
-            const schedules = item.schedules || []
+            var schedules = item.schedules || []
             return {
                 name: item.name || qsTr("Strategia"),
                 enabled: item.enabled !== false,
                 scheduleCount: schedules.length,
                 timezone: item.timezone || "",
                 nextRun: item.next_run_at || item.nextRun || "",
-                notes: item.notes || "",
+                notes: item.notes || ""
             }
         })
     }
@@ -138,10 +291,8 @@ QtObject {
     function computeExchangeConnections() {
         if (!appController || typeof appController.instrumentConfigSnapshot !== "function")
             return []
-        const instrument = appController.instrumentConfigSnapshot() || {}
-        const guard = typeof appController.performanceGuardSnapshot === "function"
-            ? (appController.performanceGuardSnapshot() || {})
-            : {}
+        var instrument = appController.instrumentConfigSnapshot() || {}
+        var guard = appController.performanceGuardSnapshot ? appController.performanceGuardSnapshot() : {}
         return [
             {
                 exchange: instrument.exchange || "",
@@ -150,7 +301,7 @@ QtObject {
                 status: appController.connectionStatus || "",
                 offline: !!appController.offlineMode,
                 automationRunning: !!appController.offlineAutomationRunning,
-                fpsTarget: guard.fpsTarget || 0,
+                fpsTarget: guard.fpsTarget || 0
             }
         ]
     }
@@ -158,11 +309,12 @@ QtObject {
     function computeAiConfiguration() {
         if (!strategyController || typeof strategyController.decisionConfigSnapshot !== "function")
             return {}
-        return strategyController.decisionConfigSnapshot() || {}
+        var snapshot = strategyController.decisionConfigSnapshot() || {}
+        return snapshot
     }
 
     function computePortfolioSummary() {
-        const summary = {}
+        var summary = {}
         if (riskHistoryModel) {
             summary.entryCount = riskHistoryModel.entryCount || 0
             summary.minValue = riskHistoryModel.minPortfolioValue || 0
@@ -173,7 +325,6 @@ QtObject {
             summary.averageLeverage = riskHistoryModel.averageLeverage || 0
             summary.anyBreach = !!riskHistoryModel.anyExposureBreached
             summary.totalBreaches = riskHistoryModel.totalBreachCount || 0
-            summary.maxExposureUtilization = riskHistoryModel.maxExposureUtilization || 0
         }
         if (riskModel && riskModel.hasData) {
             summary.latestValue = riskModel.portfolioValue
@@ -185,43 +336,44 @@ QtObject {
     function computeRiskSnapshot() {
         if (!riskModel || !riskModel.hasData)
             return {}
-        const snapshot = {
+        var snapshot = {
             profileLabel: riskModel.profileLabel,
             currentDrawdown: riskModel.currentDrawdown,
             maxDailyLoss: riskModel.maxDailyLoss,
             usedLeverage: riskModel.usedLeverage,
-            generatedAt: riskModel.generatedAt ? riskModel.generatedAt.toString() : "",
-            exposures: [],
+            generatedAt: riskModel.generatedAt ? riskModel.generatedAt.toString() : ""
         }
+        var exposures = []
         if (typeof riskModel.count === "number") {
-            for (let i = 0; i < riskModel.count; ++i) {
-                const row = riskModel.get(i)
-                snapshot.exposures.push({
+            for (var i = 0; i < riskModel.count; ++i) {
+                var row = riskModel.get(i)
+                exposures.push({
                     code: row.code,
                     current: row.currentValue,
                     max: row.maxValue,
                     threshold: row.thresholdValue,
-                    breach: row.breach,
+                    breach: row.breach
                 })
             }
         }
+        snapshot.exposures = exposures
         return snapshot
     }
 
     function computeRuntimeStatus() {
         if (!appController)
             return {}
-        const runtime = {
+        var runtime = {
             connection: appController.connectionStatus || "",
             reduceMotion: !!appController.reduceMotionActive,
             offlineMode: !!appController.offlineMode,
             offlineDaemonStatus: appController.offlineDaemonStatus || "",
-            automationRunning: !!appController.offlineAutomationRunning,
+            automationRunning: !!appController.offlineAutomationRunning
         }
         if (typeof appController.performanceGuardSnapshot === "function")
-            runtime.performanceGuard = appController.performanceGuardSnapshot() || {}
+            runtime.performanceGuard = appController.performanceGuardSnapshot()
         if (typeof appController.riskRefreshSnapshot === "function")
-            runtime.riskRefresh = appController.riskRefreshSnapshot() || {}
+            runtime.riskRefresh = appController.riskRefreshSnapshot()
         return runtime
     }
 
@@ -242,155 +394,8 @@ QtObject {
             trialExpiresAt: licenseController.licenseTrialExpiresAt || "",
             modules: licenseController.licenseModules || [],
             environments: licenseController.licenseEnvironments || [],
-            runtime: licenseController.licenseRuntime || [],
+            runtime: licenseController.licenseRuntime || []
         }
-    }
-
-    function computeInstrumentDetails() {
-        if (!appController || typeof appController.instrumentConfigSnapshot !== "function")
-            return {}
-        const snapshot = appController.instrumentConfigSnapshot() || {}
-        return {
-            exchange: snapshot.exchange || "",
-            symbol: snapshot.symbol || "",
-            venueSymbol: snapshot.venueSymbol || "",
-            quoteCurrency: snapshot.quoteCurrency || "",
-            baseCurrency: snapshot.baseCurrency || "",
-            granularity: snapshot.granularity || "",
-        }
-    }
-
-    function computeControlState() {
-        const base = normalizeControlState(controlState)
-        let schedulerRunning = base.schedulerRunning
-        if (strategyController) {
-            if (typeof strategyController.schedulerRunning === "boolean")
-                schedulerRunning = strategyController.schedulerRunning
-            else if (typeof strategyController.schedulerRunning === "function")
-                schedulerRunning = !!strategyController.schedulerRunning()
-            else if (typeof strategyController.isSchedulerRunning === "function")
-                schedulerRunning = !!strategyController.isSchedulerRunning()
-        }
-
-        let automationRunning = base.automationRunning
-        if (appController && typeof appController.offlineAutomationRunning !== "undefined")
-            automationRunning = !!appController.offlineAutomationRunning
-
-        let offlineMode = base.offlineMode
-        if (appController && typeof appController.offlineMode !== "undefined")
-            offlineMode = !!appController.offlineMode
-
-        let refreshSnapshot = null
-        if (appController && typeof appController.riskRefreshSnapshot === "function")
-            refreshSnapshot = appController.riskRefreshSnapshot() || {}
-        else if (runtimeStatus && runtimeStatus.riskRefresh)
-            refreshSnapshot = runtimeStatus.riskRefresh
-
-        const next = Object.assign({}, base, {
-            schedulerRunning: schedulerRunning,
-            automationRunning: automationRunning,
-            offlineMode: offlineMode,
-        })
-
-        if (refreshSnapshot) {
-            if (refreshSnapshot.lastUpdateAt !== undefined)
-                next.lastRiskRefreshAt = refreshSnapshot.lastUpdateAt
-            if (refreshSnapshot.nextRefreshDueAt !== undefined)
-                next.nextRiskRefreshDueAt = refreshSnapshot.nextRefreshDueAt
-        }
-
-        return next
-    }
-
-    function startScheduler() {
-        const base = normalizeControlState(controlState)
-        let success = false
-        if (demoModeActive) {
-            success = true
-            updateDemoRuntimeStatus({ automationRunning: true })
-        } else if (strategyController && typeof strategyController.startScheduler === "function") {
-            const result = strategyController.startScheduler()
-            success = result !== false
-        }
-        const nowIso = new Date().toISOString()
-        const next = Object.assign({}, base, {
-            schedulerRunning: success ? true : base.schedulerRunning,
-            lastActionSuccess: success,
-            lastActionMessage: success ? qsTr("Uruchomiono harmonogram")
-                                       : qsTr("Nie udało się uruchomić harmonogramu"),
-            lastActionAt: nowIso,
-        })
-        controlState = next
-        if (!demoModeActive)
-            refreshFromLive()
-        return success
-    }
-
-    function stopScheduler() {
-        const base = normalizeControlState(controlState)
-        let success = false
-        if (demoModeActive) {
-            success = true
-            updateDemoRuntimeStatus({ automationRunning: false })
-        } else if (strategyController && typeof strategyController.stopScheduler === "function") {
-            const result = strategyController.stopScheduler()
-            success = result !== false
-        }
-        const nowIso = new Date().toISOString()
-        const next = Object.assign({}, base, {
-            schedulerRunning: success ? false : base.schedulerRunning,
-            lastActionSuccess: success,
-            lastActionMessage: success ? qsTr("Zatrzymano harmonogram")
-                                       : qsTr("Nie udało się zatrzymać harmonogramu"),
-            lastActionAt: nowIso,
-        })
-        controlState = next
-        if (!demoModeActive)
-            refreshFromLive()
-        return success
-    }
-
-    function triggerRiskRefresh() {
-        const base = normalizeControlState(controlState)
-        let success = false
-        let nextDueIso = base.nextRiskRefreshDueAt
-        if (demoModeActive) {
-            const now = new Date()
-            const nextDue = new Date(now.getTime() + 30000)
-            nextDueIso = nextDue.toISOString()
-            updateDemoRuntimeStatus({
-                riskRefresh: {
-                    lastUpdateAt: now.toISOString(),
-                    lastRequestAt: now.toISOString(),
-                    nextRefreshDueAt: nextDueIso,
-                    nextRefreshInSeconds: Math.max(0, Math.round((nextDue.getTime() - now.getTime()) / 1000)),
-                },
-            })
-            success = true
-        } else if (appController) {
-            if (typeof appController.triggerRiskRefresh === "function")
-                success = appController.triggerRiskRefresh() !== false
-            else if (typeof appController.requestRiskRefresh === "function")
-                success = appController.requestRiskRefresh() !== false
-        }
-
-        const nowIso = new Date().toISOString()
-        const next = Object.assign({}, base, {
-            lastActionSuccess: success,
-            lastActionMessage: success ? qsTr("Zainicjowano odświeżenie ryzyka")
-                                       : qsTr("Nie udało się odświeżyć ryzyka"),
-            lastActionAt: nowIso,
-            manualRefreshCount: success ? base.manualRefreshCount + 1 : base.manualRefreshCount,
-        })
-        if (success) {
-            next.lastRiskRefreshAt = nowIso
-            if (demoModeActive)
-                next.nextRiskRefreshDueAt = nextDueIso
-        }
-        controlState = next
-        if (!demoModeActive)
-            refreshFromLive()
-        return success
     }
 
     onAppControllerChanged: {
@@ -433,7 +438,6 @@ QtObject {
         target: root.strategyController
         function onSchedulerListChanged() { root.refreshFromLive() }
         function onDecisionConfigChanged() { root.refreshFromLive() }
-        function onSchedulerStateChanged() { root.refreshFromLive() }
     }
 
     Connections {

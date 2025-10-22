@@ -90,22 +90,6 @@ public:
         Q_EMIT riskRefreshScheduleChanged();
     }
 
-    Q_INVOKABLE bool triggerRiskRefresh()
-    {
-        ++m_refreshRequests;
-        if (m_refreshSuccess) {
-            m_riskRefresh.insert(QStringLiteral("lastRequestAt"), QDateTime::currentDateTimeUtc().toString(Qt::ISODate));
-            Q_EMIT riskRefreshScheduleChanged();
-        }
-        return m_refreshSuccess;
-    }
-
-    Q_INVOKABLE bool requestRiskRefresh() { return triggerRiskRefresh(); }
-
-    void setRiskRefreshSuccess(bool success) { m_refreshSuccess = success; }
-
-    int refreshRequestCount() const { return m_refreshRequests; }
-
 Q_SIGNALS:
     void connectionStatusChanged();
     void reduceMotionActiveChanged();
@@ -125,13 +109,10 @@ private:
     QVariantMap m_instrument;
     QVariantMap m_guard;
     QVariantMap m_riskRefresh;
-    int         m_refreshRequests = 0;
-    bool        m_refreshSuccess = true;
 };
 
 class MockStrategyController : public QObject {
     Q_OBJECT
-    Q_PROPERTY(bool schedulerRunning READ schedulerRunning NOTIFY schedulerStateChanged)
 
 public:
     explicit MockStrategyController(QObject* parent = nullptr)
@@ -155,40 +136,16 @@ public:
         Q_EMIT decisionConfigChanged();
     }
 
-    void setSchedulerRunning(bool running)
-    {
-        if (m_schedulerRunning == running)
-            return;
-        m_schedulerRunning = running;
-        Q_EMIT schedulerStateChanged();
-    }
-
-    bool schedulerRunning() const { return m_schedulerRunning; }
-
-    Q_INVOKABLE bool startScheduler()
-    {
-        setSchedulerRunning(true);
-        return true;
-    }
-
-    Q_INVOKABLE bool stopScheduler()
-    {
-        setSchedulerRunning(false);
-        return true;
-    }
-
     Q_INVOKABLE QVariantList schedulerList() const { return m_schedulerList; }
     Q_INVOKABLE QVariantMap decisionConfigSnapshot() const { return m_decisionConfig; }
 
 Q_SIGNALS:
     void schedulerListChanged();
     void decisionConfigChanged();
-    void schedulerStateChanged();
 
 private:
     QVariantList m_schedulerList;
     QVariantMap  m_decisionConfig;
-    bool         m_schedulerRunning = false;
 };
 
 class MockLicenseController : public QObject {
@@ -420,7 +377,6 @@ void StrategyWorkbenchE2ETest::shouldExposeLiveDataFromControllers()
     schedulers.append(second);
     strategyController.setSchedulerList(schedulers);
     strategyController.setDecisionConfig({{QStringLiteral("policy"), QStringLiteral("momentum")}});
-    strategyController.setSchedulerRunning(true);
 
     RiskSnapshotData snapshot;
     snapshot.hasData = true;
@@ -466,43 +422,13 @@ void StrategyWorkbenchE2ETest::shouldExposeLiveDataFromControllers()
     QCOMPARE(exchanges.size(), 1);
     QCOMPARE(exchanges.first().toMap().value(QStringLiteral("exchange")).toString(), QStringLiteral("BINANCE"));
 
-    const QVariantMap instrument = viewModel->property("instrumentDetails").toMap();
-    QCOMPARE(instrument.value(QStringLiteral("exchange")).toString(), QStringLiteral("BINANCE"));
-    QCOMPARE(instrument.value(QStringLiteral("quoteCurrency")).toString(), QStringLiteral("USDT"));
-
     const QVariantMap portfolio = viewModel->property("portfolioSummary").toMap();
     QVERIFY(portfolio.value(QStringLiteral("latestValue")).toDouble() > 0.0);
     QCOMPARE(portfolio.value(QStringLiteral("profileLabel")).toString(), QStringLiteral("Live"));
-    QVERIFY(portfolio.contains(QStringLiteral("maxExposureUtilization")));
 
     const QVariantMap license = viewModel->property("licenseStatus").toMap();
     QCOMPARE(license.value(QStringLiteral("active")).toBool(), true);
     QCOMPARE(license.value(QStringLiteral("licenseId")).toString(), QStringLiteral("LIVE-123"));
-
-    QVariantMap control = viewModel->property("controlState").toMap();
-    QCOMPARE(control.value(QStringLiteral("schedulerRunning")).toBool(), true);
-    QCOMPARE(control.value(QStringLiteral("manualRefreshCount")).toInt(), 0);
-
-    QVariant stopResult;
-    QVERIFY(QMetaObject::invokeMethod(viewModel, "stopScheduler",
-                                      Q_RETURN_ARG(QVariant, stopResult)));
-    QVERIFY(stopResult.toBool());
-    QVERIFY(!strategyController.schedulerRunning());
-
-    QVariant startResult;
-    QVERIFY(QMetaObject::invokeMethod(viewModel, "startScheduler",
-                                      Q_RETURN_ARG(QVariant, startResult)));
-    QVERIFY(startResult.toBool());
-    QVERIFY(strategyController.schedulerRunning());
-
-    QVariant refreshResult;
-    QVERIFY(QMetaObject::invokeMethod(viewModel, "triggerRiskRefresh",
-                                      Q_RETURN_ARG(QVariant, refreshResult)));
-    QVERIFY(refreshResult.toBool());
-    QCOMPARE(appController.refreshRequestCount(), 1);
-
-    control = viewModel->property("controlState").toMap();
-    QCOMPARE(control.value(QStringLiteral("manualRefreshCount")).toInt(), 1);
 }
 
 void StrategyWorkbenchE2ETest::shouldSwitchDemoMode()
@@ -539,37 +465,6 @@ void StrategyWorkbenchE2ETest::shouldSwitchDemoMode()
 
     QVariantMap runtimeStatus = viewModel->property("runtimeStatus").toMap();
     QCOMPARE(runtimeStatus.value(QStringLiteral("connection")).toString(), QStringLiteral("Demo: połączenie symulacyjne"));
-
-    const QVariantMap demoInstrument = viewModel->property("instrumentDetails").toMap();
-    QCOMPARE(demoInstrument.value(QStringLiteral("exchange")).toString(), QStringLiteral("BINANCE"));
-    QCOMPARE(demoInstrument.value(QStringLiteral("venueSymbol")).toString(), QStringLiteral("BTCUSDT"));
-
-    const QVariantMap demoPortfolio = viewModel->property("portfolioSummary").toMap();
-    QVERIFY(demoPortfolio.value(QStringLiteral("maxExposureUtilization")).toDouble() > 0.0);
-
-    QVariant startResult;
-    QVERIFY(QMetaObject::invokeMethod(viewModel, "startScheduler",
-                                      Q_RETURN_ARG(QVariant, startResult)));
-    QVERIFY(startResult.toBool());
-
-    QVariantMap control = viewModel->property("controlState").toMap();
-    QCOMPARE(control.value(QStringLiteral("schedulerRunning")).toBool(), true);
-
-    QVariant refreshResult;
-    QVERIFY(QMetaObject::invokeMethod(viewModel, "triggerRiskRefresh",
-                                      Q_RETURN_ARG(QVariant, refreshResult)));
-    QVERIFY(refreshResult.toBool());
-
-    control = viewModel->property("controlState").toMap();
-    QCOMPARE(control.value(QStringLiteral("manualRefreshCount")).toInt(), 3);
-
-    QVariant stopResult;
-    QVERIFY(QMetaObject::invokeMethod(viewModel, "stopScheduler",
-                                      Q_RETURN_ARG(QVariant, stopResult)));
-    QVERIFY(stopResult.toBool());
-
-    control = viewModel->property("controlState").toMap();
-    QCOMPARE(control.value(QStringLiteral("schedulerRunning")).toBool(), false);
 
     QVERIFY(QMetaObject::invokeMethod(viewModel, "disableDemoMode"));
     QVERIFY(!viewModel->property("demoModeActive").toBool());

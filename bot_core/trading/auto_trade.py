@@ -3,13 +3,21 @@ from __future__ import annotations
 
 import time
 from collections import deque
+from copy import deepcopy
 from dataclasses import dataclass, field
-from typing import Deque, Dict, Iterable, List, Mapping, Optional
+from typing import Any, Deque, Dict, Iterable, List, Mapping, Optional
 
 import numpy as np
 import pandas as pd
 
-from bot_core.ai.regime import MarketRegime, MarketRegimeAssessment, MarketRegimeClassifier, RegimeStrategyWeights
+from bot_core.ai.regime import (
+    MarketRegime,
+    MarketRegimeAssessment,
+    MarketRegimeClassifier,
+    RegimeHistory,
+    RegimeStrategyWeights,
+    RegimeSummary,
+)
 from bot_core.backtest.ma import simulate_trades_ma  # noqa: F401 - zachowaj kompatybilność API
 from bot_core.events import DebounceRule, Event, EventBus, EventType, EmitterAdapter
 
@@ -60,6 +68,12 @@ class AutoTradeEngine:
         self._risk_frozen_until: float = 0.0
         self._submit_market = broker_submit_market
         self._regime_classifier = MarketRegimeClassifier()
+        self._regime_history = RegimeHistory(
+            thresholds_loader=self._regime_classifier.thresholds_loader
+        )
+        self._regime_history.reload_thresholds(
+            thresholds=self._regime_classifier.thresholds_snapshot()
+        )
         self._strategy_weights = RegimeStrategyWeights(
             weights={
                 MarketRegime(regime): dict(weights)
@@ -67,6 +81,7 @@ class AutoTradeEngine:
             }
         )
         self._last_regime: MarketRegimeAssessment | None = None
+        self._last_summary: RegimeSummary | None = None
 
         batch_rule = DebounceRule(window=0.1, max_batch=1)
         self.bus.subscribe(EventType.MARKET_TICK, self._on_ticks_batch, rule=batch_rule)
@@ -305,13 +320,54 @@ class AutoTradeEngine:
                 metrics={},
                 symbol=self.cfg.symbol,
             )
-        if self._last_regime is None or self._last_regime.regime != assessment.regime:
+        self._regime_history.reload_thresholds(
+            thresholds=self._regime_classifier.thresholds_snapshot()
+        )
+        self._regime_history.update(assessment)
+        summary = self._regime_history.summarise()
+        should_emit = self._last_regime is None or (
+            self._last_regime.regime != assessment.regime
+        )
+        if not should_emit and summary is not None and self._last_summary is not None:
+            if summary.risk_level != self._last_summary.risk_level:
+                should_emit = True
+            else:
+                risk_delta = abs(summary.risk_score - self._last_summary.risk_score)
+                if risk_delta >= 0.1:
+                    should_emit = True
+        if should_emit:
+            detail = assessment.to_dict()
+            if summary is not None:
+                detail["summary"] = summary.to_dict()
+                detail["thresholds"] = self._regime_history.thresholds_snapshot()
             self.adapter.push_autotrade_status(  # type: ignore[attr-defined]
                 "regime_update",
-                detail=assessment.to_dict(),
+                detail=detail,
             )
         self._last_regime = assessment
+        if summary is not None:
+            self._last_summary = summary
         return assessment
+
+    def get_last_regime_assessment(self) -> MarketRegimeAssessment | None:
+        """Zwróć ostatnią ocenę reżimu (bez możliwości modyfikacji stanu)."""
+
+        if self._last_regime is None:
+            return None
+        return deepcopy(self._last_regime)
+
+    def get_regime_summary(self) -> RegimeSummary | None:
+        """Zwróć wygładzoną historię reżimu jako kopię defensywną."""
+
+        summary = self._regime_history.summarise()
+        if summary is None:
+            return None
+        return deepcopy(summary)
+
+    def get_regime_thresholds(self) -> Mapping[str, Any]:
+        """Udostępnij aktualnie aktywne progi klasyfikatora."""
+
+        return self._regime_history.thresholds_snapshot()
 
 
 __all__ = ["AutoTradeConfig", "AutoTradeEngine"]

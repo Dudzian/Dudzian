@@ -526,15 +526,6 @@ if(BUILD_TESTING)
         FILES
             qml/components/workbench/StrategyWorkbench.qml
             qml/components/workbench/StrategyWorkbenchViewModel.qml
-            qml/components/workbench/StrategyWorkbenchPresets.js
-            qml/components/workbench/StrategyWorkbenchUtils.js
-            qml/components/workbench/panels/StrategyDashboardPanel.qml
-            qml/components/workbench/panels/InstrumentOverviewPanel.qml
-            qml/components/workbench/panels/ExchangeManagementPanel.qml
-            qml/components/workbench/panels/AiConfigurationPanel.qml
-            qml/components/workbench/panels/ResultsAnalysisPanel.qml
-            qml/components/workbench/panels/RuntimeStatusPanel.qml
-            qml/components/workbench/panels/LicenseStatusPanel.qml
     )
     target_link_libraries(strategy_workbench_e2e_tests
         PRIVATE
