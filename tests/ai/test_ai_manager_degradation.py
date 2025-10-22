@@ -120,8 +120,38 @@ def test_ai_manager_clears_degradation_with_real_backend(monkeypatch: pytest.Mon
     monkeypatch.setattr(manager_module, "_AIModels", stub_backend)
     manager = manager_module.AIManager()
     assert manager.is_degraded is False
+    assert manager.degradation_details == ()
+    assert manager.degradation_exceptions == ()
+    assert manager.degradation_exception_types == ()
+    assert manager.degradation_exception_diagnostics == ()
     manager._decision_inferences["stub"] = object()  # type: ignore[attr-defined]
     manager.require_real_models()
+
+
+@pytest.mark.skipif(sys.version_info < (3, 11), reason="ExceptionGroup dostępne od Pythona 3.11")
+def test_collect_exception_messages_preserves_primary_order() -> None:
+    primary = ImportError("primary failure")
+    secondary = ModuleNotFoundError("secondary failure")
+    bundled = manager_module._bundle_import_errors(primary, secondary)
+    details = manager_module._collect_exception_messages(bundled)
+    assert len(details) >= 3
+    assert "primary failure" in details[1]
+    assert "secondary failure" in details[2]
+
+
+def test_collect_exception_types_respects_import_chain() -> None:
+    primary = ImportError("primary failure")
+    secondary = ModuleNotFoundError("secondary failure")
+    bundled = manager_module._bundle_import_errors(primary, secondary)
+    types = manager_module._collect_exception_types(bundled)
+    assert types
+    if sys.version_info >= (3, 11):
+        assert types[0].endswith("ExceptionGroup")
+        assert any(name.endswith("ModuleNotFoundError") for name in types)
+    else:
+        assert types[0].endswith("ModuleNotFoundError")
+        assert len(types) >= 2
+        assert types[1].endswith("ImportError")
 
 
 def test_ai_manager_degrades_on_quality_thresholds(tmp_path: Path) -> None:
@@ -149,6 +179,16 @@ def test_ai_manager_degrades_on_quality_thresholds(tmp_path: Path) -> None:
     assert manager.is_degraded is True
     assert manager.degradation_reason is not None
     assert "quality" in manager.degradation_reason.lower()
+    assert any("quality" in detail.lower() for detail in manager.degradation_details)
+    assert any("directional_accuracy" in detail for detail in manager.degradation_details)
+    assert any("mae" in detail for detail in manager.degradation_details)
+    assert manager.degradation_exception_types == ("builtins.RuntimeError",)
+    assert len(manager.degradation_exceptions) == 1
+    assert isinstance(manager.degradation_exceptions[0], RuntimeError)
+    diagnostics = manager.degradation_exception_diagnostics
+    assert diagnostics
+    assert diagnostics[0].type_name == "builtins.RuntimeError"
+    assert "quality" in diagnostics[0].formatted.lower()
 
 
 def test_ai_manager_clears_fallback_degradation_when_backend_ready(
@@ -165,3 +205,7 @@ def test_ai_manager_clears_fallback_degradation_when_backend_ready(
     manager._mark_backend_ready(inference)
     assert manager.is_degraded is False
     assert manager.degradation_reason is None
+    assert manager.degradation_details == ()
+    assert manager.degradation_exception_types == ()
+    assert manager.degradation_exceptions == ()
+    assert manager.degradation_exception_diagnostics == ()

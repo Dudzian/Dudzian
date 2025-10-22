@@ -387,6 +387,57 @@ class EnsembleRegistryDiff:
         return tuple(sorted(set(self.added) | set(self.removed) | set(self.changed)))
 
 
+@dataclass(frozen=True, slots=True)
+class ExceptionDiagnostics:
+    """Struktura opisująca pojedynczy wyjątek z łańcucha degradacji."""
+
+    module: str
+    qualname: str
+    message: str
+
+    @property
+    def type_name(self) -> str:
+        return f"{self.module}.{self.qualname}" if self.module else self.qualname
+
+    @property
+    def formatted(self) -> str:
+        text = self.message.strip()
+        if text:
+            return f"{self.type_name}: {text}"
+        return self.type_name
+
+    def as_dict(self) -> Dict[str, str]:
+        data: Dict[str, str] = {
+            "module": self.module,
+            "qualname": self.qualname,
+            "type": self.type_name,
+            "formatted": self.formatted,
+        }
+        if self.message:
+            data["message"] = self.message
+        return data
+
+
+@dataclass(frozen=True, slots=True)
+class BackendStatus:
+    """Migawka stanu backendu modeli AI."""
+
+    degraded: bool
+    reason: str | None
+    details: Tuple[str, ...] = ()
+    exception_types: Tuple[str, ...] = ()
+    exception_diagnostics: Tuple[ExceptionDiagnostics, ...] = ()
+
+    def as_dict(self) -> Dict[str, object]:
+        return {
+            "degraded": self.degraded,
+            "reason": self.reason,
+            "details": list(self.details),
+            "exception_types": list(self.exception_types),
+            "exception_diagnostics": [diag.as_dict() for diag in self.exception_diagnostics],
+        }
+
+
 @dataclass(slots=True)
 class DriftReport:
     """Raport detekcji dryfu danych wejściowych."""
@@ -519,8 +570,12 @@ class AIManager:
         self._regime_classifier = MarketRegimeClassifier()
         self._latest_regimes: Dict[str, MarketRegimeAssessment] = {}
         self._regime_histories: Dict[str, RegimeHistory] = {}
-        self._degraded = bool(_AI_IMPORT_ERROR)
+        self._degraded = False
         self._degradation_reason: str | None = None
+        self._degradation_details: Tuple[str, ...] = ()
+        self._degradation_exceptions: Tuple[BaseException, ...] = ()
+        self._degradation_exception_types: Tuple[str, ...] = ()
+        self._degradation_exception_diagnostics: Tuple[ExceptionDiagnostics, ...] = ()
         self._decision_model_repository: ModelRepository | None = None
         self._model_repository: ModelRepository | None = None
         self._repository_models: Dict[str, DecisionModelInference] = {}
@@ -684,14 +739,54 @@ class AIManager:
 
         return self._degradation_reason
 
+    @property
+    def degradation_details(self) -> Tuple[str, ...]:
+        """Zwraca szczegóły degradacji backendu."""
+
+        return self._degradation_details
+
+    @property
+    def degradation_exceptions(self) -> Tuple[BaseException, ...]:
+        """Zwraca krotkę wyjątków opisujących degradację (jeśli dostępne)."""
+
+        return self._degradation_exceptions
+
+    @property
+    def degradation_exception_types(self) -> Tuple[str, ...]:
+        """Zwraca nazwy klas wyjątków związanych z degradacją."""
+
+        return self._degradation_exception_types
+
+    @property
+    def degradation_exception_diagnostics(self) -> Tuple[ExceptionDiagnostics, ...]:
+        """Zwraca szczegółowe dane wyjątków użyte do diagnostyki backendu."""
+
+        return self._degradation_exception_diagnostics
+
+    def backend_status(self) -> BackendStatus:
+        """Zwraca migawkę stanu backendu modeli AI."""
+
+        return BackendStatus(
+            degraded=self._degraded,
+            reason=self._degradation_reason,
+            details=self._degradation_details,
+            exception_types=self._degradation_exception_types,
+            exception_diagnostics=self._degradation_exception_diagnostics,
+        )
+
     def require_real_models(self) -> None:
         """Zgłasza wyjątek gdy dostępne są tylko fallbackowe modele AI."""
 
         if self._degraded or (not self._decision_inferences and not self._repository_models):
             reason = self._degradation_reason or "AI backend in degraded mode"
+            detail_text = ""
+            if self._degradation_details:
+                joined = " | ".join(self._degradation_details)
+                detail_text = f" (details: {joined})"
             raise RuntimeError(
                 "Real models are required for live trading; current backend is degraded: "
                 + str(reason)
+                + detail_text
             )
 
     # -------------------------- Harmonogram treningów --------------------------
@@ -985,7 +1080,7 @@ class AIManager:
         self._decision_inferences[normalized_name] = inference
         if set_default or self._decision_default_name is None:
             self._decision_default_name = normalized_name
-        quality_ok = self._evaluate_decision_model_quality(inference, normalized_name)
+        quality_ok, quality_details = self._evaluate_decision_model_quality(inference, normalized_name)
         if self._decision_orchestrator is not None:
             try:
                 self._decision_orchestrator.attach_named_inference(
@@ -999,10 +1094,17 @@ class AIManager:
                 )
         self._mark_backend_ready(inference)
         if not quality_ok:
+            message = f"Decision model {normalized_name} failed quality thresholds"
+            details = tuple(quality_details) if quality_details else (message,)
+            error = RuntimeError(message)
             self._degraded = True
-            self._degradation_reason = (
-                f"Decision model {normalized_name} failed quality thresholds"
+            self._degradation_reason = message
+            self._degradation_details = details
+            self._degradation_exceptions = (error,)
+            self._degradation_exception_types = (
+                f"{error.__class__.__module__}.{error.__class__.__qualname__}",
             )
+            self._degradation_exception_diagnostics = _build_exception_diagnostics(error)
         return inference
 
     def ingest_model_repository(
@@ -1394,6 +1496,10 @@ class AIManager:
             if _is_fallback_degradation(self._degradation_reason):
                 self._degraded = False
                 self._degradation_reason = None
+                self._degradation_details = ()
+                self._degradation_exceptions = ()
+                self._degradation_exception_types = ()
+                self._degradation_exception_diagnostics = ()
             return
         if _AI_IMPORT_ERROR is not None:
             return
@@ -1401,13 +1507,17 @@ class AIManager:
             if _is_fallback_degradation(self._degradation_reason):
                 self._degraded = False
                 self._degradation_reason = None
+                self._degradation_details = ()
+                self._degradation_exceptions = ()
+                self._degradation_exception_types = ()
+                self._degradation_exception_diagnostics = ()
 
     def _evaluate_decision_model_quality(
         self, inference: DecisionModelInference, name: str
-    ) -> bool:
+    ) -> Tuple[bool, Tuple[str, ...]]:
         artifact = getattr(inference, "_artifact", None)
         if artifact is None:
-            return True
+            return True, ()
         metadata = getattr(artifact, "metadata", {}) or {}
         thresholds = metadata.get("quality_thresholds", {}) if isinstance(metadata, Mapping) else {}
         min_directional = float(thresholds.get("min_directional_accuracy", 0.5))
@@ -1437,8 +1547,17 @@ class AIManager:
                 min_directional,
                 max_mae,
             )
-            return False
-        return True
+            details: List[str] = [
+                f"Decision model {name} failed quality thresholds",
+            ]
+            if directional < min_directional:
+                details.append(
+                    f"directional_accuracy={directional:.3f} < min {min_directional:.3f}"
+                )
+            if mae > max_mae:
+                details.append(f"mae={mae:.3f} > max {max_mae:.3f}")
+            return False, tuple(details)
+        return True, ()
 
     def _compose_performance_metrics(
         self,
