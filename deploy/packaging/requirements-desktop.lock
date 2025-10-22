@@ -1,0 +1,43 @@
+# Lockfile wygenerowany poleceniem:
+#   pip install -r deploy/packaging/requirements-desktop.txt
+#   pip freeze > deploy/packaging/requirements-desktop.lock
+# Aktualizuj po zmianie wersji w requirements-desktop.txt lub zależnościach projektu.
+altgraph==0.17.4
+arrow==1.4.0
+binaryornot==0.4.4
+briefcase==0.3.18
+build==1.3.0
+certifi==2025.10.5
+chardet==5.2.0
+charset-normalizer==3.4.4
+click==8.3.0
+cookiecutter==2.6.0
+gitdb==4.0.12
+GitPython==3.1.45
+idna==3.11
+Jinja2==3.1.6
+joblib==1.4.2
+markdown-it-py==4.0.0
+MarkupSafe==3.0.3
+mdurl==0.1.2
+numpy==1.26.4
+packaging==25.0
+pandas==2.2.2
+platformdirs==4.5.0
+psutil==5.9.8
+Pygments==2.19.2
+pyinstaller==6.5.0
+pyinstaller-hooks-contrib==2025.9
+pyproject_hooks==1.2.0
+python-dateutil==2.9.0.post0
+python-slugify==8.0.4
+pytz==2025.2
+PyYAML==6.0.3
+requests==2.32.5
+rich==13.9.4
+six==1.17.0
+smmap==5.0.2
+text-unidecode==1.3
+tomli_w==1.2.0
+tzdata==2025.2
+urllib3==2.5.0

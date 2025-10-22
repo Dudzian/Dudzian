@@ -29,12 +29,7 @@ from typing import Any, Callable, Dict, Mapping, Optional, Protocol, Sequence, c
 import pandas as pd
 
 from bot_core.auto_trader.audit import DecisionAuditLog
-from bot_core.auto_trader.schedule import (
-    ScheduleOverride,
-    ScheduleState,
-    ScheduleWindow,
-    TradingSchedule,
-)
+from bot_core.auto_trader.schedule import ScheduleState, TradingSchedule
 from bot_core.ai.regime import (
     MarketRegime,
     MarketRegimeAssessment,
@@ -812,73 +807,6 @@ class AutoTrader:
             return TradingSchedule.always_on(mode=self._initial_mode, timezone_name=str(tz_name))
         return TradingSchedule.always_on(mode=self._initial_mode)
 
-    def set_work_schedule(
-        self,
-        schedule: TradingSchedule | Mapping[str, object] | Sequence[object] | None,
-        *,
-        reason: str | None = None,
-    ) -> ScheduleState:
-        """Replace the active work schedule and publish its state."""
-
-        if schedule is not None and not isinstance(schedule, TradingSchedule):
-            if isinstance(schedule, Mapping) or (
-                isinstance(schedule, Sequence)
-                and not isinstance(schedule, (str, bytes, bytearray))
-            ):
-                schedule = TradingSchedule.from_payload(schedule)
-            else:
-                raise TypeError("schedule must be a TradingSchedule or serialisable payload")
-        if schedule is None:
-            schedule = self._build_default_work_schedule()
-            with self._lock:
-                self._work_schedule = schedule
-            update_reason = reason or "reset"
-        else:
-            update_reason = reason or "update"
-
-        state = schedule.describe()
-        with self._lock:
-            self._work_schedule = schedule
-            self._schedule_state = state
-            self._schedule_mode = state.mode
-            self._last_schedule_snapshot = (state.mode, state.is_open)
-
-        status = "open" if state.is_open else "closed"
-        self._log(
-            f"Trading schedule updated to mode={state.mode} ({status})",
-            level=logging.INFO,
-            reason=update_reason,
-        )
-
-        payload = _serialize_schedule_state(state)
-        payload["reason"] = update_reason
-        self._record_decision_audit_stage(
-            "schedule_configured",
-            symbol=_SCHEDULE_SYMBOL,
-            payload=payload,
-        )
-        self._emit_schedule_state_event(state, reason=update_reason)
-        return state
-
-    def get_schedule_state(self) -> ScheduleState:
-        """Return the latest schedule state, recalculating it if needed."""
-
-        schedule = getattr(self, "_work_schedule", None)
-        if schedule is None:
-            schedule = self._build_default_work_schedule()
-            with self._lock:
-                self._work_schedule = schedule
-        state = schedule.describe()
-        with self._lock:
-            self._schedule_state = state
-            self._schedule_mode = state.mode
-        return state
-
-    def is_schedule_open(self) -> bool:
-        """Return ``True`` when the work schedule allows trading."""
-
-        return self.get_schedule_state().is_open
-
     @staticmethod
     def _detect_environment_name(bootstrap_context: Any | None) -> str:
         if bootstrap_context is None:
@@ -960,14 +888,6 @@ class AutoTrader:
                 f"Trading schedule switched to mode={state.mode} ({status})",
                 level=logging.INFO,
             )
-            payload = _serialize_schedule_state(state)
-            payload["reason"] = "transition"
-            self._record_decision_audit_stage(
-                "schedule_transition",
-                symbol=_SCHEDULE_SYMBOL,
-                payload=payload,
-            )
-            self._emit_schedule_state_event(state, reason="transition")
             self._last_schedule_snapshot = snapshot
         if not state.is_open:
             delay = state.time_until_transition or self.auto_trade_interval_s
@@ -1005,18 +925,6 @@ class AutoTrader:
             )
         except Exception:  # pragma: no cover - audit log failures should not break trading
             LOGGER.debug("Decision audit logging failed", exc_info=True)
-
-    def _emit_schedule_state_event(self, state: ScheduleState, *, reason: str | None = None) -> None:
-        emitter_emit = getattr(self.emitter, "emit", None)
-        if not callable(emitter_emit):
-            return
-        payload = _serialize_schedule_state(state)
-        if reason is not None:
-            payload["reason"] = reason
-        try:
-            emitter_emit("auto_trader.schedule_state", **payload)
-        except Exception:  # pragma: no cover - emission should not break trading
-            LOGGER.debug("Schedule state emission failed", exc_info=True)
 
     def _capture_risk_snapshot(self) -> Mapping[str, object] | None:
         service = self.risk_service or getattr(self, "core_risk_engine", None)
