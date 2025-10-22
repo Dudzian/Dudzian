@@ -677,15 +677,95 @@ def test_training_and_inference(tmp_path: Path, ohlcv_rows: list[tuple[float, ..
     for stats in scalers.values():
         assert "mean" in stats and "stdev" in stats
 
-    assert artifact.metadata["training_rows"] + artifact.metadata["validation_rows"] == len(
-        dataset.vectors
+    assert (
+        artifact.metadata["training_rows"]
+        + artifact.metadata["validation_rows"]
+        + artifact.metadata["test_rows"]
+        == len(dataset.vectors)
     )
     assert artifact.metadata["validation_rows"] > 0
+    assert artifact.metadata["test_rows"] == 0
     assert pytest.approx(artifact.metadata["validation_split"], rel=1e-6) == 0.2
+    assert artifact.metadata["dataset_split"]["test_ratio"] == pytest.approx(0.0)
     assert "validation_metrics" in artifact.metadata
+    assert "dataset_split" in artifact.metadata
     assert "validation_mae" in artifact.metrics
     assert "train_mae" in artifact.metrics
+    assert "test_mae" not in artifact.metrics
+    assert "train_mse" in artifact.metrics
+    assert "validation_mse" in artifact.metrics
+    assert "test_mse" not in artifact.metrics
+    assert "train_r2" in artifact.metrics
+    assert "validation_r2" in artifact.metrics
+    assert "test_r2" not in artifact.metrics
+    assert "train_median_absolute_error" in artifact.metrics
+    assert "validation_median_absolute_error" in artifact.metrics
+    assert "test_median_absolute_error" not in artifact.metrics
+    assert "train_explained_variance" in artifact.metrics
+    assert "validation_explained_variance" in artifact.metrics
+    assert "test_explained_variance" not in artifact.metrics
+    assert "train_max_error" in artifact.metrics
+    assert "validation_max_error" in artifact.metrics
+    assert "test_max_error" not in artifact.metrics
+    assert "train_smape" in artifact.metrics
+    assert "validation_smape" in artifact.metrics
+    assert "test_smape" not in artifact.metrics
+    assert "train_mean_bias_error" in artifact.metrics
+    assert "validation_mean_bias_error" in artifact.metrics
+    assert "test_mean_bias_error" not in artifact.metrics
+    assert "train_wmape" in artifact.metrics
+    assert "validation_wmape" in artifact.metrics
+    assert "test_wmape" not in artifact.metrics
+    assert "train_mpe" in artifact.metrics
+    assert "validation_mpe" in artifact.metrics
+    assert "test_mpe" not in artifact.metrics
+    assert "train_rmspe" in artifact.metrics
+    assert "validation_rmspe" in artifact.metrics
+    assert "test_rmspe" not in artifact.metrics
+    assert "train_mase" in artifact.metrics
+    assert "validation_mase" in artifact.metrics
+    assert "test_mase" not in artifact.metrics
+    assert "train_median_percentage_error" in artifact.metrics
+    assert "validation_median_percentage_error" in artifact.metrics
+    assert "test_median_percentage_error" not in artifact.metrics
+    assert "train_median_absolute_percentage_error" in artifact.metrics
+    assert "validation_median_absolute_percentage_error" in artifact.metrics
+    assert "test_median_absolute_percentage_error" not in artifact.metrics
+    assert "train_msle" in artifact.metrics
+    assert "validation_msle" in artifact.metrics
+    assert "test_msle" not in artifact.metrics
+    assert "train_mean_absolute_log_error" in artifact.metrics
+    assert "validation_mean_absolute_log_error" in artifact.metrics
+    assert "test_mean_absolute_log_error" not in artifact.metrics
+    assert "train_mean_poisson_deviance" in artifact.metrics
+    assert "validation_mean_poisson_deviance" in artifact.metrics
+    assert "test_mean_poisson_deviance" not in artifact.metrics
+    assert "train_mean_gamma_deviance" in artifact.metrics
+    assert "validation_mean_gamma_deviance" in artifact.metrics
+    assert "test_mean_gamma_deviance" not in artifact.metrics
+    assert "train_mean_tweedie_deviance" in artifact.metrics
+    assert "validation_mean_tweedie_deviance" in artifact.metrics
+    assert "test_mean_tweedie_deviance" not in artifact.metrics
+    assert "median_absolute_error" in artifact.metrics
+    assert "explained_variance" in artifact.metrics
+    assert "max_error" in artifact.metrics
+    assert "smape" in artifact.metrics
+    assert "mean_bias_error" in artifact.metrics
+    assert "wmape" in artifact.metrics
+    assert "mpe" in artifact.metrics
+    assert "rmspe" in artifact.metrics
+    assert "median_percentage_error" in artifact.metrics
+    assert "median_absolute_percentage_error" in artifact.metrics
+    assert "mse" in artifact.metrics
+    assert "mase" in artifact.metrics
+    assert "msle" in artifact.metrics
+    assert "mean_absolute_log_error" in artifact.metrics
+    assert "mean_poisson_deviance" in artifact.metrics
+    assert "mean_gamma_deviance" in artifact.metrics
+    assert "mean_tweedie_deviance" in artifact.metrics
     assert artifact.metrics["mae"] == pytest.approx(artifact.metrics["train_mae"])
+    assert artifact.metrics["mse"] == pytest.approx(artifact.metrics["train_mse"])
+    assert artifact.metrics["mase"] == pytest.approx(artifact.metrics["train_mase"])
 
     inference = DecisionModelInference(repo)
     inference.load_weights(artifact_path)
