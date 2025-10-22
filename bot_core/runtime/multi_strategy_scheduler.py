@@ -4,7 +4,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
-from collections import Counter, defaultdict
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -593,8 +592,6 @@ class MultiStrategyScheduler:
         return self._suspension_manager.resume_tag(tag)
 
     def suspension_snapshot(self) -> Mapping[str, Mapping[str, object]]:
-        """Zwraca aktualną migawkę aktywnych zawieszeń."""
-
         return self._suspension_manager.snapshot()
     def attach_portfolio_coordinator(
         self, coordinator: "PortfolioRuntimeCoordinator"

@@ -227,9 +227,11 @@ ai_model_management:
       learning_rate: 0.05
       discount_factor: 0.9
       min_directional_accuracy: 0.58
-      heuristics: [momentum, volatility]
-  latency_spike_ms: 80.0
-  slippage_multiplier: 1.35
+      heuristics:
+        - momentum
+        - volatility
+      latency_spike_ms: 80.0
+      slippage_multiplier: 1.35
   tco:
     reports:
       - var/audit/tco/latest_report.json

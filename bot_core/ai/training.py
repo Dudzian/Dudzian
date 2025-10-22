@@ -17,15 +17,8 @@ from typing import (
     runtime_checkable,
 )
 
-try:  # pragma: no cover - optional dependency
-    import numpy as np
-except Exception:  # pragma: no cover - numpy may not be available in minimal builds
-    np = None  # type: ignore[assignment]
-
-try:  # pragma: no cover - LightGBM optional
-    import lightgbm as lgb
-except Exception:  # pragma: no cover - gracefully handle missing dependency
-    lgb = None  # type: ignore[assignment]
+import lightgbm as lgb
+import numpy as np
 
 from ._license import ensure_ai_signals_enabled
 from .feature_engineering import FeatureDataset
@@ -415,20 +408,14 @@ class ModelTrainer:
         metadata["backend"] = self.backend
         if self.validation_split > 0.0:
             metadata["validation_split"] = self.validation_split
-        total_rows = (
-            len(train_matrix) + len(validation_matrix) + len(test_matrix)
-        )
+        total_rows = len(matrix)
         if total_rows > 0:
-            train_ratio = len(train_matrix) / total_rows
-            validation_ratio = len(validation_matrix) / total_rows
-            test_ratio = len(test_matrix) / total_rows
             metadata["dataset_split"] = {
-                "train_ratio": float(train_ratio),
-                "validation_ratio": float(validation_ratio),
-                "test_ratio": float(test_ratio),
-                "train_rows": len(train_matrix),
-                "validation_rows": len(validation_matrix),
-                "test_rows": len(test_matrix),
+                "train_ratio": len(train_matrix) / total_rows,
+                "validation_ratio": len(validation_matrix) / total_rows,
+                "test_ratio": len(test_matrix) / total_rows,
+                "requested_validation_ratio": self.validation_split,
+                "requested_test_ratio": self.test_split,
             }
         cv_summary = self._cross_validate_matrix(matrix, targets, feature_names)
         metadata["cross_validation"] = {
@@ -1156,8 +1143,6 @@ class _LightGBMAdapterModel:
         scalers: Mapping[str, tuple[float, float]],
         booster: "lgb.Booster",
     ) -> None:
-        if lgb is None:
-            raise RuntimeError("LightGBM backend is not available")
         self.feature_names = [str(name) for name in feature_names]
         self.feature_scalers = {
             str(name): (float(pair[0]), float(pair[1])) for name, pair in scalers.items()
@@ -1177,8 +1162,6 @@ class _LightGBMAdapterModel:
         return [float(value) for value in predictions]
 
     def _matrix_from_samples(self, samples: Sequence[Mapping[str, float]]):
-        if np is None:
-            raise RuntimeError("NumPy is required for LightGBM inference")
         rows: list[list[float]] = []
         for sample in samples:
             vector: list[float] = []
@@ -1295,8 +1278,6 @@ def _linear_adapter_load(
 
 
 def _lightgbm_adapter_train(context: ExternalTrainingContext) -> ExternalTrainingResult:
-    if lgb is None or np is None:
-        raise RuntimeError("LightGBM backend is not available in this environment")
     params = {
         "objective": context.options.get("objective", "regression"),
         "metric": context.options.get("metric", ["l2", "l1"]),
@@ -1362,8 +1343,6 @@ def _lightgbm_adapter_load(
     feature_names: Sequence[str],
     metadata: Mapping[str, object],
 ) -> SupportsInference:
-    if lgb is None:
-        raise RuntimeError("LightGBM backend is not available in this environment")
     model_str = state.get("model_str")
     if not isinstance(model_str, str):
         raise ValueError("Invalid LightGBM state: missing 'model_str'")
@@ -1378,22 +1357,6 @@ def _lightgbm_adapter_load(
             stdev = float(payload.get("stdev", 0.0))
             scalers[str(name)] = (mean, stdev)
     return _LightGBMAdapterModel(feature_names, scalers, booster)
-
-
-def _missing_lightgbm_adapter_train(context: ExternalTrainingContext) -> ExternalTrainingResult:
-    raise RuntimeError(
-        "LightGBM backend requested but the 'lightgbm' or 'numpy' package is not installed"
-    )
-
-
-def _missing_lightgbm_adapter_load(
-    state: Mapping[str, object],
-    feature_names: Sequence[str],
-    metadata: Mapping[str, object],
-) -> SupportsInference:
-    raise RuntimeError(
-        "Cannot load LightGBM model because the backend dependencies are missing"
-    )
 
 
 def _ensure_default_external_adapters() -> None:
@@ -1414,22 +1377,13 @@ def _ensure_default_external_adapters() -> None:
             )
         )
     if "lightgbm" not in _EXTERNAL_ADAPTERS:
-        if lgb is not None and np is not None:
-            register_external_model_adapter(
-                ExternalModelAdapter(
-                    backend="lightgbm",
-                    train=_lightgbm_adapter_train,
-                    load=_lightgbm_adapter_load,
-                )
+        register_external_model_adapter(
+            ExternalModelAdapter(
+                backend="lightgbm",
+                train=_lightgbm_adapter_train,
+                load=_lightgbm_adapter_load,
             )
-        else:
-            register_external_model_adapter(
-                ExternalModelAdapter(
-                    backend="lightgbm",
-                    train=_missing_lightgbm_adapter_train,
-                    load=_missing_lightgbm_adapter_load,
-                )
-            )
+        )
 
 
 _ensure_default_external_adapters()
