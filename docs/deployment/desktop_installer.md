@@ -8,8 +8,62 @@ spakowania artefaktów w katalogu `var/dist/desktop`.
 ## Wymagania
 
 * Zbudowana wersja `Release` aplikacji (`bot_trading_shell`) z katalogu `ui/`.
-* Zainstalowany `pyinstaller` (np. `pip install pyinstaller`).
+* Środowisko Pythona zainstalowane wg `deploy/packaging/requirements-desktop.txt`
+  (obejmuje `numpy`, `pandas`, `joblib`, `pyinstaller`, `briefcase`).
+* Zablokowany zestaw zależności z `deploy/packaging/requirements-desktop.lock`
+  dla stanowisk bez dostępu do internetu.
 * Klucz HMAC używany do podpisania binarki updatera.
+
+Przed uruchomieniem procesu budowania wykonaj:
+
+```bash
+python -m venv .venv-desktop
+source .venv-desktop/bin/activate
+pip install --upgrade pip
+pip install -r deploy/packaging/requirements-desktop.txt
+# aby odwzorować dokładny zestaw wersji, zaimportuj lockfile:
+# pip install -r deploy/packaging/requirements-desktop.lock
+# w środowiskach offline wskaż katalog z lokalnymi kołami, np.:
+# pip install --no-index --find-links dist/ -r deploy/packaging/requirements-desktop.lock
+# a następnie doinstaluj bieżący projekt oraz zależności desktopowe z lokalnego koła
+pip install --no-index --find-links dist/ 'dudzian-bot[desktop]'
+```
+
+> **Uwaga:** przed dystrybucją artefaktów offline zbuduj pakiet kołowy poleceniem
+> `pip wheel . -w dist/`, aby `pip` mógł rozwiązać zależność `dudzian-bot` bez
+> dostępu do internetu.
+
+## Walidacja środowiska zależności
+
+Po odtworzeniu środowiska z lockfile zalecamy potwierdzić, że najważniejsze
+moduły AI oraz strategie startują bez brakujących importów:
+
+```bash
+pytest \
+  tests/test_ai_manager_multimodel.py \
+  tests/test_cross_exchange_arbitrage_strategy.py \
+  tests/test_build_desktop_installer.py \
+  tests/test_desktop_environment_imports.py \
+  tests/test_pyproject_desktop_dependencies.py \
+  tests/test_requirements_desktop_txt.py \
+  tests/test_requirements_desktop_lock.py
+```
+
+Powyższe testy uruchamiają wielomodelowego menedżera AI, sprawdzają strategię
+arbitrażu międzygiełdowego oraz scenariusz budowy instalatora desktopowego, co
+pozwala szybko wykryć brakujące biblioteki numeryczne.
+Dodatkowo `tests/test_desktop_environment_imports.py` upewnia się, że moduły
+UI oraz podstawowe biblioteki (`numpy`, `pandas`, `joblib`) są dostępne w
+środowisku.
+Dodatkowo test `tests/test_pyproject_desktop_dependencies.py` pilnuje, aby
+deklaracje zależności w `pyproject.toml` zawsze obejmowały stos numeryczny
+oraz pakiety bundlujące wymagane do budowy instalatora.
+Dodatkowo test `tests/test_requirements_desktop_txt.py` weryfikuje, że
+`requirements-desktop.txt` pozostaje zsynchronizowany z deklaracjami w
+`pyproject.toml`, a przypięte wersje spełniają zadeklarowane ograniczenia.
+Dodatkowo test `tests/test_requirements_desktop_lock.py` kontroluje spójność
+lockfile względem listy pakietów, dzięki czemu bundle nie powstanie na
+niezsynchronizowanym zestawie zależności.
 
 ## Kroki
 
