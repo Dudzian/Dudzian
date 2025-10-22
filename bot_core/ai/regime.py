@@ -147,36 +147,6 @@ class MarketRegimeClassifier:
             symbol=symbol,
         )
 
-
-@dataclass(frozen=True)
-class RegimeStrategyWeights:
-    """Mapping between market regimes and strategy allocations."""
-
-    weights: Mapping[MarketRegime, Mapping[str, float]]
-
-    @classmethod
-    def default(cls) -> "RegimeStrategyWeights":
-        return cls(
-            weights={
-                MarketRegime.TREND: {"trend_following": 0.6, "daily_breakout": 0.3, "mean_reversion": 0.1},
-                MarketRegime.DAILY: {"trend_following": 0.2, "daily_breakout": 0.6, "mean_reversion": 0.2},
-                MarketRegime.MEAN_REVERSION: {"trend_following": 0.1, "daily_breakout": 0.2, "mean_reversion": 0.7},
-            }
-        )
-
-    def weights_for(self, regime: MarketRegime, *, normalize: bool = True) -> Dict[str, float]:
-        allocation = dict(self.weights.get(regime, {}))
-        if not allocation:
-            allocation = dict(self.weights.get(MarketRegime.TREND, {}))
-        if not allocation:
-            return {}
-        if not normalize:
-            return allocation
-        total = float(sum(allocation.values()))
-        if total == 0.0:
-            return {name: 0.0 for name in allocation}
-        return {name: float(value) / total for name, value in allocation.items()}
-
     def _compute_metrics(
         self,
         market_data: pd.DataFrame,
@@ -315,6 +285,36 @@ class RegimeStrategyWeights:
                 1.0,
             )
         )
+
+
+@dataclass(frozen=True)
+class RegimeStrategyWeights:
+    """Mapping between market regimes and strategy allocations."""
+
+    weights: Mapping[MarketRegime, Mapping[str, float]]
+
+    @classmethod
+    def default(cls) -> "RegimeStrategyWeights":
+        return cls(
+            weights={
+                MarketRegime.TREND: {"trend_following": 0.6, "daily_breakout": 0.3, "mean_reversion": 0.1},
+                MarketRegime.DAILY: {"trend_following": 0.2, "daily_breakout": 0.6, "mean_reversion": 0.2},
+                MarketRegime.MEAN_REVERSION: {"trend_following": 0.1, "daily_breakout": 0.2, "mean_reversion": 0.7},
+            }
+        )
+
+    def weights_for(self, regime: MarketRegime, *, normalize: bool = True) -> Dict[str, float]:
+        allocation = dict(self.weights.get(regime, {}))
+        if not allocation:
+            allocation = dict(self.weights.get(MarketRegime.TREND, {}))
+        if not allocation:
+            return {}
+        if not normalize:
+            return allocation
+        total = float(sum(allocation.values()))
+        if total == 0.0:
+            return {name: 0.0 for name in allocation}
+        return {name: float(value) / total for name, value in allocation.items()}
 
 
 @dataclass(slots=True)
