@@ -14,6 +14,7 @@ from bot_core.strategies.catalog import (
     DEFAULT_STRATEGY_CATALOG,
     StrategyCatalog,
     StrategyDefinition,
+    StrategyPresetWizard,
 )
 from bot_core.strategies.cross_exchange_arbitrage import (
     CrossExchangeArbitrageSettings,
@@ -41,6 +42,7 @@ __all__ = [
     "DailyTrendMomentumStrategy",
     "StrategyCatalog",
     "StrategyDefinition",
+    "StrategyPresetWizard",
     "DEFAULT_STRATEGY_CATALOG",
     "GridTradingSettings",
     "GridTradingStrategy",

@@ -225,6 +225,7 @@ class AutoTrader:
         controller_runner_factory: Callable[[], Any] | None = None,
         controller_cycle_history_limit: int | None = 32,
         controller_cycle_history_ttl_s: float | None = None,
+        trusted_auto_confirm: bool = False,
     ) -> None:
         self.emitter = emitter
         self.gui = gui
@@ -327,7 +328,8 @@ class AutoTrader:
         self._auto_trade_stop = threading.Event()
         self._auto_trade_thread: threading.Thread | None = None
         self._auto_trade_thread_active = False
-        self._auto_trade_user_confirmed = False
+        self._trusted_auto_confirm = bool(trusted_auto_confirm)
+        self._auto_trade_user_confirmed = self._trusted_auto_confirm
         self._started = False
         self._lock = threading.RLock()
         self._risk_evaluations: list[dict[str, Any]] = []

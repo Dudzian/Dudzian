@@ -875,6 +875,7 @@ class AIManager:
         self._decision_inferences[normalized_name] = inference
         if set_default or self._decision_default_name is None:
             self._decision_default_name = normalized_name
+        quality_ok = self._evaluate_decision_model_quality(inference, normalized_name)
         if self._decision_orchestrator is not None:
             try:
                 self._decision_orchestrator.attach_named_inference(
@@ -887,6 +888,11 @@ class AIManager:
                     "Nie udało się podłączyć inference %s do DecisionOrchestratora", normalized_name
                 )
         self._mark_backend_ready(inference)
+        if not quality_ok:
+            self._degraded = True
+            self._degradation_reason = (
+                f"Decision model {normalized_name} failed quality thresholds"
+            )
         return inference
 
     def ingest_model_repository(
@@ -1274,15 +1280,56 @@ class AIManager:
     def _mark_backend_ready(self, model: Any) -> None:
         if not self._degraded:
             return
+        fallback_reasons = {None, "fallback_ai_models", "backend_validation_failed"}
         if isinstance(model, DecisionModelInference) and getattr(model, "is_ready", False):
-            self._degraded = False
-            self._degradation_reason = None
+            if self._degradation_reason in fallback_reasons:
+                self._degraded = False
+                self._degradation_reason = None
             return
         if _AI_IMPORT_ERROR is not None:
             return
         if getattr(model, "feature_names", None):
-            self._degraded = False
-            self._degradation_reason = None
+            if self._degradation_reason in fallback_reasons:
+                self._degraded = False
+                self._degradation_reason = None
+
+    def _evaluate_decision_model_quality(
+        self, inference: DecisionModelInference, name: str
+    ) -> bool:
+        artifact = getattr(inference, "_artifact", None)
+        if artifact is None:
+            return True
+        metadata = getattr(artifact, "metadata", {}) or {}
+        thresholds = metadata.get("quality_thresholds", {}) if isinstance(metadata, Mapping) else {}
+        min_directional = float(thresholds.get("min_directional_accuracy", 0.5))
+        max_mae = float(thresholds.get("max_mae", 20.0))
+        metrics = getattr(artifact, "metrics", {}) or {}
+        directional = float(
+            metrics.get(
+                "test_directional_accuracy",
+                metrics.get(
+                    "validation_directional_accuracy",
+                    metrics.get("directional_accuracy", 0.0),
+                ),
+            )
+        )
+        mae = float(
+            metrics.get(
+                "test_mae",
+                metrics.get("validation_mae", metrics.get("mae", 0.0)),
+            )
+        )
+        if directional < min_directional or mae > max_mae:
+            logger.warning(
+                "Decision model %s failed quality thresholds (directional=%.3f, mae=%.3f, min_directional=%.3f, max_mae=%.3f)",
+                name,
+                directional,
+                mae,
+                min_directional,
+                max_mae,
+            )
+            return False
+        return True
 
     def _compose_performance_metrics(
         self,

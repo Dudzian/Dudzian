@@ -1539,6 +1539,33 @@ class AutoTradeResult:
         else:
             self.ai_manager._summaries[symbol] = summary
 
+
+def test_auto_trader_trusted_mode_auto_confirms(monkeypatch: pytest.MonkeyPatch) -> None:
+    emitter = _Emitter()
+    gui = _GUI()
+
+    trader = AutoTrader(
+        emitter,
+        gui,
+        symbol_getter=lambda: "BTCUSDT",
+        enable_auto_trade=True,
+        auto_trade_interval_s=0.0,
+        trusted_auto_confirm=True,
+    )
+
+    started: list[bool] = []
+
+    def _fake_start() -> None:
+        started.append(True)
+
+    monkeypatch.setattr(trader, "_start_auto_trade_thread_locked", _fake_start)
+    trader.start()
+
+    assert trader._auto_trade_user_confirmed is True
+    assert started, "Trusted mode did not start the auto-trade loop"
+
+    trader.stop()
+
     def run_followup(
         self,
         *,

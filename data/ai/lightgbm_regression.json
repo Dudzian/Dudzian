@@ -1,0 +1,28 @@
+{
+  "backend": "lightgbm",
+  "validation_split": 0.2,
+  "test_split": 0.1,
+  "adapter_options": {
+    "objective": "regression",
+    "metric": ["l2", "l1"],
+    "learning_rate": 0.05,
+    "num_leaves": 63,
+    "min_data_in_leaf": 16,
+    "num_boost_round": 200,
+    "params": {
+      "feature_fraction": 0.9,
+      "bagging_fraction": 0.8,
+      "bagging_freq": 1
+    }
+  },
+  "drift_monitor": {
+    "threshold": 3.5,
+    "window": 75,
+    "min_observations": 20,
+    "cooldown": 120
+  },
+  "quality_thresholds": {
+    "min_directional_accuracy": 0.6,
+    "max_mae": 20.0
+  }
+}

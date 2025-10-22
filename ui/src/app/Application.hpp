@@ -19,6 +19,7 @@
 #include "grpc/TradingClient.hpp"
 #include "models/AlertsModel.hpp"
 #include "models/AlertsFilterProxyModel.hpp"
+#include "models/DecisionLogModel.hpp"
 #include "models/OhlcvListModel.hpp"
 #include "models/RiskStateModel.hpp"
 #include "models/RiskHistoryModel.hpp"
@@ -54,6 +55,8 @@ class Application : public QObject {
     Q_PROPERTY(QObject*         strategyController READ strategyController CONSTANT)
     Q_PROPERTY(QObject*         supportController READ supportController CONSTANT)
     Q_PROPERTY(QObject*         healthController READ healthController CONSTANT)
+    Q_PROPERTY(QObject*         decisionLogModel READ decisionLogModel CONSTANT)
+    Q_PROPERTY(QString          decisionLogPath READ decisionLogPath NOTIFY decisionLogPathChanged)
     Q_PROPERTY(int              telemetryPendingRetryCount READ telemetryPendingRetryCount NOTIFY telemetryPendingRetryCountChanged)
     Q_PROPERTY(QVariantMap      riskRefreshSchedule READ riskRefreshSchedule NOTIFY riskRefreshScheduleChanged)
     Q_PROPERTY(bool             riskHistoryExportLimitEnabled READ riskHistoryExportLimitEnabled WRITE setRiskHistoryExportLimitEnabled NOTIFY riskHistoryExportLimitEnabledChanged)
@@ -94,6 +97,7 @@ public:
     QObject*         strategyController() const;
     QObject*         supportController() const;
     QObject*         healthController() const;
+    QObject*         decisionLogModel() const;
     QObject*         alertsModel() const { return const_cast<AlertsModel*>(&m_alertsModel); }
     QObject*         alertsFilterModel() const { return const_cast<AlertsFilterProxyModel*>(&m_filteredAlertsModel); }
     QObject*         riskHistoryModel() const { return const_cast<RiskHistoryModel*>(&m_riskHistoryModel); }
@@ -111,6 +115,7 @@ public:
     QString          offlineDaemonStatus() const { return m_offlineStatus; }
     bool             offlineAutomationRunning() const { return m_offlineAutomationRunning; }
     QString          offlineStrategyPath() const { return m_offlineStrategyPath; }
+    QString          decisionLogPath() const { return m_decisionLogPath; }
 
 public slots:
     void start();
@@ -148,6 +153,8 @@ public slots:
     Q_INVOKABLE bool setRiskHistoryAutoExportUseLocalTime(bool useLocalTime);
     Q_INVOKABLE void startOfflineAutomation();
     Q_INVOKABLE void stopOfflineAutomation();
+    Q_INVOKABLE bool setDecisionLogPath(const QUrl& url);
+    Q_INVOKABLE bool reloadDecisionLog();
 
     // Test helpers (persistent UI state)
     void saveUiSettingsImmediatelyForTesting();
@@ -155,6 +162,8 @@ public slots:
     bool uiSettingsPersistenceEnabledForTesting() const { return m_uiSettingsPersistenceEnabled; }
     void setLastRiskHistoryAutoExportForTesting(const QDateTime& timestamp);
     void setRiskHistoryAutoExportLastPathForTesting(const QUrl& url);
+    QString decisionLogPathForTesting() const { return m_decisionLogPath; }
+    DecisionLogModel* decisionLogModelForTesting() { return &m_decisionLogModel; }
 
     // Test helpers
     void ingestFpsSampleForTesting(double fps);
@@ -180,6 +189,7 @@ signals:
     void offlineDaemonStatusChanged();
     void offlineAutomationRunningChanged(bool running);
     void offlineStrategyPathChanged();
+    void decisionLogPathChanged();
 
 private slots:
     void handleHistory(const QList<OhlcvPoint>& candles);
@@ -254,6 +264,7 @@ private:
     void applyRiskHistoryCliOverrides(const QCommandLineParser& parser);
     void configureStrategyBridge(const QCommandLineParser& parser);
     void configureSupportBundle(const QCommandLineParser& parser);
+    void configureDecisionLog(const QCommandLineParser& parser);
     void setUiSettingsPersistenceEnabled(bool enabled);
     void setUiSettingsPath(const QString& path, bool reload = true);
     void loadUiSettings();
@@ -262,6 +273,7 @@ private:
     QJsonObject buildUiSettingsPayload() const;
     void maybeAutoExportRiskHistory(const QDateTime& snapshotTimestamp);
     QString resolveAutoExportFilePath(const QDir& directory, const QString& basename, const QDateTime& timestamp) const;
+    bool setDecisionLogPathInternal(const QString& path, bool emitSignal);
     void setTradingAuthTokenFile(const QString& path);
     void setMetricsAuthTokenFile(const QString& path);
     void setHealthAuthTokenFile(const QString& path);
@@ -294,6 +306,7 @@ private:
     OhlcvListModel         m_ohlcvModel;
     RiskStateModel         m_riskModel;
     RiskHistoryModel       m_riskHistoryModel;
+    DecisionLogModel       m_decisionLogModel;
     TradingClient          m_client;
     std::unique_ptr<OfflineRuntimeBridge> m_offlineBridge;
     AlertsModel            m_alertsModel;
@@ -328,6 +341,7 @@ private:
     QString                                   m_offlineStatus;
     bool                                      m_offlineAutomationRunning = false;
     QString                                   m_offlineStrategyPath;
+    QString                                   m_decisionLogPath;
 
     // Oba kontrolery – aktywacja (app) i licencje OEM (license)
     std::unique_ptr<ActivationController>     m_activationController;

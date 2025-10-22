@@ -71,6 +71,7 @@ set(UI_SOURCES
     src/models/AlertsFilterProxyModel.cpp
     src/models/RiskHistoryModel.cpp
     src/models/RiskStateModel.cpp
+    src/models/DecisionLogModel.cpp
     src/utils/PerformanceGuard.cpp
     src/utils/FrameRateMonitor.cpp
     src/utils/PathUtils.cpp
@@ -97,6 +98,7 @@ set(UI_HEADERS
     src/models/OhlcvListModel.hpp
     src/models/RiskHistoryModel.hpp
     src/models/RiskStateModel.hpp
+    src/models/DecisionLogModel.hpp
     src/models/RiskTypes.hpp
     src/utils/PerformanceGuard.hpp
     src/utils/FrameRateMonitor.hpp
@@ -152,6 +154,7 @@ if(BUILD_TESTING)
         tests/ApplicationHealthConfigTest.cpp
         tests/ApplicationAuthTokenWatcherTest.cpp
         src/app/Application.cpp
+        src/models/DecisionLogModel.cpp
         src/utils/PathUtils.cpp
         src/grpc/TradingClient.cpp
         src/grpc/HealthClient.cpp
@@ -246,6 +249,7 @@ if(BUILD_TESTING)
         src/models/AlertsFilterProxyModel.cpp
         src/models/RiskHistoryModel.cpp
         src/models/RiskStateModel.cpp
+        src/models/DecisionLogModel.cpp
         src/utils/PerformanceGuard.cpp
         src/utils/FrameRateMonitor.cpp
         src/telemetry/UiTelemetryReporter.cpp
@@ -277,6 +281,7 @@ if(BUILD_TESTING)
         src/models/AlertsFilterProxyModel.cpp
         src/models/RiskHistoryModel.cpp
         src/models/RiskStateModel.cpp
+        src/models/DecisionLogModel.cpp
         src/utils/PerformanceGuard.cpp
         src/utils/FrameRateMonitor.cpp
         src/telemetry/UiTelemetryReporter.cpp
@@ -308,6 +313,7 @@ if(BUILD_TESTING)
         src/models/AlertsFilterProxyModel.cpp
         src/models/RiskHistoryModel.cpp
         src/models/RiskStateModel.cpp
+        src/models/DecisionLogModel.cpp
         src/utils/PerformanceGuard.cpp
         src/utils/FrameRateMonitor.cpp
         src/telemetry/UiTelemetryReporter.cpp
@@ -327,6 +333,40 @@ if(BUILD_TESTING)
             gRPC::grpc++
     )
     add_test(NAME application_risk_history_auto_export_tests COMMAND application_risk_history_auto_export_tests)
+
+    add_executable(application_decision_log_tests
+        tests/ApplicationDecisionLogTest.cpp
+        src/app/Application.cpp
+        src/utils/PathUtils.cpp
+        src/grpc/TradingClient.cpp
+        src/grpc/BotCoreLocalService.cpp
+        src/models/OhlcvListModel.cpp
+        src/models/AlertsModel.cpp
+        src/models/AlertsFilterProxyModel.cpp
+        src/models/RiskHistoryModel.cpp
+        src/models/RiskStateModel.cpp
+        src/models/DecisionLogModel.cpp
+        src/utils/PerformanceGuard.cpp
+        src/utils/FrameRateMonitor.cpp
+        src/telemetry/UiTelemetryReporter.cpp
+        src/license/LicenseActivationController.cpp
+        src/security/SecurityAdminController.cpp
+        src/reporting/ReportCenterController.cpp
+        src/support/SupportBundleController.cpp
+        src/health/HealthStatusController.cpp
+    )
+    target_include_directories(application_decision_log_tests PRIVATE src ${GENERATED_DIR})
+    target_link_libraries(application_decision_log_tests
+        PRIVATE
+            Qt6::Core
+            Qt6::Gui
+            Qt6::Quick
+            Qt6::Test
+            trading_proto
+            protobuf::libprotobuf
+            gRPC::grpc++
+    )
+    add_test(NAME application_decision_log_tests COMMAND application_decision_log_tests)
 
     # FrameRateMonitor tests
     add_executable(frame_rate_monitor_tests
@@ -369,6 +409,14 @@ if(BUILD_TESTING)
     target_include_directories(risk_history_model_tests PRIVATE src)
     target_link_libraries(risk_history_model_tests PRIVATE Qt6::Core Qt6::Test)
     add_test(NAME risk_history_model_tests COMMAND risk_history_model_tests)
+
+    add_executable(decision_log_model_tests
+        tests/DecisionLogModelTest.cpp
+        src/models/DecisionLogModel.cpp
+    )
+    target_include_directories(decision_log_model_tests PRIVATE src)
+    target_link_libraries(decision_log_model_tests PRIVATE Qt6::Core Qt6::Test)
+    add_test(NAME decision_log_model_tests COMMAND decision_log_model_tests)
 
     add_executable(alerts_model_tests
         tests/AlertsModelTest.cpp
