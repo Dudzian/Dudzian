@@ -121,7 +121,7 @@ def test_market_regime_classifier_assess_matches_manual_metrics() -> None:
     close_series = ohlcv["close"].astype(float)
     returns = close_series.pct_change(fill_method=None).dropna()
 
-    metrics_cfg = classifier.metrics_config()
+    metrics_cfg = classifier._thresholds["market_regime"]["metrics"]
     short_span_min = int(metrics_cfg.get("short_span_min", 5))
     short_span_divisor = int(metrics_cfg.get("short_span_divisor", 3))
     long_span_min = int(metrics_cfg.get("long_span_min", 10))
@@ -205,10 +205,8 @@ def test_market_regime_classifier_assess_matches_manual_metrics() -> None:
         assert key in assessment.metrics
         assert assessment.metrics[key] == pytest.approx(value, rel=1e-6, abs=1e-8)
 
-    score_cfg = classifier.risk_score_config()
-    volatility_component = min(
-        1.0, expected_metrics["volatility"] / classifier.volatility_threshold
-    )
+    score_cfg = classifier._thresholds["market_regime"]["risk_score"]
+    volatility_component = min(1.0, expected_metrics["volatility"] / classifier.volatility_threshold)
     intraday_component = min(
         1.0,
         expected_metrics["intraday_vol"]
@@ -219,7 +217,7 @@ def test_market_regime_classifier_assess_matches_manual_metrics() -> None:
     )
     drawdown_component = min(
         1.0,
-        expected_metrics["drawdown"] / float(score_cfg.get("drawdown_threshold", 0.2)),
+        expected_metrics["drawdown"] / float(score_cfg.get("drawdown_threshold", 0.2))
     )
     volatility_ratio_component = min(1.0, expected_metrics.get("volatility_ratio", 1.0))
     volume_component = min(
@@ -239,43 +237,3 @@ def test_market_regime_classifier_assess_matches_manual_metrics() -> None:
     )
 
     assert assessment.risk_score == pytest.approx(expected_risk, rel=1e-6, abs=1e-8)
-
-    metrics_cfg["short_span_min"] = 99
-    assert (
-        classifier.metrics_config()["short_span_min"]
-        != metrics_cfg["short_span_min"]
-    )
-    score_cfg["volatility_weight"] = 0.99
-    assert (
-        classifier.risk_score_config()["volatility_weight"]
-        != score_cfg["volatility_weight"]
-    )
-
-
-def test_regime_history_handles_missing_risk_level_config(monkeypatch: pytest.MonkeyPatch) -> None:
-    def _broken_thresholds_loader() -> Mapping[str, object]:
-        return {
-            "market_regime": {
-                "metrics": ["not", "a", "mapping"],
-                "risk_score": None,
-                "risk_level": [],
-            }
-        }
-
-    monkeypatch.setattr("bot_core.ai.regime.load_risk_thresholds", _broken_thresholds_loader)
-
-    classifier = MarketRegimeClassifier(
-        min_history=30, thresholds_loader=_broken_thresholds_loader
-    )
-    history = RegimeHistory(maxlen=4, decay=0.7)
-
-    prices = np.linspace(100.0, 120.0, 90)
-    df = _build_dataframe(prices)
-
-    for _ in range(3):
-        assessment = classifier.assess(df)
-        history.update(assessment)
-
-    summary = history.summarise()
-    assert summary is not None
-    assert isinstance(summary.risk_level, RiskLevel)

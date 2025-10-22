@@ -19,7 +19,6 @@ from bot_core.ai.regime import (
     RegimeHistory,
     RegimeStrategyWeights,
     RegimeSummary,
-    RiskLevel,
 )
 from bot_core.backtest.ma import simulate_trades_ma  # noqa: F401 - zachowaj kompatybilność API
 from bot_core.events import DebounceRule, Event, EventBus, EventType, EmitterAdapter
@@ -107,8 +106,14 @@ class AutoTradeEngine:
         self._manual_risk_frozen_until: float = 0.0
         self._auto_risk_frozen_until: float = 0.0
         self._auto_risk_frozen: bool = False
-        self._manual_freeze_reason: Optional[str] = None
         self._submit_market = broker_submit_market
+        self._regime_classifier = MarketRegimeClassifier()
+        self._regime_history = RegimeHistory(
+            thresholds_loader=self._regime_classifier.thresholds_loader
+        )
+        self._regime_history.reload_thresholds(
+            thresholds=self._regime_classifier.thresholds_snapshot()
+        )
         self._strategy_weights = RegimeStrategyWeights(
             weights={
                 MarketRegime(regime): dict(weights)
@@ -117,10 +122,6 @@ class AutoTradeEngine:
         )
         self._last_regime: MarketRegimeAssessment | None = None
         self._last_summary: RegimeSummary | None = None
-        self._install_regime_components(
-            regime_classifier or MarketRegimeClassifier(),
-            regime_history,
-        )
 
         batch_rule = DebounceRule(window=0.1, max_batch=1)
         self.bus.subscribe(EventType.MARKET_TICK, self._on_ticks_batch, rule=batch_rule)
@@ -132,7 +133,6 @@ class AutoTradeEngine:
         self._manual_risk_frozen_until = 0.0
         self._auto_risk_frozen_until = 0.0
         self._auto_risk_frozen = False
-        self._manual_freeze_reason = None
         self._recompute_risk_freeze_until()
         self.adapter.push_autotrade_status("enabled", detail={"symbol": self.cfg.symbol})  # type: ignore[attr-defined]
 
@@ -279,10 +279,18 @@ class AutoTradeEngine:
             payload = ev.payload or {}
             if payload.get("symbol") != self.cfg.symbol:
                 continue
-            self.freeze_trading(
-                self.cfg.risk_freeze_seconds,
-                reason=payload.get("kind", "risk_alert"),
-                source="risk_alert",
+            expiry = now + self.cfg.risk_freeze_seconds
+            if expiry > self._manual_risk_frozen_until:
+                self._manual_risk_frozen_until = expiry
+            self._recompute_risk_freeze_until()
+            self.adapter.push_autotrade_status(  # type: ignore[attr-defined]
+                "risk_freeze",
+                detail={
+                    "symbol": self.cfg.symbol,
+                    "until": self._risk_frozen_until,
+                    "reason": payload.get("kind", "risk_alert"),
+                },
+                level="WARN",
             )
 
     def _on_ticks_batch(self, events: List[Event]) -> None:
@@ -452,8 +460,6 @@ class AutoTradeEngine:
         )
         self._regime_history.update(assessment)
         summary = self._regime_history.summarise()
-        if summary is not None:
-            self._handle_auto_risk_freeze(summary)
         should_emit = self._last_regime is None or (
             self._last_regime.regime != assessment.regime
         )
@@ -497,262 +503,6 @@ class AutoTradeEngine:
         """Udostępnij aktualnie aktywne progi klasyfikatora."""
 
         return self._regime_history.thresholds_snapshot()
-
-    def _recompute_risk_freeze_until(self) -> None:
-        self._risk_frozen_until = max(self._manual_risk_frozen_until, self._auto_risk_frozen_until)
-
-    def _sync_freeze_state(self, *, now: float | None = None) -> None:
-        """Zaktualizuj stan zamrożenia po naturalnym wygaśnięciu blokad."""
-
-        current_time = time.time() if now is None else float(now)
-        manual_expired = self._manual_risk_frozen_until > 0.0 and current_time >= self._manual_risk_frozen_until
-        auto_expired = self._auto_risk_frozen and current_time >= self._auto_risk_frozen_until > 0.0
-
-        if not manual_expired and not auto_expired:
-            return
-
-        manual_reason = self._manual_freeze_reason if manual_expired else None
-
-        if manual_expired:
-            self._manual_risk_frozen_until = 0.0
-            self._manual_freeze_reason = None
-
-        if auto_expired:
-            self._auto_risk_frozen = False
-            self._auto_risk_frozen_until = 0.0
-
-        self._recompute_risk_freeze_until()
-
-        if manual_expired:
-            self.adapter.push_autotrade_status(  # type: ignore[attr-defined]
-                "risk_freeze_release",
-                detail={
-                    "symbol": self.cfg.symbol,
-                    "reason": "manual_expired",
-                    "source": "manual",
-                    "until": self._risk_frozen_until,
-                    "manual_reason": manual_reason,
-                },
-                level="INFO",
-            )
-
-        if auto_expired:
-            detail = {
-                "symbol": self.cfg.symbol,
-                "reason": "auto_risk_expired",
-                "source": "auto",
-                "until": self._risk_frozen_until,
-            }
-            if self._last_summary is not None:
-                detail["risk_level"] = self._last_summary.risk_level.value
-                detail["risk_score"] = self._last_summary.risk_score
-            self.adapter.push_autotrade_status(  # type: ignore[attr-defined]
-                "risk_freeze_release",
-                detail=detail,
-                level="INFO",
-            )
-
-    def is_risk_frozen(self, *, now: float | None = None) -> bool:
-        """Sprawdź czy handel jest obecnie zamrożony z powodu ryzyka."""
-
-        current_time = time.time() if now is None else float(now)
-        self._sync_freeze_state(now=current_time)
-        return current_time < self._risk_frozen_until
-
-    def get_risk_freeze_state(self) -> Mapping[str, Any]:
-        """Zwróć defensywną migawkę stanu zamrożenia ryzyka."""
-
-        current_time = time.time()
-        self._sync_freeze_state(now=current_time)
-        return {
-            "frozen": current_time < self._risk_frozen_until,
-            "until": self._risk_frozen_until,
-            "manual_until": self._manual_risk_frozen_until,
-            "auto_until": self._auto_risk_frozen_until,
-            "auto_active": self._auto_risk_frozen,
-            "manual_reason": self._manual_freeze_reason,
-        }
-
-    @staticmethod
-    def _normalize_freeze_duration(duration: object) -> float:
-        if hasattr(duration, "total_seconds"):
-            seconds = float(duration.total_seconds())  # type: ignore[attr-defined]
-        else:
-            try:
-                seconds = float(duration)  # type: ignore[arg-type]
-            except (TypeError, ValueError) as exc:  # pragma: no cover - sanity
-                raise TypeError("duration must be a number, timedelta or None") from exc
-        if not math.isfinite(seconds):
-            raise ValueError("duration must be a finite positive number")
-        return seconds
-
-    @staticmethod
-    def _normalize_freeze_until(value: object) -> float:
-        if isinstance(value, (int, float)):
-            timestamp = float(value)
-        elif isinstance(value, np.datetime64):
-            timestamp = float(pd.Timestamp(value).timestamp())
-        elif isinstance(value, pd.Timestamp):
-            timestamp = AutoTradeEngine._normalize_freeze_until(value.to_pydatetime())
-        elif isinstance(value, dt.datetime):
-            if value.tzinfo is None:
-                timestamp = value.replace(tzinfo=dt.timezone.utc).timestamp()
-            else:
-                timestamp = value.timestamp()
-        elif hasattr(value, "timestamp"):
-            try:
-                timestamp = float(value.timestamp())  # type: ignore[attr-defined]
-            except (TypeError, ValueError) as exc:  # pragma: no cover - sanity
-                raise TypeError("until must be a datetime, timestamp or datetime-like object") from exc
-        elif hasattr(value, "to_pydatetime"):
-            timestamp = AutoTradeEngine._normalize_freeze_until(value.to_pydatetime())
-        else:
-            raise TypeError("until must be a datetime, timestamp or datetime-like object")
-
-        if not math.isfinite(timestamp):
-            raise ValueError("until must be a finite timestamp")
-        return timestamp
-
-    def freeze_trading(
-        self,
-        duration: float | None = None,
-        *,
-        until: object | None = None,
-        reason: str = "manual_freeze",
-        source: str = "manual",
-    ) -> None:
-        """Aktywnie zamroź handel na zadany czas."""
-
-        if duration is not None and until is not None:
-            raise ValueError("specify either duration or until, not both")
-
-        now = time.time()
-        if until is not None:
-            expiry = self._normalize_freeze_until(until)
-            if expiry <= now:
-                raise ValueError("until must be in the future")
-        else:
-            if duration is None:
-                duration_value = float(self.cfg.risk_freeze_seconds)
-            else:
-                duration_value = self._normalize_freeze_duration(duration)
-            if duration_value <= 0:
-                raise ValueError("duration must be positive")
-            expiry = now + duration_value
-        previous_until = self._manual_risk_frozen_until
-        previous_reason = self._manual_freeze_reason
-        state_changed = False
-
-        if expiry >= previous_until - 1e-9:
-            state_changed = (
-                previous_until <= 0.0
-                or expiry > previous_until + 1e-9
-                or previous_reason != reason
-            )
-            self._manual_risk_frozen_until = expiry
-            self._manual_freeze_reason = reason
-
-        self._recompute_risk_freeze_until()
-
-        if not state_changed:
-            return
-
-        self.adapter.push_autotrade_status(  # type: ignore[attr-defined]
-            "risk_freeze",
-            detail={
-                "symbol": self.cfg.symbol,
-                "until": self._risk_frozen_until,
-                "reason": reason,
-                "source": source,
-            },
-            level="WARN",
-        )
-
-    def release_manual_freeze(self) -> None:
-        """Zwolnij manualne zamrożenie handlu."""
-
-        previous_until = self._manual_risk_frozen_until
-        previous_reason = self._manual_freeze_reason
-        if previous_until <= 0.0:
-            return
-        self._manual_risk_frozen_until = 0.0
-        self._manual_freeze_reason = None
-        self._recompute_risk_freeze_until()
-        if time.time() <= previous_until:
-            self.adapter.push_autotrade_status(  # type: ignore[attr-defined]
-                "risk_freeze_release",
-                detail={
-                    "symbol": self.cfg.symbol,
-                    "reason": "manual_release",
-                    "source": "manual",
-                    "until": self._risk_frozen_until,
-                    "manual_reason": previous_reason,
-                },
-                level="INFO",
-            )
-
-    def _should_auto_freeze(self, summary: RegimeSummary) -> bool:
-        if not self.cfg.auto_risk_freeze:
-            return False
-        level_threshold = self.cfg.auto_risk_freeze_level
-        summary_level = summary.risk_level
-        if not isinstance(level_threshold, RiskLevel):  # pragma: no cover - sanity
-            level_threshold = RiskLevel(level_threshold)
-        level_check = (
-            self._RISK_LEVEL_ORDER[summary_level]
-            >= self._RISK_LEVEL_ORDER[level_threshold]
-        )
-        score_check = summary.risk_score >= self.cfg.auto_risk_freeze_score
-        return level_check or score_check
-
-    def _handle_auto_risk_freeze(self, summary: RegimeSummary) -> None:
-        if not self.cfg.auto_risk_freeze:
-            if self._auto_risk_frozen:
-                self._auto_risk_frozen = False
-                self._auto_risk_frozen_until = 0.0
-                self._recompute_risk_freeze_until()
-            return
-
-        now = time.time()
-        should_freeze = self._should_auto_freeze(summary)
-        if should_freeze:
-            expiry = now + self.cfg.risk_freeze_seconds
-            previous_auto_until = self._auto_risk_frozen_until
-            if expiry > previous_auto_until:
-                self._auto_risk_frozen_until = expiry
-                self._recompute_risk_freeze_until()
-            if not self._auto_risk_frozen or expiry > previous_auto_until + 1e-9:
-                self.adapter.push_autotrade_status(  # type: ignore[attr-defined]
-                    "risk_freeze",
-                    detail={
-                        "symbol": self.cfg.symbol,
-                        "until": self._risk_frozen_until,
-                        "reason": "auto_risk_freeze",
-                        "source": "auto",
-                        "risk_level": summary.risk_level.value,
-                        "risk_score": summary.risk_score,
-                    },
-                    level="WARN",
-                )
-            self._auto_risk_frozen = True
-            return
-
-        if self._auto_risk_frozen:
-            self._auto_risk_frozen = False
-            self._auto_risk_frozen_until = 0.0
-            self._recompute_risk_freeze_until()
-            self.adapter.push_autotrade_status(  # type: ignore[attr-defined]
-                "risk_freeze_release",
-                detail={
-                    "symbol": self.cfg.symbol,
-                    "reason": "auto_risk_release",
-                    "source": "auto",
-                    "risk_level": summary.risk_level.value,
-                    "risk_score": summary.risk_score,
-                    "until": self._risk_frozen_until,
-                },
-                level="INFO",
-            )
 
 
 __all__ = ["AutoTradeConfig", "AutoTradeEngine"]
