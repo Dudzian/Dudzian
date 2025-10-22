@@ -593,18 +593,96 @@ class MultiStrategyScheduler:
         return self._suspension_manager.resume_tag(tag)
 
     def suspension_snapshot(self) -> Mapping[str, Mapping[str, object]]:
-        now = self._clock()
-        self._purge_expired_suspensions(now)
-        schedules: dict[str, dict[str, object]] = {}
-        tags: dict[str, dict[str, object]] = {}
-        with self._suspension_lock:
-            for name, record in self._schedule_suspensions.items():
-                schedules[name] = record.as_dict(now)
-            for tag_name, record in self._tag_suspensions.items():
-                tags[tag_name] = record.as_dict(now)
-        return {"schedules": schedules, "tags": tags}
+        """Return a snapshot of active schedule and tag suspensions.
 
-        return self._suspension_manager.snapshot()
+        Besides the raw mappings exported by :class:`SuspensionManager`, the
+        snapshot now exposes lightweight metadata that is useful when
+        troubleshooting the runtime.  The additional keys are backwards
+        compatible with previous consumers because the ``schedules`` and
+        ``tags`` entries remain unchanged, while the metadata lives under new
+        top-level keys such as ``counts`` or ``next_expiration``.
+        """
+
+        snapshot = self._suspension_manager.snapshot()
+        schedules = dict(snapshot.get("schedules", {})) if isinstance(snapshot, Mapping) else {}
+        tags = dict(snapshot.get("tags", {})) if isinstance(snapshot, Mapping) else {}
+
+        metadata: dict[str, object] = {
+            "schedules": schedules,
+            "tags": tags,
+        }
+
+        schedule_count = len(schedules)
+        tag_count = len(tags)
+        metadata["counts"] = {
+            "schedules": schedule_count,
+            "tags": tag_count,
+            "total": schedule_count + tag_count,
+        }
+
+        schedule_reasons: dict[str, str] = {}
+        tag_reasons: dict[str, str] = {}
+        for name, entry in schedules.items():
+            if isinstance(entry, Mapping):
+                reason = entry.get("reason")
+                if isinstance(reason, str) and reason:
+                    schedule_reasons[name] = reason
+        for tag_name, entry in tags.items():
+            if isinstance(entry, Mapping):
+                reason = entry.get("reason")
+                if isinstance(reason, str) and reason:
+                    tag_reasons[tag_name] = reason
+        if schedule_reasons or tag_reasons:
+            metadata["reasons"] = {
+                "schedules": schedule_reasons,
+                "tags": tag_reasons,
+                "unique": sorted({*schedule_reasons.values(), *tag_reasons.values()}),
+            }
+
+        def _extract_next_expiration(
+            entries: Mapping[str, object],
+            scope: str,
+        ) -> tuple[float, dict[str, object]] | None:
+            next_candidate: tuple[float, dict[str, object]] | None = None
+            for name, payload in entries.items():
+                if not isinstance(payload, Mapping):
+                    continue
+                remaining = payload.get("remaining_seconds")
+                if remaining in (None, ""):
+                    continue
+                try:
+                    seconds = float(remaining)
+                except (TypeError, ValueError):
+                    continue
+                seconds = max(0.0, seconds)
+                candidate = {
+                    "scope": scope,
+                    "name": name,
+                    "remaining_seconds": seconds,
+                }
+                until_value = payload.get("until")
+                if isinstance(until_value, str) and until_value:
+                    candidate["until"] = until_value
+                applied_value = payload.get("applied_at")
+                if isinstance(applied_value, str) and applied_value:
+                    candidate["applied_at"] = applied_value
+                if next_candidate is None or seconds < next_candidate[0]:
+                    next_candidate = (seconds, candidate)
+            return next_candidate
+
+        upcoming: tuple[float, dict[str, object]] | None = None
+        schedule_next = _extract_next_expiration(schedules, "schedule")
+        tag_next = _extract_next_expiration(tags, "tag")
+        for candidate in (schedule_next, tag_next):
+            if candidate is None:
+                continue
+            if upcoming is None or candidate[0] < upcoming[0]:
+                upcoming = candidate
+        if upcoming is not None:
+            metadata["next_expiration"] = upcoming[1]
+
+        return metadata
+
     def attach_portfolio_coordinator(
         self, coordinator: "PortfolioRuntimeCoordinator"
     ) -> None:

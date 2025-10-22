@@ -29,7 +29,7 @@ from typing import Any, Callable, Dict, Mapping, Optional, Protocol, Sequence, c
 import pandas as pd
 
 from bot_core.auto_trader.audit import DecisionAuditLog
-from bot_core.auto_trader.schedule import ScheduleState, TradingSchedule
+from bot_core.auto_trader.schedule import ScheduleOverride, ScheduleState, TradingSchedule
 from bot_core.ai.regime import (
     MarketRegime,
     MarketRegimeAssessment,
@@ -806,6 +806,77 @@ class AutoTrader:
         if isinstance(tz_name, str) and tz_name.strip():
             return TradingSchedule.always_on(mode=self._initial_mode, timezone_name=str(tz_name))
         return TradingSchedule.always_on(mode=self._initial_mode)
+
+    def _ensure_work_schedule(self) -> TradingSchedule:
+        schedule = getattr(self, "_work_schedule", None)
+        if schedule is None:
+            schedule = self._build_default_work_schedule()
+            self._work_schedule = schedule
+        return schedule
+
+    def set_work_schedule(
+        self,
+        schedule: TradingSchedule | Mapping[str, object] | None,
+        *,
+        reason: str | None = None,
+    ) -> ScheduleState:
+        """Configure the trading schedule and broadcast the resulting state."""
+
+        if schedule is None:
+            schedule_obj = self._build_default_work_schedule()
+            resolved_reason = reason or "reset"
+        elif isinstance(schedule, TradingSchedule):
+            schedule_obj = schedule
+            resolved_reason = reason or "update"
+        elif isinstance(schedule, Mapping):
+            schedule_obj = TradingSchedule.from_payload(schedule)
+            resolved_reason = reason or "update"
+        else:
+            raise TypeError("schedule must be a TradingSchedule, mapping payload or None")
+
+        self._work_schedule = schedule_obj
+        state = schedule_obj.describe()
+        self._schedule_state = state
+        self._schedule_mode = state.mode
+        self._last_schedule_snapshot = (state.mode, state.is_open)
+
+        payload = _serialize_schedule_state(state)
+        payload["reason"] = resolved_reason
+
+        self._record_decision_audit_stage(
+            "schedule_configured",
+            symbol=_SCHEDULE_SYMBOL,
+            payload=payload,
+        )
+
+        emitter_emit = getattr(self.emitter, "emit", None)
+        if callable(emitter_emit):
+            try:
+                emitter_emit("auto_trader.schedule_state", **payload)
+            except Exception:  # pragma: no cover - defensive logging
+                LOGGER.debug("Emitter failed to publish schedule state", exc_info=True)
+
+        return state
+
+    def get_schedule_state(self) -> ScheduleState:
+        schedule = self._ensure_work_schedule()
+        state = schedule.describe()
+        self._schedule_state = state
+        self._schedule_mode = state.mode
+        self._last_schedule_snapshot = (state.mode, state.is_open)
+        return state
+
+    def describe_work_schedule(self) -> Mapping[str, object]:
+        """Return a serialisable snapshot of the current work schedule."""
+
+        schedule = self._ensure_work_schedule()
+        state = schedule.describe()
+        payload = schedule.to_payload()
+        payload["state"] = _serialize_schedule_state(state)
+        return payload
+
+    def is_schedule_open(self) -> bool:
+        return self.get_schedule_state().is_open
 
     @staticmethod
     def _detect_environment_name(bootstrap_context: Any | None) -> str:

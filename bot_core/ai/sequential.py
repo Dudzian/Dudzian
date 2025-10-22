@@ -1,4 +1,4 @@
-"""Sequential/RL style training pipeline with feature engineering and fallbacks."""
+"""Sequential/RL style training pipeline with feature engineering."""
 
 from __future__ import annotations
 
@@ -9,10 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Iterable, Mapping, MutableMapping, Sequence
 
-try:  # pragma: no cover - numpy is optional in constrained builds
-    import numpy as np
-except Exception:  # pragma: no cover - fallback to Python implementation
-    np = None  # type: ignore[assignment]
+import numpy as np
 
 from .feature_engineering import FeatureDataset, FeatureVector
 from .models import ModelArtifact, ModelScore
@@ -151,10 +148,7 @@ class TemporalDifferencePolicy(SupportsInference):
     def fit(self, samples: Sequence[Mapping[str, float]], targets: Sequence[float]) -> None:
         if not samples:
             return
-        if np is None:
-            self._fit_python(samples, targets)
-        else:
-            self._fit_numpy(samples, targets)
+        self._fit_numpy(samples, targets)
 
     # ------------------------------------------------------------------ helpers --
     def _fit_numpy(self, samples: Sequence[Mapping[str, float]], targets: Sequence[float]) -> None:
@@ -169,20 +163,6 @@ class TemporalDifferencePolicy(SupportsInference):
             weights = weights + self.learning_rate * (td_error * feature_row - self.weight_decay * weights)
             bias = bias + self.learning_rate * td_error * 0.5
         self._weights = [float(w) for w in weights]
-        self._bias = bias
-
-    def _fit_python(self, samples: Sequence[Mapping[str, float]], targets: Sequence[float]) -> None:
-        weights = list(self._weights)
-        bias = float(self._bias)
-        for sample, reward in zip(samples, targets):
-            feature_row = [float(sample.get(name, 0.0)) for name in self.feature_names]
-            value = sum(w * x for w, x in zip(weights, feature_row)) + bias
-            td_target = reward + self.discount_factor * value
-            td_error = td_target - value
-            for idx, x in enumerate(feature_row):
-                weights[idx] += self.learning_rate * (td_error * x - self.weight_decay * weights[idx])
-            bias += self.learning_rate * td_error * 0.5
-        self._weights = weights
         self._bias = bias
 
     def predict(self, features: Mapping[str, float]) -> float:
@@ -232,29 +212,15 @@ def _rank_features(dataset: FeatureDataset) -> Sequence[tuple[str, float]]:
     targets = dataset.targets
     if not targets:
         return ()
-    if np is not None:
-        target_arr = np.asarray(targets, dtype=float)
-        for name in dataset.feature_names:
-            values = np.asarray([float(vector.features.get(name, 0.0)) for vector in dataset.vectors], dtype=float)
-            if np.allclose(values, values[0]):
-                score = 0.0
-            else:
-                corr = float(np.corrcoef(values, target_arr)[0, 1]) if values.size > 1 else 0.0
-                score = abs(corr)
-            scores.append((name, score))
-    else:
-        mean_target = sum(targets) / len(targets)
-        for name in dataset.feature_names:
-            values = [float(vector.features.get(name, 0.0)) for vector in dataset.vectors]
-            mean_feature = sum(values) / len(values) if values else 0.0
-            numerator = sum((x - mean_feature) * (y - mean_target) for x, y in zip(values, targets))
-            denom_feature = math.sqrt(sum((x - mean_feature) ** 2 for x in values))
-            denom_target = math.sqrt(sum((y - mean_target) ** 2 for y in targets))
-            if denom_feature <= 0.0 or denom_target <= 0.0:
-                score = 0.0
-            else:
-                score = abs(numerator / (denom_feature * denom_target))
-            scores.append((name, score))
+    target_arr = np.asarray(targets, dtype=float)
+    for name in dataset.feature_names:
+        values = np.asarray([float(vector.features.get(name, 0.0)) for vector in dataset.vectors], dtype=float)
+        if np.allclose(values, values[0]):
+            score = 0.0
+        else:
+            corr = float(np.corrcoef(values, target_arr)[0, 1]) if values.size > 1 else 0.0
+            score = abs(corr)
+        scores.append((name, score))
     return tuple(sorted(scores, key=lambda item: item[1], reverse=True))
 
 
