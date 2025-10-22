@@ -206,7 +206,30 @@ class ZondaAdapter(RESTWebSocketAdapter):
 
     async def fetch_market_data(self, symbol: str) -> MarketPayload:
         path = f"/trading/ticker/{symbol}"
-        return await self._request("GET", path)
+        response: Dict[str, Any] = await self._request("GET", path)
+        status = response.get("status") or response.get("code")
+        if status not in ("Ok", "OK", 0, None):
+            raise RuntimeError(f"Zonda API error: {status}")
+        ticker = response.get("ticker") or response.get("items") or response.get("data")
+        bid = 0.0
+        ask = 0.0
+        last = 0.0
+        if isinstance(ticker, dict):
+            bid = self._to_float(ticker.get("highestBid") or ticker.get("bid"))
+            ask = self._to_float(ticker.get("lowestAsk") or ticker.get("ask"))
+            last = self._to_float(ticker.get("rate") or ticker.get("last"))
+        payload: MarketPayload = {
+            "symbol": symbol,
+            "bid": bid,
+            "ask": ask,
+            "last": last,
+            "raw": response,
+        }
+        payload.update(response)
+        payload["bid"] = bid
+        payload["ask"] = ask
+        payload["last"] = last
+        return payload
 
     async def stream_market_data(
         self, subscriptions: Iterable[MarketSubscription], callback: Callable[[MarketPayload], Awaitable[None]]
