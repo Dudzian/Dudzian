@@ -4,6 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Mapping, MutableMapping, Sequence
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
@@ -219,6 +220,7 @@ class DecisionEngineSummary(BaseModel):
 
     model_config = ConfigDict(extra="allow")
 
+    type: Literal["decision_engine_summary"] = "decision_engine_summary"
     total: int
     accepted: int
     rejected: int
