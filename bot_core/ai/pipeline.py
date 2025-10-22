@@ -199,6 +199,9 @@ def train_gradient_boosting_model(
     validation_ratio: float = 0.15,
     test_ratio: float = 0.15,
     random_state: int | None = 42,
+    model_version: str | None = None,
+    publish_aliases: Sequence[str] | None = None,
+    activate_version: bool = True,
 ) -> Path:
     """Train a :class:`SimpleGradientBoostingModel` and persist an artifact."""
 
@@ -276,6 +279,9 @@ def train_gradient_boosting_model(
             "max_mae": 20.0,
         },
     }
+    meta_payload.setdefault("model_name", model_name)
+    if model_version:
+        meta_payload.setdefault("model_version", model_version)
     if metadata:
         for key, value in metadata.items():
             if (
@@ -305,7 +311,16 @@ def train_gradient_boosting_model(
     repository = ModelRepository(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     filename = f"{model_name}.json"
-    destination = repository.save(artifact, filename)
+    if model_version:
+        destination = repository.publish(
+            artifact,
+            version=model_version,
+            filename=filename,
+            aliases=publish_aliases,
+            activate=activate_version,
+        )
+    else:
+        destination = repository.save(artifact, filename)
     LOGGER.info("Saved decision model artifact to %s", destination)
     return destination
 
