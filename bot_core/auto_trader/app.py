@@ -57,6 +57,12 @@ _MISSING_GUARDRAIL_UNIT = "<no-unit>"
 _MISSING_DECISION_STATE = "<no-state>"
 _MISSING_DECISION_REASON = "<no-reason>"
 _MISSING_DECISION_MODE = "<no-mode>"
+_APPROVAL_APPROVED = "approved"
+_APPROVAL_DENIED = "denied"
+_APPROVAL_UNKNOWN = "<unknown-approval>"
+_NORMALIZED_NORMALIZED = "normalized"
+_NORMALIZED_RAW = "raw"
+_NORMALIZED_UNKNOWN = "<unknown-normalization>"
 _CONTROLLER_HISTORY_DEFAULT_LIMIT = 32
 
 
@@ -70,7 +76,29 @@ class GuardrailTimelineRecords(list):
 
 def _extract_guardrail_timeline_metadata(summary: Mapping[str, Any]) -> dict[str, Any]:
     metadata: dict[str, Any] = {}
-    for key in ("services", "guardrail_trigger_thresholds", "guardrail_trigger_values"):
+    for key in (
+        "bucket_s",
+        "total",
+        "evaluations",
+        "guardrail_rate",
+        "approval_states",
+        "normalization_states",
+        "first_timestamp",
+        "last_timestamp",
+        "filters",
+        "services",
+        "guardrail_reasons",
+        "guardrail_triggers",
+        "guardrail_trigger_labels",
+        "guardrail_trigger_comparators",
+        "guardrail_trigger_units",
+        "guardrail_trigger_thresholds",
+        "guardrail_trigger_values",
+        "decision_states",
+        "decision_reasons",
+        "decision_modes",
+        "missing_timestamp",
+    ):
         value = summary.get(key)
         if value is not None:
             metadata[key] = copy.deepcopy(value)
@@ -3035,6 +3063,22 @@ class AutoTrader:
         return {str(value)}
 
     @staticmethod
+    def _normalize_approval_flag(value: object) -> str:
+        if value is True:
+            return _APPROVAL_APPROVED
+        if value is False:
+            return _APPROVAL_DENIED
+        return _APPROVAL_UNKNOWN
+
+    @staticmethod
+    def _normalize_normalization_flag(value: object) -> str:
+        if value is True:
+            return _NORMALIZED_NORMALIZED
+        if value is False:
+            return _NORMALIZED_RAW
+        return _NORMALIZED_UNKNOWN
+
+    @staticmethod
     def _normalize_decision_dimension_value(
         value: object,
         *,
@@ -3076,6 +3120,117 @@ class AutoTrader:
         if coerced is None:
             return (set(), False)
         return ({coerced}, False)
+
+    @staticmethod
+    def _serialize_bool_filter(values: set[bool | None] | None) -> list[bool | None] | None:
+        if values is None:
+            return None
+
+        order: dict[bool | None, int] = {True: 0, False: 1, None: 2}
+        return sorted(values, key=lambda item: order.get(item, 3))
+
+    @staticmethod
+    def _serialize_string_filter(values: set[str] | None) -> list[str] | None:
+        if values is None:
+            return None
+        return sorted(values)
+
+    @staticmethod
+    def _serialize_numeric_filter(
+        value: tuple[set[float], bool] | None,
+    ) -> dict[str, Any] | None:
+        if value is None:
+            return None
+
+        numeric_values, include_missing = value
+        return {
+            "values": sorted(numeric_values),
+            "include_missing": include_missing,
+        }
+
+    @staticmethod
+    def _describe_timezone(tz_value: tzinfo | None) -> str | None:
+        if tz_value is None:
+            return None
+
+        for attribute in ("key", "zone", "name"):
+            candidate = getattr(tz_value, attribute, None)
+            if isinstance(candidate, str) and candidate:
+                return candidate
+
+        try:
+            tz_name = tz_value.tzname(None)
+        except Exception:  # pragma: no cover - defensywne zabezpieczenie
+            tz_name = None
+
+        if isinstance(tz_name, str) and tz_name:
+            return tz_name
+
+        return str(tz_value)
+
+    @classmethod
+    def _snapshot_guardrail_timeline_filters(
+        cls,
+        *,
+        approved_filter: set[bool | None] | None,
+        normalized_filter: set[bool | None] | None,
+        include_errors: bool,
+        service_filter: set[str] | None,
+        decision_state_filter: set[str] | None,
+        decision_reason_filter: set[str] | None,
+        decision_mode_filter: set[str] | None,
+        reason_filter: set[str] | None,
+        trigger_filter: set[str] | None,
+        trigger_label_filter: set[str] | None,
+        trigger_comparator_filter: set[str] | None,
+        trigger_unit_filter: set[str] | None,
+        trigger_threshold_filter: tuple[set[float], bool] | None,
+        trigger_threshold_min: float | None,
+        trigger_threshold_max: float | None,
+        trigger_value_filter: tuple[set[float], bool] | None,
+        trigger_value_min: float | None,
+        trigger_value_max: float | None,
+        since_ts: float | None,
+        until_ts: float | None,
+        include_services: bool,
+        include_guardrail_dimensions: bool,
+        include_decision_dimensions: bool,
+        fill_gaps: bool,
+        coerce_timestamps: bool,
+        tz_value: tzinfo | None,
+    ) -> dict[str, Any]:
+        return {
+            "approved": cls._serialize_bool_filter(approved_filter),
+            "normalized": cls._serialize_bool_filter(normalized_filter),
+            "include_errors": bool(include_errors),
+            "service": cls._serialize_string_filter(service_filter),
+            "decision_state": cls._serialize_string_filter(decision_state_filter),
+            "decision_reason": cls._serialize_string_filter(decision_reason_filter),
+            "decision_mode": cls._serialize_string_filter(decision_mode_filter),
+            "reason": cls._serialize_string_filter(reason_filter),
+            "trigger": cls._serialize_string_filter(trigger_filter),
+            "trigger_label": cls._serialize_string_filter(trigger_label_filter),
+            "trigger_comparator": cls._serialize_string_filter(
+                trigger_comparator_filter
+            ),
+            "trigger_unit": cls._serialize_string_filter(trigger_unit_filter),
+            "trigger_threshold": cls._serialize_numeric_filter(
+                trigger_threshold_filter
+            ),
+            "trigger_threshold_min": trigger_threshold_min,
+            "trigger_threshold_max": trigger_threshold_max,
+            "trigger_value": cls._serialize_numeric_filter(trigger_value_filter),
+            "trigger_value_min": trigger_value_min,
+            "trigger_value_max": trigger_value_max,
+            "since": since_ts,
+            "until": until_ts,
+            "include_services": bool(include_services),
+            "include_guardrail_dimensions": bool(include_guardrail_dimensions),
+            "include_decision_dimensions": bool(include_decision_dimensions),
+            "fill_gaps": bool(fill_gaps),
+            "coerce_timestamps": bool(coerce_timestamps),
+            "tz": cls._describe_timezone(tz_value),
+        }
 
     @staticmethod
     def _create_decision_bucket() -> dict[str, Any]:
@@ -3560,7 +3715,7 @@ class AutoTrader:
         state_filter: set[str] | None,
         reason_filter: set[str] | None,
         mode_filter: set[str] | None,
-    ) -> list[dict[str, Any]]:
+    ) -> GuardrailTimelineRecords:
         filtered: list[dict[str, Any]] = []
         for entry in records:
             if not include_errors and "error" in entry:
@@ -5373,6 +5528,148 @@ class AutoTrader:
     ) -> dict[str, Any]:
         """Agreguje decyzje ryzyka w kubełkach czasowych."""
 
+    def summarize_guardrail_timeline(
+        self,
+        *,
+        bucket_s: float,
+        approved: bool | None | Iterable[bool | None] | object = _NO_FILTER,
+        normalized: bool | None | Iterable[bool | None] | object = _NO_FILTER,
+        include_errors: bool = True,
+        service: str | None | Iterable[str | None] | object = _NO_FILTER,
+        decision_state: str | Iterable[str | None] | object = _NO_FILTER,
+        decision_reason: str | Iterable[str | None] | object = _NO_FILTER,
+        decision_mode: str | Iterable[str | None] | object = _NO_FILTER,
+        reason: str | Iterable[str] | object = _NO_FILTER,
+        trigger: str | Iterable[str] | object = _NO_FILTER,
+        trigger_label: str | Iterable[str | None] | object = _NO_FILTER,
+        trigger_comparator: str | Iterable[str | None] | object = _NO_FILTER,
+        trigger_unit: str | Iterable[str | None] | object = _NO_FILTER,
+        trigger_threshold: float | None | Iterable[float | None] | object = _NO_FILTER,
+        trigger_threshold_min: Any = None,
+        trigger_threshold_max: Any = None,
+        trigger_value: float | None | Iterable[float | None] | object = _NO_FILTER,
+        trigger_value_min: Any = None,
+        trigger_value_max: Any = None,
+        since: Any = None,
+        until: Any = None,
+        include_services: bool = True,
+        include_guardrail_dimensions: bool = True,
+        include_decision_dimensions: bool = False,
+        fill_gaps: bool = False,
+        coerce_timestamps: bool = False,
+        tz: tzinfo | None = timezone.utc,
+    ) -> dict[str, Any]:
+        try:
+            bucket_value = float(bucket_s)
+        except (TypeError, ValueError) as exc:  # pragma: no cover - walidacja wejścia
+            raise ValueError("bucket_s must be a positive number") from exc
+        if not math.isfinite(bucket_value) or bucket_value <= 0.0:
+            raise ValueError("bucket_s must be a positive number")
+
+        approved_filter = self._prepare_bool_filter(approved)
+        normalized_filter = self._prepare_bool_filter(normalized)
+        service_filter = self._prepare_service_filter(service)
+        reason_filter = self._prepare_string_filter(reason)
+        trigger_filter = self._prepare_string_filter(trigger)
+        trigger_label_filter = self._prepare_guardrail_filter(
+            trigger_label,
+            missing_token=_MISSING_GUARDRAIL_LABEL,
+        )
+        trigger_comparator_filter = self._prepare_guardrail_filter(
+            trigger_comparator,
+            missing_token=_MISSING_GUARDRAIL_COMPARATOR,
+        )
+        trigger_unit_filter = self._prepare_guardrail_filter(
+            trigger_unit,
+            missing_token=_MISSING_GUARDRAIL_UNIT,
+        )
+        trigger_threshold_filter = self._prepare_guardrail_numeric_filter(
+            trigger_threshold
+        )
+        trigger_value_filter = self._prepare_guardrail_numeric_filter(trigger_value)
+        decision_state_filter = self._prepare_decision_filter(
+            decision_state,
+            missing_token=_MISSING_DECISION_STATE,
+        )
+        decision_reason_filter = self._prepare_decision_filter(
+            decision_reason,
+            missing_token=_MISSING_DECISION_REASON,
+        )
+        decision_mode_filter = self._prepare_decision_filter(
+            decision_mode,
+            missing_token=_MISSING_DECISION_MODE,
+        )
+
+        trigger_threshold_min_value = (
+            self._coerce_float(trigger_threshold_min)
+            if trigger_threshold_min is not None
+            else None
+        )
+        trigger_threshold_max_value = (
+            self._coerce_float(trigger_threshold_max)
+            if trigger_threshold_max is not None
+            else None
+        )
+        trigger_value_min_value = (
+            self._coerce_float(trigger_value_min)
+            if trigger_value_min is not None
+            else None
+        )
+        trigger_value_max_value = (
+            self._coerce_float(trigger_value_max)
+            if trigger_value_max is not None
+            else None
+        )
+
+        since_ts = self._normalize_time_bound(since)
+        until_ts = self._normalize_time_bound(until)
+
+        trimmed_by_ttl = 0
+        ttl_snapshot: float | None = None
+        history_size = 0
+        with self._lock:
+            trimmed_by_ttl = self._prune_risk_evaluations_locked()
+            records = list(self._risk_evaluations)
+            ttl_snapshot = self._risk_evaluations_ttl_s
+            history_size = len(self._risk_evaluations)
+        self._log_risk_history_trimmed(
+            context="guardrail-timeline",
+            trimmed=trimmed_by_ttl,
+            ttl=ttl_snapshot,
+            history=history_size,
+        )
+
+        return self._build_guardrail_timeline(
+            context="guardrail-timeline",
+            bucket_value=bucket_value,
+            include_errors=include_errors,
+            include_services=include_services,
+            include_guardrail_dimensions=include_guardrail_dimensions,
+            include_decision_dimensions=include_decision_dimensions,
+            fill_gaps=fill_gaps,
+            coerce_timestamps=coerce_timestamps,
+            tz=tz,
+            approved_filter=approved_filter,
+            normalized_filter=normalized_filter,
+            service_filter=service_filter,
+            decision_state_filter=decision_state_filter,
+            decision_reason_filter=decision_reason_filter,
+            decision_mode_filter=decision_mode_filter,
+            reason_filter=reason_filter,
+            trigger_filter=trigger_filter,
+            trigger_label_filter=trigger_label_filter,
+            trigger_comparator_filter=trigger_comparator_filter,
+            trigger_unit_filter=trigger_unit_filter,
+            trigger_threshold_filter=trigger_threshold_filter,
+            trigger_threshold_min=trigger_threshold_min_value,
+            trigger_threshold_max=trigger_threshold_max_value,
+            trigger_value_filter=trigger_value_filter,
+            trigger_value_min=trigger_value_min_value,
+            trigger_value_max=trigger_value_max_value,
+            since_ts=since_ts,
+            until_ts=until_ts,
+        )
+
         try:
             bucket_value = float(bucket_s)
         except (TypeError, ValueError) as exc:  # pragma: no cover - walidacja wejścia
@@ -5525,6 +5822,7 @@ class AutoTrader:
                 "raw_true": summary.get("raw_true", 0),
                 "raw_false": summary.get("raw_false", 0),
                 "raw_none": summary.get("raw_none", 0),
+                "guardrail_rate": summary.get("guardrail_rate", 0.0),
                 "approval_rate": summary.get("approval_rate", 0.0),
                 "error_rate": summary.get("error_rate", 0.0),
                 "services": copy.deepcopy(summary.get("services")),
@@ -6032,13 +6330,63 @@ class AutoTrader:
             "first_timestamp": None,
             "last_timestamp": None,
         }
+        summary["approval_states"] = {}
+        summary["normalization_states"] = {}
+        summary["filters"] = self._snapshot_guardrail_timeline_filters(
+            approved_filter=approved_filter,
+            normalized_filter=normalized_filter,
+            include_errors=include_errors,
+            service_filter=service_filter,
+            decision_state_filter=decision_state_filter,
+            decision_reason_filter=decision_reason_filter,
+            decision_mode_filter=decision_mode_filter,
+            reason_filter=reason_filter,
+            trigger_filter=trigger_filter,
+            trigger_label_filter=trigger_label_filter,
+            trigger_comparator_filter=trigger_comparator_filter,
+            trigger_unit_filter=trigger_unit_filter,
+            trigger_threshold_filter=trigger_threshold_filter,
+            trigger_threshold_min=trigger_threshold_min,
+            trigger_threshold_max=trigger_threshold_max,
+            trigger_value_filter=trigger_value_filter,
+            trigger_value_min=trigger_value_min,
+            trigger_value_max=trigger_value_max,
+            since_ts=since_ts,
+            until_ts=until_ts,
+            include_services=include_services,
+            include_guardrail_dimensions=include_guardrail_dimensions,
+            include_decision_dimensions=include_decision_dimensions,
+            fill_gaps=fill_gaps,
+            coerce_timestamps=coerce_timestamps,
+            tz_value=tz,
+        )
+        total_approval_states: Counter[str] = Counter()
+        total_normalization_states: Counter[str] = Counter()
         total_services: dict[str, dict[str, int]] | None = None
         if include_services:
             summary["services"] = {}
             total_services = {}
+        total_guardrail_reasons: Counter[str] | None = None
+        total_guardrail_triggers: Counter[str] | None = None
+        total_guardrail_trigger_labels: Counter[str] | None = None
+        total_guardrail_trigger_comparators: Counter[str] | None = None
+        total_guardrail_trigger_units: Counter[str] | None = None
         if include_guardrail_dimensions:
             summary["guardrail_trigger_thresholds"] = {}
             summary["guardrail_trigger_values"] = {}
+            total_guardrail_reasons = Counter()
+            total_guardrail_triggers = Counter()
+            total_guardrail_trigger_labels = Counter()
+            total_guardrail_trigger_comparators = Counter()
+            total_guardrail_trigger_units = Counter()
+        total_decision_states: Counter[str] | None = None
+        total_decision_reasons: Counter[str] | None = None
+        total_decision_modes: Counter[str] | None = None
+        if include_decision_dimensions:
+            total_decision_states = Counter()
+            total_decision_reasons = Counter()
+            total_decision_modes = Counter()
+
         if not filtered_records and not guardrail_records:
             return summary
 
@@ -6058,6 +6406,8 @@ class AutoTrader:
                 "guardrail_events": 0,
                 "evaluations": 0,
             }
+            bucket["approval_states"] = Counter()
+            bucket["normalization_states"] = Counter()
             if include_services:
                 bucket["services"] = {}
             if include_guardrail_dimensions:
@@ -6110,6 +6460,14 @@ class AutoTrader:
             timestamp_value = self._normalize_time_bound(entry.get("timestamp"))
             bucket_payload = resolve_bucket(timestamp_value)
             bucket_payload["evaluations"] += 1
+            approval_state = self._normalize_approval_flag(entry.get("approved"))
+            bucket_payload.setdefault("approval_states", Counter())[approval_state] += 1
+            total_approval_states[approval_state] += 1
+            normalization_state = self._normalize_normalization_flag(
+                entry.get("normalized")
+            )
+            bucket_payload.setdefault("normalization_states", Counter())[normalization_state] += 1
+            total_normalization_states[normalization_state] += 1
 
             if include_services:
                 service_key = str(entry.get("service") or _UNKNOWN_SERVICE)
@@ -6151,7 +6509,10 @@ class AutoTrader:
                     "guardrail_reasons", Counter()
                 )
                 for reason_value in reasons:
-                    reasons_counter[str(reason_value)] += 1
+                    normalized_reason = str(reason_value)
+                    reasons_counter[normalized_reason] += 1
+                    if total_guardrail_reasons is not None:
+                        total_guardrail_reasons[normalized_reason] += 1
 
                 triggers_counter = bucket_payload.setdefault(
                     "guardrail_triggers", Counter()
@@ -6164,6 +6525,8 @@ class AutoTrader:
                         else "<unknown>"
                     )
                     triggers_counter[trigger_name] += 1
+                    if total_guardrail_triggers is not None:
+                        total_guardrail_triggers[trigger_name] += 1
 
                 labels_counter = bucket_payload.setdefault(
                     "guardrail_trigger_labels", Counter()
@@ -6186,6 +6549,8 @@ class AutoTrader:
                         else str(label_raw)
                     )
                     labels_counter[label_value] += 1
+                    if total_guardrail_trigger_labels is not None:
+                        total_guardrail_trigger_labels[label_value] += 1
 
                     comparator_raw = trigger_entry.get("comparator")
                     comparator_value = (
@@ -6194,6 +6559,10 @@ class AutoTrader:
                         else str(comparator_raw)
                     )
                     comparators_counter[comparator_value] += 1
+                    if total_guardrail_trigger_comparators is not None:
+                        total_guardrail_trigger_comparators[
+                            comparator_value
+                        ] += 1
 
                     unit_raw = trigger_entry.get("unit")
                     unit_value = (
@@ -6202,6 +6571,8 @@ class AutoTrader:
                         else str(unit_raw)
                     )
                     units_counter[unit_value] += 1
+                    if total_guardrail_trigger_units is not None:
+                        total_guardrail_trigger_units[unit_value] += 1
 
                     if threshold_stats is not None:
                         self._ingest_guardrail_numeric_value(
@@ -6255,8 +6626,14 @@ class AutoTrader:
                 )
 
                 states_counter[state_value] += 1
+                if total_decision_states is not None:
+                    total_decision_states[state_value] += 1
                 reasons_counter[reason_value] += 1
+                if total_decision_reasons is not None:
+                    total_decision_reasons[reason_value] += 1
                 modes_counter[mode_value] += 1
+                if total_decision_modes is not None:
+                    total_decision_modes[mode_value] += 1
 
         if fill_gaps and bucket_map:
             bucket_indices = sorted(bucket_map.keys())
@@ -6284,6 +6661,17 @@ class AutoTrader:
                 "guardrail_events": bucket_payload.get("guardrail_events", 0),
                 "evaluations": bucket_payload.get("evaluations", 0),
             }
+            guardrail_events = bucket_summary["guardrail_events"]
+            evaluations = bucket_summary["evaluations"]
+            bucket_summary["guardrail_rate"] = (
+                guardrail_events / evaluations if evaluations else 0.0
+            )
+            bucket_summary["approval_states"] = self._finalize_dimension_counter(
+                bucket_payload.get("approval_states")
+            )
+            bucket_summary["normalization_states"] = self._finalize_dimension_counter(
+                bucket_payload.get("normalization_states")
+            )
 
             if include_services:
                 services_payload = bucket_payload.get("services", {})
@@ -6344,6 +6732,19 @@ class AutoTrader:
         summary["buckets"] = buckets_output
         summary["first_timestamp"] = first_ts
         summary["last_timestamp"] = last_ts
+        total_guardrail_events = summary.get("total", 0) or 0
+        total_evaluations = summary.get("evaluations", 0) or 0
+        summary["guardrail_rate"] = (
+            total_guardrail_events / total_evaluations
+            if total_evaluations
+            else 0.0
+        )
+        summary["approval_states"] = self._finalize_dimension_counter(
+            total_approval_states
+        )
+        summary["normalization_states"] = self._finalize_dimension_counter(
+            total_normalization_states
+        )
         if total_services is not None:
             summary["services"] = {
                 service_name: {
@@ -6359,6 +6760,32 @@ class AutoTrader:
             summary["guardrail_trigger_values"] = (
                 self._finalize_guardrail_numeric_stats(total_value_stats)
             )
+            summary["guardrail_reasons"] = self._finalize_dimension_counter(
+                total_guardrail_reasons
+            )
+            summary["guardrail_triggers"] = self._finalize_dimension_counter(
+                total_guardrail_triggers
+            )
+            summary["guardrail_trigger_labels"] = self._finalize_dimension_counter(
+                total_guardrail_trigger_labels
+            )
+            summary["guardrail_trigger_comparators"] = (
+                self._finalize_dimension_counter(total_guardrail_trigger_comparators)
+            )
+            summary["guardrail_trigger_units"] = self._finalize_dimension_counter(
+                total_guardrail_trigger_units
+            )
+
+        if include_decision_dimensions:
+            summary["decision_states"] = self._finalize_dimension_counter(
+                total_decision_states
+            )
+            summary["decision_reasons"] = self._finalize_dimension_counter(
+                total_decision_reasons
+            )
+            summary["decision_modes"] = self._finalize_dimension_counter(
+                total_decision_modes
+            )
 
         if missing_bucket is not None and (
             missing_bucket.get("guardrail_events", 0)
@@ -6371,6 +6798,19 @@ class AutoTrader:
                 "guardrail_events": missing_bucket.get("guardrail_events", 0),
                 "evaluations": missing_bucket.get("evaluations", 0),
             }
+            missing_guardrail_events = missing_summary["guardrail_events"]
+            missing_evaluations = missing_summary["evaluations"]
+            missing_summary["guardrail_rate"] = (
+                missing_guardrail_events / missing_evaluations
+                if missing_evaluations
+                else 0.0
+            )
+            missing_summary["approval_states"] = self._finalize_dimension_counter(
+                missing_bucket.get("approval_states")
+            )
+            missing_summary["normalization_states"] = self._finalize_dimension_counter(
+                missing_bucket.get("normalization_states")
+            )
             if include_services:
                 services_payload = missing_bucket.get("services", {})
                 missing_summary["services"] = {
@@ -7353,7 +7793,8 @@ class AutoTrader:
                         )
             records.append(summary_record)
 
-        return records
+        metadata = _extract_guardrail_timeline_metadata(summary)
+        return GuardrailTimelineRecords(records, metadata)
 
     def guardrail_timeline_to_dataframe(
         self,
@@ -7379,8 +7820,8 @@ class AutoTrader:
         trigger_value_max: Any = None,
         since: Any = None,
         until: Any = None,
-        include_services: bool = True,
-        include_guardrail_dimensions: bool = True,
+        include_services: bool = False,
+        include_guardrail_dimensions: bool = False,
         include_decision_dimensions: bool = False,
         fill_gaps: bool = False,
         include_missing_bucket: bool = False,
@@ -7410,9 +7851,9 @@ class AutoTrader:
             trigger_value_max=trigger_value_max,
             since=since,
             until=until,
-            include_services=include_services,
-            include_guardrail_dimensions=include_guardrail_dimensions,
-            include_decision_dimensions=include_decision_dimensions,
+            include_services=True,
+            include_guardrail_dimensions=True,
+            include_decision_dimensions=True,
             fill_gaps=fill_gaps,
             include_missing_bucket=include_missing_bucket,
             coerce_timestamps=coerce_timestamps,
@@ -7423,24 +7864,66 @@ class AutoTrader:
         summary_metadata = getattr(records, "summary", None)
 
         if not records:
-            df = pd.DataFrame(
-                columns=[
-                    "index",
-                    "start",
-                    "end",
-                    "guardrail_events",
-                    "evaluations",
-                    "services",
-                    "guardrail_reasons",
-                    "guardrail_triggers",
-                    "decision_states",
-                    "decision_reasons",
-                    "decision_modes",
-                    "bucket_type",
-                ]
-            )
+            base_columns = [
+                "index",
+                "start",
+                "end",
+                "guardrail_events",
+                "evaluations",
+                "guardrail_rate",
+                "bucket_type",
+            ]
+            optional_columns: list[tuple[bool, str]] = [
+                (include_services, "services"),
+                (include_guardrail_dimensions, "guardrail_reasons"),
+                (include_guardrail_dimensions, "guardrail_triggers"),
+                (include_guardrail_dimensions, "guardrail_trigger_labels"),
+                (include_guardrail_dimensions, "guardrail_trigger_comparators"),
+                (include_guardrail_dimensions, "guardrail_trigger_units"),
+                (include_guardrail_dimensions, "guardrail_trigger_thresholds"),
+                (include_guardrail_dimensions, "guardrail_trigger_values"),
+                (include_decision_dimensions, "decision_states"),
+                (include_decision_dimensions, "decision_reasons"),
+                (include_decision_dimensions, "decision_modes"),
+            ]
+            for include_flag, column_name in optional_columns:
+                if include_flag:
+                    base_columns.append(column_name)
+            df = pd.DataFrame(columns=base_columns)
         else:
-            df = pd.DataFrame(records)
+            drop_columns: set[str] = set()
+            if not include_services:
+                drop_columns.add("services")
+            if not include_guardrail_dimensions:
+                drop_columns.update(
+                    {
+                        "guardrail_reasons",
+                        "guardrail_triggers",
+                        "guardrail_trigger_labels",
+                        "guardrail_trigger_comparators",
+                        "guardrail_trigger_units",
+                        "guardrail_trigger_thresholds",
+                        "guardrail_trigger_values",
+                    }
+                )
+            if not include_decision_dimensions:
+                drop_columns.update(
+                    {"decision_states", "decision_reasons", "decision_modes"}
+                )
+
+            if drop_columns:
+                sanitized_records = [
+                    {
+                        key: copy.deepcopy(value)
+                        for key, value in record.items()
+                        if key not in drop_columns
+                    }
+                    for record in records
+                ]
+            else:
+                sanitized_records = [copy.deepcopy(record) for record in records]
+
+            df = pd.DataFrame(sanitized_records)
 
         if summary_metadata is not None:
             df.attrs["guardrail_summary"] = copy.deepcopy(summary_metadata)

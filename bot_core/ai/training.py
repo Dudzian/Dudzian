@@ -782,6 +782,106 @@ class ModelTrainer:
         }
         return adapter.load(result.state, feature_names, metadata)
 
+    def _cross_validate_matrix(
+        self,
+        matrix: Sequence[Sequence[float]],
+        targets: Sequence[float],
+        feature_names: Sequence[str],
+    ) -> Mapping[str, object]:
+        total = len(matrix)
+        if total < 4:
+            return {"folds": 0, "mae": [], "directional_accuracy": []}
+        folds = min(5, max(2, total // 4))
+        rows = [list(row) for row in matrix]
+        maes: list[float] = []
+        accuracies: list[float] = []
+        fold_size = max(1, total // folds)
+        for fold in range(folds):
+            start = fold * fold_size
+            end = total if fold == folds - 1 else min(total, start + fold_size)
+            validation_rows = rows[start:end]
+            validation_targets = targets[start:end]
+            train_rows = rows[:start] + rows[end:]
+            train_targets = list(targets[:start]) + list(targets[end:])
+            if not validation_rows or not train_rows:
+                continue
+            scalers = self._compute_scalers(train_rows, feature_names)
+            try:
+                model = self._train_model_for_cv(
+                    train_rows,
+                    train_targets,
+                    feature_names,
+                    scalers,
+                    validation_rows,
+                    validation_targets,
+                )
+            except Exception:
+                _LOGGER.warning(
+                    "Cross-validation failed for backend %s; falling back to builtin model",
+                    self.backend,
+                    exc_info=True,
+                )
+                model = SimpleGradientBoostingModel(
+                    learning_rate=self.learning_rate,
+                    n_estimators=self.n_estimators,
+                )
+                model.fit_matrix(
+                    train_rows,
+                    feature_names,
+                    train_targets,
+                    feature_scalers=scalers,
+                )
+            validation_samples = self._rows_to_samples(validation_rows, feature_names)
+            predictions = model.batch_predict(validation_samples)
+            metrics = self._compute_metrics(validation_targets, predictions)
+            maes.append(float(metrics.get("mae", 0.0)))
+            accuracies.append(float(metrics.get("directional_accuracy", 0.0)))
+        return {"folds": len(maes), "mae": maes, "directional_accuracy": accuracies}
+
+    def _train_model_for_cv(
+        self,
+        train_rows: Sequence[Sequence[float]],
+        train_targets: Sequence[float],
+        feature_names: Sequence[str],
+        scalers: Mapping[str, tuple[float, float]],
+        validation_rows: Sequence[Sequence[float]],
+        validation_targets: Sequence[float],
+    ) -> SupportsInference:
+        if self.backend == "builtin":
+            model = SimpleGradientBoostingModel(
+                learning_rate=self.learning_rate,
+                n_estimators=self.n_estimators,
+            )
+            model.fit_matrix(
+                train_rows,
+                feature_names,
+                train_targets,
+                feature_scalers=scalers,
+            )
+            return model
+
+        adapter = get_external_model_adapter(self.backend)
+        context = ExternalTrainingContext(
+            feature_names=feature_names,
+            scalers=scalers,
+            train_matrix=train_rows,
+            train_targets=train_targets,
+            validation_matrix=validation_rows,
+            validation_targets=validation_targets,
+            options=self.adapter_options,
+        )
+        result = adapter.train(context)
+        model = result.trained_model
+        if model is not None:
+            return model
+        metadata: MutableMapping[str, object] = {
+            "feature_scalers": {
+                name: {"mean": mean, "stdev": stdev}
+                for name, (mean, stdev) in scalers.items()
+            }
+        }
+        return adapter.load(result.state, feature_names, metadata)
+
     def _compute_scalers(
         self, matrix: Sequence[Sequence[float]], feature_names: Sequence[str]
     ) -> dict[str, tuple[float, float]]:
