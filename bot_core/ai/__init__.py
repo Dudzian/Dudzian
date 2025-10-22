@@ -1,98 +1,80 @@
 """Pakiet bot_core.ai dostarcza pipeline trenowania i inference modeli decyzyjnych."""
 
-from .feature_engineering import FeatureDataset, FeatureEngineer, FeatureVector
-from .inference import DecisionModelInference, ModelRepository
-from .manager import (
-    AIManager,
-    EnsembleDefinition,
-    EnsembleRegistryDiff,
-    EnsembleRegistrySnapshot,
-    ModelEvaluation,
-    PipelineExecutionRecord,
-    PipelineHistoryDiff,
-    PipelineHistorySnapshot,
-)
-from .models import ModelArtifact, ModelScore
-from .sequential import (
-    BUILTIN_HEURISTICS,
-    HistoricalFeatureRepository,
-    OnlineScoringResult,
-    SequentialOnlineScorer,
-    SequentialTrainingPipeline,
-    SequentialTrainingReport,
-    TemporalDifferencePolicy,
-    WalkForwardMetrics,
-)
-from .regime import (
-    MarketRegime,
-    MarketRegimeAssessment,
-    MarketRegimeClassifier,
-    RegimeHistory,
-    RegimeSnapshot,
-    RegimeSummary,
-    RegimeStrategyWeights,
-    RiskLevel,
-)
-from .pipeline import register_model_artifact, train_gradient_boosting_model
-from .scheduler import (
-    RetrainingScheduler,
-    ScheduledTrainingJob,
-    TrainingRunRecord,
-    TrainingScheduler,
-    WalkForwardResult,
-    WalkForwardValidator,
-)
-from .training import (
-    ExternalModelAdapter,
-    ModelTrainer,
-    SimpleGradientBoostingModel,
-    get_external_model_adapter,
-    register_external_model_adapter,
-)
+from __future__ import annotations
 
-__all__ = [
-    "AIManager",
-    "BUILTIN_HEURISTICS",
-    "DecisionModelInference",
-    "FeatureDataset",
-    "FeatureEngineer",
-    "FeatureVector",
-    "HistoricalFeatureRepository",
-    "EnsembleDefinition",
-    "EnsembleRegistryDiff",
-    "EnsembleRegistrySnapshot",
-    "ModelArtifact",
-    "ModelEvaluation",
-    "ModelRepository",
-    "ModelScore",
-    "OnlineScoringResult",
-    "MarketRegime",
-    "MarketRegimeAssessment",
-    "MarketRegimeClassifier",
-    "RegimeHistory",
-    "RegimeSnapshot",
-    "RegimeSummary",
-    "RegimeStrategyWeights",
-    "RiskLevel",
-    "ExternalModelAdapter",
-    "ModelTrainer",
-    "RetrainingScheduler",
-    "ScheduledTrainingJob",
-    "SequentialOnlineScorer",
-    "SequentialTrainingPipeline",
-    "SequentialTrainingReport",
-    "SimpleGradientBoostingModel",
-    "TrainingRunRecord",
-    "TrainingScheduler",
-    "TemporalDifferencePolicy",
-    "WalkForwardResult",
-    "WalkForwardMetrics",
-    "WalkForwardValidator",
-    "get_external_model_adapter",
-    "PipelineExecutionRecord",
-    "PipelineHistoryDiff",
-    "PipelineHistorySnapshot",
-    "register_external_model_adapter",
-    "register_model_artifact",
-    "train_gradient_boosting_model",
-]
+import importlib
+from typing import Any, Dict, Tuple
+
+_EXPORTS: Dict[str, Tuple[str, str]] = {
+    # inference / repository
+    "DecisionModelInference": (".inference", "DecisionModelInference"),
+    "ModelRepository": (".inference", "ModelRepository"),
+    # modele i serializacja
+    "ModelArtifact": (".models", "ModelArtifact"),
+    "ModelScore": (".models", "ModelScore"),
+    # training pipeline
+    "ModelTrainer": (".training", "ModelTrainer"),
+    "SimpleGradientBoostingModel": (".training", "SimpleGradientBoostingModel"),
+    "ExternalModelAdapter": (".training", "ExternalModelAdapter"),
+    "get_external_model_adapter": (".training", "get_external_model_adapter"),
+    "register_external_model_adapter": (".training", "register_external_model_adapter"),
+    # pipeline helpers
+    "train_gradient_boosting_model": (".pipeline", "train_gradient_boosting_model"),
+    "register_model_artifact": (".pipeline", "register_model_artifact"),
+    # harmonogram treningów
+    "RetrainingScheduler": (".scheduler", "RetrainingScheduler"),
+    "ScheduledTrainingJob": (".scheduler", "ScheduledTrainingJob"),
+    "TrainingRunRecord": (".scheduler", "TrainingRunRecord"),
+    "TrainingScheduler": (".scheduler", "TrainingScheduler"),
+    "WalkForwardResult": (".scheduler", "WalkForwardResult"),
+    "WalkForwardValidator": (".scheduler", "WalkForwardValidator"),
+    # reżimy rynku
+    "MarketRegime": (".regime", "MarketRegime"),
+    "MarketRegimeAssessment": (".regime", "MarketRegimeAssessment"),
+    "MarketRegimeClassifier": (".regime", "MarketRegimeClassifier"),
+    "RegimeHistory": (".regime", "RegimeHistory"),
+    "RegimeSnapshot": (".regime", "RegimeSnapshot"),
+    "RegimeSummary": (".regime", "RegimeSummary"),
+    "RegimeStrategyWeights": (".regime", "RegimeStrategyWeights"),
+    "RiskLevel": (".regime", "RiskLevel"),
+    # sequential AI
+    "BUILTIN_HEURISTICS": (".sequential", "BUILTIN_HEURISTICS"),
+    "HistoricalFeatureRepository": (".sequential", "HistoricalFeatureRepository"),
+    "OnlineScoringResult": (".sequential", "OnlineScoringResult"),
+    "SequentialOnlineScorer": (".sequential", "SequentialOnlineScorer"),
+    "SequentialTrainingPipeline": (".sequential", "SequentialTrainingPipeline"),
+    "SequentialTrainingReport": (".sequential", "SequentialTrainingReport"),
+    "TemporalDifferencePolicy": (".sequential", "TemporalDifferencePolicy"),
+    "WalkForwardMetrics": (".sequential", "WalkForwardMetrics"),
+    # feature engineering
+    "FeatureDataset": (".feature_engineering", "FeatureDataset"),
+    "FeatureEngineer": (".feature_engineering", "FeatureEngineer"),
+    "FeatureVector": (".feature_engineering", "FeatureVector"),
+    # manager & historię pipeline'u
+    "AIManager": (".manager", "AIManager"),
+    "EnsembleDefinition": (".manager", "EnsembleDefinition"),
+    "EnsembleRegistryDiff": (".manager", "EnsembleRegistryDiff"),
+    "EnsembleRegistrySnapshot": (".manager", "EnsembleRegistrySnapshot"),
+    "ModelEvaluation": (".manager", "ModelEvaluation"),
+    "PipelineExecutionRecord": (".manager", "PipelineExecutionRecord"),
+    "PipelineHistoryDiff": (".manager", "PipelineHistoryDiff"),
+    "PipelineHistorySnapshot": (".manager", "PipelineHistorySnapshot"),
+}
+
+__all__ = sorted(_EXPORTS)
+
+
+def __getattr__(name: str) -> Any:  # pragma: no cover - prosty mechanizm leniwy
+    try:
+        module_name, attr_name = _EXPORTS[name]
+    except KeyError as exc:  # pragma: no cover - delegujemy do standardowego mechanizmu
+        raise AttributeError(f"module 'bot_core.ai' has no attribute {name!r}") from exc
+    module = importlib.import_module(module_name, package=__name__)
+    value = getattr(module, attr_name)
+    globals()[name] = value
+    return value
+
+
+def __dir__() -> list[str]:  # pragma: no cover - mała funkcja użytkowa
+    return sorted(list(globals().keys()) + list(__all__))
+

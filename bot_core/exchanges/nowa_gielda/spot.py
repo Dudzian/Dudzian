@@ -219,26 +219,6 @@ class NowaGieldaHTTPClient:
             params={"symbol": symbol, "depth": depth},
         )
 
-    def fetch_ohlcv(
-        self,
-        symbol: str,
-        interval: str,
-        *,
-        start: int | None = None,
-        end: int | None = None,
-        limit: int | None = None,
-    ) -> Mapping[str, Any]:
-        params = _strip_none(
-            {
-                "symbol": symbol,
-                "interval": interval,
-                "start": start,
-                "end": end,
-                "limit": limit,
-            }
-        )
-        return self._request("GET", "/public/ohlcv", params=params)
-
     def create_order(
         self,
         payload: Mapping[str, Any],
@@ -258,37 +238,6 @@ class NowaGieldaHTTPClient:
         if symbol is not None:
             params["symbol"] = symbol
         return self._request("DELETE", "/private/orders", params=params, headers=headers)
-
-    def fetch_account(
-        self,
-        *,
-        headers: Mapping[str, str],
-    ) -> Mapping[str, Any]:
-        return self._request("GET", "/private/account", headers=headers)
-
-    def fetch_trades(
-        self,
-        *,
-        headers: Mapping[str, str],
-        params: Mapping[str, Any] | None = None,
-    ) -> Mapping[str, Any]:
-        return self._request("GET", "/private/trades", params=params, headers=headers)
-
-    def fetch_open_orders(
-        self,
-        *,
-        headers: Mapping[str, str],
-        params: Mapping[str, Any] | None = None,
-    ) -> Mapping[str, Any]:
-        return self._request("GET", "/private/orders", params=params, headers=headers)
-
-    def fetch_order_history(
-        self,
-        *,
-        headers: Mapping[str, str],
-        params: Mapping[str, Any] | None = None,
-    ) -> Mapping[str, Any]:
-        return self._request("GET", "/private/orders/history", params=params, headers=headers)
 
 
 class NowaGieldaSpotAdapter(ExchangeAdapter):

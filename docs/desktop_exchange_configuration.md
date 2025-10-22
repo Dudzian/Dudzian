@@ -21,26 +21,6 @@ które należy wykonać przed uruchomieniem bota w środowisku lokalnym.
    - Adapter `nowa_gielda_spot` korzysta z osobnych baz URL dla środowisk `live`,
      `paper` i `testnet`, dlatego generując klucze testowe należy użyć portalu
      odpowiadającego wybranemu środowisku.
-   - API udostępnia endpoint `GET /private/account`, z którego pobierane są pola
-     `balances`, `totalEquity`, `availableMargin` oraz `maintenanceMargin`. Upewnij
-     się, że konto posiada uprawnienia do odczytu stanu rachunku.
-   - Historia transakcji dostępna jest pod `GET /private/trades`. Zapytanie wymaga
-     podpisu HMAC i akceptuje parametry `symbol`, `start`, `end` oraz `limit`.
-     Adapter filtruje wyniki po symbolu oraz waliduje typy liczbowe (`price`,
-     `quantity`, `fee`, `timestamp`). Endpoint objęty jest limitem 5 żądań na
-     sekundę, dlatego długie zakresy czasowe należy dzielić na mniejsze porcje.
-   - Otwarte zlecenia pobierane są z `GET /private/orders`. Endpoint wspiera
-     parametry `symbol` oraz `limit` i zwraca pola `orderId`, `status`, `side`,
-     `type`, `price`, `quantity`, `filledQuantity`, `avgPrice` oraz `timestamp`.
-     Limit wagowy pozwala na maksymalnie 5 zapytań w 1 sekundzie.
-   - Historia zamkniętych zleceń dostępna jest przez `GET /private/orders/history`.
-     Zapytanie można filtrować po `symbol`, `start`, `end` i `limit`. Adapter
-     waliduje pola `orderId`, `executedQuantity`, `closedAt` oraz poprawność
-     tłumaczenia symbolu, a limit zapytań wynosi 5 na sekundę.
-   - Dane historyczne świec pobierane są z `GET /public/ohlcv`, który wymaga
-     parametrów `symbol` (np. `BTC-USDT`) oraz `interval` (`1m`, `1h`, `1d`).
-     Opcjonalnie można przekazać `start`, `end` i `limit`, aby zawęzić zakres
-     czasowy. Endpoint ten objęty jest limitem 10 zapytań w oknie 1 sekundy.
 
 Poświadczenia przechowujemy w zaszyfrowanym magazynie `secrets/desktop.toml`.
 Każdy wpis zawiera identyfikator giełdy (`binance`, `kraken`, `zonda`) oraz
