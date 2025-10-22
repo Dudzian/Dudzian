@@ -29,12 +29,7 @@ from typing import Any, Callable, Dict, Mapping, Optional, Protocol, Sequence, c
 import pandas as pd
 
 from bot_core.auto_trader.audit import DecisionAuditLog
-from bot_core.auto_trader.schedule import (
-    ScheduleOverride,
-    ScheduleState,
-    ScheduleWindow,
-    TradingSchedule,
-)
+from bot_core.auto_trader.schedule import ScheduleState, TradingSchedule
 from bot_core.ai.regime import (
     MarketRegime,
     MarketRegimeAssessment,
@@ -142,6 +137,61 @@ class EmitterLike(Protocol):
     def log(self, message: str, *args: Any, **kwargs: Any) -> None:
         ...
 
+
+def _serialize_schedule_window(window: ScheduleWindow) -> dict[str, Any]:
+    """Return a serialisable snapshot of a schedule window."""
+
+    payload: dict[str, Any] = {
+        "start": window.start.isoformat(),
+        "end": window.end.isoformat(),
+        "mode": window.mode,
+        "allow_trading": bool(window.allow_trading),
+        "days": sorted(int(day) for day in window.days),
+        "duration_s": int(window.duration.total_seconds()),
+    }
+    if window.label is not None:
+        payload["label"] = window.label
+    return payload
+
+
+def _serialize_schedule_override(override: ScheduleOverride) -> dict[str, Any]:
+    """Return a serialisable snapshot of a schedule override."""
+
+    payload: dict[str, Any] = {
+        "start": override.start.astimezone(timezone.utc).isoformat(),
+        "end": override.end.astimezone(timezone.utc).isoformat(),
+        "mode": override.mode,
+        "allow_trading": bool(override.allow_trading),
+        "duration_s": int(override.duration.total_seconds()),
+    }
+    if override.label is not None:
+        payload["label"] = override.label
+    return payload
+
+
+def _serialize_schedule_state(state: ScheduleState) -> dict[str, Any]:
+    """Return a serialisable snapshot of a schedule state."""
+
+    payload: dict[str, Any] = {
+        "mode": state.mode,
+        "is_open": bool(state.is_open),
+    }
+    if state.window is not None:
+        payload["window"] = _serialize_schedule_window(state.window)
+    if state.next_transition is not None:
+        payload["next_transition"] = state.next_transition.astimezone(timezone.utc).isoformat()
+    if state.override is not None:
+        payload["override"] = _serialize_schedule_override(state.override)
+    if state.next_override is not None:
+        payload["next_override"] = _serialize_schedule_override(state.next_override)
+    remaining = state.time_until_transition
+    if remaining is not None:
+        payload["time_until_transition_s"] = remaining
+    next_override_delay = state.time_until_next_override
+    if next_override_delay is not None:
+        payload["time_until_next_override_s"] = next_override_delay
+    payload["override_active"] = state.override_active
+    return payload
 
 
 @dataclass(slots=True)
@@ -758,204 +808,6 @@ class AutoTrader:
         return TradingSchedule.always_on(mode=self._initial_mode)
 
     @staticmethod
-    def _coerce_schedule_overrides(
-        overrides: ScheduleOverride
-        | Mapping[str, object]
-        | Sequence[object]
-    ) -> list[ScheduleOverride]:
-        def _convert(item: object) -> list[ScheduleOverride]:
-            if isinstance(item, ScheduleOverride):
-                return [item]
-            if isinstance(item, Mapping):
-                return [ScheduleOverride.from_mapping(item)]
-            if isinstance(item, Sequence) and not isinstance(item, (str, bytes, bytearray)):
-                collected: list[ScheduleOverride] = []
-                for entry in item:
-                    collected.extend(_convert(entry))
-                return collected
-            raise TypeError("override definitions must be ScheduleOverride or mappings")
-
-        converted = _convert(overrides)
-        if not converted:
-            raise ValueError("at least one schedule override must be provided")
-        return converted
-
-    @staticmethod
-    def _coerce_override_labels(labels: str | Sequence[object] | None) -> set[str] | None:
-        if labels is None:
-            return None
-        if isinstance(labels, str):
-            label = labels.strip()
-            return {label} if label else set()
-        if isinstance(labels, Sequence) and not isinstance(labels, (bytes, bytearray)):
-            result: set[str] = set()
-            for item in labels:
-                if item is None:
-                    continue
-                token = str(item).strip()
-                if token:
-                    result.add(token)
-            return result
-        raise TypeError("labels must be a string or a sequence of strings")
-
-    def get_work_schedule(self) -> TradingSchedule:
-        """Return the current trading schedule, initialising defaults if missing."""
-
-        with self._lock:
-            schedule = getattr(self, "_work_schedule", None)
-            if schedule is None:
-                schedule = self._build_default_work_schedule()
-                self._work_schedule = schedule
-        return schedule
-
-    def set_work_schedule(
-        self,
-        schedule: TradingSchedule | Mapping[str, object] | Sequence[object] | None,
-        *,
-        reason: str | None = None,
-    ) -> ScheduleState:
-        """Replace the active work schedule and publish its state."""
-
-        if schedule is not None and not isinstance(schedule, TradingSchedule):
-            if isinstance(schedule, Mapping) or (
-                isinstance(schedule, Sequence)
-                and not isinstance(schedule, (str, bytes, bytearray))
-            ):
-                schedule = TradingSchedule.from_payload(schedule)
-            else:
-                raise TypeError("schedule must be a TradingSchedule or serialisable payload")
-        if schedule is None:
-            schedule = self._build_default_work_schedule()
-            with self._lock:
-                self._work_schedule = schedule
-            update_reason = reason or "reset"
-        else:
-            update_reason = reason or "update"
-
-        state = schedule.describe()
-        with self._lock:
-            self._work_schedule = schedule
-            self._schedule_state = state
-            self._schedule_mode = state.mode
-            self._last_schedule_snapshot = (state.mode, state.is_open)
-
-        status = "open" if state.is_open else "closed"
-        self._log(
-            f"Trading schedule updated to mode={state.mode} ({status})",
-            level=logging.INFO,
-            reason=update_reason,
-        )
-
-        payload = state.to_mapping()
-        payload["reason"] = update_reason
-        self._record_decision_audit_stage(
-            "schedule_configured",
-            symbol=_SCHEDULE_SYMBOL,
-            payload=payload,
-        )
-        self._emit_schedule_state_event(state, reason=update_reason)
-        return state
-
-    def apply_schedule_override(
-        self,
-        overrides: ScheduleOverride | Mapping[str, object] | Sequence[object],
-        *,
-        reason: str | None = None,
-        replace: bool = False,
-    ) -> ScheduleState:
-        schedule = getattr(self, "_work_schedule", None)
-        if schedule is None:
-            schedule = self._build_default_work_schedule()
-        overrides_list = self._coerce_schedule_overrides(overrides)
-        existing = schedule.overrides
-        combined: tuple[ScheduleOverride, ...]
-        if replace:
-            combined = tuple(overrides_list)
-        else:
-            combined = existing + tuple(overrides_list)
-        updated_schedule = schedule.with_overrides(combined)
-        update_reason = reason or ("override_replace" if replace else "override")
-        state = self.set_work_schedule(updated_schedule, reason=update_reason)
-        payload = state.to_mapping()
-        payload["reason"] = update_reason
-        payload["overrides_applied"] = [
-            item.to_mapping(include_duration=True, timezone_hint=timezone.utc)
-            for item in overrides_list
-        ]
-        payload["override_replace"] = bool(replace)
-        self._record_decision_audit_stage(
-            "schedule_override_applied",
-            symbol=_SCHEDULE_SYMBOL,
-            payload=payload,
-        )
-        return state
-
-    def list_schedule_overrides(self) -> tuple[ScheduleOverride, ...]:
-        """Return a snapshot of overrides currently applied to the schedule."""
-
-        schedule = self.get_work_schedule()
-        return schedule.overrides
-
-    def clear_schedule_overrides(
-        self,
-        *,
-        labels: str | Sequence[object] | None = None,
-        reason: str | None = None,
-    ) -> ScheduleState:
-        schedule = getattr(self, "_work_schedule", None)
-        if schedule is None:
-            schedule = self._build_default_work_schedule()
-        existing = schedule.overrides
-        if not existing:
-            return self.get_schedule_state()
-
-        label_filter = self._coerce_override_labels(labels)
-        if label_filter:
-            filtered = tuple(
-                override
-                for override in existing
-                if override.label is None or override.label not in label_filter
-            )
-        else:
-            filtered = ()
-
-        if filtered == existing:
-            return self.get_schedule_state()
-
-        updated_schedule = schedule.with_overrides(filtered)
-        update_reason = reason or "override_clear"
-        state = self.set_work_schedule(updated_schedule, reason=update_reason)
-        payload = state.to_mapping()
-        payload["reason"] = update_reason
-        payload["remaining_overrides"] = [
-            item.to_mapping(include_duration=True, timezone_hint=timezone.utc)
-            for item in filtered
-        ]
-        if label_filter is not None:
-            payload["cleared_labels"] = sorted(label_filter)
-        self._record_decision_audit_stage(
-            "schedule_override_cleared",
-            symbol=_SCHEDULE_SYMBOL,
-            payload=payload,
-        )
-        return state
-
-    def get_schedule_state(self) -> ScheduleState:
-        """Return the latest schedule state, recalculating it if needed."""
-
-        schedule = self.get_work_schedule()
-        state = schedule.describe()
-        with self._lock:
-            self._schedule_state = state
-            self._schedule_mode = state.mode
-        return state
-
-    def is_schedule_open(self) -> bool:
-        """Return ``True`` when the work schedule allows trading."""
-
-        return self.get_schedule_state().is_open
-
-    @staticmethod
     def _detect_environment_name(bootstrap_context: Any | None) -> str:
         if bootstrap_context is None:
             return "paper"
@@ -1036,23 +888,13 @@ class AutoTrader:
                 f"Trading schedule switched to mode={state.mode} ({status})",
                 level=logging.INFO,
             )
-            payload = state.to_mapping()
-            payload["reason"] = "transition"
-            self._record_decision_audit_stage(
-                "schedule_transition",
-                symbol=_SCHEDULE_SYMBOL,
-                payload=payload,
-            )
-            self._emit_schedule_state_event(state, reason="transition")
             self._last_schedule_snapshot = snapshot
         if not state.is_open:
             delay = state.time_until_transition or self.auto_trade_interval_s
-            payload = state.to_mapping()
-            payload["reason"] = "blocked"
             self._record_decision_audit_stage(
                 "schedule_blocked",
                 symbol=_SCHEDULE_SYMBOL,
-                payload=payload,
+                payload={"mode": state.mode},
             )
             self._auto_trade_stop.wait(delay)
             return False
@@ -1083,18 +925,6 @@ class AutoTrader:
             )
         except Exception:  # pragma: no cover - audit log failures should not break trading
             LOGGER.debug("Decision audit logging failed", exc_info=True)
-
-    def _emit_schedule_state_event(self, state: ScheduleState, *, reason: str | None = None) -> None:
-        emitter_emit = getattr(self.emitter, "emit", None)
-        if not callable(emitter_emit):
-            return
-        payload = state.to_mapping()
-        if reason is not None:
-            payload["reason"] = reason
-        try:
-            emitter_emit("auto_trader.schedule_state", **payload)
-        except Exception:  # pragma: no cover - emission should not break trading
-            LOGGER.debug("Schedule state emission failed", exc_info=True)
 
     def _capture_risk_snapshot(self) -> Mapping[str, object] | None:
         service = self.risk_service or getattr(self, "core_risk_engine", None)
@@ -4590,33 +4420,11 @@ class AutoTrader:
         with self._lock:
             self._risk_evaluations.clear()
 
-    def get_decision_audit_entries(
-        self,
-        limit: int | None = 20,
-        *,
-        reverse: bool = False,
-        stage: str | Sequence[object] | None = None,
-        symbol: str | Sequence[object] | None = None,
-        mode: str | Sequence[object] | None = None,
-        since: Any = None,
-        until: Any = None,
-        has_risk_snapshot: bool | None = None,
-        has_portfolio_snapshot: bool | None = None,
-    ) -> Sequence[Mapping[str, object]]:
+    def get_decision_audit_entries(self, limit: int = 20) -> Sequence[Mapping[str, object]]:
         log = getattr(self, "_decision_audit_log", None)
         if log is None:
             return ()
-        return log.query_dicts(
-            limit=limit,
-            reverse=reverse,
-            stage=stage,
-            symbol=symbol,
-            mode=mode,
-            since=since,
-            until=until,
-            has_risk_snapshot=has_risk_snapshot,
-            has_portfolio_snapshot=has_portfolio_snapshot,
-        )
+        return log.to_dicts(limit)
 
     def clear_decision_audit_log(self) -> None:
         log = getattr(self, "_decision_audit_log", None)

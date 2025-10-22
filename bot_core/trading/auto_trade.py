@@ -286,24 +286,65 @@ class AutoTradeEngine:
                 self.enable()
 
     def _on_risk_alert_batch(self, events: List[Event]) -> None:
-        now = time.time()
         for ev in events:
+            now = time.time()
             payload = ev.payload or {}
             if payload.get("symbol") != self.cfg.symbol:
                 continue
             expiry = now + self.cfg.risk_freeze_seconds
-            if expiry > self._manual_risk_frozen_until:
-                self._manual_risk_frozen_until = expiry
-            self._recompute_risk_freeze_until()
-            self.adapter.push_autotrade_status(  # type: ignore[attr-defined]
-                "risk_freeze",
-                detail={
+            reason_code = str(payload.get("kind") or "risk_alert")
+            manual_active = now < self._manual_risk_frozen_until
+            previous_until = self._manual_risk_frozen_until if manual_active else 0.0
+            if not manual_active:
+                self._manual_risk_state = _ManualRiskFreezeState(
+                    reason=reason_code,
+                    triggered_at=now,
+                    last_extension_at=now,
+                )
+                self._manual_risk_frozen_until = float(expiry)
+                detail = {
                     "symbol": self.cfg.symbol,
-                    "until": self._risk_frozen_until,
-                    "reason": payload.get("kind", "risk_alert"),
-                },
-                level="WARN",
-            )
+                    "until": self._manual_risk_frozen_until,
+                    "reason": reason_code,
+                    "triggered_at": now,
+                    "last_extension_at": now,
+                    "released_at": None,
+                    "frozen_for": None,
+                }
+                self.adapter.push_autotrade_status(  # type: ignore[attr-defined]
+                    "risk_freeze",
+                    detail=detail,
+                    level="WARN",
+                )
+            else:
+                should_extend = expiry > self._manual_risk_frozen_until + 1e-6
+                state = self._manual_risk_state
+                if should_extend and state is not None:
+                    previous_reason = state.reason
+                    state.reason = reason_code
+                    state.last_extension_at = now
+                    self._manual_risk_frozen_until = float(expiry)
+                    extend_detail = {
+                        "symbol": self.cfg.symbol,
+                        "extended_from": previous_until,
+                        "until": self._manual_risk_frozen_until,
+                        "reason": reason_code,
+                        "triggered_at": state.triggered_at or now,
+                        "last_extension_at": state.last_extension_at,
+                        "released_at": None,
+                        "frozen_for": None,
+                    }
+                    if previous_reason and previous_reason != reason_code:
+                        extend_detail["previous_reason"] = previous_reason
+                    self.adapter.push_autotrade_status(  # type: ignore[attr-defined]
+                        "risk_freeze_extend",
+                        detail=extend_detail,
+                        level="WARN",
+                    )
+                elif state is not None:
+                    state.reason = reason_code
+                    state.last_extension_at = now
+            self._recompute_risk_freeze_until()
 
     def _on_ticks_batch(self, events: List[Event]) -> None:
         for ev in events:
