@@ -247,6 +247,17 @@ class DecisionEngineSummary(BaseModel):
     longest_acceptance_streak: int
     longest_rejection_streak: int
     history_start_generated_at: str | None = None
+    history_end_generated_at: str | None = None
+    history_span_seconds: float | None = None
+    history_generated_at_count: int | None = None
+    history_missing_generated_at: int | None = None
+    history_generated_at_coverage: float | None = None
+    full_history_start_generated_at: str | None = None
+    full_history_end_generated_at: str | None = None
+    full_history_span_seconds: float | None = None
+    full_history_generated_at_count: int | None = None
+    full_history_missing_generated_at: int | None = None
+    full_history_generated_at_coverage: float | None = None
     full_accepted: int | None = None
     full_rejected: int | None = None
     full_acceptance_rate: float | None = None

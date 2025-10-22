@@ -201,6 +201,11 @@ def test_export_decision_engine_summary(tmp_path: Path) -> None:
     assert summary["latest_risk_flags"] == ["liquidity"]
     assert summary["latest_stress_failures"] == ["stress_liquidity"]
     assert summary["history_start_generated_at"] == "2024-05-01T00:00:00Z"
+    assert summary["history_end_generated_at"] == "2024-05-01T00:00:00Z"
+    assert summary["history_span_seconds"] == pytest.approx(0.0)
+    assert summary["full_history_start_generated_at"] == "2024-05-01T00:00:00Z"
+    assert summary["full_history_end_generated_at"] == "2024-05-01T00:00:00Z"
+    assert summary["full_history_span_seconds"] == pytest.approx(0.0)
     assert summary["median_net_edge_bps"] == pytest.approx(3.75)
     assert summary["p90_net_edge_bps"] == pytest.approx(5.95)
     assert summary["p95_net_edge_bps"] == pytest.approx(6.225)

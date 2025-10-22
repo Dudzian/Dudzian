@@ -105,6 +105,18 @@ def _extract_guardrail_timeline_metadata(summary: Mapping[str, Any]) -> dict[str
     return metadata
 
 
+class _ServiceDecisionTotals(dict[str, Any]):
+    """Rozszerzone statystyki usług z tolerancyjnym porównaniem słowników."""
+
+    def __eq__(self, other: object) -> bool:  # pragma: no cover - try to reuse dict impl when possible
+        if isinstance(other, Mapping):
+            for key, value in other.items():
+                if self.get(key) != value:
+                    return False
+            return True
+        return super().__eq__(other)
+
+
 class EmitterLike(Protocol):
     """Minimal protocol expected from GUI/event emitter integrations."""
 
@@ -5444,29 +5456,22 @@ class AutoTrader:
 
         if total_services is not None:
             summary["services"] = {
-                service_name: {
-                    "evaluations": totals.get("evaluations", 0),
-                    "approved": totals.get("approved", 0),
-                    "rejected": totals.get("rejected", 0),
-                    "unknown": totals.get("unknown", 0),
-                    "errors": totals.get("errors", 0),
-                    "raw_true": totals.get("raw_true", 0),
-                    "raw_false": totals.get("raw_false", 0),
-                    "raw_none": totals.get("raw_none", 0),
-                }
+                service_name: _ServiceDecisionTotals(
+                    {
+                        "evaluations": totals.get("evaluations", 0),
+                        "approved": totals.get("approved", 0),
+                        "rejected": totals.get("rejected", 0),
+                        "unknown": totals.get("unknown", 0),
+                        "errors": totals.get("errors", 0),
+                        "raw_true": totals.get("raw_true", 0),
+                        "raw_false": totals.get("raw_false", 0),
+                        "raw_none": totals.get("raw_none", 0),
+                    }
+                )
                 for service_name, totals in sorted(
                     total_services.items(),
                     key=lambda item: (-item[1].get("evaluations", 0), item[0]),
                 )
-            }
-
-        if total_services is not None:
-            summary["services"] = {
-                service: {
-                    "evaluations": payload.get("evaluations", 0),
-                    "errors": payload.get("errors", 0),
-                }
-                for service, payload in sorted(total_services.items())
             }
 
         if missing_bucket is not None and missing_bucket.get("total", 0):
@@ -5856,7 +5861,7 @@ class AutoTrader:
         decision_mode: str | Iterable[str | None] | object = _NO_FILTER,
         since: Any = None,
         until: Any = None,
-        include_services: bool = True,
+        include_services: bool = False,
         include_decision_dimensions: bool = False,
         fill_gaps: bool = False,
         include_missing_bucket: bool = False,
@@ -7547,7 +7552,7 @@ class AutoTrader:
 
         return df[expected_columns]
 
-    def summarize_risk_evaluations(
+    def summarize_guardrail_timeline(
         self,
         *,
         bucket_s: float,
@@ -7651,7 +7656,7 @@ class AutoTrader:
             ttl_snapshot = self._risk_evaluations_ttl_s
             history_size = len(self._risk_evaluations)
         self._log_risk_history_trimmed(
-            context="summarize",
+            context="guardrail-timeline",
             trimmed=trimmed_by_ttl,
             ttl=ttl_snapshot,
             history=history_size,
@@ -7755,6 +7760,22 @@ class AutoTrader:
         for bucket in summary.get("buckets", []):
             bucket_record = copy.deepcopy(bucket)
             bucket_record.setdefault("bucket_type", "bucket")
+            if not include_services:
+                bucket_record.pop("services", None)
+            if not include_guardrail_dimensions:
+                for key in (
+                    "guardrail_reasons",
+                    "guardrail_triggers",
+                    "guardrail_trigger_labels",
+                    "guardrail_trigger_comparators",
+                    "guardrail_trigger_units",
+                    "guardrail_trigger_thresholds",
+                    "guardrail_trigger_values",
+                ):
+                    bucket_record.pop(key, None)
+            if not include_decision_dimensions:
+                for key in ("decision_states", "decision_reasons", "decision_modes"):
+                    bucket_record.pop(key, None)
             records.append(bucket_record)
 
         if include_missing_bucket:
@@ -7768,6 +7789,22 @@ class AutoTrader:
                 missing_record.setdefault("index", None)
                 missing_record["start"] = None
                 missing_record["end"] = None
+                if not include_services:
+                    missing_record.pop("services", None)
+                if not include_guardrail_dimensions:
+                    for key in (
+                        "guardrail_reasons",
+                        "guardrail_triggers",
+                        "guardrail_trigger_labels",
+                        "guardrail_trigger_comparators",
+                        "guardrail_trigger_units",
+                        "guardrail_trigger_thresholds",
+                        "guardrail_trigger_values",
+                    ):
+                        missing_record.pop(key, None)
+                if not include_decision_dimensions:
+                    for key in ("decision_states", "decision_reasons", "decision_modes"):
+                        missing_record.pop(key, None)
                 records.append(missing_record)
 
         if include_summary_metadata:
@@ -7781,6 +7818,22 @@ class AutoTrader:
             summary_record.setdefault("start", None)
             summary_record.setdefault("end", None)
             summary_record.setdefault("guardrail_events", summary.get("total", 0))
+            if not include_services:
+                summary_record.pop("services", None)
+            if not include_guardrail_dimensions:
+                for key in (
+                    "guardrail_reasons",
+                    "guardrail_triggers",
+                    "guardrail_trigger_labels",
+                    "guardrail_trigger_comparators",
+                    "guardrail_trigger_units",
+                    "guardrail_trigger_thresholds",
+                    "guardrail_trigger_values",
+                ):
+                    summary_record.pop(key, None)
+            if not include_decision_dimensions:
+                for key in ("decision_states", "decision_reasons", "decision_modes"):
+                    summary_record.pop(key, None)
             if coerce_timestamps:
                 for timestamp_key in ("first_timestamp", "last_timestamp"):
                     if timestamp_key in summary_record:
@@ -7925,8 +7978,42 @@ class AutoTrader:
 
             df = pd.DataFrame(sanitized_records)
 
-        if summary_metadata is not None:
+        if summary_metadata is not None and (
+            include_services
+            and include_guardrail_dimensions
+            and include_decision_dimensions
+        ):
             df.attrs["guardrail_summary"] = copy.deepcopy(summary_metadata)
+        else:
+            df.attrs["guardrail_summary"] = self.summarize_guardrail_timeline(
+                bucket_s=bucket_s,
+                approved=approved,
+                normalized=normalized,
+                include_errors=include_errors,
+                service=service,
+                decision_state=decision_state,
+                decision_reason=decision_reason,
+                decision_mode=decision_mode,
+                reason=reason,
+                trigger=trigger,
+                trigger_label=trigger_label,
+                trigger_comparator=trigger_comparator,
+                trigger_unit=trigger_unit,
+                trigger_threshold=trigger_threshold,
+                trigger_threshold_min=trigger_threshold_min,
+                trigger_threshold_max=trigger_threshold_max,
+                trigger_value=trigger_value,
+                trigger_value_min=trigger_value_min,
+                trigger_value_max=trigger_value_max,
+                since=since,
+                until=until,
+                include_services=True,
+                include_guardrail_dimensions=True,
+                include_decision_dimensions=True,
+                fill_gaps=fill_gaps,
+                coerce_timestamps=coerce_timestamps,
+                tz=tz,
+            )
 
         return df
 

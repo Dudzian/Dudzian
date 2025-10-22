@@ -101,17 +101,6 @@ std::optional<bool> envBool(const QByteArray& key)
     return std::nullopt;
 }
 
-QString expandUserPath(QString path)
-{
-    if (!path.startsWith(QLatin1Char('~')))
-        return path;
-    if (path == QStringLiteral("~"))
-        return QDir::homePath();
-    if (path.startsWith(QStringLiteral("~/")))
-        return QDir::homePath() + path.mid(1);
-    return path;
-}
-
 QString readTokenFile(const QString& rawPath, const QString& label = QStringLiteral("MetricsService"))
 {
     if (rawPath.trimmed().isEmpty())
@@ -1387,17 +1376,20 @@ void Application::configureStrategyBridge(const QCommandLineParser& parser)
     }
     if (configPath.isEmpty())
         configPath = QStringLiteral("config/core.yaml");
-    m_strategyController->setConfigPath(expandPath(configPath));
-    m_strategyController->setConfigPath(expandUserPath(configPath));
+    const QString normalizedConfigPath = expandPath(configPath);
+    if (!normalizedConfigPath.isEmpty())
+        m_strategyController->setConfigPath(normalizedConfigPath);
 
     QString pythonExec = parser.value("strategy-config-python").trimmed();
     if (pythonExec.isEmpty()) {
         if (const auto envPython = envValue(QByteArrayLiteral("BOT_CORE_UI_STRATEGY_PYTHON")))
             pythonExec = envPython->trimmed();
     }
-    if (!pythonExec.isEmpty())
-        m_strategyController->setPythonExecutable(expandPath(pythonExec));
-        m_strategyController->setPythonExecutable(expandUserPath(pythonExec));
+    if (!pythonExec.isEmpty()) {
+        const QString normalizedPython = expandPath(pythonExec);
+        if (!normalizedPython.isEmpty())
+            m_strategyController->setPythonExecutable(normalizedPython);
+    }
 
     QString bridgePath = parser.value("strategy-config-bridge").trimmed();
     if (bridgePath.isEmpty()) {
@@ -1410,8 +1402,9 @@ void Application::configureStrategyBridge(const QCommandLineParser& parser)
         else
             bridgePath = QDir::current().absoluteFilePath(QStringLiteral("scripts/ui_config_bridge.py"));
     }
-    m_strategyController->setScriptPath(expandPath(bridgePath));
-    m_strategyController->setScriptPath(expandUserPath(bridgePath));
+    const QString normalizedBridge = expandPath(bridgePath);
+    if (!normalizedBridge.isEmpty())
+        m_strategyController->setScriptPath(normalizedBridge);
 
     if (!m_strategyController->refresh()) {
         const QString error = m_strategyController->lastError();
@@ -1431,33 +1424,41 @@ void Application::configureSupportBundle(const QCommandLineParser& parser)
         return std::nullopt;
     };
 
-    if (parser.isSet("support-bundle-python"))
-        m_supportController->setPythonExecutable(expandPath(parser.value("support-bundle-python")));
-    else if (const auto envPython = envTrimmed(QByteArrayLiteral("BOT_CORE_UI_SUPPORT_PYTHON")); envPython.has_value())
-        m_supportController->setPythonExecutable(expandPath(envPython.value()));
+    const auto pickPathOption = [&](const QString& optionName, const QByteArray& envKey) -> QString {
+        if (parser.isSet(optionName))
+            return parser.value(optionName).trimmed();
+        if (const auto envValue = envTrimmed(envKey); envValue.has_value())
+            return envValue->trimmed();
+        return {};
+    };
 
-    if (parser.isSet("support-bundle-script"))
-        m_supportController->setScriptPath(expandPath(parser.value("support-bundle-script")));
-    else if (const auto envScript = envTrimmed(QByteArrayLiteral("BOT_CORE_UI_SUPPORT_SCRIPT")); envScript.has_value())
-        m_supportController->setScriptPath(expandPath(envScript.value()));
+    const auto normalizePathInput = [](const QString& raw) -> QString {
+        const QString trimmed = raw.trimmed();
+        if (trimmed.isEmpty())
+            return {};
+        return expandPath(trimmed);
+    };
 
-    if (parser.isSet("support-bundle-output-dir"))
-        m_supportController->setOutputDirectory(expandPath(parser.value("support-bundle-output-dir")));
-    else if (const auto envOutput = envTrimmed(QByteArrayLiteral("BOT_CORE_UI_SUPPORT_OUTPUT_DIR")); envOutput.has_value())
-        m_supportController->setOutputDirectory(expandPath(envOutput.value()));
-        m_supportController->setPythonExecutable(expandUserPath(parser.value("support-bundle-python")));
-    else if (const auto envPython = envTrimmed(QByteArrayLiteral("BOT_CORE_UI_SUPPORT_PYTHON")); envPython.has_value())
-        m_supportController->setPythonExecutable(expandUserPath(envPython.value()));
+    if (const QString pythonExec = pickPathOption(QStringLiteral("support-bundle-python"),
+                                                  QByteArrayLiteral("BOT_CORE_UI_SUPPORT_PYTHON"));
+        !pythonExec.isEmpty()) {
+        if (const QString normalized = normalizePathInput(pythonExec); !normalized.isEmpty())
+            m_supportController->setPythonExecutable(normalized);
+    }
 
-    if (parser.isSet("support-bundle-script"))
-        m_supportController->setScriptPath(expandUserPath(parser.value("support-bundle-script")));
-    else if (const auto envScript = envTrimmed(QByteArrayLiteral("BOT_CORE_UI_SUPPORT_SCRIPT")); envScript.has_value())
-        m_supportController->setScriptPath(expandUserPath(envScript.value()));
+    if (const QString scriptPath = pickPathOption(QStringLiteral("support-bundle-script"),
+                                                  QByteArrayLiteral("BOT_CORE_UI_SUPPORT_SCRIPT"));
+        !scriptPath.isEmpty()) {
+        if (const QString normalized = normalizePathInput(scriptPath); !normalized.isEmpty())
+            m_supportController->setScriptPath(normalized);
+    }
 
-    if (parser.isSet("support-bundle-output-dir"))
-        m_supportController->setOutputDirectory(expandUserPath(parser.value("support-bundle-output-dir")));
-    else if (const auto envOutput = envTrimmed(QByteArrayLiteral("BOT_CORE_UI_SUPPORT_OUTPUT_DIR")); envOutput.has_value())
-        m_supportController->setOutputDirectory(expandUserPath(envOutput.value()));
+    if (const QString outputDir = pickPathOption(QStringLiteral("support-bundle-output-dir"),
+                                                 QByteArrayLiteral("BOT_CORE_UI_SUPPORT_OUTPUT_DIR"));
+        !outputDir.isEmpty()) {
+        if (const QString normalized = normalizePathInput(outputDir); !normalized.isEmpty())
+            m_supportController->setOutputDirectory(normalized);
+    }
 
     if (parser.isSet("support-bundle-format"))
         m_supportController->setFormat(parser.value("support-bundle-format"));
@@ -1514,8 +1515,11 @@ void Application::configureSupportBundle(const QCommandLineParser& parser)
             return;
         }
         const QString lower = label.toLower();
-        const QString expandedPath = expandPath(path);
-        const QString expandedPath = expandUserPath(path);
+        const QString expandedPath = normalizePathInput(path);
+        if (expandedPath.isEmpty()) {
+            qCWarning(lcAppMetrics) << "Nie udało się znormalizować ścieżki pakietu wsparcia" << trimmed;
+            return;
+        }
         if (lower == QStringLiteral("logs")) {
             m_supportController->setLogsPath(expandedPath);
             m_supportController->setIncludeLogs(true);

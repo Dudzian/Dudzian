@@ -152,6 +152,12 @@ def test_summarize_evaluation_payloads_counts_and_latest_fields() -> None:
         }
     }
     assert summary["unique_stress_failures"] == 1
+    assert summary["history_generated_at_count"] == 2
+    assert summary["history_missing_generated_at"] == 0
+    assert summary["history_generated_at_coverage"] == pytest.approx(1.0)
+    assert summary["full_history_generated_at_count"] == 2
+    assert summary["full_history_missing_generated_at"] == 0
+    assert summary["full_history_generated_at_coverage"] == pytest.approx(1.0)
     assert summary["model_usage"] == {"gbm_v1": 1, "gbm_v2": 1}
     assert summary["unique_models"] == 2
     assert summary["models_with_accepts"] == 1
@@ -198,6 +204,12 @@ def test_summarize_evaluation_payloads_counts_and_latest_fields() -> None:
     assert summary["strategies_with_accepts"] == 1
     strategy_breakdown = summary["strategy_breakdown"]
     assert strategy_breakdown["daily"]["metrics"]["expected_value_bps"]["accepted_sum"] == pytest.approx(7.0)
+    assert summary["history_start_generated_at"] == "2024-04-01T00:00:00Z"
+    assert summary["history_end_generated_at"] == "2024-05-01T00:00:00Z"
+    assert summary["history_span_seconds"] == pytest.approx(2_592_000.0)
+    assert summary["full_history_start_generated_at"] == "2024-04-01T00:00:00Z"
+    assert summary["full_history_end_generated_at"] == "2024-05-01T00:00:00Z"
+    assert summary["full_history_span_seconds"] == pytest.approx(2_592_000.0)
     assert strategy_breakdown["intraday"]["metrics"]["cost_bps"]["rejected_sum"] == pytest.approx(2.5)
     assert summary["symbol_usage"] == {"BTC/USDT": 1, "ETH/USDT": 1}
     assert summary["unique_symbols"] == 2
@@ -693,6 +705,11 @@ def test_summarize_evaluation_payloads_respects_history_limit() -> None:
     assert summary["rejection_reasons"] == {"too_costly": 1}
     assert summary["history_start_generated_at"] == "2024-04-02T00:00:00Z"
     assert summary["latest_generated_at"] == "2024-04-03T00:00:00Z"
+    assert summary["history_end_generated_at"] == "2024-04-03T00:00:00Z"
+    assert summary["history_span_seconds"] == pytest.approx(86_400.0)
+    assert summary["full_history_start_generated_at"] == "2024-04-01T00:00:00Z"
+    assert summary["full_history_end_generated_at"] == "2024-04-03T00:00:00Z"
+    assert summary["full_history_span_seconds"] == pytest.approx(172_800.0)
     assert summary["latest_model"] == "gbm_v3"
     assert summary["median_expected_probability"] == pytest.approx(0.625)
     assert summary["median_expected_return_bps"] == pytest.approx(7.0)
@@ -700,10 +717,55 @@ def test_summarize_evaluation_payloads_respects_history_limit() -> None:
     assert summary["full_accepted"] == 2
     assert summary["full_rejected"] == 1
     assert summary["full_acceptance_rate"] == pytest.approx(2 / 3)
+    assert summary["history_generated_at_count"] == 2
+    assert summary["history_missing_generated_at"] == 0
+    assert summary["history_generated_at_coverage"] == pytest.approx(1.0)
+    assert summary["full_history_generated_at_count"] == 3
+    assert summary["full_history_missing_generated_at"] == 0
+    assert summary["full_history_generated_at_coverage"] == pytest.approx(1.0)
     assert summary["longest_acceptance_streak"] == 1
     assert summary["longest_rejection_streak"] == 1
     assert summary["current_acceptance_streak"] == 1
     assert summary["current_rejection_streak"] == 0
+
+
+def test_summarize_evaluation_payloads_reports_generated_at_coverage() -> None:
+    evaluations = [
+        {
+            "accepted": True,
+            "model_name": "gbm_v1",
+            "candidate": {
+                "metadata": {"generated_at": "2024-04-01T00:00:00Z"},
+                "expected_probability": 0.5,
+                "expected_return_bps": 5.0,
+            },
+        },
+        {
+            "accepted": False,
+            "model_name": "gbm_v2",
+            "candidate": {"metadata": {}},
+        },
+        {
+            "accepted": True,
+            "model_name": "gbm_v3",
+            "candidate": {
+                "metadata": {"timestamp": "2024-04-03T12:00:00Z"},
+                "expected_probability": 0.6,
+                "expected_return_bps": 6.0,
+            },
+        },
+    ]
+
+    summary = _summarize(evaluations)
+
+    assert summary["history_generated_at_count"] == 2
+    assert summary["history_missing_generated_at"] == 1
+    assert summary["history_generated_at_coverage"] == pytest.approx(2 / 3)
+    assert summary["full_history_generated_at_count"] == 2
+    assert summary["full_history_missing_generated_at"] == 1
+    assert summary["full_history_generated_at_coverage"] == pytest.approx(2 / 3)
+    assert summary["history_start_generated_at"] == "2024-04-01T00:00:00Z"
+    assert summary["history_end_generated_at"] == "2024-04-03T12:00:00Z"
 
 
 def test_summarize_evaluation_payloads_includes_trimmed_history() -> None:
