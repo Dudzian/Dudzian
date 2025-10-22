@@ -198,6 +198,12 @@ class TradingParameters:
         """Validate parameters after creation."""
         if self.rsi_period < 2 or self.rsi_period > 50:
             raise ValueError("RSI period must be between 2 and 50")
+        if self.max_weight_change is not None:
+            change = float(self.max_weight_change)
+            if not np.isfinite(change) or change < 0.0:
+                raise ValueError("max_weight_change musi być nieujemne i skończone")
+            if change > 1.0:
+                object.__setattr__(self, "max_weight_change", 1.0)
         if self.ema_fast_period >= self.ema_slow_period:
             raise ValueError("Fast EMA period must be less than slow EMA period")
         if self.min_weight < 0.0 or self.min_weight > 1.0:
