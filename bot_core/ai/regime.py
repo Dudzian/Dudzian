@@ -195,7 +195,12 @@ class MarketRegimeClassifier:
         close: pd.Series,
         returns: pd.Series,
     ) -> Mapping[str, float]:
-        metrics_cfg = self._metrics_config()
+        market_cfg = self._thresholds.get("market_regime", {})
+        if not isinstance(market_cfg, Mapping):
+            market_cfg = {}
+        metrics_cfg = market_cfg.get("metrics", {})
+        if not isinstance(metrics_cfg, Mapping):
+            metrics_cfg = {}
         short_span_min = int(metrics_cfg.get("short_span_min", 5))
         short_span_divisor = int(metrics_cfg.get("short_span_divisor", 3))
         long_span_min = int(metrics_cfg.get("long_span_min", 10))
@@ -335,7 +340,12 @@ class MarketRegimeClassifier:
         }
 
     def _compute_risk_score(self, metrics: Mapping[str, float]) -> float:
-        score_cfg = self._risk_score_config()
+        market_cfg = self._thresholds.get("market_regime", {})
+        if not isinstance(market_cfg, Mapping):
+            market_cfg = {}
+        score_cfg = market_cfg.get("risk_score", {})
+        if not isinstance(score_cfg, Mapping):
+            score_cfg = {}
         volatility_component = min(
             1.0, float(metrics.get("volatility", 0.0)) / self.volatility_threshold
         )
