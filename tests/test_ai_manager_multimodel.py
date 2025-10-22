@@ -597,6 +597,55 @@ def test_predict_series_with_ensemble(tmp_path, monkeypatch):
         manager.unregister_ensemble("hybrid")
 
 
+def test_predict_series_fallback_flattens_column_predictions(tmp_path, monkeypatch):
+    class ColumnVectorModel:
+        def __init__(
+            self,
+            input_size: int,
+            seq_len: int,
+            model_type: str,
+            *,
+            model_dir: Path | None = None,
+        ) -> None:
+            self.input_size = input_size
+            self.seq_len = seq_len
+            self.model_type = model_type
+
+        def train(self, X, y, **_: object) -> None:  # noqa: N803 - podpis zgodny z realnym API
+            return None
+
+        def predict(self, X):  # noqa: N803 - podpis zgodny z realnym API
+            return np.full((len(X), 1), 0.25, dtype=float)
+
+    monkeypatch.setattr(ai_manager_module, "_AIModels", ColumnVectorModel)
+
+    manager = ai_manager_module.AIManager(ai_threshold_bps=5.0, model_dir=tmp_path)
+    df = _make_df(12)
+
+    asyncio.run(
+        manager.train_all_models(
+            "BTCUSDT",
+            df,
+            ["alpha"],
+            seq_len=3,
+            epochs=1,
+            batch_size=1,
+        )
+    )
+
+    predictions = asyncio.run(
+        manager.predict_series(
+            "BTCUSDT",
+            df,
+            model_types=["alpha"],
+        )
+    )
+
+    assert isinstance(predictions, pd.Series)
+    assert np.allclose(predictions.values, 0.25)
+    assert predictions.index.equals(df.index)
+
+
 def test_format_and_log_ensemble_registry(caplog):
     definition = ai_manager_module.EnsembleDefinition(
         name="hybrid",

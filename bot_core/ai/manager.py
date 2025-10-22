@@ -1667,9 +1667,11 @@ class AIManager:
                 array_result = np.asarray(result, dtype=float)
                 if array_result.ndim == 0:
                     array_result = np.repeat(float(array_result), len(df))
-                if array_result.shape[0] != len(df):
+                else:
+                    array_result = np.ravel(array_result)
+                if array_result.size != len(df):
                     raise ValueError(
-                        f"Metoda {method_name} zwróciła {array_result.shape[0]} wyników przy {len(df)} wierszach"
+                        f"Metoda {method_name} zwróciła {array_result.size} wyników przy {len(df)} wierszach"
                     )
                 return pd.Series(array_result, index=df.index)
 
