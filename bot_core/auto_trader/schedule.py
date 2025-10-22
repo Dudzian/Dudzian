@@ -321,7 +321,7 @@ def _parse_datetime(value: object, default_timezone: timezone) -> datetime:
     return dt
 
 
-@dataclass(frozen=True)
+@dataclass(slots=True)
 class ScheduleState:
     """Snapshot describing the state of the trading schedule."""
 
@@ -329,6 +329,7 @@ class ScheduleState:
     is_open: bool
     window: ScheduleWindow | None
     next_transition: datetime | None
+    reference_time: datetime
     override: ScheduleOverride | None = None
     next_override: ScheduleOverride | None = None
     override_active: bool = False
@@ -347,21 +348,28 @@ class ScheduleState:
         remaining = (self.next_override.start - self.reference_time).total_seconds()
         return max(0.0, remaining)
 
-    @property
-    def time_until_next_override(self) -> float | None:
-        if self.next_override is None:
-            return None
-        now = datetime.now(self.next_override.start.tzinfo)
-        remaining = (self.next_override.start - now).total_seconds()
-        return max(0.0, remaining)
-
-    @property
-    def time_until_next_override(self) -> float | None:
-        if self.next_override is None:
-            return None
-        now = datetime.now(self.next_override.start.tzinfo)
-        remaining = (self.next_override.start - now).total_seconds()
-        return max(0.0, remaining)
+    def to_mapping(self) -> dict[str, object]:
+        payload: dict[str, object] = {
+            "mode": self.mode,
+            "is_open": bool(self.is_open),
+            "override_active": bool(self.override_active),
+            "reference_time": self.reference_time.astimezone(timezone.utc).isoformat(),
+        }
+        if self.window is not None:
+            payload["window"] = self.window.to_mapping()
+        if self.next_transition is not None:
+            payload["next_transition"] = self.next_transition.astimezone(timezone.utc).isoformat()
+            remaining = self.time_until_transition
+            if remaining is not None:
+                payload["time_until_transition_s"] = remaining
+        if self.override is not None:
+            payload["override"] = self.override.to_mapping()
+        if self.next_override is not None:
+            payload["next_override"] = self.next_override.to_mapping()
+            next_delay = self.time_until_next_override
+            if next_delay is not None:
+                payload["time_until_next_override_s"] = next_delay
+        return payload
 
 
 class TradingSchedule:
@@ -475,6 +483,7 @@ class TradingSchedule:
                 is_open=bool(active_override.allow_trading),
                 window=window,
                 next_transition=next_transition,
+                reference_time=reference,
                 override=active_override,
                 next_override=next_override,
                 override_active=True,
@@ -489,6 +498,7 @@ class TradingSchedule:
                 is_open=bool(window.allow_trading),
                 window=window,
                 next_transition=next_transition,
+                reference_time=reference,
                 override=None,
                 next_override=next_override,
                 override_active=False,
@@ -507,6 +517,7 @@ class TradingSchedule:
                 is_open=False,
                 window=window,
                 next_transition=next_transition,
+                reference_time=reference,
                 override=None,
                 next_override=next_override,
                 override_active=False,

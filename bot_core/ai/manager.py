@@ -184,6 +184,84 @@ def _flatten_exception_messages(error: BaseException) -> str:
     return " | ".join(unique_messages)
 
 
+def _iter_exception_chain(root: BaseException) -> Iterable[BaseException]:
+    """Breadth-first traversal over nested, caused and contextual exceptions."""
+
+    queue: deque[BaseException] = deque([root])
+    seen: set[int] = set()
+    while queue:
+        current = queue.popleft()
+        identifier = id(current)
+        if identifier in seen:
+            continue
+        seen.add(identifier)
+        yield current
+
+        nested = getattr(current, "exceptions", None)
+        if isinstance(nested, Iterable):
+            for child in nested:
+                if isinstance(child, BaseException):
+                    queue.append(child)
+
+        cause = getattr(current, "__cause__", None)
+        if isinstance(cause, BaseException):
+            queue.append(cause)
+
+        context = getattr(current, "__context__", None)
+        if not getattr(current, "__suppress_context__", False) and isinstance(context, BaseException):
+            queue.append(context)
+
+
+def _collect_exception_messages(error: BaseException) -> Tuple[str, ...]:
+    """Collect formatted messages from an exception chain preserving order."""
+
+    messages: list[str] = []
+    seen_text: set[str] = set()
+    for exc in _iter_exception_chain(error):
+        message = str(exc).strip()
+        if message:
+            formatted = f"{exc.__class__.__name__}: {message}"
+        else:
+            formatted = exc.__class__.__name__
+        if formatted not in seen_text:
+            messages.append(formatted)
+            seen_text.add(formatted)
+    return tuple(messages)
+
+
+def _collect_exception_types(error: BaseException) -> Tuple[str, ...]:
+    """Collect fully-qualified exception type names from a chain."""
+
+    types: list[str] = []
+    seen: set[str] = set()
+    for exc in _iter_exception_chain(error):
+        name = f"{exc.__class__.__module__}.{exc.__class__.__qualname__}"
+        if name not in seen:
+            types.append(name)
+            seen.add(name)
+    return tuple(types)
+
+
+def _build_exception_diagnostics(error: BaseException) -> Tuple[ExceptionDiagnostics, ...]:
+    """Create structured diagnostics for each exception in the chain."""
+
+    diagnostics: list[ExceptionDiagnostics] = []
+    seen: set[int] = set()
+    for exc in _iter_exception_chain(error):
+        identifier = id(exc)
+        if identifier in seen:
+            continue
+        seen.add(identifier)
+        diagnostics.append(
+            ExceptionDiagnostics(
+                module=getattr(exc.__class__, "__module__", ""),
+                qualname=getattr(exc.__class__, "__qualname__", exc.__class__.__name__),
+                message=str(exc).strip(),
+            )
+        )
+    return tuple(diagnostics)
+
+
 def _is_fallback_degradation(reason: Optional[str]) -> bool:
     """Sprawdź, czy wskazany powód oznacza degradację przez fallback modeli."""
 
@@ -586,15 +664,25 @@ class AIManager:
         self._training_scheduler: TrainingScheduler | None = None
         self._scheduled_training_jobs: Dict[str, ScheduledTrainingJob] = {}
         self._job_artifact_paths: Dict[str, Path] = {}
-        if self._degraded:
-            if _AI_IMPORT_ERROR is not None:
-                details = _flatten_exception_messages(_AI_IMPORT_ERROR)
-                if details:
-                    self._degradation_reason = f"fallback_ai_models: {details}"
-                else:
-                    self._degradation_reason = "fallback_ai_models"
+        if _AI_IMPORT_ERROR is not None:
+            self._degraded = True
+            messages = _collect_exception_messages(_AI_IMPORT_ERROR)
+            if messages:
+                self._degradation_details = messages
+                summary = _flatten_exception_messages(_AI_IMPORT_ERROR)
+                self._degradation_reason = (
+                    f"fallback_ai_models: {summary}" if summary else "fallback_ai_models"
+                )
             else:
-                self._degradation_reason = "backend_validation_failed"
+                self._degradation_reason = "fallback_ai_models"
+            self._degradation_exceptions = (_AI_IMPORT_ERROR,)
+            self._degradation_exception_types = _collect_exception_types(_AI_IMPORT_ERROR)
+            self._degradation_exception_diagnostics = _build_exception_diagnostics(
+                _AI_IMPORT_ERROR
+            )
+        elif _FALLBACK_ACTIVE:
+            self._degraded = True
+            self._degradation_reason = "fallback_ai_models"
         try:
             init_signature = inspect.signature(_AIModels.__init__)  # type: ignore[attr-defined]
         except (TypeError, ValueError, AttributeError):
@@ -1407,6 +1495,11 @@ class AIManager:
                     except Exception as exc:
                         logger.error("Nie można wczytać modelu %s: %s", path, exc)
                         model = None
+            if model is not None and not self._supports_series_prediction(model):
+                logger.warning(
+                    "Model %s nie udostępnia predict_series – użyję fallbacku kompatybilności",
+                    key,
+                )
             if model is None:
                 candidate = normalized_type
                 try:
@@ -1456,6 +1549,12 @@ class AIManager:
         finally:
             visited.remove(normalized_type)
 
+    def _supports_series_prediction(self, model: Any) -> bool:
+        return any(
+            callable(getattr(model, attr, None))
+            for attr in ("predict_series", "predict", "batch_predict", "predict_batch")
+        )
+
     async def _invoke_model_method(
         self,
         model: Any,
@@ -1465,8 +1564,21 @@ class AIManager:
         **kwargs: Any,
     ) -> Any:
         method = getattr(model, method_name, None)
+        if method is None and method_name == "predict_series":
+            return await self._invoke_predict_series_fallback(
+                model, *args, prefer_thread=prefer_thread, **kwargs
+            )
         if method is None:
             raise AttributeError(f"Model {model!r} nie ma metody {method_name!r}")
+        return await self._call_model_callable(method, *args, prefer_thread=prefer_thread, **kwargs)
+
+    async def _call_model_callable(
+        self,
+        method: Callable[..., Any],
+        *args: Any,
+        prefer_thread: bool = False,
+        **kwargs: Any,
+    ) -> Any:
         if inspect.iscoroutinefunction(method):
             return await method(*args, **kwargs)
         if prefer_thread:
@@ -1475,6 +1587,99 @@ class AIManager:
         if inspect.isawaitable(result):
             return await result
         return result
+
+    async def _invoke_predict_series_fallback(
+        self,
+        model: Any,
+        *args: Any,
+        prefer_thread: bool = False,
+        **kwargs: Any,
+    ) -> Any:
+        if not args and "df" not in kwargs:
+            raise AttributeError(f"Model {model!r} nie ma metody 'predict_series'")
+
+        df = kwargs.get("df") if "df" in kwargs else args[0]
+        feature_cols = None
+        if len(args) >= 2:
+            feature_cols = args[1]
+        elif "feature_cols" in kwargs:
+            feature_cols = kwargs["feature_cols"]
+
+        if not isinstance(df, pd.DataFrame):
+            raise AttributeError(
+                f"Model {model!r} nie ma metody 'predict_series' i nie można zastosować fallbacku"
+            )
+
+        candidate_methods: list[tuple[str, Callable[..., Any]]] = []
+        for name in ("predict", "batch_predict", "predict_batch"):
+            candidate = getattr(model, name, None)
+            if callable(candidate):
+                candidate_methods.append((name, candidate))
+
+        if not candidate_methods:
+            logger.warning(
+                "Model %r nie udostępnia predict/predict_series – użyję stałej predykcji",
+                model,
+            )
+            baseline_bps = _safe_float(self.ai_threshold_bps)
+            fallback_value = 0.01 if baseline_bps is None else max(0.01, baseline_bps / 10000.0)
+            return pd.Series(np.full(len(df), fallback_value, dtype=float), index=df.index)
+
+        feature_frame: pd.DataFrame
+        try:
+            feature_frame = df.loc[:, list(feature_cols)] if feature_cols else df
+        except Exception:
+            feature_frame = df
+
+        feature_array = feature_frame.to_numpy(dtype=float, copy=False)
+
+        call_variants: list[tuple[tuple[Any, ...], Dict[str, Any]]] = []
+        if feature_cols is not None:
+            call_variants.append(((df, feature_cols), {}))
+        call_variants.append(((df,), {}))
+        if feature_frame is not df:
+            call_variants.append(((feature_frame,), {}))
+        call_variants.append(((feature_array,), {}))
+
+        suppressed_errors: list[str] = []
+
+        for method_name, method in candidate_methods:
+            for call_args, call_kwargs in call_variants:
+                try:
+                    result = await self._call_model_callable(
+                        method, *call_args, prefer_thread=prefer_thread, **call_kwargs
+                    )
+                except TypeError as exc:
+                    message = str(exc)
+                    lowered = message.lower()
+                    if "argument" in lowered and any(
+                        token in lowered for token in ("positional", "keyword", "unexpected")
+                    ):
+                        suppressed_errors.append(f"{method_name}{call_args}: {message}")
+                        continue
+                    raise
+
+                if isinstance(result, pd.Series):
+                    if result.empty:
+                        return pd.Series(np.zeros(len(df), dtype=float), index=df.index)
+                    return result.reindex(df.index, fill_value=float(result.iloc[0]))
+
+                array_result = np.asarray(result, dtype=float)
+                if array_result.ndim == 0:
+                    array_result = np.repeat(float(array_result), len(df))
+                if array_result.shape[0] != len(df):
+                    raise ValueError(
+                        f"Metoda {method_name} zwróciła {array_result.shape[0]} wyników przy {len(df)} wierszach"
+                    )
+                return pd.Series(array_result, index=df.index)
+
+        if suppressed_errors:
+            detail = "; ".join(suppressed_errors)
+        else:
+            detail = "brak kompatybilnych podpisów metod"
+        raise AttributeError(
+            f"Model {model!r} nie obsługuje fallbacku predict_series ({detail})."
+        )
 
     def _load_model_from_disk(self, path: Path) -> Any:
         loader = getattr(_AIModels, "load_model", None)

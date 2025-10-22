@@ -59,6 +59,7 @@ dependencies = [
   "scipy>=1.16",
   "lightgbm>=4.6",
   "requests>=2.31",
+  "responses>=0.25",
 ]
 
 [project.optional-dependencies]

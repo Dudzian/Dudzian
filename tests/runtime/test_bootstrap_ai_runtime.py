@@ -4,6 +4,7 @@ import asyncio
 import pickle
 from datetime import datetime
 from pathlib import Path
+from collections.abc import Sequence
 from types import SimpleNamespace
 from typing import Mapping
 
@@ -35,10 +36,17 @@ class _MemorySecretStorage(SecretStorage):
 
 
 class DummyModel:
-    def predict_series(self, df: pd.DataFrame, feature_cols=None) -> pd.Series:
-        return pd.Series([0.018] * len(df), index=df.index)
-
-    def predict(self, features) -> float:
+    def predict(self, features) -> float | list[float]:
+        if isinstance(features, pd.DataFrame):
+            return [0.018] * len(features)
+        if isinstance(features, Sequence) and not isinstance(features, (str, bytes)):
+            try:
+                length = len(features)
+            except TypeError:
+                length = None
+            else:
+                if length:
+                    return [0.018] * length
         return 0.018
 
 
