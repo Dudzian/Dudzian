@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Mapping, Sequence
 from textwrap import dedent
 from types import SimpleNamespace
+from dataclasses import is_dataclass
 
 import pytest
 import yaml
@@ -17,7 +18,7 @@ from bot_core.config.loader import load_core_config
 
 import tests._pathbootstrap  # noqa: F401  # pylint: disable=unused-import
 
-from bot_core.config.models import DecisionEngineTCOConfig
+from bot_core.config.models import DecisionEngineTCOConfig, SMSProviderSettings
 from bot_core.alerts import EmailChannel, SMSChannel, TelegramChannel
 from bot_core.decision.models import DecisionCandidate, RiskSnapshot
 from bot_core.exchanges.base import (
@@ -52,6 +53,7 @@ from bot_core.runtime.bootstrap import (
     unregister_adapter_factory,
     temporary_adapter_factories,
 )
+import bot_core.runtime.bootstrap as bootstrap_module
 from bot_core.runtime.metrics_alerts import DEFAULT_UI_ALERTS_JSONL_PATH
 from bot_core.security import SecretManager, SecretStorage, SecretStorageError
 from bot_core.security.signing import build_hmac_signature
@@ -611,6 +613,641 @@ def test_bootstrap_environment_live_exposes_checklist(tmp_path: Path) -> None:
     assert audit_info["requested"] == "inherit"
     assert audit_info["backend"] == "memory"
     assert audit_info["note"] == "inherited_environment_router"
+
+
+def test_sms_provider_fallback_without_providers_module(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Bootstrap korzysta ze stubu providers i tworzy lokalną konfigurację SMS."""
+
+    module_name = "bot_core.alerts.channels.providers"
+    monkeypatch.delitem(sys.modules, module_name, raising=False)
+    bootstrap_module._get_alert_components.cache_clear()
+
+    bootstrap_module._install_sms_provider_stub()
+    stub_module = sys.modules[module_name]
+
+    settings = SMSProviderSettings(
+        name="ops",
+        provider_key="fallback",
+        api_base_url="https://custom.example.com",
+        from_number="\u002b48123456789",
+        recipients=("+48123456789",),
+        allow_alphanumeric_sender=True,
+        sender_id="OPS",
+        credential_key=None,
+        display_name="Fallback Provider",
+        iso_country_code="pl",
+        max_sender_length=14,
+        notes="Lokalne ustawienia",
+    )
+
+    caplog.set_level("WARNING")
+    config = bootstrap_module._resolve_sms_provider(
+        settings,
+        stub_module.get_sms_provider,
+        channel_key="ops",
+    )
+
+    assert is_dataclass(config)
+    assert config.provider_id == "fallback"
+    assert config.display_name == "Fallback Provider"
+    assert config.api_base_url == "https://custom.example.com"
+    assert config.iso_country_code == "PL"
+    assert config.supports_alphanumeric_sender is True
+    assert config.max_sender_length == 14
+    assert config.notes == "Lokalne ustawienia"
+    assert "Fallback rejestru SMS" in caplog.text
+
+    registered = stub_module.DEFAULT_SMS_PROVIDERS["fallback"]
+    assert registered == config
+
+    bootstrap_module._get_alert_components.cache_clear()
+
+
+def test_resolve_sms_provider_rejects_invalid_iso_code(monkeypatch: pytest.MonkeyPatch) -> None:
+    module_name = "bot_core.alerts.channels.providers"
+    monkeypatch.delitem(sys.modules, module_name, raising=False)
+    bootstrap_module._get_alert_components.cache_clear()
+
+    bootstrap_module._install_sms_provider_stub()
+    stub_module = sys.modules[module_name]
+
+    settings = SMSProviderSettings(
+        name="ops",
+        provider_key="fallback",
+        api_base_url="https://custom.example.com",
+        from_number="\u002b48123456789",
+        recipients=("+48123456789",),
+        allow_alphanumeric_sender=False,
+        sender_id=None,
+        credential_key=None,
+        display_name="Fallback Provider",
+        iso_country_code="POL",
+    )
+
+    with pytest.raises(SecretStorageError) as exc:
+        bootstrap_module._resolve_sms_provider(
+            settings,
+            stub_module.get_sms_provider,
+            channel_key="ops",
+        )
+
+    assert "ISO 3166-1" in str(exc.value)
+
+    bootstrap_module._get_alert_components.cache_clear()
+
+
+def test_resolve_sms_provider_normalizes_invalid_registry_iso(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    module_name = "bot_core.alerts.channels.providers"
+    providers_module = sys.modules.get(module_name)
+    if providers_module is None:
+        providers_module = __import__(module_name, fromlist=["DEFAULT_SMS_PROVIDERS"])
+
+    monkeypatch.setitem(
+        providers_module.DEFAULT_SMS_PROVIDERS,
+        "broken",
+        providers_module.SmsProviderConfig(
+            provider_id="broken",
+            display_name="Broken",
+            api_base_url="https://broken.example.com",
+            iso_country_code="POL",
+            supports_alphanumeric_sender=False,
+            notes=None,
+            max_sender_length=11,
+        ),
+    )
+
+    bootstrap_module._get_alert_components.cache_clear()
+
+    settings = SMSProviderSettings(
+        name="ops",
+        provider_key="broken",
+        api_base_url="https://broken.example.com",
+        from_number="\u002b48123456789",
+        recipients=("+48123456789",),
+        allow_alphanumeric_sender=False,
+        sender_id=None,
+        credential_key="ops_sms_secret",
+    )
+
+    caplog.set_level("WARNING")
+    config = bootstrap_module._resolve_sms_provider(
+        settings,
+        providers_module.get_sms_provider,
+        channel_key="ops",
+    )
+
+    assert config.iso_country_code == "ZZ"
+    assert "nieprawidłowy kod kraju" in caplog.text
+
+    bootstrap_module._get_alert_components.cache_clear()
+
+
+def test_build_sms_channel_rejects_unsupported_alphanumeric_sender(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module_name = "bot_core.alerts.channels.providers"
+    providers_module = sys.modules.get(module_name)
+    if providers_module is None:
+        providers_module = __import__(module_name, fromlist=["DEFAULT_SMS_PROVIDERS"])
+
+    monkeypatch.setitem(
+        providers_module.DEFAULT_SMS_PROVIDERS,
+        "strict",
+        providers_module.SmsProviderConfig(
+            provider_id="strict",
+            display_name="Strict SMS",
+            api_base_url="https://strict.example.com",
+            iso_country_code="US",
+            supports_alphanumeric_sender=False,
+            notes=None,
+            max_sender_length=11,
+        ),
+    )
+
+    bootstrap_module._get_alert_components.cache_clear()
+
+    settings = SMSProviderSettings(
+        name="ops",
+        provider_key="strict",
+        api_base_url="https://strict.example.com",
+        from_number="\u002b48123456789",
+        recipients=("+48123456789",),
+        allow_alphanumeric_sender=True,
+        sender_id="OPS_TEAM",
+        credential_key="ops_sms_secret",
+    )
+
+    storage = _MemorySecretStorage()
+    secret_manager = SecretManager(storage)
+    secret_manager.store_secret_value(
+        "ops_sms_secret",
+        json.dumps({"account_sid": "AC", "auth_token": "token"}),
+        purpose="alerts:sms",
+    )
+
+    with pytest.raises(SecretStorageError) as exc:
+        bootstrap_module._build_sms_channel({"ops": settings}, "ops", secret_manager)
+
+    assert "operator go nie obsługuje" in str(exc.value)
+
+    bootstrap_module._get_alert_components.cache_clear()
+
+
+def test_build_sms_channel_validates_sender_id_length(monkeypatch: pytest.MonkeyPatch) -> None:
+    module_name = "bot_core.alerts.channels.providers"
+    providers_module = sys.modules.get(module_name)
+    if providers_module is None:
+        providers_module = __import__(module_name, fromlist=["DEFAULT_SMS_PROVIDERS"])
+
+    monkeypatch.setitem(
+        providers_module.DEFAULT_SMS_PROVIDERS,
+        "strict",
+        providers_module.SmsProviderConfig(
+            provider_id="strict",
+            display_name="Strict SMS",
+            api_base_url="https://strict.example.com",
+            iso_country_code="US",
+            supports_alphanumeric_sender=True,
+            notes=None,
+            max_sender_length=6,
+        ),
+    )
+
+    bootstrap_module._get_alert_components.cache_clear()
+
+    settings = SMSProviderSettings(
+        name="ops",
+        provider_key="strict",
+        api_base_url="https://strict.example.com",
+        from_number="\u002b48123456789",
+        recipients=("+48123456789",),
+        allow_alphanumeric_sender=True,
+        sender_id="TOO_LONG_ID",
+        credential_key="ops_sms_secret",
+    )
+
+    storage = _MemorySecretStorage()
+    secret_manager = SecretManager(storage)
+    secret_manager.store_secret_value(
+        "ops_sms_secret",
+        json.dumps({"account_sid": "AC", "auth_token": "token"}),
+        purpose="alerts:sms",
+    )
+
+    with pytest.raises(SecretStorageError) as exc:
+        bootstrap_module._build_sms_channel({"ops": settings}, "ops", secret_manager)
+
+    assert "przekracza dopuszczalny limit" in str(exc.value)
+
+    bootstrap_module._get_alert_components.cache_clear()
+
+
+def test_build_sms_channel_enforces_sender_id_min_length(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module_name = "bot_core.alerts.channels.providers"
+    providers_module = sys.modules.get(module_name)
+    if providers_module is None:
+        providers_module = __import__(module_name, fromlist=["DEFAULT_SMS_PROVIDERS"])
+
+    monkeypatch.setitem(
+        providers_module.DEFAULT_SMS_PROVIDERS,
+        "strict",
+        providers_module.SmsProviderConfig(
+            provider_id="strict",
+            display_name="Strict SMS",
+            api_base_url="https://strict.example.com",
+            iso_country_code="US",
+            supports_alphanumeric_sender=True,
+            notes=None,
+            max_sender_length=11,
+        ),
+    )
+
+    bootstrap_module._get_alert_components.cache_clear()
+
+    settings = SMSProviderSettings(
+        name="ops",
+        provider_key="strict",
+        api_base_url="https://strict.example.com",
+        from_number="\u002b48123456789",
+        recipients=("+48123456789",),
+        allow_alphanumeric_sender=True,
+        sender_id="OK",
+        credential_key="ops_sms_secret",
+    )
+
+    storage = _MemorySecretStorage()
+    secret_manager = SecretManager(storage)
+    secret_manager.store_secret_value(
+        "ops_sms_secret",
+        json.dumps({"account_sid": "AC", "auth_token": "token"}),
+        purpose="alerts:sms",
+    )
+
+    with pytest.raises(SecretStorageError) as exc:
+        bootstrap_module._build_sms_channel({"ops": settings}, "ops", secret_manager)
+
+    assert "co najmniej trzy znaki" in str(exc.value)
+
+    bootstrap_module._get_alert_components.cache_clear()
+
+
+def test_build_sms_channel_requires_sender_id_letter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module_name = "bot_core.alerts.channels.providers"
+    providers_module = sys.modules.get(module_name)
+    if providers_module is None:
+        providers_module = __import__(module_name, fromlist=["DEFAULT_SMS_PROVIDERS"])
+
+    monkeypatch.setitem(
+        providers_module.DEFAULT_SMS_PROVIDERS,
+        "strict",
+        providers_module.SmsProviderConfig(
+            provider_id="strict",
+            display_name="Strict SMS",
+            api_base_url="https://strict.example.com",
+            iso_country_code="US",
+            supports_alphanumeric_sender=True,
+            notes=None,
+            max_sender_length=11,
+        ),
+    )
+
+    bootstrap_module._get_alert_components.cache_clear()
+
+    settings = SMSProviderSettings(
+        name="ops",
+        provider_key="strict",
+        api_base_url="https://strict.example.com",
+        from_number="\u002b48123456789",
+        recipients=("+48123456789",),
+        allow_alphanumeric_sender=True,
+        sender_id="123456",
+        credential_key="ops_sms_secret",
+    )
+
+    storage = _MemorySecretStorage()
+    secret_manager = SecretManager(storage)
+    secret_manager.store_secret_value(
+        "ops_sms_secret",
+        json.dumps({"account_sid": "AC", "auth_token": "token"}),
+        purpose="alerts:sms",
+    )
+
+    with pytest.raises(SecretStorageError) as exc:
+        bootstrap_module._build_sms_channel({"ops": settings}, "ops", secret_manager)
+
+    assert "co najmniej jedną literę" in str(exc.value)
+
+    bootstrap_module._get_alert_components.cache_clear()
+
+
+def test_build_sms_channel_rejects_duplicate_recipients(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module_name = "bot_core.alerts.channels.providers"
+    providers_module = sys.modules.get(module_name)
+    if providers_module is None:
+        providers_module = __import__(module_name, fromlist=["DEFAULT_SMS_PROVIDERS"])
+
+    monkeypatch.setitem(
+        providers_module.DEFAULT_SMS_PROVIDERS,
+        "strict",
+        providers_module.SmsProviderConfig(
+            provider_id="strict",
+            display_name="Strict SMS",
+            api_base_url="https://strict.example.com",
+            iso_country_code="US",
+            supports_alphanumeric_sender=False,
+            notes=None,
+            max_sender_length=11,
+        ),
+    )
+
+    bootstrap_module._get_alert_components.cache_clear()
+
+    settings = SMSProviderSettings(
+        name="ops",
+        provider_key="strict",
+        api_base_url="https://strict.example.com",
+        from_number="  +48123456789  ",
+        recipients=("+48123456789", " +48123456789"),
+        allow_alphanumeric_sender=False,
+        sender_id=None,
+        credential_key="ops_sms_secret",
+    )
+
+    storage = _MemorySecretStorage()
+    secret_manager = SecretManager(storage)
+    secret_manager.store_secret_value(
+        "ops_sms_secret",
+        json.dumps({"account_sid": "AC", "auth_token": "token"}),
+        purpose="alerts:sms",
+    )
+
+    with pytest.raises(SecretStorageError) as exc:
+        bootstrap_module._build_sms_channel({"ops": settings}, "ops", secret_manager)
+
+    assert "zduplikowane numery odbiorców" in str(exc.value)
+
+    bootstrap_module._get_alert_components.cache_clear()
+
+
+def test_build_sms_channel_requires_sender_id_when_flag_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module_name = "bot_core.alerts.channels.providers"
+    providers_module = sys.modules.get(module_name)
+    if providers_module is None:
+        providers_module = __import__(module_name, fromlist=["DEFAULT_SMS_PROVIDERS"])
+
+    monkeypatch.setitem(
+        providers_module.DEFAULT_SMS_PROVIDERS,
+        "strict",
+        providers_module.SmsProviderConfig(
+            provider_id="strict",
+            display_name="Strict SMS",
+            api_base_url="https://strict.example.com",
+            iso_country_code="US",
+            supports_alphanumeric_sender=True,
+            notes=None,
+            max_sender_length=11,
+        ),
+    )
+
+    bootstrap_module._get_alert_components.cache_clear()
+
+    settings = SMSProviderSettings(
+        name="ops",
+        provider_key="strict",
+        api_base_url="https://strict.example.com",
+        from_number="\u002b48123456789",
+        recipients=("+48123456789",),
+        allow_alphanumeric_sender=True,
+        sender_id=None,
+        credential_key="ops_sms_secret",
+    )
+
+    storage = _MemorySecretStorage()
+    secret_manager = SecretManager(storage)
+    secret_manager.store_secret_value(
+        "ops_sms_secret",
+        json.dumps({"account_sid": "AC", "auth_token": "token"}),
+        purpose="alerts:sms",
+    )
+
+    with pytest.raises(SecretStorageError) as exc:
+        bootstrap_module._build_sms_channel({"ops": settings}, "ops", secret_manager)
+
+    assert "nie dostarczono 'sender_id'" in str(exc.value)
+
+    bootstrap_module._get_alert_components.cache_clear()
+
+
+def test_build_sms_channel_rejects_sender_id_without_flag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module_name = "bot_core.alerts.channels.providers"
+    providers_module = sys.modules.get(module_name)
+    if providers_module is None:
+        providers_module = __import__(module_name, fromlist=["DEFAULT_SMS_PROVIDERS"])
+
+    monkeypatch.setitem(
+        providers_module.DEFAULT_SMS_PROVIDERS,
+        "strict",
+        providers_module.SmsProviderConfig(
+            provider_id="strict",
+            display_name="Strict SMS",
+            api_base_url="https://strict.example.com",
+            iso_country_code="US",
+            supports_alphanumeric_sender=True,
+            notes=None,
+            max_sender_length=11,
+        ),
+    )
+
+    bootstrap_module._get_alert_components.cache_clear()
+
+    settings = SMSProviderSettings(
+        name="ops",
+        provider_key="strict",
+        api_base_url="https://strict.example.com",
+        from_number="\u002b48123456789",
+        recipients=("+48123456789",),
+        allow_alphanumeric_sender=False,
+        sender_id="OPS",
+        credential_key="ops_sms_secret",
+    )
+
+    storage = _MemorySecretStorage()
+    secret_manager = SecretManager(storage)
+    secret_manager.store_secret_value(
+        "ops_sms_secret",
+        json.dumps({"account_sid": "AC", "auth_token": "token"}),
+        purpose="alerts:sms",
+    )
+
+    with pytest.raises(SecretStorageError) as exc:
+        bootstrap_module._build_sms_channel({"ops": settings}, "ops", secret_manager)
+
+    assert "zawiera 'sender_id', lecz 'allow_alphanumeric_sender' pozostaje wyłączone" in str(exc.value)
+
+    bootstrap_module._get_alert_components.cache_clear()
+
+
+def test_build_sms_channel_validates_sender_id_charset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module_name = "bot_core.alerts.channels.providers"
+    providers_module = sys.modules.get(module_name)
+    if providers_module is None:
+        providers_module = __import__(module_name, fromlist=["DEFAULT_SMS_PROVIDERS"])
+
+    monkeypatch.setitem(
+        providers_module.DEFAULT_SMS_PROVIDERS,
+        "strict",
+        providers_module.SmsProviderConfig(
+            provider_id="strict",
+            display_name="Strict SMS",
+            api_base_url="https://strict.example.com",
+            iso_country_code="US",
+            supports_alphanumeric_sender=True,
+            notes=None,
+            max_sender_length=11,
+        ),
+    )
+
+    bootstrap_module._get_alert_components.cache_clear()
+
+    settings = SMSProviderSettings(
+        name="ops",
+        provider_key="strict",
+        api_base_url="https://strict.example.com",
+        from_number="\u002b48123456789",
+        recipients=("+48123456789",),
+        allow_alphanumeric_sender=True,
+        sender_id="OPS!",
+        credential_key="ops_sms_secret",
+    )
+
+    storage = _MemorySecretStorage()
+    secret_manager = SecretManager(storage)
+    secret_manager.store_secret_value(
+        "ops_sms_secret",
+        json.dumps({"account_sid": "AC", "auth_token": "token"}),
+        purpose="alerts:sms",
+    )
+
+    with pytest.raises(SecretStorageError) as exc:
+        bootstrap_module._build_sms_channel({"ops": settings}, "ops", secret_manager)
+
+    assert "może zawierać wyłącznie litery A-Z, cyfry 0-9" in str(exc.value)
+
+    bootstrap_module._get_alert_components.cache_clear()
+
+
+def test_build_sms_channel_validates_numeric_sender_format(monkeypatch: pytest.MonkeyPatch) -> None:
+    module_name = "bot_core.alerts.channels.providers"
+    providers_module = sys.modules.get(module_name)
+    if providers_module is None:
+        providers_module = __import__(module_name, fromlist=["DEFAULT_SMS_PROVIDERS"])
+
+    monkeypatch.setitem(
+        providers_module.DEFAULT_SMS_PROVIDERS,
+        "strict",
+        providers_module.SmsProviderConfig(
+            provider_id="strict",
+            display_name="Strict SMS",
+            api_base_url="https://strict.example.com",
+            iso_country_code="US",
+            supports_alphanumeric_sender=False,
+            notes=None,
+            max_sender_length=11,
+        ),
+    )
+
+    bootstrap_module._get_alert_components.cache_clear()
+
+    settings = SMSProviderSettings(
+        name="ops",
+        provider_key="strict",
+        api_base_url="https://strict.example.com",
+        from_number="0048123456789",
+        recipients=("+48123456789",),
+        allow_alphanumeric_sender=False,
+        sender_id=None,
+        credential_key="ops_sms_secret",
+    )
+
+    storage = _MemorySecretStorage()
+    secret_manager = SecretManager(storage)
+    secret_manager.store_secret_value(
+        "ops_sms_secret",
+        json.dumps({"account_sid": "AC", "auth_token": "token"}),
+        purpose="alerts:sms",
+    )
+
+    with pytest.raises(SecretStorageError) as exc:
+        bootstrap_module._build_sms_channel({"ops": settings}, "ops", secret_manager)
+
+    assert "formacie E.164" in str(exc.value)
+
+    bootstrap_module._get_alert_components.cache_clear()
+
+
+def test_build_sms_channel_validates_recipient_numbers(monkeypatch: pytest.MonkeyPatch) -> None:
+    module_name = "bot_core.alerts.channels.providers"
+    providers_module = sys.modules.get(module_name)
+    if providers_module is None:
+        providers_module = __import__(module_name, fromlist=["DEFAULT_SMS_PROVIDERS"])
+
+    monkeypatch.setitem(
+        providers_module.DEFAULT_SMS_PROVIDERS,
+        "strict",
+        providers_module.SmsProviderConfig(
+            provider_id="strict",
+            display_name="Strict SMS",
+            api_base_url="https://strict.example.com",
+            iso_country_code="US",
+            supports_alphanumeric_sender=False,
+            notes=None,
+            max_sender_length=11,
+        ),
+    )
+
+    bootstrap_module._get_alert_components.cache_clear()
+
+    settings = SMSProviderSettings(
+        name="ops",
+        provider_key="strict",
+        api_base_url="https://strict.example.com",
+        from_number="+48123456789",
+        recipients=("48123456789",),
+        allow_alphanumeric_sender=False,
+        sender_id=None,
+        credential_key="ops_sms_secret",
+    )
+
+    storage = _MemorySecretStorage()
+    secret_manager = SecretManager(storage)
+    secret_manager.store_secret_value(
+        "ops_sms_secret",
+        json.dumps({"account_sid": "AC", "auth_token": "token"}),
+        purpose="alerts:sms",
+    )
+
+    with pytest.raises(SecretStorageError) as exc:
+        bootstrap_module._build_sms_channel({"ops": settings}, "ops", secret_manager)
+
+    assert "formacie E.164" in str(exc.value)
+
+    bootstrap_module._get_alert_components.cache_clear()
 
 
 def test_bootstrap_environment_offline_disables_network_channels(tmp_path: Path) -> None:

@@ -836,6 +836,10 @@ class SMSProviderSettings:
     allow_alphanumeric_sender: bool = False
     sender_id: str | None = None
     credential_key: str | None = None
+    display_name: str | None = None
+    iso_country_code: str | None = None
+    max_sender_length: int | None = None
+    notes: str | None = None
 
 
 @dataclass(slots=True)

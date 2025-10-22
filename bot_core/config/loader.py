@@ -361,6 +361,12 @@ def _maybe_int(value: Any) -> int | None:
     return int(value)
 
 
+def _normalize_iso_country_code(value: Any) -> str | None:
+    if value in (None, "", False):
+        return None
+    return str(value).strip().upper()
+
+
 def _load_sms_providers(raw_alerts: Mapping[str, Any]) -> Mapping[str, SMSProviderSettings]:
     providers: dict[str, SMSProviderSettings] = {}
     for name, entry in (raw_alerts.get("sms_providers", {}) or {}).items():
@@ -373,6 +379,10 @@ def _load_sms_providers(raw_alerts: Mapping[str, Any]) -> Mapping[str, SMSProvid
             allow_alphanumeric_sender=bool(entry.get("allow_alphanumeric_sender", False)),
             sender_id=entry.get("sender_id"),
             credential_key=entry.get("credential_key"),
+            display_name=entry.get("display_name"),
+            iso_country_code=_normalize_iso_country_code(entry.get("iso_country_code")),
+            max_sender_length=_maybe_int(entry.get("max_sender_length")),
+            notes=entry.get("notes"),
         )
     return providers
 

@@ -4,24 +4,18 @@ from __future__ import annotations
 import asyncio
 import importlib
 import json
+import re
 import logging
 import os
 import stat
+import sys
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 from pathlib import Path
-from typing import (
-    TYPE_CHECKING,
-    Any,
-    Callable,
-    Iterable,
-    Iterator,
-    Mapping,
-    MutableMapping,
-    Sequence,
-)
+from types import ModuleType, SimpleNamespace
+from typing import TYPE_CHECKING, Any, Callable, Iterable, Iterator, Mapping, MutableMapping, Sequence
 
 import yaml
 
@@ -3310,22 +3304,119 @@ def _build_sms_channel(
             "Sekret dostawcy SMS musi zawierać pola 'account_sid' oraz 'auth_token'."
         )
 
-    provider_config = _resolve_sms_provider(settings, get_sms_provider_fn)
-    sender = (
-        settings.sender_id
-        if settings.allow_alphanumeric_sender and settings.sender_id
-        else settings.from_number
-    )
-    if not sender:
+    wants_alphanumeric = bool(settings.allow_alphanumeric_sender)
+    has_sender_id = bool(settings.sender_id)
+
+    if wants_alphanumeric and not has_sender_id:
         raise SecretStorageError(
-            f"Konfiguracja dostawcy SMS '{channel_key}' wymaga pola 'from_number' lub 'sender_id'."
+            (
+                f"Konfiguracja dostawcy SMS '{channel_key}' ma włączone pole "
+                "'allow_alphanumeric_sender', ale nie dostarczono 'sender_id'."
+            )
         )
 
-    recipients: Sequence[str] = tuple(settings.recipients)
-    if not recipients:
+    if not wants_alphanumeric and has_sender_id:
+        raise SecretStorageError(
+            (
+                f"Konfiguracja dostawcy SMS '{channel_key}' zawiera 'sender_id', lecz "
+                "'allow_alphanumeric_sender' pozostaje wyłączone."
+            )
+        )
+
+    provider_config = _resolve_sms_provider(
+        settings,
+        get_sms_provider_fn,
+        channel_key=channel_key,
+    )
+    supports_alphanumeric = bool(
+        getattr(provider_config, "supports_alphanumeric_sender", False)
+    )
+    if wants_alphanumeric and not supports_alphanumeric:
+        raise SecretStorageError(
+            (
+                f"Konfiguracja dostawcy SMS '{channel_key}' włącza nadawcę alfanumerycznego, "
+                "ale operator go nie obsługuje."
+            )
+        )
+
+    if wants_alphanumeric:
+        normalized_sender = str(settings.sender_id).strip()
+        if not normalized_sender:
+            raise SecretStorageError(
+                f"Pole 'sender_id' dla dostawcy SMS '{channel_key}' nie może być puste."
+            )
+        if not _ALPHANUMERIC_SENDER_PATTERN.fullmatch(normalized_sender):
+            raise SecretStorageError(
+                (
+                    f"Identyfikator nadawcy '{settings.sender_id}' może zawierać wyłącznie "
+                    "litery A-Z, cyfry 0-9, spacje oraz znaki '-' i '_'."
+                )
+            )
+        sender = normalized_sender.upper()
+        if len(sender) < 3:
+            raise SecretStorageError(
+                (
+                    f"Identyfikator nadawcy '{settings.sender_id}' musi mieć co najmniej trzy znaki, "
+                    "aby spełniał wymagania operatorów alfanumerycznych."
+                )
+            )
+        if not any(ch.isalpha() for ch in sender):
+            raise SecretStorageError(
+                (
+                    f"Identyfikator nadawcy '{settings.sender_id}' musi zawierać co najmniej jedną literę, "
+                    "zgodnie ze standardem alfanumerycznych nadawców."
+                )
+            )
+        max_sender_length = getattr(provider_config, "max_sender_length", None)
+        if max_sender_length not in (None, ""):
+            try:
+                max_length_int = int(max_sender_length)
+            except (TypeError, ValueError):  # pragma: no cover - brak spójności metadanych
+                max_length_int = None
+            else:
+                if len(sender) > max_length_int:
+                    raise SecretStorageError(
+                        (
+                            f"Identyfikator nadawcy '{settings.sender_id}' przekracza dopuszczalny "
+                            f"limit {max_length_int} znaków dla operatora '{channel_key}'."
+                        )
+                    )
+    else:
+        sender = str(settings.from_number or "").strip()
+        if not sender:
+            raise SecretStorageError(
+                f"Konfiguracja dostawcy SMS '{channel_key}' wymaga pola 'from_number'."
+            )
+        _validate_e164_number(sender, channel_key, field="from_number")
+
+    raw_recipients: Sequence[str] = tuple(settings.recipients)
+    if not raw_recipients:
         raise SecretStorageError(
             f"Konfiguracja dostawcy SMS '{channel_key}' wymaga co najmniej jednego odbiorcy."
         )
+
+    normalized_recipients: list[str] = []
+    seen_recipients: set[str] = set()
+    duplicate_recipients: set[str] = set()
+    for recipient in raw_recipients:
+        normalized = str(recipient).strip()
+        _validate_e164_number(normalized, channel_key, field="recipient")
+        if normalized in seen_recipients:
+            duplicate_recipients.add(normalized)
+        else:
+            seen_recipients.add(normalized)
+            normalized_recipients.append(normalized)
+
+    if duplicate_recipients:
+        duplicates = ", ".join(sorted(duplicate_recipients))
+        raise SecretStorageError(
+            (
+                f"Konfiguracja dostawcy SMS '{channel_key}' zawiera zduplikowane "
+                f"numery odbiorców: {duplicates}."
+            )
+        )
+
+    recipients = tuple(normalized_recipients)
 
     return SMSChannelCls(
         account_sid=str(account_sid),
@@ -3421,23 +3512,122 @@ def _build_messenger_channel(
 
 
 def _resolve_sms_provider(
-    settings: SMSProviderSettings, get_sms_provider_fn: Any
+    settings: SMSProviderSettings,
+    get_sms_provider_fn: Any,
+    *,
+    channel_key: str,
 ) -> SmsProviderConfig:
     components = _get_alert_components()
     SmsProviderConfigCls = components.get("SmsProviderConfig")
     if SmsProviderConfigCls is None:
         raise KeyError("Typ SmsProviderConfig nie jest dostępny w module alertów")
 
-    base = get_sms_provider_fn(settings.provider_key)
-    return SmsProviderConfigCls(
-        provider_id=base.provider_id,
-        display_name=base.display_name,
-        api_base_url=settings.api_base_url or base.api_base_url,
-        iso_country_code=base.iso_country_code,
-        supports_alphanumeric_sender=settings.allow_alphanumeric_sender,
-        notes=base.notes,
-        max_sender_length=base.max_sender_length,
+    is_stub_registry = getattr(get_sms_provider_fn, _SMS_PROVIDERS_STUB_FLAG, False)
+    try:
+        override_iso_code = _normalize_iso_country_code(settings.iso_country_code)
+    except ValueError:
+        raise SecretStorageError(
+            (
+                f"Konfiguracja dostawcy SMS '{channel_key}' zawiera nieprawidłowy kod kraju "
+                f"'{settings.iso_country_code}'. Oczekiwany jest kod ISO 3166-1 alfa-2."
+            )
+        ) from None
+    try:
+        base = get_sms_provider_fn(settings.provider_key)
+    except KeyError:
+        if not is_stub_registry:
+            raise
+
+        _LOGGER.warning(
+            "Fallback rejestru SMS: używam konfiguracji lokalnej bez metadanych dostawcy.",
+            extra={
+                "provider_key": settings.provider_key,
+                "channel": settings.name,
+            },
+        )
+        base = SimpleNamespace(
+            provider_id=settings.provider_key,
+            display_name=settings.display_name
+            or f"{settings.provider_key} (bootstrap)",
+            api_base_url=settings.api_base_url,
+            iso_country_code=override_iso_code or "ZZ",
+            supports_alphanumeric_sender=settings.allow_alphanumeric_sender,
+            notes=settings.notes
+            or "Bootstrap fallback provider – brak zarejestrowanego operatora.",
+            max_sender_length=settings.max_sender_length or 11,
+        )
+
+    raw_base_iso = getattr(base, "iso_country_code", None)
+    try:
+        base_iso_code = _normalize_iso_country_code(raw_base_iso)
+    except ValueError:
+        _LOGGER.warning(
+            (
+                "Rejestr dostawców SMS zwrócił nieprawidłowy kod kraju %r dla operatora '%s'. "
+                "Zastępuję wartością 'ZZ'."
+            ),
+            raw_base_iso,
+            settings.provider_key,
+            extra={
+                "provider_key": settings.provider_key,
+                "channel": settings.name,
+                "invalid_iso_country_code": raw_base_iso,
+            },
+        )
+        base_iso_code = "ZZ"
+
+    display_name = settings.display_name or getattr(base, "display_name", settings.provider_key)
+    iso_country_code = override_iso_code or base_iso_code or "ZZ"
+    notes = settings.notes if settings.notes is not None else getattr(base, "notes", None)
+    max_sender_length = (
+        settings.max_sender_length
+        if settings.max_sender_length is not None
+        else getattr(base, "max_sender_length", 11)
     )
+    supports_attr = getattr(base, "supports_alphanumeric_sender", None)
+    if supports_attr is None:
+        supports_alphanumeric = bool(settings.allow_alphanumeric_sender)
+    else:
+        supports_alphanumeric = bool(supports_attr)
+
+    provider_config = SmsProviderConfigCls(
+        provider_id=base.provider_id,
+        display_name=display_name,
+        api_base_url=settings.api_base_url or getattr(base, "api_base_url", settings.api_base_url),
+        iso_country_code=iso_country_code,
+        supports_alphanumeric_sender=supports_alphanumeric,
+        notes=notes,
+        max_sender_length=max_sender_length,
+    )
+
+    if is_stub_registry:
+        providers_module = sys.modules.get(_SMS_PROVIDERS_MODULE)
+        if providers_module and getattr(providers_module, _SMS_PROVIDERS_STUB_FLAG, False):
+            providers_module.DEFAULT_SMS_PROVIDERS[settings.provider_key] = provider_config
+
+    return provider_config
+
+
+def _normalize_iso_country_code(value: Any) -> str | None:
+    if value in (None, "", False):
+        return None
+
+    candidate = str(value).strip().upper()
+    if _ISO_COUNTRY_PATTERN.match(candidate):
+        return candidate
+
+    raise ValueError(candidate)
+
+
+def _validate_e164_number(value: str, channel_key: str, *, field: str) -> None:
+    if not _E164_PATTERN.match(str(value)):
+        example = "+48123456789"
+        raise SecretStorageError(
+            (
+                f"Wartość '{value}' dla pola '{field}' dostawcy SMS '{channel_key}' musi być "
+                f"w formacie E.164 (np. {example})."
+            )
+        )
 
 
 __all__ = [
