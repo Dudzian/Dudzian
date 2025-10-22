@@ -16,14 +16,11 @@ from .models import ModelArtifact, ModelScore
 from .sequential import (
     BUILTIN_HEURISTICS,
     HistoricalFeatureRepository,
-    HeuristicSummary,
     OnlineScoringResult,
-    build_heuristic_registry,
     SequentialOnlineScorer,
     SequentialTrainingPipeline,
     SequentialTrainingReport,
     TemporalDifferencePolicy,
-    select_heuristics,
     WalkForwardMetrics,
 )
 from .regime import (
@@ -56,13 +53,11 @@ from .training import (
 __all__ = [
     "AIManager",
     "BUILTIN_HEURISTICS",
-    "build_heuristic_registry",
     "DecisionModelInference",
     "FeatureDataset",
     "FeatureEngineer",
     "FeatureVector",
     "HistoricalFeatureRepository",
-    "HeuristicSummary",
     "EnsembleDefinition",
     "EnsembleRegistryDiff",
     "EnsembleRegistrySnapshot",
@@ -71,7 +66,6 @@ __all__ = [
     "ModelRepository",
     "ModelScore",
     "OnlineScoringResult",
-    "select_heuristics",
     "MarketRegime",
     "MarketRegimeAssessment",
     "MarketRegimeClassifier",
