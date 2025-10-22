@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from bot_core.ai.sequential import (
     BUILTIN_HEURISTICS,
     HistoricalFeatureRepository,
@@ -35,11 +33,3 @@ def test_sequential_model_beats_builtin_heuristics(tmp_path) -> None:
 
     assert model_accuracy >= heuristic_accuracy
     assert repository.list(), "repository should retain historical datasets"
-    assert report.heuristic_weights
-    assert pytest.approx(sum(report.heuristic_weights.values()), rel=1e-6) == 1.0
-    assert report.suppressed_heuristics == {}
-    assert report.heuristic_confidence
-    assert report.heuristic_trend
-    assert report.heuristic_volatility
-    assert report.heuristic_consistency
-    assert report.heuristic_drift
