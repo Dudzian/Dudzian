@@ -407,6 +407,9 @@ class AIManager:
         self._degraded = bool(_AI_IMPORT_ERROR)
         self._degradation_reason: str | None = None
         self._decision_model_repository: ModelRepository | None = None
+        self._model_repository: ModelRepository | None = None
+        self._repository_models: Dict[str, DecisionModelInference] = {}
+        self._repository_paths: Dict[str, Path] = {}
         self._decision_inferences: Dict[str, DecisionModelInference] = {}
         self._decision_default_name: str | None = None
         self._decision_orchestrator: Any | None = None
@@ -540,7 +543,7 @@ class AIManager:
     def require_real_models(self) -> None:
         """Zgłasza wyjątek gdy dostępne są tylko fallbackowe modele AI."""
 
-        if self._degraded:
+        if self._degraded or (not self._decision_inferences and not self._repository_models):
             reason = self._degradation_reason or "AI backend in degraded mode"
             raise RuntimeError(
                 "Real models are required for live trading; current backend is degraded: "
@@ -555,6 +558,15 @@ class AIManager:
         repository_path.mkdir(parents=True, exist_ok=True)
         repository = ModelRepository(repository_path)
         self._decision_model_repository = repository
+        return repository
+
+    def configure_model_repository(self, base_path: PathInput) -> ModelRepository:
+        """Configure repository used for live trading models."""
+
+        repository_path = Path(base_path).expanduser().resolve()
+        repository_path.mkdir(parents=True, exist_ok=True)
+        repository = ModelRepository(repository_path)
+        self._model_repository = repository
         return repository
 
     def attach_decision_orchestrator(
@@ -628,6 +640,7 @@ class AIManager:
         self._decision_inferences[normalized_name] = inference
         if set_default or self._decision_default_name is None:
             self._decision_default_name = normalized_name
+        quality_ok = self._evaluate_decision_model_quality(inference, normalized_name)
         if self._decision_orchestrator is not None:
             try:
                 self._decision_orchestrator.attach_named_inference(
@@ -640,7 +653,56 @@ class AIManager:
                     "Nie udało się podłączyć inference %s do DecisionOrchestratora", normalized_name
                 )
         self._mark_backend_ready(inference)
+        if not quality_ok:
+            self._degraded = True
+            self._degradation_reason = (
+                f"Decision model {normalized_name} failed quality thresholds"
+            )
         return inference
+
+    def ingest_model_repository(
+        self,
+        base_path: PathInput | None = None,
+        *,
+        pattern: str = "*.json",
+    ) -> int:
+        """Load all model artifacts matching ``pattern`` into the manager.
+
+        The repository must contain artefacts produced by the Decision Engine
+        pipeline.  Each artefact should include ``symbol`` and ``model_type``
+        metadata so that it can be addressed at runtime.
+        """
+
+        if base_path is not None:
+            repository = self.configure_model_repository(base_path)
+        elif self._model_repository is None:
+            repository_root = self.model_dir / "repository"
+            repository = self.configure_model_repository(repository_root)
+        else:
+            repository = self._model_repository
+
+        loaded = 0
+        for artifact_path in sorted(repository.base_path.glob(pattern)):
+            try:
+                inference = DecisionModelInference(repository)
+                inference.load_weights(artifact_path)
+            except Exception:
+                logger.warning("Failed to load model artifact from %s", artifact_path, exc_info=True)
+                continue
+
+            artifact = getattr(inference, "_artifact", None)
+            metadata = dict(getattr(artifact, "metadata", {})) if artifact else {}
+            symbol = metadata.get("symbol")
+            model_type = metadata.get("model_type") or metadata.get("name") or artifact_path.stem
+            if symbol is None:
+                logger.debug("Skipping artifact %s without symbol metadata", artifact_path)
+                continue
+            key = self._model_key(str(symbol), str(model_type))
+            self._repository_models[key] = inference
+            self._repository_paths[key] = artifact_path if isinstance(artifact_path, Path) else Path(artifact_path)
+            self._mark_backend_ready(inference)
+            loaded += 1
+        return loaded
 
     def _resolve_decision_inference(self, model_name: str | None = None) -> DecisionModelInference:
         if not self._decision_inferences:
@@ -840,6 +902,20 @@ class AIManager:
             raise ValueError(f"Nieobsługiwana agregacja zespołu: {agg}")
         return combined if isinstance(combined, pd.Series) else pd.Series(combined, index=frame.index)
 
+    def _predict_series_from_inference(
+        self,
+        inference: DecisionModelInference,
+        df: pd.DataFrame,
+        feature_cols: Iterable[str],
+    ) -> pd.Series:
+        rows: list[float] = []
+        for _, row in df.iterrows():
+            features = {name: float(row[name]) for name in feature_cols if name in row}
+            score = inference.score(features)
+            rows.append(float(score.expected_return_bps))
+        series = pd.Series(rows, index=df.index)
+        return self._sanitize_predictions(series)
+
     async def _predict_model_series(
         self,
         symbol_key: str,
@@ -869,6 +945,11 @@ class AIManager:
                 return combined
 
             key = self._model_key(symbol_key, normalized_type)
+            repository_model = self._repository_models.get(key)
+            if repository_model is not None:
+                preds = self._predict_series_from_inference(repository_model, df, feats)
+                cache[normalized_type] = preds
+                return preds
             model = self.models.get(key)
             if model is None:
                 path = self.model_dir / f"{symbol_key}:{normalized_type}.joblib"
@@ -964,15 +1045,56 @@ class AIManager:
     def _mark_backend_ready(self, model: Any) -> None:
         if not self._degraded:
             return
+        fallback_reasons = {None, "fallback_ai_models", "backend_validation_failed"}
         if isinstance(model, DecisionModelInference) and getattr(model, "is_ready", False):
-            self._degraded = False
-            self._degradation_reason = None
+            if self._degradation_reason in fallback_reasons:
+                self._degraded = False
+                self._degradation_reason = None
             return
         if _AI_IMPORT_ERROR is not None:
             return
         if getattr(model, "feature_names", None):
-            self._degraded = False
-            self._degradation_reason = None
+            if self._degradation_reason in fallback_reasons:
+                self._degraded = False
+                self._degradation_reason = None
+
+    def _evaluate_decision_model_quality(
+        self, inference: DecisionModelInference, name: str
+    ) -> bool:
+        artifact = getattr(inference, "_artifact", None)
+        if artifact is None:
+            return True
+        metadata = getattr(artifact, "metadata", {}) or {}
+        thresholds = metadata.get("quality_thresholds", {}) if isinstance(metadata, Mapping) else {}
+        min_directional = float(thresholds.get("min_directional_accuracy", 0.5))
+        max_mae = float(thresholds.get("max_mae", 20.0))
+        metrics = getattr(artifact, "metrics", {}) or {}
+        directional = float(
+            metrics.get(
+                "test_directional_accuracy",
+                metrics.get(
+                    "validation_directional_accuracy",
+                    metrics.get("directional_accuracy", 0.0),
+                ),
+            )
+        )
+        mae = float(
+            metrics.get(
+                "test_mae",
+                metrics.get("validation_mae", metrics.get("mae", 0.0)),
+            )
+        )
+        if directional < min_directional or mae > max_mae:
+            logger.warning(
+                "Decision model %s failed quality thresholds (directional=%.3f, mae=%.3f, min_directional=%.3f, max_mae=%.3f)",
+                name,
+                directional,
+                mae,
+                min_directional,
+                max_mae,
+            )
+            return False
+        return True
 
     def _track_signal(self, symbol: str, signals: pd.Series) -> None:
         """Zachowaj ostatnie predykcje do monitorowania dryfu."""
@@ -1107,6 +1229,39 @@ class AIManager:
 
             for model_type in model_types:
                 model_name = str(model_type).lower()
+                key = self._model_key(symbol_key, model_name)
+                repository_inference = self._repository_models.get(key)
+                if repository_inference is not None:
+                    artifact = getattr(repository_inference, "_artifact", None)
+                    metrics = dict(getattr(artifact, "metrics", {})) if artifact else {}
+                    metadata = dict(getattr(artifact, "metadata", {})) if artifact else {}
+                    cv_raw = metadata.get("cross_validation")
+                    cv_meta = cv_raw if isinstance(cv_raw, Mapping) else {}
+                    cv_scores = [
+                        float(value)
+                        for value in cv_meta.get("directional_accuracy", [])
+                        if isinstance(value, (int, float))
+                    ]
+                    pnl = float(metrics.get("expected_pnl", 0.0))
+                    hit_rate = (
+                        float(np.mean(cv_scores))
+                        if cv_scores
+                        else float(metrics.get("directional_accuracy", 0.0))
+                    )
+                    sharpe = self._sharpe_ratio(np.asarray(cv_scores, dtype=float)) if cv_scores else 0.0
+                    model_path = self._repository_paths.get(key)
+                    evaluations.append(
+                        ModelEvaluation(
+                            model_type=model_name,
+                            hit_rate=hit_rate,
+                            pnl=pnl,
+                            sharpe=sharpe,
+                            cv_scores=cv_scores,
+                            model_path=str(model_path) if model_path is not None else None,
+                        )
+                    )
+                    continue
+
                 cv_scores: List[float] = []
                 pnl_scores: List[float] = []
 

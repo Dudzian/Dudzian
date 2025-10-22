@@ -1,0 +1,17 @@
+{
+  "backend": "builtin",
+  "learning_rate": 0.12,
+  "n_estimators": 48,
+  "validation_split": 0.2,
+  "test_split": 0.1,
+  "drift_monitor": {
+    "threshold": 3.0,
+    "window": 60,
+    "min_observations": 15,
+    "cooldown": 90
+  },
+  "quality_thresholds": {
+    "min_directional_accuracy": 0.55,
+    "max_mae": 22.0
+  }
+}

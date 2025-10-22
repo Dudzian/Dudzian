@@ -7,8 +7,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from typing import Callable, Mapping, MutableMapping, Sequence
 
-from bot_core.ai.inference import DecisionModelInference
-from bot_core.ai.models import ModelScore
+from bot_core.ai import DecisionModelInference, MarketRegime, ModelScore
 from bot_core.config.models import (
     DecisionEngineConfig,
     DecisionOrchestratorThresholds,
@@ -51,6 +50,26 @@ class ModelPerformanceSummary:
     updated_at: datetime
 
 
+@dataclass(slots=True)
+class StrategyPerformanceSummary:
+    """Aggregated effectiveness metrics for an execution strategy."""
+
+    strategy: str
+    regime: MarketRegime | str
+    hit_rate: float
+    pnl: float
+    sharpe: float
+    updated_at: datetime
+    observations: int = 0
+
+
+@dataclass(slots=True)
+class StrategyRecalibrationSchedule:
+    strategy: str
+    interval: timedelta
+    next_run: datetime
+
+
 class DecisionOrchestrator:
     """Klasa realizująca logikę DecisionOrchestratora Etapu 5."""
 
@@ -79,6 +98,8 @@ class DecisionOrchestrator:
         )
         self._performance_history_limit = max(1, int(performance_history_limit))
         self._clock: Callable[[], datetime] = clock or (lambda: datetime.now(timezone.utc))
+        self._strategy_performance: MutableMapping[str, StrategyPerformanceSummary] = {}
+        self._strategy_schedules: MutableMapping[str, StrategyRecalibrationSchedule] = {}
         if inference is not None:
             self.attach_named_inference("__default__", inference, set_default=True)
 
@@ -140,6 +161,99 @@ class DecisionOrchestrator:
             directional,
             score,
             now,
+        )
+
+    # ---------------------------------------------------------- strategie --
+    def record_strategy_performance(
+        self,
+        strategy: str,
+        regime: MarketRegime | str,
+        *,
+        hit_rate: float,
+        pnl: float,
+        sharpe: float,
+        observations: int = 1,
+        timestamp: datetime | None = None,
+    ) -> None:
+        key = strategy.lower()
+        now = timestamp or self._now()
+        previous = self._strategy_performance.get(key)
+        if previous is not None and previous.regime == regime:
+            total_obs = max(previous.observations + observations, 1)
+            hit_rate = (previous.hit_rate * previous.observations + hit_rate * observations) / total_obs
+            pnl = (previous.pnl * previous.observations + pnl * observations) / total_obs
+            sharpe = (previous.sharpe * previous.observations + sharpe * observations) / total_obs
+            observations = total_obs
+        self._strategy_performance[key] = StrategyPerformanceSummary(
+            strategy=strategy,
+            regime=regime,
+            hit_rate=float(hit_rate),
+            pnl=float(pnl),
+            sharpe=float(sharpe),
+            observations=int(observations),
+            updated_at=now,
+        )
+
+    def select_strategy(self, regime: MarketRegime | str) -> str | None:
+        if isinstance(regime, str):
+            try:
+                regime = MarketRegime(regime)
+            except ValueError:
+                regime = MarketRegime.TREND
+        best_name: str | None = None
+        best_score: float | None = None
+        for summary in self._strategy_performance.values():
+            summary_regime = summary.regime
+            if isinstance(summary_regime, str):
+                try:
+                    summary_regime = MarketRegime(summary_regime)
+                except ValueError:
+                    continue
+            if summary_regime != regime:
+                continue
+            score = summary.hit_rate * (1.0 + max(summary.sharpe, 0.0)) + summary.pnl
+            if best_score is None or score > best_score:
+                best_score = score
+                best_name = summary.strategy
+        return best_name
+
+    def strategy_performance_snapshot(self) -> Mapping[str, StrategyPerformanceSummary]:
+        return dict(self._strategy_performance)
+
+    def schedule_strategy_recalibration(
+        self,
+        strategy: str,
+        interval: timedelta,
+        *,
+        first_run: datetime | None = None,
+    ) -> StrategyRecalibrationSchedule:
+        key = strategy.lower()
+        next_run = (first_run or self._now()) + interval
+        schedule = StrategyRecalibrationSchedule(strategy=strategy, interval=interval, next_run=next_run)
+        self._strategy_schedules[key] = schedule
+        return schedule
+
+    def due_recalibrations(
+        self, now: datetime | None = None
+    ) -> Sequence[StrategyRecalibrationSchedule]:
+        reference = now or self._now()
+        return tuple(schedule for schedule in self._strategy_schedules.values() if schedule.next_run <= reference)
+
+    def mark_recalibrated(
+        self,
+        strategy: str,
+        *,
+        timestamp: datetime | None = None,
+    ) -> None:
+        key = strategy.lower()
+        schedule = self._strategy_schedules.get(key)
+        if schedule is None:
+            return
+        reference = timestamp or self._now()
+        self._strategy_schedules[key] = StrategyRecalibrationSchedule(
+            strategy=schedule.strategy,
+            interval=schedule.interval,
+            next_run=reference + schedule.interval,
         )
 
     # ------------------------------------------------------------------ koszty --

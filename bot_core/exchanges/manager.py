@@ -7,7 +7,8 @@ import logging
 import os
 from dataclasses import dataclass
 from collections.abc import Iterable
-from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
+from collections import Counter
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from pydantic import BaseModel, Field
 
@@ -192,6 +193,8 @@ class _CCXTPublicFeed(BaseBackend):
         testnet: bool = False,
         futures: bool = False,
         market_type: str | None = None,
+        *,
+        error_handler: Callable[[str, Exception], None] | None = None,
     ) -> None:
         super().__init__(event_bus=EventBus())
         if ccxt is None:
@@ -225,6 +228,14 @@ class _CCXTPublicFeed(BaseBackend):
                 )
         self._markets: Dict[str, Any] = {}
         self._rules: Dict[str, MarketRules] = {}
+        self._error_handler = error_handler
+        network_error_cls = getattr(ccxt, "NetworkError", None)
+        if isinstance(network_error_cls, tuple):
+            self._network_error_classes: Tuple[type[Exception], ...] = network_error_cls
+        elif isinstance(network_error_cls, type):
+            self._network_error_classes = (network_error_cls,)
+        else:
+            self._network_error_classes = tuple()
 
     def load_markets(self) -> Dict[str, MarketRules]:
         self._markets = self.client.load_markets()
@@ -268,6 +279,7 @@ class _CCXTPublicFeed(BaseBackend):
             return self.client.fetch_ticker(symbol)
         except Exception as exc:
             log.warning("fetch_ticker failed: %s", exc)
+            self._handle_network_error("fetch_ticker", exc)
             return None
 
     def fetch_ohlcv(
@@ -277,6 +289,7 @@ class _CCXTPublicFeed(BaseBackend):
             return self.client.fetch_ohlcv(symbol, timeframe=timeframe, limit=limit)
         except Exception as exc:
             log.warning("fetch_ohlcv failed: %s", exc)
+            self._handle_network_error("fetch_ohlcv", exc)
             return None
 
     def fetch_order_book(self, symbol: str, limit: int = 50) -> Optional[Dict[str, Any]]:
@@ -284,7 +297,17 @@ class _CCXTPublicFeed(BaseBackend):
             return self.client.fetch_order_book(symbol, limit=limit)
         except Exception as exc:
             log.warning("fetch_order_book failed: %s", exc)
+            self._handle_network_error("fetch_order_book", exc)
             return None
+
+    def _handle_network_error(self, operation: str, exc: Exception) -> None:
+        if not self._error_handler or not self._network_error_classes:
+            return
+        if isinstance(exc, self._network_error_classes):
+            try:
+                self._error_handler(operation, exc)
+            except Exception:  # pragma: no cover - defensywnie
+                log.debug("Network error handler raised", exc_info=True)
 
     def create_order(self, *args, **kwargs):  # pragma: no cover - interfejs
         raise NotImplementedError
@@ -312,6 +335,7 @@ class _CCXTPrivateBackend(_CCXTPublicFeed):
         api_key: Optional[str] = None,
         secret: Optional[str] = None,
         passphrase: Optional[str] = None,
+        error_handler: Callable[[str, Exception], None] | None = None,
     ) -> None:
         resolved_market_type = market_type or ("future" if futures else "spot")
         super().__init__(
@@ -319,6 +343,7 @@ class _CCXTPrivateBackend(_CCXTPublicFeed):
             testnet=testnet,
             futures=futures,
             market_type=resolved_market_type,
+            error_handler=error_handler,
         )
         if ccxt is None:
             raise RuntimeError("CCXT nie jest zainstalowane.")
@@ -529,6 +554,7 @@ class ExchangeManager:
             }
 
         log.info("ExchangeManager initialized (bot_core)")
+        self._network_error_counts: Counter[str] = Counter()
 
     def set_mode(
         self,
@@ -707,6 +733,7 @@ class ExchangeManager:
                 testnet=self._testnet,
                 futures=self._futures,
                 market_type=market_type,
+                error_handler=self._record_network_error,
             )
         return self._public
 
@@ -749,6 +776,15 @@ class ExchangeManager:
         if self._watchdog is None:
             self._watchdog = Watchdog()
         return self._watchdog
+
+    def _record_network_error(self, operation: str, exc: Exception) -> None:
+        self._network_error_counts[operation] += 1
+        log.warning("Network error during %s: %s", operation, exc)
+
+    def get_network_error_counts(self) -> Dict[str, int]:
+        """Zwraca liczniki błędów sieciowych zarejestrowanych przez backendy CCXT."""
+
+        return dict(self._network_error_counts)
 
     def _ensure_native_adapter(self):
         if self.mode not in {Mode.MARGIN, Mode.FUTURES}:
@@ -805,6 +841,7 @@ class ExchangeManager:
                 api_key=self._api_key,
                 secret=self._secret,
                 passphrase=self._passphrase,
+                error_handler=self._record_network_error,
             )
             self._private.load_markets()
         return self._private

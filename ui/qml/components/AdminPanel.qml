@@ -43,6 +43,8 @@ Drawer {
     property bool riskHistoryAutoExportUseLocalTime: false
     property var riskHistoryLastAutoExportAt: null
     property string riskHistoryLastAutoExportPath: ""
+    property string decisionLogStatusMessage: ""
+    property color decisionLogStatusColor: palette.highlight
 
     function updateRiskSchedule() {
         if (typeof appController === "undefined")
@@ -67,6 +69,8 @@ Drawer {
         riskHistoryStatusMessage = ""
         decisionStatusMessage = ""
         schedulerStatusMessage = ""
+        decisionLogStatusMessage = ""
+        decisionLogStatusColor = palette.highlight
         if (typeof appController !== "undefined") {
             riskHistoryExportLimitEnabled = appController.riskHistoryExportLimitEnabled
             riskHistoryExportLimitValue = appController.riskHistoryExportLimitValue
@@ -453,6 +457,29 @@ Drawer {
                         supportController.exportBundle(selectedFile)
                 }
             }
+
+            FileDialog {
+                id: decisionLogFileDialog
+                title: qsTr("Wybierz plik decision logu")
+                fileMode: FileDialog.OpenFile
+                nameFilters: [qsTr("Logi JSONL (*.jsonl)"), qsTr("Wszystkie pliki (*)")]
+                onAccepted: {
+                    if (selectedFile)
+                        applyDecisionLogPath(selectedFile)
+                }
+            }
+
+            FolderDialog {
+                id: decisionLogFolderDialog
+                title: qsTr("Wybierz katalog decision logu")
+                onAccepted: {
+                    var url = decisionLogFolderDialog.selectedFolder
+                              ? decisionLogFolderDialog.selectedFolder
+                              : decisionLogFolderDialog.folder
+                    if (url)
+                        applyDecisionLogPath(url)
+                }
+            }
         }
     }
 
@@ -515,6 +542,66 @@ Drawer {
         schedulerSchedules = schedulerForm.schedules ? clone(schedulerForm.schedules) : []
         selectedScheduleIndex = schedulerSchedules.length > 0 ? 0 : -1
         schedulerStatusMessage = ""
+    }
+
+    function decisionLogPathUrl() {
+        if (typeof appController === "undefined")
+            return null
+        var path = appController.decisionLogPath || ""
+        if (!path || path.length === 0)
+            return null
+        return QUrl.fromLocalFile(path)
+    }
+
+    function decisionLogFolderUrl() {
+        var url = decisionLogPathUrl()
+        if (!url || !url.toLocalFile)
+            return null
+        var local = url.toLocalFile()
+        if (!local || local.length === 0)
+            local = url.path || ""
+        if (!local || local.length === 0)
+            return null
+        if (local.endsWith("/") || local.endsWith("\\"))
+            return QUrl.fromLocalFile(local)
+        var slashIndex = Math.max(local.lastIndexOf("/"), local.lastIndexOf("\\"))
+        if (slashIndex <= 0)
+            return QUrl.fromLocalFile(local)
+        return QUrl.fromLocalFile(local.substring(0, slashIndex))
+    }
+
+    function applyDecisionLogPath(url) {
+        if (typeof appController === "undefined" || !url)
+            return false
+        var applied = appController.setDecisionLogPath(url)
+        if (applied) {
+            var normalized = appController.decisionLogPath || (url.toLocalFile ? url.toLocalFile() : url.toString())
+            decisionLogStatusMessage = qsTr("Ścieżka decision logu ustawiona na %1").arg(normalized)
+            decisionLogStatusColor = Qt.rgba(0.3, 0.7, 0.4, 1)
+        } else {
+            decisionLogStatusMessage = qsTr("Nie udało się ustawić decision logu")
+            decisionLogStatusColor = Qt.rgba(0.9, 0.4, 0.3, 1)
+        }
+        return applied
+    }
+
+    function reloadDecisionLogFromUi() {
+        if (typeof appController === "undefined")
+            return
+        if (appController.reloadDecisionLog()) {
+            decisionLogStatusMessage = qsTr("Przeładowano decision log")
+            decisionLogStatusColor = Qt.rgba(0.3, 0.7, 0.4, 1)
+        } else {
+            decisionLogStatusMessage = qsTr("Nie udało się przeładować decision logu")
+            decisionLogStatusColor = Qt.rgba(0.9, 0.4, 0.3, 1)
+        }
+    }
+
+    function openDecisionLogLocation() {
+        var url = decisionLogPathUrl()
+        if (!url || !url.toString || url.toString().length === 0)
+            return
+        Qt.openUrlExternally(url)
     }
 
     function defaultExportFolder() {
@@ -1492,6 +1579,271 @@ Drawer {
                                 visible: schedulerStatusMessage.length > 0
                                 text: schedulerStatusMessage
                                 color: schedulerStatusColor
+                            }
+                        }
+                    }
+
+                    GroupBox {
+                        title: qsTr("Decision log")
+                        Layout.fillWidth: true
+
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            spacing: 12
+
+                            GridLayout {
+                                columns: 3
+                                columnSpacing: 12
+                                rowSpacing: 8
+                                Layout.fillWidth: true
+
+                                Label { text: qsTr("Ścieżka decision logu") }
+                                TextField {
+                                    id: decisionLogPathField
+                                    Layout.fillWidth: true
+                                    readOnly: true
+                                    text: typeof appController !== "undefined" ? appController.decisionLogPath : ""
+                                    placeholderText: qsTr("Nie ustawiono ścieżki decision logu")
+                                    color: enabled ? palette.text : palette.mid
+                                }
+                                RowLayout {
+                                    spacing: 8
+                                    Layout.alignment: Qt.AlignLeft
+
+                                    Button {
+                                        text: qsTr("Plik…")
+                                        onClicked: {
+                                            var currentFile = decisionLogPathUrl()
+                                            var folder = decisionLogFolderUrl()
+                                            if (currentFile && currentFile.toString && currentFile.toString().length > 0)
+                                                decisionLogFileDialog.currentFile = currentFile
+                                            if (folder && folder.toString && folder.toString().length > 0)
+                                                decisionLogFileDialog.currentFolder = folder
+                                            else
+                                                decisionLogFileDialog.currentFolder = Qt.resolvedUrl(".")
+                                            decisionLogFileDialog.open()
+                                        }
+                                    }
+
+                                    Button {
+                                        text: qsTr("Katalog…")
+                                        onClicked: {
+                                            var folder = decisionLogFolderUrl()
+                                            decisionLogFolderDialog.folder = folder && folder.toString && folder.toString().length > 0
+                                                    ? folder
+                                                    : Qt.resolvedUrl(".")
+                                            decisionLogFolderDialog.open()
+                                        }
+                                    }
+
+                                    Button {
+                                        text: qsTr("Otwórz")
+                                        enabled: typeof appController !== "undefined"
+                                                 && appController.decisionLogPath
+                                                 && appController.decisionLogPath.length > 0
+                                        onClicked: openDecisionLogLocation()
+                                    }
+                                }
+
+                                Label { text: qsTr("Limit wpisów") }
+                                SpinBox {
+                                    id: decisionLogLimitSpin
+                                    Layout.fillWidth: true
+                                    from: 1
+                                    to: 10000
+                                    stepSize: 10
+                                    editable: true
+                                    valueFromText: function(text, locale) {
+                                        var number = Number.fromLocaleString(locale, text)
+                                        if (isNaN(number))
+                                            number = parseFloat(text)
+                                        if (isNaN(number))
+                                            return value
+                                        return Math.max(from, Math.min(to, Math.round(number)))
+                                    }
+                                    onValueModified: {
+                                        if (decisionLogModel)
+                                            decisionLogModel.maximumEntries = value
+                                    }
+                                    Binding {
+                                        target: decisionLogLimitSpin
+                                        property: "value"
+                                        value: decisionLogModel ? decisionLogModel.maximumEntries : 250
+                                        when: !decisionLogLimitSpin.activeFocus
+                                    }
+                                }
+                                RowLayout {
+                                    spacing: 8
+
+                                    Button {
+                                        text: qsTr("Przeładuj")
+                                        enabled: typeof appController !== "undefined"
+                                        onClicked: reloadDecisionLogFromUi()
+                                    }
+
+                                    Label {
+                                        text: qsTr("Wpisy: %1").arg(decisionLogModel ? decisionLogModel.count : 0)
+                                        color: palette.mid
+                                    }
+                                }
+                            }
+
+                            Label {
+                                Layout.fillWidth: true
+                                visible: decisionLogStatusMessage.length > 0
+                                text: decisionLogStatusMessage
+                                color: decisionLogStatusColor
+                                wrapMode: Text.WordWrap
+                            }
+
+                            ScrollView {
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: 260
+                                clip: true
+
+                                ListView {
+                                    id: decisionLogListView
+                                    anchors.fill: parent
+                                    clip: true
+                                    spacing: 8
+                                    model: decisionLogModel ? decisionLogModel : null
+
+                                    delegate: Frame {
+                                        required property string timestampDisplay
+                                        required property string event
+                                        required property string environment
+                                        required property string portfolio
+                                        required property string riskProfile
+                                        required property string schedule
+                                        required property string strategy
+                                        required property string symbol
+                                        required property string side
+                                        required property string quantity
+                                        required property string price
+                                        required property bool approved
+                                        required property string decisionState
+                                        required property string decisionReason
+                                        required property string decisionMode
+                                        required property string telemetryNamespace
+                                        required property var details
+
+                                        width: ListView.view ? ListView.view.width : parent ? parent.width : implicitWidth
+                                        padding: 8
+                                        background: Rectangle {
+                                            color: Qt.rgba(0.16, 0.24, 0.34, 0.35)
+                                            radius: 6
+                                        }
+
+                                        property string detailsText: {
+                                            if (!details)
+                                                return ""
+                                            var keys = Object.keys(details)
+                                            if (!keys || keys.length === 0)
+                                                return ""
+                                            try {
+                                                return JSON.stringify(details, null, 2)
+                                            } catch (err) {
+                                                return details.toString ? details.toString() : ""
+                                            }
+                                        }
+
+                                        ColumnLayout {
+                                            anchors.fill: parent
+                                            spacing: 4
+
+                                            Label {
+                                                Layout.fillWidth: true
+                                                wrapMode: Text.WordWrap
+                                                font.bold: true
+                                                text: {
+                                                    var timeText = timestampDisplay && timestampDisplay.length > 0
+                                                            ? timestampDisplay
+                                                            : qsTr("brak znacznika czasu")
+                                                    if (event && event.length > 0)
+                                                        return timeText + " · " + event
+                                                    return timeText
+                                                }
+                                            }
+
+                                            Label {
+                                                Layout.fillWidth: true
+                                                wrapMode: Text.WordWrap
+                                                text: qsTr("Środowisko: %1 · Portfolio: %2 · Ryzyko: %3")
+                                                        .arg(environment && environment.length > 0 ? environment : qsTr("-"))
+                                                        .arg(portfolio && portfolio.length > 0 ? portfolio : qsTr("-"))
+                                                        .arg(riskProfile && riskProfile.length > 0 ? riskProfile : qsTr("-"))
+                                                color: palette.midlight
+                                            }
+
+                                            Label {
+                                                Layout.fillWidth: true
+                                                wrapMode: Text.WordWrap
+                                                text: qsTr("Strategia: %1 · Harmonogram: %2 · Tryb: %3")
+                                                        .arg(strategy && strategy.length > 0 ? strategy : qsTr("-"))
+                                                        .arg(schedule && schedule.length > 0 ? schedule : qsTr("-"))
+                                                        .arg(decisionMode && decisionMode.length > 0 ? decisionMode : qsTr("-"))
+                                                color: palette.midlight
+                                            }
+
+                                            Label {
+                                                Layout.fillWidth: true
+                                                wrapMode: Text.WordWrap
+                                                text: qsTr("Instrument: %1 · Strona: %2 · Ilość: %3 · Cena: %4")
+                                                        .arg(symbol && symbol.length > 0 ? symbol : qsTr("-"))
+                                                        .arg(side && side.length > 0 ? side : qsTr("-"))
+                                                        .arg(quantity && quantity.length > 0 ? quantity : qsTr("-"))
+                                                        .arg(price && price.length > 0 ? price : qsTr("-"))
+                                                color: palette.mid
+                                            }
+
+                        
+                                            Label {
+                                                Layout.fillWidth: true
+                                                wrapMode: Text.WordWrap
+                                                text: {
+                                                    var stateText = decisionState && decisionState.length > 0
+                                                            ? decisionState
+                                                            : qsTr("nieznany stan")
+                                                    var reasonText = decisionReason && decisionReason.length > 0
+                                                            ? " – " + decisionReason
+                                                            : ""
+                                                    var approvalText = approved ? qsTr("zatwierdzono") : qsTr("odrzucono")
+                                                    return qsTr("Decyzja: %1 (%2)%3")
+                                                            .arg(stateText)
+                                                            .arg(approvalText)
+                                                            .arg(reasonText)
+                                                }
+                                                color: approved ? Qt.rgba(0.35, 0.75, 0.45, 1) : Qt.rgba(0.95, 0.45, 0.3, 1)
+                                            }
+
+                                            Label {
+                                                Layout.fillWidth: true
+                                                wrapMode: Text.WordWrap
+                                                visible: telemetryNamespace && telemetryNamespace.length > 0
+                                                text: qsTr("Namespace telemetrii: %1").arg(telemetryNamespace)
+                                                color: palette.midlight
+                                            }
+
+                                            Label {
+                                                Layout.fillWidth: true
+                                                visible: detailsText.length > 0
+                                                text: detailsText
+                                                textFormat: Text.PlainText
+                                                font.family: "monospace"
+                                                color: palette.text
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            Label {
+                                Layout.fillWidth: true
+                                horizontalAlignment: Text.AlignHCenter
+                                visible: decisionLogModel ? decisionLogModel.count === 0 : true
+                                text: qsTr("Brak wpisów decision logu do wyświetlenia")
+                                color: palette.mid
+                                wrapMode: Text.WordWrap
                             }
                         }
                     }
