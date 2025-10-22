@@ -227,26 +227,11 @@ ai_model_management:
       learning_rate: 0.05
       discount_factor: 0.9
       min_directional_accuracy: 0.58
-      heuristics: [momentum, volatility]
-    latency_spike_ms: 80.0
-    slippage_multiplier: 1.35
-
-ai_model_management:
-  repository:
-    path: var/models/sequential
-    retention: 20
-  online_min_probability: 0.6
-  models:
-    - name: sequential_td_primary
-      backend: sequential_td
-      feature_window: 48
-      target_horizon: 3
-      top_k_features: 24
-      walk_forward_folds: 4
-      learning_rate: 0.05
-      discount_factor: 0.9
-      min_directional_accuracy: 0.58
-      heuristics: [momentum, volatility]
+      heuristics:
+        - momentum
+        - volatility
+      latency_spike_ms: 80.0
+      slippage_multiplier: 1.35
   tco:
     reports:
       - var/audit/tco/latest_report.json
