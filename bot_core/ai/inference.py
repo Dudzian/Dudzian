@@ -351,56 +351,6 @@ class ModelRepository:
         self._synchronise_aliases(manifest)
         self._write_manifest(manifest)
 
-    def activate_alias(self, alias: str, *, missing_ok: bool = False) -> str | None:
-        """Ustaw aktywną wersję na wskazywaną przez alias.
-
-        Parameters
-        ----------
-        alias:
-            Nazwa aliasu, który powinien zostać aktywowany.
-        missing_ok:
-            Jeżeli ``True`` metoda nie podniesie wyjątku dla brakującego aliasu lub
-            wersji i zwróci ``None``.  W przeciwnym razie rzucany jest ``KeyError``.
-
-        Returns
-        -------
-        str | None
-            Wersja ustawiona jako aktywna lub ``None`` jeżeli ``missing_ok`` i alias
-            nie może zostać rozwiązany.
-        """
-
-        alias = str(alias).strip()
-        if not alias:
-            raise ValueError("alias must be a non-empty string")
-
-        manifest = self._load_manifest()
-        versions, aliases_map = self._ensure_manifest_maps(manifest)
-
-        target = aliases_map.get(alias)
-        if not isinstance(target, str) or not target.strip():
-            if alias in aliases_map:
-                aliases_map.pop(alias, None)
-                self._synchronise_aliases(manifest)
-                self._write_manifest(manifest)
-            if missing_ok:
-                return None
-            raise KeyError(f"Alias '{alias}' nie istnieje w repozytorium modeli")
-
-        version = target.strip()
-        if version not in versions:
-            aliases_map.pop(alias, None)
-            self._synchronise_aliases(manifest)
-            self._write_manifest(manifest)
-            if missing_ok:
-                return None
-            raise KeyError(
-                f"Alias '{alias}' wskazuje na brakującą wersję '{version}' w manifestie modeli"
-            )
-
-        manifest["active"] = version
-        self._write_manifest(manifest)
-        return version
-
     def promote_version(
         self,
         version: str,
@@ -489,58 +439,6 @@ class ModelRepository:
                     resolved.unlink()
                 except FileNotFoundError:
                     pass
-
-    def prune_versions(
-        self,
-        max_versions: int,
-        *,
-        keep_aliases: Sequence[str] | None = None,
-        keep_versions: Sequence[str] | None = None,
-        keep_active: bool = True,
-        delete_files: bool = False,
-    ) -> tuple[str, ...]:
-        """Usuń najstarsze wersje pozostawiając maksymalnie ``max_versions`` wpisów."""
-
-        if max_versions < 0:
-            raise ValueError("max_versions must be non-negative")
-
-        manifest = self._load_manifest()
-        versions_map, aliases_map = self._ensure_manifest_maps(manifest)
-
-        ordered_versions = sorted(versions_map.keys(), key=self._version_sort_key)
-        if len(ordered_versions) <= max_versions:
-            return ()
-
-        keep: set[str] = set()
-        if keep_versions is not None:
-            keep.update({str(version).strip() for version in keep_versions if str(version).strip()})
-
-        aliases_to_consider: Sequence[str]
-        if keep_aliases is None:
-            aliases_to_consider = tuple(aliases_map.keys())
-        else:
-            aliases_to_consider = tuple(keep_aliases)
-        for alias in aliases_to_consider:
-            target = aliases_map.get(str(alias))
-            if isinstance(target, str) and target.strip():
-                keep.add(target.strip())
-
-        if keep_active:
-            active = manifest.get("active")
-            if isinstance(active, str) and active.strip():
-                keep.add(active.strip())
-
-        if max_versions:
-            keep.update(ordered_versions[-max_versions:])
-
-        removed: list[str] = []
-        for version in ordered_versions:
-            if version in keep:
-                continue
-            self.remove_version(version, delete_file=delete_files, missing_ok=True)
-            removed.append(version)
-
-        return tuple(removed)
 
     def _synchronise_aliases(self, manifest: MutableMapping[str, object]) -> None:
         versions, aliases_map = self._ensure_manifest_maps(manifest)

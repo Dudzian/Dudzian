@@ -14,6 +14,9 @@ Dokument opisuje proces przygotowania kompletu artefaktów OEM dla środowisk
   środowisku (`pip install pyinstaller briefcase`).
 * Zbudowana w trybie `Release` aplikacja Qt (`ui/`) – katalog z binarką i
   zasobami QML (`build/ui/Release` lub analogiczny).
+* Pakiet `KryptoLowca` zainstalowany w tym samym środowisku (np.
+  `pip install -e ./KryptoLowca`), aby moduły `KryptoLowca.*` – w tym
+  `KryptoLowca.ai_models` – były dostępne na ścieżce importu.
 * Plik konfiguracyjny `config/core.yaml` oraz tajemnice potrzebne do walidacji
   licencji OEM.
 * Klucz HMAC (BASE64 lub plaintext) używany do podpisywania manifestów.

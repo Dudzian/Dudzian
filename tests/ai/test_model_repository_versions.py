@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -163,56 +162,6 @@ def test_assign_alias_rejects_missing_version(tmp_path: Path) -> None:
         repository.assign_alias("missing", "9.9.9")
 
 
-def test_activate_alias_sets_active_version(tmp_path: Path) -> None:
-    repository = ModelRepository(tmp_path)
-    repository.publish(
-        _make_artifact(),
-        version="1.0.0",
-        filename="model-1.0.0.json",
-        aliases=("production",),
-        activate=True,
-    )
-    repository.publish(
-        _make_artifact(),
-        version="1.1.0",
-        filename="model-1.1.0.json",
-        aliases=("candidate",),
-        activate=False,
-    )
-
-    repository.assign_alias("production", "1.1.0")
-
-    activated = repository.activate_alias("production")
-
-    assert activated == "1.1.0"
-    assert repository.get_active_version() == "1.1.0"
-
-
-def test_activate_alias_prunes_stale_entry(tmp_path: Path) -> None:
-    repository = ModelRepository(tmp_path)
-    repository.publish(
-        _make_artifact(),
-        version="2.0.0",
-        filename="model-2.0.0.json",
-        aliases=("staging",),
-        activate=False,
-    )
-
-    # Zostaw cel aliasu, ale usuń wpis wersji, aby zasymulować nieaktualny manifest.
-    manifest_path = repository.base_path / repository.manifest_name
-    payload = json.loads(manifest_path.read_text("utf-8"))
-    payload["versions"].pop("2.0.0", None)
-    payload["aliases"]["staging"] = "2.0.0"
-    manifest_path.write_text(json.dumps(payload), encoding="utf-8")
-    repository._manifest_cache = None  # type: ignore[attr-defined]
-
-    result = repository.activate_alias("staging", missing_ok=True)
-
-    assert result is None
-    manifest = repository.get_manifest()
-    assert "staging" not in manifest["aliases"]
-
-
 def test_promote_version_sets_active_and_aliases(tmp_path: Path) -> None:
     repository = ModelRepository(tmp_path)
     repository.publish(
@@ -283,66 +232,3 @@ def test_remove_version_clears_aliases_and_optionally_deletes_file(tmp_path: Pat
     assert "canary" not in manifest["aliases"]
     assert repository.get_active_version() == "3.2.0"
     assert not path.exists()
-
-
-def test_prune_versions_removes_oldest_entries(tmp_path: Path) -> None:
-    repository = ModelRepository(tmp_path)
-    for index in range(1, 6):
-        repository.publish(
-            _make_artifact(),
-            version=f"1.0.{index}",
-            filename=f"model-1.0.{index}.json",
-            aliases=("latest",) if index == 5 else (),
-            activate=index == 5,
-        )
-
-    removed = repository.prune_versions(3)
-
-    assert removed == ("1.0.1", "1.0.2")
-    assert repository.list_versions() == ("1.0.3", "1.0.4", "1.0.5")
-    assert repository.get_active_version() == "1.0.5"
-
-
-def test_prune_versions_keeps_alias_targets(tmp_path: Path) -> None:
-    repository = ModelRepository(tmp_path)
-    for version in ("1.0.0", "1.1.0", "1.2.0", "1.3.0"):
-        repository.publish(
-            _make_artifact(),
-            version=version,
-            filename=f"model-{version}.json",
-            aliases=("production",) if version == "1.0.0" else (),
-        )
-    repository.assign_alias("canary", "1.2.0")
-
-    removed = repository.prune_versions(2)
-
-    assert removed == ("1.1.0",)
-    assert repository.list_versions() == ("1.0.0", "1.2.0", "1.3.0")
-    manifest = repository.get_manifest()
-    assert manifest["aliases"]["production"] == "1.0.0"
-    assert manifest["aliases"]["canary"] == "1.2.0"
-
-
-def test_prune_versions_respects_keep_versions_and_allows_zero(tmp_path: Path) -> None:
-    repository = ModelRepository(tmp_path)
-    for version in ("0.9.0", "1.0.0"):
-        repository.publish(
-            _make_artifact(),
-            version=version,
-            filename=f"model-{version}.json",
-        )
-
-    removed = repository.prune_versions(
-        0,
-        keep_versions=("1.0.0",),
-        keep_active=False,
-    )
-
-    assert removed == ("0.9.0",)
-    assert repository.list_versions() == ("1.0.0",)
-
-
-def test_prune_versions_rejects_negative_limit(tmp_path: Path) -> None:
-    repository = ModelRepository(tmp_path)
-    with pytest.raises(ValueError):
-        repository.prune_versions(-1)

@@ -11,6 +11,7 @@ __all__ = [
     "RiskDecision",
     "DecisionAuditLog",
     "DecisionAuditRecord",
+    "ScheduleOverride",
     "TradingSchedule",
     "ScheduleWindow",
     "ScheduleOverride",

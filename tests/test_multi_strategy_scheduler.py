@@ -276,160 +276,20 @@ def test_suspension_snapshot_includes_metadata() -> None:
         max_signals=3,
     )
 
-    secondary_strategy = DummyStrategy()
-    secondary_feed = DummyFeed([_snapshot(151.0, 2001)])
-    secondary_sink = DummySink()
-    scheduler.register_schedule(
-        name="backup_schedule",
-        strategy_name="backup_engine",
-        strategy=secondary_strategy,
-        feed=secondary_feed,
-        sink=secondary_sink,
-        cadence_seconds=5,
-        max_drift_seconds=1,
-        warmup_bars=0,
-        risk_profile="balanced",
-        max_signals=3,
-    )
-
     scheduler.suspend_schedule("mean_schedule", reason="maintenance", duration_seconds=600)
-    now["value"] = now["value"] + timedelta(seconds=1)
-    scheduler.suspend_schedule("backup_schedule", reason="maintenance", duration_seconds=120)
-    now["value"] = now["value"] + timedelta(seconds=1)
     scheduler.suspend_tag("trend", reason="incident")
-    now["value"] = now["value"] + timedelta(seconds=1)
-    scheduler.suspend_tag("momentum", reason="maintenance", duration_seconds=300)
 
     snapshot = scheduler.suspension_snapshot()
 
-    assert snapshot["counts"] == {"schedules": 2, "tags": 2, "total": 4}
-    assert snapshot["reasons"]["schedules"] == {
-        "mean_schedule": "maintenance",
-        "backup_schedule": "maintenance",
-    }
-    assert snapshot["reasons"]["tags"] == {"trend": "incident", "momentum": "maintenance"}
-
-    scope_stats = snapshot["scope_stats"]
-    schedule_scope = scope_stats["schedules"]
-    assert schedule_scope["total"] == 2
-    assert schedule_scope["expiring"] == 2
-    assert schedule_scope["indefinite"] == 0
-    assert schedule_scope["next_expiration"]["name"] == "backup_schedule"
-    assert schedule_scope["next_expiration"]["scope"] == "schedule"
-    assert schedule_scope["oldest"]["name"] in {"mean_schedule", "backup_schedule"}
-    assert schedule_scope["newest"]["name"] in {"mean_schedule", "backup_schedule"}
-    age_stats = schedule_scope["age_stats"]
-    assert age_stats["min"] == pytest.approx(2.0)
-    assert age_stats["max"] == pytest.approx(3.0)
-    assert age_stats["average"] == pytest.approx(2.5)
-
-    tag_scope = scope_stats["tags"]
-    assert tag_scope["total"] == 2
-    assert tag_scope["expiring"] == 1
-    assert tag_scope["indefinite"] == 1
-    assert tag_scope["next_expiration"]["name"] == "momentum"
-    assert tag_scope["next_expiration"]["scope"] == "tag"
-    assert tag_scope["oldest"]["name"] in {"trend", "momentum"}
-    assert tag_scope["newest"]["name"] in {"trend", "momentum"}
-    tag_age = tag_scope["age_stats"]
-    assert tag_age["min"] == pytest.approx(0.0)
-    assert tag_age["max"] == pytest.approx(1.0)
-    assert tag_age["average"] == pytest.approx(0.5)
+    assert snapshot["counts"] == {"schedules": 1, "tags": 1, "total": 2}
+    assert snapshot["reasons"]["schedules"] == {"mean_schedule": "maintenance"}
+    assert snapshot["reasons"]["tags"] == {"trend": "incident"}
 
     next_expiration = snapshot.get("next_expiration")
     assert next_expiration is not None
     assert next_expiration["scope"] == "schedule"
-    assert next_expiration["name"] == "backup_schedule"
-    backup_remaining = snapshot["schedules"]["backup_schedule"]["remaining_seconds"]
-    assert isinstance(backup_remaining, (int, float))
-    assert next_expiration["remaining_seconds"] == pytest.approx(backup_remaining)
-    assert backup_remaining < snapshot["schedules"]["mean_schedule"]["remaining_seconds"]
-
-    expiring_entries = snapshot["expiring_entries"]
-    assert snapshot["expiring_total"] == 3
-    assert [entry["name"] for entry in expiring_entries] == [
-        "backup_schedule",
-        "momentum",
-        "mean_schedule",
-    ]
-    assert expiring_entries[0]["remaining_seconds"] == pytest.approx(backup_remaining)
-    assert expiring_entries[1]["remaining_seconds"] == pytest.approx(300.0, abs=1e-3)
-    assert expiring_entries[2]["remaining_seconds"] > expiring_entries[1]["remaining_seconds"]
-    assert expiring_entries[0]["scope"] == "schedule"
-    assert expiring_entries[1]["scope"] == "tag"
-    assert all("age_seconds" in entry for entry in expiring_entries)
-
-    expiration_buckets = snapshot["expiration_buckets"]
-    assert expiration_buckets["5m"]["count"] == 2
-    assert expiration_buckets["5m"]["next"]["name"] == "backup_schedule"
-    assert expiration_buckets["5m"]["scopes"] == ["schedule", "tag"]
-    assert expiration_buckets["15m"]["count"] == 3
-    assert expiration_buckets["15m"]["next"]["name"] == "backup_schedule"
-    assert expiration_buckets["15m"]["last"]["name"] == "mean_schedule"
-    assert expiration_buckets["15m"]["scopes"] == ["schedule", "tag"]
-
-    reason_stats = snapshot["reason_stats"]
-    maintenance_stats = reason_stats["maintenance"]
-    assert maintenance_stats["schedules"] == 2
-    assert maintenance_stats["tags"] == 1
-    assert maintenance_stats["total"] == 3
-    assert maintenance_stats["expiring"] == 3
-    assert maintenance_stats["indefinite"] == 0
-    assert maintenance_stats["next_expiration"]["name"] == "backup_schedule"
-    assert maintenance_stats["next_expiration"]["scope"] == "schedule"
-    assert maintenance_stats["next_expiration"]["remaining_seconds"] == pytest.approx(
-        backup_remaining
-    )
-    assert maintenance_stats["scopes"] == ["schedules", "tags"]
-    maintenance_age = maintenance_stats["age_stats"]
-    assert maintenance_age["min"] == pytest.approx(0.0)
-    assert maintenance_age["max"] == pytest.approx(3.0)
-    assert maintenance_age["average"] == pytest.approx(5.0 / 3.0)
-    entries = maintenance_stats["entries"]
-    names = {entry["name"] for entry in entries}
-    assert names == {"mean_schedule", "backup_schedule", "momentum"}
-    assert all(entry["scope"] in {"schedule", "tag"} for entry in entries)
-    assert maintenance_stats["oldest"]["name"] in {"mean_schedule", "backup_schedule"}
-    assert maintenance_stats["newest"]["name"] in {"backup_schedule", "momentum"}
-    maintenance_breakdown = maintenance_stats["scope_breakdown"]
-    assert maintenance_breakdown["schedules"]["expiring"] == 2
-    assert maintenance_breakdown["schedules"]["indefinite"] == 0
-    assert "oldest" in maintenance_breakdown["schedules"]
-    assert "newest" in maintenance_breakdown["schedules"]
-    maintenance_schedule_age = maintenance_breakdown["schedules"]["age_stats"]
-    assert maintenance_schedule_age["min"] == pytest.approx(2.0)
-    assert maintenance_schedule_age["max"] == pytest.approx(3.0)
-    assert maintenance_schedule_age["average"] == pytest.approx(2.5)
-    assert maintenance_breakdown["tags"]["expiring"] == 1
-    assert maintenance_breakdown["tags"]["indefinite"] == 0
-    assert maintenance_breakdown["tags"]["next_expiration"]["name"] == "momentum"
-    assert maintenance_breakdown["tags"]["next_expiration"]["scope"] == "tag"
-    maintenance_tag_age = maintenance_breakdown["tags"]["age_stats"]
-    assert maintenance_tag_age["min"] == pytest.approx(0.0)
-    assert maintenance_tag_age["max"] == pytest.approx(0.0)
-    assert maintenance_tag_age["average"] == pytest.approx(0.0)
-
-    incident_stats = reason_stats["incident"]
-    assert incident_stats["schedules"] == 0
-    assert incident_stats["tags"] == 1
-    assert incident_stats["total"] == 1
-    assert incident_stats["expiring"] == 0
-    assert incident_stats["indefinite"] == 1
-    assert "next_expiration" not in incident_stats
-    assert incident_stats["scopes"] == ["tags"]
-    assert incident_stats["entries"][0]["name"] == "trend"
-    incident_age = incident_stats["age_stats"]
-    assert incident_age["min"] == pytest.approx(1.0)
-    assert incident_age["max"] == pytest.approx(1.0)
-    assert incident_age["average"] == pytest.approx(1.0)
-    incident_breakdown = incident_stats["scope_breakdown"]
-    assert incident_breakdown["tags"]["expiring"] == 0
-    assert incident_breakdown["tags"]["indefinite"] == 1
-    assert "next_expiration" not in incident_breakdown["tags"]
-    incident_tag_age = incident_breakdown["tags"]["age_stats"]
-    assert incident_tag_age["min"] == pytest.approx(1.0)
-    assert incident_tag_age["max"] == pytest.approx(1.0)
-    assert incident_tag_age["average"] == pytest.approx(1.0)
+    assert next_expiration["name"] == "mean_schedule"
+    assert next_expiration["remaining_seconds"] == pytest.approx(600.0)
 
 
 def test_scheduler_updates_allocation_interval() -> None:

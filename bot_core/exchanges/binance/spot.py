@@ -306,6 +306,10 @@ class BinanceSpotAdapter(ExchangeAdapter):
         )
         self._watchdog = watchdog or Watchdog()
         self._network_error_handler = network_error_handler
+        self._throttle_cooldown_until = 0.0
+        self._throttle_cooldown_reason: str | None = None
+        self._reconnect_backoff_until = 0.0
+        self._reconnect_reason: str | None = None
 
     # ----------------------------------------------------------------------------------
     # Konfiguracja streamingu long-pollowego
