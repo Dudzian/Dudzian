@@ -9,6 +9,7 @@ API znany z pierwszych iteracji projektu.
 from __future__ import annotations
 
 import asyncio
+import importlib
 import inspect
 import json
 import logging
@@ -125,12 +126,74 @@ def _safe_mean(values: Iterable[object]) -> Optional[float]:
 
 _AI_IMPORT_ERROR: Optional[BaseException] = None
 _FALLBACK_ACTIVE = False
-try:  # pragma: no cover - w testach zastępujemy _AIModels atrapą
-    from ai_models import AIModels as _DefaultAIModels  # type: ignore
-except Exception as exc:  # pragma: no cover - brak zależności na CI
-    _AI_IMPORT_ERROR = exc
-    _FALLBACK_ACTIVE = True
 
+
+def _bundle_import_errors(primary: BaseException, secondary: BaseException) -> BaseException:
+    """Połącz dwa wyjątki importu w jeden obiekt z zachowaniem kontekstu."""
+
+    try:
+        return ExceptionGroup("AI backend import failed", [primary, secondary])  # type: ignore[name-defined]
+    except NameError:  # pragma: no cover - Python < 3.11
+        secondary.__cause__ = primary  # type: ignore[attr-defined]
+        return secondary
+
+
+def _flatten_exception_messages(error: BaseException) -> str:
+    """Zbuduj zwięzły opis z łańcucha wyjątków importu."""
+
+    pieces: List[str] = []
+    stack: List[BaseException] = [error]
+    seen: set[int] = set()
+
+    while stack:
+        current = stack.pop()
+        identifier = id(current)
+        if identifier in seen:
+            continue
+        seen.add(identifier)
+
+        message = str(current).strip()
+        if not message:
+            message = current.__class__.__name__
+        else:
+            message = f"{current.__class__.__name__}: {message}"
+        pieces.append(message)
+
+        nested = getattr(current, "exceptions", None)
+        if isinstance(nested, Iterable):
+            for child in nested:
+                if isinstance(child, BaseException):
+                    stack.append(child)
+
+        cause = getattr(current, "__cause__", None)
+        if isinstance(cause, BaseException):
+            stack.append(cause)
+
+        context = getattr(current, "__context__", None)
+        suppressed = getattr(current, "__suppress_context__", False)
+        if not suppressed and isinstance(context, BaseException):
+            stack.append(context)
+
+    unique_messages = []
+    seen_text: set[str] = set()
+    for piece in pieces:
+        if piece not in seen_text:
+            unique_messages.append(piece)
+            seen_text.add(piece)
+
+    return " | ".join(unique_messages)
+
+
+def _is_fallback_degradation(reason: Optional[str]) -> bool:
+    """Sprawdź, czy wskazany powód oznacza degradację przez fallback modeli."""
+
+    if reason is None:
+        return True
+    prefix = reason.split(":", 1)[0].strip()
+    return prefix in {"fallback_ai_models", "backend_validation_failed"}
+
+
+def _build_fallback_ai_models() -> type:
     class _DefaultAIModels:
         """Minimalny model fallback używany w testach bez zależności ML."""
 
@@ -177,6 +240,26 @@ except Exception as exc:  # pragma: no cover - brak zależności na CI
         @staticmethod
         def load_model(path: str) -> "_DefaultAIModels":
             return _joblib_load(Path(path))
+
+    return _DefaultAIModels
+
+
+try:  # pragma: no cover - w testach zastępujemy _AIModels atrapą
+    from ai_models import AIModels as _DefaultAIModels  # type: ignore
+except Exception as exc:  # pragma: no cover - brak zależności na CI
+    try:
+        _kryptolowca_ai_models = importlib.import_module("KryptoLowca.ai_models")
+    except Exception as namespace_exc:
+        _AI_IMPORT_ERROR = _bundle_import_errors(exc, namespace_exc)
+        _FALLBACK_ACTIVE = True
+        _DefaultAIModels = _build_fallback_ai_models()
+    else:
+        try:
+            _DefaultAIModels = getattr(_kryptolowca_ai_models, "AIModels")
+        except AttributeError as attr_exc:
+            _AI_IMPORT_ERROR = _bundle_import_errors(exc, attr_exc)
+            _FALLBACK_ACTIVE = True
+            _DefaultAIModels = _build_fallback_ai_models()
 
 # --- Import funkcji windowize z różnych możliwych miejsc, z bezpiecznym fallbackiem ---
 _default_windowize: Callable[..., Tuple[np.ndarray, np.ndarray]]
@@ -449,11 +532,14 @@ class AIManager:
         self._scheduled_training_jobs: Dict[str, ScheduledTrainingJob] = {}
         self._job_artifact_paths: Dict[str, Path] = {}
         if self._degraded:
-            self._degradation_reason = (
-                "fallback_ai_models"
-                if _AI_IMPORT_ERROR is not None
-                else "backend_validation_failed"
-            )
+            if _AI_IMPORT_ERROR is not None:
+                details = _flatten_exception_messages(_AI_IMPORT_ERROR)
+                if details:
+                    self._degradation_reason = f"fallback_ai_models: {details}"
+                else:
+                    self._degradation_reason = "fallback_ai_models"
+            else:
+                self._degradation_reason = "backend_validation_failed"
         try:
             init_signature = inspect.signature(_AIModels.__init__)  # type: ignore[attr-defined]
         except (TypeError, ValueError, AttributeError):
@@ -1304,16 +1390,15 @@ class AIManager:
     def _mark_backend_ready(self, model: Any) -> None:
         if not self._degraded:
             return
-        fallback_reasons = {None, "fallback_ai_models", "backend_validation_failed"}
         if isinstance(model, DecisionModelInference) and getattr(model, "is_ready", False):
-            if self._degradation_reason in fallback_reasons:
+            if _is_fallback_degradation(self._degradation_reason):
                 self._degraded = False
                 self._degradation_reason = None
             return
         if _AI_IMPORT_ERROR is not None:
             return
         if getattr(model, "feature_names", None):
-            if self._degradation_reason in fallback_reasons:
+            if _is_fallback_degradation(self._degradation_reason):
                 self._degraded = False
                 self._degradation_reason = None
 
