@@ -383,6 +383,7 @@ class TradingGUI:
         self._market_data_interval = max(0.1, float(interval))
         self._market_data_poller: Optional[MarketDataPoller] = None
         self._market_data_adapter: Any = None
+        self._market_data_adapter_label: Optional[str] = None
         self._symbol_trace = self.symbol_var.trace_add("write", self._on_symbol_changed)
         self._schedule_market_data_drain()
         self.view.sync_positions()
@@ -492,6 +493,14 @@ class TradingGUI:
                 )
 
         return ZondaAdapter(demo_mode=demo_mode)
+
+    # ------------------------------------------------------------------
+    def _describe_market_adapter(self, adapter: Any) -> str:
+        for attr in ("name", "exchange_id", "description"):
+            value = getattr(adapter, attr, None)
+            if isinstance(value, str) and value:
+                return value
+        return adapter.__class__.__name__
 
     # ------------------------------------------------------------------
     def _load_metadata(
@@ -805,6 +814,7 @@ class TradingGUI:
         self._market_data_loop = None
         self._market_data_poller = None
         self._market_data_adapter = None
+        self._market_data_adapter_label = None
         self._market_data_stop.clear()
         if self.state.market_price is not None:
             self.state.market_price.set("—")
@@ -819,6 +829,9 @@ class TradingGUI:
             self._set_status("Błąd uruchamiania adaptera rynku")
             return
         self._market_data_adapter = adapter
+        adapter_label = self._describe_market_adapter(adapter)
+        self._market_data_adapter_label = adapter_label
+        self._set_status(f"Łączenie z {adapter_label} (REST)...")
         try:
             await adapter.connect()
         except Exception as exc:
@@ -833,6 +846,7 @@ class TradingGUI:
                 )
             finally:
                 self._market_data_adapter = None
+                self._market_data_adapter_label = None
             return
         poller = MarketDataPoller(
             adapter,
@@ -844,7 +858,7 @@ class TradingGUI:
         self._market_data_poller = poller
         try:
             await poller.start()
-            self._set_status("Ticker REST aktywny")
+            self._set_status(f"Ticker REST aktywny – {adapter_label}")
             while not self._market_data_stop.is_set():
                 await asyncio.sleep(0.2)
         finally:
@@ -854,6 +868,7 @@ class TradingGUI:
                 await adapter.close()
             self._market_data_poller = None
             self._market_data_adapter = None
+            self._market_data_adapter_label = None
 
     # ------------------------------------------------------------------
     async def _market_data_callback(self, symbol: str, payload: Dict[str, Any]) -> None:
