@@ -153,7 +153,12 @@ class MarketRegimeClassifier:
         close: pd.Series,
         returns: pd.Series,
     ) -> Mapping[str, float]:
-        metrics_cfg = self._thresholds["market_regime"]["metrics"]
+        market_cfg = self._thresholds.get("market_regime", {})
+        if not isinstance(market_cfg, Mapping):
+            market_cfg = {}
+        metrics_cfg = market_cfg.get("metrics", {})
+        if not isinstance(metrics_cfg, Mapping):
+            metrics_cfg = {}
         short_span_min = int(metrics_cfg.get("short_span_min", 5))
         short_span_divisor = int(metrics_cfg.get("short_span_divisor", 3))
         long_span_min = int(metrics_cfg.get("long_span_min", 10))
@@ -162,9 +167,12 @@ class MarketRegimeClassifier:
         long = close.ewm(span=max(long_span_min, window), adjust=False).mean()
         trend_strength = float(np.abs(short.iloc[-1] - long.iloc[-1]) / (np.abs(long.iloc[-1]) + 1e-12))
 
-        volatility = float(returns.std())
-        momentum = float(returns.tail(window).mean())
-        autocorr = float(returns.autocorr(lag=1) or 0.0)
+        volatility = float(np.nan_to_num(returns.std(), nan=0.0, posinf=0.0, neginf=0.0))
+        momentum = float(
+            np.nan_to_num(returns.tail(window).mean(), nan=0.0, posinf=0.0, neginf=0.0)
+        )
+        autocorr_raw = returns.autocorr(lag=1)
+        autocorr = float(np.nan_to_num(autocorr_raw if autocorr_raw is not None else 0.0, nan=0.0))
 
         if {"high", "low"}.issubset(market_data.columns):
             intraday_series = (
@@ -175,17 +183,30 @@ class MarketRegimeClassifier:
             )
             intraday_series = intraday_series.dropna()
             if intraday_series.empty:
-                intraday_vol = float((market_data["high"] - market_data["low"]).div(close).abs().mean())
+                intraday_vol = float(
+                    np.nan_to_num(
+                        (market_data["high"] - market_data["low"]).div(close).abs().mean(),
+                        nan=0.0,
+                    )
+                )
             else:
-                intraday_vol = float(intraday_series.iloc[-1])
+                intraday_vol = float(np.nan_to_num(intraday_series.iloc[-1], nan=0.0))
         else:
-            intraday_vol = float(returns.tail(self.daily_window).abs().mean())
+            intraday_vol = float(
+                np.nan_to_num(returns.tail(self.daily_window).abs().mean(), nan=0.0)
+            )
 
-        drawdown = float((close.cummax() - close).div(close.cummax() + 1e-12).max())
+        drawdown = float(
+            np.nan_to_num((close.cummax() - close).div(close.cummax() + 1e-12).max(), nan=0.0)
+        )
         volatility_window = min(max(self.daily_window * 5, self.trend_window), returns.size)
         rolling_vol = returns.rolling(volatility_window, min_periods=max(volatility_window // 2, 10)).std()
         rolling_clean = rolling_vol.dropna()
-        baseline_vol = float(rolling_clean.iloc[-1]) if not rolling_clean.empty else volatility
+        baseline_vol = (
+            float(np.nan_to_num(rolling_clean.iloc[-1], nan=0.0, posinf=0.0, neginf=0.0))
+            if not rolling_clean.empty
+            else volatility
+        )
         volatility_ratio = float(volatility / (baseline_vol + 1e-12)) if baseline_vol else 1.0
 
         if "volume" in market_data.columns:
@@ -194,7 +215,13 @@ class MarketRegimeClassifier:
             long_window = max(self.daily_window * 3, 1)
             long_vol_ma = volume_series.rolling(long_window, min_periods=1).mean()
             volume_trend = float(
-                (short_vol_ma.iloc[-1] - long_vol_ma.iloc[-1]) / (np.abs(long_vol_ma.iloc[-1]) + 1e-12)
+                np.nan_to_num(
+                    (short_vol_ma.iloc[-1] - long_vol_ma.iloc[-1])
+                    / (np.abs(long_vol_ma.iloc[-1]) + 1e-12),
+                    nan=0.0,
+                    posinf=0.0,
+                    neginf=0.0,
+                )
             )
         else:
             volume_trend = 0.0
@@ -205,8 +232,12 @@ class MarketRegimeClassifier:
         if "volume" in market_data.columns:
             volume_series = market_data["volume"].astype(float).reindex(close.index)
             change = returns.reindex(volume_series.index, method="ffill").fillna(0.0)
-            positive_volume = volume_series.where(change > 0.0).mean()
-            negative_volume = volume_series.where(change <= 0.0).mean()
+            positive_volume = float(
+                np.nan_to_num(volume_series.where(change > 0.0).mean(), nan=0.0)
+            )
+            negative_volume = float(
+                np.nan_to_num(volume_series.where(change <= 0.0).mean(), nan=0.0)
+            )
             denom = np.abs(positive_volume) + np.abs(negative_volume) + 1e-12
             volume_imbalance = float(np.nan_to_num((positive_volume - negative_volume) / denom))
         else:
@@ -228,11 +259,17 @@ class MarketRegimeClassifier:
         return metrics
 
     def _score_regimes(self, metrics: Mapping[str, float]) -> Mapping[MarketRegime, float]:
-        trend_norm = metrics["trend_strength"] / (self.trend_strength_threshold + 1e-12)
-        momentum_norm = metrics["momentum"] / (self.momentum_threshold + 1e-12)
-        intraday_norm = metrics["intraday_vol"] / (self.intraday_threshold + 1e-12)
-        autocorr_norm = -metrics["autocorr"] / (abs(self.autocorr_threshold) + 1e-12)
-        volume_norm = max(0.0, metrics.get("volume_trend", 0.0)) / (self.volume_trend_threshold + 1e-12)
+        trend_strength = float(metrics.get("trend_strength", 0.0))
+        momentum_metric = float(metrics.get("momentum", 0.0))
+        intraday_metric = float(metrics.get("intraday_vol", 0.0))
+        autocorr_metric = float(metrics.get("autocorr", 0.0))
+        volume_metric = float(metrics.get("volume_trend", 0.0))
+
+        trend_norm = trend_strength / (self.trend_strength_threshold + 1e-12)
+        momentum_norm = momentum_metric / (self.momentum_threshold + 1e-12)
+        intraday_norm = intraday_metric / (self.intraday_threshold + 1e-12)
+        autocorr_norm = -autocorr_metric / (abs(self.autocorr_threshold) + 1e-12)
+        volume_norm = max(0.0, volume_metric) / (self.volume_trend_threshold + 1e-12)
 
         range_bias = max(0.0, 1.0 - min(1.0, abs(trend_norm)))
         balanced_momentum = max(0.0, 1.0 - min(1.0, abs(momentum_norm)))
@@ -261,18 +298,28 @@ class MarketRegimeClassifier:
         }
 
     def _compute_risk_score(self, metrics: Mapping[str, float]) -> float:
-        score_cfg = self._thresholds["market_regime"]["risk_score"]
-        volatility_component = min(1.0, metrics["volatility"] / self.volatility_threshold)
+        market_cfg = self._thresholds.get("market_regime", {})
+        if not isinstance(market_cfg, Mapping):
+            market_cfg = {}
+        score_cfg = market_cfg.get("risk_score", {})
+        if not isinstance(score_cfg, Mapping):
+            score_cfg = {}
+        volatility_component = min(
+            1.0, float(metrics.get("volatility", 0.0)) / self.volatility_threshold
+        )
         intraday_component = min(
             1.0,
-            metrics["intraday_vol"]
+            float(metrics.get("intraday_vol", 0.0))
             / (self.intraday_threshold * float(score_cfg.get("intraday_multiplier", 1.5))),
         )
-        drawdown_component = min(1.0, metrics["drawdown"] / float(score_cfg.get("drawdown_threshold", 0.2)))
-        volatility_ratio_component = min(1.0, metrics.get("volatility_ratio", 1.0))
+        drawdown_component = min(
+            1.0,
+            float(metrics.get("drawdown", 0.0)) / float(score_cfg.get("drawdown_threshold", 0.2)),
+        )
+        volatility_ratio_component = min(1.0, float(metrics.get("volatility_ratio", 1.0)))
         volume_component = min(
             1.0,
-            abs(metrics.get("volume_trend", 0.0)) / self.volume_trend_threshold,
+            abs(float(metrics.get("volume_trend", 0.0))) / self.volume_trend_threshold,
         )
         return float(
             np.clip(
