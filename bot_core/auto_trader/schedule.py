@@ -1,9 +1,9 @@
 """Trading schedule utilities for AutoTrader runtime."""
 from __future__ import annotations
 
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta, timezone
-from typing import Any, Iterable, Mapping, MutableMapping, Sequence
+from typing import Iterable, Mapping, Sequence
 
 try:
     from zoneinfo import ZoneInfo
@@ -11,16 +11,16 @@ except ImportError:  # pragma: no cover - Python < 3.9 fallback
     ZoneInfo = None  # type: ignore
 
 
-_DAY_ALIASES: Mapping[str, int] = {
+_WEEKDAY_ALIASES = {
     "mon": 0,
     "monday": 0,
     "tue": 1,
     "tues": 1,
     "tuesday": 1,
     "wed": 2,
+    "weds": 2,
     "wednesday": 2,
     "thu": 3,
-    "thur": 3,
     "thurs": 3,
     "thursday": 3,
     "fri": 4,
@@ -32,80 +32,42 @@ _DAY_ALIASES: Mapping[str, int] = {
 }
 
 
-def _parse_time(value: Any, *, field_name: str) -> time:
+def _parse_time(value: time | str) -> time:
     if isinstance(value, time):
         return value
-    if isinstance(value, str):
-        text = value.strip()
-        if not text:
-            raise ValueError(f"{field_name} must not be empty")
+    candidate = str(value).strip()
+    if not candidate:
+        raise ValueError("ScheduleWindow requires non-empty time values")
+    try:
+        return time.fromisoformat(candidate)
+    except ValueError:
+        pass
+    for fmt in ("%H:%M", "%H:%M:%S"):
         try:
-            return time.fromisoformat(text)
+            return datetime.strptime(candidate, fmt).time()
         except ValueError:
-            for fmt in ("%H:%M", "%H:%M:%S"):
-                try:
-                    return datetime.strptime(text, fmt).time()
-                except ValueError:
-                    continue
-        raise ValueError(f"Invalid time format for {field_name!r}: {value!r}")
-    raise TypeError(f"{field_name} must be a datetime.time or ISO formatted string")
+            continue
+    raise ValueError(f"Unsupported time format: {value!r}")
 
 
-def _parse_datetime(value: Any, *, field_name: str) -> datetime:
-    if isinstance(value, datetime):
-        return value
-    if isinstance(value, str):
-        text = value.strip()
-        if not text:
-            raise ValueError(f"{field_name} must not be empty")
-        if text.endswith("Z"):
-            text = text[:-1] + "+00:00"
-        try:
-            return datetime.fromisoformat(text)
-        except ValueError as exc:  # pragma: no cover - error details bubbled up
-            raise ValueError(f"Invalid datetime format for {field_name!r}: {value!r}") from exc
-    raise TypeError(f"{field_name} must be a datetime.datetime or ISO formatted string")
+def _normalize_day(value: int | str) -> int:
+    if isinstance(value, int):
+        return int(value) % 7
+    key = str(value).strip().lower()
+    if not key:
+        raise ValueError("ScheduleWindow day identifiers cannot be empty")
+    if key.isdigit():
+        return int(key) % 7
+    try:
+        return _WEEKDAY_ALIASES[key]
+    except KeyError as exc:
+        raise ValueError(f"Unsupported weekday identifier: {value!r}") from exc
 
 
-def _parse_days(days: Iterable[Any] | None) -> frozenset[int]:
+def _normalize_days(days: Iterable[int | str] | None) -> frozenset[int]:
     if days is None:
         return frozenset(range(7))
-    normalized: set[int] = set()
-    for item in days:
-        if isinstance(item, int):
-            normalized.add(int(item) % 7)
-            continue
-        if isinstance(item, str):
-            token = item.strip().lower()
-            if not token:
-                continue
-            if token.isdigit() or (token.startswith("-") and token[1:].isdigit()):
-                normalized.add(int(token) % 7)
-                continue
-            alias = _DAY_ALIASES.get(token)
-            if alias is not None:
-                normalized.add(alias)
-                continue
-        raise TypeError("days entries must be integers or day names")
-    if not normalized:
-        raise ValueError("days must not be empty")
-    return frozenset(normalized)
-
-
-def _coerce_bool(value: Any, *, default: bool, field_name: str) -> bool:
-    if value is None:
-        return default
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, (int, float)):
-        return bool(value)
-    if isinstance(value, str):
-        token = value.strip().lower()
-        if token in {"1", "true", "yes", "y", "on"}:
-            return True
-        if token in {"0", "false", "no", "n", "off"}:
-            return False
-    raise TypeError(f"{field_name} must be a boolean value")
+    return frozenset(_normalize_day(day) for day in days)
 
 
 @dataclass(frozen=True)
@@ -126,48 +88,6 @@ class ScheduleWindow:
     def __post_init__(self) -> None:
         normalized_days = frozenset(int(day) % 7 for day in self.days)
         object.__setattr__(self, "days", normalized_days)
-
-    @classmethod
-    def from_mapping(cls, payload: Mapping[str, Any]) -> "ScheduleWindow":
-        """Build a schedule window from a mapping configuration."""
-
-        if "start" not in payload or "end" not in payload:
-            raise KeyError("schedule window payload must include 'start' and 'end'")
-        start = _parse_time(payload["start"], field_name="start")
-        end = _parse_time(payload["end"], field_name="end")
-        mode = str(payload.get("mode", "live") or "live")
-        allow_trading = _coerce_bool(
-            payload.get("allow_trading"),
-            default=True,
-            field_name="allow_trading",
-        )
-        label_raw = payload.get("label")
-        label = str(label_raw) if label_raw is not None else None
-        days = _parse_days(payload.get("days"))
-        return cls(
-            start=start,
-            end=end,
-            mode=mode,
-            allow_trading=allow_trading,
-            days=days,
-            label=label,
-        )
-
-    def to_mapping(self, *, include_duration: bool = False) -> MutableMapping[str, Any]:
-        """Serialise window definition to a mapping."""
-
-        payload: MutableMapping[str, Any] = {
-            "start": self.start.isoformat(),
-            "end": self.end.isoformat(),
-            "mode": self.mode,
-            "allow_trading": bool(self.allow_trading),
-            "days": sorted(int(day) for day in self.days),
-        }
-        if include_duration:
-            payload["duration_s"] = int(self.duration.total_seconds())
-        if self.label is not None:
-            payload["label"] = self.label
-        return payload
 
     @property
     def _start_seconds(self) -> int:
@@ -257,10 +177,62 @@ class ScheduleWindow:
     def start_datetime(self, base_date: datetime) -> datetime:
         return datetime.combine(base_date.date(), self.start, base_date.tzinfo)
 
+    @classmethod
+    def from_mapping(cls, payload: Mapping[str, object]) -> "ScheduleWindow":
+        start_raw = payload.get("start")
+        if start_raw is None:
+            raise ValueError("ScheduleWindow payload requires 'start' time")
+        end_raw = payload.get("end", start_raw)
+        mode_raw = payload.get("mode", "live")
+        allow_trading_raw = payload.get("allow_trading", True)
+        days_raw = payload.get("days")
+        label_raw = payload.get("label")
+
+        if isinstance(start_raw, time):
+            start_time = start_raw
+        else:
+            start_time = _parse_time(str(start_raw))
+
+        if end_raw is None:
+            end_time = start_time
+        elif isinstance(end_raw, time):
+            end_time = end_raw
+        else:
+            end_time = _parse_time(str(end_raw))
+        days: frozenset[int]
+        if isinstance(days_raw, Iterable) and not isinstance(days_raw, (str, bytes, bytearray)):
+            days = _normalize_days(days_raw)
+        elif days_raw is None:
+            days = _normalize_days(None)
+        else:
+            days = _normalize_days((days_raw,))
+
+        label = None if label_raw is None else str(label_raw)
+        return cls(
+            start=start_time,
+            end=end_time,
+            mode=str(mode_raw),
+            allow_trading=bool(allow_trading_raw),
+            days=days,
+            label=label,
+        )
+
+    def to_mapping(self) -> dict[str, object]:
+        payload: dict[str, object] = {
+            "start": self.start.isoformat(),
+            "end": self.end.isoformat(),
+            "mode": self.mode,
+            "allow_trading": bool(self.allow_trading),
+            "days": sorted(int(day) for day in self.days),
+        }
+        if self.label is not None:
+            payload["label"] = self.label
+        return payload
+
 
 @dataclass(frozen=True)
 class ScheduleOverride:
-    """One-off override that temporarily replaces the base schedule."""
+    """Ad-hoc override changing the active trading mode."""
 
     start: datetime
     end: datetime
@@ -269,51 +241,84 @@ class ScheduleOverride:
     label: str | None = None
 
     def __post_init__(self) -> None:
-        if self.end <= self.start:
-            raise ValueError("override end must be after start")
+        start = self.start
+        end = self.end
+        if start.tzinfo is None:
+            start = start.replace(tzinfo=timezone.utc)
+        if end.tzinfo is None:
+            end = end.replace(tzinfo=timezone.utc)
+        if end <= start:
+            raise ValueError("ScheduleOverride end must be after start")
+        object.__setattr__(self, "start", start)
+        object.__setattr__(self, "end", end)
+
+    @property
+    def duration(self) -> timedelta:
+        return self.end - self.start
+
+    def is_active(self, moment: datetime) -> bool:
+        if moment.tzinfo is None:
+            moment = moment.replace(tzinfo=timezone.utc)
+        else:
+            moment = moment.astimezone(self.start.tzinfo)
+        return self.start <= moment < self.end
 
     @classmethod
-    def from_mapping(cls, payload: Mapping[str, Any]) -> "ScheduleOverride":
-        if "start" not in payload or "end" not in payload:
-            raise KeyError("schedule override payload must include 'start' and 'end'")
-        start = _parse_datetime(payload["start"], field_name="start")
-        end = _parse_datetime(payload["end"], field_name="end")
-        mode = str(payload.get("mode", "live") or "live")
-        allow_trading = _coerce_bool(
-            payload.get("allow_trading"),
-            default=True,
-            field_name="allow_trading",
-        )
-        label_raw = payload.get("label")
-        label = str(label_raw) if label_raw is not None else None
-        return cls(start=start, end=end, mode=mode, allow_trading=allow_trading, label=label)
-
-    def to_mapping(
-        self,
+    def from_mapping(
+        cls,
+        payload: Mapping[str, object],
         *,
-        include_duration: bool = False,
-        timezone_hint: timezone | None = None,
-    ) -> MutableMapping[str, Any]:
-        start = self.start.astimezone(timezone_hint) if timezone_hint else self.start
-        end = self.end.astimezone(timezone_hint) if timezone_hint else self.end
-        payload: MutableMapping[str, Any] = {
-            "start": start.isoformat(),
-            "end": end.isoformat(),
+        default_timezone: timezone | None = None,
+    ) -> "ScheduleOverride":
+        tz = default_timezone or timezone.utc
+        start_raw = payload.get("start")
+        end_raw = payload.get("end")
+        if start_raw is None or end_raw is None:
+            raise ValueError("ScheduleOverride requires start and end timestamps")
+        start = _parse_datetime(start_raw, tz)
+        end = _parse_datetime(end_raw, tz)
+        mode_raw = payload.get("mode", "live")
+        allow_raw = payload.get("allow_trading", True)
+        label_raw = payload.get("label")
+        label = None if label_raw is None else str(label_raw)
+        return cls(start=start, end=end, mode=str(mode_raw), allow_trading=bool(allow_raw), label=label)
+
+    def to_mapping(self) -> dict[str, object]:
+        payload: dict[str, object] = {
+            "start": self.start.isoformat(),
+            "end": self.end.isoformat(),
             "mode": self.mode,
             "allow_trading": bool(self.allow_trading),
         }
         if self.label is not None:
             payload["label"] = self.label
-        if include_duration:
-            payload["duration_s"] = int(self.duration.total_seconds())
         return payload
 
-    def contains(self, moment: datetime) -> bool:
-        return self.start <= moment < self.end
 
-    @property
-    def duration(self) -> timedelta:
-        return self.end - self.start
+def _parse_datetime(value: object, default_timezone: timezone) -> datetime:
+    if isinstance(value, datetime):
+        dt = value
+    else:
+        candidate = str(value).strip()
+        if not candidate:
+            raise ValueError("Datetime value cannot be empty")
+        try:
+            dt = datetime.fromisoformat(candidate)
+        except ValueError:
+            for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S"):
+                try:
+                    dt = datetime.strptime(candidate, fmt)
+                except ValueError:
+                    continue
+                else:
+                    break
+            else:
+                raise
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=default_timezone)
+    else:
+        dt = dt.astimezone(default_timezone)
+    return dt
 
 
 @dataclass(frozen=True)
@@ -326,18 +331,21 @@ class ScheduleState:
     next_transition: datetime | None
     override: ScheduleOverride | None = None
     next_override: ScheduleOverride | None = None
+    override_active: bool = False
 
     @property
     def time_until_transition(self) -> float | None:
         if self.next_transition is None:
             return None
-        now = datetime.now(self.next_transition.tzinfo)
-        remaining = (self.next_transition - now).total_seconds()
+        remaining = (self.next_transition - self.reference_time).total_seconds()
         return max(0.0, remaining)
 
     @property
-    def override_active(self) -> bool:
-        return self.override is not None
+    def time_until_next_override(self) -> float | None:
+        if self.next_override is None:
+            return None
+        remaining = (self.next_override.start - self.reference_time).total_seconds()
+        return max(0.0, remaining)
 
     @property
     def time_until_next_override(self) -> float | None:
@@ -346,47 +354,6 @@ class ScheduleState:
         now = datetime.now(self.next_override.start.tzinfo)
         remaining = (self.next_override.start - now).total_seconds()
         return max(0.0, remaining)
-
-    def to_mapping(
-        self,
-        *,
-        timezone_hint: timezone | None = timezone.utc,
-        include_remaining: bool = True,
-    ) -> MutableMapping[str, Any]:
-        """Serialise the state to a mapping suitable for JSON payloads."""
-
-        payload: MutableMapping[str, Any] = {
-            "mode": self.mode,
-            "is_open": bool(self.is_open),
-            "override_active": self.override_active,
-        }
-        if self.window is not None:
-            payload["window"] = self.window.to_mapping(include_duration=True)
-        if self.next_transition is not None:
-            reference = (
-                self.next_transition.astimezone(timezone_hint)
-                if timezone_hint is not None
-                else self.next_transition
-            )
-            payload["next_transition"] = reference.isoformat()
-        if self.override is not None:
-            payload["override"] = self.override.to_mapping(
-                include_duration=True,
-                timezone_hint=timezone_hint,
-            )
-        if self.next_override is not None:
-            payload["next_override"] = self.next_override.to_mapping(
-                include_duration=True,
-                timezone_hint=timezone_hint,
-            )
-        if include_remaining:
-            remaining = self.time_until_transition
-            if remaining is not None:
-                payload["time_until_transition_s"] = remaining
-            next_override_delay = self.time_until_next_override
-            if next_override_delay is not None:
-                payload["time_until_next_override_s"] = next_override_delay
-        return payload
 
 
 class TradingSchedule:
@@ -397,7 +364,7 @@ class TradingSchedule:
         windows: Sequence[ScheduleWindow],
         *,
         timezone_name: str | None = None,
-        tz: timezone | None = None,
+        tz: tzinfo | None = None,
         default_mode: str = "demo",
         overrides: Sequence[ScheduleOverride] | None = None,
     ) -> None:
@@ -405,196 +372,138 @@ class TradingSchedule:
             if timezone_name is None:
                 tz = timezone.utc
             else:
-                tzinfo: timezone
+                tzinfo_obj: tzinfo
                 if ZoneInfo is not None:
-                    tzinfo = ZoneInfo(timezone_name)
+                    tzinfo_obj = ZoneInfo(timezone_name)
                 else:  # pragma: no cover - fallback for legacy builds
-                    tzinfo = timezone.utc
-                tz = tzinfo
+                    tzinfo_obj = timezone.utc
+                tz = tzinfo_obj
         self._tz = tz
+        self._timezone_name = timezone_name if isinstance(timezone_name, str) else None
         self._windows = tuple(windows)
         self._default_mode = default_mode
-        self._overrides = self._normalise_overrides(overrides or ())
+        normalized_overrides: list[ScheduleOverride] = []
+        if overrides:
+            for override in sorted(overrides, key=lambda item: item.start):
+                normalized_overrides.append(
+                    ScheduleOverride(
+                        start=override.start.astimezone(self._tz),
+                        end=override.end.astimezone(self._tz),
+                        mode=override.mode,
+                        allow_trading=override.allow_trading,
+                        label=override.label,
+                    )
+                )
+        self._overrides = tuple(normalized_overrides)
+
+    @property
+    def timezone(self) -> timezone:
+        """Return timezone associated with the schedule."""
+
+        return self._tz
+
+    @property
+    def timezone_name(self) -> str | None:
+        return self._timezone_name
+
+    @property
+    def default_mode(self) -> str:
+        return self._default_mode
 
     @property
     def windows(self) -> tuple[ScheduleWindow, ...]:
-        """Return immutable access to configured schedule windows."""
-
         return self._windows
 
     @property
     def overrides(self) -> tuple[ScheduleOverride, ...]:
-        """Return immutable access to registered overrides."""
-
         return self._overrides
+
+    def with_overrides(
+        self,
+        overrides: Sequence[ScheduleOverride] | Sequence[Mapping[str, object]],
+    ) -> "TradingSchedule":
+        """Return a copy of the schedule with provided overrides."""
+
+        normalized: list[ScheduleOverride] = []
+        for override in overrides:
+            if isinstance(override, Mapping):
+                normalized.append(
+                    ScheduleOverride.from_mapping(override, default_timezone=self._tz)
+                )
+            elif isinstance(override, ScheduleOverride):
+                normalized.append(override)
+            else:  # pragma: no cover - defensive branch
+                raise TypeError(
+                    "Overrides must be ScheduleOverride or mapping payloads"
+                )
+        return TradingSchedule(
+            self._windows,
+            timezone_name=self._timezone_name,
+            tz=self._tz,
+            default_mode=self._default_mode,
+            overrides=normalized,
+        )
 
     def describe(self, now: datetime | None = None) -> ScheduleState:
         reference = self._normalize_datetime(now)
         intervals = self._build_intervals(reference.date())
 
-        active_override: ScheduleOverride | None = None
-        next_override: ScheduleOverride | None = None
-        for override in self._overrides:
-            if override.end <= reference:
-                continue
-            if override.start <= reference < override.end:
-                active_override = override
-                continue
-            if override.start > reference:
-                next_override = override
-                break
-
+        active_window: tuple[datetime, datetime, ScheduleWindow] | None = None
+        upcoming_window: tuple[datetime, datetime, ScheduleWindow] | None = None
         for start, end, window in intervals:
             if start <= reference < end:
-                if active_override is not None:
-                    return ScheduleState(
-                        mode=active_override.mode,
-                        is_open=active_override.allow_trading,
-                        window=window,
-                        next_transition=active_override.end,
-                        override=active_override,
-                        next_override=next_override,
-                    )
-                next_transition = end
-                if next_override is not None and next_override.start < end:
-                    next_transition = next_override.start
-                return ScheduleState(
-                    mode=window.mode,
-                    is_open=window.allow_trading,
-                    window=window,
-                    next_transition=next_transition,
-                    override=None,
-                    next_override=next_override,
-                )
+                active_window = (start, end, window)
+                break
+            if start > reference and upcoming_window is None:
+                upcoming_window = (start, end, window)
 
-        for start, _end, window in intervals:
-            if start > reference:
-                if active_override is not None:
-                    return ScheduleState(
-                        mode=active_override.mode,
-                        is_open=active_override.allow_trading,
-                        window=window,
-                        next_transition=active_override.end,
-                        override=active_override,
-                        next_override=next_override,
-                    )
-                next_transition = start
-                if next_override is not None and next_override.start < next_transition:
-                    next_transition = next_override.start
-                return ScheduleState(
-                    mode=self._default_mode,
-                    is_open=False,
-                    window=window,
-                    next_transition=next_transition,
-                    override=None,
-                    next_override=next_override,
-                )
+        active_override, next_override = self._locate_overrides(reference)
 
         if active_override is not None:
             next_transition = active_override.end
-            return ScheduleState(
+            window = active_window[2] if active_window else None
+            state = ScheduleState(
                 mode=active_override.mode,
-                is_open=active_override.allow_trading,
-                window=None,
+                is_open=bool(active_override.allow_trading),
+                window=window,
                 next_transition=next_transition,
                 override=active_override,
                 next_override=next_override,
+                override_active=True,
             )
-
-        next_transition = None
-        if next_override is not None:
-            next_transition = next_override.start
-        return ScheduleState(
-            mode=self._default_mode,
-            is_open=False,
-            window=None,
-            next_transition=next_transition,
-            override=None,
-            next_override=next_override,
-        )
-
-    @classmethod
-    def from_payload(
-        cls,
-        payload: Mapping[str, Any] | Sequence[Any],
-        *,
-        timezone_name: str | None = None,
-        tz: timezone | None = None,
-        default_mode: str | None = None,
-        overrides: Sequence[ScheduleOverride] | None = None,
-    ) -> "TradingSchedule":
-        """Create a schedule from a serialised representation."""
-
-        if isinstance(payload, TradingSchedule):
-            return payload
-
-        windows_payload: Sequence[Any]
-        schedule_timezone = timezone_name
-        schedule_tz = tz
-        schedule_default_mode = default_mode
-        overrides_payload: Sequence[Any] | None = None
-
-        if isinstance(payload, Mapping):
-            windows_payload = payload.get("windows")  # type: ignore[assignment]
-            if windows_payload is None:
-                raise ValueError("schedule payload must define 'windows'")
-            if "timezone" in payload:
-                schedule_timezone = payload.get("timezone") or schedule_timezone
-            if "timezone_name" in payload:
-                schedule_timezone = payload.get("timezone_name") or schedule_timezone
-            if "tz" in payload and isinstance(payload.get("tz"), timezone):
-                schedule_tz = payload.get("tz")  # type: ignore[assignment]
-            if "default_mode" in payload:
-                schedule_default_mode = payload.get("default_mode") or schedule_default_mode
-            overrides_payload = payload.get("overrides")  # type: ignore[assignment]
-        elif isinstance(payload, Sequence) and not isinstance(payload, (str, bytes, bytearray)):
-            windows_payload = payload
+        elif active_window is not None:
+            start, end, window = active_window
+            next_transition = end
+            if next_override is not None and next_override.start < next_transition:
+                next_transition = next_override.start
+            state = ScheduleState(
+                mode=window.mode,
+                is_open=bool(window.allow_trading),
+                window=window,
+                next_transition=next_transition,
+                override=None,
+                next_override=next_override,
+                override_active=False,
+            )
         else:
-            raise TypeError("payload must be a mapping or a sequence of windows")
-
-        windows: list[ScheduleWindow] = []
-        for item in windows_payload:
-            if isinstance(item, ScheduleWindow):
-                windows.append(item)
-            elif isinstance(item, Mapping):
-                windows.append(ScheduleWindow.from_mapping(item))
-            else:
-                raise TypeError("windows must be mappings or ScheduleWindow instances")
-
-        schedule_overrides: list[ScheduleOverride] = []
-        combined_overrides: Sequence[Any] | None = overrides or overrides_payload
-        if combined_overrides is not None:
-            for item in combined_overrides:
-                if isinstance(item, ScheduleOverride):
-                    schedule_overrides.append(item)
-                elif isinstance(item, Mapping):
-                    schedule_overrides.append(ScheduleOverride.from_mapping(item))
-                else:
-                    raise TypeError("overrides must be mappings or ScheduleOverride instances")
-
-        return cls(
-            windows,
-            timezone_name=schedule_timezone,
-            tz=schedule_tz,
-            default_mode=str(schedule_default_mode or "demo"),
-            overrides=tuple(schedule_overrides),
-        )
-
-    def to_payload(self) -> MutableMapping[str, Any]:
-        """Serialise schedule definition to a mapping."""
-
-        payload: MutableMapping[str, Any] = {
-            "default_mode": self._default_mode,
-            "windows": [window.to_mapping() for window in self._windows],
-        }
-        tz_name = getattr(self._tz, "key", None) or getattr(self._tz, "zone", None)
-        if not tz_name and hasattr(self._tz, "tzname"):
-            tz_name = self._tz.tzname(None)
-        if tz_name:
-            payload["timezone"] = tz_name
-        if self._overrides:
-            payload["overrides"] = [override.to_mapping() for override in self._overrides]
-        return payload
+            next_transition = None
+            window = upcoming_window[2] if upcoming_window else None
+            if upcoming_window is not None:
+                next_transition = upcoming_window[0]
+            if next_override is not None and (
+                next_transition is None or next_override.start < next_transition
+            ):
+                next_transition = next_override.start
+            state = ScheduleState(
+                mode=self._default_mode,
+                is_open=False,
+                window=window,
+                next_transition=next_transition,
+                override=None,
+                next_override=next_override,
+                override_active=False,
+            )
+        return state
 
     def _normalize_datetime(self, now: datetime | None) -> datetime:
         if now is None:
@@ -621,32 +530,26 @@ class TradingSchedule:
         intervals.sort(key=lambda item: item[0])
         return intervals
 
-    def _normalise_overrides(
-        self, overrides: Sequence[ScheduleOverride]
-    ) -> tuple[ScheduleOverride, ...]:
-        normalised: list[ScheduleOverride] = []
-        for override in overrides:
-            if not isinstance(override, ScheduleOverride):
-                raise TypeError("overrides must be ScheduleOverride instances")
-            start = self._normalize_datetime(override.start)
-            end = self._normalize_datetime(override.end)
-            if end <= start:
-                raise ValueError("override end must be after start")
-            normalised.append(replace(override, start=start, end=end))
-        normalised.sort(key=lambda item: item.start)
-        return tuple(normalised)
-
-    def with_overrides(
-        self, overrides: Sequence[ScheduleOverride] | None
-    ) -> "TradingSchedule":
-        """Return a copy of the schedule with a new set of overrides."""
-
-        return TradingSchedule(
-            self._windows,
-            tz=self._tz,
-            default_mode=self._default_mode,
-            overrides=tuple(overrides or ()),
-        )
+    def _locate_overrides(
+        self, reference: datetime
+    ) -> tuple[ScheduleOverride | None, ScheduleOverride | None]:
+        active: ScheduleOverride | None = None
+        upcoming: ScheduleOverride | None = None
+        for idx, override in enumerate(self._overrides):
+            if override.start <= reference < override.end:
+                active = override
+                for future in self._overrides[idx + 1 :]:
+                    if future.start > reference:
+                        upcoming = future
+                        break
+                break
+            if override.start > reference:
+                upcoming = override
+                break
+        if active is None and upcoming is None:
+            # reference may be after all overrides; nothing to report
+            return None, None
+        return active, upcoming
 
     @classmethod
     def always_on(
@@ -654,17 +557,69 @@ class TradingSchedule:
         *,
         mode: str = "live",
         timezone_name: str | None = None,
-        tz: timezone | None = None,
-        overrides: Sequence[ScheduleOverride] | None = None,
+        tz: tzinfo | None = None,
     ) -> "TradingSchedule":
         window = ScheduleWindow(start=time(0, 0), end=time(0, 0), mode=mode, allow_trading=True)
+        return cls((window,), timezone_name=timezone_name, tz=tz, default_mode=mode)
+
+    @classmethod
+    def from_payload(cls, payload: Mapping[str, object]) -> "TradingSchedule":
+        windows_payload = payload.get("windows")
+        if not isinstance(windows_payload, Iterable):
+            raise TypeError("TradingSchedule payload requires iterable 'windows'")
+        window_objs: list[ScheduleWindow] = []
+        for entry in windows_payload:
+            if not isinstance(entry, Mapping):
+                raise TypeError("TradingSchedule windows must be mappings")
+            window_objs.append(ScheduleWindow.from_mapping(entry))
+        if not window_objs:
+            raise ValueError("TradingSchedule requires at least one window")
+
+        timezone_name = payload.get("timezone")
+        tz: timezone | None = None
+        if isinstance(timezone_name, str) and timezone_name.strip():
+            if ZoneInfo is not None:
+                tz = ZoneInfo(timezone_name)
+            else:  # pragma: no cover - legacy builds without zoneinfo
+                tz = timezone.utc
+        default_mode = str(payload.get("default_mode", "demo"))
+
+        overrides_payload = payload.get("overrides")
+        overrides: list[ScheduleOverride] = []
+        if isinstance(overrides_payload, Iterable):
+            for entry in overrides_payload:
+                if not isinstance(entry, Mapping):
+                    raise TypeError("Schedule overrides must be mappings")
+                overrides.append(
+                    ScheduleOverride.from_mapping(
+                        entry,
+                        default_timezone=tz or timezone.utc,
+                    )
+                )
+
         return cls(
-            (window,),
-            timezone_name=timezone_name,
+            window_objs,
+            timezone_name=timezone_name if isinstance(timezone_name, str) else None,
             tz=tz,
-            default_mode=mode,
+            default_mode=default_mode,
             overrides=overrides,
         )
 
+    def to_payload(self) -> dict[str, object]:
+        payload: dict[str, object] = {
+            "default_mode": self._default_mode,
+            "windows": [window.to_mapping() for window in self._windows],
+        }
+        if self._timezone_name:
+            payload["timezone"] = self._timezone_name
+        if self._overrides:
+            payload["overrides"] = [override.to_mapping() for override in self._overrides]
+        return payload
 
-__all__ = ["ScheduleWindow", "ScheduleState", "TradingSchedule", "ScheduleOverride"]
+
+__all__ = [
+    "ScheduleOverride",
+    "ScheduleWindow",
+    "ScheduleState",
+    "TradingSchedule",
+]
