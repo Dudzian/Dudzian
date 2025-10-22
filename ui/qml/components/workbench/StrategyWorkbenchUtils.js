@@ -12,21 +12,6 @@ function formatPercent(value, digits) {
     return Number(value * 100).toLocaleString(Qt.locale(), "f", precision) + "%";
 }
 
-function formatSignedPercent(value, digits) {
-    if (value === null || value === undefined)
-        return "–";
-    const precision = digits !== undefined ? digits : 2;
-    const percentValue = Number(value) * 100;
-    if (!isFinite(percentValue))
-        return "–";
-    const magnitude = Math.abs(percentValue).toLocaleString(Qt.locale(), "f", precision);
-    if (percentValue > 0)
-        return "+" + magnitude + "%";
-    if (percentValue < 0)
-        return "-" + magnitude + "%";
-    return "0%";
-}
-
 function formatBoolean(value) {
     return value ? qsTr("Tak") : qsTr("Nie");
 }
