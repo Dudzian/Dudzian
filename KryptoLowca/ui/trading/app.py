@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import logging
 import os
 import queue
@@ -49,7 +50,7 @@ from KryptoLowca.report_manager import ReportManager
 from KryptoLowca.risk_manager import RiskManager
 from KryptoLowca.ai_manager import AIManager
 from KryptoLowca.exchange_manager import ExchangeManager
-from KryptoLowca.exchanges import MarketDataPoller
+from KryptoLowca.exchanges import AdapterError, MarketDataPoller, create_exchange_adapter
 from KryptoLowca.exchanges.zonda import ZondaAdapter
 
 from .state import AppState
@@ -69,6 +70,8 @@ from .risk_helpers import (
 _DEFAULT_FRACTION = 0.05
 _DEFAULT_MARKET_SYMBOL = "BTC-PLN"
 _DEFAULT_MARKET_INTERVAL = 2.0
+_TRUE_VALUES = {"1", "true", "t", "yes", "y", "on"}
+_FALSE_VALUES = {"0", "false", "f", "no", "n", "off"}
 
 
 def get_default_market_symbol() -> str:
@@ -105,6 +108,102 @@ def get_default_market_interval() -> float:
         )
         return _DEFAULT_MARKET_INTERVAL
     return value
+
+
+def _parse_bool(value: Any) -> Optional[bool]:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in _TRUE_VALUES:
+            return True
+        if normalized in _FALSE_VALUES:
+            return False
+    return None
+
+
+def _merge_adapter_kwargs(options: Dict[str, Any], payload: Dict[str, Any]) -> None:
+    existing = options.get("adapter_kwargs")
+    if existing is None:
+        options["adapter_kwargs"] = dict(payload)
+        return
+    if not isinstance(existing, dict):
+        logger.warning(
+            "TRADING_GUI_MARKET_ADAPTER_KWARGS musi być słownikiem – pomijam nadpisanie"
+        )
+        return
+    existing.update(payload)
+
+
+def _resolve_market_adapter_env() -> Optional[tuple[str, Dict[str, Any]]]:
+    adapter_name = os.getenv("TRADING_GUI_MARKET_ADAPTER")
+    if not adapter_name:
+        return None
+
+    options: Dict[str, Any] = {}
+
+    raw_options = os.getenv("TRADING_GUI_MARKET_ADAPTER_OPTIONS")
+    if raw_options:
+        try:
+            parsed = json.loads(raw_options)
+        except json.JSONDecodeError:
+            logger.warning(
+                "Nie udało się sparsować TRADING_GUI_MARKET_ADAPTER_OPTIONS jako JSON"
+            )
+        else:
+            if isinstance(parsed, dict):
+                options.update(parsed)
+            else:
+                logger.warning(
+                    "TRADING_GUI_MARKET_ADAPTER_OPTIONS musi być obiektem JSON"
+                )
+
+    raw_kwargs = os.getenv("TRADING_GUI_MARKET_ADAPTER_KWARGS")
+    if raw_kwargs:
+        try:
+            parsed_kwargs = json.loads(raw_kwargs)
+        except json.JSONDecodeError:
+            logger.warning(
+                "Nie udało się sparsować TRADING_GUI_MARKET_ADAPTER_KWARGS jako JSON"
+            )
+        else:
+            if isinstance(parsed_kwargs, dict):
+                _merge_adapter_kwargs(options, parsed_kwargs)
+            else:
+                logger.warning(
+                    "TRADING_GUI_MARKET_ADAPTER_KWARGS musi być obiektem JSON"
+                )
+
+    demo_override = os.getenv("TRADING_GUI_MARKET_DEMO_MODE")
+    if demo_override:
+        parsed_demo = _parse_bool(demo_override)
+        if parsed_demo is not None:
+            options["demo_mode"] = parsed_demo
+
+    compliance_ack = os.getenv("TRADING_GUI_MARKET_COMPLIANCE_ACK")
+    if compliance_ack:
+        parsed_ack = _parse_bool(compliance_ack)
+        if parsed_ack is not None:
+            options["compliance_ack"] = parsed_ack
+
+    for key in ("demo_mode", "sandbox", "testnet", "compliance_ack"):
+        if key in options:
+            parsed_value = _parse_bool(options[key])
+            if parsed_value is not None:
+                options[key] = parsed_value
+
+    adapter_name = adapter_name.strip()
+    if not adapter_name:
+        return None
+
+    adapter_kwargs = options.get("adapter_kwargs")
+    if adapter_kwargs is not None and not isinstance(adapter_kwargs, dict):
+        logger.warning("adapter_kwargs musi być słownikiem – pomijam wartości z ENV")
+        options.pop("adapter_kwargs", None)
+
+    return adapter_name, options
 
 
 def normalize_market_symbol(
@@ -361,6 +460,37 @@ class TradingGUI:
 
     # ------------------------------------------------------------------
     def _default_market_adapter_factory(self, *, demo_mode: bool) -> ZondaAdapter:
+        env_config = _resolve_market_adapter_env()
+        if env_config:
+            adapter_name, env_options = env_config
+            options = dict(env_options)
+
+            adapter_kwargs = options.get("adapter_kwargs")
+            if isinstance(adapter_kwargs, dict):
+                options["adapter_kwargs"] = dict(adapter_kwargs)
+
+            default_demo = options.get("demo_mode")
+            if default_demo is None:
+                options["demo_mode"] = demo_mode
+                default_demo = demo_mode
+            options.setdefault("sandbox", default_demo)
+            options.setdefault("testnet", default_demo)
+
+            try:
+                return create_exchange_adapter(adapter_name, **options)
+            except AdapterError as exc:
+                logger.warning(
+                    "Nie udało się utworzyć adaptera rynku %s: %s – używam ZondaAdapter",
+                    adapter_name,
+                    exc,
+                )
+            except Exception as exc:  # pragma: no cover - defensywnie
+                logger.warning(
+                    "Błąd podczas inicjalizacji adaptera rynku %s: %s – używam ZondaAdapter",
+                    adapter_name,
+                    exc,
+                )
+
         return ZondaAdapter(demo_mode=demo_mode)
 
     # ------------------------------------------------------------------
