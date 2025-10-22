@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import os
 import sys
@@ -45,6 +46,7 @@ from bot_core.runtime.bootstrap import (
     _load_initial_tco_costs,
     bootstrap_environment,
     catalog_runtime_entrypoints,
+    extract_live_readiness_metadata,
     get_registered_adapter_factories,
     register_adapter_factory,
     register_adapter_factory_from_path,
@@ -2358,6 +2360,14 @@ def _tco_config_with_report(
             max_report_age_hours=max_hours,
         )
     )
+
+
+def _write_document(root: Path, relative_path: str, *, content: str) -> str:
+    data = content.encode("utf-8")
+    path = root / relative_path
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(data)
+    return hashlib.sha256(data).hexdigest()
 
 
 def _write_tco_report(path: Path) -> None:
