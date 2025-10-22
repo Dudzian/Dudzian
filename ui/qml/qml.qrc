@@ -16,5 +16,29 @@
         <file>components/RiskMonitorPanel.qml</file>
         <file>components/EquityCurveDashboard.qml</file>
         <file>components/AssetHeatmapDashboard.qml</file>
+        <file>components/workbench/StrategyWorkbench.qml</file>
+        <file>components/workbench/StrategyWorkbenchViewModel.qml</file>
+        <file>components/workbench/StrategyWorkbenchPresets.js</file>
+        <file>components/workbench/StrategyWorkbenchUtils.js</file>
+        <file>components/workbench/panels/StrategyDashboardPanel.qml</file>
+        <file>components/workbench/panels/StrategyControlPanel.qml</file>
+        <file>components/workbench/panels/InstrumentOverviewPanel.qml</file>
+        <file>components/workbench/panels/ExchangeManagementPanel.qml</file>
+        <file>components/workbench/panels/AiConfigurationPanel.qml</file>
+        <file>components/workbench/panels/ResultsAnalysisPanel.qml</file>
+        <file>components/workbench/panels/PerformanceComparisonPanel.qml</file>
+        <file>components/workbench/panels/ScenarioTestingPanel.qml</file>
+        <file>components/workbench/panels/CapitalAllocationPanel.qml</file>
+        <file>components/workbench/panels/OpenPositionsPanel.qml</file>
+        <file>components/workbench/panels/PendingOrdersPanel.qml</file>
+        <file>components/workbench/panels/TradeHistoryPanel.qml</file>
+        <file>components/workbench/panels/SignalAlertsPanel.qml</file>
+        <file>components/workbench/panels/MarketSentimentPanel.qml</file>
+        <file>components/workbench/panels/NewsFeedPanel.qml</file>
+        <file>components/workbench/panels/RiskTimelinePanel.qml</file>
+        <file>components/workbench/panels/ActivityLogPanel.qml</file>
+        <file>components/workbench/panels/ComplianceOverviewPanel.qml</file>
+        <file>components/workbench/panels/RuntimeStatusPanel.qml</file>
+        <file>components/workbench/panels/LicenseStatusPanel.qml</file>
     </qresource>
 </RCC>
