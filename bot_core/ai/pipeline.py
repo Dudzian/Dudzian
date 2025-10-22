@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import math
 from datetime import datetime, timezone
 from pathlib import Path
 from dataclasses import dataclass
@@ -242,6 +243,12 @@ def train_gradient_boosting_model(
     }
     if metadata:
         meta_payload.update(metadata)
+    if "train" in subset_metrics:
+        meta_payload["train_metrics"] = dict(subset_metrics["train"])
+    if "validation" in subset_metrics:
+        meta_payload["validation_metrics"] = dict(subset_metrics["validation"])
+    if "test" in subset_metrics:
+        meta_payload["test_metrics"] = dict(subset_metrics["test"])
     artifact = ModelArtifact(
         feature_names=tuple(model.feature_names),
         model_state=model.to_state(),

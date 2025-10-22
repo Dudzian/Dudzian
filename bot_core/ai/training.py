@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import math
+import statistics
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import (
@@ -565,11 +566,48 @@ class ModelTrainer:
         self, targets: Sequence[float], predictions: Sequence[float]
     ) -> Mapping[str, float]:
         if not targets:
-            return {"mae": 0.0, "rmse": 0.0}
+            return {
+                "mae": 0.0,
+                "mse": 0.0,
+                "rmse": 0.0,
+                "directional_accuracy": 0.0,
+                "mape": 0.0,
+                "r2": 0.0,
+                "median_absolute_error": 0.0,
+                "explained_variance": 0.0,
+                "max_error": 0.0,
+                "smape": 0.0,
+                "mean_bias_error": 0.0,
+                "wmape": 0.0,
+                "mpe": 0.0,
+                "rmspe": 0.0,
+                "median_percentage_error": 0.0,
+                "median_absolute_percentage_error": 0.0,
+                "mase": 0.0,
+                "msle": 0.0,
+                "mean_absolute_log_error": 0.0,
+                "mean_poisson_deviance": 0.0,
+                "mean_gamma_deviance": 0.0,
+                "mean_tweedie_deviance": 0.0,
+            }
         errors = [abs(t - p) for t, p in zip(targets, predictions)]
         mae = sum(errors) / len(errors)
+        medae = statistics.median(errors) if errors else 0.0
+        max_error = max(errors) if errors else 0.0
         mse = sum((t - p) ** 2 for t, p in zip(targets, predictions)) / len(targets)
         rmse = math.sqrt(mse)
+        mean_bias_error = sum(p - t for t, p in zip(targets, predictions)) / len(targets)
+        log_diffs = [
+            math.log1p(p) - math.log1p(t)
+            for t, p in zip(targets, predictions)
+            if t > -1.0 and p > -1.0
+        ]
+        msle = (
+            sum(diff * diff for diff in log_diffs) / len(log_diffs) if log_diffs else 0.0
+        )
+        mean_absolute_log_error = (
+            sum(abs(diff) for diff in log_diffs) / len(log_diffs) if log_diffs else 0.0
+        )
         directional_hits = sum(
             1
             for t, p in zip(targets, predictions)
@@ -777,11 +815,79 @@ class ModelTrainer:
     ) -> Mapping[str, float]:
         metrics: MutableMapping[str, float] = {
             "mae": float(train_metrics.get("mae", 0.0)),
+            "mse": float(train_metrics.get("mse", 0.0)),
             "rmse": float(train_metrics.get("rmse", 0.0)),
             "directional_accuracy": float(train_metrics.get("directional_accuracy", 0.0)),
+            "mape": float(train_metrics.get("mape", 0.0)),
+            "r2": float(train_metrics.get("r2", 0.0)),
+            "median_absolute_error": float(
+                train_metrics.get("median_absolute_error", 0.0)
+            ),
+            "explained_variance": float(train_metrics.get("explained_variance", 0.0)),
+            "max_error": float(train_metrics.get("max_error", 0.0)),
+            "smape": float(train_metrics.get("smape", 0.0)),
+            "mean_bias_error": float(train_metrics.get("mean_bias_error", 0.0)),
+            "wmape": float(train_metrics.get("wmape", 0.0)),
+            "mpe": float(train_metrics.get("mpe", 0.0)),
+            "rmspe": float(train_metrics.get("rmspe", 0.0)),
+            "median_percentage_error": float(
+                train_metrics.get("median_percentage_error", 0.0)
+            ),
+            "median_absolute_percentage_error": float(
+                train_metrics.get("median_absolute_percentage_error", 0.0)
+            ),
+            "mase": float(train_metrics.get("mase", 0.0)),
+            "msle": float(train_metrics.get("msle", 0.0)),
+            "mean_absolute_log_error": float(
+                train_metrics.get("mean_absolute_log_error", 0.0)
+            ),
+            "mean_poisson_deviance": float(
+                train_metrics.get("mean_poisson_deviance", 0.0)
+            ),
+            "mean_gamma_deviance": float(
+                train_metrics.get("mean_gamma_deviance", 0.0)
+            ),
+            "mean_tweedie_deviance": float(
+                train_metrics.get("mean_tweedie_deviance", 0.0)
+            ),
             "train_mae": float(train_metrics.get("mae", 0.0)),
+            "train_mse": float(train_metrics.get("mse", 0.0)),
             "train_rmse": float(train_metrics.get("rmse", 0.0)),
             "train_directional_accuracy": float(train_metrics.get("directional_accuracy", 0.0)),
+            "train_mape": float(train_metrics.get("mape", 0.0)),
+            "train_r2": float(train_metrics.get("r2", 0.0)),
+            "train_median_absolute_error": float(
+                train_metrics.get("median_absolute_error", 0.0)
+            ),
+            "train_explained_variance": float(
+                train_metrics.get("explained_variance", 0.0)
+            ),
+            "train_max_error": float(train_metrics.get("max_error", 0.0)),
+            "train_smape": float(train_metrics.get("smape", 0.0)),
+            "train_mean_bias_error": float(train_metrics.get("mean_bias_error", 0.0)),
+            "train_wmape": float(train_metrics.get("wmape", 0.0)),
+            "train_mpe": float(train_metrics.get("mpe", 0.0)),
+            "train_rmspe": float(train_metrics.get("rmspe", 0.0)),
+            "train_median_percentage_error": float(
+                train_metrics.get("median_percentage_error", 0.0)
+            ),
+            "train_median_absolute_percentage_error": float(
+                train_metrics.get("median_absolute_percentage_error", 0.0)
+            ),
+            "train_mase": float(train_metrics.get("mase", 0.0)),
+            "train_msle": float(train_metrics.get("msle", 0.0)),
+            "train_mean_absolute_log_error": float(
+                train_metrics.get("mean_absolute_log_error", 0.0)
+            ),
+            "train_mean_poisson_deviance": float(
+                train_metrics.get("mean_poisson_deviance", 0.0)
+            ),
+            "train_mean_gamma_deviance": float(
+                train_metrics.get("mean_gamma_deviance", 0.0)
+            ),
+            "train_mean_tweedie_deviance": float(
+                train_metrics.get("mean_tweedie_deviance", 0.0)
+            ),
         }
         if "expected_pnl" in train_metrics:
             metrics["expected_pnl"] = float(train_metrics.get("expected_pnl", 0.0))
@@ -790,9 +896,95 @@ class ModelTrainer:
             metrics.update(
                 {
                     "validation_mae": float(validation_metrics.get("mae", 0.0)),
+                    "validation_mse": float(validation_metrics.get("mse", 0.0)),
                     "validation_rmse": float(validation_metrics.get("rmse", 0.0)),
                     "validation_directional_accuracy": float(
                         validation_metrics.get("directional_accuracy", 0.0)
+                    ),
+                    "validation_mape": float(validation_metrics.get("mape", 0.0)),
+                    "validation_r2": float(validation_metrics.get("r2", 0.0)),
+                    "validation_median_absolute_error": float(
+                        validation_metrics.get("median_absolute_error", 0.0)
+                    ),
+                    "validation_explained_variance": float(
+                        validation_metrics.get("explained_variance", 0.0)
+                    ),
+                    "validation_max_error": float(
+                        validation_metrics.get("max_error", 0.0)
+                    ),
+                    "validation_smape": float(validation_metrics.get("smape", 0.0)),
+                    "validation_mean_bias_error": float(
+                        validation_metrics.get("mean_bias_error", 0.0)
+                    ),
+                    "validation_wmape": float(validation_metrics.get("wmape", 0.0)),
+                    "validation_mpe": float(validation_metrics.get("mpe", 0.0)),
+                    "validation_rmspe": float(validation_metrics.get("rmspe", 0.0)),
+                    "validation_median_percentage_error": float(
+                        validation_metrics.get("median_percentage_error", 0.0)
+                    ),
+                    "validation_median_absolute_percentage_error": float(
+                        validation_metrics.get("median_absolute_percentage_error", 0.0)
+                    ),
+                    "validation_mase": float(validation_metrics.get("mase", 0.0)),
+                    "validation_msle": float(validation_metrics.get("msle", 0.0)),
+                    "validation_mean_absolute_log_error": float(
+                        validation_metrics.get("mean_absolute_log_error", 0.0)
+                    ),
+                    "validation_mean_poisson_deviance": float(
+                        validation_metrics.get("mean_poisson_deviance", 0.0)
+                    ),
+                    "validation_mean_gamma_deviance": float(
+                        validation_metrics.get("mean_gamma_deviance", 0.0)
+                    ),
+                    "validation_mean_tweedie_deviance": float(
+                        validation_metrics.get("mean_tweedie_deviance", 0.0)
+                    ),
+                }
+            )
+        if test_metrics:
+            metrics.update(
+                {
+                    "test_mae": float(test_metrics.get("mae", 0.0)),
+                    "test_mse": float(test_metrics.get("mse", 0.0)),
+                    "test_rmse": float(test_metrics.get("rmse", 0.0)),
+                    "test_directional_accuracy": float(
+                        test_metrics.get("directional_accuracy", 0.0)
+                    ),
+                    "test_mape": float(test_metrics.get("mape", 0.0)),
+                    "test_r2": float(test_metrics.get("r2", 0.0)),
+                    "test_median_absolute_error": float(
+                        test_metrics.get("median_absolute_error", 0.0)
+                    ),
+                    "test_explained_variance": float(
+                        test_metrics.get("explained_variance", 0.0)
+                    ),
+                    "test_max_error": float(test_metrics.get("max_error", 0.0)),
+                    "test_smape": float(test_metrics.get("smape", 0.0)),
+                    "test_mean_bias_error": float(
+                        test_metrics.get("mean_bias_error", 0.0)
+                    ),
+                    "test_wmape": float(test_metrics.get("wmape", 0.0)),
+                    "test_mpe": float(test_metrics.get("mpe", 0.0)),
+                    "test_rmspe": float(test_metrics.get("rmspe", 0.0)),
+                    "test_median_percentage_error": float(
+                        test_metrics.get("median_percentage_error", 0.0)
+                    ),
+                    "test_median_absolute_percentage_error": float(
+                        test_metrics.get("median_absolute_percentage_error", 0.0)
+                    ),
+                    "test_mase": float(test_metrics.get("mase", 0.0)),
+                    "test_msle": float(test_metrics.get("msle", 0.0)),
+                    "test_mean_absolute_log_error": float(
+                        test_metrics.get("mean_absolute_log_error", 0.0)
+                    ),
+                    "test_mean_poisson_deviance": float(
+                        test_metrics.get("mean_poisson_deviance", 0.0)
+                    ),
+                    "test_mean_gamma_deviance": float(
+                        test_metrics.get("mean_gamma_deviance", 0.0)
+                    ),
+                    "test_mean_tweedie_deviance": float(
+                        test_metrics.get("mean_tweedie_deviance", 0.0)
                     ),
                 }
             )
