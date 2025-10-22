@@ -517,6 +517,36 @@ if(BUILD_TESTING)
     )
     add_test(NAME first_run_wizard_e2e_tests COMMAND first_run_wizard_e2e_tests)
 
+    add_executable(strategy_workbench_e2e_tests
+        tests/StrategyWorkbenchE2ETest.cpp
+    )
+    target_include_directories(strategy_workbench_e2e_tests PRIVATE src)
+    qt_add_resources(strategy_workbench_e2e_tests strategy_workbench_e2e_qml
+        PREFIX "/qml/components/workbench"
+        FILES
+            qml/components/workbench/StrategyWorkbench.qml
+            qml/components/workbench/StrategyWorkbenchViewModel.qml
+            qml/components/workbench/StrategyWorkbenchPresets.js
+            qml/components/workbench/StrategyWorkbenchUtils.js
+            qml/components/workbench/panels/StrategyDashboardPanel.qml
+            qml/components/workbench/panels/InstrumentOverviewPanel.qml
+            qml/components/workbench/panels/ExchangeManagementPanel.qml
+            qml/components/workbench/panels/AiConfigurationPanel.qml
+            qml/components/workbench/panels/ResultsAnalysisPanel.qml
+            qml/components/workbench/panels/RuntimeStatusPanel.qml
+            qml/components/workbench/panels/LicenseStatusPanel.qml
+    )
+    target_link_libraries(strategy_workbench_e2e_tests
+        PRIVATE
+            Qt6::Core
+            Qt6::Gui
+            Qt6::Qml
+            Qt6::Quick
+            Qt6::QuickControls2
+            Qt6::Test
+    )
+    add_test(NAME strategy_workbench_e2e_tests COMMAND strategy_workbench_e2e_tests)
+
     add_executable(bot_core_local_service_tests
         tests/BotCoreLocalServiceTest.cpp
         src/grpc/BotCoreLocalService.cpp
