@@ -415,6 +415,21 @@ class ModelTrainer:
         metadata["backend"] = self.backend
         if self.validation_split > 0.0:
             metadata["validation_split"] = self.validation_split
+        total_rows = (
+            len(train_matrix) + len(validation_matrix) + len(test_matrix)
+        )
+        if total_rows > 0:
+            train_ratio = len(train_matrix) / total_rows
+            validation_ratio = len(validation_matrix) / total_rows
+            test_ratio = len(test_matrix) / total_rows
+            metadata["dataset_split"] = {
+                "train_ratio": float(train_ratio),
+                "validation_ratio": float(validation_ratio),
+                "test_ratio": float(test_ratio),
+                "train_rows": len(train_matrix),
+                "validation_rows": len(validation_matrix),
+                "test_rows": len(test_matrix),
+            }
         cv_summary = self._cross_validate_matrix(matrix, targets, feature_names)
         metadata["cross_validation"] = {
             "folds": int(cv_summary.get("folds", 0)),
