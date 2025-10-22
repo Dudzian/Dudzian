@@ -1539,6 +1539,31 @@ class AutoTradeResult:
         else:
             self.ai_manager._summaries[symbol] = summary
 
+    def run_followup(
+        self,
+        *,
+        summary: RegimeSummary | None = _MISSING,
+        market_data: pd.DataFrame | None = None,
+        assessments: Iterable[_DummyAssessment] | None = None,
+    ) -> RiskDecision:
+        if assessments is not None:
+            self.queue_assessments(*tuple(assessments))
+        if summary is not _MISSING:
+            self.update_summary(summary)
+        if market_data is not None:
+            self.provider.df = market_data
+        self.decision = _run_auto_trade(self.trader)
+        return self.decision
+
+    def __iter__(self):
+        yield from (
+            self.decision,
+            self.trader,
+            self.emitter,
+            self.provider,
+            self.ai_manager,
+        )
+
 
 def test_auto_trader_trusted_mode_auto_confirms(monkeypatch: pytest.MonkeyPatch) -> None:
     emitter = _Emitter()
@@ -1565,25 +1590,6 @@ def test_auto_trader_trusted_mode_auto_confirms(monkeypatch: pytest.MonkeyPatch)
     assert started, "Trusted mode did not start the auto-trade loop"
 
     trader.stop()
-
-    def run_followup(
-        self,
-        *,
-        summary: RegimeSummary | None = _MISSING,
-        market_data: pd.DataFrame | None = None,
-        assessments: Iterable[_DummyAssessment] | None = None,
-    ) -> RiskDecision:
-        if assessments is not None:
-            self.queue_assessments(*tuple(assessments))
-        if summary is not _MISSING:
-            self.update_summary(summary)
-        if market_data is not None:
-            self.provider.df = market_data
-        self.decision = _run_auto_trade(self.trader)
-        return self.decision
-
-    def __iter__(self):
-        yield from (self.decision, self.trader, self.emitter, self.provider, self.ai_manager)
 
 
 def _execute_auto_trade(
