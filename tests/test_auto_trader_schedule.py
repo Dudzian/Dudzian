@@ -223,6 +223,56 @@ def test_set_work_schedule_accepts_mapping_payload() -> None:
     assert payload["reason"] == "config"
 
 
+def test_describe_work_schedule_returns_payload_with_state() -> None:
+    trader, _ = _build_trader()
+    now = datetime.now(timezone.utc)
+    schedule_payload = {
+        "timezone": "UTC",
+        "default_mode": "live",
+        "windows": [
+            {
+                "start": "07:00",
+                "end": "19:00",
+                "mode": "live",
+                "allow_trading": True,
+                "days": ["mon", "tue"],
+                "label": "session",
+            }
+        ],
+        "overrides": [
+            {
+                "start": (now - timedelta(minutes=5)).isoformat(),
+                "end": (now + timedelta(minutes=25)).isoformat(),
+                "mode": "maintenance",
+                "allow_trading": False,
+                "label": "window",
+            }
+        ],
+    }
+
+    trader.set_work_schedule(schedule_payload)
+
+    described = trader.describe_work_schedule()
+
+    assert described["timezone"] == "UTC"
+    assert described["windows"][0]["label"] == "session"
+    state = described["state"]
+    assert state["mode"] == "maintenance"
+    assert "override_active" in state
+
+
+def test_describe_work_schedule_returns_default_when_unset() -> None:
+    trader, _ = _build_trader()
+
+    described = trader.describe_work_schedule()
+
+    assert described["default_mode"] == "demo"
+    assert described["windows"]
+    state = described["state"]
+    assert state["mode"] == "demo"
+    assert state["is_open"] is True
+
+
 def test_schedule_override_blocks_trading_and_serializes() -> None:
     trader, emitter = _build_trader()
     now = datetime.now(timezone.utc)
@@ -296,269 +346,143 @@ def test_schedule_next_override_shortens_transition() -> None:
     assert during_override.next_override.label == "next-day"
 
 
-def test_trading_schedule_override_management() -> None:
-    window = ScheduleWindow(start=time(0, 0), end=time(0, 0), mode="live", allow_trading=True)
-    base_override = ScheduleOverride(
-        start=datetime(2024, 1, 1, 9, 0, tzinfo=timezone.utc),
-        end=datetime(2024, 1, 1, 10, 0, tzinfo=timezone.utc),
-        mode="maintenance",
-        allow_trading=False,
-        label="maintenance",
-    )
-    schedule = TradingSchedule(
-        (window,),
-        timezone_name="UTC",
-        default_mode="live",
-        overrides=(base_override,),
-    )
-
-    replacement = ScheduleOverride(
-        start=datetime(2024, 1, 1, 11, 0, tzinfo=timezone.utc),
-        end=datetime(2024, 1, 1, 12, 0, tzinfo=timezone.utc),
-        mode="maintenance",
-        allow_trading=False,
-        label="maintenance",
-    )
-
-    replaced_schedule = schedule.with_override(replacement)
-    assert replaced_schedule.overrides == (replacement,)
-
-    parallel = ScheduleOverride(
-        start=datetime(2024, 1, 2, 9, 0, tzinfo=timezone.utc),
-        end=datetime(2024, 1, 2, 10, 0, tzinfo=timezone.utc),
-        mode="maintenance",
-        allow_trading=False,
-        label="alt",
-    )
-
-    extended_schedule = replaced_schedule.with_override(parallel, replace_conflicts=False)
-    assert len(extended_schedule.overrides) == 2
-    assert extended_schedule.overrides[0].label == "maintenance"
-    assert extended_schedule.overrides[1].label == "alt"
-
-    cleared_schedule = extended_schedule.without_overrides(labels=("maintenance",))
-    assert len(cleared_schedule.overrides) == 1
-    assert cleared_schedule.overrides[0].label == "alt"
-
-
-def test_trading_schedule_list_overrides_filters_future() -> None:
-    window = ScheduleWindow(start=time(0, 0), end=time(0, 0), allow_trading=True)
-    past_override = ScheduleOverride(
-        start=datetime(2024, 1, 1, 8, 0, tzinfo=timezone.utc),
-        end=datetime(2024, 1, 1, 10, 0, tzinfo=timezone.utc),
-        label="past",
-    )
-    upcoming_override = ScheduleOverride(
-        start=datetime(2024, 1, 2, 12, 0, tzinfo=timezone.utc),
-        end=datetime(2024, 1, 2, 15, 0, tzinfo=timezone.utc),
-        label="future",
-    )
-    unlabeled_override = ScheduleOverride(
-        start=datetime(2024, 1, 3, 9, 0, tzinfo=timezone.utc),
-        end=datetime(2024, 1, 3, 11, 0, tzinfo=timezone.utc),
-    )
-
-    schedule = TradingSchedule(
-        (window,),
-        timezone_name="UTC",
-        overrides=(past_override, upcoming_override, unlabeled_override),
-    )
-
-    reference = datetime(2024, 1, 2, 11, 0, tzinfo=timezone.utc)
-
-    future_only = schedule.list_overrides(now=reference)
-    assert future_only == (upcoming_override, unlabeled_override)
-
-    only_label = schedule.list_overrides(labels=("future",), now=reference)
-    assert only_label == (upcoming_override,)
-
-    include_past = schedule.list_overrides(include_past=True, now=reference)
-    assert include_past == (past_override, upcoming_override, unlabeled_override)
-
-
-def test_auto_trader_add_schedule_override_emits_audit() -> None:
+def test_add_schedule_override_updates_state_and_events() -> None:
     trader, emitter = _build_trader()
-    schedule = TradingSchedule.always_on(mode="live", timezone_name="UTC")
+    window = ScheduleWindow(start=time(0, 0), end=time(0, 0), mode="live", allow_trading=True)
+    schedule = TradingSchedule((window,), timezone_name="UTC")
     trader.set_work_schedule(schedule)
-    trader.clear_decision_audit_log()
+
     emitter.events.clear()
 
     now = datetime.now(timezone.utc)
-    start = now + timedelta(minutes=5)
-    end = start + timedelta(minutes=30)
     override_payload = {
-        "start": start.isoformat(),
-        "end": end.isoformat(),
+        "start": (now - timedelta(minutes=15)).isoformat(),
+        "end": (now + timedelta(minutes=30)).isoformat(),
         "mode": "maintenance",
         "allow_trading": False,
-        "label": "manual",
+        "label": "window",
     }
 
-    state = trader.add_schedule_override(override_payload, reason="manual-block")
+    state = trader.add_schedule_override(override_payload)
 
-    assert state.next_override is not None
-    assert state.next_override.label == "manual"
+    assert state.override is not None
+    assert state.override.label == "window"
+    assert state.override_active is True
+    assert state.is_open is False
+
+    overrides = trader.list_schedule_overrides()
+    assert len(overrides) == 1
+    assert overrides[0].label == "window"
 
     entries = trader.get_decision_audit_entries(limit=1)
     assert entries
-    record = entries[-1]
-    assert record["stage"] == "schedule_override_applied"
-    payload = record["payload"]
-    assert payload["reason"] == "manual-block"
-    assert payload["override_added"]["label"] == "manual"
+    assert entries[-1]["payload"]["reason"] == "override_added"
 
     assert emitter.events
-    event_name, event_payload = emitter.events[-1]
+    event_name, payload = emitter.events[-1]
     assert event_name == "auto_trader.schedule_state"
-    assert event_payload["reason"] == "manual-block"
-    assert event_payload["override_added"]["label"] == "manual"
-    assert event_payload["replace_conflicts"] is True
+    assert payload["reason"] == "override_added"
+    assert payload["override"]["label"] == "window"
 
 
-def test_auto_trader_clear_schedule_overrides_by_label() -> None:
-    trader, emitter = _build_trader()
-    schedule = TradingSchedule.always_on(mode="live", timezone_name="UTC")
+def test_add_schedule_override_replaces_overlap_when_requested() -> None:
+    trader, _ = _build_trader()
+    window = ScheduleWindow(start=time(0, 0), end=time(0, 0))
+    schedule = TradingSchedule((window,), timezone_name="UTC")
     trader.set_work_schedule(schedule)
 
     now = datetime.now(timezone.utc)
-    start = now + timedelta(minutes=5)
-    end = start + timedelta(minutes=30)
-    override = ScheduleOverride(
-        start=start,
-        end=end,
-        mode="maintenance",
+    first = ScheduleOverride(
+        start=now - timedelta(minutes=45),
+        end=now + timedelta(minutes=15),
         allow_trading=False,
-        label="manual",
     )
-    trader.add_schedule_override(override)
+    trader.add_schedule_override(first)
 
-    trader.clear_decision_audit_log()
+    replacement = ScheduleOverride(
+        start=now - timedelta(minutes=30),
+        end=now + timedelta(minutes=45),
+        allow_trading=False,
+    )
+
+    state = trader.add_schedule_override(replacement, replace_overlaps=True)
+
+    overrides = trader.list_schedule_overrides()
+    assert len(overrides) == 1
+    assert overrides[0].start == replacement.start
+    assert overrides[0].end == replacement.end
+    assert state.override is not None
+    assert state.override.start == replacement.start
+    assert trader.get_decision_audit_entries(limit=1)[-1]["payload"]["reason"] == "override_replaced"
+
+
+def test_add_schedule_override_rejects_overlap_without_flag() -> None:
+    trader, _ = _build_trader()
+    window = ScheduleWindow(start=time(0, 0), end=time(0, 0))
+    schedule = TradingSchedule((window,), timezone_name="UTC")
+    trader.set_work_schedule(schedule)
+
+    now = datetime.now(timezone.utc)
+    trader.add_schedule_override(
+        ScheduleOverride(
+            start=now,
+            end=now + timedelta(minutes=60),
+            allow_trading=False,
+        )
+    )
+
+    with pytest.raises(ValueError):
+        trader.add_schedule_override(
+            {
+                "start": (now + timedelta(minutes=30)).isoformat(),
+                "end": (now + timedelta(minutes=120)).isoformat(),
+                "allow_trading": False,
+            }
+        )
+
+
+def test_remove_schedule_override_by_label() -> None:
+    trader, emitter = _build_trader()
+    window = ScheduleWindow(start=time(0, 0), end=time(0, 0))
+    schedule = TradingSchedule((window,), timezone_name="UTC")
+    trader.set_work_schedule(schedule)
+
+    trader.add_schedule_override(
+        {
+            "start": "2024-01-01T09:00:00+00:00",
+            "end": "2024-01-01T11:00:00+00:00",
+            "label": "incident",
+            "allow_trading": False,
+        }
+    )
+
     emitter.events.clear()
 
-    state = trader.clear_schedule_overrides("manual", reason="cleanup")
+    state = trader.remove_schedule_override(label="incident")
 
+    assert not trader.list_schedule_overrides()
     assert state.override is None
-    assert state.next_override is None
-
-    entries = trader.get_decision_audit_entries(limit=1)
-    assert entries
-    record = entries[-1]
-    assert record["stage"] == "schedule_override_cleared"
-    payload = record["payload"]
-    assert payload["reason"] == "cleanup"
-    assert payload["cleared_labels"] == ["manual"]
+    assert trader.get_decision_audit_entries(limit=1)[-1]["payload"]["reason"] == "override_removed"
 
     assert emitter.events
-    event_name, event_payload = emitter.events[-1]
+    event_name, payload = emitter.events[-1]
     assert event_name == "auto_trader.schedule_state"
-    assert event_payload["reason"] == "cleanup"
-    assert event_payload["cleared_labels"] == ["manual"]
+    assert payload["reason"] == "override_removed"
 
 
-def test_auto_trader_list_schedule_overrides_serializes_and_filters() -> None:
+def test_remove_schedule_override_requires_match() -> None:
     trader, _ = _build_trader()
-    window = ScheduleWindow(start=time(0, 0), end=time(0, 0), allow_trading=True)
-    past_override = ScheduleOverride(
-        start=datetime(2024, 1, 1, 8, 0, tzinfo=timezone.utc),
-        end=datetime(2024, 1, 1, 10, 0, tzinfo=timezone.utc),
-        mode="maintenance",
-        allow_trading=False,
-        label="past",
-    )
-    upcoming_override = ScheduleOverride(
-        start=datetime(2024, 1, 2, 12, 0, tzinfo=timezone.utc),
-        end=datetime(2024, 1, 2, 15, 0, tzinfo=timezone.utc),
-        mode="halt",
-        allow_trading=False,
-        label="future",
-    )
-    unlabeled_override = ScheduleOverride(
-        start=datetime(2024, 1, 3, 9, 0, tzinfo=timezone.utc),
-        end=datetime(2024, 1, 3, 11, 0, tzinfo=timezone.utc),
-        mode="alert",
-        allow_trading=True,
-    )
-
-    schedule = TradingSchedule(
-        (window,),
-        timezone_name="UTC",
-        overrides=(past_override, upcoming_override, unlabeled_override),
-    )
+    window = ScheduleWindow(start=time(0, 0), end=time(0, 0))
+    schedule = TradingSchedule((window,), timezone_name="UTC")
     trader.set_work_schedule(schedule)
 
-    reference = datetime(2024, 1, 2, 11, 0, tzinfo=timezone.utc)
-
-    serialized = trader.list_schedule_overrides(now=reference)
-    assert len(serialized) == 2
-    assert serialized[0]["label"] == "future"
-    assert serialized[0]["start"].startswith("2024-01-02T12:00:00+00:00")
-    assert serialized[0]["mode"] == "halt"
-    assert "label" not in serialized[1]
-    assert serialized[1]["mode"] == "alert"
-
-    only_future = trader.list_schedule_overrides("future", now=reference)
-    assert [entry.get("label") for entry in only_future] == ["future"]
-
-    all_entries = trader.list_schedule_overrides(include_past=True, now=reference)
-    assert [entry.get("label") for entry in all_entries] == ["past", "future", None]
+    with pytest.raises(LookupError):
+        trader.remove_schedule_override(label="missing")
 
 
-def test_auto_trader_describe_work_schedule_serializes_snapshot() -> None:
-    trader, _ = _build_trader()
+def test_clear_schedule_overrides_noop_when_empty() -> None:
+    trader, emitter = _build_trader()
+    trader.clear_schedule_overrides()
 
-    window = ScheduleWindow(
-        start=time(0, 0),
-        end=time(0, 0),
-        mode="live",
-        allow_trading=True,
-        label="full-day",
-    )
-    tz = timezone(timedelta(hours=2), name="UTC+02")
-    past_override = ScheduleOverride(
-        start=datetime(2024, 1, 1, 6, 0, tzinfo=timezone.utc),
-        end=datetime(2024, 1, 1, 7, 0, tzinfo=timezone.utc),
-        mode="maintenance",
-        allow_trading=False,
-        label="past",
-    )
-    future_override = ScheduleOverride(
-        start=datetime(2024, 1, 2, 9, 0, tzinfo=timezone.utc),
-        end=datetime(2024, 1, 2, 10, 0, tzinfo=timezone.utc),
-        mode="halt",
-        allow_trading=False,
-        label="future",
-    )
-    unlabeled_override = ScheduleOverride(
-        start=datetime(2024, 1, 2, 12, 0, tzinfo=timezone.utc),
-        end=datetime(2024, 1, 2, 13, 0, tzinfo=timezone.utc),
-        mode="alert",
-        allow_trading=True,
-    )
+    assert not emitter.events
 
-    schedule = TradingSchedule(
-        (window,),
-        tz=tz,
-        default_mode="live",
-        overrides=(past_override, future_override, unlabeled_override),
-    )
-    trader.set_work_schedule(schedule)
-
-    reference = datetime(2024, 1, 2, 8, 0, tzinfo=timezone.utc)
-
-    snapshot = trader.describe_work_schedule(now=reference)
-    assert snapshot["default_mode"] == "live"
-    assert snapshot["timezone_offset_s"] == 7200
-    assert snapshot["state"]["mode"] == "live"
-    assert snapshot["state"]["is_open"] is True
-    assert [window_payload["label"] for window_payload in snapshot["windows"]] == ["full-day"]
-
-    overrides = snapshot["overrides"]
-    assert len(overrides) == 2
-    assert overrides[0]["label"] == "future"
-    assert "label" not in overrides[1]
-
-    snapshot_with_past = trader.describe_work_schedule(include_past_overrides=True, now=reference)
-    assert [entry.get("label") for entry in snapshot_with_past["overrides"]] == ["past", "future", None]
-
-    filtered = trader.describe_work_schedule("future", include_past_overrides=True, now=reference)
-    assert [entry.get("label") for entry in filtered["overrides"]] == ["future"]
