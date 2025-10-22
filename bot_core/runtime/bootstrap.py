@@ -9,6 +9,7 @@ import logging
 import os
 import stat
 import sys
+import hashlib
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -1243,7 +1244,7 @@ def _get_profile_value(profile: Any, field_name: str) -> Any:
     return getattr(profile, field_name, None)
 
 
-def _build_live_readiness_checklist(
+def build_live_readiness_checklist(
     *,
     core_config: CoreConfig,
     environment: EnvironmentConfig,
@@ -1252,8 +1253,16 @@ def _build_live_readiness_checklist(
     alert_router: DefaultAlertRouter,
     alert_channels: Mapping[str, AlertChannel],
     audit_log: AlertAuditLog,
+    document_root: str | Path | None = None,
 ) -> tuple[Mapping[str, Any], ...]:
     checklist: list[Mapping[str, Any]] = []
+
+    root_path: Path | None = None
+    if document_root is not None:
+        try:
+            root_path = Path(document_root).expanduser().resolve()
+        except Exception:  # pragma: no cover - defensywne zabezpieczenie
+            root_path = Path(document_root)
 
     raw_entrypoints = _load_raw_runtime_entrypoints(core_config)
     compliance_details: list[Mapping[str, Any]] = []
@@ -1510,6 +1519,77 @@ def _build_live_readiness_checklist(
     return tuple(checklist)
 
 
+# Zachowujemy zgodność wsteczną dla modułów importujących poprzednią nazwę.
+_build_live_readiness_checklist = build_live_readiness_checklist
+
+
+def extract_live_readiness_metadata(
+    checklist: Sequence[Mapping[str, Any]] | None,
+) -> Mapping[str, Any] | None:
+    """Ekstrahuje szczegóły checklisty live z ustrukturyzowanych wyników."""
+
+    if not checklist:
+        return None
+
+    for entry in checklist:
+        if not isinstance(entry, Mapping):
+            continue
+        if entry.get("item") != "live_checklist":
+            continue
+
+        details = entry.get("details")
+        if not isinstance(details, Mapping):
+            return None
+
+        summary: dict[str, Any] = {
+            "status": entry.get("status"),
+        }
+        if entry.get("reasons"):
+            summary["reasons"] = tuple(entry.get("reasons", ()))
+
+        checklist_info = details.get("checklist")
+        if isinstance(checklist_info, Mapping):
+            normalized_checklist: dict[str, Any] = {}
+            for key, value in checklist_info.items():
+                if key in {"signed_by", "required_documents", "reasons"}:
+                    normalized_checklist[key] = tuple(value or ())
+                else:
+                    normalized_checklist[key] = value
+            summary["checklist"] = normalized_checklist
+
+        documents_payload: list[dict[str, Any]] = []
+        documents_details = details.get("documents")
+        if isinstance(documents_details, Iterable):
+            for document in documents_details:
+                if not isinstance(document, Mapping):
+                    continue
+                name = document.get("name")
+                payload: dict[str, Any] = {"name": name}
+                for key in (
+                    "required",
+                    "status",
+                    "path",
+                    "resolved_path",
+                    "signature_path",
+                    "sha256",
+                    "computed_sha256",
+                    "signed",
+                    "signed_at",
+                ):
+                    if key in document:
+                        payload[key] = document[key]
+                if document.get("reasons"):
+                    payload["reasons"] = tuple(document.get("reasons", ()))
+                if document.get("signed_by"):
+                    payload["signed_by"] = tuple(document.get("signed_by", ()))
+                documents_payload.append(payload)
+
+        summary["documents"] = documents_payload
+        return summary
+
+    return None
+
+
 @dataclass(slots=True)
 class BootstrapContext:
     """Zawiera wszystkie komponenty zainicjalizowane dla danego środowiska."""
@@ -1582,8 +1662,9 @@ def bootstrap_environment(
     """Tworzy kompletny kontekst uruchomieniowy dla wskazanego środowiska."""
     from bot_core.config.validation import assert_core_config_valid
 
+    config_path_obj = Path(config_path)
     if core_config is None:
-        core_config = load_core_config(config_path)
+        core_config = load_core_config(config_path_obj)
     validation = assert_core_config_valid(core_config)
     for warning in validation.warnings:
         _LOGGER.warning("Walidacja konfiguracji: %s", warning)
@@ -1604,8 +1685,6 @@ def bootstrap_environment(
             environment.name,
         )
     selected_profile = risk_profile_name or environment.risk_profile
-    environment_type = getattr(environment, "environment", None)
-    is_paper_like = environment_type in {Environment.PAPER, Environment.TESTNET}
 
     skip_license_validation = not (
         getattr(license_config, "license_keys_path", None)
@@ -2893,7 +2972,7 @@ def bootstrap_environment(
     live_readiness_checklist: Sequence[Mapping[str, Any]] | None = None
     if environment.environment is Environment.LIVE:
         try:
-            live_readiness_checklist = _build_live_readiness_checklist(
+            live_readiness_checklist = build_live_readiness_checklist(
                 core_config=core_config,
                 environment=environment,
                 risk_profile_name=selected_profile,
@@ -2901,6 +2980,7 @@ def bootstrap_environment(
                 alert_router=alert_router,
                 alert_channels=alert_channels,
                 audit_log=audit_log,
+                document_root=config_path_obj.parent,
             )
         except Exception:  # pragma: no cover - diagnostyka checklisty
             live_readiness_checklist = None

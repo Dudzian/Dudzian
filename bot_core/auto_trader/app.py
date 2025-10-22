@@ -30,7 +30,11 @@ from typing import Any, Callable, Dict, Mapping, Optional, Protocol, Sequence, c
 import pandas as pd
 
 from bot_core.auto_trader.audit import DecisionAuditLog
-from bot_core.auto_trader.schedule import ScheduleState, TradingSchedule
+from bot_core.auto_trader.schedule import (
+    ScheduleOverride,
+    ScheduleState,
+    TradingSchedule,
+)
 from bot_core.ai.regime import (
     MarketRegime,
     MarketRegimeAssessment,
@@ -807,6 +811,183 @@ class AutoTrader:
         if isinstance(tz_name, str) and tz_name.strip():
             return TradingSchedule.always_on(mode=self._initial_mode, timezone_name=str(tz_name))
         return TradingSchedule.always_on(mode=self._initial_mode)
+
+    def set_work_schedule(
+        self,
+        schedule: TradingSchedule | Mapping[str, object] | None,
+        *,
+        reason: str | None = None,
+    ) -> ScheduleState:
+        """Configure or reset the active work schedule."""
+
+        if schedule is None:
+            schedule_obj = self._build_default_work_schedule()
+            reason_label = reason or "reset"
+        elif isinstance(schedule, TradingSchedule):
+            schedule_obj = schedule
+            reason_label = reason or "update"
+        elif isinstance(schedule, Mapping):
+            schedule_obj = TradingSchedule.from_payload(schedule)
+            reason_label = reason or "update"
+        else:
+            raise TypeError(
+                "Work schedule must be TradingSchedule, mapping payload or None",
+            )
+
+        self._work_schedule = schedule_obj
+        state = schedule_obj.describe()
+        self._schedule_state = state
+        self._schedule_mode = state.mode
+        self._last_schedule_snapshot = (state.mode, state.is_open)
+
+        serialized_state = _serialize_schedule_state(state)
+        serialized_state["reason"] = reason_label
+
+        self._record_decision_audit_stage(
+            "schedule_configured",
+            symbol=_SCHEDULE_SYMBOL,
+            payload=serialized_state,
+        )
+
+        emitter_emit = getattr(self.emitter, "emit", None)
+        if callable(emitter_emit):
+            try:
+                emitter_emit("auto_trader.schedule_state", **serialized_state)
+            except Exception:  # pragma: no cover - defensive logging
+                self._log(
+                    "Emitter failed to publish schedule state",
+                    level=logging.DEBUG,
+                )
+
+        return state
+
+    def _ensure_work_schedule(self) -> TradingSchedule:
+        schedule = getattr(self, "_work_schedule", None)
+        if schedule is None:
+            schedule = self._build_default_work_schedule()
+            self._work_schedule = schedule
+        return schedule
+
+    def get_schedule_state(self) -> ScheduleState:
+        state = self._schedule_state
+        if state is not None:
+            return state
+        schedule = self._ensure_work_schedule()
+        state = schedule.describe()
+        self._schedule_state = state
+        self._schedule_mode = state.mode
+        return state
+
+    def is_schedule_open(self) -> bool:
+        return self.get_schedule_state().is_open
+
+    def list_schedule_overrides(self) -> tuple[ScheduleOverride, ...]:
+        schedule = self._ensure_work_schedule()
+        return schedule.overrides
+
+    def set_schedule_overrides(
+        self,
+        overrides: Sequence[ScheduleOverride] | Sequence[Mapping[str, object]],
+        *,
+        reason: str | None = None,
+    ) -> ScheduleState:
+        schedule = self._ensure_work_schedule()
+        schedule = schedule.with_overrides(overrides)
+        return self.set_work_schedule(schedule, reason=reason or "overrides_update")
+
+    @staticmethod
+    def _overrides_overlap(first: ScheduleOverride, second: ScheduleOverride) -> bool:
+        return not (first.end <= second.start or first.start >= second.end)
+
+    def add_schedule_override(
+        self,
+        override: ScheduleOverride | Mapping[str, object],
+        *,
+        allow_overlap: bool = False,
+        replace_overlaps: bool = False,
+        reason: str | None = None,
+    ) -> ScheduleState:
+        if allow_overlap and replace_overlaps:
+            raise ValueError("allow_overlap cannot be combined with replace_overlaps")
+
+        schedule = self._ensure_work_schedule()
+        if isinstance(override, Mapping):
+            override_obj = ScheduleOverride.from_mapping(
+                override, default_timezone=schedule.timezone
+            )
+        elif isinstance(override, ScheduleOverride):
+            override_obj = override
+        else:
+            raise TypeError(
+                "Override must be ScheduleOverride instance or mapping payload"
+            )
+
+        overrides = list(schedule.overrides)
+        overlapping_indexes: list[int] = []
+        for idx, existing in enumerate(overrides):
+            if self._overrides_overlap(existing, override_obj):
+                overlapping_indexes.append(idx)
+
+        if overlapping_indexes:
+            if replace_overlaps:
+                for idx in reversed(overlapping_indexes):
+                    overrides.pop(idx)
+            elif not allow_overlap:
+                raise ValueError("Schedule override overlaps existing override")
+
+        overrides.append(override_obj)
+        overrides.sort(key=lambda item: item.start)
+        return self.set_schedule_overrides(
+            overrides,
+            reason=reason or ("override_replaced" if overlapping_indexes else "override_added"),
+        )
+
+    def remove_schedule_override(
+        self,
+        *,
+        label: str | None = None,
+        start: datetime | None = None,
+        reason: str | None = None,
+    ) -> ScheduleState:
+        if label is None and start is None:
+            raise ValueError("label or start must be provided to remove override")
+
+        schedule = self._ensure_work_schedule()
+        timezone_obj = schedule.timezone
+        normalized_start: datetime | None = None
+        if start is not None:
+            normalized_start = start
+            if normalized_start.tzinfo is None:
+                normalized_start = normalized_start.replace(tzinfo=timezone_obj)
+            else:
+                normalized_start = normalized_start.astimezone(timezone_obj)
+
+        remaining: list[ScheduleOverride] = []
+        removed = False
+        for override in schedule.overrides:
+            matches = True
+            if label is not None and override.label != label:
+                matches = False
+            if matches and normalized_start is not None and override.start != normalized_start:
+                matches = False
+            if matches:
+                removed = True
+                continue
+            remaining.append(override)
+
+        if not removed:
+            raise LookupError("No schedule override matched the provided criteria")
+
+        return self.set_schedule_overrides(
+            remaining,
+            reason=reason or "override_removed",
+        )
+
+    def clear_schedule_overrides(self, *, reason: str | None = None) -> ScheduleState:
+        schedule = self._ensure_work_schedule()
+        if not schedule.overrides:
+            return self.get_schedule_state()
+        return self.set_schedule_overrides((), reason=reason or "overrides_cleared")
 
     @staticmethod
     def _detect_environment_name(bootstrap_context: Any | None) -> str:
@@ -4421,11 +4602,20 @@ class AutoTrader:
         with self._lock:
             self._risk_evaluations.clear()
 
-    def get_decision_audit_entries(self, limit: int = 20) -> Sequence[Mapping[str, object]]:
+    def get_decision_audit_entries(
+        self,
+        limit: int = 20,
+        **filters: Any,
+    ) -> Sequence[Mapping[str, object]]:
         log = getattr(self, "_decision_audit_log", None)
         if log is None:
             return ()
-        return log.to_dicts(limit)
+        query: dict[str, Any] = dict(filters)
+        query.setdefault("limit", limit)
+        try:
+            return log.query_dicts(**query)
+        except AttributeError:
+            return log.to_dicts(limit)
 
     def clear_decision_audit_log(self) -> None:
         log = getattr(self, "_decision_audit_log", None)
