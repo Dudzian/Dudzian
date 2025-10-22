@@ -16,6 +16,31 @@ które należy wykonać przed uruchomieniem bota w środowisku lokalnym.
 3. **Zonda** – klucz publiczny i prywatny z włączonymi uprawnieniami do
    pobierania stanu konta oraz składania/anulowania zleceń.
    - Margin należy aktywować w panelu klienta i nadać limit kredytowy.
+4. **nowa_gielda (spot)** – para kluczy REST (`key`, `secret`) z dostępem do danych
+   publicznych i prywatnych zleceń.
+   - Adapter `nowa_gielda_spot` korzysta z osobnych baz URL dla środowisk `live`,
+     `paper` i `testnet`, dlatego generując klucze testowe należy użyć portalu
+     odpowiadającego wybranemu środowisku.
+   - API udostępnia endpoint `GET /private/account`, z którego pobierane są pola
+     `balances`, `totalEquity`, `availableMargin` oraz `maintenanceMargin`. Upewnij
+     się, że konto posiada uprawnienia do odczytu stanu rachunku.
+   - Historia transakcji dostępna jest pod `GET /private/trades`. Zapytanie wymaga
+     podpisu HMAC i akceptuje parametry `symbol`, `start`, `end` oraz `limit`.
+     Adapter filtruje wyniki po symbolu oraz waliduje typy liczbowe (`price`,
+     `quantity`, `fee`, `timestamp`). Endpoint objęty jest limitem 5 żądań na
+     sekundę, dlatego długie zakresy czasowe należy dzielić na mniejsze porcje.
+   - Otwarte zlecenia pobierane są z `GET /private/orders`. Endpoint wspiera
+     parametry `symbol` oraz `limit` i zwraca pola `orderId`, `status`, `side`,
+     `type`, `price`, `quantity`, `filledQuantity`, `avgPrice` oraz `timestamp`.
+     Limit wagowy pozwala na maksymalnie 5 zapytań w 1 sekundzie.
+   - Historia zamkniętych zleceń dostępna jest przez `GET /private/orders/history`.
+     Zapytanie można filtrować po `symbol`, `start`, `end` i `limit`. Adapter
+     waliduje pola `orderId`, `executedQuantity`, `closedAt` oraz poprawność
+     tłumaczenia symbolu, a limit zapytań wynosi 5 na sekundę.
+   - Dane historyczne świec pobierane są z `GET /public/ohlcv`, który wymaga
+     parametrów `symbol` (np. `BTC-USDT`) oraz `interval` (`1m`, `1h`, `1d`).
+     Opcjonalnie można przekazać `start`, `end` i `limit`, aby zawęzić zakres
+     czasowy. Endpoint ten objęty jest limitem 10 zapytań w oknie 1 sekundy.
 
 Poświadczenia przechowujemy w zaszyfrowanym magazynie `secrets/desktop.toml`.
 Każdy wpis zawiera identyfikator giełdy (`binance`, `kraken`, `zonda`) oraz
@@ -38,6 +63,11 @@ key = "ZONDA_KEY"
 secret = "ZONDA_SECRET"
 mode = "margin"
 valuation_currency = "PLN"
+
+[nowa_gielda_spot]
+key = "NOWA_GIELDA_KEY"
+secret = "NOWA_GIELDA_SECRET"
+environment = "paper"  # live | paper | testnet
 ```
 
 ## Parametry środowiskowe
@@ -49,11 +79,17 @@ EXCHANGE_ENVIRONMENT=live        # live | testnet | paper
 BINANCE_MARGIN_TYPE=isolated     # cross | isolated
 KRAKEN_ENVIRONMENT=testnet
 ZONDA_ENVIRONMENT=live
+NOWA_GIELDA_ENVIRONMENT=paper
 ```
 
 Zmienne są odczytywane przez warstwę konfiguracyjną i przekazywane do adapterów.
 Jeżeli desktop uruchamiany jest w trybie testnetowym, należy upewnić się, że
 klucze API zostały wygenerowane na odpowiedniej platformie.
+
+W przypadku `nowa_gielda_spot` dodatkowo można zdefiniować allowlistę IP używając
+metody `configure_network()` adaptera. Jeśli operator korzysta z filtrów sieciowych,
+wprowadź adresy IP proxy w konfiguracji startowej bota, aby uniknąć odrzuconych
+połączeń prywatnych endpointów.
 
 ## Health-check i watchdog
 
