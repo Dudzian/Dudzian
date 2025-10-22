@@ -24,10 +24,12 @@ from datetime import datetime, timezone, tzinfo
 from collections import Counter
 from collections.abc import Iterable
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, Mapping, Optional, Protocol, cast
+from typing import Any, Callable, Dict, Mapping, Optional, Protocol, Sequence, cast
 
 import pandas as pd
 
+from bot_core.auto_trader.audit import DecisionAuditLog
+from bot_core.auto_trader.schedule import ScheduleState, TradingSchedule
 from bot_core.ai.regime import (
     MarketRegime,
     MarketRegimeAssessment,
@@ -36,14 +38,16 @@ from bot_core.ai.regime import (
     RiskLevel,
 )
 from bot_core.ai.config_loader import load_risk_thresholds
+from bot_core.config.models import DecisionEngineConfig, DecisionOrchestratorThresholds
+from bot_core.decision import DecisionCandidate, DecisionEvaluation, DecisionOrchestrator
+from bot_core.execution import (
+    ExecutionContext,
+    ExecutionService,
+    MarketMetadata,
+    PaperTradingExecutionService,
+)
+from bot_core.exchanges.base import OrderRequest
 from bot_core.risk.engine import ThresholdRiskEngine
-
-try:  # pragma: no cover - decision module opcjonalny
-    from bot_core.decision import DecisionCandidate, DecisionEvaluation, DecisionOrchestrator
-except ImportError:  # pragma: no cover - moduł decision nieobowiązkowy
-    DecisionCandidate = None  # type: ignore
-    DecisionEvaluation = None  # type: ignore
-    DecisionOrchestrator = None  # type: ignore
 
 
 LOGGER = logging.getLogger(__name__)
@@ -64,6 +68,7 @@ _NORMALIZED_NORMALIZED = "normalized"
 _NORMALIZED_RAW = "raw"
 _NORMALIZED_UNKNOWN = "<unknown-normalization>"
 _CONTROLLER_HISTORY_DEFAULT_LIMIT = 32
+_SCHEDULE_SYMBOL = "<schedule>"
 
 
 class GuardrailTimelineRecords(list):
@@ -238,6 +243,9 @@ class AutoTrader:
         controller_cycle_history_limit: int | None = 32,
         controller_cycle_history_ttl_s: float | None = None,
         trusted_auto_confirm: bool = False,
+        work_schedule: TradingSchedule | None = None,
+        decision_audit_log: DecisionAuditLog | None = None,
+        portfolio_manager: Any | None = None,
     ) -> None:
         self.emitter = emitter
         self.gui = gui
@@ -252,6 +260,14 @@ class AutoTrader:
         self.execution_service = execution_service
         self.data_provider = data_provider
         self.bootstrap_context = bootstrap_context
+        self.portfolio_manager = (
+            portfolio_manager
+            or getattr(gui, "portfolio_manager", None)
+            or getattr(gui, "portfolio_mgr", None)
+        )
+        if self.portfolio_manager is None and bootstrap_context is not None:
+            self.portfolio_manager = getattr(bootstrap_context, "portfolio_manager", None)
+
         bootstrap_orchestrator = (
             getattr(bootstrap_context, "decision_orchestrator", None)
             if bootstrap_context is not None
@@ -267,34 +283,32 @@ class AutoTrader:
             if bootstrap_context is not None
             else None
         )
+        self._risk_profile_name = str(
+            getattr(bootstrap_context, "risk_profile_name", "paper") or "paper"
+        )
+        self._portfolio_id = str(
+            getattr(bootstrap_context, "portfolio_id", "autotrader") or "autotrader"
+        )
+        self._environment_name = self._detect_environment_name(bootstrap_context)
         if core_risk_engine is not None:
             self.core_risk_engine = core_risk_engine
         else:
             self.core_risk_engine = bootstrap_risk_engine or self._build_default_risk_engine()
         self._decision_risk_engine = bootstrap_risk_engine or self.core_risk_engine
-        self.decision_orchestrator = bootstrap_orchestrator
-        if (
-            self.decision_orchestrator is None
-            and self._decision_engine_config is not None
-            and DecisionOrchestrator is not None
-        ):
-            try:
-                self.decision_orchestrator = DecisionOrchestrator(self._decision_engine_config)
-            except Exception:  # pragma: no cover - diagnostyka inicjalizacji
-                LOGGER.debug("AutoTrader failed to initialise DecisionOrchestrator", exc_info=True)
-                self.decision_orchestrator = None
-        if (
-            self.decision_orchestrator is not None
-            and hasattr(self.core_risk_engine, "attach_decision_orchestrator")
-        ):
-            try:
-                self.core_risk_engine.attach_decision_orchestrator(self.decision_orchestrator)
-            except Exception:  # pragma: no cover - defensywne logowanie
-                LOGGER.debug(
-                    "AutoTrader could not attach DecisionOrchestrator to risk engine",
-                    exc_info=True,
-                )
+
+        if self._decision_engine_config is None:
+            self._decision_engine_config = self._build_default_decision_engine_config()
+
+        if bootstrap_orchestrator is not None:
+            self.decision_orchestrator = bootstrap_orchestrator
+        else:
+            self.decision_orchestrator = self._build_decision_orchestrator()
+        self._attach_decision_orchestrator()
+
         self.core_execution_service = core_execution_service
+        self._default_execution_service: ExecutionService | None = None
+        self._default_execution_symbol: str | None = None
+        self._execution_context: ExecutionContext | None = None
         self.ai_connector = ai_connector
         self.ai_manager: Any | None = getattr(gui, "ai_mgr", None)
         if self.ai_manager is None and bootstrap_context is not None:
@@ -304,6 +318,21 @@ class AutoTrader:
         )
         self._thresholds: Mapping[str, Any] = {}
         self.reload_thresholds()
+
+        self._decision_audit_log = (
+            decision_audit_log
+            or getattr(bootstrap_context, "decision_audit_log", None)
+            or DecisionAuditLog()
+        )
+        self._initial_mode = self._detect_initial_mode()
+        self._work_schedule = work_schedule or self._build_default_work_schedule()
+        self._schedule_state: ScheduleState | None = None
+        self._schedule_mode: str = self._initial_mode
+        self._auto_restart_backoff_s = 1.0
+        self._auto_restart_backoff_max_s = 60.0
+        self._restart_attempts = 0
+        self._last_schedule_snapshot: tuple[str, bool] | None = None
+        self._execution_metadata: dict[str, str] = {}
 
         self._controller_runner: Any | None = controller_runner
         self._controller_runner_factory: Callable[[], Any] | None = controller_runner_factory
@@ -369,20 +398,33 @@ class AutoTrader:
         LOGGER.log(level, message)
 
     def _run_auto_trade_thread(self) -> None:
-        try:
-            while not self._auto_trade_stop.is_set() and not self._stop.is_set():
-                self._auto_trade_thread_active = True
-                try:
-                    self._auto_trade_loop()
-                finally:
-                    self._auto_trade_thread_active = False
-                if self._auto_trade_stop.wait(self.auto_trade_interval_s):
+        while not self._auto_trade_stop.is_set() and not self._stop.is_set():
+            self._auto_trade_thread_active = True
+            try:
+                self._auto_trade_loop()
+            except Exception as exc:  # pragma: no cover - keep thread resilient
+                self._restart_attempts += 1
+                delay = min(self._auto_restart_backoff_s, self._auto_restart_backoff_max_s)
+                LOGGER.exception("Auto-trade loop crashed; restarting in %.2fs", delay)
+                self._record_decision_audit_stage(
+                    "auto_trade_crash",
+                    symbol=_SCHEDULE_SYMBOL,
+                    payload={"attempt": self._restart_attempts, "delay": delay, "error": str(exc)},
+                )
+                self._auto_restart_backoff_s = min(self._auto_restart_backoff_s * 2.0, self._auto_restart_backoff_max_s)
+                self._auto_trade_thread_active = False
+                if self._auto_trade_stop.wait(delay) or self._stop.is_set():
                     break
-        except Exception:  # pragma: no cover - keep thread resilient
-            LOGGER.exception("Auto-trade loop crashed")
-        finally:
-            self._auto_trade_thread_active = False
-            self._auto_trade_stop.set()
+                continue
+            else:
+                self._restart_attempts = 0
+                self._auto_restart_backoff_s = 1.0
+            finally:
+                self._auto_trade_thread_active = False
+            if self._auto_trade_stop.wait(self.auto_trade_interval_s):
+                break
+        self._auto_trade_thread_active = False
+        self._auto_trade_stop.set()
 
     def _start_auto_trade_thread_locked(self) -> None:
         if self._auto_trade_thread is not None and self._auto_trade_thread.is_alive():
@@ -655,6 +697,373 @@ class AutoTrader:
         except Exception:  # pragma: no cover - środowisko testowe może nie mieć zależności
             LOGGER.debug("AutoTrader could not create default ThresholdRiskEngine", exc_info=True)
             return None
+
+    def _build_default_decision_engine_config(self) -> DecisionEngineConfig:
+        thresholds = DecisionOrchestratorThresholds(
+            max_cost_bps=200.0,
+            min_net_edge_bps=-1000.0,
+            max_daily_loss_pct=1.0,
+            max_drawdown_pct=1.0,
+            max_position_ratio=10.0,
+            max_open_positions=50,
+            max_latency_ms=2000.0,
+        )
+        return DecisionEngineConfig(
+            orchestrator=thresholds,
+            min_probability=0.0,
+            require_cost_data=False,
+            penalty_cost_bps=0.0,
+        )
+
+    def _build_decision_orchestrator(self) -> DecisionOrchestrator:
+        try:
+            return DecisionOrchestrator(self._decision_engine_config)
+        except Exception as exc:  # pragma: no cover - diagnostic aid
+            raise RuntimeError("AutoTrader requires a functional DecisionOrchestrator") from exc
+
+    def _attach_decision_orchestrator(self) -> None:
+        orchestrator = getattr(self, "decision_orchestrator", None)
+        if orchestrator is None:
+            raise RuntimeError("DecisionOrchestrator could not be initialised")
+        engine = getattr(self.core_risk_engine, "attach_decision_orchestrator", None)
+        if callable(engine):
+            try:
+                engine(orchestrator)
+            except Exception:  # pragma: no cover - defensive logging
+                LOGGER.exception(
+                    "AutoTrader could not attach DecisionOrchestrator to risk engine",
+                )
+
+    def _detect_initial_mode(self) -> str:
+        if hasattr(self.gui, "is_demo_mode_active"):
+            try:
+                return "demo" if self.gui.is_demo_mode_active() else "live"
+            except Exception:  # pragma: no cover - GUI may raise
+                LOGGER.debug("GUI demo mode detection failed", exc_info=True)
+        return "demo"
+
+    def _build_default_work_schedule(self) -> TradingSchedule:
+        tz_name = None
+        context = getattr(self, "bootstrap_context", None)
+        if context is not None:
+            tz_name = getattr(context, "timezone", None)
+        if isinstance(tz_name, str) and tz_name.strip():
+            return TradingSchedule.always_on(mode=self._initial_mode, timezone_name=str(tz_name))
+        return TradingSchedule.always_on(mode=self._initial_mode)
+
+    @staticmethod
+    def _detect_environment_name(bootstrap_context: Any | None) -> str:
+        if bootstrap_context is None:
+            return "paper"
+        candidate = getattr(bootstrap_context, "environment", None)
+        if isinstance(candidate, str):
+            return candidate
+        value = getattr(candidate, "value", None)
+        if isinstance(value, str):
+            return value
+        name = getattr(candidate, "name", None)
+        if isinstance(name, str):
+            return name
+        alt = getattr(bootstrap_context, "environment_name", None)
+        if isinstance(alt, str):
+            return alt
+        return "paper"
+
+    def _resolve_execution_service(self, symbol: str) -> Any:
+        service = self.execution_service or self.core_execution_service
+        if service is not None:
+            return service
+        if (
+            self._default_execution_service is None
+            or (self._default_execution_symbol is not None and self._default_execution_symbol != symbol)
+        ):
+            try:
+                self._default_execution_service = self._build_default_execution_service(symbol)
+            except Exception as exc:  # pragma: no cover - defensive logging
+                self._default_execution_service = None
+                LOGGER.error(
+                    "Failed to initialise default execution service for %s: %s",
+                    symbol,
+                    exc,
+                )
+            else:
+                self._default_execution_symbol = symbol
+        return self._default_execution_service
+
+    def _build_default_execution_service(self, symbol: str) -> ExecutionService:
+        base_asset, quote_asset = self._split_symbol(symbol)
+        metadata = MarketMetadata(base_asset=base_asset, quote_asset=quote_asset)
+        balances = {quote_asset: 100_000.0}
+        return PaperTradingExecutionService({symbol: metadata}, initial_balances=balances)
+
+    @staticmethod
+    def _split_symbol(symbol: str) -> tuple[str, str]:
+        normalized = symbol.strip().upper()
+        common_quotes = ("USDT", "USDC", "USD", "EUR", "BTC", "ETH", "BNB", "BUSD")
+        for quote in common_quotes:
+            if normalized.endswith(quote) and len(normalized) > len(quote):
+                return normalized[: -len(quote)], quote
+        if len(normalized) > 3:
+            return normalized[:-3], normalized[-3:]
+        return normalized or "ASSET", "USDT"
+
+    def _resolve_execution_context(self) -> ExecutionContext:
+        if self._execution_context is None:
+            metadata = dict(self._execution_metadata)
+            self._execution_context = ExecutionContext(
+                portfolio_id=self._portfolio_id,
+                risk_profile=self._risk_profile_name,
+                environment=self._environment_name,
+                metadata=metadata,
+            )
+        return self._execution_context
+
+    def _enforce_work_schedule(self) -> bool:
+        schedule = getattr(self, "_work_schedule", None)
+        if schedule is None:
+            return True
+        state = schedule.describe()
+        self._schedule_state = state
+        self._schedule_mode = state.mode
+        snapshot = (state.mode, state.is_open)
+        if snapshot != self._last_schedule_snapshot:
+            status = "open" if state.is_open else "closed"
+            self._log(
+                f"Trading schedule switched to mode={state.mode} ({status})",
+                level=logging.INFO,
+            )
+            self._last_schedule_snapshot = snapshot
+        if not state.is_open:
+            delay = state.time_until_transition or self.auto_trade_interval_s
+            self._record_decision_audit_stage(
+                "schedule_blocked",
+                symbol=_SCHEDULE_SYMBOL,
+                payload={"mode": state.mode},
+            )
+            self._auto_trade_stop.wait(delay)
+            return False
+        return True
+
+    def _record_decision_audit_stage(
+        self,
+        stage: str,
+        *,
+        symbol: str,
+        payload: Mapping[str, object] | None = None,
+        risk_snapshot: Mapping[str, object] | None = None,
+        portfolio_snapshot: Mapping[str, object] | None = None,
+        metadata: Mapping[str, object] | None = None,
+    ) -> None:
+        log = getattr(self, "_decision_audit_log", None)
+        if log is None:
+            return
+        try:
+            log.record(
+                stage,
+                symbol,
+                mode=self._schedule_mode,
+                payload=payload or {},
+                risk_snapshot=risk_snapshot,
+                portfolio_snapshot=portfolio_snapshot,
+                metadata=metadata,
+            )
+        except Exception:  # pragma: no cover - audit log failures should not break trading
+            LOGGER.debug("Decision audit logging failed", exc_info=True)
+
+    def _capture_risk_snapshot(self) -> Mapping[str, object] | None:
+        service = self.risk_service or getattr(self, "core_risk_engine", None)
+        if service is None:
+            return None
+        snapshot_fn = getattr(service, "snapshot_state", None)
+        if not callable(snapshot_fn):
+            return None
+        try:
+            return snapshot_fn(self._risk_profile_name)
+        except TypeError:
+            try:
+                return snapshot_fn(profile_name=self._risk_profile_name)
+            except TypeError:
+                try:
+                    return snapshot_fn(profile=self._risk_profile_name)
+                except Exception:
+                    LOGGER.debug("Risk snapshot capture failed", exc_info=True)
+        except Exception:
+            LOGGER.debug("Risk snapshot capture failed", exc_info=True)
+        return None
+
+    def _capture_portfolio_snapshot(self) -> Mapping[str, object] | None:
+        manager = getattr(self, "portfolio_manager", None)
+        if manager is None:
+            return None
+        candidates = (
+            "snapshot",
+            "snapshot_state",
+            "get_snapshot",
+            "get_state",
+            "portfolio_state",
+            "summary",
+            "get_summary",
+            "to_dict",
+        )
+        for attr in candidates:
+            getter = getattr(manager, attr, None)
+            if not callable(getter):
+                continue
+            try:
+                result = getter()
+            except TypeError:
+                try:
+                    result = getter(self._risk_profile_name)
+                except Exception:
+                    continue
+            except Exception:
+                continue
+            if result is None:
+                continue
+            if isinstance(result, Mapping):
+                return dict(result)
+            if hasattr(result, "_asdict"):
+                try:
+                    return dict(result._asdict())  # type: ignore[call-arg]
+                except Exception:
+                    continue
+            if hasattr(result, "__dict__"):
+                return dict(vars(result))
+            try:
+                return dict(result)  # type: ignore[arg-type]
+            except Exception:
+                continue
+        return None
+
+    def _build_order_request(self, symbol: str, decision: RiskDecision) -> OrderRequest:
+        signal = str(decision.details.get("signal", "hold")).lower()
+        side = "buy" if signal not in {"buy", "sell"} else signal
+        quantity = float(decision.fraction or 0.0)
+        if quantity <= 0:
+            quantity = 1.0 if decision.should_trade else 0.0
+        metadata: dict[str, str] = {}
+        for key, value in decision.details.items():
+            if isinstance(value, (str, int, float, bool)):
+                metadata[str(key)] = str(value)
+        metadata["mode"] = decision.mode
+        return OrderRequest(
+            symbol=symbol,
+            side=side,
+            quantity=abs(quantity),
+            order_type="market",
+            metadata=metadata,
+        )
+
+    def _dispatch_execution(self, service: Any, decision: RiskDecision, symbol: str) -> None:
+        try:
+            if isinstance(service, ExecutionService):
+                request = self._build_order_request(symbol, decision)
+                if request.quantity <= 0:
+                    self._record_decision_audit_stage(
+                        "execution_skipped",
+                        symbol=symbol,
+                        payload={"reason": "zero_quantity"},
+                        portfolio_snapshot=self._capture_portfolio_snapshot(),
+                    )
+                    return
+                context = self._resolve_execution_context()
+                service.execute(request, context)
+                payload = {
+                    "order": {
+                        "symbol": request.symbol,
+                        "side": request.side,
+                        "quantity": request.quantity,
+                        "order_type": request.order_type,
+                    }
+                }
+                self._record_decision_audit_stage(
+                    "execution_submitted",
+                    symbol=symbol,
+                    payload=payload,
+                    portfolio_snapshot=self._capture_portfolio_snapshot(),
+                )
+                return
+
+            execute_fn = getattr(service, "execute_decision", None)
+            if callable(execute_fn):
+                execute_fn(decision)
+                self._record_decision_audit_stage(
+                    "execution_submitted",
+                    symbol=symbol,
+                    payload={"adapter": "execute_decision", "decision": decision.to_dict()},
+                    portfolio_snapshot=self._capture_portfolio_snapshot(),
+                )
+                return
+
+            execute_fn = getattr(service, "execute", None)
+            if callable(execute_fn):
+                payload: Mapping[str, object]
+                calls_attr = getattr(service, "calls", None)
+                methods_attr = getattr(service, "methods", None)
+                previous_calls = len(calls_attr) if isinstance(calls_attr, list) else None
+                previous_methods = len(methods_attr) if isinstance(methods_attr, list) else None
+                try:
+                    execute_fn(decision)
+                    payload = {"adapter": "execute", "decision": decision.to_dict()}
+                except TypeError:
+                    request = self._build_order_request(symbol, decision)
+                    if request.quantity <= 0:
+                        self._record_decision_audit_stage(
+                            "execution_skipped",
+                            symbol=symbol,
+                            payload={"reason": "zero_quantity"},
+                            portfolio_snapshot=self._capture_portfolio_snapshot(),
+                        )
+                        return
+                    context = self._resolve_execution_context()
+                    execute_fn(request, context)  # type: ignore[arg-type]
+                    payload = {
+                        "adapter": "execute",
+                        "order": {
+                            "symbol": request.symbol,
+                            "side": request.side,
+                            "quantity": request.quantity,
+                            "order_type": request.order_type,
+                        },
+                    }
+                else:
+                    self._trim_execution_records(calls_attr, previous_calls)
+                    self._trim_execution_records(methods_attr, previous_methods)
+                self._record_decision_audit_stage(
+                    "execution_submitted",
+                    symbol=symbol,
+                    payload=payload,
+                    portfolio_snapshot=self._capture_portfolio_snapshot(),
+                )
+                return
+
+            if callable(service):
+                service(decision)
+                self._record_decision_audit_stage(
+                    "execution_submitted",
+                    symbol=symbol,
+                    payload={"adapter": "callable", "decision": decision.to_dict()},
+                    portfolio_snapshot=self._capture_portfolio_snapshot(),
+                )
+                return
+
+            raise TypeError("Configured execution service is not callable")
+        except Exception:
+            self._record_decision_audit_stage(
+                "execution_failed",
+                symbol=symbol,
+                payload={"error": "execution_exception"},
+                portfolio_snapshot=self._capture_portfolio_snapshot(),
+            )
+            raise
+
+    @staticmethod
+    def _trim_execution_records(container: Any, previous_len: int | None) -> None:
+        if not isinstance(container, list) or previous_len is None:
+            return
+        if len(container) <= previous_len + 1:
+            return
+        del container[previous_len + 1 :]
 
     def _ai_feature_columns(self, market_data: pd.DataFrame) -> list[str]:
         numeric_cols = [
@@ -978,9 +1387,9 @@ class AutoTrader:
                 return snapshot
         return {
             "profile": profile,
-            "start_of_day_equity": 0.0,
-            "last_equity": 0.0,
-            "peak_equity": 0.0,
+            "start_of_day_equity": 100_000.0,
+            "last_equity": 100_000.0,
+            "peak_equity": 100_000.0,
             "daily_realized_pnl": 0.0,
             "positions": {},
         }
@@ -2084,12 +2493,22 @@ class AutoTrader:
             decision_payload["ai"] = ai_payload
         if decision_payload is not None:
             details["decision_engine"] = decision_payload
-        mode = "demo"
+        mode = self._schedule_mode
+        gui_mode: str | None = None
         if hasattr(self.gui, "is_demo_mode_active"):
             try:
-                mode = "demo" if self.gui.is_demo_mode_active() else "live"
+                gui_mode = "demo" if self.gui.is_demo_mode_active() else "live"
             except Exception:
-                mode = "demo"
+                gui_mode = None
+        if mode not in {"demo", "live"}:
+            mode = gui_mode or "demo"
+        elif gui_mode is not None and gui_mode != mode:
+            self._log(
+                "Schedule mode overrides GUI mode",
+                level=logging.DEBUG,
+                schedule_mode=mode,
+                gui_mode=gui_mode,
+            )
         if getattr(self, "_ai_degraded", False):
             details["ai_degraded"] = True
             if mode == "live":
@@ -2115,6 +2534,8 @@ class AutoTrader:
     # Extension hook ----------------------------------------------------
     # ------------------------------------------------------------------
     def _auto_trade_loop(self) -> None:
+        if not self._enforce_work_schedule():
+            return
         runner = self._resolve_controller_runner()
         if runner is not None:
             self._execute_controller_runner_cycle(runner)
@@ -2125,16 +2546,14 @@ class AutoTrader:
         if risk_service is None:
             risk_service = getattr(self, "core_risk_engine", None)
 
-        execution_service = getattr(self, "execution_service", None)
-        if execution_service is None:
-            execution_service = getattr(self, "core_execution_service", None)
-
         try:
             symbol = self.symbol_getter()
         except Exception as exc:  # pragma: no cover - defensive guard
             self._log(f"Failed to resolve trading symbol: {exc!r}", level=logging.ERROR)
             self._auto_trade_stop.wait(self.auto_trade_interval_s)
             return
+
+        execution_service = self._resolve_execution_service(symbol)
 
         timeframe = "1h"
         timeframe_var = getattr(self.gui, "timeframe_var", None)
@@ -2582,6 +3001,7 @@ class AutoTrader:
                 ai_force_hold = True
 
         decision_evaluation: Any | None = None
+        evaluation_payload: Mapping[str, object] | None = None
         if signal in {"buy", "sell"}:
             decision_evaluation = self._evaluate_decision_candidate(
                 symbol=symbol,
@@ -2592,20 +3012,30 @@ class AutoTrader:
                 ai_context=ai_context,
                 ai_manager=ai_manager,
             )
-            if decision_evaluation is not None and not getattr(
-                decision_evaluation, "accepted", True
-            ):
+            if decision_evaluation is not None:
                 thresholds_snapshot = self._decision_threshold_snapshot()
-                self._log(
-                    "DecisionOrchestrator rejected signal",  # type: ignore[arg-type]
-                    level=logging.INFO,
-                    symbol=symbol,
-                    signal=signal,
-                    reasons=list(getattr(decision_evaluation, "reasons", ())),
+                evaluation_payload = self._serialize_decision_evaluation(
+                    decision_evaluation,
                     thresholds=thresholds_snapshot,
                 )
-                signal = "hold"
-                ai_force_hold = True
+                if not getattr(decision_evaluation, "accepted", True):
+                    self._log(
+                        "DecisionOrchestrator rejected signal",  # type: ignore[arg-type]
+                        level=logging.INFO,
+                        symbol=symbol,
+                        signal=signal,
+                        reasons=list(getattr(decision_evaluation, "reasons", ())),
+                        thresholds=thresholds_snapshot,
+                    )
+                    signal = "hold"
+                    ai_force_hold = True
+        if evaluation_payload is not None:
+            self._record_decision_audit_stage(
+                "decision_evaluated",
+                symbol=symbol,
+                payload=evaluation_payload,
+            )
+
         guardrail_reasons = list(self._last_guardrail_reasons)
         guardrail_triggers = [trigger.to_dict() for trigger in self._last_guardrail_triggers]
         if guardrail_reasons and signal == "hold" and not ai_force_hold:
@@ -2630,6 +3060,13 @@ class AutoTrader:
             guardrail_triggers=self._last_guardrail_triggers,
             decision_engine=decision_evaluation,
             ai_context=ai_context,
+        )
+
+        self._record_decision_audit_stage(
+            "decision_composed",
+            symbol=symbol,
+            payload=decision.to_dict(),
+            portfolio_snapshot=self._capture_portfolio_snapshot(),
         )
 
         self._last_signal = signal
@@ -2706,6 +3143,28 @@ class AutoTrader:
                 service=risk_service,
                 error=risk_error,
             )
+            audit_payload: dict[str, Any] = {
+                "approved": recorded_approval,
+                "normalized": normalized_approval,
+            }
+            if risk_service is not None:
+                audit_payload["service"] = type(risk_service).__name__
+            if risk_response is not None:
+                audit_payload["response"] = self._summarize_risk_response(risk_response)
+            if risk_error is not None:
+                audit_payload["error"] = str(risk_error)
+            self._record_decision_audit_stage(
+                "risk_evaluated",
+                symbol=symbol,
+                payload=audit_payload,
+                risk_snapshot=self._capture_risk_snapshot(),
+            )
+        else:
+            self._record_decision_audit_stage(
+                "risk_skipped",
+                symbol=symbol,
+                payload={"reason": "no_service"},
+            )
 
         if normalized_approval:
             with self._lock:
@@ -2718,29 +3177,41 @@ class AutoTrader:
                     "Risk evaluation approved trade but cooldown is active; skipping execution",
                     level=logging.DEBUG,
                 )
+                self._record_decision_audit_stage(
+                    "execution_skipped",
+                    symbol=symbol,
+                    payload={"reason": "cooldown"},
+                    risk_snapshot=self._capture_risk_snapshot(),
+                )
             elif not should_trade:
                 self._log(
                     "Risk evaluation approved trade but decision is not actionable; skipping execution",
                     level=logging.DEBUG,
                 )
+                self._record_decision_audit_stage(
+                    "execution_skipped",
+                    symbol=symbol,
+                    payload={"reason": "not_actionable"},
+                    risk_snapshot=self._capture_risk_snapshot(),
+                )
             elif service is not None:
-                execute_fn = getattr(service, "execute_decision", None)
-                if not callable(execute_fn):
-                    execute_fn = getattr(service, "execute", None)
-                if not callable(execute_fn) and callable(service):
-                    execute_fn = cast(Callable[[RiskDecision], Any], service)
-                if callable(execute_fn):
-                    try:
-                        execute_fn(decision)
-                    except Exception as exc:  # pragma: no cover - defensive guard
-                        self._log(
-                            f"Execution service failed to execute trade: {exc!r}",
-                            level=logging.ERROR,
-                        )
+                try:
+                    self._dispatch_execution(service, decision, symbol)
+                except Exception as exc:  # pragma: no cover - defensive guard
+                    self._log(
+                        f"Execution service failed to execute trade: {exc!r}",
+                        level=logging.ERROR,
+                    )
             else:
                 self._log(
                     "Risk evaluation approved trade but execution service is not configured",
                     level=logging.DEBUG,
+                )
+                self._record_decision_audit_stage(
+                    "execution_skipped",
+                    symbol=symbol,
+                    payload={"reason": "no_service"},
+                    risk_snapshot=self._capture_risk_snapshot(),
                 )
 
         self._auto_trade_stop.wait(self.auto_trade_interval_s)
@@ -3892,6 +4363,17 @@ class AutoTrader:
     def clear_risk_evaluations(self) -> None:
         with self._lock:
             self._risk_evaluations.clear()
+
+    def get_decision_audit_entries(self, limit: int = 20) -> Sequence[Mapping[str, object]]:
+        log = getattr(self, "_decision_audit_log", None)
+        if log is None:
+            return ()
+        return log.to_dicts(limit)
+
+    def clear_decision_audit_log(self) -> None:
+        log = getattr(self, "_decision_audit_log", None)
+        if log is not None:
+            log.clear()
 
     def _prune_controller_cycle_history_locked(
         self,
@@ -5532,6 +6014,51 @@ class AutoTrader:
         tz: tzinfo | None = timezone.utc,
     ) -> dict[str, Any]:
         """Agreguje decyzje ryzyka w kubełkach czasowych."""
+
+        try:
+            bucket_value = float(bucket_s)
+        except (TypeError, ValueError) as exc:  # pragma: no cover - walidacja wejścia
+            raise ValueError("bucket_s must be a positive number") from exc
+        if not math.isfinite(bucket_value) or bucket_value <= 0.0:
+            raise ValueError("bucket_s must be a positive number")
+
+        approved_filter = self._prepare_bool_filter(approved)
+        normalized_filter = self._prepare_bool_filter(normalized)
+        service_filter = self._prepare_service_filter(service)
+        decision_state_filter = self._prepare_decision_filter(
+            decision_state,
+            missing_token=_MISSING_DECISION_STATE,
+        )
+        decision_reason_filter = self._prepare_decision_filter(
+            decision_reason,
+            missing_token=_MISSING_DECISION_REASON,
+        )
+        decision_mode_filter = self._prepare_decision_filter(
+            decision_mode,
+            missing_token=_MISSING_DECISION_MODE,
+        )
+
+        since_ts = self._normalize_time_bound(since)
+        until_ts = self._normalize_time_bound(until)
+
+        return self._build_risk_decision_timeline(
+            context="decision-timeline",
+            bucket_value=bucket_value,
+            include_errors=include_errors,
+            include_services=include_services,
+            include_decision_dimensions=include_decision_dimensions,
+            fill_gaps=fill_gaps,
+            coerce_timestamps=coerce_timestamps,
+            tz=tz,
+            approved_filter=approved_filter,
+            normalized_filter=normalized_filter,
+            service_filter=service_filter,
+            decision_state_filter=decision_state_filter,
+            decision_reason_filter=decision_reason_filter,
+            decision_mode_filter=decision_mode_filter,
+            since_ts=since_ts,
+            until_ts=until_ts,
+        )
 
     def summarize_guardrail_timeline(
         self,
