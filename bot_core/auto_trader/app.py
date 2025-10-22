@@ -138,6 +138,62 @@ class EmitterLike(Protocol):
         ...
 
 
+def _serialize_schedule_window(window: ScheduleWindow) -> dict[str, Any]:
+    """Return a serialisable snapshot of a schedule window."""
+
+    payload: dict[str, Any] = {
+        "start": window.start.isoformat(),
+        "end": window.end.isoformat(),
+        "mode": window.mode,
+        "allow_trading": bool(window.allow_trading),
+        "days": sorted(int(day) for day in window.days),
+        "duration_s": int(window.duration.total_seconds()),
+    }
+    if window.label is not None:
+        payload["label"] = window.label
+    return payload
+
+
+def _serialize_schedule_override(override: ScheduleOverride) -> dict[str, Any]:
+    """Return a serialisable snapshot of a schedule override."""
+
+    payload: dict[str, Any] = {
+        "start": override.start.astimezone(timezone.utc).isoformat(),
+        "end": override.end.astimezone(timezone.utc).isoformat(),
+        "mode": override.mode,
+        "allow_trading": bool(override.allow_trading),
+        "duration_s": int(override.duration.total_seconds()),
+    }
+    if override.label is not None:
+        payload["label"] = override.label
+    return payload
+
+
+def _serialize_schedule_state(state: ScheduleState) -> dict[str, Any]:
+    """Return a serialisable snapshot of a schedule state."""
+
+    payload: dict[str, Any] = {
+        "mode": state.mode,
+        "is_open": bool(state.is_open),
+    }
+    if state.window is not None:
+        payload["window"] = _serialize_schedule_window(state.window)
+    if state.next_transition is not None:
+        payload["next_transition"] = state.next_transition.astimezone(timezone.utc).isoformat()
+    if state.override is not None:
+        payload["override"] = _serialize_schedule_override(state.override)
+    if state.next_override is not None:
+        payload["next_override"] = _serialize_schedule_override(state.next_override)
+    remaining = state.time_until_transition
+    if remaining is not None:
+        payload["time_until_transition_s"] = remaining
+    next_override_delay = state.time_until_next_override
+    if next_override_delay is not None:
+        payload["time_until_next_override_s"] = next_override_delay
+    payload["override_active"] = state.override_active
+    return payload
+
+
 @dataclass(slots=True)
 class RiskDecision:
     """Serializable snapshot describing the outcome of a risk engine check."""
