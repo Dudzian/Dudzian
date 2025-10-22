@@ -620,13 +620,10 @@ class ExchangeManager:
         secret_length = len(self._secret or "")
         passphrase_length = len(self._passphrase or "")
         log.info(
-            "Credentials set (lengths): api_key=%s, secret=%s, passphrase=%s",
+            "Credentials set (lengths): api_key=%d, secret=%d, passphrase=%d",
             api_key_length,
             secret_length,
             passphrase_length,
-            len(self._api_key or ""),
-            len(self._secret or ""),
-            len(self._passphrase or ""),
         )
         self._native_adapter = None
         self._private = None

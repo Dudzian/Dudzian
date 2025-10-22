@@ -540,7 +540,7 @@ class AIManager:
     def require_real_models(self) -> None:
         """Zgłasza wyjątek gdy dostępne są tylko fallbackowe modele AI."""
 
-        if self._degraded or not self._decision_inferences:
+        if self._degraded:
             reason = self._degradation_reason or "AI backend in degraded mode"
             raise RuntimeError(
                 "Real models are required for live trading; current backend is degraded: "

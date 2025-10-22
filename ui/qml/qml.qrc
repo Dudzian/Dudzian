@@ -14,5 +14,7 @@
         <file>components/ReportBrowser.qml</file>
         <file>components/FirstRunWizard.qml</file>
         <file>components/RiskMonitorPanel.qml</file>
+        <file>components/EquityCurveDashboard.qml</file>
+        <file>components/AssetHeatmapDashboard.qml</file>
     </qresource>
 </RCC>

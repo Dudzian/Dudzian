@@ -7,7 +7,8 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from typing import Callable, Mapping, MutableMapping, Sequence
 
-from bot_core.ai import DecisionModelInference, ModelScore
+from bot_core.ai.inference import DecisionModelInference
+from bot_core.ai.models import ModelScore
 from bot_core.config.models import (
     DecisionEngineConfig,
     DecisionOrchestratorThresholds,
