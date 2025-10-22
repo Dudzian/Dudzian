@@ -8,8 +8,18 @@ spakowania artefaktów w katalogu `var/dist/desktop`.
 ## Wymagania
 
 * Zbudowana wersja `Release` aplikacji (`bot_trading_shell`) z katalogu `ui/`.
-* Zainstalowany `pyinstaller` (np. `pip install pyinstaller`).
+* Środowisko Pythona zainstalowane wg `deploy/packaging/requirements-desktop.txt`
+  (obejmuje `numpy`, `pandas`, `joblib`, `pyinstaller`, `briefcase`).
 * Klucz HMAC używany do podpisania binarki updatera.
+
+Przed uruchomieniem procesu budowania wykonaj:
+
+```bash
+python -m venv .venv-desktop
+source .venv-desktop/bin/activate
+pip install --upgrade pip
+pip install -r deploy/packaging/requirements-desktop.txt
+```
 
 ## Kroki
 

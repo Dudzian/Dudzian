@@ -506,7 +506,6 @@ class AutoTradeEngine:
         if auto_until and now >= auto_until:
             self._auto_risk_frozen = False
             self._auto_risk_frozen_until = 0.0
-            self._auto_risk_state = _AutoRiskFreezeState()
             self.adapter.push_autotrade_status(  # type: ignore[attr-defined]
                 "auto_risk_unfreeze",
                 detail={"symbol": self.cfg.symbol},
@@ -515,77 +514,39 @@ class AutoTradeEngine:
         if self.cfg.auto_risk_freeze:
             summary = self._regime_history.summarise()
             triggered = False
-            level_rank = -1
-            score_value: float | None = None
             if summary is not None:
                 level_rank = self._RISK_LEVEL_ORDER.get(summary.risk_level, -1)
                 target_rank = self._RISK_LEVEL_ORDER.get(self.cfg.auto_risk_freeze_level, 99)
                 level_triggered = level_rank >= target_rank >= 0
-                score_value = float(summary.risk_score)
-                score_triggered = score_value >= self.cfg.auto_risk_freeze_score
+                score_triggered = summary.risk_score >= self.cfg.auto_risk_freeze_score
                 triggered = level_triggered or score_triggered
             if triggered:
-                previous_until = self._auto_risk_frozen_until if self._auto_risk_frozen else 0.0
                 new_expiry = now + float(self.cfg.risk_freeze_seconds)
-                effective_expiry = max(previous_until, new_expiry)
+                previous_until = self._auto_risk_frozen_until if self._auto_risk_frozen else 0.0
                 detail = {
                     "symbol": self.cfg.symbol,
                     "risk_level": summary.risk_level.value if summary else None,
-                    "risk_score": score_value,
-                    "until": effective_expiry,
+                    "risk_score": summary.risk_score if summary else None,
+                    "until": new_expiry,
                 }
                 if not self._auto_risk_frozen:
-                    self._auto_risk_state = _AutoRiskFreezeState(
-                        risk_level=summary.risk_level if summary else None,
-                        risk_score=score_value,
-                        triggered_at=now,
-                        last_extension_at=now,
-                    )
-                    self._auto_risk_frozen = True
-                    self._auto_risk_frozen_until = effective_expiry
                     self.adapter.push_autotrade_status(  # type: ignore[attr-defined]
                         "auto_risk_freeze",
                         detail=detail,
                         level="WARN",
                     )
                 else:
-                    extend_reason = None
-                    state = self._auto_risk_state
-                    previous_level_rank = self._RISK_LEVEL_ORDER.get(state.risk_level, -1)
-                    if summary is not None:
-                        if level_rank > previous_level_rank:
-                            extend_reason = "risk_level_escalated"
-                        elif level_rank == previous_level_rank and score_value is not None:
-                            prev_score = state.risk_score if state.risk_score is not None else -math.inf
-                            if score_value >= prev_score + 0.05:
-                                extend_reason = "risk_score_increase"
-                    time_remaining = previous_until - now
-                    if extend_reason is None and time_remaining <= float(self.cfg.risk_freeze_seconds) * 0.25:
-                        extend_reason = "expiry_near"
-                    if extend_reason and effective_expiry > previous_until + 1e-6:
+                    if new_expiry > previous_until + 1e-6:
                         extend_detail = dict(detail)
                         extend_detail["extended_from"] = previous_until
-                        extend_detail["until"] = effective_expiry
-                        extend_detail["reason"] = extend_reason
+                        extend_detail["until"] = new_expiry
                         self.adapter.push_autotrade_status(  # type: ignore[attr-defined]
                             "auto_risk_freeze_extend",
                             detail=extend_detail,
                             level="WARN",
                         )
-                        self._auto_risk_frozen_until = effective_expiry
-                        self._auto_risk_state = _AutoRiskFreezeState(
-                            risk_level=summary.risk_level if summary else None,
-                            risk_score=score_value,
-                            triggered_at=state.triggered_at or now,
-                            last_extension_at=now,
-                        )
-                    else:
-                        self._auto_risk_state = _AutoRiskFreezeState(
-                            risk_level=summary.risk_level if summary else None,
-                            risk_score=score_value,
-                            triggered_at=state.triggered_at or now,
-                            last_extension_at=state.last_extension_at,
-                        )
+                self._auto_risk_frozen = True
+                self._auto_risk_frozen_until = max(previous_until, new_expiry)
 
         self._recompute_risk_freeze_until()
 
@@ -600,7 +561,6 @@ class AutoTradeEngine:
             auto_until = 0.0
             self._auto_risk_frozen_until = 0.0
             self._auto_risk_frozen = False
-            self._auto_risk_state = _AutoRiskFreezeState()
         self._risk_frozen_until = float(max(manual_until, auto_until, 0.0))
 
     def get_last_regime_assessment(self) -> MarketRegimeAssessment | None:

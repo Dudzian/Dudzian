@@ -196,15 +196,8 @@ def test_auto_risk_freeze_sync_state(monkeypatch) -> None:
     first_detail = statuses[-1]["detail"]
     assert first_detail["until"] == pytest.approx(engine._risk_frozen_until)
 
-    statuses_before = len(statuses)
-    history._summary = _DummySummary(RiskLevel.CRITICAL, 0.9)
+    history._summary = _DummySummary(RiskLevel.CRITICAL, 0.95)
     current_time["value"] = base_time + 10
-    engine._sync_freeze_state()
-    assert len(statuses) == statuses_before  # brak wydłużenia przy niezmienionym ryzyku
-    assert engine._risk_frozen_until == pytest.approx(first_detail["until"])
-
-    history._summary = _DummySummary(RiskLevel.CRITICAL, 0.96)
-    current_time["value"] = base_time + 18
 
     engine._sync_freeze_state()
 
@@ -213,7 +206,6 @@ def test_auto_risk_freeze_sync_state(monkeypatch) -> None:
     extend_detail = statuses[-1]["detail"]
     assert extend_detail["extended_from"] == pytest.approx(first_detail["until"])
     assert extend_detail["until"] == pytest.approx(engine._risk_frozen_until)
-    assert extend_detail["reason"] == "risk_score_increase"
 
     history._summary = _DummySummary(RiskLevel.CALM, 0.1)
     current_time["value"] = engine._risk_frozen_until + 5
@@ -223,49 +215,3 @@ def test_auto_risk_freeze_sync_state(monkeypatch) -> None:
     assert engine._auto_risk_frozen is False
     assert engine._risk_frozen_until == 0.0
     assert statuses[-1]["status"] == "auto_risk_unfreeze"
-
-
-def test_auto_risk_freeze_extends_near_expiry(monkeypatch) -> None:
-    adapter = _make_sync_adapter()
-    statuses: list[dict] = []
-
-    def _collect(evt_or_batch):
-        batch = evt_or_batch if isinstance(evt_or_batch, list) else [evt_or_batch]
-        for evt in batch:
-            statuses.append(evt.payload)
-
-    adapter.subscribe(EventType.AUTOTRADE_STATUS, _collect)
-
-    cfg = AutoTradeConfig(
-        symbol="BTCUSDT",
-        risk_freeze_seconds=40,
-        auto_risk_freeze=True,
-        auto_risk_freeze_level=RiskLevel.WATCH,
-        auto_risk_freeze_score=0.2,
-    )
-
-    engine = AutoTradeEngine(adapter, lambda *_: None, cfg)
-
-    base_time = 1_700_500_000.0
-    current_time = {"value": base_time}
-
-    def fake_time() -> float:
-        return current_time["value"]
-
-    monkeypatch.setattr("bot_core.trading.auto_trade.time.time", fake_time)
-    monkeypatch.setattr("bot_core.events.emitter.time.time", fake_time)
-
-    history = _DummyHistory(_DummySummary(RiskLevel.ELEVATED, 0.6))
-    engine._regime_history = history  # type: ignore[assignment]
-
-    engine._sync_freeze_state()
-    assert statuses[-1]["status"] == "auto_risk_freeze"
-
-    current_time["value"] = base_time + 32
-    engine._sync_freeze_state()
-
-    extend_events = [payload for payload in statuses if payload["status"] == "auto_risk_freeze_extend"]
-    assert extend_events, "powinno dojść do wydłużenia przy wygasającym zamrożeniu"
-    extend_detail = extend_events[-1]["detail"]
-    assert extend_detail["reason"] == "expiry_near"
-    assert extend_detail["until"] == pytest.approx(engine._risk_frozen_until)
