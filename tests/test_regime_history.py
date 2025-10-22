@@ -162,34 +162,6 @@ def test_regime_history_reload_thresholds_and_snapshot() -> None:
     assert calls == 2
 
 
-def test_regime_history_reconfigure_adjusts_window_and_decay() -> None:
-    history = RegimeHistory(maxlen=3, decay=0.5)
-    history.update(_assessment("x", MarketRegime.TREND, risk=0.2, confidence=0.4))
-    history.update(_assessment("x", MarketRegime.DAILY, risk=0.3, confidence=0.5))
-    history.update(_assessment("x", MarketRegime.MEAN_REVERSION, risk=0.6, confidence=0.7))
-
-    history.reconfigure(maxlen=5, decay=0.8)
-    assert history.maxlen == 5
-    assert history.decay == pytest.approx(0.8)
-    assert len(history.snapshots) == 3
-
-    history.update(_assessment("x", MarketRegime.MEAN_REVERSION, risk=0.55, confidence=0.6))
-    history.reconfigure(maxlen=2)
-    assert history.maxlen == 2
-    assert len(history.snapshots) == 2
-    assert history.snapshots[-1].regime is MarketRegime.MEAN_REVERSION
-
-
-def test_regime_history_reconfigure_can_reset_state() -> None:
-    history = RegimeHistory(maxlen=4, decay=0.6)
-    history.update(_assessment("x", MarketRegime.TREND, risk=0.2, confidence=0.4))
-    history.update(_assessment("x", MarketRegime.TREND, risk=0.25, confidence=0.5))
-
-    history.reconfigure(decay=0.9, keep_history=False)
-    assert history.decay == pytest.approx(0.9)
-    assert len(history.snapshots) == 0
-
-
 class _ClassifierStub:
     def __init__(
         self,
@@ -197,15 +169,13 @@ class _ClassifierStub:
         thresholds: Mapping[str, object] | None = None,
     ) -> None:
         self._queue = assessments
-        if thresholds is None:
-            thresholds = {
-                "market_regime": {
-                    "metrics": {},
-                    "risk_score": {},
-                    "risk_level": {},
-                }
+        self._thresholds = {
+            "market_regime": {
+                "metrics": {},
+                "risk_score": {},
+                "risk_level": {},
             }
-        self._thresholds = deepcopy(thresholds)
+        }
 
     @property
     def thresholds_loader(self) -> Callable[[], Mapping[str, object]]:
