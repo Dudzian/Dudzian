@@ -3,13 +3,22 @@ from __future__ import annotations
 
 import time
 from collections import deque
+from copy import deepcopy
 from dataclasses import dataclass, field
-from typing import Deque, Dict, Iterable, List, Mapping, Optional
+from typing import Any, Deque, Dict, Iterable, List, Mapping, Optional
 
 import numpy as np
 import pandas as pd
 
-from bot_core.ai.regime import MarketRegime, MarketRegimeAssessment, MarketRegimeClassifier, RegimeStrategyWeights
+from bot_core.ai.regime import (
+    MarketRegime,
+    MarketRegimeAssessment,
+    MarketRegimeClassifier,
+    RegimeHistory,
+    RegimeStrategyWeights,
+    RegimeSummary,
+    RiskLevel,
+)
 from bot_core.backtest.ma import simulate_trades_ma  # noqa: F401 - zachowaj kompatybilność API
 from bot_core.events import DebounceRule, Event, EventBus, EventType, EmitterAdapter
 
@@ -28,6 +37,11 @@ class AutoTradeConfig:
     breakout_window: int = 24
     mean_reversion_window: int = 20
     mean_reversion_z: float = 1.25
+    regime_history_maxlen: int = 5
+    regime_history_decay: float = 0.65
+    auto_risk_freeze: bool = True
+    auto_risk_freeze_level: RiskLevel | str = RiskLevel.CRITICAL
+    auto_risk_freeze_score: float = 0.8
 
     def __post_init__(self) -> None:
         if self.default_params is None:
@@ -38,16 +52,46 @@ class AutoTradeConfig:
                 regime.value: dict(weights)
                 for regime, weights in defaults.weights.items()
             }
+        self.regime_history_maxlen = int(self.regime_history_maxlen)
+        self.regime_history_decay = float(self.regime_history_decay)
+        if self.regime_history_maxlen < 1:
+            raise ValueError("regime_history_maxlen must be at least 1")
+        if not (0.0 < self.regime_history_decay <= 1.0):
+            raise ValueError("regime_history_decay must be in the (0, 1] range")
+        self.auto_risk_freeze = bool(self.auto_risk_freeze)
+        level = self.auto_risk_freeze_level
+        if isinstance(level, str):
+            try:
+                level = RiskLevel(level.lower())
+            except ValueError as exc:  # pragma: no cover - walidacja wejścia
+                raise ValueError("auto_risk_freeze_level must be a valid RiskLevel") from exc
+        elif not isinstance(level, RiskLevel):
+            raise TypeError("auto_risk_freeze_level must be RiskLevel or string")
+        self.auto_risk_freeze_level = level
+        self.auto_risk_freeze_score = float(self.auto_risk_freeze_score)
+        if not (0.0 <= self.auto_risk_freeze_score <= 1.0):
+            raise ValueError("auto_risk_freeze_score must be in the [0, 1] range")
 
 
 class AutoTradeEngine:
     """Prosty kontroler autotradingu reagujący na ticki z EventBusa."""
+
+    _RISK_LEVEL_ORDER = {
+        RiskLevel.CALM: 0,
+        RiskLevel.BALANCED: 1,
+        RiskLevel.WATCH: 2,
+        RiskLevel.ELEVATED: 3,
+        RiskLevel.CRITICAL: 4,
+    }
 
     def __init__(
         self,
         adapter: EmitterAdapter,
         broker_submit_market,
         cfg: Optional[AutoTradeConfig] = None,
+        *,
+        regime_classifier: MarketRegimeClassifier | None = None,
+        regime_history: RegimeHistory | None = None,
     ) -> None:
         self.adapter = adapter
         self.bus: EventBus = adapter.bus
@@ -58,8 +102,10 @@ class AutoTradeEngine:
         self._last_signal: Optional[int] = None
         self._enabled: bool = True
         self._risk_frozen_until: float = 0.0
+        self._manual_risk_frozen_until: float = 0.0
+        self._auto_risk_frozen_until: float = 0.0
+        self._auto_risk_frozen: bool = False
         self._submit_market = broker_submit_market
-        self._regime_classifier = MarketRegimeClassifier()
         self._strategy_weights = RegimeStrategyWeights(
             weights={
                 MarketRegime(regime): dict(weights)
@@ -67,6 +113,11 @@ class AutoTradeEngine:
             }
         )
         self._last_regime: MarketRegimeAssessment | None = None
+        self._last_summary: RegimeSummary | None = None
+        self._install_regime_components(
+            regime_classifier or MarketRegimeClassifier(),
+            regime_history,
+        )
 
         batch_rule = DebounceRule(window=0.1, max_batch=1)
         self.bus.subscribe(EventType.MARKET_TICK, self._on_ticks_batch, rule=batch_rule)
@@ -75,7 +126,10 @@ class AutoTradeEngine:
 
     def enable(self) -> None:
         self._enabled = True
-        self._risk_frozen_until = 0.0
+        self._manual_risk_frozen_until = 0.0
+        self._auto_risk_frozen_until = 0.0
+        self._auto_risk_frozen = False
+        self._recompute_risk_freeze_until()
         self.adapter.push_autotrade_status("enabled", detail={"symbol": self.cfg.symbol})  # type: ignore[attr-defined]
 
     def disable(self, reason: str = "") -> None:
@@ -115,6 +169,94 @@ class AutoTradeEngine:
             normalized[regime] = {str(name): float(value) for name, value in weights.items()}
         return normalized
 
+    def _install_regime_components(
+        self,
+        classifier: MarketRegimeClassifier,
+        history: RegimeHistory | None = None,
+    ) -> None:
+        """Powiąż klasyfikator oraz historię, zapewniając spójną konfigurację progów."""
+
+        loader = getattr(classifier, "thresholds_loader", None)
+        if loader is None or not callable(loader):  # pragma: no cover - defensywne strażniki
+            raise TypeError("classifier must expose a callable thresholds_loader")
+        snapshot_getter = getattr(classifier, "thresholds_snapshot", None)
+        if snapshot_getter is None or not callable(snapshot_getter):  # pragma: no cover - strażnik
+            raise TypeError("classifier must provide thresholds_snapshot()")
+
+        self._regime_classifier = classifier
+        supplied_history = history
+        if supplied_history is None:
+            existing_history = getattr(self, "_regime_history", None)
+            if isinstance(existing_history, RegimeHistory):
+                history = existing_history
+                history.reconfigure(
+                    maxlen=self.cfg.regime_history_maxlen,
+                    decay=self.cfg.regime_history_decay,
+                    keep_history=True,
+                )
+                history.reload_thresholds(loader=loader)
+            else:
+                history = RegimeHistory(
+                    thresholds_loader=loader,
+                    maxlen=self.cfg.regime_history_maxlen,
+                    decay=self.cfg.regime_history_decay,
+                )
+        else:
+            history = supplied_history
+            history.reload_thresholds(loader=loader)
+        thresholds = snapshot_getter()
+        history.reload_thresholds(thresholds=thresholds)
+        self._regime_history = history
+
+    def set_regime_components(
+        self,
+        *,
+        classifier: MarketRegimeClassifier,
+        history: RegimeHistory | None = None,
+        reset_state: bool = True,
+    ) -> None:
+        """Zastąp aktywny klasyfikator i historię autotradera."""
+
+        target_history = history or getattr(self, "_regime_history", None)
+        self._install_regime_components(classifier, target_history)
+        if reset_state:
+            self._last_regime = None
+            self._last_summary = None
+            self._regime_history.clear()
+            self._auto_risk_frozen = False
+            self._auto_risk_frozen_until = 0.0
+            self._recompute_risk_freeze_until()
+
+    def configure_regime_history(
+        self,
+        *,
+        maxlen: int | None = None,
+        decay: float | None = None,
+        reset: bool = False,
+    ) -> None:
+        """Zmień parametry wygładzania historii reżimu."""
+
+        update_maxlen = maxlen is not None
+        update_decay = decay is not None
+        if maxlen is None and decay is None:
+            if not reset:
+                return
+            maxlen = self._regime_history.maxlen
+            decay = self._regime_history.decay
+        keep_history = not reset
+        self._regime_history.reconfigure(
+            maxlen=maxlen,
+            decay=decay,
+            keep_history=keep_history,
+        )
+        if update_maxlen and maxlen is not None:
+            self.cfg.regime_history_maxlen = int(maxlen)
+        if update_decay and decay is not None:
+            self.cfg.regime_history_decay = float(decay)
+        if reset:
+            self._last_regime = None
+            self._last_summary = None
+
     def _on_wfo_status_batch(self, events: List[Event]) -> None:
         for ev in events:
             st = ev.payload.get("status") if ev.payload else None
@@ -133,7 +275,10 @@ class AutoTradeEngine:
             payload = ev.payload or {}
             if payload.get("symbol") != self.cfg.symbol:
                 continue
-            self._risk_frozen_until = max(self._risk_frozen_until, now + self.cfg.risk_freeze_seconds)
+            expiry = now + self.cfg.risk_freeze_seconds
+            if expiry > self._manual_risk_frozen_until:
+                self._manual_risk_frozen_until = expiry
+            self._recompute_risk_freeze_until()
             self.adapter.push_autotrade_status(  # type: ignore[attr-defined]
                 "risk_freeze",
                 detail={
@@ -305,13 +450,120 @@ class AutoTradeEngine:
                 metrics={},
                 symbol=self.cfg.symbol,
             )
-        if self._last_regime is None or self._last_regime.regime != assessment.regime:
+        self._regime_history.reload_thresholds(
+            thresholds=self._regime_classifier.thresholds_snapshot()
+        )
+        self._regime_history.update(assessment)
+        summary = self._regime_history.summarise()
+        if summary is not None:
+            self._handle_auto_risk_freeze(summary)
+        should_emit = self._last_regime is None or (
+            self._last_regime.regime != assessment.regime
+        )
+        if not should_emit and summary is not None and self._last_summary is not None:
+            if summary.risk_level != self._last_summary.risk_level:
+                should_emit = True
+            else:
+                risk_delta = abs(summary.risk_score - self._last_summary.risk_score)
+                if risk_delta >= 0.1:
+                    should_emit = True
+        if should_emit:
+            detail = assessment.to_dict()
+            if summary is not None:
+                detail["summary"] = summary.to_dict()
+                detail["thresholds"] = self._regime_history.thresholds_snapshot()
             self.adapter.push_autotrade_status(  # type: ignore[attr-defined]
                 "regime_update",
-                detail=assessment.to_dict(),
+                detail=detail,
             )
         self._last_regime = assessment
+        if summary is not None:
+            self._last_summary = summary
         return assessment
+
+    def get_last_regime_assessment(self) -> MarketRegimeAssessment | None:
+        """Zwróć ostatnią ocenę reżimu (bez możliwości modyfikacji stanu)."""
+
+        if self._last_regime is None:
+            return None
+        return deepcopy(self._last_regime)
+
+    def get_regime_summary(self) -> RegimeSummary | None:
+        """Zwróć wygładzoną historię reżimu jako kopię defensywną."""
+
+        summary = self._regime_history.summarise()
+        if summary is None:
+            return None
+        return deepcopy(summary)
+
+    def get_regime_thresholds(self) -> Mapping[str, Any]:
+        """Udostępnij aktualnie aktywne progi klasyfikatora."""
+
+        return self._regime_history.thresholds_snapshot()
+
+    def _recompute_risk_freeze_until(self) -> None:
+        self._risk_frozen_until = max(self._manual_risk_frozen_until, self._auto_risk_frozen_until)
+
+    def _should_auto_freeze(self, summary: RegimeSummary) -> bool:
+        if not self.cfg.auto_risk_freeze:
+            return False
+        level_threshold = self.cfg.auto_risk_freeze_level
+        summary_level = summary.risk_level
+        if not isinstance(level_threshold, RiskLevel):  # pragma: no cover - sanity
+            level_threshold = RiskLevel(level_threshold)
+        level_check = (
+            self._RISK_LEVEL_ORDER[summary_level]
+            >= self._RISK_LEVEL_ORDER[level_threshold]
+        )
+        score_check = summary.risk_score >= self.cfg.auto_risk_freeze_score
+        return level_check or score_check
+
+    def _handle_auto_risk_freeze(self, summary: RegimeSummary) -> None:
+        if not self.cfg.auto_risk_freeze:
+            if self._auto_risk_frozen:
+                self._auto_risk_frozen = False
+                self._auto_risk_frozen_until = 0.0
+                self._recompute_risk_freeze_until()
+            return
+
+        now = time.time()
+        should_freeze = self._should_auto_freeze(summary)
+        if should_freeze:
+            expiry = now + self.cfg.risk_freeze_seconds
+            previous_auto_until = self._auto_risk_frozen_until
+            if expiry > previous_auto_until:
+                self._auto_risk_frozen_until = expiry
+                self._recompute_risk_freeze_until()
+            if not self._auto_risk_frozen or expiry > previous_auto_until + 1e-9:
+                self.adapter.push_autotrade_status(  # type: ignore[attr-defined]
+                    "risk_freeze",
+                    detail={
+                        "symbol": self.cfg.symbol,
+                        "until": self._risk_frozen_until,
+                        "reason": "auto_risk_freeze",
+                        "risk_level": summary.risk_level.value,
+                        "risk_score": summary.risk_score,
+                    },
+                    level="WARN",
+                )
+            self._auto_risk_frozen = True
+            return
+
+        if self._auto_risk_frozen:
+            self._auto_risk_frozen = False
+            self._auto_risk_frozen_until = 0.0
+            self._recompute_risk_freeze_until()
+            self.adapter.push_autotrade_status(  # type: ignore[attr-defined]
+                "risk_freeze_release",
+                detail={
+                    "symbol": self.cfg.symbol,
+                    "reason": "auto_risk_release",
+                    "risk_level": summary.risk_level.value,
+                    "risk_score": summary.risk_score,
+                    "until": self._risk_frozen_until,
+                },
+                level="INFO",
+            )
 
 
 __all__ = ["AutoTradeConfig", "AutoTradeEngine"]
