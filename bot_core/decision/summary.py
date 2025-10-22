@@ -1,9 +1,11 @@
 """Utilities for aggregating Decision Engine evaluation payloads."""
 from __future__ import annotations
 
+import copy
 import math
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Iterable, Mapping, Sequence
 
 from bot_core.decision.models import DecisionEngineSummary
@@ -46,18 +48,44 @@ def _extract_candidate_metadata(candidate: Mapping[str, object] | None) -> Mappi
     return None
 
 
+def _normalize_generated_at(value: object | None) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
 def _extract_generated_at(payload: Mapping[str, object]) -> str | None:
     candidate = payload.get("candidate")
     if isinstance(candidate, Mapping):
         metadata = _extract_candidate_metadata(candidate)
         if metadata:
             for key in ("generated_at", "timestamp"):
-                if metadata.get(key) is not None:
-                    return str(metadata[key])
+                normalized = _normalize_generated_at(metadata.get(key))
+                if normalized is not None:
+                    return normalized
         generated_at = candidate.get("generated_at")
-        if generated_at is not None:
-            return str(generated_at)
+        normalized_candidate = _normalize_generated_at(generated_at)
+        if normalized_candidate is not None:
+            return normalized_candidate
     return None
+
+
+def _parse_generated_at_timestamp(value: str | None) -> datetime | None:
+    if value is None:
+        return None
+    text = value.strip()
+    if not text:
+        return None
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed
 
 
 def _iter_strings(values: object) -> Iterable[str]:
@@ -75,6 +103,32 @@ def _iter_strings(values: object) -> Iterable[str]:
             yield str(item)
         return
     return (str(values),)
+
+
+def _serialize_history_entry(payload: Mapping[str, object]) -> dict[str, object]:
+    record = {str(key): copy.deepcopy(value) for key, value in payload.items()}
+
+    for field in ("reasons", "risk_flags", "stress_failures"):
+        if field in record:
+            record[field] = list(_iter_strings(record[field]))
+
+    thresholds = record.get("thresholds")
+    if isinstance(thresholds, Mapping):
+        record["thresholds"] = {str(key): thresholds[key] for key in thresholds}
+
+    model_selection = record.get("model_selection")
+    if isinstance(model_selection, Mapping):
+        record["model_selection"] = {str(key): copy.deepcopy(value) for key, value in model_selection.items()}
+
+    candidate = record.get("candidate")
+    if isinstance(candidate, Mapping):
+        normalized_candidate = {str(key): copy.deepcopy(value) for key, value in candidate.items()}
+        metadata = normalized_candidate.get("metadata")
+        if isinstance(metadata, Mapping):
+            normalized_candidate["metadata"] = {str(key): copy.deepcopy(value) for key, value in metadata.items()}
+        record["candidate"] = normalized_candidate
+
+    return record
 
 
 def _resolve_history_limit(limit: int | None) -> int | None:
@@ -371,6 +425,33 @@ class DecisionSummaryAggregator:
         else:
             self._window = list(self._items)
 
+        self._full_history_start_generated_at: str | None = None
+        self._full_history_end_generated_at: str | None = None
+        self._full_generated_at_count = 0
+        self._full_missing_generated_at = 0
+        full_start_dt: datetime | None = None
+        full_end_dt: datetime | None = None
+        for payload in self._items:
+            generated_at = _extract_generated_at(payload)
+            if generated_at is None:
+                self._full_missing_generated_at += 1
+                continue
+            self._full_generated_at_count += 1
+            if self._full_history_start_generated_at is None:
+                self._full_history_start_generated_at = generated_at
+                full_start_dt = _parse_generated_at_timestamp(generated_at)
+            self._full_history_end_generated_at = generated_at
+            candidate_dt = _parse_generated_at_timestamp(generated_at)
+            if candidate_dt is not None:
+                if full_start_dt is None:
+                    full_start_dt = candidate_dt
+                full_end_dt = candidate_dt
+        if full_start_dt is not None and full_end_dt is not None:
+            span = full_end_dt - full_start_dt
+            self._full_history_span_seconds: float | None = max(0.0, span.total_seconds())
+        else:
+            self._full_history_span_seconds = None
+
     @property
     def full_total(self) -> int:
         return self._full_total
@@ -420,6 +501,11 @@ class DecisionSummaryAggregator:
         rejected_count = 0
         latest_payload: Mapping[str, object] | None = None
         history_start_generated_at: str | None = None
+        history_start_dt: datetime | None = None
+        history_end_generated_at: str | None = None
+        history_end_dt: datetime | None = None
+        history_generated_at_count = 0
+        history_missing_generated_at = 0
 
         risk_counts: Counter[str] = Counter()
         stress_counts: Counter[str] = Counter()
@@ -457,14 +543,23 @@ class DecisionSummaryAggregator:
             candidate_raw = payload.get("candidate")
             candidate = dict(candidate_raw) if isinstance(candidate_raw, Mapping) else {}
 
-            if index == 0:
-                history_start_generated_at = _extract_generated_at(payload)
-
             generated_at = _extract_generated_at(payload)
             if generated_at is not None:
+                history_generated_at_count += 1
+                if history_start_generated_at is None:
+                    history_start_generated_at = generated_at
+                    history_start_dt = _parse_generated_at_timestamp(generated_at)
+                history_end_generated_at = generated_at
+                candidate_dt = _parse_generated_at_timestamp(generated_at)
+                if candidate_dt is not None:
+                    if history_start_dt is None:
+                        history_start_dt = candidate_dt
+                    history_end_dt = candidate_dt
                 summary_generated = summary.get("generated_at")
                 if summary_generated is None or index == len(self._window) - 1:
                     summary["generated_at"] = generated_at
+            else:
+                history_missing_generated_at += 1
 
             cost = _coerce_float(payload.get("cost_bps"))
             if cost is not None:
@@ -695,11 +790,22 @@ class DecisionSummaryAggregator:
             }
         )
 
+        summary["history_generated_at_count"] = history_generated_at_count
+        summary["history_missing_generated_at"] = history_missing_generated_at
+        summary["history_generated_at_coverage"] = (
+            history_generated_at_count / self.history_window if self.history_window else 0.0
+        )
+
         full_accepted = sum(1 for payload in self._items if bool(payload.get("accepted")))
         full_rejected = self.full_total - full_accepted
         summary["full_accepted"] = full_accepted
         summary["full_rejected"] = full_rejected
         summary["full_acceptance_rate"] = full_accepted / self.full_total if self.full_total else 0.0
+        summary["full_history_generated_at_count"] = self._full_generated_at_count
+        summary["full_history_missing_generated_at"] = self._full_missing_generated_at
+        summary["full_history_generated_at_coverage"] = (
+            self._full_generated_at_count / self.full_total if self.full_total else 0.0
+        )
 
         summary["risk_flag_counts"] = dict(risk_counts)
         summary["unique_risk_flags"] = len(risk_counts)
@@ -766,7 +872,22 @@ class DecisionSummaryAggregator:
         summary["longest_acceptance_streak"] = longest_acceptance_streak
         summary["longest_rejection_streak"] = longest_rejection_streak
 
-        summary["history_start_generated_at"] = history_start_generated_at
+        if history_start_generated_at is not None:
+            summary["history_start_generated_at"] = history_start_generated_at
+        if history_end_generated_at is not None:
+            summary["history_end_generated_at"] = history_end_generated_at
+        history_span_seconds: float | None = None
+        if history_start_dt is not None and history_end_dt is not None:
+            history_span_seconds = max(0.0, (history_end_dt - history_start_dt).total_seconds())
+        if history_span_seconds is not None:
+            summary["history_span_seconds"] = history_span_seconds
+        summary["history"] = [_serialize_history_entry(item) for item in self._window]
+        if self._full_history_start_generated_at is not None:
+            summary["full_history_start_generated_at"] = self._full_history_start_generated_at
+        if self._full_history_end_generated_at is not None:
+            summary["full_history_end_generated_at"] = self._full_history_end_generated_at
+        if self._full_history_span_seconds is not None:
+            summary["full_history_span_seconds"] = self._full_history_span_seconds
 
         for name, accumulator in metric_accumulators.items():
             include_p95 = name not in metrics_without_p95

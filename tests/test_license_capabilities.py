@@ -125,7 +125,11 @@ def test_license_service_monotonic_effective_date(tmp_path) -> None:
     audit_lines = [line for line in audit_log_path.read_text(encoding="utf-8").splitlines() if line.strip()]
     assert audit_lines, "Audit log should contain at least one entry"
     audit_entry = json.loads(audit_lines[-1])
+    expected_hash = hashlib.sha256("OPTIONAL_MACHINE_HASH".encode("utf-8")).hexdigest()[:24]
     assert audit_entry["license_id"] == SAMPLE_PAYLOAD["license_id"]
+    assert audit_entry["local_hwid_hash"] == expected_hash
+    assert audit_entry["activation_count"] == 1
+    assert audit_entry["repeat_activation"] is False
 
     # Powtórny odczyt z wcześniejszą datą zachowuje monotoniczność.
     service_late = LicenseService(
@@ -138,6 +142,48 @@ def test_license_service_monotonic_effective_date(tmp_path) -> None:
     )
     snapshot_late = service_late.load_from_file(bundle_path)
     assert snapshot_late.effective_date == date(2025, 7, 10)
+
+
+def test_license_service_audit_reactivation(tmp_path) -> None:
+    signing_key = SigningKey.generate()
+    payload_bytes = json.dumps(SAMPLE_PAYLOAD, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    signature = signing_key.sign(payload_bytes).signature
+    bundle = {
+        "payload_b64": base64.b64encode(payload_bytes).decode("ascii"),
+        "signature_b64": base64.b64encode(signature).decode("ascii"),
+    }
+    bundle_path = tmp_path / "license.lic"
+    bundle_path.write_text(json.dumps(bundle), encoding="utf-8")
+
+    audit_log_path = tmp_path / "admin.log"
+    service = LicenseService(
+        verify_key_hex=signing_key.verify_key.encode().hex(),
+        state_path=tmp_path / "state.json",
+        status_path=tmp_path / "status.json",
+        audit_log_path=audit_log_path,
+        today_provider=lambda: date(2025, 7, 10),
+        hwid_provider=StaticHwIdProvider("OPTIONAL_MACHINE_HASH"),
+    )
+
+    # Pierwsza aktywacja
+    service.load_from_file(bundle_path)
+
+    # Druga aktywacja – np. ponowna instalacja na tym samym HWID.
+    service.load_from_file(bundle_path)
+
+    audit_lines = [line for line in audit_log_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    assert len(audit_lines) >= 2
+    first_entry = json.loads(audit_lines[-2])
+    second_entry = json.loads(audit_lines[-1])
+
+    expected_hash = hashlib.sha256("OPTIONAL_MACHINE_HASH".encode("utf-8")).hexdigest()[:24]
+    assert first_entry["local_hwid_hash"] == expected_hash
+    assert first_entry["activation_count"] == 1
+    assert first_entry["repeat_activation"] is False
+
+    assert second_entry["local_hwid_hash"] == expected_hash
+    assert second_entry["activation_count"] == 2
+    assert second_entry["repeat_activation"] is True
 
 
 def test_license_service_hwid_mismatch(tmp_path) -> None:

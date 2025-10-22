@@ -161,6 +161,11 @@ def test_decision_orchestrator_runtime_filters_and_summarizes() -> None:
     assert summary["unique_rejection_reasons"] == 1
     assert summary["latest_thresholds"]["min_probability"] == pytest.approx(0.61)
     assert summary["history_start_generated_at"] == "2024-01-01T11:59:00Z"
+    assert summary["history_end_generated_at"] == "2024-01-01T11:59:30Z"
+    assert summary["history_span_seconds"] == pytest.approx(30.0)
+    assert summary["full_history_start_generated_at"] == "2024-01-01T11:59:00Z"
+    assert summary["full_history_end_generated_at"] == "2024-01-01T11:59:30Z"
+    assert summary["full_history_span_seconds"] == pytest.approx(30.0)
     assert summary["latest_candidate"]["symbol"] == "ETHUSDT"
     assert summary["latest_candidate"]["expected_value_bps"] == pytest.approx(6.8)
     assert summary["latest_expected_value_bps"] == pytest.approx(6.8)

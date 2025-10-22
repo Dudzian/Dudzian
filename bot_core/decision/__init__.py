@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from importlib import import_module
 from typing import Any
 
 try:  # pragma: no cover - podsystem podsumowań nie ma zależności opcjonalnych
@@ -24,56 +25,46 @@ except Exception:  # pragma: no cover - zachowujemy podpis funkcji
     def coerce_float(*_: Any, **__: Any) -> Any:  # type: ignore[misc]
         raise RuntimeError("Decision utilities are not available")
 
+
 _MINIMAL_MODE = os.environ.get("BOT_CORE_MINIMAL_DECISION") == "1"
 
-AIManagerDecisionConnector = None  # type: ignore[assignment]
-DecisionCandidate = None  # type: ignore[assignment]
-DecisionEvaluation = None  # type: ignore[assignment]
-DecisionOrchestrator = None  # type: ignore[assignment]
-RiskSnapshot = None  # type: ignore[assignment]
-
 if _MINIMAL_MODE:
-    try:  # pragma: no cover - orchestrator może wymagać cięższych zależności
-        from .orchestrator import DecisionOrchestrator
-    except Exception:  # pragma: no cover - zachowujemy stabilny import
-        DecisionOrchestrator = None  # type: ignore[assignment]
-
-    __all__ = [
-        "DecisionOrchestrator",
-        "DecisionSummaryAggregator",
-        "DecisionEngineSummary",
-        "summarize_evaluation_payloads",
-        "coerce_float",
-    ]
+    _LAZY_EXPORTS: dict[str, tuple[str, str]] = {
+        "DecisionOrchestrator": (".orchestrator", "DecisionOrchestrator"),
+    }
 else:
-    try:  # pragma: no cover - konektor AI wymaga opcjonalnych pakietów
-        from .ai_connector import AIManagerDecisionConnector
-    except Exception:  # pragma: no cover - zapewniamy kompatybilność API
-        AIManagerDecisionConnector = None  # type: ignore[assignment]
+    _LAZY_EXPORTS = {
+        "DecisionCandidate": (".models", "DecisionCandidate"),
+        "DecisionEvaluation": (".models", "DecisionEvaluation"),
+        "RiskSnapshot": (".models", "RiskSnapshot"),
+        "DecisionOrchestrator": (".orchestrator", "DecisionOrchestrator"),
+        "AIManagerDecisionConnector": (".ai_connector", "AIManagerDecisionConnector"),
+    }
 
-    try:  # pragma: no cover - modele decyzji mogą nie być zainstalowane
-        from .models import (
-            DecisionCandidate,
-            DecisionEvaluation,
-            RiskSnapshot,
-        )
-    except Exception:  # pragma: no cover - odchudzone środowisko
-        DecisionCandidate = DecisionEvaluation = RiskSnapshot = None  # type: ignore[assignment]
+__all__ = [
+    *sorted(_LAZY_EXPORTS.keys()),
+    "DecisionSummaryAggregator",
+    "DecisionEngineSummary",
+    "summarize_evaluation_payloads",
+    "coerce_float",
+]
 
-    try:  # pragma: no cover - orchestrator może zależeć od innych modułów
-        from .orchestrator import DecisionOrchestrator
-    except Exception:  # pragma: no cover
-        DecisionOrchestrator = None  # type: ignore[assignment]
 
-    __all__ = [
-        "DecisionCandidate",
-        "DecisionEvaluation",
-        "DecisionOrchestrator",
-        "AIManagerDecisionConnector",
-        "RiskSnapshot",
-        "DecisionSummaryAggregator",
-        "DecisionEngineSummary",
-        "summarize_evaluation_payloads",
-        "coerce_float",
-    ]
+def __getattr__(name: str) -> Any:  # pragma: no cover - leniwa inicjalizacja
+    if name in _LAZY_EXPORTS:
+        module_name, attr_name = _LAZY_EXPORTS[name]
+        try:
+            module = import_module(module_name, __name__)
+        except Exception as exc:  # pragma: no cover - raportuj brak zależności
+            raise RuntimeError(
+                f"Nie udało się załadować '{name}' z modułu '{module_name}'. "
+                "Zainstaluj wymagane zależności lub ustaw BOT_CORE_MINIMAL_DECISION=1."
+            ) from exc
+        attr = getattr(module, attr_name)
+        globals()[name] = attr
+        return attr
+    raise AttributeError(name)
 
+
+def __dir__() -> list[str]:  # pragma: no cover - kosmetyka dla introspekcji
+    return sorted(__all__)
