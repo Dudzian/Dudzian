@@ -24,6 +24,7 @@ from bot_core.alerts.channels import (
     TelegramChannel,
     get_sms_provider,
 )
+from bot_core.alerts.ai import DriftAlertPayload, emit_model_drift_alert
 from bot_core.alerts.coverage import (
     build_coverage_alert_context,
     build_environment_coverage_report,
@@ -61,6 +62,8 @@ __all__ = [
     "dispatch_coverage_alert",
     "DefaultAlertRouter",
     "AlertThrottle",
+    "DriftAlertPayload",
+    "emit_model_drift_alert",
     "EmailChannel",
     "SMSChannel",
     "SmsProviderConfig",

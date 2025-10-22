@@ -1,8 +1,13 @@
 """Katalog strategii i wspólne interfejsy fabryk."""
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Mapping, MutableMapping, Protocol, Sequence
+
+from bot_core.security.signing import build_hmac_signature
 
 from .base import StrategyEngine
 from .cross_exchange_arbitrage import (
@@ -267,11 +272,104 @@ def build_default_catalog() -> StrategyCatalog:
 DEFAULT_STRATEGY_CATALOG = build_default_catalog()
 
 
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+class StrategyPresetWizard:
+    """Buduje i podpisuje presety strategii na podstawie katalogu."""
+
+    def __init__(self, catalog: StrategyCatalog | None = None) -> None:
+        self._catalog = catalog or DEFAULT_STRATEGY_CATALOG
+
+    def build_preset(
+        self,
+        name: str,
+        entries: Sequence[Mapping[str, Any]],
+        *,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> Mapping[str, Any]:
+        if not name:
+            raise ValueError("Preset name is required")
+        if not entries:
+            raise ValueError("At least one strategy entry is required")
+
+        strategies: list[dict[str, Any]] = []
+        for entry in entries:
+            strategies.append(self._build_entry(entry))
+
+        payload: dict[str, Any] = {
+            "name": name,
+            "created_at": _now_iso(),
+            "strategies": strategies,
+        }
+        if metadata:
+            payload["metadata"] = dict(metadata)
+        return payload
+
+    def _build_entry(self, entry: Mapping[str, Any]) -> dict[str, Any]:
+        engine_name = str(entry.get("engine") or "").strip()
+        if not engine_name:
+            raise ValueError("Preset entry must define an engine")
+        spec = self._catalog.get(engine_name)
+
+        name = str(entry.get("name") or spec.key)
+        parameters = dict(entry.get("parameters") or {})
+        risk_profile = entry.get("risk_profile")
+        user_tags = tuple(entry.get("tags") or ())
+        merged_tags = tuple(dict.fromkeys((*spec.default_tags, *user_tags)))
+        metadata = dict(entry.get("metadata") or {})
+
+        payload: dict[str, Any] = {
+            "name": name,
+            "engine": spec.key,
+            "parameters": parameters,
+            "tags": list(merged_tags),
+        }
+        if risk_profile:
+            payload["risk_profile"] = str(risk_profile)
+        if spec.capability:
+            payload["capability"] = spec.capability
+        if metadata:
+            payload["metadata"] = metadata
+        return payload
+
+    def build_document(
+        self,
+        preset: Mapping[str, Any],
+        *,
+        signing_key: bytes,
+        key_id: str | None = None,
+        algorithm: str = "HMAC-SHA256",
+    ) -> Mapping[str, Any]:
+        if not isinstance(signing_key, (bytes, bytearray)):
+            raise TypeError("signing_key must be raw bytes")
+        preset_payload = dict(preset)
+        signature = build_hmac_signature(preset_payload, key=bytes(signing_key), key_id=key_id, algorithm=algorithm)
+        return {"preset": preset_payload, "signature": signature}
+
+    def export_signed(
+        self,
+        preset: Mapping[str, Any],
+        *,
+        signing_key: bytes,
+        path: str | Path,
+        key_id: str | None = None,
+        algorithm: str = "HMAC-SHA256",
+    ) -> Path:
+        document = self.build_document(preset, signing_key=signing_key, key_id=key_id, algorithm=algorithm)
+        destination = Path(path).expanduser()
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text(json.dumps(document, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        return destination
+
+
 __all__ = [
     "StrategyCatalog",
     "StrategyDefinition",
     "StrategyEngineSpec",
     "StrategyFactory",
     "DEFAULT_STRATEGY_CATALOG",
+    "StrategyPresetWizard",
     "build_default_catalog",
 ]

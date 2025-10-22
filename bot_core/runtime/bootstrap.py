@@ -19,89 +19,21 @@ from typing import TYPE_CHECKING, Any, Callable, Iterable, Iterator, Mapping, Mu
 
 import yaml
 
-_SMS_PROVIDERS_MODULE = "bot_core.alerts.channels.providers"
-_SMS_PROVIDERS_STUB_FLAG = "__bootstrap_sms_provider_stub__"
-_E164_PATTERN = re.compile(r"^\+[1-9]\d{1,14}$")
-_ISO_COUNTRY_PATTERN = re.compile(r"^[A-Z]{2}$")
-_ALPHANUMERIC_SENDER_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 _-]*$")
-
-
-def _install_sms_provider_stub() -> None:
-    """Zapewnia minimalny moduł providers gdy oryginalny nie jest dostępny."""
-
-    existing = sys.modules.get(_SMS_PROVIDERS_MODULE)
-    if existing is not None and not getattr(existing, _SMS_PROVIDERS_STUB_FLAG, False):
-        return
-
-    module = ModuleType(_SMS_PROVIDERS_MODULE)
-
-    @dataclass(frozen=True, slots=True)
-    class _SmsProviderConfig:
-        provider_id: str
-        display_name: str
-        api_base_url: str
-        iso_country_code: str
-        supports_alphanumeric_sender: bool
-        notes: str | None = None
-        max_sender_length: int = 11
-
-    def _stub_get_sms_provider(provider_key: str) -> _SmsProviderConfig:
-        try:
-            return module.DEFAULT_SMS_PROVIDERS[provider_key]
-        except KeyError as exc:  # pragma: no cover - zwracamy spójny komunikat błędu
-            raise KeyError(
-                "Rejestr dostawców SMS jest niedostępny – moduł providers nie został zainstalowany."
-            ) from exc
-
-    setattr(_stub_get_sms_provider, _SMS_PROVIDERS_STUB_FLAG, True)
-
-    module.SmsProviderConfig = _SmsProviderConfig
-    module.DEFAULT_SMS_PROVIDERS = {}
-    module.get_sms_provider = _stub_get_sms_provider
-    module.__all__ = ["SmsProviderConfig", "DEFAULT_SMS_PROVIDERS", "get_sms_provider"]
-    setattr(module, _SMS_PROVIDERS_STUB_FLAG, True)
-
-    sys.modules[_SMS_PROVIDERS_MODULE] = module
-
-
-try:
-    from bot_core.alerts import (
-        AlertSeverity,
-        AlertThrottle,
-        DefaultAlertRouter,
-        EmailChannel,
-        FileAlertAuditLog,
-        InMemoryAlertAuditLog,
-        MessengerChannel,
-        SMSChannel,
-        SignalChannel,
-        TelegramChannel,
-        WhatsAppChannel,
-        emit_alert,
-        get_sms_provider,
-    )
-except ModuleNotFoundError as exc:  # pragma: no cover - środowiska bez providers
-    if exc.name == _SMS_PROVIDERS_MODULE:
-        _install_sms_provider_stub()
-        from bot_core.alerts import (
-            AlertSeverity,
-            AlertThrottle,
-            DefaultAlertRouter,
-            EmailChannel,
-            FileAlertAuditLog,
-            InMemoryAlertAuditLog,
-            MessengerChannel,
-            SMSChannel,
-            SignalChannel,
-            TelegramChannel,
-            WhatsAppChannel,
-            emit_alert,
-            get_sms_provider,
-        )
-    else:
-        raise
-
-from bot_core.alerts.channels.providers import SmsProviderConfig
+from bot_core.alerts import (
+    AlertSeverity,
+    AlertThrottle,
+    DefaultAlertRouter,
+    EmailChannel,
+    FileAlertAuditLog,
+    InMemoryAlertAuditLog,
+    MessengerChannel,
+    SMSChannel,
+    SignalChannel,
+    TelegramChannel,
+    WhatsAppChannel,
+    emit_alert,
+    get_sms_provider,
+)
 from bot_core.alerts.base import AlertAuditLog, AlertChannel
 from bot_core.config.loader import load_core_config
 from bot_core.config.models import (
@@ -293,7 +225,14 @@ def _get_alert_components() -> Mapping[str, Any]:
         "get_sms_provider": get_sms_provider,
     }
 
-    components["SmsProviderConfig"] = SmsProviderConfig
+    try:  # pragma: no cover - zależność opcjonalna w dystrybucjach bez SMS
+        from bot_core.alerts.channels.providers import (
+            SmsProviderConfig as _SmsProviderConfig,
+        )
+    except Exception:  # pragma: no cover - brak modułu providers
+        _SmsProviderConfig = SmsProviderConfig  # type: ignore[name-defined]
+
+    components["SmsProviderConfig"] = _SmsProviderConfig
     return components
 
 

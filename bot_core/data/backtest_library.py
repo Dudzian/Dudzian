@@ -7,6 +7,7 @@ from typing import Dict, Iterable, Iterator, List, Mapping, MutableMapping, Sequ
 
 import csv
 
+import pandas as pd
 import yaml
 
 
@@ -41,6 +42,15 @@ class DatasetDescriptor:
                 )
             for row in reader:
                 yield row
+
+    @property
+    def reference_results(self) -> Mapping[str, object]:
+        """Zwraca sekcję referencyjnych wyników, jeśli istnieje."""
+
+        raw = self.checks.get("reference_results") if isinstance(self.checks, Mapping) else None
+        if isinstance(raw, Mapping):
+            return raw
+        return {}
 
 
 @dataclass(slots=True)
@@ -142,6 +152,27 @@ class BacktestDatasetLibrary:
                 typed_row[column] = self._cast_value(value, expected_type, name, column, index)
             typed_rows.append(typed_row)
         return typed_rows
+
+    def load_dataframe(
+        self,
+        name: str,
+        *,
+        index_column: str | None = None,
+        datetime_columns: Mapping[str, str] | None = None,
+    ) -> pd.DataFrame:
+        """Ładuje dataset jako :class:`pandas.DataFrame` wraz z konwersją typów."""
+
+        rows = self.load_typed_rows(name)
+        frame = pd.DataFrame(rows)
+        datetime_columns = datetime_columns or {}
+        for column, unit in datetime_columns.items():
+            if column in frame.columns:
+                frame[column] = pd.to_datetime(frame[column], unit=unit, errors="coerce")
+
+        if index_column and index_column in frame.columns:
+            frame = frame.set_index(index_column)
+
+        return frame
 
     def _cast_value(
         self, value: str, expected_type: str, dataset: str, column: str, row_index: int
