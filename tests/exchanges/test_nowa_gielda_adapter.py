@@ -79,9 +79,29 @@ def test_rate_limit_rules() -> None:
     assert trading_rule.weight == 5
     assert trading_rule.max_requests == 5
 
+    account_rule = adapter.rate_limit_rule("GET", "/private/account")
+    assert account_rule is not None
+    assert account_rule.weight == 2
+
     ticker_rule = adapter.rate_limit_rule("GET", "/public/ticker")
     assert ticker_rule is not None
     assert ticker_rule.weight == 1
+
+    ohlcv_rule = adapter.rate_limit_rule("GET", "/public/ohlcv")
+    assert ohlcv_rule is not None
+    assert ohlcv_rule.weight == 2
+
+    trades_rule = adapter.rate_limit_rule("GET", "/private/trades")
+    assert trades_rule is not None
+    assert trades_rule.weight == 3
+
+    open_orders_rule = adapter.rate_limit_rule("GET", "/private/orders")
+    assert open_orders_rule is not None
+    assert open_orders_rule.weight == 3
+
+    closed_orders_rule = adapter.rate_limit_rule("GET", "/private/orders/history")
+    assert closed_orders_rule is not None
+    assert closed_orders_rule.weight == 3
 
     assert adapter.request_weight("GET", "/non-existent") == 1
 

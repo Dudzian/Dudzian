@@ -51,6 +51,11 @@ _RATE_LIMITS: Mapping[str, RateLimitRule] = {
     for rule in (
         RateLimitRule("GET", "/public/ticker", weight=1, window_seconds=1.0, max_requests=20),
         RateLimitRule("GET", "/public/orderbook", weight=2, window_seconds=1.0, max_requests=10),
+        RateLimitRule("GET", "/public/ohlcv", weight=2, window_seconds=1.0, max_requests=10),
+        RateLimitRule("GET", "/private/account", weight=2, window_seconds=1.0, max_requests=10),
+        RateLimitRule("GET", "/private/orders", weight=3, window_seconds=1.0, max_requests=5),
+        RateLimitRule("GET", "/private/orders/history", weight=3, window_seconds=1.0, max_requests=5),
+        RateLimitRule("GET", "/private/trades", weight=3, window_seconds=1.0, max_requests=5),
         RateLimitRule("POST", "/private/orders", weight=5, window_seconds=1.0, max_requests=5),
         RateLimitRule("DELETE", "/private/orders", weight=1, window_seconds=1.0, max_requests=10),
     )
@@ -271,11 +276,61 @@ class NowaGieldaSpotAdapter(ExchangeAdapter):
 
     # --- ExchangeAdapter API -----------------------------------------------
     def fetch_account_snapshot(self) -> AccountSnapshot:
+        timestamp = self._timestamp()
+        signature = self.sign_request(timestamp, "GET", "/private/account")
+        headers = self.build_auth_headers(timestamp, signature)
+        payload = self._http_client.fetch_account(headers=headers)
+
+        raw_balances = payload.get("balances", [])
+        if not isinstance(raw_balances, Sequence):
+            raise ExchangeAPIError(
+                message="Niepoprawny format listy sald konta",
+                status_code=200,
+                payload=payload,
+            )
+
+        balances: dict[str, float] = {}
+        for entry in raw_balances:
+            if not isinstance(entry, Mapping):
+                raise ExchangeAPIError(
+                    message="Pozycja salda ma niepoprawny format",
+                    status_code=200,
+                    payload=payload,
+                )
+
+            asset = entry.get("asset")
+            total = entry.get("total")
+            if not asset:
+                raise ExchangeAPIError(
+                    message="Brak identyfikatora waluty w saldzie",
+                    status_code=200,
+                    payload=payload,
+                )
+            try:
+                balances[str(asset)] = float(total)
+            except (TypeError, ValueError) as exc:
+                raise ExchangeAPIError(
+                    message="Niepoprawna wartość salda",
+                    status_code=200,
+                    payload=payload,
+                ) from exc
+
+        def _float_field(name: str, default: float = 0.0) -> float:
+            value = payload.get(name, default)
+            try:
+                return float(value)
+            except (TypeError, ValueError) as exc:
+                raise ExchangeAPIError(
+                    message=f"Niepoprawna wartość pola {name}",
+                    status_code=200,
+                    payload=payload,
+                ) from exc
+
         return AccountSnapshot(
-            balances={"USDT": 0.0},
-            total_equity=0.0,
-            available_margin=0.0,
-            maintenance_margin=0.0,
+            balances=balances,
+            total_equity=_float_field("totalEquity"),
+            available_margin=_float_field("availableMargin"),
+            maintenance_margin=_float_field("maintenanceMargin"),
         )
 
     def fetch_symbols(self) -> Iterable[str]:
@@ -320,7 +375,367 @@ class NowaGieldaSpotAdapter(ExchangeAdapter):
         end: Optional[int] = None,
         limit: Optional[int] = None,
     ) -> Sequence[Sequence[float]]:
-        return ()
+        exchange_symbol = symbols.to_exchange_symbol(symbol)
+        payload = self._http_client.fetch_ohlcv(
+            exchange_symbol,
+            interval,
+            start=start,
+            end=end,
+            limit=limit,
+        )
+
+        response_symbol = payload.get("symbol")
+        if response_symbol and symbols.to_internal_symbol(response_symbol) != symbol:
+            raise ExchangeAPIError(
+                message="Symbol w odpowiedzi OHLCV nie zgadza się z zapytaniem",
+                status_code=200,
+                payload=payload,
+            )
+
+        raw_candles = payload.get("candles", [])
+        if not isinstance(raw_candles, Sequence):
+            raise ExchangeAPIError(
+                message="Lista świec ma niepoprawny format",
+                status_code=200,
+                payload=payload,
+            )
+
+        candles: list[list[float]] = []
+        for candle in raw_candles:
+            if not isinstance(candle, Sequence) or len(candle) < 6:
+                raise ExchangeAPIError(
+                    message="Świeca ma niepoprawny format",
+                    status_code=200,
+                    payload=payload,
+                )
+
+            open_time, open_price, high_price, low_price, close_price, volume = candle[:6]
+            try:
+                candles.append(
+                    [
+                        float(open_time),
+                        float(open_price),
+                        float(high_price),
+                        float(low_price),
+                        float(close_price),
+                        float(volume),
+                    ]
+                )
+            except (TypeError, ValueError) as exc:
+                raise ExchangeAPIError(
+                    message="Niepoprawne wartości liczby w świecy",
+                    status_code=200,
+                    payload=payload,
+                ) from exc
+
+        return candles
+
+    def fetch_trades_history(
+        self,
+        *,
+        symbol: Optional[str] = None,
+        start: Optional[int] = None,
+        end: Optional[int] = None,
+        limit: Optional[int] = None,
+    ) -> Sequence[Mapping[str, Any]]:
+        params = _strip_none(
+            {
+                "symbol": symbols.to_exchange_symbol(symbol) if symbol else None,
+                "start": start,
+                "end": end,
+                "limit": limit,
+            }
+        )
+        timestamp = self._timestamp()
+        signature = self.sign_request(
+            timestamp,
+            "GET",
+            "/private/trades",
+            params=params,
+        )
+        headers = self.build_auth_headers(timestamp, signature)
+        payload = self._http_client.fetch_trades(headers=headers, params=params)
+
+        raw_trades = payload.get("trades", [])
+        if not isinstance(raw_trades, Sequence):
+            raise ExchangeAPIError(
+                message="Lista transakcji ma niepoprawny format",
+                status_code=200,
+                payload=payload,
+            )
+
+        trades: list[Mapping[str, Any]] = []
+        for entry in raw_trades:
+            if not isinstance(entry, Mapping):
+                raise ExchangeAPIError(
+                    message="Pozycja historii transakcji ma niepoprawny format",
+                    status_code=200,
+                    payload=payload,
+                )
+
+            entry_symbol = entry.get("symbol")
+            if not entry_symbol:
+                raise ExchangeAPIError(
+                    message="Transakcja nie zawiera symbolu",
+                    status_code=200,
+                    payload=payload,
+                )
+
+            internal_symbol = symbols.to_internal_symbol(str(entry_symbol))
+            if symbol and internal_symbol != symbol:
+                raise ExchangeAPIError(
+                    message="Symbol transakcji nie zgadza się z filtrem",
+                    status_code=200,
+                    payload=payload,
+                )
+
+            trade_id_raw = entry.get("tradeId") or entry.get("id")
+            if trade_id_raw is None:
+                raise ExchangeAPIError(
+                    message="Transakcja nie posiada identyfikatora",
+                    status_code=200,
+                    payload=payload,
+                )
+
+            order_id_raw = entry.get("orderId")
+            side_raw = entry.get("side")
+            price_raw = entry.get("price")
+            qty_raw = entry.get("quantity") or entry.get("qty")
+            fee_raw = entry.get("fee")
+            timestamp_raw = entry.get("timestamp") or entry.get("time")
+
+            try:
+                trade = {
+                    "trade_id": str(trade_id_raw),
+                    "order_id": str(order_id_raw) if order_id_raw is not None else None,
+                    "symbol": internal_symbol,
+                    "side": str(side_raw) if side_raw is not None else "",
+                    "price": float(price_raw),
+                    "quantity": float(qty_raw),
+                    "fee": float(fee_raw) if fee_raw is not None else None,
+                    "timestamp": float(timestamp_raw),
+                    "raw": dict(entry),
+                }
+            except (TypeError, ValueError) as exc:
+                raise ExchangeAPIError(
+                    message="Transakcja zawiera niepoprawne wartości liczbowe",
+                    status_code=200,
+                    payload=payload,
+                ) from exc
+
+            trades.append(trade)
+
+        return trades
+
+    def fetch_open_orders(
+        self,
+        *,
+        symbol: Optional[str] = None,
+        limit: Optional[int] = None,
+    ) -> Sequence[Mapping[str, Any]]:
+        params = _strip_none(
+            {
+                "symbol": symbols.to_exchange_symbol(symbol) if symbol else None,
+                "limit": limit,
+            }
+        )
+        timestamp = self._timestamp()
+        signature = self.sign_request(
+            timestamp,
+            "GET",
+            "/private/orders",
+            params=params,
+        )
+        headers = self.build_auth_headers(timestamp, signature)
+        payload = self._http_client.fetch_open_orders(headers=headers, params=params)
+
+        raw_orders = payload.get("orders", [])
+        if not isinstance(raw_orders, Sequence):
+            raise ExchangeAPIError(
+                message="Lista zleceń ma niepoprawny format",
+                status_code=200,
+                payload=payload,
+            )
+
+        orders: list[Mapping[str, Any]] = []
+        for entry in raw_orders:
+            if not isinstance(entry, Mapping):
+                raise ExchangeAPIError(
+                    message="Pozycja zlecenia ma niepoprawny format",
+                    status_code=200,
+                    payload=payload,
+                )
+
+            entry_symbol = entry.get("symbol")
+            if not entry_symbol:
+                raise ExchangeAPIError(
+                    message="Zlecenie nie zawiera symbolu",
+                    status_code=200,
+                    payload=payload,
+                )
+
+            internal_symbol = symbols.to_internal_symbol(str(entry_symbol))
+            if symbol and internal_symbol != symbol:
+                raise ExchangeAPIError(
+                    message="Symbol zlecenia nie zgadza się z filtrem",
+                    status_code=200,
+                    payload=payload,
+                )
+
+            order_id_raw = entry.get("orderId") or entry.get("id")
+            status_raw = entry.get("status")
+            side_raw = entry.get("side")
+            type_raw = entry.get("type")
+            price_raw = entry.get("price")
+            avg_price_raw = entry.get("avgPrice")
+            quantity_raw = entry.get("quantity") or entry.get("qty")
+            filled_raw = entry.get("filledQuantity") or entry.get("filled")
+            timestamp_raw = entry.get("timestamp") or entry.get("createdAt")
+
+            if order_id_raw is None:
+                raise ExchangeAPIError(
+                    message="Zlecenie nie posiada identyfikatora",
+                    status_code=200,
+                    payload=payload,
+                )
+
+            try:
+                order = {
+                    "order_id": str(order_id_raw),
+                    "symbol": internal_symbol,
+                    "status": str(status_raw) if status_raw is not None else "",
+                    "side": str(side_raw) if side_raw is not None else "",
+                    "type": str(type_raw) if type_raw is not None else "",
+                    "price": float(price_raw) if price_raw is not None else None,
+                    "avg_price": float(avg_price_raw) if avg_price_raw is not None else None,
+                    "quantity": float(quantity_raw),
+                    "filled_quantity": float(filled_raw) if filled_raw is not None else 0.0,
+                    "timestamp": float(timestamp_raw)
+                    if timestamp_raw is not None
+                    else float(timestamp),
+                    "raw": dict(entry),
+                }
+            except (TypeError, ValueError) as exc:
+                raise ExchangeAPIError(
+                    message="Zlecenie zawiera niepoprawne wartości liczbowe",
+                    status_code=200,
+                    payload=payload,
+                ) from exc
+
+            orders.append(order)
+
+        return orders
+
+    def fetch_closed_orders(
+        self,
+        *,
+        symbol: Optional[str] = None,
+        limit: Optional[int] = None,
+        start: Optional[int] = None,
+        end: Optional[int] = None,
+    ) -> Sequence[Mapping[str, Any]]:
+        params = _strip_none(
+            {
+                "symbol": symbols.to_exchange_symbol(symbol) if symbol else None,
+                "limit": limit,
+                "start": start,
+                "end": end,
+            }
+        )
+        timestamp = self._timestamp()
+        signature = self.sign_request(
+            timestamp,
+            "GET",
+            "/private/orders/history",
+            params=params,
+        )
+        headers = self.build_auth_headers(timestamp, signature)
+        payload = self._http_client.fetch_order_history(headers=headers, params=params)
+
+        raw_orders = payload.get("orders", [])
+        if not isinstance(raw_orders, Sequence):
+            raise ExchangeAPIError(
+                message="Lista zamkniętych zleceń ma niepoprawny format",
+                status_code=200,
+                payload=payload,
+            )
+
+        orders: list[Mapping[str, Any]] = []
+        for entry in raw_orders:
+            if not isinstance(entry, Mapping):
+                raise ExchangeAPIError(
+                    message="Pozycja zamkniętego zlecenia ma niepoprawny format",
+                    status_code=200,
+                    payload=payload,
+                )
+
+            entry_symbol = entry.get("symbol")
+            if not entry_symbol:
+                raise ExchangeAPIError(
+                    message="Zamknięte zlecenie nie zawiera symbolu",
+                    status_code=200,
+                    payload=payload,
+                )
+
+            internal_symbol = symbols.to_internal_symbol(str(entry_symbol))
+            if symbol and internal_symbol != symbol:
+                raise ExchangeAPIError(
+                    message="Symbol zamkniętego zlecenia nie zgadza się z filtrem",
+                    status_code=200,
+                    payload=payload,
+                )
+
+            order_id_raw = entry.get("orderId") or entry.get("id")
+            status_raw = entry.get("status")
+            side_raw = entry.get("side")
+            type_raw = entry.get("type")
+            price_raw = entry.get("price")
+            avg_price_raw = entry.get("avgPrice")
+            quantity_raw = entry.get("quantity") or entry.get("qty")
+            filled_raw = (
+                entry.get("executedQuantity")
+                or entry.get("filledQuantity")
+                or entry.get("filled")
+            )
+            created_raw = entry.get("timestamp") or entry.get("createdAt")
+            closed_raw = entry.get("closedAt") or entry.get("updatedAt")
+
+            if order_id_raw is None:
+                raise ExchangeAPIError(
+                    message="Zamknięte zlecenie nie posiada identyfikatora",
+                    status_code=200,
+                    payload=payload,
+                )
+
+            try:
+                order = {
+                    "order_id": str(order_id_raw),
+                    "symbol": internal_symbol,
+                    "status": str(status_raw) if status_raw is not None else "",
+                    "side": str(side_raw) if side_raw is not None else "",
+                    "type": str(type_raw) if type_raw is not None else "",
+                    "price": float(price_raw) if price_raw is not None else None,
+                    "avg_price": float(avg_price_raw) if avg_price_raw is not None else None,
+                    "quantity": float(quantity_raw),
+                    "filled_quantity": float(filled_raw) if filled_raw is not None else 0.0,
+                    "timestamp": float(created_raw)
+                    if created_raw is not None
+                    else float(timestamp),
+                    "closed_timestamp": float(closed_raw)
+                    if closed_raw is not None
+                    else None,
+                    "raw": dict(entry),
+                }
+            except (TypeError, ValueError) as exc:
+                raise ExchangeAPIError(
+                    message="Zamknięte zlecenie zawiera niepoprawne wartości liczbowe",
+                    status_code=200,
+                    payload=payload,
+                ) from exc
+
+            orders.append(order)
+
+        return orders
 
     def place_order(self, request: OrderRequest) -> OrderResult:
         payload = _strip_none(
