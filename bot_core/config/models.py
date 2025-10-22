@@ -553,6 +553,40 @@ class EnvironmentAIConfig:
 
 # --- Środowiska / rdzeń ------------------------------------------------------
 
+
+@dataclass(slots=True)
+class SequentialModelConfig:
+    """Definicja sekwencyjnego modelu AI zarządzanego offline."""
+
+    name: str
+    backend: str = "sequential_td"
+    feature_window: int = 32
+    target_horizon: int = 1
+    top_k_features: int = 24
+    walk_forward_folds: int = 4
+    learning_rate: float = 0.05
+    discount_factor: float = 0.9
+    min_directional_accuracy: float = 0.55
+    heuristics: Sequence[str] = field(default_factory=tuple)
+
+
+@dataclass(slots=True)
+class SequentialModelRepositoryConfig:
+    """Parametry repozytorium przechowującego dane historyczne i artefakty."""
+
+    path: str
+    retention: int = 25
+
+
+@dataclass(slots=True)
+class AIModelManagementConfig:
+    """Centralna konfiguracja zarządzania modelami AI."""
+
+    repository: SequentialModelRepositoryConfig
+    models: Sequence[SequentialModelConfig] = field(default_factory=tuple)
+    online_min_probability: float = 0.55
+
+
 @dataclass(slots=True)
 class EnvironmentDataQualityConfig:
     """Progi jakości danych używane przez środowisko."""
@@ -1096,6 +1130,7 @@ class CoreConfig:
     # Stage5
     portfolio_governors: Mapping[str, PortfolioGovernorConfig] = field(default_factory=dict)
     decision_engine: DecisionEngineConfig | None = None
+    ai_model_management: AIModelManagementConfig | None = None
 
     # Stage6
     portfolio_governor: PortfolioGovernorV6Config | None = None
@@ -1192,6 +1227,9 @@ __all__ = [
     "EnvironmentAIModelConfig",
     "EnvironmentAIEnsembleConfig",
     "EnvironmentAIPipelineScheduleConfig",
+    "SequentialModelConfig",
+    "SequentialModelRepositoryConfig",
+    "AIModelManagementConfig",
     "DecisionEngineTCOConfig",
     "DecisionOrchestratorThresholds",
     "DecisionStressTestConfig",

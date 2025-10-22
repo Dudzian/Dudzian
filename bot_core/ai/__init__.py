@@ -13,6 +13,16 @@ from .manager import (
     PipelineHistorySnapshot,
 )
 from .models import ModelArtifact, ModelScore
+from .sequential import (
+    BUILTIN_HEURISTICS,
+    HistoricalFeatureRepository,
+    OnlineScoringResult,
+    SequentialOnlineScorer,
+    SequentialTrainingPipeline,
+    SequentialTrainingReport,
+    TemporalDifferencePolicy,
+    WalkForwardMetrics,
+)
 from .regime import (
     MarketRegime,
     MarketRegimeAssessment,
@@ -42,10 +52,12 @@ from .training import (
 
 __all__ = [
     "AIManager",
+    "BUILTIN_HEURISTICS",
     "DecisionModelInference",
     "FeatureDataset",
     "FeatureEngineer",
     "FeatureVector",
+    "HistoricalFeatureRepository",
     "EnsembleDefinition",
     "EnsembleRegistryDiff",
     "EnsembleRegistrySnapshot",
@@ -53,6 +65,7 @@ __all__ = [
     "ModelEvaluation",
     "ModelRepository",
     "ModelScore",
+    "OnlineScoringResult",
     "MarketRegime",
     "MarketRegimeAssessment",
     "MarketRegimeClassifier",
@@ -65,10 +78,15 @@ __all__ = [
     "ModelTrainer",
     "RetrainingScheduler",
     "ScheduledTrainingJob",
+    "SequentialOnlineScorer",
+    "SequentialTrainingPipeline",
+    "SequentialTrainingReport",
     "SimpleGradientBoostingModel",
     "TrainingRunRecord",
     "TrainingScheduler",
+    "TemporalDifferencePolicy",
     "WalkForwardResult",
+    "WalkForwardMetrics",
     "WalkForwardValidator",
     "get_external_model_adapter",
     "PipelineExecutionRecord",
