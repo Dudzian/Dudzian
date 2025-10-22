@@ -621,6 +621,44 @@ class RegimeHistory:
     def snapshots(self) -> Tuple[RegimeSnapshot, ...]:
         return tuple(self._snapshots)
 
+    def reconfigure(
+        self,
+        *,
+        maxlen: int | None = None,
+        decay: float | None = None,
+        keep_history: bool = True,
+    ) -> None:
+        """Aktualizuj parametry wygładzania historii.
+
+        Parametr ``maxlen`` kontroluje rozmiar okna deque przechowującego
+        migawki reżimu. Zmiana długości może opcjonalnie przyciąć istniejące
+        obserwacje (``keep_history=True``) lub wyczyścić stan, jeżeli
+        ``keep_history`` ustawiono na ``False``.
+
+        Parametr ``decay`` steruje wagą przypisywaną starszym obserwacjom
+        podczas agregacji metryk.
+        """
+
+        new_maxlen = self.maxlen if maxlen is None else int(maxlen)
+        if new_maxlen < 1:
+            raise ValueError("maxlen must be at least 1")
+        new_decay = self.decay if decay is None else float(decay)
+        if not (0.0 < new_decay <= 1.0):
+            raise ValueError("decay must be in the (0, 1] range")
+
+        self.decay = new_decay
+
+        if new_maxlen != self.maxlen:
+            preserved: Tuple[RegimeSnapshot, ...]
+            if keep_history:
+                preserved = tuple(self._snapshots)[-new_maxlen:]
+            else:
+                preserved = tuple()
+            self.maxlen = new_maxlen
+            self._snapshots = deque(preserved, maxlen=self.maxlen)
+        elif not keep_history:
+            self._snapshots.clear()
+
     def summarise(self) -> RegimeSummary | None:
         if not self._snapshots:
             return None

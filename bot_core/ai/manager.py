@@ -14,6 +14,7 @@ import json
 import logging
 import math
 from collections import deque
+from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from os import PathLike
@@ -533,9 +534,12 @@ class AIManager:
         return assessment
 
     def get_last_regime_assessment(self, symbol: str) -> Optional[MarketRegimeAssessment]:
-        """Return the cached regime classification for ``symbol`` if available."""
+        """Return a defensive copy of cached regime classification if available."""
 
-        return self._latest_regimes.get(self._normalize_symbol(symbol))
+        assessment = self._latest_regimes.get(self._normalize_symbol(symbol))
+        if assessment is None:
+            return None
+        return deepcopy(assessment)
 
     def get_regime_summary(self, symbol: str) -> Optional[RegimeSummary]:
         """Zwróć wygładzoną historię reżimów dla danego symbolu."""
@@ -543,7 +547,19 @@ class AIManager:
         history = self._regime_histories.get(self._normalize_symbol(symbol))
         if history is None:
             return None
-        return history.summarise()
+        summary = history.summarise()
+        if summary is None:
+            return None
+        return deepcopy(summary)
+
+    def get_regime_thresholds(self, symbol: str | None = None) -> Mapping[str, Any]:
+        """Expose defensive copy of thresholds either per symbol or classifier defaults."""
+
+        if symbol is not None:
+            history = self._regime_histories.get(self._normalize_symbol(symbol))
+            if history is not None:
+                return history.thresholds_snapshot()
+        return self._regime_classifier.thresholds_snapshot()
 
     # --------------------------- Modele aktywne ---------------------------
     def set_active_model(self, symbol: str, model_type: str | None) -> None:
