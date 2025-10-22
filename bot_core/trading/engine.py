@@ -1064,10 +1064,21 @@ class VectorizedBacktestEngine:
                     duration = timestamp - entry_timestamp
 
                     # Determine exit reason
-                    if signal == 0:
+                    recorded_reason = None
+                    if exit_reasons is not None and i < len(exit_reasons):
+                        recorded_reason = exit_reasons.iloc[i]
+                    if pd.isna(recorded_reason):
+                        recorded_reason = None
+
+                    if recorded_reason:
+                        exit_reason = str(recorded_reason)
+                    elif signal == 0:
                         exit_reason = "signal"
                     else:
-                        exit_reason = "reversal"
+                        # When risk metadata is unavailable fall back to a signal-driven
+                        # reversal reason so downstream consumers retain semantic parity with
+                        # the managed position output.
+                        exit_reason = "signal_reversal"
                     
                     trades.append({
                         'entry_time': entry_timestamp,
@@ -1289,6 +1300,9 @@ class TradingEngine:
         fee_bps: float,
     ) -> BacktestResult:
         try:
+            if initial_capital <= 0:
+                raise TradingEngineError("Initial capital must be positive for single-session backtests")
+
             self._logger.info("Starting enhanced trading strategy execution")
             start_time = pd.Timestamp.now()
 

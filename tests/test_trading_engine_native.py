@@ -21,6 +21,7 @@ from bot_core.trading.engine import (
     TradingEngine,
     TradingParameters,
     TradingSignalService,
+    VectorizedBacktestEngine,
 )
 from bot_core.data.backtest_library import BacktestDatasetLibrary
 
