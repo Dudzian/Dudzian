@@ -68,6 +68,8 @@ constexpr auto kRiskHistoryAutoExportIntervalEnv = QByteArrayLiteral("BOT_CORE_U
 constexpr auto kRiskHistoryAutoExportBasenameEnv = QByteArrayLiteral("BOT_CORE_UI_RISK_HISTORY_AUTO_EXPORT_BASENAME");
 constexpr auto kRiskHistoryAutoExportDirEnv = QByteArrayLiteral("BOT_CORE_UI_RISK_HISTORY_AUTO_EXPORT_DIR");
 constexpr auto kRiskHistoryAutoExportLocalTimeEnv = QByteArrayLiteral("BOT_CORE_UI_RISK_HISTORY_AUTO_EXPORT_USE_LOCAL_TIME");
+constexpr auto kDecisionLogPathEnv = QByteArrayLiteral("BOT_CORE_UI_DECISION_LOG");
+constexpr auto kDecisionLogLimitEnv = QByteArrayLiteral("BOT_CORE_UI_DECISION_LOG_LIMIT");
 
 using bot::shell::utils::expandPath;
 using bot::shell::utils::watchableDirectories;
@@ -217,6 +219,8 @@ Application::Application(QQmlApplicationEngine& engine, QObject* parent)
 
     m_healthController = std::make_unique<HealthStatusController>(this);
 
+    m_decisionLogModel.setParent(this);
+
     m_tradingTokenWatcher.setParent(this);
     m_metricsTokenWatcher.setParent(this);
     m_healthTokenWatcher.setParent(this);
@@ -284,6 +288,11 @@ Application::Application(QQmlApplicationEngine& engine, QObject* parent)
     initializeUiSettingsStorage();
 
     m_repoRoot = locateRepoRoot();
+
+    if (!m_repoRoot.isEmpty())
+        setDecisionLogPathInternal(QDir(m_repoRoot).absoluteFilePath(QStringLiteral("logs/decision_journal")), false);
+    else
+        setDecisionLogPathInternal(QDir::current().absoluteFilePath(QStringLiteral("logs/decision_journal")), false);
 
     if (m_supportController) {
         if (!m_repoRoot.isEmpty())
@@ -431,6 +440,10 @@ void Application::configureParser(QCommandLineParser& parser) const {
                       tr("Nazwy plików autoeksportu używają czasu UTC")});
     parser.addOption({"risk-history-auto-export-dir",
                       tr("Katalog docelowy automatycznego eksportu historii ryzyka"), tr("path"), QString()});
+    parser.addOption({"decision-log",
+                      tr("Ścieżka do decision logu (plik JSONL lub katalog)"), tr("path"), QString()});
+    parser.addOption({"decision-log-limit",
+                      tr("Limit liczby przechowywanych wpisów decision logu"), tr("count"), QString()});
     parser.addOption({"ui-settings-path", tr("Ścieżka pliku ustawień UI"), tr("path"), QString()});
     parser.addOption({"disable-ui-settings", tr("Wyłącza zapisywanie konfiguracji UI")});
     parser.addOption({"enable-ui-settings",
@@ -992,6 +1005,7 @@ bool Application::applyParser(const QCommandLineParser& parser) {
     applyRiskHistoryCliOverrides(parser);
     configureStrategyBridge(parser);
     configureSupportBundle(parser);
+    configureDecisionLog(parser);
 
     // TLS config (MetricsService)
     TelemetryTlsConfig mtls;
@@ -1606,6 +1620,44 @@ void Application::configureSupportBundle(const QCommandLineParser& parser)
     m_supportController->setMetadata(metadata);
 }
 
+void Application::configureDecisionLog(const QCommandLineParser& parser)
+{
+    QString path = parser.value(QStringLiteral("decision-log")).trimmed();
+    bool pathExplicit = false;
+    if (!path.isEmpty()) {
+        setDecisionLogPathInternal(path, true);
+        pathExplicit = true;
+    } else if (const auto envPath = envValue(kDecisionLogPathEnv); envPath.has_value()) {
+        const QString trimmed = envPath->trimmed();
+        if (!trimmed.isEmpty()) {
+            setDecisionLogPathInternal(trimmed, true);
+            pathExplicit = true;
+        }
+    }
+
+    QString limitText;
+    if (parser.isSet(QStringLiteral("decision-log-limit")))
+        limitText = parser.value(QStringLiteral("decision-log-limit")).trimmed();
+    else if (const auto envLimit = envValue(kDecisionLogLimitEnv); envLimit.has_value())
+        limitText = envLimit->trimmed();
+
+    if (!limitText.isEmpty()) {
+        bool ok = false;
+        const int limit = limitText.toInt(&ok);
+        if (ok && limit > 0)
+            m_decisionLogModel.setMaximumEntries(limit);
+        else if (parser.isSet(QStringLiteral("decision-log-limit")))
+            qCWarning(lcAppMetrics) << "Nieprawidłowa wartość --decision-log-limit:" << limitText;
+    }
+
+    if (!pathExplicit && m_decisionLogPath.isEmpty()) {
+        const QString fallback = !m_repoRoot.isEmpty()
+            ? QDir(m_repoRoot).absoluteFilePath(QStringLiteral("logs/decision_journal"))
+            : QDir::current().absoluteFilePath(QStringLiteral("logs/decision_journal"));
+        setDecisionLogPathInternal(fallback, false);
+    }
+}
+
 void Application::setUiSettingsPersistenceEnabled(bool enabled)
 {
     if (m_uiSettingsPersistenceEnabled == enabled)
@@ -2068,6 +2120,29 @@ QString Application::resolveAutoExportFilePath(const QDir& directory,
     return {};
 }
 
+bool Application::setDecisionLogPathInternal(const QString& path, bool emitSignal)
+{
+    QString candidate = path.trimmed();
+    if (candidate.isEmpty())
+        return false;
+
+    candidate = expandPath(candidate);
+    if (candidate.isEmpty())
+        return false;
+
+    if (m_decisionLogPath == candidate) {
+        if (emitSignal)
+            Q_EMIT decisionLogPathChanged();
+        return true;
+    }
+
+    m_decisionLogPath = candidate;
+    m_decisionLogModel.setLogPath(m_decisionLogPath);
+    if (emitSignal)
+        Q_EMIT decisionLogPathChanged();
+    return true;
+}
+
 void Application::configureLocalBotCoreService(const QCommandLineParser& parser, QString& endpoint)
 {
     if (m_offlineMode) {
@@ -2314,6 +2389,23 @@ void Application::stopOfflineAutomation()
         m_offlineBridge->stopAutomation();
 }
 
+bool Application::setDecisionLogPath(const QUrl& url)
+{
+    QString candidate;
+    if (url.isLocalFile())
+        candidate = url.toLocalFile();
+    else
+        candidate = url.toString(QUrl::PreferLocalFile);
+    if (candidate.trimmed().isEmpty())
+        return false;
+    return setDecisionLogPathInternal(candidate, true);
+}
+
+bool Application::reloadDecisionLog()
+{
+    return m_decisionLogModel.reload();
+}
+
 void Application::handleRiskHistorySnapshotRecorded(const QDateTime& timestamp)
 {
     if (m_loadingUiSettings)
@@ -2336,6 +2428,7 @@ void Application::exposeToQml() {
     m_engine.rootContext()->setContextProperty(QStringLiteral("strategyController"), m_strategyController.get());
     m_engine.rootContext()->setContextProperty(QStringLiteral("supportController"), m_supportController.get());
     m_engine.rootContext()->setContextProperty(QStringLiteral("healthController"), m_healthController.get());
+    m_engine.rootContext()->setContextProperty(QStringLiteral("decisionLogModel"), &m_decisionLogModel);
 }
 
 QObject* Application::activationController() const
@@ -2361,6 +2454,11 @@ QObject* Application::supportController() const
 QObject* Application::healthController() const
 {
     return m_healthController.get();
+}
+
+QObject* Application::decisionLogModel() const
+{
+    return const_cast<DecisionLogModel*>(&m_decisionLogModel);
 }
 
 void Application::ensureFrameMonitor() {

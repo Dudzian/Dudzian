@@ -28,7 +28,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Protocol, Tuple, Union
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Protocol, Tuple, Union
 
 import numpy as np
 import pandas as pd
@@ -149,6 +149,15 @@ class BacktestResult:
     largest_win: float
     largest_loss: float
 
+
+@dataclass(frozen=True)
+class MultiSessionBacktestResult:
+    """Aggregated result for multi-symbol or multi-session backtests."""
+
+    aggregate: BacktestResult
+    sessions: Dict[str, BacktestResult]
+    weights: Dict[str, float]
+
 @dataclass(frozen=True)
 class TradingParameters:
     """Enhanced immutable trading parameters with validation."""
@@ -256,17 +265,27 @@ class SignalGenerator(Protocol):
 
 class RiskManager(Protocol):
     """Protocol for risk management."""
-    
-    def apply_risk_management(self, data: pd.DataFrame, signals: pd.Series, 
-                            indicators: TechnicalIndicators, params: TradingParameters) -> pd.Series:
-        """Apply risk management rules."""
+
+    def apply_risk_management(
+        self,
+        data: pd.DataFrame,
+        signals: pd.Series,
+        indicators: TechnicalIndicators,
+        params: TradingParameters,
+    ) -> pd.DataFrame:
+        """Apply risk management rules returning direction and position sizing."""
         ...
 
 class BacktestEngine(Protocol):
     """Protocol for backtesting."""
     
-    def run_backtest(self, data: pd.DataFrame, signals: pd.Series, 
-                    params: TradingParameters, config: EngineConfig) -> BacktestResult:
+    def run_backtest(
+        self,
+        data: pd.DataFrame,
+        positions: pd.DataFrame,
+        params: TradingParameters,
+        config: EngineConfig,
+    ) -> BacktestResult:
         """Run backtest simulation."""
         ...
 
@@ -770,75 +789,89 @@ class RiskManagementService:
     def __init__(self, logger: logging.Logger):
         self._logger = logger
     
-    def apply_risk_management(self, data: pd.DataFrame, signals: pd.Series, 
-                            indicators: TechnicalIndicators, params: TradingParameters) -> pd.Series:
+    def apply_risk_management(
+        self,
+        data: pd.DataFrame,
+        signals: pd.Series,
+        indicators: TechnicalIndicators,
+        params: TradingParameters,
+    ) -> pd.DataFrame:
+        """Apply comprehensive risk management including stop-loss and take-profit.
+
+        Returns a DataFrame with directional signal and position sizing that can be
+        consumed by vectorized components without additional transformation.
         """
-        Apply comprehensive risk management including stop-loss and take-profit.
-        
-        Args:
-            data: OHLCV DataFrame
-            signals: Raw trading signals
-            indicators: Technical indicators
-            params: Trading parameters
-            
-        Returns:
-            Risk-managed signals
-        """
-        managed_signals = signals.copy()
+
+        managed_direction = pd.Series(0, index=signals.index, dtype=int)
+        position_sizes = pd.Series(0.0, index=signals.index, dtype=float)
+
         current_position = 0
+        current_size = 0.0
         entry_price = 0.0
         entry_time = None
-        
+
         for i in range(len(signals)):
             timestamp = signals.index[i]
-            current_signal = signals.iloc[i]
+            current_signal = int(np.sign(signals.iloc[i])) if not pd.isna(signals.iloc[i]) else 0
             current_price = data.loc[timestamp, 'close']
             current_atr = indicators.atr.iloc[i]
-            
+
             # Check for position exit conditions first
             if current_position != 0 and entry_price > 0:
                 exit_signal = self._check_exit_conditions(
                     current_position, entry_price, current_price, current_atr, params
                 )
-                
+
                 if exit_signal:
-                    managed_signals.iloc[i] = 0  # Force exit
+                    managed_direction.iloc[i] = 0
+                    position_sizes.iloc[i] = 0.0
                     self._logger.debug(f"Risk management exit at {timestamp}: {exit_signal}")
                     current_position = 0
+                    current_size = 0.0
                     entry_price = 0.0
                     entry_time = None
                     continue
-            
+
             # Handle new position entries
             if current_signal != 0 and current_position == 0:
                 # Apply position sizing
                 position_size = self._calculate_position_size(
                     current_price, current_atr, params
                 )
-                
+
                 if position_size > 0:
                     current_position = current_signal
+                    current_size = position_size
                     entry_price = current_price
                     entry_time = timestamp
-                    managed_signals.iloc[i] = current_signal
+                    managed_direction.iloc[i] = current_position
+                    position_sizes.iloc[i] = current_size
                 else:
-                    managed_signals.iloc[i] = 0  # Risk too high, skip entry
-                    
+                    managed_direction.iloc[i] = 0
+                    position_sizes.iloc[i] = 0.0
+
             elif current_signal == 0 and current_position != 0:
                 # Natural signal exit
                 current_position = 0
+                current_size = 0.0
                 entry_price = 0.0
                 entry_time = None
-                managed_signals.iloc[i] = 0
-                
+                managed_direction.iloc[i] = 0
+                position_sizes.iloc[i] = 0.0
+
             elif current_position != 0:
-                # Maintain current position
-                managed_signals.iloc[i] = current_position
+                # Maintain current position and size
+                managed_direction.iloc[i] = current_position
+                position_sizes.iloc[i] = current_size
             else:
                 # No position, no signal
-                managed_signals.iloc[i] = 0
-        
-        return managed_signals
+                managed_direction.iloc[i] = 0
+                position_sizes.iloc[i] = 0.0
+
+        return pd.DataFrame({
+            'direction': managed_direction.astype(int),
+            'size': position_sizes.astype(float),
+        })
     
     def _check_exit_conditions(self, position: int, entry_price: float, 
                              current_price: float, atr: float, params: TradingParameters) -> Optional[str]:
@@ -903,9 +936,15 @@ class VectorizedBacktestEngine:
         self._logger = logger
         self._math = MathUtils()
     
-    def run_backtest(self, data: pd.DataFrame, signals: pd.Series, 
-                    params: TradingParameters, config: EngineConfig, 
-                    initial_capital: float = 10000.0, fee_bps: float = 5.0) -> BacktestResult:
+    def run_backtest(
+        self,
+        data: pd.DataFrame,
+        positions: pd.DataFrame,
+        params: TradingParameters,
+        config: EngineConfig,
+        initial_capital: float = 10000.0,
+        fee_bps: float = 5.0,
+    ) -> BacktestResult:
         """
         Run comprehensive vectorized backtest simulation.
         
@@ -925,14 +964,14 @@ class VectorizedBacktestEngine:
         """
         try:
             # Align data and signals
-            aligned_data = data.reindex(signals.index, method='ffill')
-            
+            aligned_data = data.reindex(positions.index, method='ffill')
+
             # Calculate returns and equity curve
-            returns = self._calculate_returns_vectorized(aligned_data, signals, params, fee_bps)
+            returns = self._calculate_returns_vectorized(aligned_data, positions, params, fee_bps)
             equity_curve = (1 + returns).cumprod() * initial_capital
-            
+
             # Generate comprehensive trades DataFrame
-            trades_df = self._generate_trades_dataframe_vectorized(aligned_data, signals, params)
+            trades_df = self._generate_trades_dataframe_vectorized(aligned_data, positions, params)
             
             # Calculate all performance metrics
             metrics = self._calculate_comprehensive_metrics(equity_curve, trades_df, returns, config.risk_free_rate)
@@ -947,35 +986,51 @@ class VectorizedBacktestEngine:
         except Exception as e:
             raise BacktestExecutionError(f"Backtest execution failed: {e}") from e
     
-    def _calculate_returns_vectorized(self, data: pd.DataFrame, signals: pd.Series, 
-                                    params: TradingParameters, fee_bps: float) -> pd.Series:
+    def _calculate_returns_vectorized(
+        self,
+        data: pd.DataFrame,
+        positions: pd.DataFrame,
+        params: TradingParameters,
+        fee_bps: float,
+    ) -> pd.Series:
         """Calculate returns using fully vectorized operations."""
-        # Shift signals by 1 to avoid look-ahead bias
-        position = signals.shift(1).fillna(0)
-        
-        # Apply position sizing
-        position = position * params.position_size
-        
+
+        direction = positions.get('direction', pd.Series(index=positions.index, dtype=float)).astype(float)
+        size = positions.get('size', pd.Series(index=positions.index, dtype=float)).astype(float)
+
+        # Shift to avoid look-ahead bias
+        shifted_direction = direction.shift(1).fillna(0.0)
+        shifted_size = size.shift(1).fillna(0.0)
+        signed_position = shifted_direction * shifted_size
+
         # Calculate price returns
-        price_returns = data['close'].pct_change().fillna(0)
-        
+        price_returns = data['close'].pct_change().fillna(0.0)
+
         # Calculate strategy returns
-        strategy_returns = position * price_returns
-        
+        strategy_returns = signed_position * price_returns
+
         # Apply transaction costs vectorized
-        position_changes = position.diff().abs()
+        position_changes = signed_position.diff().abs().fillna(0.0)
         transaction_costs = position_changes * (fee_bps / 10000.0)
-        
+
         # Net returns
         net_returns = strategy_returns - transaction_costs
-        
+
         return net_returns
-    
-    def _generate_trades_dataframe_vectorized(self, data: pd.DataFrame, signals: pd.Series, 
-                                            params: TradingParameters) -> pd.DataFrame:
+
+    def _generate_trades_dataframe_vectorized(
+        self,
+        data: pd.DataFrame,
+        positions: pd.DataFrame,
+        params: TradingParameters,
+    ) -> pd.DataFrame:
         """Generate trades DataFrame using optimized vectorized operations."""
+
+        direction = positions.get('direction', pd.Series(index=positions.index, dtype=float)).astype(int)
+        size = positions.get('size', pd.Series(index=positions.index, dtype=float)).astype(float)
+
         # Find signal changes
-        signal_changes = signals.diff().fillna(signals)
+        signal_changes = direction.diff().fillna(direction)
         trade_points = signal_changes != 0
         
         if not trade_points.any():
@@ -983,26 +1038,31 @@ class VectorizedBacktestEngine:
         
         trades = []
         position = 0
+        position_size = 0.0
         entry_idx = None
-        
-        for i, (timestamp, signal) in enumerate(signals.items()):
+
+        for i, timestamp in enumerate(direction.index):
+            signal = direction.iloc[i]
+            signal_size = size.iloc[i]
             if timestamp not in data.index:
                 continue
-                
+
             current_price = data.loc[timestamp, 'close']
-            
+
             # Position change logic
             if signal != position:
                 # Close existing position
                 if position != 0 and entry_idx is not None:
-                    entry_timestamp = signals.index[entry_idx]
+                    entry_timestamp = direction.index[entry_idx]
                     entry_price = data.loc[entry_timestamp, 'close']
-                    
+                    entry_size = max(abs(size.iloc[entry_idx]), 0.0)
+
                     # Calculate trade metrics
-                    pnl = (current_price - entry_price) * position
-                    pnl_pct = pnl / entry_price
+                    signed_size = position * entry_size
+                    pnl = (current_price - entry_price) * signed_size
+                    pnl_pct = ((current_price / entry_price) - 1.0) * position if entry_price != 0 else 0.0
                     duration = timestamp - entry_timestamp
-                    
+
                     # Determine exit reason
                     if signal == 0:
                         exit_reason = "signal"
@@ -1015,22 +1075,28 @@ class VectorizedBacktestEngine:
                         'entry_price': entry_price,
                         'exit_price': current_price,
                         'position': position,
-                        'quantity': abs(position) * params.position_size,
+                        'quantity': abs(entry_size),
                         'pnl': pnl,
                         'pnl_pct': pnl_pct,
                         'duration': duration,
                         'exit_reason': exit_reason,
-                        'commission': abs(position) * params.position_size * current_price * 0.0005  # 5 bps
+                        'commission': abs(entry_size) * current_price * 0.0005  # 5 bps
                     })
-                
+
                 # Open new position
                 if signal != 0:
                     position = signal
+                    position_size = max(signal_size, 0.0)
                     entry_idx = i
                 else:
                     position = 0
+                    position_size = 0.0
                     entry_idx = None
-        
+
+            elif position != 0:
+                # Update stored size if risk manager adjusted position without flipping direction
+                position_size = max(signal_size, position_size)
+
         return pd.DataFrame(trades)
     
     def _calculate_comprehensive_metrics(self, equity_curve: pd.Series, trades_df: pd.DataFrame, 
@@ -1069,7 +1135,12 @@ class VectorizedBacktestEngine:
         threshold = 0.0
         positive_returns = returns[returns > threshold]
         negative_returns = returns[returns <= threshold]
-        omega_ratio = positive_returns.sum() / abs(negative_returns.sum()) if len(negative_returns) > 0 else float('inf')
+        positive_sum = positive_returns.sum()
+        negative_sum = negative_returns.sum()
+        if len(negative_returns) == 0 or np.isclose(negative_sum, 0.0):
+            omega_ratio = float('inf') if positive_sum > 0 else 0.0
+        else:
+            omega_ratio = positive_sum / abs(negative_sum)
         
         # VaR and Expected Shortfall
         var_95 = returns.quantile(0.05)
@@ -1172,67 +1243,209 @@ class TradingEngine:
         
         self._performance_monitor = PerformanceMonitor(self._logger)
     
-    def run_strategy(self, data: pd.DataFrame, params: TradingParameters, 
-                    initial_capital: float = 10000.0, fee_bps: float = 5.0) -> BacktestResult:
-        """
-        Run complete enhanced trading strategy with comprehensive monitoring.
-        
+    def run_strategy(
+        self,
+        data: Union[pd.DataFrame, Mapping[str, pd.DataFrame]],
+        params: Union[TradingParameters, Mapping[str, TradingParameters]],
+        initial_capital: float = 10000.0,
+        fee_bps: float = 5.0,
+        session_weights: Optional[Mapping[str, float]] = None,
+    ) -> Union[BacktestResult, MultiSessionBacktestResult]:
+        """Run enhanced trading strategy for single or multiple sessions.
+
         Args:
-            data: OHLCV DataFrame
-            params: Trading parameters
-            initial_capital: Starting capital
-            fee_bps: Transaction fees in basis points
-            
+            data: Single OHLCV DataFrame or mapping of symbol/session -> DataFrame.
+            params: Trading parameters for single run or mapping keyed by symbol/session.
+            initial_capital: Starting capital for the run (or total capital for multi-session).
+            fee_bps: Transaction fees in basis points.
+            session_weights: Optional weighting for multi-session portfolio aggregation.
+
         Returns:
-            Comprehensive backtest results
-            
+            ``BacktestResult`` for single runs or ``MultiSessionBacktestResult`` for multi-session runs.
+
         Raises:
-            TradingEngineError: If strategy execution fails
+            TradingEngineError: If strategy execution fails.
         """
+
+        if isinstance(data, Mapping):
+            return self._run_multi_symbol_strategy(
+                data,
+                params,
+                initial_capital,
+                fee_bps,
+                session_weights=session_weights,
+            )
+
+        if not isinstance(params, TradingParameters):
+            raise TradingEngineError("Trading parameters must be TradingParameters instance for single run")
+
+        return self._run_single_strategy(data, params, initial_capital, fee_bps)
+
+    def _run_single_strategy(
+        self,
+        data: pd.DataFrame,
+        params: TradingParameters,
+        initial_capital: float,
+        fee_bps: float,
+    ) -> BacktestResult:
         try:
             self._logger.info("Starting enhanced trading strategy execution")
             start_time = pd.Timestamp.now()
-            
-            # Validate data
+
             validated_data = self._validator.validate_ohlcv(data)
             self._logger.info(f"Validated {len(validated_data)} data points")
-            
-            # Calculate indicators
+
             indicators = self._indicator_calculator.calculate_indicators(validated_data, params)
             self._logger.info("Calculated technical indicators")
-            
-            # Generate raw signals
+
             raw_signals = self._signal_generator.generate_signals(indicators, params)
             self._logger.info(f"Generated {(raw_signals != 0).sum()} raw trading signals")
-            
-            # Apply risk management
-            managed_signals = self._risk_manager.apply_risk_management(
+
+            managed_positions = self._risk_manager.apply_risk_management(
                 validated_data, raw_signals, indicators, params
             )
-            risk_filtered = (managed_signals != raw_signals).sum()
+            if not {'direction', 'size'}.issubset(managed_positions.columns):
+                raise TradingEngineError("Risk manager must return 'direction' and 'size' columns")
+
+            risk_filtered = (managed_positions['direction'] != raw_signals).sum()
             self._logger.info(f"Risk management filtered {risk_filtered} signals")
-            
-            # Run backtest
+
             result = self._backtest_engine.run_backtest(
-                validated_data, managed_signals, params, self._config, initial_capital, fee_bps
+                validated_data,
+                managed_positions,
+                params,
+                self._config,
+                initial_capital,
+                fee_bps,
             )
-            
-            # Monitor performance
-            self._performance_monitor.monitor_drawdown(result.equity_curve, self._config.max_drawdown_threshold)
-            self._performance_monitor.monitor_volatility(result.equity_curve, self._config.volatility_threshold)
-            
+
+            self._performance_monitor.monitor_drawdown(
+                result.equity_curve, self._config.max_drawdown_threshold
+            )
+            self._performance_monitor.monitor_volatility(
+                result.equity_curve, self._config.volatility_threshold
+            )
+
             execution_time = pd.Timestamp.now() - start_time
             self._logger.info(
                 f"Strategy completed in {execution_time.total_seconds():.2f}s: "
                 f"{result.total_return:.2%} total return, "
                 f"{result.sharpe_ratio:.2f} Sharpe ratio"
             )
-            
+
             return result
-            
-        except Exception as e:
-            self._logger.error(f"Strategy execution failed: {e}")
-            raise TradingEngineError(f"Strategy execution failed: {e}") from e
+
+        except Exception as exc:
+            self._logger.error(f"Strategy execution failed: {exc}")
+            if isinstance(exc, TradingEngineError):
+                raise
+            raise TradingEngineError(f"Strategy execution failed: {exc}") from exc
+
+    def _run_multi_symbol_strategy(
+        self,
+        data_map: Mapping[str, pd.DataFrame],
+        params: Union[TradingParameters, Mapping[str, TradingParameters]],
+        initial_capital: float,
+        fee_bps: float,
+        *,
+        session_weights: Optional[Mapping[str, float]] = None,
+    ) -> MultiSessionBacktestResult:
+        if not data_map:
+            raise TradingEngineError("No data provided for multi-session backtest")
+
+        weights = self._normalize_session_weights(data_map.keys(), session_weights)
+        session_results: Dict[str, BacktestResult] = {}
+
+        for symbol, frame in data_map.items():
+            symbol_params: TradingParameters
+            if isinstance(params, Mapping):
+                try:
+                    symbol_params = params[symbol]
+                except KeyError as exc:
+                    raise TradingEngineError(f"Missing parameters for symbol '{symbol}'") from exc
+            else:
+                symbol_params = params
+
+            if not isinstance(symbol_params, TradingParameters):
+                raise TradingEngineError(f"Invalid parameters for symbol '{symbol}'")
+
+            capital_allocation = initial_capital * weights[symbol]
+            session_results[symbol] = self._run_single_strategy(
+                frame,
+                symbol_params,
+                capital_allocation,
+                fee_bps,
+            )
+
+        returns_df = pd.DataFrame({sym: res.daily_returns for sym, res in session_results.items()})
+        returns_df = returns_df.sort_index().fillna(0.0)
+        weight_series = pd.Series(weights).reindex(returns_df.columns).fillna(0.0)
+        weighted_returns = returns_df.mul(weight_series, axis=1).sum(axis=1)
+        weighted_returns.name = 'portfolio_returns'
+
+        combined_equity = (1 + weighted_returns).cumprod() * initial_capital
+
+        trades_frames: List[pd.DataFrame] = []
+        for symbol, res in session_results.items():
+            trades_df = res.trades.copy()
+            if trades_df.empty:
+                continue
+            trades_frames.append(trades_df.assign(symbol=symbol))
+
+        if trades_frames:
+            combined_trades = pd.concat(trades_frames, ignore_index=True)
+        else:
+            combined_trades = pd.DataFrame(
+                columns=[
+                    'entry_time', 'exit_time', 'entry_price', 'exit_price', 'position',
+                    'quantity', 'pnl', 'pnl_pct', 'duration', 'exit_reason', 'commission', 'symbol'
+                ]
+            )
+
+        metrics = self._backtest_engine._calculate_comprehensive_metrics(
+            combined_equity,
+            combined_trades.drop(columns=['symbol'], errors='ignore'),
+            weighted_returns,
+            self._config.risk_free_rate,
+        )
+
+        aggregate_result = BacktestResult(
+            equity_curve=combined_equity,
+            trades=combined_trades,
+            daily_returns=weighted_returns,
+            **metrics,
+        )
+
+        return MultiSessionBacktestResult(
+            aggregate=aggregate_result,
+            sessions=session_results,
+            weights=weights,
+        )
+
+    def _normalize_session_weights(
+        self,
+        symbols: Iterable[str],
+        weights: Optional[Mapping[str, float]],
+    ) -> Dict[str, float]:
+        symbol_list = list(symbols)
+        if not symbol_list:
+            raise TradingEngineError("No symbols provided for weighting")
+
+        if weights is None:
+            equal_weight = 1.0 / len(symbol_list)
+            return {symbol: equal_weight for symbol in symbol_list}
+
+        normalized: Dict[str, float] = {}
+        total = 0.0
+        for symbol in symbol_list:
+            value = float(weights.get(symbol, 0.0))
+            normalized[symbol] = value
+            total += value
+
+        if total <= 0:
+            raise TradingEngineError("Session weights must sum to a positive value")
+
+        return {symbol: value / total for symbol, value in normalized.items()}
     
     def optimize_parameters(self, data: pd.DataFrame, param_ranges: Dict[str, List], 
                            objective: str = 'sharpe_ratio', max_iterations: int = 1000) -> Tuple[TradingParameters, float]:
@@ -1968,6 +2181,7 @@ __all__ = [
     'TradingParameters',
     'EngineConfig',
     'BacktestResult',
+    'MultiSessionBacktestResult',
     'TechnicalIndicators',
     'Trade',
     'SignalType',
@@ -2102,8 +2316,20 @@ class TradingStrategies:
                 raw_signals = engine._signal_generator.generate_signals(indicators, params)
                 bridge = AITradingBridge(ai_model, weight_ai=float(ai_weight), threshold_bps=float(ai_threshold_bps))
                 fused_signals = bridge.integrate(validated_data, raw_signals)
-                managed_signals = engine._risk_manager.apply_risk_management(validated_data, fused_signals, indicators, params)
-                result = engine._backtest_engine.run_backtest(validated_data, managed_signals, params, initial_capital, fee_bps, engine._config)
+                managed_positions = engine._risk_manager.apply_risk_management(
+                    validated_data,
+                    fused_signals,
+                    indicators,
+                    params,
+                )
+                result = engine._backtest_engine.run_backtest(
+                    validated_data,
+                    managed_positions,
+                    params,
+                    engine._config,
+                    initial_capital,
+                    fee_bps,
+                )
 
         # 5) Konwersja wyników do formatu GUI
         metrics = {

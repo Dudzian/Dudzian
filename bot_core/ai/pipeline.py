@@ -17,6 +17,75 @@ from .inference import DecisionModelInference, ModelRepository
 from .models import ModelArtifact
 from .training import SimpleGradientBoostingModel
 
+
+def _calibrate_predictions(
+    targets: Sequence[float], predictions: Sequence[float]
+) -> tuple[float, float]:
+    """Return a simple linear calibration (slope, intercept).
+
+    The calibration rescales raw model outputs to better match the
+    distribution of training targets.  We intentionally keep the
+    implementation minimal – a closed form least squares regression – so
+    that it works in constrained environments (CI, smoke tests) without
+    requiring additional dependencies.
+    """
+
+    if not targets or not predictions:
+        return 1.0, 0.0
+
+    y = np.asarray(targets, dtype=float)
+    x = np.asarray(predictions, dtype=float)
+    if x.size != y.size:
+        raise ValueError("Targets and predictions must have the same size for calibration")
+
+    if np.allclose(x, x[0]):
+        # Degenerate case – the model produced a constant prediction.  In
+        # that scenario the best calibration we can do is to shift the
+        # output towards the empirical mean of the targets.
+        return 0.0, float(np.mean(y))
+
+    A = np.vstack([x, np.ones_like(x)]).T
+    solution, *_ = np.linalg.lstsq(A, y, rcond=None)
+    slope = float(solution[0])
+    intercept = float(solution[1])
+    return slope, intercept
+
+
+def _cross_validate(
+    features: Sequence[Mapping[str, float]],
+    targets: Sequence[float],
+    *,
+    folds: int = 5,
+) -> Mapping[str, Sequence[float]]:
+    """Compute walk-forward style cross-validation metrics."""
+
+    total = len(features)
+    if total == 0:
+        return {"mae": (), "directional_accuracy": ()}
+    folds = max(2, min(int(folds), total))
+    fold_size = max(1, total // folds)
+    maes: list[float] = []
+    accuracies: list[float] = []
+
+    for fold in range(folds):
+        start = fold * fold_size
+        end = total if fold == folds - 1 else min(total, start + fold_size)
+        validation_features = features[start:end]
+        validation_targets = targets[start:end]
+        train_features = features[:start] + features[end:]
+        train_targets = targets[:start] + targets[end:]
+
+        if not validation_features or not train_features:
+            continue
+
+        model = SimpleGradientBoostingModel()
+        model.fit(train_features, train_targets)
+        metrics = _compute_metrics(model, validation_features, validation_targets)
+        maes.append(float(metrics.get("mae", 0.0)))
+        accuracies.append(float(metrics.get("directional_accuracy", 0.0)))
+
+    return {"mae": tuple(maes), "directional_accuracy": tuple(accuracies)}
+
 LOGGER = logging.getLogger(__name__)
 
 
@@ -104,214 +173,17 @@ def _compute_metrics(
     targets: Sequence[float],
 ) -> Mapping[str, float]:
     if not features:
-        return {
-            "mae": 0.0,
-            "mse": 0.0,
-            "rmse": 0.0,
-            "directional_accuracy": 0.0,
-            "mape": 0.0,
-            "r2": 0.0,
-            "median_absolute_error": 0.0,
-            "explained_variance": 0.0,
-            "max_error": 0.0,
-            "smape": 0.0,
-            "mean_bias_error": 0.0,
-            "wmape": 0.0,
-            "mpe": 0.0,
-            "rmspe": 0.0,
-            "median_percentage_error": 0.0,
-            "median_absolute_percentage_error": 0.0,
-            "mase": 0.0,
-            "msle": 0.0,
-            "mean_absolute_log_error": 0.0,
-            "mean_poisson_deviance": 0.0,
-            "mean_gamma_deviance": 0.0,
-            "mean_tweedie_deviance": 0.0,
-        }
+        return {"mae": 0.0, "directional_accuracy": 0.0}
     predictions = np.asarray(model.batch_predict(features), dtype=float)
     target_arr = np.asarray(targets, dtype=float)
-    if len(predictions) == 0:
-        return {
-            "mae": 0.0,
-            "mse": 0.0,
-            "rmse": 0.0,
-            "directional_accuracy": 0.0,
-            "mape": 0.0,
-            "r2": 0.0,
-            "median_absolute_error": 0.0,
-            "explained_variance": 0.0,
-            "max_error": 0.0,
-            "smape": 0.0,
-            "mean_bias_error": 0.0,
-            "wmape": 0.0,
-            "mpe": 0.0,
-            "rmspe": 0.0,
-            "median_percentage_error": 0.0,
-            "median_absolute_percentage_error": 0.0,
-            "mase": 0.0,
-            "msle": 0.0,
-            "mean_absolute_log_error": 0.0,
-            "mean_poisson_deviance": 0.0,
-            "mean_gamma_deviance": 0.0,
-            "mean_tweedie_deviance": 0.0,
-        }
-    absolute_errors = np.abs(predictions - target_arr)
-    mae = float(np.mean(absolute_errors))
-    mse = float(np.mean((predictions - target_arr) ** 2))
-    medae = float(np.median(absolute_errors))
-    max_error = float(np.max(absolute_errors)) if absolute_errors.size else 0.0
-    hits = float(np.mean(np.sign(predictions) == np.sign(target_arr)))
-    rmse = float(np.sqrt(np.mean((predictions - target_arr) ** 2)))
-    mean_bias_error = float(np.mean(predictions - target_arr))
-    denominator = np.abs(target_arr)
-    safe_denominator = np.where(denominator < 1e-8, np.nan, denominator)
-    with np.errstate(divide="ignore", invalid="ignore"):
-        mape_terms = np.abs(predictions - target_arr) / safe_denominator
-        mpe_terms = (predictions - target_arr) / safe_denominator
-        mspe_terms = ((predictions - target_arr) / safe_denominator) ** 2
-    valid_mape_terms = mape_terms[~np.isnan(mape_terms)]
-    if valid_mape_terms.size == 0:
-        mape = 0.0
-        median_absolute_percentage_error = 0.0
-    else:
-        mape = float(np.mean(valid_mape_terms))
-        median_absolute_percentage_error = float(np.median(valid_mape_terms))
-    valid_mpe_terms = mpe_terms[~np.isnan(mpe_terms)]
-    if valid_mpe_terms.size == 0:
-        mpe = 0.0
-        median_percentage_error = 0.0
-    else:
-        mpe = float(np.mean(valid_mpe_terms))
-        median_percentage_error = float(np.median(valid_mpe_terms))
-    if np.isnan(mspe_terms).all():
-        rmspe = 0.0
-    else:
-        rmspe = float(np.sqrt(np.nanmean(mspe_terms)))
-    denominator = np.abs(predictions) + np.abs(target_arr)
-    with np.errstate(divide="ignore", invalid="ignore"):
-        smape_terms = np.where(denominator < 1e-8, np.nan, 2.0 * absolute_errors / denominator)
-    if np.isnan(smape_terms).all():
-        smape = 0.0
-    else:
-        smape = float(np.nanmean(smape_terms))
-    valid_log_mask = (predictions > -1.0) & (target_arr > -1.0)
-    if not np.any(valid_log_mask):
-        msle = 0.0
-        mean_absolute_log_error = 0.0
-    else:
-        log_diff = np.log1p(predictions[valid_log_mask]) - np.log1p(
-            target_arr[valid_log_mask]
-        )
-        msle = float(np.mean(log_diff**2))
-        mean_absolute_log_error = float(np.mean(np.abs(log_diff)))
-    positive_prediction_mask = predictions > 1e-12
-    poisson_mask = positive_prediction_mask & (target_arr >= 0.0)
-    if np.any(poisson_mask):
-        poisson_targets = target_arr[poisson_mask]
-        poisson_preds = predictions[poisson_mask]
-        safe_preds = np.clip(poisson_preds, 1e-12, None)
-        ratio = np.divide(
-            poisson_targets,
-            safe_preds,
-            out=np.ones_like(poisson_targets),
-            where=poisson_targets != 0.0,
-        )
-        log_term = np.where(
-            poisson_targets == 0.0,
-            0.0,
-            np.log(np.clip(ratio, 1e-12, None)),
-        )
-        poisson_deviance = 2.0 * (
-            safe_preds - poisson_targets + poisson_targets * log_term
-        )
-        mean_poisson_deviance = float(np.mean(poisson_deviance))
-    else:
-        mean_poisson_deviance = 0.0
-    gamma_mask = positive_prediction_mask & (target_arr > 0.0)
-    if np.any(gamma_mask):
-        gamma_targets = target_arr[gamma_mask]
-        gamma_preds = predictions[gamma_mask]
-        safe_preds = np.clip(gamma_preds, 1e-12, None)
-        ratio = np.clip(gamma_targets / safe_preds, 1e-12, None)
-        gamma_deviance = 2.0 * (
-            (gamma_targets - safe_preds) / safe_preds - np.log(ratio)
-        )
-        mean_gamma_deviance = float(np.mean(gamma_deviance))
-    else:
-        mean_gamma_deviance = 0.0
-    tweedie_mask = positive_prediction_mask & (target_arr >= 0.0)
-    if np.any(tweedie_mask):
-        tweedie_targets = target_arr[tweedie_mask]
-        tweedie_preds = np.clip(predictions[tweedie_mask], 1e-12, None)
-        power = 1.5
-        one_minus_power = 1.0 - power
-        two_minus_power = 2.0 - power
-        term_a = np.power(tweedie_targets, two_minus_power) / (
-            one_minus_power * two_minus_power
-        )
-        term_b = (
-            tweedie_targets
-            * np.power(tweedie_preds, one_minus_power)
-            / one_minus_power
-        )
-        term_c = np.power(tweedie_preds, two_minus_power) / two_minus_power
-        tweedie_deviance = 2.0 * (term_a - term_b + term_c)
-        mean_tweedie_deviance = float(np.mean(tweedie_deviance))
-    else:
-        mean_tweedie_deviance = 0.0
-    if target_arr.size > 1:
-        naive_diffs = np.abs(np.diff(target_arr))
-        mase_denominator = float(np.mean(naive_diffs)) if naive_diffs.size else 0.0
-    else:
-        mase_denominator = 0.0
-    if mase_denominator < 1e-8:
-        mase = 0.0
-    else:
-        mase = mae / mase_denominator
-    total_abs_target = float(np.sum(np.abs(target_arr)))
-    if total_abs_target < 1e-8:
-        wmape = 0.0
-    else:
-        wmape = float(np.sum(absolute_errors) / total_abs_target)
-    centered_targets = target_arr - np.mean(target_arr)
-    total_variance = float(np.sum(centered_targets**2))
-    if total_variance <= 1e-12:
-        r2 = 0.0
-        explained_variance = 0.0
-    else:
-        residual = float(np.sum((predictions - target_arr) ** 2))
-        r2 = 1.0 - residual / total_variance
-        prediction_diff = predictions - target_arr
-        denominator = float(np.var(target_arr))
-        if denominator <= 1e-12:
-            explained_variance = 0.0
-        else:
-            explained_variance = 1.0 - float(np.var(prediction_diff)) / denominator
-    if not math.isfinite(explained_variance):
-        explained_variance = 0.0
+    mae = float(np.mean(np.abs(predictions - target_arr))) if len(predictions) else 0.0
+    hits = float(np.mean(np.sign(predictions) == np.sign(target_arr))) if len(predictions) else 0.0
+    pnl = float(np.mean(predictions * target_arr)) if len(predictions) else 0.0
     return {
         "mae": mae,
-        "mse": mse,
         "rmse": rmse,
         "directional_accuracy": hits,
-        "mape": mape,
-        "r2": float(r2),
-        "median_absolute_error": medae,
-        "explained_variance": float(explained_variance),
-        "max_error": max_error,
-        "smape": smape,
-        "mean_bias_error": mean_bias_error,
-        "wmape": wmape,
-        "mpe": mpe,
-        "rmspe": rmspe,
-        "median_percentage_error": median_percentage_error,
-        "median_absolute_percentage_error": median_absolute_percentage_error,
-        "mase": mase,
-        "msle": msle,
-        "mean_absolute_log_error": mean_absolute_log_error,
-        "mean_poisson_deviance": mean_poisson_deviance,
-        "mean_gamma_deviance": mean_gamma_deviance,
-        "mean_tweedie_deviance": mean_tweedie_deviance,
+        "expected_pnl": pnl,
     }
 
 
@@ -349,84 +221,24 @@ def train_gradient_boosting_model(
         )
     train_set = learning_sets[0]
     model = SimpleGradientBoostingModel()
-    model.fit(train_set.features, train_set.targets)
-    metrics: dict[str, float] = {}
-    subset_metrics: dict[str, dict[str, float]] = {}
-    for subset in learning_sets:
-        computed = _compute_metrics(model, subset.features, subset.targets)
-        subset_metrics[subset.name] = {str(k): float(v) for k, v in computed.items()}
-        for key, value in computed.items():
-            metrics[f"{subset.name}_{key}"] = float(value)
-        if subset.name == "train":
-            metrics.update(
-                {
-                    "mae": float(computed.get("mae", 0.0)),
-                    "mse": float(computed.get("mse", 0.0)),
-                    "rmse": float(computed.get("rmse", 0.0)),
-                    "directional_accuracy": float(
-                        computed.get("directional_accuracy", 0.0)
-                    ),
-                    "mape": float(computed.get("mape", 0.0)),
-                    "r2": float(computed.get("r2", 0.0)),
-                    "median_absolute_error": float(
-                        computed.get("median_absolute_error", 0.0)
-                    ),
-                    "explained_variance": float(
-                        computed.get("explained_variance", 0.0)
-                    ),
-                    "max_error": float(computed.get("max_error", 0.0)),
-                    "smape": float(computed.get("smape", 0.0)),
-                    "mean_bias_error": float(computed.get("mean_bias_error", 0.0)),
-                    "wmape": float(computed.get("wmape", 0.0)),
-                    "mpe": float(computed.get("mpe", 0.0)),
-                    "rmspe": float(computed.get("rmspe", 0.0)),
-                    "median_percentage_error": float(
-                        computed.get("median_percentage_error", 0.0)
-                    ),
-                    "median_absolute_percentage_error": float(
-                        computed.get("median_absolute_percentage_error", 0.0)
-                    ),
-                    "mase": float(computed.get("mase", 0.0)),
-                    "msle": float(computed.get("msle", 0.0)),
-                    "mean_absolute_log_error": float(
-                        computed.get("mean_absolute_log_error", 0.0)
-                    ),
-                    "mean_poisson_deviance": float(
-                        computed.get("mean_poisson_deviance", 0.0)
-                    ),
-                    "mean_gamma_deviance": float(
-                        computed.get("mean_gamma_deviance", 0.0)
-                    ),
-                    "mean_tweedie_deviance": float(
-                        computed.get("mean_tweedie_deviance", 0.0)
-                    ),
-                }
-            )
-    metrics["training_samples"] = float(len(train_set.features))
-    metrics["validation_samples"] = float(len(validation_frame))
-    metrics["test_samples"] = float(len(test_frame))
+    model.fit(features, targets)
+    raw_predictions = list(model.batch_predict(features))
+    metrics = _compute_metrics(model, features, targets)
+    calibration_slope, calibration_intercept = _calibrate_predictions(targets, raw_predictions)
+    cv_payload = _cross_validate(features, targets, folds=max(3, min(5, len(features))))
     meta_payload = {
         "feature_scalers": {
             name: {"mean": mean, "stdev": stdev}
             for name, (mean, stdev) in model.feature_scalers.items()
         },
-        "dataset_split": {
-            "validation_ratio": float(validation_ratio),
-            "test_ratio": float(test_ratio),
+        "calibration": {
+            "slope": calibration_slope,
+            "intercept": calibration_intercept,
         },
-        "training_rows": len(train_frame),
-        "validation_rows": len(validation_frame),
-        "test_rows": len(test_frame),
-        "drift_monitor": {
-            "threshold": 3.5,
-            "window": 50,
-            "min_observations": 10,
-            "cooldown": 60,
-            "backend": "decision_engine",
-        },
-        "quality_thresholds": {
-            "min_directional_accuracy": 0.55,
-            "max_mae": 25.0,
+        "cross_validation": {
+            "folds": len(cv_payload["mae"]),
+            "mae": list(cv_payload["mae"]),
+            "directional_accuracy": list(cv_payload["directional_accuracy"]),
         },
     }
     if metadata:

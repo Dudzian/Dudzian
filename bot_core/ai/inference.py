@@ -136,9 +136,7 @@ class DecisionModelInference:
         self._model: Any | None = None
         self._target_scale: float = 1.0
         self._feature_scalers: dict[str, tuple[float, float]] = {}
-        self._drift_monitor = _FeatureDriftMonitor()
-        self._last_drift_score: float | None = None
-        self._model_label = "unnamed"
+        self._calibration: tuple[float, float] | None = None
 
     @property
     def is_ready(self) -> bool:
@@ -163,22 +161,7 @@ class DecisionModelInference:
         metadata = dict(self._artifact.metadata)
         self._target_scale = float(metadata.get("target_scale", 1.0))
         self._feature_scalers = self._extract_scalers(metadata)
-        drift_config = metadata.get("drift_monitor")
-        if isinstance(drift_config, Mapping):
-            self._drift_monitor.configure(
-                model_name=self._model_label,
-                threshold=float(drift_config.get("threshold", self._drift_monitor.threshold)),
-                window=int(drift_config.get("window", self._drift_monitor.window)),
-                min_observations=int(
-                    drift_config.get(
-                        "min_observations", self._drift_monitor.min_observations
-                    )
-                ),
-                cooldown=int(drift_config.get("cooldown", self._drift_monitor.cooldown)),
-                backend=str(drift_config.get("backend", self._drift_monitor.backend)),
-            )
-        elif not self._feature_scalers:
-            self._drift_monitor.disable()
+        self._calibration = self._extract_calibration(metadata)
         if hasattr(self._model, "feature_scalers"):
             model_scalers = getattr(self._model, "feature_scalers")
             if not self._feature_scalers and isinstance(model_scalers, Mapping):
@@ -194,6 +177,9 @@ class DecisionModelInference:
             raise RuntimeError("Model inference nie został załadowany")
         prepared = self._prepare_features(features)
         prediction = float(self._model.predict(prepared))
+        if self._calibration is not None:
+            slope, intercept = self._calibration
+            prediction = prediction * slope + intercept
         probability = self._to_probability(prediction)
         drift_score = self._drift_monitor.observe(prepared, self._feature_scalers)
         if drift_score is not None:
@@ -259,6 +245,16 @@ class DecisionModelInference:
             stdev = float(payload.get("stdev", 0.0))
             scalers[str(name)] = (mean, stdev)
         return scalers
+
+    def _extract_calibration(
+        self, metadata: Mapping[str, object]
+    ) -> tuple[float, float] | None:
+        payload = metadata.get("calibration")
+        if not isinstance(payload, Mapping):
+            return None
+        slope = float(payload.get("slope", 1.0))
+        intercept = float(payload.get("intercept", 0.0))
+        return slope, intercept
 
 
 __all__ = ["DecisionModelInference", "ModelRepository"]

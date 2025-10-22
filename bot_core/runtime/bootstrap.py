@@ -4,24 +4,20 @@ from __future__ import annotations
 import asyncio
 import importlib
 import json
+import re
 import logging
 import os
 import stat
+import sys
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 from pathlib import Path
-from typing import (
-    TYPE_CHECKING,
-    Any,
-    Callable,
-    Iterable,
-    Iterator,
-    Mapping,
-    MutableMapping,
-    Sequence,
-)
+from types import ModuleType, SimpleNamespace
+from typing import TYPE_CHECKING, Any, Callable, Iterable, Iterator, Mapping, MutableMapping, Sequence
+
+import yaml
 
 from bot_core.alerts import (
     AlertSeverity,
@@ -39,30 +35,6 @@ from bot_core.alerts import (
     get_sms_provider,
 )
 from bot_core.alerts.base import AlertAuditLog, AlertChannel
-
-_ALERT_COMPONENT_CACHE: dict[str, Any] | None = None
-
-
-def _get_alert_components() -> Mapping[str, Any]:
-    """Return alert-related classes without repeated imports."""
-
-    global _ALERT_COMPONENT_CACHE
-    if _ALERT_COMPONENT_CACHE is None:
-        _ALERT_COMPONENT_CACHE = {
-            "AlertThrottle": AlertThrottle,
-            "DefaultAlertRouter": DefaultAlertRouter,
-            "FileAlertAuditLog": FileAlertAuditLog,
-            "InMemoryAlertAuditLog": InMemoryAlertAuditLog,
-            "TelegramChannel": TelegramChannel,
-            "EmailChannel": EmailChannel,
-            "SMSChannel": SMSChannel,
-            "SignalChannel": SignalChannel,
-            "MessengerChannel": MessengerChannel,
-            "WhatsAppChannel": WhatsAppChannel,
-            "get_sms_provider": get_sms_provider,
-        }
-    return _ALERT_COMPONENT_CACHE
-from bot_core.alerts.channels.providers import SmsProviderConfig
 from bot_core.config.loader import load_core_config
 from bot_core.config.models import (
     CoreConfig,
@@ -232,14 +204,14 @@ try:  # pragma: no cover - integracja z AIManagerem jest opcjonalna
 except Exception:  # pragma: no cover - środowiska bez modułu bot_core.ai.manager
     AIManager = None  # type: ignore[assignment]
 
-# --- Alert component registry ---------------------------------------------------------
+# --- Rejestr komponentów alertowych ---------------------------------------------------
 
 
 @lru_cache(maxsize=1)
 def _get_alert_components() -> Mapping[str, Any]:
-    """Zwraca mapę klas komponentów alertowych używanych w bootstrapie."""
+    """Zwraca klasowe zależności alertów wymagane podczas bootstrapa."""
 
-    return {
+    components: dict[str, Any] = {
         "FileAlertAuditLog": FileAlertAuditLog,
         "InMemoryAlertAuditLog": InMemoryAlertAuditLog,
         "AlertThrottle": AlertThrottle,
@@ -250,32 +222,18 @@ def _get_alert_components() -> Mapping[str, Any]:
         "SignalChannel": SignalChannel,
         "WhatsAppChannel": WhatsAppChannel,
         "MessengerChannel": MessengerChannel,
-        "SmsProviderConfig": SmsProviderConfig,
         "get_sms_provider": get_sms_provider,
     }
 
+    try:  # pragma: no cover - zależność opcjonalna w dystrybucjach bez SMS
+        from bot_core.alerts.channels.providers import (
+            SmsProviderConfig as _SmsProviderConfig,
+        )
+    except Exception:  # pragma: no cover - brak modułu providers
+        _SmsProviderConfig = SmsProviderConfig  # type: ignore[name-defined]
 
-# --- Alert component registry ---------------------------------------------------------
-
-
-@lru_cache(maxsize=1)
-def _get_alert_components() -> Mapping[str, Any]:
-    """Zwraca mapę klas komponentów alertowych używanych w bootstrapie."""
-
-    return {
-        "FileAlertAuditLog": FileAlertAuditLog,
-        "InMemoryAlertAuditLog": InMemoryAlertAuditLog,
-        "AlertThrottle": AlertThrottle,
-        "DefaultAlertRouter": DefaultAlertRouter,
-        "EmailChannel": EmailChannel,
-        "TelegramChannel": TelegramChannel,
-        "SMSChannel": SMSChannel,
-        "SignalChannel": SignalChannel,
-        "WhatsAppChannel": WhatsAppChannel,
-        "MessengerChannel": MessengerChannel,
-        "SmsProviderConfig": SmsProviderConfig,
-        "get_sms_provider": get_sms_provider,
-    }
+    components["SmsProviderConfig"] = _SmsProviderConfig
+    return components
 
 
 # --- Metrics service (opcjonalny – w niektórych gałęziach może nie istnieć) ---
@@ -698,58 +656,6 @@ def _load_callable_from_path(target: str) -> Callable[..., Any]:
 _LOGGER = logging.getLogger(__name__)
 
 
-def _get_alert_components() -> dict[str, Any]:
-    """Zwraca podstawowe klasy i funkcje kanałów alertowych."""
-
-    try:
-        from bot_core.alerts import (
-            AlertThrottle as _AlertThrottle,
-            DefaultAlertRouter as _DefaultAlertRouter,
-            EmailChannel as _EmailChannel,
-            MessengerChannel as _MessengerChannel,
-            SMSChannel as _SMSChannel,
-            SignalChannel as _SignalChannel,
-            TelegramChannel as _TelegramChannel,
-            WhatsAppChannel as _WhatsAppChannel,
-            get_sms_provider as _get_sms_provider,
-        )
-        from bot_core.alerts.audit import (
-            FileAlertAuditLog as _FileAlertAuditLog,
-            InMemoryAlertAuditLog as _InMemoryAlertAuditLog,
-        )
-        from bot_core.alerts.channels.providers import (
-            SmsProviderConfig as _SmsProviderConfig,
-        )
-    except Exception:  # pragma: no cover - środowiska bez modułu alerts
-        _AlertThrottle = AlertThrottle
-        _DefaultAlertRouter = DefaultAlertRouter
-        _EmailChannel = EmailChannel
-        _MessengerChannel = MessengerChannel
-        _SMSChannel = SMSChannel
-        _SignalChannel = SignalChannel
-        _TelegramChannel = TelegramChannel
-        _WhatsAppChannel = WhatsAppChannel
-        _FileAlertAuditLog = FileAlertAuditLog
-        _InMemoryAlertAuditLog = InMemoryAlertAuditLog
-        _SmsProviderConfig = SmsProviderConfig
-        _get_sms_provider = get_sms_provider
-
-    return {
-        "AlertThrottle": _AlertThrottle,
-        "DefaultAlertRouter": _DefaultAlertRouter,
-        "EmailChannel": _EmailChannel,
-        "SMSChannel": _SMSChannel,
-        "SignalChannel": _SignalChannel,
-        "TelegramChannel": _TelegramChannel,
-        "WhatsAppChannel": _WhatsAppChannel,
-        "MessengerChannel": _MessengerChannel,
-        "FileAlertAuditLog": _FileAlertAuditLog,
-        "InMemoryAlertAuditLog": _InMemoryAlertAuditLog,
-        "get_sms_provider": _get_sms_provider,
-        "SmsProviderConfig": _SmsProviderConfig,
-    }
-
-
 @dataclass(slots=True, frozen=True)
 class RuntimeEntrypoint:
     """Deklaracja punktu wejścia korzystającego z bootstrap_environment."""
@@ -762,6 +668,7 @@ class RuntimeEntrypoint:
     risk_profile: str | None
     tags: tuple[str, ...]
     bootstrap_required: bool
+    trusted_auto_confirm: bool
 
 
 def catalog_runtime_entrypoints(core_config: CoreConfig) -> dict[str, RuntimeEntrypoint]:
@@ -780,6 +687,7 @@ def catalog_runtime_entrypoints(core_config: CoreConfig) -> dict[str, RuntimeEnt
             risk_profile=getattr(cfg, "risk_profile", None),
             tags=tags,
             bootstrap_required=bool(getattr(cfg, "bootstrap", True)),
+            trusted_auto_confirm=bool(getattr(cfg, "trusted_auto_confirm", False)),
         )
     return result
 
@@ -1275,6 +1183,196 @@ def _initialize_paper_execution_service(
     return service
 
 
+def _normalize_sequence(value: Any) -> tuple[str, ...]:
+    if value is None:
+        return ()
+    if isinstance(value, str):
+        items = [value]
+    elif isinstance(value, Mapping):
+        return ()
+    elif isinstance(value, Iterable):
+        items = list(value)
+    else:
+        return ()
+    normalized: list[str] = []
+    for item in items:
+        if item is None:
+            continue
+        text = str(item).strip()
+        if text:
+            normalized.append(text)
+    return tuple(normalized)
+
+
+def _load_raw_runtime_entrypoints(core_config: CoreConfig) -> Mapping[str, Any]:
+    source_path = getattr(core_config, "source_path", None)
+    if not source_path:
+        return {}
+    candidate = Path(str(source_path))
+    try:
+        raw_text = candidate.read_text(encoding="utf-8")
+    except Exception:  # pragma: no cover - diagnostyka konfiguracji
+        _LOGGER.debug(
+            "Nie udało się wczytać pliku konfiguracji CoreConfig (path=%s)",
+            candidate,
+            exc_info=True,
+        )
+        return {}
+    try:
+        parsed = yaml.safe_load(raw_text)
+    except Exception:  # pragma: no cover - diagnostyka formatu YAML
+        _LOGGER.debug(
+            "Nie udało się sparsować YAML konfiguracji core (path=%s)",
+            candidate,
+            exc_info=True,
+        )
+        return {}
+    if not isinstance(parsed, Mapping):
+        return {}
+    entrypoints = parsed.get("runtime_entrypoints")
+    if isinstance(entrypoints, Mapping):
+        return entrypoints
+    return {}
+
+
+def _get_profile_value(profile: Any, field_name: str) -> Any:
+    if profile is None:
+        return None
+    if isinstance(profile, Mapping):
+        return profile.get(field_name)
+    return getattr(profile, field_name, None)
+
+
+def _build_live_readiness_checklist(
+    *,
+    core_config: CoreConfig,
+    environment: EnvironmentConfig,
+    risk_profile_name: str,
+    risk_profile_config: RiskProfileConfig | Mapping[str, Any] | None,
+    alert_router: DefaultAlertRouter,
+    alert_channels: Mapping[str, AlertChannel],
+    audit_log: AlertAuditLog,
+) -> tuple[Mapping[str, Any], ...]:
+    checklist: list[Mapping[str, Any]] = []
+
+    raw_entrypoints = _load_raw_runtime_entrypoints(core_config)
+    compliance_details: list[Mapping[str, Any]] = []
+    compliance_ok = False
+
+    for entry_name, entry in raw_entrypoints.items():
+        if not isinstance(entry, Mapping):
+            continue
+        entry_environment = str(entry.get("environment", "")).strip()
+        if entry_environment != environment.name:
+            continue
+        compliance_source = entry.get("compliance")
+        entry_profile = str(entry.get("risk_profile", "")).strip()
+        details: dict[str, Any] = {
+            "entrypoint": entry_name,
+            "risk_profile": entry_profile or None,
+            "bootstrap_risk_profile": risk_profile_name,
+        }
+        reasons: list[str] = []
+        status_ok = True
+        signoffs: tuple[str, ...] = ()
+        if not isinstance(compliance_source, Mapping):
+            status_ok = False
+            reasons.append("missing compliance declaration")
+        else:
+            if not bool(compliance_source.get("live_allowed")):
+                status_ok = False
+                reasons.append("live mode disabled")
+            if not bool(compliance_source.get("signed")):
+                status_ok = False
+                reasons.append("unsigned compliance packet")
+            allowed_profiles = _normalize_sequence(compliance_source.get("risk_profiles"))
+            if allowed_profiles and risk_profile_name not in allowed_profiles:
+                status_ok = False
+                reasons.append("risk profile not permitted")
+            signoffs = _normalize_sequence(
+                compliance_source.get("signoffs") or compliance_source.get("signatures")
+            )
+            require_signoff = compliance_source.get("require_signoff")
+            if require_signoff is None:
+                require_signoff = True
+            if bool(require_signoff) and not signoffs:
+                status_ok = False
+                reasons.append("missing sign-off")
+        details["signoffs"] = signoffs
+        if status_ok:
+            compliance_ok = True
+            details["status"] = "ok"
+        else:
+            details["status"] = "blocked"
+            if reasons:
+                details["reasons"] = tuple(reasons)
+        compliance_details.append(details)
+
+    if not compliance_details:
+        compliance_details.append(
+            {
+                "entrypoint": None,
+                "status": "blocked",
+                "reasons": ("no runtime entrypoints bound to environment",),
+                "signoffs": (),
+            }
+        )
+
+    checklist.append(
+        {
+            "item": "kyc_aml_signoff",
+            "status": "ok" if compliance_ok else "blocked",
+            "description": (
+                "Potwierdź podpisy KYC/AML, zgodę compliance i wymagane sign-offy przed uruchomieniem live."
+            ),
+            "details": tuple(compliance_details),
+        }
+    )
+
+    risk_limits_fields = {
+        "max_daily_loss_pct": _get_profile_value(risk_profile_config, "max_daily_loss_pct"),
+        "hard_drawdown_pct": _get_profile_value(risk_profile_config, "hard_drawdown_pct"),
+        "max_position_pct": _get_profile_value(risk_profile_config, "max_position_pct"),
+        "max_open_positions": _get_profile_value(risk_profile_config, "max_open_positions"),
+    }
+
+    def _is_positive(value: Any) -> bool:
+        try:
+            return float(value) > 0.0
+        except (TypeError, ValueError):
+            return False
+
+    limits_ok = all(_is_positive(risk_limits_fields[key]) for key in ("max_daily_loss_pct", "hard_drawdown_pct", "max_position_pct"))
+
+    checklist.append(
+        {
+            "item": "risk_limits",
+            "status": "ok" if limits_ok else "blocked",
+            "description": "Zweryfikuj limity profilu ryzyka (drawdown, dzienna strata, ekspozycja).",
+            "details": risk_limits_fields,
+        }
+    )
+
+    channels_configured = bool(alert_channels)
+    audit_backend = audit_log.__class__.__name__ if audit_log is not None else None
+    throttle_enabled = bool(getattr(alert_router, "throttle", None))
+
+    checklist.append(
+        {
+            "item": "alerting",
+            "status": "ok" if channels_configured and audit_backend and throttle_enabled else "blocked",
+            "description": "Upewnij się, że kanały alertów i audyt są aktywne przed startem live.",
+            "details": {
+                "channels": tuple(sorted(alert_channels)),
+                "audit_backend": audit_backend,
+                "throttle_enabled": throttle_enabled,
+            },
+        }
+    )
+
+    return tuple(checklist)
+
+
 @dataclass(slots=True)
 class BootstrapContext:
     """Zawiera wszystkie komponenty zainicjalizowane dla danego środowiska."""
@@ -1332,6 +1430,7 @@ class BootstrapContext:
     ai_pipeline_schedules: Sequence[str] | None = None
     ai_pipeline_pending: Sequence[str] | None = None
     execution_service: Any | None = None
+    live_readiness_checklist: Sequence[Mapping[str, Any]] | None = None
 
 
 def bootstrap_environment(
@@ -1356,10 +1455,26 @@ def bootstrap_environment(
     if not isinstance(license_config, LicenseValidationConfig):
         license_config = LicenseValidationConfig()
     reset_capability_guard()
+
+    if environment_name not in core_config.environments:
+        raise KeyError(f"Środowisko '{environment_name}' nie istnieje w konfiguracji")
+
+    environment = core_config.environments[environment_name]
+    offline_mode = bool(getattr(environment, "offline_mode", False))
+    if offline_mode:
+        _LOGGER.info(
+            "Środowisko %s działa w trybie offline – pomijam komponenty wymagające sieci.",
+            environment.name,
+        )
+    selected_profile = risk_profile_name or environment.risk_profile
+    environment_type = getattr(environment, "environment", None)
+    is_paper_like = environment_type in {Environment.PAPER, Environment.TESTNET}
+
     skip_license_validation = not (
         getattr(license_config, "license_keys_path", None)
         and getattr(license_config, "fingerprint_keys_path", None)
     )
+    license_result: LicenseValidationResult | None = None
 
     if skip_license_validation:
         license_path_value = getattr(license_config, "license_path", None) or ""
@@ -1401,120 +1516,48 @@ def bootstrap_environment(
                 "status": "invalid",
                 "license_path": str(Path(license_config.license_path).expanduser()),
             }
-            emit_alert(
-                "Weryfikacja licencji OEM zakończona błędem – zatrzymuję kontroler.",
-                severity=AlertSeverity.CRITICAL,
-                source="security.license",
-                context=context,
-                exception=exc,
-            )
-            _LOGGER.critical("Weryfikacja licencji OEM nie powiodła się: %s", exc)
-            raise RuntimeError(str(exc)) from exc
+            if is_paper_like or offline_mode:
+                _LOGGER.warning(
+                    "Pomijam weryfikację licencji OEM dla środowiska %s: %s",
+                    environment.name,
+                    exc,
+                )
+                emit_alert(
+                    "Weryfikacja licencji OEM pominięta dla środowiska testowego.",
+                    severity=AlertSeverity.WARNING,
+                    source="security.license",
+                    context=context,
+                    exception=exc,
+                )
+                license_result = exc.result
+            else:
+                emit_alert(
+                    "Weryfikacja licencji OEM zakończona błędem – zatrzymuję kontroler.",
+                    severity=AlertSeverity.CRITICAL,
+                    source="security.license",
+                    context=context,
+                    exception=exc,
+                )
+                _LOGGER.critical("Weryfikacja licencji OEM nie powiodła się: %s", exc)
+                raise RuntimeError(str(exc)) from exc
 
-    if license_result.warnings:
-        for message in license_result.warnings:
-            _LOGGER.warning("Weryfikacja licencji: %s", message)
-    _LOGGER.info(
-        "Licencja OEM zweryfikowana (id=%s, fingerprint=%s, wygasa=%s, revocation=%s)",
-        license_result.license_id or "brak",
-        license_result.fingerprint,
-        license_result.expires_at or "brak informacji",
-        license_result.revocation_status or "n/a",
-    )
-    emit_alert(
-        "Licencja OEM zweryfikowana pomyślnie." if not license_result.warnings else "Licencja OEM zweryfikowana z ostrzeżeniami.",
-        severity=AlertSeverity.WARNING if license_result.warnings else AlertSeverity.INFO,
-        source="security.license",
-        context=license_result.to_context(),
-    )
-
-    if environment_name not in core_config.environments:
-        raise KeyError(f"Środowisko '{environment_name}' nie istnieje w konfiguracji")
-
-    environment = core_config.environments[environment_name]
-    offline_mode = bool(getattr(environment, "offline_mode", False))
-    if offline_mode:
+    if license_result is not None:
+        if license_result.warnings:
+            for message in license_result.warnings:
+                _LOGGER.warning("Weryfikacja licencji: %s", message)
         _LOGGER.info(
-            "Środowisko %s działa w trybie offline – pomijam komponenty wymagające sieci.",
-            environment.name,
+            "Licencja OEM zweryfikowana (id=%s, fingerprint=%s, wygasa=%s, revocation=%s)",
+            license_result.license_id or "brak",
+            license_result.fingerprint,
+            license_result.expires_at or "brak informacji",
+            license_result.revocation_status or "n/a",
         )
-    selected_profile = risk_profile_name or environment.risk_profile
-    license_config = getattr(core_config, "license", None)
-    if not isinstance(license_config, LicenseValidationConfig):
-        license_config = LicenseValidationConfig()
-
-    environment_type = getattr(environment, "environment", None)
-    is_paper_like = environment_type in {Environment.PAPER, Environment.TESTNET}
-    license_result: LicenseValidationResult | None = None
-    try:
-        license_result = validate_license_from_config(license_config)
-    except LicenseValidationError as exc:
-        if is_paper_like or offline_mode:
-            context = exc.result.to_context() if exc.result else {
-                "status": "skipped",
-                "reason": str(exc),
-                "license_path": str(Path(license_config.license_path).expanduser()),
-            }
-            _LOGGER.warning(
-                "Pomijam weryfikację licencji OEM dla środowiska %s: %s",
-                environment.name,
-                exc,
-            )
-            emit_alert(
-                "Weryfikacja licencji OEM pominięta dla środowiska testowego.",
-                severity=AlertSeverity.WARNING,
-                source="security.license",
-                context=context,
-                exception=exc,
-            )
-        else:
-            context = exc.result.to_context() if exc.result else {
-                "status": "invalid",
-                "license_path": str(Path(license_config.license_path).expanduser()),
-            }
-            emit_alert(
-                "Weryfikacja licencji OEM zakończona błędem – zatrzymuję kontroler.",
-                severity=AlertSeverity.CRITICAL,
-                source="security.license",
-                context=context,
-                exception=exc,
-            )
-            _LOGGER.critical("Weryfikacja licencji OEM nie powiodła się: %s", exc)
-            raise RuntimeError(str(exc)) from exc
-    else:
-        try:
-            license_result = validate_license_from_config(license_config)
-        except LicenseValidationError as exc:
-            context = exc.result.to_context() if exc.result else {
-                "status": "invalid",
-                "license_path": str(Path(license_config.license_path).expanduser()),
-            }
-            emit_alert(
-                "Weryfikacja licencji OEM zakończona błędem – zatrzymuję kontroler.",
-                severity=AlertSeverity.CRITICAL,
-                source="security.license",
-                context=context,
-                exception=exc,
-            )
-            _LOGGER.critical("Weryfikacja licencji OEM nie powiodła się: %s", exc)
-            raise RuntimeError(str(exc)) from exc
-        else:
-            if license_result.warnings:
-                for message in license_result.warnings:
-                    _LOGGER.warning("Weryfikacja licencji: %s", message)
-            _LOGGER.info(
-                "Licencja OEM zweryfikowana (id=%s, fingerprint=%s, wygasa=%s, revocation=%s)",
-                license_result.license_id or "brak",
-                license_result.fingerprint,
-                license_result.expires_at or "brak informacji",
-                license_result.revocation_status or "n/a",
-            )
-            emit_alert(
-                "Licencja OEM zweryfikowana pomyślnie." if not license_result.warnings else "Licencja OEM zweryfikowana z ostrzeżeniami.",
-                severity=AlertSeverity.WARNING if license_result.warnings else AlertSeverity.INFO,
-                source="security.license",
-                context=license_result.to_context(),
-            )
+        emit_alert(
+            "Licencja OEM zweryfikowana pomyślnie." if not license_result.warnings else "Licencja OEM zweryfikowana z ostrzeżeniami.",
+            severity=AlertSeverity.WARNING if license_result.warnings else AlertSeverity.INFO,
+            source="security.license",
+            context=license_result.to_context(),
+        )
 
     if license_result is not None:
         offline_license_path = os.environ.get("BOT_CORE_LICENSE_PATH")
@@ -1606,9 +1649,23 @@ def bootstrap_environment(
         if reporter is not None:
             tco_reporter = reporter
 
-    if decision_engine_config and DecisionOrchestrator is not None:
+    orchestrator_cls: Any | None = DecisionOrchestrator
+    if (
+        decision_engine_config
+        and orchestrator_cls is None
+    ):
+        try:  # pragma: no cover - środowiska z odchudzonym bot_core.decision
+            from bot_core.decision.orchestrator import (  # type: ignore
+                DecisionOrchestrator as _DecisionOrchestrator,
+            )
+        except Exception:  # pragma: no cover - brak pełnego modułu decision
+            orchestrator_cls = None
+        else:
+            orchestrator_cls = _DecisionOrchestrator
+
+    if decision_engine_config and orchestrator_cls is not None:
         try:
-            decision_orchestrator = DecisionOrchestrator(decision_engine_config)
+            decision_orchestrator = orchestrator_cls(decision_engine_config)
         except Exception:  # pragma: no cover - diagnostyka inicjalizacji
             decision_orchestrator = None
             _LOGGER.exception("Nie udało się zainicjalizować DecisionOrchestratora")
@@ -2405,6 +2462,9 @@ def bootstrap_environment(
                 alert_router,
                 requested_backend=getattr(metrics_config, "ui_alerts_audit_backend", None),
             )
+            if metrics_config is None and audit_backend.get("backend") == "file":
+                audit_backend = dict(audit_backend)
+                audit_backend["backend"] = "memory"
             settings_payload["audit"] = audit_backend
 
             metrics_sinks.append(UiTelemetryAlertSink(alert_router, **sink_kwargs))
@@ -2708,6 +2768,21 @@ def bootstrap_environment(
             environment=environment,
             risk_profile=selected_profile,
         )
+    live_readiness_checklist: Sequence[Mapping[str, Any]] | None = None
+    if environment.environment is Environment.LIVE:
+        try:
+            live_readiness_checklist = _build_live_readiness_checklist(
+                core_config=core_config,
+                environment=environment,
+                risk_profile_name=selected_profile,
+                risk_profile_config=risk_profile_config,
+                alert_router=alert_router,
+                alert_channels=alert_channels,
+                audit_log=audit_log,
+            )
+        except Exception:  # pragma: no cover - diagnostyka checklisty
+            live_readiness_checklist = None
+            _LOGGER.exception("Nie udało się zbudować checklisty live readiness")
 
     return BootstrapContext(
         core_config=core_config,
@@ -2771,6 +2846,7 @@ def bootstrap_environment(
         else None,
         ai_pipeline_pending=tuple(ai_pipeline_pending) if ai_pipeline_pending else None,
         execution_service=execution_service,
+        live_readiness_checklist=live_readiness_checklist,
     )
 
 
@@ -3228,22 +3304,119 @@ def _build_sms_channel(
             "Sekret dostawcy SMS musi zawierać pola 'account_sid' oraz 'auth_token'."
         )
 
-    provider_config = _resolve_sms_provider(settings, get_sms_provider_fn)
-    sender = (
-        settings.sender_id
-        if settings.allow_alphanumeric_sender and settings.sender_id
-        else settings.from_number
-    )
-    if not sender:
+    wants_alphanumeric = bool(settings.allow_alphanumeric_sender)
+    has_sender_id = bool(settings.sender_id)
+
+    if wants_alphanumeric and not has_sender_id:
         raise SecretStorageError(
-            f"Konfiguracja dostawcy SMS '{channel_key}' wymaga pola 'from_number' lub 'sender_id'."
+            (
+                f"Konfiguracja dostawcy SMS '{channel_key}' ma włączone pole "
+                "'allow_alphanumeric_sender', ale nie dostarczono 'sender_id'."
+            )
         )
 
-    recipients: Sequence[str] = tuple(settings.recipients)
-    if not recipients:
+    if not wants_alphanumeric and has_sender_id:
+        raise SecretStorageError(
+            (
+                f"Konfiguracja dostawcy SMS '{channel_key}' zawiera 'sender_id', lecz "
+                "'allow_alphanumeric_sender' pozostaje wyłączone."
+            )
+        )
+
+    provider_config = _resolve_sms_provider(
+        settings,
+        get_sms_provider_fn,
+        channel_key=channel_key,
+    )
+    supports_alphanumeric = bool(
+        getattr(provider_config, "supports_alphanumeric_sender", False)
+    )
+    if wants_alphanumeric and not supports_alphanumeric:
+        raise SecretStorageError(
+            (
+                f"Konfiguracja dostawcy SMS '{channel_key}' włącza nadawcę alfanumerycznego, "
+                "ale operator go nie obsługuje."
+            )
+        )
+
+    if wants_alphanumeric:
+        normalized_sender = str(settings.sender_id).strip()
+        if not normalized_sender:
+            raise SecretStorageError(
+                f"Pole 'sender_id' dla dostawcy SMS '{channel_key}' nie może być puste."
+            )
+        if not _ALPHANUMERIC_SENDER_PATTERN.fullmatch(normalized_sender):
+            raise SecretStorageError(
+                (
+                    f"Identyfikator nadawcy '{settings.sender_id}' może zawierać wyłącznie "
+                    "litery A-Z, cyfry 0-9, spacje oraz znaki '-' i '_'."
+                )
+            )
+        sender = normalized_sender.upper()
+        if len(sender) < 3:
+            raise SecretStorageError(
+                (
+                    f"Identyfikator nadawcy '{settings.sender_id}' musi mieć co najmniej trzy znaki, "
+                    "aby spełniał wymagania operatorów alfanumerycznych."
+                )
+            )
+        if not any(ch.isalpha() for ch in sender):
+            raise SecretStorageError(
+                (
+                    f"Identyfikator nadawcy '{settings.sender_id}' musi zawierać co najmniej jedną literę, "
+                    "zgodnie ze standardem alfanumerycznych nadawców."
+                )
+            )
+        max_sender_length = getattr(provider_config, "max_sender_length", None)
+        if max_sender_length not in (None, ""):
+            try:
+                max_length_int = int(max_sender_length)
+            except (TypeError, ValueError):  # pragma: no cover - brak spójności metadanych
+                max_length_int = None
+            else:
+                if len(sender) > max_length_int:
+                    raise SecretStorageError(
+                        (
+                            f"Identyfikator nadawcy '{settings.sender_id}' przekracza dopuszczalny "
+                            f"limit {max_length_int} znaków dla operatora '{channel_key}'."
+                        )
+                    )
+    else:
+        sender = str(settings.from_number or "").strip()
+        if not sender:
+            raise SecretStorageError(
+                f"Konfiguracja dostawcy SMS '{channel_key}' wymaga pola 'from_number'."
+            )
+        _validate_e164_number(sender, channel_key, field="from_number")
+
+    raw_recipients: Sequence[str] = tuple(settings.recipients)
+    if not raw_recipients:
         raise SecretStorageError(
             f"Konfiguracja dostawcy SMS '{channel_key}' wymaga co najmniej jednego odbiorcy."
         )
+
+    normalized_recipients: list[str] = []
+    seen_recipients: set[str] = set()
+    duplicate_recipients: set[str] = set()
+    for recipient in raw_recipients:
+        normalized = str(recipient).strip()
+        _validate_e164_number(normalized, channel_key, field="recipient")
+        if normalized in seen_recipients:
+            duplicate_recipients.add(normalized)
+        else:
+            seen_recipients.add(normalized)
+            normalized_recipients.append(normalized)
+
+    if duplicate_recipients:
+        duplicates = ", ".join(sorted(duplicate_recipients))
+        raise SecretStorageError(
+            (
+                f"Konfiguracja dostawcy SMS '{channel_key}' zawiera zduplikowane "
+                f"numery odbiorców: {duplicates}."
+            )
+        )
+
+    recipients = tuple(normalized_recipients)
 
     return SMSChannelCls(
         account_sid=str(account_sid),
@@ -3339,23 +3512,122 @@ def _build_messenger_channel(
 
 
 def _resolve_sms_provider(
-    settings: SMSProviderSettings, get_sms_provider_fn: Any
+    settings: SMSProviderSettings,
+    get_sms_provider_fn: Any,
+    *,
+    channel_key: str,
 ) -> SmsProviderConfig:
     components = _get_alert_components()
     SmsProviderConfigCls = components.get("SmsProviderConfig")
     if SmsProviderConfigCls is None:
         raise KeyError("Typ SmsProviderConfig nie jest dostępny w module alertów")
 
-    base = get_sms_provider_fn(settings.provider_key)
-    return SmsProviderConfigCls(
-        provider_id=base.provider_id,
-        display_name=base.display_name,
-        api_base_url=settings.api_base_url or base.api_base_url,
-        iso_country_code=base.iso_country_code,
-        supports_alphanumeric_sender=settings.allow_alphanumeric_sender,
-        notes=base.notes,
-        max_sender_length=base.max_sender_length,
+    is_stub_registry = getattr(get_sms_provider_fn, _SMS_PROVIDERS_STUB_FLAG, False)
+    try:
+        override_iso_code = _normalize_iso_country_code(settings.iso_country_code)
+    except ValueError:
+        raise SecretStorageError(
+            (
+                f"Konfiguracja dostawcy SMS '{channel_key}' zawiera nieprawidłowy kod kraju "
+                f"'{settings.iso_country_code}'. Oczekiwany jest kod ISO 3166-1 alfa-2."
+            )
+        ) from None
+    try:
+        base = get_sms_provider_fn(settings.provider_key)
+    except KeyError:
+        if not is_stub_registry:
+            raise
+
+        _LOGGER.warning(
+            "Fallback rejestru SMS: używam konfiguracji lokalnej bez metadanych dostawcy.",
+            extra={
+                "provider_key": settings.provider_key,
+                "channel": settings.name,
+            },
+        )
+        base = SimpleNamespace(
+            provider_id=settings.provider_key,
+            display_name=settings.display_name
+            or f"{settings.provider_key} (bootstrap)",
+            api_base_url=settings.api_base_url,
+            iso_country_code=override_iso_code or "ZZ",
+            supports_alphanumeric_sender=settings.allow_alphanumeric_sender,
+            notes=settings.notes
+            or "Bootstrap fallback provider – brak zarejestrowanego operatora.",
+            max_sender_length=settings.max_sender_length or 11,
+        )
+
+    raw_base_iso = getattr(base, "iso_country_code", None)
+    try:
+        base_iso_code = _normalize_iso_country_code(raw_base_iso)
+    except ValueError:
+        _LOGGER.warning(
+            (
+                "Rejestr dostawców SMS zwrócił nieprawidłowy kod kraju %r dla operatora '%s'. "
+                "Zastępuję wartością 'ZZ'."
+            ),
+            raw_base_iso,
+            settings.provider_key,
+            extra={
+                "provider_key": settings.provider_key,
+                "channel": settings.name,
+                "invalid_iso_country_code": raw_base_iso,
+            },
+        )
+        base_iso_code = "ZZ"
+
+    display_name = settings.display_name or getattr(base, "display_name", settings.provider_key)
+    iso_country_code = override_iso_code or base_iso_code or "ZZ"
+    notes = settings.notes if settings.notes is not None else getattr(base, "notes", None)
+    max_sender_length = (
+        settings.max_sender_length
+        if settings.max_sender_length is not None
+        else getattr(base, "max_sender_length", 11)
     )
+    supports_attr = getattr(base, "supports_alphanumeric_sender", None)
+    if supports_attr is None:
+        supports_alphanumeric = bool(settings.allow_alphanumeric_sender)
+    else:
+        supports_alphanumeric = bool(supports_attr)
+
+    provider_config = SmsProviderConfigCls(
+        provider_id=base.provider_id,
+        display_name=display_name,
+        api_base_url=settings.api_base_url or getattr(base, "api_base_url", settings.api_base_url),
+        iso_country_code=iso_country_code,
+        supports_alphanumeric_sender=supports_alphanumeric,
+        notes=notes,
+        max_sender_length=max_sender_length,
+    )
+
+    if is_stub_registry:
+        providers_module = sys.modules.get(_SMS_PROVIDERS_MODULE)
+        if providers_module and getattr(providers_module, _SMS_PROVIDERS_STUB_FLAG, False):
+            providers_module.DEFAULT_SMS_PROVIDERS[settings.provider_key] = provider_config
+
+    return provider_config
+
+
+def _normalize_iso_country_code(value: Any) -> str | None:
+    if value in (None, "", False):
+        return None
+
+    candidate = str(value).strip().upper()
+    if _ISO_COUNTRY_PATTERN.match(candidate):
+        return candidate
+
+    raise ValueError(candidate)
+
+
+def _validate_e164_number(value: str, channel_key: str, *, field: str) -> None:
+    if not _E164_PATTERN.match(str(value)):
+        example = "+48123456789"
+        raise SecretStorageError(
+            (
+                f"Wartość '{value}' dla pola '{field}' dostawcy SMS '{channel_key}' musi być "
+                f"w formacie E.164 (np. {example})."
+            )
+        )
 
 
 __all__ = [

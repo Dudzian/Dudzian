@@ -540,3 +540,91 @@ def test_public_request_raises_api_error(monkeypatch: pytest.MonkeyPatch) -> Non
         labels={**adapter._metric_base_labels, "reason": "server_error"},
     )
     assert api_errors == pytest.approx(1.0)
+
+
+def test_zonda_spot_adapter_global_throttle_failover(monkeypatch: pytest.MonkeyPatch) -> None:
+    adapter = ZondaSpotAdapter(ExchangeCredentials(key_id="k", secret="s", environment=Environment.LIVE))
+
+    monotonic_now = [2_000.0]
+
+    def fake_monotonic() -> float:
+        return monotonic_now[0]
+
+    monkeypatch.setattr("bot_core.exchanges.zonda.spot.time.monotonic", fake_monotonic)
+    monkeypatch.setattr("bot_core.exchanges.zonda.spot.time.sleep", lambda *_: None)
+
+    def throttle_urlopen(request: Request, timeout: int = 15):  # type: ignore[override]
+        raise HTTPError(request.full_url, 429, "Too Many Requests", {"Retry-After": "3"}, None)
+
+    monkeypatch.setattr("bot_core.exchanges.zonda.spot.urlopen", throttle_urlopen)
+
+    with pytest.raises(ExchangeThrottlingError):
+        adapter._public_request("/trading/ticker")
+
+    status = adapter.failover_status()
+    assert status["throttle_active"] is True
+
+    success_calls = 0
+
+    def success_urlopen(request: Request, timeout: int = 15):  # type: ignore[override]
+        nonlocal success_calls
+        success_calls += 1
+        return _FakeResponse({"status": "Ok", "items": {}})
+
+    monkeypatch.setattr("bot_core.exchanges.zonda.spot.urlopen", success_urlopen)
+
+    with pytest.raises(ExchangeThrottlingError):
+        adapter._public_request("/trading/ticker")
+    assert success_calls == 0
+
+    monotonic_now[0] += status["throttle_remaining"] + 0.5
+    payload = adapter._public_request("/trading/ticker")
+    assert payload == {"status": "Ok", "items": {}}
+    assert adapter.failover_status()["throttle_active"] is False
+    assert success_calls == 1
+
+
+def test_zonda_spot_adapter_reconnect_cooldown(monkeypatch: pytest.MonkeyPatch) -> None:
+    adapter = ZondaSpotAdapter(ExchangeCredentials(key_id="k", secret="s", environment=Environment.LIVE))
+
+    monotonic_now = [4_000.0]
+
+    def fake_monotonic() -> float:
+        return monotonic_now[0]
+
+    monkeypatch.setattr("bot_core.exchanges.zonda.spot.time.monotonic", fake_monotonic)
+    monkeypatch.setattr("bot_core.exchanges.zonda.spot.time.sleep", lambda *_: None)
+
+    calls = 0
+
+    def failing_urlopen(request: Request, timeout: int = 15):  # type: ignore[override]
+        nonlocal calls
+        calls += 1
+        raise URLError("down")
+
+    monkeypatch.setattr("bot_core.exchanges.zonda.spot.urlopen", failing_urlopen)
+
+    with pytest.raises(ExchangeNetworkError):
+        adapter._public_request("/trading/ticker")
+    assert calls >= 3
+
+    status = adapter.failover_status()
+    assert status["reconnect_required"] is True
+
+    with pytest.raises(ExchangeNetworkError):
+        adapter._public_request("/trading/ticker")
+
+    success_calls = 0
+
+    def success_urlopen(request: Request, timeout: int = 15):  # type: ignore[override]
+        nonlocal success_calls
+        success_calls += 1
+        return _FakeResponse({"status": "Ok", "items": {}})
+
+    monkeypatch.setattr("bot_core.exchanges.zonda.spot.urlopen", success_urlopen)
+    monotonic_now[0] += status["reconnect_remaining"] + 0.5
+
+    payload = adapter._public_request("/trading/ticker")
+    assert payload == {"status": "Ok", "items": {}}
+    assert adapter.failover_status()["reconnect_required"] is False
+    assert success_calls == 1

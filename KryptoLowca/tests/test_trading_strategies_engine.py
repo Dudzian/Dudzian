@@ -91,12 +91,15 @@ class TestTradingEngine(unittest.TestCase):
 
         indicators = calculator.calculate_indicators(self.sample_data, self.params)
         raw_signals = generator.generate_signals(indicators, self.params)
-        managed_signals = risk_manager.apply_risk_management(
+        managed_positions = risk_manager.apply_risk_management(
             self.sample_data, raw_signals, indicators, self.params
         )
 
-        self.assertEqual(len(managed_signals), len(raw_signals))
-        self.assertTrue(all(signal in [-1, 0, 1] for signal in managed_signals))
+        self.assertIsInstance(managed_positions, pd.DataFrame)
+        self.assertEqual(len(managed_positions), len(raw_signals))
+        self.assertIn("direction", managed_positions.columns)
+        self.assertIn("size", managed_positions.columns)
+        self.assertTrue(all(signal in [-1, 0, 1] for signal in managed_positions["direction"]))
 
     def test_backtest_execution(self) -> None:
         result = self.engine.run_strategy(self.sample_data, self.params)

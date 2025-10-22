@@ -94,9 +94,13 @@ Start the headless AutoTrader with the shared runtime services:
 python -m KryptoLowca.run_autotrade_paper
 ```
 
-`KryptoLowca.auto_trader.app.AutoTrader` consumes risk metadata, listens for
-reload notifications (GUI, `SIGHUP`, filesystem watcher) and orchestrates the
-walk-forward engine, auto-trading loop and Prometheus telemetry.
+`bot_core.auto_trader.app.AutoTrader` jest kanoniczną implementacją kontrolera
+autotradingu. Warstwa `KryptoLowca.auto_trader` utrzymuje jedynie cienki shim
+delegujący do modułu `bot_core` (wraz z przekierowaniem alertów), dzięki czemu
+legacy importy nadal działają, a logika runtime jest utrzymywana w jednym
+miejscu. AutoTrader konsumuje metadane ryzyka, reaguje na przeładowania (GUI,
+`SIGHUP`, watcher pliku) i orkiestruje pętlę auto-tradingu oraz telemetrię
+Prometheusa.
 
 ## Risk Management Runtime
 

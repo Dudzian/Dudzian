@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import math
 import statistics
 from dataclasses import dataclass
@@ -29,6 +30,33 @@ except Exception:  # pragma: no cover - gracefully handle missing dependency
 from ._license import ensure_ai_signals_enabled
 from .feature_engineering import FeatureDataset
 from .models import ModelArtifact
+
+
+_LOGGER = logging.getLogger(__name__)
+
+
+def _linear_calibration(
+    targets: Sequence[float], predictions: Sequence[float]
+) -> tuple[float, float]:
+    if not targets or not predictions:
+        return 1.0, 0.0
+    if len(targets) != len(predictions):
+        raise ValueError("targets and predictions must have the same length")
+    y = [float(value) for value in targets]
+    x = [float(value) for value in predictions]
+    if all(abs(value - x[0]) < 1e-12 for value in x):
+        return 0.0, float(sum(y) / len(y))
+    sum_x = sum(x)
+    sum_y = sum(y)
+    sum_xx = sum(value * value for value in x)
+    sum_xy = sum(val_x * val_y for val_x, val_y in zip(x, y))
+    n = float(len(x))
+    denominator = n * sum_xx - sum_x * sum_x
+    if abs(denominator) < 1e-12:
+        return 0.0, float(sum_y / n)
+    slope = (n * sum_xy - sum_x * sum_y) / denominator
+    intercept = (sum_y - slope * sum_x) / n
+    return float(slope), float(intercept)
 
 
 @runtime_checkable
@@ -387,29 +415,14 @@ class ModelTrainer:
         metadata["backend"] = self.backend
         if self.validation_split > 0.0:
             metadata["validation_split"] = self.validation_split
-        if self.test_split > 0.0:
-            metadata["test_split"] = self.test_split
-        metadata["dataset_split"] = {
-            "validation_ratio": float(self.validation_split),
-            "test_ratio": float(self.test_split),
+        cv_summary = self._cross_validate_matrix(matrix, targets, feature_names)
+        metadata["cross_validation"] = {
+            "folds": int(cv_summary.get("folds", 0)),
+            "mae": [float(value) for value in cv_summary.get("mae", [])],
+            "directional_accuracy": [
+                float(value) for value in cv_summary.get("directional_accuracy", [])
+            ],
         }
-        metadata.setdefault(
-            "drift_monitor",
-            {
-                "threshold": 3.5,
-                "window": 50,
-                "min_observations": 10,
-                "cooldown": 60,
-                "backend": self.backend,
-            },
-        )
-        metadata.setdefault(
-            "quality_thresholds",
-            {
-                "min_directional_accuracy": 0.55,
-                "max_mae": 25.0,
-            },
-        )
 
         if self.backend == "builtin":
             return self._train_builtin(
@@ -460,6 +473,9 @@ class ModelTrainer:
         train_samples = self._rows_to_samples(train_matrix, feature_names)
         train_predictions = model.batch_predict(train_samples)
         train_metrics = self._compute_metrics(train_targets, train_predictions)
+        slope, intercept = _linear_calibration(train_targets, train_predictions)
+        metadata["calibration"] = {"slope": slope, "intercept": intercept}
+        metrics = self._compose_metrics(train_metrics)
         validation_metrics: Mapping[str, float] | None = None
         if validation_matrix:
             validation_samples = self._rows_to_samples(validation_matrix, feature_names)
@@ -471,7 +487,6 @@ class ModelTrainer:
             test_predictions = model.batch_predict(test_samples)
             test_metrics = self._compute_metrics(test_targets, test_predictions)
         metrics = self._compose_metrics(train_metrics, validation_metrics, test_metrics)
-        metadata["train_metrics"] = dict(train_metrics)
         if validation_metrics:
             metadata["validation_metrics"] = dict(validation_metrics)
         if test_metrics:
@@ -515,6 +530,9 @@ class ModelTrainer:
         train_samples = self._rows_to_samples(train_matrix, feature_names)
         train_predictions = list(model.batch_predict(train_samples))
         train_metrics = self._compute_metrics(train_targets, train_predictions)
+        slope, intercept = _linear_calibration(train_targets, train_predictions)
+        metadata["calibration"] = {"slope": slope, "intercept": intercept}
+        metrics = self._compose_metrics(train_metrics)
         validation_metrics: Mapping[str, float] | None = None
         if validation_matrix:
             validation_samples = self._rows_to_samples(validation_matrix, feature_names)
@@ -526,7 +544,6 @@ class ModelTrainer:
             test_predictions = list(model.batch_predict(test_samples))
             test_metrics = self._compute_metrics(test_targets, test_predictions)
         metrics = self._compose_metrics(train_metrics, validation_metrics, test_metrics)
-        metadata["train_metrics"] = dict(train_metrics)
         if validation_metrics:
             metadata["validation_metrics"] = dict(validation_metrics)
         if test_metrics:
@@ -597,123 +614,16 @@ class ModelTrainer:
             if (t >= 0 and p >= 0) or (t < 0 and p < 0)
         )
         accuracy = directional_hits / len(targets)
-        mape_terms = [
-            abs(t - p) / abs(t)
-            for t, p in zip(targets, predictions)
-            if abs(t) >= 1e-8
-        ]
-        mape = sum(mape_terms) / len(mape_terms) if mape_terms else 0.0
-        mpe_terms = [
-            (p - t) / t
-            for t, p in zip(targets, predictions)
-            if abs(t) >= 1e-8
-        ]
-        mpe = sum(mpe_terms) / len(mpe_terms) if mpe_terms else 0.0
-        median_percentage_error = statistics.median(mpe_terms) if mpe_terms else 0.0
-        rmspe_terms = [
-            ((p - t) / t) ** 2
-            for t, p in zip(targets, predictions)
-            if abs(t) >= 1e-8
-        ]
-        rmspe = math.sqrt(sum(rmspe_terms) / len(rmspe_terms)) if rmspe_terms else 0.0
-        smape_terms = [
-            (2.0 * abs(t - p)) / (abs(t) + abs(p))
-            for t, p in zip(targets, predictions)
-            if (abs(t) + abs(p)) >= 1e-8
-        ]
-        smape = sum(smape_terms) / len(smape_terms) if smape_terms else 0.0
-        median_absolute_percentage_error = (
-            statistics.median(mape_terms) if mape_terms else 0.0
-        )
-        total_abs_target = sum(abs(t) for t in targets)
-        wmape = (sum(errors) / total_abs_target) if total_abs_target >= 1e-8 else 0.0
-        mean_target = sum(targets) / len(targets)
-        total_variance = sum((t - mean_target) ** 2 for t in targets)
-        if total_variance <= 1e-12:
-            r2 = 0.0
-            explained_variance = 0.0
-        else:
-            residual = sum((t - p) ** 2 for t, p in zip(targets, predictions))
-            r2 = 1.0 - (residual / total_variance)
-            residuals = [t - p for t, p in zip(targets, predictions)]
-            mean_residual = sum(residuals) / len(residuals)
-            variance_residual = sum((r - mean_residual) ** 2 for r in residuals) / len(
-                residuals
-            )
-            variance_target = total_variance / len(targets)
-            if variance_target <= 1e-12:
-                explained_variance = 0.0
-            else:
-                explained_variance = 1.0 - (variance_residual / variance_target)
-        if len(targets) > 1:
-            naive_diffs = [abs(targets[idx] - targets[idx - 1]) for idx in range(1, len(targets))]
-            mase_denominator = sum(naive_diffs) / len(naive_diffs) if naive_diffs else 0.0
-        else:
-            mase_denominator = 0.0
-        mase = (mae / mase_denominator) if mase_denominator >= 1e-8 else 0.0
-        poisson_terms: list[float] = []
-        gamma_terms: list[float] = []
-        tweedie_terms: list[float] = []
-        power = 1.5
-        one_minus_power = 1.0 - power
-        two_minus_power = 2.0 - power
-        for target, prediction in zip(targets, predictions):
-            if prediction > 1e-12 and target >= 0.0:
-                safe_prediction = prediction
-                if target == 0.0:
-                    log_ratio = 0.0
-                else:
-                    ratio = max(target / safe_prediction, 1e-12)
-                    log_ratio = math.log(ratio)
-                poisson_terms.append(
-                    2.0 * (safe_prediction - target + target * log_ratio)
-                )
-            if prediction > 1e-12 and target > 0.0:
-                safe_prediction = prediction
-                ratio = max(target / safe_prediction, 1e-12)
-                gamma_terms.append(
-                    2.0 * ((target - safe_prediction) / safe_prediction - math.log(ratio))
-                )
-            if prediction > 1e-12 and target >= 0.0:
-                safe_prediction = prediction
-                term_a = (target ** two_minus_power) / (
-                    one_minus_power * two_minus_power
-                )
-                term_b = (
-                    target * (safe_prediction ** one_minus_power) / one_minus_power
-                )
-                term_c = (safe_prediction ** two_minus_power) / two_minus_power
-                tweedie_terms.append(2.0 * (term_a - term_b + term_c))
-        mean_poisson_deviance = (
-            sum(poisson_terms) / len(poisson_terms) if poisson_terms else 0.0
-        )
-        mean_gamma_deviance = sum(gamma_terms) / len(gamma_terms) if gamma_terms else 0.0
-        mean_tweedie_deviance = (
-            sum(tweedie_terms) / len(tweedie_terms) if tweedie_terms else 0.0
+        pnl = (
+            sum(t * p for t, p in zip(targets, predictions)) / len(targets)
+            if targets
+            else 0.0
         )
         return {
             "mae": mae,
-            "mse": mse,
             "rmse": rmse,
             "directional_accuracy": accuracy,
-            "mape": mape,
-            "r2": r2,
-            "median_absolute_error": medae,
-            "explained_variance": explained_variance,
-            "max_error": max_error,
-            "smape": smape,
-            "mean_bias_error": mean_bias_error,
-            "wmape": wmape,
-            "mpe": mpe,
-            "rmspe": rmspe,
-            "median_percentage_error": median_percentage_error,
-            "median_absolute_percentage_error": median_absolute_percentage_error,
-            "mase": mase,
-            "msle": msle,
-            "mean_absolute_log_error": mean_absolute_log_error,
-            "mean_poisson_deviance": mean_poisson_deviance,
-            "mean_gamma_deviance": mean_gamma_deviance,
-            "mean_tweedie_deviance": mean_tweedie_deviance,
+            "expected_pnl": pnl,
         }
 
     def _split_learning_arrays(
@@ -771,6 +681,106 @@ class ModelTrainer:
             [list(row) for row in matrix[test_start:]],
             [float(targets[idx]) for idx in range(test_start, total)],
         )
+
+    def _cross_validate_matrix(
+        self,
+        matrix: Sequence[Sequence[float]],
+        targets: Sequence[float],
+        feature_names: Sequence[str],
+    ) -> Mapping[str, object]:
+        total = len(matrix)
+        if total < 4:
+            return {"folds": 0, "mae": [], "directional_accuracy": []}
+        folds = min(5, max(2, total // 4))
+        rows = [list(row) for row in matrix]
+        maes: list[float] = []
+        accuracies: list[float] = []
+        fold_size = max(1, total // folds)
+        for fold in range(folds):
+            start = fold * fold_size
+            end = total if fold == folds - 1 else min(total, start + fold_size)
+            validation_rows = rows[start:end]
+            validation_targets = targets[start:end]
+            train_rows = rows[:start] + rows[end:]
+            train_targets = list(targets[:start]) + list(targets[end:])
+            if not validation_rows or not train_rows:
+                continue
+            scalers = self._compute_scalers(train_rows, feature_names)
+            try:
+                model = self._train_model_for_cv(
+                    train_rows,
+                    train_targets,
+                    feature_names,
+                    scalers,
+                    validation_rows,
+                    validation_targets,
+                )
+            except Exception:
+                _LOGGER.warning(
+                    "Cross-validation failed for backend %s; falling back to builtin model",
+                    self.backend,
+                    exc_info=True,
+                )
+                model = SimpleGradientBoostingModel(
+                    learning_rate=self.learning_rate,
+                    n_estimators=self.n_estimators,
+                )
+                model.fit_matrix(
+                    train_rows,
+                    feature_names,
+                    train_targets,
+                    feature_scalers=scalers,
+                )
+            validation_samples = self._rows_to_samples(validation_rows, feature_names)
+            predictions = model.batch_predict(validation_samples)
+            metrics = self._compute_metrics(validation_targets, predictions)
+            maes.append(float(metrics.get("mae", 0.0)))
+            accuracies.append(float(metrics.get("directional_accuracy", 0.0)))
+        return {"folds": len(maes), "mae": maes, "directional_accuracy": accuracies}
+
+    def _train_model_for_cv(
+        self,
+        train_rows: Sequence[Sequence[float]],
+        train_targets: Sequence[float],
+        feature_names: Sequence[str],
+        scalers: Mapping[str, tuple[float, float]],
+        validation_rows: Sequence[Sequence[float]],
+        validation_targets: Sequence[float],
+    ) -> SupportsInference:
+        if self.backend == "builtin":
+            model = SimpleGradientBoostingModel(
+                learning_rate=self.learning_rate,
+                n_estimators=self.n_estimators,
+            )
+            model.fit_matrix(
+                train_rows,
+                feature_names,
+                train_targets,
+                feature_scalers=scalers,
+            )
+            return model
+
+        adapter = get_external_model_adapter(self.backend)
+        context = ExternalTrainingContext(
+            feature_names=feature_names,
+            scalers=scalers,
+            train_matrix=train_rows,
+            train_targets=train_targets,
+            validation_matrix=validation_rows,
+            validation_targets=validation_targets,
+            options=self.adapter_options,
+        )
+        result = adapter.train(context)
+        model = result.trained_model
+        if model is not None:
+            return model
+        metadata: MutableMapping[str, object] = {
+            "feature_scalers": {
+                name: {"mean": mean, "stdev": stdev}
+                for name, (mean, stdev) in scalers.items()
+            }
+        }
+        return adapter.load(result.state, feature_names, metadata)
 
     def _compute_scalers(
         self, matrix: Sequence[Sequence[float]], feature_names: Sequence[str]
@@ -879,6 +889,9 @@ class ModelTrainer:
                 train_metrics.get("mean_tweedie_deviance", 0.0)
             ),
         }
+        if "expected_pnl" in train_metrics:
+            metrics["expected_pnl"] = float(train_metrics.get("expected_pnl", 0.0))
+            metrics["train_expected_pnl"] = float(train_metrics.get("expected_pnl", 0.0))
         if validation_metrics:
             metrics.update(
                 {
@@ -975,6 +988,10 @@ class ModelTrainer:
                     ),
                 }
             )
+            if "expected_pnl" in validation_metrics:
+                metrics["validation_expected_pnl"] = float(
+                    validation_metrics.get("expected_pnl", 0.0)
+                )
         return metrics
 
 

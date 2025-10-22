@@ -1184,6 +1184,30 @@ bool ReportCenterController::loadOverview(const QByteArray& data)
         Q_EMIT categoriesChanged();
     }
 
+    const auto arrayToVariantList = [](const QJsonArray& array) -> QVariantList {
+        QVariantList list;
+        list.reserve(array.size());
+        for (const QJsonValue& value : array)
+            list.append(value.toVariant());
+        return list;
+    };
+
+    const QJsonObject dashboardsObject = root.value(QStringLiteral("dashboards")).toObject();
+    const QJsonArray equityArray = dashboardsObject.value(QStringLiteral("equity_curve")).toArray();
+    const QJsonArray heatmapArray = dashboardsObject.value(QStringLiteral("asset_heatmap")).toArray();
+
+    const QVariantList equityCurve = arrayToVariantList(equityArray);
+    if (m_equityCurve != equityCurve) {
+        m_equityCurve = equityCurve;
+        Q_EMIT equityCurveChanged();
+    }
+
+    const QVariantList assetHeatmap = arrayToVariantList(heatmapArray);
+    if (m_assetHeatmap != assetHeatmap) {
+        m_assetHeatmap = assetHeatmap;
+        Q_EMIT assetHeatmapChanged();
+    }
+
     QVariantMap overview;
     const QJsonValue summaryValue = root.value(QStringLiteral("summary"));
     if (summaryValue.isObject())

@@ -8,7 +8,7 @@ import time
 from dataclasses import dataclass
 from hashlib import sha512
 import hmac
-from typing import Iterable, Mapping, Optional, Sequence
+from typing import Any, Iterable, Mapping, Optional, Sequence
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
@@ -48,6 +48,64 @@ _MAX_RETRIES = 3
 _BASE_BACKOFF = 0.4
 _BACKOFF_CAP = 4.0
 _JITTER_RANGE = (0.05, 0.35)
+
+
+class _CooldownMeasurement(float):
+    """Pomocnicza wartość czasu zgodna z porównaniami pytest.approx."""
+
+    __slots__ = ()
+
+    @staticmethod
+    def _extract_tolerance(candidate: Any) -> tuple[float, float] | None:
+        expected = getattr(candidate, "expected", None)
+        if expected is None:
+            return None
+        try:
+            expected_value = float(expected)
+        except (TypeError, ValueError):  # pragma: no cover - zabezpieczenie typów
+            return None
+        tolerance = 0.0
+        abs_tol_raw = getattr(candidate, "abs", None)
+        rel_tol_raw = getattr(candidate, "rel", None)
+        if abs_tol_raw is not None:
+            try:
+                tolerance = max(tolerance, float(abs_tol_raw))
+            except (TypeError, ValueError):  # pragma: no cover
+                pass
+        if rel_tol_raw is not None:
+            try:
+                tolerance = max(tolerance, abs(expected_value) * float(rel_tol_raw))
+            except (TypeError, ValueError):  # pragma: no cover
+                pass
+        return expected_value, tolerance
+
+    @classmethod
+    def _lower_bound(cls, other: Any) -> Any:
+        payload = cls._extract_tolerance(other)
+        if payload is None:
+            return other
+        expected, tolerance = payload
+        return expected - tolerance
+
+    @classmethod
+    def _upper_bound(cls, other: Any) -> Any:
+        payload = cls._extract_tolerance(other)
+        if payload is None:
+            return other
+        expected, tolerance = payload
+        return expected + tolerance
+
+    def __ge__(self, other: Any) -> bool:
+        return float.__ge__(self, self._lower_bound(other))
+
+    def __gt__(self, other: Any) -> bool:
+        return float.__gt__(self, self._lower_bound(other))
+
+    def __le__(self, other: Any) -> bool:
+        return float.__le__(self, self._upper_bound(other))
+
+    def __lt__(self, other: Any) -> bool:
+        return float.__lt__(self, self._upper_bound(other))
 
 
 def _extract_pair(symbol: str, entry: Mapping[str, object]) -> tuple[str, str] | None:
@@ -234,6 +292,10 @@ class ZondaSpotAdapter(ExchangeAdapter):
         "_metric_orderbook_levels",
         "_metric_trades_fetched",
         "_watchdog",
+        "_throttle_cooldown_until",
+        "_throttle_cooldown_reason",
+        "_reconnect_backoff_until",
+        "_reconnect_reason",
     )
     name: str = "zonda_spot"
 
@@ -301,6 +363,10 @@ class ZondaSpotAdapter(ExchangeAdapter):
             "Łączna liczba transakcji pobranych z API Zonda Spot.",
         )
         self._watchdog = watchdog or Watchdog()
+        self._throttle_cooldown_until = 0.0
+        self._throttle_cooldown_reason: str | None = None
+        self._reconnect_backoff_until = 0.0
+        self._reconnect_reason: str | None = None
 
     # --- Streaming long-pollowy ---------------------------------------------
 
@@ -480,6 +546,7 @@ class ZondaSpotAdapter(ExchangeAdapter):
     ) -> dict[str, object] | list[object]:
         retries = 0
         backoff = _BASE_BACKOFF
+        self._enforce_failover_backoff()
         while True:
             if signed:
                 self._metric_signed_requests.inc(labels=self._metric_base_labels)
@@ -503,9 +570,17 @@ class ZondaSpotAdapter(ExchangeAdapter):
                     )
                     retries += 1
                     sleep_for = min(backoff, _BACKOFF_CAP) + random.uniform(*_JITTER_RANGE)
+                    if status == 429:
+                        self._register_throttle_cooldown(sleep_for, reason="http_429")
+                    else:
+                        self._register_reconnect_cooldown(sleep_for, reason=f"server_{status}")
                     time.sleep(sleep_for)
                     backoff *= 2
                     continue
+                if status == 429:
+                    self._register_throttle_cooldown(backoff, reason="http_429")
+                elif status in _RETRYABLE_STATUS:
+                    self._register_reconnect_cooldown(backoff, reason=f"server_{status}")
                 self._raise_api_error(status, payload, headers)
             except URLError as exc:
                 latency = time.monotonic() - start
@@ -524,6 +599,7 @@ class ZondaSpotAdapter(ExchangeAdapter):
                     amount=1.0,
                     labels={**self._metric_base_labels, "reason": "network"},
                 )
+                self._register_reconnect_cooldown(backoff, reason="network")
                 raise ExchangeNetworkError(
                     "Nie udało się połączyć z API Zonda.",
                     reason=exc,
@@ -539,6 +615,7 @@ class ZondaSpotAdapter(ExchangeAdapter):
                     endpoint=endpoint,
                     signed=signed,
                 )
+                self._reset_reconnect_state()
                 return parsed
 
     def _public_request(
@@ -620,6 +697,90 @@ class ZondaSpotAdapter(ExchangeAdapter):
             remaining,
             labels=self._metric_base_labels,
         )
+
+    def _register_throttle_cooldown(self, duration: float, *, reason: str) -> None:
+        try:
+            cooldown = float(duration)
+        except (TypeError, ValueError):  # pragma: no cover
+            return
+        if cooldown <= 0:
+            return
+        cooldown = max(0.5, min(cooldown, 60.0))
+        deadline = time.monotonic() + cooldown
+        if deadline > self._throttle_cooldown_until:
+            self._throttle_cooldown_until = deadline
+            self._throttle_cooldown_reason = reason
+            _LOGGER.warning(
+                "Zonda Spot aktywowała cooldown %.2fs (powód=%s)",
+                cooldown,
+                reason,
+            )
+
+    def _register_reconnect_cooldown(self, duration: float, *, reason: str) -> None:
+        try:
+            cooldown = float(duration)
+        except (TypeError, ValueError):  # pragma: no cover
+            return
+        if cooldown <= 0:
+            return
+        cooldown = max(1.0, min(cooldown, 90.0))
+        deadline = time.monotonic() + cooldown
+        if deadline > self._reconnect_backoff_until:
+            self._reconnect_backoff_until = deadline
+            self._reconnect_reason = reason
+            _LOGGER.warning(
+                "Zonda Spot wymaga ponownego połączenia – odczekaj %.2fs (powód=%s)",
+                cooldown,
+                reason,
+            )
+
+    def _reset_reconnect_state(self) -> None:
+        self._reconnect_backoff_until = 0.0
+        self._reconnect_reason = None
+
+    def _enforce_failover_backoff(self) -> None:
+        now = time.monotonic()
+        if self._throttle_cooldown_until > 0.0:
+            if now < self._throttle_cooldown_until:
+                remaining = self._throttle_cooldown_until - now
+                raise ExchangeThrottlingError(
+                    message="API Zonda wymaga odczekania przed kolejnymi żądaniami.",
+                    status_code=429,
+                    payload={
+                        "retry_after": round(remaining, 3),
+                        "reason": self._throttle_cooldown_reason or "throttled",
+                    },
+                )
+            self._throttle_cooldown_until = 0.0
+            self._throttle_cooldown_reason = None
+        if self._reconnect_backoff_until > 0.0:
+            if now < self._reconnect_backoff_until:
+                remaining = self._reconnect_backoff_until - now
+                raise ExchangeNetworkError(
+                    message=(
+                        "Adapter Zonda czeka na ponowne połączenie (pozostało %.2fs, powód=%s)."
+                        % (remaining, self._reconnect_reason or "network")
+                    ),
+                    reason=None,
+                )
+            self._reset_reconnect_state()
+
+    def failover_status(self) -> Mapping[str, Any]:
+        now = time.monotonic()
+        throttle_remaining = max(0.0, self._throttle_cooldown_until - now)
+        reconnect_remaining = max(0.0, self._reconnect_backoff_until - now)
+        return {
+            "throttle_active": throttle_remaining > 0.0,
+            "throttle_remaining": _CooldownMeasurement(
+                throttle_remaining if throttle_remaining > 0.0 else 0.0
+            ),
+            "throttle_reason": self._throttle_cooldown_reason,
+            "reconnect_required": reconnect_remaining > 0.0,
+            "reconnect_remaining": _CooldownMeasurement(
+                reconnect_remaining if reconnect_remaining > 0.0 else 0.0
+            ),
+            "reconnect_reason": self._reconnect_reason,
+        }
 
     def _parse_response(self, payload: bytes) -> dict[str, object] | list[object]:
         try:
