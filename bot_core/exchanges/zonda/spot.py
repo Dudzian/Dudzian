@@ -8,7 +8,7 @@ import time
 from dataclasses import dataclass
 from hashlib import sha512
 import hmac
-from typing import Any, Iterable, Mapping, Optional, Sequence
+from typing import Any, Callable, Iterable, Mapping, Optional, Sequence, TypeVar
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
@@ -33,6 +33,8 @@ from bot_core.exchanges.streaming import LocalLongPollStream
 from bot_core.observability.metrics import MetricsRegistry, get_global_metrics_registry
 
 _LOGGER = logging.getLogger(__name__)
+
+_T = TypeVar("_T")
 
 # --- Konfiguracja endpointów -------------------------------------------------
 
@@ -363,6 +365,7 @@ class ZondaSpotAdapter(ExchangeAdapter):
             "Łączna liczba transakcji pobranych z API Zonda Spot.",
         )
         self._watchdog = watchdog or Watchdog()
+        self._backoff_grace_attempts = 0
         self._throttle_cooldown_until = 0.0
         self._throttle_cooldown_reason: str | None = None
         self._reconnect_backoff_until = 0.0
@@ -536,6 +539,21 @@ class ZondaSpotAdapter(ExchangeAdapter):
         if not path.startswith("/"):
             path = "/" + path
         return f"{self._base_url}{path}"
+
+    def _run_with_watchdog(self, operation: str, func: Callable[[], _T]) -> _T:
+        policy = getattr(self._watchdog, "retry_policy", None)
+        attempts = getattr(policy, "max_attempts", None) if policy is not None else None
+        try:
+            numeric_attempts = int(attempts) if attempts is not None else None
+        except Exception:  # pragma: no cover - defensywnie obsłuż niestandardowe wartości
+            numeric_attempts = None
+        grace = max((numeric_attempts or 0) - 1, 0)
+        # Pozwól Watchdogowi na kilka natychmiastowych prób zanim wymusimy globalny cooldown.
+        self._backoff_grace_attempts = grace
+        try:
+            return self._watchdog.execute(operation, func)
+        finally:
+            self._backoff_grace_attempts = 0
 
     def _execute_request(
         self,
@@ -755,14 +773,17 @@ class ZondaSpotAdapter(ExchangeAdapter):
             self._throttle_cooldown_reason = None
         if self._reconnect_backoff_until > 0.0:
             if now < self._reconnect_backoff_until:
-                remaining = self._reconnect_backoff_until - now
-                raise ExchangeNetworkError(
-                    message=(
-                        "Adapter Zonda czeka na ponowne połączenie (pozostało %.2fs, powód=%s)."
-                        % (remaining, self._reconnect_reason or "network")
-                    ),
-                    reason=None,
-                )
+                if self._backoff_grace_attempts > 0:
+                    self._backoff_grace_attempts -= 1
+                else:
+                    remaining = self._reconnect_backoff_until - now
+                    raise ExchangeNetworkError(
+                        message=(
+                            "Adapter Zonda czeka na ponowne połączenie (pozostało %.2fs, powód=%s)."
+                            % (remaining, self._reconnect_reason or "network")
+                        ),
+                        reason=None,
+                    )
             self._reset_reconnect_state()
 
     def failover_status(self) -> Mapping[str, Any]:
@@ -978,7 +999,7 @@ class ZondaSpotAdapter(ExchangeAdapter):
                 return sorted(str(symbol) for symbol in items.keys())
             return []
 
-        return self._watchdog.execute("zonda_spot_fetch_symbols", _call)
+        return self._run_with_watchdog("zonda_spot_fetch_symbols", _call)
 
     def _labels(self, **extra: str) -> Mapping[str, str]:
         labels = dict(self._metric_base_labels)
@@ -1026,7 +1047,7 @@ class ZondaSpotAdapter(ExchangeAdapter):
                 candles.append([float(timestamp), open_price, high_price, low_price, close_price, volume])
             return candles
 
-        return self._watchdog.execute("zonda_spot_fetch_ohlcv", _call)
+        return self._run_with_watchdog("zonda_spot_fetch_ohlcv", _call)
 
     def fetch_account_snapshot(self) -> AccountSnapshot:  # type: ignore[override]
         if "read" not in self._permission_set and "trade" not in self._permission_set:
@@ -1085,7 +1106,7 @@ class ZondaSpotAdapter(ExchangeAdapter):
                 maintenance_margin=0.0,
             )
 
-        return self._watchdog.execute("zonda_spot_fetch_account", _call)
+        return self._run_with_watchdog("zonda_spot_fetch_account", _call)
 
     def _parse_order_payload(self, response: Mapping[str, object]) -> _OrderPayload:
         order_payload: Mapping[str, object]
@@ -1148,7 +1169,7 @@ class ZondaSpotAdapter(ExchangeAdapter):
                 raw_response=dict(response),
             )
 
-        return self._watchdog.execute("zonda_spot_place_order", _call)
+        return self._run_with_watchdog("zonda_spot_place_order", _call)
 
     def cancel_order(self, order_id: str, *, symbol: Optional[str] = None) -> None:  # type: ignore[override]
         def _call() -> None:
@@ -1159,7 +1180,7 @@ class ZondaSpotAdapter(ExchangeAdapter):
                     return
             raise RuntimeError(f"Nieoczekiwana odpowiedź anulowania Zonda: {response}")
 
-        self._watchdog.execute("zonda_spot_cancel_order", _call)
+        self._run_with_watchdog("zonda_spot_cancel_order", _call)
 
     def fetch_ticker(self, symbol: str) -> ZondaTicker:
         """Pobiera ticker oraz aktualizuje metryki top-of-book."""
@@ -1244,7 +1265,7 @@ class ZondaSpotAdapter(ExchangeAdapter):
             self._metric_ticker_spread.set(spread, labels=labels)
             return ticker
 
-        return self._watchdog.execute("zonda_spot_fetch_ticker", _call)
+        return self._run_with_watchdog("zonda_spot_fetch_ticker", _call)
 
     def fetch_order_book(self, symbol: str, *, depth: int = 50) -> ZondaOrderBook:
         """Pobiera orderbook ograniczony do wskazanej głębokości."""
@@ -1293,7 +1314,7 @@ class ZondaSpotAdapter(ExchangeAdapter):
             self._metric_orderbook_levels.set(len(bids) + len(asks), labels=labels)
             return orderbook
 
-        return self._watchdog.execute("zonda_spot_fetch_order_book", _call)
+        return self._run_with_watchdog("zonda_spot_fetch_order_book", _call)
 
     def fetch_recent_trades(self, symbol: str, *, limit: int = 50) -> Sequence[ZondaTrade]:
         """Pobiera ostatnie transakcje dla wskazanego symbolu."""
@@ -1366,7 +1387,7 @@ class ZondaSpotAdapter(ExchangeAdapter):
             self._metric_trades_fetched.inc(amount=float(len(trades)), labels=labels)
             return trades
 
-        return self._watchdog.execute("zonda_spot_fetch_recent_trades", _call)
+        return self._run_with_watchdog("zonda_spot_fetch_recent_trades", _call)
 
     def stream_public_data(self, *, channels: Sequence[str]):  # type: ignore[override]
         return self._build_stream("public", channels)

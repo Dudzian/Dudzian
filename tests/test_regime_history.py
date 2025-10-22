@@ -169,13 +169,17 @@ class _ClassifierStub:
         thresholds: Mapping[str, object] | None = None,
     ) -> None:
         self._queue = assessments
-        self._thresholds = {
+        base_thresholds: Mapping[str, object] = {
             "market_regime": {
                 "metrics": {},
                 "risk_score": {},
                 "risk_level": {},
             }
         }
+        if thresholds is not None:
+            merged = deepcopy(dict(thresholds))
+            base_thresholds.update(merged)
+        self._thresholds = base_thresholds
 
     @property
     def thresholds_loader(self) -> Callable[[], Mapping[str, object]]:
