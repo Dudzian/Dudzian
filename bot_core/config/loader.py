@@ -14,6 +14,7 @@ import re
 import yaml
 
 from bot_core.config.models import (
+    AIModelManagementConfig,
     AlertThrottleConfig,
     CoreConfig,
     CoverageMonitorTargetConfig,
@@ -45,6 +46,8 @@ from bot_core.config.models import (
     PortfolioDecisionLogConfig,
     PortfolioRuntimeInputsConfig,
     SignalLimitOverrideConfig,
+    SequentialModelConfig,
+    SequentialModelRepositoryConfig,
     PermissionProfileConfig,
     RuntimeEntrypointConfig,
     LicenseValidationConfig,
@@ -1452,6 +1455,73 @@ def _load_environment_ai(
         models=tuple(models),
         ensembles=tuple(ensembles),
         pipeline_schedules=tuple(schedules),
+    )
+
+
+def _load_ai_model_management(
+    payload: object, *, base_dir: Path
+) -> AIModelManagementConfig | None:
+    if payload in (None, False):
+        return None
+    if not isinstance(payload, Mapping):
+        raise ValueError("Sekcja ai_model_management musi być mapą")
+
+    repository_raw = payload.get("repository")
+    if not isinstance(repository_raw, Mapping):
+        raise ValueError("ai_model_management.repository musi być mapą")
+    repo_path_raw = repository_raw.get("path")
+    if not repo_path_raw:
+        raise ValueError("ai_model_management.repository.path jest wymagane")
+    repo_path = _resolve_optional_path(repo_path_raw, base_dir=base_dir)
+    if repo_path is None:
+        raise ValueError("ai_model_management.repository.path jest wymagane")
+    retention_raw = repository_raw.get("retention", 25)
+    repo_config = SequentialModelRepositoryConfig(
+        path=repo_path,
+        retention=int(retention_raw),
+    )
+
+    models_raw = payload.get("models", ()) or ()
+    models: list[SequentialModelConfig] = []
+    for entry in models_raw:
+        if not isinstance(entry, Mapping):
+            raise ValueError("ai_model_management.models wymaga listy map")
+        name_raw = entry.get("name") or entry.get("id")
+        if not name_raw:
+            raise ValueError("Każdy model w ai_model_management musi mieć pole 'name'")
+        backend = str(entry.get("backend", "sequential_td"))
+        feature_window = int(entry.get("feature_window", 32))
+        target_horizon = int(entry.get("target_horizon", 1))
+        top_k_features = int(entry.get("top_k_features", 24))
+        folds = int(entry.get("walk_forward_folds", entry.get("folds", 4)))
+        learning_rate = float(entry.get("learning_rate", 0.05))
+        discount_factor = float(entry.get("discount_factor", 0.9))
+        min_directional_accuracy = float(entry.get("min_directional_accuracy", 0.55))
+        heuristics_raw = entry.get("heuristics", ()) or ()
+        heuristics = tuple(str(item) for item in heuristics_raw)
+        models.append(
+            SequentialModelConfig(
+                name=str(name_raw),
+                backend=backend,
+                feature_window=feature_window,
+                target_horizon=target_horizon,
+                top_k_features=top_k_features,
+                walk_forward_folds=folds,
+                learning_rate=learning_rate,
+                discount_factor=discount_factor,
+                min_directional_accuracy=min_directional_accuracy,
+                heuristics=heuristics,
+            )
+        )
+
+    min_probability_raw = payload.get("online_min_probability", payload.get("min_probability"))
+    min_probability = (
+        float(min_probability_raw) if min_probability_raw not in (None, "") else 0.55
+    )
+    return AIModelManagementConfig(
+        repository=repo_config,
+        models=tuple(models),
+        online_min_probability=min_probability,
     )
 
 
@@ -3593,6 +3663,9 @@ def load_core_config(path: str | Path) -> CoreConfig:
     strategy_definitions = _load_strategy_definitions(raw)
     scheduler_configs = _load_multi_strategy_schedulers(raw)
     portfolio_governor_configs = _load_portfolio_governors(raw)
+    ai_model_management_config = _load_ai_model_management(
+        raw.get("ai_model_management"), base_dir=config_base_dir
+    )
 
     reporting = _load_reporting(raw.get("reporting"))
     runtime_section = raw.get("runtime") or {}
@@ -3653,6 +3726,8 @@ def load_core_config(path: str | Path) -> CoreConfig:
         core_kwargs["multi_strategy_schedulers"] = scheduler_configs
     if _core_has("portfolio_governors"):
         core_kwargs["portfolio_governors"] = portfolio_governor_configs
+    if ai_model_management_config is not None and _core_has("ai_model_management"):
+        core_kwargs["ai_model_management"] = ai_model_management_config
     if _core_has("signal_channels"):
         core_kwargs["signal_channels"] = signal_channels
     if _core_has("whatsapp_channels"):
