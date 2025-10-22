@@ -1,25 +1,16 @@
 from __future__ import annotations
 
-import enum
 import copy
-from dataclasses import dataclass
+import enum
+import json
+import time
+from collections.abc import Iterable
+from dataclasses import MISSING as _MISSING, dataclass
+from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
-import enum
-import time
-from datetime import datetime, timezone
-from pathlib import Path
-from dataclasses import MISSING as _MISSING, dataclass
-from typing import Any, Iterable
-import time
-from pathlib import Path
-import enum
-from dataclasses import MISSING as _MISSING, dataclass
-from typing import Any
-from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Any
-from collections.abc import Iterable
 
 import numpy as np
 import pandas as pd
@@ -1539,6 +1530,31 @@ class AutoTradeResult:
         else:
             self.ai_manager._summaries[symbol] = summary
 
+    def run_followup(
+        self,
+        *,
+        summary: RegimeSummary | None = _MISSING,
+        market_data: pd.DataFrame | None = None,
+        assessments: Iterable[_DummyAssessment] | None = None,
+    ) -> RiskDecision:
+        if assessments is not None:
+            self.queue_assessments(*tuple(assessments))
+        if summary is not _MISSING:
+            self.update_summary(summary)
+        if market_data is not None:
+            self.provider.df = market_data
+        self.decision = _run_auto_trade(self.trader)
+        return self.decision
+
+    def __iter__(self):
+        yield from (
+            self.decision,
+            self.trader,
+            self.emitter,
+            self.provider,
+            self.ai_manager,
+        )
+
 
 def test_auto_trader_trusted_mode_auto_confirms(monkeypatch: pytest.MonkeyPatch) -> None:
     emitter = _Emitter()
@@ -1565,25 +1581,6 @@ def test_auto_trader_trusted_mode_auto_confirms(monkeypatch: pytest.MonkeyPatch)
     assert started, "Trusted mode did not start the auto-trade loop"
 
     trader.stop()
-
-    def run_followup(
-        self,
-        *,
-        summary: RegimeSummary | None = _MISSING,
-        market_data: pd.DataFrame | None = None,
-        assessments: Iterable[_DummyAssessment] | None = None,
-    ) -> RiskDecision:
-        if assessments is not None:
-            self.queue_assessments(*tuple(assessments))
-        if summary is not _MISSING:
-            self.update_summary(summary)
-        if market_data is not None:
-            self.provider.df = market_data
-        self.decision = _run_auto_trade(self.trader)
-        return self.decision
-
-    def __iter__(self):
-        yield from (self.decision, self.trader, self.emitter, self.provider, self.ai_manager)
 
 
 def _execute_auto_trade(
@@ -2963,6 +2960,376 @@ def test_auto_trader_risk_history_filters_by_service_and_time(monkeypatch: pytes
 
     df.loc[pd.isna(df["service"]), "normalized"] = False
     assert trader.get_risk_evaluations()[2]["normalized"] is None
+
+
+def test_auto_trader_risk_history_emits_events(monkeypatch: pytest.MonkeyPatch) -> None:
+    emitter = _Emitter()
+    gui = _GUI()
+    provider = _Provider(_build_market_data())
+
+    trader = AutoTrader(
+        emitter,
+        gui,
+        symbol_getter=lambda: "SOLUSDT",
+        auto_trade_interval_s=0.0,
+        enable_auto_trade=False,
+        market_data_provider=provider,
+        risk_evaluations_limit=2,
+    )
+
+    decision = RiskDecision(
+        should_trade=True,
+        fraction=0.25,
+        state="active",
+        details={"origin": "listener-test"},
+    )
+
+    payloads: list[dict[str, Any]] = []
+    trader.add_risk_evaluation_listener(payloads.append)
+
+    with pytest.raises(TypeError):
+        trader.add_risk_evaluation_listener(object())  # type: ignore[arg-type]
+
+    class _ServiceGamma:
+        ...
+
+    service = _ServiceGamma()
+
+    timestamps = iter([1000.0, 1010.0, 1020.0, 1030.0])
+    monkeypatch.setattr("bot_core.auto_trader.app.time.time", lambda: next(timestamps))
+
+    trader._record_risk_evaluation(
+        decision,
+        approved=True,
+        normalized=True,
+        response=True,
+        service=service,
+        error=None,
+    )
+    trader._record_risk_evaluation(
+        decision,
+        approved=False,
+        normalized=False,
+        response=False,
+        service=None,
+        error=None,
+    )
+    trader._record_risk_evaluation(
+        decision,
+        approved=True,
+        normalized=True,
+        response=True,
+        service=None,
+        error=None,
+    )
+
+    risk_events = [payload for event, payload in emitter.events if event == "auto_trader.risk_evaluation"]
+    assert len(risk_events) == 3
+    assert len(payloads) == 3
+    assert payloads[0]["service"] == "_ServiceGamma"
+    assert payloads[0]["history_size"] == 1
+    assert payloads[0]["history_trimmed_by_limit"] == 0
+    assert payloads[-1]["history_size"] == 2
+    assert payloads[-1]["history_trimmed_by_limit"] == 1
+    assert payloads[-1]["history_limit"] == 2
+    assert payloads[-1]["history_trimmed_by_ttl"] == 0
+
+    trader.remove_risk_evaluation_listener(payloads.append)
+    trader.remove_risk_evaluation_listener(payloads.append)
+
+    trader._record_risk_evaluation(
+        decision,
+        approved=None,
+        normalized=None,
+        response=None,
+        service=None,
+        error=None,
+    )
+
+    risk_events_after = [payload for event, payload in emitter.events if event == "auto_trader.risk_evaluation"]
+    assert len(risk_events_after) == 4
+    assert len(payloads) == 3
+
+
+def test_auto_trader_load_risk_evaluations_notifies_listeners(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    emitter = _Emitter()
+    gui = _GUI()
+    provider = _Provider(_build_market_data())
+
+    trader = AutoTrader(
+        emitter,
+        gui,
+        symbol_getter=lambda: "SOLUSDT",
+        auto_trade_interval_s=0.0,
+        enable_auto_trade=False,
+        market_data_provider=provider,
+    )
+
+    decision = RiskDecision(
+        should_trade=True,
+        fraction=0.5,
+        state="active",
+        details={"origin": "load-test"},
+    )
+
+    timestamps = iter([2000.0, 2010.0])
+    monkeypatch.setattr("bot_core.auto_trader.app.time.time", lambda: next(timestamps))
+
+    trader._record_risk_evaluation(
+        decision,
+        approved=True,
+        normalized=True,
+        response=True,
+        service=None,
+        error=None,
+    )
+    trader._record_risk_evaluation(
+        decision,
+        approved=False,
+        normalized=False,
+        response=False,
+        service=None,
+        error=None,
+    )
+
+    payload = trader.export_risk_evaluations()
+
+    loader_emitter = _Emitter()
+    loader = AutoTrader(
+        loader_emitter,
+        _GUI(),
+        symbol_getter=lambda: "SOLUSDT",
+        auto_trade_interval_s=0.0,
+        enable_auto_trade=False,
+        market_data_provider=_Provider(_build_market_data()),
+    )
+
+    default_notifications: list[dict[str, Any]] = []
+    loader.add_risk_evaluation_listener(default_notifications.append)
+
+    loader.load_risk_evaluations(payload)
+
+    assert default_notifications == []
+    default_risk_events = [
+        event_payload
+        for event_name, event_payload in loader_emitter.events
+        if event_name == "auto_trader.risk_evaluation"
+    ]
+    assert len(default_risk_events) == len(payload.get("entries", []))
+
+    notifying_emitter = _Emitter()
+    notifying_loader = AutoTrader(
+        notifying_emitter,
+        _GUI(),
+        symbol_getter=lambda: "SOLUSDT",
+        auto_trade_interval_s=0.0,
+        enable_auto_trade=False,
+        market_data_provider=_Provider(_build_market_data()),
+    )
+
+    notified: list[dict[str, Any]] = []
+    notifying_loader.add_risk_evaluation_listener(notified.append)
+
+    notifying_loader.load_risk_evaluations(payload, notify_listeners=True)
+
+    assert len(notified) == len(payload.get("entries", []))
+    assert notified[0]["history_size"] == 1
+    assert notified[-1]["history_size"] == len(payload.get("entries", []))
+    assert notified[-1]["history_trimmed_by_limit"] == 0
+
+    notified_events = [
+        event_payload
+        for event_name, event_payload in notifying_emitter.events
+        if event_name == "auto_trader.risk_evaluation"
+    ]
+    assert notified_events == notified
+
+
+def test_auto_trader_exports_and_dumps_risk_evaluations(tmp_path: Path) -> None:
+    emitter = _Emitter()
+    gui = _GUI()
+    provider = _Provider(_build_market_data())
+
+    trader = AutoTrader(
+        emitter,
+        gui,
+        symbol_getter=lambda: "ADAUSDT",
+        auto_trade_interval_s=0.0,
+        enable_auto_trade=False,
+        market_data_provider=provider,
+        risk_evaluations_limit=5,
+        risk_evaluations_ttl_s=60.0,
+    )
+
+    class _ExportService:
+        pass
+
+    decision_active = RiskDecision(
+        should_trade=True,
+        fraction=0.4,
+        state="active",
+        reason="go",
+        mode="auto",
+        details={"origin": "export-test"},
+    )
+    decision_blocked = RiskDecision(
+        should_trade=False,
+        fraction=0.0,
+        state="blocked",
+        reason="cooldown",
+        mode="demo",
+        details={},
+    )
+
+    trader._record_risk_evaluation(
+        decision_active,
+        approved=True,
+        normalized=True,
+        response={"ok": True},
+        service=_ExportService(),
+        error=None,
+    )
+    trader._record_risk_evaluation(
+        decision_blocked,
+        approved=False,
+        normalized=None,
+        response=False,
+        service=None,
+        error=RuntimeError("failure"),
+    )
+
+    export = trader.export_risk_evaluations(
+        flatten_decision=True,
+        decision_fields=["state"],
+        fill_value="missing",
+        coerce_timestamps=True,
+    )
+
+    assert export["version"] == 1
+    assert export["history_size"] == len(export["entries"]) >= 2
+    assert export["retention"]["limit"] == 5
+    assert export["retention"]["ttl_s"] == pytest.approx(60.0)
+    assert export["filters"]["decision_fields"] == ["state"]
+    assert export["filters"]["flatten_decision"] is True
+    assert isinstance(export["entries"][0]["timestamp"], str)
+    assert export["entries"][0]["decision_state"] == "active"
+    assert export["entries"][0]["service"] == "_ExportService"
+    assert "error" in export["entries"][1]
+
+    destination = tmp_path / "risk_history.json"
+    trader.dump_risk_evaluations(
+        destination,
+        flatten_decision=True,
+        decision_fields=["state"],
+        fill_value="missing",
+        coerce_timestamps=True,
+    )
+
+    stored = json.loads(destination.read_text())
+    assert stored == export
+
+
+def test_auto_trader_loads_and_imports_risk_evaluations(tmp_path: Path) -> None:
+    emitter = _Emitter()
+    gui = _GUI()
+    provider = _Provider(_build_market_data())
+
+    trader = AutoTrader(
+        emitter,
+        gui,
+        symbol_getter=lambda: "MATICUSDT",
+        auto_trade_interval_s=0.0,
+        enable_auto_trade=False,
+        market_data_provider=provider,
+        risk_evaluations_limit=5,
+        risk_evaluations_ttl_s=120.0,
+    )
+
+    class _ImportService:
+        pass
+
+    decision_active = RiskDecision(
+        should_trade=True,
+        fraction=0.3,
+        state="active",
+        reason="go",
+        mode="auto",
+        details={"origin": "load-test"},
+    )
+    decision_blocked = RiskDecision(
+        should_trade=False,
+        fraction=0.0,
+        state="blocked",
+        reason="cooldown",
+        mode="demo",
+        details={},
+    )
+
+    trader._record_risk_evaluation(
+        decision_active,
+        approved=True,
+        normalized=True,
+        response={"ok": True},
+        service=_ImportService(),
+        error=None,
+    )
+    trader._record_risk_evaluation(
+        decision_blocked,
+        approved=False,
+        normalized=None,
+        response=False,
+        service=None,
+        error=RuntimeError("boom"),
+    )
+
+    export = trader.export_risk_evaluations(
+        flatten_decision=True,
+        decision_fields=["state", "should_trade"],
+        drop_decision_column=True,
+        fill_value="<missing>",
+        coerce_timestamps=True,
+    )
+
+    limited_export = copy.deepcopy(export)
+    limited_export["retention"]["limit"] = 1
+
+    trader.clear_risk_evaluations()
+    loaded = trader.load_risk_evaluations(limited_export)
+    assert loaded == len(export["entries"])
+
+    restored = trader.get_risk_evaluations()
+    assert len(restored) == 1
+    restored_entry = restored[0]
+    assert isinstance(restored_entry["timestamp"], float)
+    assert restored_entry["decision"]["state"] == "blocked"
+    assert restored_entry["decision"]["should_trade"] is False
+
+    destination = tmp_path / "risk_history.json"
+    destination.write_text(json.dumps(export, indent=2), encoding="utf-8")
+
+    trader.clear_risk_evaluations()
+    loaded_from_file = trader.import_risk_evaluations(destination)
+    assert loaded_from_file == len(export["entries"])
+
+    restored_all = trader.get_risk_evaluations()
+    assert [entry["decision"]["state"] for entry in restored_all] == ["active", "blocked"]
+
+    partial_payload = copy.deepcopy(export)
+    partial_entry = copy.deepcopy(partial_payload["entries"][0])
+    partial_entry["timestamp"] = (
+        pd.Timestamp(partial_entry["timestamp"]) + pd.Timedelta(seconds=90)
+    ).isoformat()
+    partial_payload["entries"] = [partial_entry]
+    partial_payload["retention"] = {}
+
+    merged = trader.load_risk_evaluations(partial_payload, merge=True)
+    assert merged == 1
+    merged_states = [entry["decision"]["state"] for entry in trader.get_risk_evaluations()]
+    assert merged_states.count("active") >= 1
+    assert merged_states.count("blocked") >= 1
+    assert len(merged_states) == len(export["entries"]) + 1
 
 
 def test_auto_trader_filters_risk_history_by_decision_fields() -> None:

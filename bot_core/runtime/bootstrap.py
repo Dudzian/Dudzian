@@ -1516,30 +1516,15 @@ def bootstrap_environment(
                 "status": "invalid",
                 "license_path": str(Path(license_config.license_path).expanduser()),
             }
-            if is_paper_like or offline_mode:
-                _LOGGER.warning(
-                    "Pomijam weryfikację licencji OEM dla środowiska %s: %s",
-                    environment.name,
-                    exc,
-                )
-                emit_alert(
-                    "Weryfikacja licencji OEM pominięta dla środowiska testowego.",
-                    severity=AlertSeverity.WARNING,
-                    source="security.license",
-                    context=context,
-                    exception=exc,
-                )
-                license_result = exc.result
-            else:
-                emit_alert(
-                    "Weryfikacja licencji OEM zakończona błędem – zatrzymuję kontroler.",
-                    severity=AlertSeverity.CRITICAL,
-                    source="security.license",
-                    context=context,
-                    exception=exc,
-                )
-                _LOGGER.critical("Weryfikacja licencji OEM nie powiodła się: %s", exc)
-                raise RuntimeError(str(exc)) from exc
+            emit_alert(
+                "Weryfikacja licencji OEM zakończona błędem – zatrzymuję kontroler.",
+                severity=AlertSeverity.CRITICAL,
+                source="security.license",
+                context=context,
+                exception=exc,
+            )
+            _LOGGER.critical("Weryfikacja licencji OEM nie powiodła się: %s", exc)
+            raise RuntimeError(str(exc)) from exc
 
     if license_result is not None:
         if license_result.warnings:

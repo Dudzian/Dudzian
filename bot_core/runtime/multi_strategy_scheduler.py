@@ -593,17 +593,6 @@ class MultiStrategyScheduler:
         return self._suspension_manager.resume_tag(tag)
 
     def suspension_snapshot(self) -> Mapping[str, Mapping[str, object]]:
-        now = self._clock()
-        self._purge_expired_suspensions(now)
-        schedules: dict[str, dict[str, object]] = {}
-        tags: dict[str, dict[str, object]] = {}
-        with self._suspension_lock:
-            for name, record in self._schedule_suspensions.items():
-                schedules[name] = record.as_dict(now)
-            for tag_name, record in self._tag_suspensions.items():
-                tags[tag_name] = record.as_dict(now)
-        return {"schedules": schedules, "tags": tags}
-
         return self._suspension_manager.snapshot()
     def attach_portfolio_coordinator(
         self, coordinator: "PortfolioRuntimeCoordinator"
