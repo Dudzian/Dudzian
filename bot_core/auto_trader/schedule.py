@@ -355,6 +355,14 @@ class ScheduleState:
         remaining = (self.next_override.start - now).total_seconds()
         return max(0.0, remaining)
 
+    @property
+    def time_until_next_override(self) -> float | None:
+        if self.next_override is None:
+            return None
+        now = datetime.now(self.next_override.start.tzinfo)
+        remaining = (self.next_override.start - now).total_seconds()
+        return max(0.0, remaining)
+
 
 class TradingSchedule:
     """Determine the active trading mode based on time windows."""
