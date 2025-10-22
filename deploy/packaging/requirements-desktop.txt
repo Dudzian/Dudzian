@@ -1,0 +1,9 @@
+# Zależności wymagane do przygotowania bundla desktopowego w środowiskach offline.
+#
+# Plik zakłada, że pakiet `dudzian-bot` instalujemy z lokalnego koła / archiwum
+# zbudowanego przez `pip wheel .` i udostępnionego w katalogu `dist/`.
+numpy==1.26.4
+pandas==2.2.2
+joblib==1.4.2
+pyinstaller==6.5.0
+briefcase==0.3.18
