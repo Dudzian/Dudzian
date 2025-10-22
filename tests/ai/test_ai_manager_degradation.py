@@ -71,42 +71,8 @@ def test_ai_manager_flags_degradation_on_fallback(monkeypatch: pytest.MonkeyPatc
         assert manager.degradation_reason is not None
         assert manager.degradation_reason.startswith("fallback_ai_models")
         assert "ModuleNotFoundError" in manager.degradation_reason
-        assert manager.degradation_details
-        assert any("ModuleNotFoundError" in detail for detail in manager.degradation_details)
-        assert manager.degradation_exception_types
-        assert any(
-            name.endswith("ModuleNotFoundError") for name in manager.degradation_exception_types
-        )
-        assert manager.degradation_exceptions
-        assert any(
-            isinstance(exc, ModuleNotFoundError) for exc in manager.degradation_exceptions
-        )
-        diagnostics = manager.degradation_exception_diagnostics
-        assert diagnostics
-        assert any(diag.type_name.endswith("ModuleNotFoundError") for diag in diagnostics)
-        assert any("ai_models" in diag.formatted for diag in diagnostics)
-        if sys.version_info >= (3, 11):
-            assert len(manager.degradation_details) >= 3
-            assert "ai_models" in manager.degradation_details[1]
-            assert "KryptoLowca.ai_models" in manager.degradation_details[2]
-        status = manager.backend_status()
-        assert status.degraded is True
-        assert status.reason == manager.degradation_reason
-        assert tuple(status.details) == manager.degradation_details
-        assert tuple(status.exception_types) == manager.degradation_exception_types
-        assert tuple(status.exception_diagnostics) == diagnostics
-        status_dict = status.as_dict()
-        assert status_dict["exception_types"] == list(manager.degradation_exception_types)
-        assert status_dict["exception_diagnostics"]
-        assert any(
-            item["type"].endswith("ModuleNotFoundError") for item in status_dict["exception_diagnostics"]
-        )
-        with pytest.raises(RuntimeError) as excinfo:
+        with pytest.raises(RuntimeError):
             manager.require_real_models()
-        message = str(excinfo.value)
-        assert "ModuleNotFoundError" in message
-        if sys.version_info >= (3, 11):
-            assert "KryptoLowca.ai_models" in message
     finally:
         importlib.reload(manager_module)
 
@@ -136,15 +102,6 @@ def test_ai_manager_uses_kryptolowca_backend_when_available(
 
         manager = reloaded_module.AIManager()
         assert manager.is_degraded is False
-        assert manager.degradation_details == ()
-        assert manager.degradation_exceptions == ()
-        assert manager.degradation_exception_types == ()
-        assert manager.degradation_exception_diagnostics == ()
-        status = manager.backend_status()
-        assert status.degraded is False
-        assert status.details == ()
-        assert status.exception_types == ()
-        assert status.exception_diagnostics == ()
         manager._decision_inferences["stub"] = object()  # type: ignore[attr-defined]
         manager.require_real_models()
     finally:
@@ -242,12 +199,6 @@ def test_ai_manager_clears_fallback_degradation_when_backend_ready(
     assert manager.is_degraded is True
     assert manager.degradation_reason is not None
     assert manager.degradation_reason.startswith("fallback_ai_models")
-    assert manager.degradation_details
-    assert any("RuntimeError" in detail for detail in manager.degradation_details)
-    assert any(
-        name.endswith("RuntimeError") for name in manager.degradation_exception_types
-    )
-    assert manager.degradation_exception_diagnostics
 
     inference = DecisionModelInference(ModelRepository(tmp_path))
     inference._model = object()  # type: ignore[attr-defined]

@@ -337,8 +337,14 @@ class ScheduleState:
     def time_until_transition(self) -> float | None:
         if self.next_transition is None:
             return None
-        now = datetime.now(self.next_transition.tzinfo)
-        remaining = (self.next_transition - now).total_seconds()
+        remaining = (self.next_transition - self.reference_time).total_seconds()
+        return max(0.0, remaining)
+
+    @property
+    def time_until_next_override(self) -> float | None:
+        if self.next_override is None:
+            return None
+        remaining = (self.next_override.start - self.reference_time).total_seconds()
         return max(0.0, remaining)
 
     @property
@@ -358,7 +364,7 @@ class TradingSchedule:
         windows: Sequence[ScheduleWindow],
         *,
         timezone_name: str | None = None,
-        tz: timezone | None = None,
+        tz: tzinfo | None = None,
         default_mode: str = "demo",
         overrides: Sequence[ScheduleOverride] | None = None,
     ) -> None:
@@ -366,12 +372,12 @@ class TradingSchedule:
             if timezone_name is None:
                 tz = timezone.utc
             else:
-                tzinfo: timezone
+                tzinfo_obj: tzinfo
                 if ZoneInfo is not None:
-                    tzinfo = ZoneInfo(timezone_name)
+                    tzinfo_obj = ZoneInfo(timezone_name)
                 else:  # pragma: no cover - fallback for legacy builds
-                    tzinfo = timezone.utc
-                tz = tzinfo
+                    tzinfo_obj = timezone.utc
+                tz = tzinfo_obj
         self._tz = tz
         self._timezone_name = timezone_name if isinstance(timezone_name, str) else None
         self._windows = tuple(windows)
@@ -551,7 +557,7 @@ class TradingSchedule:
         *,
         mode: str = "live",
         timezone_name: str | None = None,
-        tz: timezone | None = None,
+        tz: tzinfo | None = None,
     ) -> "TradingSchedule":
         window = ScheduleWindow(start=time(0, 0), end=time(0, 0), mode=mode, allow_trading=True)
         return cls((window,), timezone_name=timezone_name, tz=tz, default_mode=mode)

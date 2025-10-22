@@ -138,11 +138,20 @@ def _bundle_import_errors(primary: BaseException, secondary: BaseException) -> B
         return secondary
 
 
-def _collect_exception_messages(error: BaseException) -> Tuple[str, ...]:
-    """Zbierz unikalne komunikaty z łańcucha wyjątków w kolejności przyczyn."""
+def _flatten_exception_messages(error: BaseException) -> str:
+    """Zbuduj zwięzły opis z łańcucha wyjątków importu."""
 
     pieces: List[str] = []
-    for current in _iter_exception_chain(error):
+    stack: List[BaseException] = [error]
+    seen: set[int] = set()
+
+    while stack:
+        current = stack.pop()
+        identifier = id(current)
+        if identifier in seen:
+            continue
+        seen.add(identifier)
+
         message = str(current).strip()
         if not message:
             message = current.__class__.__name__
@@ -150,80 +159,29 @@ def _collect_exception_messages(error: BaseException) -> Tuple[str, ...]:
             message = f"{current.__class__.__name__}: {message}"
         pieces.append(message)
 
-    unique_messages: List[str] = []
+        nested = getattr(current, "exceptions", None)
+        if isinstance(nested, Iterable):
+            for child in nested:
+                if isinstance(child, BaseException):
+                    stack.append(child)
+
+        cause = getattr(current, "__cause__", None)
+        if isinstance(cause, BaseException):
+            stack.append(cause)
+
+        context = getattr(current, "__context__", None)
+        suppressed = getattr(current, "__suppress_context__", False)
+        if not suppressed and isinstance(context, BaseException):
+            stack.append(context)
+
+    unique_messages = []
     seen_text: set[str] = set()
     for piece in pieces:
         if piece not in seen_text:
             unique_messages.append(piece)
             seen_text.add(piece)
 
-    return tuple(unique_messages)
-
-
-def _collect_exception_types(error: BaseException) -> Tuple[str, ...]:
-    """Zwróć krotkę nazw klas wyjątków z zachowaniem kolejności."""
-
-    identifiers: set[str] = set()
-    ordered: List[str] = []
-    for current in _iter_exception_chain(error):
-        name = f"{current.__class__.__module__}.{current.__class__.__qualname__}"
-        if name not in identifiers:
-            ordered.append(name)
-            identifiers.add(name)
-    return tuple(ordered)
-
-
-def _iter_exception_chain(error: BaseException) -> Iterable[BaseException]:
-    """Iteruj po wyjątkach (w tym grupach), zachowując kolejność przyczyn."""
-
-    queue: deque[BaseException] = deque([error])
-    seen: set[int] = set()
-
-    while queue:
-        current = queue.popleft()
-        identifier = id(current)
-        if identifier in seen:
-            continue
-        seen.add(identifier)
-        yield current
-
-        nested = getattr(current, "exceptions", None)
-        if isinstance(nested, Iterable):
-            for child in nested:
-                if isinstance(child, BaseException):
-                    queue.append(child)
-
-        cause = getattr(current, "__cause__", None)
-        if isinstance(cause, BaseException):
-            queue.append(cause)
-
-        context = getattr(current, "__context__", None)
-        suppressed = getattr(current, "__suppress_context__", False)
-        if not suppressed and isinstance(context, BaseException):
-            queue.append(context)
-
-
-def _build_exception_diagnostics(error: BaseException) -> Tuple[ExceptionDiagnostics, ...]:
-    """Zwróć uporządkowaną listę diagnoz wyjątków z łańcucha."""
-
-    diagnostics: List[ExceptionDiagnostics] = []
-    seen: set[Tuple[str, str, str]] = set()
-    for current in _iter_exception_chain(error):
-        module = current.__class__.__module__
-        qualname = current.__class__.__qualname__
-        message = str(current).strip()
-        key = (module, qualname, message)
-        if key in seen:
-            continue
-        seen.add(key)
-        diagnostics.append(ExceptionDiagnostics(module=module, qualname=qualname, message=message))
-    return tuple(diagnostics)
-
-
-def _flatten_exception_messages(error: BaseException) -> str:
-    """Zbuduj zwięzły opis z łańcucha wyjątków importu."""
-
-    return " | ".join(_collect_exception_messages(error))
+    return " | ".join(unique_messages)
 
 
 def _is_fallback_degradation(reason: Optional[str]) -> bool:
@@ -628,29 +586,15 @@ class AIManager:
         self._training_scheduler: TrainingScheduler | None = None
         self._scheduled_training_jobs: Dict[str, ScheduledTrainingJob] = {}
         self._job_artifact_paths: Dict[str, Path] = {}
-        if _AI_IMPORT_ERROR is not None:
-            flattened = _flatten_exception_messages(_AI_IMPORT_ERROR)
-            reason = f"fallback_ai_models: {flattened}" if flattened else "fallback_ai_models"
-            messages = _collect_exception_messages(_AI_IMPORT_ERROR)
-            if messages:
-                details = messages
-            elif flattened:
-                details = (flattened,)
+        if self._degraded:
+            if _AI_IMPORT_ERROR is not None:
+                details = _flatten_exception_messages(_AI_IMPORT_ERROR)
+                if details:
+                    self._degradation_reason = f"fallback_ai_models: {details}"
+                else:
+                    self._degradation_reason = "fallback_ai_models"
             else:
-                details = (reason,)
-            self._degraded = True
-            self._degradation_reason = reason
-            self._degradation_details = details
-            self._degradation_exceptions = tuple(_iter_exception_chain(_AI_IMPORT_ERROR))
-            self._degradation_exception_types = _collect_exception_types(_AI_IMPORT_ERROR)
-            self._degradation_exception_diagnostics = _build_exception_diagnostics(_AI_IMPORT_ERROR)
-        elif _FALLBACK_ACTIVE:
-            self._degraded = True
-            self._degradation_reason = "backend_validation_failed"
-            self._degradation_details = ("backend_validation_failed",)
-            self._degradation_exceptions = ()
-            self._degradation_exception_types = ()
-            self._degradation_exception_diagnostics = ()
+                self._degradation_reason = "backend_validation_failed"
         try:
             init_signature = inspect.signature(_AIModels.__init__)  # type: ignore[attr-defined]
         except (TypeError, ValueError, AttributeError):

@@ -14,4 +14,5 @@ __all__ = [
     "ScheduleOverride",
     "TradingSchedule",
     "ScheduleWindow",
+    "ScheduleOverride",
 ]
