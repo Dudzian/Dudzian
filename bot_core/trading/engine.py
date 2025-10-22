@@ -187,6 +187,9 @@ class TradingParameters:
     position_size: float = 1.0
     max_position_risk: float = 0.02
     max_position_size: int = 5
+    min_weight: float = 0.0
+    max_weight: Optional[float] = None
+    max_weight_change: Optional[float] = None
 
     # Position sizing
     volatility_target: float = 0.15
@@ -196,8 +199,21 @@ class TradingParameters:
         """Validate parameters after creation."""
         if self.rsi_period < 2 or self.rsi_period > 50:
             raise ValueError("RSI period must be between 2 and 50")
+        if self.max_weight_change is not None:
+            change = float(self.max_weight_change)
+            if not np.isfinite(change) or change < 0.0:
+                raise ValueError("max_weight_change musi być nieujemne i skończone")
+            if change > 1.0:
+                object.__setattr__(self, "max_weight_change", 1.0)
         if self.ema_fast_period >= self.ema_slow_period:
             raise ValueError("Fast EMA period must be less than slow EMA period")
+        if self.min_weight < 0.0 or self.min_weight > 1.0:
+            raise ValueError("min_weight must be between 0 and 1")
+        if self.max_weight is not None:
+            if self.max_weight <= 0.0 or self.max_weight > 1.0:
+                raise ValueError("max_weight must be in the (0, 1] range")
+            if self.min_weight > self.max_weight:
+                raise ValueError("min_weight cannot exceed max_weight")
         if not 0 < self.signal_threshold < 1:
             raise ValueError("Signal threshold must be between 0 and 1")
         if self.stop_loss_atr_mult < 0 or self.take_profit_atr_mult < 0:
@@ -1725,24 +1741,673 @@ class PortfolioManager:
         
         return returns_df.corr()
     
-    def optimize_portfolio_weights(self, assets_data: Dict[str, pd.DataFrame], 
-                                 params: Dict[str, TradingParameters],
-                                 objective: str = 'sharpe_ratio') -> Dict[str, float]:
+    def optimize_portfolio_weights(
+        self,
+        assets_data: Dict[str, pd.DataFrame],
+        params: Dict[str, TradingParameters],
+        objective: str = 'sharpe_ratio',
+        previous_weights: Optional[Mapping[str, float]] = None,
+        max_turnover: Optional[float] = None,
+    ) -> Dict[str, float]:
         """Optimize portfolio weights using mean-variance optimization."""
-        # This is a simplified implementation
-        # In practice, you'd use scipy.optimize or similar
-        
-        n_assets = len(assets_data)
-        if n_assets < 2:
-            return {list(assets_data.keys())[0]: 1.0} if assets_data else {}
-        
-        # Equal weight as starting point
-        equal_weight = 1.0 / n_assets
-        initial_weights = {asset: equal_weight for asset in assets_data.keys()}
-        
-        # For now, return equal weights
-        # TODO: Implement proper mean-variance optimization
-        return initial_weights
+        if not assets_data:
+            return {}
+
+        # Gather daily return series for each asset. We try common OHLCV column
+        # names first and fall back to the first numeric column available.
+        def _extract_price_series(frame: pd.DataFrame) -> pd.Series:
+            if frame is None or frame.empty:
+                raise ValueError("Brak danych cenowych")
+
+            candidates = [
+                "close",
+                "Close",
+                "adj_close",
+                "Adj Close",
+                "price",
+                "Price",
+            ]
+            for column in candidates:
+                if column in frame.columns:
+                    series = frame[column].dropna()
+                    if len(series) >= 2:
+                        return series.astype(float)
+
+            numeric_cols = frame.select_dtypes(include=[np.number])
+            if numeric_cols.empty:
+                raise ValueError("Brak kolumn numerycznych do obliczenia zwrotów")
+
+            series = numeric_cols.iloc[:, 0].dropna()
+            if len(series) < 2:
+                raise ValueError("Za mało obserwacji do obliczenia zwrotów")
+            return series.astype(float)
+
+        clean_returns: Dict[str, pd.Series] = {}
+        for asset, frame in assets_data.items():
+            try:
+                prices = _extract_price_series(frame)
+            except ValueError:
+                self._logger.warning(
+                    "Pominięto aktywo %s przy optymalizacji portfela – brak odpowiednich danych",
+                    asset,
+                )
+                continue
+
+            returns = (
+                prices.sort_index().pct_change().replace([np.inf, -np.inf], np.nan).dropna()
+            )
+            if returns.empty:
+                self._logger.warning(
+                    "Pominięto aktywo %s przy optymalizacji portfela – brak zwrotów po czyszczeniu",
+                    asset,
+                )
+                continue
+
+            clean_returns[asset] = returns.astype(float)
+
+        available_assets = list(clean_returns.keys())
+
+        combined_order: List[str] = []
+        combined_order.extend(available_assets)
+        combined_order.extend(
+            asset for asset in assets_data.keys() if asset not in clean_returns
+        )
+        if previous_weights:
+            for asset in previous_weights:
+                if asset not in clean_returns and asset not in assets_data:
+                    combined_order.append(asset)
+
+        asset_order = list(dict.fromkeys(combined_order))
+
+        lower_bounds, upper_bounds = self._derive_weight_bounds(asset_order, params)
+
+        if not available_assets:
+            self._logger.warning(
+                "Brak prawidłowych danych do optymalizacji – zwracam równy podział",
+            )
+            fallback = self._fallback_weight_dict(
+                asset_order,
+                lower_bounds,
+                upper_bounds,
+                params,
+            )
+            return self._finalize_weight_dict(
+                asset_order,
+                lower_bounds,
+                upper_bounds,
+                fallback,
+                previous_weights,
+                max_turnover,
+                params,
+            )
+
+        if len(available_assets) == 1 and len(asset_order) == 1:
+            fallback = self._fallback_weight_dict(
+                asset_order,
+                lower_bounds,
+                upper_bounds,
+                params,
+            )
+            return self._finalize_weight_dict(
+                asset_order,
+                lower_bounds,
+                upper_bounds,
+                fallback,
+                previous_weights,
+                max_turnover,
+                params,
+            )
+
+        aligned_returns = [
+            series.rename(asset) for asset, series in clean_returns.items()
+        ]
+        returns_df = pd.concat(aligned_returns, axis=1, join="inner")
+
+        if not returns_df.empty:
+            returns_df = returns_df.reindex(columns=available_assets)
+
+        if returns_df.empty:
+            self._logger.warning(
+                "Zwrócono równy podział wag – brak wspólnego zakresu dat dla aktywów",
+            )
+            fallback = self._fallback_weight_dict(
+                asset_order,
+                lower_bounds,
+                upper_bounds,
+                params,
+            )
+            return self._finalize_weight_dict(
+                asset_order,
+                lower_bounds,
+                upper_bounds,
+                fallback,
+                previous_weights,
+                max_turnover,
+                params,
+            )
+
+        mean_returns = returns_df.mean().to_numpy()
+        cov_matrix = returns_df.cov().to_numpy()
+
+        # Stabilizujemy macierz kowariancji, aby uniknąć osobliwości.
+        regularization = np.eye(cov_matrix.shape[0]) * 1e-8
+        inv_cov = np.linalg.pinv(cov_matrix + regularization)
+
+        objective_key = (objective or "sharpe_ratio").lower()
+
+        risk_free_rate = 0.0
+        engine_config = getattr(self._engine, "_config", None)
+        if engine_config is not None:
+            risk_free_rate = float(getattr(engine_config, "risk_free_rate", 0.0) or 0.0)
+        daily_risk_free = risk_free_rate / 252.0
+
+        n_available = len(available_assets)
+
+        if objective_key == "min_variance":
+            ones = np.ones(n_available)
+            raw_weights = inv_cov @ ones
+        elif objective_key == "risk_parity":
+            risk_budgets = []
+            for asset in available_assets:
+                budget = 0.0
+                param = params.get(asset)
+                if isinstance(param, TradingParameters):
+                    budget = float(getattr(param, "max_position_risk", 0.0) or 0.0)
+                    if budget <= 0.0:
+                        budget = float(getattr(param, "position_size", 0.0) or 0.0)
+                risk_budgets.append(max(budget, 0.0))
+
+            risk_budget_vector = np.asarray(risk_budgets, dtype=float)
+            if not np.isfinite(risk_budget_vector).all() or np.all(risk_budget_vector <= 0):
+                risk_budget_vector = np.ones(n_available, dtype=float)
+
+            raw_weights = self._solve_risk_parity_weights(cov_matrix, risk_budget_vector)
+        elif objective_key == "max_return":
+            # Najprostsza wersja: całość kapitału na aktywo o najwyższej oczekiwanej stopie zwrotu.
+            best_idx = int(np.argmax(mean_returns))
+            raw_weights = np.zeros(n_available)
+            raw_weights[best_idx] = 1.0
+        else:
+            if objective_key != "sharpe_ratio":
+                self._logger.warning(
+                    "Nieznany cel optymalizacji '%s' – używam Sharpe ratio",
+                    objective,
+                )
+            excess_returns = mean_returns - daily_risk_free
+            if np.allclose(excess_returns, 0.0):
+                raw_weights = inv_cov @ mean_returns
+            else:
+                raw_weights = inv_cov @ excess_returns
+
+        # Używamy ustawień pozycji z TradingParameters jako miękkich wag priorytetowych.
+        if params and objective_key != "risk_parity":
+            bias = np.ones(n_available)
+            for idx, asset in enumerate(available_assets):
+                param = params.get(asset)
+                if isinstance(param, TradingParameters):
+                    bias[idx] = max(float(param.position_size), 0.0)
+            if np.all(bias == 0):
+                bias = np.ones(n_available)
+            raw_weights = raw_weights * bias
+
+        # Wymuszamy portfel long-only.
+        raw_weights = np.clip(raw_weights, 0.0, None)
+
+        total = raw_weights.sum()
+        if not np.isfinite(total) or total <= 0:
+            self._logger.warning(
+                "Nie udało się wyznaczyć wag portfela – zwracam równy podział",
+            )
+            fallback = self._fallback_weight_dict(
+                asset_order,
+                lower_bounds,
+                upper_bounds,
+                params,
+            )
+            return self._finalize_weight_dict(
+                asset_order,
+                lower_bounds,
+                upper_bounds,
+                fallback,
+                previous_weights,
+                max_turnover,
+            )
+
+        normalized_weights = raw_weights / total
+
+        normalized_weights = self._apply_weight_bounds(
+            normalized_weights,
+            lower_bounds[:n_available],
+            upper_bounds[:n_available],
+        )
+
+        reserved_missing = 0.0
+        if len(asset_order) > n_available:
+            reserved_missing = float(lower_bounds[n_available:].sum())
+        available_budget = max(1.0 - reserved_missing, 0.0)
+
+        weights_vector = np.zeros(len(asset_order), dtype=float)
+        for idx, weight in enumerate(normalized_weights):
+            base = weight * available_budget
+            lower = lower_bounds[idx]
+            weights_vector[idx] = max(base, lower)
+
+        for idx in range(n_available, len(asset_order)):
+            weights_vector[idx] = max(lower_bounds[idx], 0.0)
+
+        return self._finalize_weight_dict(
+            asset_order,
+            lower_bounds,
+            upper_bounds,
+            {
+                asset: float(weights_vector[idx])
+                for idx, asset in enumerate(asset_order)
+            },
+            previous_weights,
+            max_turnover,
+            params,
+        )
+
+    def _solve_risk_parity_weights(
+        self,
+        covariance: NDArray[np.float64],
+        risk_budgets: NDArray[np.float64],
+        max_iterations: int = 1000,
+        tolerance: float = 1e-6,
+    ) -> NDArray[np.float64]:
+        """Wyznacza wagi portfela spełniające zadane budżety ryzyka."""
+
+        n_assets = covariance.shape[0]
+        if n_assets == 0:
+            return np.array([], dtype=float)
+
+        weights = np.ones(n_assets, dtype=float) / n_assets
+        if risk_budgets.shape[0] != n_assets:
+            risk_budgets = np.ones(n_assets, dtype=float)
+
+        risk_budgets = np.clip(risk_budgets, 1e-12, None)
+        risk_budgets = risk_budgets / risk_budgets.sum()
+
+        for _ in range(max_iterations):
+            portfolio_variance = float(weights @ covariance @ weights)
+            if not np.isfinite(portfolio_variance) or portfolio_variance <= 0.0:
+                break
+
+            marginal_risk = covariance @ weights
+            risk_contribution = weights * marginal_risk
+            target_contribution = risk_budgets * portfolio_variance
+
+            if np.all(np.abs(risk_contribution - target_contribution) <= tolerance):
+                break
+
+            adjustment = np.divide(
+                target_contribution,
+                np.maximum(risk_contribution, 1e-12),
+            )
+            weights *= adjustment
+            weights = np.clip(weights, 1e-12, None)
+            weights /= weights.sum()
+
+        return weights
+
+    def _derive_weight_bounds(
+        self,
+        asset_order: List[str],
+        params: Dict[str, TradingParameters],
+    ) -> Tuple[NDArray[np.float64], NDArray[np.float64]]:
+        """Tworzy wektory ograniczeń dolnych i górnych dla wag aktywów."""
+
+        n_assets = len(asset_order)
+        lower_bounds = np.zeros(n_assets, dtype=float)
+        upper_bounds = np.ones(n_assets, dtype=float)
+
+        if params:
+            for idx, asset in enumerate(asset_order):
+                param = params.get(asset)
+                if not isinstance(param, TradingParameters):
+                    continue
+
+                min_weight = float(getattr(param, "min_weight", 0.0) or 0.0)
+                if not np.isfinite(min_weight) or min_weight < 0.0:
+                    min_weight = 0.0
+                lower_bounds[idx] = min(min_weight, 1.0)
+
+                max_weight_value = getattr(param, "max_weight", None)
+                if max_weight_value is not None:
+                    max_weight_float = float(max_weight_value)
+                    if not np.isfinite(max_weight_float) or max_weight_float <= 0.0:
+                        max_weight_float = lower_bounds[idx]
+                    upper_bounds[idx] = np.clip(
+                        max(max_weight_float, lower_bounds[idx]),
+                        lower_bounds[idx],
+                        1.0,
+                    )
+
+        tol = 1e-9
+        if np.any(lower_bounds > 0.0):
+            lower_sum = lower_bounds.sum()
+            if lower_sum > 1.0 + tol:
+                self._logger.warning(
+                    "Sumy minimalnych wag przekraczają 100% – normalizuję proporcjonalnie.",
+                )
+                lower_bounds = lower_bounds / lower_sum
+                upper_bounds = np.maximum(upper_bounds, lower_bounds)
+
+        if np.any(upper_bounds < 1.0):
+            upper_sum = upper_bounds.sum()
+            if upper_sum < 1.0 - tol:
+                self._logger.warning(
+                    "Suma limitów maksymalnych wag jest mniejsza niż 100% – ignoruję ograniczenia górne.",
+                )
+                upper_bounds = np.ones_like(upper_bounds)
+            upper_bounds = np.maximum(upper_bounds, lower_bounds)
+
+        return lower_bounds, upper_bounds
+
+    def _fallback_weight_dict(
+        self,
+        asset_order: List[str],
+        lower_bounds: NDArray[np.float64],
+        upper_bounds: NDArray[np.float64],
+        params: Optional[Dict[str, TradingParameters]] = None,
+    ) -> Dict[str, float]:
+        """Buduje podział wag respektujący ograniczenia oraz preferencje pozycji."""
+
+        if not asset_order:
+            return {}
+
+        n_assets = len(asset_order)
+        base = np.full(n_assets, 1.0 / n_assets, dtype=float)
+
+        if params:
+            preference = np.zeros(n_assets, dtype=float)
+            for idx, asset in enumerate(asset_order):
+                param = params.get(asset) if isinstance(params, dict) else None
+                if isinstance(param, TradingParameters):
+                    size = float(getattr(param, "position_size", 0.0) or 0.0)
+                    if np.isfinite(size) and size > 0.0:
+                        preference[idx] = size
+            total_pref = preference.sum()
+            if np.isfinite(total_pref) and total_pref > 0.0:
+                base = preference / total_pref
+
+        adjusted = self._apply_weight_bounds(base, lower_bounds, upper_bounds)
+
+        total = adjusted.sum()
+        if not np.isfinite(total) or total <= 0.0:
+            return {asset: 0.0 for asset in asset_order}
+
+        return {
+            asset: float(weight)
+            for asset, weight in zip(asset_order, adjusted)
+        }
+
+    def _finalize_weight_dict(
+        self,
+        asset_order: List[str],
+        lower_bounds: NDArray[np.float64],
+        upper_bounds: NDArray[np.float64],
+        weights: Mapping[str, float],
+        previous_weights: Optional[Mapping[str, float]],
+        max_turnover: Optional[float],
+        params: Optional[Mapping[str, TradingParameters]] = None,
+    ) -> Dict[str, float]:
+        """Normalizuje wektory wag i egzekwuje limit rotacji portfela."""
+
+        if not asset_order:
+            return {}
+
+        vector = np.array(
+            [max(float(weights.get(asset, 0.0)), 0.0) for asset in asset_order],
+            dtype=float,
+        )
+
+        total = vector.sum()
+        if not np.isfinite(total) or total <= 0.0:
+            return {asset: 0.0 for asset in asset_order}
+
+        vector /= total
+        constrained = self._apply_turnover_limit(
+            vector,
+            asset_order,
+            lower_bounds,
+            upper_bounds,
+            previous_weights,
+            max_turnover,
+            params,
+        )
+
+        total = constrained.sum()
+        if not np.isfinite(total) or total <= 0.0:
+            return {asset: 0.0 for asset in asset_order}
+
+        constrained /= total
+        return {asset: float(weight) for asset, weight in zip(asset_order, constrained)}
+
+    def _apply_turnover_limit(
+        self,
+        target_weights: NDArray[np.float64],
+        asset_order: List[str],
+        lower_bounds: NDArray[np.float64],
+        upper_bounds: NDArray[np.float64],
+        previous_weights: Optional[Mapping[str, float]],
+        max_turnover: Optional[float],
+        params: Optional[Mapping[str, TradingParameters]] = None,
+    ) -> NDArray[np.float64]:
+        """Ogranicza zmianę wag portfela względem poprzedniej alokacji."""
+
+        if (
+            target_weights.size == 0
+            or previous_weights is None
+            or max_turnover is None
+        ):
+            return target_weights
+
+        turnover_limit = float(max_turnover)
+        if not np.isfinite(turnover_limit) or turnover_limit < 0.0:
+            return target_weights
+
+        prev_vector = np.zeros(len(asset_order), dtype=float)
+        for idx, asset in enumerate(asset_order):
+            try:
+                prev_vector[idx] = max(float(previous_weights.get(asset, 0.0)), 0.0)
+            except (TypeError, ValueError):
+                prev_vector[idx] = 0.0
+
+        prev_total = prev_vector.sum()
+        if prev_total <= 0.0:
+            return target_weights
+        prev_vector /= prev_total
+
+        effective_lower = np.asarray(lower_bounds, dtype=float).copy()
+        effective_upper = np.asarray(upper_bounds, dtype=float).copy()
+
+        if params is not None:
+            mapping: Optional[Mapping[str, TradingParameters]]
+            mapping = params if isinstance(params, Mapping) else None
+            for idx, asset in enumerate(asset_order):
+                param = mapping.get(asset) if mapping is not None else None
+                if isinstance(param, TradingParameters):
+                    limit = getattr(param, "max_weight_change", None)
+                    if limit is None:
+                        continue
+                    limit_value = float(limit)
+                    if not np.isfinite(limit_value) or limit_value < 0.0:
+                        continue
+                    lower_cap = max(prev_vector[idx] - limit_value, 0.0)
+                    upper_cap = min(prev_vector[idx] + limit_value, 1.0)
+                    if upper_cap < lower_cap:
+                        target_value = float(np.clip(prev_vector[idx], 0.0, 1.0))
+                        lower_cap = target_value
+                        upper_cap = target_value
+                    effective_lower[idx] = max(effective_lower[idx], lower_cap)
+                    effective_upper[idx] = min(
+                        max(effective_upper[idx], effective_lower[idx]),
+                        max(upper_cap, effective_lower[idx]),
+                    )
+
+        effective_upper = np.maximum(effective_upper, effective_lower)
+
+        candidate = np.clip(np.asarray(target_weights, dtype=float), 0.0, None)
+        candidate_total = candidate.sum()
+        if candidate_total <= 0.0:
+            return candidate
+        candidate /= candidate_total
+
+        candidate = self._apply_weight_bounds(
+            candidate,
+            effective_lower,
+            effective_upper,
+        )
+        candidate_total = candidate.sum()
+        if candidate_total > 0.0:
+            candidate /= candidate_total
+
+        current_turnover = 0.5 * np.abs(candidate - prev_vector).sum()
+        if current_turnover <= turnover_limit + 1e-9:
+            return candidate
+
+        def project(alpha: float) -> NDArray[np.float64]:
+            mixed = prev_vector + (candidate - prev_vector) * alpha
+            mixed = np.clip(mixed, 0.0, None)
+            mixed_total = mixed.sum()
+            if mixed_total > 0.0:
+                mixed /= mixed_total
+            projected = self._apply_weight_bounds(
+                mixed,
+                effective_lower,
+                effective_upper,
+            )
+            projected = np.clip(projected, 0.0, None)
+            proj_total = projected.sum()
+            if proj_total > 0.0:
+                projected /= proj_total
+            return projected
+
+        if current_turnover == 0.0:
+            return candidate
+
+        ratio = np.clip(turnover_limit / current_turnover, 0.0, 1.0)
+        best = project(ratio)
+        best_turnover = 0.5 * np.abs(best - prev_vector).sum()
+        if best_turnover <= turnover_limit + 1e-6:
+            return best
+
+        low, high = 0.0, ratio
+        best_alpha = low
+        while high - low > 1e-4:
+            mid = (low + high) / 2.0
+            candidate_mid = project(mid)
+            turnover_mid = 0.5 * np.abs(candidate_mid - prev_vector).sum()
+            if turnover_mid <= turnover_limit + 1e-6:
+                low = mid
+                best = candidate_mid
+                best_alpha = mid
+                best_turnover = turnover_mid
+            else:
+                high = mid
+
+        if best_turnover <= turnover_limit + 1e-6:
+            return best
+
+        return project(best_alpha)
+
+    def _apply_weight_bounds(
+        self,
+        base_weights: NDArray[np.float64],
+        lower_bounds: NDArray[np.float64],
+        upper_bounds: NDArray[np.float64],
+    ) -> NDArray[np.float64]:
+        """Projektuje wagi na prostą sympleksu z ograniczeniami dolnymi i górnymi."""
+
+        if base_weights.size == 0:
+            return base_weights
+
+        weights = np.asarray(base_weights, dtype=float)
+        lower = np.clip(np.asarray(lower_bounds, dtype=float), 0.0, 1.0)
+        upper = np.clip(np.asarray(upper_bounds, dtype=float), 0.0, 1.0)
+        upper = np.maximum(upper, lower)
+
+        n_assets = weights.size
+        tol = 1e-9
+
+        sum_lower = lower.sum()
+        if sum_lower > 1.0 + tol:
+            fallback = lower / sum_lower
+            return fallback
+
+        # Start from preferowane wektory, ale respektuj ograniczenia.
+        weights = np.clip(weights, lower, upper)
+
+        for _ in range(n_assets * 8):
+            weights = np.clip(weights, lower, upper)
+            total = weights.sum()
+            if abs(total - 1.0) <= tol:
+                break
+
+            if total > 1.0:
+                excess = total - 1.0
+                candidates = [
+                    idx for idx in range(n_assets)
+                    if weights[idx] > lower[idx] + tol
+                ]
+                if not candidates:
+                    break
+                slack = np.array([
+                    max(weights[idx] - lower[idx], 0.0)
+                    for idx in candidates
+                ])
+                slack_sum = slack.sum()
+                if slack_sum <= tol:
+                    reduction = excess / len(candidates)
+                    for idx in candidates:
+                        weights[idx] = max(weights[idx] - reduction, lower[idx])
+                else:
+                    for share, idx in zip(slack / slack_sum, candidates):
+                        reduction = excess * share
+                        weights[idx] = max(weights[idx] - reduction, lower[idx])
+            else:
+                deficit = 1.0 - total
+                candidates = [
+                    idx for idx in range(n_assets)
+                    if weights[idx] < upper[idx] - tol
+                ]
+                if not candidates:
+                    break
+                slack = np.array([
+                    max(upper[idx] - weights[idx], 0.0)
+                    for idx in candidates
+                ])
+                slack_sum = slack.sum()
+                if slack_sum <= tol:
+                    addition = deficit / len(candidates)
+                    for idx in candidates:
+                        weights[idx] = min(weights[idx] + addition, upper[idx])
+                else:
+                    for share, idx in zip(slack / slack_sum, candidates):
+                        addition = deficit * share
+                        weights[idx] = min(weights[idx] + addition, upper[idx])
+
+        weights = np.clip(weights, lower, upper)
+        total = weights.sum()
+        if total <= tol:
+            residual = max(1.0 - lower.sum(), 0.0)
+            capacity = np.maximum(upper - lower, 0.0)
+            capacity_sum = capacity.sum()
+            if capacity_sum > 0:
+                weights = lower + residual * (capacity / capacity_sum)
+            else:
+                weights = lower.copy()
+        else:
+            weights /= total
+            weights = np.clip(weights, lower, upper)
+
+        final_total = weights.sum()
+        if abs(final_total - 1.0) > 1e-6 and final_total > 0:
+            weights /= final_total
+            weights = np.clip(weights, lower, upper)
+
+        return weights
 
 # =================== Risk Analytics Service ===================
 
