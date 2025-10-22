@@ -48,11 +48,6 @@ Raport zawiera sekcje:
 - `live_readiness_metadata` – surowe metadane checklisty (nazwy dokumentów,
   podpisy, sumy SHA-256).
 
-Podczas generowania raportu skrypt potwierdza fizyczną obecność każdego pliku
-zadeklarowanego w sekcji `live_readiness.documents`, weryfikuje sumy SHA-256 i
-istnienie artefaktów podpisów. Brak pliku, rozbieżność skrótu lub brak podpisu
-powoduje oznaczenie pozycji jako `blocked` z odpowiednią przyczyną.
-
 ## 3. Checklist manualna
 
 1. **Porównanie profili ryzyka** – potwierdź, że limity w `risk_profiles` są

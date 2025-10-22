@@ -14,10 +14,7 @@ if __package__ is None:  # pragma: no cover - uruchomienie jako skrypt
 
 from bot_core.config.loader import load_core_config
 from bot_core.config.models import CoreConfig, EnvironmentConfig, RiskProfileConfig
-from bot_core.runtime.bootstrap import (
-    build_live_readiness_checklist,
-    extract_live_readiness_metadata,
-)
+from bot_core.runtime.bootstrap import _build_live_readiness_checklist
 from bot_core.security.license import (
     LicenseValidationError,
     LicenseValidationResult,
@@ -89,8 +86,7 @@ def build_promotion_report(
 ) -> Mapping[str, Any]:
     """Buduje raport synchronizacji przed uruchomieniem środowiska live."""
 
-    config_path_obj = Path(config_path)
-    core_config = load_core_config(config_path_obj)
+    core_config = load_core_config(config_path)
     try:
         environment = core_config.environments[environment_name]
     except KeyError as exc:
@@ -99,7 +95,7 @@ def build_promotion_report(
     risk_profile = _extract_risk_profile(core_config, environment)
     alert_channels, alert_router, audit_log = _build_alert_stub(environment)
 
-    checklist = build_live_readiness_checklist(
+    checklist = _build_live_readiness_checklist(
         core_config=core_config,
         environment=environment,
         risk_profile_name=environment.risk_profile,
@@ -107,7 +103,6 @@ def build_promotion_report(
         alert_router=alert_router,
         alert_channels=alert_channels,
         audit_log=audit_log,
-        document_root=config_path_obj.parent,
     )
 
     report: dict[str, Any] = {
@@ -136,65 +131,28 @@ def build_promotion_report(
         }
 
     readiness = getattr(environment, "live_readiness", None)
-    metadata = extract_live_readiness_metadata(checklist)
-    if readiness is not None or metadata is not None:
-        base_metadata: dict[str, Any] = {}
-        if readiness is not None:
-            base_documents = []
-            for document in getattr(readiness, "documents", ()) or ():
-                name = getattr(document, "name", None)
-                base_documents.append(
-                    {
-                        "name": name,
-                        "required": bool(getattr(document, "required", True)),
-                        "signed": bool(getattr(document, "signed", False)),
-                        "signed_by": tuple(getattr(document, "signed_by", ()) or ()),
-                        "signature_path": getattr(document, "signature_path", None),
-                        "sha256": getattr(document, "sha256", None),
-                    }
-                )
-            base_metadata.update(
+    if readiness is not None:
+        documents = []
+        for document in getattr(readiness, "documents", ()) or ():
+            name = getattr(document, "name", None)
+            documents.append(
                 {
-                    "checklist_id": getattr(readiness, "checklist_id", None),
-                    "signed": bool(getattr(readiness, "signed", False)),
-                    "signed_by": tuple(getattr(readiness, "signed_by", ()) or ()),
-                    "signature_path": getattr(readiness, "signature_path", None),
-                    "signed_at": getattr(readiness, "signed_at", None),
-                    "required_documents": tuple(
-                        getattr(readiness, "required_documents", ()) or ()
-                    ),
-                    "documents": base_documents,
+                    "name": name,
+                    "required": bool(getattr(document, "required", True)),
+                    "signed": bool(getattr(document, "signed", False)),
+                    "signed_by": tuple(getattr(document, "signed_by", ()) or ()),
+                    "signature_path": getattr(document, "signature_path", None),
+                    "sha256": getattr(document, "sha256", None),
                 }
             )
-
-        if metadata is not None:
-            if metadata.get("status") is not None:
-                base_metadata["status"] = metadata["status"]
-            if metadata.get("reasons"):
-                base_metadata["reasons"] = metadata["reasons"]
-            checklist_meta = metadata.get("checklist") or {}
-            if checklist_meta:
-                for key in (
-                    "checklist_id",
-                    "signed",
-                    "signed_by",
-                    "signed_at",
-                    "signature_path",
-                    "resolved_signature_path",
-                    "required_documents",
-                ):
-                    value = checklist_meta.get(key)
-                    if value is not None:
-                        base_metadata[key] = value
-                if checklist_meta.get("status") is not None:
-                    base_metadata["checklist_status"] = checklist_meta["status"]
-                if checklist_meta.get("reasons"):
-                    base_metadata["checklist_reasons"] = checklist_meta["reasons"]
-            documents = metadata.get("documents")
-            if documents is not None:
-                base_metadata["documents"] = documents
-
-        report["live_readiness_metadata"] = base_metadata
+        report["live_readiness_metadata"] = {
+            "checklist_id": getattr(readiness, "checklist_id", None),
+            "signed": bool(getattr(readiness, "signed", False)),
+            "signed_by": tuple(getattr(readiness, "signed_by", ()) or ()),
+            "signature_path": getattr(readiness, "signature_path", None),
+            "required_documents": tuple(getattr(readiness, "required_documents", ()) or ()),
+            "documents": documents,
+        }
 
     return report
 

@@ -154,11 +154,16 @@ class MetricWeightedAllocation:
         self._shift_epsilon = max(1e-9, float(shift_epsilon))
         self._default_score = float(default_score)
         self._last_snapshot: dict[str, dict[str, float]] = {}
-        if label not in (None, ""):
-            try:
-                self.name = str(label)
-            except Exception:  # pragma: no cover - defensywnie
-                pass
+        if label:
+            self.name = str(label)
+
+    @property
+    def metrics(self) -> tuple[MetricWeightRule, ...]:
+        return self._rules
+
+    @property
+    def fallback_policy(self) -> CapitalAllocationPolicy | None:
+        return self._fallback
 
     def allocate(self, schedules: Sequence["_ScheduleContext"]) -> Mapping[str, float]:
         if not schedules:
