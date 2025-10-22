@@ -4,12 +4,14 @@ import QtQuick.Layouts
 import QtQuick.Window
 import Qt.labs.settings
 import "."
+import "workbench"
 
 ApplicationWindow {
     id: window
     property alias performanceGuard: guardModel.guard
     property alias sidePanel: sidePanel
     property alias chartView: chartView
+    property alias workbenchView: strategyWorkbench
     property var extraWindows: []
     property int extraWindowCount: 0
 
@@ -172,13 +174,40 @@ ApplicationWindow {
                 Layout.fillHeight: true
             }
 
-            CandlestickChartView {
-                id: chartView
+            TabView {
+                id: mainTabView
                 Layout.fillWidth: true
                 Layout.fillHeight: true
-                model: ohlcvModel
-                performanceGuard: guardModel.guard
-                reduceMotion: appController.reduceMotionActive
+
+                Tab {
+                    title: qsTr("Wykres")
+
+                    Item {
+                        anchors.fill: parent
+
+                        CandlestickChartView {
+                            id: chartView
+                            anchors.fill: parent
+                            model: ohlcvModel
+                            performanceGuard: guardModel.guard
+                            reduceMotion: appController.reduceMotionActive
+                        }
+                    }
+                }
+
+                Tab {
+                    title: qsTr("Workbench")
+
+                    StrategyWorkbench {
+                        id: strategyWorkbench
+                        anchors.fill: parent
+                        appController: appController
+                        strategyController: strategyController
+                        riskModel: riskModel
+                        riskHistoryModel: riskHistoryModel
+                        licenseController: licenseController
+                    }
+                }
             }
         }
     }

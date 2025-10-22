@@ -516,7 +516,15 @@ class AIManager:
             symbol=normalized_symbol,
         )
         self._latest_regimes[normalized_symbol] = assessment
-        history = self._regime_histories.setdefault(normalized_symbol, RegimeHistory())
+        history = self._regime_histories.setdefault(
+            normalized_symbol,
+            RegimeHistory(
+                thresholds_loader=self._regime_classifier.thresholds_loader,
+            ),
+        )
+        history.reload_thresholds(
+            thresholds=self._regime_classifier.thresholds_snapshot()
+        )
         history.update(assessment)
         _emit_history_log(
             f"Regime[{normalized_symbol}] => {assessment.regime.value} (risk={assessment.risk_score:.2f}, confidence={assessment.confidence:.2f})",

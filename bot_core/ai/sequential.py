@@ -293,54 +293,6 @@ BUILTIN_HEURISTICS: Mapping[str, Callable[[Mapping[str, float]], float]] = {
 }
 
 
-def build_heuristic_registry(
-    *registries: Mapping[str, Callable[[Mapping[str, float]], float]] | None,
-) -> Mapping[str, Callable[[Mapping[str, float]], float]]:
-    """Łączy wbudowane heurystyki z dodatkowymi rejestrami użytkownika."""
-
-    combined: dict[str, Callable[[Mapping[str, float]], float]] = dict(BUILTIN_HEURISTICS)
-    for registry in registries:
-        if not registry:
-            continue
-        for name, func in registry.items():
-            if callable(func):
-                combined[str(name)] = func
-    return combined
-
-
-def select_heuristics(
-    names: Sequence[str] | None,
-    *,
-    registry: Mapping[str, Callable[[Mapping[str, float]], float]] | None = None,
-) -> Mapping[str, Callable[[Mapping[str, float]], float]]:
-    """Wybiera podzbiór heurystyk, walidując nazwy względem dostępnego rejestru."""
-
-    available = (
-        {str(name): func for name, func in registry.items() if callable(func)}
-        if registry is not None
-        else dict(BUILTIN_HEURISTICS)
-    )
-    if not names:
-        return available
-
-    selected: dict[str, Callable[[Mapping[str, float]], float]] = {}
-    missing: list[str] = []
-    for raw_name in names:
-        name = str(raw_name)
-        func = available.get(name)
-        if func is None:
-            missing.append(name)
-        else:
-            selected[name] = func
-
-    if missing:
-        raise ValueError(
-            "Nieznane heurystyki: " + ", ".join(sorted(missing))
-        )
-
-    return selected
-
-
 @dataclass(slots=True)
 class WalkForwardMetrics:
     directional_accuracy: Sequence[float]
@@ -362,29 +314,12 @@ class WalkForwardMetrics:
 
 
 @dataclass(slots=True)
-class HeuristicSummary:
-    """Zbiorcza informacja o metrykach dla pojedynczej heurystyki."""
-
-    name: str
-    metrics: WalkForwardMetrics
-
-    def to_dict(self) -> Mapping[str, object]:
-        payload = dict(self.metrics.to_dict())
-        payload["name"] = self.name
-        return payload
-
-
-@dataclass(slots=True)
 class SequentialTrainingReport:
     artifact: ModelArtifact
     selected_features: Sequence[str]
     feature_ranking: Sequence[tuple[str, float]]
     walk_forward_metrics: WalkForwardMetrics
     heuristic_metrics: WalkForwardMetrics
-    heuristic_details: Sequence[HeuristicSummary]
-    heuristic_weights: Mapping[str, float]
-    suppressed_heuristics: Mapping[str, float]
-    heuristic_confidence: Mapping[str, float]
 
 
 class SequentialTrainingPipeline:
@@ -395,12 +330,10 @@ class SequentialTrainingPipeline:
         *,
         repository: HistoricalFeatureRepository,
         heuristics: Mapping[str, Callable[[Mapping[str, float]], float]] | None = None,
-        heuristic_names: Sequence[str] | None = None,
         min_directional_accuracy: float = 0.5,
     ) -> None:
         self._repository = repository
-        registry = build_heuristic_registry(heuristics)
-        self._heuristics = select_heuristics(heuristic_names, registry=registry)
+        self._heuristics = heuristics or BUILTIN_HEURISTICS
         self._min_directional_accuracy = float(min_directional_accuracy)
 
     def train_offline(
@@ -421,16 +354,8 @@ class SequentialTrainingPipeline:
         ]
         targets = trimmed_dataset.targets
 
-        wf_metrics = self._walk_forward(
-            features, targets, selected, folds, learning_rate, discount_factor
-        )
-        (
-            heuristic_metrics,
-            heuristic_details,
-            heuristic_weights,
-            suppressed_heuristics,
-            heuristic_confidence,
-        ) = self._evaluate_heuristics(features, targets, folds)
+        wf_metrics = self._walk_forward(features, targets, selected, folds, learning_rate, discount_factor)
+        heuristic_metrics = self._evaluate_heuristics(features, targets, folds)
 
         final_model = TemporalDifferencePolicy(
             feature_names=selected,
@@ -445,21 +370,8 @@ class SequentialTrainingPipeline:
             "feature_scalers": dataset.feature_stats,
             "walk_forward": metrics_payload,
             "heuristics": heuristic_metrics.to_dict(),
-            "heuristics_used": [
-                name for name, weight in heuristic_weights.items() if weight > 0.0
-            ],
-            "heuristics_detail": {
-                summary.name: summary.to_dict() for summary in heuristic_details
-            },
-            "heuristics_weights": dict(heuristic_weights),
             "min_directional_accuracy": self._min_directional_accuracy,
         }
-        if suppressed_heuristics:
-            metadata["heuristics_suppressed"] = dict(suppressed_heuristics)
-        if heuristic_confidence:
-            metadata["heuristics_confidence"] = {
-                name: float(value) for name, value in heuristic_confidence.items()
-            }
         if metrics_payload.get("mean_directional_accuracy", 0.0) < self._min_directional_accuracy:
             metadata["training_warning"] = "directional_accuracy_below_threshold"
         artifact = ModelArtifact(
@@ -483,10 +395,6 @@ class SequentialTrainingPipeline:
             feature_ranking=tuple(ranking),
             walk_forward_metrics=wf_metrics,
             heuristic_metrics=heuristic_metrics,
-            heuristic_details=tuple(heuristic_details),
-            heuristic_weights=dict(heuristic_weights),
-            suppressed_heuristics=dict(suppressed_heuristics),
-            heuristic_confidence=dict(heuristic_confidence),
         )
 
     # ------------------------------------------------------------------ helpers --
@@ -534,22 +442,12 @@ class SequentialTrainingPipeline:
         features: Sequence[Mapping[str, float]],
         targets: Sequence[float],
         folds: int,
-    ) -> tuple[
-        WalkForwardMetrics,
-        Sequence[HeuristicSummary],
-        Mapping[str, float],
-        Mapping[str, float],
-        Mapping[str, float],
-    ]:
+    ) -> WalkForwardMetrics:
         splits = _split_walk_forward(len(features), folds)
         accuracies: list[float] = []
         maes: list[float] = []
         rmses: list[float] = []
         pnls: list[float] = []
-        per_heuristic: list[HeuristicSummary] = []
-        per_metric: dict[str, WalkForwardMetrics] = {}
-        suppressed: dict[str, float] = {}
-        confidence: dict[str, float] = {}
         for start, end in splits:
             validation_features = features[start:end]
             validation_targets = targets[start:end]
@@ -560,91 +458,12 @@ class SequentialTrainingPipeline:
             maes.append(self._mae(predictions, validation_targets))
             rmses.append(self._rmse(predictions, validation_targets))
             pnls.append(self._pnl(predictions, validation_targets))
-        if self._heuristics:
-            for name, heuristic in self._heuristics.items():
-                metrics = self._evaluate_single_heuristic(heuristic, features, targets, splits)
-                per_heuristic.append(HeuristicSummary(name=name, metrics=metrics))
-                per_metric[name] = metrics
-                accuracy = _mean(metrics.directional_accuracy)
-                confidence[name] = accuracy
-                if accuracy < self._min_directional_accuracy:
-                    suppressed[name] = accuracy
-        overall = WalkForwardMetrics(
-            directional_accuracy=tuple(accuracies),
-            mae=tuple(maes),
-            rmse=tuple(rmses),
-            pnl=tuple(pnls),
-        )
-        if not per_metric:
-            return overall, tuple(per_heuristic), {}, {}, confidence
-
-        eligible_metrics: dict[str, WalkForwardMetrics] = {
-            name: metric
-            for name, metric in per_metric.items()
-            if name not in suppressed
-        }
-        # Jeśli wszystkie heurystyki zostały odrzucone, zachowaj najlepszą z nich jako awaryjną.
-        if not eligible_metrics and per_metric:
-            best_name = max(
-                per_metric.items(),
-                key=lambda item: _mean(item[1].directional_accuracy),
-            )[0]
-            eligible_metrics[best_name] = per_metric[best_name]
-            suppressed.pop(best_name, None)
-
-        weights = self._compute_heuristic_weights(eligible_metrics)
-        # Dołącz zerowe wagi dla heurystyk usuniętych podczas walidacji.
-        for name in per_metric:
-            weights.setdefault(name, 0.0)
-        return overall, tuple(per_heuristic), weights, suppressed, confidence
-
-    def _evaluate_single_heuristic(
-        self,
-        heuristic: Callable[[Mapping[str, float]], float],
-        features: Sequence[Mapping[str, float]],
-        targets: Sequence[float],
-        splits: Sequence[tuple[int, int]],
-    ) -> WalkForwardMetrics:
-        accuracies: list[float] = []
-        maes: list[float] = []
-        rmses: list[float] = []
-        pnls: list[float] = []
-        for start, end in splits:
-            validation_features = features[start:end]
-            validation_targets = targets[start:end]
-            if not validation_features:
-                continue
-            predictions = [heuristic(sample) for sample in validation_features]
-            accuracies.append(self._directional_accuracy(predictions, validation_targets))
-            maes.append(self._mae(predictions, validation_targets))
-            rmses.append(self._rmse(predictions, validation_targets))
-            pnls.append(self._pnl(predictions, validation_targets))
         return WalkForwardMetrics(
             directional_accuracy=tuple(accuracies),
             mae=tuple(maes),
             rmse=tuple(rmses),
             pnl=tuple(pnls),
         )
-
-    @staticmethod
-    def _compute_heuristic_weights(
-        metrics: Mapping[str, WalkForwardMetrics],
-    ) -> Mapping[str, float]:
-        if not metrics:
-            return {}
-        raw_scores: dict[str, float] = {}
-        for name, metric in metrics.items():
-            accuracy = _mean(metric.directional_accuracy)
-            excess = max(0.0, accuracy - 0.5)
-            score = excess ** 2
-            if score <= 0.0:
-                continue
-            raw_scores[name] = score
-        if not raw_scores:
-            uniform = 1.0 / len(metrics)
-            return {name: uniform for name in metrics}
-        total = sum(raw_scores.values())
-        return {name: value / total for name, value in raw_scores.items()}
 
     def _heuristic_prediction(self, features: Mapping[str, float]) -> float:
         if not self._heuristics:
@@ -703,25 +522,11 @@ class SequentialOnlineScorer:
         *,
         model: SupportsInference | None,
         heuristics: Mapping[str, Callable[[Mapping[str, float]], float]] | None = None,
-        heuristic_names: Sequence[str] | None = None,
         min_probability: float = 0.55,
-        heuristic_weights: Mapping[str, float] | None = None,
-        heuristic_confidence: Mapping[str, float] | None = None,
     ) -> None:
         self._model = model
-        registry = build_heuristic_registry(heuristics)
-        self._heuristics = select_heuristics(heuristic_names, registry=registry)
+        self._heuristics = heuristics or BUILTIN_HEURISTICS
         self._min_probability = float(min_probability)
-        self._heuristic_weights = {
-            name: float(weight)
-            for name, weight in (heuristic_weights or {}).items()
-            if name in self._heuristics
-        }
-        self._heuristic_confidence = {
-            name: float(confidence)
-            for name, confidence in (heuristic_confidence or {}).items()
-            if name in self._heuristics
-        }
 
     def score(self, features: Mapping[str, float]) -> OnlineScoringResult:
         model_score: ModelScore | None = None
@@ -737,18 +542,12 @@ class SequentialOnlineScorer:
                 )
 
         heuristic_prediction = self._heuristic_prediction(features)
-        heuristic_probability = self._heuristic_probability(heuristic_prediction)
+        heuristic_probability = max(0.5, min(0.5 + abs(heuristic_prediction) / 100.0, 0.99))
         fallback_score = ModelScore(
             expected_return_bps=heuristic_prediction,
             success_probability=heuristic_probability,
         )
         diagnostics: dict[str, float] = {"heuristic_probability": heuristic_probability}
-        for name, confidence in self._heuristic_confidence.items():
-            if self._heuristic_weights.get(name, 0.0) <= 0.0:
-                continue
-            diagnostics[f"heuristic_confidence.{name}"] = float(
-                max(0.0, min(confidence, 1.0))
-            )
         if model_score is not None:
             diagnostics["model_probability"] = model_score.success_probability
             diagnostics["model_prediction"] = model_score.expected_return_bps
@@ -757,46 +556,16 @@ class SequentialOnlineScorer:
     def _heuristic_prediction(self, features: Mapping[str, float]) -> float:
         if not self._heuristics:
             return 0.0
-        weighted_sum = 0.0
-        weight_total = 0.0
-        for name, heuristic in self._heuristics.items():
-            weight = self._heuristic_weights.get(name, 1.0)
-            if weight <= 0.0:
-                continue
-            value = heuristic(features)
-            weighted_sum += weight * value
-            weight_total += weight
-        if weight_total <= 0.0:
+        values = [heuristic(features) for heuristic in self._heuristics.values()]
+        if not values:
             return 0.0
-        return weighted_sum / weight_total
-
-    def _heuristic_probability(self, prediction: float) -> float:
-        if not self._heuristics:
-            return 0.5
-        weighted_confidence = 0.0
-        total_weight = 0.0
-        for name in self._heuristics:
-            weight = self._heuristic_weights.get(name, 1.0)
-            if weight <= 0.0:
-                continue
-            confidence = self._heuristic_confidence.get(name)
-            if confidence is None or not math.isfinite(confidence):
-                continue
-            bounded = max(0.0, min(confidence, 1.0))
-            weighted_confidence += weight * bounded
-            total_weight += weight
-        if total_weight > 0.0:
-            return max(0.5, min(weighted_confidence / total_weight, 0.99))
-        return max(0.5, min(0.5 + abs(prediction) / 100.0, 0.99))
+        return sum(values) / len(values)
 
 
 __all__ = [
     "BUILTIN_HEURISTICS",
-    "build_heuristic_registry",
     "HistoricalFeatureRepository",
-    "HeuristicSummary",
     "OnlineScoringResult",
-    "select_heuristics",
     "SequentialOnlineScorer",
     "SequentialTrainingPipeline",
     "SequentialTrainingReport",
