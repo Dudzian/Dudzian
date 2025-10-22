@@ -9,6 +9,7 @@ import logging
 import os
 import stat
 import sys
+import hashlib
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -1243,7 +1244,7 @@ def _get_profile_value(profile: Any, field_name: str) -> Any:
     return getattr(profile, field_name, None)
 
 
-def _build_live_readiness_checklist(
+def build_live_readiness_checklist(
     *,
     core_config: CoreConfig,
     environment: EnvironmentConfig,
@@ -1252,12 +1253,31 @@ def _build_live_readiness_checklist(
     alert_router: DefaultAlertRouter,
     alert_channels: Mapping[str, AlertChannel],
     audit_log: AlertAuditLog,
+    document_root: str | Path | None = None,
 ) -> tuple[Mapping[str, Any], ...]:
     checklist: list[Mapping[str, Any]] = []
+
+    root_path: Path | None = None
+    if document_root is not None:
+        try:
+            root_path = Path(document_root).expanduser().resolve()
+        except Exception:  # pragma: no cover - defensywne zabezpieczenie
+            root_path = Path(document_root)
 
     raw_entrypoints = _load_raw_runtime_entrypoints(core_config)
     compliance_details: list[Mapping[str, Any]] = []
     compliance_ok = False
+
+    def _get_value(source: Any, key: str) -> Any:
+        if isinstance(source, Mapping):
+            return source.get(key)
+        return getattr(source, key, None)
+
+    def _normalize_text(value: Any) -> str | None:
+        if value in (None, "", False):
+            return None
+        text = str(value).strip()
+        return text or None
 
     for entry_name, entry in raw_entrypoints.items():
         if not isinstance(entry, Mapping):
@@ -1329,6 +1349,196 @@ def _build_live_readiness_checklist(
         }
     )
 
+    live_checklist_config = getattr(environment, "live_readiness", None)
+    if live_checklist_config:
+        checklist_signed = bool(_get_value(live_checklist_config, "signed"))
+        checklist_signers = _normalize_sequence(
+            _get_value(live_checklist_config, "signed_by")
+        )
+        checklist_signed_at = _normalize_text(
+            _get_value(live_checklist_config, "signed_at")
+        )
+        checklist_signature_path = _normalize_text(
+            _get_value(live_checklist_config, "signature_path")
+        )
+        checklist_id = _normalize_text(
+            _get_value(live_checklist_config, "checklist_id")
+        )
+        declared_required = set(
+            _normalize_sequence(_get_value(live_checklist_config, "required_documents"))
+        )
+        documents = _get_value(live_checklist_config, "documents") or ()
+        document_details: list[Mapping[str, Any]] = []
+        document_names: set[str] = set()
+        required_from_docs: set[str] = set()
+        documents_ok = True
+        for raw_doc in documents:
+            doc_name = _normalize_text(_get_value(raw_doc, "name"))
+            if not doc_name:
+                continue
+            document_names.add(doc_name)
+            doc_path = _normalize_text(_get_value(raw_doc, "path") or _get_value(raw_doc, "location"))
+            doc_sha = _normalize_text(
+                _get_value(raw_doc, "sha256") or _get_value(raw_doc, "checksum")
+            )
+            doc_signature_path = _normalize_text(
+                _get_value(raw_doc, "signature_path") or _get_value(raw_doc, "signature")
+            )
+            doc_signed = bool(_get_value(raw_doc, "signed"))
+            doc_signers = _normalize_sequence(_get_value(raw_doc, "signed_by"))
+            doc_signed_at = _normalize_text(_get_value(raw_doc, "signed_at"))
+            doc_required_flag = _get_value(raw_doc, "required")
+            doc_required = True if doc_required_flag in (None, "") else bool(doc_required_flag)
+            if doc_required:
+                required_from_docs.add(doc_name)
+            required_for_check = doc_required or doc_name in declared_required
+            doc_ok = True
+            doc_reasons: list[str] = []
+
+            resolved_doc_path: Path | None = None
+            doc_path_verified = False
+            if doc_path:
+                candidate = Path(doc_path)
+                if candidate.is_absolute():
+                    resolved_doc_path = candidate
+                    doc_path_verified = True
+                elif root_path is not None:
+                    resolved_doc_path = (root_path / candidate).resolve()
+                    doc_path_verified = True
+                else:
+                    resolved_doc_path = candidate
+
+            if required_for_check:
+                if not doc_signed:
+                    doc_ok = False
+                    doc_reasons.append("document not signed")
+                if doc_signed and not doc_signers:
+                    doc_ok = False
+                    doc_reasons.append("missing signer entries")
+                if doc_signed and not doc_signature_path:
+                    doc_ok = False
+                    doc_reasons.append("missing signature artifact")
+                if not doc_sha:
+                    doc_ok = False
+                    doc_reasons.append("missing sha256 digest")
+                if doc_signature_path and root_path is not None:
+                    signature_candidate = Path(doc_signature_path)
+                    if not signature_candidate.is_absolute():
+                        signature_candidate = (root_path / signature_candidate).resolve()
+                    if not signature_candidate.exists():
+                        doc_ok = False
+                        doc_reasons.append("signature artifact missing")
+
+            computed_sha: str | None = None
+            if doc_path_verified and resolved_doc_path is not None:
+                if not resolved_doc_path.exists():
+                    if required_for_check:
+                        doc_ok = False
+                        doc_reasons.append("file not found")
+                else:
+                    try:
+                        digest = hashlib.sha256()
+                        with resolved_doc_path.open("rb") as handle:
+                            for chunk in iter(lambda: handle.read(65536), b""):
+                                digest.update(chunk)
+                        computed_sha = digest.hexdigest()
+                    except OSError as exc:  # pragma: no cover - nieoczekiwane błędy IO
+                        if required_for_check:
+                            doc_ok = False
+                            doc_reasons.append(f"failed to read file: {exc}")
+                    if computed_sha is not None and doc_sha:
+                        if computed_sha.lower() != doc_sha.lower():
+                            doc_ok = False
+                            doc_reasons.append("sha256 mismatch")
+
+            detail: dict[str, Any] = {
+                "name": doc_name,
+                "required": required_for_check,
+                "path": doc_path,
+                "sha256": doc_sha,
+                "signed": doc_signed,
+                "signed_by": doc_signers,
+                "status": "ok" if doc_ok or not required_for_check else "blocked",
+            }
+            if resolved_doc_path is not None:
+                detail["resolved_path"] = str(resolved_doc_path)
+            if computed_sha is not None:
+                detail["computed_sha256"] = computed_sha
+            if doc_signature_path:
+                detail["signature_path"] = doc_signature_path
+            if doc_signed_at:
+                detail["signed_at"] = doc_signed_at
+            if doc_reasons:
+                detail["reasons"] = tuple(doc_reasons)
+            if not doc_ok and required_for_check:
+                documents_ok = False
+                detail["status"] = "blocked"
+            document_details.append(detail)
+
+        required_targets = declared_required | required_from_docs
+        missing_required = required_targets - document_names
+        if missing_required:
+            documents_ok = False
+            for missing in sorted(missing_required):
+                document_details.append(
+                    {
+                        "name": missing,
+                        "required": True,
+                        "status": "missing",
+                        "reasons": ("document metadata not provided",),
+                    }
+                )
+
+        checklist_reasons: list[str] = []
+        if not checklist_signed:
+            checklist_reasons.append("checklist not signed")
+        if checklist_signed and not checklist_signers:
+            checklist_reasons.append("missing checklist signers")
+        signature_path_obj: Path | None = None
+        if checklist_signed and not checklist_signature_path:
+            checklist_reasons.append("missing checklist signature artifact")
+        elif checklist_signature_path:
+            signature_path_obj = Path(checklist_signature_path)
+            signature_checked = False
+            if not signature_path_obj.is_absolute() and root_path is not None:
+                signature_path_obj = (root_path / signature_path_obj).resolve()
+                signature_checked = True
+            elif signature_path_obj.is_absolute():
+                signature_checked = True
+            if signature_checked and not signature_path_obj.exists():
+                checklist_reasons.append("checklist signature missing")
+
+        documents_status_ok = documents_ok and not checklist_reasons
+
+        checklist_details: dict[str, Any] = {
+            "checklist_id": checklist_id,
+            "signed": checklist_signed,
+            "signed_by": checklist_signers,
+            "signed_at": checklist_signed_at,
+            "signature_path": checklist_signature_path,
+            "status": "ok" if not checklist_reasons else "blocked",
+        }
+        if signature_path_obj is not None:
+            checklist_details["resolved_signature_path"] = str(signature_path_obj)
+        if checklist_reasons:
+            checklist_details["reasons"] = tuple(checklist_reasons)
+        if required_targets:
+            checklist_details["required_documents"] = tuple(sorted(required_targets))
+
+        checklist.append(
+            {
+                "item": "live_checklist",
+                "status": "ok" if documents_status_ok else "blocked",
+                "description": (
+                    "Zweryfikuj podpisaną checklistę LIVE oraz komplet dokumentów (ryzyko, licencja, alerting)."
+                ),
+                "details": {
+                    "checklist": checklist_details,
+                    "documents": tuple(document_details),
+                },
+            }
+        )
+
     risk_limits_fields = {
         "max_daily_loss_pct": _get_profile_value(risk_profile_config, "max_daily_loss_pct"),
         "hard_drawdown_pct": _get_profile_value(risk_profile_config, "hard_drawdown_pct"),
@@ -1371,6 +1581,77 @@ def _build_live_readiness_checklist(
     )
 
     return tuple(checklist)
+
+
+# Zachowujemy zgodność wsteczną dla modułów importujących poprzednią nazwę.
+_build_live_readiness_checklist = build_live_readiness_checklist
+
+
+def extract_live_readiness_metadata(
+    checklist: Sequence[Mapping[str, Any]] | None,
+) -> Mapping[str, Any] | None:
+    """Ekstrahuje szczegóły checklisty live z ustrukturyzowanych wyników."""
+
+    if not checklist:
+        return None
+
+    for entry in checklist:
+        if not isinstance(entry, Mapping):
+            continue
+        if entry.get("item") != "live_checklist":
+            continue
+
+        details = entry.get("details")
+        if not isinstance(details, Mapping):
+            return None
+
+        summary: dict[str, Any] = {
+            "status": entry.get("status"),
+        }
+        if entry.get("reasons"):
+            summary["reasons"] = tuple(entry.get("reasons", ()))
+
+        checklist_info = details.get("checklist")
+        if isinstance(checklist_info, Mapping):
+            normalized_checklist: dict[str, Any] = {}
+            for key, value in checklist_info.items():
+                if key in {"signed_by", "required_documents", "reasons"}:
+                    normalized_checklist[key] = tuple(value or ())
+                else:
+                    normalized_checklist[key] = value
+            summary["checklist"] = normalized_checklist
+
+        documents_payload: list[dict[str, Any]] = []
+        documents_details = details.get("documents")
+        if isinstance(documents_details, Iterable):
+            for document in documents_details:
+                if not isinstance(document, Mapping):
+                    continue
+                name = document.get("name")
+                payload: dict[str, Any] = {"name": name}
+                for key in (
+                    "required",
+                    "status",
+                    "path",
+                    "resolved_path",
+                    "signature_path",
+                    "sha256",
+                    "computed_sha256",
+                    "signed",
+                    "signed_at",
+                ):
+                    if key in document:
+                        payload[key] = document[key]
+                if document.get("reasons"):
+                    payload["reasons"] = tuple(document.get("reasons", ()))
+                if document.get("signed_by"):
+                    payload["signed_by"] = tuple(document.get("signed_by", ()))
+                documents_payload.append(payload)
+
+        summary["documents"] = documents_payload
+        return summary
+
+    return None
 
 
 @dataclass(slots=True)
@@ -1445,8 +1726,9 @@ def bootstrap_environment(
     """Tworzy kompletny kontekst uruchomieniowy dla wskazanego środowiska."""
     from bot_core.config.validation import assert_core_config_valid
 
+    config_path_obj = Path(config_path)
     if core_config is None:
-        core_config = load_core_config(config_path)
+        core_config = load_core_config(config_path_obj)
     validation = assert_core_config_valid(core_config)
     for warning in validation.warnings:
         _LOGGER.warning("Walidacja konfiguracji: %s", warning)
@@ -1467,8 +1749,6 @@ def bootstrap_environment(
             environment.name,
         )
     selected_profile = risk_profile_name or environment.risk_profile
-    environment_type = getattr(environment, "environment", None)
-    is_paper_like = environment_type in {Environment.PAPER, Environment.TESTNET}
 
     skip_license_validation = not (
         getattr(license_config, "license_keys_path", None)
@@ -1516,14 +1796,14 @@ def bootstrap_environment(
                 "status": "invalid",
                 "license_path": str(Path(license_config.license_path).expanduser()),
             }
-            if is_paper_like or offline_mode:
+            if offline_mode:
                 _LOGGER.warning(
-                    "Pomijam weryfikację licencji OEM dla środowiska %s: %s",
+                    "Pomijam weryfikację licencji OEM dla środowiska %s w trybie offline: %s",
                     environment.name,
                     exc,
                 )
                 emit_alert(
-                    "Weryfikacja licencji OEM pominięta dla środowiska testowego.",
+                    "Weryfikacja licencji OEM pominięta – środowisko działa offline.",
                     severity=AlertSeverity.WARNING,
                     source="security.license",
                     context=context,
@@ -2771,7 +3051,7 @@ def bootstrap_environment(
     live_readiness_checklist: Sequence[Mapping[str, Any]] | None = None
     if environment.environment is Environment.LIVE:
         try:
-            live_readiness_checklist = _build_live_readiness_checklist(
+            live_readiness_checklist = build_live_readiness_checklist(
                 core_config=core_config,
                 environment=environment,
                 risk_profile_name=selected_profile,
@@ -2779,6 +3059,7 @@ def bootstrap_environment(
                 alert_router=alert_router,
                 alert_channels=alert_channels,
                 audit_log=audit_log,
+                document_root=config_path_obj.parent,
             )
         except Exception:  # pragma: no cover - diagnostyka checklisty
             live_readiness_checklist = None
@@ -2858,6 +3139,12 @@ _EXCHANGE_REQUIRED_MODULES: Mapping[str, tuple[str, ...]] = {
 }
 
 _ADVANCED_ALERT_TYPES = frozenset({"sms", "signal", "whatsapp", "messenger"})
+
+_SMS_PROVIDERS_MODULE = "bot_core.alerts.channels.providers"
+_SMS_PROVIDERS_STUB_FLAG = "__bootstrap_sms_provider_stub__"
+_ISO_COUNTRY_PATTERN = re.compile(r"^[A-Z]{2}$")
+_E164_PATTERN = re.compile(r"^\+[1-9]\d{1,14}$")
+_ALPHANUMERIC_SENDER_PATTERN = re.compile(r"^[A-Z0-9 _-]+$", re.IGNORECASE)
 
 
 def _ensure_environment_allowed(guard: "CapabilityGuard", environment: Environment) -> None:
@@ -3511,6 +3798,62 @@ def _build_messenger_channel(
     )
 
 
+def _install_sms_provider_stub() -> None:
+    """Instaluje minimalny rejestr dostawców SMS na potrzeby testów."""
+
+    providers_module = sys.modules.get(_SMS_PROVIDERS_MODULE)
+    if providers_module is None:
+        providers_module = ModuleType(_SMS_PROVIDERS_MODULE)
+        providers_module.DEFAULT_SMS_PROVIDERS = {}
+
+        @dataclass(slots=True)
+        class SmsProviderConfig:  # type: ignore[invalid-annotation]
+            provider_id: str
+            display_name: str
+            api_base_url: str | None = None
+            iso_country_code: str | None = None
+            supports_alphanumeric_sender: bool = False
+            notes: str | None = None
+            max_sender_length: int = 11
+
+        def get_sms_provider(key: str) -> SmsProviderConfig:
+            try:
+                return providers_module.DEFAULT_SMS_PROVIDERS[key]
+            except KeyError as exc:  # pragma: no cover - diagnostyka testowa
+                raise KeyError(f"Brak zarejestrowanego dostawcy SMS '{key}'") from exc
+
+        providers_module.SmsProviderConfig = SmsProviderConfig  # type: ignore[attr-defined]
+        providers_module.get_sms_provider = get_sms_provider  # type: ignore[attr-defined]
+        sys.modules[_SMS_PROVIDERS_MODULE] = providers_module
+    else:
+        providers_module.DEFAULT_SMS_PROVIDERS = getattr(
+            providers_module, "DEFAULT_SMS_PROVIDERS", {}
+        )
+
+        if not hasattr(providers_module, "SmsProviderConfig"):
+            @dataclass(slots=True)
+            class SmsProviderConfig:  # type: ignore[invalid-annotation]
+                provider_id: str
+                display_name: str
+                api_base_url: str | None = None
+                iso_country_code: str | None = None
+                supports_alphanumeric_sender: bool = False
+                notes: str | None = None
+                max_sender_length: int = 11
+
+            providers_module.SmsProviderConfig = SmsProviderConfig  # type: ignore[attr-defined]
+
+        if not hasattr(providers_module, "get_sms_provider"):
+            def get_sms_provider(key: str):
+                return providers_module.DEFAULT_SMS_PROVIDERS[key]
+
+            providers_module.get_sms_provider = get_sms_provider  # type: ignore[attr-defined]
+
+    setattr(providers_module, _SMS_PROVIDERS_STUB_FLAG, True)
+    get_provider_fn = getattr(providers_module, "get_sms_provider")
+    setattr(get_provider_fn, _SMS_PROVIDERS_STUB_FLAG, True)
+
+
 def _resolve_sms_provider(
     settings: SMSProviderSettings,
     get_sms_provider_fn: Any,
@@ -3643,4 +3986,5 @@ __all__ = [
     "parse_adapter_factory_cli_specs",
     "temporary_adapter_factories",
     "build_alert_channels",
+    "_install_sms_provider_stub",
 ]
