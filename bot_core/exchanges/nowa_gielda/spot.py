@@ -151,12 +151,14 @@ class NowaGieldaHTTPClient:
     ) -> Mapping[str, Any]:
         self._rate_limiter.consume(method, path)
         url = f"{self._base_url}{path}"
+        query = _strip_none(params)
+        body = _strip_none(json_body)
         try:
             response = self._session.request(
                 method,
                 url,
-                params=params,
-                json=json_body,
+                params=query or None,
+                json=body or None,
                 headers=headers,
                 timeout=self._timeout,
             )
@@ -218,6 +220,67 @@ class NowaGieldaHTTPClient:
             "/public/orderbook",
             params={"symbol": symbol, "depth": depth},
         )
+
+    def fetch_account(
+        self,
+        *,
+        headers: Mapping[str, str],
+        params: Mapping[str, Any] | None = None,
+    ) -> Mapping[str, Any]:
+        return self._request("GET", "/private/account", params=params, headers=headers)
+
+    def fetch_ohlcv(
+        self,
+        symbol: str,
+        interval: str,
+        *,
+        start: Optional[int] = None,
+        end: Optional[int] = None,
+        limit: Optional[int] = None,
+        params: Mapping[str, Any] | None = None,
+        headers: Mapping[str, str] | None = None,
+    ) -> Mapping[str, Any]:
+        query = _strip_none(
+            {
+                "symbol": symbol,
+                "interval": interval,
+                "start": start,
+                "end": end,
+                "limit": limit,
+            }
+        )
+        if params:
+            query = {**query, **_strip_none(params)}
+        return self._request(
+            "GET",
+            "/public/ohlcv",
+            params=query,
+            headers=headers,
+        )
+
+    def fetch_trades(
+        self,
+        *,
+        headers: Mapping[str, str],
+        params: Mapping[str, Any] | None = None,
+    ) -> Mapping[str, Any]:
+        return self._request("GET", "/private/trades", params=params, headers=headers)
+
+    def fetch_open_orders(
+        self,
+        *,
+        headers: Mapping[str, str],
+        params: Mapping[str, Any] | None = None,
+    ) -> Mapping[str, Any]:
+        return self._request("GET", "/private/orders", params=params, headers=headers)
+
+    def fetch_order_history(
+        self,
+        *,
+        headers: Mapping[str, str],
+        params: Mapping[str, Any] | None = None,
+    ) -> Mapping[str, Any]:
+        return self._request("GET", "/private/orders/history", params=params, headers=headers)
 
     def create_order(
         self,
