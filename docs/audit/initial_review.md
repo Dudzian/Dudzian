@@ -16,10 +16,10 @@ nowej architektury `bot_core` oraz przy planowaniu kolejnych iteracji rozwoju.
   baner profilu ryzyka i kontrolki frakcji wprost z runtime settings i potrafi
   przeładowywać `core.yaml` z poziomu przycisku.
 - **Launchery AutoTradera** zostały wydzielone do pakietu
-  `KryptoLowca.auto_trader` oraz zgodnościowych wrapperów (`run_autotrade_paper.py`,
-  `paper_auto_trade_app.py`). Moduły headless i GUI korzystają ze wspólnego
-  loadera profilu ryzyka i rejestrują nasłuchy przeładowań (GUI, SIGHUP,
-  watcher pliku).
+  `bot_core.auto_trader.app`, a w `KryptoLowca.auto_trader` pozostał jedynie shim
+  zgodnościowy (`run_autotrade_paper.py`, `paper_auto_trade_app.py`). Moduły
+  headless i GUI korzystają ze wspólnego loadera profilu ryzyka i rejestrują
+  nasłuchy przeładowań (GUI, SIGHUP, watcher pliku).
 - W katalogu głównym nadal znajdują się aliasowe pliki z epoki monolitu, jednak
   stopniowo delegują one działanie do nowych pakietów.
 

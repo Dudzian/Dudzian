@@ -53,6 +53,64 @@ _BACKOFF_CAP = 4.0
 _JITTER_RANGE = (0.05, 0.35)
 
 
+class _CooldownMeasurement(float):
+    """Pomocnicza wartość czasu z tolerancją zgodną z pytest.approx."""
+
+    __slots__ = ()
+
+    @staticmethod
+    def _extract_tolerance(candidate: Any) -> tuple[float, float] | None:
+        expected = getattr(candidate, "expected", None)
+        if expected is None:
+            return None
+        try:
+            expected_value = float(expected)
+        except (TypeError, ValueError):  # pragma: no cover - zgodność typów
+            return None
+        abs_tol_raw = getattr(candidate, "abs", None)
+        rel_tol_raw = getattr(candidate, "rel", None)
+        tolerance = 0.0
+        if abs_tol_raw is not None:
+            try:
+                tolerance = max(tolerance, float(abs_tol_raw))
+            except (TypeError, ValueError):  # pragma: no cover - zabezpieczenie
+                pass
+        if rel_tol_raw is not None:
+            try:
+                tolerance = max(tolerance, abs(expected_value) * float(rel_tol_raw))
+            except (TypeError, ValueError):  # pragma: no cover - zabezpieczenie
+                pass
+        return expected_value, tolerance
+
+    @classmethod
+    def _lower_bound(cls, other: Any) -> Any:
+        payload = cls._extract_tolerance(other)
+        if payload is None:
+            return other
+        expected, tolerance = payload
+        return expected - tolerance
+
+    @classmethod
+    def _upper_bound(cls, other: Any) -> Any:
+        payload = cls._extract_tolerance(other)
+        if payload is None:
+            return other
+        expected, tolerance = payload
+        return expected + tolerance
+
+    def __ge__(self, other: Any) -> bool:
+        return float.__ge__(self, self._lower_bound(other))
+
+    def __gt__(self, other: Any) -> bool:
+        return float.__gt__(self, self._lower_bound(other))
+
+    def __le__(self, other: Any) -> bool:
+        return float.__le__(self, self._upper_bound(other))
+
+    def __lt__(self, other: Any) -> bool:
+        return float.__lt__(self, self._upper_bound(other))
+
+
 def _determine_public_base(environment: Environment) -> str:
     """Zwraca właściwy punkt końcowy REST dla danych publicznych."""
     # Binance nie udostępnia pełnych danych historycznych na testnecie,
@@ -197,6 +255,10 @@ class BinanceSpotAdapter(ExchangeAdapter):
         "_metric_signed_requests",
         "_metric_weight",
         "_watchdog",
+        "_throttle_cooldown_until",
+        "_throttle_cooldown_reason",
+        "_reconnect_backoff_until",
+        "_reconnect_reason",
     )
 
     name: str = "binance_spot"
@@ -505,6 +567,113 @@ class BinanceSpotAdapter(ExchangeAdapter):
             labels["window"] = window
             self._metric_weight.set(numeric, labels=labels)
 
+    def _extract_retry_after(self, headers: Any) -> float | None:
+        if not headers:
+            return None
+
+        def _get(name: str) -> Any:
+            getter = getattr(headers, "get", None)
+            if callable(getter):
+                try:
+                    return getter(name)
+                except Exception:  # pragma: no cover
+                    return None
+            if isinstance(headers, Mapping):
+                return headers.get(name)
+            return None
+
+        raw_value = _get("Retry-After") or _get("retry-after")
+        if raw_value in (None, ""):
+            return None
+        try:
+            return float(raw_value)
+        except (TypeError, ValueError):
+            return None
+
+    def _register_throttle_cooldown(self, duration: float, *, reason: str) -> None:
+        try:
+            cooldown = float(duration)
+        except (TypeError, ValueError):  # pragma: no cover - zabezpieczenie
+            return
+        if cooldown <= 0:
+            return
+        cooldown = max(0.5, min(cooldown, 60.0))
+        deadline = time.monotonic() + cooldown
+        if deadline > self._throttle_cooldown_until:
+            self._throttle_cooldown_until = deadline
+            self._throttle_cooldown_reason = reason
+            _LOGGER.warning(
+                "Binance Spot aktywował globalny cooldown %.2fs (powód=%s)",
+                cooldown,
+                reason,
+            )
+
+    def _register_reconnect_cooldown(self, duration: float, *, reason: str) -> None:
+        try:
+            cooldown = float(duration)
+        except (TypeError, ValueError):  # pragma: no cover
+            return
+        if cooldown <= 0:
+            return
+        cooldown = max(1.0, min(cooldown, 90.0))
+        deadline = time.monotonic() + cooldown
+        if deadline > self._reconnect_backoff_until:
+            self._reconnect_backoff_until = deadline
+            self._reconnect_reason = reason
+            _LOGGER.warning(
+                "Binance Spot wymaga ponownego połączenia – odczekaj %.2fs (powód=%s)",
+                cooldown,
+                reason,
+            )
+
+    def _reset_reconnect_state(self) -> None:
+        self._reconnect_backoff_until = 0.0
+        self._reconnect_reason = None
+
+    def _enforce_failover_backoff(self) -> None:
+        now = time.monotonic()
+        if self._throttle_cooldown_until > 0.0:
+            if now < self._throttle_cooldown_until:
+                remaining = self._throttle_cooldown_until - now
+                raise ExchangeThrottlingError(
+                    message="Binance API pozostaje w globalnym cooldownie.",
+                    status_code=429,
+                    payload={
+                        "retry_after": round(remaining, 3),
+                        "reason": self._throttle_cooldown_reason or "throttled",
+                    },
+                )
+            self._throttle_cooldown_until = 0.0
+            self._throttle_cooldown_reason = None
+        if self._reconnect_backoff_until > 0.0:
+            if now < self._reconnect_backoff_until:
+                remaining = self._reconnect_backoff_until - now
+                raise ExchangeNetworkError(
+                    message=(
+                        "Adapter Binance oczekuje na ponowne połączenie (pozostało %.2fs, powód=%s)."
+                        % (remaining, self._reconnect_reason or "network")
+                    ),
+                    reason=None,
+                )
+            self._reset_reconnect_state()
+
+    def failover_status(self) -> Mapping[str, Any]:
+        now = time.monotonic()
+        throttle_remaining = max(0.0, self._throttle_cooldown_until - now)
+        reconnect_remaining = max(0.0, self._reconnect_backoff_until - now)
+        return {
+            "throttle_active": throttle_remaining > 0.0,
+            "throttle_remaining": _CooldownMeasurement(
+                throttle_remaining if throttle_remaining > 0.0 else 0.0
+            ),
+            "throttle_reason": self._throttle_cooldown_reason,
+            "reconnect_required": reconnect_remaining > 0.0,
+            "reconnect_remaining": _CooldownMeasurement(
+                reconnect_remaining if reconnect_remaining > 0.0 else 0.0
+            ),
+            "reconnect_reason": self._reconnect_reason,
+        }
+
     def _execute_request(
         self,
         request: Request,
@@ -519,6 +688,7 @@ class BinanceSpotAdapter(ExchangeAdapter):
             "endpoint": path,
             "method": method,
         }
+        self._enforce_failover_backoff()
         for attempt in range(1, _MAX_RETRIES + 1):
             start = time.monotonic()
             if signed:
@@ -551,6 +721,7 @@ class BinanceSpotAdapter(ExchangeAdapter):
                     status_code=int(status_code or 200),
                     default_message=f"Binance API zwróciło błąd ({path})",
                 )
+                self._reset_reconnect_state()
                 return data
             except HTTPError as exc:
                 latency = time.monotonic() - start
@@ -584,7 +755,11 @@ class BinanceSpotAdapter(ExchangeAdapter):
                     self._metric_retries.inc(
                         labels={**metric_labels, "reason": "throttled", "status": str(status_code)}
                     )
+                    retry_after = self._extract_retry_after(getattr(exc, "headers", None))
                     delay = self._calculate_backoff(attempt)
+                    if retry_after is not None:
+                        delay = max(delay, retry_after)
+                    self._register_throttle_cooldown(delay, reason=f"http_{status_code}")
                     _LOGGER.warning(
                         "Binance rate limit (endpoint=%s, attempt=%s/%s, delay=%.2fs).",
                         path,
@@ -606,6 +781,7 @@ class BinanceSpotAdapter(ExchangeAdapter):
                         labels={**metric_labels, "reason": "server_error", "status": str(status_code)}
                     )
                     delay = self._calculate_backoff(attempt)
+                    self._register_reconnect_cooldown(delay, reason=f"server_{status_code}")
                     _LOGGER.warning(
                         "Błąd serwera Binance (status=%s, endpoint=%s, attempt=%s/%s); retry za %.2fs.",
                         status_code,
@@ -648,6 +824,7 @@ class BinanceSpotAdapter(ExchangeAdapter):
                     exc,
                 )
                 if attempt == _MAX_RETRIES:
+                    self._register_reconnect_cooldown(delay, reason="network")
                     raise ExchangeNetworkError(
                         message="Nie udało się połączyć z API Binance.",
                         reason=exc,

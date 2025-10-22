@@ -11,7 +11,7 @@ import zipfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterable, Mapping
+from typing import Iterable, Mapping, MutableMapping, Sequence
 
 
 @dataclass(slots=True)
@@ -717,6 +717,293 @@ def _aggregate_categories(entries: Iterable[ReportEntry]) -> list[Mapping[str, o
     return serialized
 
 
+def _safe_parse_datetime(value: object) -> datetime | None:
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return None
+        candidate = text
+        if candidate.endswith("Z"):
+            candidate = candidate[:-1] + "+00:00"
+        try:
+            parsed = datetime.fromisoformat(candidate)
+        except ValueError:
+            try:
+                numeric = float(candidate)
+            except ValueError:
+                return None
+            try:
+                return datetime.fromtimestamp(numeric, timezone.utc)
+            except (OverflowError, OSError, ValueError):
+                return None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+    if isinstance(value, (int, float)):
+        try:
+            return datetime.fromtimestamp(float(value), timezone.utc)
+        except (OverflowError, OSError, ValueError):
+            return None
+    return None
+
+
+def _normalize_equity_timestamp(raw: object, *, index: int) -> str | float:
+    parsed = _safe_parse_datetime(raw)
+    if parsed is not None:
+        return parsed.isoformat()
+    if isinstance(raw, str):
+        text = raw.strip()
+        if text:
+            return text
+    if isinstance(raw, (int, float)):
+        return float(raw)
+    return float(index)
+
+
+def _extract_equity_curve_points(
+    summary: Mapping[str, object], *, source: str, category: str
+) -> list[dict[str, object]]:
+    candidate: object | None = None
+    for key in ("equity_curve", "equityCurve", "equity_series", "equitySeries"):
+        if key in summary:
+            candidate = summary.get(key)
+            break
+    if candidate is None:
+        return []
+
+    raw_points: Sequence[object] | None
+    if isinstance(candidate, Mapping):
+        raw_points = None
+        for field in ("points", "series", "values", "data"):
+            value = candidate.get(field)
+            if isinstance(value, Sequence):
+                raw_points = value
+                break
+        if raw_points is None and isinstance(candidate.get("timestamps"), Sequence) and isinstance(
+            candidate.get("values"), Sequence
+        ):
+            timestamps = candidate["timestamps"]  # type: ignore[index]
+            values = candidate["values"]  # type: ignore[index]
+            raw_points = [
+                {"timestamp": timestamps[i], "value": values[i]}
+                for i in range(min(len(timestamps), len(values)))
+            ]
+    elif isinstance(candidate, Sequence):
+        raw_points = candidate
+    else:
+        raw_points = None
+
+    if not raw_points:
+        return []
+
+    points: list[dict[str, object]] = []
+    for index, entry in enumerate(raw_points):
+        timestamp_raw: object | None = None
+        value_raw: object | None = None
+        label: str | None = None
+
+        if isinstance(entry, Mapping):
+            timestamp_raw = entry.get("timestamp")
+            if timestamp_raw is None:
+                for key in ("time", "t", "date", "index"):
+                    if key in entry:
+                        timestamp_raw = entry.get(key)
+                        break
+            value_raw = entry.get("value")
+            if value_raw is None:
+                for key in ("equity", "balance", "y"):
+                    if key in entry:
+                        value_raw = entry.get(key)
+                        break
+            label_value = entry.get("label")
+            if isinstance(label_value, str) and label_value.strip():
+                label = label_value.strip()
+        elif isinstance(entry, Sequence) and len(entry) >= 2:
+            timestamp_raw, value_raw = entry[0], entry[1]
+        else:
+            value_raw = entry
+
+        try:
+            value = float(value_raw)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            continue
+
+        timestamp = _normalize_equity_timestamp(timestamp_raw, index=index)
+        point = {
+            "timestamp": timestamp,
+            "value": value,
+            "source": source,
+            "category": category,
+            "label": label or source,
+            "sequence_index": index,
+        }
+        points.append(point)
+
+    return points
+
+
+def _extract_asset_heatmap_cells(
+    summary: Mapping[str, object], *, source: str, category: str
+) -> list[dict[str, object]]:
+    candidate: object | None = None
+    for key in ("asset_heatmap", "assetHeatmap", "asset_allocation", "assetAllocation", "assets", "positions"):
+        if key in summary:
+            candidate = summary.get(key)
+            break
+    if candidate is None:
+        return []
+
+    cells: list[dict[str, object]] = []
+
+    if isinstance(candidate, Mapping):
+        items = candidate.items()
+    elif isinstance(candidate, Sequence):
+        items = []
+        for entry in candidate:
+            if isinstance(entry, Mapping):
+                asset = entry.get("asset") or entry.get("symbol") or entry.get("code")
+                if not asset:
+                    continue
+                payload = dict(entry)
+                payload.setdefault("value", entry.get("value"))
+                items.append((asset, payload))
+            else:
+                items.append((entry, entry))
+    else:
+        return []
+
+    for asset, payload in items:
+        if not isinstance(asset, str):
+            continue
+        label = asset
+        value_candidate: object | None = None
+        if isinstance(payload, Mapping):
+            for key in ("value", "weight", "exposure", "share", "pnl", "notional", "score"):
+                if key in payload:
+                    value_candidate = payload.get(key)
+                    if value_candidate is not None:
+                        break
+            label_value = payload.get("label")
+            if isinstance(label_value, str) and label_value.strip():
+                label = label_value.strip()
+        else:
+            value_candidate = payload
+
+        try:
+            value = float(value_candidate)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            continue
+
+        cells.append(
+            {
+                "asset": asset,
+                "label": label,
+                "value": value,
+                "source": source,
+                "category": category,
+            }
+        )
+
+    return cells
+
+
+def _build_dashboard_payload(entries: Iterable[ReportEntry]) -> Mapping[str, object]:
+    equity_points: list[dict[str, object]] = []
+    heatmap_cells: list[dict[str, object]] = []
+
+    for entry in entries:
+        if entry.summary is None or not isinstance(entry.summary, Mapping):
+            continue
+        equity_points.extend(
+            _extract_equity_curve_points(
+                entry.summary,
+                source=entry.identifier,
+                category=entry.category,
+            )
+        )
+        heatmap_cells.extend(
+            _extract_asset_heatmap_cells(
+                entry.summary,
+                source=entry.identifier,
+                category=entry.category,
+            )
+        )
+
+    def _equity_sort_key(item: Mapping[str, object]) -> tuple[float, str]:
+        timestamp_value = item.get("timestamp")
+        parsed = _safe_parse_datetime(timestamp_value)
+        if parsed is not None:
+            return parsed.timestamp(), str(item.get("source", ""))
+        try:
+            return float(timestamp_value), str(item.get("source", ""))
+        except (TypeError, ValueError):
+            sequence = item.get("sequence_index", 0)
+            try:
+                return float(sequence), str(item.get("source", ""))
+            except (TypeError, ValueError):
+                return 0.0, str(item.get("source", ""))
+
+        return 0.0, str(item.get("source", ""))
+
+    equity_points.sort(key=_equity_sort_key)
+
+    max_equity_points = 600
+    if len(equity_points) > max_equity_points:
+        total_points = len(equity_points)
+        step = max(1, (total_points + max_equity_points - 1) // max_equity_points)
+        sampled = [
+            equity_points[index]
+            for index in range(0, total_points, step)
+        ]
+        if sampled:
+            sampled[-1] = equity_points[-1]
+        else:
+            sampled = [equity_points[-1]]
+        equity_points = sampled
+
+    for point in equity_points:
+        if isinstance(point, MutableMapping):
+            point.pop("sequence_index", None)
+
+    aggregated_heatmap: dict[str, dict[str, object]] = {}
+    for cell in heatmap_cells:
+        asset = str(cell.get("asset", "")).strip()
+        if not asset:
+            continue
+        value = float(cell.get("value", 0.0))
+        bucket = aggregated_heatmap.get(asset)
+        if bucket is None:
+            bucket = {
+                "asset": asset,
+                "label": cell.get("label") or asset,
+                "value": 0.0,
+                "sources": [],
+            }
+            aggregated_heatmap[asset] = bucket
+        bucket["value"] = float(bucket.get("value", 0.0)) + value
+        bucket["sources"].append(
+            {
+                "source": cell.get("source"),
+                "category": cell.get("category"),
+                "value": value,
+            }
+        )
+
+    aggregated_list = sorted(
+        aggregated_heatmap.values(),
+        key=lambda item: (-abs(float(item.get("value", 0.0))), str(item.get("asset", ""))),
+    )
+
+    return {
+        "equity_curve": equity_points,
+        "asset_heatmap": aggregated_list,
+    }
+
+
 def _summarize_overview(entries: Iterable[ReportEntry]) -> Mapping[str, object]:
     entries = list(entries)
     summary: dict[str, object] = {
@@ -819,6 +1106,7 @@ def cmd_overview(args: argparse.Namespace) -> int:
     reports = [_serialize(entry) for entry in paginated_entries]
     category_stats = _aggregate_categories(filtered_entries)
     summary = _summarize_overview(filtered_entries)
+    dashboards = _build_dashboard_payload(filtered_entries)
 
     total_count = len(filtered_entries)
     returned_count = len(paginated_entries)
@@ -852,6 +1140,7 @@ def cmd_overview(args: argparse.Namespace) -> int:
         "summary": summary,
         "filters": filters,
         "pagination": pagination,
+        "dashboards": dashboards,
     }
     print(json.dumps(payload, ensure_ascii=False))
     return 0

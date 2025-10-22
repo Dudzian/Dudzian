@@ -421,6 +421,7 @@ import importlib
 import importlib.util
 import json
 import os
+import sys
 from pathlib import Path
 
 
@@ -468,6 +469,35 @@ def _read_runtime_fingerprint():
     )
 
 
+def _log_install_event(*, fingerprint, status, key_id=None, expected=None, expected_path=None, message=None):
+    try:
+        module = importlib.import_module("bot_core.security.fingerprint")
+    except Exception:
+        return
+    writer = getattr(module, "append_fingerprint_audit", None)
+    if writer is None:
+        return
+    metadata = {
+        "script": str(Path(__file__).resolve()),
+    }
+    if expected is not None:
+        metadata["expected_fingerprint"] = expected
+    if expected_path is not None:
+        metadata["expected_file"] = str(expected_path)
+    if message:
+        metadata["message"] = message
+    try:
+        writer(
+            event="installer_run",
+            fingerprint=fingerprint or "",
+            status=status,
+            key_id=key_id,
+            metadata=metadata,
+        )
+    except Exception as exc:  # pragma: no cover - ostrzeżenie przy problemie z audytem
+        print(f"[core-oem] Warning: failed to write fingerprint audit: {exc}", file=sys.stderr)
+
+
 def _verify_signature(payload, signature, key: bytes):
     algorithm = signature.get("algorithm", "HMAC-SHA384")
     if algorithm.upper() != "HMAC-SHA384":
@@ -501,11 +531,43 @@ def main():
     )
     args = parser.parse_args()
     payload, signature = _load_expected(args.expected)
-    key = _load_key()
-    runtime_value = _read_runtime_fingerprint()
-    _verify(payload, signature, runtime_value, key)
-    key_id = signature.get("key_id", "n/a")
-    print(f"[core-oem] Fingerprint verified for {runtime_value} (key_id={key_id})")
+    runtime_value = None
+    key_identifier = signature.get("key_id")
+    expected_value = payload.get("fingerprint")
+    try:
+        key = _load_key()
+        runtime_value = _read_runtime_fingerprint()
+        _verify(payload, signature, runtime_value, key)
+    except SystemExit as exc:
+        _log_install_event(
+            fingerprint=runtime_value,
+            status="failed",
+            key_id=key_identifier,
+            expected=expected_value,
+            expected_path=args.expected,
+            message=str(exc),
+        )
+        raise
+    except Exception as exc:  # pragma: no cover - obsługa wyjątków instalatora
+        _log_install_event(
+            fingerprint=runtime_value,
+            status="error",
+            key_id=key_identifier,
+            expected=expected_value,
+            expected_path=args.expected,
+            message=str(exc),
+        )
+        raise
+    else:
+        _log_install_event(
+            fingerprint=runtime_value,
+            status="verified",
+            key_id=key_identifier,
+            expected=expected_value,
+            expected_path=args.expected,
+        )
+        key_label = key_identifier if key_identifier is not None else "n/a"
+        print(f"[core-oem] Fingerprint verified for {runtime_value} (key_id={key_label})")
 
 
 if __name__ == "__main__":

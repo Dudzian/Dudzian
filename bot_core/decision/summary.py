@@ -787,6 +787,20 @@ class DecisionSummaryAggregator:
             summary.setdefault("latest_candidate", None)
             summary.setdefault("latest_generated_at", None)
 
+        history_entries: list[dict[str, object]] = []
+        for payload in self._window:
+            entry: dict[str, object] = {}
+            for key, value in payload.items():
+                if key in {"reasons", "risk_flags", "stress_failures"}:
+                    entry[key] = list(_iter_strings(value))
+                elif key == "candidate" and isinstance(value, Mapping):
+                    entry[key] = dict(value)
+                else:
+                    entry[key] = value
+            history_entries.append(entry)
+
+        summary["history"] = history_entries
+
         return summary
 
 

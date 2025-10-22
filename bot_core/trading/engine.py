@@ -804,7 +804,6 @@ class RiskManagementService:
 
         managed_direction = pd.Series(0, index=signals.index, dtype=int)
         position_sizes = pd.Series(0.0, index=signals.index, dtype=float)
-        exit_reasons = pd.Series([None] * len(signals), index=signals.index, dtype=object)
 
         current_position = 0
         current_size = 0.0
@@ -813,48 +812,29 @@ class RiskManagementService:
 
         for i in range(len(signals)):
             timestamp = signals.index[i]
-            raw_signal = signals.iloc[i]
-            current_signal = int(np.sign(raw_signal)) if not pd.isna(raw_signal) else 0
+            current_signal = int(np.sign(signals.iloc[i])) if not pd.isna(signals.iloc[i]) else 0
             current_price = data.loc[timestamp, 'close']
             current_atr = indicators.atr.iloc[i]
 
-            exit_reason: Optional[str] = None
-            blocked_reentry = False
-
+            # Check for position exit conditions first
             if current_position != 0 and entry_price > 0:
                 exit_signal = self._check_exit_conditions(
                     current_position, entry_price, current_price, current_atr, params
                 )
 
                 if exit_signal:
-                    exit_reason = exit_signal
-                    blocked_reentry = True
+                    managed_direction.iloc[i] = 0
+                    position_sizes.iloc[i] = 0.0
                     self._logger.debug(f"Risk management exit at {timestamp}: {exit_signal}")
                     current_position = 0
                     current_size = 0.0
                     entry_price = 0.0
                     entry_time = None
+                    continue
 
-            if current_position != 0 and exit_reason is None:
-                if current_signal == 0:
-                    exit_reason = 'signal'
-                    current_position = 0
-                    current_size = 0.0
-                    entry_price = 0.0
-                    entry_time = None
-                    self._logger.debug("Signal exit executed due to flat signal")
-                elif current_signal != current_position:
-                    exit_reason = 'signal_reversal'
-                    current_position = 0
-                    current_size = 0.0
-                    entry_price = 0.0
-                    entry_time = None
-                    self._logger.debug("Signal exit executed due to reversal")
-
-            if exit_reason:
-                exit_reasons.iloc[i] = exit_reason
-
-            if current_position == 0 and current_signal != 0 and not blocked_reentry:
+            # Handle new position entries
+            if current_signal != 0 and current_position == 0:
+                # Apply position sizing
                 position_size = self._calculate_position_size(
                     current_price, current_atr, params
                 )
@@ -864,19 +844,33 @@ class RiskManagementService:
                     current_size = position_size
                     entry_price = current_price
                     entry_time = timestamp
+                    managed_direction.iloc[i] = current_position
+                    position_sizes.iloc[i] = current_size
                 else:
-                    current_position = 0
-                    current_size = 0.0
-                    entry_price = 0.0
-                    entry_time = None
+                    managed_direction.iloc[i] = 0
+                    position_sizes.iloc[i] = 0.0
 
-            managed_direction.iloc[i] = current_position
-            position_sizes.iloc[i] = current_size
+            elif current_signal == 0 and current_position != 0:
+                # Natural signal exit
+                current_position = 0
+                current_size = 0.0
+                entry_price = 0.0
+                entry_time = None
+                managed_direction.iloc[i] = 0
+                position_sizes.iloc[i] = 0.0
+
+            elif current_position != 0:
+                # Maintain current position and size
+                managed_direction.iloc[i] = current_position
+                position_sizes.iloc[i] = current_size
+            else:
+                # No position, no signal
+                managed_direction.iloc[i] = 0
+                position_sizes.iloc[i] = 0.0
 
         return pd.DataFrame({
             'direction': managed_direction.astype(int),
             'size': position_sizes.astype(float),
-            'exit_reason': exit_reasons,
         })
     
     def _check_exit_conditions(self, position: int, entry_price: float, 
@@ -977,12 +971,7 @@ class VectorizedBacktestEngine:
             equity_curve = (1 + returns).cumprod() * initial_capital
 
             # Generate comprehensive trades DataFrame
-            trades_df = self._generate_trades_dataframe_vectorized(
-                aligned_data,
-                positions,
-                params,
-                fee_bps,
-            )
+            trades_df = self._generate_trades_dataframe_vectorized(aligned_data, positions, params)
             
             # Calculate all performance metrics
             metrics = self._calculate_comprehensive_metrics(equity_curve, trades_df, returns, config.risk_free_rate)
@@ -1014,14 +1003,6 @@ class VectorizedBacktestEngine:
         shifted_size = size.shift(1).fillna(0.0)
         signed_position = shifted_direction * shifted_size
 
-        # Track raw position changes (including the initial entry) for transaction cost accounting
-        raw_position = direction * size
-        position_changes = raw_position.diff().abs().fillna(0.0)
-        if not raw_position.empty:
-            position_changes.iloc[0] = abs(raw_position.iloc[0])
-            if raw_position.iloc[-1] != 0:
-                position_changes.iloc[-1] += abs(raw_position.iloc[-1])
-
         # Calculate price returns
         price_returns = data['close'].pct_change().fillna(0.0)
 
@@ -1029,6 +1010,7 @@ class VectorizedBacktestEngine:
         strategy_returns = signed_position * price_returns
 
         # Apply transaction costs vectorized
+        position_changes = signed_position.diff().abs().fillna(0.0)
         transaction_costs = position_changes * (fee_bps / 10000.0)
 
         # Net returns
@@ -1041,24 +1023,11 @@ class VectorizedBacktestEngine:
         data: pd.DataFrame,
         positions: pd.DataFrame,
         params: TradingParameters,
-        fee_bps: float,
     ) -> pd.DataFrame:
-        """Generate trades DataFrame using optimized vectorized operations.
-
-        Args:
-            data: OHLCV data aligned to the position index.
-            positions: DataFrame with ``direction`` and ``size`` columns produced by risk management.
-            params: Strategy parameters (retained for interface compatibility).
-            fee_bps: Transaction fee expressed in basis points used for commission calculation.
-        """
+        """Generate trades DataFrame using optimized vectorized operations."""
 
         direction = positions.get('direction', pd.Series(index=positions.index, dtype=float)).astype(int)
         size = positions.get('size', pd.Series(index=positions.index, dtype=float)).astype(float)
-        exit_reasons = positions.get('exit_reason')
-        if exit_reasons is None:
-            exit_reasons = pd.Series([None] * len(direction), index=direction.index, dtype=object)
-        else:
-            exit_reasons = exit_reasons.reindex(direction.index)
 
         # Find signal changes
         signal_changes = direction.diff().fillna(direction)
@@ -1090,17 +1059,9 @@ class VectorizedBacktestEngine:
 
                     # Calculate trade metrics
                     signed_size = position * entry_size
-                    gross_pnl = (current_price - entry_price) * signed_size
-                    gross_return = ((current_price / entry_price) - 1.0) * position if entry_price != 0 else 0.0
+                    pnl = (current_price - entry_price) * signed_size
+                    pnl_pct = ((current_price / entry_price) - 1.0) * position if entry_price != 0 else 0.0
                     duration = timestamp - entry_timestamp
-
-                    fee_rate = fee_bps / 10000.0
-                    entry_notional = abs(entry_size) * entry_price
-                    exit_notional = abs(position_size) * current_price
-                    commission = (entry_notional + exit_notional) * fee_rate
-                    net_pnl = gross_pnl - commission
-                    fee_return = (commission / entry_notional) if entry_notional > 0 else 0.0
-                    pnl_pct = gross_return - fee_return
 
                     # Determine exit reason
                     recorded_reason = None
@@ -1126,11 +1087,11 @@ class VectorizedBacktestEngine:
                         'exit_price': current_price,
                         'position': position,
                         'quantity': abs(entry_size),
-                        'pnl': net_pnl,
+                        'pnl': pnl,
                         'pnl_pct': pnl_pct,
                         'duration': duration,
                         'exit_reason': exit_reason,
-                        'commission': commission,
+                        'commission': abs(entry_size) * current_price * 0.0005  # 5 bps
                     })
 
                 # Open new position
@@ -1145,50 +1106,7 @@ class VectorizedBacktestEngine:
 
             elif position != 0:
                 # Update stored size if risk manager adjusted position without flipping direction
-                if signal_size > 0:
-                    position_size = signal_size
-
-        # Force-close any open position at the end of the dataset so trade metrics remain consistent
-        if position != 0 and entry_idx is not None:
-            exit_timestamp = direction.index[-1]
-            if exit_timestamp not in data.index:
-                # Align to the last available price if indices diverge
-                common_index = direction.index.intersection(data.index)
-                if common_index.empty:
-                    return pd.DataFrame(trades)
-                exit_timestamp = common_index[-1]
-
-            entry_timestamp = direction.index[entry_idx]
-            entry_price = data.loc[entry_timestamp, 'close']
-            entry_size = max(abs(size.iloc[entry_idx]), 0.0)
-            if entry_size > 0:
-                current_price = data.loc[exit_timestamp, 'close']
-                signed_size = position * entry_size
-                gross_pnl = (current_price - entry_price) * signed_size
-                gross_return = ((current_price / entry_price) - 1.0) * position if entry_price != 0 else 0.0
-                duration = exit_timestamp - entry_timestamp
-
-                fee_rate = fee_bps / 10000.0
-                exit_notional = abs(position_size) * current_price
-                entry_notional = abs(entry_size) * entry_price
-                commission = (entry_notional + exit_notional) * fee_rate
-                net_pnl = gross_pnl - commission
-                fee_return = (commission / entry_notional) if entry_notional > 0 else 0.0
-                pnl_pct = gross_return - fee_return
-
-                trades.append({
-                    'entry_time': entry_timestamp,
-                    'exit_time': exit_timestamp,
-                    'entry_price': entry_price,
-                    'exit_price': current_price,
-                    'position': position,
-                    'quantity': abs(entry_size),
-                    'pnl': net_pnl,
-                    'pnl_pct': pnl_pct,
-                    'duration': duration,
-                    'exit_reason': 'end_of_data',
-                    'commission': commission,
-                })
+                position_size = max(signal_size, position_size)
 
         return pd.DataFrame(trades)
     
@@ -1433,11 +1351,9 @@ class TradingEngine:
 
         except Exception as exc:
             self._logger.error(f"Strategy execution failed: {exc}")
-            error_code = getattr(exc, "error_code", None)
-            raise TradingEngineError(
-                f"Strategy execution failed: {exc}",
-                error_code=error_code,
-            ) from exc
+            if isinstance(exc, TradingEngineError):
+                raise
+            raise TradingEngineError(f"Strategy execution failed: {exc}") from exc
 
     def _run_multi_symbol_strategy(
         self,
@@ -1468,10 +1384,6 @@ class TradingEngine:
                 raise TradingEngineError(f"Invalid parameters for symbol '{symbol}'")
 
             capital_allocation = initial_capital * weights[symbol]
-            if capital_allocation <= 0:
-                session_results[symbol] = self._build_empty_backtest_result(frame.index)
-                continue
-
             session_results[symbol] = self._run_single_strategy(
                 frame,
                 symbol_params,
@@ -1522,34 +1434,6 @@ class TradingEngine:
             aggregate=aggregate_result,
             sessions=session_results,
             weights=weights,
-        )
-
-    def _build_empty_backtest_result(self, index: pd.Index) -> BacktestResult:
-        """Create an empty backtest result used for zero-weight sessions."""
-
-        zeros = pd.Series(0.0, index=index, dtype=float)
-        empty_trades = pd.DataFrame(
-            columns=[
-                'entry_time',
-                'exit_time',
-                'entry_price',
-                'exit_price',
-                'position',
-                'quantity',
-                'pnl',
-                'pnl_pct',
-                'duration',
-                'exit_reason',
-                'commission',
-            ]
-        )
-        metrics = self._backtest_engine._empty_comprehensive_metrics()
-
-        return BacktestResult(
-            equity_curve=zeros,
-            trades=empty_trades,
-            daily_returns=zeros,
-            **metrics,
         )
 
     def _normalize_session_weights(

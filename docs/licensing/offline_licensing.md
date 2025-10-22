@@ -63,10 +63,11 @@ licencji, zgodnie z wymaganiami OEM.
 
 ## Launcher AutoTrader (headless)
 
-`KryptoLowca.auto_trader.paper.PaperAutoTradeApp` ładuje `LicenseCapabilities` przy
-uruchomieniu. Strażnik licencji blokuje start, gdy brakuje modułu `auto_trader`,
-odpowiedniego środowiska (`paper/demo` lub `live`) albo przekroczono limity
-instancji. Wymagane zachowania:
+`bot_core.auto_trader.app` stanowi kanoniczny runtime, a shim
+`KryptoLowca.auto_trader.paper.PaperAutoTradeApp` ładuje `LicenseCapabilities`
+przy uruchomieniu. Strażnik licencji blokuje start, gdy brakuje modułu
+`auto_trader`, odpowiedniego środowiska (`paper/demo` lub `live`) albo
+przekroczono limity instancji. Wymagane zachowania:
 
 - tryb **Live** wymaga edycji co najmniej *Pro* oraz dostępu do środowiska `live`;
 - środowiska futures (np. `binance_futures`, `kraken_futures`) wymagają modułu
@@ -76,7 +77,10 @@ instancji. Wymagane zachowania:
   `license_restriction`.
 
 CLI (`python -m KryptoLowca.auto_trader`) kończy działanie kodem wyjścia różnym od
-zera przy naruszeniu restrykcji, a logi zawierają komunikat o blokadzie licencyjnej.
+zera przy naruszeniu restrykcji, a logi zawierają komunikat o blokadzie
+licencyjnej. Wywołanie deleguje do runtime `bot_core.auto_trader.app`, dlatego
+scenariusze licencyjne należy testować również na importerach korzystających
+bezpośrednio z pakietu `bot_core`.
 
 ## Generator licencji
 
