@@ -6,7 +6,7 @@ import math
 import time
 from collections import deque
 from copy import deepcopy
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Deque, Dict, Iterable, List, Mapping, Optional
 
 import numpy as np
@@ -19,9 +19,18 @@ from bot_core.ai.regime import (
     RegimeHistory,
     RegimeStrategyWeights,
     RegimeSummary,
+    RiskLevel,
 )
 from bot_core.backtest.ma import simulate_trades_ma  # noqa: F401 - zachowaj kompatybilność API
 from bot_core.events import DebounceRule, Event, EventBus, EventType, EmitterAdapter
+
+
+@dataclass
+class _AutoRiskFreezeState:
+    risk_level: RiskLevel | None = None
+    risk_score: float | None = None
+    triggered_at: float = 0.0
+    last_extension_at: float = 0.0
 
 
 @dataclass
@@ -106,6 +115,7 @@ class AutoTradeEngine:
         self._manual_risk_frozen_until: float = 0.0
         self._auto_risk_frozen_until: float = 0.0
         self._auto_risk_frozen: bool = False
+        self._auto_risk_state = _AutoRiskFreezeState()
         self._submit_market = broker_submit_market
         self._regime_classifier = MarketRegimeClassifier()
         self._regime_history = RegimeHistory(
@@ -133,6 +143,7 @@ class AutoTradeEngine:
         self._manual_risk_frozen_until = 0.0
         self._auto_risk_frozen_until = 0.0
         self._auto_risk_frozen = False
+        self._auto_risk_state = _AutoRiskFreezeState()
         self._recompute_risk_freeze_until()
         self.adapter.push_autotrade_status("enabled", detail={"symbol": self.cfg.symbol})  # type: ignore[attr-defined]
 
@@ -229,6 +240,7 @@ class AutoTradeEngine:
             self._regime_history.clear()
             self._auto_risk_frozen = False
             self._auto_risk_frozen_until = 0.0
+            self._auto_risk_state = _AutoRiskFreezeState()
             self._recompute_risk_freeze_until()
 
     def configure_regime_history(
@@ -483,6 +495,73 @@ class AutoTradeEngine:
         if summary is not None:
             self._last_summary = summary
         return assessment
+
+    def _sync_freeze_state(self) -> None:
+        now = time.time()
+
+        if self._manual_risk_frozen_until and now >= self._manual_risk_frozen_until:
+            self._manual_risk_frozen_until = 0.0
+
+        auto_until = self._auto_risk_frozen_until if self._auto_risk_frozen else 0.0
+        if auto_until and now >= auto_until:
+            self._auto_risk_frozen = False
+            self._auto_risk_frozen_until = 0.0
+            self.adapter.push_autotrade_status(  # type: ignore[attr-defined]
+                "auto_risk_unfreeze",
+                detail={"symbol": self.cfg.symbol},
+            )
+
+        if self.cfg.auto_risk_freeze:
+            summary = self._regime_history.summarise()
+            triggered = False
+            if summary is not None:
+                level_rank = self._RISK_LEVEL_ORDER.get(summary.risk_level, -1)
+                target_rank = self._RISK_LEVEL_ORDER.get(self.cfg.auto_risk_freeze_level, 99)
+                level_triggered = level_rank >= target_rank >= 0
+                score_triggered = summary.risk_score >= self.cfg.auto_risk_freeze_score
+                triggered = level_triggered or score_triggered
+            if triggered:
+                new_expiry = now + float(self.cfg.risk_freeze_seconds)
+                previous_until = self._auto_risk_frozen_until if self._auto_risk_frozen else 0.0
+                detail = {
+                    "symbol": self.cfg.symbol,
+                    "risk_level": summary.risk_level.value if summary else None,
+                    "risk_score": summary.risk_score if summary else None,
+                    "until": new_expiry,
+                }
+                if not self._auto_risk_frozen:
+                    self.adapter.push_autotrade_status(  # type: ignore[attr-defined]
+                        "auto_risk_freeze",
+                        detail=detail,
+                        level="WARN",
+                    )
+                else:
+                    if new_expiry > previous_until + 1e-6:
+                        extend_detail = dict(detail)
+                        extend_detail["extended_from"] = previous_until
+                        extend_detail["until"] = new_expiry
+                        self.adapter.push_autotrade_status(  # type: ignore[attr-defined]
+                            "auto_risk_freeze_extend",
+                            detail=extend_detail,
+                            level="WARN",
+                        )
+                self._auto_risk_frozen = True
+                self._auto_risk_frozen_until = max(previous_until, new_expiry)
+
+        self._recompute_risk_freeze_until()
+
+    def _recompute_risk_freeze_until(self) -> None:
+        now = time.time()
+        manual_until = self._manual_risk_frozen_until
+        if manual_until and now >= manual_until:
+            manual_until = 0.0
+            self._manual_risk_frozen_until = 0.0
+        auto_until = self._auto_risk_frozen_until if self._auto_risk_frozen else 0.0
+        if auto_until and now >= auto_until:
+            auto_until = 0.0
+            self._auto_risk_frozen_until = 0.0
+            self._auto_risk_frozen = False
+        self._risk_frozen_until = float(max(manual_until, auto_until, 0.0))
 
     def get_last_regime_assessment(self) -> MarketRegimeAssessment | None:
         """Zwróć ostatnią ocenę reżimu (bez możliwości modyfikacji stanu)."""
