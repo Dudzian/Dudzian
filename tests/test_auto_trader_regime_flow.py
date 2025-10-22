@@ -3222,7 +3222,6 @@ def test_auto_trader_risk_history_emits_events(monkeypatch: pytest.MonkeyPatch) 
     assert len(risk_events) == 3
     assert len(payloads) == 3
     assert payloads[0]["service"] == "_ServiceGamma"
-    assert isinstance(payloads[0]["decision_id"], str)
     assert payloads[0]["history_size"] == 1
     assert payloads[0]["history_trimmed_by_limit"] == 0
     assert payloads[-1]["history_size"] == 2
@@ -3409,11 +3408,9 @@ def test_auto_trader_exports_and_dumps_risk_evaluations(tmp_path: Path) -> None:
     assert export["retention"]["ttl_s"] == pytest.approx(60.0)
     assert export["filters"]["decision_fields"] == ["state"]
     assert export["filters"]["flatten_decision"] is True
-    assert "decision_id" in export["filters"]
     assert isinstance(export["entries"][0]["timestamp"], str)
     assert export["entries"][0]["decision_state"] == "active"
     assert export["entries"][0]["service"] == "_ExportService"
-    assert all("decision_id" in entry for entry in export["entries"])
     assert "error" in export["entries"][1]
 
     destination = tmp_path / "risk_history.json"
@@ -3503,7 +3500,6 @@ def test_auto_trader_loads_and_imports_risk_evaluations(tmp_path: Path) -> None:
     assert isinstance(restored_entry["timestamp"], float)
     assert restored_entry["decision"]["state"] == "blocked"
     assert restored_entry["decision"]["should_trade"] is False
-    assert "decision_id" in restored_entry
 
     destination = tmp_path / "risk_history.json"
     destination.write_text(json.dumps(export, indent=2), encoding="utf-8")
@@ -3514,7 +3510,6 @@ def test_auto_trader_loads_and_imports_risk_evaluations(tmp_path: Path) -> None:
 
     restored_all = trader.get_risk_evaluations()
     assert [entry["decision"]["state"] for entry in restored_all] == ["active", "blocked"]
-    assert all("decision_id" in entry for entry in restored_all)
 
     partial_payload = copy.deepcopy(export)
     partial_entry = copy.deepcopy(partial_payload["entries"][0])
@@ -3530,7 +3525,6 @@ def test_auto_trader_loads_and_imports_risk_evaluations(tmp_path: Path) -> None:
     assert merged_states.count("active") >= 1
     assert merged_states.count("blocked") >= 1
     assert len(merged_states) == len(export["entries"]) + 1
-    assert all("decision_id" in entry for entry in trader.get_risk_evaluations())
 
 
 def test_auto_trader_filters_risk_history_by_decision_fields() -> None:

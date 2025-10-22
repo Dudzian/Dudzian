@@ -196,8 +196,33 @@ class KrakenDemoAdapter(RESTWebSocketAdapter):
         await super().authenticate(credentials)
 
     async def fetch_market_data(self, symbol: str) -> MarketPayload:
-        response = await self._request("GET", "/0/public/Ticker", params={"pair": symbol})
-        return response
+        response: Dict[str, Any] = await self._request(
+            "GET", "/0/public/Ticker", params={"pair": symbol}
+        )
+        errors = response.get("error")
+        if errors:
+            raise RuntimeError(f"Kraken API error: {errors}")
+        result = response.get("result", {})
+        symbol_key = next(iter(result.keys()), symbol)
+        ticker = result.get(symbol_key, {})
+        ask = ticker.get("a", [None])[0]
+        bid = ticker.get("b", [None])[0]
+        last = ticker.get("c", [None])[0]
+        bid_value = float(bid) if bid is not None else 0.0
+        ask_value = float(ask) if ask is not None else 0.0
+        last_value = float(last) if last is not None else 0.0
+        payload: MarketPayload = {
+            "symbol": symbol,
+            "bid": bid_value,
+            "ask": ask_value,
+            "last": last_value,
+            "raw": response,
+        }
+        payload.update(response)
+        payload["bid"] = bid_value
+        payload["ask"] = ask_value
+        payload["last"] = last_value
+        return payload
 
     async def stream_market_data(
         self, subscriptions: Iterable[MarketSubscription], callback: Callable[[MarketPayload], Awaitable[None]]
