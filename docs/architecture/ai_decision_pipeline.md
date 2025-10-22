@@ -21,3 +21,31 @@
 - **On-line scoring** – przed wdrożeniem zweryfikuj, że `DecisionOrchestrator` ładuje aktualne wagi (`DecisionModelInference.is_ready == True`) oraz że `AIDecisionLoop` loguje odchylenia kosztów w alertach.
 - **Retraining** – scheduler powinien mieć dowód ostatniego wykonania (`RetrainingScheduler.last_run`) i plan kolejnego (`next_run`). Brak retreningu > interwał wymaga otwarcia incydentu risk/compliance.
 - **Dane wejściowe** – `FeatureEngineer` wymaga kompletności kolumn OHLCV. Monitoring musi raportować luki oraz nieciągłości w `bot_core.data.ohlcv` przed uruchomieniem inference.
+
+## Specyfikacja `ModelArtifact`
+
+| Pole | Typ | Opis | Źródło |
+| --- | --- | --- | --- |
+| `model_version` | string | Semantyczna wersja artefaktu (`major.minor.patch`). | `ModelRepository` |
+| `created_at` | ISO datetime | Znacznik czasu wygenerowania artefaktu. | `ModelTrainer` |
+| `target_scale` | string | Zakres targetu, np. `bps` lub `returns_pct`. | Dane treningowe |
+| `feature_scalers` | dict[str, {mean: float, std: float}] | Parametry normalizacji cech. | `ModelTrainer` |
+| `training_rows` | int | Liczba rekordów wykorzystanych w treningu. | `ModelTrainer` |
+| `validation_rows` | int | Liczba rekordów użytych do walidacji. | `WalkForwardValidator` / `ModelTrainer` |
+| `test_rows` | int | Liczba rekordów zestawu testowego (jeśli dotyczy). | `ModelTrainer` |
+| `metrics.train.mae` / `metrics.train.rmse` | float | Metryki na zbiorze treningowym. | `ModelTrainer` |
+| `metrics.validation.mae` / `metrics.validation.rmse` | float | Metryki na walidacji. | `WalkForwardValidator` |
+| `metrics.test.mae` / `metrics.test.rmse` | float | Metryki na zbiorze testowym (opcjonalne). | `ModelTrainer` |
+| `decision_journal_entry` | string | Identyfikator wpisu w decision journalu powiązany z artefaktem. | Decision journal |
+
+Artefakt powinien być podpisany kryptograficznie oraz przechowywany wraz z `checksums.sha256`, aby umożliwić audyt integralności. Schemat JSON przechowujemy w `docs/schemas/model_artifact.schema.json`, a każde odchylenie wymaga aktualizacji dokumentacji oraz zatwierdzenia compliance.
+
+## Monitoring danych wejściowych
+
+Monitoring skupia się na wykrywaniu anomalii w danych zasilających inference:
+
+- **Kompletność świec OHLCV** – `DataCompletenessWatcher` monitoruje luki czasowe (`missing_bars`) oraz odchylenia wolumenów. Raporty dzienne trafiają do `audit/ai_decision/data_quality/<date>.json`.
+- **Dryf statystyczny cech** – `FeatureDriftMonitor` porównuje rozkłady cech (`population_stability_index`, `kolmogorov_smirnov`) pomiędzy treningiem a produkcją. Alerty zapisywane są w `audit/ai_decision/drift/<date>.json` oraz trafiają na kanał incident.
+- **Walidacja zakresów** – `FeatureBoundsValidator` weryfikuje, że wartości inference mieszczą się w przedziałach wyznaczonych przez `feature_scalers` ± `3σ`. Przekroczenia blokują scoring i wymagają podpisu Risk przed kontynuacją.
+
+Każdy komponent monitoringu ma dedykowany runbook (`docs/runbooks/ai_data_monitoring.md`) opisujący kroki reakcji, eskalację oraz wymagane podpisy compliance.
