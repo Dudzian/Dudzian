@@ -26,9 +26,27 @@ from bot_core.exchanges.core import (
     PositionDTO,
 )
 try:  # pragma: no cover - środowisko testowe może nie zawierać pełnej konfiguracji managera
-    from bot_core.exchanges.manager import ExchangeManager
+    from bot_core.exchanges.manager import (
+        ExchangeManager,
+        get_native_adapter_info,
+        NativeAdapterInfo,
+        iter_registered_native_adapters,
+        register_native_adapter,
+        reload_native_adapters,
+        unregister_native_adapter,
+        temporary_native_adapter,
+        temporary_native_adapters,
+    )
 except Exception:  # pragma: no cover - zapewniamy import pakietu
     ExchangeManager = None  # type: ignore[assignment]
+    register_native_adapter = None  # type: ignore[assignment]
+    iter_registered_native_adapters = None  # type: ignore[assignment]
+    reload_native_adapters = None  # type: ignore[assignment]
+    NativeAdapterInfo = None  # type: ignore[assignment]
+    get_native_adapter_info = None  # type: ignore[assignment]
+    unregister_native_adapter = None  # type: ignore[assignment]
+    temporary_native_adapter = None  # type: ignore[assignment]
+    temporary_native_adapters = None  # type: ignore[assignment]
 from bot_core.exchanges.binance.futures import BinanceFuturesAdapter
 from bot_core.exchanges.binance.margin import BinanceMarginAdapter
 from bot_core.exchanges.binance.spot import BinanceSpotAdapter
@@ -64,6 +82,7 @@ from bot_core.exchanges.health import (
     RetryPolicy,
     Watchdog,
 )
+from . import streaming
 
 __all__ = [
     "AccountSnapshot",
@@ -112,6 +131,15 @@ __all__ = [
     "Watchdog",
     "PaperBackend",
     "PositionDTO",
+    "streaming",
+    "register_native_adapter",
+    "reload_native_adapters",
+    "iter_registered_native_adapters",
+    "NativeAdapterInfo",
+    "get_native_adapter_info",
+    "unregister_native_adapter",
+    "temporary_native_adapter",
+    "temporary_native_adapters",
 ]
 
 if os.environ.get("BOT_CORE_MINIMAL_EXCHANGES") != "1":  # pragma: no cover - pełny import dla runtime
