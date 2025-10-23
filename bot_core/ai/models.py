@@ -301,8 +301,7 @@ class ModelArtifact:
                 }
             ),
         )
-        metrics_source = self.metrics if isinstance(self.metrics, Mapping) else None
-        object.__setattr__(self, "metrics", _normalize_metrics(metrics_source))
+        object.__setattr__(self, "metrics", _normalize_metrics(self.metrics))
         object.__setattr__(self, "target_scale", float(self.target_scale))
         object.__setattr__(self, "training_rows", int(self.training_rows))
         object.__setattr__(self, "validation_rows", int(self.validation_rows))
@@ -345,7 +344,7 @@ class ModelArtifact:
         backend = str(raw.get("backend", "builtin"))
 
         metrics_raw = raw.get("metrics")
-        metrics = _normalize_metrics(metrics_raw if isinstance(metrics_raw, Mapping) else None)
+        metrics = _normalize_metrics(metrics_raw)
 
         target_scale = float(raw.get("target_scale", metadata.get("target_scale", 1.0)))
         training_rows = int(raw.get("training_rows", metadata.get("training_rows", 0)))
