@@ -22,9 +22,12 @@ from bot_core.ai.audit import (
     load_latest_data_quality_report,
     load_latest_drift_report,
     load_latest_walk_forward_report,
+    load_scheduler_state,
     save_data_quality_report,
     save_drift_report,
+    save_scheduler_state,
     save_walk_forward_report,
+    summarize_walk_forward_reports,
 )
 from bot_core.ai.feature_engineering import FeatureVector
 from bot_core.ai.scheduler import (
@@ -33,6 +36,7 @@ from bot_core.ai.scheduler import (
     ScheduledTrainingJob,
     WalkForwardResult,
 )
+from bot_core.ai.data_monitoring import update_sign_off
 from bot_core.ai.training import ExternalModelAdapter, ExternalTrainingContext, ExternalTrainingResult, register_external_model_adapter
 from bot_core.runtime.journal import InMemoryTradingDecisionJournal
 
@@ -944,3 +948,22 @@ def test_list_and_load_latest_audit_reports(tmp_path: Path) -> None:
     assert drift_payload["metrics"]["feature_drift"]["psi"] == 0.1
     drift_paths = list_audit_reports("drift", audit_root=tmp_path)
     assert drift_paths[0] == drift_path
+
+
+def test_save_and_load_scheduler_state(tmp_path: Path) -> None:
+    state = {
+        "version": 5,
+        "last_run": "2024-06-01T12:00:00+00:00",
+        "next_run": "2024-06-01T12:30:00+00:00",
+        "interval": 1800.0,
+        "updated_at": "2024-06-01T12:00:05+00:00",
+        "failure_streak": 0,
+    }
+
+    path = save_scheduler_state(state, audit_root=tmp_path)
+    assert path == tmp_path / "scheduler.json"
+    loaded = load_scheduler_state(audit_root=tmp_path)
+    assert loaded is not None
+    assert loaded["next_run"] == state["next_run"]
+    for subdir in ("walk_forward", "data_quality", "drift"):
+        assert (tmp_path / subdir).is_dir()

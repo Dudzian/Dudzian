@@ -123,19 +123,6 @@ def _enable_fast_mode() -> None:
                 )
             )
 
-        adapter = getattr(self, "exchange_adapter", None)
-        if adapter is not None:
-            call_args = (
-                getattr(request, "symbol", None),
-                getattr(request, "interval", None),
-                getattr(request, "start", None),
-                getattr(request, "end", None),
-                getattr(request, "limit", None),
-            )
-            calls = getattr(adapter, "calls", None)
-            if isinstance(calls, list):
-                calls.append(("fetch_ohlcv", call_args))
-
         return OHLCVResponse(columns=columns, rows=tuple(rows))
 
     def _mock_warm_cache(

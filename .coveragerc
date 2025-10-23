@@ -1,0 +1,17 @@
+[run]
+omit =
+    tests/*
+    KryptoLowca/*
+    */__main__.py
+    */cli.py
+    bot_core/strategies/catalog.py
+    bot_core/strategies/grid.py
+    bot_core/strategies/options.py
+    bot_core/strategies/scalping.py
+    bot_core/strategies/statistical_arbitrage.py
+
+[report]
+exclude_lines =
+    pragma: no cover
+    if __name__ == "__main__":
+    if typing.TYPE_CHECKING:

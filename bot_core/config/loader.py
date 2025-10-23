@@ -25,6 +25,8 @@ from bot_core.config.models import (
     EnvironmentAIModelConfig,
     EnvironmentAIPipelineScheduleConfig,
     EnvironmentConfig,
+    ExchangeAccountConfig,
+    NativeExchangeAdapterConfig,
     LiveChecklistDocumentConfig,
     LiveReadinessChecklistConfig,
     EnvironmentDataSourceConfig,
@@ -55,6 +57,7 @@ from bot_core.config.models import (
     LicenseValidationConfig,
 )
 from bot_core.exchanges.base import Environment
+from bot_core.exchanges.core import Mode
 
 
 try:  # Stage6 asset-level konfiguracja governora
@@ -352,6 +355,73 @@ def _load_permission_profiles(raw: Mapping[str, Any]) -> Mapping[str, Permission
             ),
         )
     return profiles
+
+
+def _load_exchange_accounts(raw: Mapping[str, Any]) -> Mapping[str, Mapping[str, ExchangeAccountConfig]]:
+    accounts_raw = raw.get("exchange_accounts") or {}
+    accounts: dict[str, dict[str, ExchangeAccountConfig]] = {}
+    if not isinstance(accounts_raw, Mapping):
+        return accounts
+
+    for exchange_id, environments in accounts_raw.items():
+        if not isinstance(environments, Mapping):
+            continue
+        normalized_exchange = str(exchange_id).strip().lower()
+        entries: dict[str, ExchangeAccountConfig] = {}
+        for env_name, entry in environments.items():
+            if not isinstance(entry, Mapping):
+                continue
+            environment = str(entry.get("environment", "")).strip()
+            keychain_key = str(entry.get("keychain_key", "")).strip()
+            risk_profile = str(entry.get("risk_profile", "")).strip()
+            if not environment or not keychain_key or not risk_profile:
+                continue
+            normalized_env = str(env_name).strip().lower()
+            entries[normalized_env] = ExchangeAccountConfig(
+                environment=environment,
+                keychain_key=keychain_key,
+                risk_profile=risk_profile,
+            )
+        if entries:
+            accounts[normalized_exchange] = entries
+    return accounts
+
+
+def _load_exchange_adapters(raw: Mapping[str, Any]) -> Mapping[str, Mapping[Mode, NativeExchangeAdapterConfig]]:
+    adapters_raw = raw.get("exchange_adapters") or {}
+    adapters: dict[str, dict[Mode, NativeExchangeAdapterConfig]] = {}
+    if not isinstance(adapters_raw, Mapping):
+        return adapters
+
+    for exchange_id, modes in adapters_raw.items():
+        if not isinstance(modes, Mapping):
+            continue
+        normalized_exchange = str(exchange_id).strip().lower()
+        entries: dict[Mode, NativeExchangeAdapterConfig] = {}
+        for mode_name, entry in modes.items():
+            if not isinstance(entry, Mapping):
+                continue
+            try:
+                mode = Mode(str(mode_name).strip().lower())
+            except ValueError:
+                continue
+            class_path = str(entry.get("class_path", "")).strip()
+            if not class_path:
+                continue
+            supports_testnet = bool(entry.get("supports_testnet", True))
+            defaults_raw = entry.get("default_settings") or {}
+            if isinstance(defaults_raw, Mapping):
+                default_settings = {str(key): value for key, value in defaults_raw.items()}
+            else:
+                default_settings = {}
+            entries[mode] = NativeExchangeAdapterConfig(
+                class_path=class_path,
+                supports_testnet=supports_testnet,
+                default_settings=default_settings,
+            )
+        if entries:
+            adapters[normalized_exchange] = entries
+    return adapters
 
 
 def _maybe_float(value: Any) -> float | None:
@@ -3602,6 +3672,8 @@ def load_core_config(path: str | Path) -> CoreConfig:
     instrument_universes = _load_instrument_universes(raw)
     instrument_buckets = _load_instrument_buckets(raw)
     permission_profiles = _load_permission_profiles(raw)
+    exchange_accounts = _load_exchange_accounts(raw)
+    exchange_adapters = _load_exchange_adapters(raw)
 
     # Środowiska – budujemy kwargs dynamicznie, tak by działało na różnych gałęziach modeli.
     environments: dict[str, EnvironmentConfig] = {}
@@ -3797,6 +3869,10 @@ def load_core_config(path: str | Path) -> CoreConfig:
     }
     if permission_profiles and _core_has("permission_profiles"):
         core_kwargs["permission_profiles"] = permission_profiles
+    if exchange_accounts and _core_has("exchange_accounts"):
+        core_kwargs["exchange_accounts"] = exchange_accounts
+    if exchange_adapters and _core_has("exchange_adapters"):
+        core_kwargs["exchange_adapters"] = exchange_adapters
     if _core_has("instrument_universes"):
         core_kwargs["instrument_universes"] = instrument_universes
     if _core_has("instrument_buckets"):

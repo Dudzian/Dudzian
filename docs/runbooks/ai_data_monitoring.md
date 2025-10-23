@@ -13,6 +13,7 @@ Runbook opisuje monitorowanie jakości danych oraz dryfu cech dla pipeline'u AI.
 2. **Dryf cech** – porównaj zbiór treningowy z oknem produkcyjnym za pomocą `FeatureDriftAnalyzer`. Zweryfikuj `assessment.summary.triggered_features`, `metrics.feature_drift.psi` oraz `distribution_summary.max_ks`. Trigger > progów PSI/KS wymaga wpisu w decision journalu oraz przeglądu risk/compliance.
 3. **Zakres cech inference** – podczas obsługi alertu sprawdź `InferenceFeatureBoundsValidator.observe()` dla ostatnich próbek inference. Jeśli którekolwiek `feature_out_of_bounds`, zatrzymaj scoring i potwierdź wznowienie z risk.
 4. **Automatyczny audyt pipeline'u** – zweryfikuj, że `AIManager.get_last_data_quality_report_path()` wskazuje świeży raport (`pipeline:<symbol>:<kontrola>`) po ostatnim `run_pipeline`. Brak raportu oznacza, że kontrola nie została zarejestrowana.
+5. **Bramka podpisów** – przed promocją modelu do DecisionOrchestratora uruchom `ensure_compliance_sign_offs(...)`, aby potwierdzić, że ostatnie alerty `data_quality` i `drift` mają status `approved/waived` dla ról Risk i Compliance.
 
 ## 2. Procedura operacyjna
 
@@ -100,6 +101,19 @@ await manager.run_pipeline("BTCUSDT", df, ["alpha"], seq_len=3, folds=2)
 ```
 
 Po wykonaniu pipeline'u raport znajdziesz w `audit/ai_decision/data_quality/<timestamp>.json` pod nazwą `pipeline:btcusdt:completeness`. Helper `manager.get_data_quality_checks()` zwraca aktualnie aktywne kontrole, a `clear_data_quality_checks()` pozwala szybko wyłączyć monitoring podczas testów.
+
+Do walidacji podpisów compliance użyj helperów inference:
+
+```python
+from bot_core.ai.data_monitoring import ensure_compliance_sign_offs, load_recent_data_quality_reports, load_recent_drift_reports
+
+pending = ensure_compliance_sign_offs(
+    data_quality_reports=load_recent_data_quality_reports(limit=5),
+    drift_reports=load_recent_drift_reports(limit=5),
+)
+assert all(not entries for entries in pending.values())
+```
+`ComplianceSignOffError` sygnalizuje brak wymaganych podpisów – aktualizuj `docs/compliance/ai_pipeline_signoff.md` i eskaluj do właścicieli raportu.
 
 ### 2.5 Monitoring inference
 

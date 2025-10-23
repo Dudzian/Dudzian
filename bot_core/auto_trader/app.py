@@ -23,7 +23,7 @@ import threading
 import time
 import uuid
 from bisect import bisect_right
-from datetime import datetime, timezone, tzinfo
+from datetime import datetime, timedelta, timezone, tzinfo
 from collections import Counter, OrderedDict
 from pathlib import Path
 from collections.abc import Iterable
@@ -33,6 +33,7 @@ from typing import Any, Callable, Dict, Mapping, Optional, Protocol, Sequence, c
 
 import pandas as pd
 
+from bot_core.alerts.base import AlertMessage, AlertRouter
 from bot_core.auto_trader.audit import DecisionAuditLog
 from bot_core.auto_trader.schedule import (
     ScheduleOverride,
@@ -57,6 +58,7 @@ from bot_core.execution import (
 )
 from bot_core.exchanges.base import OrderRequest
 from bot_core.risk.engine import ThresholdRiskEngine
+from bot_core.observability import MetricsRegistry, get_global_metrics_registry
 
 
 LOGGER = logging.getLogger(__name__)
@@ -372,6 +374,8 @@ class AutoTrader:
         self._attach_decision_orchestrator()
 
         self.core_execution_service = core_execution_service
+        if self.core_execution_service is None and bootstrap_context is not None:
+            self.core_execution_service = getattr(bootstrap_context, "execution_service", None)
         self._default_execution_service: ExecutionService | None = None
         self._default_execution_symbol: str | None = None
         self._execution_context: ExecutionContext | None = None
@@ -399,6 +403,45 @@ class AutoTrader:
         self._restart_attempts = 0
         self._last_schedule_snapshot: tuple[str, bool] | None = None
         self._execution_metadata: dict[str, str] = {}
+
+        self.alert_router: AlertRouter | None = getattr(bootstrap_context, "alert_router", None)
+        self._metrics: MetricsRegistry = get_global_metrics_registry()
+        self._base_metric_labels: Mapping[str, str] = {
+            "environment": self._environment_name,
+            "portfolio": self._portfolio_id,
+            "risk_profile": self._risk_profile_name,
+        }
+        self._metric_cycle_total = self._metrics.counter(
+            "auto_trader_cycles_total",
+            "Liczba wykonanych cykli AutoTradera.",
+        )
+        self._metric_strategy_switch_total = self._metrics.counter(
+            "auto_trader_strategy_switch_total",
+            "Liczba przełączeń strategii przez AutoTradera.",
+        )
+        self._metric_guardrail_blocks_total = self._metrics.counter(
+            "auto_trader_guardrail_blocks_total",
+            "Liczba blokad transakcji przez guardrail.",
+        )
+        self._metric_recalibration_total = self._metrics.counter(
+            "auto_trader_recalibrations_triggered_total",
+            "Liczba zleconych rekalkibracji strategii.",
+        )
+        self._metric_schedule_closed_seconds = self._metrics.histogram(
+            "auto_trader_schedule_block_duration_seconds",
+            "Czas oczekiwania na otwarcie harmonogramu handlu.",
+            (10, 60, 300, 900, 1800, 3600),
+        )
+        self._metric_schedule_open_gauge = self._metrics.gauge(
+            "auto_trader_schedule_open",
+            "Stan harmonogramu handlu (1 oznacza otwarty).",
+        )
+        self._metric_strategy_state_gauge = self._metrics.gauge(
+            "auto_trader_strategy_active",
+            "Aktywna strategia handlowa AutoTradera.",
+        )
+        self._last_strategy_metric: str | None = None
+        self._schedule_last_alert_state: bool | None = None
 
         self._controller_runner: Any | None = controller_runner
         self._controller_runner_factory: Callable[[], Any] | None = controller_runner_factory
@@ -440,6 +483,15 @@ class AutoTrader:
         self._auto_trade_user_confirmed = self._trusted_auto_confirm
         self._started = False
         self._lock = threading.RLock()
+
+        initial_state = self.get_schedule_state()
+        self._schedule_last_alert_state = initial_state.is_open
+        self._metric_schedule_open_gauge.set(
+            1.0 if initial_state.is_open else 0.0,
+            labels=self._base_metric_labels,
+        )
+        self._last_schedule_snapshot = (initial_state.mode, initial_state.is_open)
+        self._update_strategy_metrics(self.current_strategy)
         self._risk_evaluations: list[dict[str, Any]] = []
         self._risk_evaluations_limit: int | None = None
         self._risk_evaluations_ttl_s: float | None = self._normalise_cycle_history_ttl(
@@ -452,6 +504,192 @@ class AutoTrader:
         """Reload cached risk thresholds from the configured loader."""
 
         self._thresholds = self._thresholds_loader()
+
+    def _compute_ai_signal_context(
+        self,
+        ai_manager: Any | None,
+        symbol: str,
+        market_data: pd.DataFrame,
+    ) -> Mapping[str, object] | None:
+        """Return AI signal metadata used by guardrails.
+
+        Older versions of :class:`AutoTrader` did not expose this helper which
+        made tests crash when they tried to interrogate the signal context.  To
+        remain backward compatible we provide a small delegating stub that falls
+        back to an empty mapping if the specialised implementation is missing.
+        """
+
+        compute = getattr(self, "_compute_ai_signal_context_impl", None)
+        if compute is None:
+            return {}
+        return compute(ai_manager, symbol, market_data)
+
+    def _compute_ai_signal_context_impl(
+        self,
+        ai_manager: Any | None,
+        symbol: str,
+        market_data: pd.DataFrame,
+    ) -> Mapping[str, object]:
+        if ai_manager is None:
+            return {}
+
+        threshold_raw = getattr(ai_manager, "ai_threshold_bps", None)
+        try:
+            threshold_bps = float(threshold_raw) if threshold_raw is not None else 0.0
+        except (TypeError, ValueError):
+            threshold_bps = 0.0
+
+        predictions: Any | None = None
+        predict_series = getattr(ai_manager, "predict_series", None)
+        if callable(predict_series):
+            try:
+                predictions = predict_series(symbol, market_data)
+            except TypeError:
+                predictions = predict_series(market_data, symbol=symbol)
+            except Exception as exc:
+                self._log(
+                    "AI manager prediction failed", level=logging.DEBUG, symbol=symbol, error=repr(exc)
+                )
+                predictions = None
+
+        if asyncio.iscoroutine(predictions) or isinstance(predictions, asyncio.Future):
+            try:
+                predictions = asyncio.run(predictions)
+            except RuntimeError:
+                loop = asyncio.get_event_loop()
+                predictions = loop.run_until_complete(predictions)
+        elif hasattr(predictions, "__await__"):
+            try:
+                predictions = asyncio.run(predictions)  # type: ignore[arg-type]
+            except RuntimeError:
+                loop = asyncio.get_event_loop()
+                predictions = loop.run_until_complete(predictions)  # type: ignore[arg-type]
+
+        if not isinstance(predictions, pd.Series):
+            try:
+                predictions = pd.Series(predictions) if predictions is not None else None
+            except Exception:
+                predictions = None
+
+        prediction_value: float | None = None
+        evaluated_at: str | float | None = None
+        if isinstance(predictions, pd.Series) and not predictions.empty:
+            raw_value = predictions.iloc[-1]
+            try:
+                prediction_value = float(raw_value)
+            except (TypeError, ValueError):
+                prediction_value = None
+
+            index_value = predictions.index[-1]
+            if hasattr(index_value, "isoformat"):
+                evaluated_at = index_value.isoformat()  # type: ignore[call-arg]
+            elif isinstance(index_value, (int, float)):
+                evaluated_at = float(index_value)
+
+        context: dict[str, object] = {"threshold_bps": threshold_bps}
+        if evaluated_at is not None:
+            context["evaluated_at"] = evaluated_at
+
+        if prediction_value is None or not math.isfinite(prediction_value):
+            context["direction"] = "hold"
+            return context
+
+        prediction_bps = prediction_value * 10_000.0
+        context["prediction"] = prediction_value
+        context["prediction_bps"] = prediction_bps
+
+        probability_raw = getattr(ai_manager, "prediction_probability", None)
+        if probability_raw is None:
+            probability_fn = getattr(ai_manager, "predict_probability", None)
+            if callable(probability_fn):
+                try:
+                    probability_raw = probability_fn(symbol=symbol, market_data=market_data)
+                except TypeError:
+                    try:
+                        probability_raw = probability_fn(symbol, market_data)
+                    except Exception:
+                        probability_raw = None
+                except Exception:
+                    probability_raw = None
+
+        try:
+            if probability_raw is not None:
+                probability = float(probability_raw)
+            else:
+                probability = None
+        except (TypeError, ValueError):
+            probability = None
+        else:
+            if probability is not None and math.isfinite(probability):
+                probability = max(0.0, min(1.0, probability))
+                context["probability"] = probability
+
+        threshold_abs = abs(threshold_bps)
+        direction = "hold"
+        if prediction_bps > 0 and prediction_bps >= threshold_abs:
+            direction = "buy"
+        elif prediction_bps < 0 and -prediction_bps >= threshold_abs:
+            direction = "sell"
+        context["direction"] = direction
+        return context
+
+    def _normalise_cycle_history_limit(self, limit: int | None) -> int:
+        if limit is None:
+            return -1
+        try:
+            value = int(limit)
+        except (TypeError, ValueError):
+            return -1
+        if value <= 0:
+            return -1
+        return value
+
+    def _normalise_cycle_history_ttl(self, ttl: float | None) -> float | None:
+        if ttl is None:
+            return None
+        try:
+            value = float(ttl)
+        except (TypeError, ValueError):
+            return None
+        if not math.isfinite(value) or value <= 0.0:
+            return None
+        return value
+
+    # ------------------------------------------------------------------
+    # Normalisers
+    # ------------------------------------------------------------------
+    def _normalise_cycle_history_limit(self, limit: int | float | None) -> int:
+        """Coerce history limit values into an internal representation.
+
+        ``None`` and non-positive values disable trimming and are represented as
+        ``-1``.  Invalid inputs fall back to ``-1`` as well so callers do not
+        need to handle conversion errors.
+        """
+
+        if limit is None:
+            return -1
+        try:
+            # ``int(True)`` evaluates to ``1`` which is acceptable, so there is no
+            # need for a dedicated bool branch here.
+            normalized = int(limit)
+        except (TypeError, ValueError):
+            return -1
+        if normalized <= 0:
+            return -1
+        return normalized
+
+    def _normalise_cycle_history_ttl(self, ttl: float | int | None) -> float | None:
+        """Return a positive TTL in seconds or ``None`` when disabled."""
+
+        if ttl is None:
+            return None
+        try:
+            normalized = float(ttl)
+        except (TypeError, ValueError):
+            return None
+        if not math.isfinite(normalized) or normalized <= 0.0:
+            return None
+        return normalized
 
     # ------------------------------------------------------------------
     # Normalisers
@@ -819,90 +1057,130 @@ class AutoTrader:
             penalty_cost_bps=0.0,
         )
 
-    def _build_decision_orchestrator(self) -> DecisionOrchestrator:
-        try:
-            return DecisionOrchestrator(self._decision_engine_config)
-        except Exception as exc:  # pragma: no cover - diagnostic aid
-            raise RuntimeError("AutoTrader requires a functional DecisionOrchestrator") from exc
 
-    def _attach_decision_orchestrator(self) -> None:
-        orchestrator = getattr(self, "decision_orchestrator", None)
-        if orchestrator is None:
-            raise RuntimeError("DecisionOrchestrator could not be initialised")
-        engine = getattr(self.core_risk_engine, "attach_decision_orchestrator", None)
-        if callable(engine):
-            try:
-                engine(orchestrator)
-            except Exception:  # pragma: no cover - defensive logging
-                LOGGER.exception(
-                    "AutoTrader could not attach DecisionOrchestrator to risk engine",
-                )
 
-    def _detect_initial_mode(self) -> str:
-        if hasattr(self.gui, "is_demo_mode_active"):
-            try:
-                return "demo" if self.gui.is_demo_mode_active() else "live"
-            except Exception:  # pragma: no cover - GUI may raise
-                LOGGER.debug("GUI demo mode detection failed", exc_info=True)
-        return "demo"
+    def _metric_label_payload(self, **extra: Any) -> Mapping[str, str]:
+        payload: Dict[str, str] = {str(key): str(value) for key, value in self._base_metric_labels.items()}
+        for key, value in extra.items():
+            payload[str(key)] = str(value)
+        return payload
 
-    def _build_default_work_schedule(self) -> TradingSchedule:
-        tz_name = None
-        context = getattr(self, "bootstrap_context", None)
-        if context is not None:
-            tz_name = getattr(context, "timezone", None)
-        if isinstance(tz_name, str) and tz_name.strip():
-            return TradingSchedule.always_on(mode=self._initial_mode, timezone_name=str(tz_name))
-        return TradingSchedule.always_on(mode=self._initial_mode)
+    def _update_strategy_metrics(self, strategy: str) -> None:
+        strategy_label = str(strategy)
+        labels = self._metric_label_payload(strategy=strategy_label)
+        self._metric_strategy_state_gauge.set(1.0, labels=labels)
+        if self._last_strategy_metric and self._last_strategy_metric != strategy_label:
+            previous_labels = self._metric_label_payload(strategy=self._last_strategy_metric)
+            self._metric_strategy_state_gauge.set(0.0, labels=previous_labels)
+            self._metric_strategy_switch_total.inc(labels=self._base_metric_labels)
+        if self._last_strategy_metric != strategy_label:
+            self._last_strategy_metric = strategy_label
 
-    def set_work_schedule(
+    def _emit_alert(
         self,
-        schedule: TradingSchedule | Mapping[str, object] | None,
+        category: str,
+        title: str,
+        body: str,
         *,
-        reason: str | None = None,
-    ) -> ScheduleState:
-        """Configure or reset the active work schedule."""
-
-        if schedule is None:
-            schedule_obj = self._build_default_work_schedule()
-            reason_label = reason or "reset"
-        elif isinstance(schedule, TradingSchedule):
-            schedule_obj = schedule
-            reason_label = reason or "update"
-        elif isinstance(schedule, Mapping):
-            schedule_obj = TradingSchedule.from_payload(schedule)
-            reason_label = reason or "update"
-        else:
-            raise TypeError(
-                "Work schedule must be TradingSchedule, mapping payload or None",
-            )
-
-        self._work_schedule = schedule_obj
-        state = schedule_obj.describe()
-        self._schedule_state = state
-        self._schedule_mode = state.mode
-        self._last_schedule_snapshot = (state.mode, state.is_open)
-
-        serialized_state = _serialize_schedule_state(state)
-        serialized_state["reason"] = reason_label
-
-        self._record_decision_audit_stage(
-            "schedule_configured",
-            symbol=_SCHEDULE_SYMBOL,
-            payload=serialized_state,
+        severity: str = "info",
+        context: Mapping[str, Any] | None = None,
+    ) -> bool:
+        router = getattr(self, "alert_router", None)
+        if router is None:
+            return False
+        context_payload = self._metric_label_payload()
+        if context:
+            for key, value in context.items():
+                context_payload[str(key)] = str(value)
+        message = AlertMessage(
+            category=str(category),
+            title=str(title),
+            body=str(body),
+            severity=str(severity),
+            context=context_payload,
         )
+        try:
+            router.dispatch(message)
+        except Exception:  # pragma: no cover - defensive logging
+            self._log(
+                "Failed to dispatch alert message",
+                level=logging.DEBUG,
+                category=category,
+                title=title,
+            )
+            return False
+        return True
 
-        emitter_emit = getattr(self.emitter, "emit", None)
-        if callable(emitter_emit):
-            try:
-                emitter_emit("auto_trader.schedule_state", **serialized_state)
-            except Exception:  # pragma: no cover - defensive logging
-                self._log(
-                    "Emitter failed to publish schedule state",
-                    level=logging.DEBUG,
+    def _process_orchestrator_recalibrations(self) -> None:
+        orchestrator = self._resolve_decision_orchestrator()
+        if orchestrator is None:
+            return
+        due_recalibrations = getattr(orchestrator, "due_recalibrations", None)
+        mark_recalibrated = getattr(orchestrator, "mark_recalibrated", None)
+        if not callable(due_recalibrations):
+            return
+        try:
+            schedules = due_recalibrations()
+        except Exception:  # pragma: no cover - defensive logging
+            self._log(
+                "DecisionOrchestrator.due_recalibrations failed",
+                level=logging.DEBUG,
+            )
+            return
+        if not schedules:
+            return
+        for schedule in schedules:
+            strategy = str(getattr(schedule, "strategy", "<unknown>"))
+            interval = getattr(schedule, "interval", None)
+            next_run = getattr(schedule, "next_run", None)
+            if callable(self._metric_recalibration_total.inc):
+                self._metric_recalibration_total.inc(
+                    labels=self._metric_label_payload(strategy=strategy)
                 )
+            context = {
+                "strategy": strategy,
+                "next_run": getattr(next_run, "isoformat", lambda: str(next_run))(),
+            }
+            if isinstance(interval, timedelta):
+                context["interval_s"] = f"{interval.total_seconds():.0f}"
+            self._emit_alert(
+                "auto_trader.recalibration",
+                "Wymagana rekalkibracja strategii",
+                f"Strategia {strategy} wymaga ponownej kalibracji.",
+                severity="warning",
+                context=context,
+            )
+            if callable(mark_recalibrated):
+                try:
+                    mark_recalibrated(strategy)
+                except Exception:  # pragma: no cover - defensive logging
+                    self._log(
+                        "Failed to acknowledge strategy recalibration",
+                        level=logging.DEBUG,
+                        strategy=strategy,
+                    )
 
-        return state
+    @staticmethod
+    def _normalise_cycle_history_limit(limit: int | None) -> int:
+        if limit is None:
+            return _CONTROLLER_HISTORY_DEFAULT_LIMIT
+        try:
+            value = int(limit)
+        except (TypeError, ValueError):
+            return _CONTROLLER_HISTORY_DEFAULT_LIMIT
+        return max(1, value)
+
+    @staticmethod
+    def _normalise_cycle_history_ttl(ttl: float | None) -> float | None:
+        if ttl is None:
+            return None
+        try:
+            value = float(ttl)
+        except (TypeError, ValueError):
+            return None
+        return max(0.0, value)
+
+
 
     def _ensure_work_schedule(self) -> TradingSchedule:
         schedule = getattr(self, "_work_schedule", None)
@@ -911,15 +1189,41 @@ class AutoTrader:
             self._work_schedule = schedule
         return schedule
 
-    def get_schedule_state(self) -> ScheduleState:
-        state = self._schedule_state
-        if state is not None:
-            return state
-        schedule = self._ensure_work_schedule()
-        state = self._describe_schedule(schedule)
-        self._schedule_state = state
-        self._schedule_mode = state.mode
-        return state
+    def _describe_schedule(self, schedule: TradingSchedule) -> ScheduleState:
+        """Return a :class:`ScheduleState` snapshot for the provided schedule."""
+
+        describe = getattr(schedule, "describe", None)
+        reference = datetime.now(timezone.utc)
+
+        if callable(describe):
+            try:
+                state = describe(reference)
+            except TypeError:
+                # ``TradingSchedule.describe`` accepts an optional reference
+                # argument.  Older or simplified implementations may expose a
+                # no-argument variant, so fall back to calling it without
+                # parameters.  If both fail we handle it below.
+                state = describe()
+            except Exception:  # pragma: no cover - defensive fallback
+                LOGGER.exception("Failed to describe trading schedule")
+            else:
+                if isinstance(state, ScheduleState):
+                    return state
+
+        # Fallback used when the schedule does not expose ``describe`` or
+        # returns an unexpected payload.  We synthesise a minimal
+        # ``ScheduleState`` snapshot so callers can continue operating.
+        mode = getattr(schedule, "default_mode", "live")
+        allow_trading = getattr(schedule, "allow_trading", True)
+        return ScheduleState(
+            mode=mode,
+            is_open=bool(allow_trading),
+            window=None,
+            next_transition=None,
+            reference_time=reference,
+        )
+
+
 
     def describe_work_schedule(self) -> dict[str, Any]:
         schedule = self._ensure_work_schedule()
@@ -930,21 +1234,7 @@ class AutoTrader:
         description["state"] = _serialize_schedule_state(state)
         return description
 
-    def describe_work_schedule(self) -> dict[str, Any]:
-        schedule = self._ensure_work_schedule()
-        state = self._describe_schedule(schedule)
-        self._schedule_state = state
-        self._schedule_mode = state.mode
-        description = schedule.to_payload()
-        description["state"] = _serialize_schedule_state(state)
-        return description
 
-    def is_schedule_open(self) -> bool:
-        return self.get_schedule_state().is_open
-
-    def list_schedule_overrides(self) -> tuple[ScheduleOverride, ...]:
-        schedule = self._ensure_work_schedule()
-        return schedule.overrides
 
     def set_schedule_overrides(
         self,
@@ -1044,362 +1334,55 @@ class AutoTrader:
             reason=reason or "override_removed",
         )
 
-    def clear_schedule_overrides(self, *, reason: str | None = None) -> ScheduleState:
-        schedule = self._ensure_work_schedule()
-        if not schedule.overrides:
-            return self.get_schedule_state()
-        return self.set_schedule_overrides((), reason=reason or "overrides_cleared")
 
-    @staticmethod
-    def _detect_environment_name(bootstrap_context: Any | None) -> str:
-        if bootstrap_context is None:
-            return "paper"
-        candidate = getattr(bootstrap_context, "environment", None)
-        if isinstance(candidate, str):
-            return candidate
-        value = getattr(candidate, "value", None)
-        if isinstance(value, str):
-            return value
-        name = getattr(candidate, "name", None)
-        if isinstance(name, str):
-            return name
-        alt = getattr(bootstrap_context, "environment_name", None)
-        if isinstance(alt, str):
-            return alt
-        return "paper"
 
-    def _resolve_execution_service(self, symbol: str) -> Any:
-        service = self.execution_service or self.core_execution_service
-        if service is not None:
-            return service
-        if (
-            self._default_execution_service is None
-            or (self._default_execution_symbol is not None and self._default_execution_symbol != symbol)
-        ):
-            try:
-                self._default_execution_service = self._build_default_execution_service(symbol)
-            except Exception as exc:  # pragma: no cover - defensive logging
-                self._default_execution_service = None
-                LOGGER.error(
-                    "Failed to initialise default execution service for %s: %s",
-                    symbol,
-                    exc,
-                )
-            else:
-                self._default_execution_symbol = symbol
-        return self._default_execution_service
 
-    def _build_default_execution_service(self, symbol: str) -> ExecutionService:
-        base_asset, quote_asset = self._split_symbol(symbol)
-        metadata = MarketMetadata(base_asset=base_asset, quote_asset=quote_asset)
-        balances = {quote_asset: 100_000.0}
-        return PaperTradingExecutionService({symbol: metadata}, initial_balances=balances)
 
-    @staticmethod
-    def _split_symbol(symbol: str) -> tuple[str, str]:
-        normalized = symbol.strip().upper()
-        common_quotes = ("USDT", "USDC", "USD", "EUR", "BTC", "ETH", "BNB", "BUSD")
-        for quote in common_quotes:
-            if normalized.endswith(quote) and len(normalized) > len(quote):
-                return normalized[: -len(quote)], quote
-        if len(normalized) > 3:
-            return normalized[:-3], normalized[-3:]
-        return normalized or "ASSET", "USDT"
 
-    def _resolve_execution_context(self) -> ExecutionContext:
-        if self._execution_context is None:
-            metadata = dict(self._execution_metadata)
-            self._execution_context = ExecutionContext(
-                portfolio_id=self._portfolio_id,
-                risk_profile=self._risk_profile_name,
-                environment=self._environment_name,
-                metadata=metadata,
-            )
-        return self._execution_context
 
-    def _enforce_work_schedule(self) -> bool:
-        schedule = getattr(self, "_work_schedule", None)
-        if schedule is None:
-            return True
-        describe = getattr(schedule, "describe", None)
-        if callable(describe):
-            try:
-                state = describe()
-            except TypeError:
-                state = describe(datetime.now(timezone.utc))
-        else:
-            state = ScheduleState(
-                mode=getattr(schedule, "default_mode", "live"),
-                is_open=True,
-                window=None,
-                next_transition=None,
-                reference_time=datetime.now(timezone.utc),
-            )
-        self._schedule_state = state
-        self._schedule_mode = state.mode
-        snapshot = (state.mode, state.is_open)
-        if snapshot != self._last_schedule_snapshot:
-            status = "open" if state.is_open else "closed"
-            self._log(
-                f"Trading schedule switched to mode={state.mode} ({status})",
-                level=logging.INFO,
-            )
-            self._last_schedule_snapshot = snapshot
+    def _handle_schedule_transition(self, state: ScheduleState, *, reason: str) -> None:
+        gauge_value = 1.0 if state.is_open else 0.0
+        self._metric_schedule_open_gauge.set(gauge_value, labels=self._base_metric_labels)
         if not state.is_open:
             delay = state.time_until_transition or self.auto_trade_interval_s
-            self._record_decision_audit_stage(
-                "schedule_blocked",
-                symbol=_SCHEDULE_SYMBOL,
-                payload={"mode": state.mode},
-            )
-            self._auto_trade_stop.wait(delay)
-            return False
-        return True
-
-    def _record_decision_audit_stage(
-        self,
-        stage: str,
-        *,
-        symbol: str,
-        payload: Mapping[str, object] | None = None,
-        risk_snapshot: Mapping[str, object] | None = None,
-        portfolio_snapshot: Mapping[str, object] | None = None,
-        metadata: Mapping[str, object] | None = None,
-    ) -> None:
-        log = getattr(self, "_decision_audit_log", None)
-        if log is None:
-            return
-        try:
-            log.record(
-                stage,
-                symbol,
-                mode=self._schedule_mode,
-                payload=payload or {},
-                risk_snapshot=risk_snapshot,
-                portfolio_snapshot=portfolio_snapshot,
-                metadata=metadata,
-            )
-        except Exception:  # pragma: no cover - audit log failures should not break trading
-            LOGGER.debug("Decision audit logging failed", exc_info=True)
-
-    def _capture_risk_snapshot(self) -> Mapping[str, object] | None:
-        service = self.risk_service or getattr(self, "core_risk_engine", None)
-        if service is None:
-            return None
-        snapshot_fn = getattr(service, "snapshot_state", None)
-        if not callable(snapshot_fn):
-            return None
-        try:
-            return snapshot_fn(self._risk_profile_name)
-        except TypeError:
-            try:
-                return snapshot_fn(profile_name=self._risk_profile_name)
-            except TypeError:
-                try:
-                    return snapshot_fn(profile=self._risk_profile_name)
-                except Exception:
-                    LOGGER.debug("Risk snapshot capture failed", exc_info=True)
-        except Exception:
-            LOGGER.debug("Risk snapshot capture failed", exc_info=True)
-        return None
-
-    def _capture_portfolio_snapshot(self) -> Mapping[str, object] | None:
-        manager = getattr(self, "portfolio_manager", None)
-        if manager is None:
-            return None
-        candidates = (
-            "snapshot",
-            "snapshot_state",
-            "get_snapshot",
-            "get_state",
-            "portfolio_state",
-            "summary",
-            "get_summary",
-            "to_dict",
-        )
-        for attr in candidates:
-            getter = getattr(manager, attr, None)
-            if not callable(getter):
-                continue
-            try:
-                result = getter()
-            except TypeError:
-                try:
-                    result = getter(self._risk_profile_name)
-                except Exception:
-                    continue
-            except Exception:
-                continue
-            if result is None:
-                continue
-            if isinstance(result, Mapping):
-                return dict(result)
-            if hasattr(result, "_asdict"):
-                try:
-                    return dict(result._asdict())  # type: ignore[call-arg]
-                except Exception:
-                    continue
-            if hasattr(result, "__dict__"):
-                return dict(vars(result))
-            try:
-                return dict(result)  # type: ignore[arg-type]
-            except Exception:
-                continue
-        return None
-
-    def _build_order_request(self, symbol: str, decision: RiskDecision) -> OrderRequest:
-        signal = str(decision.details.get("signal", "hold")).lower()
-        side = "buy" if signal not in {"buy", "sell"} else signal
-        quantity = float(decision.fraction or 0.0)
-        if quantity <= 0:
-            quantity = 1.0 if decision.should_trade else 0.0
-        metadata: dict[str, str] = {}
-        for key, value in decision.details.items():
-            if isinstance(value, (str, int, float, bool)):
-                metadata[str(key)] = str(value)
-        metadata["mode"] = decision.mode
-        return OrderRequest(
-            symbol=symbol,
-            side=side,
-            quantity=abs(quantity),
-            order_type="market",
-            metadata=metadata,
-        )
-
-    def _dispatch_execution(self, service: Any, decision: RiskDecision, symbol: str) -> None:
-        try:
-            if isinstance(service, ExecutionService):
-                request = self._build_order_request(symbol, decision)
-                if request.quantity <= 0:
-                    self._record_decision_audit_stage(
-                        "execution_skipped",
-                        symbol=symbol,
-                        payload={"reason": "zero_quantity"},
-                        portfolio_snapshot=self._capture_portfolio_snapshot(),
-                    )
-                    return
-                context = self._resolve_execution_context()
-                service.execute(request, context)
-                payload = {
-                    "order": {
-                        "symbol": request.symbol,
-                        "side": request.side,
-                        "quantity": request.quantity,
-                        "order_type": request.order_type,
-                    }
-                }
-                self._record_decision_audit_stage(
-                    "execution_submitted",
-                    symbol=symbol,
-                    payload=payload,
-                    portfolio_snapshot=self._capture_portfolio_snapshot(),
+            if reason in {"transition", "blocked"}:
+                self._metric_schedule_closed_seconds.observe(
+                    float(delay),
+                    labels=self._base_metric_labels,
                 )
-                return
-
-            execute_fn = getattr(service, "execute_decision", None)
-            if callable(execute_fn):
-                execute_fn(decision)
-                self._record_decision_audit_stage(
-                    "execution_submitted",
-                    symbol=symbol,
-                    payload={"adapter": "execute_decision", "decision": decision.to_dict()},
-                    portfolio_snapshot=self._capture_portfolio_snapshot(),
+            if reason in {"transition", "blocked"} and self._schedule_last_alert_state is not False:
+                context = {"mode": state.mode}
+                if state.next_transition is not None:
+                    context["next_transition"] = state.next_transition.astimezone(timezone.utc).isoformat()
+                self._emit_alert(
+                    "auto_trader.schedule",
+                    "Harmonogram handlu zamknięty",
+                    "AutoTrader oczekuje na ponowne otwarcie okna handlu.",
+                    severity="warning",
+                    context=context,
                 )
-                return
-
-            execute_fn = getattr(service, "execute", None)
-            if callable(execute_fn):
-                payload: Mapping[str, object]
-                calls_attr = getattr(service, "calls", None)
-                methods_attr = getattr(service, "methods", None)
-                previous_calls = len(calls_attr) if isinstance(calls_attr, list) else None
-                previous_methods = len(methods_attr) if isinstance(methods_attr, list) else None
-                try:
-                    execute_fn(decision)
-                    payload = {"adapter": "execute", "decision": decision.to_dict()}
-                except TypeError:
-                    request = self._build_order_request(symbol, decision)
-                    if request.quantity <= 0:
-                        self._record_decision_audit_stage(
-                            "execution_skipped",
-                            symbol=symbol,
-                            payload={"reason": "zero_quantity"},
-                            portfolio_snapshot=self._capture_portfolio_snapshot(),
-                        )
-                        return
-                    context = self._resolve_execution_context()
-                    execute_fn(request, context)  # type: ignore[arg-type]
-                    payload = {
-                        "adapter": "execute",
-                        "order": {
-                            "symbol": request.symbol,
-                            "side": request.side,
-                            "quantity": request.quantity,
-                            "order_type": request.order_type,
-                        },
-                    }
-                else:
-                    self._trim_execution_records(calls_attr, previous_calls)
-                    self._trim_execution_records(methods_attr, previous_methods)
-                self._record_decision_audit_stage(
-                    "execution_submitted",
-                    symbol=symbol,
-                    payload=payload,
-                    portfolio_snapshot=self._capture_portfolio_snapshot(),
+            self._schedule_last_alert_state = False
+        else:
+            if reason == "transition" and self._schedule_last_alert_state is False:
+                context = {"mode": state.mode}
+                self._emit_alert(
+                    "auto_trader.schedule",
+                    "Harmonogram handlu wznowiony",
+                    "Okno handlu zostało ponownie otwarte.",
+                    severity="info",
+                    context=context,
                 )
-                return
+            self._schedule_last_alert_state = True
 
-            if callable(service):
-                service(decision)
-                self._record_decision_audit_stage(
-                    "execution_submitted",
-                    symbol=symbol,
-                    payload={"adapter": "callable", "decision": decision.to_dict()},
-                    portfolio_snapshot=self._capture_portfolio_snapshot(),
-                )
-                return
 
-            raise TypeError("Configured execution service is not callable")
-        except Exception:
-            self._record_decision_audit_stage(
-                "execution_failed",
-                symbol=symbol,
-                payload={"error": "execution_exception"},
-                portfolio_snapshot=self._capture_portfolio_snapshot(),
-            )
-            raise
 
-    @staticmethod
-    def _trim_execution_records(container: Any, previous_len: int | None) -> None:
-        if not isinstance(container, list) or previous_len is None:
-            return
-        if len(container) <= previous_len + 1:
-            return
-        del container[previous_len + 1 :]
 
-    def _ai_feature_columns(self, market_data: pd.DataFrame) -> list[str]:
-        numeric_cols = [
-            str(column)
-            for column in market_data.columns
-            if pd.api.types.is_numeric_dtype(market_data[column])
-        ]
-        if numeric_cols:
-            return numeric_cols
-        return [str(column) for column in market_data.columns]
 
-    @staticmethod
-    def _ai_probability_from_prediction(prediction: float) -> float:
-        clamped = max(min(float(prediction) * 4.0, 20.0), -20.0)
-        return 1.0 / (1.0 + math.exp(-clamped))
 
-    def _compute_ai_signal_context(
-        self,
-        ai_manager: Any | None,
-        symbol: str,
-        market_data: pd.DataFrame,
-    ) -> Mapping[str, object] | None:
-        if ai_manager is None:
-            return None
+
+
+
+
 
     def _build_decision_orchestrator(self) -> DecisionOrchestrator:
         try:
@@ -1540,782 +1523,105 @@ class AutoTrader:
             self._emit_schedule_state_event(state, reason=update_reason)
             return state
 
-    def apply_schedule_override(
+
+
+
+
+    def schedule_strategy_recalibration(
         self,
-        overrides: ScheduleOverride | Mapping[str, object] | Sequence[object],
+        strategy: str,
         *,
-        reason: str | None = None,
-        replace: bool = False,
-    ) -> ScheduleState:
-        with self._decision_audit_scope() as decision_id:
-            schedule = getattr(self, "_work_schedule", None)
-            if schedule is None:
-                schedule = self._build_default_work_schedule()
-            overrides_list = self._coerce_schedule_overrides(overrides)
-            existing = schedule.overrides
-            combined: tuple[ScheduleOverride, ...]
-            if replace:
-                combined = tuple(overrides_list)
-            else:
-                combined = existing + tuple(overrides_list)
-            updated_schedule = schedule.with_overrides(combined)
-            update_reason = reason or ("override_replace" if replace else "override")
-            state = self.set_work_schedule(updated_schedule, reason=update_reason)
-            payload = state.to_mapping()
-            payload["reason"] = update_reason
-            payload["overrides_applied"] = [
-                item.to_mapping(include_duration=True, timezone_hint=timezone.utc)
-                for item in overrides_list
-            ]
-            payload["override_replace"] = bool(replace)
-            self._record_decision_audit_stage(
-                "schedule_override_applied",
-                symbol=_SCHEDULE_SYMBOL,
-                payload=payload,
-                decision_id=decision_id,
-            )
-            return state
-
-    def list_schedule_overrides(self) -> tuple[ScheduleOverride, ...]:
-        """Return a snapshot of overrides currently applied to the schedule."""
-
-        schedule = self.get_work_schedule()
-        return schedule.overrides
-
-    def clear_schedule_overrides(
-        self,
-        *,
-        labels: str | Sequence[object] | None = None,
-        reason: str | None = None,
-    ) -> ScheduleState:
-        with self._decision_audit_scope() as decision_id:
-            schedule = getattr(self, "_work_schedule", None)
-            if schedule is None:
-                schedule = self._build_default_work_schedule()
-            existing = schedule.overrides
-            if not existing:
-                return self.get_schedule_state()
-
-            label_filter = self._coerce_override_labels(labels)
-            if label_filter:
-                filtered = tuple(
-                    override
-                    for override in existing
-                    if override.label is None or override.label not in label_filter
-                )
-            else:
-                filtered = ()
-
-            if filtered == existing:
-                return self.get_schedule_state()
-
-            updated_schedule = schedule.with_overrides(filtered)
-            update_reason = reason or "override_clear"
-            state = self.set_work_schedule(updated_schedule, reason=update_reason)
-            payload = state.to_mapping()
-            payload["reason"] = update_reason
-            payload["remaining_overrides"] = [
-                item.to_mapping(include_duration=True, timezone_hint=timezone.utc)
-                for item in filtered
-            ]
-            if label_filter is not None:
-                payload["cleared_labels"] = sorted(label_filter)
-            self._record_decision_audit_stage(
-                "schedule_override_cleared",
-                symbol=_SCHEDULE_SYMBOL,
-                payload=payload,
-                decision_id=decision_id,
-            )
-            return state
-
-    def get_schedule_state(self) -> ScheduleState:
-        """Return the latest schedule state, recalculating it if needed."""
-
-        schedule = self.get_work_schedule()
-        state = self._describe_schedule(schedule)
-        with self._lock:
-            self._schedule_state = state
-            self._schedule_mode = state.mode
-        return state
-
-    def is_schedule_open(self) -> bool:
-        """Return ``True`` when the work schedule allows trading."""
-
-        return self.get_schedule_state().is_open
-
-    @staticmethod
-    def _detect_environment_name(bootstrap_context: Any | None) -> str:
-        if bootstrap_context is None:
-            return "paper"
-        candidate = getattr(bootstrap_context, "environment", None)
-        if isinstance(candidate, str):
-            return candidate
-        value = getattr(candidate, "value", None)
-        if isinstance(value, str):
-            return value
-        name = getattr(candidate, "name", None)
-        if isinstance(name, str):
-            return name
-        alt = getattr(bootstrap_context, "environment_name", None)
-        if isinstance(alt, str):
-            return alt
-        return "paper"
-
-    def _resolve_execution_service(self, symbol: str) -> Any:
-        service = self.execution_service or self.core_execution_service
-        if service is not None:
-            return service
-        if (
-            self._default_execution_service is None
-            or (self._default_execution_symbol is not None and self._default_execution_symbol != symbol)
-        ):
-            try:
-                self._default_execution_service = self._build_default_execution_service(symbol)
-            except Exception as exc:  # pragma: no cover - defensive logging
-                self._default_execution_service = None
-                LOGGER.error(
-                    "Failed to initialise default execution service for %s: %s",
-                    symbol,
-                    exc,
-                )
-            else:
-                self._default_execution_symbol = symbol
-        return self._default_execution_service
-
-    def _build_default_execution_service(self, symbol: str) -> ExecutionService:
-        base_asset, quote_asset = self._split_symbol(symbol)
-        metadata = MarketMetadata(base_asset=base_asset, quote_asset=quote_asset)
-        balances = {quote_asset: 100_000.0}
-        return PaperTradingExecutionService({symbol: metadata}, initial_balances=balances)
-
-    @staticmethod
-    def _split_symbol(symbol: str) -> tuple[str, str]:
-        normalized = symbol.strip().upper()
-        common_quotes = ("USDT", "USDC", "USD", "EUR", "BTC", "ETH", "BNB", "BUSD")
-        for quote in common_quotes:
-            if normalized.endswith(quote) and len(normalized) > len(quote):
-                return normalized[: -len(quote)], quote
-        if len(normalized) > 3:
-            return normalized[:-3], normalized[-3:]
-        return normalized or "ASSET", "USDT"
-
-    def _resolve_execution_context(self) -> ExecutionContext:
-        if self._execution_context is None:
-            metadata = dict(self._execution_metadata)
-            self._execution_context = ExecutionContext(
-                portfolio_id=self._portfolio_id,
-                risk_profile=self._risk_profile_name,
-                environment=self._environment_name,
-                metadata=metadata,
-            )
-        return self._execution_context
-
-    def _enforce_work_schedule(self) -> bool:
-        schedule = getattr(self, "_work_schedule", None)
-        if schedule is None:
-            return True
-        describe = getattr(schedule, "describe", None)
-        if callable(describe):
-            try:
-                state = describe()
-            except TypeError:
-                state = describe(datetime.now(timezone.utc))
-        else:
-            state = ScheduleState(
-                mode=getattr(schedule, "default_mode", "live"),
-                is_open=True,
-                window=None,
-                next_transition=None,
-                reference_time=datetime.now(timezone.utc),
-            )
-        self._schedule_state = state
-        self._schedule_mode = state.mode
-        snapshot = (state.mode, state.is_open)
-        if snapshot != self._last_schedule_snapshot:
-            status = "open" if state.is_open else "closed"
-            self._log(
-                f"Trading schedule switched to mode={state.mode} ({status})",
-                level=logging.INFO,
-            )
-            payload = state.to_mapping()
-            payload["reason"] = "transition"
-            self._record_decision_audit_stage(
-                "schedule_transition",
-                symbol=_SCHEDULE_SYMBOL,
-                payload=payload,
-            )
-            self._emit_schedule_state_event(state, reason="transition")
-            self._last_schedule_snapshot = snapshot
-        if not state.is_open:
-            delay = state.time_until_transition or self.auto_trade_interval_s
-            payload = state.to_mapping()
-            payload["reason"] = "blocked"
-            self._record_decision_audit_stage(
-                "schedule_blocked",
-                symbol=_SCHEDULE_SYMBOL,
-                payload=payload,
-            )
-            self._auto_trade_stop.wait(delay)
-            return False
-        return True
-
-    @staticmethod
-    def _generate_decision_id() -> str:
-        return uuid.uuid4().hex
-
-    @staticmethod
-    def _normalize_decision_id(value: Any | None) -> str | None:
-        if value is None:
-            return None
-        token = str(value).strip()
-        return token or None
-
-    @contextmanager
-    def _decision_audit_scope(self, *, decision_id: str | None = None):
-        existing = self._active_decision_id
-        if existing is not None:
-            yield existing
-            return
-        normalized = self._normalize_decision_id(decision_id) or self._generate_decision_id()
-        self._active_decision_id = normalized
-        try:
-            yield normalized
-        finally:
-            if self._active_decision_id == normalized:
-                self._active_decision_id = None
-
-    def _record_decision_audit_stage(
-        self,
-        stage: str,
-        *,
-        symbol: str,
-        payload: Mapping[str, object] | None = None,
-        risk_snapshot: Mapping[str, object] | None = None,
-        portfolio_snapshot: Mapping[str, object] | None = None,
-        metadata: Mapping[str, object] | None = None,
-        decision_id: str | None = None,
+        interval_s: float,
+        first_run: datetime | None = None,
     ) -> None:
-        log = getattr(self, "_decision_audit_log", None)
-        if log is None:
-            return
-        try:
-            normalized_decision_id = (
-                self._normalize_decision_id(decision_id)
-                or self._active_decision_id
-                or self._generate_decision_id()
-            )
-            payload_dict = dict(payload or {})
-            if normalized_decision_id is not None:
-                payload_dict.setdefault("decision_id", normalized_decision_id)
-            record = log.record(
-                stage,
-                symbol,
-                mode=self._schedule_mode,
-                payload=payload_dict,
-                risk_snapshot=risk_snapshot,
-                portfolio_snapshot=portfolio_snapshot,
-                metadata=metadata,
-            )
-            self._emit_decision_audit_event(record)
-        except Exception:  # pragma: no cover - audit log failures should not break trading
-            LOGGER.debug("Decision audit logging failed", exc_info=True)
-
-    def _emit_decision_audit_event(self, record: DecisionAuditRecord) -> None:
-        emitter_emit = getattr(self.emitter, "emit", None)
-        if not callable(emitter_emit):
-            return
-        payload = record.to_mapping()
-        try:
-            emitter_emit("auto_trader.decision_audit", **payload)
-        except Exception:  # pragma: no cover - emission should not break trading
-            LOGGER.debug("Decision audit emission failed", exc_info=True)
-
-    def _emit_schedule_state_event(self, state: ScheduleState, *, reason: str | None = None) -> None:
-        emitter_emit = getattr(self.emitter, "emit", None)
-        if not callable(emitter_emit):
-            return
-        payload = state.to_mapping()
-        if reason is not None:
-            payload["reason"] = reason
-        try:
-            emitter_emit("auto_trader.schedule_state", **payload)
-        except Exception:  # pragma: no cover - emission should not break trading
-            LOGGER.debug("Schedule state emission failed", exc_info=True)
-
-    def _capture_risk_snapshot(self) -> Mapping[str, object] | None:
-        service = self.risk_service or getattr(self, "core_risk_engine", None)
-        if service is None:
-            return None
-        snapshot_fn = getattr(service, "snapshot_state", None)
-        if not callable(snapshot_fn):
-            return None
-        try:
-            return snapshot_fn(self._risk_profile_name)
-        except TypeError:
-            try:
-                return snapshot_fn(profile_name=self._risk_profile_name)
-            except TypeError:
-                try:
-                    return snapshot_fn(profile=self._risk_profile_name)
-                except Exception:
-                    LOGGER.debug("Risk snapshot capture failed", exc_info=True)
-        except Exception:
-            LOGGER.debug("Risk snapshot capture failed", exc_info=True)
-        return None
-
-    def _capture_portfolio_snapshot(self) -> Mapping[str, object] | None:
-        manager = getattr(self, "portfolio_manager", None)
-        if manager is None:
-            return None
-        candidates = (
-            "snapshot",
-            "snapshot_state",
-            "get_snapshot",
-            "get_state",
-            "portfolio_state",
-            "summary",
-            "get_summary",
-            "to_dict",
-        )
-        for attr in candidates:
-            getter = getattr(manager, attr, None)
-            if not callable(getter):
-                continue
-            try:
-                result = getter()
-            except TypeError:
-                try:
-                    result = getter(self._risk_profile_name)
-                except Exception:
-                    continue
-            except Exception:
-                continue
-            if result is None:
-                continue
-            if isinstance(result, Mapping):
-                return dict(result)
-            if hasattr(result, "_asdict"):
-                try:
-                    return dict(result._asdict())  # type: ignore[call-arg]
-                except Exception:
-                    continue
-            if hasattr(result, "__dict__"):
-                return dict(vars(result))
-            try:
-                return dict(result)  # type: ignore[arg-type]
-            except Exception:
-                continue
-        return None
-
-    def _build_order_request(self, symbol: str, decision: RiskDecision) -> OrderRequest:
-        signal = str(decision.details.get("signal", "hold")).lower()
-        side = "buy" if signal not in {"buy", "sell"} else signal
-        quantity = float(decision.fraction or 0.0)
-        if quantity <= 0:
-            quantity = 1.0 if decision.should_trade else 0.0
-        metadata: dict[str, str] = {}
-        for key, value in decision.details.items():
-            if isinstance(value, (str, int, float, bool)):
-                metadata[str(key)] = str(value)
-        metadata["mode"] = decision.mode
-        return OrderRequest(
-            symbol=symbol,
-            side=side,
-            quantity=abs(quantity),
-            order_type="market",
-            metadata=metadata,
+        orchestrator = self._resolve_decision_orchestrator()
+        scheduler = getattr(orchestrator, "schedule_strategy_recalibration", None) if orchestrator else None
+        if not callable(scheduler):
+            raise RuntimeError("DecisionOrchestrator does not support strategy scheduling")
+        interval = timedelta(seconds=float(max(interval_s, 0.0)))
+        schedule = scheduler(strategy, interval, first_run=first_run)
+        next_run = getattr(schedule, "next_run", None)
+        self._log(
+            "Strategy recalibration scheduled",
+            level=logging.INFO,
+            strategy=strategy,
+            interval_s=interval.total_seconds(),
+            next_run=getattr(next_run, "isoformat", lambda: str(next_run))(),
         )
 
-    def _dispatch_execution(self, service: Any, decision: RiskDecision, symbol: str) -> None:
-        try:
-            if isinstance(service, ExecutionService):
-                request = self._build_order_request(symbol, decision)
-                if request.quantity <= 0:
-                    self._record_decision_audit_stage(
-                        "execution_skipped",
-                        symbol=symbol,
-                        payload={"reason": "zero_quantity"},
-                        portfolio_snapshot=self._capture_portfolio_snapshot(),
-                    )
-                    return
-                context = self._resolve_execution_context()
-                service.execute(request, context)
-                payload = {
-                    "order": {
-                        "symbol": request.symbol,
-                        "side": request.side,
-                        "quantity": request.quantity,
-                        "order_type": request.order_type,
-                    }
-                }
-                self._record_decision_audit_stage(
-                    "execution_submitted",
-                    symbol=symbol,
-                    payload=payload,
-                    portfolio_snapshot=self._capture_portfolio_snapshot(),
-                )
-                return
 
-            execute_fn = getattr(service, "execute_decision", None)
-            if callable(execute_fn):
-                execute_fn(decision)
-                self._record_decision_audit_stage(
-                    "execution_submitted",
-                    symbol=symbol,
-                    payload={"adapter": "execute_decision", "decision": decision.to_dict()},
-                    portfolio_snapshot=self._capture_portfolio_snapshot(),
-                )
-                return
 
-            execute_fn = getattr(service, "execute", None)
-            if callable(execute_fn):
-                payload: Mapping[str, object]
-                calls_attr = getattr(service, "calls", None)
-                methods_attr = getattr(service, "methods", None)
-                previous_calls = len(calls_attr) if isinstance(calls_attr, list) else None
-                previous_methods = len(methods_attr) if isinstance(methods_attr, list) else None
-                try:
-                    execute_fn(decision)
-                    payload = {"adapter": "execute", "decision": decision.to_dict()}
-                except TypeError:
-                    request = self._build_order_request(symbol, decision)
-                    if request.quantity <= 0:
-                        self._record_decision_audit_stage(
-                            "execution_skipped",
-                            symbol=symbol,
-                            payload={"reason": "zero_quantity"},
-                            portfolio_snapshot=self._capture_portfolio_snapshot(),
-                        )
-                        return
-                    context = self._resolve_execution_context()
-                    execute_fn(request, context)  # type: ignore[arg-type]
-                    payload = {
-                        "adapter": "execute",
-                        "order": {
-                            "symbol": request.symbol,
-                            "side": request.side,
-                            "quantity": request.quantity,
-                            "order_type": request.order_type,
-                        },
-                    }
-                else:
-                    self._trim_execution_records(calls_attr, previous_calls)
-                    self._trim_execution_records(methods_attr, previous_methods)
-                self._record_decision_audit_stage(
-                    "execution_submitted",
-                    symbol=symbol,
-                    payload=payload,
-                    portfolio_snapshot=self._capture_portfolio_snapshot(),
-                )
-                return
 
-            if callable(service):
-                service(decision)
-                self._record_decision_audit_stage(
-                    "execution_submitted",
-                    symbol=symbol,
-                    payload={"adapter": "callable", "decision": decision.to_dict()},
-                    portfolio_snapshot=self._capture_portfolio_snapshot(),
-                )
-                return
 
-            raise TypeError("Configured execution service is not callable")
-        except Exception:
-            self._record_decision_audit_stage(
-                "execution_failed",
-                symbol=symbol,
-                payload={"error": "execution_exception"},
-                portfolio_snapshot=self._capture_portfolio_snapshot(),
-            )
-            raise
 
-    @staticmethod
-    def _trim_execution_records(container: Any, previous_len: int | None) -> None:
-        if not isinstance(container, list) or previous_len is None:
-            return
-        if len(container) <= previous_len + 1:
-            return
-        del container[previous_len + 1 :]
 
-    @staticmethod
-    def _normalize_decision_fields(
-        decision_fields: Iterable[Any] | Any | None,
-    ) -> list[Any] | None:
-        if decision_fields is None:
-            return None
-        if isinstance(decision_fields, Iterable) and not isinstance(
-            decision_fields,
-            (str, bytes, bytearray),
-        ):
-            candidates = decision_fields
-        else:
-            candidates = [decision_fields]
 
-        normalized: list[Any] = []
-        for candidate in candidates:
-            if candidate is None:
-                continue
-            if any(existing == candidate for existing in normalized):
-                continue
-            normalized.append(candidate)
-        if not normalized:
-            return []
-        return normalized
 
-    def _resolve_risk_evaluation_filters(
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    def apply_schedule_override(
         self,
+        strategy: str,
         *,
-        approved: bool | None | Iterable[bool | None] | object,
-        normalized: bool | None | Iterable[bool | None] | object,
-        service: str | None | Iterable[str | None] | object,
-        decision_state: str | Iterable[str | None] | object,
-        decision_reason: str | Iterable[str | None] | object,
-        decision_mode: str | Iterable[str | None] | object,
-        since: Any,
-        until: Any,
-        decision_fields: Iterable[Any] | Any | None,
-    ) -> tuple[
-        set[bool | None] | None,
-        set[bool | None] | None,
-        set[str] | None,
-        set[str] | None,
-        set[str] | None,
-        set[str] | None,
-        list[Any] | None,
-        datetime | None,
-        datetime | None,
-    ]:
-        approved_filter = self._prepare_bool_filter(approved)
-        normalized_filter = self._prepare_bool_filter(normalized)
-        service_filter = self._prepare_service_filter(service)
-        decision_state_filter = self._prepare_decision_filter(
-            decision_state,
-            missing_token=_MISSING_DECISION_STATE,
-        )
-        decision_reason_filter = self._prepare_decision_filter(
-            decision_reason,
-            missing_token=_MISSING_DECISION_REASON,
-        )
-        decision_mode_filter = self._prepare_decision_filter(
-            decision_mode,
-            missing_token=_MISSING_DECISION_MODE,
-        )
-        since_ts = self._normalize_time_bound(since)
-        until_ts = self._normalize_time_bound(until)
-        normalized_decision_fields = self._normalize_decision_fields(decision_fields)
-        return (
-            approved_filter,
-            normalized_filter,
-            service_filter,
-            decision_state_filter,
-            decision_reason_filter,
-            decision_mode_filter,
-            normalized_decision_fields,
-            since_ts,
-            until_ts,
+        interval_s: float,
+        first_run: datetime | None = None,
+    ) -> None:
+        orchestrator = self._resolve_decision_orchestrator()
+        scheduler = getattr(orchestrator, "schedule_strategy_recalibration", None) if orchestrator else None
+        if not callable(scheduler):
+            raise RuntimeError("DecisionOrchestrator does not support strategy scheduling")
+        interval = timedelta(seconds=float(max(interval_s, 0.0)))
+        schedule = scheduler(strategy, interval, first_run=first_run)
+        next_run = getattr(schedule, "next_run", None)
+        self._log(
+            "Strategy recalibration scheduled",
+            level=logging.INFO,
+            strategy=strategy,
+            interval_s=interval.total_seconds(),
+            next_run=getattr(next_run, "isoformat", lambda: str(next_run))(),
         )
 
-    def _build_risk_evaluation_records(
-        self,
-        filtered_records: Sequence[dict[str, Any]],
-        *,
-        normalized_decision_fields: list[Any] | None,
-        flatten_decision: bool,
-        decision_prefix: str,
-        drop_decision_column: bool,
-        fill_value: Any,
-        coerce_timestamps: bool,
-        tz: tzinfo | None,
-    ) -> list[dict[str, Any]]:
-        if not filtered_records:
-            return []
 
-        if normalized_decision_fields is not None:
-            ordered_keys = list(normalized_decision_fields)
-        else:
-            ordered_keys: list[Any] = []
-            for entry in filtered_records:
-                payload = entry.get("decision")
-                if isinstance(payload, Mapping):
-                    for key in payload.keys():
-                        if not any(existing == key for existing in ordered_keys):
-                            ordered_keys.append(key)
 
-        base_columns = [
-            "timestamp",
-            "approved",
-            "normalized",
-            "decision",
-            "service",
-            "response",
-            "error",
-        ]
 
-        prefix = str(decision_prefix)
-        records: list[dict[str, Any]] = []
-        for entry in filtered_records:
-            record = copy.deepcopy(entry)
-            raw_timestamp = record.get("timestamp")
-            record["timestamp"] = self._normalize_timestamp_for_export(
-                raw_timestamp,
-                coerce=coerce_timestamps,
-                tz=tz,
-            )
 
-            for column in base_columns:
-                if column not in record:
-                    record[column] = None
 
-            if flatten_decision:
-                payload = record.get("decision")
-                for key in ordered_keys:
-                    column_name = f"{prefix}{key}"
-                    if isinstance(payload, Mapping) and key in payload:
-                        record[column_name] = copy.deepcopy(payload[key])
-                    else:
-                        record[column_name] = copy.deepcopy(fill_value)
 
-            if drop_decision_column:
-                record.pop("decision", None)
 
-            records.append(record)
 
-        return records
 
-    @staticmethod
-    def _jsonify_risk_evaluation_value(value: Any) -> Any:
-        if value is pd.NA or value is pd.NaT:  # type: ignore[attr-defined]
-            return None
-        if isinstance(value, float) and math.isnan(value):
-            return None
-        if isinstance(value, pd.Timestamp):
-            if pd.isna(value):
-                return None
-            return AutoTrader._jsonify_risk_evaluation_value(value.to_pydatetime())
-        if isinstance(value, datetime):
-            return value.isoformat()
-        if isinstance(value, Mapping):
-            return {
-                str(key): AutoTrader._jsonify_risk_evaluation_value(item)
-                for key, item in value.items()
-            }
-        if isinstance(value, (list, tuple, set)):
-            return [AutoTrader._jsonify_risk_evaluation_value(item) for item in value]
-        return value
 
-    @staticmethod
-    def _jsonify_risk_evaluation_records(
-        records: Sequence[Mapping[str, Any]],
-    ) -> list[dict[str, Any]]:
-        return [
-            AutoTrader._jsonify_risk_evaluation_value(record)  # type: ignore[return-value]
-            for record in records
-        ]
 
-    def _ai_feature_columns(self, market_data: pd.DataFrame) -> list[str]:
-        numeric_cols = [
-            str(column)
-            for column in market_data.columns
-            if pd.api.types.is_numeric_dtype(market_data[column])
-        ]
-        if numeric_cols:
-            return numeric_cols
-        return [str(column) for column in market_data.columns]
 
-    @staticmethod
-    def _ai_probability_from_prediction(prediction: float) -> float:
-        clamped = max(min(float(prediction) * 4.0, 20.0), -20.0)
-        return 1.0 / (1.0 + math.exp(-clamped))
 
-    def _compute_ai_signal_context(
-        self,
-        ai_manager: Any | None,
-        symbol: str,
-        market_data: pd.DataFrame,
-    ) -> Mapping[str, object] | None:
-        if ai_manager is None:
-            return None
 
-        require_real = getattr(ai_manager, "require_real_models", None)
-        if callable(require_real):
-            try:
-                require_real()
-            except RuntimeError as exc:
-                self._log(
-                    "AI manager reports degraded backend; holding signals",
-                    level=logging.WARNING,
-                    symbol=symbol,
-                    error=str(exc),
-                )
-                return None
 
-        predictor = getattr(ai_manager, "predict_series", None)
-        if predictor is None:
-            return None
 
-        feature_cols = self._ai_feature_columns(market_data)
-        try:
-            prediction_result = predictor(symbol, market_data, feature_cols=feature_cols)
-        except TypeError:
-            prediction_result = predictor(symbol, market_data)
-        except Exception as exc:
-            self._log(
-                f"AI predict_series invocation failed: {exc!r}",
-                level=logging.ERROR,
-                symbol=symbol,
-            )
-            return None
 
-        if asyncio.iscoroutine(prediction_result):
-            loop = asyncio.new_event_loop()
-            try:
-                asyncio.set_event_loop(loop)
-                predictions = loop.run_until_complete(prediction_result)
-            finally:
-                asyncio.set_event_loop(None)
-                loop.close()
-        else:
-            predictions = prediction_result
 
-        if not isinstance(predictions, pd.Series):
-            try:
-                predictions = pd.Series(
-                    predictions,
-                    index=market_data.index[-len(predictions) :],
-                )
-            except Exception:
-                predictions = pd.Series(predictions)
 
-        if predictions.empty:
-            return None
 
-        value = float(predictions.iloc[-1])
-        prediction_bps = value * 10_000.0
-        threshold = float(getattr(ai_manager, "ai_threshold_bps", 0.0))
-        if prediction_bps >= threshold:
-            direction = "buy"
-        elif prediction_bps <= -threshold:
-            direction = "sell"
-        else:
-            direction = "hold"
 
-            status = "open" if state.is_open else "closed"
-            self._log(
-                f"Trading schedule updated to mode={state.mode} ({status})",
-                level=logging.INFO,
-                reason=update_reason,
-            )
 
-            payload = state.to_mapping()
-            payload["reason"] = update_reason
-            self._record_decision_audit_stage(
-                "schedule_configured",
-                symbol=_SCHEDULE_SYMBOL,
-                payload=payload,
-                decision_id=decision_id,
-            )
-            self._emit_schedule_state_event(state, reason=update_reason)
-            return state
+
+
+
 
     def apply_schedule_override(
         self,
@@ -2486,25 +1792,6 @@ class AutoTrader:
                 metadata=metadata,
             )
         return self._execution_context
-
-    def _describe_schedule(self, schedule: TradingSchedule) -> ScheduleState:
-        describe = getattr(schedule, "describe", None)
-        reference = datetime.now(timezone.utc)
-        if callable(describe):
-            try:
-                state = describe()
-            except TypeError:
-                state = describe(reference)
-            else:
-                if isinstance(state, ScheduleState):
-                    return state
-        return ScheduleState(
-            mode=getattr(schedule, "default_mode", "live"),
-            is_open=True,
-            window=None,
-            next_transition=None,
-            reference_time=reference,
-        )
 
     def _enforce_work_schedule(self) -> bool:
         schedule = getattr(self, "_work_schedule", None)
@@ -2690,6 +1977,24 @@ class AutoTrader:
                 continue
         return None
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
     def _build_order_request(self, symbol: str, decision: RiskDecision) -> OrderRequest:
         signal = str(decision.details.get("signal", "hold")).lower()
         side = "buy" if signal not in {"buy", "sell"} else signal
@@ -2710,23 +2015,6 @@ class AutoTrader:
         )
         return candidate
 
-    def _build_risk_snapshot(self, profile: str) -> Mapping[str, object]:
-        engine = self._decision_risk_engine or self.core_risk_engine
-        if engine is not None and hasattr(engine, "snapshot_state"):
-            try:
-                snapshot = engine.snapshot_state(profile)
-            except Exception:
-                snapshot = None
-            if snapshot:
-                return snapshot
-        return {
-            "profile": profile,
-            "start_of_day_equity": 100_000.0,
-            "last_equity": 100_000.0,
-            "peak_equity": 100_000.0,
-            "daily_realized_pnl": 0.0,
-            "positions": {},
-        }
 
     def _dispatch_execution(self, service: Any, decision: RiskDecision, symbol: str) -> None:
         try:
@@ -2864,8 +2152,88 @@ class AutoTrader:
             return []
         return normalized
 
-    def _resolve_risk_evaluation_filters(
+    @staticmethod
+    def _iter_filter_values(value: Any) -> Iterable[Any]:
+        if isinstance(value, Iterable) and not isinstance(value, (str, bytes, bytearray)):
+            return value
+        return (value,)
+
+    @staticmethod
+    def _coerce_optional_bool(value: Any) -> bool | None | object:
+        if value is _NO_FILTER:
+            return _NO_FILTER
+        if value is None:
+            return None
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)):
+            try:
+                numeric = float(value)
+            except (TypeError, ValueError):
+                return None
+            if math.isnan(numeric) or math.isinf(numeric):
+                return None
+            return bool(numeric)
+        if isinstance(value, str):
+            token = value.strip().lower()
+            if not token or token in {"none", "null"}:
+                return None
+            if token in {"1", "true", "t", "yes", "y", "on"}:
+                return True
+            if token in {"0", "false", "f", "no", "n", "off"}:
+                return False
+        return None
+
+    def _prepare_bool_filter(
+        self, value: bool | None | Iterable[bool | None] | object
+    ) -> set[bool | None] | None:
+        if value is _NO_FILTER:
+            return None
+        normalized: set[bool | None] = set()
+        for candidate in self._iter_filter_values(value):
+            token = self._coerce_optional_bool(candidate)
+            if token is _NO_FILTER:
+                continue
+            if token is None:
+                normalized.add(None)
+            elif isinstance(token, bool):
+                normalized.add(token)
+        return normalized or None
+
+    def _prepare_service_filter(
+        self, value: str | None | Iterable[str | None] | object
+    ) -> set[str] | None:
+        if value is _NO_FILTER:
+            return None
+        normalized: set[str] = set()
+        for candidate in self._iter_filter_values(value):
+            if candidate is _NO_FILTER:
+                continue
+            if candidate is None:
+                normalized.add(_UNKNOWN_SERVICE)
+                continue
+            token = str(candidate).strip()
+            if token:
+                normalized.add(token)
+        return normalized or None
+
+    def _prepare_string_filter(
+        self, value: str | Iterable[str] | object
+    ) -> set[str] | None:
+        if value is _NO_FILTER:
+            return None
+        normalized: set[str] = set()
+        for candidate in self._iter_filter_values(value):
+            if candidate is _NO_FILTER or candidate is None:
+                continue
+            token = str(candidate).strip()
+            if token:
+                normalized.add(token)
+        return normalized or None
+
+    def _prepare_guardrail_filter(
         self,
+        value: str | Iterable[str | None] | object,
         *,
         approved: bool | None | Iterable[bool | None] | object,
         normalized: bool | None | Iterable[bool | None] | object,
@@ -2908,6 +2276,38 @@ class AutoTrader:
             decision_id,
             missing_token=_MISSING_DECISION_ID,
         )
+        decision_id_filter = self._prepare_decision_filter(
+            decision_id,
+            missing_token=_MISSING_DECISION_ID,
+        )
+        decision_id_filter = self._prepare_decision_filter(
+            decision_id,
+            missing_token=_MISSING_DECISION_ID,
+        )
+        decision_id_filter = self._prepare_decision_filter(
+            decision_id,
+            missing_token=_MISSING_DECISION_ID,
+        )
+        decision_id_filter = self._prepare_decision_filter(
+            decision_id,
+            missing_token=_MISSING_DECISION_ID,
+        )
+        decision_id_filter = self._prepare_decision_filter(
+            decision_id,
+            missing_token=_MISSING_DECISION_ID,
+        )
+        decision_id_filter = self._prepare_decision_filter(
+            decision_id,
+            missing_token=_MISSING_DECISION_ID,
+        )
+        decision_id_filter = self._prepare_decision_filter(
+            decision_id,
+            missing_token=_MISSING_DECISION_ID,
+        )
+        decision_id_filter = self._prepare_decision_filter(
+            decision_id,
+            missing_token=_MISSING_DECISION_ID,
+        )
         since_ts = self._normalize_time_bound(since)
         until_ts = self._normalize_time_bound(until)
         normalized_decision_fields = self._normalize_decision_fields(decision_fields)
@@ -2924,23 +2324,31 @@ class AutoTrader:
             until_ts,
         )
 
-    def _build_risk_evaluation_records(
+    def _prepare_decision_filter(
         self,
-        filtered_records: Sequence[dict[str, Any]],
+        value: str | Iterable[str | None] | object,
         *,
-        normalized_decision_fields: list[Any] | None,
-        flatten_decision: bool,
-        decision_prefix: str,
-        drop_decision_column: bool,
-        fill_value: Any,
-        coerce_timestamps: bool,
-        tz: tzinfo | None,
-    ) -> list[dict[str, Any]]:
-        if not filtered_records:
-            return []
+        missing_token: str,
+    ) -> set[str] | None:
+        if value is _NO_FILTER:
+            return None
+        normalized: set[str] = set()
+        for candidate in self._iter_filter_values(value):
+            if candidate is _NO_FILTER:
+                continue
+            if candidate is None:
+                normalized.add(missing_token)
+                continue
+            token = str(candidate).strip()
+            normalized.add(token or missing_token)
+        return normalized or None
 
-        if normalized_decision_fields is not None:
-            ordered_keys = list(normalized_decision_fields)
+    @staticmethod
+    def _coerce_float(value: Any) -> float | None:
+        if value is None:
+            return None
+        if isinstance(value, (int, float)):
+            numeric = float(value)
         else:
             ordered_keys: list[Any] = []
             for entry in filtered_records:
@@ -2993,796 +2401,172 @@ class AutoTrader:
         return records
 
     @staticmethod
-    def _jsonify_risk_evaluation_value(value: Any) -> Any:
-        if value is pd.NA or value is pd.NaT:  # type: ignore[attr-defined]
+    def _ensure_datetime(value: Any, tz: tzinfo | None) -> datetime | None:
+        tzinfo = tz or timezone.utc
+        if value is None or value is _NO_FILTER:
             return None
-        if isinstance(value, float) and math.isnan(value):
-            return None
-        if isinstance(value, pd.Timestamp):
-            if pd.isna(value):
-                return None
-            return AutoTrader._jsonify_risk_evaluation_value(value.to_pydatetime())
         if isinstance(value, datetime):
-            return value.isoformat()
-        if isinstance(value, Mapping):
-            return {
-                str(key): AutoTrader._jsonify_risk_evaluation_value(item)
-                for key, item in value.items()
-            }
-        if isinstance(value, (list, tuple, set)):
-            return [AutoTrader._jsonify_risk_evaluation_value(item) for item in value]
-        return value
-
-    @staticmethod
-    def _jsonify_risk_evaluation_records(
-        records: Sequence[Mapping[str, Any]],
-    ) -> list[dict[str, Any]]:
-        return [
-            AutoTrader._jsonify_risk_evaluation_value(record)  # type: ignore[return-value]
-            for record in records
-        ]
-
-    def _ai_feature_columns(self, market_data: pd.DataFrame) -> list[str]:
-        numeric_cols = [
-            str(column)
-            for column in market_data.columns
-            if pd.api.types.is_numeric_dtype(market_data[column])
-        ]
-        if numeric_cols:
-            return numeric_cols
-        return [str(column) for column in market_data.columns]
-
-    @staticmethod
-    def _ai_probability_from_prediction(prediction: float) -> float:
-        clamped = max(min(float(prediction) * 4.0, 20.0), -20.0)
-        return 1.0 / (1.0 + math.exp(-clamped))
-
-    def _compute_ai_signal_context(
-        self,
-        ai_manager: Any | None,
-        symbol: str,
-        market_data: pd.DataFrame,
-    ) -> Mapping[str, object] | None:
-        if ai_manager is None:
-            return None
-
-        require_real = getattr(ai_manager, "require_real_models", None)
-        if callable(require_real):
-            try:
-                require_real()
-            except RuntimeError as exc:
-                self._log(
-                    "AI manager reports degraded backend; holding signals",
-                    level=logging.WARNING,
-                    symbol=symbol,
-                    error=str(exc),
-                )
+            dt = value
+        elif isinstance(value, pd.Timestamp):
+            dt = value.to_pydatetime()
+        elif isinstance(value, (int, float)):
+            numeric = float(value)
+            if math.isnan(numeric) or math.isinf(numeric):
                 return None
-
-        predictor = getattr(ai_manager, "predict_series", None)
-        if predictor is None:
-            return None
-
-        feature_cols = self._ai_feature_columns(market_data)
-        try:
-            prediction_result = predictor(symbol, market_data, feature_cols=feature_cols)
-        except TypeError:
-            prediction_result = predictor(symbol, market_data)
-        except Exception as exc:
-            self._log(
-                f"AI predict_series invocation failed: {exc!r}",
-                level=logging.ERROR,
-                symbol=symbol,
-            )
-            return None
-
-        if asyncio.iscoroutine(prediction_result):
-            loop = asyncio.new_event_loop()
-            try:
-                asyncio.set_event_loop(loop)
-                predictions = loop.run_until_complete(prediction_result)
-            finally:
-                asyncio.set_event_loop(None)
-                loop.close()
-        else:
-            predictions = prediction_result
-
-        if not isinstance(predictions, pd.Series):
-            try:
-                predictions = pd.Series(
-                    predictions,
-                    index=market_data.index[-len(predictions) :],
-                )
-            except Exception:
-                predictions = pd.Series(predictions)
-
-        if predictions.empty:
-            return None
-
-        value = float(predictions.iloc[-1])
-        prediction_bps = value * 10_000.0
-        threshold = float(getattr(ai_manager, "ai_threshold_bps", 0.0))
-        if prediction_bps >= threshold:
-            direction = "buy"
-        elif prediction_bps <= -threshold:
-            direction = "sell"
-        else:
-            direction = "hold"
-
-        probability = self._ai_probability_from_prediction(value)
-        evaluated_at_raw = predictions.index[-1]
-        evaluated_at: str | float | None
-        if hasattr(evaluated_at_raw, "isoformat"):
-            evaluated_at = evaluated_at_raw.isoformat()
-        elif isinstance(evaluated_at_raw, (int, float)):
-            evaluated_at = float(evaluated_at_raw)
-        else:
-            evaluated_at = None
-
-        snapshot: Dict[str, object] = {
-            "prediction": value,
-            "prediction_bps": prediction_bps,
-            "threshold_bps": threshold,
-            "direction": direction,
-            "probability": probability,
-        }
-        if evaluated_at is not None:
-            snapshot["evaluated_at"] = evaluated_at
-
-        self._log(
-            "AI prediction snapshot",
-            level=logging.DEBUG,
-            symbol=symbol,
-            prediction_bps=prediction_bps,
-            direction=direction,
-            threshold_bps=threshold,
-        )
-        return snapshot
-
-    def _normalize_ai_context(
-        self,
-        ai_context: Mapping[str, object],
-        *,
-        default_return_bps: float,
-        default_probability: float,
-    ) -> tuple[float, float, Dict[str, Any]]:
-        normalized_return = float(default_return_bps)
-        normalized_probability = max(0.0, min(1.0, float(default_probability)))
-        payload: Dict[str, Any] = {}
-
-        prediction_raw = ai_context.get("prediction")
-        if prediction_raw is not None:
-            try:
-                payload["prediction"] = float(prediction_raw)
-            except (TypeError, ValueError):
-                pass
-
-        prediction_bps_raw = ai_context.get("prediction_bps")
-        if prediction_bps_raw is not None:
-            try:
-                normalized_return = float(prediction_bps_raw)
-            except (TypeError, ValueError):
-                pass
-        payload["prediction_bps"] = normalized_return
-
-        threshold_raw = ai_context.get("threshold_bps")
-        try:
-            payload["threshold_bps"] = float(threshold_raw) if threshold_raw is not None else 0.0
-        except (TypeError, ValueError):
-            payload["threshold_bps"] = 0.0
-
-        payload["direction"] = ai_context.get("direction")
-
-        probability_raw = ai_context.get("probability")
-        if probability_raw is not None:
-            try:
-                ai_probability = max(0.0, min(1.0, float(probability_raw)))
-            except (TypeError, ValueError):
-                ai_probability = None
-            if ai_probability is not None:
-                payload["probability"] = ai_probability
-                normalized_probability = max(normalized_probability, ai_probability)
-
-        if "evaluated_at" in ai_context:
-            payload["evaluated_at"] = ai_context["evaluated_at"]
-
-        return normalized_return, normalized_probability, payload
-
-    def _resolve_decision_orchestrator(self) -> Any | None:
-        orchestrator = self.decision_orchestrator
-        if orchestrator is not None:
-            return orchestrator
-        if self.bootstrap_context is not None:
-            return getattr(self.bootstrap_context, "decision_orchestrator", None)
-        return None
-
-    def _fetch_market_data(self, symbol: str, timeframe: str) -> pd.DataFrame | None:
-        provider = self.market_data_provider or self.data_provider
-        if provider is None:
-            return None
-
-        def _coerce(result: Any) -> pd.DataFrame | None:
-            if result is None:
+            dt = datetime.fromtimestamp(numeric, tzinfo)
+        elif isinstance(value, str):
+            token = value.strip()
+            if not token:
                 return None
-            if isinstance(result, pd.DataFrame):
-                return result
             try:
-                df = pd.DataFrame(result)
-            except Exception:
-                return None
-            return df
-
-        if hasattr(provider, "get_historical"):
-            getter = getattr(provider, "get_historical")
-            try:
-                return _coerce(getter(symbol=symbol, timeframe=timeframe, limit=256))
-            except TypeError:
+                numeric = float(token)
+            except ValueError:
                 try:
-                    return _coerce(getter(symbol, timeframe, 256))
-                except TypeError:
-                    return _coerce(getter(symbol, timeframe))
-        if callable(provider):
-            try:
-                return _coerce(provider(symbol=symbol, timeframe=timeframe))
-            except TypeError:
-                try:
-                    return _coerce(provider(symbol, timeframe))
-                except TypeError:
-                    try:
-                        return _coerce(provider(symbol))
-                    except TypeError:
-                        try:
-                            return _coerce(provider())
-                        except TypeError:
-                            return None
-        return None
-
-    def _decision_risk_profile_name(self) -> str:
-        if self.bootstrap_context is not None:
-            profile = getattr(self.bootstrap_context, "risk_profile_name", None)
-            if profile:
-                return str(profile)
-        return "default"
-
-    def _estimate_candidate_notional(self, symbol: str) -> float:
-        del symbol  # symbol not used yet
-        leverage = abs(getattr(self, "current_leverage", 1.0))
-        return max(1000.0, leverage * 1000.0)
-
-    def _build_decision_candidate(
-        self,
-        *,
-        symbol: str,
-        signal: str,
-        market_data: pd.DataFrame,
-        assessment: MarketRegimeAssessment,
-        last_return: float,
-        ai_context: Mapping[str, object] | None = None,
-        ai_manager: Any | None = None,
-    ) -> Any | None:
-        if DecisionCandidate is None:
-            return None
-        if market_data.empty:
-            return None
-        try:
-            row = market_data.iloc[-1]
-        except Exception:
-            return None
-        features: Dict[str, float] = {}
-        for key, value in row.items():
-            try:
-                features[str(key)] = float(value)
-            except (TypeError, ValueError):
-                continue
-        features["assessment_confidence"] = float(assessment.confidence)
-        features["assessment_risk"] = float(assessment.risk_score)
-        features["signal_direction"] = 1.0 if signal == "buy" else -1.0
-        timestamp = getattr(row, "name", None)
-        metadata: Dict[str, Any] = {
-            "auto_trader": {
-                "signal": signal,
-                "strategy": self.current_strategy,
-            },
-            "decision_engine": {
-                "features": features,
-                "generated_at": timestamp,
-            },
-        }
-        decision_section = metadata["decision_engine"]
-        expected_return = float(last_return * 10_000.0)
-        if signal == "sell":
-            expected_return = -abs(expected_return)
-        elif signal == "buy":
-            expected_return = abs(expected_return)
-        expected_probability = max(0.0, min(1.0, float(assessment.confidence)))
-        candidate_notional = self._estimate_candidate_notional(symbol)
-        if ai_manager is not None and hasattr(ai_manager, "build_decision_engine_payload"):
-            try:
-                engine_payload = ai_manager.build_decision_engine_payload(
-                    strategy=self.current_strategy,
-                    action="enter" if signal == "buy" else "exit",
-                    risk_profile=self._decision_risk_profile_name(),
-                    symbol=symbol,
-                    notional=candidate_notional,
-                    features=features,
-                )
-            except Exception:  # pragma: no cover - diagnostyka integracji
-                engine_payload = None
-                LOGGER.debug("AI manager decision payload generation failed", exc_info=True)
+                    dt = datetime.fromisoformat(token)
+                except ValueError:
+                    return None
             else:
-                if isinstance(engine_payload, Mapping):
-                    decision_section.update(engine_payload)
-                    if ai_context is None and isinstance(engine_payload.get("ai"), Mapping):
-                        ai_context = engine_payload.get("ai")
-        if ai_context:
-            expected_return, expected_probability, ai_payload = self._normalize_ai_context(
-                ai_context,
-                default_return_bps=expected_return,
-                default_probability=expected_probability,
-            )
-            decision_section["ai"] = ai_payload
-        candidate = DecisionCandidate(
-            strategy=self.current_strategy,
-            action="enter" if signal == "buy" else "exit",
-            risk_profile=self._decision_risk_profile_name(),
-            symbol=symbol,
-            notional=candidate_notional,
-            expected_return_bps=expected_return,
-            expected_probability=expected_probability,
-            metadata=metadata,
-        )
-        return candidate
+                if math.isnan(numeric) or math.isinf(numeric):
+                    return None
+                dt = datetime.fromtimestamp(numeric, tzinfo)
+        else:
+            timestamp_method = getattr(value, "timestamp", None)
+            if callable(timestamp_method):
+                try:
+                    numeric = float(timestamp_method())
+                except (TypeError, ValueError):
+                    return None
+                if math.isnan(numeric) or math.isinf(numeric):
+                    return None
+                dt = datetime.fromtimestamp(numeric, tzinfo)
+            else:
+                return None
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=tzinfo)
+        else:
+            dt = dt.astimezone(tzinfo)
+        return dt
 
-    def _build_order_request(self, symbol: str, decision: RiskDecision) -> OrderRequest:
-        signal = str(decision.details.get("signal", "hold")).lower()
-        side = "buy" if signal not in {"buy", "sell"} else signal
-        quantity = float(decision.fraction or 0.0)
-        if quantity <= 0:
-            quantity = 1.0 if decision.should_trade else 0.0
-        metadata: dict[str, str] = {}
-        for key, value in decision.details.items():
-            if isinstance(value, (str, int, float, bool)):
-                metadata[str(key)] = str(value)
-        metadata["mode"] = decision.mode
-        return OrderRequest(
-            symbol=symbol,
-            side=side,
-            quantity=abs(quantity),
-            order_type="market",
-            metadata=metadata,
-        )
-        return candidate
+    def _normalize_time_bound(self, value: Any) -> float | None:
+        dt = self._ensure_datetime(value, timezone.utc)
+        if dt is None:
+            return None
+        return dt.timestamp()
 
-    def _build_risk_snapshot(self, profile: str) -> Mapping[str, object]:
-        engine = self._decision_risk_engine or self.core_risk_engine
-        if engine is not None and hasattr(engine, "snapshot_state"):
-            try:
-                snapshot = engine.snapshot_state(profile)
-            except Exception:
-                snapshot = None
-            if snapshot:
-                return snapshot
+    def _normalize_timestamp_for_export(
+        self,
+        value: Any,
+        *,
+        coerce: bool,
+        tz: tzinfo | None,
+    ) -> Any:
+        dt = self._ensure_datetime(value, tz or timezone.utc)
+        if dt is None:
+            return None
+        if coerce:
+            return pd.Timestamp(dt)
+        return dt.isoformat()
+
+    def _normalize_approval_flag(self, value: Any) -> str:
+        token = self._coerce_optional_bool(value)
+        if token is True:
+            return _APPROVAL_APPROVED
+        if token is False:
+            return _APPROVAL_DENIED
+        return _APPROVAL_UNKNOWN
+
+    @staticmethod
+    def _normalize_normalization_flag(value: Any) -> str:
+        if value is True:
+            return _NORMALIZED_NORMALIZED
+        if value is False:
+            return _NORMALIZED_RAW
+        return _NORMALIZED_UNKNOWN
+
+    @staticmethod
+    def _init_guardrail_numeric_stats() -> dict[str, Any]:
         return {
-            "profile": profile,
-            "start_of_day_equity": 100_000.0,
-            "last_equity": 100_000.0,
-            "peak_equity": 100_000.0,
-            "daily_realized_pnl": 0.0,
-            "positions": {},
+            "count": 0,
+            "missing": 0,
+            "sum": 0.0,
+            "min": None,
+            "max": None,
         }
 
-    def _dispatch_execution(self, service: Any, decision: RiskDecision, symbol: str) -> None:
-        try:
-            if isinstance(service, ExecutionService):
-                request = self._build_order_request(symbol, decision)
-                if request.quantity <= 0:
-                    self._record_decision_audit_stage(
-                        "execution_skipped",
-                        symbol=symbol,
-                        payload={"reason": "zero_quantity"},
-                        portfolio_snapshot=self._capture_portfolio_snapshot(),
-                    )
-                    return
-                context = self._resolve_execution_context()
-                service.execute(request, context)
-                payload = {
-                    "order": {
-                        "symbol": request.symbol,
-                        "side": request.side,
-                        "quantity": request.quantity,
-                        "order_type": request.order_type,
-                    }
-                }
-                self._record_decision_audit_stage(
-                    "execution_submitted",
-                    symbol=symbol,
-                    payload=payload,
-                    portfolio_snapshot=self._capture_portfolio_snapshot(),
-                )
-                return
-
-            execute_fn = getattr(service, "execute_decision", None)
-            if callable(execute_fn):
-                execute_fn(decision)
-                self._record_decision_audit_stage(
-                    "execution_submitted",
-                    symbol=symbol,
-                    payload={"adapter": "execute_decision", "decision": decision.to_dict()},
-                    portfolio_snapshot=self._capture_portfolio_snapshot(),
-                )
-                return
-
-            execute_fn = getattr(service, "execute", None)
-            if callable(execute_fn):
-                payload: Mapping[str, object]
-                calls_attr = getattr(service, "calls", None)
-                methods_attr = getattr(service, "methods", None)
-                previous_calls = len(calls_attr) if isinstance(calls_attr, list) else None
-                previous_methods = len(methods_attr) if isinstance(methods_attr, list) else None
-                try:
-                    execute_fn(decision)
-                    payload = {"adapter": "execute", "decision": decision.to_dict()}
-                except TypeError:
-                    request = self._build_order_request(symbol, decision)
-                    if request.quantity <= 0:
-                        self._record_decision_audit_stage(
-                            "execution_skipped",
-                            symbol=symbol,
-                            payload={"reason": "zero_quantity"},
-                            portfolio_snapshot=self._capture_portfolio_snapshot(),
-                        )
-                        return
-                    context = self._resolve_execution_context()
-                    execute_fn(request, context)  # type: ignore[arg-type]
-                    payload = {
-                        "adapter": "execute",
-                        "order": {
-                            "symbol": request.symbol,
-                            "side": request.side,
-                            "quantity": request.quantity,
-                            "order_type": request.order_type,
-                        },
-                    }
-                else:
-                    self._trim_execution_records(calls_attr, previous_calls)
-                    self._trim_execution_records(methods_attr, previous_methods)
-                self._record_decision_audit_stage(
-                    "execution_submitted",
-                    symbol=symbol,
-                    payload=payload,
-                    portfolio_snapshot=self._capture_portfolio_snapshot(),
-                )
-                return
-
-            if callable(service):
-                service(decision)
-                self._record_decision_audit_stage(
-                    "execution_submitted",
-                    symbol=symbol,
-                    payload={"adapter": "callable", "decision": decision.to_dict()},
-                    portfolio_snapshot=self._capture_portfolio_snapshot(),
-                )
-                return
-
-            raise TypeError("Configured execution service is not callable")
-        except Exception:
-            self._record_decision_audit_stage(
-                "execution_failed",
-                symbol=symbol,
-                payload={"error": "execution_exception"},
-                portfolio_snapshot=self._capture_portfolio_snapshot(),
-            )
-            raise
-
     @staticmethod
-    def _trim_execution_records(container: Any, previous_len: int | None) -> None:
-        if not isinstance(container, list) or previous_len is None:
+    def _ingest_guardrail_numeric_value(
+        stats: dict[str, Any] | None,
+        value: Any,
+    ) -> None:
+        if stats is None:
             return
-        if len(container) <= previous_len + 1:
+        numeric = AutoTrader._coerce_float(value)
+        if numeric is None:
+            stats["missing"] = stats.get("missing", 0) + 1
             return
-        del container[previous_len + 1 :]
+        stats["count"] = stats.get("count", 0) + 1
+        stats["sum"] = stats.get("sum", 0.0) + numeric
+        current_min = stats.get("min")
+        stats["min"] = numeric if current_min is None else min(current_min, numeric)
+        current_max = stats.get("max")
+        stats["max"] = numeric if current_max is None else max(current_max, numeric)
 
     @staticmethod
-    def _normalize_decision_fields(
-        decision_fields: Iterable[Any] | Any | None,
-    ) -> list[Any] | None:
-        if decision_fields is None:
-            return None
-        if isinstance(decision_fields, Iterable) and not isinstance(
-            decision_fields,
-            (str, bytes, bytearray),
-        ):
-            candidates = decision_fields
+    def _finalize_guardrail_numeric_stats(
+        stats: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        if not stats:
+            return {}
+        count = int(stats.get("count", 0))
+        missing = int(stats.get("missing", 0))
+        total_sum = float(stats.get("sum", 0.0))
+        result: dict[str, Any] = {
+            "count": count,
+            "missing": missing,
+            "sum": total_sum,
+            "min": stats.get("min"),
+            "max": stats.get("max"),
+        }
+        if count:
+            result["average"] = total_sum / count
         else:
-            candidates = [decision_fields]
+            result["average"] = None if missing else 0.0
+        return result
 
-        normalized: list[Any] = []
-        for candidate in candidates:
-            if candidate is None:
-                continue
-            if any(existing == candidate for existing in normalized):
-                continue
-            normalized.append(candidate)
-        if not normalized:
-            return []
-        return normalized
+    @staticmethod
+    def _finalize_dimension_counter(counter: Counter[str] | None) -> dict[str, int]:
+        if not counter:
+            return {}
+        return {key: int(counter[key]) for key in sorted(counter)}
 
-    def _resolve_risk_evaluation_filters(
-        self,
+    @staticmethod
+    def _normalize_decision_dimension_value(
+        value: Any,
         *,
-        approved: bool | None | Iterable[bool | None] | object,
-        normalized: bool | None | Iterable[bool | None] | object,
-        service: str | None | Iterable[str | None] | object,
-        decision_state: str | Iterable[str | None] | object,
-        decision_reason: str | Iterable[str | None] | object,
-        decision_mode: str | Iterable[str | None] | object,
-        decision_id: str | Iterable[str | None] | object,
-        since: Any,
-        until: Any,
-        decision_fields: Iterable[Any] | Any | None,
-    ) -> tuple[
-        set[bool | None] | None,
-        set[bool | None] | None,
-        set[str] | None,
-        set[str] | None,
-        set[str] | None,
-        set[str] | None,
-        set[str] | None,
-        list[Any] | None,
-        datetime | None,
-        datetime | None,
-    ]:
-        approved_filter = self._prepare_bool_filter(approved)
-        normalized_filter = self._prepare_bool_filter(normalized)
-        service_filter = self._prepare_service_filter(service)
-        decision_state_filter = self._prepare_decision_filter(
-            decision_state,
-            missing_token=_MISSING_DECISION_STATE,
-        )
-        decision_reason_filter = self._prepare_decision_filter(
-            decision_reason,
-            missing_token=_MISSING_DECISION_REASON,
-        )
-        decision_mode_filter = self._prepare_decision_filter(
-            decision_mode,
-            missing_token=_MISSING_DECISION_MODE,
-        )
-        decision_id_filter = self._prepare_decision_filter(
-            decision_id,
-            missing_token=_MISSING_DECISION_ID,
-        )
-        decision_id_filter = self._prepare_decision_filter(
-            decision_id,
-            missing_token=_MISSING_DECISION_ID,
-        )
-        decision_id_filter = self._prepare_decision_filter(
-            decision_id,
-            missing_token=_MISSING_DECISION_ID,
-        )
-        decision_id_filter = self._prepare_decision_filter(
-            decision_id,
-            missing_token=_MISSING_DECISION_ID,
-        )
-        decision_id_filter = self._prepare_decision_filter(
-            decision_id,
-            missing_token=_MISSING_DECISION_ID,
-        )
-        decision_id_filter = self._prepare_decision_filter(
-            decision_id,
-            missing_token=_MISSING_DECISION_ID,
-        )
-        decision_id_filter = self._prepare_decision_filter(
-            decision_id,
-            missing_token=_MISSING_DECISION_ID,
-        )
-        decision_id_filter = self._prepare_decision_filter(
-            decision_id,
-            missing_token=_MISSING_DECISION_ID,
-        )
-        decision_id_filter = self._prepare_decision_filter(
-            decision_id,
-            missing_token=_MISSING_DECISION_ID,
-        )
-        since_ts = self._normalize_time_bound(since)
-        until_ts = self._normalize_time_bound(until)
-        normalized_decision_fields = self._normalize_decision_fields(decision_fields)
-        return (
-            approved_filter,
-            normalized_filter,
-            service_filter,
-            decision_state_filter,
-            decision_reason_filter,
-            decision_mode_filter,
-            decision_id_filter,
-            normalized_decision_fields,
-            since_ts,
-            until_ts,
-        )
-
-    def _build_risk_evaluation_records(
-        self,
-        filtered_records: Sequence[dict[str, Any]],
-        *,
-        normalized_decision_fields: list[Any] | None,
-        flatten_decision: bool,
-        decision_prefix: str,
-        drop_decision_column: bool,
-        fill_value: Any,
-        coerce_timestamps: bool,
-        tz: tzinfo | None,
-    ) -> list[dict[str, Any]]:
-        if not filtered_records:
-            return []
-
-        if normalized_decision_fields is not None:
-            ordered_keys = list(normalized_decision_fields)
-        else:
-            ordered_keys: list[Any] = []
-            for entry in filtered_records:
-                payload = entry.get("decision")
-                if isinstance(payload, Mapping):
-                    for key in payload.keys():
-                        if not any(existing == key for existing in ordered_keys):
-                            ordered_keys.append(key)
-
-        base_columns = [
-            "timestamp",
-            "approved",
-            "normalized",
-            "decision_id",
-            "decision",
-            "service",
-            "response",
-            "error",
-        ]
-
-        prefix = str(decision_prefix)
-        records: list[dict[str, Any]] = []
-        for entry in filtered_records:
-            record = copy.deepcopy(entry)
-            raw_timestamp = record.get("timestamp")
-            record["timestamp"] = self._normalize_timestamp_for_export(
-                raw_timestamp,
-                coerce=coerce_timestamps,
-                tz=tz,
-            )
-
-            for column in base_columns:
-                if column not in record:
-                    record[column] = None
-
-            if flatten_decision:
-                payload = record.get("decision")
-                for key in ordered_keys:
-                    column_name = f"{prefix}{key}"
-                    if isinstance(payload, Mapping) and key in payload:
-                        record[column_name] = copy.deepcopy(payload[key])
-                    else:
-                        record[column_name] = copy.deepcopy(fill_value)
-
-            if drop_decision_column:
-                record.pop("decision", None)
-
-            records.append(record)
-
-        return records
+        missing_token: str,
+    ) -> str:
+        if value is None:
+            return missing_token
+        token = str(value).strip()
+        return token or missing_token
 
     @staticmethod
-    def _jsonify_risk_evaluation_value(value: Any) -> Any:
-        if value is pd.NA or value is pd.NaT:  # type: ignore[attr-defined]
+    def _serialize_filter_snapshot(values: Iterable[Any] | None) -> list[Any] | None:
+        if values is None:
             return None
-        if isinstance(value, float) and math.isnan(value):
-            return None
-        if isinstance(value, pd.Timestamp):
-            if pd.isna(value):
-                return None
-            return AutoTrader._jsonify_risk_evaluation_value(value.to_pydatetime())
-        if isinstance(value, datetime):
-            return value.isoformat()
-        if isinstance(value, Mapping):
-            return {
-                str(key): AutoTrader._jsonify_risk_evaluation_value(item)
-                for key, item in value.items()
-            }
-        if isinstance(value, (list, tuple, set)):
-            return [AutoTrader._jsonify_risk_evaluation_value(item) for item in value]
-        return value
+        return [value for value in sorted(values, key=lambda item: (str(item).lower(), str(item)))]
 
     @staticmethod
-    def _jsonify_risk_evaluation_records(
-        records: Sequence[Mapping[str, Any]],
-    ) -> list[dict[str, Any]]:
-        return [
-            AutoTrader._jsonify_risk_evaluation_value(record)  # type: ignore[return-value]
-            for record in records
-        ]
-
-    def _ai_feature_columns(self, market_data: pd.DataFrame) -> list[str]:
-        numeric_cols = [
-            str(column)
-            for column in market_data.columns
-            if pd.api.types.is_numeric_dtype(market_data[column])
-        ]
-        if numeric_cols:
-            return numeric_cols
-        return [str(column) for column in market_data.columns]
-
-    @staticmethod
-    def _ai_probability_from_prediction(prediction: float) -> float:
-        clamped = max(min(float(prediction) * 4.0, 20.0), -20.0)
-        return 1.0 / (1.0 + math.exp(-clamped))
-
-    def _compute_ai_signal_context(
-        self,
-        ai_manager: Any | None,
-        symbol: str,
-        market_data: pd.DataFrame,
-    ) -> Mapping[str, object] | None:
-        if ai_manager is None:
+    def _serialize_numeric_filter_snapshot(
+        payload: tuple[set[float], bool] | None,
+    ) -> Mapping[str, Any] | None:
+        if payload is None:
             return None
-
-        require_real = getattr(ai_manager, "require_real_models", None)
-        if callable(require_real):
-            try:
-                require_real()
-            except RuntimeError as exc:
-                self._log(
-                    "AI manager reports degraded backend; holding signals",
-                    level=logging.WARNING,
-                    symbol=symbol,
-                    error=str(exc),
-                )
-                return None
-
-        predictor = getattr(ai_manager, "predict_series", None)
-        if predictor is None:
-            return None
-
-        feature_cols = self._ai_feature_columns(market_data)
-        try:
-            prediction_result = predictor(symbol, market_data, feature_cols=feature_cols)
-        except TypeError:
-            prediction_result = predictor(symbol, market_data)
-        except Exception as exc:
-            self._log(
-                f"AI predict_series invocation failed: {exc!r}",
-                level=logging.ERROR,
-                symbol=symbol,
-            )
-            return None
-
-        if asyncio.iscoroutine(prediction_result):
-            loop = asyncio.new_event_loop()
-            try:
-                asyncio.set_event_loop(loop)
-                predictions = loop.run_until_complete(prediction_result)
-            finally:
-                asyncio.set_event_loop(None)
-                loop.close()
-        else:
-            predictions = prediction_result
-
-        if not isinstance(predictions, pd.Series):
-            try:
-                predictions = pd.Series(
-                    predictions,
-                    index=market_data.index[-len(predictions) :],
-                )
-            except Exception:
-                predictions = pd.Series(predictions)
-
-        if predictions.empty:
-            return None
-
-        value = float(predictions.iloc[-1])
-        prediction_bps = value * 10_000.0
-        threshold = float(getattr(ai_manager, "ai_threshold_bps", 0.0))
-        if prediction_bps >= threshold:
-            direction = "buy"
-        elif prediction_bps <= -threshold:
-            direction = "sell"
-        else:
-            direction = "hold"
+        values, include_missing = payload
+        return {
+            "values": [float(item) for item in sorted(values)],
+            "include_missing": bool(include_missing),
+        }
 
         probability = self._ai_probability_from_prediction(value)
         evaluated_at_raw = predictions.index[-1]
@@ -3939,6 +2723,8 @@ class AutoTrader:
             return None
         if market_data.empty:
             return None
+
+        feature_cols = self._ai_feature_columns(market_data)
         try:
             row = market_data.iloc[-1]
         except Exception:
@@ -4205,6 +2991,37 @@ class AutoTrader:
         if last_return < -threshold:
             return "sell"
         return "hold"
+
+    def _apply_orchestrator_strategy_selection(
+        self, assessment: MarketRegimeAssessment
+    ) -> None:
+        orchestrator = self._resolve_decision_orchestrator()
+        if orchestrator is None:
+            return
+        selector = getattr(orchestrator, "select_strategy", None)
+        if not callable(selector):
+            return
+        try:
+            selected = selector(assessment.regime)
+        except Exception:  # pragma: no cover - defensive logging
+            self._log(
+                "DecisionOrchestrator.select_strategy failed",
+                level=logging.DEBUG,
+            )
+            return
+        if not selected:
+            return
+        selected_name = str(selected)
+        if selected_name != self.current_strategy:
+            self._log(
+                "Strategy overridden by DecisionOrchestrator",
+                level=logging.INFO,
+                previous=self.current_strategy,
+                selected=selected_name,
+                regime=assessment.regime.value,
+            )
+        self.current_strategy = selected_name
+        self._update_strategy_metrics(self.current_strategy)
 
     def _adjust_strategy_parameters(
         self,
@@ -4852,6 +3669,46 @@ class AutoTrader:
 
         return _finalise(signal)
 
+    def _handle_guardrail_trigger(
+        self,
+        symbol: str,
+        reasons: Sequence[str],
+        triggers: Sequence[GuardrailTrigger],
+    ) -> None:
+        if not reasons:
+            return
+        unique_guardrails: set[str] = set()
+        for trigger in triggers:
+            guardrail_name = str(getattr(trigger, "name", None) or getattr(trigger, "label", "unknown"))
+            unique_guardrails.add(guardrail_name)
+        if not unique_guardrails:
+            unique_guardrails.add("unknown")
+        for name in unique_guardrails:
+            self._metric_guardrail_blocks_total.inc(
+                labels=self._metric_label_payload(guardrail=name)
+            )
+        alert_context = {
+            "symbol": symbol,
+            "strategy": self.current_strategy,
+            "reasons": "; ".join(str(reason) for reason in reasons),
+        }
+        self._emit_alert(
+            "auto_trader.guardrail",
+            "Guardrail zablokował transakcję",
+            "\n".join(str(reason) for reason in reasons),
+            severity="warning",
+            context=alert_context,
+        )
+        if self.current_strategy != "capital_preservation":
+            previous = self.current_strategy
+            self.current_strategy = "capital_preservation"
+            self._log(
+                "Guardrail forced strategy fallback",
+                level=logging.INFO,
+                previous=previous,
+            )
+            self._update_strategy_metrics(self.current_strategy)
+
     def _update_cooldown(
         self,
         *,
@@ -5168,6 +4025,8 @@ class AutoTrader:
     def _auto_trade_loop(self) -> None:
         if not self._enforce_work_schedule():
             return
+        self._metric_cycle_total.inc(labels=self._base_metric_labels)
+        self._process_orchestrator_recalibrations()
         runner = self._resolve_controller_runner()
         if runner is not None:
             self._execute_controller_runner_cycle(runner)
@@ -5595,6 +4454,7 @@ class AutoTrader:
             effective_risk=effective_risk,
         )
         self._adjust_strategy_parameters(assessment, aggregated_risk=effective_risk, summary=summary)
+        self._apply_orchestrator_strategy_selection(assessment)
         signal = self._map_regime_to_signal(assessment, last_return, summary=summary)
         signal = self._apply_signal_guardrails(signal, effective_risk, summary)
         pre_ai_signal = signal
@@ -5669,7 +4529,8 @@ class AutoTrader:
             )
 
         guardrail_reasons = list(self._last_guardrail_reasons)
-        guardrail_triggers = [trigger.to_dict() for trigger in self._last_guardrail_triggers]
+        guardrail_objects = list(self._last_guardrail_triggers)
+        guardrail_triggers = [trigger.to_dict() for trigger in guardrail_objects]
         if guardrail_reasons and signal == "hold" and not ai_force_hold:
             self._log(
                 "Signal overridden by guardrails",
@@ -5677,6 +4538,7 @@ class AutoTrader:
                 reasons=guardrail_reasons,
                 triggers=guardrail_triggers,
             )
+            self._handle_guardrail_trigger(symbol, guardrail_reasons, guardrail_objects)
         if cooldown_active:
             signal = "hold"
         decision = self._build_risk_decision(
@@ -5817,49 +4679,6 @@ class AutoTrader:
                     risk_snapshot=self._capture_risk_snapshot(),
                 )
 
-    def _apply_risk_evaluation_filters(
-        self,
-        records: Iterable[dict[str, Any]],
-        *,
-        include_errors: bool,
-        approved_filter: set[bool | None] | None,
-        normalized_filter: set[bool | None] | None,
-        service_filter: set[str] | None,
-        since_ts: float | None,
-        until_ts: float | None,
-        state_filter: set[str] | None,
-        reason_filter: set[str] | None,
-        mode_filter: set[str] | None,
-        decision_id_filter: set[str] | None = None,
-    ) -> GuardrailTimelineRecords:
-        filtered: list[dict[str, Any]] = []
-        for entry in records:
-            if not include_errors and "error" in entry:
-                continue
-            if approved_filter is not None and entry.get("approved") not in approved_filter:
-                continue
-            if normalized_filter is not None and entry.get("normalized") not in normalized_filter:
-                continue
-            service_key = entry.get("service") or _UNKNOWN_SERVICE
-            if service_filter is not None and service_key not in service_filter:
-                continue
-            timestamp = entry.get("timestamp")
-            if since_ts is not None and (timestamp is None or timestamp < since_ts):
-                continue
-            if until_ts is not None and (timestamp is None or timestamp > until_ts):
-                continue
-
-            decision_id_value = entry.get("decision_id")
-            decision_id_token = (
-                str(decision_id_value)
-                if decision_id_value is not None
-                else _MISSING_DECISION_ID
-            )
-            if (
-                decision_id_filter is not None
-                and decision_id_token not in decision_id_filter
-            ):
-                continue
 
     def _apply_risk_evaluation_limit_locked(
         self, limit: int | None
@@ -5878,40 +4697,46 @@ class AutoTrader:
         return 0
 
     def _prune_risk_evaluations_locked(
-        self,
-        *,
-        reference_time: float | None = None,
+        self, *, reference_time: float | None = None
     ) -> int:
         history = self._risk_evaluations
         ttl = self._risk_evaluations_ttl_s
-        if ttl is None or ttl <= 0.0 or not history:
+        if ttl is None or ttl <= 0 or not history:
             return 0
-        try:
-            cutoff_reference = (
-                float(reference_time)
-                if reference_time is not None
-                else float(time.time())
-            )
-        except (TypeError, ValueError):  # pragma: no cover - defensive guard
-            cutoff_reference = float(time.time())
-        cutoff = cutoff_reference - ttl
-        if cutoff <= float("-inf"):
-            return 0
-        retained: list[dict[str, Any]] = []
+        cutoff = (reference_time if reference_time is not None else time.time()) - ttl
         trimmed = 0
+        retained: list[dict[str, Any]] = []
         for entry in history:
-            timestamp = entry.get("timestamp")
             try:
-                timestamp_value = float(timestamp) if timestamp is not None else None
+                timestamp_value = float(entry.get("timestamp", cutoff + ttl))
             except (TypeError, ValueError):
-                timestamp_value = None
-            if timestamp_value is None or timestamp_value >= cutoff:
+                timestamp_value = cutoff + ttl
+            if timestamp_value >= cutoff:
                 retained.append(entry)
             else:
                 trimmed += 1
         if trimmed:
             history[:] = retained
         return trimmed
+
+    def _log_risk_history_trimmed(
+        self,
+        *,
+        context: str,
+        trimmed: int,
+        ttl: float | None,
+        history: int,
+    ) -> None:
+        if trimmed <= 0:
+            return
+        self._log(
+            "Risk evaluation history trimmed",
+            level=logging.DEBUG,
+            context=context,
+            trimmed=trimmed,
+            ttl=ttl,
+            remaining=history,
+        )
 
     def _store_risk_evaluation_entry(
         self,
@@ -5981,25 +4806,6 @@ class AutoTrader:
                 listener(copy.deepcopy(dict(payload)))
             except Exception:  # pragma: no cover - listeners should not break trading
                 LOGGER.debug("Risk evaluation listener failed", exc_info=True)
-
-    def _log_risk_history_trimmed(
-        self,
-        *,
-        context: str,
-        trimmed: int,
-        ttl: float | None,
-        history: int,
-    ) -> None:
-        if trimmed <= 0:
-            return
-        self._log(
-            "Przycięto historię ocen ryzyka",
-            level=logging.DEBUG,
-            context=context,
-            trimmed_by_ttl=trimmed,
-            ttl=ttl,
-            history=history,
-        )
 
     def add_risk_evaluation_listener(
         self, listener: Callable[[Mapping[str, Any]], None]
@@ -6193,39 +4999,7 @@ class AutoTrader:
                 break
         return results
 
-    def clear_risk_evaluations(self) -> None:
-        with self._lock:
-            self._risk_evaluations.clear()
 
-    def get_decision_audit_entries(
-        self,
-        limit: int | None = 20,
-        *,
-        reverse: bool = False,
-        stage: str | Sequence[object] | None = None,
-        symbol: str | Sequence[object] | None = None,
-        mode: str | Sequence[object] | None = None,
-        decision_id: str | Sequence[object] | None = None,
-        since: Any = None,
-        until: Any = None,
-        has_risk_snapshot: bool | None = None,
-        has_portfolio_snapshot: bool | None = None,
-    ) -> Sequence[Mapping[str, object]]:
-        log = getattr(self, "_decision_audit_log", None)
-        if log is None:
-            return ()
-        return log.query_dicts(
-            limit=limit,
-            reverse=reverse,
-            stage=stage,
-            symbol=symbol,
-            mode=mode,
-            decision_id=decision_id,
-            since=since,
-            until=until,
-            has_risk_snapshot=has_risk_snapshot,
-            has_portfolio_snapshot=has_portfolio_snapshot,
-        )
 
     def get_grouped_decision_audit_entries(
         self,
@@ -6423,10 +5197,6 @@ class AutoTrader:
             timezone_hint=timezone_hint,
         )
 
-    def clear_decision_audit_log(self) -> None:
-        log = getattr(self, "_decision_audit_log", None)
-        if log is not None:
-            log.clear()
 
     def trim_decision_audit_log(
         self,
@@ -6513,253 +5283,13 @@ class AutoTrader:
             return 0
         return log.load(payload, merge=merge, notify_listeners=notify_listeners)
 
-    def _prune_controller_cycle_history_locked(
-        self,
-        *,
-        reference_time: float | None = None,
-    ) -> tuple[int, int]:
-        trimmed_by_limit = 0
-        trimmed_by_ttl = 0
-        history = self._controller_cycle_history
 
-        limit = self._controller_cycle_history_limit
-        if limit > 0 and len(history) > limit:
-            trimmed_by_limit = len(history) - limit
-            if trimmed_by_limit > 0:
-                del history[:trimmed_by_limit]
 
-        ttl = self._controller_cycle_history_ttl_s
-        if ttl is not None and ttl > 0.0 and history:
-            try:
-                cutoff_reference = (
-                    float(reference_time)
-                    if reference_time is not None
-                    else float(time.time())
-                )
-            except (TypeError, ValueError):  # pragma: no cover - defensive guard
-                cutoff_reference = float(time.time())
 
-            cutoff = cutoff_reference - ttl
-            if cutoff > float("-inf"):
-                retained: list[dict[str, Any]] = []
-                for entry in history:
-                    timestamp = entry.get("finished_at")
-                    if timestamp is None:
-                        timestamp = entry.get("started_at")
-                    if timestamp is None or timestamp >= cutoff:
-                        retained.append(entry)
-                    else:
-                        trimmed_by_ttl += 1
-                if trimmed_by_ttl:
-                    history[:] = retained
 
-        return trimmed_by_limit, trimmed_by_ttl
 
-    def get_last_controller_cycle(self) -> dict[str, Any] | None:
-        """Zwraca zrzut ostatniego cyklu runnera realtime.
 
-        Słownik zawiera surowe obiekty sygnałów i wyników zwrócone przez runnera
-        oraz znacznik czasu rozpoczęcia cyklu (w sekundach unix epoch), jeśli był
-        dostępny.  Zwracana jest kopia danych, dzięki czemu wywołujący nie może
-        zmodyfikować wewnętrznego stanu AutoTradera.
-        """
 
-        duration = None
-        orders = 0
-        with self._lock:
-            if (
-                self._controller_cycle_signals is None
-                and self._controller_cycle_results is None
-                and self._controller_cycle_started_at is None
-                and self._controller_cycle_finished_at is None
-            ):
-                return None
-
-            signals = tuple(self._controller_cycle_signals or ())
-            results = tuple(self._controller_cycle_results or ())
-            started_at = self._controller_cycle_started_at
-            finished_at = self._controller_cycle_finished_at
-            sequence = self._controller_cycle_sequence
-            duration = self._controller_cycle_last_duration
-            orders = self._controller_cycle_last_orders
-
-        if (
-            not signals
-            and not results
-            and started_at is None
-            and finished_at is None
-        ):
-            return None
-
-        return {
-            "signals": signals,
-            "results": results,
-            "started_at": started_at,
-            "finished_at": finished_at,
-            "sequence": sequence,
-            "duration_s": duration,
-            "orders": orders,
-        }
-
-    def get_controller_cycle_history(
-        self,
-        *,
-        limit: int | None = None,
-        reverse: bool = False,
-    ) -> list[dict[str, Any]]:
-        """Zwraca historię cykli bridge'a realtime.
-
-        Parametr ``limit`` ogranicza liczbę rekordów (domyślnie wykorzystuje
-        wewnętrzny limit AutoTradera), a ``reverse`` pozwala uzyskać dane w
-        kolejności malejącej po sekwencji.
-        """
-
-        if limit is not None:
-            try:
-                normalized_limit = int(limit)
-            except (TypeError, ValueError):  # pragma: no cover - defensive guard
-                normalized_limit = None
-            else:
-                if normalized_limit < 0:
-                    normalized_limit = 0
-                if normalized_limit == 0:
-                    return []
-        else:
-            normalized_limit = None
-
-        with self._lock:
-            history = list(self._controller_cycle_history)
-
-        if not history:
-            return []
-
-        iterator: Iterable[dict[str, Any]]
-        if reverse:
-            iterator = reversed(history)
-        else:
-            iterator = iter(history)
-
-        results: list[dict[str, Any]] = []
-        for entry in iterator:
-            copied = {
-                "sequence": entry.get("sequence"),
-                "signals": tuple(entry.get("signals", ())),
-                "results": tuple(entry.get("results", ())),
-                "started_at": entry.get("started_at"),
-                "finished_at": entry.get("finished_at"),
-                "duration_s": entry.get("duration_s"),
-                "orders": entry.get("orders"),
-            }
-            results.append(copied)
-            if normalized_limit is not None and len(results) >= normalized_limit:
-                break
-        return results
-
-    def set_controller_cycle_history_limit(self, limit: int | None) -> int:
-        """Aktualizuje limit przechowywania historii cykli kontrolera.
-
-        Zwracana wartość to znormalizowany limit – ``-1`` oznacza brak
-        ograniczenia (historia rośnie do rozmiaru pamięci).  Podanie
-        ``None`` lub wartości nie-dodatniej dezaktywuje przycinanie historii.
-        """
-
-        normalized = self._normalise_cycle_history_limit(limit)
-        trimmed_by_limit = 0
-        trimmed_by_ttl = 0
-        ttl_snapshot: float | None = None
-        history_size = 0
-        with self._lock:
-            self._controller_cycle_history_limit = normalized
-            trimmed_by_limit, trimmed_by_ttl = self._prune_controller_cycle_history_locked()
-            ttl_snapshot = self._controller_cycle_history_ttl_s
-            history_size = len(self._controller_cycle_history)
-        self._log(
-            "Zmieniono limit historii cykli kontrolera",
-            level=logging.DEBUG,
-            limit=None if normalized <= 0 else normalized,
-            ttl=ttl_snapshot,
-            trimmed_by_limit=trimmed_by_limit,
-            trimmed_by_ttl=trimmed_by_ttl,
-            history=history_size,
-        )
-        return normalized
-
-    def get_controller_cycle_history_ttl(self) -> float | None:
-        """Zwraca obowiązujący TTL (w sekundach) dla historii cykli kontrolera."""
-
-        with self._lock:
-            ttl = self._controller_cycle_history_ttl_s
-        return ttl
-
-    def set_controller_cycle_history_ttl(self, ttl: float | None) -> float | None:
-        """Aktualizuje czas życia rekordów historii cykli kontrolera."""
-
-        normalized = self._normalise_cycle_history_ttl(ttl)
-        trimmed_by_limit = 0
-        trimmed_by_ttl = 0
-        limit_snapshot = 0
-        history_size = 0
-        with self._lock:
-            self._controller_cycle_history_ttl_s = normalized
-            trimmed_by_limit, trimmed_by_ttl = self._prune_controller_cycle_history_locked()
-            limit_snapshot = self._controller_cycle_history_limit
-            history_size = len(self._controller_cycle_history)
-        self._log(
-            "Zmieniono TTL historii cykli kontrolera",
-            level=logging.DEBUG,
-            ttl=normalized,
-            limit=None if limit_snapshot <= 0 else limit_snapshot,
-            trimmed_by_limit=trimmed_by_limit,
-            trimmed_by_ttl=trimmed_by_ttl,
-            history=history_size,
-        )
-        return normalized
-
-    def clear_controller_cycle_history(self) -> None:
-        """Usuwa wszystkie zapisane cykle kontrolera."""
-
-        cleared = 0
-        with self._lock:
-            if self._controller_cycle_history:
-                cleared = len(self._controller_cycle_history)
-                self._controller_cycle_history.clear()
-        if cleared:
-            self._log(
-                "Wyczyszczono historię cykli kontrolera",
-                level=logging.DEBUG,
-                cleared=cleared,
-            )
-
-    def summarize_controller_cycle_history(
-        self,
-        *,
-        since: object = None,
-        until: object = None,
-        limit: int | None = None,
-    ) -> dict[str, Any]:
-        """Buduje zbiorczy raport z historii cykli kontrolera.
-
-        Parametry ``since`` i ``until`` pozwalają ograniczyć analizę do
-        zadanego przedziału czasowego (akceptują ``datetime``, ``Timestamp``
-        Pandas oraz float/int jako sekundę epoki).  Opcjonalny ``limit``
-        ogranicza liczbę najnowszych rekordów uwzględnionych w raporcie –
-        ``0`` zwraca pusty raport.
-        """
-
-        normalized_limit: int | None
-        if limit is None:
-            normalized_limit = None
-        else:
-            try:
-                normalized_limit = int(limit)
-            except (TypeError, ValueError):  # pragma: no cover - defensive guard
-                normalized_limit = None
-            else:
-                if normalized_limit <= 0:
-                    normalized_limit = 0
-
-        since_ts = self._normalize_time_bound(since)
-        until_ts = self._normalize_time_bound(until)
 
     def _collect_guardrail_events(
         self,
@@ -7046,110 +5576,7 @@ class AutoTrader:
         )
         return summary
 
-    def _filtered_controller_cycle_history(
-        self,
-        *,
-        since_ts: float | None,
-        until_ts: float | None,
-        reverse: bool,
-    ) -> list[tuple[dict[str, Any], float | None, float | None]]:
-        with self._lock:
-            history_snapshot = list(self._controller_cycle_history)
 
-        if not history_snapshot:
-            return []
-
-        filtered: list[tuple[dict[str, Any], float | None, float | None]] = []
-        for entry in history_snapshot:
-            started_raw = entry.get("started_at")
-            finished_raw = entry.get("finished_at")
-            started_ts = self._normalize_time_bound(started_raw)
-            finished_ts = self._normalize_time_bound(finished_raw)
-            pivot_ts = finished_ts if finished_ts is not None else started_ts
-            if since_ts is not None and (pivot_ts is None or pivot_ts < since_ts):
-                continue
-            if until_ts is not None and (pivot_ts is None or pivot_ts > until_ts):
-                continue
-            filtered.append((entry, started_ts, finished_ts))
-
-        if reverse:
-            filtered.reverse()
-
-        return filtered
-
-    def controller_cycle_history_to_records(
-        self,
-        *,
-        since: object = None,
-        until: object = None,
-        limit: int | None = None,
-        reverse: bool = False,
-        include_sequences: bool = True,
-        include_counts: bool = True,
-        coerce_timestamps: bool = False,
-        tz: tzinfo | None = timezone.utc,
-    ) -> list[dict[str, Any]]:
-        """Zwraca listę rekordów historii cykli kontrolera."""
-
-        normalized_limit = self._normalize_history_export_limit(limit)
-        if normalized_limit == 0:
-            return []
-
-        since_ts = self._normalize_time_bound(since)
-        until_ts = self._normalize_time_bound(until)
-
-        filtered = self._filtered_controller_cycle_history(
-            since_ts=since_ts,
-            until_ts=until_ts,
-            reverse=reverse,
-        )
-
-        if not filtered:
-            return []
-
-        def _convert_timestamp(value_ts: float | None, raw: object) -> object:
-            if not coerce_timestamps:
-                return raw
-            if value_ts is None:
-                return None
-            if tz is not None:
-                return datetime.fromtimestamp(value_ts, tz=tz)
-            return datetime.fromtimestamp(value_ts, tz=timezone.utc).replace(tzinfo=None)
-
-        records: list[dict[str, Any]] = []
-        for entry, started_ts, finished_ts in filtered:
-            signals = tuple(entry.get("signals", ()) or ())
-            results = tuple(entry.get("results", ()) or ())
-            orders_value = entry.get("orders")
-            if isinstance(orders_value, (int, float)):
-                orders_count = max(0, int(orders_value))
-            else:
-                orders_count = len(results)
-
-            started_raw = entry.get("started_at")
-            finished_raw = entry.get("finished_at")
-
-            record: dict[str, Any] = {
-                "sequence": entry.get("sequence"),
-                "duration_s": entry.get("duration_s"),
-                "orders": orders_count,
-                "started_at": _convert_timestamp(started_ts, started_raw),
-                "finished_at": _convert_timestamp(finished_ts, finished_raw),
-            }
-
-            if include_counts:
-                record["signals_count"] = len(signals)
-                record["results_count"] = len(results)
-
-            if include_sequences:
-                record["signals"] = signals
-                record["results"] = results
-
-            records.append(record)
-            if normalized_limit is not None and len(records) >= normalized_limit:
-                break
-
-        return records
 
     def clear_risk_evaluations(self) -> None:
         with self._lock:
@@ -7175,217 +5602,7 @@ class AutoTrader:
         if log is not None:
             log.clear()
 
-    def _prune_controller_cycle_history_locked(
-        self,
-        *,
-        reference_time: float | None = None,
-    ) -> tuple[int, int]:
-        trimmed_by_limit = 0
-        trimmed_by_ttl = 0
-        history = self._controller_cycle_history
 
-        limit = self._controller_cycle_history_limit
-        if limit > 0 and len(history) > limit:
-            trimmed_by_limit = len(history) - limit
-            if trimmed_by_limit > 0:
-                del history[:trimmed_by_limit]
-
-        ttl = self._controller_cycle_history_ttl_s
-        if ttl is not None and ttl > 0.0 and history:
-            try:
-                cutoff_reference = (
-                    float(reference_time)
-                    if reference_time is not None
-                    else float(time.time())
-                )
-            except (TypeError, ValueError):  # pragma: no cover - defensive guard
-                cutoff_reference = float(time.time())
-
-            cutoff = cutoff_reference - ttl
-            if cutoff > float("-inf"):
-                retained: list[dict[str, Any]] = []
-                for entry in history:
-                    timestamp = entry.get("finished_at")
-                    if timestamp is None:
-                        timestamp = entry.get("started_at")
-                    if timestamp is None or timestamp >= cutoff:
-                        retained.append(entry)
-                    else:
-                        trimmed_by_ttl += 1
-                if trimmed_by_ttl:
-                    history[:] = retained
-
-        return trimmed_by_limit, trimmed_by_ttl
-
-        def _convert_timestamp(value_ts: float | None, raw: object) -> object:
-            if not coerce_timestamps:
-                return raw
-            if value_ts is None:
-                return None
-            if tz is not None:
-                return datetime.fromtimestamp(value_ts, tz=tz)
-            return datetime.fromtimestamp(value_ts, tz=timezone.utc).replace(tzinfo=None)
-
-        records: list[dict[str, Any]] = []
-        for entry, started_ts, finished_ts in filtered:
-            signals = tuple(entry.get("signals", ()) or ())
-            results = tuple(entry.get("results", ()) or ())
-            orders_value = entry.get("orders")
-            if isinstance(orders_value, (int, float)):
-                orders_count = max(0, int(orders_value))
-            else:
-                orders_count = len(results)
-
-            started_raw = entry.get("started_at")
-            finished_raw = entry.get("finished_at")
-
-            record: dict[str, Any] = {
-                "sequence": entry.get("sequence"),
-                "duration_s": entry.get("duration_s"),
-                "orders": orders_count,
-                "started_at": _convert_timestamp(started_ts, started_raw),
-                "finished_at": _convert_timestamp(finished_ts, finished_raw),
-            }
-
-            if include_counts:
-                record["signals_count"] = len(signals)
-                record["results_count"] = len(results)
-
-            if include_sequences:
-                record["signals"] = signals
-                record["results"] = results
-
-            records.append(record)
-            if normalized_limit is not None and len(records) >= normalized_limit:
-                break
-
-        return records
-
-    def controller_cycle_history_to_dataframe(
-        self,
-        *,
-        since: object = None,
-        until: object = None,
-        limit: int | None = None,
-        reverse: bool = False,
-        include_sequences: bool = True,
-        include_counts: bool = True,
-        coerce_timestamps: bool = True,
-    ) -> pd.DataFrame:
-        """Buduje ``DataFrame`` z historią cykli kontrolera.
-
-        Parametry ``since`` i ``until`` filtrują rekordy według czasu zakończenia
-        (z zapasem czasu rozpoczęcia jeśli ``finished_at`` jest niedostępne).
-        ``limit`` oraz ``reverse`` odwzorowują zachowanie ``get_controller_cycle_history``.
-        ``include_sequences`` pozwala kontrolować obecność surowych sekwencji sygnałów
-        i wyników, natomiast ``include_counts`` dodaje kolumny z ich licznością.
-        Włączenie ``coerce_timestamps`` zamienia znaczniki czasu na ``Timestamp`` UTC,
-        co ułatwia dalszą analizę w Pandas.
-        """
-
-        normalized_limit = self._normalize_history_export_limit(limit)
-        if normalized_limit == 0:
-            columns = [
-                "sequence",
-                "started_at",
-                "finished_at",
-                "duration_s",
-                "orders",
-            ]
-            if include_counts:
-                columns.extend(["signals_count", "results_count"])
-            if include_sequences:
-                columns.extend(["signals", "results"])
-            return pd.DataFrame(columns=columns)
-
-        since_ts = self._normalize_time_bound(since)
-        until_ts = self._normalize_time_bound(until)
-
-        filtered = self._filtered_controller_cycle_history(
-            since_ts=since_ts,
-            until_ts=until_ts,
-            reverse=reverse,
-        )
-
-        if not filtered:
-            columns = [
-                "sequence",
-                "started_at",
-                "finished_at",
-                "duration_s",
-                "orders",
-            ]
-            if include_counts:
-                columns.extend(["signals_count", "results_count"])
-            if include_sequences:
-                columns.extend(["signals", "results"])
-            return pd.DataFrame(columns=columns)
-
-        rows: list[dict[str, Any]] = []
-        for entry, started_ts, finished_ts in filtered:
-            signals = tuple(entry.get("signals", ()) or ())
-            results = tuple(entry.get("results", ()) or ())
-            orders_value = entry.get("orders")
-            if isinstance(orders_value, (int, float)):
-                orders_count = max(0, int(orders_value))
-            else:
-                orders_count = len(results)
-
-            started_raw = entry.get("started_at")
-            finished_raw = entry.get("finished_at")
-
-            row: dict[str, Any] = {
-                "sequence": entry.get("sequence"),
-                "duration_s": entry.get("duration_s"),
-                "orders": orders_count,
-            }
-
-            if coerce_timestamps:
-                row["started_at"] = (
-                    pd.to_datetime(started_ts, unit="s", utc=True)
-                    if started_ts is not None
-                    else pd.NaT
-                )
-                row["finished_at"] = (
-                    pd.to_datetime(finished_ts, unit="s", utc=True)
-                    if finished_ts is not None
-                    else pd.NaT
-                )
-            else:
-                row["started_at"] = started_raw
-                row["finished_at"] = finished_raw
-
-            if include_counts:
-                row["signals_count"] = len(signals)
-                row["results_count"] = len(results)
-
-            if include_sequences:
-                row["signals"] = signals
-                row["results"] = results
-
-            rows.append(row)
-            if normalized_limit is not None and len(rows) >= normalized_limit:
-                break
-
-        df = pd.DataFrame.from_records(rows)
-
-        expected_columns = [
-            "sequence",
-            "started_at",
-            "finished_at",
-            "duration_s",
-            "orders",
-        ]
-        if include_counts:
-            expected_columns.extend(["signals_count", "results_count"])
-        if include_sequences:
-            expected_columns.extend(["signals", "results"])
-
-        for column in expected_columns:
-            if column not in df.columns:
-                df[column] = pd.NA
-
-        return df[expected_columns]
 
     def summarize_risk_evaluations(
         self,
@@ -8321,6 +6538,19 @@ class AutoTrader:
                     key=lambda item: (-item[1].get("evaluations", 0), item[0]),
                 )
             }
+            if include_services:
+                missing_summary["services"] = dict(missing_bucket.get("services", {}))
+            if include_decision_dimensions:
+                missing_summary["states"] = self._finalize_dimension_counter(
+                    missing_bucket.get("states")
+                )
+                missing_summary["reasons"] = self._finalize_dimension_counter(
+                    missing_bucket.get("reasons")
+                )
+                missing_summary["modes"] = self._finalize_dimension_counter(
+                    missing_bucket.get("modes")
+                )
+            summary["missing_timestamp"] = missing_summary
 
         if missing_bucket is not None and missing_bucket.get("total", 0):
             self._finalize_decision_bucket(missing_bucket)
@@ -8432,214 +6662,6 @@ class AutoTrader:
             until_ts=until_ts,
         )
 
-    def summarize_guardrail_timeline(
-        self,
-        *,
-        bucket_s: float,
-        approved: bool | None | Iterable[bool | None] | object = _NO_FILTER,
-        normalized: bool | None | Iterable[bool | None] | object = _NO_FILTER,
-        include_errors: bool = True,
-        service: str | None | Iterable[str | None] | object = _NO_FILTER,
-        decision_state: str | Iterable[str | None] | object = _NO_FILTER,
-        decision_reason: str | Iterable[str | None] | object = _NO_FILTER,
-        decision_mode: str | Iterable[str | None] | object = _NO_FILTER,
-        decision_id: str | Iterable[str | None] | object = _NO_FILTER,
-        since: Any = None,
-        until: Any = None,
-        include_services: bool = True,
-        include_guardrail_dimensions: bool = True,
-        include_decision_dimensions: bool = False,
-        fill_gaps: bool = False,
-        coerce_timestamps: bool = False,
-        tz: tzinfo | None = timezone.utc,
-    ) -> dict[str, Any]:
-        try:
-            bucket_value = float(bucket_s)
-        except (TypeError, ValueError) as exc:  # pragma: no cover - walidacja wejścia
-            raise ValueError("bucket_s must be a positive number") from exc
-        if not math.isfinite(bucket_value) or bucket_value <= 0.0:
-            raise ValueError("bucket_s must be a positive number")
-
-        approved_filter = self._prepare_bool_filter(approved)
-        normalized_filter = self._prepare_bool_filter(normalized)
-        service_filter = self._prepare_service_filter(service)
-        reason_filter = self._prepare_string_filter(reason)
-        trigger_filter = self._prepare_string_filter(trigger)
-        trigger_label_filter = self._prepare_guardrail_filter(
-            trigger_label,
-            missing_token=_MISSING_GUARDRAIL_LABEL,
-        )
-        trigger_comparator_filter = self._prepare_guardrail_filter(
-            trigger_comparator,
-            missing_token=_MISSING_GUARDRAIL_COMPARATOR,
-        )
-        trigger_unit_filter = self._prepare_guardrail_filter(
-            trigger_unit,
-            missing_token=_MISSING_GUARDRAIL_UNIT,
-        )
-        trigger_threshold_filter = self._prepare_guardrail_numeric_filter(
-            trigger_threshold
-        )
-        trigger_value_filter = self._prepare_guardrail_numeric_filter(trigger_value)
-        decision_state_filter = self._prepare_decision_filter(
-            decision_state,
-            missing_token=_MISSING_DECISION_STATE,
-        )
-        decision_reason_filter = self._prepare_decision_filter(
-            decision_reason,
-            missing_token=_MISSING_DECISION_REASON,
-        )
-        decision_mode_filter = self._prepare_decision_filter(
-            decision_mode,
-            missing_token=_MISSING_DECISION_MODE,
-        )
-        decision_id_filter = self._prepare_decision_filter(
-            decision_id,
-            missing_token=_MISSING_DECISION_ID,
-        )
-        since_ts = self._normalize_time_bound(since)
-        until_ts = self._normalize_time_bound(until)
-
-        (
-            filtered_records,
-            trimmed_by_ttl,
-            ttl_snapshot,
-            history_size,
-        ) = self._collect_filtered_risk_evaluations(
-            include_errors=include_errors,
-            approved_filter=approved_filter,
-            normalized_filter=normalized_filter,
-            service_filter=service_filter,
-            since_ts=since_ts,
-            until_ts=until_ts,
-            state_filter=decision_state_filter,
-            reason_filter=decision_reason_filter,
-            mode_filter=decision_mode_filter,
-            decision_id_filter=decision_id_filter,
-        )
-        self._log_risk_history_trimmed(
-            context="decision-dimensions",
-            trimmed=trimmed_by_ttl,
-            ttl=ttl_snapshot,
-            history=history_size,
-        )
-
-        trigger_threshold_min_value = (
-            self._coerce_float(trigger_threshold_min)
-            if trigger_threshold_min is not None
-            else None
-        )
-        trigger_threshold_max_value = (
-            self._coerce_float(trigger_threshold_max)
-            if trigger_threshold_max is not None
-            else None
-        )
-        trigger_value_min_value = (
-            self._coerce_float(trigger_value_min)
-            if trigger_value_min is not None
-            else None
-        )
-        trigger_value_max_value = (
-            self._coerce_float(trigger_value_max)
-            if trigger_value_max is not None
-            else None
-        )
-
-        since_ts = self._normalize_time_bound(since)
-        until_ts = self._normalize_time_bound(until)
-
-        trimmed_by_ttl = 0
-        ttl_snapshot: float | None = None
-        history_size = 0
-        with self._lock:
-            trimmed_by_ttl = self._prune_risk_evaluations_locked()
-            records = list(self._risk_evaluations)
-            ttl_snapshot = self._risk_evaluations_ttl_s
-            history_size = len(self._risk_evaluations)
-        self._log_risk_history_trimmed(
-            context="guardrail-timeline",
-            trimmed=trimmed_by_ttl,
-            ttl=ttl_snapshot,
-            history=history_size,
-        )
-
-        return self._build_guardrail_timeline(
-            context="guardrail-timeline",
-            bucket_value=bucket_value,
-            include_errors=include_errors,
-            include_services=include_services,
-            include_guardrail_dimensions=include_guardrail_dimensions,
-            include_decision_dimensions=include_decision_dimensions,
-            fill_gaps=fill_gaps,
-            coerce_timestamps=coerce_timestamps,
-            tz=tz,
-            approved_filter=approved_filter,
-            normalized_filter=normalized_filter,
-            service_filter=service_filter,
-            decision_state_filter=decision_state_filter,
-            decision_reason_filter=decision_reason_filter,
-            decision_mode_filter=decision_mode_filter,
-            decision_id_filter=decision_id_filter,
-            reason_filter=reason_filter,
-            trigger_filter=trigger_filter,
-            trigger_label_filter=trigger_label_filter,
-            trigger_comparator_filter=trigger_comparator_filter,
-            trigger_unit_filter=trigger_unit_filter,
-            trigger_threshold_filter=trigger_threshold_filter,
-            trigger_threshold_min=trigger_threshold_min_value,
-            trigger_threshold_max=trigger_threshold_max_value,
-            trigger_value_filter=trigger_value_filter,
-            trigger_value_min=trigger_value_min_value,
-            trigger_value_max=trigger_value_max_value,
-            since_ts=since_ts,
-            until_ts=until_ts,
-        )
-
-        try:
-            bucket_value = float(bucket_s)
-        except (TypeError, ValueError) as exc:  # pragma: no cover - walidacja wejścia
-            raise ValueError("bucket_s must be a positive number") from exc
-        if not math.isfinite(bucket_value) or bucket_value <= 0.0:
-            raise ValueError("bucket_s must be a positive number")
-
-        approved_filter = self._prepare_bool_filter(approved)
-        normalized_filter = self._prepare_bool_filter(normalized)
-        service_filter = self._prepare_service_filter(service)
-        decision_state_filter = self._prepare_decision_filter(
-            decision_state,
-            missing_token=_MISSING_DECISION_STATE,
-        )
-        decision_reason_filter = self._prepare_decision_filter(
-            decision_reason,
-            missing_token=_MISSING_DECISION_REASON,
-        )
-        decision_mode_filter = self._prepare_decision_filter(
-            decision_mode,
-            missing_token=_MISSING_DECISION_MODE,
-        )
-
-        since_ts = self._normalize_time_bound(since)
-        until_ts = self._normalize_time_bound(until)
-
-        return self._build_risk_decision_timeline(
-            context="decision-timeline",
-            bucket_value=bucket_value,
-            include_errors=include_errors,
-            include_services=include_services,
-            include_decision_dimensions=include_decision_dimensions,
-            fill_gaps=fill_gaps,
-            coerce_timestamps=coerce_timestamps,
-            tz=tz,
-            approved_filter=approved_filter,
-            normalized_filter=normalized_filter,
-            service_filter=service_filter,
-            decision_state_filter=decision_state_filter,
-            decision_reason_filter=decision_reason_filter,
-            decision_mode_filter=decision_mode_filter,
-            decision_id_filter=decision_id_filter,
-            since_ts=since_ts,
-            until_ts=until_ts,
-        )
 
     def risk_decision_timeline_to_records(
         self,
@@ -8959,186 +6981,6 @@ class AutoTrader:
             until_ts=until_ts,
         )
 
-    def summarize_guardrail_timeline(
-        self,
-        *,
-        approved: bool | None | Iterable[bool | None] | object = _NO_FILTER,
-        normalized: bool | None | Iterable[bool | None] | object = _NO_FILTER,
-        include_errors: bool = True,
-        service: str | None | Iterable[str | None] | object = _NO_FILTER,
-        decision_state: str | Iterable[str | None] | object = _NO_FILTER,
-        decision_reason: str | Iterable[str | None] | object = _NO_FILTER,
-        decision_mode: str | Iterable[str | None] | object = _NO_FILTER,
-        decision_id: str | Iterable[str | None] | object = _NO_FILTER,
-        reason: str | Iterable[str] | object = _NO_FILTER,
-        trigger: str | Iterable[str] | object = _NO_FILTER,
-        trigger_label: str | Iterable[str | None] | object = _NO_FILTER,
-        trigger_comparator: str | Iterable[str | None] | object = _NO_FILTER,
-        trigger_unit: str | Iterable[str | None] | object = _NO_FILTER,
-        trigger_threshold: float | None | Iterable[float | None] | object = _NO_FILTER,
-        trigger_threshold_min: Any = None,
-        trigger_threshold_max: Any = None,
-        trigger_value: float | None | Iterable[float | None] | object = _NO_FILTER,
-        trigger_value_min: Any = None,
-        trigger_value_max: Any = None,
-        since: Any = None,
-        until: Any = None,
-        limit: int | None = None,
-        reverse: bool = False,
-        include_decision: bool = False,
-        coerce_timestamps: bool = True,
-        tz: tzinfo | None = timezone.utc,
-    ) -> pd.DataFrame:
-        """Buduje DataFrame ze zdarzeń guardrail."""
-
-        normalized_limit = self._normalize_history_export_limit(limit)
-        base_columns = [
-            "timestamp",
-            "approved",
-            "normalized",
-            "service",
-            "response",
-            "error",
-            "decision_id",
-            "guardrail_reasons",
-            "guardrail_triggers",
-            "guardrail_reason_count",
-            "guardrail_trigger_count",
-        ]
-        if include_decision:
-            base_columns.append("decision")
-
-        if normalized_limit == 0:
-            return pd.DataFrame(columns=base_columns)
-
-        approved_filter = self._prepare_bool_filter(approved)
-        normalized_filter = self._prepare_bool_filter(normalized)
-        service_filter = self._prepare_service_filter(service)
-        reason_filter = self._prepare_string_filter(reason)
-        trigger_filter = self._prepare_string_filter(trigger)
-        trigger_label_filter = self._prepare_guardrail_filter(
-            trigger_label,
-            missing_token=_MISSING_GUARDRAIL_LABEL,
-        )
-        trigger_comparator_filter = self._prepare_guardrail_filter(
-            trigger_comparator,
-            missing_token=_MISSING_GUARDRAIL_COMPARATOR,
-        )
-        trigger_unit_filter = self._prepare_guardrail_filter(
-            trigger_unit,
-            missing_token=_MISSING_GUARDRAIL_UNIT,
-        )
-        trigger_threshold_filter = self._prepare_guardrail_numeric_filter(
-            trigger_threshold
-        )
-        trigger_value_filter = self._prepare_guardrail_numeric_filter(trigger_value)
-        decision_state_filter = self._prepare_decision_filter(
-            decision_state,
-            missing_token=_MISSING_DECISION_STATE,
-        )
-        decision_reason_filter = self._prepare_decision_filter(
-            decision_reason,
-            missing_token=_MISSING_DECISION_REASON,
-        )
-        decision_mode_filter = self._prepare_decision_filter(
-            decision_mode,
-            missing_token=_MISSING_DECISION_MODE,
-        )
-        decision_id_filter = self._prepare_decision_filter(
-            decision_id,
-            missing_token=_MISSING_DECISION_ID,
-        )
-        trigger_threshold_min_value = (
-            self._coerce_float(trigger_threshold_min)
-            if trigger_threshold_min is not None
-            else None
-        )
-        trigger_threshold_max_value = (
-            self._coerce_float(trigger_threshold_max)
-            if trigger_threshold_max is not None
-            else None
-        )
-        trigger_value_min_value = (
-            self._coerce_float(trigger_value_min)
-            if trigger_value_min is not None
-            else None
-        )
-        trigger_value_max_value = (
-            self._coerce_float(trigger_value_max)
-            if trigger_value_max is not None
-            else None
-        )
-        since_ts = self._normalize_time_bound(since)
-        until_ts = self._normalize_time_bound(until)
-
-        (
-            guardrail_records,
-            trimmed_by_ttl,
-            ttl_snapshot,
-            history_size,
-            _filtered_records,
-        ) = self._collect_guardrail_events(
-            include_errors=include_errors,
-            approved_filter=approved_filter,
-            normalized_filter=normalized_filter,
-            service_filter=service_filter,
-            decision_state_filter=decision_state_filter,
-            decision_reason_filter=decision_reason_filter,
-            decision_mode_filter=decision_mode_filter,
-            decision_id_filter=decision_id_filter,
-            since_ts=since_ts,
-            until_ts=until_ts,
-            reason_filter=reason_filter,
-            trigger_filter=trigger_filter,
-            trigger_label_filter=trigger_label_filter,
-            trigger_comparator_filter=trigger_comparator_filter,
-            trigger_unit_filter=trigger_unit_filter,
-            trigger_threshold_filter=trigger_threshold_filter,
-            trigger_threshold_min=trigger_threshold_min_value,
-            trigger_threshold_max=trigger_threshold_max_value,
-            trigger_value_filter=trigger_value_filter,
-            trigger_value_min=trigger_value_min_value,
-            trigger_value_max=trigger_value_max_value,
-        )
-        self._log_risk_history_trimmed(
-            context="guardrail-dataframe",
-            trimmed=trimmed_by_ttl,
-            ttl=ttl_snapshot,
-            history=history_size,
-        )
-
-        if not guardrail_records:
-            return pd.DataFrame(columns=base_columns)
-
-        if reverse:
-            guardrail_records = list(reversed(guardrail_records))
-
-        rows: list[dict[str, Any]] = []
-        for entry, reasons, triggers in guardrail_records:
-            row = self._build_guardrail_event_record(
-                entry,
-                reasons,
-                triggers,
-                include_decision=include_decision,
-                include_service=True,
-                include_response=True,
-                include_error=True,
-                include_guardrail_dimensions=True,
-                coerce_timestamps=False,
-                tz=tz,
-            )
-            rows.append(row)
-            if normalized_limit is not None and len(rows) >= normalized_limit:
-                break
-
-        df = pd.DataFrame.from_records(rows, columns=base_columns)
-        if coerce_timestamps and "timestamp" in df.columns:
-            df["timestamp"] = [
-                self._normalize_timestamp_for_export(value, coerce=True, tz=tz)
-                for value in df["timestamp"].tolist()
-            ]
-
-        return df
 
     def export_guardrail_events(
         self,
@@ -10845,268 +8687,8 @@ class AutoTrader:
         )
         return summary
 
-    def _filtered_controller_cycle_history(
-        self,
-        *,
-        since_ts: float | None,
-        until_ts: float | None,
-        reverse: bool,
-    ) -> list[tuple[dict[str, Any], float | None, float | None]]:
-        with self._lock:
-            history_snapshot = list(self._controller_cycle_history)
 
-        if not history_snapshot:
-            return []
 
-        filtered: list[tuple[dict[str, Any], float | None, float | None]] = []
-        for entry in history_snapshot:
-            started_raw = entry.get("started_at")
-            finished_raw = entry.get("finished_at")
-            started_ts = self._normalize_time_bound(started_raw)
-            finished_ts = self._normalize_time_bound(finished_raw)
-            pivot_ts = finished_ts if finished_ts is not None else started_ts
-            if since_ts is not None and (pivot_ts is None or pivot_ts < since_ts):
-                continue
-            if until_ts is not None and (pivot_ts is None or pivot_ts > until_ts):
-                continue
-            filtered.append((entry, started_ts, finished_ts))
-
-        if reverse:
-            filtered.reverse()
-
-        return filtered
-
-    def controller_cycle_history_to_records(
-        self,
-        *,
-        since: object = None,
-        until: object = None,
-        limit: int | None = None,
-        reverse: bool = False,
-        include_sequences: bool = True,
-        include_counts: bool = True,
-        coerce_timestamps: bool = False,
-        tz: tzinfo | None = timezone.utc,
-    ) -> list[dict[str, Any]]:
-        """Zwraca listę rekordów historii cykli kontrolera."""
-
-        normalized_limit = self._normalize_history_export_limit(limit)
-        if normalized_limit == 0:
-            return []
-
-        since_ts = self._normalize_time_bound(since)
-        until_ts = self._normalize_time_bound(until)
-
-        filtered = self._filtered_controller_cycle_history(
-            since_ts=since_ts,
-            until_ts=until_ts,
-            reverse=reverse,
-        )
-
-        if not filtered:
-            return []
-
-        def _convert_timestamp(value_ts: float | None, raw: object) -> object:
-            if not coerce_timestamps:
-                return raw
-            if value_ts is None:
-                return None
-            if tz is not None:
-                return datetime.fromtimestamp(value_ts, tz=tz)
-            return datetime.fromtimestamp(value_ts, tz=timezone.utc).replace(tzinfo=None)
-
-        records: list[dict[str, Any]] = []
-        for entry, started_ts, finished_ts in filtered:
-            signals = tuple(entry.get("signals", ()) or ())
-            results = tuple(entry.get("results", ()) or ())
-            orders_value = entry.get("orders")
-            if isinstance(orders_value, (int, float)):
-                orders_count = max(0, int(orders_value))
-            else:
-                orders_count = len(results)
-
-            started_raw = entry.get("started_at")
-            finished_raw = entry.get("finished_at")
-
-            record: dict[str, Any] = {
-                "sequence": entry.get("sequence"),
-                "duration_s": entry.get("duration_s"),
-                "orders": orders_count,
-                "started_at": _convert_timestamp(started_ts, started_raw),
-                "finished_at": _convert_timestamp(finished_ts, finished_raw),
-            }
-
-            if include_counts:
-                record["signals_count"] = len(signals)
-                record["results_count"] = len(results)
-
-            if include_sequences:
-                record["signals"] = signals
-                record["results"] = results
-
-            records.append(record)
-            if normalized_limit is not None and len(records) >= normalized_limit:
-                break
-
-        return records
-
-    def controller_cycle_history_to_dataframe(
-        self,
-        *,
-        since: object = None,
-        until: object = None,
-        limit: int | None = None,
-        reverse: bool = False,
-        include_sequences: bool = True,
-        include_counts: bool = True,
-        coerce_timestamps: bool = True,
-    ) -> pd.DataFrame:
-        """Buduje ``DataFrame`` z historią cykli kontrolera.
-
-        Parametry ``since`` i ``until`` filtrują rekordy według czasu zakończenia
-        (z zapasem czasu rozpoczęcia jeśli ``finished_at`` jest niedostępne).
-        ``limit`` oraz ``reverse`` odwzorowują zachowanie ``get_controller_cycle_history``.
-        ``include_sequences`` pozwala kontrolować obecność surowych sekwencji sygnałów
-        i wyników, natomiast ``include_counts`` dodaje kolumny z ich licznością.
-        Włączenie ``coerce_timestamps`` zamienia znaczniki czasu na ``Timestamp`` UTC,
-        co ułatwia dalszą analizę w Pandas.
-        """
-
-        normalized_limit = self._normalize_history_export_limit(limit)
-        if normalized_limit == 0:
-            columns = [
-                "sequence",
-                "started_at",
-                "finished_at",
-                "duration_s",
-                "orders",
-            ]
-            if include_counts:
-                columns.extend(["signals_count", "results_count"])
-            if include_sequences:
-                columns.extend(["signals", "results"])
-            return pd.DataFrame(columns=columns)
-
-        since_ts = self._normalize_time_bound(since)
-        until_ts = self._normalize_time_bound(until)
-
-        filtered = self._filtered_controller_cycle_history(
-            since_ts=since_ts,
-            until_ts=until_ts,
-            reverse=reverse,
-        )
-
-        if not filtered:
-            columns = [
-                "sequence",
-                "started_at",
-                "finished_at",
-                "duration_s",
-                "orders",
-            ]
-            if include_counts:
-                columns.extend(["signals_count", "results_count"])
-            if include_sequences:
-                columns.extend(["signals", "results"])
-            return pd.DataFrame(columns=columns)
-
-        rows: list[dict[str, Any]] = []
-        for entry, started_ts, finished_ts in filtered:
-            signals = tuple(entry.get("signals", ()) or ())
-            results = tuple(entry.get("results", ()) or ())
-            orders_value = entry.get("orders")
-            if isinstance(orders_value, (int, float)):
-                orders_count = max(0, int(orders_value))
-            else:
-                orders_count = len(entry.get("results", ()) or ())
-            orders_per_cycle.append(orders_count)
-
-            signals_sequence = entry.get("signals") or ()
-            results_sequence = entry.get("results") or ()
-
-            signals_count = len(signals_sequence)
-            results_count = len(results_sequence)
-            signals_per_cycle.append(signals_count)
-            results_per_cycle.append(results_count)
-
-            duration_value = entry.get("duration_s")
-            if duration_value is not None:
-                try:
-                    durations.append(max(0.0, float(duration_value)))
-                except (TypeError, ValueError):  # pragma: no cover - defensive guard
-                    pass
-
-            for raw_signal in signals_sequence:
-                side = None
-                payload = getattr(raw_signal, "signal", raw_signal)
-                if isinstance(payload, Mapping):
-                    side = payload.get("side")
-                if side is None:
-                    side = getattr(payload, "side", None)
-                if side is None and isinstance(raw_signal, Mapping):
-                    side = raw_signal.get("side")
-                if side is None:
-                    side = getattr(raw_signal, "side", None)
-                if side is None:
-                    continue
-                side_str = str(side).lower()
-                signal_sides[side_str] += 1
-
-            for raw_result in results_sequence:
-                status = getattr(raw_result, "status", None)
-                if status is None and isinstance(raw_result, Mapping):
-                    status = raw_result.get("status")
-                if status is None:
-                    continue
-                result_statuses[str(status).lower()] += 1
-
-        def _aggregate_numbers(values: list[int]) -> dict[str, Any]:
-            if not values:
-                return {"total": 0, "average": 0.0, "min": 0, "max": 0}
-            total_value = sum(values)
-            return {
-                "total": total_value,
-                "average": total_value / len(values),
-                "min": min(values),
-                "max": max(values),
-            }
-
-        duration_metrics: dict[str, Any]
-        if durations:
-            total_duration = sum(durations)
-            duration_metrics = {
-                "total": total_duration,
-                "average": total_duration / len(durations),
-                "min": min(durations),
-                "max": max(durations),
-            }
-        else:
-            duration_metrics = {
-                "total": 0.0,
-                "average": 0.0,
-                "min": None,
-                "max": None,
-            }
-
-        summary.update(
-            {
-                "orders": _aggregate_numbers(orders_per_cycle),
-                "signals": {
-                    **_aggregate_numbers(signals_per_cycle),
-                    "by_side": dict(signal_sides),
-                },
-                "results": {
-                    **_aggregate_numbers(results_per_cycle),
-                    "status_counts": dict(result_statuses),
-                },
-                "duration": duration_metrics,
-                "first_sequence": first_sequence,
-                "last_sequence": last_sequence,
-                "first_timestamp": first_timestamp,
-                "last_timestamp": last_timestamp,
-            }
-        )
-        return summary
 
     def _filtered_controller_cycle_history(
         self,
@@ -11350,6 +8932,7 @@ class AutoTrader:
         decision_state: str | Iterable[str | None] | object = _NO_FILTER,
         decision_reason: str | Iterable[str | None] | object = _NO_FILTER,
         decision_mode: str | Iterable[str | None] | object = _NO_FILTER,
+        decision_id: str | Iterable[str | None] | object = _NO_FILTER,
         reason: str | Iterable[str] | object = _NO_FILTER,
         trigger: str | Iterable[str] | object = _NO_FILTER,
         trigger_label: str | Iterable[str | None] | object = _NO_FILTER,
@@ -11410,6 +8993,10 @@ class AutoTrader:
             decision_mode,
             missing_token=_MISSING_DECISION_MODE,
         )
+        decision_id_filter = self._prepare_decision_filter(
+            decision_id,
+            missing_token=_MISSING_DECISION_ID,
+        )
 
         trigger_threshold_min_value = (
             self._coerce_float(trigger_threshold_min)
@@ -11465,6 +9052,7 @@ class AutoTrader:
             decision_state_filter=decision_state_filter,
             decision_reason_filter=decision_reason_filter,
             decision_mode_filter=decision_mode_filter,
+            decision_id_filter=decision_id_filter,
             reason_filter=reason_filter,
             trigger_filter=trigger_filter,
             trigger_label_filter=trigger_label_filter,
@@ -11803,6 +9391,205 @@ class AutoTrader:
             )
 
         return df
+
+    def build_lifecycle_snapshot(
+        self,
+        *,
+        bucket_s: float = 3600.0,
+        tz: tzinfo | None = timezone.utc,
+    ) -> dict[str, Any]:
+        tzinfo = tz or timezone.utc
+        now_dt = datetime.now(tzinfo)
+        try:
+            symbol = self.symbol_getter()
+        except Exception:  # pragma: no cover - defensywne logowanie
+            LOGGER.debug("Symbol getter failed during lifecycle snapshot", exc_info=True)
+            symbol = "<unknown>"
+
+        schedule_state = self.get_schedule_state()
+        schedule_payload = _serialize_schedule_state(schedule_state)
+
+        try:
+            guardrail_summary = self.summarize_guardrail_timeline(
+                bucket_s=bucket_s,
+                include_errors=True,
+                include_services=True,
+                include_guardrail_dimensions=True,
+                include_decision_dimensions=True,
+                coerce_timestamps=True,
+                tz=tzinfo,
+            )
+        except Exception:  # pragma: no cover - defensywne logowanie
+            LOGGER.debug("Guardrail timeline summary failed", exc_info=True)
+            guardrail_summary = self._fallback_guardrail_summary()
+
+        try:
+            decision_summary = self.summarize_risk_decision_timeline(
+                bucket_s=bucket_s,
+                include_errors=True,
+                include_services=True,
+                include_decision_dimensions=True,
+                coerce_timestamps=True,
+                tz=tzinfo,
+            )
+        except Exception:  # pragma: no cover - defensywne logowanie
+            LOGGER.debug("Decision timeline summary failed", exc_info=True)
+            decision_summary = self._fallback_decision_summary()
+
+        with self._lock:
+            last_guardrail_reasons = list(self._last_guardrail_reasons)
+            last_guardrail_triggers = [trigger.to_dict() for trigger in self._last_guardrail_triggers]
+            last_decision = (
+                self._last_risk_decision.to_dict()
+                if self._last_risk_decision is not None
+                else None
+            )
+            last_regime = (
+                self._last_regime.to_dict()
+                if self._last_regime is not None
+                else None
+            )
+            last_signal = self._last_signal
+            ai_context = (
+                copy.deepcopy(self._last_ai_context)
+                if self._last_ai_context is not None
+                else None
+            )
+            ai_degraded = bool(self._ai_degraded)
+            cooldown_until = self._cooldown_until
+            cooldown_reason = self._cooldown_reason
+            controller_history = [copy.deepcopy(entry) for entry in self._controller_cycle_history]
+            controller_summary = {
+                "sequence": self._controller_cycle_sequence,
+                "last_duration_s": self._controller_cycle_last_duration,
+                "last_orders": self._controller_cycle_last_orders,
+                "history": controller_history,
+            }
+            risk_history_size = len(self._risk_evaluations)
+            auto_trade_state = {
+                "active": bool(self._auto_trade_thread_active),
+                "user_confirmed": bool(self._auto_trade_user_confirmed),
+                "trusted_auto_confirm": bool(self._trusted_auto_confirm),
+                "started": bool(self._started),
+            }
+            schedule_last_alert = self._schedule_last_alert_state
+
+        now_ts = time.time()
+        if cooldown_until and cooldown_until > now_ts:
+            cooldown_remaining = cooldown_until - now_ts
+        else:
+            cooldown_remaining = 0.0
+        cooldown_dt = self._ensure_datetime(cooldown_until, tzinfo)
+        cooldown_until_iso = cooldown_dt.isoformat() if cooldown_dt is not None else None
+
+        metrics_labels = self._base_metric_labels
+        cycles_total = self._metric_cycle_total.value(labels=metrics_labels)
+        strategy_switch_total = self._metric_strategy_switch_total.value(labels=metrics_labels)
+        guardrail_blocks_total = 0.0
+        guardrail_values = getattr(self._metric_guardrail_blocks_total, "_values", {})
+        for label_tuple, value in getattr(guardrail_values, "items", lambda: [])():
+            labels = dict(label_tuple)
+            if all(labels.get(key) == val for key, val in metrics_labels.items()):
+                guardrail_blocks_total += float(value)
+        recalibration_total = self._metric_recalibration_total.value(labels=metrics_labels)
+        schedule_open_value = self._metric_schedule_open_gauge.value(labels=metrics_labels)
+        strategy_gauge_value = self._metric_strategy_state_gauge.value(labels=metrics_labels)
+        histogram_state = self._metric_schedule_closed_seconds.snapshot(labels=metrics_labels)
+        histogram_buckets: dict[str, int] = {}
+        for boundary, count in sorted(histogram_state.counts.items(), key=lambda item: item[0]):
+            if math.isinf(boundary):
+                key = "+inf"
+            else:
+                key = str(boundary)
+            histogram_buckets[key] = int(count)
+
+        metrics_snapshot = {
+            "cycles_total": cycles_total,
+            "strategy_switch_total": strategy_switch_total,
+            "guardrail_blocks_total": guardrail_blocks_total,
+            "recalibration_total": recalibration_total,
+            "schedule_open": schedule_open_value,
+            "strategy_active": strategy_gauge_value,
+            "schedule_block_histogram": {
+                "sum": histogram_state.sum,
+                "count": histogram_state.count,
+                "buckets": histogram_buckets,
+            },
+        }
+
+        recalibrations: list[dict[str, Any]] = []
+        orchestrator = getattr(self, "decision_orchestrator", None)
+        due_recalibrations = getattr(orchestrator, "due_recalibrations", None)
+        if callable(due_recalibrations):
+            try:
+                for item in due_recalibrations():
+                    strategy = getattr(item, "strategy", None) or getattr(item, "name", None)
+                    next_run = getattr(item, "next_run", None)
+                    payload: dict[str, Any] = {"strategy": strategy}
+                    if next_run is not None:
+                        payload["next_run"] = self._normalize_timestamp_for_export(
+                            next_run,
+                            coerce=False,
+                            tz=tzinfo,
+                        )
+                    recalibrations.append(payload)
+            except Exception:  # pragma: no cover - defensywne logowanie
+                self._log(
+                    "DecisionOrchestrator.due_recalibrations snapshot failed",
+                    level=logging.DEBUG,
+                )
+
+        snapshot = {
+            "timestamp": now_dt.isoformat(),
+            "symbol": symbol,
+            "environment": self._environment_name,
+            "portfolio": self._portfolio_id,
+            "risk_profile": self._risk_profile_name,
+            "schedule": schedule_payload,
+            "strategy": {
+                "current": self.current_strategy,
+                "leverage": self.current_leverage,
+                "stop_loss_pct": self.current_stop_loss_pct,
+                "take_profit_pct": self.current_take_profit_pct,
+                "last_signal": last_signal,
+                "last_regime": last_regime,
+            },
+            "guardrails": {
+                "summary": guardrail_summary,
+                "last_reasons": last_guardrail_reasons,
+                "last_triggers": last_guardrail_triggers,
+            },
+            "risk_decisions": {
+                "summary": decision_summary,
+                "last_decision": last_decision,
+                "history_size": risk_history_size,
+                "thresholds": self._decision_threshold_snapshot(),
+            },
+            "ai": {
+                "degraded": ai_degraded,
+                "context": ai_context,
+                "threshold_bps": getattr(
+                    getattr(self, "ai_manager", None),
+                    "ai_threshold_bps",
+                    None,
+                ),
+            },
+            "controller": {
+                **controller_summary,
+                "auto_trade": auto_trade_state,
+                "schedule_last_alert": schedule_last_alert,
+            },
+            "cooldown": {
+                "active": cooldown_remaining > 0.0,
+                "remaining_s": cooldown_remaining if cooldown_remaining > 0.0 else 0.0,
+                "reason": cooldown_reason,
+                "until": cooldown_until_iso,
+            },
+            "metrics": metrics_snapshot,
+            "recalibrations": recalibrations,
+        }
+
+        return snapshot
 
     def risk_evaluations_to_dataframe(
         self,
@@ -12244,217 +10031,7 @@ class AutoTrader:
 
         return tuple(timeline)
 
-    def export_risk_evaluations(
-        self,
-        *,
-        approved: bool | None | Iterable[bool | None] | object = _NO_FILTER,
-        normalized: bool | None | Iterable[bool | None] | object = _NO_FILTER,
-        include_errors: bool = True,
-        service: str | None | Iterable[str | None] | object = _NO_FILTER,
-        decision_state: str | Iterable[str | None] | object = _NO_FILTER,
-        decision_reason: str | Iterable[str | None] | object = _NO_FILTER,
-        decision_mode: str | Iterable[str | None] | object = _NO_FILTER,
-        decision_id: str | Iterable[str | None] | object = _NO_FILTER,
-        since: Any = None,
-        until: Any = None,
-        flatten_decision: bool = False,
-        decision_prefix: str = "decision_",
-        decision_fields: Iterable[Any] | Any | None = None,
-        drop_decision_column: bool = False,
-        fill_value: Any = pd.NA,
-        coerce_timestamps: bool = False,
-        tz: tzinfo | None = timezone.utc,
-    ) -> pd.DataFrame:
-        """Return risk evaluations as a pandas DataFrame with optional filters."""
 
-        (
-            approved_filter,
-            normalized_filter,
-            service_filter,
-            decision_state_filter,
-            decision_reason_filter,
-            decision_mode_filter,
-            decision_id_filter,
-            normalized_decision_fields,
-            since_ts,
-            until_ts,
-        ) = self._resolve_risk_evaluation_filters(
-            approved=approved,
-            normalized=normalized,
-            service=service,
-            decision_state=decision_state,
-            decision_reason=decision_reason,
-            decision_mode=decision_mode,
-            decision_id=decision_id,
-            since=since,
-            until=until,
-            decision_fields=decision_fields,
-        )
-
-        (
-            filtered_records,
-            trimmed_by_ttl,
-            ttl_snapshot,
-            history_size,
-        ) = self._collect_filtered_risk_evaluations(
-            include_errors=include_errors,
-            approved_filter=approved_filter,
-            normalized_filter=normalized_filter,
-            service_filter=service_filter,
-            since_ts=since_ts,
-            until_ts=until_ts,
-            state_filter=decision_state_filter,
-            reason_filter=decision_reason_filter,
-            mode_filter=decision_mode_filter,
-            decision_id_filter=decision_id_filter,
-        )
-
-        self._log_risk_history_trimmed(
-            context="export",
-            trimmed=trimmed_by_ttl,
-            ttl=ttl_snapshot,
-            history=history_size,
-        )
-
-        records = self._build_risk_evaluation_records(
-            filtered_records,
-            normalized_decision_fields=normalized_decision_fields,
-            flatten_decision=flatten_decision,
-            decision_prefix=decision_prefix,
-            drop_decision_column=drop_decision_column,
-            fill_value=fill_value,
-            coerce_timestamps=coerce_timestamps,
-            tz=tz,
-        )
-        json_ready = self._jsonify_risk_evaluation_records(records)
-
-        with self._lock:
-            limit_snapshot = self._risk_evaluations_limit
-
-        def _serialize_filter(values: Iterable[object] | None) -> list[str] | None:
-            if values is None:
-                return None
-            return sorted(str(item) for item in values)
-
-        filters_payload: dict[str, Any] = {
-            "approved": _serialize_filter(approved_filter),
-            "normalized": _serialize_filter(normalized_filter),
-            "include_errors": bool(include_errors),
-            "service": _serialize_filter(service_filter),
-            "decision_state": _serialize_filter(decision_state_filter),
-            "decision_reason": _serialize_filter(decision_reason_filter),
-            "decision_mode": _serialize_filter(decision_mode_filter),
-            "decision_id": _serialize_filter(decision_id_filter),
-            "since": since_ts.isoformat() if since_ts is not None else None,
-            "until": until_ts.isoformat() if until_ts is not None else None,
-            "flatten_decision": bool(flatten_decision),
-            "decision_prefix": str(decision_prefix),
-            "decision_fields": (
-                list(normalized_decision_fields)
-                if normalized_decision_fields is not None
-                else None
-            ),
-            "drop_decision_column": bool(drop_decision_column),
-            "fill_value_repr": repr(fill_value),
-            "coerce_timestamps": bool(coerce_timestamps),
-            "timezone": tz.tzname(None) if isinstance(tz, tzinfo) else tz,
-        }
-
-        payload: dict[str, Any] = {
-            "version": 1,
-            "entries": json_ready,
-            "filters": filters_payload,
-            "retention": {
-                "limit": limit_snapshot,
-                "ttl_s": ttl_snapshot,
-            },
-            "trimmed_by_ttl": trimmed_by_ttl,
-            "history_size": history_size,
-        }
-        return payload
-
-    def dump_risk_evaluations(
-        self,
-        destination: str | Path,
-        *,
-        approved: bool | None | Iterable[bool | None] | object = _NO_FILTER,
-        normalized: bool | None | Iterable[bool | None] | object = _NO_FILTER,
-        include_errors: bool = True,
-        service: str | None | Iterable[str | None] | object = _NO_FILTER,
-        decision_state: str | Iterable[str | None] | object = _NO_FILTER,
-        decision_reason: str | Iterable[str | None] | object = _NO_FILTER,
-        decision_mode: str | Iterable[str | None] | object = _NO_FILTER,
-        decision_id: str | Iterable[str | None] | object = _NO_FILTER,
-        since: Any = None,
-        until: Any = None,
-        flatten_decision: bool = False,
-        decision_prefix: str = "decision_",
-        decision_fields: Iterable[Any] | Any | None = None,
-        drop_decision_column: bool = False,
-        fill_value: Any = pd.NA,
-        coerce_timestamps: bool = False,
-        tz: tzinfo | None = timezone.utc,
-    ) -> list[dict[str, Any]]:
-        """Eksportuje historię ocen ryzyka jako listę słowników."""
-
-        (
-            approved_filter,
-            normalized_filter,
-            service_filter,
-            decision_state_filter,
-            decision_reason_filter,
-            decision_mode_filter,
-            decision_id_filter,
-            normalized_decision_fields,
-            since_ts,
-            until_ts,
-        ) = self._resolve_risk_evaluation_filters(
-            approved=approved,
-            normalized=normalized,
-            service=service,
-            decision_state=decision_state,
-            decision_reason=decision_reason,
-            decision_mode=decision_mode,
-            decision_id=decision_id,
-            since=since,
-            until=until,
-            decision_fields=decision_fields,
-        )
-
-        (
-            filtered_records,
-            trimmed_by_ttl,
-            ttl_snapshot,
-            history_size,
-        ) = self._collect_filtered_risk_evaluations(
-            include_errors=include_errors,
-            approved_filter=approved_filter,
-            normalized_filter=normalized_filter,
-            service_filter=service_filter,
-            since_ts=since_ts,
-            until_ts=until_ts,
-            state_filter=decision_state_filter,
-            reason_filter=decision_reason_filter,
-            mode_filter=decision_mode_filter,
-            decision_id_filter=decision_id_filter,
-        )
-        self._log_risk_history_trimmed(
-            context="records",
-            trimmed=trimmed_by_ttl,
-            ttl=ttl_snapshot,
-            history=history_size,
-        )
-
-        return self._build_risk_evaluation_records(
-            filtered_records,
-            normalized_decision_fields=normalized_decision_fields,
-            flatten_decision=flatten_decision,
-            decision_prefix=decision_prefix,
-            drop_decision_column=drop_decision_column,
-            fill_value=fill_value,
-            coerce_timestamps=coerce_timestamps,
-            tz=tz,
-        )
 
     def export_risk_evaluations(
         self,

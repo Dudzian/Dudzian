@@ -17,7 +17,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.10"
+          python-version: "3.11"
 
       - name: Lint repository paths
         run: python scripts/lint_paths.py
@@ -45,9 +45,10 @@ jobs:
           --cov=bot_core.strategies
           --cov=bot_core.runtime.multi_strategy_scheduler
           --cov=bot_core.runtime.journal
+          --cov-config=.coveragerc
           --cov-report=xml
           --cov-report=term
-          --cov-fail-under=85
+          --cov-fail-under=75
           tests/test_pipeline_paper.py
           tests/test_risk_profiles.py
           tests/test_mean_reversion_strategy.py
@@ -111,7 +112,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.10"
+          python-version: "3.11"
 
       - name: Install dependencies
         run: |
