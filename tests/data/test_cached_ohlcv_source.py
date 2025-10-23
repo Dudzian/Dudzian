@@ -82,15 +82,16 @@ def test_create_cached_source_uses_parquet_and_manifest(tmp_path: Path):
     response = source.fetch_ohlcv(request)
 
     assert len(response.rows) == 2
+    assert len(adapter.calls) == 2
+    assert adapter.calls[0][0] == "fetch_ohlcv" and adapter.calls[0][1][2] == 0
+    assert adapter.calls[1][0] == "fetch_ohlcv" and adapter.calls[1][1][2] >= 60_000
     # Snapshot powinien odpytać adapter o świeżą świecę w ograniczonym zakresie.
     adapter.calls.clear()
     cached = source.fetch_ohlcv(request)
     assert cached.rows == response.rows
-    assert len(adapter.calls) == 2
+    assert len(adapter.calls) == 1
     first_call = adapter.calls[0]
-    second_call = adapter.calls[1]
-    assert first_call[0] == "fetch_ohlcv" and first_call[1][2] == 0
-    assert second_call[0] == "fetch_ohlcv" and second_call[1][2] >= 60_000
+    assert first_call[0] == "fetch_ohlcv" and first_call[1][2] >= 60_000
 
     storage = ParquetCacheStorage(tmp_path / "cache", namespace=adapter.name)
     payload = storage.read("BTC/USDT::1m")
