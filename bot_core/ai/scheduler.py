@@ -41,6 +41,7 @@ class RetrainingScheduler:
     paused_reason: str | None = None
     persistence_path: str | Path | None = None
     _persistence_enabled: bool = field(init=False, repr=False, default=False)
+    _configured_interval_seconds: float = field(init=False, repr=False, default=0.0)
 
     def __post_init__(self) -> None:
         ensure_ai_signals_enabled("harmonogramu retreningu modeli AI")
@@ -49,6 +50,7 @@ class RetrainingScheduler:
         self.persistence_path = Path(path)
         self.persistence_path.parent.mkdir(parents=True, exist_ok=True)
         self._persistence_enabled = True
+        self._configured_interval_seconds = float(self.interval.total_seconds())
         if self.last_run is not None:
             self.last_run = self._ensure_utc(self.last_run)
             self.updated_at = self.last_run
@@ -99,6 +101,7 @@ class RetrainingScheduler:
 
         self._validate_interval(interval)
         self.interval = interval
+        self._configured_interval_seconds = float(interval.total_seconds())
         if self.last_run is not None:
             self.updated_at = self.last_run
         else:
@@ -364,6 +367,10 @@ class RetrainingScheduler:
             self.paused_reason = None
             self.updated_at = reference
             self._persist_state()
+
+    @property
+    def configured_interval(self) -> timedelta:
+        return timedelta(seconds=self._configured_interval_seconds)
 
 
 @dataclass(slots=True)

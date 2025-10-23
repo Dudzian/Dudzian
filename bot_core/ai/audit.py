@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
+from os import PathLike
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any, Mapping, MutableMapping, Sequence, TYPE_CHECKING
 
 if TYPE_CHECKING:  # pragma: no cover - tylko dla typowania
@@ -14,6 +16,7 @@ if TYPE_CHECKING:  # pragma: no cover - tylko dla typowania
 
 DEFAULT_AUDIT_ROOT = Path("audit/ai_decision")
 AUDIT_SUBDIRECTORIES: tuple[str, ...] = ("walk_forward", "data_quality", "drift")
+SCHEDULER_STATE_FILENAME = "scheduler.json"
 
 
 def ensure_audit_structure(audit_root: str | Path | None = None) -> Path:
@@ -23,6 +26,13 @@ def ensure_audit_structure(audit_root: str | Path | None = None) -> Path:
     for name in AUDIT_SUBDIRECTORIES:
         (root / name).mkdir(parents=True, exist_ok=True)
     return root
+
+
+def scheduler_state_path(audit_root: str | Path | None = None) -> Path:
+    """Zwraca ścieżkę do pliku stanu harmonogramu retreningu."""
+
+    root = ensure_audit_structure(audit_root)
+    return root / SCHEDULER_STATE_FILENAME
 
 
 def _json_safe(value: object) -> object:
@@ -37,6 +47,53 @@ def _json_safe(value: object) -> object:
     if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
         return [_json_safe(item) for item in value]
     return str(value)
+
+
+def _default_sign_off() -> dict[str, dict[str, object]]:
+    return {
+        "risk": {
+            "status": "pending",
+            "signed_by": None,
+            "timestamp": None,
+            "notes": "Awaiting Risk review",
+        },
+        "compliance": {
+            "status": "pending",
+            "signed_by": None,
+            "timestamp": None,
+            "notes": "Awaiting Compliance sign-off",
+        },
+    }
+
+
+def _normalize_sign_off(
+    sign_off: Mapping[str, Mapping[str, Any]] | None
+) -> Mapping[str, Mapping[str, Any]]:
+    normalized: dict[str, dict[str, Any]] = _default_sign_off()
+    if not isinstance(sign_off, Mapping):
+        return normalized
+    for role, payload in sign_off.items():
+        role_key = str(role).strip().lower()
+        if role_key not in _SIGN_OFF_ROLES:
+            continue
+        base = dict(normalized.get(role_key, {}))
+        if isinstance(payload, Mapping):
+            status_raw = payload.get("status")
+            if isinstance(status_raw, str):
+                status = status_raw.strip().lower()
+                if status in _SIGN_OFF_STATUSES:
+                    base["status"] = status
+            signed_by = payload.get("signed_by")
+            if signed_by is not None:
+                base["signed_by"] = str(signed_by)
+            notes = payload.get("notes")
+            if notes is not None:
+                base["notes"] = str(notes)
+            timestamp = payload.get("timestamp")
+            if isinstance(timestamp, str):
+                base["timestamp"] = timestamp
+        normalized[role_key] = base
+    return normalized
 
 
 def _serialize_windows(windows: Sequence[Mapping[str, Any]]) -> list[Mapping[str, Any]]:
@@ -83,6 +140,7 @@ def save_walk_forward_report(
     audit_root: str | Path | None = None,
     generated_at: datetime | None = None,
     trainer_backend: str | None = None,
+    sign_off: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> Path:
     """Zapisuje raport z walidacji walk-forward do katalogu audytowego."""
 
@@ -100,6 +158,7 @@ def save_walk_forward_report(
             "average_directional_accuracy": float(result.average_directional_accuracy),
             "windows": _serialize_windows(result.windows),
         },
+        "sign_off": _json_safe(_normalize_sign_off(sign_off)),
     }
 
     if validator is not None:
@@ -124,6 +183,204 @@ def save_walk_forward_report(
         generated_at=timestamp,
         audit_root=audit_root,
     )
+
+
+def _load_recent_reports(
+    *,
+    subdir: str,
+    limit: int = 20,
+    audit_root: str | Path | None = None,
+) -> tuple[Mapping[str, Any], ...]:
+    root = ensure_audit_structure(audit_root)
+    directory = root / subdir
+    files = _iter_json_reports(directory)
+    files.sort(key=lambda path: path.name, reverse=True)
+    if limit >= 0:
+        files = files[:limit]
+    records: list[Mapping[str, Any]] = []
+    for path in files:
+        try:
+            payload = load_audit_report(path)
+        except (OSError, json.JSONDecodeError, TypeError):
+            continue
+        if isinstance(payload, Mapping):
+            record: MutableMapping[str, Any] = dict(payload)
+        else:
+            record = {"raw_payload": payload}
+        record.setdefault("report_path", str(path))
+        records.append(record)
+    return tuple(records)
+
+
+def load_recent_walk_forward_reports(
+    *, limit: int = 20, audit_root: str | Path | None = None
+) -> tuple[Mapping[str, Any], ...]:
+    """Ładuje najnowsze raporty walk-forward z audytu."""
+
+    return _load_recent_reports(subdir="walk_forward", limit=limit, audit_root=audit_root)
+
+
+def _collect_pending_sign_off(
+    report: Mapping[str, Any],
+    *,
+    pending: MutableMapping[str, list[Mapping[str, Any]]],
+    category: str,
+) -> None:
+    sign_off = report.get("sign_off")
+    timestamp = report.get("generated_at") or report.get("timestamp")
+    report_path = report.get("report_path")
+    path_str = None
+    if isinstance(report_path, (str, PathLike)):
+        path_str = str(report_path)
+    if not isinstance(sign_off, Mapping):
+        for role in _SIGN_OFF_ROLES:
+            pending.setdefault(role, []).append(
+                {
+                    "category": category,
+                    "status": "pending",
+                    "report_path": path_str,
+                    "timestamp": timestamp,
+                }
+            )
+        return
+    for role in _SIGN_OFF_ROLES:
+        entry = sign_off.get(role)
+        status = "pending"
+        if isinstance(entry, Mapping):
+            status_raw = entry.get("status")
+            if isinstance(status_raw, str):
+                status = status_raw.strip().lower()
+        if status not in _COMPLETED_SIGN_OFF_STATUSES:
+            pending.setdefault(role, []).append(
+                {
+                    "category": category,
+                    "status": status,
+                    "report_path": path_str,
+                    "timestamp": timestamp,
+                }
+            )
+
+
+def summarize_walk_forward_reports(
+    reports: Sequence[Mapping[str, Any]] | None,
+) -> Mapping[str, Any]:
+    """Buduje podsumowanie raportów walk-forward i brakujących podpisów."""
+
+    normalized = [report for report in reports or () if isinstance(report, Mapping)]
+    mae_values: list[float] = []
+    accuracy_values: list[float] = []
+    worst_mae: float | None = None
+    best_mae: float | None = None
+    worst_accuracy: float | None = None
+    best_accuracy: float | None = None
+    total_windows = 0
+    pending: MutableMapping[str, list[Mapping[str, Any]]] = {
+        role: [] for role in _SIGN_OFF_ROLES
+    }
+
+    summary: MutableMapping[str, Any] = {
+        "total": len(normalized),
+        "latest_report_path": None,
+        "latest_generated_at": None,
+        "average_mae": {"mean": None, "min": None, "max": None},
+        "average_directional_accuracy": {"mean": None, "min": None, "max": None},
+        "window_extremes": {
+            "total_windows": 0,
+            "worst_mae": None,
+            "best_mae": None,
+            "worst_directional_accuracy": None,
+            "best_directional_accuracy": None,
+        },
+        "pending_sign_off": {role: () for role in _SIGN_OFF_ROLES},
+    }
+
+    for index, report in enumerate(normalized):
+        if index == 0:
+            report_path = report.get("report_path")
+            if isinstance(report_path, (str, PathLike)):
+                summary["latest_report_path"] = str(report_path)
+            generated = report.get("generated_at")
+            if isinstance(generated, str):
+                summary["latest_generated_at"] = generated
+        wf = report.get("walk_forward")
+        if isinstance(wf, Mapping):
+            average_mae = wf.get("average_mae")
+            average_dir = wf.get("average_directional_accuracy")
+            try:
+                mae_value = float(average_mae)
+            except (TypeError, ValueError):
+                mae_value = None
+            if mae_value is not None:
+                mae_values.append(mae_value)
+                worst_mae = mae_value if worst_mae is None else max(worst_mae, mae_value)
+                best_mae = mae_value if best_mae is None else min(best_mae, mae_value)
+            try:
+                acc_value = float(average_dir)
+            except (TypeError, ValueError):
+                acc_value = None
+            if acc_value is not None:
+                accuracy_values.append(acc_value)
+                worst_accuracy = (
+                    acc_value if worst_accuracy is None else min(worst_accuracy, acc_value)
+                )
+                best_accuracy = (
+                    acc_value if best_accuracy is None else max(best_accuracy, acc_value)
+                )
+            windows = wf.get("windows")
+            if isinstance(windows, Sequence):
+                for window in windows:
+                    if not isinstance(window, Mapping):
+                        continue
+                    total_windows += 1
+                    try:
+                        mae = float(window.get("mae"))
+                        worst_mae = mae if worst_mae is None else max(worst_mae, mae)
+                        best_mae = mae if best_mae is None else min(best_mae, mae)
+                    except (TypeError, ValueError):
+                        pass
+                    try:
+                        acc = float(window.get("directional_accuracy"))
+                        worst_accuracy = (
+                            acc if worst_accuracy is None else min(worst_accuracy, acc)
+                        )
+                        best_accuracy = (
+                            acc if best_accuracy is None else max(best_accuracy, acc)
+                        )
+                    except (TypeError, ValueError):
+                        pass
+        _collect_pending_sign_off(
+            report,
+            pending=pending,
+            category=str(report.get("job_name") or "walk_forward"),
+        )
+
+    if mae_values:
+        summary["average_mae"] = {
+            "mean": float(sum(mae_values) / len(mae_values)),
+            "min": float(min(mae_values)),
+            "max": float(max(mae_values)),
+        }
+    if accuracy_values:
+        summary["average_directional_accuracy"] = {
+            "mean": float(sum(accuracy_values) / len(accuracy_values)),
+            "min": float(min(accuracy_values)),
+            "max": float(max(accuracy_values)),
+        }
+    summary["window_extremes"] = {
+        "total_windows": total_windows,
+        "worst_mae": float(worst_mae) if worst_mae is not None else None,
+        "best_mae": float(best_mae) if best_mae is not None else None,
+        "worst_directional_accuracy": (
+            float(worst_accuracy) if worst_accuracy is not None else None
+        ),
+        "best_directional_accuracy": (
+            float(best_accuracy) if best_accuracy is not None else None
+        ),
+    }
+    summary["pending_sign_off"] = {
+        role: tuple(entries) for role, entries in pending.items()
+    }
+    return MappingProxyType(summary)
 
 
 def save_data_quality_report(
@@ -214,6 +471,33 @@ def save_drift_report(
         audit_root=audit_root,
     )
 
+
+def save_scheduler_state(
+    state: Mapping[str, Any], *, audit_root: str | Path | None = None
+) -> Path:
+    """Zapisuje stan harmonogramu retreningu do ``scheduler.json``."""
+
+    target_path = scheduler_state_path(audit_root)
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    with target_path.open("w", encoding="utf-8") as handle:
+        json.dump({str(k): _json_safe(v) for k, v in state.items()}, handle, ensure_ascii=False, indent=2, sort_keys=True)
+        handle.write("\n")
+    return target_path
+
+
+def load_scheduler_state(
+    *, audit_root: str | Path | None = None
+) -> Mapping[str, Any] | None:
+    """Ładuje zapisany stan harmonogramu retreningu."""
+
+    target_path = scheduler_state_path(audit_root)
+    if not target_path.exists():
+        return None
+    payload = json.loads(target_path.read_text(encoding="utf-8"))
+    if isinstance(payload, Mapping):
+        return payload
+    raise TypeError("Stan harmonogramu w scheduler.json musi być mapowaniem JSON")
+
 def _iter_json_reports(directory: Path) -> list[Path]:
     files: list[Path] = []
     if not directory.exists():
@@ -289,9 +573,14 @@ __all__ = [
     "AUDIT_SUBDIRECTORIES",
     "DEFAULT_AUDIT_ROOT",
     "ensure_audit_structure",
+    "load_scheduler_state",
+    "save_scheduler_state",
     "save_walk_forward_report",
+    "load_recent_walk_forward_reports",
+    "summarize_walk_forward_reports",
     "save_data_quality_report",
     "save_drift_report",
+    "scheduler_state_path",
     "list_audit_reports",
     "load_audit_report",
     "load_latest_walk_forward_report",

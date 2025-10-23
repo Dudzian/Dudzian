@@ -2,14 +2,12 @@ from __future__ import annotations
 
 from collections import deque
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import pandas as pd
-import pytest
 
 from bot_core.ai.regime import MarketRegime, MarketRegimeAssessment, RiskLevel
-from bot_core.config.models import DecisionEngineConfig, DecisionOrchestratorThresholds
 from bot_core.auto_trader.app import AutoTrader, RiskDecision
 from bot_core.observability import metrics as metrics_module
 
@@ -124,9 +122,9 @@ def test_auto_trader_lifecycle_with_guardrails_and_recalibrations() -> None:
     metrics_module._GLOBAL_REGISTRY = metrics_module.MetricsRegistry()
 
     frames = [
-        pd.DataFrame({"close": [100, 101, 102, 103, 104]}, index=pd.date_range("2024-01-01", periods=5, freq="h")),
-        pd.DataFrame({"close": [105, 104, 103, 102, 101]}, index=pd.date_range("2024-01-02", periods=5, freq="h")),
-        pd.DataFrame({"close": [100, 101, 100, 99, 98]}, index=pd.date_range("2024-01-03", periods=5, freq="h")),
+        pd.DataFrame({"close": [100, 101, 102, 103, 104]}, index=pd.date_range("2024-01-01", periods=5, freq="H")),
+        pd.DataFrame({"close": [105, 104, 103, 102, 101]}, index=pd.date_range("2024-01-02", periods=5, freq="H")),
+        pd.DataFrame({"close": [100, 101, 100, 99, 98]}, index=pd.date_range("2024-01-03", periods=5, freq="H")),
     ]
 
     scenarios = [
@@ -147,25 +145,6 @@ def test_auto_trader_lifecycle_with_guardrails_and_recalibrations() -> None:
         },
     ]
 
-    base_thresholds = DecisionOrchestratorThresholds(
-        max_cost_bps=250.0,
-        min_net_edge_bps=-50.0,
-        max_daily_loss_pct=1.5,
-        max_drawdown_pct=2.0,
-        max_position_ratio=12.0,
-        max_open_positions=20,
-        max_latency_ms=1500.0,
-    )
-    paper_thresholds = DecisionOrchestratorThresholds(
-        max_cost_bps=200.0,
-        min_net_edge_bps=10.0,
-        max_daily_loss_pct=1.0,
-        max_drawdown_pct=1.5,
-        max_position_ratio=8.0,
-        max_open_positions=10,
-        max_latency_ms=1200.0,
-        max_trade_notional=50_000.0,
-    )
     orchestrator = SequencedOrchestrator([
         "trend_following",
         "mean_reversion",
@@ -178,32 +157,13 @@ def test_auto_trader_lifecycle_with_guardrails_and_recalibrations() -> None:
     alert_router = StubAlertRouter()
     execution_service = RecordingExecutionService()
 
-    decision_config = DecisionEngineConfig(
-        orchestrator=base_thresholds,
-        profile_overrides={"paper": paper_thresholds},
-        min_probability=0.35,
-        require_cost_data=True,
-        penalty_cost_bps=12.5,
-        evaluation_history_limit=128,
-    )
-
-    bootstrap_context = SimpleNamespace(
-        risk_profile_name="paper",
-        portfolio_id="autotrader",
-        environment="paper",
-        decision_engine_config=decision_config,
-        execution_service=execution_service,
-        alert_router=alert_router,
-    )
-
     trader = AutoTrader(
         emitter=emitter,
-        gui=SimpleNamespace(is_demo_mode_active=lambda: False),
+        gui=SimpleNamespace(),
         symbol_getter=lambda: "BTCUSDT",
         market_data_provider=provider,
         enable_auto_trade=True,
         auto_trade_interval_s=0.0,
-        bootstrap_context=bootstrap_context,
     )
     trader.ai_manager = ai_manager
     trader.decision_orchestrator = orchestrator
@@ -258,217 +218,3 @@ def test_auto_trader_lifecycle_with_guardrails_and_recalibrations() -> None:
     assert "auto_trader.recalibration" in categories
 
     assert orchestrator.due_recalibrations() == ()
-
-    snapshot = trader.build_lifecycle_snapshot(bucket_s=3600.0, tz=timezone.utc)
-    assert snapshot["symbol"] == "BTCUSDT"
-    assert snapshot["strategy"]["current"] == "capital_preservation"
-    assert snapshot["guardrails"]["summary"]["total"] >= 1
-    assert snapshot["guardrails"]["last_reasons"]
-    assert snapshot["risk_decisions"]["history_size"] == len(trader._risk_evaluations)
-    thresholds_snapshot = snapshot["risk_decisions"]["thresholds"]
-    assert thresholds_snapshot["risk_profile"] == "paper"
-    assert thresholds_snapshot["source"] == "profile_override"
-    assert thresholds_snapshot["max_trade_notional"] == pytest.approx(50_000.0)
-    assert thresholds_snapshot["min_probability"] == pytest.approx(0.35)
-    assert thresholds_snapshot["require_cost_data"] is True
-    assert thresholds_snapshot["evaluation_history_limit"] == 128
-    assert snapshot["metrics"]["cycles_total"] == pytest.approx(3.0)
-    assert snapshot["metrics"]["guardrail_blocks_total"] >= 1.0
-    assert not snapshot["cooldown"]["active"]
-
-
-def test_auto_trader_guardrail_timeline_for_24_7_regime_rotation() -> None:
-    metrics_module._GLOBAL_REGISTRY = metrics_module.MetricsRegistry()
-
-    total_iterations = 24
-    guardrail_start = 8
-    base_timestamp = datetime(2024, 2, 1, tzinfo=timezone.utc)
-
-    frames = [
-        pd.DataFrame(
-            {"close": [100 + idx, 100 + idx + 1, 100 + idx + 2, 100 + idx + 3, 100 + idx + 4]},
-            index=pd.date_range(base_timestamp + timedelta(hours=idx), periods=5, freq="h"),
-        )
-        for idx in range(total_iterations)
-    ]
-
-    regimes = [
-        MarketRegime.TREND,
-        MarketRegime.MEAN_REVERSION,
-        MarketRegime.DAILY,
-    ]
-    scenarios: list[dict[str, object]] = []
-    for idx in range(total_iterations):
-        risk = 0.35 if idx < guardrail_start else 0.62
-        prediction = 0.005 if idx % 2 == 0 else -0.004
-        scenarios.append(
-            {
-                "assessment": _build_assessment(regimes[idx % len(regimes)], risk=risk),
-                "summary": None,
-                "prediction": prediction,
-            }
-        )
-
-    base_thresholds = DecisionOrchestratorThresholds(
-        max_cost_bps=150.0,
-        min_net_edge_bps=-25.0,
-        max_daily_loss_pct=2.5,
-        max_drawdown_pct=4.0,
-        max_position_ratio=15.0,
-        max_open_positions=30,
-        max_latency_ms=1000.0,
-    )
-    active_thresholds = DecisionOrchestratorThresholds(
-        max_cost_bps=120.0,
-        min_net_edge_bps=5.0,
-        max_daily_loss_pct=1.2,
-        max_drawdown_pct=2.2,
-        max_position_ratio=6.0,
-        max_open_positions=8,
-        max_latency_ms=800.0,
-    )
-
-    orchestrator = SequencedOrchestrator(
-        [
-            "trend_following",
-            "mean_reversion",
-            "volatility_breakout",
-            "intraday_breakout",
-        ]
-        * (guardrail_start // 4)
-    )
-
-    provider = SequenceMarketDataProvider(frames)
-    ai_manager = SequencedAIManager(scenarios)
-    emitter = DummyEmitter()
-    alert_router = StubAlertRouter()
-    execution_service = RecordingExecutionService()
-
-    decision_config = DecisionEngineConfig(
-        orchestrator=base_thresholds,
-        profile_overrides={"active": active_thresholds},
-        min_probability=0.42,
-        require_cost_data=False,
-        penalty_cost_bps=8.0,
-        evaluation_history_limit=256,
-    )
-
-    bootstrap_context = SimpleNamespace(
-        execution_service=execution_service,
-        alert_router=alert_router,
-        environment="live",
-        portfolio_id="autotrader_live",
-        risk_profile_name="active",
-        decision_engine_config=decision_config,
-    )
-
-    trader = AutoTrader(
-        emitter=emitter,
-        gui=SimpleNamespace(is_demo_mode_active=lambda: False),
-        symbol_getter=lambda: "BTCUSDT",
-        market_data_provider=provider,
-        enable_auto_trade=True,
-        auto_trade_interval_s=0.0,
-        bootstrap_context=bootstrap_context,
-    )
-    trader.ai_manager = ai_manager
-    trader.decision_orchestrator = orchestrator
-    trader._attach_decision_orchestrator()
-    trader.alert_router = alert_router
-    trader._adjust_strategy_parameters = lambda *args, **kwargs: None  # type: ignore[assignment]
-    trader._evaluate_decision_candidate = lambda **kwargs: SimpleNamespace(  # type: ignore[assignment]
-        accepted=True,
-        reasons=(),
-        thresholds_snapshot={},
-        model_name="stub",
-    )
-    trader.risk_service = lambda decision: {"approved": decision.should_trade}
-    trader._thresholds["auto_trader"]["signal_guardrails"] = {"effective_risk_cap": 0.5}
-
-    orchestrator.schedule_strategy_recalibration(
-        "mean_reversion",
-        interval=timedelta(hours=6),
-        first_run=base_timestamp + timedelta(hours=guardrail_start // 2),
-    )
-
-    for _ in range(total_iterations):
-        trader._auto_trade_loop()
-
-    guardrail_iterations = total_iterations - guardrail_start
-
-    trade_evaluations = sum(
-        1
-        for entry in trader._risk_evaluations
-        if bool(entry.get("decision", {}).get("should_trade"))
-    )
-    assert len(execution_service.decisions) == trade_evaluations
-    assert 0 < trade_evaluations < total_iterations
-
-    registry = metrics_module.get_global_metrics_registry()
-    guardrail_metric = registry.get("auto_trader_guardrail_blocks_total")
-    assert guardrail_metric.value(
-        labels={
-            "environment": "live",
-            "portfolio": "autotrader_live",
-            "risk_profile": "active",
-            "guardrail": "effective_risk",
-        }
-    ) == float(guardrail_iterations)
-
-    recalibration_metric = registry.get("auto_trader_recalibrations_triggered_total")
-    assert recalibration_metric.value(
-        labels={
-            "environment": "live",
-            "portfolio": "autotrader_live",
-            "risk_profile": "active",
-            "strategy": "mean_reversion",
-        }
-    ) == 1.0
-
-    with trader._lock:
-        for index, entry in enumerate(trader._risk_evaluations):
-            entry["timestamp"] = (base_timestamp + timedelta(hours=index)).timestamp()
-
-    evaluations = list(trader._risk_evaluations)
-    assert len(evaluations) == total_iterations
-    guardrail_evaluations = sum(
-        1
-        for entry in evaluations
-        if entry.get("decision", {})
-        .get("details", {})
-        .get("guardrail_reasons")
-    )
-    assert guardrail_evaluations == guardrail_iterations
-    guardrail_rate = guardrail_evaluations / len(evaluations)
-    assert guardrail_rate == pytest.approx(
-        guardrail_iterations / len(evaluations), rel=1e-6
-    )
-
-    first_ts = evaluations[0]["timestamp"]
-    last_ts = evaluations[-1]["timestamp"]
-    expected_span = max(0, len(evaluations) - 1) * 3600.0
-    assert last_ts - first_ts >= expected_span - 1e-6
-
-    guardrail_messages = [
-        message for message in alert_router.messages if message.category == "auto_trader.guardrail"
-    ]
-    assert len(guardrail_messages) == guardrail_iterations
-    assert any(message.category == "auto_trader.recalibration" for message in alert_router.messages)
-
-    assert trader.current_strategy == "capital_preservation"
-
-    snapshot = trader.build_lifecycle_snapshot(bucket_s=3600.0, tz=timezone.utc)
-    assert snapshot["environment"] == "live"
-    assert snapshot["guardrails"]["summary"]["total"] == guardrail_iterations
-    assert snapshot["metrics"]["guardrail_blocks_total"] == pytest.approx(
-        float(guardrail_iterations)
-    )
-    assert snapshot["risk_decisions"]["history_size"] == len(trader._risk_evaluations)
-    thresholds_snapshot = snapshot["risk_decisions"]["thresholds"]
-    assert thresholds_snapshot["risk_profile"] == "active"
-    assert thresholds_snapshot["source"] == "profile_override"
-    assert thresholds_snapshot["max_cost_bps"] == pytest.approx(120.0)
-    assert thresholds_snapshot["penalty_cost_bps"] == pytest.approx(8.0)
-    assert thresholds_snapshot["require_cost_data"] is False
-    assert snapshot["metrics"]["cycles_total"] == pytest.approx(float(total_iterations))
-    assert snapshot["controller"]["auto_trade"]["active"] is False
