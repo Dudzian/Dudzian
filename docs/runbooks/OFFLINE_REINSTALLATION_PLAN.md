@@ -13,7 +13,7 @@ Zapewnienie bezpiecznej reinstalacji pakietu OEM (daemon + UI) na stacjach air-g
 | 5. Przeprowadź reinstalację wg `deploy/packaging/README.md` | Operator OEM | Log z instalatora, `install_report.json` | Instalacja zakończona, log bez błędów | 
 | 6. Uruchom bootstrap `bootstrap/verify_fingerprint.py --license <licencja.jsonl>` | QA | Log z weryfikacji | Bootstrap PASS, licencja aktywna |
 | 7. Zweryfikuj serwisy (`systemctl status bot-core.service`, `systemctl status bot-ui.service`) | DevOps | Logi systemowe, status usług | Status `active (running)` na obu usługach |
-| 8. Aktualizuj decision log (`python scripts/verify_decision_log.py summary --append --tag reinstall`) | Compliance | `audit/decision_logs/reinstall.jsonl` | Wpis podpisany HMAC, zawiera `bundle_sha384`, `license_id` |
+| 8. Aktualizuj decision log (`python scripts/verify_decision_log.py summary --append audit/decision_logs/reinstall.jsonl --stage reinstall --status reinstall_complete --artefact bundle_sha384=<SHA-384> --artefact license_id=<ID> --artefact-from-file summary_sha256=var/audit/reinstall/install_report.json --tag reinstall`) | Compliance | `audit/decision_logs/reinstall.jsonl`, `var/audit/reinstall/install_report.json` | Wpis podpisany HMAC, zawiera `bundle_sha384`, `license_id`, skrót raportu i tag `reinstall` |
 
 ## Procedura odzyskiwania awaryjnego
 1. **Brak ważnej licencji:**

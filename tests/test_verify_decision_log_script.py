@@ -2035,3 +2035,106 @@ def test_verify_risk_service_token_id_env(monkeypatch, tmp_path):
     )
 
     assert exit_code == 0
+
+
+def test_summary_subcommand_appends_signed_entry(tmp_path):
+    log_path = tmp_path / "decision.jsonl"
+    summary_path = tmp_path / "summary.json"
+    schema_path = Path(__file__).resolve().parents[1] / "docs" / "schemas" / "decision_log_v2.json"
+
+    summary_payload = {
+        "summary": {"total_snapshots": 0, "events": {}},
+        "metadata": {"source": "demo"},
+    }
+    summary_path.write_text(json.dumps(summary_payload, ensure_ascii=False), encoding="utf-8")
+
+    exit_code = verify_main(
+        [
+            "summary",
+            "--append",
+            str(log_path),
+            "--stage",
+            "demo",
+            "--status",
+            "demo_ready",
+            "--summary-json",
+            str(summary_path),
+            "--artefact",
+            "config_sha384=sha384:deadbeef",
+            "--metadata",
+            "notes=OK",
+            "--tag",
+            "demo",
+            "--hmac-key",
+            "verysecret",
+            "--hmac-key-id",
+            "demo-key",
+        ]
+    )
+
+    assert exit_code == 0
+
+    payloads = [json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines() if line]
+    assert len(payloads) == 1
+    entry = payloads[0]
+    assert entry["status"] == "demo_ready"
+    assert entry["stage"] == "demo"
+    assert entry["artefacts"]["config_sha384"] == "sha384:deadbeef"
+    assert entry["artefacts"]["summary_sha256"].startswith("sha256:")
+    assert entry["runtime_flags"]["verify_decision_log.summary"] is True
+    assert entry["metadata"]["summary_path"] == str(summary_path)
+    assert entry["signatures"]["decision_log.entry"] == "hmac:pending"
+    assert entry["tags"] == ["demo"]
+
+    signature = entry["signature"]
+    assert signature["algorithm"] == "HMAC-SHA256"
+    assert signature["key_id"] == "demo-key"
+    canonical = json.dumps(
+        {key: value for key, value in entry.items() if key != "signature"},
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    expected_digest = hmac.new(b"verysecret", canonical, hashlib.sha256).digest()
+    assert base64.b64decode(signature["value"]) == expected_digest
+
+    verify_exit = verify_main(
+        [
+            str(log_path),
+            "--hmac-key",
+            "verysecret",
+            "--schema",
+            str(schema_path),
+        ]
+    )
+    assert verify_exit == 0
+
+
+def test_summary_subcommand_allows_unsigned(tmp_path):
+    log_path = tmp_path / "unsigned.jsonl"
+
+    exit_code = verify_main(
+        [
+            "summary",
+            "--append",
+            str(log_path),
+            "--stage",
+            "ops",
+            "--status",
+            "ops_ready",
+            "--artefact",
+            "config_sha384=sha384:feedface",
+            "--allow-unsigned",
+        ]
+    )
+
+    assert exit_code == 0
+
+    entries = [json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines() if line]
+    assert len(entries) == 1
+    entry = entries[0]
+    assert entry["status"] == "ops_ready"
+    assert entry["artefacts"]["config_sha384"] == "sha384:feedface"
+    assert entry["runtime_flags"]["verify_decision_log.summary"] is True
+    assert entry["signatures"]["decision_log.entry"] == "hmac:pending"
+    assert "signature" not in entry

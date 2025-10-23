@@ -247,6 +247,7 @@ class RiskSimulationReport:
     base_equity: float
     profiles: Sequence[ProfileSimulationResult]
     synthetic_data: bool = False
+    tco_summary: Mapping[str, object] | None = None
 
     @classmethod
     def from_mapping(cls, payload: Mapping[str, object]) -> "RiskSimulationReport":
@@ -263,6 +264,14 @@ class RiskSimulationReport:
             raise ValueError("Pole 'base_equity' musi być liczbą") from exc
 
         synthetic_data = bool(payload.get("synthetic_data", False))
+
+        tco_payload_raw = payload.get("tco")
+        if tco_payload_raw is None:
+            tco_summary: Mapping[str, object] | None = None
+        elif isinstance(tco_payload_raw, Mapping):
+            tco_summary = dict(tco_payload_raw)
+        else:
+            raise ValueError("Pole 'tco' musi być mapą, jeśli występuje w raporcie")
 
         profiles_payload = payload.get("profiles") or []
         if not isinstance(profiles_payload, Sequence):
@@ -323,6 +332,7 @@ class RiskSimulationReport:
             base_equity=base_equity_value,
             profiles=tuple(profiles),
             synthetic_data=synthetic_data,
+            tco_summary=tco_summary,
         )
 
     @classmethod
@@ -346,7 +356,7 @@ class RiskSimulationReport:
         return cls.from_mapping(payload)
 
     def to_mapping(self) -> Mapping[str, object]:
-        return {
+        payload: dict[str, object] = {
             "generated_at": self.generated_at,
             "base_equity": self.base_equity,
             "synthetic_data": self.synthetic_data,
@@ -354,6 +364,9 @@ class RiskSimulationReport:
             "breach_count": sum(len(p.breaches) for p in self.profiles),
             "stress_failures": sum(sum(1 for r in p.stress_tests if r.is_failure()) for p in self.profiles),
         }
+        if self.tco_summary is not None:
+            payload["tco"] = dict(self.tco_summary)
+        return payload
 
     def has_failures(self) -> bool:
         return any(p.has_failures() for p in self.profiles)
@@ -390,6 +403,25 @@ class RiskSimulationReport:
                     lines.append(f"  Stress {stress.name}: {status}")
                 if stress.notes:
                     lines.append(f"    Notes: {stress.notes}")
+        if self.tco_summary:
+            lines.append("")
+            lines.append("TCO summary:")
+            reports = self.tco_summary.get("reports") if isinstance(self.tco_summary, Mapping) else None
+            if isinstance(reports, Sequence):
+                for entry in reports:
+                    if not isinstance(entry, Mapping):
+                        continue
+                    path = str(entry.get("path", "unknown"))
+                    status = str(entry.get("status", "unknown")).upper()
+                    lines.append(f"  {status}: {path}")
+                    summary = entry.get("summary")
+                    if isinstance(summary, Mapping):
+                        generated_at = summary.get("generated_at")
+                        if generated_at:
+                            lines.append(f"    generated_at: {generated_at}")
+                        total_cost = summary.get("cost_bps") or summary.get("monthly_total")
+                        if total_cost is not None:
+                            lines.append(f"    total: {total_cost}")
         _write_simple_pdf(path, lines)
 
 
@@ -805,10 +837,20 @@ class RiskSimulationRunner:
         profiles: Sequence[RiskProfile],
         candles_by_symbol: Mapping[str, Sequence[Candle]],
         settings: SimulationSettings | None = None,
+        stress_scenarios: Sequence[str] | None = None,
     ) -> None:
         self._profiles = list(profiles)
         self._candles_by_symbol = candles_by_symbol
         self._settings = settings or SimulationSettings()
+        scenario_filter = {
+            scenario.strip().lower()
+            for scenario in (stress_scenarios or ())
+            if scenario and scenario.strip()
+        }
+        if not scenario_filter or "all" in scenario_filter:
+            self._stress_scenarios: set[str] | None = None
+        else:
+            self._stress_scenarios = scenario_filter
 
     def run(self) -> RiskSimulationReport:
         base_equity = self._settings.base_equity
@@ -825,6 +867,9 @@ class RiskSimulationRunner:
         )
 
     def _run_for_profile(self, *, profile: RiskProfile, base_equity: float) -> ProfileSimulationResult:
+        def _scenario_enabled(name: str) -> bool:
+            return self._stress_scenarios is None or name in self._stress_scenarios
+
         total_returns: list[float] = []
         pnl_series: list[float] = []
         sample_size = 0
@@ -845,11 +890,35 @@ class RiskSimulationRunner:
             total_returns.extend(returns)
             sample_size += len(returns)
         if not pnl_series:
-            stress_tests = (
-                StressTestResult(name="flash_crash", status="failed", metrics={"severity": float("inf")}, notes="Brak danych do symulacji"),
-                StressTestResult(name="dry_liquidity", status="failed", metrics={"severity": float("inf")}, notes="Brak danych do symulacji"),
-                StressTestResult(name="latency_spike", status="failed", metrics={"severity": float("inf")}, notes="Brak danych do symulacji"),
-            )
+            fallback_tests: list[StressTestResult] = []
+            if _scenario_enabled("flash_crash"):
+                fallback_tests.append(
+                    StressTestResult(
+                        name="flash_crash",
+                        status="failed",
+                        metrics={"severity": float("inf")},
+                        notes="Brak danych do symulacji",
+                    )
+                )
+            if _scenario_enabled("dry_liquidity"):
+                fallback_tests.append(
+                    StressTestResult(
+                        name="dry_liquidity",
+                        status="failed",
+                        metrics={"severity": float("inf")},
+                        notes="Brak danych do symulacji",
+                    )
+                )
+            if _scenario_enabled("latency_spike"):
+                fallback_tests.append(
+                    StressTestResult(
+                        name="latency_spike",
+                        status="failed",
+                        metrics={"severity": float("inf")},
+                        notes="Brak danych do symulacji",
+                    )
+                )
+            stress_tests = tuple(fallback_tests)
             return ProfileSimulationResult(
                 profile=profile.name,
                 base_equity=base_equity,
@@ -874,15 +943,54 @@ class RiskSimulationRunner:
             breaches.append("daily_loss_limit")
         if realized_vol > _target_volatility(profile) * 1.6:
             breaches.append("volatility_target")
-        stress_results = [
-            _run_flash_crash_test(profile, candles, base_equity) for candles in self._candles_by_symbol.values() if candles
-        ] or [StressTestResult(name="flash_crash", status="failed", metrics={"severity": float("inf")}, notes="Brak danych do symulacji")]
-        liquidity_results = [
-            _run_liquidity_dryout_test(profile, candles) for candles in self._candles_by_symbol.values() if candles
-        ]
-        latency_results = [
-            _run_latency_spike_test(profile, candles) for candles in self._candles_by_symbol.values() if candles
-        ]
+        stress_results: list[StressTestResult] = []
+        if _scenario_enabled("flash_crash"):
+            stress_results = [
+                _run_flash_crash_test(profile, candles, base_equity)
+                for candles in self._candles_by_symbol.values()
+                if candles
+            ]
+            if not stress_results:
+                stress_results = [
+                    StressTestResult(
+                        name="flash_crash",
+                        status="failed",
+                        metrics={"severity": float("inf")},
+                        notes="Brak danych do symulacji",
+                    )
+                ]
+        liquidity_results: list[StressTestResult] = []
+        if _scenario_enabled("dry_liquidity"):
+            liquidity_results = [
+                _run_liquidity_dryout_test(profile, candles)
+                for candles in self._candles_by_symbol.values()
+                if candles
+            ]
+            if not liquidity_results:
+                liquidity_results = [
+                    StressTestResult(
+                        name="dry_liquidity",
+                        status="failed",
+                        metrics={"severity": float("inf")},
+                        notes="Brak danych do symulacji",
+                    )
+                ]
+        latency_results: list[StressTestResult] = []
+        if _scenario_enabled("latency_spike"):
+            latency_results = [
+                _run_latency_spike_test(profile, candles)
+                for candles in self._candles_by_symbol.values()
+                if candles
+            ]
+            if not latency_results:
+                latency_results = [
+                    StressTestResult(
+                        name="latency_spike",
+                        status="failed",
+                        metrics={"severity": float("inf")},
+                        notes="Brak danych do symulacji",
+                    )
+                ]
         stress_tests = tuple(stress_results + liquidity_results + latency_results)
         return ProfileSimulationResult(
             profile=profile.name,
@@ -956,9 +1064,27 @@ def run_simulations_from_config(
     interval: str,
     settings: SimulationSettings | None = None,
     synthetic_fallback: bool = False,
+    profile_names: Sequence[str] | None = None,
+    stress_scenarios: Sequence[str] | None = None,
 ) -> RiskSimulationReport:
     """Uruchamia symulacje OHLCV na podstawie konfiguracji."""
-    profiles = load_profiles_from_config(config_path)
+    profiles = list(load_profiles_from_config(config_path))
+    if profile_names:
+        normalized = [name.strip().lower() for name in profile_names if name and name.strip()]
+        if normalized and "all" not in normalized:
+            available = {profile.name.lower(): profile for profile in profiles}
+            missing = [name for name in normalized if name not in available]
+            if missing:
+                raise RuntimeError(
+                    "Brak profili ryzyka w konfiguracji: " + ", ".join(sorted(set(missing)))
+                )
+            ordered_unique: list[str] = []
+            seen: set[str] = set()
+            for name in normalized:
+                if name not in seen:
+                    ordered_unique.append(name)
+                    seen.add(name)
+            profiles = [available[name] for name in ordered_unique]
     if dataset_root is None:
         dataset_root = Path("data/ohlcv")
     candles: dict[str, Sequence[Candle]] = {}
@@ -979,7 +1105,24 @@ def run_simulations_from_config(
                 bars=settings.max_bars if settings else 720,
                 seed=hash(symbol) % 10_000,
             )
-    runner = RiskSimulationRunner(profiles=profiles, candles_by_symbol=candles, settings=settings)
+    scenario_filter = [
+        scenario.strip().lower()
+        for scenario in (stress_scenarios or ())
+        if scenario and scenario.strip()
+    ]
+    if scenario_filter:
+        allowed_scenarios = {"flash_crash", "dry_liquidity", "latency_spike", "all"}
+        unknown = [name for name in scenario_filter if name not in allowed_scenarios]
+        if unknown:
+            raise RuntimeError(
+                "Nieznane scenariusze stress testów: " + ", ".join(sorted(set(unknown)))
+            )
+    runner = RiskSimulationRunner(
+        profiles=profiles,
+        candles_by_symbol=candles,
+        settings=settings,
+        stress_scenarios=scenario_filter,
+    )
     report = runner.run()
     if synthetic_fallback:
         report.synthetic_data = True
