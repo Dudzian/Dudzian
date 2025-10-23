@@ -524,6 +524,115 @@ class AutoTrader:
             return {}
         return compute(ai_manager, symbol, market_data)
 
+    def _compute_ai_signal_context_impl(
+        self,
+        ai_manager: Any | None,
+        symbol: str,
+        market_data: pd.DataFrame,
+    ) -> Mapping[str, object]:
+        if ai_manager is None:
+            return {}
+
+        threshold_raw = getattr(ai_manager, "ai_threshold_bps", None)
+        try:
+            threshold_bps = float(threshold_raw) if threshold_raw is not None else 0.0
+        except (TypeError, ValueError):
+            threshold_bps = 0.0
+
+        predictions: Any | None = None
+        predict_series = getattr(ai_manager, "predict_series", None)
+        if callable(predict_series):
+            try:
+                predictions = predict_series(symbol, market_data)
+            except TypeError:
+                predictions = predict_series(market_data, symbol=symbol)
+            except Exception as exc:
+                self._log(
+                    "AI manager prediction failed", level=logging.DEBUG, symbol=symbol, error=repr(exc)
+                )
+                predictions = None
+
+        if asyncio.iscoroutine(predictions) or isinstance(predictions, asyncio.Future):
+            try:
+                predictions = asyncio.run(predictions)
+            except RuntimeError:
+                loop = asyncio.get_event_loop()
+                predictions = loop.run_until_complete(predictions)
+        elif hasattr(predictions, "__await__"):
+            try:
+                predictions = asyncio.run(predictions)  # type: ignore[arg-type]
+            except RuntimeError:
+                loop = asyncio.get_event_loop()
+                predictions = loop.run_until_complete(predictions)  # type: ignore[arg-type]
+
+        if not isinstance(predictions, pd.Series):
+            try:
+                predictions = pd.Series(predictions) if predictions is not None else None
+            except Exception:
+                predictions = None
+
+        prediction_value: float | None = None
+        evaluated_at: str | float | None = None
+        if isinstance(predictions, pd.Series) and not predictions.empty:
+            raw_value = predictions.iloc[-1]
+            try:
+                prediction_value = float(raw_value)
+            except (TypeError, ValueError):
+                prediction_value = None
+
+            index_value = predictions.index[-1]
+            if hasattr(index_value, "isoformat"):
+                evaluated_at = index_value.isoformat()  # type: ignore[call-arg]
+            elif isinstance(index_value, (int, float)):
+                evaluated_at = float(index_value)
+
+        context: dict[str, object] = {"threshold_bps": threshold_bps}
+        if evaluated_at is not None:
+            context["evaluated_at"] = evaluated_at
+
+        if prediction_value is None or not math.isfinite(prediction_value):
+            context["direction"] = "hold"
+            return context
+
+        prediction_bps = prediction_value * 10_000.0
+        context["prediction"] = prediction_value
+        context["prediction_bps"] = prediction_bps
+
+        probability_raw = getattr(ai_manager, "prediction_probability", None)
+        if probability_raw is None:
+            probability_fn = getattr(ai_manager, "predict_probability", None)
+            if callable(probability_fn):
+                try:
+                    probability_raw = probability_fn(symbol=symbol, market_data=market_data)
+                except TypeError:
+                    try:
+                        probability_raw = probability_fn(symbol, market_data)
+                    except Exception:
+                        probability_raw = None
+                except Exception:
+                    probability_raw = None
+
+        try:
+            if probability_raw is not None:
+                probability = float(probability_raw)
+            else:
+                probability = None
+        except (TypeError, ValueError):
+            probability = None
+        else:
+            if probability is not None and math.isfinite(probability):
+                probability = max(0.0, min(1.0, probability))
+                context["probability"] = probability
+
+        threshold_abs = abs(threshold_bps)
+        direction = "hold"
+        if prediction_bps > 0 and prediction_bps >= threshold_abs:
+            direction = "buy"
+        elif prediction_bps < 0 and -prediction_bps >= threshold_abs:
+            direction = "sell"
+        context["direction"] = direction
+        return context
+
     def _normalise_cycle_history_limit(self, limit: int | None) -> int:
         if limit is None:
             return -1
