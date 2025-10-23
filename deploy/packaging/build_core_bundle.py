@@ -33,6 +33,12 @@ from bot_core.security.signing import canonical_json_bytes
 BUNDLE_NAME = "core-oem"
 SUPPORTED_PLATFORMS = {"linux", "macos", "windows"}
 _DEFAULT_DRY_RUN_VERSION = "0.0.0-dry-run"
+_SAMPLES_ROOT = Path(__file__).with_name("samples")
+_DRY_RUN_SAMPLE_DAEMON = _SAMPLES_ROOT / "daemon"
+_DRY_RUN_SAMPLE_UI = _SAMPLES_ROOT / "ui"
+_DRY_RUN_SAMPLE_CONFIG = _SAMPLES_ROOT / "config" / "core.yaml"
+_DRY_RUN_SAMPLE_RESOURCE_DIR = _SAMPLES_ROOT / "resources" / "extras"
+_DRY_RUN_SAMPLE_SIGNING_KEY = _SAMPLES_ROOT / "signing.key"
 _RESERVED_RESOURCE_PREFIXES = {"daemon", "ui", "config", "bootstrap"}
 _RESERVED_RESOURCE_PREFIXES_CASEFOLD = {prefix.casefold() for prefix in _RESERVED_RESOURCE_PREFIXES}
 _RESERVED_CONFIG_PATHS = {
@@ -710,37 +716,69 @@ def _resolve_paths(values: Iterable[str], *, label: str) -> List[Path]:
     return result
 
 
+def _apply_dry_run_defaults(args: argparse.Namespace) -> None:
+    """Populate CLI arguments with sample artifacts when running ``--dry-run``."""
+
+    if not args.daemon:
+        if _DRY_RUN_SAMPLE_DAEMON.exists():
+            args.daemon = [str(_DRY_RUN_SAMPLE_DAEMON)]
+        else:
+            args.daemon = []
+    if not args.ui:
+        if _DRY_RUN_SAMPLE_UI.exists():
+            args.ui = [str(_DRY_RUN_SAMPLE_UI)]
+        else:
+            args.ui = []
+    if not args.config:
+        if _DRY_RUN_SAMPLE_CONFIG.exists():
+            args.config = [f"core.yaml={_DRY_RUN_SAMPLE_CONFIG}"]
+        else:
+            args.config = []
+
+    resource_entries = list(args.resource or [])
+    if not resource_entries and _DRY_RUN_SAMPLE_RESOURCE_DIR.exists():
+        resource_entries.append(f"extras={_DRY_RUN_SAMPLE_RESOURCE_DIR}")
+    args.resource = resource_entries
+
+    if args.signing_key_path is None and _DRY_RUN_SAMPLE_SIGNING_KEY.exists():
+        args.signing_key_path = str(_DRY_RUN_SAMPLE_SIGNING_KEY)
+
+
 def build_from_cli(argv: Optional[List[str]] = None) -> Path:
     parser = argparse.ArgumentParser(description="Build Core OEM bundle")
     parser.add_argument("--platform", required=True, choices=sorted(SUPPORTED_PLATFORMS))
     parser.add_argument("--version", required=False, help="Bundle version string")
-    parser.add_argument("--signing-key-path", required=True)
+    parser.add_argument(
+        "--signing-key-path",
+        required=False,
+        help="Path to signing key (required unless --dry-run is specified)",
+    )
     parser.add_argument(
         "--daemon",
         dest="daemon",
         action="append",
-        required=True,
-        help="Path to daemon artifact (file or directory)",
+        required=False,
+        help="Path to daemon artifact (file or directory). Required unless --dry-run is specified",
     )
     parser.add_argument(
         "--ui",
         dest="ui",
         action="append",
-        required=True,
-        help="Path to UI artifact (file or directory)",
+        required=False,
+        help="Path to UI artifact (file or directory). Required unless --dry-run is specified",
     )
     parser.add_argument(
         "--config",
         dest="config",
         action="append",
-        required=True,
-        help="Configuration file entry in the form name=path",
+        required=False,
+        help="Configuration file entry in the form name=path. Required unless --dry-run is specified",
     )
     parser.add_argument(
         "--resource",
         dest="resource",
         action="append",
-        default=[],
+        required=False,
         help="Additional resource path in the form directory=path",
     )
     parser.add_argument(
@@ -756,12 +794,18 @@ def build_from_cli(argv: Optional[List[str]] = None) -> Path:
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Validate inputs without creating bundle archives",
+        help="Validate inputs without creating bundle archives. When other arguments are omitted, sample artifacts from deploy/packaging/samples/ are used",
     )
     parser.add_argument("--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"])
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=getattr(logging, args.log_level))
+
+    if args.resource is None:
+        args.resource = []
+
+    if args.dry_run:
+        _apply_dry_run_defaults(args)
 
     version = args.version
     if version is None:
@@ -771,20 +815,34 @@ def build_from_cli(argv: Optional[List[str]] = None) -> Path:
             raise ValueError("--version is required unless --dry-run is specified")
     version = str(version)
 
-    raw_key_path = Path(args.signing_key_path).expanduser()
-    if not raw_key_path.exists():
-        raise FileNotFoundError(raw_key_path)
-    _ensure_no_symlinks(raw_key_path, label="Signing key path")
-    key_path = raw_key_path.resolve()
-    _ensure_windows_safe_tree(key_path, label="Signing key path")
-    if not key_path.is_file():
-        raise ValueError(f"Signing key path must reference a file: {key_path}")
-    if os.name != "nt":
-        mode = key_path.stat().st_mode
-        if mode & (stat.S_IRWXG | stat.S_IRWXO):
-            raise ValueError("Signing key file permissions must restrict access to the owner: " f"{key_path}")
+    if not args.daemon:
+        raise ValueError("--daemon is required unless --dry-run is specified")
+    if not args.ui:
+        raise ValueError("--ui is required unless --dry-run is specified")
+    if not args.config:
+        raise ValueError("--config is required unless --dry-run is specified")
 
-    signing_key = key_path.read_bytes()
+    if args.signing_key_path is None:
+        if args.dry_run:
+            signing_key = b"dry-run-signing-key-material-placeholder"
+        else:
+            raise ValueError("--signing-key-path is required unless --dry-run is specified")
+    else:
+        raw_key_path = Path(args.signing_key_path).expanduser()
+        if not raw_key_path.exists():
+            raise FileNotFoundError(raw_key_path)
+        _ensure_no_symlinks(raw_key_path, label="Signing key path")
+        key_path = raw_key_path.resolve()
+        skip_permission_check = args.dry_run and key_path == _DRY_RUN_SAMPLE_SIGNING_KEY.resolve()
+        _ensure_windows_safe_tree(key_path, label="Signing key path")
+        if not key_path.is_file():
+            raise ValueError(f"Signing key path must reference a file: {key_path}")
+        if os.name != "nt" and not skip_permission_check:
+            mode = key_path.stat().st_mode
+            if mode & (stat.S_IRWXG | stat.S_IRWXO):
+                raise ValueError("Signing key file permissions must restrict access to the owner: " f"{key_path}")
+
+        signing_key = key_path.read_bytes()
 
     daemon_paths = _resolve_paths(args.daemon, label="Daemon artifact")
     ui_paths = _resolve_paths(args.ui, label="UI artifact")

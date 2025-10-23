@@ -398,6 +398,17 @@ def test_build_from_cli_dry_run_uses_defaults_and_creates_no_artifacts(tmp_path)
     assert not destination.exists()
 
 
+def test_build_from_cli_dry_run_without_additional_arguments(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+
+    destination = build_from_cli(["--dry-run", "--platform", "linux"])
+
+    expected = (tmp_path / "var" / "dist" / "core-oem-0.0.0-dry-run-linux.tar.gz").resolve()
+    assert destination == expected
+    assert not destination.exists()
+    assert not destination.parent.exists()
+
+
 def test_build_from_cli_dry_run_detects_existing_bundle(tmp_path):
     env = _create_basic_cli_environment(tmp_path)
     config_file = tmp_path / "core.yaml"

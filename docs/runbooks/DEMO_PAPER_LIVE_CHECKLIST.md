@@ -15,7 +15,7 @@ Zapewnienie, że każda promocja środowiska tradingowego spełnia wymagania tec
 | Krok | Odpowiedzialny | Artefakty | Akceptacja |
 | --- | --- | --- | --- |
 | 1. Uruchom Paper Labs (`python scripts/run_risk_simulation_lab.py --profile all`) | Zespół Ryzyka | `reports/paper_labs/*.json`, `reports/paper_labs/*.pdf` | Wszystkie profile PASS, podpis Compliance |
-| 2. Zweryfikuj bundla OEM (`python deploy/packaging/build_core_bundle.py --dry-run --platform linux`) | Release | Raport bundlera, `manifest.json` | Manifest podpisany, brak rozbieżności |
+| 2. Zweryfikuj bundla OEM (`python deploy/packaging/build_core_bundle.py --dry-run --platform linux`, komenda używa wbudowanych próbek z `deploy/packaging/samples/`) | Release | Raport bundlera, `manifest.json` | Manifest podpisany, brak rozbieżności |
 | 3. Provision licencję paper (`python scripts/oem_provision_license.py request.json --registry var/licenses/registry.jsonl`) | Operator OEM | `var/licenses/registry.jsonl`, licencja `.jsonl` | Licencja podpisana, wpis w decision logu |
 | 4. Uruchom `python scripts/run_paper_smoke_ci.py --render-summary-markdown` | Zespół Runtime | `reports/paper_smoke/*.json`, `reports/paper_smoke/*.md` | Smoke PASS, raport przesłany do compliance |
 | 5. Potwierdź checklistę `docs/runbooks/paper_trading.md` | Operator Paper | Wypełniona lista kontrolna | Sekcja „Akceptacja” podpisana przez Compliance |
