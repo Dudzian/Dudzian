@@ -116,7 +116,11 @@ def test_cached_source_fallbacks_to_cache_on_network_error(tmp_path: Path):
 
     adapter = _FakeAdapter()
     upstream = _FailingUpstream(exchange_adapter=adapter)
-    source = CachedOHLCVSource(storage=storage, upstream=upstream, snapshot_fetcher=None)
+    source = CachedOHLCVSource(
+        storage=storage,
+        upstream=upstream,
+        snapshot_fetcher=None,
+    )
 
     request = OHLCVRequest(symbol="BTC/USDT", interval="1m", start=0, end=180_000, limit=2)
     response = source.fetch_ohlcv(request)
@@ -135,12 +139,46 @@ def test_snapshot_fetcher_merges_latest_rows(tmp_path: Path):
     storage = DualCacheStorage(parquet, manifest)
 
     upstream = PublicAPIDataSource(exchange_adapter=adapter)
-    source = CachedOHLCVSource(storage=storage, upstream=upstream, snapshot_fetcher=_snapshot)
+    source = CachedOHLCVSource(
+        storage=storage,
+        upstream=upstream,
+        snapshot_fetcher=_snapshot,
+        snapshots_enabled=True,
+    )
 
     request = OHLCVRequest(symbol="BTC/USDT", interval="1m", start=0, end=180_000, limit=3)
     rows = source.fetch_ohlcv(request).rows
 
     assert rows[-1][0] == pytest.approx(request.end)
+
+
+def test_cached_source_rehydrates_snapshot_when_missing(tmp_path: Path):
+    adapter = _FakeAdapter()
+
+    parquet = ParquetCacheStorage(tmp_path / "cache", namespace="fallback")
+    manifest = SQLiteCacheStorage(tmp_path / "manifest.sqlite", store_rows=False)
+    storage = DualCacheStorage(parquet, manifest)
+
+    upstream = PublicAPIDataSource(exchange_adapter=adapter)
+    source = CachedOHLCVSource(
+        storage=storage,
+        upstream=upstream,
+        snapshot_fetcher=None,
+        snapshots_enabled=True,
+    )
+
+    request = OHLCVRequest(symbol="BTC/USDT", interval="1m", start=0, end=180_000, limit=2)
+
+    source.fetch_ohlcv(request)
+    adapter.calls.clear()
+
+    cached = source.fetch_ohlcv(request)
+
+    assert cached.rows
+    assert len(adapter.calls) == 2
+    first_call, second_call = adapter.calls
+    assert first_call[0] == "fetch_ohlcv" and first_call[1][2] == 0
+    assert second_call[0] == "fetch_ohlcv" and second_call[1][2] >= 60_000
 
 
 def test_offline_source_avoids_network_and_snapshots(tmp_path: Path):
