@@ -45,6 +45,41 @@ def _supports_main_cli() -> bool:
     return parser_supports(_parser, "--fills", "--output-dir")
 
 
+def _write_sample_fills(target: Path) -> Path:
+    events = [
+        {
+            "timestamp": "2024-04-01T10:00:00Z",
+            "strategy": "mean_reversion",
+            "risk_profile": "balanced",
+            "instrument": "BTC/USDT",
+            "exchange": "binance",
+            "side": "buy",
+            "quantity": 0.4,
+            "price": 21000,
+            "commission": 3.2,
+            "slippage": 1.1,
+            "funding": 0.2,
+        },
+        {
+            "timestamp": "2024-04-01T10:05:00Z",
+            "strategy": "volatility_target",
+            "risk_profile": "aggressive",
+            "instrument": "ETH/USDT",
+            "exchange": "kraken",
+            "side": "sell",
+            "quantity": 1.1,
+            "price": 3100,
+            "commission": 2.4,
+            "slippage": 0.8,
+            "funding": 0.15,
+            "other_costs": 0.05,
+        },
+    ]
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("\n".join(json.dumps(event) for event in events) + "\n", encoding="utf-8")
+    return target
+
+
 # ----------------- TESTY -----------------
 def test_run_tco_analysis_generates_signed_reports_or_summary(tmp_path: Path) -> None:
     if _supports_head_cli():

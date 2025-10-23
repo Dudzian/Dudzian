@@ -16,7 +16,7 @@ import sys
 from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
-from typing import Iterable, Sequence, Optional
+from typing import Iterable, Optional, Sequence
 
 # ────────────────────────────────────────────────────────────────────────────────
 # Importy wariantu HEAD (summary)
