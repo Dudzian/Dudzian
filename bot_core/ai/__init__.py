@@ -29,6 +29,8 @@ _EXPORTS: Dict[str, Tuple[str, str]] = {
     "save_scheduler_state": (".audit", "save_scheduler_state"),
     "load_scheduler_state": (".audit", "load_scheduler_state"),
     "save_walk_forward_report": (".audit", "save_walk_forward_report"),
+    "load_recent_walk_forward_reports": (".audit", "load_recent_walk_forward_reports"),
+    "summarize_walk_forward_reports": (".audit", "summarize_walk_forward_reports"),
     "save_data_quality_report": (".audit", "save_data_quality_report"),
     "save_drift_report": (".audit", "save_drift_report"),
     "list_audit_reports": (".audit", "list_audit_reports"),
