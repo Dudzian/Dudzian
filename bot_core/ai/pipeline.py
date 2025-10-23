@@ -14,7 +14,7 @@ import numpy as np
 import pandas as pd
 
 from .inference import DecisionModelInference, ModelRepository
-from .models import ModelArtifact
+from .models import ModelArtifact, ModelScore
 from .training import SimpleGradientBoostingModel
 
 
@@ -420,6 +420,19 @@ def _load_frame_from_path(path: Path) -> pd.DataFrame:
             payload = json.load(handle)
         return pd.DataFrame(payload)
     return pd.read_csv(path)
+
+
+def score_with_data_monitoring(
+    inference: DecisionModelInference,
+    features: Mapping[str, float],
+    *,
+    context: Mapping[str, object] | None = None,
+) -> tuple[ModelScore, Mapping[str, Mapping[str, object]]]:
+    """Score a candidate ensuring monitoring executes and returns the report."""
+
+    score = inference.score(features, context=context)
+    report = inference.last_data_quality_report or {}
+    return score, report
 
 
 def _run_cli(argv: Sequence[str] | None = None) -> int:
