@@ -77,18 +77,30 @@ class _MetricsView(Mapping[str, object]):
     def __init__(self, base: Mapping[str, Mapping[str, float]]) -> None:
         self._base = base
         summary = base.get("summary")
-        summary_keys: Sequence[str]
-        if summary is not None:
-            summary_keys = tuple(summary.keys())
-        else:
-            summary_keys = ()
         keys: list[str] = []
-        for key in summary_keys:
-            keys.append(str(key))
+        seen: set[str] = set()
+
+        if summary:
+            for metric in summary.keys():
+                name = str(metric)
+                if name not in seen:
+                    keys.append(name)
+                    seen.add(name)
+        else:
+            for block in base.values():
+                if isinstance(block, Mapping):
+                    for metric in block.keys():
+                        name = str(metric)
+                        if name not in seen:
+                            keys.append(name)
+                            seen.add(name)
+
         for key in base.keys():
-            str_key = str(key)
-            if str_key not in summary_keys:
-                keys.append(str_key)
+            name = str(key)
+            if name not in seen:
+                keys.append(name)
+                seen.add(name)
+
         self._keys = tuple(keys)
 
     def __getitem__(self, key: str) -> object:
@@ -97,6 +109,13 @@ class _MetricsView(Mapping[str, object]):
             return summary[key]
         if key in self._base:
             return self._base[key]
+        for block_name in ("validation", "test", "train"):
+            block = self._base.get(block_name)
+            if isinstance(block, Mapping) and key in block:
+                return block[key]
+        for block in self._base.values():
+            if isinstance(block, Mapping) and key in block:
+                return block[key]
         raise KeyError(key)
 
     def __iter__(self) -> Iterator[str]:
@@ -110,6 +129,13 @@ class _MetricsView(Mapping[str, object]):
             summary = self._base.get("summary")
             if summary is not None and key in summary:
                 return True
+            for block_name in ("validation", "test", "train"):
+                block = self._base.get(block_name)
+                if isinstance(block, Mapping) and key in block:
+                    return True
+            for block in self._base.values():
+                if isinstance(block, Mapping) and key in block:
+                    return True
         return key in self._base
 
     def splits(self) -> Mapping[str, Mapping[str, float]]:
@@ -122,39 +148,121 @@ class _MetricsView(Mapping[str, object]):
         return self._base.get("summary", MappingProxyType({}))
 
 
-def _normalize_metrics(raw: Mapping[str, object] | None) -> Mapping[str, object]:
-    required_keys = ("summary", "train", "validation", "test")
+class ModelMetrics(_MetricsView):
+    """Ustandaryzowany widok metryk modeli eksportowany dla użytkowników."""
 
-    def _coerce_block(values: Mapping[str, object]) -> Mapping[str, float]:
-        normalized: dict[str, float] = {}
-        for key, value in values.items():
-            try:
-                normalized[str(key)] = float(value)  # type: ignore[arg-type]
-            except (TypeError, ValueError):
-                continue
-        return MappingProxyType(normalized)
+    @classmethod
+    def from_raw(cls, raw: Mapping[str, object] | None) -> "ModelMetrics":
+        required_keys = ("summary", "train", "validation", "test")
 
-    structured: dict[str, Mapping[str, float]] = {}
-
-    if isinstance(raw, Mapping) and raw:
-        if all(isinstance(value, Mapping) for value in raw.values()):
-            for split, payload in raw.items():
-                if isinstance(payload, Mapping):
-                    structured[str(split)] = _coerce_block(payload)
-        else:
-            legacy: dict[str, float] = {}
-            for key, value in raw.items():
+        def _coerce_block(values: Mapping[str, object]) -> dict[str, float]:
+            normalized: dict[str, float] = {}
+            for key, value in values.items():
                 try:
-                    legacy[str(key)] = float(value)  # type: ignore[arg-type]
+                    normalized[str(key)] = float(value)  # type: ignore[arg-type]
                 except (TypeError, ValueError):
                     continue
-            structured["summary"] = MappingProxyType(legacy)
+            return normalized
 
-    for key in required_keys:
-        if key not in structured:
-            structured[key] = MappingProxyType({})
+        structured: dict[str, dict[str, float]] = {}
 
-    return _MetricsView(MappingProxyType(structured))
+        if isinstance(raw, Mapping) and raw:
+            if all(isinstance(value, Mapping) for value in raw.values()):
+                for split, payload in raw.items():
+                    if isinstance(payload, Mapping):
+                        structured[str(split)] = _coerce_block(payload)
+            else:
+                legacy: dict[str, float] = {}
+                for key, value in raw.items():
+                    try:
+                        legacy[str(key)] = float(value)  # type: ignore[arg-type]
+                    except (TypeError, ValueError):
+                        continue
+                if legacy:
+                    structured["summary"] = legacy
+
+        for key in required_keys:
+            structured.setdefault(key, {})
+
+        summary = dict(structured.get("summary", {}))
+        if not summary:
+            for block_name in ("validation", "test", "train"):
+                block = structured.get(block_name, {})
+                if block:
+                    summary = dict(block)
+                    break
+
+        for block_name in ("validation", "test", "train"):
+            block = structured.get(block_name, {})
+            if block:
+                for metric, value in block.items():
+                    summary.setdefault(metric, value)
+
+        structured["summary"] = summary
+
+        hydrated: dict[str, Mapping[str, float]] = {
+            split: MappingProxyType(dict(values)) for split, values in structured.items()
+        }
+
+        return cls(MappingProxyType(hydrated))
+
+    def to_dict(self) -> dict[str, dict[str, float]]:
+        """Zwraca metryki jako głęboko kopiowalny słownik gotowy do serializacji."""
+
+        payload: dict[str, dict[str, float]] = {}
+        for split, values in self.blocks().items():
+            if isinstance(values, Mapping):
+                payload[str(split)] = {
+                    str(metric): float(score) for metric, score in values.items()
+                }
+            else:  # pragma: no cover - defensywnie dla niestandardowych danych
+                payload[str(split)] = {}
+
+        for key in ("summary", "train", "validation", "test"):
+            payload.setdefault(key, {})
+
+        return payload
+
+    def as_flat_dict(self, *, prefer: Sequence[str] | None = None) -> dict[str, float]:
+        """Zwraca spłaszczone metryki preferując wybrane bloki.
+
+        Funkcja zachowuje kompatybilność z historycznym API, które oczekiwało
+        prostego słownika metryk. Domyślnie wybierany jest blok "summary", a
+        następnie kolejne bloki w kolejności validation, test, train. Jeżeli
+        ``prefer`` zostanie podane, wskazane bloki są sprawdzane w pierwszej
+        kolejności (pojawienie się "summary" na liście jest opcjonalne).
+        """
+
+        if prefer is None:
+            prefer_order: Sequence[str] = ("summary", "validation", "test", "train")
+        else:
+            prefer_order = tuple(prefer)
+
+        visited: set[str] = set()
+        for block_name in prefer_order:
+            visited.add(block_name)
+            values = self.blocks().get(block_name)
+            if isinstance(values, Mapping) and values:
+                return {str(metric): float(score) for metric, score in values.items()}
+
+        for block_name in ("summary", "validation", "test", "train"):
+            if block_name in visited:
+                continue
+            values = self.blocks().get(block_name)
+            if isinstance(values, Mapping) and values:
+                return {str(metric): float(score) for metric, score in values.items()}
+
+        for block_name, values in self.blocks().items():
+            if block_name in visited:
+                continue
+            if isinstance(values, Mapping) and values:
+                return {str(metric): float(score) for metric, score in values.items()}
+
+        return {}
+
+
+def _normalize_metrics(raw: Mapping[str, object] | None) -> ModelMetrics:
+    return ModelMetrics.from_raw(raw)
 
 
 @dataclass(slots=True)
@@ -204,12 +312,7 @@ class ModelArtifact:
         object.__setattr__(self, "backend", str(self.backend))
 
     def to_dict(self) -> Mapping[str, object]:
-        metrics_payload: dict[str, dict[str, float]] = {}
-        for split, values in self.metrics.blocks().items():
-            if isinstance(values, Mapping):
-                metrics_payload[str(split)] = dict(values)
-        for required in ("summary", "train", "validation", "test"):
-            metrics_payload.setdefault(required, {})
+        metrics_payload = self.metrics.to_dict()
 
         payload: MutableMapping[str, object] = {
             "feature_names": list(self.feature_names),
