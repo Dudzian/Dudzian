@@ -3,8 +3,8 @@
 Runbook opisuje monitorowanie jakości danych oraz dryfu cech dla pipeline'u AI. Monitoring opiera się na helperach z modułu `bot_core.ai.monitoring` oraz raportach audytu zapisywanych w `audit/ai_decision/{data_quality,drift}`.
 
 > **Wybór modułu:**
-> - Helpery pipeline (batch/training) są dostępne w `bot_core.ai.monitoring` i operują na ramkach Pandas (`DataCompletenessWatcher`, `FeatureDriftAnalyzer`, `FeatureBoundsValidator`).
-> - Helpery inference (on-line scoring) znajdują się w `bot_core.ai.data_monitoring` i są eksportowane jako `InferenceDataCompletenessWatcher` oraz `InferenceFeatureBoundsValidator` z `bot_core.ai`. Zapewniają obsługę raportów JSON i polityk blokujących scoring.
+> - Użyj `bot_core.ai.monitoring`, gdy działasz w pipeline'ie treningowym/batchowym i pracujesz na ramkach Pandas – eksporty `DataCompletenessWatcher` oraz `FeatureBoundsValidator` pochodzą bezpośrednio z tego modułu.
+> - Użyj `bot_core.ai.data_monitoring` (lub aliasów `bot_core.ai.InferenceDataCompletenessWatcher`/`bot_core.ai.InferenceFeatureBoundsValidator`), gdy monitorujesz cechy w trakcie inference on-line. Ta wersja zapisuje raporty JSON, potrafi wymuszać blokadę scoringu (`policy.enforce`) i pracuje na słownikach cech.
 > - Jeśli preferujesz bezpośrednie importy modułu inference, użyj `from bot_core.ai.data_monitoring import DataCompletenessWatcher as InferenceDataCompletenessWatcher` (analogicznie dla `FeatureBoundsValidator`).
 
 ## 1. Szybka checklista
