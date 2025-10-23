@@ -9,7 +9,9 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from bot_core.ai import manager as ai_manager_module
+from bot_core.ai import DataQualityCheck, FeatureDataset, FeatureVector, manager as ai_manager_module
+from bot_core.ai.monitoring import DataCompletenessWatcher
+from bot_core.runtime.journal import InMemoryTradingDecisionJournal
 from tests._ai_manager_helpers import make_stub_model, positive_negative_predict
 
 
@@ -714,3 +716,191 @@ def test_detect_drift_falls_back_to_python_math(tmp_path, monkeypatch, exception
     assert report.triggered is True
     assert report.volatility_shift > 0.0
     assert report.feature_drift > 0.0
+
+
+def test_run_pipeline_persists_drift_audit(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        ai_manager_module,
+        "_AIModels",
+        make_stub_model(predict_fn=positive_negative_predict),
+    )
+
+    journal = InMemoryTradingDecisionJournal()
+    manager = ai_manager_module.AIManager(
+        ai_threshold_bps=5.0,
+        model_dir=tmp_path / "models",
+        audit_root=tmp_path / "ai_audit",
+        decision_journal=journal,
+        decision_journal_context={
+            "environment": "paper-trading",
+            "portfolio": "ai-pipeline",
+            "risk_profile": "ai-monitoring",
+        },
+    )
+    df = _make_df(32)
+
+    selection = asyncio.run(
+        manager.run_pipeline(
+            "BTCUSDT",
+            df,
+            ["alpha", "beta"],
+            seq_len=3,
+            folds=2,
+            baseline=df,
+        )
+    )
+
+    assert selection.drift_report is not None
+    drift_path = manager.get_last_drift_report_path()
+    assert drift_path is not None and drift_path.exists()
+    payload = json.loads(drift_path.read_text(encoding="utf-8"))
+    assert payload["job_name"] == "pipeline:btcusdt"
+    assert payload["metrics"]["feature_drift"]["score"] >= 0.0
+    assert "psi" in payload["metrics"]["feature_drift"]
+    assert "distribution_summary" in payload["metrics"]
+    assert "triggered_features" in payload["metrics"]["distribution_summary"]
+    assert "features" in payload["metrics"]
+    assert payload["metrics"]["triggered"]["value"] in {True, False}
+    assert payload["baseline_window"]["rows"] == len(df)
+    assert payload["production_window"]["rows"] == len(df)
+    drift_payload = manager.load_last_drift_report()
+    assert drift_payload is not None
+    assert drift_payload["job_name"] == "pipeline:btcusdt"
+    listed = manager.list_drift_report_paths(limit=1)
+    assert listed and listed[0] == drift_path
+    events = tuple(journal.export())
+    drift_events = [event for event in events if event["event"] == "ai_drift_report"]
+    assert drift_events, "Decision journal should contain drift report entry"
+    event = drift_events[-1]
+    assert event["environment"] == "paper-trading"
+    assert event["portfolio"] == "ai-pipeline"
+    assert event["report_type"] == "drift"
+    assert event["report_path"].endswith(".json")
+    assert event["threshold"]
+    assert event["symbol"].lower() == "btcusdt"
+    assert event["triggered"] in {"true", "false"}
+
+
+def test_run_pipeline_records_data_quality_checks(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        ai_manager_module,
+        "_AIModels",
+        make_stub_model(predict_fn=positive_negative_predict),
+    )
+
+    audit_root = tmp_path / "audit"
+    journal = InMemoryTradingDecisionJournal()
+    manager = ai_manager_module.AIManager(
+        ai_threshold_bps=5.0,
+        model_dir=tmp_path / "models",
+        audit_root=audit_root,
+        decision_journal=journal,
+        decision_journal_context={
+            "environment": "paper-trading",
+            "portfolio": "ai-pipeline",
+            "risk_profile": "ai-monitoring",
+            "strategy": "data-quality",
+        },
+    )
+
+    watcher = DataCompletenessWatcher("1min", warning_gap_ratio=0.0)
+    check = DataQualityCheck(
+        name="completeness",
+        callback=lambda frame: watcher.assess(frame),
+        tags=("completeness", "monitoring"),
+        source="monitoring:test",  # źródło nadpisuje domyślne
+    )
+    manager.register_data_quality_check(check)
+
+    df = _make_df(24)
+    df = df.drop(df.index[5])
+
+    selection = asyncio.run(
+        manager.run_pipeline(
+            "BTCUSDT",
+            df,
+            ["alpha"],
+            seq_len=3,
+            folds=2,
+        )
+    )
+
+    assert selection.predictions is not None
+    path = manager.get_last_data_quality_report_path()
+    assert path is not None and path.exists()
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    assert payload["job_name"] == "pipeline:btcusdt:completeness"
+    assert payload["source"] == "monitoring:test"
+    assert payload["tags"] == ["completeness", "monitoring"]
+    assert payload["issues"], "Raport jakości danych powinien zawierać wykryte problemy"
+    assert payload["summary"]["status"] in {"warning", "critical"}
+    events = tuple(journal.export())
+    dq_events = [event for event in events if event["event"] == "ai_data_quality_report"]
+    assert dq_events, "Decision journal should contain data quality audit entry"
+    journal_event = dq_events[-1]
+    assert journal_event["environment"] == "paper-trading"
+    assert journal_event["report_type"] == "data_quality"
+    assert journal_event["report_path"].endswith(".json")
+    assert journal_event["status"] in {"warning", "critical"}
+    assert journal_event["schedule"] == "pipeline:btcusdt:completeness"
+    assert journal_event.get("tags") == "completeness,monitoring"
+
+
+def test_record_data_quality_issues_creates_audit_entry(tmp_path):
+    journal = InMemoryTradingDecisionJournal()
+    manager = ai_manager_module.AIManager(
+        ai_threshold_bps=5.0,
+        model_dir=tmp_path / "models",
+        audit_root=tmp_path / "ai_audit",
+        decision_journal=journal,
+        decision_journal_context={
+            "environment": "paper-trading",
+            "portfolio": "ai-pipeline",
+            "risk_profile": "ai-monitoring",
+        },
+    )
+    vector = FeatureVector(
+        timestamp=1_700_000_000,
+        symbol="BTCUSDT",
+        features={"momentum": 1.0, "volume_ratio": 1.2},
+        target_bps=0.0,
+    )
+    dataset = FeatureDataset(vectors=(vector,), metadata={"symbols": ["BTCUSDT"]})
+
+    path = manager.record_data_quality_issues(
+        [
+            {"code": "missing_rows", "message": "braki w danych", "row": None},
+            {"code": "timestamp_gap", "message": "luka czasowa", "row": 42},
+        ],
+        dataset=dataset,
+        job_name="btc-data-quality",
+        source="backtest-monitor",
+        summary={"total_gaps": 2},
+        tags=("ohlcv", "monitoring"),
+    )
+
+    assert path is not None and path.exists()
+    assert path == manager.get_last_data_quality_report_path()
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    assert payload["job_name"] == "btc-data-quality"
+    assert payload["source"] == "backtest-monitor"
+    assert payload["dataset"]["rows"] == len(dataset.vectors)
+    assert payload["summary"]["total_gaps"] == 2
+    assert payload["issues"][0]["code"] == "missing_rows"
+    dq_payload = manager.load_last_data_quality_report()
+    assert dq_payload is not None
+    assert dq_payload["issues"][1]["code"] == "timestamp_gap"
+    manager._last_data_quality_report_path = None  # simulate restart
+    fallback_payload = manager.load_last_data_quality_report()
+    assert fallback_payload is not None
+    assert fallback_payload["job_name"] == "btc-data-quality"
+    listed = manager.list_data_quality_report_paths(limit=1)
+    assert listed and listed[0] == path
+    events = tuple(journal.export())
+    assert events and events[-1]["event"] == "ai_data_quality_report"
+    journal_entry = events[-1]
+    assert journal_entry["symbol"].lower() == "btcusdt"
+    assert journal_entry["report_type"] == "data_quality"
+    assert journal_entry["issues_count"] == "2"
+    assert journal_entry["schedule"] == "btc-data-quality"
+    assert journal_entry.get("tags") == "ohlcv,monitoring"

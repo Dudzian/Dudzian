@@ -11,6 +11,7 @@ Proces przejścia z trybu paper trading do środowiska live wymaga potwierdzenia
 | Alerty i audyt | Zweryfikuj kanały (`alert_channels`), throttling (`alert_throttle`) oraz backend audytu (FileAlertAuditLog). | Konfiguracja runtime, logi `alerts/` | SRE |
 | Licencje | Potwierdź ważność licencji OEM i modułów live. | `var/licenses/active/`, log weryfikacji | Security |
 | Dostęp do danych | Upewnij się, że źródła danych (OHLCV, risk snapshot) są kompletne dla rynku live. | Raporty data-quality, `var/data/<env>/` | Data |
+| Walidacja modeli AI | Sprawdź najnowsze raporty `audit/ai_decision/walk_forward/<timestamp>.json` (`job_name`, `walk_forward.average_mae`, `dataset.rows`, `walk_forward.windows[*].mae`). Upewnij się, że katalog audytu zawiera również sekcje `data_quality/` (pola: `issues[*]`, `summary.total_gaps`, `summary.status`, `source`, `tags`) i `drift/` (`metrics.feature_drift.{score,psi,ks,threshold}`, `metrics.distribution_summary.triggered_features`, `metrics.features[*]`, `baseline_window`, `production_window`, `detector`, `threshold`) na przyszłe kontrole. W razie potrzeby użyj helperów `load_latest_walk_forward_report`, `load_latest_data_quality_report`, `load_latest_drift_report`, aby szybko zweryfikować zawartość artefaktów. | Repozytorium `audit/ai_decision/{walk_forward,data_quality,drift}/` | AI + Compliance |
 
 ## 2. Procedura aktywacji
 
