@@ -67,11 +67,13 @@ def _write_config(tmp_path: Path, content: str) -> Path:
 
 def test_validate_config_script_returns_success_for_valid_config(tmp_path: Path) -> None:
     config_path = _write_config(tmp_path, _VALID_CONFIG)
-    exit_code = validate_config.main(["--config", str(config_path), "--json"])
+    exit_code = validate_config.main(
+        ["--config", str(config_path), "--json", "--profile", "paper"]
+    )
     assert exit_code == 0
 
 
 def test_validate_config_script_returns_error_for_invalid_config(tmp_path: Path) -> None:
     config_path = _write_config(tmp_path, _INVALID_CONFIG)
-    exit_code = validate_config.main(["--config", str(config_path)])
+    exit_code = validate_config.main(["--config", str(config_path), "-p", "paper"])
     assert exit_code == 1

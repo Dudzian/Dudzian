@@ -27,13 +27,22 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         action="store_true",
         help="Zwróć wynik w formacie JSON (łatwiejszy do użycia w CI)",
     )
+    parser.add_argument(
+        "-p",
+        "--profile",
+        dest="profile",
+        default=None,
+        help=(
+            "Opcjonalny profil środowiskowy (np. demo/paper/live) ograniczający zakres kontroli."
+        ),
+    )
     return parser.parse_args(argv)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parse_args(argv)
     config = load_core_config(args.config)
-    result = validate_core_config(config)
+    result = validate_core_config(config, profile=args.profile)
 
     if args.json:
         payload = {
