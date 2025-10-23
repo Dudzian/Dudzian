@@ -26,9 +26,17 @@ except Exception:  # noqa: BLE001 - opcjonalna zależność
 _LOGGER = logging.getLogger(__name__)
 
 
+DEFAULT_CONFIG_PATH = "config/core.yaml"
+DEFAULT_OUTPUT_DIR = "reports/paper_labs"
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--config", required=True, help="Ścieżka do pliku config/core.yaml")
+    parser.add_argument(
+        "--config",
+        default=DEFAULT_CONFIG_PATH,
+        help="Ścieżka do pliku config/core.yaml",
+    )
     parser.add_argument(
         "--environment",
         help="Nazwa środowiska, której użyć do domyślnej lokalizacji danych",
@@ -67,7 +75,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--output-dir",
-        required=True,
+        default=DEFAULT_OUTPUT_DIR,
         help="Katalog, w którym zapisane zostaną raporty",
     )
     parser.add_argument(
@@ -275,7 +283,7 @@ def main(argv: list[str] | None = None) -> int:
         tco_summary = _collect_tco_summary(core_config, config_path=config_path)
         report.tco_summary = tco_summary
 
-    output_dir = Path(args.output_dir)
+    output_dir = Path(args.output_dir).expanduser()
     output_dir.mkdir(parents=True, exist_ok=True)
     json_path = output_dir / args.json_output
     pdf_path = output_dir / args.pdf_output
