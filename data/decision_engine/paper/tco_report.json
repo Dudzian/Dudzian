@@ -1,0 +1,17 @@
+{
+  "strategies": {
+    "mean_reversion_alpha": {
+      "profiles": {
+        "balanced": {
+          "cost_bps": 4.0
+        }
+      },
+      "total": {
+        "cost_bps": 4.5
+      }
+    }
+  },
+  "total": {
+    "cost_bps": 5.2
+  }
+}

@@ -32,6 +32,7 @@ from bot_core.security.signing import canonical_json_bytes
 
 BUNDLE_NAME = "core-oem"
 SUPPORTED_PLATFORMS = {"linux", "macos", "windows"}
+_DEFAULT_DRY_RUN_VERSION = "0.0.0-dry-run"
 _RESERVED_RESOURCE_PREFIXES = {"daemon", "ui", "config", "bootstrap"}
 _RESERVED_RESOURCE_PREFIXES_CASEFOLD = {prefix.casefold() for prefix in _RESERVED_RESOURCE_PREFIXES}
 _RESERVED_CONFIG_PATHS = {
@@ -256,6 +257,7 @@ class CoreBundleBuilder:
         output_dir: Path,
         inputs: BundleInputs,
         logger: Optional[logging.Logger] = None,
+        ensure_output_dir: bool = True,
     ) -> None:
         if platform not in SUPPORTED_PLATFORMS:
             raise ValueError(f"Unsupported platform: {platform}")
@@ -269,7 +271,7 @@ class CoreBundleBuilder:
                 raise ValueError(f"Output directory must not be a symlink: {prepared_output_dir}")
             if not prepared_output_dir.is_dir():
                 raise ValueError(f"Output directory is not a directory: {prepared_output_dir}")
-        else:
+        elif ensure_output_dir:
             prepared_output_dir.mkdir(parents=True, exist_ok=True)
 
         self.output_dir = prepared_output_dir.resolve()
@@ -282,9 +284,14 @@ class CoreBundleBuilder:
         )
         self.logger = logger or logging.getLogger(__name__)
 
+    def expected_archive_path(self) -> Path:
+        """Return the destination path for the bundle archive."""
+
+        return self.output_dir / self._expected_archive_name()
+
     def build(self) -> Path:
-        expected_archive_name = self._expected_archive_name()
-        destination = self.output_dir / expected_archive_name
+        destination = self.expected_archive_path()
+        expected_archive_name = destination.name
         if destination.exists():
             raise FileExistsError(f"Bundle archive already exists: {destination}")
 
@@ -706,7 +713,7 @@ def _resolve_paths(values: Iterable[str], *, label: str) -> List[Path]:
 def build_from_cli(argv: Optional[List[str]] = None) -> Path:
     parser = argparse.ArgumentParser(description="Build Core OEM bundle")
     parser.add_argument("--platform", required=True, choices=sorted(SUPPORTED_PLATFORMS))
-    parser.add_argument("--version", required=True)
+    parser.add_argument("--version", required=False, help="Bundle version string")
     parser.add_argument("--signing-key-path", required=True)
     parser.add_argument(
         "--daemon",
@@ -746,10 +753,23 @@ def build_from_cli(argv: Optional[List[str]] = None) -> Path:
         default="var/dist",
         help="Destination directory for bundle archives",
     )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Validate inputs without creating bundle archives",
+    )
     parser.add_argument("--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"])
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=getattr(logging, args.log_level))
+
+    version = args.version
+    if version is None:
+        if args.dry_run:
+            version = _DEFAULT_DRY_RUN_VERSION
+        else:
+            raise ValueError("--version is required unless --dry-run is specified")
+    version = str(version)
 
     raw_key_path = Path(args.signing_key_path).expanduser()
     if not raw_key_path.exists():
@@ -821,18 +841,25 @@ def build_from_cli(argv: Optional[List[str]] = None) -> Path:
             raise ValueError(f"Output directory must not be a symlink: {raw_output_dir}")
         if not raw_output_dir.is_dir():
             raise ValueError(f"Output directory is not a directory: {raw_output_dir}")
-    else:
+    elif not args.dry_run:
         raw_output_dir.mkdir(parents=True, exist_ok=True)
 
     output_dir = raw_output_dir.resolve()
 
     builder = CoreBundleBuilder(
         platform=args.platform,
-        version=args.version,
+        version=version,
         signing_key=signing_key,
         output_dir=output_dir,
         inputs=inputs,
+        ensure_output_dir=not args.dry_run,
     )
+    if args.dry_run:
+        destination = builder.expected_archive_path()
+        if destination.exists():
+            raise FileExistsError(f"Bundle archive already exists: {destination}")
+        builder.logger.info("Dry run: validations completed. Bundle would be created at %s", destination)
+        return destination
     return builder.build()
 
 

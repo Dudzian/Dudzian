@@ -21,6 +21,8 @@ otrzymuje komplet instrukcji serwisowych.
 | 10. Potwierdź możliwość eksportu pakietu wsparcia | Support | Archiwum z logami/raportami | Zawiera `logs/`, eksporty CSV i raport telemetrii, gotowe do wysłania do L2 |
 | 11. Archiwizuj artefakty w `var/audit/acceptance/<TS>` oraz decision log | Release Manager | `decision_log/entry.json`, raport PDF | Wpis podpisany, wskazuje lokalizację bundla i logów |
 
+> 💡 **Walidacja przed pakowaniem:** przed uruchomieniem właściwego builda wywołaj `python deploy/packaging/build_core_bundle.py --dry-run` (z tym samym zestawem artefaktów), aby sprawdzić klucze HMAC, ścieżki oraz potencjalne konflikty nazw bez tworzenia archiwów. Flaga `--dry-run` ustawia domyślną wersję `0.0.0-dry-run`, dzięki czemu nie trzeba rezerwować numeru wydania na etapie wstępnej walidacji.
+
 ## Artefakty końcowe
 - `core-oem-<wersja>-<platforma>.{tar.gz|zip}` wraz z `manifest.json(.sig)` i
   raportem sum SHA-384.

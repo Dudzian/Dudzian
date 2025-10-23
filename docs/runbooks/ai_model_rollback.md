@@ -171,7 +171,7 @@ kontroli compliance opisanych w `docs/compliance/ai_pipeline_signoff.md`.
      print('Scheduler next_run:', scheduler.next_run())
      PY
      ```
-   - Przeprowadź smoke test pętli decyzyjnej (`scripts/run_decision_engine_smoke.py --mode incident`).
+   - Przeprowadź smoke test pętli decyzyjnej (`scripts/run_decision_engine_smoke.py --mode live --risk-snapshot <ścieżka> --candidates <ścieżka> --tco-report <ścieżka> --output <ścieżka>`; w razie potrzeby testów kontrolnych dostępny jest tryb `paper` z danymi w `data/decision_engine/paper/`).
 
 ## Eskalacja
 - Jeżeli rollback nie usuwa alertu dryfu, eskaluj do Platform Ops z logami

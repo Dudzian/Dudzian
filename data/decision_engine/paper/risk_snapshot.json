@@ -1,0 +1,18 @@
+{
+  "balanced": {
+    "start_of_day_equity": 100000.0,
+    "daily_realized_pnl": 0.0,
+    "peak_equity": 105000.0,
+    "last_equity": 102000.0,
+    "positions": {
+      "BTCUSDT": {
+        "side": "long",
+        "notional": 15000.0
+      },
+      "ETHUSDT": {
+        "side": "long",
+        "notional": 8000.0
+      }
+    }
+  }
+}
