@@ -157,6 +157,8 @@ def test_training_scheduler_executes_external_backend(tmp_path) -> None:
     record = job.history[-1]
     assert record.backend == "mean_regressor"
     assert record.dataset_rows == len(dataset.vectors)
+    assert record.metrics
+    assert record.metrics == dict(artifact.metrics.summary())
 
 
 def test_scheduled_job_persists_state_and_records_journal(tmp_path) -> None:
@@ -228,7 +230,21 @@ def test_scheduled_job_persists_state_and_records_journal(tmp_path) -> None:
     assert entry["risk_profile"] == "ai-research"
     assert entry["schedule"] == "btc-retrain"
     assert entry["schedule_run_id"].startswith("btc-retrain:")
-    assert entry["metric_mae"] == str(artifact.metrics["mae"])
+    expected_summary_metrics = dict(artifact.metrics.summary())
+    assert expected_summary_metrics, "powinny istnieć metryki podsumowujące"
+    assert entry["metric_mae"] == f"{expected_summary_metrics['mae']:.10f}"
+    for metric_name, metric_value in expected_summary_metrics.items():
+        key = f"metric_{metric_name}"
+        assert key in entry
+        assert entry[key] == f"{metric_value:.10f}"
+    block_metrics = artifact.metrics.splits()
+    for split_name, values in block_metrics.items():
+        if split_name == "summary" or not values:
+            continue
+        for metric_name, metric_value in values.items():
+            key = f"metric_{split_name}_{metric_name}"
+            assert key in entry
+            assert entry[key] == f"{metric_value:.10f}"
     assert entry["last_run"] == artifact.trained_at.isoformat()
     assert entry["next_run"] == (
         artifact.trained_at + timedelta(minutes=30)
