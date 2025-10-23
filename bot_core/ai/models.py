@@ -202,7 +202,7 @@ class ModelArtifact:
 
     def to_dict(self) -> Mapping[str, object]:
         metrics_payload: dict[str, dict[str, float]] = {}
-        for split, values in self.metrics.items():
+        for split, values in self.metrics.blocks().items():
             if isinstance(values, Mapping):
                 metrics_payload[str(split)] = dict(values)
         for required in ("summary", "train", "validation", "test"):
@@ -301,4 +301,4 @@ class ModelArtifact:
         return adapter.load(self.model_state, self.feature_names, self.metadata)
 
 
-__all__ = ["ModelArtifact", "ModelScore"]
+__all__ = ["ModelArtifact", "ModelMetrics", "ModelScore"]

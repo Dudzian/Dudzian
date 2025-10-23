@@ -11,6 +11,7 @@ _EXPORTS: Dict[str, Tuple[str, str]] = {
     "ModelRepository": (".inference", "ModelRepository"),
     # modele i serializacja
     "ModelArtifact": (".models", "ModelArtifact"),
+    "ModelMetrics": (".models", "ModelMetrics"),
     "ModelScore": (".models", "ModelScore"),
     # training pipeline
     "ModelTrainer": (".training", "ModelTrainer"),
