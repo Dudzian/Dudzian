@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import dataclass, field, replace
+from dataclasses import InitVar, dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from tempfile import NamedTemporaryFile
@@ -16,6 +16,11 @@ from .models import ModelArtifact
 from .training import ModelTrainer
 
 from .audit import DEFAULT_AUDIT_ROOT, save_walk_forward_report
+from ..runtime.journal import TradingDecisionEvent, TradingDecisionJournal
+
+
+DEFAULT_JOURNAL_ENVIRONMENT = "ai-training"
+DEFAULT_JOURNAL_RISK_PROFILE = "ai-research"
 
 
 @dataclass(slots=True)
@@ -490,11 +495,23 @@ class ScheduledTrainingJob:
     audit_root: str | Path | None = None
     decision_journal: TradingDecisionJournal | None = None
     decision_journal_context: Mapping[str, str] | None = None
-    journal_environment: str = "ai-training"
-    journal_portfolio: str | None = None
-    journal_risk_profile: str = "ai-research"
+    _journal_environment: str = field(
+        init=False, repr=False, default=DEFAULT_JOURNAL_ENVIRONMENT
+    )
+    _journal_portfolio: str | None = field(init=False, repr=False, default=None)
+    _journal_risk_profile: str = field(
+        init=False, repr=False, default=DEFAULT_JOURNAL_RISK_PROFILE
+    )
+    journal_environment: InitVar[str | None] = None
+    journal_portfolio: InitVar[str | None] = None
+    journal_risk_profile: InitVar[str | None] = None
 
-    def __post_init__(self) -> None:
+    def __post_init__(
+        self,
+        journal_environment: str | None,
+        journal_portfolio: str | None,
+        journal_risk_profile: str | None,
+    ) -> None:
         ensure_ai_signals_enabled("zadań treningowych AI")
         if not callable(self.trainer_factory):
             raise TypeError("trainer_factory musi być wywoływalny")
@@ -504,12 +521,27 @@ class ScheduledTrainingJob:
             self.decision_journal_context, Mapping
         ):
             raise TypeError("decision_journal_context musi być mapowaniem lub None")
-        self.journal_environment = str(self.journal_environment or "ai-training")
-        self.journal_risk_profile = str(self.journal_risk_profile or "ai-research")
-        if self.journal_portfolio is None:
-            self.journal_portfolio = self.name
+        if isinstance(journal_environment, property):
+            journal_environment = None
+        if isinstance(journal_portfolio, property):
+            journal_portfolio = None
+        if isinstance(journal_risk_profile, property):
+            journal_risk_profile = None
+
+        self._journal_environment = self._normalize_journal_value(
+            journal_environment, default=DEFAULT_JOURNAL_ENVIRONMENT
+        )
+        self._journal_risk_profile = self._normalize_journal_value(
+            journal_risk_profile, default=DEFAULT_JOURNAL_RISK_PROFILE
+        )
+
+        if journal_portfolio is None:
+            if self._journal_portfolio is None:
+                self._journal_portfolio = self.name
         else:
-            self.journal_portfolio = str(self.journal_portfolio)
+            self._journal_portfolio = self._normalize_journal_value(
+                journal_portfolio, default=self.name
+            )
 
     def is_due(self, now: datetime | None = None) -> bool:
         return self.scheduler.should_retrain(now)
@@ -520,19 +552,50 @@ class ScheduledTrainingJob:
         value = self.decision_journal_context.get(key)
         if value is None:
             return default
-        return str(value)
+        return self._normalize_journal_value(value, default=default)
+
+    @staticmethod
+    def _normalize_journal_value(value: object | None, *, default: str) -> str:
+        if value is None:
+            return default
+        coerced = str(value)
+        if coerced:
+            return coerced
+        return default
 
     @property
     def journal_environment(self) -> str:
-        return self._journal_context_value("environment", "ai-training")
+        return self._journal_context_value("environment", self._journal_environment)
+
+    @journal_environment.setter
+    def journal_environment(self, value: str | None) -> None:
+        self._journal_environment = self._normalize_journal_value(
+            value, default=DEFAULT_JOURNAL_ENVIRONMENT
+        )
 
     @property
     def journal_portfolio(self) -> str:
-        return self._journal_context_value("portfolio", self.name)
+        default_portfolio = self._journal_portfolio or self.name
+        return self._journal_context_value("portfolio", default_portfolio)
+
+    @journal_portfolio.setter
+    def journal_portfolio(self, value: str | None) -> None:
+        if value is None:
+            self._journal_portfolio = None
+        else:
+            self._journal_portfolio = self._normalize_journal_value(
+                value, default=self.name
+            )
 
     @property
     def journal_risk_profile(self) -> str:
-        return self._journal_context_value("risk_profile", "ai-research")
+        return self._journal_context_value("risk_profile", self._journal_risk_profile)
+
+    @journal_risk_profile.setter
+    def journal_risk_profile(self, value: str | None) -> None:
+        self._journal_risk_profile = self._normalize_journal_value(
+            value, default=DEFAULT_JOURNAL_RISK_PROFILE
+        )
 
     @property
     def journal_strategy(self) -> str:
@@ -580,6 +643,7 @@ class ScheduledTrainingJob:
             )
 
         self.scheduler.mark_executed(artifact.trained_at)
+        summary_metrics = dict(artifact.metrics.summary())
         record = TrainingRunRecord(
             trained_at=artifact.trained_at,
             metrics=dict(summary_metrics),
@@ -612,12 +676,12 @@ class ScheduledTrainingJob:
             if self.scheduler.paused_reason:
                 metadata["paused_reason"] = self.scheduler.paused_reason
             for key, value in summary_metrics.items():
-                metadata[f"metric_{key}"] = f"{value:.10f}"
-            for split, values in artifact.metrics.blocks().items():
+                metadata[f"metric_{key}"] = str(value)
+            for split, values in artifact.metrics.splits().items():
                 if split == "summary" or not values:
                     continue
                 for metric_name, metric_value in values.items():
-                    metadata[f"metric_{split}_{metric_name}"] = f"{metric_value:.10f}"
+                    metadata[f"metric_{split}_{metric_name}"] = str(metric_value)
             event = TradingDecisionEvent(
                 event_type="ai_retraining",
                 timestamp=artifact.trained_at,
@@ -712,7 +776,14 @@ class ScheduledTrainingJob:
             for key, value in self.decision_journal_context.items():
                 if value is None:
                     continue
-                context[str(key)] = str(value)
+                key_str = str(key)
+                if key_str in {"environment", "portfolio", "risk_profile", "strategy", "schedule"}:
+                    fallback = context.get(key_str, self.name)
+                    context[key_str] = self._normalize_journal_value(
+                        value, default=fallback
+                    )
+                else:
+                    context[key_str] = str(value)
         return context
 
     def _record_retraining_failure_journal(
