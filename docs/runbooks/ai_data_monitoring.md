@@ -2,11 +2,16 @@
 
 Runbook opisuje monitorowanie jakości danych oraz dryfu cech dla pipeline'u AI. Monitoring opiera się na helperach z modułu `bot_core.ai.monitoring` oraz raportach audytu zapisywanych w `audit/ai_decision/{data_quality,drift}`.
 
+> **Wybór modułu:**
+> - Helpery pipeline (batch/training) są dostępne w `bot_core.ai.monitoring` i operują na ramkach Pandas (`DataCompletenessWatcher`, `FeatureDriftAnalyzer`, `FeatureBoundsValidator`).
+> - Helpery inference (on-line scoring) znajdują się w `bot_core.ai.data_monitoring` i są eksportowane jako `InferenceDataCompletenessWatcher` oraz `InferenceFeatureBoundsValidator` z `bot_core.ai`. Zapewniają obsługę raportów JSON i polityk blokujących scoring.
+> - Jeśli preferujesz bezpośrednie importy modułu inference, użyj `from bot_core.ai.data_monitoring import DataCompletenessWatcher as InferenceDataCompletenessWatcher` (analogicznie dla `FeatureBoundsValidator`).
+
 ## 1. Szybka checklista
 
 1. **Kompletność świec** – uruchom `DataCompletenessWatcher` (częstotliwość np. `1min`) na ramce OHLCV z ostatniej doby. Sprawdź `assessment.summary.status` oraz `summary.total_gaps`. Jeśli `status == "critical"`, eskaluj do zespołu danych i wstrzymaj inference dla symbolu.
 2. **Dryf cech** – porównaj zbiór treningowy z oknem produkcyjnym za pomocą `FeatureDriftAnalyzer`. Zweryfikuj `assessment.summary.triggered_features`, `metrics.feature_drift.psi` oraz `distribution_summary.max_ks`. Trigger > progów PSI/KS wymaga wpisu w decision journalu oraz przeglądu risk/compliance.
-3. **Zakres cech inference** – podczas obsługi alertu sprawdź `FeatureBoundsValidator.is_within_bounds()` dla ostatnich próbek inference. Jeśli którekolwiek `feature_out_of_bounds`, zatrzymaj scoring i potwierdź wznowienie z risk.
+3. **Zakres cech inference** – podczas obsługi alertu sprawdź `InferenceFeatureBoundsValidator.observe()` dla ostatnich próbek inference. Jeśli którekolwiek `feature_out_of_bounds`, zatrzymaj scoring i potwierdź wznowienie z risk.
 4. **Automatyczny audyt pipeline'u** – zweryfikuj, że `AIManager.get_last_data_quality_report_path()` wskazuje świeży raport (`pipeline:<symbol>:<kontrola>`) po ostatnim `run_pipeline`. Brak raportu oznacza, że kontrola nie została zarejestrowana.
 
 ## 2. Procedura operacyjna
@@ -96,7 +101,39 @@ await manager.run_pipeline("BTCUSDT", df, ["alpha"], seq_len=3, folds=2)
 
 Po wykonaniu pipeline'u raport znajdziesz w `audit/ai_decision/data_quality/<timestamp>.json` pod nazwą `pipeline:btcusdt:completeness`. Helper `manager.get_data_quality_checks()` zwraca aktualnie aktywne kontrole, a `clear_data_quality_checks()` pozwala szybko wyłączyć monitoring podczas testów.
 
-### 2.5 Decision journal
+### 2.5 Monitoring inference
+
+Helpery inference działają na słownikach cech i raportach JSON z `audit/ai_decision`. Korzystają z aliasów eksportowanych przez `bot_core.ai`.
+
+```python
+from bot_core.ai import (
+    DecisionModelInference,
+    InferenceDataCompletenessWatcher,
+    InferenceFeatureBoundsValidator,
+    score_with_data_monitoring,
+)
+
+watcher = InferenceDataCompletenessWatcher()
+watcher.configure(["alpha", "beta"])
+
+bounds = InferenceFeatureBoundsValidator()
+bounds.configure({"ratio": {"min": 0.0, "max": 1.0}})
+
+report = watcher.observe({"alpha": 1.0, "beta": None}, context={"run": "nightly"})
+
+inference = DecisionModelInference(repository)
+inference.load_weights("latest.json")  # konfiguruje watchery na podstawie metadanych artefaktu
+
+score_with_data_monitoring(
+    inference,
+    latest_features,
+    context={"run": "nightly"},
+)
+```
+
+Raporty inference zawierają pola `policy.enforce`, `sign_off` oraz ścieżkę do pliku (`report_path`). W przypadku alertu `DataQualityException` obejmuje jednocześnie raporty kompletności i zakresów.
+
+### 2.6 Decision journal
 
 Każdy zapis raportu (`save_data_quality_report`, `save_drift_report`) generuje zdarzenie w `TradingDecisionJournal`:
 
@@ -114,5 +151,5 @@ Ustaw `AIManager(..., decision_journal=JsonlTradingDecisionJournal(...))`, aby l
 
 - Raporty data-quality: `audit/ai_decision/data_quality/<timestamp>.json` (pola `issues`, `summary.status`, `summary.total_gaps`).
 - Raporty dryfu: `audit/ai_decision/drift/<timestamp>.json` (`metrics.feature_drift.psi`, `metrics.features`, `distribution_summary`).
-- Helpery API: `bot_core.ai.{DataCompletenessWatcher, FeatureDriftAnalyzer, FeatureBoundsValidator, AIManager.record_data_quality_issues}`.
+- Helpery API: `bot_core.ai.{DataCompletenessWatcher, FeatureDriftAnalyzer, FeatureBoundsValidator, AIManager.record_data_quality_issues}` dla pipeline'u oraz `bot_core.ai.{InferenceDataCompletenessWatcher, InferenceFeatureBoundsValidator, score_with_data_monitoring}` dla inference.
 

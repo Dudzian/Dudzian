@@ -9,10 +9,10 @@ from typing import Mapping, Sequence
 import pytest
 
 from bot_core.ai import (
-    DataCompletenessWatcher,
     DecisionModelInference,
     DataQualityException,
-    FeatureBoundsValidator,
+    InferenceDataCompletenessWatcher,
+    InferenceFeatureBoundsValidator,
     ModelArtifact,
     ModelRepository,
     export_drift_alert_report,
@@ -104,7 +104,7 @@ def _make_artifact(
 
 def test_data_completeness_watcher_detects_missing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("AI_DECISION_AUDIT_ROOT", str(tmp_path / "audit"))
-    watcher = DataCompletenessWatcher()
+    watcher = InferenceDataCompletenessWatcher()
     watcher.configure(["alpha", "beta"])
 
     report = watcher.observe({"alpha": 1.0, "beta": None}, context={"pipeline": "unit"})
@@ -120,7 +120,7 @@ def test_data_completeness_watcher_detects_missing(tmp_path: Path, monkeypatch: 
 
 def test_feature_bounds_validator_detects_outliers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("AI_DECISION_AUDIT_ROOT", str(tmp_path / "audit"))
-    validator = FeatureBoundsValidator()
+    validator = InferenceFeatureBoundsValidator()
     validator.configure({"ratio": {"min": 0.0, "max": 1.0}})
 
     report = validator.observe({"ratio": 10.0}, context={"pipeline": "unit"})
