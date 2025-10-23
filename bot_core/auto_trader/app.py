@@ -505,6 +505,25 @@ class AutoTrader:
 
         self._thresholds = self._thresholds_loader()
 
+    def _compute_ai_signal_context(
+        self,
+        ai_manager: Any | None,
+        symbol: str,
+        market_data: pd.DataFrame,
+    ) -> Mapping[str, object] | None:
+        """Return AI signal metadata used by guardrails.
+
+        Older versions of :class:`AutoTrader` did not expose this helper which
+        made tests crash when they tried to interrogate the signal context.  To
+        remain backward compatible we provide a small delegating stub that falls
+        back to an empty mapping if the specialised implementation is missing.
+        """
+
+        compute = getattr(self, "_compute_ai_signal_context_impl", None)
+        if compute is None:
+            return {}
+        return compute(ai_manager, symbol, market_data)
+
     def _normalise_cycle_history_limit(self, limit: int | None) -> int:
         if limit is None:
             return -1
@@ -2145,7 +2164,7 @@ class AutoTrader:
         clamped = max(min(float(prediction) * 4.0, 20.0), -20.0)
         return 1.0 / (1.0 + math.exp(-clamped))
 
-    def _compute_ai_signal_context(
+    def _compute_ai_signal_context_impl(
         self,
         ai_manager: Any | None,
         symbol: str,
