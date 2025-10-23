@@ -82,6 +82,131 @@ permission_profiles:
     required_permissions: [read]
     forbidden_permissions: []
 
+exchange_accounts:
+  binance:
+    paper:
+      environment: binance_paper
+      keychain_key: binance_paper_trading
+      risk_profile: balanced
+    live:
+      environment: binance_live
+      keychain_key: binance_live_trading
+      risk_profile: conservative
+    futures_paper:
+      environment: binance_futures_paper
+      keychain_key: binance_futures_paper_trading
+      risk_profile: balanced
+    futures_live:
+      environment: binance_futures_live
+      keychain_key: binance_futures_live_trading
+      risk_profile: conservative
+  kraken:
+    paper:
+      environment: kraken_paper
+      keychain_key: kraken_paper_trading
+      risk_profile: balanced
+    live:
+      environment: kraken_live
+      keychain_key: kraken_live_trading
+      risk_profile: conservative
+    futures_paper:
+      environment: kraken_futures_paper
+      keychain_key: kraken_futures_paper_trading
+      risk_profile: balanced
+    futures_live:
+      environment: kraken_futures_live
+      keychain_key: kraken_futures_live_trading
+      risk_profile: conservative
+  zonda:
+    paper:
+      environment: zonda_paper
+      keychain_key: zonda_paper_trading
+      risk_profile: conservative
+    live:
+      environment: zonda_live
+      keychain_key: zonda_live_trading
+      risk_profile: conservative
+  coinbase:
+    paper:
+      environment: coinbase_paper
+      keychain_key: coinbase_paper_trading
+      risk_profile: balanced
+    margin_paper:
+      environment: coinbase_margin_paper
+      keychain_key: coinbase_margin_paper_trading
+      risk_profile: balanced
+    futures_live:
+      environment: coinbase_futures_live
+      keychain_key: coinbase_futures_live_trading
+      risk_profile: conservative
+  okx:
+    paper:
+      environment: okx_paper
+      keychain_key: okx_paper_trading
+      risk_profile: balanced
+    margin_testnet:
+      environment: okx_margin_testnet
+      keychain_key: okx_margin_testnet_trading
+      risk_profile: balanced
+  bybit:
+    paper:
+      environment: bybit_paper
+      keychain_key: bybit_paper_trading
+      risk_profile: balanced
+    futures_testnet:
+      environment: bybit_futures_testnet
+      keychain_key: bybit_futures_testnet_trading
+      risk_profile: balanced
+
+exchange_adapters:
+  binance:
+    margin:
+      class_path: bot_core.exchanges.binance.margin:BinanceMarginAdapter
+      supports_testnet: true
+    futures:
+      class_path: bot_core.exchanges.binance.futures:BinanceFuturesAdapter
+      supports_testnet: true
+  kraken:
+    margin:
+      class_path: bot_core.exchanges.kraken.margin:KrakenMarginAdapter
+      supports_testnet: true
+    futures:
+      class_path: bot_core.exchanges.kraken.futures:KrakenFuturesAdapter
+      supports_testnet: true
+  zonda:
+    margin:
+      class_path: bot_core.exchanges.zonda.margin:ZondaMarginAdapter
+      supports_testnet: false
+  coinbase:
+    margin:
+      class_path: bot_core.exchanges.coinbase.margin:CoinbaseMarginAdapter
+      supports_testnet: false
+      default_settings:
+        product_type: margin
+    futures:
+      class_path: bot_core.exchanges.coinbase.futures:CoinbaseFuturesAdapter
+      supports_testnet: false
+      default_settings:
+        product_type: futures
+  okx:
+    margin:
+      class_path: bot_core.exchanges.okx.margin:OKXMarginAdapter
+      supports_testnet: true
+      default_settings:
+        marginMode: cross
+    futures:
+      class_path: bot_core.exchanges.okx.futures:OKXFuturesAdapter
+      supports_testnet: true
+  bybit:
+    margin:
+      class_path: bot_core.exchanges.bybit.margin:BybitMarginAdapter
+      supports_testnet: true
+    futures:
+      class_path: bot_core.exchanges.bybit.futures:BybitFuturesAdapter
+      supports_testnet: true
+      default_settings:
+        hedgeMode: true
+
 license:
   license_path: var/licenses/active/license.json
   fingerprint_path: var/licenses/active/fingerprint.json
