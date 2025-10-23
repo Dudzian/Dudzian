@@ -37,108 +37,68 @@ def _read_latest_category_report(root: Path, category: str) -> dict:
     return _read_json(candidates[-1])
 
 
-def _normalize_feature_scalers(
-    scalers: Mapping[str, object] | None,
-) -> dict[str, tuple[float, float]]:
-    if not isinstance(scalers, Mapping):
-        return {}
-    normalized: dict[str, tuple[float, float]] = {}
-    for name, raw in scalers.items():
-        if isinstance(raw, Mapping):
-            mean = float(raw.get("mean", 0.0))
-            stdev = float(raw.get("stdev", 1.0))
-            normalized[str(name)] = (mean, stdev)
-        elif isinstance(raw, Sequence) and len(raw) >= 2:
-            normalized[str(name)] = (float(raw[0]), float(raw[1]))
-    return normalized
-
-
-def _merge_metrics(blocks: Mapping[str, object] | None) -> Mapping[str, object]:
-    merged: dict[str, object] = {
-        "summary": {},
-        "train": {},
-        "validation": {},
-        "test": {},
-    }
-    if not isinstance(blocks, Mapping):
-        return merged
-    for split, payload in blocks.items():
-        if isinstance(payload, Mapping):
-            merged[str(split)] = dict(payload)
-    return merged
-
-
 def _make_artifact(
     *,
-    feature_names: Sequence[str],
-    model_state: Mapping[str, object],
-    metadata: Mapping[str, object],
-    metrics: Mapping[str, object] | None = None,
-    backend: str = "builtin",
+    feature_names: tuple[str, ...] = ("alpha", "beta"),
+    model_state: dict | None = None,
+    metrics: dict | None = None,
     trained_at: datetime | None = None,
-    target_scale: float | None = None,
-    training_rows: int | None = None,
-    validation_rows: int | None = None,
-    test_rows: int | None = None,
-    feature_scalers: Mapping[str, tuple[float, float]] | None = None,
+    data_quality: dict | None = None,
+    drift_monitor: dict | None = None,
+    feature_stats: dict | None = None,
+    metadata_feature_scalers: dict | None = None,
+    feature_scaler_summary: dict | None = None,
+    metadata_extra: dict | None = None,
     decision_journal_entry_id: str | None = None,
+    target_scale: float = 1.0,
+    training_rows: int = 10,
+    validation_rows: int = 5,
+    test_rows: int = 5,
 ) -> ModelArtifact:
-    target_scale = (
-        float(target_scale)
-        if target_scale is not None
-        else float(metadata.get("target_scale", 1.0))
-    )
-    training_rows = (
-        int(training_rows)
-        if training_rows is not None
-        else int(metadata.get("training_rows", 0))
-    )
-    validation_rows = (
-        int(validation_rows)
-        if validation_rows is not None
-        else int(metadata.get("validation_rows", 0))
-    )
-    test_rows = (
-        int(test_rows)
-        if test_rows is not None
-        else int(metadata.get("test_rows", 0))
-    )
-    computed_metrics = _merge_metrics(metrics)
+    feature_names = tuple(feature_names)
+    metadata_scalers = metadata_feature_scalers or {
+        name: {"mean": 0.0, "stdev": 1.0} for name in feature_names
+    }
+    stats = feature_stats or {
+        name: {"mean": 0.0, "stdev": 1.0, "min": -1.0, "max": 1.0}
+        for name in feature_names
+    }
+    scaler_summary = feature_scaler_summary or {
+        name: (0.0, 1.0) for name in feature_names
+    }
+    metadata = {
+        "feature_names": list(feature_names),
+        "feature_scalers": metadata_scalers,
+        "feature_stats": stats,
+    }
+    if data_quality is not None:
+        metadata["data_quality"] = data_quality
+    if drift_monitor is not None:
+        metadata["drift_monitor"] = drift_monitor
+    if metadata_extra:
+        metadata.update(metadata_extra)
+    model_defaults = {
+        "learning_rate": 0.1,
+        "n_estimators": 0,
+        "initial_prediction": 0.0,
+        "feature_names": list(feature_names),
+        "feature_scalers": metadata_scalers,
+        "stumps": [],
+    }
 
-    scalers_source: Mapping[str, object] | None
-    if feature_scalers is not None:
-        scalers_source = feature_scalers
-    else:
-        scalers_source = metadata.get("feature_scalers") or model_state.get(
-            "feature_scalers"
-        )
-    computed_feature_scalers = _normalize_feature_scalers(scalers_source)
-    if not computed_feature_scalers:
-        computed_feature_scalers = {
-            str(name): (0.0, 1.0) for name in feature_names
-        }
-
-    if decision_journal_entry_id is None:
-        raw_decision_id = metadata.get("decision_journal_entry_id") or metadata.get(
-            "decision_journal_entry"
-        )
-        if raw_decision_id is not None:
-            decision_journal_entry_id = str(raw_decision_id)
-
-    trained_at = trained_at or datetime.now(timezone.utc)
     return ModelArtifact(
-        feature_names=tuple(feature_names),
-        model_state=model_state,
-        trained_at=trained_at,
-        metrics=computed_metrics,
+        feature_names=feature_names,
+        model_state=model_state or model_defaults,
+        trained_at=trained_at or datetime.now(timezone.utc),
+        metrics=metrics or {"mae": 0.0},
         metadata=metadata,
         target_scale=target_scale,
         training_rows=training_rows,
         validation_rows=validation_rows,
         test_rows=test_rows,
-        feature_scalers=computed_feature_scalers,
+        feature_scalers=scaler_summary,
         decision_journal_entry_id=decision_journal_entry_id,
-        backend=backend,
+        backend="builtin",
     )
 
 
@@ -180,37 +140,13 @@ def test_inference_monitoring_exports_reports(tmp_path: Path, monkeypatch: pytes
     audit_root = tmp_path / "audit"
     monkeypatch.setenv("AI_DECISION_AUDIT_ROOT", str(audit_root))
     repository = ModelRepository(tmp_path / "repo")
-    metadata = {
-        "feature_scalers": {
-            "alpha": {"mean": 0.0, "stdev": 1.0},
-            "beta": {"mean": 0.0, "stdev": 1.0},
-        },
-        "feature_stats": {
-            "alpha": {"mean": 0.0, "stdev": 1.0, "min": -1.0, "max": 1.0},
-            "beta": {"mean": 0.0, "stdev": 1.0, "min": -1.0, "max": 1.0},
-        },
-        "drift_monitor": {
+    artifact = _make_artifact(
+        drift_monitor={
             "threshold": 0.5,
             "window": 1,
             "min_observations": 1,
             "cooldown": 1,
-        },
-    }
-    artifact = _make_artifact(
-        feature_names=("alpha", "beta"),
-        model_state={
-            "learning_rate": 0.1,
-            "n_estimators": 0,
-            "initial_prediction": 0.0,
-            "feature_names": ["alpha", "beta"],
-            "feature_scalers": {
-                "alpha": {"mean": 0.0, "stdev": 1.0},
-                "beta": {"mean": 0.0, "stdev": 1.0},
-            },
-            "stumps": [],
-        },
-        metadata=metadata,
-        metrics={"mae": 0.0},
+        }
     )
     model_path = repository.save(artifact, "test_model.json")
 
@@ -255,33 +191,7 @@ def test_score_with_data_monitoring_passes_when_data_ok(
     audit_root = tmp_path / "audit"
     monkeypatch.setenv("AI_DECISION_AUDIT_ROOT", str(audit_root))
     repository = ModelRepository(tmp_path / "repo")
-    metadata = {
-        "feature_scalers": {
-            "alpha": {"mean": 0.0, "stdev": 1.0},
-            "beta": {"mean": 0.0, "stdev": 1.0},
-        },
-        "feature_stats": {
-            "alpha": {"mean": 0.0, "stdev": 1.0, "min": -1.0, "max": 1.0},
-            "beta": {"mean": 0.0, "stdev": 1.0, "min": -1.0, "max": 1.0},
-        },
-        "data_quality": {"enforce": True},
-    }
-    artifact = _make_artifact(
-        feature_names=("alpha", "beta"),
-        model_state={
-            "learning_rate": 0.1,
-            "n_estimators": 0,
-            "initial_prediction": 0.0,
-            "feature_names": ["alpha", "beta"],
-            "feature_scalers": {
-                "alpha": {"mean": 0.0, "stdev": 1.0},
-                "beta": {"mean": 0.0, "stdev": 1.0},
-            },
-            "stumps": [],
-        },
-        metadata=metadata,
-        metrics={"mae": 0.0},
-    )
+    artifact = _make_artifact(data_quality={"enforce": True})
     model_path = repository.save(artifact, "test_model_ok.json")
 
     inference = DecisionModelInference(repository)
@@ -316,29 +226,14 @@ def test_score_with_data_monitoring_respects_category_policy(
     audit_root = tmp_path / "audit"
     monkeypatch.setenv("AI_DECISION_AUDIT_ROOT", str(audit_root))
     repository = ModelRepository(tmp_path / "repo")
-    metadata = {
-        "feature_stats": {
-            "alpha": {"mean": 0.0, "stdev": 1.0, "min": -1.0, "max": 1.0},
-        },
-        "data_quality": {
+    artifact = _make_artifact(
+        feature_names=("alpha",),
+        data_quality={
             "enforce": True,
             "categories": {
                 "bounds": {"enforce": False},
             },
         },
-    }
-    artifact = _make_artifact(
-        feature_names=("alpha",),
-        model_state={
-            "learning_rate": 0.1,
-            "n_estimators": 0,
-            "initial_prediction": 0.0,
-            "feature_names": ["alpha"],
-            "feature_scalers": {"alpha": {"mean": 0.0, "stdev": 1.0}},
-            "stumps": [],
-        },
-        metadata=metadata,
-        metrics={"mae": 0.0},
     )
     model_path = repository.save(artifact, "policy_model.json")
 
@@ -368,24 +263,7 @@ def test_update_sign_off_updates_exported_report(
     audit_root = tmp_path / "audit"
     monkeypatch.setenv("AI_DECISION_AUDIT_ROOT", str(audit_root))
     repository = ModelRepository(tmp_path / "repo")
-    metadata = {
-        "feature_stats": {
-            "alpha": {"mean": 0.0, "stdev": 1.0, "min": -1.0, "max": 1.0},
-        },
-    }
-    artifact = _make_artifact(
-        feature_names=("alpha",),
-        model_state={
-            "learning_rate": 0.1,
-            "n_estimators": 0,
-            "initial_prediction": 0.0,
-            "feature_names": ["alpha"],
-            "feature_scalers": {"alpha": {"mean": 0.0, "stdev": 1.0}},
-            "stumps": [],
-        },
-        metadata=metadata,
-        metrics={"mae": 0.0},
-    )
+    artifact = _make_artifact(feature_names=("alpha",))
     model_path = repository.save(artifact, "signoff_model.json")
 
     inference = DecisionModelInference(repository)
@@ -427,33 +305,13 @@ def test_load_recent_reports_filters_and_limits(
     audit_root = tmp_path / "audit"
     monkeypatch.setenv("AI_DECISION_AUDIT_ROOT", str(audit_root))
     repository = ModelRepository(tmp_path / "repo")
-    metadata = {
-        "feature_stats": {
-            "alpha": {"mean": 0.0, "stdev": 1.0, "min": -1.0, "max": 1.0},
-            "beta": {"mean": 0.0, "stdev": 1.0, "min": -1.0, "max": 1.0},
-        },
-        "drift_monitor": {
+    artifact = _make_artifact(
+        drift_monitor={
             "threshold": 0.5,
             "window": 1,
             "min_observations": 1,
             "cooldown": 1,
-        },
-    }
-    artifact = _make_artifact(
-        feature_names=("alpha", "beta"),
-        model_state={
-            "learning_rate": 0.1,
-            "n_estimators": 0,
-            "initial_prediction": 0.0,
-            "feature_names": ["alpha", "beta"],
-            "feature_scalers": {
-                "alpha": {"mean": 0.0, "stdev": 1.0},
-                "beta": {"mean": 0.0, "stdev": 1.0},
-            },
-            "stumps": [],
-        },
-        metadata=metadata,
-        metrics={"mae": 0.0},
+        }
     )
     model_path = repository.save(artifact, "history_model.json")
 
@@ -510,28 +368,7 @@ def test_summarize_data_quality_reports_flags_pending_sign_off(
     audit_root = tmp_path / "audit"
     monkeypatch.setenv("AI_DECISION_AUDIT_ROOT", str(audit_root))
     repository = ModelRepository(tmp_path / "repo")
-    metadata = {
-        "feature_stats": {
-            "alpha": {"mean": 0.0, "stdev": 1.0, "min": -1.0, "max": 1.0},
-            "beta": {"mean": 0.0, "stdev": 1.0, "min": -1.0, "max": 1.0},
-        },
-    }
-    artifact = _make_artifact(
-        feature_names=("alpha", "beta"),
-        model_state={
-            "learning_rate": 0.1,
-            "n_estimators": 0,
-            "initial_prediction": 0.0,
-            "feature_names": ["alpha", "beta"],
-            "feature_scalers": {
-                "alpha": {"mean": 0.0, "stdev": 1.0},
-                "beta": {"mean": 0.0, "stdev": 1.0},
-            },
-            "stumps": [],
-        },
-        metadata=metadata,
-        metrics={"mae": 0.0},
-    )
+    artifact = _make_artifact()
     model_path = repository.save(artifact, "summary_model.json")
 
     inference = DecisionModelInference(repository)
