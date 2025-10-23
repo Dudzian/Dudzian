@@ -4614,100 +4614,6 @@ class AutoTrader:
             payload=decision.to_dict(),
             portfolio_snapshot=self._capture_portfolio_snapshot(),
         )
-        payload = self._build_risk_evaluation_event_payload(
-            entry,
-            trimmed_by_limit=trimmed_by_limit,
-            trimmed_by_ttl=trimmed_by_ttl,
-            history_size=history_size,
-            limit_snapshot=limit_snapshot,
-            ttl_snapshot=ttl_snapshot,
-        )
-        self._emit_risk_evaluation_event(payload)
-        self._notify_risk_evaluation_listeners(payload)
-
-    def _resolve_risk_service(self) -> Any | None:
-        risk_service = getattr(self, "risk_service", None)
-        if risk_service is None:
-            risk_service = getattr(self, "core_risk_engine", None)
-        return risk_service
-
-    def _invoke_risk_service(self, service: Any, decision: "RiskDecision") -> Any:
-        if hasattr(service, "evaluate_decision"):
-            return service.evaluate_decision(decision)
-        if callable(service):  # pragma: no branch - simple delegation
-            return service(decision)
-        raise TypeError("Configured risk service is not callable")
-
-    def _normalize_risk_approval(
-        self,
-        decision: "RiskDecision",
-        service: Any,
-        response: Any,
-    ) -> tuple[bool | None, bool | None]:
-        approval: bool | None = None
-        normalized: bool | None = None
-
-        risk_details = decision.details.setdefault("risk_service", {})
-        risk_details["service"] = type(service).__name__
-        summary = self._summarize_risk_response(response)
-        if summary is not None:
-            risk_details["response"] = summary
-
-        candidate = response
-        additional_context: Mapping[str, Any] | None = None
-        if isinstance(response, tuple) and response:
-            candidate = response[0]
-            if len(response) > 1 and isinstance(response[1], Mapping):
-                additional_context = dict(response[1])
-        elif isinstance(response, list) and response:
-            candidate = response[0]
-        if additional_context:
-            risk_details["context"] = additional_context
-
-        approval = self._coerce_risk_approval(candidate)
-        if approval is None:
-            if isinstance(response, Mapping):
-                for key in ("approved", "allow", "should_trade", "trade"):
-                    if key in response:
-                        approval = self._coerce_risk_approval(response[key])
-                        if approval is not None:
-                            break
-            elif hasattr(response, "__dict__"):
-                for key in ("approved", "allow", "should_trade", "trade"):
-                    if hasattr(response, key):
-                        approval = self._coerce_risk_approval(getattr(response, key))
-                        if approval is not None:
-                            break
-
-        if approval is not None:
-            normalized = approval
-
-        return approval, normalized
-
-    def _coerce_risk_approval(self, candidate: Any) -> bool | None:
-        if isinstance(candidate, bool):
-            return candidate
-        if isinstance(candidate, enum.Enum):
-            return self._coerce_risk_approval(candidate.value)
-        if isinstance(candidate, (int, float)):
-            if candidate >= 1:
-                return True
-            if candidate <= 0:
-                return False
-            return None
-        if isinstance(candidate, str):
-            value = candidate.strip().lower()
-            if value in {"true", "yes", "y", "allow", "allowed", "approve", "approved", "accept", "accepted", "ok"}:
-                return True
-            if value in {"false", "no", "n", "deny", "denied", "block", "blocked", "reject", "rejected"}:
-                return False
-            return None
-        return None
-
-    def _summarize_risk_response(self, response: Any) -> dict[str, Any] | None:
-        if response is None:
-            return None
-
         self._last_signal = signal
         self._last_regime = assessment
         self._last_risk_decision = decision
@@ -4824,6 +4730,18 @@ class AutoTrader:
                     risk_snapshot=self._capture_risk_snapshot(),
                 )
 
+    def _resolve_risk_service(self) -> Any | None:
+        risk_service = getattr(self, "risk_service", None)
+        if risk_service is None:
+            risk_service = getattr(self, "core_risk_engine", None)
+        return risk_service
+
+    def _invoke_risk_service(self, service: Any, decision: "RiskDecision") -> Any:
+        if hasattr(service, "evaluate_decision"):
+            return service.evaluate_decision(decision)
+        if callable(service):  # pragma: no branch - simple delegation
+            return service(decision)
+        raise TypeError("Configured risk service is not callable")
 
     def _apply_risk_evaluation_limit_locked(
         self, limit: int | None
