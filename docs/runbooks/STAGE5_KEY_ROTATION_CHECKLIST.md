@@ -43,3 +43,10 @@ polityki bezpieczeństwa.
   środowiska objętego checklistą.
 - Notatka w decision logu hypercare (lub innym rejestrze operacyjnym) z datą,
   operatorem i listą środowisk.
+
+> **Tip:** Status bundla mTLS możesz sprawdzić osobno poleceniem
+> `python scripts/rotate_keys.py --status --bundle core-oem`
+> (również w skróconej formie `--status core-oem` lub `status core-oem`). Raport JSON zawiera
+> sekcję `summary` (liczby `ok/warning/due/overdue`) oraz listę `entries` z
+> polami `state`, `days_since_rotation` i `due_in_days` dla kluczy `ca/server/client`,
+> co pozwala błyskawicznie ocenić aktualność pakietu bez uruchamiania pełnej rotacji.

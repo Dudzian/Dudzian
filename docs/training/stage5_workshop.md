@@ -37,7 +37,7 @@ Przekazać zespołom OEM wiedzę i procedury konieczne do utrzymania modułów T
 - Wymagania wstępne: dostęp do repo OEM, konfiguracja Python 3.11+, uprawnienia do odczytu kluczy Stage5 i decision logu.
 
 ## Notatki dla prowadzącego
-- Zweryfikuj aktualność kluczy HMAC i mTLS (`scripts/rotate_keys.py --status`) oraz przygotuj próbkę rotacji z wpisem w decision logu.
+- Zweryfikuj aktualność kluczy HMAC i mTLS (`scripts/rotate_keys.py --status --bundle core-oem`, opcjonalnie skrót `--status core-oem` lub `status core-oem`) oraz przygotuj próbkę rotacji z wpisem w decision logu. Raport `--status` pokazuje sekcję `summary` oraz listę `entries`, dzięki czemu od razu widać wpisy `due/overdue`.
 - Przygotuj konto testowe z wypełnionym decision logiem (kategorie `stage5_incident`, `stage5_training`).
 - Zapewnij dostęp do środowiska offline z najnowszym bundlem Stage4/Stage5 (raport `run_oem_acceptance.py`).
 - Po warsztacie zaktualizuj `docs/training/stage5_workshop.md` o listę uczestników i wnioski.
