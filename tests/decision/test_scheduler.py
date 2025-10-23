@@ -6,6 +6,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import List, Mapping, Sequence
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from bot_core.ai import (
@@ -75,8 +77,11 @@ register_external_model_adapter(
 )
 
 
-def test_retraining_scheduler_marks_runs() -> None:
-    scheduler = RetrainingScheduler(interval=timedelta(hours=6))
+def test_retraining_scheduler_marks_runs(tmp_path) -> None:
+    scheduler = RetrainingScheduler(
+        interval=timedelta(hours=6),
+        persistence_path=tmp_path / "scheduler.json",
+    )
     now = datetime(2024, 5, 1, 12, tzinfo=timezone.utc)
 
     assert scheduler.should_retrain(now)
@@ -113,7 +118,7 @@ def test_walk_forward_validator_produces_metrics() -> None:
     assert 0.0 <= result.average_directional_accuracy <= 1.0
 
 
-def test_training_scheduler_executes_external_backend() -> None:
+def test_training_scheduler_executes_external_backend(tmp_path) -> None:
     vectors: list[FeatureVector] = []
     for idx in range(12):
         features = {"momentum": float(idx) / 5.0, "volume_ratio": 1.0 + (idx % 2) * 0.2}
@@ -127,7 +132,10 @@ def test_training_scheduler_executes_external_backend() -> None:
         )
     dataset = FeatureDataset(vectors=tuple(vectors), metadata={"symbols": ["ETHUSDT"]})
 
-    schedule = RetrainingScheduler(interval=timedelta(minutes=5))
+    schedule = RetrainingScheduler(
+        interval=timedelta(minutes=5),
+        persistence_path=tmp_path / "scheduler.json",
+    )
     job = ScheduledTrainingJob(
         name="eth-mean",
         scheduler=schedule,
@@ -149,6 +157,337 @@ def test_training_scheduler_executes_external_backend() -> None:
     record = job.history[-1]
     assert record.backend == "mean_regressor"
     assert record.dataset_rows == len(dataset.vectors)
+
+
+def test_scheduled_job_persists_state_and_records_journal(tmp_path) -> None:
+    dataset = FeatureDataset(
+        vectors=(
+            FeatureVector(
+                timestamp=1_700_300_000,
+                symbol="BTCUSDT",
+                features={"momentum": 1.0},
+                target_bps=0.5,
+            ),
+        ),
+        metadata={"symbols": ["BTCUSDT"]},
+    )
+    persistence_path = tmp_path / "scheduler.json"
+    scheduler = RetrainingScheduler(
+        interval=timedelta(minutes=30),
+        persistence_path=persistence_path,
+    )
+    journal = InMemoryTradingDecisionJournal()
+    job = ScheduledTrainingJob(
+        name="btc-retrain",
+        scheduler=scheduler,
+        trainer_factory=lambda: ModelTrainer(learning_rate=0.1, n_estimators=5),
+        dataset_provider=lambda: dataset,
+        decision_journal=journal,
+    )
+    now = datetime(2024, 6, 1, 8, 0, tzinfo=timezone.utc)
+
+    artifact = job.run(now=now)
+
+    assert persistence_path.exists(), "scheduler powinien zapisać stan do pliku"
+    payload = json.loads(persistence_path.read_text(encoding="utf-8"))
+    assert payload["version"] == RetrainingScheduler.STATE_VERSION
+    assert payload["last_run"] == artifact.trained_at.isoformat()
+    assert payload["next_run"] == (
+        artifact.trained_at + timedelta(minutes=30)
+    ).isoformat()
+    assert payload["interval"] == timedelta(minutes=30).total_seconds()
+    assert payload["updated_at"] == artifact.trained_at.isoformat()
+    assert payload["last_failure"] is None
+    assert payload["failure_streak"] == 0
+    assert payload["last_failure_reason"] is None
+    assert payload["cooldown_until"] is None
+    assert payload["paused_until"] is None
+    assert payload["paused_reason"] is None
+
+    exported_state = scheduler.export_state()
+    assert exported_state["version"] == RetrainingScheduler.STATE_VERSION
+    assert exported_state["last_run"] == artifact.trained_at.isoformat()
+    assert exported_state["next_run"] == (
+        artifact.trained_at + timedelta(minutes=30)
+    ).isoformat()
+    assert exported_state["interval"] == timedelta(minutes=30).total_seconds()
+    assert exported_state["updated_at"] == artifact.trained_at.isoformat()
+    assert exported_state["last_failure"] is None
+    assert exported_state["failure_streak"] == 0
+    assert exported_state["last_failure_reason"] is None
+    assert exported_state["cooldown_until"] is None
+    assert exported_state["paused_until"] is None
+    assert exported_state["paused_reason"] is None
+
+    exported = tuple(journal.export())
+    assert len(exported) == 1, "powinien powstać wpis w decision journal"
+    entry = exported[0]
+    assert entry["event"] == "ai_retraining"
+    assert entry["schedule"] == "btc-retrain"
+    assert entry["schedule_run_id"].startswith("btc-retrain:")
+    assert entry["last_run"] == artifact.trained_at.isoformat()
+    assert entry["next_run"] == (
+        artifact.trained_at + timedelta(minutes=30)
+    ).isoformat()
+    assert entry["scheduler_version"] == str(RetrainingScheduler.STATE_VERSION)
+    assert entry["state_updated_at"] == artifact.trained_at.isoformat()
+    assert entry["failure_streak"] == "0"
+    assert "cooldown_until" not in entry
+
+
+def test_scheduled_job_records_failure_and_updates_state(tmp_path) -> None:
+    dataset = FeatureDataset(
+        vectors=(
+            FeatureVector(
+                timestamp=1_700_400_000,
+                symbol="BTCUSDT",
+                features={"momentum": 2.0},
+                target_bps=-0.75,
+            ),
+        ),
+        metadata={"symbols": ["BTCUSDT"]},
+    )
+    persistence_path = tmp_path / "scheduler.json"
+    scheduler = RetrainingScheduler(
+        interval=timedelta(minutes=20),
+        persistence_path=persistence_path,
+    )
+    previous_run = datetime(2024, 6, 30, 15, 0, tzinfo=timezone.utc)
+    scheduler.mark_executed(previous_run)
+    journal = InMemoryTradingDecisionJournal()
+
+    class _FailingTrainer:
+        backend = "failing"
+
+        def train(self, _dataset: FeatureDataset):
+            raise RuntimeError("boom during training")
+
+    job = ScheduledTrainingJob(
+        name="btc-fail",
+        scheduler=scheduler,
+        trainer_factory=lambda: _FailingTrainer(),
+        dataset_provider=lambda: dataset,
+        decision_journal=journal,
+    )
+
+    failure_time = datetime(2024, 6, 30, 18, 30, tzinfo=timezone.utc)
+    with pytest.raises(RuntimeError):
+        job.run(now=failure_time)
+
+    payload = json.loads(persistence_path.read_text(encoding="utf-8"))
+    assert payload["version"] == RetrainingScheduler.STATE_VERSION
+    assert payload["last_run"] == previous_run.isoformat()
+    assert payload["updated_at"] == failure_time.isoformat()
+    assert payload["last_failure"] == failure_time.isoformat()
+    assert payload["failure_streak"] == 1
+    assert payload["last_failure_reason"].startswith("RuntimeError: boom during training")
+    expected_cooldown = failure_time + timedelta(minutes=20)
+    assert payload["cooldown_until"] == expected_cooldown.isoformat()
+    assert payload["paused_until"] is None
+    assert payload["paused_reason"] is None
+
+    exported_state = scheduler.export_state()
+    assert exported_state["last_run"] == previous_run.isoformat()
+    assert exported_state["updated_at"] == failure_time.isoformat()
+    assert exported_state["last_failure"] == failure_time.isoformat()
+    assert exported_state["failure_streak"] == 1
+    assert exported_state["last_failure_reason"].startswith("RuntimeError: boom during training")
+    assert exported_state["cooldown_until"] == expected_cooldown.isoformat()
+    assert exported_state["paused_until"] is None
+    assert exported_state["paused_reason"] is None
+
+    assert scheduler.failure_streak == 1
+
+    exported = tuple(journal.export())
+    assert len(exported) == 1
+    entry = exported[0]
+    assert entry["event"] == "ai_retraining_failed"
+    assert entry["schedule"] == "btc-fail"
+    assert entry["error_type"] == "RuntimeError"
+    assert entry["failure_streak"] == "1"
+    assert entry["last_failure"] == failure_time.isoformat()
+    assert entry["last_run"] == previous_run.isoformat()
+    assert entry["next_run"] == expected_cooldown.isoformat()
+    assert entry["scheduler_version"] == str(RetrainingScheduler.STATE_VERSION)
+    assert entry["last_failure_reason"].startswith("RuntimeError: boom during training")
+    assert entry["cooldown_until"] == expected_cooldown.isoformat()
+
+
+def test_scheduler_reload_uses_persisted_state(tmp_path) -> None:
+    persistence_path = tmp_path / "scheduler.json"
+    original_interval = timedelta(hours=2)
+    scheduler = RetrainingScheduler(
+        interval=original_interval,
+        persistence_path=persistence_path,
+    )
+    executed_at = datetime(2024, 7, 1, 12, 30, tzinfo=timezone.utc)
+    scheduler.mark_executed(executed_at)
+
+    reloaded = RetrainingScheduler(
+        interval=timedelta(minutes=15),
+        persistence_path=persistence_path,
+    )
+
+    assert reloaded.interval == original_interval
+    assert reloaded.last_run == executed_at
+    assert reloaded.next_run(executed_at - timedelta(minutes=1)) == executed_at + original_interval
+
+
+def test_scheduler_applies_failure_backoff(tmp_path) -> None:
+    persistence_path = tmp_path / "scheduler.json"
+    scheduler = RetrainingScheduler(
+        interval=timedelta(minutes=10),
+        persistence_path=persistence_path,
+    )
+    last_run = datetime(2024, 7, 4, 12, 0, tzinfo=timezone.utc)
+    scheduler.mark_executed(last_run)
+
+    first_failure = last_run + timedelta(minutes=5)
+    scheduler.mark_failure(first_failure, reason="transient")
+
+    assert scheduler.cooldown_until == first_failure + timedelta(minutes=10)
+    assert scheduler.should_retrain(first_failure + timedelta(minutes=9)) is False
+    assert scheduler.should_retrain(first_failure + timedelta(minutes=11)) is True
+
+    second_failure = first_failure + timedelta(minutes=11)
+    scheduler.mark_failure(second_failure, reason="still failing")
+
+    expected_second_cooldown = second_failure + timedelta(minutes=20)
+    assert scheduler.cooldown_until == expected_second_cooldown
+    assert scheduler.failure_streak == 2
+    assert scheduler.should_retrain(second_failure + timedelta(minutes=19)) is False
+    assert scheduler.should_retrain(second_failure + timedelta(minutes=21)) is True
+
+    payload = json.loads(persistence_path.read_text(encoding="utf-8"))
+    assert payload["cooldown_until"] == expected_second_cooldown.isoformat()
+    assert payload["failure_streak"] == 2
+    assert payload["paused_until"] is None
+    assert payload["paused_reason"] is None
+
+
+def test_scheduler_pause_and_resume(tmp_path) -> None:
+    persistence_path = tmp_path / "scheduler.json"
+    scheduler = RetrainingScheduler(
+        interval=timedelta(minutes=15),
+        persistence_path=persistence_path,
+    )
+
+    scheduler.pause(duration=timedelta(minutes=45), reason="maintenance")
+
+    payload = json.loads(persistence_path.read_text(encoding="utf-8"))
+    paused_until = datetime.fromisoformat(payload["paused_until"]).astimezone(timezone.utc)
+
+    assert payload["paused_reason"] == "maintenance"
+    assert scheduler.should_retrain(paused_until - timedelta(minutes=5)) is False
+    assert scheduler.next_run(paused_until - timedelta(minutes=5)) == paused_until
+
+    scheduler.resume(paused_until)
+
+    payload = json.loads(persistence_path.read_text(encoding="utf-8"))
+    assert payload["paused_until"] is None
+    assert payload["paused_reason"] is None
+
+    after_resume = paused_until + timedelta(minutes=1)
+    assert scheduler.should_retrain(after_resume)
+
+
+def test_scheduler_clears_pause_after_expiration(tmp_path) -> None:
+    persistence_path = tmp_path / "scheduler.json"
+    scheduler = RetrainingScheduler(
+        interval=timedelta(minutes=30),
+        persistence_path=persistence_path,
+    )
+
+    scheduler.pause(duration=timedelta(minutes=15), reason="ops-window")
+    paused_until = scheduler.paused_until
+    assert paused_until is not None
+
+    past_pause = paused_until + timedelta(minutes=10)
+    assert scheduler.should_retrain(past_pause)
+
+    payload = json.loads(persistence_path.read_text(encoding="utf-8"))
+    assert payload["paused_until"] is None
+    assert payload["paused_reason"] is None
+    assert payload["updated_at"] == past_pause.isoformat()
+
+
+def test_scheduler_pause_validation(tmp_path) -> None:
+    persistence_path = tmp_path / "scheduler.json"
+    scheduler = RetrainingScheduler(
+        interval=timedelta(minutes=10),
+        persistence_path=persistence_path,
+    )
+
+    with pytest.raises(ValueError):
+        scheduler.pause()
+
+    with pytest.raises(ValueError):
+        scheduler.pause(duration=timedelta(seconds=-1))
+
+    in_past = datetime.now(timezone.utc) - timedelta(minutes=5)
+    with pytest.raises(ValueError):
+        scheduler.pause(until=in_past)
+
+    with pytest.raises(ValueError):
+        scheduler.pause(duration=timedelta(minutes=5), until=datetime.now(timezone.utc) + timedelta(minutes=10))
+
+def test_scheduler_recovers_last_run_from_next_run(tmp_path) -> None:
+    persistence_path = tmp_path / "scheduler.json"
+    scheduler = RetrainingScheduler(
+        interval=timedelta(minutes=45),
+        persistence_path=persistence_path,
+    )
+    executed_at = datetime(2024, 7, 2, 10, 0, tzinfo=timezone.utc)
+    scheduler.mark_executed(executed_at)
+
+    payload = json.loads(persistence_path.read_text(encoding="utf-8"))
+    payload.pop("last_run", None)
+    payload["interval"] = str(payload["interval"])  # wymusza parsowanie z napisu
+    payload["next_run"] = (executed_at + timedelta(minutes=45)).timestamp()
+    payload["updated_at"] = executed_at.timestamp()
+    persistence_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    reloaded = RetrainingScheduler(
+        interval=timedelta(hours=5),
+        persistence_path=persistence_path,
+    )
+
+    assert reloaded.interval == timedelta(seconds=float(payload["interval"]))
+    assert reloaded.last_run == executed_at
+    assert reloaded.next_run(executed_at) == executed_at + reloaded.interval
+    assert reloaded.updated_at == executed_at
+
+
+def test_scheduler_update_interval_persists_and_updates_state(tmp_path) -> None:
+    persistence_path = tmp_path / "scheduler.json"
+    scheduler = RetrainingScheduler(
+        interval=timedelta(minutes=10),
+        persistence_path=persistence_path,
+    )
+    executed_at = datetime(2024, 7, 3, 9, tzinfo=timezone.utc)
+    scheduler.mark_executed(executed_at)
+
+    scheduler.update_interval(timedelta(minutes=90))
+
+    payload = json.loads(persistence_path.read_text(encoding="utf-8"))
+    assert payload["interval"] == timedelta(minutes=90).total_seconds()
+    assert payload["last_run"] == executed_at.isoformat()
+    assert payload["updated_at"] == executed_at.isoformat()
+    assert payload["last_failure"] is None
+    assert payload["failure_streak"] == 0
+
+
+def test_scheduler_rejects_non_positive_interval(tmp_path) -> None:
+    persistence_path = tmp_path / "scheduler.json"
+    with pytest.raises(ValueError):
+        RetrainingScheduler(interval=timedelta(0), persistence_path=persistence_path)
+
+    scheduler = RetrainingScheduler(
+        interval=timedelta(minutes=5),
+        persistence_path=persistence_path,
+    )
+    with pytest.raises(ValueError):
+        scheduler.update_interval(timedelta(seconds=-5))
 
 
 def test_cross_validation_uses_external_adapter_for_each_fold() -> None:
