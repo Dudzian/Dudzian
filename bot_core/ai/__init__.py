@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import importlib
-from typing import Any, Dict, Tuple
+from typing import TYPE_CHECKING, Any, Dict, Tuple
 
 _EXPORTS: Dict[str, Tuple[str, str]] = {
     # inference / repository
@@ -31,7 +31,7 @@ _EXPORTS: Dict[str, Tuple[str, str]] = {
     "load_latest_walk_forward_report": (".audit", "load_latest_walk_forward_report"),
     "load_latest_data_quality_report": (".audit", "load_latest_data_quality_report"),
     "load_latest_drift_report": (".audit", "load_latest_drift_report"),
-    # monitoring danych
+    # monitoring danych (pipeline)
     "DataCompletenessWatcher": (".monitoring", "DataCompletenessWatcher"),
     "DataQualityAssessment": (".monitoring", "DataQualityAssessment"),
     "DataQualityIssue": (".monitoring", "DataQualityIssue"),
@@ -71,9 +71,9 @@ _EXPORTS: Dict[str, Tuple[str, str]] = {
     "FeatureDataset": (".feature_engineering", "FeatureDataset"),
     "FeatureEngineer": (".feature_engineering", "FeatureEngineer"),
     "FeatureVector": (".feature_engineering", "FeatureVector"),
-    # monitoring danych
-    "DataCompletenessWatcher": (".data_monitoring", "DataCompletenessWatcher"),
-    "FeatureBoundsValidator": (".data_monitoring", "FeatureBoundsValidator"),
+    # monitoring danych (inference)
+    "InferenceDataCompletenessWatcher": (".data_monitoring", "DataCompletenessWatcher"),
+    "InferenceFeatureBoundsValidator": (".data_monitoring", "FeatureBoundsValidator"),
     "export_data_quality_report": (".data_monitoring", "export_data_quality_report"),
     "export_drift_alert_report": (".data_monitoring", "export_drift_alert_report"),
     "DataQualityException": (".data_monitoring", "DataQualityException"),
@@ -105,6 +105,14 @@ _EXPORTS: Dict[str, Tuple[str, str]] = {
 }
 
 __all__ = sorted(_EXPORTS)
+
+
+if TYPE_CHECKING:  # pragma: no cover - tylko dla statycznych analizatorów typu mypy
+    from .data_monitoring import (
+        DataCompletenessWatcher as InferenceDataCompletenessWatcher,
+        FeatureBoundsValidator as InferenceFeatureBoundsValidator,
+    )
+    from .monitoring import DataCompletenessWatcher, FeatureBoundsValidator
 
 
 def __getattr__(name: str) -> Any:  # pragma: no cover - prosty mechanizm leniwy
