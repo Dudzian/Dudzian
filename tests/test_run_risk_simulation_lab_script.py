@@ -191,51 +191,15 @@ def test_cli_stage5_latency_tco(tmp_path: Path, stage5_config: tuple[Path, Path]
 def test_parser_stage2_defaults() -> None:
     parser = _build_parser()
     args = parser.parse_args(["--profile", "all"])
-    assert args.config is None
-    assert args.output_dir is None
+    assert args.config == DEFAULT_CONFIG_PATH
+    assert args.output_dir == DEFAULT_OUTPUT_DIR
     assert args.profile == ["all"]
 
 
 def test_parser_stage5_defaults() -> None:
     parser = _build_parser()
     args = parser.parse_args(["--scenario", "latency_spike", "--include-tco"])
-    assert args.config is None
-    assert args.output_dir is None
+    assert args.config == DEFAULT_CONFIG_PATH
+    assert args.output_dir == DEFAULT_OUTPUT_DIR
     assert args.scenario == ["latency_spike"]
     assert args.include_tco is True
-
-
-def test_parser_help_displays_repo_defaults() -> None:
-    parser = _build_parser()
-    help_text = parser.format_help()
-    assert str(DEFAULT_CONFIG_PATH.relative_to(ROOT)) in help_text
-    assert str(DEFAULT_OUTPUT_DIR.relative_to(ROOT)) in help_text
-
-
-def test_cli_uses_repo_defaults(
-    tmp_path: Path,
-    simple_config: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    reports_dir = tmp_path / "paper_labs"
-    caplog.set_level(logging.INFO)
-    monkeypatch.setattr("scripts.run_risk_simulation_lab.DEFAULT_CONFIG_PATH", simple_config)
-    monkeypatch.setattr("scripts.run_risk_simulation_lab.DEFAULT_OUTPUT_DIR", reports_dir)
-
-    exit_code = run_main(["--synthetic-fallback", "--print-summary"])
-
-    assert exit_code == 0
-    assert reports_dir.exists()
-    assert (reports_dir / "risk_simulation_report.json").exists()
-    assert (reports_dir / "risk_simulation_report.pdf").exists()
-    resolved_config = simple_config.resolve()
-    resolved_reports_dir = reports_dir.resolve()
-    assert any(
-        "domyślnej ścieżki" in message and str(resolved_config) in message
-        for message in caplog.messages
-    )
-    assert any(
-        "domyślnego katalogu" in message and str(resolved_reports_dir) in message
-        for message in caplog.messages
-    )

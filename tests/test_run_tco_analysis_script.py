@@ -213,6 +213,143 @@ def test_run_tco_analysis_generates_signed_reports_or_summary(tmp_path: Path) ->
     pytest.skip("run_tco_analysis CLI shape not recognized (neither HEAD nor main)")
 
 
+def test_runbook_tco_checklist_default_summary_mode(tmp_path: Path) -> None:
+    if not _supports_head_cli():
+        pytest.skip("Runbook checklist applies to summary CLI variant")
+
+    input_payload = {
+        "currency": "USD",
+        "items": [
+            {"name": "Monitoring", "category": "operations", "monthly_cost": 120.0},
+            {"name": "Training", "category": "enablement", "monthly_cost": 80.0},
+        ],
+    }
+    input_path = tmp_path / "stage5_tco.json"
+    input_path.write_text(json.dumps(input_payload), encoding="utf-8")
+
+    key_path = tmp_path / "tco.key"
+    key_bytes = b"stage5-hmac-key"
+    key_path.write_bytes(key_bytes)
+
+    artifact_root = tmp_path / "var" / "audit" / "tco"
+    timestamp = "20240505T110000Z"
+
+    exit_code = run_tco(
+        [
+            "--input",
+            str(input_path),
+            "--artifact-root",
+            str(artifact_root),
+            "--monthly-trades",
+            "200",
+            "--monthly-volume",
+            "450000",
+            "--signing-key-file",
+            str(key_path),
+            "--signing-key-id",
+            "stage5-tco",
+            "--tag",
+            "weekly-cycle",
+            "--print-summary",
+            "--timestamp",
+            timestamp,
+        ]
+    )
+    assert exit_code == 0
+
+    run_dir = artifact_root / timestamp
+    json_path = run_dir / "tco_summary.json"
+    csv_path = run_dir / "tco_breakdown.csv"
+    signature_path = run_dir / "tco_summary.signature.json"
+
+    assert json_path.exists()
+    assert csv_path.exists()
+    assert signature_path.exists()
+
+    payload = json.loads(json_path.read_text(encoding="utf-8"))
+    assert payload["monthly_total"] == 200.0
+    assert payload["usage"]["monthly_trades"] == 200.0
+    assert payload["tag"] == "weekly-cycle"
+
+    expected_signature = build_hmac_signature(payload, key=key_bytes, key_id="stage5-tco")
+    assert json.loads(signature_path.read_text(encoding="utf-8")) == expected_signature
+
+
+def test_runbook_support_playbook_output_alias(tmp_path: Path) -> None:
+    if not _supports_head_cli():
+        pytest.skip("Output alias applies to summary CLI variant")
+
+    input_payload = {
+        "currency": "USD",
+        "items": [
+            {"name": "Audit tooling", "category": "operations", "monthly_cost": 90.0}
+        ],
+    }
+    input_path = tmp_path / "incident_costs.json"
+    input_path.write_text(json.dumps(input_payload), encoding="utf-8")
+
+    key_path = tmp_path / "support.key"
+    key_bytes = b"stage5-support-hmac"
+    key_path.write_bytes(key_bytes)
+
+    output_target = tmp_path / "var" / "audit" / "tco" / "20240507T090000Z" / "incident.csv"
+
+    exit_code = run_tco(
+        [
+            "--input",
+            str(input_path),
+            "--output",
+            str(output_target),
+            "--signing-key-file",
+            str(key_path),
+            "--signing-key-id",
+            "stage5-support",
+        ]
+    )
+    assert exit_code == 0
+
+    run_dir = tmp_path / "var" / "audit" / "tco" / "20240507T090000Z"
+    json_path = run_dir / "incident.json"
+    csv_path = run_dir / "incident.csv"
+    signature_path = run_dir / "incident.signature.json"
+
+    assert json_path.exists()
+    assert csv_path.exists()
+    assert signature_path.exists()
+
+    payload = json.loads(json_path.read_text(encoding="utf-8"))
+    assert payload["monthly_total"] == 90.0
+
+    expected_signature = build_hmac_signature(payload, key=key_bytes, key_id="stage5-support")
+    assert json.loads(signature_path.read_text(encoding="utf-8")) == expected_signature
+
+
+def test_output_alias_directory_with_digits_is_not_timestamp(tmp_path: Path) -> None:
+    if not _supports_head_cli():
+        pytest.skip("Output alias applies to summary CLI variant")
+
+    input_payload = {"currency": "USD", "items": []}
+    input_path = tmp_path / "empty.json"
+    input_path.write_text(json.dumps(input_payload), encoding="utf-8")
+
+    output_target = tmp_path / "var2" / "audit" / "tco" / "report.csv"
+
+    exit_code = run_tco([
+        "--input",
+        str(input_path),
+        "--output",
+        str(output_target),
+    ])
+    assert exit_code == 0
+
+    artifact_root = tmp_path / "var2" / "audit" / "tco"
+    # wygenerowany znacznik czasu powinien być podkatalogiem z 15-16 znakami, nie "var2"
+    subdirs = [item for item in artifact_root.iterdir() if item.is_dir()]
+    assert len(subdirs) == 1
+    generated_dir = subdirs[0]
+    assert generated_dir.name != "var2"
+    assert generated_dir.name.startswith("20")  # rok
+    assert (generated_dir / "report.csv").exists()
 def test_run_tco_analysis_requires_key_length_if_applicable(tmp_path: Path) -> None:
     if not _supports_main_cli():
         pytest.skip("Key length validation applies to 'main' CLI variant only")
