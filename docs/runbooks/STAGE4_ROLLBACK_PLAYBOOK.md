@@ -12,7 +12,7 @@ Bezpieczne i audytowalne wyłączenie scheduler-a wielostrate-gicznego Stage4 w 
 | 3. Potwierdź zatrzymanie scheduler-a (`scripts/smoke_demo_strategies.py --check-disabled`) | L2 Ops | Log CLI, status `disabled` | Status `disabled` zwrócony w CLI |
 | 4. Monitoruj metryki awaryjne (`scripts/watch_metrics_stream.py --headers-report --duration 15m`) | NOC | Raport ze skryptu, zrzuty dashboardu Stage4 | Brak nowych alertów krytycznych w oknie obserwacji |
 | 5. Po zakończeniu incydentu usuń plik override (`rm var/runtime/overrides/multi_strategy_disable.json`) i potwierdź restart scheduler-a | L2 Ops | Log usunięcia, wynik `scripts/smoke_demo_strategies.py --check-disabled` | Status `enabled`, brak ostrzeżeń |
-| 6. Zaktualizuj decision log (`scripts/run_oem_acceptance.py --decision-log-*` lub ręczny wpis) | Incident Manager | `var/audit/decision_log.jsonl`, wpis incydentu | Wpis podpisany HMAC, zawiera ID zgłoszenia i czas trwania |
+| 6. Zaktualizuj decision log (`python scripts/verify_decision_log.py summary --append audit/decision_logs/stage4.jsonl --stage stage4 --status rollback_completed --hash-algorithm sha384 --artefact incident_id=<ID> --artefact-from-file summary_sha384=var/audit/stage4/rollback_summary.json --metadata duration_min=<MIN> --tag rollback`) | Incident Manager | `audit/decision_logs/stage4.jsonl`, `var/audit/stage4/rollback_summary.json` | Wpis podpisany HMAC, zawiera identyfikator zgłoszenia, skrót podsumowania i metadane czasu trwania |
 
 ## Artefakty końcowe
 - `var/runtime/overrides/multi_strategy_disable.json` (kopie przed i po usunięciu).

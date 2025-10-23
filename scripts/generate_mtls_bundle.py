@@ -80,7 +80,13 @@ class BundleConfig:
 # -----------------------------------------------------------------------------
 def _parse_args(argv: Iterable[str] | None = None) -> BundleConfig:
     parser = argparse.ArgumentParser(description="Generuje pakiet certyfikatów mTLS (CA/server/client).")
-    parser.add_argument("--output-dir", required=True, help="Katalog docelowy na wygenerowany pakiet")
+    parser.add_argument(
+        "--output",
+        "--output-dir",
+        dest="output_dir",
+        required=True,
+        help="Katalog docelowy na wygenerowany pakiet (alias --output-dir / --output)",
+    )
     parser.add_argument("--bundle-name", default="core-oem", help="Identyfikator pakietu (prefiks plików)")
     parser.add_argument("--common-name", default="Dudzian OEM", help="CN używany dla certyfikatów")
     parser.add_argument("--organization", default="Dudzian", help="Pole O w certyfikatach")

@@ -86,26 +86,43 @@ class CachedOHLCVSource(DataSource):
         cache_key = self._cache_key(request.symbol, request.interval)
         cached_rows, columns = self._load_cached_payload(cache_key)
 
-        upstream_response = self._fetch_upstream_response(request, columns)
-        rows = cached_rows
-        if upstream_response.rows:
-            rows = self._merge_rows(cached_rows, upstream_response.rows)
-            # Aktualizacja cache: zapisujemy całą serię, aby kolejne zapytania były szybkie.
-            selected_columns = columns or tuple(upstream_response.columns or _DEFAULT_COLUMNS)
-            self.storage.write(
-                cache_key,
-                {
-                    "columns": list(selected_columns),
-                    "rows": rows,
-                },
-            )
-            columns = selected_columns
-        if self.snapshot_fetcher is None and self.snapshots_enabled:
-            self.snapshot_fetcher = self._fallback_snapshot_fetcher()
+        filtered_cached_rows = [
+            row for row in cached_rows if row and request.start <= float(row[0]) <= request.end
+        ]
+        if request.limit is not None:
+            filtered_cached_rows = filtered_cached_rows[: request.limit]
 
+        cache_covers_request = bool(filtered_cached_rows)
+        if request.limit is None and cached_rows:
+            timestamps = [float(row[0]) for row in cached_rows if row]
+            if timestamps:
+                cache_covers_request = (
+                    request.start >= min(timestamps)
+                    and request.end <= max(timestamps)
+                )
+
+        should_hit_upstream = not (
+            cache_covers_request and self.snapshot_fetcher is not None
+        )
+
+        rows = cached_rows
+        if should_hit_upstream:
+            upstream_response = self._fetch_upstream_response(request, columns)
+            if upstream_response.rows:
+                rows = self._merge_rows(cached_rows, upstream_response.rows)
+                # Aktualizacja cache: zapisujemy całą serię, aby kolejne zapytania były szybkie.
+                selected_columns = columns or tuple(upstream_response.columns or _DEFAULT_COLUMNS)
+                self.storage.write(
+                    cache_key,
+                    {
+                        "columns": list(selected_columns),
+                        "rows": rows,
+                    },
+                )
+                columns = selected_columns
         if self.snapshot_fetcher is not None:
             try:
-                snapshot_rows = tuple(self.snapshot_fetcher(request))
+                snapshot_rows = tuple(snapshot_fetcher(request))
             except ExchangeNetworkError as exc:
                 _LOGGER.warning(
                     "Snapshot API niedostępne – pozostaję przy danych z cache (%s %s): %s",

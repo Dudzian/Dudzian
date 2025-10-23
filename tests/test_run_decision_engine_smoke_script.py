@@ -74,6 +74,35 @@ def test_run_decision_engine_smoke(tmp_path: Path) -> None:
     assert completed.returncode == 0
 
     payload = json.loads(output_path.read_text(encoding="utf-8"))
+    assert payload["mode"] is None
     assert payload["accepted"] >= 1
     assert payload["rejected"] == 0
     assert payload["stress_failures"] == 0
+
+
+def test_run_decision_engine_smoke_paper_mode(tmp_path: Path) -> None:
+    output_path = tmp_path / "decision_smoke_paper.json"
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT),
+            "--mode",
+            "paper",
+            "--output",
+            str(output_path),
+        ],
+        check=False,
+        cwd=str(REPO_ROOT),
+    )
+
+    assert completed.returncode == 0
+
+    payload = json.loads(output_path.read_text(encoding="utf-8"))
+    assert payload["mode"] == "paper"
+    assert payload["accepted"] >= 1
+    assert payload["rejected"] == 0
+    assert payload["stress_failures"] == 0
+    assert payload["risk_snapshot"].endswith("data/decision_engine/paper/risk_snapshot.json")
+    assert payload["candidates"].endswith("data/decision_engine/paper/candidates.json")
+    assert payload["tco_report"].endswith("data/decision_engine/paper/tco_report.json")

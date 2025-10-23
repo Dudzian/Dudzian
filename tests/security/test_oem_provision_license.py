@@ -51,6 +51,40 @@ def _registry_path(tmp_path) -> str:
     return str(tmp_path / "registry.jsonl")
 
 
+def test_parse_args_accepts_request_yaml(tmp_path):
+    request_path = tmp_path / "request.yaml"
+    registry_path = tmp_path / "registry.jsonl"
+    request_path.write_text(
+        "\n".join(
+            [
+                "fingerprint: ZXCV-ASDF",
+                "mode: usb",
+                "issuer: FILE-OPS",
+                "license_keys:",
+                "  lic-2024: hex:aaaa",
+                "fingerprint_keys:",
+                "  fp-key: hex:bbbb",
+                f"registry: {registry_path}",
+                "validate_registry: true",
+                "emit_qr: true",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    args = cli._parse_args([str(request_path), "--license-key", "extra=from-cli"])
+
+    assert args.request_path == str(request_path)
+    assert args.fingerprint == "ZXCV-ASDF"
+    assert args.mode == "usb"
+    assert args.issuer == "FILE-OPS"
+    assert args.validate_registry is True
+    assert args.emit_qr is True
+    assert args.output == str(registry_path)
+    assert args.license_keys == ["extra=from-cli", "lic-2024=hex:aaaa"]
+    assert args.fingerprint_keys == ["fp-key=hex:bbbb"]
+
+
 def test_provision_license_usb_flow(tmp_path, capsys):
     fingerprint_path, record = _fingerprint_file(tmp_path)
     rotation_log = _license_rotation(tmp_path, purpose="oem-license")

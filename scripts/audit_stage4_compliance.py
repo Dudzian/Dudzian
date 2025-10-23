@@ -1,4 +1,4 @@
-"""Mini-audyt zgodności Stage4: RBAC, mTLS oraz rotacje kluczy."""
+"""Mini-audyt zgodności Stage4/Stage5: RBAC, mTLS, TCO oraz observability."""
 
 from __future__ import annotations
 
@@ -17,7 +17,15 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from bot_core.config.loader import load_core_config  # noqa: E402
-from bot_core.config.models import CoreConfig, MultiStrategySchedulerConfig, ServiceTokenConfig  # noqa: E402
+from bot_core.config.models import (  # noqa: E402
+    CoreConfig,
+    DecisionEngineTCOConfig,
+    KeyRotationConfig,
+    KeyRotationEntryConfig,
+    MultiStrategySchedulerConfig,
+    ObservabilityConfig,
+    ServiceTokenConfig,
+)
 from bot_core.security.rotation import RotationRegistry  # noqa: E402
 
 from scripts._cli_common import now_iso
@@ -34,6 +42,15 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         "--config",
         default="config/core.yaml",
         help="Ścieżka do pliku CoreConfig (domyślnie config/core.yaml)",
+    )
+    parser.add_argument(
+        "--profile",
+        choices=("stage4", "stage5"),
+        default="stage4",
+        help=(
+            "Określa profil kontroli: 'stage4' (domyślny) ogranicza się do RBAC/mTLS,"
+            " 'stage5' dodaje walidacje TCO i observability."
+        ),
     )
     parser.add_argument(
         "--allow-missing-env",
@@ -401,6 +418,165 @@ def _validate_live_router(
         )
 
 
+def _validate_stage5_tco(
+    *,
+    config: CoreConfig,
+    base_dir: Path,
+    issues: list[Mapping[str, Any]],
+    warnings: list[Mapping[str, Any]],
+) -> None:
+    decision_engine = getattr(config, "decision_engine", None)
+    if decision_engine is None:
+        _record(
+            issues,
+            check="decision_engine",
+            message="Profil Stage5 wymaga konfiguracji decision_engine.",
+        )
+        return
+
+    tco_config = getattr(decision_engine, "tco", None)
+    if not isinstance(tco_config, DecisionEngineTCOConfig):
+        _record(
+            issues,
+            check="decision_engine.tco",
+            message="Profil Stage5 wymaga sekcji decision_engine.tco (raporty kosztów).",
+        )
+        return
+
+    report_paths = tuple(str(path) for path in getattr(tco_config, "report_paths", ()) if str(path).strip())
+    if not report_paths:
+        _record(
+            issues,
+            check="decision_engine.tco.report_paths",
+            message="Sekcja decision_engine.tco musi definiować co najmniej jeden raport TCO.",
+        )
+        return
+
+    now = _dt.datetime.now(_dt.timezone.utc)
+    warn_age = getattr(tco_config, "warn_report_age_hours", None)
+    max_age = getattr(tco_config, "max_report_age_hours", None)
+
+    for raw_path in report_paths:
+        resolved = _resolve_path(base_dir, raw_path)
+        if not resolved or not resolved.exists():
+            _record(
+                issues,
+                check=f"decision_engine.tco.report:{raw_path}",
+                message=f"Raport TCO {raw_path} nie istnieje – dostarcz aktualny artefakt.",
+            )
+            continue
+
+        mtime = _dt.datetime.fromtimestamp(resolved.stat().st_mtime, tz=_dt.timezone.utc)
+        age_hours = (now - mtime).total_seconds() / 3600.0
+
+        if max_age is not None and age_hours > max_age:
+            _record(
+                issues,
+                check=f"decision_engine.tco.report:{raw_path}",
+                message=(
+                    f"Raport TCO {raw_path} jest starszy niż dozwolone {max_age:.1f} h (wiek {age_hours:.1f} h)."
+                ),
+            )
+        elif warn_age is not None and age_hours > warn_age:
+            _record(
+                warnings,
+                check=f"decision_engine.tco.report:{raw_path}",
+                message=(
+                    f"Raport TCO {raw_path} przekroczył próg ostrzeżenia {warn_age:.1f} h (wiek {age_hours:.1f} h)."
+                ),
+            )
+
+
+def _validate_stage5_observability(
+    *,
+    config: CoreConfig,
+    base_dir: Path,
+    issues: list[Mapping[str, Any]],
+    warnings: list[Mapping[str, Any]],
+) -> None:
+    observability = getattr(config, "observability", None)
+    if not isinstance(observability, ObservabilityConfig):
+        _record(
+            issues,
+            check="observability",
+            message="Profil Stage5 wymaga sekcji observability z definicjami SLO i rotacją kluczy.",
+        )
+        return
+
+    slo_definitions = getattr(observability, "slo", {}) or {}
+    required_slos = {"decision_latency", "trade_cost", "fill_rate"}
+    missing_slos = sorted(required_slos.difference(slo_definitions))
+    if missing_slos:
+        _record(
+            issues,
+            check="observability.slo",
+            message="Brak wymaganych SLO Stage5: " + ", ".join(missing_slos),
+        )
+
+    key_rotation = getattr(observability, "key_rotation", None)
+    if not isinstance(key_rotation, KeyRotationConfig):
+        _record(
+            issues,
+            check="observability.key_rotation",
+            message="Sekcja observability.key_rotation jest wymagana w profilu Stage5.",
+        )
+        return
+
+    registry_path_value = getattr(key_rotation, "registry_path", "")
+    registry_path = _resolve_path(base_dir, str(registry_path_value))
+    if not registry_path or not registry_path.exists():
+        _record(
+            issues,
+            check="observability.key_rotation.registry_path",
+            message=f"Rejestr rotacji Stage5 nie istnieje: {registry_path_value}",
+        )
+        return
+
+    registry = RotationRegistry(registry_path)
+    entries = tuple(getattr(key_rotation, "entries", ()) or ())
+    if not entries:
+        _record(
+            warnings,
+            check="observability.key_rotation.entries",
+            message="Rejestr rotacji Stage5 istnieje, lecz nie zdefiniowano żadnych wpisów.",
+        )
+        return
+
+    default_interval = getattr(key_rotation, "default_interval_days", 90.0) or 90.0
+    default_warn = getattr(key_rotation, "default_warn_within_days", 14.0) or 14.0
+    now = _dt.datetime.now(_dt.timezone.utc)
+
+    for entry in entries:
+        if not isinstance(entry, KeyRotationEntryConfig):
+            continue
+        interval_days = float(entry.interval_days or default_interval)
+        warn_within = float(entry.warn_within_days or default_warn)
+        status = registry.status(entry.key, entry.purpose, interval_days=interval_days, now=now)
+        label = f"{entry.key}:{entry.purpose}"
+
+        if status.is_overdue:
+            if status.last_rotated is None:
+                message = f"Brak historii rotacji dla {label} – wpis nigdy nie został wykonany."
+            else:
+                overdue_days = abs(status.due_in_days)
+                message = (
+                    f"Rotacja {label} jest przeterminowana o {overdue_days:.1f} dnia/dni (interwał {interval_days:.1f} dni)."
+                )
+            _record(
+                issues,
+                check=f"observability.key_rotation:{label}",
+                message=message,
+            )
+        elif status.is_due or status.due_in_days <= warn_within:
+            message = (
+                f"Rotacja {label} będzie wymagana w ciągu {status.due_in_days:.1f} dnia/dni (interwał {interval_days:.1f} dni)."
+            )
+            _record(
+                warnings,
+                check=f"observability.key_rotation:{label}",
+                message=message,
+            )
+
 def _build_report(
     *,
     config_path: Path,
@@ -425,6 +601,7 @@ def _build_report(
 def run(argv: Sequence[str] | None = None) -> int:
     args = _parse_args(argv)
     config_path = Path(args.config).expanduser().resolve()
+    profile = str(getattr(args, "profile", "stage4")).lower()
 
     try:
         core_config = load_core_config(config_path)
@@ -470,6 +647,20 @@ def run(argv: Sequence[str] | None = None) -> int:
         issues=issues,
         warnings=warnings,
     )
+
+    if profile == "stage5":
+        _validate_stage5_tco(
+            config=core_config,
+            base_dir=base_dir,
+            issues=issues,
+            warnings=warnings,
+        )
+        _validate_stage5_observability(
+            config=core_config,
+            base_dir=base_dir,
+            issues=issues,
+            warnings=warnings,
+        )
 
     report = _build_report(config_path=config_path, issues=issues, warnings=warnings)
     print(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True))

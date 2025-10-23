@@ -78,7 +78,7 @@ def create_cached_ohlcv_source(
         storage=storage,
         upstream=upstream,
         snapshot_fetcher=snapshot_fetcher,
-        snapshots_enabled=enable_snapshots and allow_network_upstream,
+        snapshots_enabled=bool(snapshot_fetcher),
     )
 
 __all__ = [
