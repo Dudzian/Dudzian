@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
+import sys
 import textwrap
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -48,7 +49,9 @@ def _iso(dt: datetime) -> str:
     return dt.isoformat().replace("+00:00", "Z")
 
 
-def _write_minimal_head_config(path: Path, cache_path: Path) -> None:
+def _write_minimal_head_config(path: Path, cache_path: Path, tls_registry: Path | None = None) -> None:
+    registry_path = tls_registry or (cache_path / "security" / "tls_rotation.json")
+    plan_registry = cache_path / "security" / "rotation_log.json"
     path.write_text(
         f"""
 risk_profiles: {{ paper: {{ name: paper, max_daily_loss_pct: 0.1, max_position_pct: 0.5, target_volatility: 0.1, max_leverage: 1.0, stop_loss_atr_multiple: 2.0, max_open_positions: 3, hard_drawdown_pct: 0.2 }} }}
@@ -70,6 +73,22 @@ cross_exchange_arbitrage_strategies: {{}}
 multi_strategy_schedulers: {{}}
 portfolio_governors: {{}}
 reporting: {{}}
+execution:
+  mtls:
+    bundle_directory: {cache_path.as_posix()}
+    ca_certificate: secrets/mtls/core-oem-ca.pem
+    server_certificate: secrets/mtls/core-oem-server.pem
+    server_key: secrets/mtls/core-oem-server-key.pem
+    client_certificate: secrets/mtls/core-oem-client.pem
+    client_key: secrets/mtls/core-oem-client-key.pem
+    rotation_registry: {registry_path.as_posix()}
+observability:
+  key_rotation:
+    registry_path: {plan_registry.as_posix()}
+    default_interval_days: 90.0
+    default_warn_within_days: 14.0
+    audit_directory: var/audit/keys
+    entries: []
 """,
         encoding="utf-8",
     )
@@ -265,3 +284,145 @@ def test_rotate_keys_dry_run_or_plan_only_does_not_touch_registry(tmp_path: Path
         assert status.is_due or status.is_overdue
     else:
         pytest.skip("rotate_keys CLI shape not recognized (neither HEAD nor main)")
+
+
+def test_rotate_keys_prepare_argv_infers_modes() -> None:
+    prepare = getattr(rotate_keys_mod, "_prepare_argv", None)
+    if prepare is None:
+        pytest.skip("rotate_keys CLI does not expose _prepare_argv")
+
+    assert prepare(["batch", "--dry-run"]) == ["batch", "--dry-run"]
+    assert prepare(["--config", "core.yaml", "--operator", "Ops"])[0] == "batch"
+    status_args = prepare(["--status", "--bundle", "core-oem", "--config", "core.yaml"])
+    assert status_args[0] == "status"
+    assert "--bundle" in status_args
+    status_value_args = prepare(["--status", "core-oem", "--config", "core.yaml"])
+    assert status_value_args[:3] == ["status", "--bundle", "core-oem"]
+    status_value_with_bundle = prepare(
+        ["--status", "core-oem", "--bundle", "alt", "--config", "core.yaml"]
+    )
+    assert status_value_with_bundle.count("--bundle") == 1
+
+
+def test_rotate_keys_prepare_argv_uses_sys_argv(monkeypatch: pytest.MonkeyPatch) -> None:
+    prepare = getattr(rotate_keys_mod, "_prepare_argv", None)
+    if prepare is None:
+        pytest.skip("rotate_keys CLI does not expose _prepare_argv")
+
+    monkeypatch.setattr(sys, "argv", ["rotate_keys.py", "--status", "core-oem"])
+    prepared = prepare(None)
+    assert prepared[:3] == ["status", "--bundle", "core-oem"]
+
+
+@pytest.mark.parametrize(
+    "status_invocation",
+    [
+        ["--status", "--bundle", "core-oem"],
+        ["--status", "core-oem"],
+        ["status", "core-oem"],
+    ],
+)
+def test_rotate_keys_status_reports_bundle_summary(
+    status_invocation: list[str],
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert RotationRegistry is not None, "RotationRegistry not available"
+
+    rotation_registry = tmp_path / "tls_rotation.json"
+    now = datetime(2024, 5, 20, tzinfo=timezone.utc)
+    rotation_registry.write_text(
+        json.dumps(
+            {
+                "core-oem::ca": _iso(now - timedelta(days=10)),
+                "core-oem::server": _iso(now - timedelta(days=28)),
+                "core-oem::client": _iso(now - timedelta(days=40)),
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    config_path = tmp_path / "core.yaml"
+
+    if _supports_head_cli():
+        cache_path = tmp_path / "cache"
+        _write_minimal_head_config(config_path, cache_path, rotation_registry)
+    elif _supports_main_cli():
+        _write_main_config(config_path, rotation_registry)
+        config_path.write_text(
+            config_path.read_text(encoding="utf-8")
+            + textwrap.dedent(
+                f"""
+                execution:
+                  mtls:
+                    bundle_directory: {tmp_path.as_posix()}
+                    rotation_registry: {rotation_registry.as_posix()}
+                """
+            ).strip()
+            + "\n",
+            encoding="utf-8",
+        )
+    else:
+        pytest.skip("rotate_keys CLI shape not recognized (neither HEAD nor main)")
+
+    exit_code = rotate_keys_run(
+        [
+            *status_invocation,
+            "--config",
+            str(config_path),
+            "--interval-days",
+            "30",
+            "--warn-days",
+            "5",
+            "--as-of",
+            "2024-05-20T00:00:00Z",
+        ]
+    )
+    assert exit_code == 0
+
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out.strip())
+
+    assert payload["bundle"] == "core-oem"
+    assert payload["entries_found"] is True
+    states = {entry["purpose"]: entry["state"] for entry in payload["entries"] if entry["key"] == "core-oem"}
+    assert states.get("ca") == "ok"
+    assert states.get("server") in {"warning", "due"}
+    assert states.get("client") == "overdue"
+    assert payload["summary"]["total"] >= 3
+
+
+def test_rotate_keys_status_rejects_conflicting_bundle_inputs(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert RotationRegistry is not None, "RotationRegistry not available"
+
+    rotation_registry = tmp_path / "tls_rotation.json"
+    rotation_registry.write_text("{}\n", encoding="utf-8")
+
+    config_path = tmp_path / "core.yaml"
+    if _supports_head_cli():
+        cache_path = tmp_path / "cache"
+        _write_minimal_head_config(config_path, cache_path, rotation_registry)
+    elif _supports_main_cli():
+        _write_main_config(config_path, rotation_registry)
+    else:
+        pytest.skip("rotate_keys CLI shape not recognized (neither HEAD nor main)")
+
+    exit_code = rotate_keys_run(
+        [
+            "status",
+            "core-oem",
+            "--bundle",
+            "alt",  # konflikt z argumentem pozycyjnym
+            "--config",
+            str(config_path),
+        ]
+    )
+    assert exit_code == 2
+
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out.strip())
+    assert "error" in payload
+    assert "--bundle" in payload["error"]

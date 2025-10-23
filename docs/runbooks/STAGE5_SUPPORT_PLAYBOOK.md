@@ -21,11 +21,17 @@ Zapewnić zespołom dyżurnym powtarzalny proces obsługi środowiska Stage5 –
 | --- | --- | --- | --- |
 | 1. Uruchom `python scripts/run_tco_analysis.py --output var/audit/tco/<TS>/incident.csv` i porównaj z progiem w `config/core.yaml`. | L2 | Raport CSV/PDF, podpis HMAC | Koszt poniżej progu lub decyzja o ograniczeniu strategii |
 | 2. Wykonaj `python scripts/run_decision_engine_smoke.py --mode live --risk-snapshot <ścieżka> --candidates <ścieżka> --tco-report <ścieżka> --output <ścieżka>` dla strategii objętej alertem (w trybie testowym możesz użyć `--mode paper`, który korzysta z danych referencyjnych). | L2 | Log CLI, podpis `smoke.sig` | Status `success`; w razie `fail` przygotuj plan rollbacku |
-| 3. Zweryfikuj rotację kluczy: `python scripts/rotate_keys.py --status --bundle core-oem`. | L2 | Raport JSON, wpis decision logu | Brak przeterminowanych kluczy; w przeciwnym razie zaplanuj rotację |
+| 3. Zweryfikuj rotację kluczy: `python scripts/rotate_keys.py --status --bundle core-oem` (możesz użyć skrótu `--status core-oem` lub `status core-oem`). | L2 | Raport JSON, wpis decision logu | Brak przeterminowanych kluczy; w przeciwnym razie zaplanuj rotację |
 | 4. Uaktualnij decision log (`verify_decision_log.py summary --category stage5_incident`) i potwierdź obecność pól TCO. | L2 | Raport w `var/audit/decisions/` | Wpis zawiera `tco_kpi`, `decision_path`, `rotation_event_id` |
 | 5. Jeśli konieczne, uruchom `python scripts/disable_multi_strategy.py --component decision_orchestrator --reason <ID>` zgodnie z runbookiem rollbacku. | L2 | `var/runtime/overrides/decision_orchestrator_disable.json`, wpis logu | Orchestrator w oczekiwanym stanie, plan przywrócenia przygotowany |
 | 6. Po incydencie zaktualizuj dokumentację (`docs/runbooks/STAGE5_SUPPORT_PLAYBOOK.md`, `docs/runbooks/STAGE5_COMPLIANCE_CHECKLIST.md`) i przekaż lessons learned zespołowi compliance. | L2 | Commit, wpis w change-logu | Review zatwierdzone przez właściciela produktu |
 | 7. Jeżeli incydent wymagał warsztatu ad-hoc (lessons learned), zarejestruj go przy pomocy `python scripts/log_stage5_training.py` i załącz artefakty (nagranie, slajdy) do `var/audit/training/<data>/`. | L2 | `var/audit/training/stage5_training_log.jsonl`, wpis decision log `stage5_training` | Wpis podpisany HMAC, artefakty dostępne offline |
+
+> Raport `--status` zawiera sekcję `summary` z liczbą wpisów `ok/warning/due/overdue`
+> oraz listę `entries` z polami `state`, `days_since_rotation`, `due_in_days` i
+> `last_rotated`. Dzięki temu operatorzy L2 mogą natychmiast potwierdzić, czy
+> bundel (np. `core-oem`) wymaga akcji, oraz dołączyć wynik do decision logu bez
+> dodatkowych narzędzi.
 
 ## Walidacja modeli Decision Engine
 - Uruchom pipeline treningowy: `python -m bot_core.ai.pipeline training.csv models/decision autotrader target --features close volume --register --config config/decision_engine.yaml`. Upewnij się, że artefakt zawiera metadane (`trained_at`, `metrics.mae`, `metadata.feature_scalers`).

@@ -4,10 +4,11 @@
 Stage5 Key Rotation – merged CLI (HEAD + main)
 
 Subcommands:
-  - batch : aktualizuje rejestr rotacji dla wskazanych środowisk i zapisuje
-            podpisany raport Stage5 (HMAC Base64)
-  - plan  : generuje plan rotacji wg observability.key_rotation i opcjonalnie
-            oznacza klucze jako zrotowane (execute)
+  - batch  : aktualizuje rejestr rotacji dla wskazanych środowisk i zapisuje
+             podpisany raport Stage5 (HMAC Base64)
+  - plan   : generuje plan rotacji wg observability.key_rotation i opcjonalnie
+             oznacza klucze jako zrotowane (execute)
+  - status : szybki podgląd rejestru rotacji dla bundla (np. mTLS `core-oem`)
 """
 from __future__ import annotations
 
@@ -20,6 +21,11 @@ from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Optional, Sequence
+
+try:  # PyYAML jest zależnością bot_core.config.loader
+    import yaml
+except Exception:  # pragma: no cover - fallback gdyby brakowało PyYAML
+    yaml = None  # type: ignore[assignment]
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
@@ -100,6 +106,73 @@ def _parse_datetime(value: str | None) -> datetime:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
     return parsed.astimezone(timezone.utc).replace(microsecond=0)
+
+
+def _maybe_getattr(obj: Any, name: str) -> Any:
+    if obj is None:
+        return None
+    if isinstance(obj, Mapping):
+        return obj.get(name)
+    return getattr(obj, name, None)
+
+
+def _resolve_config_path(value: str | Path | None, *, base: Path) -> Path | None:
+    if value is None:
+        return None
+    candidate = Path(value)
+    if not candidate.is_absolute():
+        candidate = (base / candidate).resolve()
+    return candidate
+
+
+def _bundle_key_candidates(bundle: str) -> list[str]:
+    normalized = bundle.strip().lower()
+    variants: list[str] = []
+    for candidate in {
+        normalized,
+        normalized.replace("-", "_"),
+        normalized.replace("_", "-"),
+    }:
+        if candidate and candidate not in variants:
+            variants.append(candidate)
+    if normalized.endswith("mtls"):
+        suffix_stripped = normalized[: -4].rstrip("-_ ")
+        if suffix_stripped and suffix_stripped not in variants:
+            variants.append(suffix_stripped)
+    else:
+        for extra in (f"{normalized}-mtls", f"{normalized}_mtls"):
+            if extra and extra not in variants:
+                variants.append(extra)
+    if "mtls" not in variants:
+        variants.append("mtls")
+    return variants
+
+
+def _status_payload(
+    registry: RotationRegistry,
+    *,
+    key: str,
+    purpose: str,
+    interval_days: float,
+    warn_within_days: float,
+    now: datetime,
+) -> dict[str, object]:
+    status = registry.status(key, purpose, interval_days=interval_days, now=now)
+    payload = asdict(status)
+    payload["key"] = key
+    payload["purpose"] = purpose
+    payload["state"] = "ok"
+    if status.is_overdue:
+        payload["state"] = "overdue"
+    elif status.is_due:
+        payload["state"] = "due"
+    elif status.due_in_days <= warn_within_days:
+        payload["state"] = "warning"
+    payload["due_within_days"] = float(warn_within_days)
+    last_rotated = payload.get("last_rotated")
+    if isinstance(last_rotated, datetime):
+        payload["last_rotated"] = last_rotated.isoformat().replace("+00:00", "Z")
+    return payload
 
 # =====================================================================
 # Subcommand: batch  (HEAD – podpisany raport Stage5)
@@ -365,22 +438,304 @@ def _handle_plan(args: argparse.Namespace) -> int:
     return 0
 
 # =====================================================================
+# Subcommand: status  (Stage5 L2 – szybki podgląd bundla)
+# =====================================================================
+
+def _extract_status_defaults(
+    config: Any,
+    *,
+    raw: Mapping[str, Any] | None,
+    bundle: str,
+) -> tuple[Path | None, float | None, float | None]:
+    raw_mapping = raw or {}
+
+    execution = _maybe_getattr(config, "execution")
+    if execution is None:
+        execution = raw_mapping.get("execution") if isinstance(raw_mapping, Mapping) else None
+
+    mtls = _maybe_getattr(execution, "mtls")
+    if mtls is None and isinstance(execution, Mapping):
+        mtls = execution.get("mtls")
+
+    rotation_registry = _maybe_getattr(mtls, "rotation_registry") if mtls is not None else None
+    if rotation_registry is None and isinstance(mtls, Mapping):
+        rotation_registry = mtls.get("rotation_registry")
+
+    observability = _maybe_getattr(config, "observability")
+    if observability is None:
+        observability = (
+            raw_mapping.get("observability")
+            if isinstance(raw_mapping, Mapping)
+            else None
+        )
+
+    key_rotation = _maybe_getattr(observability, "key_rotation")
+    if key_rotation is None and isinstance(observability, Mapping):
+        key_rotation = observability.get("key_rotation")
+
+    default_interval = (
+        _maybe_getattr(key_rotation, "default_interval_days") if key_rotation else None
+    )
+    if default_interval is None and isinstance(key_rotation, Mapping):
+        default_interval = key_rotation.get("default_interval_days")
+
+    default_warn = (
+        _maybe_getattr(key_rotation, "default_warn_within_days") if key_rotation else None
+    )
+    if default_warn is None and isinstance(key_rotation, Mapping):
+        default_warn = key_rotation.get("default_warn_within_days")
+
+    entries = _maybe_getattr(key_rotation, "entries") if key_rotation else None
+    if entries:
+        try:
+            iterator = list(entries)
+        except TypeError:
+            iterator = []
+        bundle_candidates = set(_bundle_key_candidates(bundle))
+        for entry in iterator:
+            entry_key = _maybe_getattr(entry, "key")
+            if entry_key and str(entry_key).strip().lower() in bundle_candidates:
+                entry_interval = _maybe_getattr(entry, "interval_days")
+                entry_warn = _maybe_getattr(entry, "warn_within_days")
+                if entry_interval is not None:
+                    default_interval = entry_interval
+                if entry_warn is not None:
+                    default_warn = entry_warn
+                break
+
+    resolved_registry = Path(str(rotation_registry)) if rotation_registry else None
+    if isinstance(rotation_registry, Path):
+        resolved_registry = rotation_registry
+
+    interval_value = float(default_interval) if default_interval is not None else None
+    warn_value = float(default_warn) if default_warn is not None else None
+    return resolved_registry, interval_value, warn_value
+
+
+def _build_parser_status(sub: argparse._SubParsersAction) -> argparse.ArgumentParser:
+    p = sub.add_parser(
+        "status",
+        help="Podsumowanie stanu rotacji dla bundla (np. mTLS)",
+        description=(
+            "Wyświetla czytelny raport rotacji dla wskazanego bundla – domyślnie "
+            "korzysta z execution.mtls.rotation_registry i progów observability.key_rotation."
+        ),
+    )
+    p.add_argument(
+        "--bundle",
+        dest="bundle_opt",
+        help="Nazwa bundla do sprawdzenia (np. core-oem)",
+    )
+    p.add_argument(
+        "bundle",
+        nargs="?",
+        metavar="BUNDLE",
+        help="Nazwa bundla do sprawdzenia (np. core-oem)",
+    )
+    p.add_argument(
+        "--config",
+        default=str(REPO_ROOT / "config" / "core.yaml"),
+        help="Ścieżka do CoreConfig używana do odczytu ustawień bundla",
+    )
+    p.add_argument(
+        "--registry-path",
+        help="Opcjonalna ścieżka rejestru rotacji (domyślnie z konfiguracji execution.mtls)",
+    )
+    p.add_argument(
+        "--interval-days",
+        type=float,
+        help="Interwał rotacji (domyślnie z konfiguracji lub 90 dni)",
+    )
+    p.add_argument(
+        "--warn-days",
+        type=float,
+        help="Próg ostrzeżenia (domyślnie z konfiguracji lub 14 dni)",
+    )
+    p.add_argument(
+        "--as-of",
+        help="Znacznik czasu referencyjny (ISO8601, domyślnie teraz)",
+    )
+    p.set_defaults(_handler=_handle_status)
+    return p
+
+
+def _handle_status(args: argparse.Namespace) -> int:
+    bundle_flag = getattr(args, "bundle_opt", None)
+    bundle_positional = getattr(args, "bundle", None)
+
+    bundle_candidates = [value for value in (bundle_flag, bundle_positional) if value]
+    normalized_candidates = [str(value).strip() for value in bundle_candidates if str(value).strip()]
+
+    if bundle_flag and bundle_positional:
+        if not normalized_candidates or len(set(normalized_candidates)) > 1:
+            print(
+                json.dumps(
+                    {
+                        "error": "Wartości podane przez --bundle i argument pozycyjny muszą być takie same.",
+                    },
+                    ensure_ascii=False,
+                )
+            )
+            return 2
+
+    bundle = normalized_candidates[0] if normalized_candidates else ""
+    if not bundle:
+        print(json.dumps({"error": "Parametr --bundle nie może być pusty."}, ensure_ascii=False))
+        return 2
+
+    config_path = Path(args.config)
+    try:
+        config = load_core_config(config_path)
+    except FileNotFoundError:
+        print(json.dumps({"error": f"Plik konfiguracji {config_path} nie istnieje"}, ensure_ascii=False))
+        return 2
+
+    raw_config: Mapping[str, Any] | None = None
+    if yaml is not None:
+        try:
+            raw_config = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+        except Exception:  # pragma: no cover - brak dostępu / błędny YAML
+            raw_config = None
+
+    registry_path = None
+    defaults_registry, default_interval, default_warn = _extract_status_defaults(
+        config,
+        raw=raw_config,
+        bundle=bundle,
+    )
+    if args.registry_path:
+        registry_path = _resolve_config_path(args.registry_path, base=config_path.parent)
+    elif defaults_registry is not None:
+        registry_path = _resolve_config_path(defaults_registry, base=config_path.parent)
+
+    if registry_path is None:
+        print(
+            json.dumps(
+                {"error": "Nie można wyznaczyć ścieżki rejestru rotacji (użyj --registry-path)."},
+                ensure_ascii=False,
+            )
+        )
+        return 2
+
+    interval = float(args.interval_days) if args.interval_days is not None else default_interval or 90.0
+    warn_within = float(args.warn_days) if args.warn_days is not None else default_warn or 14.0
+    now = _parse_datetime(getattr(args, "as_of", None))
+
+    registry = RotationRegistry(registry_path)
+    candidate_keys = _bundle_key_candidates(bundle)
+    candidate_set = set(candidate_keys)
+    pairs: set[tuple[str, str]] = set()
+    for key, purpose, _ in registry.entries():
+        normalized_key = str(key).strip().lower()
+        if normalized_key in candidate_set:
+            pairs.add((normalized_key, str(purpose).strip().lower()))
+
+    matches_found = bool(pairs)
+    if not pairs:
+        primary_key = candidate_keys[0]
+        for purpose in ("ca", "server", "client"):
+            pairs.add((primary_key, purpose))
+
+    payloads = []
+    for key, purpose in sorted(pairs):
+        payloads.append(
+            _status_payload(
+                registry,
+                key=key,
+                purpose=purpose,
+                interval_days=interval,
+                warn_within_days=warn_within,
+                now=now,
+            )
+        )
+
+    summary = {"total": len(payloads), "ok": 0, "warning": 0, "due": 0, "overdue": 0}
+    for payload in payloads:
+        state = str(payload.get("state", "ok"))
+        if state not in summary:
+            summary[state] = 0
+        summary[state] += 1
+
+    report = {
+        "bundle": bundle,
+        "checked_at": now.isoformat().replace("+00:00", "Z"),
+        "registry_path": str(registry_path),
+        "interval_days": float(interval),
+        "warn_within_days": float(warn_within),
+        "entries_found": matches_found,
+        "entries": payloads,
+        "summary": summary,
+        "matched_keys": sorted({payload["key"] for payload in payloads}),
+    }
+
+    print(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True))
+    return 0
+
+# =====================================================================
 # Entrypoint
 # =====================================================================
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Stage5 Key Rotation – merged CLI (batch + plan)"
+        description="Stage5 Key Rotation – merged CLI (batch + plan + status)"
     )
-    sub = parser.add_subparsers(dest="_cmd", metavar="{batch|plan}", required=True)
+    sub = parser.add_subparsers(dest="_cmd", metavar="{batch|plan|status}")
     _build_parser_batch(sub)
     _build_parser_plan(sub)
+    _build_parser_status(sub)
     return parser
+
+
+def _prepare_argv(argv: Sequence[str] | None) -> list[str]:
+    source = argv if argv is not None else sys.argv[1:]
+    args = list(source)
+    if not args or args in [["-h"], ["--help"]]:
+        return args
+    if args[0] in {"batch", "plan", "status"}:
+        return args
+    if args[0].startswith("-"):
+        normalized: list[str] = []
+        saw_status = False
+        status_bundle: str | None = None
+        idx = 0
+        while idx < len(args):
+            arg = args[idx]
+            if arg == "--status":
+                saw_status = True
+                next_value = args[idx + 1] if idx + 1 < len(args) else None
+                if next_value and not next_value.startswith("-"):
+                    status_bundle = next_value
+                    idx += 1
+                idx += 1
+                continue
+            if arg.startswith("--status="):
+                saw_status = True
+                value = arg.split("=", 1)[1]
+                if value:
+                    status_bundle = value
+                idx += 1
+                continue
+            normalized.append(arg)
+            idx += 1
+        if saw_status:
+            has_bundle_flag = any(
+                item == "--bundle" or item.startswith("--bundle=") for item in normalized
+            )
+            if status_bundle and not has_bundle_flag:
+                normalized = ["--bundle", status_bundle, *normalized]
+            return ["status", *normalized]
+        return ["batch", *args]
+    return args
+
 
 def run(argv: Sequence[str] | None = None) -> int:
     parser = _build_parser()
-    args = parser.parse_args(argv)
-    return args._handler(args)
+    args = parser.parse_args(_prepare_argv(argv))
+    handler = getattr(args, "_handler", None)
+    if handler is None:
+        parser.print_help()
+        return 1
+    return handler(args)
 
 if __name__ == "__main__":  # pragma: no cover
     raise SystemExit(run())
