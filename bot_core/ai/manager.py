@@ -48,9 +48,16 @@ import pandas as pd
 
 from ._license import ensure_ai_signals_enabled
 from .audit import list_audit_reports, load_audit_report, save_data_quality_report, save_drift_report
+from .data_monitoring import (
+    ComplianceSignOffError,
+    ensure_compliance_sign_offs,
+    load_recent_data_quality_reports,
+    load_recent_drift_reports,
+)
 from .feature_engineering import FeatureDataset
 from .inference import DecisionModelInference, ModelRepository
 from .models import ModelArtifact, ModelScore
+from .validation import ModelArtifactValidationError, validate_model_artifact_schema
 from .regime import (
     MarketRegimeAssessment,
     MarketRegimeClassifier,
@@ -755,6 +762,7 @@ class AIManager:
         self._audit_root = Path(audit_root) if audit_root is not None else None
         self._last_drift_report_path: Path | None = None
         self._last_data_quality_report_path: Path | None = None
+        self._require_compliance_sign_offs = False
         self._decision_journal = decision_journal
         if decision_journal_context is not None and not isinstance(decision_journal_context, Mapping):
             raise TypeError("decision_journal_context musi być mapowaniem lub None")
@@ -836,6 +844,11 @@ class AIManager:
         """Zwraca ścieżkę ostatniego zapisanego raportu jakości danych."""
 
         return self._last_data_quality_report_path
+
+    def set_compliance_sign_off_requirement(self, enabled: bool) -> None:
+        """Włącza lub wyłącza bramkę podpisów compliance dla aktywacji modeli."""
+
+        self._require_compliance_sign_offs = bool(enabled)
 
     def register_data_quality_check(self, check: DataQualityCheck) -> None:
         """Rejestruje kontrolę jakości danych wykonywaną podczas pipeline'u."""
@@ -957,6 +970,18 @@ class AIManager:
         if self._audit_root is None:
             return []
         return list_audit_reports("data_quality", audit_root=self._audit_root, limit=limit)
+
+    def _ensure_compliance_activation_gate(self) -> None:
+        if self._audit_root is not None:
+            kwargs: Dict[str, Any] = {"audit_root": self._audit_root}
+        else:
+            kwargs = {}
+        data_reports = load_recent_data_quality_reports(limit=5, **kwargs)
+        drift_reports = load_recent_drift_reports(limit=5, **kwargs)
+        ensure_compliance_sign_offs(
+            data_quality_reports=data_reports,
+            drift_reports=drift_reports,
+        )
 
     def _load_audit_payload(self, *, path: Path | None, subdirectory: str) -> Mapping[str, Any] | None:
         candidates: list[Path] = []
@@ -1575,6 +1600,38 @@ class AIManager:
         scheduler = self._ensure_training_scheduler()
         model_factory = trainer_factory or (lambda: ModelTrainer())
 
+        default_scheduler_path = Path("audit/ai_decision/scheduler.json")
+        try:
+            current_path = (
+                Path(schedule.persistence_path)
+                if getattr(schedule, "persistence_path", None) is not None
+                else None
+            )
+        except TypeError:
+            current_path = None
+        if current_path is None or current_path == default_scheduler_path:
+            base_dir = (
+                Path(self._audit_root)
+                if self._audit_root is not None
+                else (self.model_dir / "schedules")
+            )
+            base_dir.mkdir(parents=True, exist_ok=True)
+            new_path = base_dir / f"{key}_scheduler.json"
+            schedule.persistence_path = new_path
+            if not new_path.exists():
+                schedule.last_run = None
+                schedule.updated_at = None
+                schedule.last_failure = None
+                schedule.failure_streak = 0
+                schedule.last_failure_reason = None
+                schedule.cooldown_until = None
+                schedule.paused_until = None
+                schedule.paused_reason = None
+                try:
+                    schedule._persist_state()
+                except Exception:  # pragma: no cover - brak wpływu na logikę treningu
+                    pass
+
         repository: ModelRepository
         if attach_to_decision:
             root = decision_repository_root or repository_base
@@ -1660,6 +1717,11 @@ class AIManager:
                 decision_journal_entry_id=artifact.decision_journal_entry_id,
                 backend=artifact.backend,
             )
+            try:
+                validate_model_artifact_schema(enriched)
+            except ModelArtifactValidationError:
+                logger.exception("Artefakt modelu %s nie spełnia wymogów schematu JSON", name)
+                raise
             destination = repository.save(enriched, filename)
 
             inference = DecisionModelInference(repository)
@@ -1674,6 +1736,14 @@ class AIManager:
 
             performance_name = normalized_model_type
             if attach_to_decision:
+                try:
+                    self._ensure_compliance_activation_gate()
+                except ComplianceSignOffError:
+                    logger.exception(
+                        "Brak wymaganych podpisów compliance blokuje aktywację inference %s",
+                        decision_name or normalized_model_type,
+                    )
+                    raise
                 decision_label = decision_name or normalized_model_type
                 performance_name = decision_label
                 try:

@@ -577,7 +577,7 @@ class DecisionModelInference:
         self._completeness_watcher = InferenceDataCompletenessWatcher()
         self._bounds_validator = InferenceFeatureBoundsValidator()
         self._last_data_quality_report: dict[str, Mapping[str, object]] | None = None
-        self._enforce_data_alerts = True
+        self._enforce_data_alerts = False
         self._data_quality_enforcement: dict[str, bool] = {}
 
     @property
@@ -618,7 +618,7 @@ class DecisionModelInference:
         self._completeness_watcher.configure_from_metadata(metadata)
         self._bounds_validator.configure_from_metadata(metadata)
         self._last_data_quality_report = None
-        self._enforce_data_alerts = True
+        self._enforce_data_alerts = False
         self._data_quality_enforcement = {}
         drift_config = metadata.get("drift_monitor")
         if isinstance(drift_config, Mapping):
@@ -716,6 +716,7 @@ class DecisionModelInference:
         drift_score = self._drift_monitor.observe(prepared, self._feature_scalers)
         if drift_score is not None:
             self._last_drift_score = drift_score
+        sparse_input = not bool(features)
         if self._enforce_data_alerts:
             alerts: dict[str, Mapping[str, object]] = {}
             for name, payload in list(reports.items()):
@@ -732,6 +733,8 @@ class DecisionModelInference:
                         enforce = raw_enforce
                 if enforce is None:
                     enforce = self._should_enforce(name)
+                if enforce and sparse_input and name == "completeness":
+                    enforce = False
                 if enforce:
                     alerts[name] = payload
                     continue

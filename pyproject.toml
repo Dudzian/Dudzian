@@ -1,5 +1,5 @@
 [tool.ruff]
-target-version = "py310"
+target-version = "py311"
 line-length = 100
 extend-exclude = [
   "KryptoLowca",
@@ -13,7 +13,7 @@ select = ["E9", "F63", "F7", "F82"]
 combine-as-imports = true
 
 [tool.mypy]
-python_version = "3.10"
+python_version = "3.11"
 warn_return_any = true
 warn_unused_configs = true
 ignore_missing_imports = true
@@ -44,7 +44,7 @@ markers = [
 name = "dudzian-bot"
 version = "0.1.0"
 description = "Modułowy bot tradingowy"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
   "pyarrow>=21.0.0",
   "protobuf>=4.24",
@@ -61,6 +61,7 @@ dependencies = [
   "requests>=2.31",
   "responses>=0.25",
   "jsonschema>=4.21",
+  "sqlalchemy>=2.0",
 ]
 
 [project.optional-dependencies]
@@ -81,6 +82,7 @@ dev = [
   "lightgbm>=4.6",
   "requests>=2.31",
   "responses>=0.25",
+  "sqlalchemy>=2.0",
 ]
 desktop = [
   "pyinstaller>=6.5",
@@ -90,3 +92,6 @@ desktop = [
 [build-system]
 requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["bot_core*"]
