@@ -11,7 +11,7 @@ Każdy dry-run oraz release Etapu 5 musi spełnić poniższe warunki przed promo
   - Artefakty/Akceptacja: `var/audit/acceptance/<data>/paper_labs_tco.json`.
 
 ## Sekcja: DecisionOrchestrator
-- [ ] Wynik `python scripts/run_decision_engine_smoke.py --mode paper` zakończył się sukcesem.
+- [ ] Wynik `python scripts/run_decision_engine_smoke.py --mode paper` zakończył się sukcesem (tryb `paper` korzysta z referencyjnych danych w `data/decision_engine/paper/`).
   - Artefakty/Akceptacja: `var/audit/decision_engine/smoke_<data>.json` + podpis `smoke_<data>.json.sig`.
 - [ ] Decision log zawiera pola `tco_kpi`, `decision_path`, `rotation_event_id`; `scripts/verify_decision_log.py` raportuje status PASS.
   - Artefakty/Akceptacja: `var/audit/decisions/verification_<data>.json`.

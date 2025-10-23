@@ -1,0 +1,12 @@
+[
+  {
+    "strategy": "mean_reversion_alpha",
+    "action": "enter",
+    "risk_profile": "balanced",
+    "symbol": "ADAUSDT",
+    "notional": 4000.0,
+    "expected_return_bps": 16.0,
+    "expected_probability": 0.9,
+    "latency_ms": 120.0
+  }
+]
