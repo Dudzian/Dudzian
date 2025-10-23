@@ -8,7 +8,7 @@ from dataclasses import InitVar, dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from tempfile import NamedTemporaryFile
-from typing import Callable, ClassVar, Iterable, Mapping, MutableMapping, Sequence
+from typing import Callable, ClassVar, Final, Iterable, Mapping, MutableMapping, Sequence
 
 from bot_core.runtime.journal import TradingDecisionEvent, TradingDecisionJournal
 
@@ -18,7 +18,10 @@ from .models import ModelArtifact
 from .training import ModelTrainer
 
 from .audit import DEFAULT_AUDIT_ROOT, save_walk_forward_report
-from bot_core.runtime.journal import TradingDecisionEvent, TradingDecisionJournal
+
+
+DEFAULT_JOURNAL_ENVIRONMENT: Final[str] = "ai-training"
+DEFAULT_JOURNAL_RISK_PROFILE: Final[str] = "ai-research"
 
 
 @dataclass(slots=True)
@@ -519,21 +522,15 @@ class ScheduledTrainingJob:
             self.decision_journal_context, Mapping
         ):
             raise TypeError("decision_journal_context musi być mapowaniem lub None")
-        env_value = object.__getattribute__(self, "journal_environment")
-        if isinstance(env_value, property):
-            env_value = "ai-training"
-        object.__setattr__(self, "journal_environment", str(env_value or "ai-training"))
+        env_value = None if isinstance(journal_environment, property) else journal_environment
+        risk_value = None if isinstance(journal_risk_profile, property) else journal_risk_profile
+        portfolio_value = (
+            None if isinstance(journal_portfolio, property) else journal_portfolio
+        )
 
-        risk_value = object.__getattribute__(self, "journal_risk_profile")
-        if isinstance(risk_value, property):
-            risk_value = "ai-research"
-        object.__setattr__(self, "journal_risk_profile", str(risk_value or "ai-research"))
-
-        portfolio_value = object.__getattribute__(self, "journal_portfolio")
-        if isinstance(portfolio_value, property) or portfolio_value is None:
-            object.__setattr__(self, "journal_portfolio", self.name)
-        else:
-            object.__setattr__(self, "journal_portfolio", str(portfolio_value))
+        self.journal_environment = env_value
+        self.journal_risk_profile = risk_value
+        self.journal_portfolio = portfolio_value
 
     def is_due(self, now: datetime | None = None) -> bool:
         return self.scheduler.should_retrain(now)
@@ -954,6 +951,8 @@ class TrainingScheduler:
 
 
 __all__ = [
+    "DEFAULT_JOURNAL_ENVIRONMENT",
+    "DEFAULT_JOURNAL_RISK_PROFILE",
     "RetrainingScheduler",
     "ScheduledTrainingJob",
     "TrainingRunRecord",
