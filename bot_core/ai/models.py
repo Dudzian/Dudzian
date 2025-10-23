@@ -71,51 +71,55 @@ def _normalize_feature_scalers(
 
 
 
-class ModelMetrics(Mapping[str, object]):
-    """Niezmienna struktura udostępniająca metryki modelu."""
+class _MetricsView(Mapping[str, object]):
+    """Widok na metryki artefaktu zachowujący kompatybilność wsteczną."""
 
-    def __init__(self, blocks: Mapping[str, Mapping[str, float]]) -> None:
-        self._blocks = MappingProxyType(dict(blocks))
-        summary = self._blocks.get("summary")
-        if summary is None:
-            summary = MappingProxyType({})
-        self._summary = summary
+    def __init__(self, base: Mapping[str, Mapping[str, float]]) -> None:
+        self._base = base
+        summary = base.get("summary")
+        summary_keys: Sequence[str]
+        if summary is not None:
+            summary_keys = tuple(summary.keys())
+        else:
+            summary_keys = ()
+        keys: list[str] = []
+        for key in summary_keys:
+            keys.append(str(key))
+        for key in base.keys():
+            str_key = str(key)
+            if str_key not in summary_keys:
+                keys.append(str_key)
+        self._keys = tuple(keys)
 
     def __getitem__(self, key: str) -> object:
-        if key in self._blocks:
-            return self._blocks[key]
-        if key in self._summary:
-            return self._summary[key]
+        summary = self._base.get("summary")
+        if summary is not None and key in summary:
+            return summary[key]
+        if key in self._base:
+            return self._base[key]
         raise KeyError(key)
 
     def __iter__(self) -> Iterator[str]:
-        yielded: set[str] = set()
-        for key in self._blocks.keys():
-            yielded.add(key)
-            yield key
-        for key in self._summary.keys():
-            if key in yielded:
-                continue
-            yielded.add(key)
-            yield key
+        return iter(self._keys)
 
     def __len__(self) -> int:
-        keys = set(self._blocks.keys())
-        keys.update(self._summary.keys())
-        return len(keys)
+        return len(self._keys)
 
-    def blocks(self) -> Mapping[str, Mapping[str, float]]:
-        """Zwraca pierwotne bloki metryk (summary/train/validation/test)."""
+    def __contains__(self, key: object) -> bool:  # pragma: no cover - trywialne
+        if isinstance(key, str):
+            summary = self._base.get("summary")
+            if summary is not None and key in summary:
+                return True
+        return key in self._base
 
-        return self._blocks
+    def splits(self) -> Mapping[str, Mapping[str, float]]:
+        return self._base
 
     def summary(self) -> Mapping[str, float]:
-        """Zwraca blok podsumowania metryk."""
-
-        return self._summary
+        return self._base.get("summary", MappingProxyType({}))
 
 
-def _normalize_metrics(raw: Mapping[str, object] | None) -> ModelMetrics:
+def _normalize_metrics(raw: Mapping[str, object] | None) -> Mapping[str, object]:
     required_keys = ("summary", "train", "validation", "test")
 
     def _coerce_block(values: Mapping[str, object]) -> Mapping[str, float]:
@@ -147,7 +151,7 @@ def _normalize_metrics(raw: Mapping[str, object] | None) -> ModelMetrics:
         if key not in structured:
             structured[key] = MappingProxyType({})
 
-    return ModelMetrics(structured)
+    return _MetricsView(MappingProxyType(structured))
 
 
 @dataclass(slots=True)
@@ -157,7 +161,7 @@ class ModelArtifact:
     feature_names: Sequence[str]
     model_state: Mapping[str, object]
     trained_at: datetime
-    metrics: ModelMetrics
+    metrics: Mapping[str, object]
     metadata: Mapping[str, object]
     target_scale: float
     training_rows: int

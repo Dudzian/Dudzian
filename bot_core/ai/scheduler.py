@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from tempfile import NamedTemporaryFile
@@ -14,7 +14,6 @@ from ._license import ensure_ai_signals_enabled
 from .feature_engineering import FeatureDataset
 from .models import ModelArtifact
 from .training import ModelTrainer
-from ..runtime.journal import TradingDecisionEvent, TradingDecisionJournal
 
 from .audit import DEFAULT_AUDIT_ROOT, save_walk_forward_report
 
@@ -491,6 +490,9 @@ class ScheduledTrainingJob:
     audit_root: str | Path | None = None
     decision_journal: TradingDecisionJournal | None = None
     decision_journal_context: Mapping[str, str] | None = None
+    journal_environment: str = "ai-training"
+    journal_portfolio: str | None = None
+    journal_risk_profile: str = "ai-research"
 
     def __post_init__(self) -> None:
         ensure_ai_signals_enabled("zadań treningowych AI")
@@ -502,6 +504,12 @@ class ScheduledTrainingJob:
             self.decision_journal_context, Mapping
         ):
             raise TypeError("decision_journal_context musi być mapowaniem lub None")
+        self.journal_environment = str(self.journal_environment or "ai-training")
+        self.journal_risk_profile = str(self.journal_risk_profile or "ai-research")
+        if self.journal_portfolio is None:
+            self.journal_portfolio = self.name
+        else:
+            self.journal_portfolio = str(self.journal_portfolio)
 
     def is_due(self, now: datetime | None = None) -> bool:
         return self.scheduler.should_retrain(now)
@@ -531,7 +539,9 @@ class ScheduledTrainingJob:
         return self._journal_context_value("strategy", self.name)
 
     def run(self, now: datetime | None = None) -> ModelArtifact:
-        timestamp = self.scheduler._ensure_utc(now)
+        planned_timestamp = (
+            self.scheduler._ensure_utc(now) if now is not None else None
+        )
         dataset: FeatureDataset | None = None
         trainer: ModelTrainer | None = None
         try:
@@ -539,12 +549,19 @@ class ScheduledTrainingJob:
             trainer = self.trainer_factory()
             artifact = trainer.train(dataset)
         except Exception as exc:
-            self._handle_failure(
-                failed_at=timestamp,
+            failure_time = planned_timestamp or self.scheduler._ensure_utc(None)
+            self.scheduler.mark_failure(failure_time, reason=f"{type(exc).__name__}: {exc}")
+            self._record_retraining_failure_journal(
+                failed_at=failure_time,
                 error=exc,
                 dataset=dataset,
             )
             raise
+
+        trained_at = planned_timestamp or artifact.trained_at
+        if trained_at != artifact.trained_at:
+            artifact = replace(artifact, trained_at=trained_at)
+
         validation_result: WalkForwardResult | None = None
         report_path: Path | None = None
         validator: WalkForwardValidator | None = None
@@ -561,7 +578,7 @@ class ScheduledTrainingJob:
                 generated_at=artifact.trained_at,
                 trainer_backend=getattr(trainer, "backend", "builtin"),
             )
-        summary_metrics = artifact.metrics.summary()
+
         self.scheduler.mark_executed(artifact.trained_at)
         record = TrainingRunRecord(
             trained_at=artifact.trained_at,
@@ -572,6 +589,7 @@ class ScheduledTrainingJob:
         )
         self.history.append(record)
         if self.decision_journal is not None:
+            context = self._build_journal_context()
             metadata: dict[str, str] = {
                 "next_run": self.scheduler.next_run().isoformat(),
                 "interval_seconds": str(self.scheduler.interval.total_seconds()),
@@ -603,13 +621,18 @@ class ScheduledTrainingJob:
             event = TradingDecisionEvent(
                 event_type="ai_retraining",
                 timestamp=artifact.trained_at,
-                environment=self.journal_environment,
-                portfolio=self.journal_portfolio,
-                risk_profile=self.journal_risk_profile,
-                schedule=self.name,
-                strategy=self.journal_strategy,
-                schedule_run_id=f"{self.name}:{artifact.trained_at.isoformat()}",
-                telemetry_namespace=f"ai.scheduler.{self.name}",
+                environment=context.get("environment", self.journal_environment),
+                portfolio=context.get("portfolio", self.journal_portfolio),
+                risk_profile=context.get("risk_profile", self.journal_risk_profile),
+                schedule=context.get("schedule", self.name),
+                strategy=context.get("strategy", self.name),
+                schedule_run_id=context.get(
+                    "schedule_run_id", f"{self.name}:{artifact.trained_at.isoformat()}"
+                ),
+                strategy_instance_id=context.get("strategy_instance_id"),
+                telemetry_namespace=context.get(
+                    "telemetry_namespace", f"ai.scheduler.{self.name}"
+                ),
                 metadata=metadata,
             )
             self.decision_journal.record(event)
@@ -620,6 +643,7 @@ class ScheduledTrainingJob:
                     validator=validator,
                     dataset=dataset,
                     trained_at=artifact.trained_at,
+                    context=context,
                 )
         if self.on_completed is not None:
             self.on_completed(artifact, validation_result)
@@ -633,20 +657,16 @@ class ScheduledTrainingJob:
         validator: WalkForwardValidator | None,
         dataset: FeatureDataset,
         trained_at: datetime,
+        context: Mapping[str, str] | None = None,
     ) -> None:
         if self.decision_journal is None:
             return
 
-        context: MutableMapping[str, str] = {
-            "environment": "ai-training",
-            "portfolio": self.name,
-            "risk_profile": "ai-research",
-        }
-        if self.decision_journal_context is not None:
-            for key, value in self.decision_journal_context.items():
-                if value is None:
-                    continue
-                context[str(key)] = str(value)
+        context_view: Mapping[str, str]
+        if context is None:
+            context_view = self._build_journal_context()
+        else:
+            context_view = context
 
         metadata: MutableMapping[str, str] = {
             "job": self.name,
@@ -665,13 +685,85 @@ class ScheduledTrainingJob:
         event = TradingDecisionEvent(
             event_type="ai_walk_forward_report",
             timestamp=trained_at.astimezone(timezone.utc),
-            environment=context.get("environment", "ai-training"),
-            portfolio=context.get("portfolio", self.name),
-            risk_profile=context.get("risk_profile", "ai-research"),
+            environment=context_view.get("environment", self.journal_environment),
+            portfolio=context_view.get("portfolio", self.journal_portfolio),
+            risk_profile=context_view.get("risk_profile", self.journal_risk_profile),
+            schedule=context_view.get("schedule", self.name),
+            strategy=context_view.get("strategy", self.name),
+            schedule_run_id=context_view.get("schedule_run_id"),
+            strategy_instance_id=context_view.get("strategy_instance_id"),
+            metadata=metadata,
+        )
+        try:
+            self.decision_journal.record(event)
+        except Exception:  # pragma: no cover - audyt nie może blokować treningu
+            pass
+
+    def _build_journal_context(self) -> MutableMapping[str, str]:
+        context: MutableMapping[str, str] = {
+            "environment": self.journal_environment,
+            "portfolio": self.journal_portfolio,
+            "risk_profile": self.journal_risk_profile,
+            "schedule": self.name,
+            "strategy": self.name,
+            "telemetry_namespace": f"ai.scheduler.{self.name}",
+        }
+        if self.decision_journal_context is not None:
+            for key, value in self.decision_journal_context.items():
+                if value is None:
+                    continue
+                context[str(key)] = str(value)
+        return context
+
+    def _record_retraining_failure_journal(
+        self,
+        *,
+        failed_at: datetime,
+        error: BaseException,
+        dataset: FeatureDataset | None,
+    ) -> None:
+        if self.decision_journal is None:
+            return
+
+        context = self._build_journal_context()
+        metadata: MutableMapping[str, str] = {
+            "scheduler_version": str(self.scheduler.STATE_VERSION),
+            "failure_streak": str(self.scheduler.failure_streak),
+            "error_type": type(error).__name__,
+            "error_message": str(error),
+            "last_failure": failed_at.astimezone(timezone.utc).isoformat(),
+            "next_run": self.scheduler.next_run().isoformat(),
+        }
+        if dataset is not None:
+            metadata["dataset_rows"] = str(len(dataset.vectors))
+        if self.scheduler.last_run is not None:
+            metadata["last_run"] = self.scheduler.last_run.isoformat()
+        if self.scheduler.updated_at is not None:
+            metadata["state_updated_at"] = self.scheduler.updated_at.isoformat()
+        if self.scheduler.last_failure_reason:
+            metadata["last_failure_reason"] = self.scheduler.last_failure_reason
+        if self.scheduler.cooldown_until is not None:
+            metadata["cooldown_until"] = self.scheduler.cooldown_until.isoformat()
+        if self.scheduler.paused_until is not None:
+            metadata["paused_until"] = self.scheduler.paused_until.isoformat()
+        if self.scheduler.paused_reason:
+            metadata["paused_reason"] = self.scheduler.paused_reason
+
+        event = TradingDecisionEvent(
+            event_type="ai_retraining_failed",
+            timestamp=failed_at,
+            environment=context.get("environment", self.journal_environment),
+            portfolio=context.get("portfolio", self.journal_portfolio),
+            risk_profile=context.get("risk_profile", self.journal_risk_profile),
             schedule=context.get("schedule", self.name),
-            strategy=context.get("strategy"),
-            schedule_run_id=context.get("schedule_run_id"),
+            strategy=context.get("strategy", self.name),
+            schedule_run_id=context.get(
+                "schedule_run_id", f"{self.name}:{failed_at.isoformat()}"
+            ),
             strategy_instance_id=context.get("strategy_instance_id"),
+            telemetry_namespace=context.get(
+                "telemetry_namespace", f"ai.scheduler.{self.name}"
+            ),
             metadata=metadata,
         )
         try:
