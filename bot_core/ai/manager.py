@@ -972,8 +972,6 @@ class AIManager:
         return list_audit_reports("data_quality", audit_root=self._audit_root, limit=limit)
 
     def _ensure_compliance_activation_gate(self) -> None:
-        if not self._require_compliance_sign_offs:
-            return
         if self._audit_root is not None:
             kwargs: Dict[str, Any] = {"audit_root": self._audit_root}
         else:
