@@ -359,6 +359,128 @@ def test_runbook_support_playbook_output_alias(tmp_path: Path) -> None:
     assert json.loads(signature_path.read_text(encoding="utf-8")) == expected_signature
 
 
+def test_stage5_support_playbook_shortcut_command(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    if not _supports_head_cli():
+        pytest.skip("Support playbook shortcut applies to summary CLI variant")
+
+    monkeypatch.delenv("STAGE5_TCO_INPUT", raising=False)
+    default_input = tmp_path / "data" / "stage5" / "tco.json"
+    default_input.parent.mkdir(parents=True, exist_ok=True)
+    default_payload = {
+        "currency": "USD",
+        "items": [
+            {"name": "Incident review", "category": "operations", "monthly_cost": 45.0},
+            {"name": "Compliance sync", "category": "governance", "monthly_cost": 35.0},
+        ],
+    }
+    default_input.write_text(json.dumps(default_payload), encoding="utf-8")
+
+    # Zapewnij, że parser korzysta z przygotowanej ścieżki Stage5 zamiast realnego configu
+    monkeypatch.setattr(run_tco_mod, "DEFAULT_STAGE5_TCO_INPUT", default_input)
+    monkeypatch.setattr(run_tco_mod, "DEFAULT_CORE_CONFIG_PATH", tmp_path / "config" / "core.yaml")
+
+    output_csv = tmp_path / "var" / "audit" / "tco" / "20240508T070000Z" / "incident.csv"
+
+    exit_code = run_tco(["--output", str(output_csv)])
+    assert exit_code == 0
+
+    run_dir = output_csv.parent
+    json_path = run_dir / "incident.json"
+    csv_path = run_dir / "incident.csv"
+
+    assert json_path.exists()
+    assert csv_path.exists()
+
+    payload = json.loads(json_path.read_text(encoding="utf-8"))
+    assert payload["monthly_total"] == 80.0
+    assert payload["items_count"] == 2
+
+
+def test_stage5_support_shortcut_uses_core_config(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    if not _supports_head_cli():
+        pytest.skip("Support playbook shortcut applies to summary CLI variant")
+    if getattr(run_tco_mod, "_YAML_MODULE", None) is None:
+        pytest.skip("PyYAML is required to verify config-driven shortcut")
+
+    monkeypatch.delenv("STAGE5_TCO_INPUT", raising=False)
+    config_path = tmp_path / "etc" / "core.yaml"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+
+    relative_target = Path("../share/stage5_tco.json")
+    stage5_input = (config_path.parent / relative_target).resolve(strict=False)
+    stage5_input.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "currency": "USD",
+        "items": [
+            {"name": "Runbook analysis", "category": "operations", "monthly_cost": 15.0},
+            {"name": "Follow-up", "category": "operations", "monthly_cost": 5.0},
+        ],
+    }
+    stage5_input.write_text(json.dumps(payload), encoding="utf-8")
+
+    config_path.write_text(
+        "stage5:\n  tco:\n    support_input: ../share/stage5_tco.json\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(run_tco_mod, "DEFAULT_CORE_CONFIG_PATH", config_path)
+    monkeypatch.setattr(run_tco_mod, "DEFAULT_STAGE5_TCO_INPUT", tmp_path / "missing" / "tco.json")
+
+    output_csv = tmp_path / "var" / "audit" / "tco" / "20240508T090000Z" / "incident.csv"
+
+    exit_code = run_tco(["--output", str(output_csv)])
+    assert exit_code == 0
+
+    std = capsys.readouterr()
+    assert str(stage5_input) in std.err
+
+    json_path = output_csv.parent / "incident.json"
+    assert json_path.exists()
+
+    result = json.loads(json_path.read_text(encoding="utf-8"))
+    assert result["monthly_total"] == 20.0
+    assert result["items_count"] == 2
+
+
+def test_stage5_support_shortcut_prefers_env_override(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    if not _supports_head_cli():
+        pytest.skip("Support playbook shortcut applies to summary CLI variant")
+
+    stage5_input = tmp_path / "env" / "stage5_tco.json"
+    stage5_input.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "currency": "USD",
+        "items": [
+            {"name": "Env override", "category": "operations", "monthly_cost": 12.0},
+            {"name": "Follow up", "category": "operations", "monthly_cost": 8.0},
+        ],
+    }
+    stage5_input.write_text(json.dumps(payload), encoding="utf-8")
+
+    monkeypatch.setenv("STAGE5_TCO_INPUT", str(stage5_input))
+    monkeypatch.setattr(run_tco_mod, "DEFAULT_CORE_CONFIG_PATH", tmp_path / "config" / "core.yaml")
+    monkeypatch.setattr(run_tco_mod, "DEFAULT_STAGE5_TCO_INPUT", tmp_path / "missing" / "tco.json")
+
+    output_csv = tmp_path / "var" / "audit" / "tco" / "20240508T100000Z" / "incident.csv"
+
+    exit_code = run_tco(["--output", str(output_csv)])
+    assert exit_code == 0
+
+    std = capsys.readouterr()
+    assert str(stage5_input) in std.err
+
+    json_path = output_csv.parent / "incident.json"
+    assert json_path.exists()
+
+    result = json.loads(json_path.read_text(encoding="utf-8"))
+    assert result["monthly_total"] == 20.0
+    assert result["items_count"] == 2
+
+
 def test_output_alias_directory_with_digits_is_not_timestamp(tmp_path: Path) -> None:
     if not _supports_head_cli():
         pytest.skip("Output alias applies to summary CLI variant")
