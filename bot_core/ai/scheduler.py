@@ -10,6 +10,8 @@ from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import Callable, ClassVar, Iterable, Mapping, MutableMapping, Sequence
 
+from bot_core.runtime.journal import TradingDecisionEvent, TradingDecisionJournal
+
 from ._license import ensure_ai_signals_enabled
 from .feature_engineering import FeatureDataset
 from .models import ModelArtifact
@@ -805,7 +807,7 @@ class ScheduledTrainingJob:
             "portfolio": self.journal_portfolio,
             "risk_profile": self.journal_risk_profile,
             "schedule": self.name,
-            "strategy": self.name,
+            "strategy": self.journal_strategy,
             "telemetry_namespace": f"ai.scheduler.{self.name}",
         }
         if self.decision_journal_context is not None:
