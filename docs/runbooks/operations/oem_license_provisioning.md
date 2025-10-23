@@ -32,6 +32,33 @@ fingerprintu w postaci QR, jak i na nośniku USB.
 
 Do wystawienia licencji użyj narzędzia `scripts/oem_provision_license.py`.
 
+### Wniosek licencyjny z pliku JSON/YAML
+
+Operator może przygotować kompletny wniosek w pliku (np. `request.json` lub
+`request.yaml`) i przekazać go jako pierwszy argument polecenia. Przykład
+minimalnego pliku JSON:
+
+```json
+{
+  "fingerprint": "ABCD-EFGH",
+  "issuer": "QA-DEPARTMENT",
+  "profile": "paper",
+  "bundle_version": "1.2.3",
+  "features": ["daemon", "ui"],
+  "valid_days": 30,
+  "signing_key_path": "var/licenses/signing.key",
+  "key_id": "lic-2024",
+  "output": "var/licenses/registry.jsonl",
+  "rotation_log": "var/licenses/license_rotation.json"
+}
+```
+
+Polecenie uruchomione jako `python scripts/oem_provision_license.py request.json`
+zachowuje się tak, jak gdyby wszystkie wartości zostały podane wprost jako
+flagi CLI. Parametry przekazane jednocześnie w pliku i poprzez flagi są
+nadpisywane przez flagi (np. `--issuer`). Plik YAML może wykorzystywać te same
+klucze (np. `bundle_version: 1.2.3`).
+
 ### Walidacja fingerprintu i wydanie licencji (USB)
 
 ```bash
