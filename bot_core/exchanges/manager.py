@@ -8,6 +8,8 @@ import os
 from dataclasses import dataclass
 from collections.abc import Iterable, Iterator, MutableMapping
 from collections import Counter
+from importlib import import_module
+from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, MutableMapping, Optional, Sequence, Tuple
 
 from pydantic import BaseModel, Field
@@ -32,16 +34,6 @@ from bot_core.exchanges.base import (
     OrderRequest,
     OrderResult,
 )
-from bot_core.exchanges.binance.futures import BinanceFuturesAdapter
-from bot_core.exchanges.binance.margin import BinanceMarginAdapter
-from bot_core.exchanges.bybit.futures import BybitFuturesAdapter
-from bot_core.exchanges.bybit.margin import BybitMarginAdapter
-from bot_core.exchanges.coinbase.futures import CoinbaseFuturesAdapter
-from bot_core.exchanges.coinbase.margin import CoinbaseMarginAdapter
-from bot_core.exchanges.kraken.futures import KrakenFuturesAdapter
-from bot_core.exchanges.kraken.margin import KrakenMarginAdapter
-from bot_core.exchanges.okx.futures import OKXFuturesAdapter
-from bot_core.exchanges.okx.margin import OKXMarginAdapter
 from bot_core.exchanges.health import (
     CircuitBreaker,
     HealthCheck,
@@ -50,7 +42,6 @@ from bot_core.exchanges.health import (
     Watchdog,
 )
 from bot_core.exchanges.paper_simulator import PaperFuturesSimulator, PaperMarginSimulator
-from bot_core.exchanges.zonda.margin import ZondaMarginAdapter
 
 try:  # pragma: no cover
     import ccxt  # type: ignore
@@ -102,9 +93,12 @@ class _NativeAdapterRegistration:
     factory: Any
     default_settings: Mapping[str, object]
     supports_testnet: bool = True
+    source: Path | None = None
+    dynamic: bool = False
 
 
 _NATIVE_ADAPTER_REGISTRY: Dict[Tuple[Mode, str], _NativeAdapterRegistration] = {}
+_DYNAMIC_ADAPTER_KEYS: set[Tuple[Mode, str]] = set()
 
 
 class _LegacyAdapterMapping(MutableMapping[str, Any]):
@@ -144,6 +138,23 @@ _NATIVE_MARGIN_ADAPTERS: MutableMapping[str, Any] = _LegacyAdapterMapping(Mode.M
 _NATIVE_FUTURES_ADAPTERS: MutableMapping[str, Any] = _LegacyAdapterMapping(Mode.FUTURES)
 
 
+_DYNAMIC_ADAPTERS_INITIALIZED = False
+_DYNAMIC_ADAPTERS_SOURCE: Path | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class NativeAdapterInfo:
+    """Informacje o zarejestrowanym natywnym adapterze giełdy."""
+
+    exchange_id: str
+    mode: Mode
+    factory: Any
+    default_settings: Mapping[str, object]
+    supports_testnet: bool
+    source: Path | None
+    dynamic: bool
+
+
 def register_native_adapter(
     *,
     exchange_id: str,
@@ -151,6 +162,8 @@ def register_native_adapter(
     factory: Any,
     default_settings: Mapping[str, object] | None = None,
     supports_testnet: bool = True,
+    source: str | os.PathLike[str] | None = None,
+    dynamic: bool = False,
 ) -> None:
     """Registers a native adapter factory used by :class:`ExchangeManager`.
 
@@ -162,24 +175,245 @@ def register_native_adapter(
     if mode not in {Mode.MARGIN, Mode.FUTURES}:
         raise ValueError("Native adapters are only supported for margin/futures modes")
     key = (mode, exchange_id)
-    _NATIVE_ADAPTER_REGISTRY[key] = _NativeAdapterRegistration(
+    source_path = Path(source).expanduser() if source is not None else None
+    registration = _NativeAdapterRegistration(
         factory=factory,
         default_settings=dict(default_settings or {}),
         supports_testnet=bool(supports_testnet),
+        source=source_path,
+        dynamic=bool(dynamic),
+    )
+    _NATIVE_ADAPTER_REGISTRY[key] = registration
+    if registration.dynamic:
+        _DYNAMIC_ADAPTER_KEYS.add(key)
+    else:
+        _DYNAMIC_ADAPTER_KEYS.discard(key)
+
+
+def get_native_adapter_info(*, exchange_id: str, mode: Mode) -> NativeAdapterInfo | None:
+    """Zwraca metadane pojedynczego zarejestrowanego adaptera."""
+
+    if mode not in {Mode.MARGIN, Mode.FUTURES}:
+        raise ValueError(
+            "Informacje o adapterach dostępne są tylko dla trybów margin/futures",
+        )
+
+    normalized_exchange = str(exchange_id or "").strip().lower()
+    if not normalized_exchange:
+        raise ValueError("exchange_id nie może być pusty")
+
+    registration = _NATIVE_ADAPTER_REGISTRY.get((mode, normalized_exchange))
+    if registration is None:
+        return None
+
+    return NativeAdapterInfo(
+        exchange_id=normalized_exchange,
+        mode=mode,
+        factory=registration.factory,
+        default_settings=dict(registration.default_settings),
+        supports_testnet=registration.supports_testnet,
+        source=registration.source,
+        dynamic=registration.dynamic,
     )
 
 
-register_native_adapter(exchange_id="binance", mode=Mode.MARGIN, factory=BinanceMarginAdapter)
-register_native_adapter(exchange_id="kraken", mode=Mode.MARGIN, factory=KrakenMarginAdapter)
-register_native_adapter(exchange_id="zonda", mode=Mode.MARGIN, factory=ZondaMarginAdapter, supports_testnet=False)
-register_native_adapter(exchange_id="binance", mode=Mode.FUTURES, factory=BinanceFuturesAdapter)
-register_native_adapter(exchange_id="kraken", mode=Mode.FUTURES, factory=KrakenFuturesAdapter)
-register_native_adapter(exchange_id="bybit", mode=Mode.MARGIN, factory=BybitMarginAdapter)
-register_native_adapter(exchange_id="bybit", mode=Mode.FUTURES, factory=BybitFuturesAdapter)
-register_native_adapter(exchange_id="okx", mode=Mode.MARGIN, factory=OKXMarginAdapter)
-register_native_adapter(exchange_id="okx", mode=Mode.FUTURES, factory=OKXFuturesAdapter)
-register_native_adapter(exchange_id="coinbase", mode=Mode.MARGIN, factory=CoinbaseMarginAdapter)
-register_native_adapter(exchange_id="coinbase", mode=Mode.FUTURES, factory=CoinbaseFuturesAdapter)
+def unregister_native_adapter(
+    *,
+    exchange_id: str,
+    mode: Mode,
+    allow_dynamic: bool = False,
+) -> bool:
+    """Usuwa zarejestrowany adapter natywny, jeśli istnieje.
+
+    Dynamiczne wpisy z konfiguracji są domyślnie chronione przed usunięciem –
+    aby je skasować należy ustawić ``allow_dynamic=True`` i ewentualnie ponownie
+    załadować konfigurację funkcją :func:`reload_native_adapters`.
+    """
+
+    if mode not in {Mode.MARGIN, Mode.FUTURES}:
+        raise ValueError("Usuwanie adapterów wspiera tylko tryby margin/futures")
+
+    normalized_exchange = str(exchange_id or "").strip().lower()
+    if not normalized_exchange:
+        raise ValueError("exchange_id nie może być pusty")
+
+    key = (mode, normalized_exchange)
+    registration = _NATIVE_ADAPTER_REGISTRY.get(key)
+    if registration is None:
+        return False
+    if registration.dynamic and not allow_dynamic:
+        return False
+
+    _NATIVE_ADAPTER_REGISTRY.pop(key, None)
+    _DYNAMIC_ADAPTER_KEYS.discard(key)
+    return True
+
+
+def _import_adapter_factory(path: str) -> Any:
+    """Importuje klasę adaptera z notacji modułowej ``module:Class``."""
+
+    module_path, separator, attr_path = path.partition(":")
+    if not separator:
+        module_path, _, attr_path = path.rpartition(".")
+    if not module_path or not attr_path:
+        raise ImportError(f"Niepoprawna ścieżka klasy adaptera: {path}")
+    module = import_module(module_path)
+    target: Any = module
+    for attr in attr_path.split("."):
+        target = getattr(target, attr)
+    return target
+
+
+def _discover_core_config_candidates() -> list[Path]:
+    """Zwraca listę potencjalnych ścieżek do pliku core.yaml."""
+
+    candidates: list[Path] = []
+    for env_var in (
+        "BOT_CORE_ADAPTER_CONFIG",
+        "DUDZIAN_CORE_CONFIG",
+        "BOT_CORE_CORE_CONFIG",
+    ):
+        candidate = os.environ.get(env_var)
+        if candidate:
+            candidates.append(Path(candidate).expanduser())
+
+    base_dir = Path(__file__).resolve().parents[2]
+    candidates.append(base_dir / "config" / "core.yaml")
+    candidates.append(Path("config/core.yaml").expanduser())
+
+    unique: list[Path] = []
+    seen: set[Path] = set()
+    for candidate in candidates:
+        resolved = candidate
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        unique.append(resolved)
+    return unique
+
+
+def _clear_dynamic_native_adapters() -> None:
+    """Czyści rejestr adapterów pochodzących z konfiguracji."""
+
+    for key in list(_NATIVE_ADAPTER_REGISTRY):
+        registration = _NATIVE_ADAPTER_REGISTRY.get(key)
+        if registration is None or not registration.dynamic:
+            continue
+        _NATIVE_ADAPTER_REGISTRY.pop(key, None)
+    _DYNAMIC_ADAPTER_KEYS.clear()
+
+
+def _load_dynamic_native_adapters(
+    config_path: str | os.PathLike[str] | Path | None = None,
+) -> None:
+    """Ładuje definicje adapterów z config/core.yaml, jeśli dostępne."""
+
+    global _DYNAMIC_ADAPTERS_INITIALIZED, _DYNAMIC_ADAPTERS_SOURCE
+    if _DYNAMIC_ADAPTERS_INITIALIZED and config_path is None:
+        return
+
+    try:
+        from bot_core.config.loader import load_core_config  # noqa: WPS433
+    except Exception as exc:  # pragma: no cover - opcjonalny loader
+        log.debug("Pominięto dynamiczne adaptery – loader niedostępny: %s", exc)
+        _DYNAMIC_ADAPTERS_INITIALIZED = True
+        return
+
+    if config_path is not None:
+        candidates = [Path(config_path).expanduser()]
+    else:
+        candidates = _discover_core_config_candidates()
+
+    for candidate in candidates:
+        try:
+            config = load_core_config(candidate)
+        except Exception as exc:  # pragma: no cover - diagnostyka konfiguracji
+            log.debug("Nie udało się wczytać %s: %s", candidate, exc)
+            continue
+
+        adapters = getattr(config, "exchange_adapters", None) or {}
+        if not adapters:
+            continue
+
+        for exchange_id, modes in adapters.items():
+            if not isinstance(modes, Mapping):
+                continue
+            for mode, entry in modes.items():
+                if not isinstance(mode, Mode):
+                    try:
+                        mode = Mode(str(mode).lower())
+                    except Exception:
+                        continue
+                class_path = getattr(entry, "class_path", "")
+                if not class_path:
+                    continue
+                normalized_exchange = str(exchange_id).strip().lower()
+                key = (mode, normalized_exchange)
+                if key in _NATIVE_ADAPTER_REGISTRY:
+                    continue
+                try:
+                    factory = _import_adapter_factory(class_path)
+                except Exception as exc:  # pragma: no cover - diagnostyka importu
+                    log.warning(
+                        "Pominięto adapter %s/%s z powodu błędu importu: %s",
+                        exchange_id,
+                        mode.value,
+                        exc,
+                    )
+                    continue
+                register_native_adapter(
+                    exchange_id=normalized_exchange,
+                    mode=mode,
+                    factory=factory,
+                    default_settings=dict(getattr(entry, "default_settings", {})),
+                    supports_testnet=bool(getattr(entry, "supports_testnet", True)),
+                    source=candidate,
+                    dynamic=True,
+                )
+
+        _DYNAMIC_ADAPTERS_SOURCE = candidate
+        break
+
+    _DYNAMIC_ADAPTERS_INITIALIZED = True
+
+
+def reload_native_adapters(
+    config_path: str | os.PathLike[str] | Path | None = None,
+) -> None:
+    """Czyści i ponownie ładuje adaptery konfiguracyjne."""
+
+    global _DYNAMIC_ADAPTERS_INITIALIZED, _DYNAMIC_ADAPTERS_SOURCE
+
+    _clear_dynamic_native_adapters()
+    _DYNAMIC_ADAPTERS_INITIALIZED = False
+    _DYNAMIC_ADAPTERS_SOURCE = None
+    _load_dynamic_native_adapters(config_path)
+
+
+def iter_registered_native_adapters(
+    mode: Mode | None = None,
+) -> Iterator[NativeAdapterInfo]:
+    """Udostępnia metadane wszystkich zarejestrowanych natywnych adapterów."""
+
+    if mode is not None and mode not in {Mode.MARGIN, Mode.FUTURES}:
+        raise ValueError("Filtrowanie obsługuje tylko tryby margin lub futures")
+
+    for (registered_mode, exchange_id), registration in sorted(
+        _NATIVE_ADAPTER_REGISTRY.items(),
+        key=lambda item: (item[0][0].value, item[0][1]),
+    ):
+        if mode is not None and registered_mode is not mode:
+            continue
+        yield NativeAdapterInfo(
+            exchange_id=exchange_id,
+            mode=registered_mode,
+            factory=registration.factory,
+            default_settings=dict(registration.default_settings),
+            supports_testnet=registration.supports_testnet,
+            source=registration.source,
+            dynamic=registration.dynamic,
+        )
+
 
 _STATUS_MAPPING = {
     "NEW": OrderStatus.OPEN,
@@ -828,6 +1062,8 @@ class ExchangeManager:
             raise RuntimeError("Natywny adapter dostępny jest wyłącznie w trybach margin/futures.")
         if not self._api_key or not self._secret:
             raise RuntimeError("Brak API Key/Secret – ustaw je przed użyciem trybu live/testnet.")
+
+        _load_dynamic_native_adapters()
 
         registration = _NATIVE_ADAPTER_REGISTRY.get((self.mode, self.exchange_id))
 
@@ -1568,5 +1804,8 @@ __all__ = [
     "OrderStatus",
     "PositionDTO",
     "register_native_adapter",
+    "reload_native_adapters",
+    "iter_registered_native_adapters",
+    "NativeAdapterInfo",
 ]
 
