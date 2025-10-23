@@ -220,7 +220,17 @@ def main(argv: list[str] | None = None) -> int:
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
-    config_path = Path(args.config).expanduser().resolve()
+    if args.config:
+        config_candidate = Path(args.config)
+        using_default_config = False
+    else:
+        config_candidate = DEFAULT_CONFIG_PATH
+        using_default_config = True
+    config_path = config_candidate.expanduser().resolve()
+    if using_default_config:
+        _LOGGER.info("Nie podano --config, używam domyślnej ścieżki: %s", config_path)
+    else:
+        _LOGGER.info("Używam pliku konfiguracji: %s", config_path)
     core_config = load_core_config(str(config_path))
 
     settings = SimulationSettings(base_equity=args.base_equity, max_bars=args.max_bars)
