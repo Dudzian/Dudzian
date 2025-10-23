@@ -11,7 +11,12 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from scripts.run_risk_simulation_lab import main as run_main
+from scripts.run_risk_simulation_lab import (
+    DEFAULT_CONFIG_PATH,
+    DEFAULT_OUTPUT_DIR,
+    _build_parser,
+    main as run_main,
+)
 
 
 @pytest.fixture()
@@ -180,3 +185,20 @@ def test_cli_stage5_latency_tco(tmp_path: Path, stage5_config: tuple[Path, Path]
     summary = first_entry.get("summary", {})
     assert summary.get("cost_bps") == 6.5
     assert summary.get("monthly_total") == 1250.0
+
+
+def test_parser_stage2_defaults() -> None:
+    parser = _build_parser()
+    args = parser.parse_args(["--profile", "all"])
+    assert args.config == DEFAULT_CONFIG_PATH
+    assert args.output_dir == DEFAULT_OUTPUT_DIR
+    assert args.profile == ["all"]
+
+
+def test_parser_stage5_defaults() -> None:
+    parser = _build_parser()
+    args = parser.parse_args(["--scenario", "latency_spike", "--include-tco"])
+    assert args.config == DEFAULT_CONFIG_PATH
+    assert args.output_dir == DEFAULT_OUTPUT_DIR
+    assert args.scenario == ["latency_spike"]
+    assert args.include_tco is True
