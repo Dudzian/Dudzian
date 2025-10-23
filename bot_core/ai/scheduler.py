@@ -10,6 +10,8 @@ from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import Callable, ClassVar, Iterable, Mapping, MutableMapping, Sequence
 
+from bot_core.runtime.journal import TradingDecisionEvent, TradingDecisionJournal
+
 from ._license import ensure_ai_signals_enabled
 from .feature_engineering import FeatureDataset
 from .models import ModelArtifact
@@ -493,6 +495,7 @@ class ScheduledTrainingJob:
     journal_environment: str = "ai-training"
     journal_portfolio: str | None = None
     journal_risk_profile: str = "ai-research"
+    journal_strategy: str | None = None
 
     def __post_init__(self) -> None:
         ensure_ai_signals_enabled("zadań treningowych AI")
@@ -510,33 +513,13 @@ class ScheduledTrainingJob:
             self.journal_portfolio = self.name
         else:
             self.journal_portfolio = str(self.journal_portfolio)
+        if self.journal_strategy is None:
+            self.journal_strategy = self.name
+        else:
+            self.journal_strategy = str(self.journal_strategy)
 
     def is_due(self, now: datetime | None = None) -> bool:
         return self.scheduler.should_retrain(now)
-
-    def _journal_context_value(self, key: str, default: str) -> str:
-        if self.decision_journal_context is None:
-            return default
-        value = self.decision_journal_context.get(key)
-        if value is None:
-            return default
-        return str(value)
-
-    @property
-    def journal_environment(self) -> str:
-        return self._journal_context_value("environment", "ai-training")
-
-    @property
-    def journal_portfolio(self) -> str:
-        return self._journal_context_value("portfolio", self.name)
-
-    @property
-    def journal_risk_profile(self) -> str:
-        return self._journal_context_value("risk_profile", "ai-research")
-
-    @property
-    def journal_strategy(self) -> str:
-        return self._journal_context_value("strategy", self.name)
 
     def run(self, now: datetime | None = None) -> ModelArtifact:
         planned_timestamp = (
@@ -580,6 +563,33 @@ class ScheduledTrainingJob:
             )
 
         self.scheduler.mark_executed(artifact.trained_at)
+
+        metrics_source = artifact.metrics
+        summary_candidate: Mapping[str, float] | None = None
+        if hasattr(metrics_source, "summary"):
+            summary_view = metrics_source.summary()  # type: ignore[attr-defined]
+            if isinstance(summary_view, Mapping):
+                summary_candidate = summary_view
+        if summary_candidate is None:
+            if isinstance(metrics_source, Mapping):
+                raw_summary = metrics_source.get("summary")
+                if isinstance(raw_summary, Mapping):
+                    summary_candidate = raw_summary
+            elif hasattr(metrics_source, "splits"):
+                splits_view = metrics_source.splits()  # type: ignore[attr-defined]
+                if isinstance(splits_view, Mapping):
+                    raw_summary = splits_view.get("summary")
+                    if isinstance(raw_summary, Mapping):
+                        summary_candidate = raw_summary
+
+        summary_metrics: dict[str, float] = {}
+        if summary_candidate is not None:
+            for key, value in summary_candidate.items():
+                try:
+                    summary_metrics[str(key)] = float(value)
+                except (TypeError, ValueError):
+                    continue
+
         record = TrainingRunRecord(
             trained_at=artifact.trained_at,
             metrics=dict(summary_metrics),
@@ -612,12 +622,35 @@ class ScheduledTrainingJob:
             if self.scheduler.paused_reason:
                 metadata["paused_reason"] = self.scheduler.paused_reason
             for key, value in summary_metrics.items():
-                metadata[f"metric_{key}"] = f"{value:.10f}"
-            for split, values in artifact.metrics.blocks().items():
+                metadata[f"metric_{key}"] = str(value)
+
+            metric_blocks: Mapping[str, Mapping[str, float]] | None = None
+            if hasattr(metrics_source, "splits"):
+                blocks_view = metrics_source.splits()  # type: ignore[attr-defined]
+                if isinstance(blocks_view, Mapping):
+                    metric_blocks = blocks_view
+            elif hasattr(metrics_source, "blocks"):
+                blocks_view = metrics_source.blocks()  # type: ignore[attr-defined]
+                if isinstance(blocks_view, Mapping):
+                    metric_blocks = blocks_view
+            elif isinstance(metrics_source, Mapping):
+                metric_blocks = {
+                    str(split): values
+                    for split, values in metrics_source.items()
+                    if isinstance(values, Mapping)
+                }
+
+            if metric_blocks is None:
+                metric_blocks = {}
+
+            for split, values in metric_blocks.items():
                 if split == "summary" or not values:
                     continue
                 for metric_name, metric_value in values.items():
-                    metadata[f"metric_{split}_{metric_name}"] = f"{metric_value:.10f}"
+                    try:
+                        metadata[f"metric_{split}_{metric_name}"] = str(float(metric_value))
+                    except (TypeError, ValueError):
+                        continue
             event = TradingDecisionEvent(
                 event_type="ai_retraining",
                 timestamp=artifact.trained_at,
@@ -705,7 +738,7 @@ class ScheduledTrainingJob:
             "portfolio": self.journal_portfolio,
             "risk_profile": self.journal_risk_profile,
             "schedule": self.name,
-            "strategy": self.name,
+            "strategy": self.journal_strategy,
             "telemetry_namespace": f"ai.scheduler.{self.name}",
         }
         if self.decision_journal_context is not None:
