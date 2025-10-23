@@ -190,6 +190,133 @@ def register_native_adapter(
         _DYNAMIC_ADAPTER_KEYS.discard(key)
 
 
+def _import_adapter_factory(path: str) -> Any:
+    """Importuje klasę adaptera z notacji modułowej ``module:Class``."""
+
+    module_path, separator, attr_path = path.partition(":")
+    if not separator:
+        module_path, _, attr_path = path.rpartition(".")
+    if not module_path or not attr_path:
+        raise ImportError(f"Niepoprawna ścieżka klasy adaptera: {path}")
+    module = import_module(module_path)
+    target: Any = module
+    for attr in attr_path.split("."):
+        target = getattr(target, attr)
+    return target
+
+
+def _discover_core_config_candidates() -> list[Path]:
+    """Zwraca listę potencjalnych ścieżek do pliku core.yaml."""
+
+    candidates: list[Path] = []
+    for env_var in (
+        "BOT_CORE_ADAPTER_CONFIG",
+        "DUDZIAN_CORE_CONFIG",
+        "BOT_CORE_CORE_CONFIG",
+    ):
+        candidate = os.environ.get(env_var)
+        if candidate:
+            candidates.append(Path(candidate).expanduser())
+
+    base_dir = Path(__file__).resolve().parents[2]
+    candidates.append(base_dir / "config" / "core.yaml")
+    candidates.append(Path("config/core.yaml").expanduser())
+
+    unique: list[Path] = []
+    seen: set[Path] = set()
+    for candidate in candidates:
+        resolved = candidate
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        unique.append(resolved)
+    return unique
+
+
+def _clear_dynamic_native_adapters() -> None:
+    """Czyści rejestr adapterów pochodzących z konfiguracji."""
+
+    for key in list(_NATIVE_ADAPTER_REGISTRY):
+        registration = _NATIVE_ADAPTER_REGISTRY.get(key)
+        if registration is None or not registration.dynamic:
+            continue
+        _NATIVE_ADAPTER_REGISTRY.pop(key, None)
+    _DYNAMIC_ADAPTER_KEYS.clear()
+
+
+def _load_dynamic_native_adapters(
+    config_path: str | os.PathLike[str] | Path | None = None,
+) -> None:
+    """Ładuje definicje adapterów z config/core.yaml, jeśli dostępne."""
+
+    global _DYNAMIC_ADAPTERS_INITIALIZED, _DYNAMIC_ADAPTERS_SOURCE
+    if _DYNAMIC_ADAPTERS_INITIALIZED and config_path is None:
+        return
+
+    try:
+        from bot_core.config.loader import load_core_config  # noqa: WPS433
+    except Exception as exc:  # pragma: no cover - opcjonalny loader
+        log.debug("Pominięto dynamiczne adaptery – loader niedostępny: %s", exc)
+        _DYNAMIC_ADAPTERS_INITIALIZED = True
+        return
+
+    if config_path is not None:
+        candidates = [Path(config_path).expanduser()]
+    else:
+        candidates = _discover_core_config_candidates()
+
+    for candidate in candidates:
+        try:
+            config = load_core_config(candidate)
+        except Exception as exc:  # pragma: no cover - diagnostyka konfiguracji
+            log.debug("Nie udało się wczytać %s: %s", candidate, exc)
+            continue
+
+        adapters = getattr(config, "exchange_adapters", None) or {}
+        if not adapters:
+            continue
+
+        for exchange_id, modes in adapters.items():
+            if not isinstance(modes, Mapping):
+                continue
+            for mode, entry in modes.items():
+                if not isinstance(mode, Mode):
+                    try:
+                        mode = Mode(str(mode).lower())
+                    except Exception:
+                        continue
+                class_path = getattr(entry, "class_path", "")
+                if not class_path:
+                    continue
+                normalized_exchange = str(exchange_id).strip().lower()
+                key = (mode, normalized_exchange)
+                if key in _NATIVE_ADAPTER_REGISTRY:
+                    continue
+                try:
+                    factory = _import_adapter_factory(class_path)
+                except Exception as exc:  # pragma: no cover - diagnostyka importu
+                    log.warning(
+                        "Pominięto adapter %s/%s z powodu błędu importu: %s",
+                        exchange_id,
+                        mode.value,
+                        exc,
+                    )
+                    continue
+                register_native_adapter(
+                    exchange_id=normalized_exchange,
+                    mode=mode,
+                    factory=factory,
+                    default_settings=dict(getattr(entry, "default_settings", {})),
+                    supports_testnet=bool(getattr(entry, "supports_testnet", True)),
+                    source=candidate,
+                    dynamic=True,
+                )
+
+        _DYNAMIC_ADAPTERS_SOURCE = candidate
+        break
+
+    _DYNAMIC_ADAPTERS_INITIALIZED = True
+
 def get_native_adapter_info(*, exchange_id: str, mode: Mode) -> NativeAdapterInfo | None:
     """Zwraca metadane pojedynczego zarejestrowanego adaptera."""
 
@@ -376,6 +503,43 @@ def _load_dynamic_native_adapters(
 
     _DYNAMIC_ADAPTERS_INITIALIZED = True
 
+
+def reload_native_adapters(
+    config_path: str | os.PathLike[str] | Path | None = None,
+) -> None:
+    """Czyści i ponownie ładuje adaptery konfiguracyjne."""
+
+    global _DYNAMIC_ADAPTERS_INITIALIZED, _DYNAMIC_ADAPTERS_SOURCE
+
+    _clear_dynamic_native_adapters()
+    _DYNAMIC_ADAPTERS_INITIALIZED = False
+    _DYNAMIC_ADAPTERS_SOURCE = None
+    _load_dynamic_native_adapters(config_path)
+
+
+def iter_registered_native_adapters(
+    mode: Mode | None = None,
+) -> Iterator[NativeAdapterInfo]:
+    """Udostępnia metadane wszystkich zarejestrowanych natywnych adapterów."""
+
+    if mode is not None and mode not in {Mode.MARGIN, Mode.FUTURES}:
+        raise ValueError("Filtrowanie obsługuje tylko tryby margin lub futures")
+
+    for (registered_mode, exchange_id), registration in sorted(
+        _NATIVE_ADAPTER_REGISTRY.items(),
+        key=lambda item: (item[0][0].value, item[0][1]),
+    ):
+        if mode is not None and registered_mode is not mode:
+            continue
+        yield NativeAdapterInfo(
+            exchange_id=exchange_id,
+            mode=registered_mode,
+            factory=registration.factory,
+            default_settings=dict(registration.default_settings),
+            supports_testnet=registration.supports_testnet,
+            source=registration.source,
+            dynamic=registration.dynamic,
+        )
 
 def reload_native_adapters(
     config_path: str | os.PathLike[str] | Path | None = None,

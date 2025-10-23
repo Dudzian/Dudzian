@@ -95,11 +95,14 @@ class _MetricsView(Mapping[str, object]):
                             keys.append(name)
                             seen.add(name)
 
-        for key in base.keys():
+        for key, value in base.items():
             name = str(key)
-            if name not in seen:
-                keys.append(name)
-                seen.add(name)
+            if name in seen:
+                continue
+            if isinstance(value, Mapping) and not value:
+                continue
+            keys.append(name)
+            seen.add(name)
 
         self._keys = tuple(keys)
 
@@ -151,8 +154,23 @@ class _MetricsView(Mapping[str, object]):
 class ModelMetrics(_MetricsView):
     """Ustandaryzowany widok metryk modeli eksportowany dla użytkowników."""
 
-    @classmethod
-    def from_raw(cls, raw: Mapping[str, object] | None) -> "ModelMetrics":
+    def __init__(
+        self,
+        raw: Mapping[str, object] | None = None,
+        *,
+        _structured: Mapping[str, Mapping[str, float]] | None = None,
+    ) -> None:
+        if _structured is None:
+            structured = self._structure_raw(raw)
+        else:
+            structured = _structured
+        self._structured = structured
+        super().__init__(structured)
+
+    @staticmethod
+    def _structure_raw(
+        raw: Mapping[str, object] | None,
+    ) -> Mapping[str, Mapping[str, float]]:
         required_keys = ("summary", "train", "validation", "test")
 
         def _coerce_block(values: Mapping[str, object]) -> dict[str, float]:
@@ -165,6 +183,9 @@ class ModelMetrics(_MetricsView):
             return normalized
 
         structured: dict[str, dict[str, float]] = {}
+
+        if isinstance(raw, ModelMetrics):
+            raw = raw.blocks()
 
         if isinstance(raw, Mapping) and raw:
             if all(isinstance(value, Mapping) for value in raw.values()):
@@ -200,11 +221,34 @@ class ModelMetrics(_MetricsView):
 
         structured["summary"] = summary
 
-        hydrated: dict[str, Mapping[str, float]] = {
-            split: MappingProxyType(dict(values)) for split, values in structured.items()
-        }
+        hydrated: dict[str, Mapping[str, float]] = {}
+        for split, values in structured.items():
+            hydrated[str(split)] = MappingProxyType(dict(values))
 
-        return cls(MappingProxyType(hydrated))
+        for key in required_keys:
+            hydrated.setdefault(key, MappingProxyType({}))
+
+        return MappingProxyType(hydrated)
+
+    @classmethod
+    def from_raw(cls, raw: Mapping[str, object] | None) -> "ModelMetrics":
+        return cls(raw)
+
+    def blocks(self) -> Mapping[str, Mapping[str, float]]:
+        return self._structured
+
+    def splits(self) -> Mapping[str, Mapping[str, float]]:
+        return self._structured
+
+    def __eq__(self, other: object) -> bool:  # pragma: no cover - prosty operator
+        if isinstance(other, Mapping):
+            if not other:
+                return all(
+                    not isinstance(block, Mapping) or not block
+                    for block in self._base.values()
+                )
+            return dict(self.items()) == dict(other.items())
+        return dict(self.items()) == other
 
     def to_dict(self) -> dict[str, dict[str, float]]:
         """Zwraca metryki jako głęboko kopiowalny słownik gotowy do serializacji."""
@@ -262,6 +306,8 @@ class ModelMetrics(_MetricsView):
 
 
 def _normalize_metrics(raw: Mapping[str, object] | None) -> ModelMetrics:
+    if isinstance(raw, ModelMetrics):
+        return raw
     return ModelMetrics.from_raw(raw)
 
 

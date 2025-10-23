@@ -448,6 +448,67 @@ class TradingSchedule:
     def overrides(self) -> tuple[ScheduleOverride, ...]:
         return self._overrides
 
+    def describe(self, reference: datetime | None = None) -> ScheduleState:
+        reference_dt = self._normalize_datetime(reference)
+        intervals = self._build_intervals(reference_dt.date())
+        active_window: tuple[datetime, datetime, ScheduleWindow] | None = None
+        upcoming_window: tuple[datetime, datetime, ScheduleWindow] | None = None
+        for start, end, window in intervals:
+            if start <= reference_dt < end:
+                active_window = (start, end, window)
+                break
+            if start > reference_dt and upcoming_window is None:
+                upcoming_window = (start, end, window)
+
+        active_override, next_override = self._locate_overrides(reference_dt)
+
+        if active_override is not None:
+            window = active_window[2] if active_window else None
+            next_transition = active_override.end
+            return ScheduleState(
+                mode=active_override.mode,
+                is_open=bool(active_override.allow_trading),
+                window=window,
+                next_transition=next_transition,
+                reference_time=reference_dt,
+                override=active_override,
+                next_override=next_override,
+                override_active=True,
+            )
+
+        if active_window is not None:
+            start, end, window = active_window
+            next_transition = end
+            if next_override is not None and next_override.start < next_transition:
+                next_transition = next_override.start
+            return ScheduleState(
+                mode=window.mode,
+                is_open=bool(window.allow_trading),
+                window=window,
+                next_transition=next_transition,
+                reference_time=reference_dt,
+                override=None,
+                next_override=next_override,
+                override_active=False,
+            )
+
+        window = upcoming_window[2] if upcoming_window else None
+        next_transition = upcoming_window[0] if upcoming_window else None
+        if next_override is not None and (
+            next_transition is None or next_override.start < next_transition
+        ):
+            next_transition = next_override.start
+        return ScheduleState(
+            mode=self._default_mode,
+            is_open=False,
+            window=window,
+            next_transition=next_transition,
+            reference_time=reference_dt,
+            override=None,
+            next_override=next_override,
+            override_active=False,
+        )
+
     def with_overrides(
         self,
         overrides: Sequence[ScheduleOverride] | Sequence[Mapping[str, object]],
