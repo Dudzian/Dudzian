@@ -21,6 +21,7 @@ _EXPORTS: Dict[str, Tuple[str, str]] = {
     # pipeline helpers
     "train_gradient_boosting_model": (".pipeline", "train_gradient_boosting_model"),
     "register_model_artifact": (".pipeline", "register_model_artifact"),
+    "score_with_data_monitoring": (".pipeline", "score_with_data_monitoring"),
     # harmonogram treningów
     "RetrainingScheduler": (".scheduler", "RetrainingScheduler"),
     "ScheduledTrainingJob": (".scheduler", "ScheduledTrainingJob"),
@@ -50,6 +51,27 @@ _EXPORTS: Dict[str, Tuple[str, str]] = {
     "FeatureDataset": (".feature_engineering", "FeatureDataset"),
     "FeatureEngineer": (".feature_engineering", "FeatureEngineer"),
     "FeatureVector": (".feature_engineering", "FeatureVector"),
+    # monitoring danych
+    "DataCompletenessWatcher": (".data_monitoring", "DataCompletenessWatcher"),
+    "FeatureBoundsValidator": (".data_monitoring", "FeatureBoundsValidator"),
+    "export_data_quality_report": (".data_monitoring", "export_data_quality_report"),
+    "export_drift_alert_report": (".data_monitoring", "export_drift_alert_report"),
+    "DataQualityException": (".data_monitoring", "DataQualityException"),
+    "apply_policy_to_report": (".data_monitoring", "apply_policy_to_report"),
+    "update_sign_off": (".data_monitoring", "update_sign_off"),
+    "load_recent_data_quality_reports": (
+        ".data_monitoring",
+        "load_recent_data_quality_reports",
+    ),
+    "load_recent_drift_reports": (".data_monitoring", "load_recent_drift_reports"),
+    "summarize_data_quality_reports": (
+        ".data_monitoring",
+        "summarize_data_quality_reports",
+    ),
+    "summarize_drift_reports": (
+        ".data_monitoring",
+        "summarize_drift_reports",
+    ),
     # manager & historię pipeline'u
     "AIManager": (".manager", "AIManager"),
     "EnsembleDefinition": (".manager", "EnsembleDefinition"),

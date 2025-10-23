@@ -13,6 +13,14 @@ from typing import Any, Deque, Mapping, MutableMapping, Sequence
 
 from bot_core.alerts import DriftAlertPayload, emit_model_drift_alert
 
+from .data_monitoring import (
+    DataCompletenessWatcher,
+    DataQualityException,
+    FeatureBoundsValidator,
+    apply_policy_to_report,
+    export_drift_alert_report,
+)
+
 from ._license import ensure_ai_signals_enabled
 from .models import ModelArtifact, ModelScore
 
@@ -538,6 +546,10 @@ class _FeatureDriftMonitor:
                     extra={"recent_score": score},
                 )
                 emit_model_drift_alert(payload)
+                try:
+                    export_drift_alert_report(payload)
+                except Exception:  # pragma: no cover - audyt nie może zatrzymać inference
+                    pass
                 self._last_alert_score = avg
                 self._last_alert_time = now
         return avg
@@ -557,6 +569,11 @@ class DecisionModelInference:
         self._model_label: str = "unknown"
         self._drift_monitor = _FeatureDriftMonitor()
         self._last_drift_score: float | None = None
+        self._completeness_watcher = DataCompletenessWatcher()
+        self._bounds_validator = FeatureBoundsValidator()
+        self._last_data_quality_report: dict[str, Mapping[str, object]] | None = None
+        self._enforce_data_alerts = True
+        self._data_quality_enforcement: dict[str, bool] = {}
 
     @property
     def is_ready(self) -> bool:
@@ -582,6 +599,11 @@ class DecisionModelInference:
         self._target_scale = float(metadata.get("target_scale", 1.0))
         self._feature_scalers = self._extract_scalers(metadata)
         self._calibration = self._extract_calibration(metadata)
+        self._completeness_watcher.configure_from_metadata(metadata)
+        self._bounds_validator.configure_from_metadata(metadata)
+        self._last_data_quality_report = None
+        self._enforce_data_alerts = True
+        self._data_quality_enforcement = {}
         drift_config = metadata.get("drift_monitor")
         if isinstance(drift_config, Mapping):
             self._drift_monitor.configure(
@@ -595,6 +617,7 @@ class DecisionModelInference:
         else:
             self._drift_monitor.configure(model_name=getattr(self, "_model_label", "unknown"))
         self._last_drift_score = None
+        self._configure_data_quality_policy(metadata)
         if hasattr(self._model, "feature_scalers"):
             model_scalers = getattr(self._model, "feature_scalers")
             if not self._feature_scalers and isinstance(model_scalers, Mapping):
@@ -605,18 +628,110 @@ class DecisionModelInference:
             elif self._feature_scalers:
                 self._model.feature_scalers = dict(self._feature_scalers)
 
-    def score(self, features: Mapping[str, float]) -> ModelScore:
+    @property
+    def last_data_quality_report(self) -> Mapping[str, Mapping[str, object]] | None:
+        return self._last_data_quality_report
+
+    def monitor_features(
+        self, features: Mapping[str, float], *, context: Mapping[str, object] | None = None
+    ) -> Mapping[str, Mapping[str, object]]:
+        monitoring_context: dict[str, object] = {"model": self._model_label}
+        if context:
+            monitoring_context.update({str(key): value for key, value in context.items()})
+        reports: dict[str, Mapping[str, object]] = {}
+        if self._completeness_watcher.is_configured:
+            report = dict(
+                self._completeness_watcher.observe(features, context=monitoring_context)
+            )
+            enforce = self._should_enforce("completeness")
+            reports["completeness"] = apply_policy_to_report(report, enforce=enforce)
+        if self._bounds_validator.is_configured:
+            report = dict(self._bounds_validator.observe(features, context=monitoring_context))
+            enforce = self._should_enforce("bounds")
+            reports["bounds"] = apply_policy_to_report(report, enforce=enforce)
+        if reports:
+            self._last_data_quality_report = reports
+        else:
+            self._last_data_quality_report = {}
+        return reports
+
+    def _configure_data_quality_policy(self, metadata: Mapping[str, object]) -> None:
+        data_quality_cfg = metadata.get("data_quality")
+        if isinstance(data_quality_cfg, Mapping):
+            enforce = data_quality_cfg.get("enforce")
+            if isinstance(enforce, bool):
+                self._enforce_data_alerts = enforce
+            else:
+                block = data_quality_cfg.get("block_on_alert")
+                if isinstance(block, bool):
+                    self._enforce_data_alerts = block
+            categories = data_quality_cfg.get("categories")
+            if isinstance(categories, Mapping):
+                for category, cfg in categories.items():
+                    if not isinstance(cfg, Mapping):
+                        continue
+                    raw_enforce = cfg.get("enforce")
+                    if not isinstance(raw_enforce, bool):
+                        raw_enforce = cfg.get("block_on_alert")
+                    if isinstance(raw_enforce, bool):
+                        self._data_quality_enforcement[str(category)] = raw_enforce
+        enforce_flag = metadata.get("enforce_data_quality")
+        if isinstance(enforce_flag, bool):
+            self._enforce_data_alerts = enforce_flag
+
+    def _should_enforce(self, category: str) -> bool:
+        if category in self._data_quality_enforcement:
+            return self._data_quality_enforcement[category]
+        return self._enforce_data_alerts
+
+    def score(
+        self,
+        features: Mapping[str, float],
+        *,
+        context: Mapping[str, object] | None = None,
+    ) -> ModelScore:
         if self._model is None:
             raise RuntimeError("Model inference nie został załadowany")
+        if context is not None:
+            reports = self.monitor_features(features, context=context)
+        else:
+            reports = self.monitor_features(features)
         prepared = self._prepare_features(features)
+        drift_score = self._drift_monitor.observe(prepared, self._feature_scalers)
+        if drift_score is not None:
+            self._last_drift_score = drift_score
+        if self._enforce_data_alerts:
+            alerts: dict[str, Mapping[str, object]] = {}
+            for name, payload in list(reports.items()):
+                if not isinstance(payload, Mapping):
+                    continue
+                status = str(payload.get("status"))
+                if status != "alert":
+                    continue
+                policy = payload.get("policy")
+                enforce = None
+                if isinstance(policy, Mapping):
+                    raw_enforce = policy.get("enforce")
+                    if isinstance(raw_enforce, bool):
+                        enforce = raw_enforce
+                if enforce is None:
+                    enforce = self._should_enforce(name)
+                if enforce:
+                    alerts[name] = payload
+                    continue
+                if isinstance(payload, MutableMapping):
+                    payload.setdefault("policy", {"enforce": False})
+                else:
+                    updated = dict(payload)
+                    updated.setdefault("policy", {"enforce": False})
+                    reports[name] = updated
+            if alerts:
+                raise DataQualityException(alerts)
         prediction = float(self._model.predict(prepared))
         if self._calibration is not None:
             slope, intercept = self._calibration
             prediction = prediction * slope + intercept
         probability = self._to_probability(prediction)
-        drift_score = self._drift_monitor.observe(prepared, self._feature_scalers)
-        if drift_score is not None:
-            self._last_drift_score = drift_score
         return ModelScore(expected_return_bps=prediction, success_probability=probability)
 
     def explain(self, features: Mapping[str, float]) -> Mapping[str, float]:
