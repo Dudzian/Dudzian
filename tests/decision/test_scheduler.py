@@ -27,7 +27,12 @@ from bot_core.ai.audit import (
     save_walk_forward_report,
 )
 from bot_core.ai.feature_engineering import FeatureVector
-from bot_core.ai.scheduler import ScheduledTrainingJob, WalkForwardResult
+from bot_core.ai.scheduler import (
+    DEFAULT_JOURNAL_ENVIRONMENT,
+    DEFAULT_JOURNAL_RISK_PROFILE,
+    ScheduledTrainingJob,
+    WalkForwardResult,
+)
 from bot_core.ai.training import ExternalModelAdapter, ExternalTrainingContext, ExternalTrainingResult, register_external_model_adapter
 from bot_core.runtime.journal import InMemoryTradingDecisionJournal
 
@@ -225,9 +230,9 @@ def test_scheduled_job_persists_state_and_records_journal(tmp_path) -> None:
     assert len(exported) == 1, "powinien powstać wpis w decision journal"
     entry = exported[0]
     assert entry["event"] == "ai_retraining"
-    assert entry["environment"] == "ai-training"
+    assert entry["environment"] == DEFAULT_JOURNAL_ENVIRONMENT
     assert entry["portfolio"] == "btc-retrain"
-    assert entry["risk_profile"] == "ai-research"
+    assert entry["risk_profile"] == DEFAULT_JOURNAL_RISK_PROFILE
     assert entry["schedule"] == "btc-retrain"
     assert entry["schedule_run_id"].startswith("btc-retrain:")
     expected_summary_metrics = dict(artifact.metrics.summary())
@@ -506,9 +511,9 @@ def test_scheduled_job_records_failure_and_updates_state(tmp_path) -> None:
     assert len(exported) == 1
     entry = exported[0]
     assert entry["event"] == "ai_retraining_failed"
-    assert entry["environment"] == "ai-training"
+    assert entry["environment"] == DEFAULT_JOURNAL_ENVIRONMENT
     assert entry["portfolio"] == "btc-fail"
-    assert entry["risk_profile"] == "ai-research"
+    assert entry["risk_profile"] == DEFAULT_JOURNAL_RISK_PROFILE
     assert entry["schedule"] == "btc-fail"
     assert entry["error_type"] == "RuntimeError"
     assert "metric_mae" not in entry
