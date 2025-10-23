@@ -8,6 +8,7 @@ import os
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from os import PathLike
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Callable, Mapping, MutableMapping, Sequence
@@ -92,7 +93,7 @@ def _update_report_file(
     report: Mapping[str, Any], mutator: Callable[[MutableMapping[str, Any]], None]
 ) -> None:
     report_path = report.get("report_path")
-    if not isinstance(report_path, (str, os.PathLike)):
+    if not isinstance(report_path, (str, PathLike)):
         return
     path = Path(report_path)
     try:
@@ -330,7 +331,7 @@ def summarize_data_quality_reports(
             category_stats["latest_status"] = status or None
         if category_stats["latest_report_path"] is None:
             report_path = report.get("report_path")
-            if isinstance(report_path, (str, os.PathLike)):
+            if isinstance(report_path, (str, PathLike)):
                 category_stats["latest_report_path"] = str(report_path)
 
         if status == "alert":
@@ -374,7 +375,7 @@ def summarize_drift_reports(
     for index, report in enumerate(normalized):
         if index == 0:
             report_path = report.get("report_path")
-            if isinstance(report_path, (str, os.PathLike)):
+            if isinstance(report_path, (str, PathLike)):
                 summary["latest_report_path"] = str(report_path)
         try:
             drift_score = float(report.get("drift_score"))
@@ -387,7 +388,7 @@ def summarize_drift_reports(
         summary["exceeds_threshold"] += 1
         if summary["latest_exceeding_report_path"] is None:
             report_path = report.get("report_path")
-            if isinstance(report_path, (str, os.PathLike)):
+            if isinstance(report_path, (str, PathLike)):
                 summary["latest_exceeding_report_path"] = str(report_path)
         _collect_pending_sign_off(
             report,
@@ -409,7 +410,7 @@ def _collect_pending_sign_off(
 ) -> None:
     report_path = report.get("report_path")
     path_str = None
-    if isinstance(report_path, (str, os.PathLike)):
+    if isinstance(report_path, (str, PathLike)):
         path_str = str(report_path)
     timestamp = report.get("timestamp")
     sign_off = report.get("sign_off")
