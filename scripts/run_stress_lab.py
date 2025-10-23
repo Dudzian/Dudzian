@@ -6,6 +6,10 @@ Stage6 Stress Lab – merged CLI (HEAD + main)
 Subcommands:
   - evaluate : ocenia raport Paper Labs (RiskSimulationReport) i generuje raport/CSV/podpis
   - run      : uruchamia Stress Lab z configu i generuje podpisany raport
+
+Domyślnie, gdy pominięto subkomendę, skrypt wybiera `evaluate` dla poleceń z
+`--risk-report` lub `run` dla pozostałych (zachowanie zgodne ze starymi
+runbookami).
 """
 from __future__ import annotations
 
@@ -92,7 +96,13 @@ def _resolve_signing_key_from_config_or_args(
 # =====================================================================
 
 def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Stage6 Stress Lab – merged CLI")
+    parser = argparse.ArgumentParser(
+        description="Stage6 Stress Lab – merged CLI",
+        epilog=(
+            "Zgodność wsteczna: pominięcie subkomendy powoduje wybór 'evaluate' "
+            "dla poleceń z --risk-report lub 'run' w pozostałych przypadkach."
+        ),
+    )
     sub = parser.add_subparsers(dest="_cmd", metavar="{evaluate|run}", required=True)
 
     # evaluate (HEAD)
@@ -236,28 +246,30 @@ def _handle_run(args: argparse.Namespace) -> int:
 
 # =====================================================================
 
-def _inject_default_command(argv: Sequence[str] | None) -> list[str]:
+def _prepare_argv(argv: Sequence[str] | None) -> list[str]:
+    """Normalize argv so legacy invocations without a sub-command still work."""
+
     args = list(argv or ())
-    if args and args[0] in {"run", "evaluate"}:
+    if not args:
+        return ["run"]
+
+    if args[0] in {"run", "evaluate"}:
         return args
-    evaluate_markers = {
-        "--definitions",
-        "--risk-report",
-        "--output-json",
-        "--output-csv",
-        "--overrides-csv",
-        "--signing-key",
-        "--signature-path",
-    }
-    if any(item.split("=", 1)[0] in evaluate_markers for item in args):
+
+    if args[0] in {"-h", "--help"}:
+        return args
+
+    normalized_flags = {item.split("=", 1)[0] for item in args if item.startswith("--")}
+    if "--risk-report" in normalized_flags:
         return ["evaluate", *args]
+
     return ["run", *args]
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     raw_argv = list(sys.argv[1:] if argv is None else argv)
-    effective_argv = _inject_default_command(raw_argv)
+    effective_argv = _prepare_argv(raw_argv)
     args = parser.parse_args(effective_argv)
     return args._handler(args)
 

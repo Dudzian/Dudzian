@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from scripts.run_stress_lab import main as run_stress_lab
+from scripts.run_stress_lab import main as run_stress_lab, _prepare_argv
 
 
 @pytest.mark.parametrize("fail_on_breach", [False, True])
@@ -29,3 +29,22 @@ def test_run_stress_lab_cli(tmp_path: Path, fail_on_breach: bool, monkeypatch: p
     exit_code = run_stress_lab(argv)
     assert exit_code == 0
     assert output_path.exists()
+
+
+def test_prepare_argv_injects_subcommand() -> None:
+    assert _prepare_argv(["--risk-report", "report.json"]) == [
+        "evaluate",
+        "--risk-report",
+        "report.json",
+    ]
+    assert _prepare_argv(["--output-json", "out.json", "--risk-report=report.json"]) == [
+        "evaluate",
+        "--output-json",
+        "out.json",
+        "--risk-report=report.json",
+    ]
+    assert _prepare_argv(["--config", "config/core.yaml"]) == [
+        "run",
+        "--config",
+        "config/core.yaml",
+    ]

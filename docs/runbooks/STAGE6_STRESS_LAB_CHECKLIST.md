@@ -22,7 +22,7 @@ kalibrację progów płynności/latencji oraz archiwizację podpisanych artefakt
       w razie potrzeby zasięgnij opinii zespołu tradingowego.
 
 ## Uruchomienie Stress Lab
-- [ ] `python scripts/run_stress_lab.py --risk-report var/audit/stage6/risk_simulation_report.json --config config/core.yaml --governor <gov> --output-json var/audit/stage6/stress_lab_report.json --output-csv var/audit/stage6/stress_lab_insights.csv --overrides-csv var/audit/stage6/stress_lab_overrides.csv --signing-key secrets/hypercare/stage6_hmac.key --signing-key-id stage6`.
+- [ ] `python scripts/run_stress_lab.py --risk-report var/audit/stage6/risk_simulation_report.json --config config/core.yaml --governor <gov> --output-json var/audit/stage6/stress_lab_report.json --output-csv var/audit/stage6/stress_lab_insights.csv --overrides-csv var/audit/stage6/stress_lab_overrides.csv --signing-key secrets/hypercare/stage6_hmac.key --signing-key-id stage6` (subkomenda `evaluate` jest opcjonalna – skrypt doda ją automatycznie).
 - [ ] Zweryfikuj liczbę insightów i overridów w komunikacie końcowym.
 - [ ] Jeśli pojawiły się rekomendacje `critical`, powiadom właściciela portfela i
       zaplanuj dodatkowe obserwacje.
@@ -55,7 +55,7 @@ Zweryfikowanie odporności portfela wielostrate-gicznego przy użyciu modułu `b
    - [ ] W razie braku danych – potwierdzono w runbooku dopuszczalność trybu syntetycznego i zapisano wpis w decision logu.
 2. **Uruchomienie Stress Lab**
    - [ ] Ustawiono zmienną środowiskową `STRESS_LAB_SIGNING_KEY` (lub przekazano ścieżkę klucza przez CLI).
-   - [ ] Uruchomiono `python scripts/run_stress_lab.py --config config/core.yaml` lub pipeline CI `Stage6 stress lab`.
+   - [ ] Uruchomiono `python scripts/run_stress_lab.py --config config/core.yaml` (subkomendę `run` można pominąć) lub pipeline CI `Stage6 stress lab`.
    - [ ] Raport został wygenerowany w katalogu wskazanym w `config.core.yaml:stress_lab.report_directory`.
 3. **Weryfikacja wyników**
    - [ ] Raport JSON zawiera wszystkie scenariusze z konfiguracji i brak błędów deserializacji.
