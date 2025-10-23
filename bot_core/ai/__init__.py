@@ -97,6 +97,11 @@ _EXPORTS: Dict[str, Tuple[str, str]] = {
         ".data_monitoring",
         "summarize_drift_reports",
     ),
+    # compliance snapshot
+    "collect_pipeline_compliance_summary": (
+        ".compliance",
+        "collect_pipeline_compliance_summary",
+    ),
     # manager & historię pipeline'u
     "AIManager": (".manager", "AIManager"),
     "EnsembleDefinition": (".manager", "EnsembleDefinition"),

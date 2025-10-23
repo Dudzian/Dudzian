@@ -159,6 +159,7 @@ Ustaw `AIManager(..., decision_journal=JsonlTradingDecisionJournal(...))`, aby l
 ## 3. Eskalacja
 
 - **Status critical** w `DataCompletenessWatcher` lub `FeatureDriftAnalyzer` → zgłoszenie do #sec-alerts, wstrzymanie inference oraz aktualizacja decision journalu.
+- **Potwierdzony dryf danych / incydent compliance** → wykonaj procedurę [`docs/runbooks/ai_model_rollback.md`](ai_model_rollback.md) przed ponowną aktywacją inference.
 - **Feature out of bounds** → blokada scoringu do czasu przywrócenia stabilności cech, podpis risk przed wznowieniem.
 
 ## 4. Artefakty

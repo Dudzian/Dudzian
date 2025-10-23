@@ -87,6 +87,7 @@
      PYTHONPATH=. python scripts/run_retraining_job.py --job btc-retrain
      ```
    - W przypadku błędów infrastrukturalnych (GPU, storage), eskaluj do zespołu Platform Ops z logami i metrykami (`/var/log/system.log`).
+   - Jeśli alert dotyczy dryfu danych lub blokady compliance, przejdź do procedury [`docs/runbooks/ai_model_rollback.md`](ai_model_rollback.md) w celu wycofania modelu przed ponowną aktywacją.
    - Jeżeli `cooldown_until` blokuje pilny retrening, po usunięciu przyczyny awarii rozważ ręczne wyzerowanie stanu poprzez polecenie serwisowe:
      ```bash
      python - <<'PY'
