@@ -48,9 +48,16 @@ import pandas as pd
 
 from ._license import ensure_ai_signals_enabled
 from .audit import list_audit_reports, load_audit_report, save_data_quality_report, save_drift_report
+from .data_monitoring import (
+    ComplianceSignOffError,
+    ensure_compliance_sign_offs,
+    load_recent_data_quality_reports,
+    load_recent_drift_reports,
+)
 from .feature_engineering import FeatureDataset
 from .inference import DecisionModelInference, ModelRepository
 from .models import ModelArtifact, ModelScore
+from .validation import ModelArtifactValidationError, validate_model_artifact_schema
 from .regime import (
     MarketRegimeAssessment,
     MarketRegimeClassifier,
@@ -958,6 +965,18 @@ class AIManager:
             return []
         return list_audit_reports("data_quality", audit_root=self._audit_root, limit=limit)
 
+    def _ensure_compliance_activation_gate(self) -> None:
+        if self._audit_root is not None:
+            kwargs: Dict[str, Any] = {"audit_root": self._audit_root}
+        else:
+            kwargs = {}
+        data_reports = load_recent_data_quality_reports(limit=5, **kwargs)
+        drift_reports = load_recent_drift_reports(limit=5, **kwargs)
+        ensure_compliance_sign_offs(
+            data_quality_reports=data_reports,
+            drift_reports=drift_reports,
+        )
+
     def _load_audit_payload(self, *, path: Path | None, subdirectory: str) -> Mapping[str, Any] | None:
         candidates: list[Path] = []
         if path is not None:
@@ -1660,6 +1679,11 @@ class AIManager:
                 decision_journal_entry_id=artifact.decision_journal_entry_id,
                 backend=artifact.backend,
             )
+            try:
+                validate_model_artifact_schema(enriched)
+            except ModelArtifactValidationError:
+                logger.exception("Artefakt modelu %s nie spełnia wymogów schematu JSON", name)
+                raise
             destination = repository.save(enriched, filename)
 
             inference = DecisionModelInference(repository)
@@ -1674,6 +1698,14 @@ class AIManager:
 
             performance_name = normalized_model_type
             if attach_to_decision:
+                try:
+                    self._ensure_compliance_activation_gate()
+                except ComplianceSignOffError:
+                    logger.exception(
+                        "Brak wymaganych podpisów compliance blokuje aktywację inference %s",
+                        decision_name or normalized_model_type,
+                    )
+                    raise
                 decision_label = decision_name or normalized_model_type
                 performance_name = decision_label
                 try:

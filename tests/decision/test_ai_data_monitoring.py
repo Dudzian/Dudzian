@@ -10,12 +10,15 @@ import pytest
 
 from bot_core.ai import (
     DecisionModelInference,
+    ComplianceSignOffError,
     DataQualityException,
     InferenceDataCompletenessWatcher,
     InferenceFeatureBoundsValidator,
     ModelArtifact,
     ModelRepository,
+    ensure_compliance_sign_offs,
     export_drift_alert_report,
+    export_data_quality_report,
     load_recent_data_quality_reports,
     load_recent_drift_reports,
     score_with_data_monitoring,
@@ -441,3 +444,44 @@ def test_summarize_drift_reports_marks_threshold_excess(
     pending_risk = summary["pending_sign_off"]["risk"]
     assert pending_risk
     assert pending_risk[0]["status"] == "pending"
+
+
+def test_ensure_compliance_sign_offs_detects_pending() -> None:
+    reports = (
+        {
+            "category": "completeness",
+            "status": "alert",
+            "policy": {"enforce": True},
+            "sign_off": {
+                "risk": {"status": "pending"},
+                "compliance": {"status": "approved"},
+            },
+        },
+    )
+
+    with pytest.raises(ComplianceSignOffError) as excinfo:
+        ensure_compliance_sign_offs(data_quality_reports=reports)
+    assert excinfo.value.pending["risk"]
+    assert not excinfo.value.pending["compliance"]
+
+
+def test_ensure_compliance_sign_offs_accepts_approved(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AI_DECISION_AUDIT_ROOT", str(tmp_path / "audit"))
+    report_path = export_data_quality_report(
+        {
+            "category": "completeness",
+            "status": "alert",
+            "policy": {"enforce": True},
+            "sign_off": {
+                "risk": {"status": "approved", "signed_by": "risk-user"},
+                "compliance": {"status": "approved", "signed_by": "comp-user"},
+            },
+        },
+        category="completeness",
+    )
+    report = _read_json(report_path)
+    report["report_path"] = str(report_path)
+
+    ensure_compliance_sign_offs(data_quality_reports=(report,))
