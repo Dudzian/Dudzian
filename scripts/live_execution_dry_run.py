@@ -80,8 +80,10 @@ def _parse_args(argv: Sequence[str]) -> argparse.Namespace:
     )
     parser.add_argument(
         "--decision-log",
+        "--audit-json",
+        dest="decision_log",
         type=Path,
-        help="Ścieżka JSONL decision logu do zaktualizowania.",
+        help="Ścieżka JSONL decision logu do zaktualizowania (alias --audit-json).",
     )
     parser.add_argument(
         "--decision-log-hmac-key",
@@ -108,6 +110,11 @@ def _parse_args(argv: Sequence[str]) -> argparse.Namespace:
         "--skip-decision-log",
         action="store_true",
         help="Nie zapisuj wpisu decision logu.",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Potwierdza tryb dry-run (flaga no-op, zgodność ze Stage3).",
     )
     parser.add_argument(
         "--max-symbols",
@@ -407,6 +414,9 @@ def _process_environment(
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parse_args(argv or sys.argv[1:])
     logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
+
+    if getattr(args, "dry_run", False):
+        print("Uruchomiono w trybie dry-run – brak zleceń live.")
 
     config_path = args.config.expanduser()
     if not config_path.is_file():
