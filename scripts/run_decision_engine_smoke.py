@@ -5,6 +5,7 @@ import argparse
 import json
 import os
 import sys
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Sequence
@@ -20,6 +21,45 @@ from bot_core.decision import DecisionCandidate, DecisionOrchestrator
 from bot_core.security.signing import build_hmac_signature
 
 DEFAULT_CONFIG = REPO_ROOT / "config/core.yaml"
+
+
+@dataclass(frozen=True)
+class ModeDefaults:
+    config: Path | None = None
+    risk_snapshot: Path | None = None
+    candidates: Path | None = None
+    tco_report: Path | None = None
+    output: Path | None = None
+
+
+MODE_DEFAULTS: Mapping[str, ModeDefaults] = {
+    "paper": ModeDefaults(
+        config=DEFAULT_CONFIG,
+        risk_snapshot=REPO_ROOT
+        / "data"
+        / "decision_engine"
+        / "paper"
+        / "risk_snapshot.json",
+        candidates=REPO_ROOT
+        / "data"
+        / "decision_engine"
+        / "paper"
+        / "candidates.json",
+        tco_report=REPO_ROOT
+        / "data"
+        / "decision_engine"
+        / "paper"
+        / "tco_report.json",
+        output=REPO_ROOT
+        / "var"
+        / "audit"
+        / "decision_engine"
+        / "smoke_paper.json",
+    ),
+    # Placeholder presets for future environments.
+    "demo": ModeDefaults(config=DEFAULT_CONFIG),
+    "live": ModeDefaults(config=DEFAULT_CONFIG),
+}
 
 
 def _load_json(path: Path) -> Any:
@@ -87,11 +127,54 @@ def _build_signature_payload(
 
 def _parse_args(argv: Sequence[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
-    parser.add_argument("--risk-snapshot", type=Path, required=True)
-    parser.add_argument("--candidates", type=Path, required=True)
-    parser.add_argument("--tco-report", type=Path)
-    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument(
+        "--mode",
+        choices=sorted(MODE_DEFAULTS),
+        help=(
+            "Predefiniowany tryb uruchomienia. Tryb 'paper' korzysta z danych w "
+            "data/decision_engine/paper/ i zapisuje wynik w var/audit/decision_engine/."
+        ),
+    )
+    parser.add_argument(
+        "--config",
+        type=Path,
+        help=(
+            "Ścieżka do pliku konfiguracji CoreConfig. Domyślnie config/core.yaml lub "
+            "wartość powiązana z wybranym trybem."
+        ),
+    )
+    parser.add_argument(
+        "--risk-snapshot",
+        type=Path,
+        help=(
+            "Ścieżka do snapshotu ryzyka w formacie JSON. W trybie 'paper' używany jest "
+            "plik data/decision_engine/paper/risk_snapshot.json."
+        ),
+    )
+    parser.add_argument(
+        "--candidates",
+        type=Path,
+        help=(
+            "Ścieżka do listy kandydatów w formacie JSON (lista lub pole 'candidates'). "
+            "Tryb 'paper' korzysta z data/decision_engine/paper/candidates.json."
+        ),
+    )
+    parser.add_argument(
+        "--tco-report",
+        type=Path,
+        help=(
+            "Opcjonalny raport TCO w formacie JSON. Tryb 'paper' domyślnie wczytuje "
+            "data/decision_engine/paper/tco_report.json."
+        ),
+    )
+    parser.add_argument(
+        "--output",
+        type=Path,
+        help=(
+            "Ścieżka docelowa podsumowania JSON. W trybie 'paper' domyślnie zapisywany "
+            "jest plik var/audit/decision_engine/smoke_paper.json."
+        ),
+    )
     parser.add_argument("--allow-empty", action="store_true")
     parser.add_argument("--signing-key")
     parser.add_argument("--signing-key-env")
@@ -128,20 +211,80 @@ def _load_candidates(path: Path) -> Sequence[DecisionCandidate]:
     return candidates
 
 
+@dataclass(frozen=True)
+class ResolvedInputs:
+    config: Path
+    risk_snapshot: Path
+    candidates: Path
+    tco_report: Path | None
+    output: Path
+
+
+def _resolve_inputs(args: argparse.Namespace) -> ResolvedInputs:
+    preset = MODE_DEFAULTS.get(args.mode or "", ModeDefaults())
+
+    config_path = (args.config or preset.config or DEFAULT_CONFIG).expanduser()
+
+    risk_snapshot_path = (args.risk_snapshot or preset.risk_snapshot)
+    if risk_snapshot_path is None:
+        raise ValueError(
+            "Podaj --risk-snapshot lub wybierz tryb z domyślnym snapshotem (np. --mode paper)."
+        )
+    risk_snapshot_path = risk_snapshot_path.expanduser()
+
+    candidates_path = (args.candidates or preset.candidates)
+    if candidates_path is None:
+        raise ValueError(
+            "Podaj --candidates lub wybierz tryb z domyślną listą kandydatów (np. --mode paper)."
+        )
+    candidates_path = candidates_path.expanduser()
+
+    tco_report_path = args.tco_report or preset.tco_report
+    if tco_report_path is not None:
+        tco_report_path = tco_report_path.expanduser()
+
+    output_path = args.output or preset.output
+    if output_path is None:
+        raise ValueError(
+            "Podaj --output lub wybierz tryb z domyślną ścieżką wynikową (np. --mode paper)."
+        )
+    output_path = output_path.expanduser()
+
+    return ResolvedInputs(
+        config=config_path,
+        risk_snapshot=risk_snapshot_path,
+        candidates=candidates_path,
+        tco_report=tco_report_path,
+        output=output_path,
+    )
+
+
+def _path_for_summary(path: Path | None) -> str | None:
+    if path is None:
+        return None
+    try:
+        return path.relative_to(REPO_ROOT).as_posix()
+    except ValueError:
+        return path.as_posix()
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parse_args(argv or sys.argv[1:])
-    config_path = args.config.expanduser()
-    config = load_core_config(str(config_path))
+    try:
+        resolved = _resolve_inputs(args)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
+    config = load_core_config(str(resolved.config))
     if not hasattr(config, "decision_engine") or config.decision_engine is None:
         raise RuntimeError("Konfiguracja nie zawiera sekcji decision_engine")
 
     orchestrator = DecisionOrchestrator(config.decision_engine)
 
-    if args.tco_report:
-        orchestrator.update_costs_from_report(_load_json(args.tco_report.expanduser()))
+    if resolved.tco_report:
+        orchestrator.update_costs_from_report(_load_json(resolved.tco_report))
 
-    risk_snapshots = _load_risk_snapshots(args.risk_snapshot.expanduser())
-    candidates = _load_candidates(args.candidates.expanduser())
+    risk_snapshots = _load_risk_snapshots(resolved.risk_snapshot)
+    candidates = _load_candidates(resolved.candidates)
 
     evaluations = orchestrator.evaluate_candidates(candidates, risk_snapshots)
     accepted = [evaluation for evaluation in evaluations if evaluation.accepted]
@@ -150,16 +293,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     generated_at = datetime.now(tz=timezone.utc).isoformat()
     summary = {
         "generated_at": generated_at,
-        "config": config_path.as_posix(),
-        "risk_snapshot": args.risk_snapshot.as_posix(),
-        "tco_report": args.tco_report.as_posix() if args.tco_report else None,
+        "mode": args.mode,
+        "config": _path_for_summary(resolved.config),
+        "risk_snapshot": _path_for_summary(resolved.risk_snapshot),
+        "candidates": _path_for_summary(resolved.candidates),
+        "tco_report": _path_for_summary(resolved.tco_report),
         "evaluations": [evaluation.to_mapping() for evaluation in evaluations],
         "accepted": len(accepted),
         "rejected": len(evaluations) - len(accepted),
         "stress_failures": stress_failures,
     }
 
-    output_path = args.output.expanduser()
+    output_path = resolved.output
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(
         json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
