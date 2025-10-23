@@ -255,6 +255,190 @@ def test_scheduled_job_persists_state_and_records_journal(tmp_path) -> None:
     assert "cooldown_until" not in entry
 
 
+def test_scheduled_job_respects_custom_journal_defaults(tmp_path) -> None:
+    dataset = FeatureDataset(
+        vectors=(
+            FeatureVector(
+                timestamp=1_700_350_000,
+                symbol="BTCUSDT",
+                features={"momentum": 1.5},
+                target_bps=0.25,
+            ),
+        ),
+        metadata={"symbols": ["BTCUSDT"]},
+    )
+    scheduler = RetrainingScheduler(
+        interval=timedelta(minutes=45),
+        persistence_path=tmp_path / "scheduler.json",
+    )
+    journal = InMemoryTradingDecisionJournal()
+    job = ScheduledTrainingJob(
+        name="btc-custom",
+        scheduler=scheduler,
+        trainer_factory=lambda: ModelTrainer(learning_rate=0.2, n_estimators=3),
+        dataset_provider=lambda: dataset,
+        decision_journal=journal,
+        journal_environment="ai-lab",
+        journal_portfolio="btc-experiment",
+        journal_risk_profile="balanced",
+    )
+
+    job.run(now=datetime(2024, 6, 2, 9, tzinfo=timezone.utc))
+
+    exported = tuple(journal.export())
+    assert len(exported) == 1
+    entry = exported[0]
+    assert entry["environment"] == "ai-lab"
+    assert entry["portfolio"] == "btc-experiment"
+    assert entry["risk_profile"] == "balanced"
+
+
+def test_scheduled_job_applies_context_overrides(tmp_path) -> None:
+    dataset = FeatureDataset(
+        vectors=(
+            FeatureVector(
+                timestamp=1_700_355_000,
+                symbol="BTCUSDT",
+                features={"momentum": 1.25},
+                target_bps=0.35,
+            ),
+        ),
+        metadata={"symbols": ["BTCUSDT"]},
+    )
+    scheduler = RetrainingScheduler(
+        interval=timedelta(minutes=15),
+        persistence_path=tmp_path / "scheduler.json",
+    )
+    journal = InMemoryTradingDecisionJournal()
+    context = {
+        "environment": "ctx-env",
+        "portfolio": "ctx-portfolio",
+        "risk_profile": "ctx-risk",
+        "strategy": "ctx-strategy",
+        "schedule": "ctx-schedule",
+        "schedule_run_id": "ctx-run",
+        "telemetry_namespace": "ctx.namespace",
+        "strategy_instance_id": "ctx-instance",
+    }
+    job = ScheduledTrainingJob(
+        name="btc-context",
+        scheduler=scheduler,
+        trainer_factory=lambda: ModelTrainer(learning_rate=0.2, n_estimators=3),
+        dataset_provider=lambda: dataset,
+        decision_journal=journal,
+        decision_journal_context=context,
+        journal_environment="ignored-env",
+        journal_portfolio="ignored-portfolio",
+        journal_risk_profile="ignored-risk",
+    )
+
+    assert job.journal_environment == "ctx-env"
+    assert job.journal_portfolio == "ctx-portfolio"
+    assert job.journal_risk_profile == "ctx-risk"
+    assert job.journal_strategy == "ctx-strategy"
+
+    now = datetime(2024, 6, 2, 11, tzinfo=timezone.utc)
+    job.run(now=now)
+
+    exported = tuple(journal.export())
+    assert len(exported) == 1
+    entry = exported[0]
+    assert entry["environment"] == "ctx-env"
+    assert entry["portfolio"] == "ctx-portfolio"
+    assert entry["risk_profile"] == "ctx-risk"
+    assert entry["schedule"] == "ctx-schedule"
+    assert entry["strategy"] == "ctx-strategy"
+    assert entry["schedule_run_id"] == "ctx-run"
+    assert entry["telemetry_namespace"] == "ctx.namespace"
+    assert entry["strategy_instance_id"] == "ctx-instance"
+
+
+def test_scheduled_job_ignores_blank_context_overrides(tmp_path) -> None:
+    dataset = FeatureDataset(
+        vectors=(
+            FeatureVector(
+                timestamp=1_700_356_000,
+                symbol="BTCUSDT",
+                features={"momentum": 0.75},
+                target_bps=0.2,
+            ),
+        ),
+        metadata={"symbols": ["BTCUSDT"]},
+    )
+    scheduler = RetrainingScheduler(
+        interval=timedelta(minutes=25),
+        persistence_path=tmp_path / "scheduler.json",
+    )
+    journal = InMemoryTradingDecisionJournal()
+    job = ScheduledTrainingJob(
+        name="btc-blank",
+        scheduler=scheduler,
+        trainer_factory=lambda: ModelTrainer(learning_rate=0.15, n_estimators=4),
+        dataset_provider=lambda: dataset,
+        decision_journal=journal,
+        decision_journal_context={
+            "environment": "",
+            "portfolio": "",
+            "risk_profile": "",
+        },
+        journal_environment="custom-env",
+        journal_portfolio="custom-portfolio",
+        journal_risk_profile="custom-risk",
+    )
+
+    assert job.journal_environment == "custom-env"
+    assert job.journal_portfolio == "custom-portfolio"
+    assert job.journal_risk_profile == "custom-risk"
+
+    now = datetime(2024, 6, 2, 12, tzinfo=timezone.utc)
+    job.run(now=now)
+
+    exported = tuple(journal.export())
+    assert len(exported) == 1
+    entry = exported[0]
+    assert entry["environment"] == "custom-env"
+    assert entry["portfolio"] == "custom-portfolio"
+    assert entry["risk_profile"] == "custom-risk"
+
+
+def test_scheduled_job_handles_falsy_journal_values(tmp_path) -> None:
+    dataset = FeatureDataset(
+        vectors=(
+            FeatureVector(
+                timestamp=1_700_360_000,
+                symbol="BTCUSDT",
+                features={"momentum": 0.0},
+                target_bps=0.1,
+            ),
+        ),
+        metadata={"symbols": ["BTCUSDT"]},
+    )
+    scheduler = RetrainingScheduler(
+        interval=timedelta(minutes=30),
+        persistence_path=tmp_path / "scheduler.json",
+    )
+    journal = InMemoryTradingDecisionJournal()
+    job = ScheduledTrainingJob(
+        name="btc-falsy",
+        scheduler=scheduler,
+        trainer_factory=lambda: ModelTrainer(learning_rate=0.1, n_estimators=2),
+        dataset_provider=lambda: dataset,
+        decision_journal=journal,
+        journal_environment=0,
+        journal_portfolio=0,
+        journal_risk_profile=False,
+    )
+
+    job.run(now=datetime(2024, 6, 2, 10, tzinfo=timezone.utc))
+
+    exported = tuple(journal.export())
+    assert len(exported) == 1
+    entry = exported[0]
+    assert entry["environment"] == "0"
+    assert entry["portfolio"] == "0"
+    assert entry["risk_profile"] == "False"
+
+
 def test_scheduled_job_records_failure_and_updates_state(tmp_path) -> None:
     dataset = FeatureDataset(
         vectors=(
