@@ -11,7 +11,7 @@ Faza druga rozwoju strumienia decyzyjnego koncentruje się na przygotowaniu i op
 - Dostarczenie artefaktów modeli wraz z metadanymi umożliwiającymi audyt i reprodukcję.
 
 ### Zadania
-- [x] Przygotować `ModelArtifact` dla każdej iteracji retreningu z uzupełnionymi metadanymi `target_scale`, `feature_scalers`, `training_rows`, `validation_rows` oraz metrykami MAE/RMSE (train/validation/test).
+- [ ] Przygotować `ModelArtifact` dla każdej iteracji retreningu z uzupełnionymi metadanymi `target_scale`, `feature_scalers`, `training_rows`, `validation_rows` oraz metrykami MAE/RMSE (train/validation/test).
 - [x] Zaimplementować i udokumentować proces walidacji walk-forward (`WalkForwardValidator`) wraz z archiwizacją raportów JSON w `audit/ai_decision/walk_forward/<timestamp>.json` (pola: `job_name`, `trainer_backend`, `walk_forward.average_mae`, `walk_forward.windows[*].directional_accuracy`) oraz podpisem w decision journalu i utrzymaniem katalogów `audit/ai_decision/{walk_forward,data_quality,drift}`.
 - [x] Dostarczyć helpery zapisujące raporty `data_quality/<timestamp>.json` (`issues[*]`, `summary`, `source`, `tags`) oraz `drift/<timestamp>.json` (`metrics`, `baseline_window`, `production_window`, `detector`, `threshold`) dla monitoringu produkcyjnego wraz z API `list_audit_reports`/`load_latest_*` do przeglądu ostatnich artefaktów.
 - [x] Zintegrować `AIManager` z helperami audytowymi tak, aby `run_pipeline` zapisywał raport dryfu, a moduły monitoringu mogły delegować zapisy `data_quality` przez `record_data_quality_issues` oraz `register_data_quality_check`. Dziennik decyzji rejestruje zdarzenia `ai_data_quality_report` i `ai_drift_report` z linkami do artefaktów.

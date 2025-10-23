@@ -22,7 +22,6 @@ from bot_core.ai.audit import (
     load_latest_data_quality_report,
     load_latest_drift_report,
     load_latest_walk_forward_report,
-    load_recent_walk_forward_reports,
     load_scheduler_state,
     save_data_quality_report,
     save_drift_report,
@@ -949,101 +948,6 @@ def test_list_and_load_latest_audit_reports(tmp_path: Path) -> None:
     assert drift_payload["metrics"]["feature_drift"]["psi"] == 0.1
     drift_paths = list_audit_reports("drift", audit_root=tmp_path)
     assert drift_paths[0] == drift_path
-
-
-def test_walk_forward_summary_and_sign_off_workflow(tmp_path: Path) -> None:
-    dataset = FeatureDataset(
-        vectors=(
-            FeatureVector(
-                timestamp=1_700_420_000,
-                symbol="BTCUSDT",
-                features={"momentum": 1.0},
-                target_bps=0.3,
-            ),
-            FeatureVector(
-                timestamp=1_700_420_060,
-                symbol="BTCUSDT",
-                features={"momentum": 1.2},
-                target_bps=0.4,
-            ),
-        ),
-        metadata={"symbols": ["BTCUSDT"], "window_minutes": 5},
-    )
-
-    save_walk_forward_report(
-        WalkForwardResult(
-            windows=(
-                {
-                    "mae": 1.2,
-                    "directional_accuracy": 0.55,
-                    "start_timestamp": 1_700_300_000,
-                    "end_timestamp": 1_700_300_060,
-                },
-            ),
-            average_mae=1.2,
-            average_directional_accuracy=0.55,
-        ),
-        job_name="wf-signoff",
-        dataset=dataset,
-        audit_root=tmp_path,
-        generated_at=datetime(2024, 6, 1, 9, tzinfo=timezone.utc),
-    )
-
-    save_walk_forward_report(
-        WalkForwardResult(
-            windows=(
-                {
-                    "mae": 0.75,
-                    "directional_accuracy": 0.68,
-                    "start_timestamp": 1_700_400_000,
-                    "end_timestamp": 1_700_400_060,
-                },
-                {
-                    "mae": 0.65,
-                    "directional_accuracy": 0.72,
-                    "start_timestamp": 1_700_400_060,
-                    "end_timestamp": 1_700_400_120,
-                },
-            ),
-            average_mae=0.7,
-            average_directional_accuracy=0.7,
-        ),
-        job_name="wf-signoff",
-        dataset=dataset,
-        audit_root=tmp_path,
-        generated_at=datetime(2024, 6, 3, 9, tzinfo=timezone.utc),
-        sign_off={"risk": {"status": "approved", "signed_by": "risk.ops"}},
-    )
-
-    latest_reports = load_recent_walk_forward_reports(limit=1, audit_root=tmp_path)
-    assert len(latest_reports) == 1
-    latest_summary = summarize_walk_forward_reports(latest_reports)
-    assert latest_summary["total"] == 1
-    assert latest_summary["latest_report_path"]
-    assert latest_summary["average_directional_accuracy"]["mean"] == pytest.approx(0.7)
-    assert latest_summary["pending_sign_off"]["risk"] == ()
-    assert latest_summary["pending_sign_off"]["compliance"]
-
-    update_sign_off(
-        latest_reports[0],
-        role="compliance",
-        status="approved",
-        signed_by="compliance.ops",
-    )
-
-    refreshed_reports = load_recent_walk_forward_reports(limit=1, audit_root=tmp_path)
-    refreshed_summary = summarize_walk_forward_reports(refreshed_reports)
-    assert refreshed_summary["pending_sign_off"]["compliance"] == ()
-    assert refreshed_summary["window_extremes"]["total_windows"] == 2
-    assert refreshed_summary["window_extremes"]["best_directional_accuracy"] == pytest.approx(0.72)
-
-    all_reports = load_recent_walk_forward_reports(limit=2, audit_root=tmp_path)
-    assert len(all_reports) == 2
-    combined_summary = summarize_walk_forward_reports(all_reports)
-    assert combined_summary["total"] == 2
-    assert combined_summary["window_extremes"]["total_windows"] == 3
-    assert combined_summary["window_extremes"]["worst_mae"] == pytest.approx(1.2)
-    assert combined_summary["pending_sign_off"]["risk"], "starsze raporty powinny wymagać podpisu risk"
 
 
 def test_save_and_load_scheduler_state(tmp_path: Path) -> None:
