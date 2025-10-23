@@ -1,4 +1,9 @@
-"""Provisioning licencji OEM – generacja, podpis HMAC, walidacja rejestru i obsługa fingerprintów JSON/Base32."""
+"""Provisioning licencji OEM.
+
+Skrypt generuje i podpisuje licencje na podstawie fingerprintu urządzenia. Parametry
+można przekazać zarówno jako flagi CLI, jak i poprzez opcjonalny wniosek licencyjny
+(`request.json`/`request.yaml`) przekazany jako pierwszy argument pozycyjny.
+"""
 from __future__ import annotations
 
 import argparse
@@ -12,6 +17,11 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Mapping, Sequence
+
+try:  # opcjonalna zależność do obsługi YAML
+    import yaml  # type: ignore
+except Exception:  # pragma: no cover - fallback gdy PyYAML nie jest zainstalowany
+    yaml = None  # type: ignore
 
 # --- zależności bot_core -----------------------------------------------------
 from bot_core.security.fingerprint import DeviceFingerprintGenerator, FingerprintError
@@ -392,8 +402,143 @@ def validate_registry(
 
 
 # --- CLI ---------------------------------------------------------------------
+def _load_request_payload(path: Path) -> Mapping[str, Any]:
+    if not path.exists():
+        raise ProvisioningError(f"Plik wniosku licencyjnego nie istnieje: {path}")
+    text = path.read_text(encoding="utf-8")
+    suffix = path.suffix.lower()
+
+    data: Any
+    if suffix in {".yaml", ".yml"}:
+        if yaml is None:
+            raise ProvisioningError("Do wczytania plików YAML wymagany jest PyYAML (pip install pyyaml).")
+        data = yaml.safe_load(text) or {}
+    else:
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError:
+            if yaml is None:
+                raise ProvisioningError(
+                    "Niepoprawny JSON w pliku wniosku i brak obsługi YAML (zainstaluj PyYAML lub popraw plik)."
+                )
+            try:
+                data = yaml.safe_load(text) or {}
+            except Exception as exc:  # pragma: no cover - propagacja błędu PyYAML
+                raise ProvisioningError(f"Nie można wczytać pliku wniosku: {exc}") from exc
+
+    if not isinstance(data, Mapping):
+        raise ProvisioningError("Plik wniosku musi zawierać obiekt klucz-wartość na poziomie głównym.")
+    return data
+
+
+def _normalize_request_key(key: str) -> str:
+    return key.strip().lower().replace("-", "_")
+
+
+def _flag_present(existing_args: Sequence[str], flags: Sequence[str]) -> bool:
+    for flag in flags:
+        if flag in existing_args:
+            return True
+        prefix = f"{flag}="
+        if any(arg.startswith(prefix) for arg in existing_args):
+            return True
+    return False
+
+
+def _ensure_list(value: Any) -> list[Any]:
+    if value is None:
+        return []
+    if isinstance(value, (list, tuple, set)):
+        return list(value)
+    return [value]
+
+
+_REQUEST_SCALAR_FLAGS: dict[str, list[str]] = {
+    "fingerprint": ["--fingerprint"],
+    "mode": ["--mode"],
+    "issuer": ["--issuer"],
+    "profile": ["--profile"],
+    "bundle_version": ["--bundle-version"],
+    "notes": ["--notes"],
+    "valid_days": ["--valid-days"],
+    "signing_key_path": ["--signing-key-path"],
+    "key_id": ["--key-id"],
+    "rotation_log": ["--rotation-log", "--license-rotation-log"],
+    "rotation_interval_days": ["--rotation-interval-days"],
+    "output": ["--output", "--registry"],
+    "qr_output": ["--qr-output"],
+    "usb_target": ["--usb-target", "--usb-output"],
+}
+
+_REQUEST_BOOL_FLAGS: dict[str, str] = {
+    "emit_qr": "--emit-qr",
+    "validate_registry": "--validate-registry",
+    "no_mark_rotation": "--no-mark-rotation",
+}
+
+_REQUEST_LIST_FLAGS: dict[str, str] = {
+    "features": "--feature",
+    "license_keys": "--license-key",
+    "fingerprint_keys": "--fingerprint-key",
+}
+
+_REQUEST_KEY_ALIASES: dict[str, str] = {
+    "registry": "output",
+    "license_rotation_log": "rotation_log",
+    "usb_output": "usb_target",
+}
+
+
+def _request_payload_to_cli_args(data: Mapping[str, Any], existing_args: Sequence[str]) -> list[str]:
+    normalized = {_normalize_request_key(key): value for key, value in data.items()}
+    for alias, target in _REQUEST_KEY_ALIASES.items():
+        if alias in normalized and target not in normalized:
+            normalized[target] = normalized[alias]
+    additional: list[str] = []
+
+    for key, flags in _REQUEST_SCALAR_FLAGS.items():
+        if key not in normalized or _flag_present(existing_args, flags):
+            continue
+        value = normalized[key]
+        if value is None:
+            continue
+        if key == "fingerprint" and isinstance(value, Mapping):
+            value = json.dumps(value, ensure_ascii=False)
+        additional.extend([flags[0], str(value)])
+
+    for key, flag in _REQUEST_BOOL_FLAGS.items():
+        if key not in normalized or _flag_present(existing_args, [flag]):
+            continue
+        if bool(normalized[key]):
+            additional.append(flag)
+
+    for key, flag in _REQUEST_LIST_FLAGS.items():
+        if key not in normalized:
+            continue
+        items = _ensure_list(normalized[key])
+        if key in {"license_keys", "fingerprint_keys"}:
+            expanded: list[str] = []
+            for entry in items:
+                if isinstance(entry, Mapping):
+                    expanded.extend([f"{k}={v}" for k, v in entry.items()])
+                else:
+                    expanded.append(str(entry))
+            items = expanded
+        for item in items:
+            if item is None:
+                continue
+            additional.extend([flag, str(item)])
+
+    return additional
+
+
 def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "request_path",
+        nargs="?",
+        help="Opcjonalny plik JSON/YAML z pełnym wnioskiem licencyjnym.",
+    )
     # fingerprint
     parser.add_argument("--fingerprint", help="Fingerprint: string lub JSON/BASE64 albo ścieżka do pliku.")
     parser.add_argument(
@@ -447,7 +592,22 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     )
     # tryb walidacji rejestru
     parser.add_argument("--validate-registry", action="store_true", help="Waliduj rejestr i zakończ.")
-    return parser.parse_args(argv)
+
+    argv_list = list(argv if argv is not None else sys.argv[1:])
+    args = parser.parse_args(argv_list)
+
+    if args.request_path:
+        request_path = Path(args.request_path)
+        request_data = _load_request_payload(request_path)
+        cli_args = list(argv_list)
+        if args.request_path in cli_args:
+            cli_args.remove(args.request_path)
+        additional_args = _request_payload_to_cli_args(request_data, cli_args)
+        if additional_args:
+            final_argv = [args.request_path, *cli_args, *additional_args]
+            args = parser.parse_args(final_argv)
+
+    return args
 
 
 def _run_validation(args: argparse.Namespace) -> int:
