@@ -4,6 +4,7 @@ import json
 import math
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Mapping, Sequence
 
 import pytest
 
