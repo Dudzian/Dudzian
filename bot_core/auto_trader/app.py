@@ -1025,6 +1025,40 @@ class AutoTrader:
             self._work_schedule = schedule
         return schedule
 
+    def _describe_schedule(self, schedule: TradingSchedule) -> ScheduleState:
+        """Return a :class:`ScheduleState` snapshot for the provided schedule."""
+
+        describe = getattr(schedule, "describe", None)
+        reference = datetime.now(timezone.utc)
+
+        if callable(describe):
+            try:
+                state = describe(reference)
+            except TypeError:
+                # ``TradingSchedule.describe`` accepts an optional reference
+                # argument.  Older or simplified implementations may expose a
+                # no-argument variant, so fall back to calling it without
+                # parameters.  If both fail we handle it below.
+                state = describe()
+            except Exception:  # pragma: no cover - defensive fallback
+                LOGGER.exception("Failed to describe trading schedule")
+            else:
+                if isinstance(state, ScheduleState):
+                    return state
+
+        # Fallback used when the schedule does not expose ``describe`` or
+        # returns an unexpected payload.  We synthesise a minimal
+        # ``ScheduleState`` snapshot so callers can continue operating.
+        mode = getattr(schedule, "default_mode", "live")
+        allow_trading = getattr(schedule, "allow_trading", True)
+        return ScheduleState(
+            mode=mode,
+            is_open=bool(allow_trading),
+            window=None,
+            next_transition=None,
+            reference_time=reference,
+        )
+
 
 
     def describe_work_schedule(self) -> dict[str, Any]:
@@ -1551,20 +1585,7 @@ class AutoTrader:
         schedule = getattr(self, "_work_schedule", None)
         if schedule is None:
             return True
-        describe = getattr(schedule, "describe", None)
-        if callable(describe):
-            try:
-                state = describe()
-            except TypeError:
-                state = describe(datetime.now(timezone.utc))
-        else:
-            state = ScheduleState(
-                mode=getattr(schedule, "default_mode", "live"),
-                is_open=True,
-                window=None,
-                next_transition=None,
-                reference_time=datetime.now(timezone.utc),
-            )
+        state = self._describe_schedule(schedule)
         self._schedule_state = state
         self._schedule_mode = state.mode
         snapshot = (state.mode, state.is_open)
