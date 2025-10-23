@@ -1432,6 +1432,54 @@ class AutoTrader:
 
     def apply_schedule_override(
         self,
+        strategy: str,
+        *,
+        interval_s: float,
+        first_run: datetime | None = None,
+    ) -> None:
+        orchestrator = self._resolve_decision_orchestrator()
+        scheduler = getattr(orchestrator, "schedule_strategy_recalibration", None) if orchestrator else None
+        if not callable(scheduler):
+            raise RuntimeError("DecisionOrchestrator does not support strategy scheduling")
+        interval = timedelta(seconds=float(max(interval_s, 0.0)))
+        schedule = scheduler(strategy, interval, first_run=first_run)
+        next_run = getattr(schedule, "next_run", None)
+        self._log(
+            "Strategy recalibration scheduled",
+            level=logging.INFO,
+            strategy=strategy,
+            interval_s=interval.total_seconds(),
+            next_run=getattr(next_run, "isoformat", lambda: str(next_run))(),
+        )
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    def apply_schedule_override(
+        self,
         overrides: ScheduleOverride | Mapping[str, object] | Sequence[object],
         *,
         reason: str | None = None,
@@ -1959,8 +2007,88 @@ class AutoTrader:
             return []
         return normalized
 
-    def _resolve_risk_evaluation_filters(
+    @staticmethod
+    def _iter_filter_values(value: Any) -> Iterable[Any]:
+        if isinstance(value, Iterable) and not isinstance(value, (str, bytes, bytearray)):
+            return value
+        return (value,)
+
+    @staticmethod
+    def _coerce_optional_bool(value: Any) -> bool | None | object:
+        if value is _NO_FILTER:
+            return _NO_FILTER
+        if value is None:
+            return None
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)):
+            try:
+                numeric = float(value)
+            except (TypeError, ValueError):
+                return None
+            if math.isnan(numeric) or math.isinf(numeric):
+                return None
+            return bool(numeric)
+        if isinstance(value, str):
+            token = value.strip().lower()
+            if not token or token in {"none", "null"}:
+                return None
+            if token in {"1", "true", "t", "yes", "y", "on"}:
+                return True
+            if token in {"0", "false", "f", "no", "n", "off"}:
+                return False
+        return None
+
+    def _prepare_bool_filter(
+        self, value: bool | None | Iterable[bool | None] | object
+    ) -> set[bool | None] | None:
+        if value is _NO_FILTER:
+            return None
+        normalized: set[bool | None] = set()
+        for candidate in self._iter_filter_values(value):
+            token = self._coerce_optional_bool(candidate)
+            if token is _NO_FILTER:
+                continue
+            if token is None:
+                normalized.add(None)
+            elif isinstance(token, bool):
+                normalized.add(token)
+        return normalized or None
+
+    def _prepare_service_filter(
+        self, value: str | None | Iterable[str | None] | object
+    ) -> set[str] | None:
+        if value is _NO_FILTER:
+            return None
+        normalized: set[str] = set()
+        for candidate in self._iter_filter_values(value):
+            if candidate is _NO_FILTER:
+                continue
+            if candidate is None:
+                normalized.add(_UNKNOWN_SERVICE)
+                continue
+            token = str(candidate).strip()
+            if token:
+                normalized.add(token)
+        return normalized or None
+
+    def _prepare_string_filter(
+        self, value: str | Iterable[str] | object
+    ) -> set[str] | None:
+        if value is _NO_FILTER:
+            return None
+        normalized: set[str] = set()
+        for candidate in self._iter_filter_values(value):
+            if candidate is _NO_FILTER or candidate is None:
+                continue
+            token = str(candidate).strip()
+            if token:
+                normalized.add(token)
+        return normalized or None
+
+    def _prepare_guardrail_filter(
         self,
+        value: str | Iterable[str | None] | object,
         *,
         approved: bool | None | Iterable[bool | None] | object,
         normalized: bool | None | Iterable[bool | None] | object,
@@ -2051,23 +2179,31 @@ class AutoTrader:
             until_ts,
         )
 
-    def _build_risk_evaluation_records(
+    def _prepare_decision_filter(
         self,
-        filtered_records: Sequence[dict[str, Any]],
+        value: str | Iterable[str | None] | object,
         *,
-        normalized_decision_fields: list[Any] | None,
-        flatten_decision: bool,
-        decision_prefix: str,
-        drop_decision_column: bool,
-        fill_value: Any,
-        coerce_timestamps: bool,
-        tz: tzinfo | None,
-    ) -> list[dict[str, Any]]:
-        if not filtered_records:
-            return []
+        missing_token: str,
+    ) -> set[str] | None:
+        if value is _NO_FILTER:
+            return None
+        normalized: set[str] = set()
+        for candidate in self._iter_filter_values(value):
+            if candidate is _NO_FILTER:
+                continue
+            if candidate is None:
+                normalized.add(missing_token)
+                continue
+            token = str(candidate).strip()
+            normalized.add(token or missing_token)
+        return normalized or None
 
-        if normalized_decision_fields is not None:
-            ordered_keys = list(normalized_decision_fields)
+    @staticmethod
+    def _coerce_float(value: Any) -> float | None:
+        if value is None:
+            return None
+        if isinstance(value, (int, float)):
+            numeric = float(value)
         else:
             ordered_keys: list[Any] = []
             for entry in filtered_records:
@@ -2120,121 +2256,172 @@ class AutoTrader:
         return records
 
     @staticmethod
-    def _jsonify_risk_evaluation_value(value: Any) -> Any:
-        if value is pd.NA or value is pd.NaT:  # type: ignore[attr-defined]
+    def _ensure_datetime(value: Any, tz: tzinfo | None) -> datetime | None:
+        tzinfo = tz or timezone.utc
+        if value is None or value is _NO_FILTER:
             return None
-        if isinstance(value, float) and math.isnan(value):
-            return None
-        if isinstance(value, pd.Timestamp):
-            if pd.isna(value):
-                return None
-            return AutoTrader._jsonify_risk_evaluation_value(value.to_pydatetime())
         if isinstance(value, datetime):
-            return value.isoformat()
-        if isinstance(value, Mapping):
-            return {
-                str(key): AutoTrader._jsonify_risk_evaluation_value(item)
-                for key, item in value.items()
-            }
-        if isinstance(value, (list, tuple, set)):
-            return [AutoTrader._jsonify_risk_evaluation_value(item) for item in value]
-        return value
-
-    @staticmethod
-    def _jsonify_risk_evaluation_records(
-        records: Sequence[Mapping[str, Any]],
-    ) -> list[dict[str, Any]]:
-        return [
-            AutoTrader._jsonify_risk_evaluation_value(record)  # type: ignore[return-value]
-            for record in records
-        ]
-
-    def _ai_feature_columns(self, market_data: pd.DataFrame) -> list[str]:
-        numeric_cols = [
-            str(column)
-            for column in market_data.columns
-            if pd.api.types.is_numeric_dtype(market_data[column])
-        ]
-        if numeric_cols:
-            return numeric_cols
-        return [str(column) for column in market_data.columns]
-
-    @staticmethod
-    def _ai_probability_from_prediction(prediction: float) -> float:
-        clamped = max(min(float(prediction) * 4.0, 20.0), -20.0)
-        return 1.0 / (1.0 + math.exp(-clamped))
-
-    def _compute_ai_signal_context_impl(
-        self,
-        ai_manager: Any | None,
-        symbol: str,
-        market_data: pd.DataFrame,
-    ) -> Mapping[str, object] | None:
-        if ai_manager is None:
-            return None
-
-        require_real = getattr(ai_manager, "require_real_models", None)
-        if callable(require_real):
-            try:
-                require_real()
-            except RuntimeError as exc:
-                self._log(
-                    "AI manager reports degraded backend; holding signals",
-                    level=logging.WARNING,
-                    symbol=symbol,
-                    error=str(exc),
-                )
+            dt = value
+        elif isinstance(value, pd.Timestamp):
+            dt = value.to_pydatetime()
+        elif isinstance(value, (int, float)):
+            numeric = float(value)
+            if math.isnan(numeric) or math.isinf(numeric):
                 return None
-
-        predictor = getattr(ai_manager, "predict_series", None)
-        if predictor is None:
-            return None
-
-        feature_cols = self._ai_feature_columns(market_data)
-        try:
-            prediction_result = predictor(symbol, market_data, feature_cols=feature_cols)
-        except TypeError:
-            prediction_result = predictor(symbol, market_data)
-        except Exception as exc:
-            self._log(
-                f"AI predict_series invocation failed: {exc!r}",
-                level=logging.ERROR,
-                symbol=symbol,
-            )
-            return None
-
-        if asyncio.iscoroutine(prediction_result):
-            loop = asyncio.new_event_loop()
+            dt = datetime.fromtimestamp(numeric, tzinfo)
+        elif isinstance(value, str):
+            token = value.strip()
+            if not token:
+                return None
             try:
-                asyncio.set_event_loop(loop)
-                predictions = loop.run_until_complete(prediction_result)
-            finally:
-                asyncio.set_event_loop(None)
-                loop.close()
+                numeric = float(token)
+            except ValueError:
+                try:
+                    dt = datetime.fromisoformat(token)
+                except ValueError:
+                    return None
+            else:
+                if math.isnan(numeric) or math.isinf(numeric):
+                    return None
+                dt = datetime.fromtimestamp(numeric, tzinfo)
         else:
-            predictions = prediction_result
+            timestamp_method = getattr(value, "timestamp", None)
+            if callable(timestamp_method):
+                try:
+                    numeric = float(timestamp_method())
+                except (TypeError, ValueError):
+                    return None
+                if math.isnan(numeric) or math.isinf(numeric):
+                    return None
+                dt = datetime.fromtimestamp(numeric, tzinfo)
+            else:
+                return None
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=tzinfo)
+        else:
+            dt = dt.astimezone(tzinfo)
+        return dt
 
-        if not isinstance(predictions, pd.Series):
-            try:
-                predictions = pd.Series(
-                    predictions,
-                    index=market_data.index[-len(predictions) :],
-                )
-            except Exception:
-                predictions = pd.Series(predictions)
-
-        if predictions.empty:
+    def _normalize_time_bound(self, value: Any) -> float | None:
+        dt = self._ensure_datetime(value, timezone.utc)
+        if dt is None:
             return None
+        return dt.timestamp()
 
-        value = float(predictions.iloc[-1])
-        prediction_bps = value * 10_000.0
-        threshold = float(getattr(ai_manager, "ai_threshold_bps", 0.0))
-        if prediction_bps >= threshold:
-            direction = "buy"
-        elif prediction_bps <= -threshold:
-            direction = "sell"
+    def _normalize_timestamp_for_export(
+        self,
+        value: Any,
+        *,
+        coerce: bool,
+        tz: tzinfo | None,
+    ) -> Any:
+        dt = self._ensure_datetime(value, tz or timezone.utc)
+        if dt is None:
+            return None
+        if coerce:
+            return pd.Timestamp(dt)
+        return dt.isoformat()
+
+    def _normalize_approval_flag(self, value: Any) -> str:
+        token = self._coerce_optional_bool(value)
+        if token is True:
+            return _APPROVAL_APPROVED
+        if token is False:
+            return _APPROVAL_DENIED
+        return _APPROVAL_UNKNOWN
+
+    @staticmethod
+    def _normalize_normalization_flag(value: Any) -> str:
+        if value is True:
+            return _NORMALIZED_NORMALIZED
+        if value is False:
+            return _NORMALIZED_RAW
+        return _NORMALIZED_UNKNOWN
+
+    @staticmethod
+    def _init_guardrail_numeric_stats() -> dict[str, Any]:
+        return {
+            "count": 0,
+            "missing": 0,
+            "sum": 0.0,
+            "min": None,
+            "max": None,
+        }
+
+    @staticmethod
+    def _ingest_guardrail_numeric_value(
+        stats: dict[str, Any] | None,
+        value: Any,
+    ) -> None:
+        if stats is None:
+            return
+        numeric = AutoTrader._coerce_float(value)
+        if numeric is None:
+            stats["missing"] = stats.get("missing", 0) + 1
+            return
+        stats["count"] = stats.get("count", 0) + 1
+        stats["sum"] = stats.get("sum", 0.0) + numeric
+        current_min = stats.get("min")
+        stats["min"] = numeric if current_min is None else min(current_min, numeric)
+        current_max = stats.get("max")
+        stats["max"] = numeric if current_max is None else max(current_max, numeric)
+
+    @staticmethod
+    def _finalize_guardrail_numeric_stats(
+        stats: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        if not stats:
+            return {}
+        count = int(stats.get("count", 0))
+        missing = int(stats.get("missing", 0))
+        total_sum = float(stats.get("sum", 0.0))
+        result: dict[str, Any] = {
+            "count": count,
+            "missing": missing,
+            "sum": total_sum,
+            "min": stats.get("min"),
+            "max": stats.get("max"),
+        }
+        if count:
+            result["average"] = total_sum / count
         else:
-            direction = "hold"
+            result["average"] = None if missing else 0.0
+        return result
+
+    @staticmethod
+    def _finalize_dimension_counter(counter: Counter[str] | None) -> dict[str, int]:
+        if not counter:
+            return {}
+        return {key: int(counter[key]) for key in sorted(counter)}
+
+    @staticmethod
+    def _normalize_decision_dimension_value(
+        value: Any,
+        *,
+        missing_token: str,
+    ) -> str:
+        if value is None:
+            return missing_token
+        token = str(value).strip()
+        return token or missing_token
+
+    @staticmethod
+    def _serialize_filter_snapshot(values: Iterable[Any] | None) -> list[Any] | None:
+        if values is None:
+            return None
+        return [value for value in sorted(values, key=lambda item: (str(item).lower(), str(item)))]
+
+    @staticmethod
+    def _serialize_numeric_filter_snapshot(
+        payload: tuple[set[float], bool] | None,
+    ) -> Mapping[str, Any] | None:
+        if payload is None:
+            return None
+        values, include_missing = payload
+        return {
+            "values": [float(item) for item in sorted(values)],
+            "include_missing": bool(include_missing),
+        }
 
         probability = self._ai_probability_from_prediction(value)
         evaluated_at_raw = predictions.index[-1]
@@ -2391,6 +2578,8 @@ class AutoTrader:
             return None
         if market_data.empty:
             return None
+
+        feature_cols = self._ai_feature_columns(market_data)
         try:
             row = market_data.iloc[-1]
         except Exception:
@@ -6204,6 +6393,19 @@ class AutoTrader:
                     key=lambda item: (-item[1].get("evaluations", 0), item[0]),
                 )
             }
+            if include_services:
+                missing_summary["services"] = dict(missing_bucket.get("services", {}))
+            if include_decision_dimensions:
+                missing_summary["states"] = self._finalize_dimension_counter(
+                    missing_bucket.get("states")
+                )
+                missing_summary["reasons"] = self._finalize_dimension_counter(
+                    missing_bucket.get("reasons")
+                )
+                missing_summary["modes"] = self._finalize_dimension_counter(
+                    missing_bucket.get("modes")
+                )
+            summary["missing_timestamp"] = missing_summary
 
         if missing_bucket is not None and missing_bucket.get("total", 0):
             self._finalize_decision_bucket(missing_bucket)
@@ -8585,6 +8787,7 @@ class AutoTrader:
         decision_state: str | Iterable[str | None] | object = _NO_FILTER,
         decision_reason: str | Iterable[str | None] | object = _NO_FILTER,
         decision_mode: str | Iterable[str | None] | object = _NO_FILTER,
+        decision_id: str | Iterable[str | None] | object = _NO_FILTER,
         reason: str | Iterable[str] | object = _NO_FILTER,
         trigger: str | Iterable[str] | object = _NO_FILTER,
         trigger_label: str | Iterable[str | None] | object = _NO_FILTER,
@@ -8645,6 +8848,10 @@ class AutoTrader:
             decision_mode,
             missing_token=_MISSING_DECISION_MODE,
         )
+        decision_id_filter = self._prepare_decision_filter(
+            decision_id,
+            missing_token=_MISSING_DECISION_ID,
+        )
 
         trigger_threshold_min_value = (
             self._coerce_float(trigger_threshold_min)
@@ -8700,6 +8907,7 @@ class AutoTrader:
             decision_state_filter=decision_state_filter,
             decision_reason_filter=decision_reason_filter,
             decision_mode_filter=decision_mode_filter,
+            decision_id_filter=decision_id_filter,
             reason_filter=reason_filter,
             trigger_filter=trigger_filter,
             trigger_label_filter=trigger_label_filter,
@@ -9038,6 +9246,205 @@ class AutoTrader:
             )
 
         return df
+
+    def build_lifecycle_snapshot(
+        self,
+        *,
+        bucket_s: float = 3600.0,
+        tz: tzinfo | None = timezone.utc,
+    ) -> dict[str, Any]:
+        tzinfo = tz or timezone.utc
+        now_dt = datetime.now(tzinfo)
+        try:
+            symbol = self.symbol_getter()
+        except Exception:  # pragma: no cover - defensywne logowanie
+            LOGGER.debug("Symbol getter failed during lifecycle snapshot", exc_info=True)
+            symbol = "<unknown>"
+
+        schedule_state = self.get_schedule_state()
+        schedule_payload = _serialize_schedule_state(schedule_state)
+
+        try:
+            guardrail_summary = self.summarize_guardrail_timeline(
+                bucket_s=bucket_s,
+                include_errors=True,
+                include_services=True,
+                include_guardrail_dimensions=True,
+                include_decision_dimensions=True,
+                coerce_timestamps=True,
+                tz=tzinfo,
+            )
+        except Exception:  # pragma: no cover - defensywne logowanie
+            LOGGER.debug("Guardrail timeline summary failed", exc_info=True)
+            guardrail_summary = self._fallback_guardrail_summary()
+
+        try:
+            decision_summary = self.summarize_risk_decision_timeline(
+                bucket_s=bucket_s,
+                include_errors=True,
+                include_services=True,
+                include_decision_dimensions=True,
+                coerce_timestamps=True,
+                tz=tzinfo,
+            )
+        except Exception:  # pragma: no cover - defensywne logowanie
+            LOGGER.debug("Decision timeline summary failed", exc_info=True)
+            decision_summary = self._fallback_decision_summary()
+
+        with self._lock:
+            last_guardrail_reasons = list(self._last_guardrail_reasons)
+            last_guardrail_triggers = [trigger.to_dict() for trigger in self._last_guardrail_triggers]
+            last_decision = (
+                self._last_risk_decision.to_dict()
+                if self._last_risk_decision is not None
+                else None
+            )
+            last_regime = (
+                self._last_regime.to_dict()
+                if self._last_regime is not None
+                else None
+            )
+            last_signal = self._last_signal
+            ai_context = (
+                copy.deepcopy(self._last_ai_context)
+                if self._last_ai_context is not None
+                else None
+            )
+            ai_degraded = bool(self._ai_degraded)
+            cooldown_until = self._cooldown_until
+            cooldown_reason = self._cooldown_reason
+            controller_history = [copy.deepcopy(entry) for entry in self._controller_cycle_history]
+            controller_summary = {
+                "sequence": self._controller_cycle_sequence,
+                "last_duration_s": self._controller_cycle_last_duration,
+                "last_orders": self._controller_cycle_last_orders,
+                "history": controller_history,
+            }
+            risk_history_size = len(self._risk_evaluations)
+            auto_trade_state = {
+                "active": bool(self._auto_trade_thread_active),
+                "user_confirmed": bool(self._auto_trade_user_confirmed),
+                "trusted_auto_confirm": bool(self._trusted_auto_confirm),
+                "started": bool(self._started),
+            }
+            schedule_last_alert = self._schedule_last_alert_state
+
+        now_ts = time.time()
+        if cooldown_until and cooldown_until > now_ts:
+            cooldown_remaining = cooldown_until - now_ts
+        else:
+            cooldown_remaining = 0.0
+        cooldown_dt = self._ensure_datetime(cooldown_until, tzinfo)
+        cooldown_until_iso = cooldown_dt.isoformat() if cooldown_dt is not None else None
+
+        metrics_labels = self._base_metric_labels
+        cycles_total = self._metric_cycle_total.value(labels=metrics_labels)
+        strategy_switch_total = self._metric_strategy_switch_total.value(labels=metrics_labels)
+        guardrail_blocks_total = 0.0
+        guardrail_values = getattr(self._metric_guardrail_blocks_total, "_values", {})
+        for label_tuple, value in getattr(guardrail_values, "items", lambda: [])():
+            labels = dict(label_tuple)
+            if all(labels.get(key) == val for key, val in metrics_labels.items()):
+                guardrail_blocks_total += float(value)
+        recalibration_total = self._metric_recalibration_total.value(labels=metrics_labels)
+        schedule_open_value = self._metric_schedule_open_gauge.value(labels=metrics_labels)
+        strategy_gauge_value = self._metric_strategy_state_gauge.value(labels=metrics_labels)
+        histogram_state = self._metric_schedule_closed_seconds.snapshot(labels=metrics_labels)
+        histogram_buckets: dict[str, int] = {}
+        for boundary, count in sorted(histogram_state.counts.items(), key=lambda item: item[0]):
+            if math.isinf(boundary):
+                key = "+inf"
+            else:
+                key = str(boundary)
+            histogram_buckets[key] = int(count)
+
+        metrics_snapshot = {
+            "cycles_total": cycles_total,
+            "strategy_switch_total": strategy_switch_total,
+            "guardrail_blocks_total": guardrail_blocks_total,
+            "recalibration_total": recalibration_total,
+            "schedule_open": schedule_open_value,
+            "strategy_active": strategy_gauge_value,
+            "schedule_block_histogram": {
+                "sum": histogram_state.sum,
+                "count": histogram_state.count,
+                "buckets": histogram_buckets,
+            },
+        }
+
+        recalibrations: list[dict[str, Any]] = []
+        orchestrator = getattr(self, "decision_orchestrator", None)
+        due_recalibrations = getattr(orchestrator, "due_recalibrations", None)
+        if callable(due_recalibrations):
+            try:
+                for item in due_recalibrations():
+                    strategy = getattr(item, "strategy", None) or getattr(item, "name", None)
+                    next_run = getattr(item, "next_run", None)
+                    payload: dict[str, Any] = {"strategy": strategy}
+                    if next_run is not None:
+                        payload["next_run"] = self._normalize_timestamp_for_export(
+                            next_run,
+                            coerce=False,
+                            tz=tzinfo,
+                        )
+                    recalibrations.append(payload)
+            except Exception:  # pragma: no cover - defensywne logowanie
+                self._log(
+                    "DecisionOrchestrator.due_recalibrations snapshot failed",
+                    level=logging.DEBUG,
+                )
+
+        snapshot = {
+            "timestamp": now_dt.isoformat(),
+            "symbol": symbol,
+            "environment": self._environment_name,
+            "portfolio": self._portfolio_id,
+            "risk_profile": self._risk_profile_name,
+            "schedule": schedule_payload,
+            "strategy": {
+                "current": self.current_strategy,
+                "leverage": self.current_leverage,
+                "stop_loss_pct": self.current_stop_loss_pct,
+                "take_profit_pct": self.current_take_profit_pct,
+                "last_signal": last_signal,
+                "last_regime": last_regime,
+            },
+            "guardrails": {
+                "summary": guardrail_summary,
+                "last_reasons": last_guardrail_reasons,
+                "last_triggers": last_guardrail_triggers,
+            },
+            "risk_decisions": {
+                "summary": decision_summary,
+                "last_decision": last_decision,
+                "history_size": risk_history_size,
+                "thresholds": self._decision_threshold_snapshot(),
+            },
+            "ai": {
+                "degraded": ai_degraded,
+                "context": ai_context,
+                "threshold_bps": getattr(
+                    getattr(self, "ai_manager", None),
+                    "ai_threshold_bps",
+                    None,
+                ),
+            },
+            "controller": {
+                **controller_summary,
+                "auto_trade": auto_trade_state,
+                "schedule_last_alert": schedule_last_alert,
+            },
+            "cooldown": {
+                "active": cooldown_remaining > 0.0,
+                "remaining_s": cooldown_remaining if cooldown_remaining > 0.0 else 0.0,
+                "reason": cooldown_reason,
+                "until": cooldown_until_iso,
+            },
+            "metrics": metrics_snapshot,
+            "recalibrations": recalibrations,
+        }
+
+        return snapshot
 
     def risk_evaluations_to_dataframe(
         self,
