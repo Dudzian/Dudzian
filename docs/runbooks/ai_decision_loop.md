@@ -7,6 +7,16 @@
    ```bash
    cat audit/ai_decision/scheduler.json | jq
    ```
+   Alternatywnie skorzystaj z helpera audytowego:
+   ```bash
+   python - <<'PY'
+   from bot_core.ai import load_scheduler_state
+
+   state = load_scheduler_state()
+   assert state is not None, "Brak pliku audit/ai_decision/scheduler.json"
+   print(state)
+   PY
+   ```
 4. Sprawdź pola:
    - `version` – wersja schematu pliku (powinna wynosić `5`).
    - `last_run` – ostatnie zakończone retreningi (UTC).
@@ -33,6 +43,66 @@
    PY
    ```
 
+## Walidacja artefaktów i podpisów compliance
+1. **Walidacja schematu** – po każdym retreningu uruchom:
+   ```bash
+   python - <<'PY'
+   from pathlib import Path
+   from bot_core.ai.validation import validate_model_artifact_schema
+   from bot_core.ai.inference import ModelRepository
+
+   repo = ModelRepository(Path("models/decision_engine"))
+   latest = sorted(repo.base_path.glob("*.json"))[-1]
+   payload = repo.load(latest)
+   validate_model_artifact_schema(payload)
+   print("Schema OK:", latest)
+   PY
+   ```
+   Błąd walidacji oznacza, że artefakt nie spełnia `docs/schemas/model_artifact.schema.json` – retrening należy powtórzyć.
+2. **Podpisy Risk/Compliance** – przed aktywacją inference uruchom kontrolę:
+   ```bash
+   python - <<'PY'
+   from bot_core.ai.data_monitoring import ensure_compliance_sign_offs, load_recent_data_quality_reports, load_recent_drift_reports
+
+   dq = load_recent_data_quality_reports(limit=5)
+   drift = load_recent_drift_reports(limit=5)
+   ensure_compliance_sign_offs(data_quality_reports=dq, drift_reports=drift)
+   print("Sign-off gate passed")
+   PY
+   ```
+   Wyjątek `ComplianceSignOffError` blokuje aktywację – eskaluj do zespołów Risk/Compliance i uzyskaj podpisy w `docs/compliance/ai_pipeline_signoff.md`.
+3. **Raporty walk-forward** – sprawdź, czy najnowsza walidacja posiada komplet podpisów i mieści się w progach jakości:
+   ```bash
+   python - <<'PY'
+   from bot_core.ai import (
+       load_recent_walk_forward_reports,
+       summarize_walk_forward_reports,
+   )
+
+   reports = load_recent_walk_forward_reports(limit=3)
+   summary = summarize_walk_forward_reports(reports)
+   print(summary)
+   missing = summary["pending_sign_off"]
+   assert not missing["risk"], "Brak podpisu Risk pod raportem walk-forward"
+   assert not missing["compliance"], "Brak podpisu Compliance pod raportem walk-forward"
+   assert summary["average_directional_accuracy"]["mean"] >= 0.65, "Kierunkowość poniżej wymaganego progu"
+   PY
+   ```
+   Jeśli `pending_sign_off` zawiera wpisy – uaktualnij raport przy pomocy `bot_core.ai.update_sign_off(...)` i zarejestruj podpis w `docs/compliance/ai_pipeline_signoff.md`.
+4. **Zbiorcze podsumowanie** – dla szybkiego przeglądu wykorzystaj helper:
+   ```bash
+   python - <<'PY'
+   from bot_core.ai import collect_pipeline_compliance_summary
+
+   summary = collect_pipeline_compliance_summary()
+   print(summary)
+   assert summary["ready"], summary["issues"]
+   PY
+   ```
+   Raport wskazuje brakujące podpisy (`pending_sign_off`), otwarte alerty oraz status harmonogramu retreningu. W razie `ready == False`
+   przejdź odpowiednio przez punkty 1–3.
+5. **Decision journal** – po aktywacji modelu zweryfikuj wpis `ai_retraining`/`ai_drift_report` z linkiem do artefaktu i raportów audytu. Brak wpisu wymaga powtórzenia rejestracji.
+
 ## Procedura reakcji na opóźnienia
 1. **Potwierdź opóźnienie:**
    - Zweryfikuj logi `logs/ai_training/*.log` pod kątem błędów w trakcie ostatniego uruchomienia.
@@ -47,6 +117,7 @@
      PYTHONPATH=. python scripts/run_retraining_job.py --job btc-retrain
      ```
    - W przypadku błędów infrastrukturalnych (GPU, storage), eskaluj do zespołu Platform Ops z logami i metrykami (`/var/log/system.log`).
+   - Jeśli alert dotyczy dryfu danych lub blokady compliance, przejdź do procedury [`docs/runbooks/ai_model_rollback.md`](ai_model_rollback.md) w celu wycofania modelu przed ponowną aktywacją.
    - Jeżeli `cooldown_until` blokuje pilny retrening, po usunięciu przyczyny awarii rozważ ręczne wyzerowanie stanu poprzez polecenie serwisowe:
      ```bash
      python - <<'PY'

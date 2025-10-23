@@ -23,6 +23,7 @@ Zapewnienie, że pipeline danych i inference modeli decyzyjnych spełnia wymagan
 ## Post-incident review
 - [ ] Dodano wpis do `audit/ai_decision/incident_journal.md`.
 - [ ] Zaktualizowano raporty `data_quality`/`drift` podpisami Risk/Compliance.
+- [ ] Wykonano procedurę rollbacku z [`docs/runbooks/ai_model_rollback.md`](../runbooks/ai_model_rollback.md) lub potwierdzono brak potrzeby wycofania modeli.
 - [ ] Podpisy zarejestrowano przy użyciu `bot_core.ai.update_sign_off`, aby raporty JSON zawierały status i datę zatwierdzenia.
 - [ ] Zweryfikowano w `bot_core.ai.load_recent_drift_reports()` brak nowych alertów dryfu po wdrożeniu działań naprawczych.
 - [ ] `bot_core.ai.summarize_drift_reports(...)` potwierdza brak zaległych podpisów dla alertów przekraczających próg.
