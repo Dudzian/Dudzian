@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from types import MappingProxyType
-from typing import Mapping, MutableMapping, Sequence, TYPE_CHECKING
+from typing import Iterator, Mapping, MutableMapping, Sequence, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .training import SupportsInference
@@ -71,7 +71,55 @@ def _normalize_feature_scalers(
 
 
 
-def _normalize_metrics(raw: Mapping[str, object] | None) -> Mapping[str, Mapping[str, float]]:
+class _MetricsView(Mapping[str, object]):
+    """Widok na metryki artefaktu zachowujący kompatybilność wsteczną."""
+
+    def __init__(self, base: Mapping[str, Mapping[str, float]]) -> None:
+        self._base = base
+        summary = base.get("summary")
+        summary_keys: Sequence[str]
+        if summary is not None:
+            summary_keys = tuple(summary.keys())
+        else:
+            summary_keys = ()
+        keys: list[str] = []
+        for key in summary_keys:
+            keys.append(str(key))
+        for key in base.keys():
+            str_key = str(key)
+            if str_key not in summary_keys:
+                keys.append(str_key)
+        self._keys = tuple(keys)
+
+    def __getitem__(self, key: str) -> object:
+        summary = self._base.get("summary")
+        if summary is not None and key in summary:
+            return summary[key]
+        if key in self._base:
+            return self._base[key]
+        raise KeyError(key)
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._keys)
+
+    def __len__(self) -> int:
+        return len(self._keys)
+
+    def __contains__(self, key: object) -> bool:  # pragma: no cover - trywialne
+        if isinstance(key, str):
+            summary = self._base.get("summary")
+            if summary is not None and key in summary:
+                return True
+        return key in self._base
+
+    def splits(self) -> Mapping[str, Mapping[str, float]]:
+        return self._base
+
+    def summary(self) -> Mapping[str, float]:
+        return self._base.get("summary", MappingProxyType({}))
+
+
+def _normalize_metrics(raw: Mapping[str, object] | None) -> Mapping[str, object]:
     required_keys = ("summary", "train", "validation", "test")
 
     def _coerce_block(values: Mapping[str, object]) -> Mapping[str, float]:
@@ -103,7 +151,7 @@ def _normalize_metrics(raw: Mapping[str, object] | None) -> Mapping[str, Mapping
         if key not in structured:
             structured[key] = MappingProxyType({})
 
-    return MappingProxyType(structured)
+    return _MetricsView(MappingProxyType(structured))
 
 
 @dataclass(slots=True)
@@ -113,7 +161,7 @@ class ModelArtifact:
     feature_names: Sequence[str]
     model_state: Mapping[str, object]
     trained_at: datetime
-    metrics: Mapping[str, Mapping[str, float]]
+    metrics: Mapping[str, object]
     metadata: Mapping[str, object]
     target_scale: float
     training_rows: int
