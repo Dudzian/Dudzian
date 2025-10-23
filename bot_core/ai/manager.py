@@ -79,6 +79,40 @@ def _utcnow() -> datetime:
 
     return datetime.now(timezone.utc)
 
+
+def _select_metric_block(metrics: Mapping[str, object]) -> Mapping[str, float]:
+    if not isinstance(metrics, Mapping):
+        return {}
+    if metrics and any(isinstance(value, Mapping) for value in metrics.values()):
+        summary = metrics.get("summary")
+        if isinstance(summary, Mapping):
+            return {
+                str(key): float(value)
+                for key, value in summary.items()
+                if isinstance(value, (int, float))
+            }
+        for key in ("test", "validation", "train"):
+            candidate = metrics.get(key)
+            if isinstance(candidate, Mapping) and candidate:
+                return {
+                    str(metric_name): float(metric_value)
+                    for metric_name, metric_value in candidate.items()
+                    if isinstance(metric_value, (int, float))
+                }
+        for value in metrics.values():
+            if isinstance(value, Mapping):
+                return {
+                    str(metric_name): float(metric_value)
+                    for metric_name, metric_value in value.items()
+                    if isinstance(metric_value, (int, float))
+                }
+        return {}
+    return {
+        str(key): float(value)
+        for key, value in metrics.items()
+        if isinstance(value, (int, float))
+    }
+
 LoggerLike = Union[logging.Logger, logging.LoggerAdapter]
 
 
@@ -1066,6 +1100,12 @@ class AIManager:
                 trained_at=artifact.trained_at,
                 metrics=artifact.metrics,
                 metadata=metadata,
+                target_scale=artifact.target_scale,
+                training_rows=artifact.training_rows,
+                validation_rows=artifact.validation_rows,
+                test_rows=artifact.test_rows,
+                feature_scalers=artifact.feature_scalers,
+                decision_journal_entry_id=artifact.decision_journal_entry_id,
                 backend=artifact.backend,
             )
             destination = repository.save(enriched, filename)
@@ -1784,22 +1824,10 @@ class AIManager:
         thresholds = metadata.get("quality_thresholds", {}) if isinstance(metadata, Mapping) else {}
         min_directional = float(thresholds.get("min_directional_accuracy", 0.5))
         max_mae = float(thresholds.get("max_mae", 20.0))
-        metrics = getattr(artifact, "metrics", {}) or {}
-        directional = float(
-            metrics.get(
-                "test_directional_accuracy",
-                metrics.get(
-                    "validation_directional_accuracy",
-                    metrics.get("directional_accuracy", 0.0),
-                ),
-            )
-        )
-        mae = float(
-            metrics.get(
-                "test_mae",
-                metrics.get("validation_mae", metrics.get("mae", 0.0)),
-            )
-        )
+        metrics_payload = getattr(artifact, "metrics", {}) or {}
+        summary_metrics = _select_metric_block(metrics_payload)
+        directional = float(summary_metrics.get("directional_accuracy", 0.0))
+        mae = float(summary_metrics.get("mae", 0.0))
         if directional < min_directional or mae > max_mae:
             logger.warning(
                 "Decision model %s failed quality thresholds (directional=%.3f, mae=%.3f, min_directional=%.3f, max_mae=%.3f)",
@@ -1823,12 +1851,13 @@ class AIManager:
 
     def _compose_performance_metrics(
         self,
-        base_metrics: Mapping[str, float],
+        base_metrics: Mapping[str, object],
         metadata: Mapping[str, object],
         validation: WalkForwardResult | None,
     ) -> Dict[str, float]:
         summary: Dict[str, float] = {}
-        for key, value in base_metrics.items():
+        structured = _select_metric_block(base_metrics)
+        for key, value in structured.items():
             number = _safe_float(value)
             if number is None:
                 continue

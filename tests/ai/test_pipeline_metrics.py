@@ -26,10 +26,11 @@ def test_train_gradient_boosting_model_generates_split_metrics(tmp_path: Path) -
     )
     payload = json.loads(Path(artifact_path).read_text())
     metrics = payload["metrics"]
-    assert "train_mae" in metrics
-    assert "validation_mae" in metrics
-    assert "test_mae" in metrics
-    assert metrics["mae"] == metrics["train_mae"]
+    assert "summary" in metrics
+    assert "train" in metrics
+    assert "validation" in metrics
+    assert "test" in metrics
+    assert metrics["summary"]["mae"] == metrics["train"]["mae"]
     metadata = payload["metadata"]
     assert metadata["dataset_split"]["validation_ratio"] == 0.15
     assert metadata["dataset_split"]["test_ratio"] == 0.15
@@ -68,5 +69,5 @@ def test_register_model_artifact_reports_metrics(tmp_path: Path) -> None:
     )
     assert orchestrator.attached["demo"] is True
     assert "demo" in orchestrator.metrics
-    assert "test_mae" in orchestrator.metrics["demo"]
+    assert "mae" in orchestrator.metrics["demo"]
     assert getattr(inference, "model_label", "") == "demo"

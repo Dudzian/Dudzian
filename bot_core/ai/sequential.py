@@ -333,24 +333,49 @@ class SequentialTrainingPipeline:
         metrics_payload = wf_metrics.to_dict()
         metadata: dict[str, object] = {
             "target_scale": dataset.target_scale,
-            "feature_scalers": dataset.feature_stats,
             "walk_forward": metrics_payload,
             "heuristics": heuristic_metrics.to_dict(),
             "min_directional_accuracy": self._min_directional_accuracy,
         }
         if metrics_payload.get("mean_directional_accuracy", 0.0) < self._min_directional_accuracy:
             metadata["training_warning"] = "directional_accuracy_below_threshold"
+        feature_scalers = {
+            name: (
+                float(stats.get("mean", 0.0)),
+                float(stats.get("stdev", 0.0)),
+            )
+            for name, stats in dataset.feature_stats.items()
+            if isinstance(stats, Mapping)
+        }
+        summary_metrics = {
+            "directional_accuracy": float(metrics_payload["mean_directional_accuracy"]),
+            "mae": float(metrics_payload["mean_mae"]),
+            "rmse": float(metrics_payload["mean_rmse"]),
+            "expected_pnl": float(metrics_payload["mean_expected_pnl"]),
+        }
+        decision_journal_entry = metadata.get("decision_journal_entry_id") or metadata.get(
+            "decision_journal_entry"
+        )
+        decision_journal_entry_id = (
+            str(decision_journal_entry) if decision_journal_entry is not None else None
+        )
         artifact = ModelArtifact(
             feature_names=tuple(selected),
             model_state=final_model.to_state(),
             trained_at=datetime.now(timezone.utc),
             metrics={
-                "directional_accuracy": metrics_payload["mean_directional_accuracy"],
-                "mae": metrics_payload["mean_mae"],
-                "rmse": metrics_payload["mean_rmse"],
-                "expected_pnl": metrics_payload["mean_expected_pnl"],
+                "summary": dict(summary_metrics),
+                "train": dict(summary_metrics),
+                "validation": {},
+                "test": {},
             },
             metadata=metadata,
+            target_scale=float(dataset.target_scale),
+            training_rows=len(features),
+            validation_rows=0,
+            test_rows=0,
+            feature_scalers=feature_scalers,
+            decision_journal_entry_id=decision_journal_entry_id,
             backend="sequential_td",
         )
 
