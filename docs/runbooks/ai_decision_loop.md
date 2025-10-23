@@ -71,25 +71,7 @@
    PY
    ```
    Wyjątek `ComplianceSignOffError` blokuje aktywację – eskaluj do zespołów Risk/Compliance i uzyskaj podpisy w `docs/compliance/ai_pipeline_signoff.md`.
-3. **Raporty walk-forward** – sprawdź, czy najnowsza walidacja posiada komplet podpisów i mieści się w progach jakości:
-   ```bash
-   python - <<'PY'
-   from bot_core.ai import (
-       load_recent_walk_forward_reports,
-       summarize_walk_forward_reports,
-   )
-
-   reports = load_recent_walk_forward_reports(limit=3)
-   summary = summarize_walk_forward_reports(reports)
-   print(summary)
-   missing = summary["pending_sign_off"]
-   assert not missing["risk"], "Brak podpisu Risk pod raportem walk-forward"
-   assert not missing["compliance"], "Brak podpisu Compliance pod raportem walk-forward"
-   assert summary["average_directional_accuracy"]["mean"] >= 0.65, "Kierunkowość poniżej wymaganego progu"
-   PY
-   ```
-   Jeśli `pending_sign_off` zawiera wpisy – uaktualnij raport przy pomocy `bot_core.ai.update_sign_off(...)` i zarejestruj podpis w `docs/compliance/ai_pipeline_signoff.md`.
-4. **Decision journal** – po aktywacji modelu zweryfikuj wpis `ai_retraining`/`ai_drift_report` z linkiem do artefaktu i raportów audytu. Brak wpisu wymaga powtórzenia rejestracji.
+3. **Decision journal** – po aktywacji modelu zweryfikuj wpis `ai_retraining`/`ai_drift_report` z linkiem do artefaktu i raportów audytu. Brak wpisu wymaga powtórzenia rejestracji.
 
 ## Procedura reakcji na opóźnienia
 1. **Potwierdź opóźnienie:**

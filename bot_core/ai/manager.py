@@ -972,8 +972,6 @@ class AIManager:
         return list_audit_reports("data_quality", audit_root=self._audit_root, limit=limit)
 
     def _ensure_compliance_activation_gate(self) -> None:
-        if not self._require_compliance_sign_offs:
-            return
         if self._audit_root is not None:
             kwargs: Dict[str, Any] = {"audit_root": self._audit_root}
         else:
@@ -1630,12 +1628,9 @@ class AIManager:
                 schedule.paused_until = None
                 schedule.paused_reason = None
                 try:
-                    schedule.update_interval(schedule.configured_interval)
+                    schedule._persist_state()
                 except Exception:  # pragma: no cover - brak wpływu na logikę treningu
-                    try:
-                        schedule._persist_state()
-                    except Exception:
-                        pass
+                    pass
 
         repository: ModelRepository
         if attach_to_decision:

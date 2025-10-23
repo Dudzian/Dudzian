@@ -17,11 +17,6 @@ if TYPE_CHECKING:  # pragma: no cover - tylko dla typowania
 DEFAULT_AUDIT_ROOT = Path("audit/ai_decision")
 AUDIT_SUBDIRECTORIES: tuple[str, ...] = ("walk_forward", "data_quality", "drift")
 SCHEDULER_STATE_FILENAME = "scheduler.json"
-_SIGN_OFF_ROLES: tuple[str, ...] = ("risk", "compliance")
-_SIGN_OFF_STATUSES: frozenset[str] = frozenset(
-    {"pending", "approved", "rejected", "escalated", "waived", "investigating"}
-)
-_COMPLETED_SIGN_OFF_STATUSES: frozenset[str] = frozenset({"approved", "waived"})
 
 
 def ensure_audit_structure(audit_root: str | Path | None = None) -> Path:
