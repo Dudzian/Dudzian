@@ -19,7 +19,7 @@ Zapewnić zespołom dyżurnym powtarzalny proces obsługi środowiska Stage5 –
 ## Checklista L2
 | Krok | Odpowiedzialny | Artefakty | Akceptacja |
 | --- | --- | --- | --- |
-| 1. Uruchom `python scripts/run_tco_analysis.py --output var/audit/tco/<TS>/incident.csv` i porównaj z progiem w `config/core.yaml`. | L2 | Raport CSV/PDF, podpis HMAC | Koszt poniżej progu lub decyzja o ograniczeniu strategii |
+| 1. Uruchom `python scripts/run_tco_analysis.py --output var/audit/tco/<TS>/incident.csv` (bez `--input` skrypt użyje ścieżki Stage5/TCO ze zmiennej środowiskowej `STAGE5_TCO_INPUT`, wpisu w `config/core.yaml` lub domyślnego `data/stage5/tco.json`) i porównaj wynik z progiem w `config/core.yaml`. | L2 | Raport CSV/PDF, podpis HMAC | Koszt poniżej progu lub decyzja o ograniczeniu strategii |
 | 2. Wykonaj `python scripts/run_decision_engine_smoke.py --mode live --risk-snapshot <ścieżka> --candidates <ścieżka> --tco-report <ścieżka> --output <ścieżka>` dla strategii objętej alertem (w trybie testowym możesz użyć `--mode paper`, który korzysta z danych referencyjnych). | L2 | Log CLI, podpis `smoke.sig` | Status `success`; w razie `fail` przygotuj plan rollbacku |
 | 3. Zweryfikuj rotację kluczy: `python scripts/rotate_keys.py --status --bundle core-oem` (możesz użyć skrótu `--status core-oem` lub `status core-oem`). | L2 | Raport JSON, wpis decision logu | Brak przeterminowanych kluczy; w przeciwnym razie zaplanuj rotację |
 | 4. Uaktualnij decision log (`verify_decision_log.py summary --category stage5_incident`) i potwierdź obecność pól TCO. | L2 | Raport w `var/audit/decisions/` | Wpis zawiera `tco_kpi`, `decision_path`, `rotation_event_id` |

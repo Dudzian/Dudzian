@@ -10,13 +10,31 @@ Subcommands:
 from __future__ import annotations
 
 import argparse
+import importlib
+import importlib.util
 import json
+import os
 import re
 import sys
 from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
+from types import ModuleType
 from typing import Iterable, Optional, Sequence
+
+# Domyślne ścieżki Stage5 wykorzystywane do trybu summary
+DEFAULT_STAGE5_TCO_INPUT = Path("data/stage5/tco.json")
+DEFAULT_CORE_CONFIG_PATH = Path("config/core.yaml")
+
+
+def _load_yaml_module() -> ModuleType | None:
+    spec = importlib.util.find_spec("yaml")
+    if spec is None:
+        return None
+    return importlib.import_module("yaml")  # type: ignore[return-value]
+
+
+_YAML_MODULE = _load_yaml_module()
 
 # ────────────────────────────────────────────────────────────────────────────────
 # Importy wariantu HEAD (summary)
@@ -63,6 +81,101 @@ def _looks_like_timestamp(candidate: str | None) -> bool:
 
 
 # ==============================================================================
+# Domyślne ścieżki i konfiguracja Stage5
+# ==============================================================================
+
+def _extract_stage5_tco_input(node: object) -> Optional[str]:
+    """Spróbuj odnaleźć ścieżkę Stage5 TCO w zagnieżdżonych strukturach YAML."""
+
+    if isinstance(node, dict):
+        # Potencjalne ścieżki konfiguracyjne (stage5.tco.support_input itp.)
+        preferred_paths = [
+            ("stage5", "tco", "support_input"),
+            ("stage5", "tco", "input"),
+            ("stage5", "support", "tco_input"),
+            ("stage5_support", "tco", "input"),
+        ]
+        for keys in preferred_paths:
+            cursor: object = node
+            for key in keys:
+                if not isinstance(cursor, dict) or key not in cursor:
+                    break
+                cursor = cursor[key]
+            else:
+                if isinstance(cursor, str):
+                    return cursor
+
+        for value in node.values():
+            candidate = _extract_stage5_tco_input(value)
+            if candidate:
+                return candidate
+    elif isinstance(node, list):
+        for item in node:
+            candidate = _extract_stage5_tco_input(item)
+            if candidate:
+                return candidate
+    elif isinstance(node, str):
+        lowered = node.lower()
+        if "stage5" in lowered and "tco" in lowered and lowered.endswith(".json") and "summary" not in lowered:
+            return node
+    return None
+
+
+def _resolve_summary_input_from_env() -> tuple[Optional[Path], list[str]]:
+    warnings: list[str] = []
+    raw = os.environ.get("STAGE5_TCO_INPUT")
+    if not raw or not raw.strip():
+        return None, warnings
+
+    expanded = os.path.expandvars(raw.strip())
+    candidate = Path(expanded).expanduser()
+    return candidate, warnings
+
+
+def _resolve_summary_input_from_config() -> tuple[Optional[Path], list[str]]:
+    warnings: list[str] = []
+    config_path = DEFAULT_CORE_CONFIG_PATH
+
+    if _YAML_MODULE is None:
+        warnings.append(
+            "Ostrzeżenie: biblioteka PyYAML nie jest dostępna – pomijam automatyczny odczyt config/core.yaml."
+        )
+        return None, warnings
+
+    if not config_path.exists():
+        return None, warnings
+
+    try:
+        contents = config_path.read_text(encoding="utf-8")
+        data = _YAML_MODULE.safe_load(contents)  # type: ignore[union-attr]
+    except Exception as exc:  # pragma: no cover - błędy I/O są rzadkie
+        warnings.append(f"Ostrzeżenie: nie udało się wczytać {config_path}: {exc}")
+        return None, warnings
+
+    candidate = _extract_stage5_tco_input(data)
+    if candidate:
+        candidate_path = Path(candidate).expanduser()
+        if not candidate_path.is_absolute():
+            candidate_path = (config_path.parent / candidate_path).resolve(strict=False)
+        return candidate_path, warnings
+
+    return None, warnings
+
+
+def _resolve_default_summary_input() -> tuple[Optional[Path], list[str], str]:
+    resolved_path, warnings = _resolve_summary_input_from_env()
+    if resolved_path:
+        return resolved_path, warnings, "env"
+
+    config_path, config_warnings = _resolve_summary_input_from_config()
+    warnings.extend(config_warnings)
+    if config_path:
+        return config_path, warnings, "config"
+
+    return DEFAULT_STAGE5_TCO_INPUT.expanduser(), warnings, "fallback"
+
+
+# ==============================================================================
 # Subcommand: summary (HEAD)
 # ==============================================================================
 
@@ -72,7 +185,13 @@ def _build_summary_parser(sub: argparse._SubParsersAction) -> argparse.ArgumentP
         help="Agregacja pozycji kosztowych i podpisany raport TCO (wariant HEAD)",
         description="Generuje raport TCO (JSON + CSV) z pojedynczego pliku JSON i opcjonalnie podpisuje HMAC."
     )
-    p.add_argument("--input", required=True, help="Plik JSON z listą pozycji kosztowych")
+    p.add_argument(
+        "--input",
+        required=False,
+        help=(
+            "Plik JSON z listą pozycji kosztowych. Domyślnie użyje ścieżki Stage5/TCO z config/core.yaml lub data/stage5/tco.json"
+        ),
+    )
     p.add_argument(
         "--artifact-root",
         default="var/audit/tco",
@@ -138,7 +257,37 @@ def _handle_summary(args: argparse.Namespace) -> int:
         print("Parametr --monthly-volume musi być nieujemny", file=sys.stderr)
         return 2
 
-    input_path = Path(args.input).expanduser()
+    input_argument = getattr(args, "input", None)
+    if input_argument:
+        input_path = Path(input_argument).expanduser()
+    else:
+        default_input, default_warnings, resolved_source = _resolve_default_summary_input()
+        for message in default_warnings:
+            print(message, file=sys.stderr)
+        if default_input is None:
+            print(
+                "Ostrzeżenie: nie podano --input, a nie znaleziono domyślnej ścieżki Stage5/TCO. Użyj --input, aby wskazać plik kosztów.",
+                file=sys.stderr,
+            )
+            return 0
+
+        input_path = default_input
+        if not input_path.exists():
+            if resolved_source == "config":
+                location_hint = str(DEFAULT_CORE_CONFIG_PATH)
+            elif resolved_source == "env":
+                location_hint = "zmienna środowiskowa STAGE5_TCO_INPUT"
+            else:
+                location_hint = str(DEFAULT_STAGE5_TCO_INPUT)
+            print(
+                f"Ostrzeżenie: nie podano --input, a plik Stage5/TCO {input_path} (źródło: {location_hint}) nie istnieje. "
+                "Pomiń ostrzeżenie, jeśli raport nie jest wymagany, lub użyj --input.",
+                file=sys.stderr,
+            )
+            return 0
+
+        print(f"Używam domyślnej ścieżki Stage5/TCO: {input_path}", file=sys.stderr)
+
     try:
         items = load_cost_items(input_path)
     except Exception as exc:
