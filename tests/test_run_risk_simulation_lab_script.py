@@ -190,15 +190,15 @@ def test_cli_stage5_latency_tco(tmp_path: Path, stage5_config: tuple[Path, Path]
 def test_parser_stage2_defaults() -> None:
     parser = _build_parser()
     args = parser.parse_args(["--profile", "all"])
-    assert args.config == str(DEFAULT_CONFIG_PATH)
-    assert args.output_dir == str(DEFAULT_OUTPUT_DIR)
+    assert args.config == DEFAULT_CONFIG_PATH
+    assert args.output_dir == DEFAULT_OUTPUT_DIR
     assert args.profile == ["all"]
 
 
 def test_parser_stage5_defaults() -> None:
     parser = _build_parser()
     args = parser.parse_args(["--scenario", "latency_spike", "--include-tco"])
-    assert args.config == str(DEFAULT_CONFIG_PATH)
-    assert args.output_dir == str(DEFAULT_OUTPUT_DIR)
+    assert args.config == DEFAULT_CONFIG_PATH
+    assert args.output_dir == DEFAULT_OUTPUT_DIR
     assert args.scenario == ["latency_spike"]
     assert args.include_tco is True

@@ -31,11 +31,15 @@ DEFAULT_CONFIG_PATH = REPO_ROOT / "config/core.yaml"
 DEFAULT_OUTPUT_DIR = REPO_ROOT / "reports/paper_labs"
 
 
+DEFAULT_CONFIG_PATH = "config/core.yaml"
+DEFAULT_OUTPUT_DIR = "reports/paper_labs"
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--config",
-        default=str(DEFAULT_CONFIG_PATH),
+        default=DEFAULT_CONFIG_PATH,
         help="Ścieżka do pliku config/core.yaml",
     )
     parser.add_argument(
@@ -76,7 +80,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--output-dir",
-        default=str(DEFAULT_OUTPUT_DIR),
+        default=DEFAULT_OUTPUT_DIR,
         help="Katalog, w którym zapisane zostaną raporty",
     )
     parser.add_argument(
