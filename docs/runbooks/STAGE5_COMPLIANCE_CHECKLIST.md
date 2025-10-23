@@ -29,7 +29,7 @@ Każdy dry-run oraz release Etapu 5 musi spełnić poniższe warunki przed promo
 ## Sekcja: Rotacja kluczy i bezpieczeństwo
 - [ ] `scripts/rotate_keys.py --dry-run` wykonane i zatwierdzone w decision logu; w przypadku rotacji produkcyjnej `--execute` z kopią zapasową offline.
   - Artefakty/Akceptacja: `var/audit/keys/rotation_plan_<data>.json`, wpis decision log HMAC.
-- [ ] Audit Stage5 compliance (`python scripts/audit_stage4_compliance.py --profile stage5`) rozszerzony o moduł TCO.
+- [ ] Audit Stage5 compliance (`python scripts/audit_stage4_compliance.py --profile stage5`) rozszerzony o moduły TCO i observability (SLO, rotacja kluczy).
   - Artefakty/Akceptacja: `var/audit/compliance/stage5_report.json`.
 - [ ] Weryfikacja uprawnień plików kluczy (`chmod 600`) oraz potwierdzenie podpisów bundli (`scripts/verify_signature.py`).
   - Artefakty/Akceptacja: raport `var/audit/security/key_permissions_<data>.json`.
