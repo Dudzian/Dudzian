@@ -61,6 +61,7 @@ dependencies = [
   "requests>=2.31",
   "responses>=0.25",
   "jsonschema>=4.21",
+  "sqlalchemy>=2.0",
 ]
 
 [project.optional-dependencies]
@@ -81,6 +82,7 @@ dev = [
   "lightgbm>=4.6",
   "requests>=2.31",
   "responses>=0.25",
+  "sqlalchemy>=2.0",
 ]
 desktop = [
   "pyinstaller>=6.5",
