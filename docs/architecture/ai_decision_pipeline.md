@@ -28,17 +28,19 @@
 | --- | --- | --- | --- |
 | `model_version` | string | Semantyczna wersja artefaktu (`major.minor.patch`). | `ModelRepository` |
 | `created_at` | ISO datetime | Znacznik czasu wygenerowania artefaktu. | `ModelTrainer` |
-| `target_scale` | string | Zakres targetu, np. `bps` lub `returns_pct`. | Dane treningowe |
-| `feature_scalers` | dict[str, {mean: float, std: float}] | Parametry normalizacji cech. | `ModelTrainer` |
+| `target_scale` | number | Odchylenie standardowe targetu (bps), wykorzystywane do kalibracji prawdopodobieństwa. | Dane treningowe |
+| `feature_scalers` | dict[str, {mean: float, stdev: float}] | Parametry normalizacji cech z porcji treningowej. | `ModelTrainer` |
 | `training_rows` | int | Liczba rekordów wykorzystanych w treningu. | `ModelTrainer` |
 | `validation_rows` | int | Liczba rekordów użytych do walidacji. | `WalkForwardValidator` / `ModelTrainer` |
 | `test_rows` | int | Liczba rekordów zestawu testowego (jeśli dotyczy). | `ModelTrainer` |
-| `metrics.train.mae` / `metrics.train.rmse` | float | Metryki na zbiorze treningowym. | `ModelTrainer` |
-| `metrics.validation.mae` / `metrics.validation.rmse` | float | Metryki na walidacji. | `WalkForwardValidator` |
-| `metrics.test.mae` / `metrics.test.rmse` | float | Metryki na zbiorze testowym (opcjonalne). | `ModelTrainer` |
-| `decision_journal_entry` | string | Identyfikator wpisu w decision journalu powiązany z artefaktem. | Decision journal |
+| `metrics.train` | dict[str, float] | Zestaw metryk MAE/RMSE/directional accuracy dla zbioru treningowego. | `ModelTrainer` |
+| `metrics.validation` | dict[str, float] | Metryki walidacyjne (puste, jeśli split=0). | `ModelTrainer` |
+| `metrics.test` | dict[str, float] | Metryki dla hold-out testu (puste, jeśli split=0). | `ModelTrainer` |
+| `metrics.summary` | dict[str, float] | Płaska reprezentacja metryk treningowych wzbogacona o prefiksowane wartości walidacji/testu (np. `validation_mae`, `test_directional_accuracy`) dla zachowania kompatybilności z konsumentami oczekującymi płaskiej mapy. | `ModelTrainer` |
+| `decision_journal_entry_id` | string | Identyfikator wpisu w decision journalu powiązany z artefaktem. | Decision journal |
 
 Artefakt powinien być podpisany kryptograficznie oraz przechowywany wraz z `checksums.sha256`, aby umożliwić audyt integralności. Schemat JSON przechowujemy w `docs/schemas/model_artifact.schema.json`, a każde odchylenie wymaga aktualizacji dokumentacji oraz zatwierdzenia compliance.
+W CI uruchamiamy walidację `tests/decision/test_model_artifact_schema.py`, która potwierdza zgodność artefaktu z tym schematem (w tym obecność pól `target_scale`, `training_rows` i ustrukturyzowanych metryk).
 
 ## Monitoring danych wejściowych
 

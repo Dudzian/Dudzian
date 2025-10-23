@@ -3217,10 +3217,40 @@ class AutoTrader:
         candidate_notional = self._estimate_candidate_notional(symbol)
         if ai_manager is not None and hasattr(ai_manager, "build_decision_engine_payload"):
             try:
-                return dict(result)  # type: ignore[arg-type]
-            except Exception:
-                continue
-        return None
+                engine_payload = ai_manager.build_decision_engine_payload(
+                    strategy=self.current_strategy,
+                    action="enter" if signal == "buy" else "exit",
+                    risk_profile=self._decision_risk_profile_name(),
+                    symbol=symbol,
+                    notional=candidate_notional,
+                    features=features,
+                )
+            except Exception:  # pragma: no cover - diagnostyka integracji
+                engine_payload = None
+                LOGGER.debug("AI manager decision payload generation failed", exc_info=True)
+            else:
+                if isinstance(engine_payload, Mapping):
+                    decision_section.update(engine_payload)
+                    if ai_context is None and isinstance(engine_payload.get("ai"), Mapping):
+                        ai_context = engine_payload.get("ai")
+        if ai_context:
+            expected_return, expected_probability, ai_payload = self._normalize_ai_context(
+                ai_context,
+                default_return_bps=expected_return,
+                default_probability=expected_probability,
+            )
+            decision_section["ai"] = ai_payload
+        candidate = DecisionCandidate(
+            strategy=self.current_strategy,
+            action="enter" if signal == "buy" else "exit",
+            risk_profile=self._decision_risk_profile_name(),
+            symbol=symbol,
+            notional=candidate_notional,
+            expected_return_bps=expected_return,
+            expected_probability=expected_probability,
+            metadata=metadata,
+        )
+        return candidate
 
     def _build_order_request(self, symbol: str, decision: RiskDecision) -> OrderRequest:
         signal = str(decision.details.get("signal", "hold")).lower()
@@ -5594,33 +5624,38 @@ class AutoTrader:
         self._last_regime = assessment
         self._last_risk_decision = decision
 
-            if trigger_filter is not None:
-                trigger_names = {
-                    str(trigger.get("name", "<unknown>")) for trigger in triggers
-                }
-                if not trigger_names & trigger_filter:
-                    continue
+        risk_service = self._resolve_risk_service()
+        risk_invoked = risk_service is not None
+        risk_response: Any | None = None
+        recorded_approval: bool | None = None
+        normalized_approval: bool | None = None
+        risk_error: BaseException | None = None
 
-            if trigger_label_filter is not None:
-                trigger_labels = {
-                    (
-                        _MISSING_GUARDRAIL_LABEL
-                        if trigger.get("label") is None
-                        else str(trigger.get("label"))
-                    )
-                    normalized_approval = False
-                    recorded_approval = False
-                    risk_error = exc
-                else:
-                    recorded_approval = self._coerce_risk_approval(risk_response)
-                    if recorded_approval is None:
-                        self._log(
-                            "Risk service returned an unsupported approval response; treating as rejected",
-                            level=logging.DEBUG,
-                        )
-                        normalized_approval = False
-                    else:
-                        normalized_approval = recorded_approval
+        if risk_service is not None:
+            try:
+                risk_response = self._invoke_risk_service(risk_service, decision)
+            except Exception as exc:  # pragma: no cover - defensive guard
+                risk_error = exc
+                self._log(
+                    "Risk service evaluation failed; treating as rejected",
+                    level=logging.ERROR,
+                    symbol=symbol,
+                    error=repr(exc),
+                )
+                recorded_approval = False
+                normalized_approval = False
+            else:
+                recorded_approval, normalized_approval = self._normalize_risk_approval(
+                    decision,
+                    risk_service,
+                    risk_response,
+                )
+
+        if normalized_approval is None:
+            normalized_approval = decision.should_trade if not risk_invoked else False
+        if recorded_approval is None and risk_invoked:
+            recorded_approval = normalized_approval
+
         if risk_invoked:
             self._record_risk_evaluation(
                 decision,
@@ -5700,108 +5735,6 @@ class AutoTrader:
                     payload={"reason": "no_service"},
                     risk_snapshot=self._capture_risk_snapshot(),
                 )
-
-            if trigger_unit_filter is not None:
-                trigger_units = {
-                    (
-                        _MISSING_GUARDRAIL_UNIT
-                        if trigger.get("unit") is None
-                        else str(trigger.get("unit"))
-                    )
-                    for trigger in triggers
-                }
-                if not trigger_units & trigger_unit_filter:
-                    continue
-
-            if (
-                trigger_threshold_filter is not None
-                or trigger_threshold_min is not None
-                or trigger_threshold_max is not None
-            ):
-                threshold_values: list[float] = []
-                threshold_missing = False
-                for trigger in triggers:
-                    raw_threshold = trigger.get("threshold")
-                    if raw_threshold is None:
-                        threshold_missing = True
-                    coerced_threshold = AutoTrader._coerce_float(raw_threshold)
-                    if coerced_threshold is not None:
-                        threshold_values.append(coerced_threshold)
-
-                if trigger_threshold_filter is not None:
-                    threshold_set, include_missing = trigger_threshold_filter
-                    match = False
-                    if include_missing and threshold_missing:
-                        match = True
-                    if not match and threshold_set:
-                        if any(value in threshold_set for value in threshold_values):
-                            match = True
-                    if not match:
-                        continue
-
-                if trigger_threshold_min is not None or trigger_threshold_max is not None:
-                    def _within_threshold_bounds(candidate: float) -> bool:
-                        if trigger_threshold_min is not None and candidate < trigger_threshold_min:
-                            return False
-                        if trigger_threshold_max is not None and candidate > trigger_threshold_max:
-                            return False
-                        return True
-
-                    if not any(
-                        _within_threshold_bounds(candidate)
-                        for candidate in threshold_values
-                    ):
-                        continue
-
-            if (
-                trigger_value_filter is not None
-                or trigger_value_min is not None
-                or trigger_value_max is not None
-            ):
-                value_values: list[float] = []
-                value_missing = False
-                for trigger in triggers:
-                    raw_value = trigger.get("value")
-                    if raw_value is None:
-                        value_missing = True
-                    coerced_value = AutoTrader._coerce_float(raw_value)
-                    if coerced_value is not None:
-                        value_values.append(coerced_value)
-
-                if trigger_value_filter is not None:
-                    value_set, include_missing = trigger_value_filter
-                    match = False
-                    if include_missing and value_missing:
-                        match = True
-                    if not match and value_set:
-                        if any(value in value_set for value in value_values):
-                            match = True
-                    if not match:
-                        continue
-
-                if trigger_value_min is not None or trigger_value_max is not None:
-                    def _within_value_bounds(candidate: float) -> bool:
-                        if trigger_value_min is not None and candidate < trigger_value_min:
-                            return False
-                        if trigger_value_max is not None and candidate > trigger_value_max:
-                            return False
-                        return True
-
-                    if not any(
-                        _within_value_bounds(candidate)
-                        for candidate in value_values
-                    ):
-                        continue
-
-            guardrail_records.append((entry, reasons, triggers))
-
-        return (
-            guardrail_records,
-            trimmed_by_ttl,
-            ttl_snapshot,
-            history_size,
-            filtered_records,
-        )
 
     def _apply_risk_evaluation_filters(
         self,
@@ -5952,6 +5885,7 @@ class AutoTrader:
 
     def _record_risk_evaluation(
         self,
+        decision: "RiskDecision",
         *,
         approved: bool | None,
         normalized: bool | None,
@@ -5976,7 +5910,9 @@ class AutoTrader:
         if error is not None:
             entry["error"] = repr(error)
         else:
-            entry["response"] = self._summarize_risk_response(response)
+            response_summary = self._summarize_risk_response(response)
+            if response_summary is not None:
+                entry["response"] = response_summary
         (
             trimmed_by_limit,
             trimmed_by_ttl,
@@ -6003,6 +5939,110 @@ class AutoTrader:
         )
         self._emit_risk_evaluation_event(payload)
         self._notify_risk_evaluation_listeners(payload)
+
+    def _resolve_risk_service(self) -> Any | None:
+        risk_service = getattr(self, "risk_service", None)
+        if risk_service is None:
+            risk_service = getattr(self, "core_risk_engine", None)
+        return risk_service
+
+    def _invoke_risk_service(self, service: Any, decision: "RiskDecision") -> Any:
+        if hasattr(service, "evaluate_decision"):
+            return service.evaluate_decision(decision)
+        if callable(service):  # pragma: no branch - simple delegation
+            return service(decision)
+        raise TypeError("Configured risk service is not callable")
+
+    def _normalize_risk_approval(
+        self,
+        decision: "RiskDecision",
+        service: Any,
+        response: Any,
+    ) -> tuple[bool | None, bool | None]:
+        approval: bool | None = None
+        normalized: bool | None = None
+
+        risk_details = decision.details.setdefault("risk_service", {})
+        risk_details["service"] = type(service).__name__
+        summary = self._summarize_risk_response(response)
+        if summary is not None:
+            risk_details["response"] = summary
+
+        candidate = response
+        additional_context: Mapping[str, Any] | None = None
+        if isinstance(response, tuple) and response:
+            candidate = response[0]
+            if len(response) > 1 and isinstance(response[1], Mapping):
+                additional_context = dict(response[1])
+        elif isinstance(response, list) and response:
+            candidate = response[0]
+        if additional_context:
+            risk_details["context"] = additional_context
+
+        approval = self._coerce_risk_approval(candidate)
+        if approval is None:
+            if isinstance(response, Mapping):
+                for key in ("approved", "allow", "should_trade", "trade"):
+                    if key in response:
+                        approval = self._coerce_risk_approval(response[key])
+                        if approval is not None:
+                            break
+            elif hasattr(response, "__dict__"):
+                for key in ("approved", "allow", "should_trade", "trade"):
+                    if hasattr(response, key):
+                        approval = self._coerce_risk_approval(getattr(response, key))
+                        if approval is not None:
+                            break
+
+        if approval is not None:
+            normalized = approval
+
+        return approval, normalized
+
+    def _coerce_risk_approval(self, candidate: Any) -> bool | None:
+        if isinstance(candidate, bool):
+            return candidate
+        if isinstance(candidate, enum.Enum):
+            return self._coerce_risk_approval(candidate.value)
+        if isinstance(candidate, (int, float)):
+            if candidate >= 1:
+                return True
+            if candidate <= 0:
+                return False
+            return None
+        if isinstance(candidate, str):
+            value = candidate.strip().lower()
+            if value in {"true", "yes", "y", "allow", "allowed", "approve", "approved", "accept", "accepted", "ok"}:
+                return True
+            if value in {"false", "no", "n", "deny", "denied", "block", "blocked", "reject", "rejected"}:
+                return False
+            return None
+        return None
+
+    def _summarize_risk_response(self, response: Any) -> dict[str, Any] | None:
+        if response is None:
+            return None
+
+        summary: dict[str, Any] = {"type": type(response).__name__}
+        if isinstance(response, str):
+            value = response.strip()
+            if len(value) > 120:
+                value = value[:117] + "..."
+            summary["value"] = value
+        elif isinstance(response, (bool, int, float)):
+            summary["value"] = response
+        elif isinstance(response, Mapping):
+            summary["size"] = len(response)
+            summary["keys"] = sorted(str(key) for key in response.keys())
+        elif isinstance(response, (list, tuple, set, frozenset)):
+            sequence = list(response)
+            summary["size"] = len(sequence)
+            if sequence:
+                preview = sequence[:5]
+                summary["preview"] = [repr(item) for item in preview]
+        else:
+            summary["repr"] = repr(response)
+        return summary
 
         iterator: Iterable[dict[str, Any]]
         if reverse:
@@ -6875,30 +6915,13 @@ class AutoTrader:
         *,
         since_ts: float | None,
         until_ts: float | None,
-        state_filter: set[str] | None,
-        reason_filter: set[str] | None,
-        mode_filter: set[str] | None,
-        decision_id_filter: set[str] | None = None,
-    ) -> tuple[list[dict[str, Any]], int, float | None, int]:
-        trimmed_by_ttl = 0
-        ttl_snapshot: float | None = None
-        history_size = 0
+        reverse: bool,
+    ) -> list[tuple[dict[str, Any], float | None, float | None]]:
         with self._lock:
             history_snapshot = list(self._controller_cycle_history)
 
-        filtered_records = self._apply_risk_evaluation_filters(
-            records,
-            include_errors=include_errors,
-            approved_filter=approved_filter,
-            normalized_filter=normalized_filter,
-            service_filter=service_filter,
-            since_ts=since_ts,
-            until_ts=until_ts,
-            state_filter=state_filter,
-            reason_filter=reason_filter,
-            mode_filter=mode_filter,
-            decision_id_filter=decision_id_filter,
-        )
+        if not history_snapshot:
+            return []
 
         filtered: list[tuple[dict[str, Any], float | None, float | None]] = []
         for entry in history_snapshot:
@@ -6925,64 +6948,72 @@ class AutoTrader:
         until: object = None,
         limit: int | None = None,
         reverse: bool = False,
-        service: str | None | Iterable[str | None] | object = _NO_FILTER,
-        decision_state: str | Iterable[str | None] | object = _NO_FILTER,
-        decision_reason: str | Iterable[str | None] | object = _NO_FILTER,
-        decision_mode: str | Iterable[str | None] | object = _NO_FILTER,
-        decision_id: str | Iterable[str | None] | object = _NO_FILTER,
-        since: Any = None,
-        until: Any = None,
+        include_sequences: bool = True,
+        include_counts: bool = True,
+        coerce_timestamps: bool = False,
+        tz: tzinfo | None = timezone.utc,
     ) -> list[dict[str, Any]]:
-        approved_filter = self._prepare_bool_filter(approved)
-        normalized_filter = self._prepare_bool_filter(normalized)
-        service_filter = self._prepare_service_filter(service)
-        decision_state_filter = self._prepare_decision_filter(
-            decision_state,
-            missing_token=_MISSING_DECISION_STATE,
-        )
-        decision_reason_filter = self._prepare_decision_filter(
-            decision_reason,
-            missing_token=_MISSING_DECISION_REASON,
-        )
-        decision_mode_filter = self._prepare_decision_filter(
-            decision_mode,
-            missing_token=_MISSING_DECISION_MODE,
-        )
-        decision_id_filter = self._prepare_decision_filter(
-            decision_id,
-            missing_token=_MISSING_DECISION_ID,
-        )
+        """Zwraca listę rekordów historii cykli kontrolera."""
+
+        normalized_limit = self._normalize_history_export_limit(limit)
+        if normalized_limit == 0:
+            return []
+
         since_ts = self._normalize_time_bound(since)
         until_ts = self._normalize_time_bound(until)
 
         filtered = self._filtered_controller_cycle_history(
             since_ts=since_ts,
             until_ts=until_ts,
-            state_filter=decision_state_filter,
-            reason_filter=decision_reason_filter,
-            mode_filter=decision_mode_filter,
-            decision_id_filter=decision_id_filter,
+            reverse=reverse,
         )
 
-        self._log_risk_history_trimmed(
-            context="get",
-            trimmed=trimmed_by_ttl,
-            ttl=ttl_snapshot,
-            history=history_size,
-        )
+        if not filtered:
+            return []
 
-        iterator: Iterable[dict[str, Any]]
-        if reverse:
-            iterator = reversed(filtered_records)
-        else:
-            iterator = iter(filtered_records)
+        def _convert_timestamp(value_ts: float | None, raw: object) -> object:
+            if not coerce_timestamps:
+                return raw
+            if value_ts is None:
+                return None
+            if tz is not None:
+                return datetime.fromtimestamp(value_ts, tz=tz)
+            return datetime.fromtimestamp(value_ts, tz=timezone.utc).replace(tzinfo=None)
 
-        results: list[dict[str, Any]] = []
-        for entry in iterator:
-            results.append(copy.deepcopy(entry))
-            if normalized_limit is not None and len(results) >= normalized_limit:
+        records: list[dict[str, Any]] = []
+        for entry, started_ts, finished_ts in filtered:
+            signals = tuple(entry.get("signals", ()) or ())
+            results = tuple(entry.get("results", ()) or ())
+            orders_value = entry.get("orders")
+            if isinstance(orders_value, (int, float)):
+                orders_count = max(0, int(orders_value))
+            else:
+                orders_count = len(results)
+
+            started_raw = entry.get("started_at")
+            finished_raw = entry.get("finished_at")
+
+            record: dict[str, Any] = {
+                "sequence": entry.get("sequence"),
+                "duration_s": entry.get("duration_s"),
+                "orders": orders_count,
+                "started_at": _convert_timestamp(started_ts, started_raw),
+                "finished_at": _convert_timestamp(finished_ts, finished_raw),
+            }
+
+            if include_counts:
+                record["signals_count"] = len(signals)
+                record["results_count"] = len(results)
+
+            if include_sequences:
+                record["signals"] = signals
+                record["results"] = results
+
+            records.append(record)
+            if normalized_limit is not None and len(records) >= normalized_limit:
                 break
-        return results
+
+        return records
 
     def clear_risk_evaluations(self) -> None:
         with self._lock:
@@ -9339,7 +9370,7 @@ class AutoTrader:
         decision_state: str | Iterable[str | None] | object = _NO_FILTER,
         decision_reason: str | Iterable[str | None] | object = _NO_FILTER,
         decision_mode: str | Iterable[str | None] | object = _NO_FILTER,
-        decision_id: str | Iterable[str | None] | object = _NO_FILTER,
+        decision_id_filter: str | Iterable[str | None] | object = _NO_FILTER,
         since: Any = None,
         until: Any = None,
         include_decision: bool = True,
@@ -9382,7 +9413,7 @@ class AutoTrader:
             decision_state=decision_state,
             decision_reason=decision_reason,
             decision_mode=decision_mode,
-            decision_id=decision_id,
+            decision_id=decision_id_filter,
             since=since,
             until=until,
         )

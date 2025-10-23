@@ -41,6 +41,12 @@ def test_require_real_models_passes_when_repository_loaded(tmp_path) -> None:
         trained_at=artifact.trained_at,
         metrics=artifact.metrics,
         metadata=metadata,
+        target_scale=artifact.target_scale,
+        training_rows=artifact.training_rows,
+        validation_rows=artifact.validation_rows,
+        test_rows=artifact.test_rows,
+        feature_scalers=artifact.feature_scalers,
+        decision_journal_entry_id=artifact.decision_journal_entry_id,
         backend=artifact.backend,
     )
     repo.save(enriched, "btc_trend.json")

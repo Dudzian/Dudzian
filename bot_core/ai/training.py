@@ -398,22 +398,23 @@ class ModelTrainer:
         scalers = self._compute_scalers(train_matrix, feature_names)
         metadata: MutableMapping[str, object] = dict(dataset.metadata)
         metadata.setdefault("target_scale", dataset.target_scale)
-        metadata["feature_scalers"] = {
-            name: {"mean": mean, "stdev": stdev}
-            for name, (mean, stdev) in scalers.items()
-        }
-        metadata["training_rows"] = len(train_matrix)
-        metadata["validation_rows"] = len(validation_matrix)
-        metadata["test_rows"] = len(test_matrix)
         metadata["backend"] = self.backend
         if self.validation_split > 0.0:
             metadata["validation_split"] = self.validation_split
+        if self.test_split > 0.0:
+            metadata["test_split"] = self.test_split
         total_rows = len(matrix)
+        training_rows = len(train_matrix)
+        validation_rows = len(validation_matrix)
+        test_rows = len(test_matrix)
         if total_rows > 0:
             metadata["dataset_split"] = {
-                "train_ratio": len(train_matrix) / total_rows,
-                "validation_ratio": len(validation_matrix) / total_rows,
-                "test_ratio": len(test_matrix) / total_rows,
+                "train_ratio": training_rows / total_rows,
+                "validation_ratio": validation_rows / total_rows,
+                "test_ratio": test_rows / total_rows,
+                "train_rows": training_rows,
+                "validation_rows": validation_rows,
+                "test_rows": test_rows,
                 "requested_validation_ratio": self.validation_split,
                 "requested_test_ratio": self.test_split,
             }
@@ -426,6 +427,14 @@ class ModelTrainer:
             ],
         }
 
+        decision_journal_entry_id: str | None
+        raw_journal_entry = metadata.get("decision_journal_entry_id")
+        if raw_journal_entry is None:
+            raw_journal_entry = metadata.get("decision_journal_entry")
+        decision_journal_entry_id = (
+            str(raw_journal_entry) if raw_journal_entry is not None else None
+        )
+
         if self.backend == "builtin":
             return self._train_builtin(
                 train_matrix,
@@ -437,6 +446,11 @@ class ModelTrainer:
                 feature_names,
                 scalers,
                 metadata,
+                target_scale=float(dataset.target_scale),
+                training_rows=training_rows,
+                validation_rows=validation_rows,
+                test_rows=test_rows,
+                decision_journal_entry_id=decision_journal_entry_id,
             )
         return self._train_external(
             train_matrix,
@@ -448,6 +462,11 @@ class ModelTrainer:
             feature_names,
             scalers,
             metadata,
+            target_scale=float(dataset.target_scale),
+            training_rows=training_rows,
+            validation_rows=validation_rows,
+            test_rows=test_rows,
+            decision_journal_entry_id=decision_journal_entry_id,
         )
 
     def _train_builtin(
@@ -461,6 +480,12 @@ class ModelTrainer:
         feature_names: Sequence[str],
         scalers: Mapping[str, tuple[float, float]],
         metadata: MutableMapping[str, object],
+        *,
+        target_scale: float,
+        training_rows: int,
+        validation_rows: int,
+        test_rows: int,
+        decision_journal_entry_id: str | None,
     ) -> ModelArtifact:
         model = SimpleGradientBoostingModel(
             learning_rate=self.learning_rate,
@@ -477,7 +502,6 @@ class ModelTrainer:
         train_metrics = self._compute_metrics(train_targets, train_predictions)
         slope, intercept = _linear_calibration(train_targets, train_predictions)
         metadata["calibration"] = {"slope": slope, "intercept": intercept}
-        metrics = self._compose_metrics(train_metrics)
         validation_metrics: Mapping[str, float] | None = None
         if validation_matrix:
             validation_samples = self._rows_to_samples(validation_matrix, feature_names)
@@ -488,17 +512,25 @@ class ModelTrainer:
             test_samples = self._rows_to_samples(test_matrix, feature_names)
             test_predictions = model.batch_predict(test_samples)
             test_metrics = self._compute_metrics(test_targets, test_predictions)
-        metrics = self._compose_metrics(train_metrics, validation_metrics, test_metrics)
-        if validation_metrics:
-            metadata["validation_metrics"] = dict(validation_metrics)
-        if test_metrics:
-            metadata["test_metrics"] = dict(test_metrics)
+        metrics = self._compose_metrics(
+            train_metrics,
+            validation_metrics,
+            test_metrics,
+            validation_rows=validation_rows,
+            test_rows=test_rows,
+        )
         artifact = ModelArtifact(
             feature_names=tuple(model.feature_names),
             model_state=model.to_state(),
             trained_at=datetime.now(timezone.utc),
             metrics=metrics,
             metadata=metadata,
+            target_scale=target_scale,
+            training_rows=training_rows,
+            validation_rows=validation_rows,
+            test_rows=test_rows,
+            feature_scalers=scalers,
+            decision_journal_entry_id=decision_journal_entry_id,
             backend=self.backend,
         )
         return artifact
@@ -514,6 +546,12 @@ class ModelTrainer:
         feature_names: Sequence[str],
         scalers: Mapping[str, tuple[float, float]],
         metadata: MutableMapping[str, object],
+        *,
+        target_scale: float,
+        training_rows: int,
+        validation_rows: int,
+        test_rows: int,
+        decision_journal_entry_id: str | None,
     ) -> ModelArtifact:
         adapter = get_external_model_adapter(self.backend)
         context = ExternalTrainingContext(
@@ -534,7 +572,6 @@ class ModelTrainer:
         train_metrics = self._compute_metrics(train_targets, train_predictions)
         slope, intercept = _linear_calibration(train_targets, train_predictions)
         metadata["calibration"] = {"slope": slope, "intercept": intercept}
-        metrics = self._compose_metrics(train_metrics)
         validation_metrics: Mapping[str, float] | None = None
         if validation_matrix:
             validation_samples = self._rows_to_samples(validation_matrix, feature_names)
@@ -545,13 +582,20 @@ class ModelTrainer:
             test_samples = self._rows_to_samples(test_matrix, feature_names)
             test_predictions = list(model.batch_predict(test_samples))
             test_metrics = self._compute_metrics(test_targets, test_predictions)
-        metrics = self._compose_metrics(train_metrics, validation_metrics, test_metrics)
-        if validation_metrics:
-            metadata["validation_metrics"] = dict(validation_metrics)
-        if test_metrics:
-            metadata["test_metrics"] = dict(test_metrics)
+        metrics = self._compose_metrics(
+            train_metrics,
+            validation_metrics,
+            test_metrics,
+            validation_rows=validation_rows,
+            test_rows=test_rows,
+        )
         if result.metrics:
-            metrics = {**metrics, **result.metrics}
+            summary_block = metrics.setdefault("summary", {})
+            for key, value in result.metrics.items():
+                try:
+                    summary_block[str(key)] = float(value)
+                except (TypeError, ValueError):
+                    continue
         if result.metadata:
             metadata.update(result.metadata)
         artifact = ModelArtifact(
@@ -560,6 +604,12 @@ class ModelTrainer:
             trained_at=datetime.now(timezone.utc),
             metrics=metrics,
             metadata=metadata,
+            target_scale=target_scale,
+            training_rows=training_rows,
+            validation_rows=validation_rows,
+            test_rows=test_rows,
+            feature_scalers=scalers,
+            decision_journal_entry_id=decision_journal_entry_id,
             backend=self.backend,
         )
         return artifact
@@ -914,187 +964,88 @@ class ModelTrainer:
         train_metrics: Mapping[str, float],
         validation_metrics: Mapping[str, float] | None = None,
         test_metrics: Mapping[str, float] | None = None,
-    ) -> Mapping[str, float]:
-        metrics: MutableMapping[str, float] = {
-            "mae": float(train_metrics.get("mae", 0.0)),
-            "mse": float(train_metrics.get("mse", 0.0)),
-            "rmse": float(train_metrics.get("rmse", 0.0)),
-            "directional_accuracy": float(train_metrics.get("directional_accuracy", 0.0)),
-            "mape": float(train_metrics.get("mape", 0.0)),
-            "r2": float(train_metrics.get("r2", 0.0)),
-            "median_absolute_error": float(
-                train_metrics.get("median_absolute_error", 0.0)
-            ),
-            "explained_variance": float(train_metrics.get("explained_variance", 0.0)),
-            "max_error": float(train_metrics.get("max_error", 0.0)),
-            "smape": float(train_metrics.get("smape", 0.0)),
-            "mean_bias_error": float(train_metrics.get("mean_bias_error", 0.0)),
-            "wmape": float(train_metrics.get("wmape", 0.0)),
-            "mpe": float(train_metrics.get("mpe", 0.0)),
-            "rmspe": float(train_metrics.get("rmspe", 0.0)),
-            "median_percentage_error": float(
-                train_metrics.get("median_percentage_error", 0.0)
-            ),
-            "median_absolute_percentage_error": float(
-                train_metrics.get("median_absolute_percentage_error", 0.0)
-            ),
-            "mase": float(train_metrics.get("mase", 0.0)),
-            "msle": float(train_metrics.get("msle", 0.0)),
-            "mean_absolute_log_error": float(
-                train_metrics.get("mean_absolute_log_error", 0.0)
-            ),
-            "mean_poisson_deviance": float(
-                train_metrics.get("mean_poisson_deviance", 0.0)
-            ),
-            "mean_gamma_deviance": float(
-                train_metrics.get("mean_gamma_deviance", 0.0)
-            ),
-            "mean_tweedie_deviance": float(
-                train_metrics.get("mean_tweedie_deviance", 0.0)
-            ),
-            "train_mae": float(train_metrics.get("mae", 0.0)),
-            "train_mse": float(train_metrics.get("mse", 0.0)),
-            "train_rmse": float(train_metrics.get("rmse", 0.0)),
-            "train_directional_accuracy": float(train_metrics.get("directional_accuracy", 0.0)),
-            "train_mape": float(train_metrics.get("mape", 0.0)),
-            "train_r2": float(train_metrics.get("r2", 0.0)),
-            "train_median_absolute_error": float(
-                train_metrics.get("median_absolute_error", 0.0)
-            ),
-            "train_explained_variance": float(
-                train_metrics.get("explained_variance", 0.0)
-            ),
-            "train_max_error": float(train_metrics.get("max_error", 0.0)),
-            "train_smape": float(train_metrics.get("smape", 0.0)),
-            "train_mean_bias_error": float(train_metrics.get("mean_bias_error", 0.0)),
-            "train_wmape": float(train_metrics.get("wmape", 0.0)),
-            "train_mpe": float(train_metrics.get("mpe", 0.0)),
-            "train_rmspe": float(train_metrics.get("rmspe", 0.0)),
-            "train_median_percentage_error": float(
-                train_metrics.get("median_percentage_error", 0.0)
-            ),
-            "train_median_absolute_percentage_error": float(
-                train_metrics.get("median_absolute_percentage_error", 0.0)
-            ),
-            "train_mase": float(train_metrics.get("mase", 0.0)),
-            "train_msle": float(train_metrics.get("msle", 0.0)),
-            "train_mean_absolute_log_error": float(
-                train_metrics.get("mean_absolute_log_error", 0.0)
-            ),
-            "train_mean_poisson_deviance": float(
-                train_metrics.get("mean_poisson_deviance", 0.0)
-            ),
-            "train_mean_gamma_deviance": float(
-                train_metrics.get("mean_gamma_deviance", 0.0)
-            ),
-            "train_mean_tweedie_deviance": float(
-                train_metrics.get("mean_tweedie_deviance", 0.0)
-            ),
+        *,
+        validation_rows: int = 0,
+        test_rows: int = 0,
+    ) -> Mapping[str, Mapping[str, float]]:
+        def _build_block(
+            source: Mapping[str, float] | None,
+            *,
+            include_defaults: bool = False,
+        ) -> dict[str, float]:
+            block: dict[str, float] = {}
+            if include_defaults or source:
+                for key in (
+                    "mae",
+                    "mse",
+                    "rmse",
+                    "directional_accuracy",
+                    "mape",
+                    "r2",
+                    "median_absolute_error",
+                    "explained_variance",
+                    "max_error",
+                    "smape",
+                    "mean_bias_error",
+                    "wmape",
+                    "mpe",
+                    "rmspe",
+                    "median_percentage_error",
+                    "median_absolute_percentage_error",
+                    "mase",
+                    "msle",
+                    "mean_absolute_log_error",
+                    "mean_poisson_deviance",
+                    "mean_gamma_deviance",
+                    "mean_tweedie_deviance",
+                ):
+                    value = float(source.get(key, 0.0)) if source else 0.0
+                    if include_defaults or (source and (key in source or value != 0.0)):
+                        block[key] = value
+                if source and "expected_pnl" in source:
+                    block["expected_pnl"] = float(source.get("expected_pnl", 0.0))
+                if source:
+                    for key, value in source.items():
+                        if key in block:
+                            continue
+                        try:
+                            block[str(key)] = float(value)
+                        except (TypeError, ValueError):
+                            continue
+            return block
+
+        train_block = _build_block(train_metrics, include_defaults=True)
+        validation_block = _build_block(
+            validation_metrics, include_defaults=validation_metrics is not None
+        )
+        test_block = _build_block(test_metrics, include_defaults=test_metrics is not None)
+
+        summary_block = dict(train_block)
+        if validation_metrics and validation_rows > 0:
+            summary_block.setdefault("validation_mae", validation_block.get("mae", 0.0))
+            summary_block.setdefault(
+                "validation_directional_accuracy",
+                validation_block.get("directional_accuracy", 0.0),
+            )
+            if "expected_pnl" in validation_block:
+                summary_block.setdefault("validation_expected_pnl", validation_block["expected_pnl"])
+        if test_metrics and test_rows > 0:
+            summary_block.setdefault("test_mae", test_block.get("mae", 0.0))
+            summary_block.setdefault(
+                "test_directional_accuracy",
+                test_block.get("directional_accuracy", 0.0),
+            )
+            if "expected_pnl" in test_block:
+                summary_block.setdefault("test_expected_pnl", test_block["expected_pnl"])
+        if "expected_pnl" not in summary_block and "expected_pnl" in train_block:
+            summary_block["expected_pnl"] = train_block["expected_pnl"]
+
+        return {
+            "summary": summary_block,
+            "train": train_block,
+            "validation": validation_block,
+            "test": test_block,
         }
-        if "expected_pnl" in train_metrics:
-            metrics["expected_pnl"] = float(train_metrics.get("expected_pnl", 0.0))
-            metrics["train_expected_pnl"] = float(train_metrics.get("expected_pnl", 0.0))
-        if validation_metrics:
-            metrics.update(
-                {
-                    "validation_mae": float(validation_metrics.get("mae", 0.0)),
-                    "validation_mse": float(validation_metrics.get("mse", 0.0)),
-                    "validation_rmse": float(validation_metrics.get("rmse", 0.0)),
-                    "validation_directional_accuracy": float(
-                        validation_metrics.get("directional_accuracy", 0.0)
-                    ),
-                    "validation_mape": float(validation_metrics.get("mape", 0.0)),
-                    "validation_r2": float(validation_metrics.get("r2", 0.0)),
-                    "validation_median_absolute_error": float(
-                        validation_metrics.get("median_absolute_error", 0.0)
-                    ),
-                    "validation_explained_variance": float(
-                        validation_metrics.get("explained_variance", 0.0)
-                    ),
-                    "validation_max_error": float(
-                        validation_metrics.get("max_error", 0.0)
-                    ),
-                    "validation_smape": float(validation_metrics.get("smape", 0.0)),
-                    "validation_mean_bias_error": float(
-                        validation_metrics.get("mean_bias_error", 0.0)
-                    ),
-                    "validation_wmape": float(validation_metrics.get("wmape", 0.0)),
-                    "validation_mpe": float(validation_metrics.get("mpe", 0.0)),
-                    "validation_rmspe": float(validation_metrics.get("rmspe", 0.0)),
-                    "validation_median_percentage_error": float(
-                        validation_metrics.get("median_percentage_error", 0.0)
-                    ),
-                    "validation_median_absolute_percentage_error": float(
-                        validation_metrics.get("median_absolute_percentage_error", 0.0)
-                    ),
-                    "validation_mase": float(validation_metrics.get("mase", 0.0)),
-                    "validation_msle": float(validation_metrics.get("msle", 0.0)),
-                    "validation_mean_absolute_log_error": float(
-                        validation_metrics.get("mean_absolute_log_error", 0.0)
-                    ),
-                    "validation_mean_poisson_deviance": float(
-                        validation_metrics.get("mean_poisson_deviance", 0.0)
-                    ),
-                    "validation_mean_gamma_deviance": float(
-                        validation_metrics.get("mean_gamma_deviance", 0.0)
-                    ),
-                    "validation_mean_tweedie_deviance": float(
-                        validation_metrics.get("mean_tweedie_deviance", 0.0)
-                    ),
-                }
-            )
-        if test_metrics:
-            metrics.update(
-                {
-                    "test_mae": float(test_metrics.get("mae", 0.0)),
-                    "test_mse": float(test_metrics.get("mse", 0.0)),
-                    "test_rmse": float(test_metrics.get("rmse", 0.0)),
-                    "test_directional_accuracy": float(
-                        test_metrics.get("directional_accuracy", 0.0)
-                    ),
-                    "test_mape": float(test_metrics.get("mape", 0.0)),
-                    "test_r2": float(test_metrics.get("r2", 0.0)),
-                    "test_median_absolute_error": float(
-                        test_metrics.get("median_absolute_error", 0.0)
-                    ),
-                    "test_explained_variance": float(
-                        test_metrics.get("explained_variance", 0.0)
-                    ),
-                    "test_max_error": float(test_metrics.get("max_error", 0.0)),
-                    "test_smape": float(test_metrics.get("smape", 0.0)),
-                    "test_mean_bias_error": float(
-                        test_metrics.get("mean_bias_error", 0.0)
-                    ),
-                    "test_wmape": float(test_metrics.get("wmape", 0.0)),
-                    "test_mpe": float(test_metrics.get("mpe", 0.0)),
-                    "test_rmspe": float(test_metrics.get("rmspe", 0.0)),
-                    "test_median_percentage_error": float(
-                        test_metrics.get("median_percentage_error", 0.0)
-                    ),
-                    "test_median_absolute_percentage_error": float(
-                        test_metrics.get("median_absolute_percentage_error", 0.0)
-                    ),
-                    "test_mase": float(test_metrics.get("mase", 0.0)),
-                    "test_msle": float(test_metrics.get("msle", 0.0)),
-                    "test_mean_absolute_log_error": float(
-                        test_metrics.get("mean_absolute_log_error", 0.0)
-                    ),
-                    "test_mean_poisson_deviance": float(
-                        test_metrics.get("mean_poisson_deviance", 0.0)
-                    ),
-                    "test_mean_gamma_deviance": float(
-                        test_metrics.get("mean_gamma_deviance", 0.0)
-                    ),
-                    "test_mean_tweedie_deviance": float(
-                        test_metrics.get("mean_tweedie_deviance", 0.0)
-                    ),
-                }
-            )
-            if "expected_pnl" in validation_metrics:
-                metrics["validation_expected_pnl"] = float(
-                    validation_metrics.get("expected_pnl", 0.0)
-                )
-        return metrics
 
 
 class _LinearAdapterModel:

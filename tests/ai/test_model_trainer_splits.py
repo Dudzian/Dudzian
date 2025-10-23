@@ -30,22 +30,26 @@ def test_model_trainer_emits_test_metrics() -> None:
     )
     artifact = trainer.train(dataset)
 
-    total_rows = (
-        artifact.metadata["training_rows"]
-        + artifact.metadata["validation_rows"]
-        + artifact.metadata["test_rows"]
-    )
+    total_rows = artifact.training_rows + artifact.validation_rows + artifact.test_rows
     assert total_rows == len(dataset.vectors)
-    assert artifact.metadata["validation_rows"] > 0
-    assert artifact.metadata["test_rows"] > 0
+    assert artifact.validation_rows > 0
+    assert artifact.test_rows > 0
     assert "dataset_split" in artifact.metadata
     assert artifact.metadata["dataset_split"]["validation_ratio"] == pytest.approx(0.2)
     assert artifact.metadata["dataset_split"]["test_ratio"] == pytest.approx(0.1)
 
-    assert "validation_mae" in artifact.metrics
-    assert "test_mae" in artifact.metrics
-    assert "test_metrics" in artifact.metadata
-    assert artifact.metadata["test_metrics"]["mae"] == pytest.approx(
-        artifact.metrics["test_mae"]
+    assert "validation" in artifact.metrics
+    assert "test" in artifact.metrics
+    assert "summary" in artifact.metrics
+    assert artifact.metrics["validation"].get("mae", 0.0) >= 0.0
+    assert artifact.metrics["test"].get("mae", 0.0) >= 0.0
+    assert artifact.metrics["summary"]["mae"] == pytest.approx(
+        artifact.metrics["train"]["mae"]
+    )
+    assert artifact.metrics["summary"]["test_mae"] == pytest.approx(
+        artifact.metrics["test"]["mae"]
+    )
+    assert artifact.metrics["summary"]["validation_mae"] == pytest.approx(
+        artifact.metrics["validation"]["mae"]
     )
 
