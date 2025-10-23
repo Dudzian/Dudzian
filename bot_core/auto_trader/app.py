@@ -505,6 +505,28 @@ class AutoTrader:
 
         self._thresholds = self._thresholds_loader()
 
+    def _normalise_cycle_history_limit(self, limit: int | None) -> int:
+        if limit is None:
+            return -1
+        try:
+            value = int(limit)
+        except (TypeError, ValueError):
+            return -1
+        if value <= 0:
+            return -1
+        return value
+
+    def _normalise_cycle_history_ttl(self, ttl: float | None) -> float | None:
+        if ttl is None:
+            return None
+        try:
+            value = float(ttl)
+        except (TypeError, ValueError):
+            return None
+        if not math.isfinite(value) or value <= 0.0:
+            return None
+        return value
+
     # ------------------------------------------------------------------
     # Normalisers
     # ------------------------------------------------------------------

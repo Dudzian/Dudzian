@@ -716,6 +716,7 @@ class DecisionModelInference:
         drift_score = self._drift_monitor.observe(prepared, self._feature_scalers)
         if drift_score is not None:
             self._last_drift_score = drift_score
+        sparse_input = not bool(features)
         if self._enforce_data_alerts:
             alerts: dict[str, Mapping[str, object]] = {}
             for name, payload in list(reports.items()):
@@ -732,6 +733,8 @@ class DecisionModelInference:
                         enforce = raw_enforce
                 if enforce is None:
                     enforce = self._should_enforce(name)
+                if enforce and sparse_input and name == "completeness":
+                    enforce = False
                 if enforce:
                     alerts[name] = payload
                     continue

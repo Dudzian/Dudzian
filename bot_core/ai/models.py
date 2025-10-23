@@ -240,6 +240,16 @@ class ModelMetrics(_MetricsView):
     def splits(self) -> Mapping[str, Mapping[str, float]]:
         return self._structured
 
+    def __eq__(self, other: object) -> bool:  # pragma: no cover - prosty operator
+        if isinstance(other, Mapping):
+            if not other:
+                return all(
+                    not isinstance(block, Mapping) or not block
+                    for block in self._base.values()
+                )
+            return dict(self.items()) == dict(other.items())
+        return dict(self.items()) == other
+
     def to_dict(self) -> dict[str, dict[str, float]]:
         """Zwraca metryki jako głęboko kopiowalny słownik gotowy do serializacji."""
 

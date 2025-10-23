@@ -762,6 +762,7 @@ class AIManager:
         self._audit_root = Path(audit_root) if audit_root is not None else None
         self._last_drift_report_path: Path | None = None
         self._last_data_quality_report_path: Path | None = None
+        self._require_compliance_sign_offs = False
         self._decision_journal = decision_journal
         if decision_journal_context is not None and not isinstance(decision_journal_context, Mapping):
             raise TypeError("decision_journal_context musi być mapowaniem lub None")
@@ -843,6 +844,11 @@ class AIManager:
         """Zwraca ścieżkę ostatniego zapisanego raportu jakości danych."""
 
         return self._last_data_quality_report_path
+
+    def set_compliance_sign_off_requirement(self, enabled: bool) -> None:
+        """Włącza lub wyłącza bramkę podpisów compliance dla aktywacji modeli."""
+
+        self._require_compliance_sign_offs = bool(enabled)
 
     def register_data_quality_check(self, check: DataQualityCheck) -> None:
         """Rejestruje kontrolę jakości danych wykonywaną podczas pipeline'u."""
@@ -1593,6 +1599,38 @@ class AIManager:
 
         scheduler = self._ensure_training_scheduler()
         model_factory = trainer_factory or (lambda: ModelTrainer())
+
+        default_scheduler_path = Path("audit/ai_decision/scheduler.json")
+        try:
+            current_path = (
+                Path(schedule.persistence_path)
+                if getattr(schedule, "persistence_path", None) is not None
+                else None
+            )
+        except TypeError:
+            current_path = None
+        if current_path is None or current_path == default_scheduler_path:
+            base_dir = (
+                Path(self._audit_root)
+                if self._audit_root is not None
+                else (self.model_dir / "schedules")
+            )
+            base_dir.mkdir(parents=True, exist_ok=True)
+            new_path = base_dir / f"{key}_scheduler.json"
+            schedule.persistence_path = new_path
+            if not new_path.exists():
+                schedule.last_run = None
+                schedule.updated_at = None
+                schedule.last_failure = None
+                schedule.failure_streak = 0
+                schedule.last_failure_reason = None
+                schedule.cooldown_until = None
+                schedule.paused_until = None
+                schedule.paused_reason = None
+                try:
+                    schedule._persist_state()
+                except Exception:  # pragma: no cover - brak wpływu na logikę treningu
+                    pass
 
         repository: ModelRepository
         if attach_to_decision:
