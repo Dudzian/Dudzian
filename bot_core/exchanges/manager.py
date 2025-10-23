@@ -158,18 +158,20 @@ class NativeAdapterInfo:
 def register_native_adapter(
     *,
     exchange_id: str,
-    mode: Mode,
+    mode: Mode | str,
     factory: Any,
     default_settings: Mapping[str, object] | None = None,
     supports_testnet: bool = True,
     source: str | os.PathLike[str] | None = None,
     dynamic: bool = False,
 ) -> None:
-    """Registers a native adapter factory used by :class:`ExchangeManager`.
+    """Rejestruje fabrykę adaptera wykorzystywaną przez :class:`ExchangeManager`.
 
-    Tests rely on this helper to plug in lightweight fakes without
-    modifying global mappings directly.  Registrations are idempotent –
-    the last call wins which allows overriding defaults if required.
+    ``mode`` może być przekazany jako instancja :class:`Mode` lub napis
+    ``"margin"``/``"futures"``.  Testy korzystają z tego helpera, aby
+    wstrzykiwać lekkie atrapy bez modyfikowania globalnych struktur.
+    Rejestracje są idempotentne – ostatnie wywołanie wygrywa, co pozwala
+    nadpisywać domyślne ustawienia w razie potrzeby.
     """
 
     if mode not in {Mode.MARGIN, Mode.FUTURES}:
