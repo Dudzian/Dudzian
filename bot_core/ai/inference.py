@@ -299,6 +299,12 @@ class ModelRepository:
             trained_at=artifact.trained_at,
             metrics=artifact.metrics,
             metadata=base_metadata,
+            target_scale=artifact.target_scale,
+            training_rows=artifact.training_rows,
+            validation_rows=artifact.validation_rows,
+            test_rows=artifact.test_rows,
+            feature_scalers=artifact.feature_scalers,
+            decision_journal_entry_id=artifact.decision_journal_entry_id,
             backend=artifact.backend,
         )
         publish_aliases = tuple(aliases) if aliases is not None else ("latest",)
@@ -596,8 +602,19 @@ class DecisionModelInference:
         self._artifact = self._repository.load(artifact)
         self._model = self._artifact.build_model()
         metadata = dict(self._artifact.metadata)
-        self._target_scale = float(metadata.get("target_scale", 1.0))
-        self._feature_scalers = self._extract_scalers(metadata)
+        self._target_scale = float(
+            getattr(self._artifact, "target_scale", metadata.get("target_scale", 1.0))
+        )
+        scalers_field = getattr(self._artifact, "feature_scalers", {})
+        if isinstance(scalers_field, Mapping):
+            self._feature_scalers = {
+                str(name): (float(pair[0]), float(pair[1]))
+                for name, pair in scalers_field.items()
+            }
+        else:
+            self._feature_scalers = {}
+        if not self._feature_scalers:
+            self._feature_scalers = self._extract_scalers(metadata)
         self._calibration = self._extract_calibration(metadata)
         self._completeness_watcher.configure_from_metadata(metadata)
         self._bounds_validator.configure_from_metadata(metadata)

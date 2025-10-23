@@ -3,6 +3,9 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 
+from datetime import datetime, timezone
+from typing import Mapping
+
 import pytest
 
 from bot_core.ai.inference import ModelRepository
@@ -10,15 +13,27 @@ from bot_core.ai.models import ModelArtifact
 
 
 def _make_artifact(*, metadata: dict[str, object] | None = None) -> ModelArtifact:
-    payload = {"feature_scalers": {}}
+    payload: dict[str, object] = {}
     if metadata:
         payload.update(metadata)
+    metrics: Mapping[str, Mapping[str, float]] = {
+        "summary": {"mae": 1.23, "directional_accuracy": 0.6},
+        "train": {"mae": 1.23, "directional_accuracy": 0.6},
+        "validation": {},
+        "test": {},
+    }
     return ModelArtifact(
         feature_names=("f1", "f2"),
         model_state={"weights": [0.1, 0.2], "bias": 0.0},
         trained_at=datetime.now(timezone.utc),
-        metrics={"mae": 1.23, "directional_accuracy": 0.6},
+        metrics=metrics,
         metadata=payload,
+        target_scale=1.0,
+        training_rows=64,
+        validation_rows=0,
+        test_rows=0,
+        feature_scalers={"f1": (0.0, 1.0), "f2": (0.0, 1.0)},
+        decision_journal_entry_id=None,
         backend="builtin",
     )
 

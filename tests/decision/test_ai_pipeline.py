@@ -673,28 +673,27 @@ def test_training_and_inference(tmp_path: Path, ohlcv_rows: list[tuple[float, ..
     repo = ModelRepository(tmp_path)
     artifact_path = repo.save(artifact, "test_model.json")
 
-    assert "feature_scalers" in artifact.metadata
-    scalers = artifact.metadata["feature_scalers"]  # type: ignore[index]
-    assert set(scalers.keys()) == set(dataset.feature_names)
-    for stats in scalers.values():
-        assert "mean" in stats and "stdev" in stats
+    assert set(artifact.feature_scalers.keys()) == set(dataset.feature_names)
+    for mean, stdev in artifact.feature_scalers.values():
+        assert math.isfinite(mean)
+        assert stdev >= 0.0
 
     assert (
-        artifact.metadata["training_rows"]
-        + artifact.metadata["validation_rows"]
-        + artifact.metadata["test_rows"]
+        artifact.training_rows + artifact.validation_rows + artifact.test_rows
         == len(dataset.vectors)
     )
-    assert artifact.metadata["validation_rows"] > 0
-    assert artifact.metadata["test_rows"] == 0
+    assert artifact.validation_rows > 0
+    assert artifact.test_rows == 0
     assert pytest.approx(artifact.metadata["validation_split"], rel=1e-6) == 0.2
     assert artifact.metadata["dataset_split"]["test_ratio"] == pytest.approx(0.0)
-    assert "validation_metrics" in artifact.metadata
+    assert "validation" in artifact.metrics
     assert "dataset_split" in artifact.metadata
-    assert "validation_mae" in artifact.metrics
-    assert "train_mae" in artifact.metrics
-    assert "expected_pnl" in artifact.metrics
-    assert artifact.metrics["mae"] == pytest.approx(artifact.metrics["train_mae"])
+    assert "summary" in artifact.metrics
+    assert "train" in artifact.metrics
+    assert "expected_pnl" in artifact.metrics["summary"]
+    assert artifact.metrics["summary"]["mae"] == pytest.approx(
+        artifact.metrics["train"]["mae"]
+    )
     assert "calibration" in artifact.metadata
     calibration = artifact.metadata["calibration"]  # type: ignore[index]
     assert {"slope", "intercept"}.issubset(calibration.keys())

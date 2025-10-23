@@ -1,65 +1,118 @@
-# Runbook: AI Decision Engine Data Monitoring
+# Runbook: Monitoring danych AI
 
-## Cel
-Zapewnienie ciągłości i zgodności monitoringu jakości danych wejściowych modeli decyzyjnych. Runbook opisuje kroki reagowania na alerty `DataCompletenessWatcher`, `FeatureBoundsValidator` oraz dryf statystyczny raportowany przez `_FeatureDriftMonitor`.
+Runbook opisuje monitorowanie jakości danych oraz dryfu cech dla pipeline'u AI. Monitoring opiera się na helperach z modułu `bot_core.ai.monitoring` oraz raportach audytu zapisywanych w `audit/ai_decision/{data_quality,drift}`.
 
-## Zakres
-- Dane wejściowe do pipeline'u `DecisionModelInference` (cechy kandydatów, wartości OHLCV przetworzone przez `FeatureEngineer`).
-- Alerty zapisane w `audit/ai_decision/data_quality/*.json` oraz `audit/ai_decision/drift/*.json`.
+## 1. Szybka checklista
 
-## Procedura operacyjna
-1. **Codzienny przegląd raportów**
-   - Lokalizacja: `audit/ai_decision/data_quality/` (kompletność i zakresy) oraz `audit/ai_decision/drift/` (dryf).
-   - Dla szybszego przeglądu użyj helperów `bot_core.ai.load_recent_data_quality_reports()`
-     i `bot_core.ai.load_recent_drift_reports()` – zwracają najnowsze wpisy (najnowszy
-     raport jako pierwszy) wraz z pełną ścieżką pliku JSON. Następnie zastosuj
-     `bot_core.ai.summarize_data_quality_reports(...)` oraz
-     `bot_core.ai.summarize_drift_reports(...)`, aby szybko zidentyfikować alerty
-     wymagające podpisów Risk/Compliance (sekcja `pending_sign_off`).
-   - Zweryfikuj metadane `context.model`, `status` oraz listę naruszeń.
-   - Sprawdź sekcję `policy.enforce`. Jeśli `False`, alert jest rejestrowany jako ostrzeżenie konfiguracyjne (np. kategoria wyłączona w `metadata.data_quality.categories`).
-   - Potwierdź podpisy Risk/Compliance – jeśli `status == "alert"` i `policy.enforce == True`, obie sekcje muszą zostać zaktualizowane w ciągu 4 godzin.
-2. **Diagnoza braków danych**
-   - Sprawdź, które cechy znajdują się w `missing_features` lub `null_features`.
-   - Odtwórz pipeline danych (skrypt `scripts/backfill.py` lub zadanie ETL) dla konkretnego symbolu/interwału.
-   - Jeśli błąd wynika z dostawcy, eskaluj do zespołu Data Platform (kanał `#data-incidents`).
-3. **Naruszenie zakresów cech**
-   - Odczytaj `violations` i porównaj z oczekiwanymi limitami (metadane modelu, `feature_stats`).
-   - Wykonaj backtest na ostatnich 30 dniach, aby zweryfikować stabilność.
-   - Jeśli naruszenie dotyczy wielu cech i `policy.enforce == True`, rozważ wstrzymanie modelu (ustaw `DecisionOrchestrator.disable_model(name)`).
-   - Jeżeli kategoria została oznaczona jako `policy.enforce == False`, odnotuj w JIRA uzasadnienie konfiguracji (link do decyzji Risk/Compliance).
-4. **Dryf cech**
-   - Raporty dryfu zawierają `drift_score` i `threshold`. Jeżeli `drift_score > threshold * 1.5`, natychmiast powiadom właściciela modelu.
-   - Przygotuj plan roll-back (np. aktywuj poprzednią wersję modelu przez `ModelRepository.set_active_version`).
-   - Zbierz przykładowe próbki (ostatnie 50 obserwacji) i dołącz do zgłoszenia w JIRA (`AI-DRIFT`).
-5. **Eskalacja**
-   - Eskalacja krytyczna (`status == "alert"` i brak danych > 30 min):
-     1. Powiadom Incident Commander.
-     2. Umieść wpis w `docs/compliance/ai_pipeline_signoff.md` (sekcja *Post-incident review*).
-     3. Rozważ przełączenie na strategię awaryjną (`MarketRegime.MEAN_REVERSION`).
-6. **Powrót do normalnej pracy**
-   - Po rozwiązaniu problemu zaktualizuj `sign_off` w raporcie (Risk/Compliance podpisują się z datą i komentarzem).
-   - Użyj helpera `bot_core.ai.update_sign_off(report, role=..., status=...)`, aby zsynchronizować podpisy w pamięci i pliku JSON.
-   - Zweryfikuj, że `load_recent_data_quality_reports(category=...)` nie zwraca otwartych
-     alertów dla kategorii objętych remediacją.
-   - Dodaj streszczenie do `audit/ai_decision/incident_journal.md` (jeśli incydent został otwarty).
-   - Zweryfikuj, czy tymczasowe wyłączenia kategorii (`policy.enforce == False`) zostały cofnięte lub formalnie zatwierdzone.
+1. **Kompletność świec** – uruchom `DataCompletenessWatcher` (częstotliwość np. `1min`) na ramce OHLCV z ostatniej doby. Sprawdź `assessment.summary.status` oraz `summary.total_gaps`. Jeśli `status == "critical"`, eskaluj do zespołu danych i wstrzymaj inference dla symbolu.
+2. **Dryf cech** – porównaj zbiór treningowy z oknem produkcyjnym za pomocą `FeatureDriftAnalyzer`. Zweryfikuj `assessment.summary.triggered_features`, `metrics.feature_drift.psi` oraz `distribution_summary.max_ks`. Trigger > progów PSI/KS wymaga wpisu w decision journalu oraz przeglądu risk/compliance.
+3. **Zakres cech inference** – podczas obsługi alertu sprawdź `FeatureBoundsValidator.is_within_bounds()` dla ostatnich próbek inference. Jeśli którekolwiek `feature_out_of_bounds`, zatrzymaj scoring i potwierdź wznowienie z risk.
+4. **Automatyczny audyt pipeline'u** – zweryfikuj, że `AIManager.get_last_data_quality_report_path()` wskazuje świeży raport (`pipeline:<symbol>:<kontrola>`) po ostatnim `run_pipeline`. Brak raportu oznacza, że kontrola nie została zarejestrowana.
 
-## Checklista on-call
-- [ ] Raporty `data_quality` przejrzane do godziny 09:00 UTC.
-- [ ] Raporty `drift` przejrzane do godziny 12:00 UTC.
-- [ ] Wszystkie alerty posiadają wpis w dzienniku incydentów lub uzasadnione zamknięcie.
-- [ ] Potwierdzono poprawność podpisów Risk/Compliance.
-- [ ] Wyniki `summarize_data_quality_reports` oraz `summarize_drift_reports` nie zawierają
-      zaległych podpisów starszych niż 24h.
+## 2. Procedura operacyjna
 
-## Kontakty
-- **Owner modelu:** ml-decisions@firma.example
-- **Zespół Data Platform:** data-platform@firma.example
-- **Risk:** risk-office@firma.example
-- **Compliance:** compliance@firma.example
+### 2.1 DataCompletenessWatcher
 
-## Historia zmian
-- 2024-04-05 – utworzenie runbooka.
-- 2024-04-08 – dodano obsługę polityk egzekwowania na poziomie kategorii monitoringu.
-- 2024-04-10 – uzupełniono runbook o podsumowania alertów i walidację podpisów.
+```python
+from datetime import timedelta
+
+import pandas as pd
+
+from bot_core.ai.monitoring import DataCompletenessWatcher
+
+df = load_ohlcv("BTCUSDT", hours=24)
+watcher = DataCompletenessWatcher(timedelta(minutes=1))
+assessment = watcher.assess(df)
+
+if assessment.status != "ok":
+    manager.record_data_quality_issues(
+        assessment,
+        dataset=build_feature_dataset(df),
+        job_name="btc-data-quality",
+        source="ohlcv-monitor",
+    )
+```
+
+Najważniejsze pola raportu: `summary.total_gaps`, `summary.missing_ratio`, `issues[*].details.missing_bars`. Eskaluj, gdy `missing_ratio >= 0.05`.
+
+### 2.2 FeatureDriftAnalyzer
+
+```python
+from bot_core.ai.monitoring import FeatureDriftAnalyzer
+
+baseline = load_training_frame("BTCUSDT", span_days=30)
+production = load_recent_frame("BTCUSDT", span_days=3)
+analyzer = FeatureDriftAnalyzer(psi_threshold=0.1, ks_threshold=0.1)
+assessment = analyzer.compare(baseline, production)
+
+if assessment.triggered:
+    manager.record_data_quality_issues(
+        {"code": "feature_drift_alert", "features": assessment.summary["triggered_features"]},
+        job_name="btc-feature-monitor",
+        source="drift-monitor",
+        tags=("drift", "psi"),
+        summary=assessment.summary,
+    )
+```
+
+Raport dryfu z pipeline'u (`_persist_drift_report`) zawiera te same dane pod kluczami `metrics.feature_drift.{score,psi,ks}` oraz `metrics.features`.
+
+### 2.3 FeatureBoundsValidator
+
+```python
+from bot_core.ai.monitoring import FeatureBoundsValidator
+
+validator = FeatureBoundsValidator(sigma_multiplier=3.0)
+issues = validator.validate(latest_features, latest_scalers)
+
+if issues:
+    raise RuntimeError("Feature bounds exceeded", issues)
+```
+
+Wpisz incydent, jeśli którekolwiek odchylenie przekracza `3σ` i zarchiwizuj wynik w `audit/ai_decision/data_quality/`.
+
+### 2.4 Integracja z AIManager
+
+`AIManager` może automatycznie uruchamiać kontrole jakości danych po każdym `run_pipeline`. Zarejestruj kontrolę za pomocą `DataQualityCheck`:
+
+```python
+from bot_core.ai import AIManager, DataQualityCheck
+from bot_core.ai.monitoring import DataCompletenessWatcher
+
+manager = AIManager(audit_root="audit/ai_decision")
+watcher = DataCompletenessWatcher("1min", warning_gap_ratio=0.0)
+
+manager.register_data_quality_check(
+    DataQualityCheck(
+        name="completeness",
+        callback=lambda frame: watcher.assess(frame),
+        tags=("completeness", "pipeline"),
+        source="ohlcv-monitor",
+    )
+)
+
+await manager.run_pipeline("BTCUSDT", df, ["alpha"], seq_len=3, folds=2)
+```
+
+Po wykonaniu pipeline'u raport znajdziesz w `audit/ai_decision/data_quality/<timestamp>.json` pod nazwą `pipeline:btcusdt:completeness`. Helper `manager.get_data_quality_checks()` zwraca aktualnie aktywne kontrole, a `clear_data_quality_checks()` pozwala szybko wyłączyć monitoring podczas testów.
+
+### 2.5 Decision journal
+
+Każdy zapis raportu (`save_data_quality_report`, `save_drift_report`) generuje zdarzenie w `TradingDecisionJournal`:
+
+- `event="ai_data_quality_report"` – metadane: `report_path`, `issues_count`, `status`, `tags`, `schedule`.
+- `event="ai_drift_report"` – metadane: `report_path`, `feature_drift`, `volatility_shift`, `threshold`, `triggered`, `triggered_features`.
+
+Ustaw `AIManager(..., decision_journal=JsonlTradingDecisionJournal(...))`, aby logi trafiały do pliku JSONL lub wykorzystaj `InMemoryTradingDecisionJournal` w testach. Zespół operacyjny sprawdza, czy w dzienniku pojawił się wpis z aktualnym `report_path` oraz poprawnym `environment/portfolio` zgodnie z kontekstem (`decision_journal_context`). Brak zdarzenia blokuje eskalację alertu i wymaga ręcznej weryfikacji pipeline'u.
+
+## 3. Eskalacja
+
+- **Status critical** w `DataCompletenessWatcher` lub `FeatureDriftAnalyzer` → zgłoszenie do #sec-alerts, wstrzymanie inference oraz aktualizacja decision journalu.
+- **Feature out of bounds** → blokada scoringu do czasu przywrócenia stabilności cech, podpis risk przed wznowieniem.
+
+## 4. Artefakty
+
+- Raporty data-quality: `audit/ai_decision/data_quality/<timestamp>.json` (pola `issues`, `summary.status`, `summary.total_gaps`).
+- Raporty dryfu: `audit/ai_decision/drift/<timestamp>.json` (`metrics.feature_drift.psi`, `metrics.features`, `distribution_summary`).
+- Helpery API: `bot_core.ai.{DataCompletenessWatcher, FeatureDriftAnalyzer, FeatureBoundsValidator, AIManager.record_data_quality_issues}`.
+
