@@ -45,6 +45,41 @@ def _supports_main_cli() -> bool:
     return parser_supports(_parser, "--fills", "--output-dir")
 
 
+def _write_sample_fills(target: Path) -> Path:
+    events = [
+        {
+            "timestamp": "2024-04-01T10:00:00Z",
+            "strategy": "mean_reversion",
+            "risk_profile": "balanced",
+            "instrument": "BTC/USDT",
+            "exchange": "binance",
+            "side": "buy",
+            "quantity": 0.4,
+            "price": 21000,
+            "commission": 3.2,
+            "slippage": 1.1,
+            "funding": 0.2,
+        },
+        {
+            "timestamp": "2024-04-01T10:05:00Z",
+            "strategy": "volatility_target",
+            "risk_profile": "aggressive",
+            "instrument": "ETH/USDT",
+            "exchange": "kraken",
+            "side": "sell",
+            "quantity": 1.1,
+            "price": 3100,
+            "commission": 2.4,
+            "slippage": 0.8,
+            "funding": 0.15,
+            "other_costs": 0.05,
+        },
+    ]
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("\n".join(json.dumps(event) for event in events) + "\n", encoding="utf-8")
+    return target
+
+
 # ----------------- TESTY -----------------
 def test_run_tco_analysis_generates_signed_reports_or_summary(tmp_path: Path) -> None:
     if _supports_head_cli():
@@ -211,6 +246,306 @@ def test_run_tco_analysis_generates_signed_reports_or_summary(tmp_path: Path) ->
         return
 
     pytest.skip("run_tco_analysis CLI shape not recognized (neither HEAD nor main)")
+
+
+def test_runbook_tco_checklist_default_summary_mode(tmp_path: Path) -> None:
+    if not _supports_head_cli():
+        pytest.skip("Runbook checklist applies to summary CLI variant")
+
+    input_payload = {
+        "currency": "USD",
+        "items": [
+            {"name": "Monitoring", "category": "operations", "monthly_cost": 120.0},
+            {"name": "Training", "category": "enablement", "monthly_cost": 80.0},
+        ],
+    }
+    input_path = tmp_path / "stage5_tco.json"
+    input_path.write_text(json.dumps(input_payload), encoding="utf-8")
+
+    key_path = tmp_path / "tco.key"
+    key_bytes = b"stage5-hmac-key"
+    key_path.write_bytes(key_bytes)
+
+    artifact_root = tmp_path / "var" / "audit" / "tco"
+    timestamp = "20240505T110000Z"
+
+    exit_code = run_tco(
+        [
+            "--input",
+            str(input_path),
+            "--artifact-root",
+            str(artifact_root),
+            "--monthly-trades",
+            "200",
+            "--monthly-volume",
+            "450000",
+            "--signing-key-file",
+            str(key_path),
+            "--signing-key-id",
+            "stage5-tco",
+            "--tag",
+            "weekly-cycle",
+            "--print-summary",
+            "--timestamp",
+            timestamp,
+        ]
+    )
+    assert exit_code == 0
+
+    run_dir = artifact_root / timestamp
+    json_path = run_dir / "tco_summary.json"
+    csv_path = run_dir / "tco_breakdown.csv"
+    signature_path = run_dir / "tco_summary.signature.json"
+
+    assert json_path.exists()
+    assert csv_path.exists()
+    assert signature_path.exists()
+
+    payload = json.loads(json_path.read_text(encoding="utf-8"))
+    assert payload["monthly_total"] == 200.0
+    assert payload["usage"]["monthly_trades"] == 200.0
+    assert payload["tag"] == "weekly-cycle"
+
+    expected_signature = build_hmac_signature(payload, key=key_bytes, key_id="stage5-tco")
+    assert json.loads(signature_path.read_text(encoding="utf-8")) == expected_signature
+
+
+def test_runbook_support_playbook_output_alias(tmp_path: Path) -> None:
+    if not _supports_head_cli():
+        pytest.skip("Output alias applies to summary CLI variant")
+
+    input_payload = {
+        "currency": "USD",
+        "items": [
+            {"name": "Audit tooling", "category": "operations", "monthly_cost": 90.0}
+        ],
+    }
+    input_path = tmp_path / "incident_costs.json"
+    input_path.write_text(json.dumps(input_payload), encoding="utf-8")
+
+    key_path = tmp_path / "support.key"
+    key_bytes = b"stage5-support-hmac"
+    key_path.write_bytes(key_bytes)
+
+    output_target = tmp_path / "var" / "audit" / "tco" / "20240507T090000Z" / "incident.csv"
+
+    exit_code = run_tco(
+        [
+            "--input",
+            str(input_path),
+            "--output",
+            str(output_target),
+            "--signing-key-file",
+            str(key_path),
+            "--signing-key-id",
+            "stage5-support",
+        ]
+    )
+    assert exit_code == 0
+
+    run_dir = tmp_path / "var" / "audit" / "tco" / "20240507T090000Z"
+    json_path = run_dir / "incident.json"
+    csv_path = run_dir / "incident.csv"
+    signature_path = run_dir / "incident.signature.json"
+
+    assert json_path.exists()
+    assert csv_path.exists()
+    assert signature_path.exists()
+
+    payload = json.loads(json_path.read_text(encoding="utf-8"))
+    assert payload["monthly_total"] == 90.0
+
+    expected_signature = build_hmac_signature(payload, key=key_bytes, key_id="stage5-support")
+    assert json.loads(signature_path.read_text(encoding="utf-8")) == expected_signature
+
+
+def test_output_alias_accepts_sanitized_timestamp_formats(tmp_path: Path) -> None:
+    if not _supports_head_cli():
+        pytest.skip("Output alias applies to summary CLI variant")
+
+    input_payload = {"currency": "USD", "items": []}
+    input_path = tmp_path / "sanitized.json"
+    input_path.write_text(json.dumps(input_payload), encoding="utf-8")
+
+    # runbook potrafi dostarczać katalogi z myślnikami/spacjami, które po sanizacji
+    # powinny być traktowane jako znacznik czasu
+    output_target = (
+        tmp_path
+        / "var"
+        / "audit"
+        / "tco"
+        / "2024-05-07 09_00_00z"
+        / "custom.csv"
+    )
+
+    exit_code = run_tco([
+        "--input",
+        str(input_path),
+        "--output",
+        str(output_target),
+    ])
+    assert exit_code == 0
+
+    artifact_root = tmp_path / "var" / "audit" / "tco"
+    expected_dir = run_tco_mod._sanitize_timestamp("2024-05-07 09_00_00z")
+    run_dir = artifact_root / expected_dir
+    assert run_dir.is_dir()
+    assert (run_dir / "custom.csv").exists()
+    assert (run_dir / "custom.json").exists()
+
+
+def test_output_alias_directory_timestamp_hint(tmp_path: Path) -> None:
+    if not _supports_head_cli():
+        pytest.skip("Output alias applies to summary CLI variant")
+
+    input_payload = {
+        "currency": "USD",
+        "items": [{"name": "Ops", "category": "operations", "monthly_cost": 15.0}],
+    }
+    input_path = tmp_path / "costs.json"
+    input_path.write_text(json.dumps(input_payload), encoding="utf-8")
+
+    output_dir = tmp_path / "var" / "audit" / "tco" / "20240507T090000Z"
+
+    exit_code = run_tco([
+        "--input",
+        str(input_path),
+        "--output",
+        str(output_dir),
+    ])
+    assert exit_code == 0
+
+    artifact_root = tmp_path / "var" / "audit" / "tco"
+    expected_dir = artifact_root / run_tco_mod._sanitize_timestamp("20240507T090000Z")
+    assert expected_dir == output_dir
+    assert expected_dir.is_dir()
+
+    json_path = expected_dir / "tco_summary.json"
+    csv_path = expected_dir / "tco_breakdown.csv"
+    assert json_path.exists()
+    assert csv_path.exists()
+
+    nested_dirs = [item for item in expected_dir.iterdir() if item.is_dir()]
+    assert not nested_dirs
+
+
+def test_output_alias_directory_with_digits_is_not_timestamp(tmp_path: Path) -> None:
+    if not _supports_head_cli():
+        pytest.skip("Output alias applies to summary CLI variant")
+
+    input_payload = {"currency": "USD", "items": []}
+    input_path = tmp_path / "empty.json"
+    input_path.write_text(json.dumps(input_payload), encoding="utf-8")
+
+    output_target = tmp_path / "var2" / "audit" / "tco" / "report.csv"
+
+    exit_code = run_tco([
+        "--input",
+        str(input_path),
+        "--output",
+        str(output_target),
+    ])
+    assert exit_code == 0
+
+    artifact_root = tmp_path / "var2" / "audit" / "tco"
+    # wygenerowany znacznik czasu powinien być podkatalogiem z 15-16 znakami, nie "var2"
+    subdirs = [item for item in artifact_root.iterdir() if item.is_dir()]
+    assert len(subdirs) == 1
+    generated_dir = subdirs[0]
+    assert generated_dir.name != "var2"
+    assert generated_dir.name.startswith("20")  # rok
+    assert (generated_dir / "report.csv").exists()
+
+
+def test_analyze_output_alias_csv_sets_basename(tmp_path: Path) -> None:
+    if not _supports_main_cli():
+        pytest.skip("Output alias applies to analyze CLI variant")
+
+    fills_path = _write_sample_fills(tmp_path / "fills.csv.jsonl")
+    key_path = tmp_path / "keys" / "analyze_alias.key"
+    signing_key = write_random_hmac_key(key_path)
+
+    output_target = tmp_path / "var" / "audit" / "tco" / "alias.csv"
+
+    exit_code = run_tco([
+        "--fills",
+        str(fills_path),
+        "--output",
+        str(output_target),
+        "--signing-key-path",
+        str(key_path),
+        "--signing-key-id",
+        "stage5-alias",
+    ])
+    assert exit_code == 0
+
+    output_root = tmp_path / "var" / "audit" / "tco"
+    csv_path = output_root / "alias.csv"
+    pdf_path = output_root / "alias.pdf"
+    json_path = output_root / "alias.json"
+
+    for artifact in (csv_path, pdf_path, json_path):
+        assert artifact.exists()
+        signature_path = artifact.with_suffix(artifact.suffix + ".sig")
+        assert signature_path.exists()
+        document = json.loads(signature_path.read_text(encoding="utf-8"))
+        expected_signature = build_hmac_signature(
+            document["payload"],
+            key=signing_key,
+            algorithm="HMAC-SHA256",
+            key_id="stage5-alias",
+        )
+        assert document["signature"] == expected_signature
+
+    assert not any(child.is_dir() for child in output_root.iterdir())
+
+
+def test_analyze_output_alias_directory_preserves_target(tmp_path: Path) -> None:
+    if not _supports_main_cli():
+        pytest.skip("Output alias applies to analyze CLI variant")
+
+    fills_path = _write_sample_fills(tmp_path / "fills.dir.jsonl")
+    key_path = tmp_path / "keys" / "analyze_dir.key"
+    signing_key = write_random_hmac_key(key_path)
+
+    output_dir = tmp_path / "var" / "audit" / "tco" / "custom_runs"
+
+    exit_code = run_tco([
+        "--fills",
+        str(fills_path),
+        "--output",
+        str(output_dir),
+        "--signing-key-path",
+        str(key_path),
+        "--signing-key-id",
+        "stage5-dir",
+    ])
+    assert exit_code == 0
+
+    assert output_dir.exists()
+    subdirs = [child for child in output_dir.iterdir() if child.is_dir()]
+    assert len(subdirs) == 1
+    run_dir = subdirs[0]
+
+    csv_files = list(run_dir.glob("tco_report_*.csv"))
+    assert len(csv_files) == 1
+    csv_path = csv_files[0]
+    base = csv_path.stem
+    pdf_path = run_dir / f"{base}.pdf"
+    json_path = run_dir / f"{base}.json"
+
+    for artifact in (csv_path, pdf_path, json_path):
+        assert artifact.exists()
+        signature_path = artifact.with_suffix(artifact.suffix + ".sig")
+        assert signature_path.exists()
+        document = json.loads(signature_path.read_text(encoding="utf-8"))
+        expected_signature = build_hmac_signature(
+            document["payload"],
+            key=signing_key,
+            algorithm="HMAC-SHA256",
+            key_id="stage5-dir",
+        )
+        assert document["signature"] == expected_signature
 
 
 def test_run_tco_analysis_requires_key_length_if_applicable(tmp_path: Path) -> None:
