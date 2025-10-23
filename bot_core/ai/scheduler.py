@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import dataclass, field, replace
+from dataclasses import InitVar, dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from tempfile import NamedTemporaryFile
@@ -18,6 +18,7 @@ from .models import ModelArtifact
 from .training import ModelTrainer
 
 from .audit import DEFAULT_AUDIT_ROOT, save_walk_forward_report
+from bot_core.runtime.journal import TradingDecisionEvent, TradingDecisionJournal
 
 
 @dataclass(slots=True)
@@ -492,12 +493,23 @@ class ScheduledTrainingJob:
     audit_root: str | Path | None = None
     decision_journal: TradingDecisionJournal | None = None
     decision_journal_context: Mapping[str, str] | None = None
-    journal_environment: str = "ai-training"
-    journal_portfolio: str | None = None
-    journal_risk_profile: str = "ai-research"
-    journal_strategy: str | None = None
+    _journal_environment: str = field(
+        init=False, repr=False, default=DEFAULT_JOURNAL_ENVIRONMENT
+    )
+    _journal_portfolio: str | None = field(init=False, repr=False, default=None)
+    _journal_risk_profile: str = field(
+        init=False, repr=False, default=DEFAULT_JOURNAL_RISK_PROFILE
+    )
+    journal_environment: InitVar[str | None] = None
+    journal_portfolio: InitVar[str | None] = None
+    journal_risk_profile: InitVar[str | None] = None
 
-    def __post_init__(self) -> None:
+    def __post_init__(
+        self,
+        journal_environment: str | None,
+        journal_portfolio: str | None,
+        journal_risk_profile: str | None,
+    ) -> None:
         ensure_ai_signals_enabled("zadań treningowych AI")
         if not callable(self.trainer_factory):
             raise TypeError("trainer_factory musi być wywoływalny")
@@ -507,19 +519,79 @@ class ScheduledTrainingJob:
             self.decision_journal_context, Mapping
         ):
             raise TypeError("decision_journal_context musi być mapowaniem lub None")
-        self.journal_environment = str(self.journal_environment or "ai-training")
-        self.journal_risk_profile = str(self.journal_risk_profile or "ai-research")
-        if self.journal_portfolio is None:
-            self.journal_portfolio = self.name
+        env_value = object.__getattribute__(self, "journal_environment")
+        if isinstance(env_value, property):
+            env_value = "ai-training"
+        object.__setattr__(self, "journal_environment", str(env_value or "ai-training"))
+
+        risk_value = object.__getattribute__(self, "journal_risk_profile")
+        if isinstance(risk_value, property):
+            risk_value = "ai-research"
+        object.__setattr__(self, "journal_risk_profile", str(risk_value or "ai-research"))
+
+        portfolio_value = object.__getattribute__(self, "journal_portfolio")
+        if isinstance(portfolio_value, property) or portfolio_value is None:
+            object.__setattr__(self, "journal_portfolio", self.name)
         else:
-            self.journal_portfolio = str(self.journal_portfolio)
-        if self.journal_strategy is None:
-            self.journal_strategy = self.name
-        else:
-            self.journal_strategy = str(self.journal_strategy)
+            object.__setattr__(self, "journal_portfolio", str(portfolio_value))
 
     def is_due(self, now: datetime | None = None) -> bool:
         return self.scheduler.should_retrain(now)
+
+    def _journal_context_value(self, key: str, default: str) -> str:
+        if self.decision_journal_context is None:
+            return default
+        value = self.decision_journal_context.get(key)
+        if value is None:
+            return default
+        return self._normalize_journal_value(value, default=default)
+
+    @staticmethod
+    def _normalize_journal_value(value: object | None, *, default: str) -> str:
+        if value is None:
+            return default
+        coerced = str(value)
+        if coerced:
+            return coerced
+        return default
+
+    @property
+    def journal_environment(self) -> str:
+        return self._journal_context_value("environment", self._journal_environment)
+
+    @journal_environment.setter
+    def journal_environment(self, value: str | None) -> None:
+        self._journal_environment = self._normalize_journal_value(
+            value, default=DEFAULT_JOURNAL_ENVIRONMENT
+        )
+
+    @property
+    def journal_portfolio(self) -> str:
+        default_portfolio = self._journal_portfolio or self.name
+        return self._journal_context_value("portfolio", default_portfolio)
+
+    @journal_portfolio.setter
+    def journal_portfolio(self, value: str | None) -> None:
+        if value is None:
+            self._journal_portfolio = None
+        else:
+            self._journal_portfolio = self._normalize_journal_value(
+                value, default=self.name
+            )
+
+    @property
+    def journal_risk_profile(self) -> str:
+        return self._journal_context_value("risk_profile", self._journal_risk_profile)
+
+    @journal_risk_profile.setter
+    def journal_risk_profile(self, value: str | None) -> None:
+        self._journal_risk_profile = self._normalize_journal_value(
+            value, default=DEFAULT_JOURNAL_RISK_PROFILE
+        )
+
+    @property
+    def journal_strategy(self) -> str:
+        return self._journal_context_value("strategy", self.name)
 
     def run(self, now: datetime | None = None) -> ModelArtifact:
         planned_timestamp = (
@@ -563,33 +635,25 @@ class ScheduledTrainingJob:
             )
 
         self.scheduler.mark_executed(artifact.trained_at)
-
-        metrics_source = artifact.metrics
-        summary_candidate: Mapping[str, float] | None = None
-        if hasattr(metrics_source, "summary"):
-            summary_view = metrics_source.summary()  # type: ignore[attr-defined]
-            if isinstance(summary_view, Mapping):
-                summary_candidate = summary_view
-        if summary_candidate is None:
-            if isinstance(metrics_source, Mapping):
-                raw_summary = metrics_source.get("summary")
-                if isinstance(raw_summary, Mapping):
-                    summary_candidate = raw_summary
-            elif hasattr(metrics_source, "splits"):
-                splits_view = metrics_source.splits()  # type: ignore[attr-defined]
-                if isinstance(splits_view, Mapping):
-                    raw_summary = splits_view.get("summary")
-                    if isinstance(raw_summary, Mapping):
-                        summary_candidate = raw_summary
-
-        summary_metrics: dict[str, float] = {}
-        if summary_candidate is not None:
-            for key, value in summary_candidate.items():
-                try:
-                    summary_metrics[str(key)] = float(value)
-                except (TypeError, ValueError):
-                    continue
-
+        summary_metrics: dict[str, object]
+        try:
+            summary_callable = getattr(artifact.metrics, "summary")
+        except AttributeError:
+            summary_callable = None
+        if callable(summary_callable):
+            try:
+                summary_source = summary_callable()
+            except Exception:  # pragma: no cover - defensywnie na nietypowe metryki
+                summary_source = {}
+        else:
+            summary_source = {}
+        if isinstance(summary_source, Mapping):
+            summary_metrics = dict(summary_source)
+        else:
+            try:
+                summary_metrics = dict(summary_source)
+            except Exception:
+                summary_metrics = {}
         record = TrainingRunRecord(
             trained_at=artifact.trained_at,
             metrics=dict(summary_metrics),
@@ -622,35 +686,40 @@ class ScheduledTrainingJob:
             if self.scheduler.paused_reason:
                 metadata["paused_reason"] = self.scheduler.paused_reason
             for key, value in summary_metrics.items():
-                metadata[f"metric_{key}"] = str(value)
-
-            metric_blocks: Mapping[str, Mapping[str, float]] | None = None
-            if hasattr(metrics_source, "splits"):
-                blocks_view = metrics_source.splits()  # type: ignore[attr-defined]
-                if isinstance(blocks_view, Mapping):
-                    metric_blocks = blocks_view
-            elif hasattr(metrics_source, "blocks"):
-                blocks_view = metrics_source.blocks()  # type: ignore[attr-defined]
-                if isinstance(blocks_view, Mapping):
-                    metric_blocks = blocks_view
-            elif isinstance(metrics_source, Mapping):
-                metric_blocks = {
-                    str(split): values
-                    for split, values in metrics_source.items()
-                    if isinstance(values, Mapping)
-                }
-
-            if metric_blocks is None:
-                metric_blocks = {}
-
-            for split, values in metric_blocks.items():
-                if split == "summary" or not values:
+                try:
+                    numeric_value = float(value)  # type: ignore[arg-type]
+                except (TypeError, ValueError):
                     continue
-                for metric_name, metric_value in values.items():
+                metadata[f"metric_{key}"] = f"{numeric_value:.10f}"
+            block_metrics_source: Mapping[str, Mapping[str, float]] | None = None
+            try:
+                blocks_callable = getattr(artifact.metrics, "blocks")
+            except AttributeError:
+                blocks_callable = None
+            if callable(blocks_callable):
+                try:
+                    block_metrics_source = blocks_callable()
+                except Exception:  # pragma: no cover - defensywnie na nietypowe metryki
+                    block_metrics_source = {}
+            elif hasattr(artifact.metrics, "splits"):
+                splits_callable = getattr(artifact.metrics, "splits")
+                if callable(splits_callable):
                     try:
-                        metadata[f"metric_{split}_{metric_name}"] = str(float(metric_value))
-                    except (TypeError, ValueError):
+                        block_metrics_source = splits_callable()
+                    except Exception:  # pragma: no cover - defensywnie na nietypowe metryki
+                        block_metrics_source = {}
+            if isinstance(block_metrics_source, Mapping):
+                for split_name, values in block_metrics_source.items():
+                    if split_name == "summary" or not isinstance(values, Mapping):
                         continue
+                    for metric_name, metric_value in values.items():
+                        try:
+                            formatted_value = float(metric_value)
+                        except (TypeError, ValueError):
+                            continue
+                        metadata[
+                            f"metric_{split_name}_{metric_name}"
+                        ] = f"{formatted_value:.10f}"
             event = TradingDecisionEvent(
                 event_type="ai_retraining",
                 timestamp=artifact.trained_at,
@@ -745,7 +814,14 @@ class ScheduledTrainingJob:
             for key, value in self.decision_journal_context.items():
                 if value is None:
                     continue
-                context[str(key)] = str(value)
+                key_str = str(key)
+                if key_str in {"environment", "portfolio", "risk_profile", "strategy", "schedule"}:
+                    fallback = context.get(key_str, self.name)
+                    context[key_str] = self._normalize_journal_value(
+                        value, default=fallback
+                    )
+                else:
+                    context[key_str] = str(value)
         return context
 
     def _record_retraining_failure_journal(

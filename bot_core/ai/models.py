@@ -115,6 +115,9 @@ class _MetricsView(Mapping[str, object]):
     def splits(self) -> Mapping[str, Mapping[str, float]]:
         return self._base
 
+    def blocks(self) -> Mapping[str, Mapping[str, float]]:
+        return self._base
+
     def summary(self) -> Mapping[str, float]:
         return self._base.get("summary", MappingProxyType({}))
 
