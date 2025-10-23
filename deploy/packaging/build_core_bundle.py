@@ -39,6 +39,19 @@ _DRY_RUN_SAMPLE_UI = _SAMPLES_ROOT / "ui"
 _DRY_RUN_SAMPLE_CONFIG = _SAMPLES_ROOT / "config" / "core.yaml"
 _DRY_RUN_SAMPLE_RESOURCE_DIR = _SAMPLES_ROOT / "resources" / "extras"
 _DRY_RUN_SAMPLE_SIGNING_KEY = _SAMPLES_ROOT / "signing.key"
+
+
+@dataclass
+class _DryRunPlaceholderAssets:
+    temp_dir: tempfile.TemporaryDirectory
+    daemon_dir: Path
+    ui_dir: Path
+    config_file: Path
+    resource_dir: Path
+    signing_key: Path
+
+
+_DRY_RUN_PLACEHOLDER_ASSETS: Optional[_DryRunPlaceholderAssets] = None
 _RESERVED_RESOURCE_PREFIXES = {"daemon", "ui", "config", "bootstrap"}
 _RESERVED_RESOURCE_PREFIXES_CASEFOLD = {prefix.casefold() for prefix in _RESERVED_RESOURCE_PREFIXES}
 _RESERVED_CONFIG_PATHS = {
@@ -716,38 +729,122 @@ def _resolve_paths(values: Iterable[str], *, label: str) -> List[Path]:
     return result
 
 
+def _ensure_dry_run_placeholders() -> _DryRunPlaceholderAssets:
+    """Create placeholder assets for ``--dry-run`` when samples are unavailable."""
+
+    global _DRY_RUN_PLACEHOLDER_ASSETS
+    if _DRY_RUN_PLACEHOLDER_ASSETS is not None:
+        return _DRY_RUN_PLACEHOLDER_ASSETS
+
+    temp_dir = tempfile.TemporaryDirectory(prefix="core_bundle_dry_run_")
+    base = Path(temp_dir.name)
+
+    daemon_dir = base / "daemon"
+    daemon_dir.mkdir(parents=True, exist_ok=True)
+    (daemon_dir / "placeholder.txt").write_text(
+        "Dry-run daemon placeholder artifact\n",
+        encoding="utf-8",
+    )
+
+    ui_dir = base / "ui"
+    ui_dir.mkdir(parents=True, exist_ok=True)
+    (ui_dir / "placeholder.txt").write_text(
+        "Dry-run UI placeholder artifact\n",
+        encoding="utf-8",
+    )
+
+    config_dir = base / "config"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    config_file = config_dir / "core.yaml"
+    config_file.write_text(
+        "# Generated dry-run configuration\ntrading:\n  mode: placeholder\n",
+        encoding="utf-8",
+    )
+
+    resource_dir = base / "extras"
+    resource_dir.mkdir(parents=True, exist_ok=True)
+    (resource_dir / "placeholder.txt").write_text(
+        "Dry-run extras placeholder\n",
+        encoding="utf-8",
+    )
+
+    signing_key = base / "signing.key"
+    signing_key.write_text(
+        "dry-run-signing-key-material-placeholder-abcdef0123456789",
+        encoding="utf-8",
+    )
+
+    _DRY_RUN_PLACEHOLDER_ASSETS = _DryRunPlaceholderAssets(
+        temp_dir=temp_dir,
+        daemon_dir=daemon_dir,
+        ui_dir=ui_dir,
+        config_file=config_file,
+        resource_dir=resource_dir,
+        signing_key=signing_key,
+    )
+    return _DRY_RUN_PLACEHOLDER_ASSETS
+
+
 def _apply_dry_run_defaults(args: argparse.Namespace) -> None:
     """Populate CLI arguments with sample artifacts when running ``--dry-run``."""
 
+    placeholders: Optional[_DryRunPlaceholderAssets] = None
+
+    def _placeholders() -> _DryRunPlaceholderAssets:
+        nonlocal placeholders
+        if placeholders is None:
+            placeholders = _ensure_dry_run_placeholders()
+        return placeholders
+
     if not args.daemon:
-        if _DRY_RUN_SAMPLE_DAEMON.exists():
-            args.daemon = [str(_DRY_RUN_SAMPLE_DAEMON)]
-        else:
-            args.daemon = []
+        target = _DRY_RUN_SAMPLE_DAEMON if _DRY_RUN_SAMPLE_DAEMON.exists() else _placeholders().daemon_dir
+        args.daemon = [str(target)]
     if not args.ui:
-        if _DRY_RUN_SAMPLE_UI.exists():
-            args.ui = [str(_DRY_RUN_SAMPLE_UI)]
-        else:
-            args.ui = []
+        target = _DRY_RUN_SAMPLE_UI if _DRY_RUN_SAMPLE_UI.exists() else _placeholders().ui_dir
+        args.ui = [str(target)]
     if not args.config:
         if _DRY_RUN_SAMPLE_CONFIG.exists():
-            args.config = [f"core.yaml={_DRY_RUN_SAMPLE_CONFIG}"]
+            config_path = _DRY_RUN_SAMPLE_CONFIG
         else:
-            args.config = []
+            config_path = _placeholders().config_file
+        args.config = [f"core.yaml={config_path}"]
 
     resource_entries = list(args.resource or [])
-    if not resource_entries and _DRY_RUN_SAMPLE_RESOURCE_DIR.exists():
-        resource_entries.append(f"extras={_DRY_RUN_SAMPLE_RESOURCE_DIR}")
+    if not resource_entries:
+        if _DRY_RUN_SAMPLE_RESOURCE_DIR.exists():
+            resource_entries.append(f"extras={_DRY_RUN_SAMPLE_RESOURCE_DIR}")
+        else:
+            resource_entries.append(f"extras={_placeholders().resource_dir}")
     args.resource = resource_entries
 
-    if args.signing_key_path is None and _DRY_RUN_SAMPLE_SIGNING_KEY.exists():
-        args.signing_key_path = str(_DRY_RUN_SAMPLE_SIGNING_KEY)
+    if args.signing_key_path is None:
+        if _DRY_RUN_SAMPLE_SIGNING_KEY.exists():
+            key_path = _DRY_RUN_SAMPLE_SIGNING_KEY
+        else:
+            key_path = _placeholders().signing_key
+        args.signing_key_path = str(key_path)
+
+
+def _is_dry_run_autofilled_signing_key(path: Path) -> bool:
+    """Return ``True`` if ``path`` corresponds to CLI-provided dry-run key material."""
+
+    resolved = path.resolve()
+    if resolved == _DRY_RUN_SAMPLE_SIGNING_KEY.resolve():
+        return True
+    assets = _DRY_RUN_PLACEHOLDER_ASSETS
+    if assets is None:
+        return False
+    return resolved == assets.signing_key.resolve()
 
 
 def build_from_cli(argv: Optional[List[str]] = None) -> Path:
     parser = argparse.ArgumentParser(description="Build Core OEM bundle")
     parser.add_argument("--platform", required=True, choices=sorted(SUPPORTED_PLATFORMS))
-    parser.add_argument("--version", required=False, help="Bundle version string")
+    parser.add_argument(
+        "--version",
+        required=False,
+        help="Bundle version string (required unless --dry-run is specified)",
+    )
     parser.add_argument(
         "--signing-key-path",
         required=False,
@@ -833,7 +930,7 @@ def build_from_cli(argv: Optional[List[str]] = None) -> Path:
             raise FileNotFoundError(raw_key_path)
         _ensure_no_symlinks(raw_key_path, label="Signing key path")
         key_path = raw_key_path.resolve()
-        skip_permission_check = args.dry_run and key_path == _DRY_RUN_SAMPLE_SIGNING_KEY.resolve()
+        skip_permission_check = args.dry_run and _is_dry_run_autofilled_signing_key(key_path)
         _ensure_windows_safe_tree(key_path, label="Signing key path")
         if not key_path.is_file():
             raise ValueError(f"Signing key path must reference a file: {key_path}")

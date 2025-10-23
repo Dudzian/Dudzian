@@ -11,6 +11,8 @@ from typing import Dict, List
 
 import pytest
 
+import deploy.packaging.build_core_bundle as build_core_bundle_module
+
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -400,6 +402,44 @@ def test_build_from_cli_dry_run_uses_defaults_and_creates_no_artifacts(tmp_path)
 
 def test_build_from_cli_dry_run_without_additional_arguments(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
+
+    destination = build_from_cli(["--dry-run", "--platform", "linux"])
+
+    expected = (tmp_path / "var" / "dist" / "core-oem-0.0.0-dry-run-linux.tar.gz").resolve()
+    assert destination == expected
+    assert not destination.exists()
+    assert not destination.parent.exists()
+
+
+def test_build_from_cli_dry_run_without_samples(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+
+    monkeypatch.setattr(build_core_bundle_module, "_DRY_RUN_PLACEHOLDER_ASSETS", None)
+    monkeypatch.setattr(
+        build_core_bundle_module,
+        "_DRY_RUN_SAMPLE_DAEMON",
+        tmp_path / "missing" / "daemon",
+    )
+    monkeypatch.setattr(
+        build_core_bundle_module,
+        "_DRY_RUN_SAMPLE_UI",
+        tmp_path / "missing" / "ui",
+    )
+    monkeypatch.setattr(
+        build_core_bundle_module,
+        "_DRY_RUN_SAMPLE_CONFIG",
+        tmp_path / "missing" / "config" / "core.yaml",
+    )
+    monkeypatch.setattr(
+        build_core_bundle_module,
+        "_DRY_RUN_SAMPLE_RESOURCE_DIR",
+        tmp_path / "missing" / "extras",
+    )
+    monkeypatch.setattr(
+        build_core_bundle_module,
+        "_DRY_RUN_SAMPLE_SIGNING_KEY",
+        tmp_path / "missing" / "signing.key",
+    )
 
     destination = build_from_cli(["--dry-run", "--platform", "linux"])
 
