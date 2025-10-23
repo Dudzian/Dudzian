@@ -319,6 +319,30 @@ def test_build_from_cli_rejects_config_path_traversal(tmp_path):
         build_from_cli(args)
 
 
+def test_build_from_cli_requires_version_without_dry_run(tmp_path):
+    env = _create_basic_cli_environment(tmp_path)
+    config_file = tmp_path / "core.yaml"
+    config_file.write_text("risk: balanced", encoding="utf-8")
+
+    args = [
+        "--platform",
+        "linux",
+        "--signing-key-path",
+        str(env["signing_key_path"]),
+        "--daemon",
+        str(env["daemon_dir"]),
+        "--ui",
+        str(env["ui_dir"]),
+        "--config",
+        f"core.yaml={config_file}",
+        "--output-dir",
+        str(env["output_dir"]),
+    ]
+
+    with pytest.raises(ValueError, match="--version is required"):
+        build_from_cli(args)
+
+
 def test_build_from_cli_rejects_invalid_version(tmp_path):
     env = _create_basic_cli_environment(tmp_path)
     args = _base_cli_args(env)
@@ -344,6 +368,55 @@ def test_build_from_cli_rejects_existing_bundle_archive(tmp_path):
 
     with pytest.raises(FileExistsError, match="already exists"):
         build_from_cli(args)
+
+
+def test_build_from_cli_dry_run_uses_defaults_and_creates_no_artifacts(tmp_path):
+    env = _create_basic_cli_environment(tmp_path)
+    config_file = tmp_path / "core.yaml"
+    config_file.write_text("risk: conservative", encoding="utf-8")
+
+    args = [
+        "--platform",
+        "linux",
+        "--signing-key-path",
+        str(env["signing_key_path"]),
+        "--daemon",
+        str(env["daemon_dir"]),
+        "--ui",
+        str(env["ui_dir"]),
+        "--config",
+        f"core.yaml={config_file}",
+        "--output-dir",
+        str(env["output_dir"]),
+        "--dry-run",
+    ]
+
+    destination = build_from_cli(args)
+    expected = env["output_dir"].resolve() / "core-oem-0.0.0-dry-run-linux.tar.gz"
+    assert destination == expected
+    assert not env["output_dir"].exists()
+    assert not destination.exists()
+
+
+def test_build_from_cli_dry_run_detects_existing_bundle(tmp_path):
+    env = _create_basic_cli_environment(tmp_path)
+    config_file = tmp_path / "core.yaml"
+    config_file.write_text("risk: balanced", encoding="utf-8")
+
+    args = _base_cli_args(env) + [
+        "--config",
+        f"core.yaml={config_file}",
+        "--dry-run",
+    ]
+
+    env["output_dir"].mkdir()
+    existing = env["output_dir"].resolve() / "core-oem-1.0.0-linux.tar.gz"
+    existing.write_text("placeholder", encoding="utf-8")
+
+    with pytest.raises(FileExistsError, match="already exists"):
+        build_from_cli(args)
+
+    assert existing.exists()
 
 
 def test_build_from_cli_rejects_symlink_signing_key(tmp_path):
