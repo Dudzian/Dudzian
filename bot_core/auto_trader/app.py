@@ -692,6 +692,42 @@ class AutoTrader:
         return normalized
 
     # ------------------------------------------------------------------
+    # Normalisers
+    # ------------------------------------------------------------------
+    def _normalise_cycle_history_limit(self, limit: int | float | None) -> int:
+        """Coerce history limit values into an internal representation.
+
+        ``None`` and non-positive values disable trimming and are represented as
+        ``-1``.  Invalid inputs fall back to ``-1`` as well so callers do not
+        need to handle conversion errors.
+        """
+
+        if limit is None:
+            return -1
+        try:
+            # ``int(True)`` evaluates to ``1`` which is acceptable, so there is no
+            # need for a dedicated bool branch here.
+            normalized = int(limit)
+        except (TypeError, ValueError):
+            return -1
+        if normalized <= 0:
+            return -1
+        return normalized
+
+    def _normalise_cycle_history_ttl(self, ttl: float | int | None) -> float | None:
+        """Return a positive TTL in seconds or ``None`` when disabled."""
+
+        if ttl is None:
+            return None
+        try:
+            normalized = float(ttl)
+        except (TypeError, ValueError):
+            return None
+        if not math.isfinite(normalized) or normalized <= 0.0:
+            return None
+        return normalized
+
+    # ------------------------------------------------------------------
     # Lifecycle helpers
     # ------------------------------------------------------------------
     def _log(self, message: str, *, level: int = logging.INFO, **kwargs: Any) -> None:
