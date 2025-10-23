@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import Any, Mapping, Sequence
 
 from bot_core.exchanges.base import Environment
+from bot_core.exchanges.core import Mode
 
 
 # --- Alerty / audyt ----------------------------------------------------------
@@ -705,6 +706,27 @@ class RiskProfileConfig:
     instrument_buckets: Sequence[str] = field(default_factory=tuple)
 
 
+# --- Giełdy / adaptery -------------------------------------------------------
+
+
+@dataclass(slots=True)
+class ExchangeAccountConfig:
+    """Opisuje parę (środowisko, klucz, profil ryzyka) dla danego konta."""
+
+    environment: str
+    keychain_key: str
+    risk_profile: str
+
+
+@dataclass(slots=True)
+class NativeExchangeAdapterConfig:
+    """Definicja natywnego adaptera giełdowego dla określonego trybu."""
+
+    class_path: str
+    supports_testnet: bool = True
+    default_settings: Mapping[str, Any] = field(default_factory=dict)
+
+
 # --- Instrumenty / uniwersa --------------------------------------------------
 
 @dataclass(slots=True)
@@ -871,9 +893,6 @@ class MultiStrategySchedulerConfig:
     initial_signal_limits: Mapping[str, Mapping[str, SignalLimitOverrideConfig]] = field(
         default_factory=dict
     )
-    signal_limits: Mapping[str, Mapping[str, int]] = field(default_factory=dict)
-    capital_policy: Mapping[str, Any] | str | None = None
-    allocation_rebalance_seconds: int | None = None
 
 
 @dataclass(slots=True)
@@ -1145,6 +1164,8 @@ class CoreConfig:
     environments: Mapping[str, EnvironmentConfig]
     risk_profiles: Mapping[str, RiskProfileConfig]
     permission_profiles: Mapping[str, PermissionProfileConfig] = field(default_factory=dict)
+    exchange_accounts: Mapping[str, Mapping[str, ExchangeAccountConfig]] = field(default_factory=dict)
+    exchange_adapters: Mapping[str, Mapping[Mode, NativeExchangeAdapterConfig]] = field(default_factory=dict)
     instrument_universes: Mapping[str, InstrumentUniverseConfig] = field(default_factory=dict)
     instrument_buckets: Mapping[str, InstrumentBucketConfig] = field(default_factory=dict)
     strategy_definitions: Mapping[str, StrategyDefinitionConfig] = field(default_factory=dict)
@@ -1196,6 +1217,8 @@ __all__ = [
     "EnvironmentStreamConfig",
     "LiveChecklistDocumentConfig",
     "LiveReadinessChecklistConfig",
+    "ExchangeAccountConfig",
+    "NativeExchangeAdapterConfig",
     "CoverageMonitorTargetConfig",
     "CoverageMonitoringConfig",
     "RiskProfileConfig",
