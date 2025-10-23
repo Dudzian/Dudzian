@@ -4,6 +4,7 @@ import json
 import math
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any, Mapping, Sequence
 
 import pytest
 
@@ -14,13 +15,13 @@ from bot_core.ai import (
     FeatureBoundsValidator,
     ModelArtifact,
     ModelRepository,
-    score_with_data_monitoring,
-    update_sign_off,
+    export_drift_alert_report,
     load_recent_data_quality_reports,
     load_recent_drift_reports,
-    export_drift_alert_report,
+    score_with_data_monitoring,
     summarize_data_quality_reports,
     summarize_drift_reports,
+    update_sign_off,
 )
 
 
@@ -34,6 +35,65 @@ def _read_latest_category_report(root: Path, category: str) -> dict:
     if not candidates:
         pytest.fail(f"no reports found for category {category}")
     return _read_json(candidates[-1])
+
+
+def _extract_scalers(
+    feature_names: Sequence[str], metadata: Mapping[str, Any]
+) -> Mapping[str, tuple[float, float]]:
+    scalers_meta = metadata.get("feature_scalers")
+    stats_meta = metadata.get("feature_stats")
+    scalers: dict[str, tuple[float, float]] = {}
+    for name in feature_names:
+        entry: Mapping[str, Any] | None = None
+        if isinstance(scalers_meta, Mapping):
+            candidate = scalers_meta.get(name)
+            if isinstance(candidate, Mapping):
+                entry = candidate
+        if entry is None and isinstance(stats_meta, Mapping):
+            candidate = stats_meta.get(name)
+            if isinstance(candidate, Mapping):
+                entry = candidate
+        mean = float(entry.get("mean", 0.0)) if entry else 0.0
+        raw_stdev = entry.get("stdev") if entry else None
+        stdev = float(raw_stdev) if raw_stdev is not None else 1.0
+        if not math.isfinite(stdev) or stdev == 0.0:
+            stdev = 1.0
+        scalers[str(name)] = (mean, stdev)
+    return scalers
+
+
+def _make_artifact(
+    feature_names: Sequence[str], metadata: Mapping[str, Any]
+) -> ModelArtifact:
+    feature_names = tuple(str(name) for name in feature_names)
+    scalers = _extract_scalers(feature_names, metadata)
+    return ModelArtifact(
+        feature_names=feature_names,
+        model_state={
+            "learning_rate": 0.1,
+            "n_estimators": 0,
+            "initial_prediction": 0.0,
+            "feature_names": list(feature_names),
+            "feature_scalers": {
+                name: {"mean": values[0], "stdev": values[1]} for name, values in scalers.items()
+            },
+            "stumps": [],
+        },
+        trained_at=datetime.now(timezone.utc),
+        metrics={
+            "summary": {"mae": 0.0},
+            "train": {"mae": 0.0},
+            "validation": {},
+            "test": {},
+        },
+        metadata=dict(metadata),
+        target_scale=1.0,
+        training_rows=128,
+        validation_rows=0,
+        test_rows=0,
+        feature_scalers=scalers,
+        backend="builtin",
+    )
 
 
 def test_data_completeness_watcher_detects_missing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -90,24 +150,7 @@ def test_inference_monitoring_exports_reports(tmp_path: Path, monkeypatch: pytes
             "cooldown": 1,
         },
     }
-    artifact = ModelArtifact(
-        feature_names=("alpha", "beta"),
-        model_state={
-            "learning_rate": 0.1,
-            "n_estimators": 0,
-            "initial_prediction": 0.0,
-            "feature_names": ["alpha", "beta"],
-            "feature_scalers": {
-                "alpha": {"mean": 0.0, "stdev": 1.0},
-                "beta": {"mean": 0.0, "stdev": 1.0},
-            },
-            "stumps": [],
-        },
-        trained_at=datetime.now(timezone.utc),
-        metrics={"mae": 0.0},
-        metadata=metadata,
-        backend="builtin",
-    )
+    artifact = _make_artifact(("alpha", "beta"), metadata)
     model_path = repository.save(artifact, "test_model.json")
 
     inference = DecisionModelInference(repository)
@@ -162,24 +205,7 @@ def test_score_with_data_monitoring_passes_when_data_ok(
         },
         "data_quality": {"enforce": True},
     }
-    artifact = ModelArtifact(
-        feature_names=("alpha", "beta"),
-        model_state={
-            "learning_rate": 0.1,
-            "n_estimators": 0,
-            "initial_prediction": 0.0,
-            "feature_names": ["alpha", "beta"],
-            "feature_scalers": {
-                "alpha": {"mean": 0.0, "stdev": 1.0},
-                "beta": {"mean": 0.0, "stdev": 1.0},
-            },
-            "stumps": [],
-        },
-        trained_at=datetime.now(timezone.utc),
-        metrics={"mae": 0.0},
-        metadata=metadata,
-        backend="builtin",
-    )
+    artifact = _make_artifact(("alpha", "beta"), metadata)
     model_path = repository.save(artifact, "test_model_ok.json")
 
     inference = DecisionModelInference(repository)
@@ -225,21 +251,7 @@ def test_score_with_data_monitoring_respects_category_policy(
             },
         },
     }
-    artifact = ModelArtifact(
-        feature_names=("alpha",),
-        model_state={
-            "learning_rate": 0.1,
-            "n_estimators": 0,
-            "initial_prediction": 0.0,
-            "feature_names": ["alpha"],
-            "feature_scalers": {"alpha": {"mean": 0.0, "stdev": 1.0}},
-            "stumps": [],
-        },
-        trained_at=datetime.now(timezone.utc),
-        metrics={"mae": 0.0},
-        metadata=metadata,
-        backend="builtin",
-    )
+    artifact = _make_artifact(("alpha",), metadata)
     model_path = repository.save(artifact, "policy_model.json")
 
     inference = DecisionModelInference(repository)
@@ -273,21 +285,7 @@ def test_update_sign_off_updates_exported_report(
             "alpha": {"mean": 0.0, "stdev": 1.0, "min": -1.0, "max": 1.0},
         },
     }
-    artifact = ModelArtifact(
-        feature_names=("alpha",),
-        model_state={
-            "learning_rate": 0.1,
-            "n_estimators": 0,
-            "initial_prediction": 0.0,
-            "feature_names": ["alpha"],
-            "feature_scalers": {"alpha": {"mean": 0.0, "stdev": 1.0}},
-            "stumps": [],
-        },
-        trained_at=datetime.now(timezone.utc),
-        metrics={"mae": 0.0},
-        metadata=metadata,
-        backend="builtin",
-    )
+    artifact = _make_artifact(("alpha",), metadata)
     model_path = repository.save(artifact, "signoff_model.json")
 
     inference = DecisionModelInference(repository)
@@ -341,24 +339,7 @@ def test_load_recent_reports_filters_and_limits(
             "cooldown": 1,
         },
     }
-    artifact = ModelArtifact(
-        feature_names=("alpha", "beta"),
-        model_state={
-            "learning_rate": 0.1,
-            "n_estimators": 0,
-            "initial_prediction": 0.0,
-            "feature_names": ["alpha", "beta"],
-            "feature_scalers": {
-                "alpha": {"mean": 0.0, "stdev": 1.0},
-                "beta": {"mean": 0.0, "stdev": 1.0},
-            },
-            "stumps": [],
-        },
-        trained_at=datetime.now(timezone.utc),
-        metrics={"mae": 0.0},
-        metadata=metadata,
-        backend="builtin",
-    )
+    artifact = _make_artifact(("alpha", "beta"), metadata)
     model_path = repository.save(artifact, "history_model.json")
 
     inference = DecisionModelInference(repository)
@@ -420,24 +401,7 @@ def test_summarize_data_quality_reports_flags_pending_sign_off(
             "beta": {"mean": 0.0, "stdev": 1.0, "min": -1.0, "max": 1.0},
         },
     }
-    artifact = ModelArtifact(
-        feature_names=("alpha", "beta"),
-        model_state={
-            "learning_rate": 0.1,
-            "n_estimators": 0,
-            "initial_prediction": 0.0,
-            "feature_names": ["alpha", "beta"],
-            "feature_scalers": {
-                "alpha": {"mean": 0.0, "stdev": 1.0},
-                "beta": {"mean": 0.0, "stdev": 1.0},
-            },
-            "stumps": [],
-        },
-        trained_at=datetime.now(timezone.utc),
-        metrics={"mae": 0.0},
-        metadata=metadata,
-        backend="builtin",
-    )
+    artifact = _make_artifact(("alpha", "beta"), metadata)
     model_path = repository.save(artifact, "summary_model.json")
 
     inference = DecisionModelInference(repository)
