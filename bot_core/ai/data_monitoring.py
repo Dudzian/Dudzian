@@ -16,12 +16,14 @@ from typing import Any, Callable, Mapping, MutableMapping, Sequence
 from bot_core.alerts import DriftAlertPayload
 
 __all__ = [
+    "ComplianceSignOffError",
     "DataCompletenessWatcher",
     "FeatureBoundsValidator",
     "export_data_quality_report",
     "export_drift_alert_report",
     "DataQualityException",
     "apply_policy_to_report",
+    "ensure_compliance_sign_offs",
     "update_sign_off",
     "load_recent_data_quality_reports",
     "load_recent_drift_reports",
@@ -234,10 +236,12 @@ def _load_recent_reports(
     subdir: str,
     category: str | None = None,
     limit: int = 20,
+    audit_root: str | Path | None = None,
 ) -> tuple[Mapping[str, Any], ...]:
     if limit <= 0:
         raise ValueError("limit must be greater than zero")
-    root = _audit_root() / subdir
+    base_root = Path(audit_root).expanduser() if audit_root is not None else _audit_root()
+    root = base_root / subdir
     if not root.exists():
         return ()
     pattern = "*.json"
@@ -268,7 +272,10 @@ def _load_recent_reports(
 
 
 def load_recent_data_quality_reports(
-    *, category: str | None = None, limit: int = 20
+    *,
+    category: str | None = None,
+    limit: int = 20,
+    audit_root: str | Path | None = None,
 ) -> tuple[Mapping[str, Any], ...]:
     """Ładuje najnowsze raporty jakości danych z dysku.
 
@@ -277,13 +284,17 @@ def load_recent_data_quality_reports(
     wynik do konkretnej kategorii (np. ``"completeness"``).
     """
 
-    return _load_recent_reports(subdir="data_quality", category=category, limit=limit)
+    return _load_recent_reports(
+        subdir="data_quality", category=category, limit=limit, audit_root=audit_root
+    )
 
 
-def load_recent_drift_reports(*, limit: int = 20) -> tuple[Mapping[str, Any], ...]:
+def load_recent_drift_reports(
+    *, limit: int = 20, audit_root: str | Path | None = None
+) -> tuple[Mapping[str, Any], ...]:
     """Ładuje najnowsze raporty dryfu modelu z audytu."""
 
-    return _load_recent_reports(subdir="drift", limit=limit)
+    return _load_recent_reports(subdir="drift", limit=limit, audit_root=audit_root)
 
 
 def summarize_data_quality_reports(
@@ -440,6 +451,36 @@ def _collect_pending_sign_off(
                     "timestamp": timestamp,
                 }
             )
+
+
+def ensure_compliance_sign_offs(
+    *,
+    data_quality_reports: Sequence[Mapping[str, Any]] | None = None,
+    drift_reports: Sequence[Mapping[str, Any]] | None = None,
+    roles: Sequence[str] | None = None,
+) -> Mapping[str, tuple[Mapping[str, Any], ...]]:
+    """Weryfikuje, czy wymagane role zatwierdziły alerty data-quality oraz dryfu."""
+
+    required_roles = tuple(str(role).lower() for role in (roles or _SIGN_OFF_ROLES))
+    pending: MutableMapping[str, list[Mapping[str, Any]]] = {
+        role: [] for role in required_roles
+    }
+
+    dq_summary = summarize_data_quality_reports(data_quality_reports)
+    drift_summary = summarize_drift_reports(drift_reports)
+
+    for role in required_roles:
+        dq_entries = dq_summary.get("pending_sign_off", {}).get(role, ())
+        drift_entries = drift_summary.get("pending_sign_off", {}).get(role, ())
+        pending[role].extend(dict(entry) for entry in dq_entries)
+        pending[role].extend(dict(entry) for entry in drift_entries)
+
+    normalized = {role: tuple(entries) for role, entries in pending.items()}
+    if any(normalized.values()):
+        missing = {role: entries for role, entries in normalized.items() if entries}
+        if missing:
+            raise ComplianceSignOffError(normalized)
+    return normalized
 def _is_missing(value: object) -> bool:
     if value is None:
         return True
@@ -638,4 +679,26 @@ class DataQualityException(RuntimeError):
         """Zwraca raporty monitoringu, które spowodowały wyjątek."""
 
         return self._reports
+
+
+class ComplianceSignOffError(RuntimeError):
+    """Wyjątek zgłaszany, gdy brakuje zatwierdzonych podpisów Risk/Compliance."""
+
+    def __init__(self, pending: Mapping[str, Sequence[Mapping[str, Any]]]) -> None:
+        consolidated = {
+            str(role): tuple(dict(entry) for entry in entries)
+            for role, entries in pending.items()
+        }
+        missing = {
+            role: tuple(entries)
+            for role, entries in consolidated.items()
+            if entries
+        }
+        summary = ", ".join(f"{role}:{len(entries)}" for role, entries in sorted(missing.items()))
+        message = "Brak wymaganych podpisów Risk/Compliance dla raportów audytu AI"
+        if summary:
+            message = f"{message} ({summary})"
+        super().__init__(message)
+        self.pending: Mapping[str, tuple[Mapping[str, Any], ...]] = MappingProxyType(consolidated)
+        self.missing: Mapping[str, tuple[Mapping[str, Any], ...]] = MappingProxyType(missing)
 

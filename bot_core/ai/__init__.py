@@ -13,6 +13,8 @@ _EXPORTS: Dict[str, Tuple[str, str]] = {
     "ModelArtifact": (".models", "ModelArtifact"),
     "ModelMetrics": (".models", "ModelMetrics"),
     "ModelScore": (".models", "ModelScore"),
+    "ModelArtifactValidationError": (".validation", "ModelArtifactValidationError"),
+    "validate_model_artifact_schema": (".validation", "validate_model_artifact_schema"),
     # training pipeline
     "ModelTrainer": (".training", "ModelTrainer"),
     "SimpleGradientBoostingModel": (".training", "SimpleGradientBoostingModel"),
@@ -23,6 +25,9 @@ _EXPORTS: Dict[str, Tuple[str, str]] = {
     "AUDIT_SUBDIRECTORIES": (".audit", "AUDIT_SUBDIRECTORIES"),
     "DEFAULT_AUDIT_ROOT": (".audit", "DEFAULT_AUDIT_ROOT"),
     "ensure_audit_structure": (".audit", "ensure_audit_structure"),
+    "scheduler_state_path": (".audit", "scheduler_state_path"),
+    "save_scheduler_state": (".audit", "save_scheduler_state"),
+    "load_scheduler_state": (".audit", "load_scheduler_state"),
     "save_walk_forward_report": (".audit", "save_walk_forward_report"),
     "save_data_quality_report": (".audit", "save_data_quality_report"),
     "save_drift_report": (".audit", "save_drift_report"),
@@ -75,6 +80,8 @@ _EXPORTS: Dict[str, Tuple[str, str]] = {
     "DataQualityException": (".data_monitoring", "DataQualityException"),
     "apply_policy_to_report": (".data_monitoring", "apply_policy_to_report"),
     "update_sign_off": (".data_monitoring", "update_sign_off"),
+    "ComplianceSignOffError": (".data_monitoring", "ComplianceSignOffError"),
+    "ensure_compliance_sign_offs": (".data_monitoring", "ensure_compliance_sign_offs"),
     "load_recent_data_quality_reports": (
         ".data_monitoring",
         "load_recent_data_quality_reports",

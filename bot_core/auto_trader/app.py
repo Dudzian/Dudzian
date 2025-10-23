@@ -453,6 +453,28 @@ class AutoTrader:
 
         self._thresholds = self._thresholds_loader()
 
+    def _normalise_cycle_history_limit(self, limit: int | None) -> int:
+        if limit is None:
+            return -1
+        try:
+            value = int(limit)
+        except (TypeError, ValueError):
+            return -1
+        if value <= 0:
+            return -1
+        return value
+
+    def _normalise_cycle_history_ttl(self, ttl: float | None) -> float | None:
+        if ttl is None:
+            return None
+        try:
+            value = float(ttl)
+        except (TypeError, ValueError):
+            return None
+        if not math.isfinite(value) or value <= 0.0:
+            return None
+        return value
+
     # ------------------------------------------------------------------
     # Lifecycle helpers
     # ------------------------------------------------------------------
@@ -5796,6 +5818,43 @@ class AutoTrader:
             return overflow
         return 0
 
+    def _prune_risk_evaluations_locked(
+        self, *, reference_time: float | None = None
+    ) -> int:
+        history = self._risk_evaluations
+        ttl = self._risk_evaluations_ttl_s
+        if ttl is None or ttl <= 0.0 or not history:
+            return 0
+        try:
+            cutoff_reference = (
+                float(reference_time)
+                if reference_time is not None
+                else float(time.time())
+            )
+        except (TypeError, ValueError):  # pragma: no cover - defensive guard
+            cutoff_reference = float(time.time())
+
+        cutoff = cutoff_reference - ttl
+        if cutoff <= float("-inf"):
+            return 0
+
+        retained: list[dict[str, Any]] = []
+        trimmed = 0
+        for entry in history:
+            timestamp = entry.get("timestamp")
+            try:
+                timestamp_value = float(timestamp) if timestamp is not None else None
+            except (TypeError, ValueError):
+                timestamp_value = None
+            if timestamp_value is None or timestamp_value >= cutoff:
+                retained.append(entry)
+            else:
+                trimmed += 1
+
+        if trimmed:
+            history[:] = retained
+        return trimmed
+
     def _store_risk_evaluation_entry(
         self,
         entry: dict[str, Any],
@@ -5844,6 +5903,25 @@ class AutoTrader:
         payload["history_limit"] = limit_snapshot
         payload["history_ttl"] = ttl_snapshot
         return payload
+
+    def _log_risk_history_trimmed(
+        self,
+        *,
+        context: str,
+        trimmed: int,
+        ttl: float | None,
+        history: int,
+    ) -> None:
+        if trimmed <= 0:
+            return
+        self._log(
+            "Przycięto historię ocen ryzyka",
+            level=logging.DEBUG,
+            context=context,
+            trimmed=trimmed,
+            ttl=ttl,
+            history=history,
+        )
 
     def _emit_risk_evaluation_event(self, payload: Mapping[str, Any]) -> None:
         emitter_emit = getattr(self.emitter, "emit", None)
