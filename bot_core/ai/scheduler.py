@@ -7,14 +7,14 @@ import os
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Callable, Iterable, Mapping, MutableMapping, Sequence
+from tempfile import NamedTemporaryFile
+from typing import Callable, ClassVar, Iterable, Mapping, MutableMapping, Sequence
 
-from ..runtime.journal import TradingDecisionEvent, TradingDecisionJournal
 from ._license import ensure_ai_signals_enabled
 from .feature_engineering import FeatureDataset
 from .models import ModelArtifact
 from .training import ModelTrainer
-from bot_core.runtime.journal import TradingDecisionEvent, TradingDecisionJournal
+from ..runtime.journal import TradingDecisionEvent, TradingDecisionJournal
 
 from .audit import DEFAULT_AUDIT_ROOT, save_walk_forward_report
 
@@ -506,10 +506,45 @@ class ScheduledTrainingJob:
     def is_due(self, now: datetime | None = None) -> bool:
         return self.scheduler.should_retrain(now)
 
+    def _journal_context_value(self, key: str, default: str) -> str:
+        if self.decision_journal_context is None:
+            return default
+        value = self.decision_journal_context.get(key)
+        if value is None:
+            return default
+        return str(value)
+
+    @property
+    def journal_environment(self) -> str:
+        return self._journal_context_value("environment", "ai-training")
+
+    @property
+    def journal_portfolio(self) -> str:
+        return self._journal_context_value("portfolio", self.name)
+
+    @property
+    def journal_risk_profile(self) -> str:
+        return self._journal_context_value("risk_profile", "ai-research")
+
+    @property
+    def journal_strategy(self) -> str:
+        return self._journal_context_value("strategy", self.name)
+
     def run(self, now: datetime | None = None) -> ModelArtifact:
-        dataset = self.dataset_provider()
-        trainer = self.trainer_factory()
-        artifact = trainer.train(dataset)
+        timestamp = self.scheduler._ensure_utc(now)
+        dataset: FeatureDataset | None = None
+        trainer: ModelTrainer | None = None
+        try:
+            dataset = self.dataset_provider()
+            trainer = self.trainer_factory()
+            artifact = trainer.train(dataset)
+        except Exception as exc:
+            self._handle_failure(
+                failed_at=timestamp,
+                error=exc,
+                dataset=dataset,
+            )
+            raise
         validation_result: WalkForwardResult | None = None
         report_path: Path | None = None
         validator: WalkForwardValidator | None = None
@@ -526,17 +561,11 @@ class ScheduledTrainingJob:
                 generated_at=artifact.trained_at,
                 trainer_backend=getattr(trainer, "backend", "builtin"),
             )
-            self._record_walk_forward_journal(
-                validation=validation_result,
-                report_path=report_path,
-                validator=validator,
-                dataset=dataset,
-                trained_at=artifact.trained_at,
-            )
-        self.scheduler.mark_executed(now)
+        summary_metrics = artifact.metrics.summary()
+        self.scheduler.mark_executed(artifact.trained_at)
         record = TrainingRunRecord(
             trained_at=artifact.trained_at,
-            metrics=dict(artifact.metrics),
+            metrics=dict(summary_metrics),
             backend=getattr(trainer, "backend", "builtin"),
             dataset_rows=len(dataset.vectors),
             validation=validation_result,
@@ -564,8 +593,13 @@ class ScheduledTrainingJob:
                 metadata["paused_until"] = self.scheduler.paused_until.isoformat()
             if self.scheduler.paused_reason:
                 metadata["paused_reason"] = self.scheduler.paused_reason
-            for key, value in artifact.metrics.items():
-                metadata[f"metric_{key}"] = str(value)
+            for key, value in summary_metrics.items():
+                metadata[f"metric_{key}"] = f"{value:.10f}"
+            for split, values in artifact.metrics.blocks().items():
+                if split == "summary" or not values:
+                    continue
+                for metric_name, metric_value in values.items():
+                    metadata[f"metric_{split}_{metric_name}"] = f"{metric_value:.10f}"
             event = TradingDecisionEvent(
                 event_type="ai_retraining",
                 timestamp=artifact.trained_at,
@@ -573,12 +607,20 @@ class ScheduledTrainingJob:
                 portfolio=self.journal_portfolio,
                 risk_profile=self.journal_risk_profile,
                 schedule=self.name,
-                strategy=self.name,
+                strategy=self.journal_strategy,
                 schedule_run_id=f"{self.name}:{artifact.trained_at.isoformat()}",
                 telemetry_namespace=f"ai.scheduler.{self.name}",
                 metadata=metadata,
             )
             self.decision_journal.record(event)
+            if validation_result is not None:
+                self._record_walk_forward_journal(
+                    validation=validation_result,
+                    report_path=report_path,
+                    validator=validator,
+                    dataset=dataset,
+                    trained_at=artifact.trained_at,
+                )
         if self.on_completed is not None:
             self.on_completed(artifact, validation_result)
         return artifact
@@ -630,6 +672,52 @@ class ScheduledTrainingJob:
             strategy=context.get("strategy"),
             schedule_run_id=context.get("schedule_run_id"),
             strategy_instance_id=context.get("strategy_instance_id"),
+            metadata=metadata,
+        )
+        try:
+            self.decision_journal.record(event)
+        except Exception:  # pragma: no cover - audyt nie może blokować treningu
+            pass
+
+    def _handle_failure(
+        self,
+        *,
+        failed_at: datetime,
+        error: Exception,
+        dataset: FeatureDataset | None,
+    ) -> None:
+        self.scheduler.mark_failure(failed_at, reason=f"{type(error).__name__}: {error}")
+        if self.decision_journal is None:
+            return
+
+        metadata: MutableMapping[str, str] = {
+            "scheduler_version": str(self.scheduler.STATE_VERSION),
+            "failure_streak": str(self.scheduler.failure_streak),
+            "error_type": type(error).__name__,
+            "next_run": self.scheduler.next_run().isoformat(),
+        }
+        if self.scheduler.last_run is not None:
+            metadata["last_run"] = self.scheduler.last_run.isoformat()
+        metadata["last_failure"] = failed_at.isoformat()
+        if self.scheduler.last_failure_reason:
+            metadata["last_failure_reason"] = self.scheduler.last_failure_reason
+        if self.scheduler.cooldown_until is not None:
+            metadata["cooldown_until"] = self.scheduler.cooldown_until.isoformat()
+        if self.scheduler.updated_at is not None:
+            metadata["state_updated_at"] = self.scheduler.updated_at.isoformat()
+        if dataset is not None:
+            metadata["dataset_rows"] = str(len(dataset.vectors))
+
+        event = TradingDecisionEvent(
+            event_type="ai_retraining_failed",
+            timestamp=failed_at,
+            environment=self.journal_environment,
+            portfolio=self.journal_portfolio,
+            risk_profile=self.journal_risk_profile,
+            schedule=self.name,
+            strategy=self.journal_strategy,
+            schedule_run_id=f"{self.name}:{failed_at.isoformat()}",
+            telemetry_namespace=f"ai.scheduler.{self.name}",
             metadata=metadata,
         )
         try:

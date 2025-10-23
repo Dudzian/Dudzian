@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from types import MappingProxyType
-from typing import Mapping, MutableMapping, Sequence, TYPE_CHECKING
+from typing import Iterator, Mapping, MutableMapping, Sequence, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .training import SupportsInference
@@ -71,7 +71,51 @@ def _normalize_feature_scalers(
 
 
 
-def _normalize_metrics(raw: Mapping[str, object] | None) -> Mapping[str, Mapping[str, float]]:
+class ModelMetrics(Mapping[str, object]):
+    """Niezmienna struktura udostępniająca metryki modelu."""
+
+    def __init__(self, blocks: Mapping[str, Mapping[str, float]]) -> None:
+        self._blocks = MappingProxyType(dict(blocks))
+        summary = self._blocks.get("summary")
+        if summary is None:
+            summary = MappingProxyType({})
+        self._summary = summary
+
+    def __getitem__(self, key: str) -> object:
+        if key in self._blocks:
+            return self._blocks[key]
+        if key in self._summary:
+            return self._summary[key]
+        raise KeyError(key)
+
+    def __iter__(self) -> Iterator[str]:
+        yielded: set[str] = set()
+        for key in self._blocks.keys():
+            yielded.add(key)
+            yield key
+        for key in self._summary.keys():
+            if key in yielded:
+                continue
+            yielded.add(key)
+            yield key
+
+    def __len__(self) -> int:
+        keys = set(self._blocks.keys())
+        keys.update(self._summary.keys())
+        return len(keys)
+
+    def blocks(self) -> Mapping[str, Mapping[str, float]]:
+        """Zwraca pierwotne bloki metryk (summary/train/validation/test)."""
+
+        return self._blocks
+
+    def summary(self) -> Mapping[str, float]:
+        """Zwraca blok podsumowania metryk."""
+
+        return self._summary
+
+
+def _normalize_metrics(raw: Mapping[str, object] | None) -> ModelMetrics:
     required_keys = ("summary", "train", "validation", "test")
 
     def _coerce_block(values: Mapping[str, object]) -> Mapping[str, float]:
@@ -103,7 +147,7 @@ def _normalize_metrics(raw: Mapping[str, object] | None) -> Mapping[str, Mapping
         if key not in structured:
             structured[key] = MappingProxyType({})
 
-    return MappingProxyType(structured)
+    return ModelMetrics(structured)
 
 
 @dataclass(slots=True)
@@ -113,7 +157,7 @@ class ModelArtifact:
     feature_names: Sequence[str]
     model_state: Mapping[str, object]
     trained_at: datetime
-    metrics: Mapping[str, Mapping[str, float]]
+    metrics: ModelMetrics
     metadata: Mapping[str, object]
     target_scale: float
     training_rows: int
@@ -154,7 +198,7 @@ class ModelArtifact:
 
     def to_dict(self) -> Mapping[str, object]:
         metrics_payload: dict[str, dict[str, float]] = {}
-        for split, values in self.metrics.items():
+        for split, values in self.metrics.blocks().items():
             if isinstance(values, Mapping):
                 metrics_payload[str(split)] = dict(values)
         for required in ("summary", "train", "validation", "test"):
@@ -253,4 +297,4 @@ class ModelArtifact:
         return adapter.load(self.model_state, self.feature_names, self.metadata)
 
 
-__all__ = ["ModelArtifact", "ModelScore"]
+__all__ = ["ModelArtifact", "ModelMetrics", "ModelScore"]
