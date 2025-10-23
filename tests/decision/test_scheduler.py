@@ -223,8 +223,12 @@ def test_scheduled_job_persists_state_and_records_journal(tmp_path) -> None:
     assert len(exported) == 1, "powinien powstać wpis w decision journal"
     entry = exported[0]
     assert entry["event"] == "ai_retraining"
+    assert entry["environment"] == "ai-training"
+    assert entry["portfolio"] == "btc-retrain"
+    assert entry["risk_profile"] == "ai-research"
     assert entry["schedule"] == "btc-retrain"
     assert entry["schedule_run_id"].startswith("btc-retrain:")
+    assert entry["metric_mae"] == str(artifact.metrics["mae"])
     assert entry["last_run"] == artifact.trained_at.isoformat()
     assert entry["next_run"] == (
         artifact.trained_at + timedelta(minutes=30)
@@ -302,8 +306,12 @@ def test_scheduled_job_records_failure_and_updates_state(tmp_path) -> None:
     assert len(exported) == 1
     entry = exported[0]
     assert entry["event"] == "ai_retraining_failed"
+    assert entry["environment"] == "ai-training"
+    assert entry["portfolio"] == "btc-fail"
+    assert entry["risk_profile"] == "ai-research"
     assert entry["schedule"] == "btc-fail"
     assert entry["error_type"] == "RuntimeError"
+    assert "metric_mae" not in entry
     assert entry["failure_streak"] == "1"
     assert entry["last_failure"] == failure_time.isoformat()
     assert entry["last_run"] == previous_run.isoformat()
