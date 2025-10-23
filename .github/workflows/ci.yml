@@ -125,7 +125,7 @@ jobs:
 
       - name: Coverage alert runner (nominal)
         run: >-
-          python scripts/coverage_alert_runner.py
+          python -m scripts.coverage_alert_runner
           --config tests/assets/coverage_sample/core.yaml
           --all-configured
           --as-of 2024-01-22T00:00:00+00:00
@@ -134,7 +134,7 @@ jobs:
       - name: Coverage alert runner (threshold violation smoke)
         run: |
           set +e
-          python scripts/coverage_alert_runner.py \
+          python -m scripts.coverage_alert_runner \
             --config tests/assets/coverage_sample/core.yaml \
             --all-configured \
             --as-of 2024-02-05T00:00:00+00:00 \
