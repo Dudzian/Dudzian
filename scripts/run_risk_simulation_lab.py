@@ -25,10 +25,33 @@ except Exception:  # noqa: BLE001 - opcjonalna zależność
 
 _LOGGER = logging.getLogger(__name__)
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
+DEFAULT_CONFIG_PATH = REPO_ROOT / "config" / "core.yaml"
+DEFAULT_OUTPUT_DIR = REPO_ROOT / "reports" / "paper_labs"
+
+
+def _describe_default(path: Path) -> str:
+    """Zwraca opis ścieżki względem repozytorium, jeśli to możliwe."""
+
+    try:
+        relative = path.relative_to(REPO_ROOT)
+    except ValueError:
+        return str(path)
+    return str(relative)
+
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--config", required=True, help="Ścieżka do pliku config/core.yaml")
+    parser.add_argument(
+        "--config",
+        default=None,
+        metavar="PATH",
+        help=(
+            "Ścieżka do pliku config/core.yaml (domyślnie "
+            f"{_describe_default(DEFAULT_CONFIG_PATH)} w katalogu repozytorium)"
+        ),
+    )
     parser.add_argument(
         "--environment",
         help="Nazwa środowiska, której użyć do domyślnej lokalizacji danych",
@@ -67,8 +90,12 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--output-dir",
-        required=True,
-        help="Katalog, w którym zapisane zostaną raporty",
+        default=None,
+        metavar="DIR",
+        help=(
+            "Katalog, w którym zapisane zostaną raporty (domyślnie "
+            f"{_describe_default(DEFAULT_OUTPUT_DIR)} w katalogu repozytorium)"
+        ),
     )
     parser.add_argument(
         "--synthetic-fallback",
@@ -207,7 +234,17 @@ def main(argv: list[str] | None = None) -> int:
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
-    config_path = Path(args.config).expanduser().resolve()
+    if args.config:
+        config_candidate = Path(args.config)
+        using_default_config = False
+    else:
+        config_candidate = DEFAULT_CONFIG_PATH
+        using_default_config = True
+    config_path = config_candidate.expanduser().resolve()
+    if using_default_config:
+        _LOGGER.info("Nie podano --config, używam domyślnej ścieżki: %s", config_path)
+    else:
+        _LOGGER.info("Używam pliku konfiguracji: %s", config_path)
     core_config = load_core_config(str(config_path))
 
     settings = SimulationSettings(base_equity=args.base_equity, max_bars=args.max_bars)
@@ -275,7 +312,17 @@ def main(argv: list[str] | None = None) -> int:
         tco_summary = _collect_tco_summary(core_config, config_path=config_path)
         report.tco_summary = tco_summary
 
-    output_dir = Path(args.output_dir)
+    if args.output_dir:
+        output_candidate = Path(args.output_dir)
+        using_default_output = False
+    else:
+        output_candidate = DEFAULT_OUTPUT_DIR
+        using_default_output = True
+    output_dir = output_candidate.expanduser().resolve()
+    if using_default_output:
+        _LOGGER.info("Nie podano --output-dir, używam domyślnego katalogu: %s", output_dir)
+    else:
+        _LOGGER.info("Raporty zostaną zapisane do katalogu: %s", output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     json_path = output_dir / args.json_output
     pdf_path = output_dir / args.pdf_output
