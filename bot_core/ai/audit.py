@@ -14,6 +14,7 @@ if TYPE_CHECKING:  # pragma: no cover - tylko dla typowania
 
 DEFAULT_AUDIT_ROOT = Path("audit/ai_decision")
 AUDIT_SUBDIRECTORIES: tuple[str, ...] = ("walk_forward", "data_quality", "drift")
+SCHEDULER_STATE_FILENAME = "scheduler.json"
 
 
 def ensure_audit_structure(audit_root: str | Path | None = None) -> Path:
@@ -23,6 +24,13 @@ def ensure_audit_structure(audit_root: str | Path | None = None) -> Path:
     for name in AUDIT_SUBDIRECTORIES:
         (root / name).mkdir(parents=True, exist_ok=True)
     return root
+
+
+def scheduler_state_path(audit_root: str | Path | None = None) -> Path:
+    """Zwraca ścieżkę do pliku stanu harmonogramu retreningu."""
+
+    root = ensure_audit_structure(audit_root)
+    return root / SCHEDULER_STATE_FILENAME
 
 
 def _json_safe(value: object) -> object:
@@ -214,6 +222,33 @@ def save_drift_report(
         audit_root=audit_root,
     )
 
+
+def save_scheduler_state(
+    state: Mapping[str, Any], *, audit_root: str | Path | None = None
+) -> Path:
+    """Zapisuje stan harmonogramu retreningu do ``scheduler.json``."""
+
+    target_path = scheduler_state_path(audit_root)
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    with target_path.open("w", encoding="utf-8") as handle:
+        json.dump({str(k): _json_safe(v) for k, v in state.items()}, handle, ensure_ascii=False, indent=2, sort_keys=True)
+        handle.write("\n")
+    return target_path
+
+
+def load_scheduler_state(
+    *, audit_root: str | Path | None = None
+) -> Mapping[str, Any] | None:
+    """Ładuje zapisany stan harmonogramu retreningu."""
+
+    target_path = scheduler_state_path(audit_root)
+    if not target_path.exists():
+        return None
+    payload = json.loads(target_path.read_text(encoding="utf-8"))
+    if isinstance(payload, Mapping):
+        return payload
+    raise TypeError("Stan harmonogramu w scheduler.json musi być mapowaniem JSON")
+
 def _iter_json_reports(directory: Path) -> list[Path]:
     files: list[Path] = []
     if not directory.exists():
@@ -289,9 +324,12 @@ __all__ = [
     "AUDIT_SUBDIRECTORIES",
     "DEFAULT_AUDIT_ROOT",
     "ensure_audit_structure",
+    "load_scheduler_state",
+    "save_scheduler_state",
     "save_walk_forward_report",
     "save_data_quality_report",
     "save_drift_report",
+    "scheduler_state_path",
     "list_audit_reports",
     "load_audit_report",
     "load_latest_walk_forward_report",
