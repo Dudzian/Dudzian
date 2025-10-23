@@ -454,6 +454,42 @@ class AutoTrader:
         self._thresholds = self._thresholds_loader()
 
     # ------------------------------------------------------------------
+    # Normalisers
+    # ------------------------------------------------------------------
+    def _normalise_cycle_history_limit(self, limit: int | float | None) -> int:
+        """Coerce history limit values into an internal representation.
+
+        ``None`` and non-positive values disable trimming and are represented as
+        ``-1``.  Invalid inputs fall back to ``-1`` as well so callers do not
+        need to handle conversion errors.
+        """
+
+        if limit is None:
+            return -1
+        try:
+            # ``int(True)`` evaluates to ``1`` which is acceptable, so there is no
+            # need for a dedicated bool branch here.
+            normalized = int(limit)
+        except (TypeError, ValueError):
+            return -1
+        if normalized <= 0:
+            return -1
+        return normalized
+
+    def _normalise_cycle_history_ttl(self, ttl: float | int | None) -> float | None:
+        """Return a positive TTL in seconds or ``None`` when disabled."""
+
+        if ttl is None:
+            return None
+        try:
+            normalized = float(ttl)
+        except (TypeError, ValueError):
+            return None
+        if not math.isfinite(normalized) or normalized <= 0.0:
+            return None
+        return normalized
+
+    # ------------------------------------------------------------------
     # Lifecycle helpers
     # ------------------------------------------------------------------
     def _log(self, message: str, *, level: int = logging.INFO, **kwargs: Any) -> None:
@@ -880,14 +916,14 @@ class AutoTrader:
         if state is not None:
             return state
         schedule = self._ensure_work_schedule()
-        state = schedule.describe()
+        state = self._describe_schedule(schedule)
         self._schedule_state = state
         self._schedule_mode = state.mode
         return state
 
     def describe_work_schedule(self) -> dict[str, Any]:
         schedule = self._ensure_work_schedule()
-        state = schedule.describe()
+        state = self._describe_schedule(schedule)
         self._schedule_state = state
         self._schedule_mode = state.mode
         description = schedule.to_payload()
@@ -896,7 +932,7 @@ class AutoTrader:
 
     def describe_work_schedule(self) -> dict[str, Any]:
         schedule = self._ensure_work_schedule()
-        state = schedule.describe()
+        state = self._describe_schedule(schedule)
         self._schedule_state = state
         self._schedule_mode = state.mode
         description = schedule.to_payload()
@@ -1085,7 +1121,20 @@ class AutoTrader:
         schedule = getattr(self, "_work_schedule", None)
         if schedule is None:
             return True
-        state = schedule.describe()
+        describe = getattr(schedule, "describe", None)
+        if callable(describe):
+            try:
+                state = describe()
+            except TypeError:
+                state = describe(datetime.now(timezone.utc))
+        else:
+            state = ScheduleState(
+                mode=getattr(schedule, "default_mode", "live"),
+                is_open=True,
+                window=None,
+                next_transition=None,
+                reference_time=datetime.now(timezone.utc),
+            )
         self._schedule_state = state
         self._schedule_mode = state.mode
         snapshot = (state.mode, state.is_open)
@@ -1466,7 +1515,7 @@ class AutoTrader:
             else:
                 update_reason = reason or "update"
 
-            state = schedule.describe()
+            state = self._describe_schedule(schedule)
             with self._lock:
                 self._work_schedule = schedule
                 self._schedule_state = state
@@ -1583,7 +1632,7 @@ class AutoTrader:
         """Return the latest schedule state, recalculating it if needed."""
 
         schedule = self.get_work_schedule()
-        state = schedule.describe()
+        state = self._describe_schedule(schedule)
         with self._lock:
             self._schedule_state = state
             self._schedule_mode = state.mode
@@ -1665,7 +1714,20 @@ class AutoTrader:
         schedule = getattr(self, "_work_schedule", None)
         if schedule is None:
             return True
-        state = schedule.describe()
+        describe = getattr(schedule, "describe", None)
+        if callable(describe):
+            try:
+                state = describe()
+            except TypeError:
+                state = describe(datetime.now(timezone.utc))
+        else:
+            state = ScheduleState(
+                mode=getattr(schedule, "default_mode", "live"),
+                is_open=True,
+                window=None,
+                next_transition=None,
+                reference_time=datetime.now(timezone.utc),
+            )
         self._schedule_state = state
         self._schedule_mode = state.mode
         snapshot = (state.mode, state.is_open)
@@ -2347,7 +2409,7 @@ class AutoTrader:
         """Return the latest schedule state, recalculating it if needed."""
 
         schedule = self.get_work_schedule()
-        state = schedule.describe()
+        state = self._describe_schedule(schedule)
         with self._lock:
             self._schedule_state = state
             self._schedule_mode = state.mode
@@ -2425,11 +2487,30 @@ class AutoTrader:
             )
         return self._execution_context
 
+    def _describe_schedule(self, schedule: TradingSchedule) -> ScheduleState:
+        describe = getattr(schedule, "describe", None)
+        reference = datetime.now(timezone.utc)
+        if callable(describe):
+            try:
+                state = describe()
+            except TypeError:
+                state = describe(reference)
+            else:
+                if isinstance(state, ScheduleState):
+                    return state
+        return ScheduleState(
+            mode=getattr(schedule, "default_mode", "live"),
+            is_open=True,
+            window=None,
+            next_transition=None,
+            reference_time=reference,
+        )
+
     def _enforce_work_schedule(self) -> bool:
         schedule = getattr(self, "_work_schedule", None)
         if schedule is None:
             return True
-        state = schedule.describe()
+        state = self._describe_schedule(schedule)
         self._schedule_state = state
         self._schedule_mode = state.mode
         snapshot = (state.mode, state.is_open)
@@ -5796,6 +5877,42 @@ class AutoTrader:
             return overflow
         return 0
 
+    def _prune_risk_evaluations_locked(
+        self,
+        *,
+        reference_time: float | None = None,
+    ) -> int:
+        history = self._risk_evaluations
+        ttl = self._risk_evaluations_ttl_s
+        if ttl is None or ttl <= 0.0 or not history:
+            return 0
+        try:
+            cutoff_reference = (
+                float(reference_time)
+                if reference_time is not None
+                else float(time.time())
+            )
+        except (TypeError, ValueError):  # pragma: no cover - defensive guard
+            cutoff_reference = float(time.time())
+        cutoff = cutoff_reference - ttl
+        if cutoff <= float("-inf"):
+            return 0
+        retained: list[dict[str, Any]] = []
+        trimmed = 0
+        for entry in history:
+            timestamp = entry.get("timestamp")
+            try:
+                timestamp_value = float(timestamp) if timestamp is not None else None
+            except (TypeError, ValueError):
+                timestamp_value = None
+            if timestamp_value is None or timestamp_value >= cutoff:
+                retained.append(entry)
+            else:
+                trimmed += 1
+        if trimmed:
+            history[:] = retained
+        return trimmed
+
     def _store_risk_evaluation_entry(
         self,
         entry: dict[str, Any],
@@ -5864,6 +5981,25 @@ class AutoTrader:
                 listener(copy.deepcopy(dict(payload)))
             except Exception:  # pragma: no cover - listeners should not break trading
                 LOGGER.debug("Risk evaluation listener failed", exc_info=True)
+
+    def _log_risk_history_trimmed(
+        self,
+        *,
+        context: str,
+        trimmed: int,
+        ttl: float | None,
+        history: int,
+    ) -> None:
+        if trimmed <= 0:
+            return
+        self._log(
+            "Przycięto historię ocen ryzyka",
+            level=logging.DEBUG,
+            context=context,
+            trimmed_by_ttl=trimmed,
+            ttl=ttl,
+            history=history,
+        )
 
     def add_risk_evaluation_listener(
         self, listener: Callable[[Mapping[str, Any]], None]
