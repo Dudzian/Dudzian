@@ -13,10 +13,9 @@ from typing import Any, Deque, Mapping, MutableMapping, Sequence
 
 from bot_core.alerts import DriftAlertPayload, emit_model_drift_alert
 
+from . import InferenceDataCompletenessWatcher, InferenceFeatureBoundsValidator
 from .data_monitoring import (
-    DataCompletenessWatcher,
     DataQualityException,
-    FeatureBoundsValidator,
     apply_policy_to_report,
     export_drift_alert_report,
 )
@@ -575,8 +574,8 @@ class DecisionModelInference:
         self._model_label: str = "unknown"
         self._drift_monitor = _FeatureDriftMonitor()
         self._last_drift_score: float | None = None
-        self._completeness_watcher = DataCompletenessWatcher()
-        self._bounds_validator = FeatureBoundsValidator()
+        self._completeness_watcher = InferenceDataCompletenessWatcher()
+        self._bounds_validator = InferenceFeatureBoundsValidator()
         self._last_data_quality_report: dict[str, Mapping[str, object]] | None = None
         self._enforce_data_alerts = True
         self._data_quality_enforcement: dict[str, bool] = {}

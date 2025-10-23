@@ -32,10 +32,8 @@ _EXPORTS: Dict[str, Tuple[str, str]] = {
     "load_latest_data_quality_report": (".audit", "load_latest_data_quality_report"),
     "load_latest_drift_report": (".audit", "load_latest_drift_report"),
     # monitoring danych (pipeline)
-    "DataCompletenessWatcher": (".monitoring", "DataCompletenessWatcher"),
     "DataQualityAssessment": (".monitoring", "DataQualityAssessment"),
     "DataQualityIssue": (".monitoring", "DataQualityIssue"),
-    "FeatureBoundsValidator": (".monitoring", "FeatureBoundsValidator"),
     "FeatureDriftAnalyzer": (".monitoring", "FeatureDriftAnalyzer"),
     "FeatureDriftAssessment": (".monitoring", "FeatureDriftAssessment"),
     # pipeline helpers
@@ -72,8 +70,6 @@ _EXPORTS: Dict[str, Tuple[str, str]] = {
     "FeatureEngineer": (".feature_engineering", "FeatureEngineer"),
     "FeatureVector": (".feature_engineering", "FeatureVector"),
     # monitoring danych (inference)
-    "InferenceDataCompletenessWatcher": (".data_monitoring", "DataCompletenessWatcher"),
-    "InferenceFeatureBoundsValidator": (".data_monitoring", "FeatureBoundsValidator"),
     "export_data_quality_report": (".data_monitoring", "export_data_quality_report"),
     "export_drift_alert_report": (".data_monitoring", "export_drift_alert_report"),
     "DataQualityException": (".data_monitoring", "DataQualityException"),
@@ -103,6 +99,19 @@ _EXPORTS: Dict[str, Tuple[str, str]] = {
     "PipelineHistorySnapshot": (".manager", "PipelineHistorySnapshot"),
     "DataQualityCheck": (".manager", "DataQualityCheck"),
 }
+
+_PIPELINE_MONITORING_EXPORTS: Dict[str, Tuple[str, str]] = {
+    "DataCompletenessWatcher": (".monitoring", "DataCompletenessWatcher"),
+    "FeatureBoundsValidator": (".monitoring", "FeatureBoundsValidator"),
+}
+
+_INFERENCE_MONITORING_EXPORTS: Dict[str, Tuple[str, str]] = {
+    "InferenceDataCompletenessWatcher": (".data_monitoring", "DataCompletenessWatcher"),
+    "InferenceFeatureBoundsValidator": (".data_monitoring", "FeatureBoundsValidator"),
+}
+
+_EXPORTS.update(_PIPELINE_MONITORING_EXPORTS)
+_EXPORTS.update(_INFERENCE_MONITORING_EXPORTS)
 
 __all__ = sorted(_EXPORTS)
 
