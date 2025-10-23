@@ -9,7 +9,7 @@ Zapewnienie, że każda promocja środowiska tradingowego spełnia wymagania tec
 | 1. Zweryfikuj konfigurację `config/core.yaml` poleceniem `python scripts/validate_config.py --profile demo` (flaga `--profile`/`-p` ogranicza kontrolę do wskazanego typu środowiska) | Inżynier Runtime | Raport walidacji, `config/core.yaml` (hash SHA-256) | Raport bez błędów, hash wpisany do decision logu |
 | 2. Uruchom `python scripts/run_metrics_service.py --shutdown-after 0 --jsonl logs/metrics_demo.jsonl` i zweryfikuj TLS/mTLS | Observability | `logs/metrics_demo.jsonl`, snapshot TLS | Potwierdzony status TLS/mTLS, brak ostrzeżeń o kluczach |
 | 3. Wykonaj smoke test strategii (`python scripts/smoke_demo_strategies.py --cycles 1`) **lub** potwierdź ostatni przebieg workflow `Stage4 multi-strategy smoke` (zob. `docs/runbooks/STAGE4_MULTI_STRATEGY_SMOKE.md`) | Zespół Strategii | `reports/demo_smoke/*.json`, logi, `var/audit/acceptance/<TS>/stage4_smoke/*` | Wynik PASS, numer joba zapisany w runbooku Stage4, brak odchyleń > tolerancji |
-| 4. Dodaj wpis do decision logu (`python scripts/verify_decision_log.py summary --append`) | Operator Demo | `audit/decision_logs/demo.jsonl` | Wpis podpisany HMAC, `status=demo_ready` |
+| 4. Dodaj wpis do decision logu (`python scripts/verify_decision_log.py summary --append audit/decision_logs/demo.jsonl --stage demo --status demo_ready --summary-json var/audit/demo_summary.json --artefact config_sha384=<SHA-384> --tag demo`) | Operator Demo | `audit/decision_logs/demo.jsonl`, `var/audit/demo_summary.json` | Wpis podpisany HMAC (`signature.algorithm=HMAC-SHA256`), zawiera artefakt `summary_sha256` i `config_sha384`, tag `demo` oraz status `demo_ready` |
 
 ## Etap 2 – Promocja do paper
 | Krok | Odpowiedzialny | Artefakty | Akceptacja |

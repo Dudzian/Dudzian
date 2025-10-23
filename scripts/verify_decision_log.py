@@ -15,6 +15,7 @@ import codecs
 from collections import defaultdict
 from copy import deepcopy
 import gzip
+import hashlib
 import hmac
 import json
 import logging
@@ -1992,6 +1993,297 @@ def _write_report_output(destination: str, payload: Mapping[str, Any]) -> None:
 
 # ------------------------------ CLI -----------------------------------------
 
+
+def _parse_key_value_option(
+    spec: str,
+    *,
+    parser: argparse.ArgumentParser,
+    option: str,
+    allow_empty: bool = False,
+) -> tuple[str, str]:
+    if "=" not in spec:
+        parser.error(f"{option} wymaga formatu KLUCZ=WARTOŚĆ")
+    raw_key, raw_value = spec.split("=", 1)
+    key = raw_key.strip()
+    if not key:
+        parser.error(f"{option}: klucz nie może być pusty")
+    value = raw_value if allow_empty else raw_value.strip()
+    if not allow_empty and not value:
+        parser.error(f"{option}: wartość dla {key!r} nie może być pusta")
+    return key, value
+
+
+def _parse_json_like(value: str) -> Any:
+    candidate = value.strip()
+    if not candidate:
+        return ""
+    try:
+        return json.loads(candidate)
+    except json.JSONDecodeError:
+        return value
+
+
+def _parse_runtime_flag_spec(spec: str, *, parser: argparse.ArgumentParser) -> tuple[str, bool]:
+    if "=" in spec:
+        key, raw_value = _parse_key_value_option(
+            spec, parser=parser, option="--runtime-flag", allow_empty=False
+        )
+        normalized = raw_value.strip().lower()
+        if normalized in _BOOL_TRUE:
+            return key, True
+        if normalized in _BOOL_FALSE:
+            return key, False
+        parser.error("--runtime-flag: wartość musi być typu bool (true/false)")
+    key = spec.strip()
+    if not key:
+        parser.error("--runtime-flag: klucz nie może być pusty")
+    return key, True
+
+
+def _compute_file_digest(path: Path, *, algorithm: str, parser: argparse.ArgumentParser) -> str:
+    try:
+        hasher = hashlib.new(algorithm)
+    except ValueError:
+        parser.error(f"Nieobsługiwany algorytm skrótu: {algorithm}")
+    try:
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(65536), b""):
+                hasher.update(chunk)
+    except OSError as exc:
+        parser.error(f"Nie udało się obliczyć skrótu pliku {path}: {exc}")
+    return f"{algorithm}:{hasher.hexdigest()}"
+
+
+def _build_summary_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Budowa wpisu decision logu na podstawie podsumowania i artefaktów.",
+        prog="verify_decision_log.py summary",
+    )
+    parser.add_argument("--append", help="Ścieżka decision logu JSONL do zaktualizowania")
+    parser.add_argument("--stage", required=True, help="Nazwa etapu (np. demo, paper, live_execution)")
+    parser.add_argument("--status", required=True, help="Status wpisu decision logu")
+    parser.add_argument("--kind", default="snapshot", help="Wartość pola kind (domyślnie snapshot)")
+    parser.add_argument(
+        "--timestamp",
+        help="Znacznik czasu wpisu (ISO 8601). Domyślnie bieżący czas UTC.",
+    )
+    parser.add_argument(
+        "--summary-json",
+        help=(
+            "Ścieżka do pliku podsumowania (JSON) – zostanie obliczony skrót i zapisany w artefaktach."
+        ),
+    )
+    parser.add_argument(
+        "--summary-hash-key",
+        help="Klucz artefaktu dla skrótu podsumowania (domyślnie summary_<algorytm>)",
+    )
+    parser.add_argument(
+        "--hash-algorithm",
+        default="sha256",
+        help="Algorytm skrótu używany dla artefaktów plikowych (domyślnie sha256)",
+    )
+    parser.add_argument(
+        "--artefact",
+        action="append",
+        default=[],
+        metavar="KLUCZ=WARTOŚĆ",
+        help="Dodatkowy wpis w sekcji artefacts (można powtarzać)",
+    )
+    parser.add_argument(
+        "--artefact-from-file",
+        action="append",
+        default=[],
+        metavar="KLUCZ=ŚCIEŻKA",
+        help="Dodaj artefakt jako skrót wskazanego pliku (można powtarzać)",
+    )
+    parser.add_argument(
+        "--runtime-flag",
+        action="append",
+        default=[],
+        metavar="FLAGA[=true|false]",
+        help="Flaga runtime dodana do wpisu (można powtarzać)",
+    )
+    parser.add_argument(
+        "--signature-entry",
+        action="append",
+        default=[],
+        metavar="KLUCZ=WARTOŚĆ",
+        help="Dodatkowa informacja w sekcji signatures (można powtarzać)",
+    )
+    parser.add_argument(
+        "--metadata",
+        action="append",
+        default=[],
+        metavar="KLUCZ=WARTOŚĆ",
+        help="Dodatkowe metadane wpisu (można powtarzać)",
+    )
+    parser.add_argument(
+        "--tag",
+        action="append",
+        default=[],
+        help="Tag dołączany do pola tags (można powtarzać)",
+    )
+    parser.add_argument("--hmac-key", help="Sekret HMAC wprost w CLI (UTF-8)")
+    parser.add_argument("--hmac-key-file", help="Ścieżka do pliku z sekretnym kluczem HMAC")
+    parser.add_argument("--hmac-key-id", help="Identyfikator klucza HMAC")
+    parser.add_argument(
+        "--allow-unsigned",
+        action="store_true",
+        help="Pozwól na wpis bez podpisu HMAC (dla testów lub środowisk offline)",
+    )
+    return parser
+
+
+def _summary_main(argv: list[str]) -> int:
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    parser = _build_summary_parser()
+    args = parser.parse_args(argv)
+
+    env_key = os.getenv(f"{_ENV_PREFIX}HMAC_KEY")
+    env_key_file = os.getenv(f"{_ENV_PREFIX}HMAC_KEY_FILE")
+    env_key_id = os.getenv(f"{_ENV_PREFIX}HMAC_KEY_ID")
+    env_allow_unsigned = os.getenv(f"{_ENV_PREFIX}ALLOW_UNSIGNED")
+
+    signing_key, allow_unsigned_override = _load_signing_key(
+        cli_value=args.hmac_key,
+        cli_file=args.hmac_key_file,
+        cli_key_id=args.hmac_key_id,
+        env_value=env_key,
+        env_file=env_key_file,
+        env_key_id=env_key_id,
+        env_allow_unsigned=env_allow_unsigned,
+        parser=parser,
+    )
+    allow_unsigned = bool(args.allow_unsigned or allow_unsigned_override)
+
+    artefacts: dict[str, Any] = {}
+    metadata: dict[str, Any] = {}
+
+    if args.summary_json:
+        try:
+            summary_payload = _read_summary_payload(args.summary_json)
+        except VerificationError as exc:
+            parser.error(str(exc))
+        summary_path = Path(args.summary_json).expanduser()
+        metadata.setdefault("summary_path", str(summary_path))
+        hash_key = args.summary_hash_key or f"summary_{args.hash_algorithm.lower()}"
+        canonical_summary = _canonical_payload(summary_payload)
+        try:
+            digest = hashlib.new(args.hash_algorithm.lower())
+        except ValueError:
+            parser.error(f"Nieobsługiwany algorytm skrótu: {args.hash_algorithm}")
+        digest.update(canonical_summary)
+        artefacts[hash_key] = f"{args.hash_algorithm.lower()}:{digest.hexdigest()}"
+        signature_payload = summary_payload.get("signature")
+        if isinstance(signature_payload, Mapping):
+            metadata.setdefault("summary_signature", signature_payload)
+        summary_meta = summary_payload.get("metadata")
+        if isinstance(summary_meta, Mapping):
+            metadata.setdefault("summary_metadata", summary_meta)
+
+    for spec in args.artefact or ():
+        key, raw_value = _parse_key_value_option(
+            spec, parser=parser, option="--artefact", allow_empty=True
+        )
+        artefacts[key] = _parse_json_like(raw_value)
+
+    for spec in args.artefact_from_file or ():
+        key, raw_path = _parse_key_value_option(spec, parser=parser, option="--artefact-from-file")
+        file_path = Path(raw_path).expanduser()
+        if not file_path.exists():
+            parser.error(f"Plik artefaktu {file_path} nie istnieje")
+        artefacts[key] = _compute_file_digest(
+            file_path, algorithm=args.hash_algorithm.lower(), parser=parser
+        )
+
+    if not artefacts:
+        parser.error(
+            "Wpis decision logu wymaga co najmniej jednego artefaktu – użyj --summary-json lub --artefact"
+        )
+
+    runtime_flags: dict[str, bool] = {"verify_decision_log.summary": True}
+    for spec in args.runtime_flag or ():
+        key, value = _parse_runtime_flag_spec(spec, parser=parser)
+        runtime_flags[key] = value
+
+    signature_entries: dict[str, str] = {}
+    for spec in args.signature_entry or ():
+        key, raw_value = _parse_key_value_option(
+            spec, parser=parser, option="--signature-entry"
+        )
+        value = raw_value.strip()
+        if not value:
+            parser.error(f"--signature-entry: wartość dla {key!r} nie może być pusta")
+        signature_entries[key] = value
+    if not signature_entries:
+        signature_entries["decision_log.entry"] = "hmac:pending"
+
+    for spec in args.metadata or ():
+        key, raw_value = _parse_key_value_option(
+            spec, parser=parser, option="--metadata", allow_empty=True
+        )
+        metadata[key] = _parse_json_like(raw_value)
+
+    tags: list[str] = []
+    seen_tags: set[str] = set()
+    for tag in args.tag or ():
+        normalized = tag.strip()
+        if not normalized or normalized in seen_tags:
+            continue
+        seen_tags.add(normalized)
+        tags.append(normalized)
+
+    timestamp = args.timestamp or datetime.now(timezone.utc).isoformat()
+
+    entry: dict[str, Any] = {
+        "kind": args.kind,
+        "timestamp": timestamp,
+        "stage": args.stage,
+        "status": args.status,
+        "artefacts": artefacts,
+        "runtime_flags": runtime_flags,
+        "signatures": signature_entries,
+    }
+
+    if metadata:
+        entry["metadata"] = metadata
+    if tags:
+        entry["tags"] = tags
+
+    if signing_key is None:
+        if not allow_unsigned:
+            parser.error(
+                "Do podpisania wpisu wymagany jest klucz HMAC – użyj --hmac-key lub --hmac-key-file"
+            )
+    else:
+        payload = dict(entry)
+        digest = hmac.new(
+            signing_key.value, _canonical_payload(payload), digestmod="sha256"
+        ).digest()
+        signature_payload = {
+            "algorithm": "HMAC-SHA256",
+            "value": base64.b64encode(digest).decode("ascii"),
+        }
+        if signing_key.key_id:
+            signature_payload["key_id"] = signing_key.key_id
+        entry["signature"] = signature_payload
+
+    output = json.dumps(entry, ensure_ascii=False, sort_keys=True)
+
+    target_path = args.append
+    if target_path:
+        if target_path == "-":
+            print(output)
+        else:
+            destination = Path(target_path).expanduser()
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            with destination.open("a", encoding="utf-8") as handle:
+                handle.write(output + "\n")
+            LOGGER.info("Dodano wpis %s do %s", args.status, destination)
+    else:
+        print(output)
+    return 0
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Weryfikacja podpisów decision logu UI")
     parser.add_argument(
@@ -2741,8 +3033,11 @@ def _enforce_risk_profile_requirements(
 
 def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(message)s")
+    argv_list = list(sys.argv[1:] if argv is None else argv)
+    if argv_list and argv_list[0] == "summary":
+        return _summary_main(argv_list[1:])
     parser = build_parser()
-    args = parser.parse_args(argv)
+    args = parser.parse_args(argv_list)
 
     if getattr(args, "list_schema_aliases", False):
         _print_builtin_schema_aliases()
@@ -2762,7 +3057,7 @@ def main(argv: list[str] | None = None) -> int:
 
     # źródło profilu ryzyka do metadanych
     args._risk_profile_source = None
-    provided_flags = {arg for arg in (argv or []) if isinstance(arg, str) and arg.startswith("--")}
+    provided_flags = {arg for arg in argv_list if isinstance(arg, str) and arg.startswith("--")}
     if "--risk-profile" in provided_flags:
         args._risk_profile_source = "cli"
 
