@@ -4,6 +4,7 @@ import base64
 import gzip
 import hashlib
 import hmac
+import importlib.util
 import io
 import json
 import logging
@@ -88,6 +89,61 @@ def _signed_summary_payload(summary: dict[str, object], *, key: bytes, key_id: s
         signature["key_id"] = key_id
     payload["signature"] = signature
     return payload
+
+
+def _load_verify_module_without_jsonschema(monkeypatch):
+    module_name = "scripts.verify_decision_log_no_jsonschema"
+    monkeypatch.setitem(sys.modules, "jsonschema", None)
+    monkeypatch.delitem(sys.modules, module_name, raising=False)
+    spec = importlib.util.spec_from_file_location(
+        module_name,
+        Path(__file__).resolve().parents[1] / "scripts" / "verify_decision_log.py",
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    spec.loader.exec_module(module)  # type: ignore[misc]
+    return module
+
+
+def test_list_schema_aliases_outputs_builtin_aliases(capsys):
+    exit_code = verify_main(["--list-schema-aliases"])
+    assert exit_code == 0
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert "schemas" in payload
+    schemas = {entry["canonical"]: entry for entry in payload["schemas"]}
+    assert "builtin:decision_log_v2" in schemas
+    info = schemas["builtin:decision_log_v2"]
+    assert "decision_log_v2" in info["aliases"]
+    assert any(alias.startswith("https://") for alias in info["aliases"])
+
+
+def test_describe_schema_alias_outputs_details(capsys):
+    exit_code = verify_main(["--describe-schema-alias", "builtin:decision_log_v2"])
+    assert exit_code == 0
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert payload["canonical"] == "builtin:decision_log_v2"
+    assert payload["supports_builtin_validator"] is True
+    requirements = payload.get("requirements")
+    assert requirements is not None
+    assert set(requirements["required_fields"]) == {
+        "artefacts",
+        "runtime_flags",
+        "signatures",
+        "stage",
+        "status",
+        "timestamp",
+    }
+    assert "signature_pattern" in requirements
+
+
+def test_describe_schema_alias_unknown(caplog):
+    caplog.set_level(logging.ERROR)
+    exit_code = verify_main(["--describe-schema-alias", "builtin:unknown"])
+    assert exit_code == 2
+    assert any("nieznany" in message for message in caplog.messages)
 
 
 def test_verify_success(tmp_path, caplog):
@@ -208,6 +264,294 @@ def test_verify_reads_from_stdin(monkeypatch, tmp_path):
 
     exit_code = verify_main(["-", "--hmac-key", key.decode("utf-8")])
     assert exit_code == 0
+
+
+def test_verify_schema_success(tmp_path):
+    schema_path = Path(__file__).resolve().parents[1] / "docs/schemas/decision_log_v2.json"
+    log_path = tmp_path / "decision_schema.jsonl"
+    key = b"schema-key"
+    entry = _signed_entry(
+        {
+            "kind": "snapshot",
+            "timestamp": "2025-01-01T12:00:00Z",
+            "stage": "paper",
+            "status": "paper_ready",
+            "artefacts": {
+                "config_hash": "sha384:deadbeef",
+                "paper_labs_report": "reports/paper_labs/2025-01-01.pdf"
+            },
+            "runtime_flags": {
+                "StrategyContext.require_demo_mode": False,
+                "runtime.compliance_confirmed": False
+            },
+            "signatures": {"owner": "hmac:deadbeef"},
+        },
+        key=key,
+        key_id=None,
+    )
+    log_path.write_text(json.dumps(entry, ensure_ascii=False) + "\n", encoding="utf-8")
+
+    exit_code = verify_main(
+        [
+            str(log_path),
+            "--hmac-key",
+            key.decode("utf-8"),
+            "--schema",
+            str(schema_path),
+        ]
+    )
+
+    assert exit_code == 0
+
+
+def test_verify_schema_failure(tmp_path, caplog):
+    caplog.set_level(logging.ERROR)
+    schema_path = Path(__file__).resolve().parents[1] / "docs/schemas/decision_log_v2.json"
+    log_path = tmp_path / "decision_schema_invalid.jsonl"
+    key = b"schema-bad"
+    entry = _signed_entry(
+        {
+            "kind": "snapshot",
+            "timestamp": "2025-01-01T12:00:00Z",
+            "stage": "demo",
+            "status": "demo_ready",
+            "artefacts": {"config_hash": "sha384:bead"},
+            "runtime_flags": {
+                "StrategyContext.require_demo_mode": "yes"
+            },
+            "signatures": {"owner": "hmac:bad"},
+        },
+        key=key,
+        key_id=None,
+    )
+    log_path.write_text(json.dumps(entry, ensure_ascii=False) + "\n", encoding="utf-8")
+
+    exit_code = verify_main(
+        [
+            str(log_path),
+            "--hmac-key",
+            key.decode("utf-8"),
+            "--schema",
+            str(schema_path),
+        ]
+    )
+
+    assert exit_code == 2
+    assert any("schematu JSON" in message for message in caplog.messages)
+    assert any(
+        "ścieżka: $.runtime_flags['StrategyContext.require_demo_mode']" in message
+        for message in caplog.messages
+    )
+
+
+def test_verify_schema_success_without_jsonschema(tmp_path, monkeypatch):
+    module = _load_verify_module_without_jsonschema(monkeypatch)
+    assert module.jsonschema is None
+
+    schema_path = Path(__file__).resolve().parents[1] / "docs/schemas/decision_log_v2.json"
+    log_path = tmp_path / "decision_schema_builtin.jsonl"
+    key = b"builtin"
+    key_id = "builtin-key"
+    entry = _signed_entry(
+        {
+            "kind": "snapshot",
+            "timestamp": "2024-03-01T00:00:00Z",
+            "stage": "paper",
+            "status": "paper_ready",
+            "artefacts": {
+                "config_hash": "sha384:abc123",
+                "report": "reports/paper_labs/latest.pdf",
+                "run_id": 42,
+                "flag": False,
+                "optional": None,
+            },
+            "runtime_flags": {
+                "StrategyContext.require_demo_mode": True,
+                "runtime.compliance_confirmed": False,
+            },
+            "signatures": {"ops": "hmac:ABCdef123_-"},
+        },
+        key=key,
+        key_id=key_id,
+    )
+    log_path.write_text(json.dumps(entry, ensure_ascii=False) + "\n", encoding="utf-8")
+
+    exit_code = module.main(
+        [
+            str(log_path),
+            "--schema",
+            str(schema_path),
+            "--hmac-key",
+            key.decode("utf-8"),
+            "--hmac-key-id",
+            key_id,
+        ]
+    )
+
+    assert exit_code == 0
+
+
+def test_verify_schema_failure_without_jsonschema(tmp_path, caplog, monkeypatch):
+    module = _load_verify_module_without_jsonschema(monkeypatch)
+    assert module.jsonschema is None
+
+    caplog.set_level(logging.ERROR)
+    schema_path = Path(__file__).resolve().parents[1] / "docs/schemas/decision_log_v2.json"
+    log_path = tmp_path / "decision_schema_builtin_invalid.jsonl"
+    key = b"builtin-bad"
+    key_id = "builtin-key"
+    invalid_entry = {
+        "kind": "snapshot",
+        "timestamp": "2024-03-01T00:00:00Z",
+        "stage": "paper",
+        "status": "paper_ready",
+        "artefacts": {
+            "config_hash": "sha384:def456",
+            "report": "reports/paper_labs/latest.pdf",
+        },
+        "runtime_flags": {
+            "runtime.compliance_confirmed": "false",
+        },
+        "signatures": {"ops": "hmac:XYZabc789"},
+    }
+    log_path.write_text(
+        json.dumps(_signed_entry(invalid_entry, key=key, key_id=key_id), ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+
+    exit_code = module.main(
+        [
+            str(log_path),
+            "--schema",
+            str(schema_path),
+            "--hmac-key",
+            key.decode("utf-8"),
+            "--hmac-key-id",
+            key_id,
+        ]
+    )
+
+    assert exit_code == 2
+    assert any("runtime_flags" in message and "schematu JSON" in message for message in caplog.messages)
+
+
+def test_verify_schema_builtin_alias_success(tmp_path):
+    log_path = tmp_path / "decision_schema_builtin_alias.jsonl"
+    key = b"alias"
+    key_id = "alias-key"
+    entry = _signed_entry(
+        {
+            "kind": "snapshot",
+            "timestamp": "2025-05-01T10:00:00Z",
+            "stage": "demo",
+            "status": "demo_ready",
+            "artefacts": {
+                "config_hash": "sha384:0123456789abcdef",
+                "report": "reports/demo/latest.pdf",
+            },
+            "runtime_flags": {
+                "StrategyContext.require_demo_mode": True,
+            },
+            "signatures": {"ops": "hmac:XYZabc012_-"},
+        },
+        key=key,
+        key_id=key_id,
+    )
+    log_path.write_text(json.dumps(entry, ensure_ascii=False) + "\n", encoding="utf-8")
+
+    exit_code = verify_main(
+        [
+            str(log_path),
+            "--schema",
+            "builtin:decision_log_v2",
+            "--hmac-key",
+            key.decode("utf-8"),
+            "--hmac-key-id",
+            key_id,
+        ]
+    )
+
+    assert exit_code == 0
+
+
+def test_verify_schema_builtin_alias_success_without_jsonschema(tmp_path, monkeypatch):
+    module = _load_verify_module_without_jsonschema(monkeypatch)
+    assert module.jsonschema is None
+
+    log_path = tmp_path / "decision_schema_builtin_alias_fallback.jsonl"
+    key = b"alias-fallback"
+    key_id = "alias-fallback-key"
+    entry = _signed_entry(
+        {
+            "kind": "snapshot",
+            "timestamp": "2025-05-02T10:00:00Z",
+            "stage": "paper",
+            "status": "paper_ready",
+            "artefacts": {
+                "config_hash": "sha384:fallback",
+            },
+            "runtime_flags": {
+                "runtime.compliance_confirmed": False,
+            },
+            "signatures": {"ops": "hmac:XYZabc987_-"},
+        },
+        key=key,
+        key_id=key_id,
+    )
+    log_path.write_text(json.dumps(entry, ensure_ascii=False) + "\n", encoding="utf-8")
+
+    exit_code = module.main(
+        [
+            str(log_path),
+            "--schema",
+            "builtin:decision_log_v2",
+            "--hmac-key",
+            key.decode("utf-8"),
+            "--hmac-key-id",
+            key_id,
+        ]
+    )
+
+    assert exit_code == 0
+
+
+def test_verify_schema_builtin_alias_failure_without_jsonschema(tmp_path, caplog, monkeypatch):
+    module = _load_verify_module_without_jsonschema(monkeypatch)
+    assert module.jsonschema is None
+
+    caplog.set_level(logging.ERROR)
+    log_path = tmp_path / "decision_schema_builtin_alias_invalid.jsonl"
+    key = b"alias-bad"
+    key_id = "alias-bad-key"
+    invalid_entry = {
+        "kind": "snapshot",
+        "timestamp": "2025-05-03T10:00:00Z",
+        "stage": "demo",
+        "status": "demo_ready",
+        "artefacts": {
+            "config_hash": "sha384:badalias",
+        },
+        "signatures": {"ops": "hmac:XYZabc654_-"},
+    }
+    log_path.write_text(
+        json.dumps(_signed_entry(invalid_entry, key=key, key_id=key_id), ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+
+    exit_code = module.main(
+        [
+            str(log_path),
+            "--schema",
+            "builtin:decision_log_v2",
+            "--hmac-key",
+            key.decode("utf-8"),
+            "--hmac-key-id",
+            key_id,
+        ]
+    )
+
+    assert exit_code == 2
+    assert any("runtime_flags" in message for message in caplog.messages)
 
 
 def test_print_risk_profiles_cli(tmp_path, capsys):
