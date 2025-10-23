@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
 from typing import Mapping
 
@@ -31,6 +32,31 @@ _INTERVAL_SUFFIX_TO_SECONDS: Mapping[str, int] = {
     "w": 7 * 24 * 60 * 60,
     "M": 30 * 24 * 60 * 60,
 }
+
+
+def _normalize_profile_value(value: object | None) -> str | None:
+    """Normalizuje nazwę profilu (CLI/Enum) do formatu porównywalnego."""
+
+    if value is None:
+        return None
+    if isinstance(value, str):
+        text = value.strip().lower()
+    elif isinstance(value, Enum):
+        text = str(value.value).strip().lower()
+    else:
+        text = str(value).strip().lower()
+    return text or None
+
+
+def _collect_environment_profiles(config: CoreConfig) -> set[str]:
+    """Zwraca zbiór dostępnych profili środowiskowych."""
+
+    profiles: set[str] = set()
+    for environment in config.environments.values():
+        normalized = _normalize_profile_value(getattr(environment, "environment", None))
+        if normalized:
+            profiles.add(normalized)
+    return profiles
 
 
 def _interval_seconds(interval: str) -> int:
@@ -91,17 +117,34 @@ class ConfigValidationError(RuntimeError):
         super().__init__(message or "Nieznany błąd walidacji konfiguracji")
 
 
-def validate_core_config(config: CoreConfig) -> ConfigValidationResult:
+def validate_core_config(
+    config: CoreConfig, *, profile: str | None = None
+) -> ConfigValidationResult:
     """Waliduje spójność konfiguracji i zwraca listę błędów/ostrzeżeń."""
+
+    requested_profile = _normalize_profile_value(profile)
+    available_env_profiles = _collect_environment_profiles(config)
+
     errors: list[str] = []
     warnings: list[str] = []
+
+    if requested_profile and requested_profile not in available_env_profiles:
+        available_text = ", ".join(sorted(available_env_profiles)) or "brak"
+        profile_display = (profile or "").strip() or requested_profile
+        warnings.append(
+            f"profil środowisk '{profile_display}' nie jest wspierany – dostępne: {available_text}"
+        )
+
+    active_profile = (
+        requested_profile if requested_profile in available_env_profiles else None
+    )
 
     _validate_risk_profiles(config, errors, warnings)
     _validate_instrument_buckets(config, errors, warnings)
     _validate_strategies(config, errors, warnings)
     _validate_runtime_controllers(config, errors, warnings)
     _validate_instrument_universes(config, errors, warnings)
-    _validate_environments(config, errors, warnings)
+    _validate_environments(config, errors, warnings, profile=active_profile)
     _validate_metrics_service(config, errors, warnings)
     _validate_live_routing(config, errors, warnings)
     _validate_risk_service(config, errors, warnings)
@@ -293,7 +336,7 @@ def _validate_runtime_controllers(
 
 
 def _validate_environments(
-    config: CoreConfig, errors: list[str], warnings: list[str]
+    config: CoreConfig, errors: list[str], warnings: list[str], *, profile: str | None = None
 ) -> None:
     risk_profiles = set(config.risk_profiles)
     universes = set(config.instrument_universes)
@@ -301,6 +344,9 @@ def _validate_environments(
     controllers = set(config.runtime_controllers)
 
     for name, environment in config.environments.items():
+        environment_profile = _normalize_profile_value(getattr(environment, "environment", None))
+        if profile and environment_profile and environment_profile != profile:
+            continue
         context = f"środowisko '{name}'"
         if environment.risk_profile not in risk_profiles:
             errors.append(

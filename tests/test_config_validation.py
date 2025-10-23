@@ -103,6 +103,38 @@ def test_validate_core_config_accepts_valid_configuration(base_config: CoreConfi
     assert result.errors == []
 
 
+def test_validate_core_config_filters_environments_by_profile(
+    base_config: CoreConfig,
+) -> None:
+    paper_invalid = replace(base_config.environments["paper"], risk_profile="unknown")
+    live_env = replace(
+        base_config.environments["paper"],
+        name="live",
+        environment=Environment.LIVE,
+    )
+    config = replace(
+        base_config,
+        environments={
+            "paper": paper_invalid,
+            "live": live_env,
+        },
+    )
+
+    all_profiles = validate_core_config(config)
+    assert not all_profiles.is_valid()
+
+    live_only = validate_core_config(config, profile="live")
+    assert live_only.is_valid()
+    assert live_only.errors == []
+
+
+def test_validate_core_config_warns_on_unknown_profile(base_config: CoreConfig) -> None:
+    result = validate_core_config(base_config, profile="staging")
+
+    assert result.is_valid()
+    assert any("profil środowisk 'staging'" in warning for warning in result.warnings)
+
+
 def test_validate_core_config_detects_missing_risk_profile(base_config: CoreConfig) -> None:
     invalid_env = replace(base_config.environments["paper"], risk_profile="unknown")
     config = replace(base_config, environments={"paper": invalid_env})
