@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Callable, Iterable, Sequence
 
 from bot_core.data.base import CacheStorage, DataSource, OHLCVRequest, OHLCVResponse
+from bot_core.data.intervals import interval_to_milliseconds
 from bot_core.exchanges.errors import ExchangeNetworkError
 
 _LOGGER = logging.getLogger(__name__)
@@ -30,6 +31,7 @@ class CachedOHLCVSource(DataSource):
     storage: CacheStorage
     upstream: DataSource
     snapshot_fetcher: SnapshotFetcher | None = None
+    snapshots_enabled: bool = False
 
     def _cache_key(self, symbol: str, interval: str) -> str:
         return f"{symbol}::{interval}"
@@ -98,9 +100,13 @@ class CachedOHLCVSource(DataSource):
                 },
             )
             columns = selected_columns
-        if self.snapshot_fetcher is not None:
+        active_snapshot_fetcher = self.snapshot_fetcher
+        if active_snapshot_fetcher is None and self.snapshots_enabled:
+            active_snapshot_fetcher = self._fallback_snapshot_fetcher()
+
+        if active_snapshot_fetcher is not None:
             try:
-                snapshot_rows = tuple(self.snapshot_fetcher(request))
+                snapshot_rows = tuple(active_snapshot_fetcher(request))
             except ExchangeNetworkError as exc:
                 _LOGGER.warning(
                     "Snapshot API niedostępne – pozostaję przy danych z cache (%s %s): %s",
@@ -144,6 +150,29 @@ class CachedOHLCVSource(DataSource):
         metadata["symbols"] = ",".join(sorted(set(symbols)))
         metadata["intervals"] = ",".join(sorted(set(intervals)))
         _LOGGER.info("Cache OHLCV gotowe dla %s symboli i %s interwałów.", len(set(symbols)), len(set(intervals)))
+
+    def _fallback_snapshot_fetcher(self) -> SnapshotFetcher | None:
+        """Buduje zapasowy snapshot wykorzystując adapter upstreamowy, jeśli to możliwe."""
+
+        adapter = getattr(self.upstream, "exchange_adapter", None)
+        fetch = getattr(adapter, "fetch_ohlcv", None)
+        if fetch is None:
+            return None
+
+        def _snapshot(request: OHLCVRequest) -> Sequence[Sequence[float]]:
+            interval_ms = interval_to_milliseconds(request.interval)
+            window = max(interval_ms * 2, interval_ms)
+            window_start = max(request.start, request.end - window)
+            limit = request.limit if request.limit and request.limit > 0 else 1
+            return fetch(
+                request.symbol,
+                request.interval,
+                start=window_start,
+                end=request.end,
+                limit=limit,
+            )
+
+        return _snapshot
 
 
 @dataclass(slots=True)
