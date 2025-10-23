@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -50,6 +51,17 @@ def _sanitize_timestamp(raw: str | None) -> str:
     return candidate.replace(":", "").replace("-", "").replace(" ", "_")
 
 
+_TIMESTAMP_PATTERN = re.compile(r"^\d{8}(T\d{6}Z?)?$")
+
+
+def _looks_like_timestamp(candidate: str | None) -> bool:
+    if not candidate:
+        return False
+    sanitized = _sanitize_timestamp(candidate)
+    normalized = sanitized.replace("_", "")
+    return _TIMESTAMP_PATTERN.fullmatch(normalized) is not None
+
+
 # ==============================================================================
 # Subcommand: summary (HEAD)
 # ==============================================================================
@@ -72,6 +84,10 @@ def _build_summary_parser(sub: argparse._SubParsersAction) -> argparse.ArgumentP
         "--signature-name",
         default="tco_summary.signature.json",
         help="Nazwa pliku podpisu HMAC podsumowania",
+    )
+    p.add_argument(
+        "--output",
+        help="Alias runbookowy: katalog docelowy lub ścieżka CSV (ustawia też nazwy JSON/podpisu)",
     )
     p.add_argument("--monthly-trades", type=float, help="Średnia miesięczna liczba transakcji")
     p.add_argument("--monthly-volume", type=float, help="Średni miesięczny wolumen obrotu (np. USD)")
@@ -97,6 +113,23 @@ def _load_signing_key_inline_or_file(*, value: str | None, path: str | None) -> 
 
 
 def _handle_summary(args: argparse.Namespace) -> int:
+    if getattr(args, "output", None):
+        output_path = Path(args.output).expanduser()
+        if output_path.suffix.lower() == ".csv":
+            base_name = output_path.stem or "tco_summary"
+            parent_dir = output_path.parent
+            timestamp_hint = parent_dir.name if args.timestamp is None else None
+            if timestamp_hint and _looks_like_timestamp(timestamp_hint):
+                args.timestamp = timestamp_hint
+                parent_dir = parent_dir.parent
+            parent_dir = parent_dir if str(parent_dir) else Path(".")
+            args.artifact_root = str(parent_dir)
+            args.csv_name = output_path.name
+            args.json_name = f"{base_name}.json"
+            args.signature_name = f"{base_name}.signature.json"
+        else:
+            args.artifact_root = str(output_path)
+
     # walidacje
     if args.monthly_trades is not None and args.monthly_trades < 0:
         print("Parametr --monthly-trades musi być nieujemny", file=sys.stderr)
@@ -188,6 +221,10 @@ def _build_analyze_parser(sub: argparse._SubParsersAction) -> argparse.ArgumentP
     p.add_argument("--output-dir", default="var/audit/tco", help="Katalog docelowy raportu (domyślnie var/audit/tco)")
     p.add_argument("--basename", default=None, help="Opcjonalna nazwa bazowa plików (bez rozszerzeń)")
     p.add_argument(
+        "--output",
+        help="Alias runbookowy: katalog docelowy lub ścieżka CSV (ustawia też basename)",
+    )
+    p.add_argument(
         "--signing-key-path",
         dest="signing_key_path",
         help="Ścieżka do klucza HMAC używanego do podpisów CSV/PDF/JSON",
@@ -252,6 +289,14 @@ def _read_signing_key_path(path: Path) -> bytes:
 
 
 def _handle_analyze(args: argparse.Namespace) -> int:
+    if getattr(args, "output", None):
+        output_path = Path(args.output).expanduser()
+        if output_path.suffix.lower() == ".csv":
+            args.output_dir = str(output_path.parent or Path("."))
+            args.basename = output_path.stem or args.basename or "tco_report"
+        else:
+            args.output_dir = str(output_path)
+
     fill_paths = [Path(item).expanduser() for item in args.fills]
     events: list[TradeCostEvent] = []
     for candidate in fill_paths:
@@ -293,19 +338,101 @@ def _handle_analyze(args: argparse.Namespace) -> int:
 # Główny parser i wejście
 # ==============================================================================
 
-def _build_parser() -> argparse.ArgumentParser:
+_SUMMARY_FLAGS = {
+    "--input",
+    "--artifact-root",
+    "--json-name",
+    "--csv-name",
+    "--signature-name",
+    "--monthly-trades",
+    "--monthly-volume",
+    "--signing-key",
+    "--signing-key-file",
+    "--signing-key-id",
+    "--tag",
+    "--timestamp",
+    "--print-summary",
+    "--output",
+}
+
+_ANALYZE_FLAGS = {
+    "--fills",
+    "--output-dir",
+    "--basename",
+    "--signing-key-path",
+    "--cost-limit-bps",
+    "--metadata",
+}
+
+
+def _detect_default_command(argv: Sequence[str]) -> Optional[str]:
+    if any(token in {"-h", "--help"} for token in argv):
+        return None
+    for token in argv:
+        if token.startswith("-"):
+            continue
+        if token in {"summary", "analyze"}:
+            return None
+        break
+
+    flags = {item.split("=", 1)[0] for item in argv if item.startswith("--")}
+    if flags & _ANALYZE_FLAGS:
+        return "analyze"
+    if flags & _SUMMARY_FLAGS or argv:
+        return "summary"
+    return "summary"
+
+
+def _inject_default_command(argv: Sequence[str], default_cmd: Optional[str]) -> Sequence[str]:
+    if not argv or default_cmd is None:
+        return argv
+    for token in argv:
+        if token.startswith("-"):
+            continue
+        if token in {"summary", "analyze"}:
+            return argv
+        break
+    return (default_cmd, *argv)
+
+
+def _build_parser(argv: Sequence[str] | None = None) -> argparse.ArgumentParser:
+    effective_argv: Sequence[str] = tuple(argv or ())
+    default_cmd = _detect_default_command(effective_argv)
+
     parser = argparse.ArgumentParser(
-        description="Stage5 TCO – CLI łączące warianty summary (HEAD) i analyze (main)."
+        description=(
+            "Stage5 TCO – CLI łączące warianty summary (HEAD) i analyze (main)."
+            " Zgodność wsteczna: brak subkomendy = tryb summary."
+        )
     )
-    sub = parser.add_subparsers(dest="_cmd", metavar="{summary|analyze}", required=True)
-    _build_summary_parser(sub)
-    _build_analyze_parser(sub)
+    sub = parser.add_subparsers(dest="_cmd", metavar="{summary|analyze}")
+    sub.required = default_cmd is None
+    summary_parser = _build_summary_parser(sub)
+    analyze_parser = _build_analyze_parser(sub)
+    if not effective_argv:
+        mirrored: set[str] = set()
+        for action in (*summary_parser._actions, *analyze_parser._actions):
+            appended = False
+            for option in getattr(action, "option_strings", []) or []:
+                if option in {"-h", "--help"}:
+                    continue
+                if option not in mirrored:
+                    if not appended:
+                        parser._actions.append(action)
+                        appended = True
+                    mirrored.add(option)
+    setattr(parser, "_default_cmd", default_cmd)
     return parser
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    parser = _build_parser()
-    args = parser.parse_args(argv)
+    if argv is None:
+        effective_argv: Sequence[str] = tuple(sys.argv[1:])
+    else:
+        effective_argv = tuple(argv)
+    parser = _build_parser(effective_argv)
+    normalized_argv = _inject_default_command(effective_argv, getattr(parser, "_default_cmd", None))
+    args = parser.parse_args(normalized_argv)
     return args._handler(args)
 
 
