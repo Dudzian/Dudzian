@@ -46,19 +46,29 @@ class CachedOHLCVSource(DataSource):
             combined[float(row[0])] = row
         return [combined[key] for key in sorted(combined)]
 
-    def fetch_ohlcv(self, request: OHLCVRequest) -> OHLCVResponse:
-        """Pobiera dane OHLCV łącząc cache oraz świeże dane z API."""
+    def _load_cached_payload(
+        self, cache_key: str
+    ) -> tuple[Sequence[Sequence[float]], tuple[str, ...]]:
+        """Loads rows and columns from cache, tolerating a missing entry."""
 
-        cache_key = self._cache_key(request.symbol, request.interval)
         try:
             cached_payload = self.storage.read(cache_key)
         except KeyError:
-            cached_payload = {"rows": [], "columns": _DEFAULT_COLUMNS}
-        cached_rows: Sequence[Sequence[float]] = cached_payload.get("rows", [])
+            return (), ()
+
+        rows = cached_payload.get("rows", [])
         columns = tuple(cached_payload.get("columns", ()))
+        return rows, columns
+
+    def _fetch_upstream_response(
+        self,
+        request: OHLCVRequest,
+        fallback_columns: Sequence[str] | tuple[str, ...],
+    ) -> OHLCVResponse:
+        """Always attempts to hit the upstream API, falling back to cache columns."""
 
         try:
-            upstream_response = self.upstream.fetch_ohlcv(request)
+            return self.upstream.fetch_ohlcv(request)
         except ExchangeNetworkError as exc:
             _LOGGER.warning(
                 "Upstream OHLCV niedostępny – używam danych z cache (%s %s): %s",
@@ -66,7 +76,15 @@ class CachedOHLCVSource(DataSource):
                 request.interval,
                 exc,
             )
-            upstream_response = OHLCVResponse(columns=columns or _DEFAULT_COLUMNS, rows=[])
+            return OHLCVResponse(columns=fallback_columns or _DEFAULT_COLUMNS, rows=[])
+
+    def fetch_ohlcv(self, request: OHLCVRequest) -> OHLCVResponse:
+        """Pobiera dane OHLCV łącząc cache oraz świeże dane z API."""
+
+        cache_key = self._cache_key(request.symbol, request.interval)
+        cached_rows, columns = self._load_cached_payload(cache_key)
+
+        upstream_response = self._fetch_upstream_response(request, columns)
         rows = cached_rows
         if upstream_response.rows:
             rows = self._merge_rows(cached_rows, upstream_response.rows)
