@@ -1,0 +1,76 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://example.com/schemas/decision_log_v2.json",
+  "title": "Decision Log Entry v2",
+  "description": "Struktura wpisu decision logu OEM obejmująca referencje artefaktów, flagi runtime i podpisy HMAC.",
+  "type": "object",
+  "required": [
+    "timestamp",
+    "stage",
+    "status",
+    "artefacts",
+    "runtime_flags",
+    "signatures"
+  ],
+  "properties": {
+    "kind": {
+      "type": "string",
+      "description": "Typ wpisu decision logu (np. snapshot)."
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Znacznik czasu ISO 8601 rejestracji wpisu."
+    },
+    "stage": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Faza procesu (demo, paper, live_execution itp.)."
+    },
+    "status": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Status decyzji opisujący gotowość etapu."
+    },
+    "artefacts": {
+      "type": "object",
+      "minProperties": 1,
+      "description": "Referencje do plików, hashy i innych dowodów dla wpisu.",
+      "additionalProperties": {
+        "anyOf": [
+          {
+            "type": "string",
+            "minLength": 1
+          },
+          {
+            "type": "number"
+          },
+          {
+            "type": "boolean"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      }
+    },
+    "runtime_flags": {
+      "type": "object",
+      "minProperties": 1,
+      "description": "Zbiór flag runtime potwierdzających konfigurację środowiska.",
+      "additionalProperties": {
+        "type": "boolean"
+      }
+    },
+    "signatures": {
+      "type": "object",
+      "minProperties": 1,
+      "description": "Podpisy kryptograficzne potwierdzające wpis decision logu.",
+      "additionalProperties": {
+        "type": "string",
+        "pattern": "^hmac:[A-Za-z0-9+/=:_-]+$"
+      }
+    }
+  },
+  "additionalProperties": true
+}

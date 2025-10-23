@@ -19,11 +19,17 @@ import hmac
 import json
 import logging
 import os
+import re
 import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any, Callable, Iterable, Mapping, Sequence
+
+try:  # pragma: no cover - zależy od opcjonalnych zależności środowiska testowego
+    import jsonschema  # type: ignore[import-not-found]
+except ImportError:  # pragma: no cover - biblioteka może być opcjonalna
+    jsonschema = None  # type: ignore[assignment]
 
 # --- opcjonalna konfiguracja core.yaml ---------------------------------------
 try:  # pragma: no cover - brak modułu konfiguracji
@@ -66,6 +72,7 @@ _ENV_RISK_PROFILE_YAML_SNIPPET = f"{_ENV_PREFIX}RISK_PROFILE_YAML_SNIPPET"
 _ENV_REQUIRE_TLS_MATERIALS = f"{_ENV_PREFIX}REQUIRE_TLS_MATERIALS"
 _ENV_EXPECT_SERVER_SHA256 = f"{_ENV_PREFIX}EXPECT_SERVER_SHA256"
 _ENV_EXPECT_SERVER_SHA256_SOURCE = f"{_ENV_PREFIX}EXPECT_SERVER_SHA256_SOURCE"
+_ENV_SCHEMA_PATH = f"{_ENV_PREFIX}SCHEMA"
 
 # rozszerzenia dot. RBAC/TLS dla RiskService i auth-scope
 _ENV_REQUIRE_AUTH_SCOPE = f"{_ENV_PREFIX}REQUIRE_AUTH_SCOPE"
@@ -89,6 +96,18 @@ class VerificationError(RuntimeError):
 class _SigningKey:
     value: bytes
     key_id: str | None
+
+
+@dataclass(frozen=True)
+class _BuiltinSchemaInfo:
+    canonical: str
+    description: str
+    synonyms: tuple[str, ...]
+    factory: Callable[[], Any]
+
+    @property
+    def aliases(self) -> tuple[str, ...]:
+        return (self.canonical, *self.synonyms)
 
 
 _SEVERITY_ORDER = [
@@ -316,6 +335,318 @@ def _load_yaml_like(path: Path) -> Mapping[str, Any]:
     if not isinstance(data, Mapping):
         raise VerificationError(f"Plik {path} nie zawiera słownika z konfiguracją snippetów")
     return data
+
+
+_DECISION_LOG_V2_SCHEMA_IDS = {
+    "https://example.com/schemas/decision_log_v2.json",
+    "decision_log_v2",  # fallback alias na potrzeby środowisk testowych
+}
+_DECISION_LOG_V2_SCHEMA_TITLES = {
+    "Decision Log Entry v2",
+}
+
+
+def _load_json_schema_validator(path: str):
+    if not path:
+        return None
+
+    builtin_validator = _resolve_builtin_schema_validator(path)
+    if builtin_validator is not None:
+        return builtin_validator
+
+    target = Path(path).expanduser()
+    try:
+        schema_text = target.read_text(encoding="utf-8")
+    except FileNotFoundError as exc:
+        raise VerificationError(f"Plik schematu JSON {path!r} nie istnieje") from exc
+    except OSError as exc:
+        raise VerificationError(f"Nie udało się odczytać schematu JSON {path!r}: {exc}") from exc
+
+    try:
+        schema = json.loads(schema_text)
+    except json.JSONDecodeError as exc:
+        raise VerificationError(f"Plik schematu JSON {path!r} zawiera nieprawidłowy JSON: {exc}") from exc
+    if not isinstance(schema, Mapping):
+        raise VerificationError(f"Plik schematu JSON {path!r} musi zawierać obiekt na poziomie głównym")
+
+    if jsonschema is None:  # pragma: no cover - zależy od środowiska uruchomieniowego
+        builtin_validator = _build_builtin_json_schema_validator(schema)
+        if builtin_validator is not None:
+            return builtin_validator
+        raise VerificationError(
+            "Walidacja schematu (--schema) wymaga zainstalowanej biblioteki jsonschema"
+        )
+
+    schema_error_type = None
+    exceptions_module = getattr(jsonschema, "exceptions", None)
+    if exceptions_module is not None:
+        schema_error_type = getattr(exceptions_module, "SchemaError", None)
+
+    try:
+        validator_cls = jsonschema.validators.validator_for(schema)
+        validator_cls.check_schema(schema)
+    except Exception as exc:  # pragma: no cover - zależy od zawartości schematu
+        if schema_error_type and isinstance(exc, schema_error_type):
+            message = getattr(exc, "message", str(exc))
+        else:
+            message = str(exc)
+        raise VerificationError(f"Schemat JSON {path!r} jest nieprawidłowy: {message}") from exc
+
+    format_checker = getattr(jsonschema, "FormatChecker", None)
+    if callable(format_checker):
+        return validator_cls(schema, format_checker=format_checker())
+    return validator_cls(schema)
+
+
+class _DecisionLogSchemaValidationError(Exception):
+    def __init__(self, message: str, *, path: Sequence[Any] = ()):  # pragma: no cover - prosta struktura
+        super().__init__(message)
+        self.message = message
+        self.absolute_path = tuple(path)
+        self.relative_path = tuple(path)
+        self.json_path = _format_json_path(self.absolute_path)
+
+
+def _format_json_path(path: Sequence[Any]) -> str | None:
+    if not path:
+        return "$"
+    formatted_segments: list[str] = ["$"]
+    for segment in path:
+        if isinstance(segment, int):
+            formatted_segments.append(f"[{segment}]")
+        else:
+            if isinstance(segment, str) and re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", segment):
+                formatted_segments.append(f".{segment}")
+            else:
+                formatted_segments.append(f"[{segment!r}]")
+    return "".join(formatted_segments)
+
+
+class _BuiltinDecisionLogSchemaValidator:
+    _REQUIRED_FIELDS = ("timestamp", "stage", "status", "artefacts", "runtime_flags", "signatures")
+    _SIGNATURE_PATTERN = re.compile(r"^hmac:[A-Za-z0-9+/=:_-]+$")
+
+    def validate(self, entry: Mapping[str, Any]) -> None:
+        if not isinstance(entry, Mapping):
+            raise _DecisionLogSchemaValidationError(
+                "Wpis decision logu musi być obiektem JSON",
+                path=(),
+            )
+        for field in self._REQUIRED_FIELDS:
+            if field not in entry:
+                raise _DecisionLogSchemaValidationError(
+                    f"Brakuje wymaganego pola {field!r}",
+                    path=(field,),
+                )
+
+        timestamp = entry.get("timestamp")
+        if _parse_iso_datetime(timestamp) is None:
+            raise _DecisionLogSchemaValidationError(
+                "Pole 'timestamp' musi być napisem w formacie ISO 8601",
+                path=("timestamp",),
+            )
+
+        stage = entry.get("stage")
+        if not isinstance(stage, str) or not stage.strip():
+            raise _DecisionLogSchemaValidationError(
+                "Pole 'stage' musi być niepustym napisem",
+                path=("stage",),
+            )
+
+        status = entry.get("status")
+        if not isinstance(status, str) or not status.strip():
+            raise _DecisionLogSchemaValidationError(
+                "Pole 'status' musi być niepustym napisem",
+                path=("status",),
+            )
+
+        artefacts = entry.get("artefacts")
+        if not isinstance(artefacts, Mapping) or not artefacts:
+            raise _DecisionLogSchemaValidationError(
+                "Pole 'artefacts' musi być obiektem z co najmniej jednym wpisem",
+                path=("artefacts",),
+            )
+        for key, value in artefacts.items():
+            if not isinstance(key, str) or not key:
+                raise _DecisionLogSchemaValidationError(
+                    "Klucze w 'artefacts' muszą być niepustymi napisami",
+                    path=("artefacts", key),
+                )
+            if isinstance(value, bool) or value is None:
+                continue
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                continue
+            if isinstance(value, str) and value:
+                continue
+            raise _DecisionLogSchemaValidationError(
+                "Wartości w 'artefacts' muszą być napisem, liczbą, bool albo null",
+                path=("artefacts", key),
+            )
+
+        runtime_flags = entry.get("runtime_flags")
+        if not isinstance(runtime_flags, Mapping) or not runtime_flags:
+            raise _DecisionLogSchemaValidationError(
+                "Pole 'runtime_flags' musi być obiektem z co najmniej jednym wpisem",
+                path=("runtime_flags",),
+            )
+        for key, value in runtime_flags.items():
+            if not isinstance(key, str) or not key:
+                raise _DecisionLogSchemaValidationError(
+                    "Klucze w 'runtime_flags' muszą być niepustymi napisami",
+                    path=("runtime_flags", key),
+                )
+            if not isinstance(value, bool):
+                raise _DecisionLogSchemaValidationError(
+                    "Wartości w 'runtime_flags' muszą być typu bool",
+                    path=("runtime_flags", key),
+                )
+
+        signatures = entry.get("signatures")
+        if not isinstance(signatures, Mapping) or not signatures:
+            raise _DecisionLogSchemaValidationError(
+                "Pole 'signatures' musi być obiektem z co najmniej jednym wpisem",
+                path=("signatures",),
+            )
+        for key, value in signatures.items():
+            if not isinstance(key, str) or not key:
+                raise _DecisionLogSchemaValidationError(
+                    "Klucze w 'signatures' muszą być niepustymi napisami",
+                    path=("signatures", key),
+                )
+            if not isinstance(value, str) or not value:
+                raise _DecisionLogSchemaValidationError(
+                    "Wartości w 'signatures' muszą być niepustymi napisami",
+                    path=("signatures", key),
+                )
+            if not self._SIGNATURE_PATTERN.match(value):
+                raise _DecisionLogSchemaValidationError(
+                    "Podpis musi mieć postać 'hmac:<zakodowana_wartość>'",
+                    path=("signatures", key),
+                )
+
+
+_DECISION_LOG_V2_SCHEMA_DESCRIPTION = (
+    "Wbudowany schemat decision logu v2 (artefacts, runtime_flags, signatures)."
+)
+_DECISION_LOG_V2_SCHEMA_SYNONYMS = tuple(
+    sorted(
+        {"decision_log_v2"} | _DECISION_LOG_V2_SCHEMA_IDS | _DECISION_LOG_V2_SCHEMA_TITLES
+    )
+)
+_DECISION_LOG_V2_SCHEMA_INFO = _BuiltinSchemaInfo(
+    canonical="builtin:decision_log_v2",
+    description=_DECISION_LOG_V2_SCHEMA_DESCRIPTION,
+    synonyms=_DECISION_LOG_V2_SCHEMA_SYNONYMS,
+    factory=lambda: _BuiltinDecisionLogSchemaValidator(),
+)
+_BUILTIN_SCHEMA_INFOS: tuple[_BuiltinSchemaInfo, ...] = (_DECISION_LOG_V2_SCHEMA_INFO,)
+_BUILTIN_SCHEMA_ALIAS_MAP: dict[str, _BuiltinSchemaInfo] = {}
+for info in _BUILTIN_SCHEMA_INFOS:
+    for alias in info.aliases:
+        _BUILTIN_SCHEMA_ALIAS_MAP[alias] = info
+
+
+def _resolve_builtin_schema_validator(reference: str):
+    trimmed = reference.strip()
+    if not trimmed:
+        return None
+
+    if not trimmed.startswith("builtin:"):
+        candidate_path = Path(trimmed).expanduser()
+        if candidate_path.exists():
+            return None
+
+    info = _BUILTIN_SCHEMA_ALIAS_MAP.get(trimmed)
+    if info is None:
+        return None
+    return info.factory()
+
+
+def _build_builtin_json_schema_validator(schema: Mapping[str, Any]):
+    schema_id = schema.get("$id")
+    schema_title = schema.get("title")
+    is_known_schema = False
+    if isinstance(schema_id, str) and schema_id in _DECISION_LOG_V2_SCHEMA_IDS:
+        is_known_schema = True
+    if isinstance(schema_title, str) and schema_title in _DECISION_LOG_V2_SCHEMA_TITLES:
+        is_known_schema = True
+    if is_known_schema:
+        required = schema.get("required")
+        if isinstance(required, Sequence) and not isinstance(required, (str, bytes)):
+            missing = set(_BuiltinDecisionLogSchemaValidator._REQUIRED_FIELDS) - set(required)
+            if not missing:
+                return _BuiltinDecisionLogSchemaValidator()
+    return None
+
+
+def _list_builtin_schema_aliases_payload() -> Mapping[str, Any]:
+    entries: list[dict[str, Any]] = []
+    for info in _BUILTIN_SCHEMA_INFOS:
+        entries.append(
+            {
+                "canonical": info.canonical,
+                "description": info.description,
+                "aliases": list(info.synonyms),
+            }
+        )
+    return {"schemas": entries}
+
+
+def _print_builtin_schema_aliases() -> None:
+    payload = _list_builtin_schema_aliases_payload()
+    json.dump(payload, sys.stdout, ensure_ascii=False, indent=2, sort_keys=True)
+    sys.stdout.write("\n")
+
+
+def _describe_builtin_schema_alias(reference: str) -> Mapping[str, Any]:
+    trimmed = reference.strip()
+    if not trimmed:
+        raise VerificationError("Alias wbudowanego schematu JSON nie może być pusty")
+
+    info = _BUILTIN_SCHEMA_ALIAS_MAP.get(trimmed)
+    if info is None:
+        available = ", ".join(sorted(_BUILTIN_SCHEMA_ALIAS_MAP))
+        raise VerificationError(
+            f"Alias wbudowanego schematu JSON {reference!r} jest nieznany. Dostępne: {available}"
+        )
+
+    payload: dict[str, Any] = {
+        "canonical": info.canonical,
+        "description": info.description,
+        "aliases": list(info.aliases),
+        "supports_builtin_validator": True,
+    }
+
+    if info is _DECISION_LOG_V2_SCHEMA_INFO:
+        payload["requirements"] = {
+            "required_fields": sorted(_BuiltinDecisionLogSchemaValidator._REQUIRED_FIELDS),
+            "signature_pattern": _BuiltinDecisionLogSchemaValidator._SIGNATURE_PATTERN.pattern,
+        }
+
+    return payload
+
+
+def _print_builtin_schema_alias_description(reference: str) -> None:
+    payload = _describe_builtin_schema_alias(reference)
+    json.dump(payload, sys.stdout, ensure_ascii=False, indent=2, sort_keys=True)
+    sys.stdout.write("\n")
+
+
+def _describe_schema_error_path(error: Exception) -> str | None:
+    json_path = getattr(error, "json_path", None)
+    if json_path:
+        return str(json_path)
+    absolute_path = getattr(error, "absolute_path", None)
+    if absolute_path:
+        segments = [str(segment) for segment in absolute_path]
+        if segments:
+            return "/" + "/".join(segments)
+    relative_path = getattr(error, "relative_path", None)
+    if relative_path:
+        segments = [str(segment) for segment in relative_path]
+        if segments:
+            return "/" + "/".join(segments)
+    return None
 
 
 def _validate_risk_profile_snippets(
@@ -738,6 +1069,7 @@ def verify_log(
     allow_unsigned: bool,
     require_screen_info: bool = False,
     collect_summary: bool = False,
+    schema_validator: Any | None = None,
 ) -> dict[str, Any]:
     metadata: dict[str, Any] | None = None
     total = 0
@@ -761,6 +1093,17 @@ def verify_log(
         if kind == "metadata":
             metadata = _load_metadata(entry.get("metadata", {}))
         _verify_entry(entry, signing_key=signing_key, allow_unsigned=allow_unsigned)
+        if schema_validator is not None and kind != "metadata":
+            try:
+                schema_validator.validate(entry)
+            except Exception as exc:
+                detail = getattr(exc, "message", str(exc))
+                path_hint = _describe_schema_error_path(exc)
+                if path_hint:
+                    detail = f"{detail} (ścieżka: {path_hint})"
+                raise VerificationError(
+                    f"Wpis decision logu (linia {total}) nie spełnia schematu JSON: {detail}"
+                ) from exc
         if kind != "metadata":
             if require_screen_info:
                 screen = entry.get("screen")
@@ -1661,6 +2004,24 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--hmac-key-id", help="Identyfikator klucza HMAC")
     parser.add_argument("--allow-unsigned", action="store_true", help="Zezwól na wpisy bez podpisu")
     parser.add_argument("--expected-key-id", help="Oczekiwany identyfikator klucza podpisującego")
+    parser.add_argument(
+        "--schema",
+        help=(
+            "Ścieżka do pliku JSON Schema wymuszającego strukturę wpisów decision logu; "
+            "użyj 'builtin:decision_log_v2' aby skorzystać z wbudowanego schematu"
+        ),
+    )
+    schema_alias_group = parser.add_mutually_exclusive_group()
+    schema_alias_group.add_argument(
+        "--list-schema-aliases",
+        action="store_true",
+        help="Wypisz dostępne aliasy wbudowanych schematów JSON i zakończ",
+    )
+    schema_alias_group.add_argument(
+        "--describe-schema-alias",
+        metavar="ALIAS",
+        help="Wypisz szczegółowy opis aliasu wbudowanego schematu JSON i zakończ",
+    )
     parser.add_argument("--expect-mode", choices=["grpc", "jsonl"], help="Oczekiwany tryb metadanych")
     parser.add_argument(
         "--expect-summary-enabled",
@@ -1874,6 +2235,11 @@ def _apply_env_defaults(args: argparse.Namespace, parser: argparse.ArgumentParse
         env_path = os.getenv(f"{_ENV_PREFIX}PATH")
         if env_path:
             args.path = env_path
+
+    if getattr(args, "schema", None) is None:
+        env_schema = os.getenv(_ENV_SCHEMA_PATH)
+        if env_schema:
+            args.schema = env_schema
 
     if getattr(args, "risk_profiles_file", None) is None:
         env_profiles = os.getenv(_ENV_RISK_PROFILES_FILE)
@@ -2378,6 +2744,19 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
 
+    if getattr(args, "list_schema_aliases", False):
+        _print_builtin_schema_aliases()
+        return 0
+
+    describe_alias = getattr(args, "describe_schema_alias", None)
+    if describe_alias:
+        try:
+            _print_builtin_schema_alias_description(describe_alias)
+        except VerificationError as exc:
+            LOGGER.error(str(exc))
+            return 2
+        return 0
+
     # Zresetuj stan profili ryzyka, aby unikać przecieków pomiędzy wywołaniami.
     reset_risk_profile_store()
 
@@ -2394,6 +2773,14 @@ def main(argv: list[str] | None = None) -> int:
     _apply_risk_profile_defaults(args, parser)
 
     core_metadata: Mapping[str, Any] | None = getattr(args, "_core_config_metadata", None)
+
+    schema_validator = None
+    schema_path_value = getattr(args, "schema", None)
+    if schema_path_value:
+        try:
+            schema_validator = _load_json_schema_validator(schema_path_value)
+        except VerificationError as exc:
+            parser.error(str(exc))
 
     if getattr(args, "print_risk_profiles", False):
         _print_available_risk_profiles(getattr(args, "risk_profile", None), core_metadata=core_metadata)
@@ -2443,6 +2830,7 @@ def main(argv: list[str] | None = None) -> int:
             allow_unsigned=args.allow_unsigned,
             require_screen_info=args.require_screen_info,
             collect_summary=collect_summary,
+            schema_validator=schema_validator,
         )
         _validate_metadata(
             result.get("metadata"),
