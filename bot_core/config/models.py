@@ -893,9 +893,6 @@ class MultiStrategySchedulerConfig:
     initial_signal_limits: Mapping[str, Mapping[str, SignalLimitOverrideConfig]] = field(
         default_factory=dict
     )
-    signal_limits: Mapping[str, Mapping[str, int]] = field(default_factory=dict)
-    capital_policy: Mapping[str, Any] | str | None = None
-    allocation_rebalance_seconds: int | None = None
 
 
 @dataclass(slots=True)
