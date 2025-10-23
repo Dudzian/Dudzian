@@ -122,9 +122,46 @@ class _MetricsView(Mapping[str, object]):
         return self._base.get("summary", MappingProxyType({}))
 
 
-def _normalize_metrics(raw: Mapping[str, object] | None) -> Mapping[str, object]:
-    required_keys = ("summary", "train", "validation", "test")
+class ModelMetrics(_MetricsView):
+    """Publiczny widok metryk zachowujący API `_MetricsView`."""
 
+    __slots__ = ()
+
+    def __init__(self, payload: Mapping[str, object] | None = None) -> None:
+        base = self._build_base(payload)
+        super().__init__(base)
+
+    @classmethod
+    def _build_base(
+        cls, payload: Mapping[str, object] | None
+    ) -> Mapping[str, Mapping[str, float]]:
+        if isinstance(payload, _MetricsView):
+            structured_source: Mapping[str, object] | None = payload.blocks()
+        else:
+            structured_source = payload
+        structured = cls._normalize(structured_source)
+        return MappingProxyType(structured)
+
+    @classmethod
+    def _normalize(
+        cls, raw: Mapping[str, object] | None
+    ) -> dict[str, Mapping[str, float]]:
+        required_keys = ("summary", "train", "validation", "test")
+        structured: dict[str, Mapping[str, float]] = {}
+
+        if isinstance(raw, Mapping) and raw:
+            if all(isinstance(value, Mapping) for value in raw.values()):
+                for split, payload in raw.items():
+                    if isinstance(payload, Mapping):
+                        structured[str(split)] = cls._coerce_block(payload)
+            else:
+                structured["summary"] = cls._coerce_legacy_summary(raw)
+
+        for key in required_keys:
+            structured.setdefault(key, MappingProxyType({}))
+        return structured
+
+    @staticmethod
     def _coerce_block(values: Mapping[str, object]) -> Mapping[str, float]:
         normalized: dict[str, float] = {}
         for key, value in values.items():
@@ -134,27 +171,25 @@ def _normalize_metrics(raw: Mapping[str, object] | None) -> Mapping[str, object]
                 continue
         return MappingProxyType(normalized)
 
-    structured: dict[str, Mapping[str, float]] = {}
+    @staticmethod
+    def _coerce_legacy_summary(values: Mapping[str, object]) -> Mapping[str, float]:
+        legacy: dict[str, float] = {}
+        for key, value in values.items():
+            try:
+                legacy[str(key)] = float(value)  # type: ignore[arg-type]
+            except (TypeError, ValueError):
+                continue
+        return MappingProxyType(legacy)
 
-    if isinstance(raw, Mapping) and raw:
-        if all(isinstance(value, Mapping) for value in raw.values()):
-            for split, payload in raw.items():
-                if isinstance(payload, Mapping):
-                    structured[str(split)] = _coerce_block(payload)
-        else:
-            legacy: dict[str, float] = {}
-            for key, value in raw.items():
-                try:
-                    legacy[str(key)] = float(value)  # type: ignore[arg-type]
-                except (TypeError, ValueError):
-                    continue
-            structured["summary"] = MappingProxyType(legacy)
 
-    for key in required_keys:
-        if key not in structured:
-            structured[key] = MappingProxyType({})
-
-    return _MetricsView(MappingProxyType(structured))
+def _normalize_metrics(raw: object) -> ModelMetrics:
+    if isinstance(raw, ModelMetrics):
+        return raw
+    if isinstance(raw, _MetricsView):
+        return ModelMetrics(raw.blocks())
+    if isinstance(raw, Mapping):
+        return ModelMetrics(raw)
+    return ModelMetrics(None)
 
 
 @dataclass(slots=True)
@@ -193,8 +228,7 @@ class ModelArtifact:
                 }
             ),
         )
-        metrics_source = self.metrics if isinstance(self.metrics, Mapping) else None
-        object.__setattr__(self, "metrics", _normalize_metrics(metrics_source))
+        object.__setattr__(self, "metrics", _normalize_metrics(self.metrics))
         object.__setattr__(self, "target_scale", float(self.target_scale))
         object.__setattr__(self, "training_rows", int(self.training_rows))
         object.__setattr__(self, "validation_rows", int(self.validation_rows))
@@ -242,7 +276,7 @@ class ModelArtifact:
         backend = str(raw.get("backend", "builtin"))
 
         metrics_raw = raw.get("metrics")
-        metrics = _normalize_metrics(metrics_raw if isinstance(metrics_raw, Mapping) else None)
+        metrics = _normalize_metrics(metrics_raw)
 
         target_scale = float(raw.get("target_scale", metadata.get("target_scale", 1.0)))
         training_rows = int(raw.get("training_rows", metadata.get("training_rows", 0)))
