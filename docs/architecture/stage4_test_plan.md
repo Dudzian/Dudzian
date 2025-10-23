@@ -16,7 +16,7 @@ Zapewnienie, że rozszerzona biblioteka strategii oraz scheduler przechodzą pip
 | Alerty | scenariusze operacyjne | `python scripts/run_metrics_service.py --simulate-alerts`, `pytest tests/test_alert_thresholds.py` | progi PnL/ryzyko/opóźnienia, eskalacje |
 | CI/coverage | pipeline/regresja | `scripts/run_ci_pipeline.sh`, `pytest --cov=bot_core.strategies --cov=bot_core.runtime.multi_strategy_scheduler --cov-fail-under=85` | włączenie testów, progi coverage |
 | Smoke demo CLI | smoke/integracja | `python scripts/smoke_demo_strategies.py --cycles 3` | validacja multi-strategy na danych demo |
-| Bezpieczeństwo | audyt/manual | `python scripts/verify_decision_log.py audit`, `python scripts/audit_security_baseline.py --scheduler-required-scope runtime.schedule.write` | HMAC, RBAC, mTLS, schemat decision log |
+| Bezpieczeństwo | audyt/manual | `python -m scripts.verify_decision_log audit/decision_logs/runtime.jsonl --schema builtin:decision_log_v2`, `python scripts/audit_security_baseline.py --scheduler-required-scope runtime.schedule.write` | HMAC, RBAC, mTLS, schemat decision log |
 | Operacje | smoke/manual | `python scripts/run_multi_strategy_scheduler.py --demo-smoke`, `docs/runbooks/paper_trading.md` checklist | CLI smoke, playbook L1/L2 |
 | Wydajność | obciążenie | `python scripts/load_test_scheduler.py`, `pytest tests/test_scheduler_load_test.py` | latencja, jitter, budżety zasobów |
 
@@ -45,7 +45,7 @@ Zapewnienie, że rozszerzona biblioteka strategii oraz scheduler przechodzą pip
 
 ## Testy bezpieczeństwa i compliance
 1. `python scripts/rbac_audit.py --config config/core.yaml` – walidacja przypisań ról dla scheduler-a i strategii.
-2. `python scripts/verify_decision_log.py audit --schema schemas/decision_log_multi_strategy.schema.json` – sprawdzenie nowych pól.
+2. `python -m scripts.verify_decision_log audit/decision_logs/runtime.jsonl --schema builtin:decision_log_v2` – sprawdzenie nowych pól; w razie potrzeby użyj `--list-schema-aliases`, aby potwierdzić dostępność aliasów schematu (`docs/schemas/decision_log_v2.json`).
 3. Mini-audyt HMAC: `python scripts/key_rotation_check.py --context stage4` oraz aktualizacja `docs/architecture/iteration_gate_checklists.md`.
 
 ## Testy obciążeniowe i budżety zasobów
