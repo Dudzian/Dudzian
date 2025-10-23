@@ -51,60 +51,15 @@ def _sanitize_timestamp(raw: str | None) -> str:
     return candidate.replace(":", "").replace("-", "").replace(" ", "_")
 
 
-_TIMESTAMP_PATTERN = re.compile(r"^\d{8}(\d{6}|T\d{6})?Z?$")
+_TIMESTAMP_PATTERN = re.compile(r"^\d{8}(T\d{6}Z?)?$")
 
 
 def _looks_like_timestamp(candidate: str | None) -> bool:
     if not candidate:
         return False
     sanitized = _sanitize_timestamp(candidate)
-    normalized = sanitized.replace("_", "").upper()
+    normalized = sanitized.replace("_", "")
     return _TIMESTAMP_PATTERN.fullmatch(normalized) is not None
-
-
-def _normalize_directory(path: Path) -> Path:
-    return path if str(path) else Path(".")
-
-
-def _apply_summary_output_alias(args: argparse.Namespace) -> None:
-    output_value = getattr(args, "output", None)
-    if not output_value:
-        return
-
-    output_path = Path(output_value).expanduser()
-    if output_path.suffix.lower() == ".csv":
-        base_name = output_path.stem or "tco_summary"
-        parent_dir = _normalize_directory(output_path.parent)
-        if args.timestamp is None and parent_dir != output_path:
-            timestamp_hint = output_path.parent.name
-            if _looks_like_timestamp(timestamp_hint):
-                args.timestamp = timestamp_hint
-                parent_dir = _normalize_directory(output_path.parent.parent)
-        args.artifact_root = str(parent_dir)
-        args.csv_name = output_path.name
-        args.json_name = f"{base_name}.json"
-        args.signature_name = f"{base_name}.signature.json"
-        return
-
-    artifact_root = output_path
-    if args.timestamp is None and _looks_like_timestamp(output_path.name):
-        args.timestamp = output_path.name
-        artifact_root = _normalize_directory(output_path.parent)
-    args.artifact_root = str(_normalize_directory(artifact_root))
-
-
-def _apply_analyze_output_alias(args: argparse.Namespace) -> None:
-    output_value = getattr(args, "output", None)
-    if not output_value:
-        return
-
-    output_path = Path(output_value).expanduser()
-    if output_path.suffix.lower() == ".csv":
-        args.output_dir = str(_normalize_directory(output_path.parent))
-        args.basename = output_path.stem or args.basename or "tco_report"
-        return
-
-    args.output_dir = str(_normalize_directory(output_path))
 
 
 # ==============================================================================
@@ -158,7 +113,22 @@ def _load_signing_key_inline_or_file(*, value: str | None, path: str | None) -> 
 
 
 def _handle_summary(args: argparse.Namespace) -> int:
-    _apply_summary_output_alias(args)
+    if getattr(args, "output", None):
+        output_path = Path(args.output).expanduser()
+        if output_path.suffix.lower() == ".csv":
+            base_name = output_path.stem or "tco_summary"
+            parent_dir = output_path.parent
+            timestamp_hint = parent_dir.name if args.timestamp is None else None
+            if timestamp_hint and _looks_like_timestamp(timestamp_hint):
+                args.timestamp = timestamp_hint
+                parent_dir = parent_dir.parent
+            parent_dir = parent_dir if str(parent_dir) else Path(".")
+            args.artifact_root = str(parent_dir)
+            args.csv_name = output_path.name
+            args.json_name = f"{base_name}.json"
+            args.signature_name = f"{base_name}.signature.json"
+        else:
+            args.artifact_root = str(output_path)
 
     # walidacje
     if args.monthly_trades is not None and args.monthly_trades < 0:
@@ -319,7 +289,13 @@ def _read_signing_key_path(path: Path) -> bytes:
 
 
 def _handle_analyze(args: argparse.Namespace) -> int:
-    _apply_analyze_output_alias(args)
+    if getattr(args, "output", None):
+        output_path = Path(args.output).expanduser()
+        if output_path.suffix.lower() == ".csv":
+            args.output_dir = str(output_path.parent or Path("."))
+            args.basename = output_path.stem or args.basename or "tco_report"
+        else:
+            args.output_dir = str(output_path)
 
     fill_paths = [Path(item).expanduser() for item in args.fills]
     events: list[TradeCostEvent] = []
