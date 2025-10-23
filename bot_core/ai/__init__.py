@@ -18,9 +18,29 @@ _EXPORTS: Dict[str, Tuple[str, str]] = {
     "ExternalModelAdapter": (".training", "ExternalModelAdapter"),
     "get_external_model_adapter": (".training", "get_external_model_adapter"),
     "register_external_model_adapter": (".training", "register_external_model_adapter"),
+    # audyt
+    "AUDIT_SUBDIRECTORIES": (".audit", "AUDIT_SUBDIRECTORIES"),
+    "DEFAULT_AUDIT_ROOT": (".audit", "DEFAULT_AUDIT_ROOT"),
+    "ensure_audit_structure": (".audit", "ensure_audit_structure"),
+    "save_walk_forward_report": (".audit", "save_walk_forward_report"),
+    "save_data_quality_report": (".audit", "save_data_quality_report"),
+    "save_drift_report": (".audit", "save_drift_report"),
+    "list_audit_reports": (".audit", "list_audit_reports"),
+    "load_audit_report": (".audit", "load_audit_report"),
+    "load_latest_walk_forward_report": (".audit", "load_latest_walk_forward_report"),
+    "load_latest_data_quality_report": (".audit", "load_latest_data_quality_report"),
+    "load_latest_drift_report": (".audit", "load_latest_drift_report"),
+    # monitoring danych
+    "DataCompletenessWatcher": (".monitoring", "DataCompletenessWatcher"),
+    "DataQualityAssessment": (".monitoring", "DataQualityAssessment"),
+    "DataQualityIssue": (".monitoring", "DataQualityIssue"),
+    "FeatureBoundsValidator": (".monitoring", "FeatureBoundsValidator"),
+    "FeatureDriftAnalyzer": (".monitoring", "FeatureDriftAnalyzer"),
+    "FeatureDriftAssessment": (".monitoring", "FeatureDriftAssessment"),
     # pipeline helpers
     "train_gradient_boosting_model": (".pipeline", "train_gradient_boosting_model"),
     "register_model_artifact": (".pipeline", "register_model_artifact"),
+    "score_with_data_monitoring": (".pipeline", "score_with_data_monitoring"),
     # harmonogram treningów
     "RetrainingScheduler": (".scheduler", "RetrainingScheduler"),
     "ScheduledTrainingJob": (".scheduler", "ScheduledTrainingJob"),
@@ -50,6 +70,27 @@ _EXPORTS: Dict[str, Tuple[str, str]] = {
     "FeatureDataset": (".feature_engineering", "FeatureDataset"),
     "FeatureEngineer": (".feature_engineering", "FeatureEngineer"),
     "FeatureVector": (".feature_engineering", "FeatureVector"),
+    # monitoring danych
+    "DataCompletenessWatcher": (".data_monitoring", "DataCompletenessWatcher"),
+    "FeatureBoundsValidator": (".data_monitoring", "FeatureBoundsValidator"),
+    "export_data_quality_report": (".data_monitoring", "export_data_quality_report"),
+    "export_drift_alert_report": (".data_monitoring", "export_drift_alert_report"),
+    "DataQualityException": (".data_monitoring", "DataQualityException"),
+    "apply_policy_to_report": (".data_monitoring", "apply_policy_to_report"),
+    "update_sign_off": (".data_monitoring", "update_sign_off"),
+    "load_recent_data_quality_reports": (
+        ".data_monitoring",
+        "load_recent_data_quality_reports",
+    ),
+    "load_recent_drift_reports": (".data_monitoring", "load_recent_drift_reports"),
+    "summarize_data_quality_reports": (
+        ".data_monitoring",
+        "summarize_data_quality_reports",
+    ),
+    "summarize_drift_reports": (
+        ".data_monitoring",
+        "summarize_drift_reports",
+    ),
     # manager & historię pipeline'u
     "AIManager": (".manager", "AIManager"),
     "EnsembleDefinition": (".manager", "EnsembleDefinition"),
@@ -59,6 +100,7 @@ _EXPORTS: Dict[str, Tuple[str, str]] = {
     "PipelineExecutionRecord": (".manager", "PipelineExecutionRecord"),
     "PipelineHistoryDiff": (".manager", "PipelineHistoryDiff"),
     "PipelineHistorySnapshot": (".manager", "PipelineHistorySnapshot"),
+    "DataQualityCheck": (".manager", "DataQualityCheck"),
 }
 
 __all__ = sorted(_EXPORTS)

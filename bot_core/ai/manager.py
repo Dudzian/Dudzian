@@ -16,11 +16,11 @@ import logging
 import math
 from collections import deque
 from copy import deepcopy
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
 from os import PathLike
 from pathlib import Path
-from typing import Any, Awaitable, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple, Union
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple, Union
 
 try:  # pragma: no cover - środowisko testowe może nie mieć joblib
     import joblib
@@ -47,6 +47,7 @@ import numpy as np
 import pandas as pd
 
 from ._license import ensure_ai_signals_enabled
+from .audit import list_audit_reports, load_audit_report, save_data_quality_report, save_drift_report
 from .feature_engineering import FeatureDataset
 from .inference import DecisionModelInference, ModelRepository
 from .models import ModelArtifact, ModelScore
@@ -56,6 +57,7 @@ from .regime import (
     RegimeHistory,
     RegimeSummary,
 )
+from bot_core.runtime.journal import TradingDecisionEvent, TradingDecisionJournal
 from .scheduler import (
     RetrainingScheduler,
     ScheduledTrainingJob,
@@ -64,6 +66,9 @@ from .scheduler import (
     WalkForwardValidator,
 )
 from .training import ModelTrainer
+
+if TYPE_CHECKING:  # pragma: no cover - tylko dla typowania
+    from .monitoring import DataQualityAssessment, FeatureDriftAssessment
 
 logger = logging.getLogger(__name__)
 if not logger.handlers:
@@ -79,7 +84,75 @@ def _utcnow() -> datetime:
 
     return datetime.now(timezone.utc)
 
+
+def _select_metric_block(metrics: Mapping[str, object]) -> Mapping[str, float]:
+    if not isinstance(metrics, Mapping):
+        return {}
+    if metrics and any(isinstance(value, Mapping) for value in metrics.values()):
+        summary = metrics.get("summary")
+        if isinstance(summary, Mapping):
+            return {
+                str(key): float(value)
+                for key, value in summary.items()
+                if isinstance(value, (int, float))
+            }
+        for key in ("test", "validation", "train"):
+            candidate = metrics.get(key)
+            if isinstance(candidate, Mapping) and candidate:
+                return {
+                    str(metric_name): float(metric_value)
+                    for metric_name, metric_value in candidate.items()
+                    if isinstance(metric_value, (int, float))
+                }
+        for value in metrics.values():
+            if isinstance(value, Mapping):
+                return {
+                    str(metric_name): float(metric_value)
+                    for metric_name, metric_value in value.items()
+                    if isinstance(metric_value, (int, float))
+                }
+        return {}
+    return {
+        str(key): float(value)
+        for key, value in metrics.items()
+        if isinstance(value, (int, float))
+    }
+
 LoggerLike = Union[logging.Logger, logging.LoggerAdapter]
+
+
+@dataclass(slots=True)
+class DataQualityCheck:
+    """Definicja pojedynczej kontroli jakości danych uruchamianej w pipeline AI."""
+
+    name: str
+    callback: Callable[[pd.DataFrame], Any]
+    tags: Tuple[str, ...] = field(default_factory=tuple)
+    source: str | None = None
+    job_name: str | None = None
+    dataset_provider: Callable[[pd.DataFrame], FeatureDataset | None] | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.name, str) or not self.name.strip():
+            raise ValueError("Nazwa kontroli jakości danych nie może być pusta.")
+        self.name = self.name.strip()
+        if not callable(self.callback):
+            raise TypeError("callback musi być wywoływalny")
+        if not isinstance(self.tags, Sequence):
+            raise TypeError("tags musi być sekwencją")
+        normalized_tags: list[str] = []
+        for tag in self.tags:
+            normalized_tags.append(str(tag))
+        self.tags = tuple(normalized_tags)
+        if self.dataset_provider is not None and not callable(self.dataset_provider):
+            raise TypeError("dataset_provider musi być wywoływalny lub None")
+
+    def evaluate(self, frame: pd.DataFrame) -> tuple[Any, FeatureDataset | None]:
+        dataset = None
+        if self.dataset_provider is not None:
+            dataset = self.dataset_provider(frame)
+        result = self.callback(frame)
+        return result, dataset
 
 
 def _ensure_logger(logger_like: Optional[LoggerLike]) -> LoggerLike:
@@ -636,7 +709,15 @@ class AIManager:
     dba o higienę danych oraz ograniczenie sygnałów do rozsądnego zakresu.
     """
 
-    def __init__(self, *, ai_threshold_bps: float = 5.0, model_dir: str | Path = "models") -> None:
+    def __init__(
+        self,
+        *,
+        ai_threshold_bps: float = 5.0,
+        model_dir: str | Path = "models",
+        audit_root: str | Path | None = None,
+        decision_journal: TradingDecisionJournal | None = None,
+        decision_journal_context: Mapping[str, Any] | None = None,
+    ) -> None:
         ensure_ai_signals_enabled("zarządzania modelami AI")
         self.ai_threshold_bps = float(ai_threshold_bps)
         self.model_dir = Path(model_dir)
@@ -670,6 +751,16 @@ class AIManager:
         self._training_scheduler: TrainingScheduler | None = None
         self._scheduled_training_jobs: Dict[str, ScheduledTrainingJob] = {}
         self._job_artifact_paths: Dict[str, Path] = {}
+        self._data_quality_checks: List[DataQualityCheck] = []
+        self._audit_root = Path(audit_root) if audit_root is not None else None
+        self._last_drift_report_path: Path | None = None
+        self._last_data_quality_report_path: Path | None = None
+        self._decision_journal = decision_journal
+        if decision_journal_context is not None and not isinstance(decision_journal_context, Mapping):
+            raise TypeError("decision_journal_context musi być mapowaniem lub None")
+        self._decision_journal_context: Mapping[str, Any] | None = (
+            dict(decision_journal_context) if decision_journal_context is not None else None
+        )
         if _AI_IMPORT_ERROR is not None:
             self._degraded = True
             messages = _collect_exception_messages(_AI_IMPORT_ERROR)
@@ -725,6 +816,501 @@ class AIManager:
 
     def _model_key(self, symbol: str, model_type: str) -> str:
         return f"{self._normalize_symbol(symbol)}:{self._normalize_model_type(model_type)}"
+
+    def set_audit_root(self, audit_root: str | Path | None) -> None:
+        """Skonfiguruj katalog audytu AI wykorzystywany przy zapisie raportów."""
+
+        self._audit_root = Path(audit_root) if audit_root is not None else None
+
+    def get_audit_root(self) -> Path | None:
+        """Zwróć aktualną ścieżkę katalogu audytu AI (jeśli skonfigurowana)."""
+
+        return self._audit_root
+
+    def get_last_drift_report_path(self) -> Path | None:
+        """Zwraca ścieżkę ostatniego zapisanego raportu dryfu (jeśli istnieje)."""
+
+        return self._last_drift_report_path
+
+    def get_last_data_quality_report_path(self) -> Path | None:
+        """Zwraca ścieżkę ostatniego zapisanego raportu jakości danych."""
+
+        return self._last_data_quality_report_path
+
+    def register_data_quality_check(self, check: DataQualityCheck) -> None:
+        """Rejestruje kontrolę jakości danych wykonywaną podczas pipeline'u."""
+
+        if not isinstance(check, DataQualityCheck):
+            raise TypeError("check musi być instancją DataQualityCheck")
+        self._data_quality_checks.append(check)
+
+    def clear_data_quality_checks(self) -> None:
+        """Usuwa wszystkie wcześniej zarejestrowane kontrole jakości danych."""
+
+        self._data_quality_checks.clear()
+
+    def get_data_quality_checks(self) -> Tuple[DataQualityCheck, ...]:
+        """Zwraca aktualnie skonfigurowane kontrole jakości danych."""
+
+        return tuple(self._data_quality_checks)
+
+    def _build_decision_context(self, overrides: Mapping[str, Any] | None = None) -> Dict[str, str]:
+        context: Dict[str, str] = {
+            "environment": "ai-monitoring",
+            "portfolio": "ai-manager",
+            "risk_profile": "ai-monitoring",
+        }
+        if isinstance(self._decision_journal_context, Mapping):
+            for key, value in self._decision_journal_context.items():
+                if value is None:
+                    continue
+                context[str(key)] = str(value)
+        if overrides is not None:
+            for key, value in overrides.items():
+                if value is None:
+                    continue
+                context[str(key)] = str(value)
+        return context
+
+    @staticmethod
+    def _stringify_metadata(metadata: Mapping[str, Any]) -> Dict[str, str]:
+        payload: Dict[str, str] = {}
+        for key, value in metadata.items():
+            if value is None:
+                continue
+            key_str = str(key)
+            if isinstance(value, bool):
+                payload[key_str] = "true" if value else "false"
+            elif isinstance(value, (int, np.integer)):
+                payload[key_str] = str(int(value))
+            elif isinstance(value, (float, np.floating)):
+                formatted = f"{float(value):.10f}".rstrip("0").rstrip(".")
+                payload[key_str] = formatted if formatted else "0"
+            elif isinstance(value, (datetime, pd.Timestamp)):
+                normalized = value
+                if isinstance(normalized, pd.Timestamp):
+                    normalized = normalized.to_pydatetime()
+                payload[key_str] = normalized.astimezone(timezone.utc).isoformat()
+            elif isinstance(value, np.datetime64):
+                payload[key_str] = pd.Timestamp(value).to_pydatetime().astimezone(timezone.utc).isoformat()
+            elif isinstance(value, Path):
+                payload[key_str] = str(value)
+            elif isinstance(value, Mapping):
+                try:
+                    payload[key_str] = json.dumps(value, ensure_ascii=False, sort_keys=True)
+                except TypeError:
+                    payload[key_str] = str(value)
+            elif isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+                payload[key_str] = ",".join(str(item) for item in value)
+            else:
+                payload[key_str] = str(value)
+        return payload
+
+    def _record_journal_event(
+        self,
+        event_type: str,
+        *,
+        timestamp: datetime,
+        metadata: Mapping[str, Any],
+        overrides: Mapping[str, Any] | None = None,
+    ) -> None:
+        if self._decision_journal is None:
+            return
+        context = self._build_decision_context(overrides)
+        event_timestamp = timestamp
+        if event_timestamp.tzinfo is None:
+            event_timestamp = event_timestamp.replace(tzinfo=timezone.utc)
+        else:
+            event_timestamp = event_timestamp.astimezone(timezone.utc)
+        event_kwargs: Dict[str, Any] = {
+            "event_type": event_type,
+            "timestamp": event_timestamp,
+            "environment": context.get("environment", "ai-monitoring"),
+            "portfolio": context.get("portfolio", "ai-manager"),
+            "risk_profile": context.get("risk_profile", "ai-monitoring"),
+            "metadata": self._stringify_metadata(metadata),
+        }
+        for key in ("symbol", "schedule", "strategy", "schedule_run_id", "strategy_instance_id", "status"):
+            value = context.get(key)
+            if value is not None:
+                event_kwargs[key] = str(value)
+        try:
+            event = TradingDecisionEvent(**event_kwargs)
+        except Exception:
+            logger.exception("Nie udało się zbudować zdarzenia decision journalu %s", event_type)
+            return
+        try:
+            self._decision_journal.record(event)
+        except Exception:
+            logger.exception("Nie udało się zapisać zdarzenia decision journalu %s", event_type)
+
+    def list_drift_report_paths(self, limit: int | None = None) -> list[Path]:
+        """Zwraca posortowane ścieżki raportów dryfu."""
+
+        if self._audit_root is None:
+            return []
+        return list_audit_reports("drift", audit_root=self._audit_root, limit=limit)
+
+    def list_data_quality_report_paths(self, limit: int | None = None) -> list[Path]:
+        """Zwraca posortowane ścieżki raportów jakości danych."""
+
+        if self._audit_root is None:
+            return []
+        return list_audit_reports("data_quality", audit_root=self._audit_root, limit=limit)
+
+    def _load_audit_payload(self, *, path: Path | None, subdirectory: str) -> Mapping[str, Any] | None:
+        candidates: list[Path] = []
+        if path is not None:
+            candidates.append(path)
+        if self._audit_root is not None:
+            for candidate in list_audit_reports(subdirectory, audit_root=self._audit_root, limit=1):
+                if candidate not in candidates:
+                    candidates.append(candidate)
+        for candidate in candidates:
+            try:
+                return load_audit_report(candidate)
+            except FileNotFoundError:
+                continue
+            except Exception:
+                logger.exception("Nie udało się odczytać raportu audytu %s", candidate)
+                return None
+        return None
+
+    def load_last_drift_report(self) -> Mapping[str, Any] | None:
+        """Ładuje najnowszy znany raport dryfu danych."""
+
+        return self._load_audit_payload(path=self._last_drift_report_path, subdirectory="drift")
+
+    def load_last_data_quality_report(self) -> Mapping[str, Any] | None:
+        """Ładuje najnowszy znany raport jakości danych."""
+
+        return self._load_audit_payload(
+            path=self._last_data_quality_report_path, subdirectory="data_quality"
+        )
+
+    @staticmethod
+    def _normalize_timestamp_value(value: Any) -> str | None:
+        if value is None:
+            return None
+        if isinstance(value, pd.Timestamp):
+            dt_value = value.to_pydatetime()
+        elif isinstance(value, datetime):
+            dt_value = value
+        elif isinstance(value, np.datetime64):
+            dt_value = pd.Timestamp(value).to_pydatetime()
+        elif isinstance(value, (np.integer, int)):
+            try:
+                dt_value = datetime.fromtimestamp(int(value), tz=timezone.utc)
+            except (OverflowError, OSError, ValueError):
+                return None
+        elif isinstance(value, (np.floating, float)):
+            number = float(value)
+            if math.isnan(number) or math.isinf(number):
+                return None
+            try:
+                dt_value = datetime.fromtimestamp(number, tz=timezone.utc)
+            except (OverflowError, OSError, ValueError):
+                return None
+        else:
+            return None
+        if dt_value.tzinfo is None:
+            dt_value = dt_value.replace(tzinfo=timezone.utc)
+        else:
+            dt_value = dt_value.astimezone(timezone.utc)
+        return dt_value.isoformat()
+
+    @classmethod
+    def _frame_window_summary(cls, frame: pd.DataFrame) -> Mapping[str, Any]:
+        if frame is None or frame.empty:
+            return {}
+        summary: Dict[str, Any] = {"rows": int(len(frame))}
+
+        start_value: Any = None
+        end_value: Any = None
+        start_iso: str | None = None
+        end_iso: str | None = None
+
+        if len(frame.index) > 0:
+            start_candidate = frame.index[0]
+            end_candidate = frame.index[-1]
+            start_iso = cls._normalize_timestamp_value(start_candidate)
+            end_iso = cls._normalize_timestamp_value(end_candidate)
+            start_value = start_candidate
+            end_value = end_candidate
+
+        if (start_iso is None or end_iso is None) and "timestamp" in frame.columns and not frame["timestamp"].empty:
+            start_candidate = frame["timestamp"].iloc[0]
+            end_candidate = frame["timestamp"].iloc[-1]
+            candidate_start_iso = cls._normalize_timestamp_value(start_candidate)
+            candidate_end_iso = cls._normalize_timestamp_value(end_candidate)
+            if candidate_start_iso is not None or candidate_end_iso is not None:
+                start_iso = candidate_start_iso
+                end_iso = candidate_end_iso
+                start_value = start_candidate
+                end_value = end_candidate
+
+        if start_iso is not None:
+            summary["start"] = start_iso
+        elif start_value is not None:
+            summary["start"] = str(start_value)
+        if end_iso is not None:
+            summary["end"] = end_iso
+        elif end_value is not None:
+            summary["end"] = str(end_value)
+
+        return summary
+
+    @staticmethod
+    def _normalize_quality_issues(issues: Sequence[Mapping[str, Any]] | Mapping[str, Any]) -> List[Mapping[str, Any]]:
+        if isinstance(issues, Mapping):
+            return [dict(issues)]
+        normalized: List[Mapping[str, Any]] = []
+        for issue in issues:
+            if isinstance(issue, Mapping):
+                normalized.append(dict(issue))
+                continue
+            try:
+                normalized.append(asdict(issue))
+            except Exception:
+                normalized.append({"issue": str(issue)})
+        return normalized
+
+    def record_data_quality_issues(
+        self,
+        issues: Sequence[Mapping[str, Any]] | Mapping[str, Any] | "DataQualityAssessment",
+        *,
+        dataset: FeatureDataset | None = None,
+        job_name: str | None = None,
+        source: str | None = None,
+        summary: Mapping[str, Any] | None = None,
+        tags: Sequence[str] | None = None,
+        generated_at: datetime | None = None,
+    ) -> Path | None:
+        """Zapisuje raport jakości danych w katalogu audytu AI."""
+
+        if self._audit_root is None:
+            return None
+        assessment_summary: Mapping[str, Any] | None = None
+        timestamp = (generated_at or datetime.now(timezone.utc)).astimezone(timezone.utc)
+        if hasattr(issues, "issues") and not isinstance(issues, Mapping):
+            candidate = getattr(issues, "issues")
+            if isinstance(candidate, (Mapping, Sequence)):
+                issues = candidate  # type: ignore[assignment]
+        if hasattr(issues, "issues_payload") and callable(getattr(issues, "issues_payload", None)):
+            payload = getattr(issues, "issues_payload")()
+            if isinstance(payload, Sequence):
+                issues = payload  # type: ignore[assignment]
+        if hasattr(issues, "summary"):
+            assessment_summary = getattr(issues, "summary")
+            if summary is None and isinstance(assessment_summary, Mapping):
+                summary = assessment_summary
+            elif summary is not None and isinstance(assessment_summary, Mapping):
+                merged: dict[str, Any] = dict(assessment_summary)
+                merged.update(summary)
+                summary = merged
+        normalized = self._normalize_quality_issues(issues)
+        try:
+            path = save_data_quality_report(
+                normalized,
+                job_name=job_name,
+                dataset=dataset,
+                audit_root=self._audit_root,
+                generated_at=timestamp,
+                source=source,
+                summary=summary,
+                tags=tags if tags is not None else None,
+            )
+        except Exception:
+            logger.exception("Nie udało się zapisać raportu jakości danych (%s)", job_name or "unknown")
+            return None
+        self._last_data_quality_report_path = path
+        metadata: Dict[str, Any] = {
+            "report_type": "data_quality",
+            "report_path": path,
+            "issues_count": len(normalized),
+        }
+        if job_name is not None:
+            metadata["job"] = job_name
+        if source is not None:
+            metadata["source"] = source
+        if tags:
+            metadata["tags"] = list(tags)
+        summary_payload = summary if isinstance(summary, Mapping) else None
+        if summary_payload is not None:
+            status_value = summary_payload.get("status")
+            if status_value is not None:
+                metadata["status"] = status_value
+        dataset_symbol: str | None = None
+        if dataset is not None and isinstance(dataset.metadata, Mapping):
+            symbol_candidate = dataset.metadata.get("symbol")
+            if isinstance(symbol_candidate, str) and symbol_candidate.strip():
+                dataset_symbol = symbol_candidate
+            else:
+                symbols_candidate = dataset.metadata.get("symbols")
+                if isinstance(symbols_candidate, Sequence) and not isinstance(symbols_candidate, (str, bytes, bytearray)):
+                    for entry in symbols_candidate:
+                        if entry is None:
+                            continue
+                        dataset_symbol = str(entry)
+                        if dataset_symbol:
+                            break
+        overrides: Dict[str, Any] = {}
+        if dataset_symbol:
+            overrides["symbol"] = dataset_symbol
+        if job_name is not None:
+            overrides.setdefault("schedule", job_name)
+        self._record_journal_event(
+            "ai_data_quality_report",
+            timestamp=timestamp,
+            metadata=metadata,
+            overrides=overrides,
+        )
+        return path
+
+    def _run_data_quality_checks(
+        self,
+        symbol: str,
+        df: pd.DataFrame,
+        *,
+        generated_at: datetime,
+    ) -> None:
+        if not self._data_quality_checks or self._audit_root is None:
+            return
+        symbol_key = self._normalize_symbol(symbol)
+        for check in list(self._data_quality_checks):
+            try:
+                result, dataset = check.evaluate(df)
+            except Exception:
+                logger.exception(
+                    "Nie udało się uruchomić kontroli jakości danych %s", check.name
+                )
+                continue
+            if result is None:
+                continue
+            issues_candidate: Any
+            if hasattr(result, "issues") and not isinstance(result, Mapping):
+                issues_candidate = getattr(result, "issues")
+            else:
+                issues_candidate = result
+            if issues_candidate is None:
+                continue
+            try:
+                normalized_issues = self._normalize_quality_issues(issues_candidate)
+            except Exception:
+                logger.exception(
+                    "Nie udało się znormalizować wyników kontroli jakości danych %s",
+                    check.name,
+                )
+                continue
+            status = getattr(result, "status", None)
+            if not normalized_issues:
+                if isinstance(status, str) and status.lower() == "ok":
+                    continue
+                if status is None and not isinstance(issues_candidate, Mapping):
+                    continue
+            summary = getattr(result, "summary", None)
+            if not isinstance(summary, Mapping):
+                summary = None
+            job_name = check.job_name or f"pipeline:{symbol_key}:{check.name}"
+            source = check.source or f"ai_manager:{check.name}"
+            self.record_data_quality_issues(
+                result,
+                dataset=dataset,
+                job_name=job_name,
+                source=source,
+                summary=summary,
+                tags=check.tags,
+                generated_at=generated_at,
+            )
+
+    def _persist_drift_report(
+        self,
+        *,
+        symbol: str,
+        drift: DriftReport,
+        baseline: pd.DataFrame,
+        production: pd.DataFrame,
+        generated_at: datetime,
+        assessment: "FeatureDriftAssessment" | None = None,
+    ) -> Path | None:
+        if self._audit_root is None:
+            return None
+        metrics = {
+            "feature_drift": {"score": float(drift.feature_drift)},
+            "volatility_shift": {"score": float(drift.volatility_shift)},
+            "triggered": {"value": bool(drift.triggered)},
+        }
+        baseline_window = self._frame_window_summary(baseline)
+        production_window = self._frame_window_summary(production)
+        combined_triggered = bool(drift.triggered)
+
+        if assessment is None:
+            try:
+                from .monitoring import FeatureDriftAnalyzer
+
+                analyzer = FeatureDriftAnalyzer(psi_threshold=drift.threshold)
+                common = None
+                try:
+                    common = sorted(set(baseline.columns) & set(production.columns))
+                except AttributeError:
+                    common = None
+                assessment = analyzer.compare(
+                    baseline,
+                    production,
+                    features=common,
+                )
+            except Exception:  # pragma: no cover - diagnostyka dryfu nie może blokować pipeline'u
+                logger.exception("Nie udało się obliczyć szczegółowego raportu dryfu dla %s", symbol)
+                assessment = None
+
+        if assessment is not None:
+            summary_payload = dict(assessment.summary)
+            metrics["feature_drift"]["psi"] = float(summary_payload.get("max_psi", 0.0))
+            metrics["feature_drift"]["ks"] = float(summary_payload.get("max_ks", 0.0))
+            metrics["distribution_summary"] = summary_payload
+            if assessment.metrics:
+                metrics["features"] = assessment.metrics_payload()
+            if assessment.issues:
+                metrics["issues"] = assessment.issues_payload()
+            combined_triggered = combined_triggered or assessment.triggered
+        metrics["feature_drift"]["threshold"] = float(drift.threshold)
+        metrics["triggered"]["value"] = bool(combined_triggered)
+        try:
+            path = save_drift_report(
+                metrics,
+                job_name=f"pipeline:{symbol}",
+                audit_root=self._audit_root,
+                generated_at=generated_at,
+                baseline_window=baseline_window or None,
+                production_window=production_window or None,
+                detector="ai_manager.detect_drift",
+                threshold=drift.threshold,
+            )
+        except Exception:
+            logger.exception("Nie udało się zapisać raportu dryfu dla symbolu %s", symbol)
+            return None
+        self._last_drift_report_path = path
+        metadata: Dict[str, Any] = {
+            "report_type": "drift",
+            "report_path": path,
+            "job": f"pipeline:{symbol}",
+            "feature_drift": drift.feature_drift,
+            "volatility_shift": drift.volatility_shift,
+            "threshold": drift.threshold,
+            "triggered": combined_triggered,
+        }
+        triggered_features = None
+        if assessment is not None and isinstance(assessment.summary, Mapping):
+            triggered_features = assessment.summary.get("triggered_features")
+        if triggered_features:
+            metadata["triggered_features"] = triggered_features
+        self._record_journal_event(
+            "ai_drift_report",
+            timestamp=generated_at,
+            metadata=metadata,
+            overrides={"symbol": symbol},
+        )
+        return path
 
     # --------------------------- Market regimes ---------------------------
     def assess_market_regime(
@@ -1066,6 +1652,12 @@ class AIManager:
                 trained_at=artifact.trained_at,
                 metrics=artifact.metrics,
                 metadata=metadata,
+                target_scale=artifact.target_scale,
+                training_rows=artifact.training_rows,
+                validation_rows=artifact.validation_rows,
+                test_rows=artifact.test_rows,
+                feature_scalers=artifact.feature_scalers,
+                decision_journal_entry_id=artifact.decision_journal_entry_id,
                 backend=artifact.backend,
             )
             destination = repository.save(enriched, filename)
@@ -1784,22 +2376,10 @@ class AIManager:
         thresholds = metadata.get("quality_thresholds", {}) if isinstance(metadata, Mapping) else {}
         min_directional = float(thresholds.get("min_directional_accuracy", 0.5))
         max_mae = float(thresholds.get("max_mae", 20.0))
-        metrics = getattr(artifact, "metrics", {}) or {}
-        directional = float(
-            metrics.get(
-                "test_directional_accuracy",
-                metrics.get(
-                    "validation_directional_accuracy",
-                    metrics.get("directional_accuracy", 0.0),
-                ),
-            )
-        )
-        mae = float(
-            metrics.get(
-                "test_mae",
-                metrics.get("validation_mae", metrics.get("mae", 0.0)),
-            )
-        )
+        metrics_payload = getattr(artifact, "metrics", {}) or {}
+        summary_metrics = _select_metric_block(metrics_payload)
+        directional = float(summary_metrics.get("directional_accuracy", 0.0))
+        mae = float(summary_metrics.get("mae", 0.0))
         if directional < min_directional or mae > max_mae:
             logger.warning(
                 "Decision model %s failed quality thresholds (directional=%.3f, mae=%.3f, min_directional=%.3f, max_mae=%.3f)",
@@ -1823,12 +2403,13 @@ class AIManager:
 
     def _compose_performance_metrics(
         self,
-        base_metrics: Mapping[str, float],
+        base_metrics: Mapping[str, object],
         metadata: Mapping[str, object],
         validation: WalkForwardResult | None,
     ) -> Dict[str, float]:
         summary: Dict[str, float] = {}
-        for key, value in base_metrics.items():
+        structured = _select_metric_block(base_metrics)
+        for key, value in structured.items():
             number = _safe_float(value)
             if number is None:
                 continue
@@ -2496,8 +3077,20 @@ class AIManager:
         )
         selection.predictions = predictions
         self.set_active_model(symbol, selection.best_model)
+        self._run_data_quality_checks(
+            symbol,
+            df,
+            generated_at=selection.decided_at,
+        )
         if baseline is not None:
             selection.drift_report = self.detect_drift(baseline, df)
+            self._persist_drift_report(
+                symbol=self._normalize_symbol(symbol),
+                drift=selection.drift_report,
+                baseline=baseline,
+                production=df,
+                generated_at=selection.decided_at,
+            )
         self._track_signal(symbol, predictions)
         self._record_pipeline_selection(selection)
         return selection

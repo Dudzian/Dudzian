@@ -7,14 +7,16 @@ import os
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from tempfile import NamedTemporaryFile
-from typing import Callable, ClassVar, Iterable, Mapping, Sequence
+from typing import Callable, Iterable, Mapping, MutableMapping, Sequence
 
 from ..runtime.journal import TradingDecisionEvent, TradingDecisionJournal
 from ._license import ensure_ai_signals_enabled
 from .feature_engineering import FeatureDataset
 from .models import ModelArtifact
 from .training import ModelTrainer
+from bot_core.runtime.journal import TradingDecisionEvent, TradingDecisionJournal
+
+from .audit import DEFAULT_AUDIT_ROOT, save_walk_forward_report
 
 
 @dataclass(slots=True)
@@ -407,6 +409,18 @@ class WalkForwardValidator:
             yield WalkForwardWindow(train_indices=train_indices, test_indices=test_indices)
             start += self._step
 
+    @property
+    def train_window(self) -> int:
+        return self._train_window
+
+    @property
+    def test_window(self) -> int:
+        return self._test_window
+
+    @property
+    def step(self) -> int:
+        return self._step
+
     def validate(self, trainer_factory: Callable[[], ModelTrainer]) -> WalkForwardResult:
         windows_metrics: list[Mapping[str, float]] = []
         maes: list[float] = []
@@ -474,10 +488,9 @@ class ScheduledTrainingJob:
     validator_factory: Callable[[FeatureDataset], WalkForwardValidator] | None = None
     on_completed: Callable[[ModelArtifact, WalkForwardResult | None], None] | None = None
     history: list[TrainingRunRecord] = field(default_factory=list)
+    audit_root: str | Path | None = None
     decision_journal: TradingDecisionJournal | None = None
-    journal_environment: str = "ai_decision"
-    journal_portfolio: str = "ai_training"
-    journal_risk_profile: str = "model_retraining"
+    decision_journal_context: Mapping[str, str] | None = None
 
     def __post_init__(self) -> None:
         ensure_ai_signals_enabled("zadań treningowych AI")
@@ -485,29 +498,42 @@ class ScheduledTrainingJob:
             raise TypeError("trainer_factory musi być wywoływalny")
         if not callable(self.dataset_provider):
             raise TypeError("dataset_provider musi być wywoływalny")
+        if self.decision_journal_context is not None and not isinstance(
+            self.decision_journal_context, Mapping
+        ):
+            raise TypeError("decision_journal_context musi być mapowaniem lub None")
 
     def is_due(self, now: datetime | None = None) -> bool:
         return self.scheduler.should_retrain(now)
 
     def run(self, now: datetime | None = None) -> ModelArtifact:
-        try:
-            dataset = self.dataset_provider()
-            trainer = self.trainer_factory()
-            artifact = trainer.train(dataset)
-            validation_result: WalkForwardResult | None = None
-            if self.validator_factory is not None:
-                validator = self.validator_factory(dataset)
-                validation_result = validator.validate(self.trainer_factory)
-            execution_time = getattr(artifact, "trained_at", None)
-            if not isinstance(execution_time, datetime):
-                execution_time = now
-            execution_time = self.scheduler._ensure_utc(execution_time)
-            artifact.trained_at = execution_time
-        except Exception as exc:
-            self._handle_failure(now, exc)
-            raise
-
-        self.scheduler.mark_executed(artifact.trained_at)
+        dataset = self.dataset_provider()
+        trainer = self.trainer_factory()
+        artifact = trainer.train(dataset)
+        validation_result: WalkForwardResult | None = None
+        report_path: Path | None = None
+        validator: WalkForwardValidator | None = None
+        if self.validator_factory is not None:
+            validator = self.validator_factory(dataset)
+            validation_result = validator.validate(self.trainer_factory)
+            report_path = save_walk_forward_report(
+                validation_result,
+                job_name=self.name,
+                dataset=dataset,
+                validator=validator,
+                artifact=artifact,
+                audit_root=self.audit_root if self.audit_root is not None else DEFAULT_AUDIT_ROOT,
+                generated_at=artifact.trained_at,
+                trainer_backend=getattr(trainer, "backend", "builtin"),
+            )
+            self._record_walk_forward_journal(
+                validation=validation_result,
+                report_path=report_path,
+                validator=validator,
+                dataset=dataset,
+                trained_at=artifact.trained_at,
+            )
+        self.scheduler.mark_executed(now)
         record = TrainingRunRecord(
             trained_at=artifact.trained_at,
             metrics=dict(artifact.metrics),
@@ -557,46 +583,59 @@ class ScheduledTrainingJob:
             self.on_completed(artifact, validation_result)
         return artifact
 
-    def _handle_failure(self, now: datetime | None, exc: Exception) -> None:
-        failure_time = self.scheduler._ensure_utc(now)
-        reason = f"{exc.__class__.__name__}: {exc}"
-        self.scheduler.mark_failure(failure_time, reason=reason)
+    def _record_walk_forward_journal(
+        self,
+        *,
+        validation: WalkForwardResult,
+        report_path: Path | None,
+        validator: WalkForwardValidator | None,
+        dataset: FeatureDataset,
+        trained_at: datetime,
+    ) -> None:
         if self.decision_journal is None:
             return
-        metadata: dict[str, str] = {
-            "next_run": self.scheduler.next_run(failure_time).isoformat(),
-            "interval_seconds": str(self.scheduler.interval.total_seconds()),
-            "scheduler_version": str(self.scheduler.STATE_VERSION),
-            "failure_streak": str(self.scheduler.failure_streak),
-            "error_type": exc.__class__.__name__,
+
+        context: MutableMapping[str, str] = {
+            "environment": "ai-training",
+            "portfolio": self.name,
+            "risk_profile": "ai-research",
         }
-        if self.scheduler.last_run is not None:
-            metadata["last_run"] = self.scheduler.last_run.isoformat()
-        if self.scheduler.updated_at is not None:
-            metadata["state_updated_at"] = self.scheduler.updated_at.isoformat()
-        if self.scheduler.last_failure is not None:
-            metadata["last_failure"] = self.scheduler.last_failure.isoformat()
-        if self.scheduler.last_failure_reason:
-            metadata["last_failure_reason"] = self.scheduler.last_failure_reason
-        if self.scheduler.cooldown_until is not None:
-            metadata["cooldown_until"] = self.scheduler.cooldown_until.isoformat()
-        if self.scheduler.paused_until is not None:
-            metadata["paused_until"] = self.scheduler.paused_until.isoformat()
-        if self.scheduler.paused_reason:
-            metadata["paused_reason"] = self.scheduler.paused_reason
+        if self.decision_journal_context is not None:
+            for key, value in self.decision_journal_context.items():
+                if value is None:
+                    continue
+                context[str(key)] = str(value)
+
+        metadata: MutableMapping[str, str] = {
+            "job": self.name,
+            "average_mae": f"{validation.average_mae:.10f}",
+            "average_directional_accuracy": f"{validation.average_directional_accuracy:.10f}",
+            "dataset_rows": str(len(dataset.vectors)),
+        }
+        if validator is not None:
+            metadata["train_window"] = str(getattr(validator, "train_window", ""))
+            metadata["test_window"] = str(getattr(validator, "test_window", ""))
+            metadata["step"] = str(getattr(validator, "step", ""))
+        if report_path is not None:
+            metadata["report_path"] = str(report_path)
+        metadata["trained_at"] = trained_at.astimezone(timezone.utc).isoformat()
+
         event = TradingDecisionEvent(
-            event_type="ai_retraining_failed",
-            timestamp=failure_time,
-            environment=self.journal_environment,
-            portfolio=self.journal_portfolio,
-            risk_profile=self.journal_risk_profile,
-            schedule=self.name,
-            strategy=self.name,
-            schedule_run_id=f"{self.name}:{failure_time.isoformat()}:failure",
-            telemetry_namespace=f"ai.scheduler.{self.name}",
+            event_type="ai_walk_forward_report",
+            timestamp=trained_at.astimezone(timezone.utc),
+            environment=context.get("environment", "ai-training"),
+            portfolio=context.get("portfolio", self.name),
+            risk_profile=context.get("risk_profile", "ai-research"),
+            schedule=context.get("schedule", self.name),
+            strategy=context.get("strategy"),
+            schedule_run_id=context.get("schedule_run_id"),
+            strategy_instance_id=context.get("strategy_instance_id"),
             metadata=metadata,
         )
-        self.decision_journal.record(event)
+        try:
+            self.decision_journal.record(event)
+        except Exception:  # pragma: no cover - audyt nie może blokować treningu
+            pass
 
 
 class TrainingScheduler:

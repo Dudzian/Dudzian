@@ -14,7 +14,7 @@ import numpy as np
 import pandas as pd
 
 from .inference import DecisionModelInference, ModelRepository
-from .models import ModelArtifact
+from .models import ModelArtifact, ModelScore
 from .training import SimpleGradientBoostingModel
 
 
@@ -238,18 +238,50 @@ def train_gradient_boosting_model(
         subset.name: _compute_metrics(model, subset.features, subset.targets)
         for subset in learning_sets
     }
-    metrics = dict(subset_metrics.get(train_set.name, {}))
-    if not metrics:
-        metrics = _compute_metrics(model, train_features, train_targets)
-    for subset_name, values in subset_metrics.items():
-        prefix = subset_name.lower()
-        for metric_name, value in values.items():
-            metrics[f"{prefix}_{metric_name}"] = value
-    meta_payload = {
-        "feature_scalers": {
-            name: {"mean": mean, "stdev": stdev}
-            for name, (mean, stdev) in model.feature_scalers.items()
+    train_rows = len(train_frame)
+    validation_rows = len(validation_frame)
+    test_rows = len(test_frame)
+    structured_metrics: dict[str, dict[str, float]] = {
+        "train": {str(name): float(value) for name, value in subset_metrics.get("train", {}).items()},
+        "validation": {
+            str(name): float(value) for name, value in subset_metrics.get("validation", {}).items()
         },
+        "test": {str(name): float(value) for name, value in subset_metrics.get("test", {}).items()},
+    }
+    summary_block = dict(structured_metrics["train"])
+    if structured_metrics["validation"]:
+        summary_block.setdefault("validation_mae", structured_metrics["validation"].get("mae", 0.0))
+        summary_block.setdefault(
+            "validation_directional_accuracy",
+            structured_metrics["validation"].get("directional_accuracy", 0.0),
+        )
+        if "expected_pnl" in structured_metrics["validation"]:
+            summary_block.setdefault(
+                "validation_expected_pnl", structured_metrics["validation"]["expected_pnl"]
+            )
+    if structured_metrics["test"]:
+        summary_block.setdefault("test_mae", structured_metrics["test"].get("mae", 0.0))
+        summary_block.setdefault(
+            "test_directional_accuracy",
+            structured_metrics["test"].get("directional_accuracy", 0.0),
+        )
+        if "expected_pnl" in structured_metrics["test"]:
+            summary_block.setdefault(
+                "test_expected_pnl", structured_metrics["test"]["expected_pnl"]
+            )
+    if "expected_pnl" not in summary_block and "expected_pnl" in structured_metrics["train"]:
+        summary_block["expected_pnl"] = structured_metrics["train"]["expected_pnl"]
+    structured_metrics["summary"] = summary_block
+    target_array = np.asarray(frame[target_col], dtype=float)
+    if target_array.size == 0:
+        target_scale = 1.0
+    else:
+        scale = float(np.std(target_array))
+        if not np.isfinite(scale) or scale <= 0.0:
+            mean_target = float(np.mean(target_array)) if target_array.size else 0.0
+            scale = max(abs(mean_target) or 1.0, 1.0)
+        target_scale = scale
+    meta_payload = {
         "calibration": {
             "slope": calibration_slope,
             "intercept": calibration_intercept,
@@ -263,9 +295,9 @@ def train_gradient_boosting_model(
             "train_ratio": max(0.0, 1.0 - float(validation_ratio) - float(test_ratio)),
             "validation_ratio": float(validation_ratio),
             "test_ratio": float(test_ratio),
-            "train_rows": len(train_frame),
-            "validation_rows": len(validation_frame),
-            "test_rows": len(test_frame),
+            "train_rows": train_rows,
+            "validation_rows": validation_rows,
+            "test_rows": test_rows,
         },
         "drift_monitor": {
             "threshold": 3.5,
@@ -294,18 +326,27 @@ def train_gradient_boosting_model(
                 meta_payload[key] = merged
             else:
                 meta_payload[key] = value
-    if "train" in subset_metrics:
-        meta_payload["train_metrics"] = dict(subset_metrics["train"])
-    if "validation" in subset_metrics:
-        meta_payload["validation_metrics"] = dict(subset_metrics["validation"])
-    if "test" in subset_metrics:
-        meta_payload["test_metrics"] = dict(subset_metrics["test"])
+    decision_journal_entry = meta_payload.get("decision_journal_entry_id") or meta_payload.get(
+        "decision_journal_entry"
+    )
+    decision_journal_entry_id = (
+        str(decision_journal_entry) if decision_journal_entry is not None else None
+    )
+    feature_scalers = {
+        name: (float(mean), float(stdev)) for name, (mean, stdev) in model.feature_scalers.items()
+    }
     artifact = ModelArtifact(
         feature_names=tuple(model.feature_names),
         model_state=model.to_state(),
         trained_at=datetime.now(timezone.utc),
-        metrics=metrics,
+        metrics=structured_metrics,
         metadata=meta_payload,
+        target_scale=target_scale,
+        training_rows=train_rows,
+        validation_rows=validation_rows,
+        test_rows=test_rows,
+        feature_scalers=feature_scalers,
+        decision_journal_entry_id=decision_journal_entry_id,
         backend="builtin",
     )
     repository = ModelRepository(output_dir)
@@ -357,7 +398,17 @@ def register_model_artifact(
     update_metrics = getattr(orchestrator, "update_model_performance", None)
     if artifact is not None and callable(update_metrics):
         try:
-            update_metrics(name, getattr(artifact, "metrics", {}) or {})
+            raw_metrics = getattr(artifact, "metrics", {}) or {}
+            summary_source: Mapping[str, float] = {}
+            if isinstance(raw_metrics, Mapping):
+                summary_candidate = raw_metrics.get("summary") if isinstance(raw_metrics.get("summary"), Mapping) else None
+                source = summary_candidate if isinstance(summary_candidate, Mapping) else raw_metrics
+                summary_source = {
+                    str(key): float(value)
+                    for key, value in source.items()
+                    if isinstance(value, (int, float))
+                }
+            update_metrics(name, summary_source)
         except Exception:  # pragma: no cover - orchestrator extensions may fail
             LOGGER.exception("Failed to push metrics to DecisionOrchestrator for %s", name)
     return inference
@@ -369,6 +420,19 @@ def _load_frame_from_path(path: Path) -> pd.DataFrame:
             payload = json.load(handle)
         return pd.DataFrame(payload)
     return pd.read_csv(path)
+
+
+def score_with_data_monitoring(
+    inference: DecisionModelInference,
+    features: Mapping[str, float],
+    *,
+    context: Mapping[str, object] | None = None,
+) -> tuple[ModelScore, Mapping[str, Mapping[str, object]]]:
+    """Score a candidate ensuring monitoring executes and returns the report."""
+
+    score = inference.score(features, context=context)
+    report = inference.last_data_quality_report or {}
+    return score, report
 
 
 def _run_cli(argv: Sequence[str] | None = None) -> int:

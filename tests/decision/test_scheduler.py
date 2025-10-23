@@ -17,8 +17,17 @@ from bot_core.ai import (
     TrainingScheduler,
     WalkForwardValidator,
 )
+from bot_core.ai.audit import (
+    list_audit_reports,
+    load_latest_data_quality_report,
+    load_latest_drift_report,
+    load_latest_walk_forward_report,
+    save_data_quality_report,
+    save_drift_report,
+    save_walk_forward_report,
+)
 from bot_core.ai.feature_engineering import FeatureVector
-from bot_core.ai.scheduler import ScheduledTrainingJob
+from bot_core.ai.scheduler import ScheduledTrainingJob, WalkForwardResult
 from bot_core.ai.training import ExternalModelAdapter, ExternalTrainingContext, ExternalTrainingResult, register_external_model_adapter
 from bot_core.runtime.journal import InMemoryTradingDecisionJournal
 
@@ -535,3 +544,190 @@ def test_cross_validation_uses_external_adapter_for_each_fold() -> None:
     folds = cv_meta.get("folds", 0)
     assert folds > 0
     assert len(calls) >= folds + 1
+
+
+def test_training_job_writes_walk_forward_audit(tmp_path: Path) -> None:
+    vectors: list[FeatureVector] = []
+    for idx in range(16):
+        features = {"momentum": float(idx) / 4.0, "volume_ratio": 1.0 + (idx % 2) * 0.1}
+        vectors.append(
+            FeatureVector(
+                timestamp=1_700_300_000 + idx * 60,
+                symbol="BTCUSDT",
+                features=features,
+                target_bps=float(idx - 7),
+            )
+        )
+    dataset = FeatureDataset(vectors=tuple(vectors), metadata={"symbols": ["BTCUSDT"]})
+
+    def _validator_factory(data: FeatureDataset) -> WalkForwardValidator:
+        return WalkForwardValidator(data, train_window=8, test_window=4)
+
+    schedule = RetrainingScheduler(interval=timedelta(minutes=10))
+    journal = InMemoryTradingDecisionJournal()
+    job = ScheduledTrainingJob(
+        name="btc-wf",
+        scheduler=schedule,
+        trainer_factory=lambda: ModelTrainer(backend="mean_regressor"),
+        dataset_provider=lambda: dataset,
+        validator_factory=_validator_factory,
+        audit_root=tmp_path / "ai_decision",
+        decision_journal=journal,
+        decision_journal_context={
+            "environment": "lab",
+            "portfolio": "ai-lab",
+            "risk_profile": "research",
+            "strategy": "wf-validation",
+        },
+    )
+
+    job.run(now=datetime(2024, 6, 1, 12, tzinfo=timezone.utc))
+
+    root_dir = tmp_path / "ai_decision"
+    for name in ("walk_forward", "data_quality", "drift"):
+        assert (root_dir / name).is_dir(), f"powinien istnieć katalog audytu {name}"
+
+    walk_dir = root_dir / "walk_forward"
+    files = sorted(walk_dir.glob("*.json"))
+    assert len(files) == 1, "powinien zostać wygenerowany pojedynczy raport walk-forward"
+
+    payload = json.loads(files[0].read_text(encoding="utf-8"))
+    assert payload["job_name"] == "btc-wf"
+    assert payload["walk_forward"]["train_window"] == 8
+    assert payload["walk_forward"]["test_window"] == 4
+    assert payload["walk_forward"]["average_mae"] >= 0.0
+    assert payload["dataset"]["rows"] == len(dataset.vectors)
+
+    events = list(journal.export())
+    assert events, "journal powinien otrzymać wpis o audycie"
+    audit_event = events[-1]
+    assert audit_event["event"] == "ai_walk_forward_report"
+    assert audit_event["schedule"] == "btc-wf"
+    assert Path(audit_event["report_path"]) == files[0]
+    assert float(audit_event["average_mae"]) >= 0.0
+
+
+def test_save_data_quality_report_serializes_payload(tmp_path: Path) -> None:
+    dataset = FeatureDataset(
+        vectors=(),
+        metadata={"symbols": ["BTCUSDT"], "window_minutes": 60},
+    )
+    path = save_data_quality_report(
+        [{"issue": "missing_rows", "count": 12, "symbols": ["BTCUSDT"]}],
+        job_name="btc-quality",
+        dataset=dataset,
+        audit_root=tmp_path,
+        summary={"total_gaps": 12, "max_gap_minutes": 30},
+        source="ohlcv-lake",
+        tags=("ohlcv", "gap-detection"),
+    )
+
+    assert path.parent == tmp_path / "data_quality"
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    assert payload["job_name"] == "btc-quality"
+    assert payload["source"] == "ohlcv-lake"
+    assert payload["dataset"]["metadata"]["window_minutes"] == 60
+    assert payload["summary"]["total_gaps"] == 12
+    assert payload["issues"][0]["issue"] == "missing_rows"
+    assert payload["tags"] == ["ohlcv", "gap-detection"]
+
+
+def test_save_drift_report_serializes_metrics(tmp_path: Path) -> None:
+    dataset = FeatureDataset(
+        vectors=(),
+        metadata={"symbols": ["ETHUSDT"]},
+    )
+    path = save_drift_report(
+        {
+            "return_distribution": {
+                "p_value": 0.0125,
+                "test_statistic": 3.1,
+                "method": "ks_test",
+            },
+            "feature_scaling": {"psi": 0.4},
+        },
+        job_name="eth-drift",
+        dataset=dataset,
+        audit_root=tmp_path,
+        baseline_window={"start": "2024-05-01", "end": "2024-05-07"},
+        production_window={"start": "2024-06-01", "end": "2024-06-07"},
+        detector="psi",
+        threshold=0.2,
+    )
+
+    assert path.parent == tmp_path / "drift"
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    assert payload["job_name"] == "eth-drift"
+    assert payload["detector"] == "psi"
+    assert payload["threshold"] == 0.2
+    assert payload["baseline_window"]["start"] == "2024-05-01"
+    assert payload["production_window"]["end"] == "2024-06-07"
+    assert payload["metrics"]["return_distribution"]["method"] == "ks_test"
+    assert payload["metrics"]["feature_scaling"]["psi"] == 0.4
+
+
+def test_list_and_load_latest_audit_reports(tmp_path: Path) -> None:
+    dataset = FeatureDataset(
+        vectors=(),
+        metadata={"symbols": ["BTCUSDT"], "window_minutes": 15},
+    )
+    first = save_walk_forward_report(
+        WalkForwardResult(
+            windows=({"mae": 0.5, "directional_accuracy": 0.6},),
+            average_mae=0.5,
+            average_directional_accuracy=0.6,
+        ),
+        job_name="wf-job",
+        dataset=dataset,
+        audit_root=tmp_path,
+        generated_at=datetime(2024, 6, 1, 12, tzinfo=timezone.utc),
+    )
+    second = save_walk_forward_report(
+        WalkForwardResult(
+            windows=({"mae": 0.4, "directional_accuracy": 0.65},),
+            average_mae=0.4,
+            average_directional_accuracy=0.65,
+        ),
+        job_name="wf-job",
+        dataset=dataset,
+        audit_root=tmp_path,
+        generated_at=datetime(2024, 6, 2, 12, tzinfo=timezone.utc),
+    )
+
+    paths = list_audit_reports("walk_forward", audit_root=tmp_path)
+    assert paths == [second, first]
+    payload = load_latest_walk_forward_report(audit_root=tmp_path)
+    assert payload is not None
+    assert payload["walk_forward"]["average_mae"] == 0.4
+
+    save_data_quality_report(
+        {"issue": "missing_rows", "count": 3},
+        audit_root=tmp_path,
+        generated_at=datetime(2024, 6, 1, 12, tzinfo=timezone.utc),
+    )
+    dq_path = save_data_quality_report(
+        {"issue": "gap", "count": 1},
+        audit_root=tmp_path,
+        generated_at=datetime(2024, 6, 3, 10, tzinfo=timezone.utc),
+    )
+    dq_payload = load_latest_data_quality_report(audit_root=tmp_path)
+    assert dq_payload is not None
+    assert dq_payload["issues"][0]["issue"] == "gap"
+    dq_paths = list_audit_reports("data_quality", audit_root=tmp_path)
+    assert dq_paths[0] == dq_path
+
+    save_drift_report(
+        {"feature_drift": {"psi": 0.2}},
+        audit_root=tmp_path,
+        generated_at=datetime(2024, 6, 1, 9, tzinfo=timezone.utc),
+    )
+    drift_path = save_drift_report(
+        {"feature_drift": {"psi": 0.1}},
+        audit_root=tmp_path,
+        generated_at=datetime(2024, 6, 5, 9, tzinfo=timezone.utc),
+    )
+    drift_payload = load_latest_drift_report(audit_root=tmp_path)
+    assert drift_payload is not None
+    assert drift_payload["metrics"]["feature_drift"]["psi"] == 0.1
+    drift_paths = list_audit_reports("drift", audit_root=tmp_path)
+    assert drift_paths[0] == drift_path

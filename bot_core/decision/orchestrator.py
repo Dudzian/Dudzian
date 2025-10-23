@@ -134,7 +134,7 @@ class DecisionOrchestrator:
     def update_model_performance(
         self,
         name: str,
-        metrics: Mapping[str, float],
+        metrics: Mapping[str, object],
         *,
         strategy: str | None = None,
         risk_profile: str | None = None,
@@ -142,14 +142,10 @@ class DecisionOrchestrator:
     ) -> None:
         key = (strategy or "__any__", risk_profile or "__any__")
         summary_map = self._model_performance.setdefault(key, {})
-        score = self._score_from_metrics(metrics)
-        mae = float(metrics.get("mae", metrics.get("validation_mae", 0.0)))
-        directional = float(
-            metrics.get(
-                "directional_accuracy",
-                metrics.get("validation_directional_accuracy", 0.0),
-            )
-        )
+        summary_metrics = self._extract_metrics_block(metrics)
+        score = self._score_from_metrics(summary_metrics)
+        mae = float(summary_metrics.get("mae", 0.0))
+        directional = float(summary_metrics.get("directional_accuracy", 0.0))
         now = timestamp or self._now()
         lower_name = name.lower()
         previous = summary_map.get(lower_name)
@@ -661,15 +657,43 @@ class DecisionOrchestrator:
         return True, None
 
     def _score_from_metrics(self, metrics: Mapping[str, float]) -> float:
-        mae = float(metrics.get("validation_mae", metrics.get("mae", 0.0)))
-        directional = float(
-            metrics.get(
-                "validation_directional_accuracy",
-                metrics.get("directional_accuracy", 0.0),
-            )
-        )
+        mae = float(metrics.get("mae", 0.0))
+        directional = float(metrics.get("directional_accuracy", 0.0))
         penalty = mae / 100.0
         return directional - penalty
+
+    def _extract_metrics_block(self, metrics: Mapping[str, object]) -> Mapping[str, float]:
+        if not isinstance(metrics, Mapping):
+            return {}
+        if metrics and any(isinstance(value, Mapping) for value in metrics.values()):
+            summary = metrics.get("summary")
+            if isinstance(summary, Mapping):
+                return {
+                    str(key): float(value)
+                    for key, value in summary.items()
+                    if isinstance(value, (int, float))
+                }
+            for candidate_key in ("test", "validation", "train"):
+                candidate = metrics.get(candidate_key)
+                if isinstance(candidate, Mapping) and candidate:
+                    return {
+                        str(key): float(value)
+                        for key, value in candidate.items()
+                        if isinstance(value, (int, float))
+                    }
+            for value in metrics.values():
+                if isinstance(value, Mapping):
+                    return {
+                        str(key): float(val)
+                        for key, val in value.items()
+                        if isinstance(val, (int, float))
+                    }
+            return {}
+        return {
+            str(key): float(value)
+            for key, value in metrics.items()
+            if isinstance(value, (int, float))
+        }
 
     def _compose_summary(
         self,

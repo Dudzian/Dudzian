@@ -1,0 +1,87 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dudzian.bot/schemas/model_artifact.schema.json",
+  "title": "ModelArtifact",
+  "type": "object",
+  "required": [
+    "feature_names",
+    "model_state",
+    "trained_at",
+    "metrics",
+    "metadata",
+    "target_scale",
+    "training_rows",
+    "validation_rows",
+    "test_rows",
+    "feature_scalers",
+    "backend"
+  ],
+  "properties": {
+    "feature_names": {
+      "type": "array",
+      "items": {"type": "string"},
+      "minItems": 1
+    },
+    "model_state": {
+      "type": "object"
+    },
+    "trained_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "metrics": {
+      "type": "object",
+      "properties": {
+        "summary": {"$ref": "#/$defs/metricsBlock"},
+        "train": {"$ref": "#/$defs/metricsBlock"},
+        "validation": {"$ref": "#/$defs/metricsBlock"},
+        "test": {"$ref": "#/$defs/metricsBlock"}
+      },
+      "required": ["summary", "train", "validation", "test"],
+      "additionalProperties": {"$ref": "#/$defs/metricsBlock"}
+    },
+    "metadata": {
+      "type": "object"
+    },
+    "target_scale": {
+      "type": "number"
+    },
+    "training_rows": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "validation_rows": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "test_rows": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "feature_scalers": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["mean", "stdev"],
+        "properties": {
+          "mean": {"type": "number"},
+          "stdev": {"type": "number"}
+        },
+        "additionalProperties": false
+      }
+    },
+    "decision_journal_entry_id": {
+      "type": "string"
+    },
+    "backend": {
+      "type": "string"
+    }
+  },
+  "$defs": {
+    "metricsBlock": {
+      "type": "object",
+      "additionalProperties": {"type": "number"}
+    }
+  },
+  "additionalProperties": false
+}

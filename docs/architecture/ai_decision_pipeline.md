@@ -28,24 +28,28 @@
 | --- | --- | --- | --- |
 | `model_version` | string | Semantyczna wersja artefaktu (`major.minor.patch`). | `ModelRepository` |
 | `created_at` | ISO datetime | Znacznik czasu wygenerowania artefaktu. | `ModelTrainer` |
-| `target_scale` | string | Zakres targetu, np. `bps` lub `returns_pct`. | Dane treningowe |
-| `feature_scalers` | dict[str, {mean: float, std: float}] | Parametry normalizacji cech. | `ModelTrainer` |
+| `target_scale` | number | Odchylenie standardowe targetu (bps), wykorzystywane do kalibracji prawdopodobieństwa. | Dane treningowe |
+| `feature_scalers` | dict[str, {mean: float, stdev: float}] | Parametry normalizacji cech z porcji treningowej. | `ModelTrainer` |
 | `training_rows` | int | Liczba rekordów wykorzystanych w treningu. | `ModelTrainer` |
 | `validation_rows` | int | Liczba rekordów użytych do walidacji. | `WalkForwardValidator` / `ModelTrainer` |
 | `test_rows` | int | Liczba rekordów zestawu testowego (jeśli dotyczy). | `ModelTrainer` |
-| `metrics.train.mae` / `metrics.train.rmse` | float | Metryki na zbiorze treningowym. | `ModelTrainer` |
-| `metrics.validation.mae` / `metrics.validation.rmse` | float | Metryki na walidacji. | `WalkForwardValidator` |
-| `metrics.test.mae` / `metrics.test.rmse` | float | Metryki na zbiorze testowym (opcjonalne). | `ModelTrainer` |
-| `decision_journal_entry` | string | Identyfikator wpisu w decision journalu powiązany z artefaktem. | Decision journal |
+| `metrics.train` | dict[str, float] | Zestaw metryk MAE/RMSE/directional accuracy dla zbioru treningowego. | `ModelTrainer` |
+| `metrics.validation` | dict[str, float] | Metryki walidacyjne (puste, jeśli split=0). | `ModelTrainer` |
+| `metrics.test` | dict[str, float] | Metryki dla hold-out testu (puste, jeśli split=0). | `ModelTrainer` |
+| `metrics.summary` | dict[str, float] | Płaska reprezentacja metryk treningowych wzbogacona o prefiksowane wartości walidacji/testu (np. `validation_mae`, `test_directional_accuracy`) dla zachowania kompatybilności z konsumentami oczekującymi płaskiej mapy. | `ModelTrainer` |
+| `decision_journal_entry_id` | string | Identyfikator wpisu w decision journalu powiązany z artefaktem. | Decision journal |
 
 Artefakt powinien być podpisany kryptograficznie oraz przechowywany wraz z `checksums.sha256`, aby umożliwić audyt integralności. Schemat JSON przechowujemy w `docs/schemas/model_artifact.schema.json`, a każde odchylenie wymaga aktualizacji dokumentacji oraz zatwierdzenia compliance.
+W CI uruchamiamy walidację `tests/decision/test_model_artifact_schema.py`, która potwierdza zgodność artefaktu z tym schematem (w tym obecność pól `target_scale`, `training_rows` i ustrukturyzowanych metryk).
 
 ## Monitoring danych wejściowych
 
 Monitoring skupia się na wykrywaniu anomalii w danych zasilających inference:
 
-- **Kompletność świec OHLCV** – `DataCompletenessWatcher` monitoruje luki czasowe (`missing_bars`) oraz odchylenia wolumenów. Raporty dzienne trafiają do `audit/ai_decision/data_quality/<date>.json`.
-- **Dryf statystyczny cech** – `FeatureDriftMonitor` porównuje rozkłady cech (`population_stability_index`, `kolmogorov_smirnov`) pomiędzy treningiem a produkcją. Alerty zapisywane są w `audit/ai_decision/drift/<date>.json` oraz trafiają na kanał incident.
-- **Walidacja zakresów** – `FeatureBoundsValidator` weryfikuje, że wartości inference mieszczą się w przedziałach wyznaczonych przez `feature_scalers` ± `3σ`. Przekroczenia blokują scoring i wymagają podpisu Risk przed kontynuacją.
+- **Kompletność świec OHLCV** – `bot_core.ai.monitoring.DataCompletenessWatcher` monitoruje luki czasowe (`missing_bars`) i raportuje podsumowanie (`missing_ratio`, `ok_ratio`, `status`) zapisywane w `audit/ai_decision/data_quality/<date>.json` poprzez `AIManager.record_data_quality_issues`.
+- **Dryf statystyczny cech** – `bot_core.ai.monitoring.FeatureDriftAnalyzer` porównuje rozkłady cech z wykorzystaniem wskaźników PSI oraz testu KS. Wyniki (`metrics.features`, `distribution_summary.max_psi`, `triggered_features`) trafiają do raportów `audit/ai_decision/drift/<date>.json` generowanych przez `_persist_drift_report`, a `metrics.feature_drift.psi` odzwierciedla maksymalne odchylenie.
+- **Automatyczne kontrole pipeline'u** – `AIManager.register_data_quality_check` pozwala zarejestrować kontrole jakości danych (`DataQualityCheck`) wykonywane przy każdym `run_pipeline`. Raporty są zapisywane jako `audit/ai_decision/data_quality/<date>.json` z nazwą `pipeline:<symbol>:<kontrola>`, co scala monitoring z audytem bez dodatkowego kodu.
+- **Ścieżki audytu** – `AIManager.record_data_quality_issues` konsoliduje wyniki monitoringu jakości danych (również typu `DataQualityAssessment`) w katalogu `audit/ai_decision/data_quality/`, a `AIManager.run_pipeline` automatycznie tworzy rozszerzone raporty dryfu (`baseline_window`, `production_window`, `metrics.features`, `distribution_summary`) w `audit/ai_decision/drift/` po każdej selekcji modeli. Najnowsze artefakty można pobierać przez helpery `load_latest_*` lub przeglądać listę dostępnych plików dzięki `list_audit_reports`. Każdy zapis raportu generuje dodatkowo wpis w `TradingDecisionJournal` (`event` = `ai_data_quality_report` lub `ai_drift_report`) z metadanymi `report_path`, `status/triggered`, `threshold` oraz kontekstem środowiska, co zapewnia spójność audytu danych z decyzjami operacyjnymi.
+- **Walidacja zakresów** – `bot_core.ai.monitoring.FeatureBoundsValidator` weryfikuje, że wartości inference mieszczą się w przedziałach wyznaczonych przez `feature_scalers` ± `σ * multiplier`. Przekroczenia zapisują alert `feature_out_of_bounds` i blokują scoring do momentu podpisu Risk.
 
 Każdy komponent monitoringu ma dedykowany runbook (`docs/runbooks/ai_data_monitoring.md`) opisujący kroki reakcji, eskalację oraz wymagane podpisy compliance.

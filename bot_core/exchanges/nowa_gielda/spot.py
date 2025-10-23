@@ -4,9 +4,10 @@ from __future__ import annotations
 import hmac
 import logging
 import time
+from collections import deque
 from dataclasses import dataclass
 from hashlib import sha256
-from typing import Any, Iterable, Mapping, Optional, Protocol, Sequence
+from typing import Any, Callable, Deque, Iterable, Mapping, Optional, Protocol, Sequence
 
 import requests
 from requests import Response, Session
@@ -20,13 +21,26 @@ from bot_core.exchanges.base import (
     OrderRequest,
     OrderResult,
 )
-from bot_core.exchanges.nowa_gielda import symbols
 from bot_core.exchanges.errors import (
     ExchangeAPIError,
     ExchangeAuthError,
     ExchangeNetworkError,
     ExchangeThrottlingError,
 )
+from bot_core.exchanges.nowa_gielda import symbols
+from bot_core.exchanges.streaming import LocalLongPollStream, StreamBatch
+
+_PUBLIC_STREAM_CHANNEL_MAP: Mapping[str, str] = {
+    "ticker": "ticker",
+    "depth": "orderbook",
+    "trades": "trades",
+}
+
+_PRIVATE_STREAM_CHANNEL_MAP: Mapping[str, str] = {
+    "orders": "orders",
+    "balances": "account",
+    "fills": "fills",
+}
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -303,10 +317,399 @@ class NowaGieldaHTTPClient:
         return self._request("DELETE", "/private/orders", params=params, headers=headers)
 
 
+class NowaGieldaStreamClient(Iterable[StreamBatch]):
+    """Lokalny klient streamingu z obsługą reconnectów i bufora."""
+
+    __slots__ = (
+        "_scope",
+        "_channels",
+        "_remote_channels",
+        "_channel_map",
+        "_fallback_factory",
+        "_stream",
+        "_closed",
+        "_pending",
+        "_history",
+        "_replay_scheduled",
+        "_max_reconnects",
+        "_backoff_base",
+        "_backoff_cap",
+        "_clock",
+        "_sleep",
+        "_last_cursor",
+        "_symbol_filter",
+        "_reconnect_attempt",
+        "_total_batches",
+        "_total_events",
+        "_heartbeats",
+        "_reconnects_total",
+    )
+
+    _CURSOR_UNCHANGED = object()
+
+    def __init__(
+        self,
+        *,
+        scope: str,
+        channels: Sequence[str],
+        fallback_factory: Callable[[Sequence[str], Optional[str]], LocalLongPollStream],
+        channel_mapping: Mapping[str, str] | None = None,
+        symbols: Sequence[str] | None = None,
+        max_reconnects: int = 3,
+        backoff_base: float = 0.5,
+        backoff_cap: float = 5.0,
+        buffer_size: int = 8,
+        clock: Callable[[], float] | None = None,
+        sleep: Callable[[float], None] | None = None,
+    ) -> None:
+        normalized_channels = tuple(
+            dict.fromkeys(
+                channel.strip()
+                for channel in (str(item) for item in channels)
+                if str(channel).strip()
+            )
+        )
+        if not normalized_channels:
+            raise ValueError("Lista kanałów subskrypcji nie może być pusta.")
+
+        self._scope = scope
+        self._channels = normalized_channels
+        self._channel_map = dict(channel_mapping or {})
+        remote_channels: list[str] = []
+        for channel in normalized_channels:
+            if self._channel_map:
+                if channel not in self._channel_map:
+                    raise ValueError(f"Kanał {channel!r} nie jest wspierany w streamie {scope}.")
+                remote_channels.append(str(self._channel_map[channel]))
+            else:
+                remote_channels.append(str(channel))
+
+        self._remote_channels = tuple(remote_channels)
+        self._fallback_factory = fallback_factory
+        self._closed = False
+        self._pending: Deque[StreamBatch] = deque()
+        self._history: Deque[StreamBatch] = deque(maxlen=max(1, int(buffer_size)))
+        self._replay_scheduled = False
+        self._max_reconnects = max(0, int(max_reconnects)) or 1
+        self._backoff_base = max(0.0, float(backoff_base))
+        self._backoff_cap = max(self._backoff_base, float(backoff_cap))
+        self._clock = clock or time.monotonic
+        self._sleep = sleep or time.sleep
+        self._last_cursor: str | None = None
+        self._symbol_filter = frozenset(
+            self._normalize_symbol(symbol)
+            for symbol in (symbols or ())
+            if self._normalize_symbol(symbol)
+        )
+        self._reconnect_attempt = 0
+        self._total_batches = 0
+        self._total_events = 0
+        self._heartbeats = 0
+        self._reconnects_total = 0
+        self._stream = self._fallback_factory(self._remote_channels, None)
+
+    def __iter__(self) -> "NowaGieldaStreamClient":
+        return self
+
+    def __enter__(self) -> "NowaGieldaStreamClient":
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:  # noqa: D401
+        self.close()
+        return None
+
+    def __next__(self) -> StreamBatch:
+        while not self._closed:
+            if self._pending:
+                batch = self._pending.popleft()
+                self._record_yield(batch)
+                return batch
+            try:
+                batch = next(self._stream)
+            except StopIteration:
+                self.close()
+                raise
+            except (ExchangeNetworkError, ExchangeThrottlingError) as exc:
+                self._handle_disconnect(exc)
+                continue
+            filtered = self._filter_batch(batch)
+            if filtered is None:
+                continue
+            if filtered.cursor is not None:
+                self._last_cursor = filtered.cursor
+            elif batch.cursor is not None:
+                self._last_cursor = batch.cursor
+            self._enqueue_batch(filtered)
+        raise StopIteration
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        try:
+            self._stream.close()
+        finally:
+            self._pending.clear()
+            self._history.clear()
+
+    @property
+    def closed(self) -> bool:
+        """Informuje, czy klient został zamknięty."""
+
+        return self._closed
+
+    @property
+    def channels(self) -> tuple[str, ...]:
+        """Zwraca listę kanałów zadeklarowanych podczas tworzenia klienta."""
+
+        return self._channels
+
+    @property
+    def remote_channels(self) -> tuple[str, ...]:
+        """Zwraca kanały przekazywane do fallbackowego streamu REST."""
+
+        return self._remote_channels
+
+    @property
+    def scope(self) -> str:
+        """Udostępnia przestrzeń streamu (np. ``public`` lub ``private``)."""
+
+        return self._scope
+
+    @property
+    def last_cursor(self) -> str | None:
+        """Udostępnia ostatni znany kursor streamu (jeśli został nadany)."""
+
+        return self._last_cursor
+
+    @property
+    def max_reconnects(self) -> int:
+        """Zwraca limit ponowień połączenia."""
+
+        return self._max_reconnects
+
+    @property
+    def reconnect_attempt(self) -> int:
+        """Informuje ile kolejnych prób reconnectu zostało już wykonanych."""
+
+        return self._reconnect_attempt
+
+    @property
+    def reconnects_total(self) -> int:
+        """Zwraca łączną liczbę wykonanych restartów streamu."""
+
+        return self._reconnects_total
+
+    @property
+    def buffer_size(self) -> int:
+        """Zwraca maksymalną pojemność bufora historii paczek."""
+
+        return int(self._history.maxlen or 0)
+
+    @property
+    def history_size(self) -> int:
+        """Informuje ile paczek aktualnie znajduje się w historii."""
+
+        return len(self._history)
+
+    @property
+    def pending_size(self) -> int:
+        """Informuje ile paczek oczekuje w kolejce do zwrócenia."""
+
+        return len(self._pending)
+
+    @property
+    def total_batches(self) -> int:
+        """Zlicza paczki zwrócone użytkownikowi (łącznie z odtworzoną historią)."""
+
+        return self._total_batches
+
+    @property
+    def total_events(self) -> int:
+        """Zwraca sumę zdarzeń dostarczonych w paczkach."""
+
+        return self._total_events
+
+    @property
+    def heartbeats_received(self) -> int:
+        """Zwraca liczbę heartbeatów zwróconych w paczkach."""
+
+        return self._heartbeats
+
+    def reset_counters(self) -> None:
+        """Zeruje liczniki diagnostyczne paczek, zdarzeń i restartów."""
+
+        self._total_batches = 0
+        self._total_events = 0
+        self._heartbeats = 0
+        self._reconnects_total = 0
+
+    def replay_history(
+        self,
+        *,
+        include_heartbeats: bool = True,
+        force: bool = False,
+    ) -> bool:
+        """Ponownie emituje zbuforowaną historię paczek.
+
+        Parametr ``include_heartbeats`` pozwala pominąć puste paczki będące
+        jedynie heartbeatami. Gdy ``force`` ustawione jest na ``True`` metoda
+        wyczyści aktualną kolejkę oczekujących paczek oraz zdejmie blokadę
+        ponownego odtwarzania, co umożliwia natychmiastowe ponowne odtworzenie
+        historii nawet jeśli klient czeka na świeże dane po reconnectach.
+        Zwraca ``True`` jeśli historia została dodana do kolejki, w przeciwnym
+        razie ``False``.
+        """
+
+        if self._closed or not self._history:
+            return False
+
+        if not force and (self._pending or self._replay_scheduled):
+            return False
+
+        snapshots = (
+            list(self._history)
+            if include_heartbeats
+            else [batch for batch in self._history if batch.events]
+        )
+        if not snapshots:
+            return False
+
+        if force:
+            self._pending.clear()
+            self._replay_scheduled = False
+
+        for batch in snapshots:
+            self._pending.append(batch)
+
+        return True
+
+    def force_reconnect(
+        self,
+        *,
+        cursor: str | None | object = _CURSOR_UNCHANGED,
+        replay_history: bool = True,
+    ) -> None:
+        """Wymusza natychmiastowe ponowne połączenie z fallbackowym streamem.
+
+        Parametr ``cursor`` pozwala wskazać nowy kursor startowy. Gdy nie
+        zostanie przekazany, klient użyje ostatnio znanego kursora.
+        Jeżeli ``replay_history`` ustawione jest na ``True`` (wartość
+        domyślna), zbuforowana historia zostanie umieszczona w kolejce
+        oczekujących paczek przed pobraniem nowych danych.
+        """
+
+        if self._closed:
+            raise RuntimeError("Próba reconnectu zamkniętego klienta streamu.")
+
+        self._restart_stream(cursor=cursor)
+        self._reconnect_attempt = 0
+        self._reconnects_total += 1
+        if replay_history and self._history:
+            self._pending.extend(self._history)
+            self._replay_scheduled = True
+        else:
+            self._replay_scheduled = False
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+    def _enqueue_batch(self, batch: StreamBatch) -> None:
+        self._pending.append(batch)
+        if batch.events or batch.heartbeat:
+            self._history.append(batch)
+        self._replay_scheduled = False
+        self._reconnect_attempt = 0
+
+    def _handle_disconnect(self, exc: Exception) -> None:
+        if self._closed:
+            return
+        self._reconnect_attempt += 1
+        if self._reconnect_attempt > self._max_reconnects:
+            self.close()
+            raise
+        delay = min(self._backoff_base * (2 ** (self._reconnect_attempt - 1)), self._backoff_cap)
+        if delay > 0:
+            self._sleep(delay)
+        self._restart_stream()
+        self._reconnects_total += 1
+        if self._history and not self._replay_scheduled:
+            # udostępnij ostatnie dane zanim pojawią się nowe paczki
+            self._pending.extend(self._history)
+            self._replay_scheduled = True
+
+    def _restart_stream(self, *, cursor: object = _CURSOR_UNCHANGED) -> None:
+        if cursor is not self._CURSOR_UNCHANGED:
+            if cursor is None:
+                self._last_cursor = None
+            elif isinstance(cursor, str):
+                self._last_cursor = cursor
+            else:
+                self._last_cursor = str(cursor)
+        try:
+            self._stream.close()
+        except Exception:  # pragma: no cover - defensywnie
+            _LOGGER.debug("Błąd podczas zamykania streamu %s", self._scope, exc_info=True)
+        self._stream = self._fallback_factory(self._remote_channels, self._last_cursor)
+
+    def _filter_batch(self, batch: StreamBatch) -> StreamBatch | None:
+        events = list(batch.events)
+        if self._symbol_filter:
+            events = [event for event in events if self._matches_symbol(event)]
+        if not events and not batch.heartbeat:
+            return None
+        return StreamBatch(
+            channel=batch.channel,
+            events=tuple(events),
+            received_at=batch.received_at,
+            cursor=batch.cursor,
+            heartbeat=batch.heartbeat,
+            raw=batch.raw,
+        )
+
+    def _record_yield(self, batch: StreamBatch) -> None:
+        self._total_batches += 1
+        self._total_events += len(batch.events)
+        if batch.heartbeat:
+            self._heartbeats += 1
+
+    def _matches_symbol(self, event: Mapping[str, Any]) -> bool:
+        if not isinstance(event, Mapping):
+            return False
+        symbol = None
+        for key in ("symbol", "Symbol", "pair", "Pair", "instrument", "s"):
+            value = event.get(key)
+            if value is None:
+                continue
+            symbol = self._normalize_symbol(value)
+            if symbol:
+                break
+        if not symbol:
+            return False
+        return symbol in self._symbol_filter
+
+    @staticmethod
+    def _normalize_symbol(value: object) -> str:
+        if value is None:
+            return ""
+        normalized = str(value).strip()
+        if not normalized:
+            return ""
+        normalized = normalized.replace("-", "_").upper()
+        return normalized
+
+
 class NowaGieldaSpotAdapter(ExchangeAdapter):
     """Adapter implementujący podstawowe operacje dla nowa_gielda."""
 
-    __slots__ = ("_environment", "_ip_allowlist", "_metrics", "_http_client")
+    __slots__ = (
+        "_environment",
+        "_ip_allowlist",
+        "_metrics",
+        "_http_client",
+        "_settings",
+        "_permission_set",
+    )
 
     name: str = "nowa_gielda_spot"
 
@@ -315,12 +718,15 @@ class NowaGieldaSpotAdapter(ExchangeAdapter):
         credentials: ExchangeCredentials,
         *,
         environment: Environment | None = None,
+        settings: Mapping[str, Any] | None = None,
     ) -> None:
         super().__init__(credentials)
         self._environment = environment or credentials.environment
         self._ip_allowlist: tuple[str, ...] = ()
         self._metrics: Mapping[str, Any] | None = None
         self._http_client = NowaGieldaHTTPClient(self._determine_base_url(self._environment))
+        self._settings = dict(settings or {})
+        self._permission_set = frozenset(perm.lower() for perm in self.credentials.permissions)
 
     # --- Utilities ---------------------------------------------------------
     @staticmethod
@@ -336,6 +742,152 @@ class NowaGieldaSpotAdapter(ExchangeAdapter):
         self._ip_allowlist = tuple(ip_allowlist or ())
         if self._ip_allowlist:
             _LOGGER.debug("Skonfigurowano allowlistę IP: %s", self._ip_allowlist)
+
+    # --- Streaming configuration -------------------------------------------
+    def _stream_settings(self) -> Mapping[str, Any]:
+        raw = self._settings.get("stream")
+        if isinstance(raw, Mapping):
+            return raw
+        return {}
+
+    def _stream_symbol_filter(self, scope: str) -> tuple[str, ...]:
+        settings = self._stream_settings()
+        scope_key = f"{scope}_symbols"
+        raw = settings.get(scope_key, settings.get("symbols"))
+        if raw is None:
+            return ()
+        if isinstance(raw, str):
+            values = [raw]
+        elif isinstance(raw, Iterable):
+            values = list(raw)
+        else:
+            return ()
+        normalized: list[str] = []
+        for entry in values:
+            symbol = NowaGieldaStreamClient._normalize_symbol(entry)
+            if symbol and symbol not in normalized:
+                normalized.append(symbol)
+        return tuple(normalized)
+
+    def _stream_reconnect_config(self, scope: str) -> tuple[int, float, float, int]:
+        settings = self._stream_settings()
+        attempts = int(
+            settings.get(f"{scope}_reconnect_attempts", settings.get("reconnect_attempts", 3))
+        )
+        backoff_base = float(
+            settings.get(f"{scope}_reconnect_backoff", settings.get("reconnect_backoff", 0.5))
+        )
+        backoff_cap = float(
+            settings.get(
+                f"{scope}_reconnect_backoff_cap",
+                settings.get("reconnect_backoff_cap", max(backoff_base, 5.0)),
+            )
+        )
+        buffer_size = int(settings.get(f"{scope}_buffer_size", settings.get("buffer_size", 8)))
+        return max(1, attempts), max(0.0, backoff_base), max(backoff_base, backoff_cap), max(1, buffer_size)
+
+    def _build_stream(
+        self,
+        scope: str,
+        channels: Sequence[str],
+        *,
+        initial_cursor: str | None = None,
+    ) -> LocalLongPollStream:
+        stream_settings = dict(self._stream_settings())
+        base_url = str(
+            stream_settings.get("base_url", self._settings.get("stream_base_url", "http://127.0.0.1:8765"))
+        )
+        default_path = f"/stream/{self.name}/{scope}"
+        path = str(
+            stream_settings.get(
+                f"{scope}_path",
+                self._settings.get(f"stream_{scope}_path", default_path),
+            )
+            or default_path
+        )
+        poll_interval = float(stream_settings.get("poll_interval", 0.5))
+        timeout = float(stream_settings.get("timeout", 10.0))
+        # Long-pollowe ponawianie po stronie LocalLongPollStream ograniczamy do jednej próby.
+        # Dzięki temu logika reconnectów i buforowania pozostaje w NowaGieldaStreamClient,
+        # który jest w stanie odtworzyć dane z historii przed pobraniem świeżych paczek.
+        max_retries = 1
+        backoff_base = float(stream_settings.get("backoff_base", 0.25))
+        backoff_cap = float(stream_settings.get("backoff_cap", 2.0))
+        jitter = stream_settings.get("jitter", (0.05, 0.30))
+        channel_param = stream_settings.get(f"{scope}_channel_param")
+        if channel_param is None:
+            channel_param = stream_settings.get("channel_param", "channels")
+        cursor_param = stream_settings.get(f"{scope}_cursor_param")
+        if cursor_param is None:
+            cursor_param = stream_settings.get("cursor_param", "cursor")
+        initial_cursor_value = initial_cursor
+        if initial_cursor_value is None:
+            initial_cursor_value = stream_settings.get(f"{scope}_initial_cursor")
+        channel_serializer = None
+        serializer_candidate = stream_settings.get(f"{scope}_channel_serializer")
+        if not callable(serializer_candidate):
+            serializer_candidate = stream_settings.get("channel_serializer")
+        if callable(serializer_candidate):
+            channel_serializer = serializer_candidate
+        else:
+            separator = stream_settings.get(f"{scope}_channel_separator")
+            if separator is None:
+                separator = stream_settings.get("channel_separator", ",")
+            if isinstance(separator, str):
+                channel_serializer = lambda values, sep=separator: sep.join(values)  # noqa: E731
+        headers_raw = stream_settings.get("headers")
+        header_map = dict(headers_raw) if isinstance(headers_raw, Mapping) else None
+        params: dict[str, object] = {}
+        base_params = stream_settings.get("params")
+        if isinstance(base_params, Mapping):
+            params.update(base_params)
+        scope_params = stream_settings.get(f"{scope}_params")
+        if isinstance(scope_params, Mapping):
+            params.update(scope_params)
+        token_key = f"{scope}_token"
+        if isinstance(stream_settings.get(token_key), str):
+            params.setdefault("token", stream_settings[token_key])
+        elif isinstance(stream_settings.get("auth_token"), str):
+            params.setdefault("token", stream_settings["auth_token"])
+        http_method = stream_settings.get(f"{scope}_method", stream_settings.get("method", "GET"))
+        params_in_body = bool(stream_settings.get(f"{scope}_params_in_body", stream_settings.get("params_in_body", False)))
+        channels_in_body = bool(stream_settings.get(f"{scope}_channels_in_body", stream_settings.get("channels_in_body", False)))
+        cursor_in_body = bool(stream_settings.get(f"{scope}_cursor_in_body", stream_settings.get("cursor_in_body", False)))
+        body_params: dict[str, object] = {}
+        base_body = stream_settings.get("body_params")
+        if isinstance(base_body, Mapping):
+            body_params.update(base_body)
+        scope_body = stream_settings.get(f"{scope}_body_params")
+        if isinstance(scope_body, Mapping):
+            body_params.update(scope_body)
+        body_encoder = stream_settings.get(f"{scope}_body_encoder", stream_settings.get("body_encoder"))
+
+        return LocalLongPollStream(
+            base_url=base_url,
+            path=path,
+            channels=channels,
+            adapter=self.name,
+            scope=scope,
+            environment=self._environment.value,
+            params=params,
+            headers=header_map,
+            poll_interval=poll_interval,
+            timeout=timeout,
+            max_retries=max_retries,
+            backoff_base=backoff_base,
+            backoff_cap=backoff_cap,
+            jitter=jitter if isinstance(jitter, Sequence) else (0.05, 0.30),
+            channel_param=str(channel_param).strip() if channel_param not in (None, "") else "",
+            cursor_param=str(cursor_param).strip() if cursor_param not in (None, "") else "",
+            initial_cursor=initial_cursor_value,
+            channel_serializer=channel_serializer,
+            http_method=str(http_method or "GET"),
+            params_in_body=params_in_body,
+            channels_in_body=channels_in_body,
+            cursor_in_body=cursor_in_body,
+            body_params=body_params or None,
+            body_encoder=body_encoder,
+        )
 
     # --- ExchangeAdapter API -----------------------------------------------
     def fetch_account_snapshot(self) -> AccountSnapshot:
@@ -843,10 +1395,45 @@ class NowaGieldaSpotAdapter(ExchangeAdapter):
         self._http_client.cancel_order(order_id, headers=headers, symbol=exchange_symbol)
 
     def stream_public_data(self, *, channels: Sequence[str]) -> Protocol:
-        raise NotImplementedError("Strumień publiczny nie jest wspierany w testowym adapterze")
+        symbol_filter = self._stream_symbol_filter("public")
+        attempts, backoff_base, backoff_cap, buffer_size = self._stream_reconnect_config("public")
+
+        def factory(mapped_channels: Sequence[str], cursor: Optional[str]) -> LocalLongPollStream:
+            return self._build_stream("public", mapped_channels, initial_cursor=cursor)
+
+        return NowaGieldaStreamClient(
+            scope="public",
+            channels=channels,
+            fallback_factory=factory,
+            channel_mapping=_PUBLIC_STREAM_CHANNEL_MAP,
+            symbols=symbol_filter,
+            max_reconnects=attempts,
+            backoff_base=backoff_base,
+            backoff_cap=backoff_cap,
+            buffer_size=buffer_size,
+        )
 
     def stream_private_data(self, *, channels: Sequence[str]) -> Protocol:
-        raise NotImplementedError("Strumień prywatny nie jest wspierany w testowym adapterze")
+        if "trade" not in self._permission_set and "write" not in self._permission_set:
+            raise PermissionError("Poświadczenia nie pozwalają na prywatny stream nowa_gielda.")
+
+        symbol_filter = self._stream_symbol_filter("private")
+        attempts, backoff_base, backoff_cap, buffer_size = self._stream_reconnect_config("private")
+
+        def factory(mapped_channels: Sequence[str], cursor: Optional[str]) -> LocalLongPollStream:
+            return self._build_stream("private", mapped_channels, initial_cursor=cursor)
+
+        return NowaGieldaStreamClient(
+            scope="private",
+            channels=channels,
+            fallback_factory=factory,
+            channel_mapping=_PRIVATE_STREAM_CHANNEL_MAP,
+            symbols=symbol_filter,
+            max_reconnects=attempts,
+            backoff_base=backoff_base,
+            backoff_cap=backoff_cap,
+            buffer_size=buffer_size,
+        )
 
     # --- Custom helpers ----------------------------------------------------
     def sign_request(
@@ -892,4 +1479,4 @@ class NowaGieldaSpotAdapter(ExchangeAdapter):
         return rule.weight if rule else 1
 
 
-__all__ = ["NowaGieldaSpotAdapter", "RateLimitRule"]
+__all__ = ["NowaGieldaSpotAdapter", "RateLimitRule", "NowaGieldaStreamClient"]
