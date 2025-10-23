@@ -18,7 +18,7 @@ import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable, Mapping, Optional, Sequence, Tuple
+from typing import Any, Collection, Iterable, Mapping, Optional, Sequence
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
@@ -441,25 +441,37 @@ def _handle_register(args: argparse.Namespace) -> int:
 # Entrypoint
 # =====================================================================
 
-def _build_parser() -> argparse.ArgumentParser:
+def _build_parser() -> tuple[argparse.ArgumentParser, frozenset[str]]:
     parser = argparse.ArgumentParser(
         description="Stage5 Training – merged CLI (report + register)"
     )
     sub = parser.add_subparsers(dest="_cmd", metavar="{report|register}", required=True)
     _build_parser_report(sub)
     _parse_args_register(sub)
-    return parser
+    return parser, frozenset(sub.choices.keys())
 
-def _prepare_argv(argv: Sequence[str] | None) -> list[str]:
-    args = list(argv or [])
-    if args and args[0] not in {"report", "register"}:
-        if args[0].startswith("-"):
-            return ["register", *args]
-    return args
+
+HELP_FLAGS = {"-h", "--help"}
+
+
+def _prepare_argv(argv: Sequence[str] | None, known_commands: Collection[str]) -> list[str]:
+    source = sys.argv[1:] if argv is None else argv
+    args = list(source)
+    if not args:
+        return args
+
+    first = args[0]
+    if first in known_commands or first in HELP_FLAGS:
+        return args
+
+    if first.startswith("-"):
+        return ["register", *args]
+
+    return ["report", *args]
 
 def _execute_cli(argv: Sequence[str] | None = None) -> int:
-    parser = _build_parser()
-    args = _prepare_argv(argv)
+    parser, commands = _build_parser()
+    args = _prepare_argv(argv, commands)
     try:
         parsed = parser.parse_args(args)
     except SystemExit as exc:  # pragma: no cover - argument errors map to exit codes
