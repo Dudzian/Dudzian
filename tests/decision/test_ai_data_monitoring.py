@@ -4,6 +4,7 @@ import json
 import math
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Mapping, Sequence
 
 import pytest
 
@@ -34,6 +35,111 @@ def _read_latest_category_report(root: Path, category: str) -> dict:
     if not candidates:
         pytest.fail(f"no reports found for category {category}")
     return _read_json(candidates[-1])
+
+
+def _normalize_feature_scalers(
+    scalers: Mapping[str, object] | None,
+) -> dict[str, tuple[float, float]]:
+    if not isinstance(scalers, Mapping):
+        return {}
+    normalized: dict[str, tuple[float, float]] = {}
+    for name, raw in scalers.items():
+        if isinstance(raw, Mapping):
+            mean = float(raw.get("mean", 0.0))
+            stdev = float(raw.get("stdev", 1.0))
+            normalized[str(name)] = (mean, stdev)
+        elif isinstance(raw, Sequence) and len(raw) >= 2:
+            normalized[str(name)] = (float(raw[0]), float(raw[1]))
+    return normalized
+
+
+def _merge_metrics(blocks: Mapping[str, object] | None) -> Mapping[str, object]:
+    merged: dict[str, object] = {
+        "summary": {},
+        "train": {},
+        "validation": {},
+        "test": {},
+    }
+    if not isinstance(blocks, Mapping):
+        return merged
+    for split, payload in blocks.items():
+        if isinstance(payload, Mapping):
+            merged[str(split)] = dict(payload)
+    return merged
+
+
+def _make_artifact(
+    *,
+    feature_names: Sequence[str],
+    model_state: Mapping[str, object],
+    metadata: Mapping[str, object],
+    metrics: Mapping[str, object] | None = None,
+    backend: str = "builtin",
+    trained_at: datetime | None = None,
+    target_scale: float | None = None,
+    training_rows: int | None = None,
+    validation_rows: int | None = None,
+    test_rows: int | None = None,
+    feature_scalers: Mapping[str, tuple[float, float]] | None = None,
+    decision_journal_entry_id: str | None = None,
+) -> ModelArtifact:
+    target_scale = (
+        float(target_scale)
+        if target_scale is not None
+        else float(metadata.get("target_scale", 1.0))
+    )
+    training_rows = (
+        int(training_rows)
+        if training_rows is not None
+        else int(metadata.get("training_rows", 0))
+    )
+    validation_rows = (
+        int(validation_rows)
+        if validation_rows is not None
+        else int(metadata.get("validation_rows", 0))
+    )
+    test_rows = (
+        int(test_rows)
+        if test_rows is not None
+        else int(metadata.get("test_rows", 0))
+    )
+    computed_metrics = _merge_metrics(metrics)
+
+    scalers_source: Mapping[str, object] | None
+    if feature_scalers is not None:
+        scalers_source = feature_scalers
+    else:
+        scalers_source = metadata.get("feature_scalers") or model_state.get(
+            "feature_scalers"
+        )
+    computed_feature_scalers = _normalize_feature_scalers(scalers_source)
+    if not computed_feature_scalers:
+        computed_feature_scalers = {
+            str(name): (0.0, 1.0) for name in feature_names
+        }
+
+    if decision_journal_entry_id is None:
+        raw_decision_id = metadata.get("decision_journal_entry_id") or metadata.get(
+            "decision_journal_entry"
+        )
+        if raw_decision_id is not None:
+            decision_journal_entry_id = str(raw_decision_id)
+
+    trained_at = trained_at or datetime.now(timezone.utc)
+    return ModelArtifact(
+        feature_names=tuple(feature_names),
+        model_state=model_state,
+        trained_at=trained_at,
+        metrics=computed_metrics,
+        metadata=metadata,
+        target_scale=target_scale,
+        training_rows=training_rows,
+        validation_rows=validation_rows,
+        test_rows=test_rows,
+        feature_scalers=computed_feature_scalers,
+        decision_journal_entry_id=decision_journal_entry_id,
+        backend=backend,
+    )
 
 
 def test_data_completeness_watcher_detects_missing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -90,7 +196,7 @@ def test_inference_monitoring_exports_reports(tmp_path: Path, monkeypatch: pytes
             "cooldown": 1,
         },
     }
-    artifact = ModelArtifact(
+    artifact = _make_artifact(
         feature_names=("alpha", "beta"),
         model_state={
             "learning_rate": 0.1,
@@ -103,10 +209,8 @@ def test_inference_monitoring_exports_reports(tmp_path: Path, monkeypatch: pytes
             },
             "stumps": [],
         },
-        trained_at=datetime.now(timezone.utc),
-        metrics={"mae": 0.0},
         metadata=metadata,
-        backend="builtin",
+        metrics={"mae": 0.0},
     )
     model_path = repository.save(artifact, "test_model.json")
 
@@ -162,7 +266,7 @@ def test_score_with_data_monitoring_passes_when_data_ok(
         },
         "data_quality": {"enforce": True},
     }
-    artifact = ModelArtifact(
+    artifact = _make_artifact(
         feature_names=("alpha", "beta"),
         model_state={
             "learning_rate": 0.1,
@@ -175,10 +279,8 @@ def test_score_with_data_monitoring_passes_when_data_ok(
             },
             "stumps": [],
         },
-        trained_at=datetime.now(timezone.utc),
-        metrics={"mae": 0.0},
         metadata=metadata,
-        backend="builtin",
+        metrics={"mae": 0.0},
     )
     model_path = repository.save(artifact, "test_model_ok.json")
 
@@ -225,7 +327,7 @@ def test_score_with_data_monitoring_respects_category_policy(
             },
         },
     }
-    artifact = ModelArtifact(
+    artifact = _make_artifact(
         feature_names=("alpha",),
         model_state={
             "learning_rate": 0.1,
@@ -235,10 +337,8 @@ def test_score_with_data_monitoring_respects_category_policy(
             "feature_scalers": {"alpha": {"mean": 0.0, "stdev": 1.0}},
             "stumps": [],
         },
-        trained_at=datetime.now(timezone.utc),
-        metrics={"mae": 0.0},
         metadata=metadata,
-        backend="builtin",
+        metrics={"mae": 0.0},
     )
     model_path = repository.save(artifact, "policy_model.json")
 
@@ -273,7 +373,7 @@ def test_update_sign_off_updates_exported_report(
             "alpha": {"mean": 0.0, "stdev": 1.0, "min": -1.0, "max": 1.0},
         },
     }
-    artifact = ModelArtifact(
+    artifact = _make_artifact(
         feature_names=("alpha",),
         model_state={
             "learning_rate": 0.1,
@@ -283,10 +383,8 @@ def test_update_sign_off_updates_exported_report(
             "feature_scalers": {"alpha": {"mean": 0.0, "stdev": 1.0}},
             "stumps": [],
         },
-        trained_at=datetime.now(timezone.utc),
-        metrics={"mae": 0.0},
         metadata=metadata,
-        backend="builtin",
+        metrics={"mae": 0.0},
     )
     model_path = repository.save(artifact, "signoff_model.json")
 
@@ -341,7 +439,7 @@ def test_load_recent_reports_filters_and_limits(
             "cooldown": 1,
         },
     }
-    artifact = ModelArtifact(
+    artifact = _make_artifact(
         feature_names=("alpha", "beta"),
         model_state={
             "learning_rate": 0.1,
@@ -354,10 +452,8 @@ def test_load_recent_reports_filters_and_limits(
             },
             "stumps": [],
         },
-        trained_at=datetime.now(timezone.utc),
-        metrics={"mae": 0.0},
         metadata=metadata,
-        backend="builtin",
+        metrics={"mae": 0.0},
     )
     model_path = repository.save(artifact, "history_model.json")
 
@@ -420,7 +516,7 @@ def test_summarize_data_quality_reports_flags_pending_sign_off(
             "beta": {"mean": 0.0, "stdev": 1.0, "min": -1.0, "max": 1.0},
         },
     }
-    artifact = ModelArtifact(
+    artifact = _make_artifact(
         feature_names=("alpha", "beta"),
         model_state={
             "learning_rate": 0.1,
@@ -433,10 +529,8 @@ def test_summarize_data_quality_reports_flags_pending_sign_off(
             },
             "stumps": [],
         },
-        trained_at=datetime.now(timezone.utc),
-        metrics={"mae": 0.0},
         metadata=metadata,
-        backend="builtin",
+        metrics={"mae": 0.0},
     )
     model_path = repository.save(artifact, "summary_model.json")
 
