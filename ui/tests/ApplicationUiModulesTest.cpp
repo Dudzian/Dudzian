@@ -66,6 +66,7 @@ private slots:
     void fallbackUsesDefaultDirectories();
     void reloadsModulesOnDemand();
     void autoReloadTriggeredByWatcher();
+    void autoReloadWatchesMissingDirectories();
 };
 
 void ApplicationUiModulesTest::cliOverridesModuleDirectories()
@@ -328,6 +329,56 @@ void ApplicationUiModulesTest::autoReloadTriggeredByWatcher()
     app.triggerUiModuleWatcherForTesting(expectedDir);
     QTest::qWait(50);
     QCOMPARE(reloadSpy.count(), 0);
+}
+
+void ApplicationUiModulesTest::autoReloadWatchesMissingDirectories()
+{
+    QQmlApplicationEngine engine;
+    Application app(engine);
+
+    auto moduleManager = std::make_unique<RecordingModuleManager>();
+    RecordingModuleManager* recording = moduleManager.get();
+    app.setModuleManagerForTesting(std::move(moduleManager));
+
+    QTemporaryDir rootDir;
+    QVERIFY(rootDir.isValid());
+
+    const QString missingDir = QDir(rootDir.path()).absoluteFilePath(QStringLiteral("modules/ui"));
+    QVERIFY(!QFileInfo::exists(missingDir));
+
+    QCommandLineParser parser;
+    app.configureParser(parser);
+    const QStringList args{
+        QStringLiteral("test"),
+        QStringLiteral("--endpoint"), QStringLiteral("localhost:50051"),
+        QStringLiteral("--metrics-endpoint"), QStringLiteral("localhost:9000"),
+        QStringLiteral("--ui-module-dir"), missingDir,
+    };
+    parser.process(args);
+
+    QVERIFY(app.applyParser(parser));
+
+    const QString parentDir = QFileInfo(rootDir.path()).absoluteFilePath();
+    const QStringList watched = app.watchedUiModulePathsForTesting();
+    QVERIFY(watched.contains(parentDir));
+
+    QVERIFY(!app.uiModuleAutoReloadEnabled());
+    app.setUiModuleAutoReloadEnabled(true);
+    QCOMPARE(app.uiModuleAutoReloadEnabled(), true);
+
+    app.setUiModuleAutoReloadDebounceForTesting(5);
+
+    QSignalSpy reloadSpy(&app, &Application::uiModulesReloaded);
+    QVERIFY(reloadSpy.isValid());
+    reloadSpy.clear();
+
+    recording->loadResult = true;
+    app.triggerUiModuleWatcherForTesting(parentDir);
+    QTRY_VERIFY_WITH_TIMEOUT(reloadSpy.count() > 0, 200);
+
+    const QList<QVariant> arguments = reloadSpy.takeFirst();
+    QCOMPARE(arguments.size(), 2);
+    QCOMPARE(arguments.at(0).toBool(), true);
 }
 
 QTEST_MAIN(ApplicationUiModulesTest)

@@ -3823,6 +3823,12 @@ void Application::updateUiModuleWatchTargets(const QStringList& directories, con
             list.append(value);
     };
 
+    auto appendWatchableDirectories = [&](const QString& basePath) {
+        const QStringList candidates = watchableDirectories(basePath);
+        for (const QString& candidate : candidates)
+            appendUnique(directoryTargets, candidate);
+    };
+
     QStringList directoryTargets;
     QStringList fileTargets;
 
@@ -3831,14 +3837,15 @@ void Application::updateUiModuleWatchTargets(const QStringList& directories, con
         if (trimmed.isEmpty())
             continue;
         QFileInfo info(trimmed);
-        if (!info.exists())
-            continue;
-        if (info.isDir()) {
-            appendUnique(directoryTargets, info.absoluteFilePath());
-        } else if (info.isFile()) {
+        if (info.exists() && info.isFile()) {
             appendUnique(fileTargets, info.absoluteFilePath());
-            appendUnique(directoryTargets, info.absolutePath());
+            appendWatchableDirectories(info.absolutePath());
+            continue;
         }
+
+        appendWatchableDirectories(info.absoluteFilePath());
+        if (!info.exists())
+            appendWatchableDirectories(info.absolutePath());
     }
 
     for (const QString& plugin : pluginFiles) {
@@ -3846,10 +3853,12 @@ void Application::updateUiModuleWatchTargets(const QStringList& directories, con
         if (trimmed.isEmpty())
             continue;
         QFileInfo info(trimmed);
-        if (!info.exists())
+        if (!info.exists()) {
+            appendWatchableDirectories(info.absolutePath());
             continue;
+        }
         appendUnique(fileTargets, info.absoluteFilePath());
-        appendUnique(directoryTargets, info.absolutePath());
+        appendWatchableDirectories(info.absolutePath());
     }
 
     if (!directoryTargets.isEmpty()) {
