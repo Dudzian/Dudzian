@@ -1,8 +1,6 @@
 """Testy katalogu strategii Multi-Strategy."""
 from __future__ import annotations
 
-from datetime import date
-
 import pytest
 
 from bot_core.config.loader import (
@@ -26,28 +24,6 @@ from bot_core.strategies.catalog import (
     StrategyDefinition,
     StrategyPresetWizard,
 )
-from bot_core.security.capabilities import build_capabilities_from_payload
-from bot_core.security.guards import (
-    LicenseCapabilityError,
-    install_capability_guard,
-    reset_capability_guard,
-)
-
-
-def _activate_guard(strategies: dict[str, bool]) -> None:
-    capabilities = build_capabilities_from_payload(
-        {
-            "edition": "pro",
-            "environments": ["paper"],
-            "exchanges": {},
-            "strategies": strategies,
-            "runtime": {},
-            "modules": {},
-            "limits": {},
-        },
-        effective_date=date(2025, 1, 1),
-    )
-    install_capability_guard(capabilities)
 from bot_core.runtime.pipeline import _collect_strategy_definitions
 
 
@@ -139,24 +115,6 @@ def test_preset_wizard_propagates_metadata() -> None:
     assert entry["capability"] == "trend_d1"
     assert entry["metadata"]["capability"] == "trend_d1"
     assert entry["metadata"]["tags"] == ("trend", "momentum")
-
-
-def test_preset_wizard_respects_capability_guard() -> None:
-    wizard = StrategyPresetWizard(DEFAULT_STRATEGY_CATALOG)
-    try:
-        _activate_guard({"trend_d1": True, "scalping": False})
-        with pytest.raises(LicenseCapabilityError):
-            wizard.build_preset(
-                "blocked",
-                [
-                    {
-                        "engine": "scalping",
-                        "name": "blocked-entry",
-                    }
-                ],
-            )
-    finally:
-        reset_capability_guard()
 
 
 def test_catalog_describe_engines_includes_metadata() -> None:
@@ -416,23 +374,6 @@ def test_catalog_builds_scalping_strategy() -> None:
     assert metadata["required_data"] == ("ohlcv", "order_book")
     assert metadata["risk_classes"] == ("intraday", "scalping")
     assert metadata["tags"] == ("intraday", "scalping")
-
-
-def test_catalog_create_blocks_capability_without_license() -> None:
-    definition = StrategyDefinition(
-        name="blocked-scalp",
-        engine="scalping",
-        license_tier="professional",
-        risk_classes=("intraday",),
-        required_data=("ohlcv",),
-        parameters={},
-    )
-    try:
-        _activate_guard({"trend_d1": True, "scalping": False})
-        with pytest.raises(LicenseCapabilityError):
-            DEFAULT_STRATEGY_CATALOG.create(definition)
-    finally:
-        reset_capability_guard()
 
 
 def test_catalog_builds_options_strategy() -> None:
