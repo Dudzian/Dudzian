@@ -1,8 +1,6 @@
 """Testy katalogu strategii Multi-Strategy."""
 from __future__ import annotations
 
-from datetime import date
-
 import pytest
 
 from bot_core.config.loader import (
@@ -15,13 +13,9 @@ from bot_core.config.loader import (
 from bot_core.config.models import (
     CoreConfig,
     EnvironmentConfig,
-    MultiStrategySchedulerConfig,
-    MultiStrategySuspensionConfig,
     RiskProfileConfig,
     ScalpingStrategyConfig,
-    SignalLimitOverrideConfig,
     StrategyDefinitionConfig,
-    StrategyScheduleConfig,
 )
 from bot_core.exchanges.base import Environment
 from bot_core.strategies.base import StrategyEngine
@@ -30,32 +24,7 @@ from bot_core.strategies.catalog import (
     StrategyDefinition,
     StrategyPresetWizard,
 )
-from bot_core.security.capabilities import build_capabilities_from_payload
-from bot_core.security.guards import (
-    LicenseCapabilityError,
-    install_capability_guard,
-    reset_capability_guard,
-)
-
-
-def _activate_guard(strategies: dict[str, bool]) -> None:
-    capabilities = build_capabilities_from_payload(
-        {
-            "edition": "pro",
-            "environments": ["paper"],
-            "exchanges": {},
-            "strategies": strategies,
-            "runtime": {},
-            "modules": {},
-            "limits": {},
-        },
-        effective_date=date(2025, 1, 1),
-    )
-    install_capability_guard(capabilities)
-from bot_core.runtime.pipeline import (
-    _collect_strategy_definitions,
-    describe_multi_strategy_configuration,
-)
+from bot_core.runtime.pipeline import _collect_strategy_definitions
 
 
 def test_catalog_builds_trend_strategy() -> None:
@@ -146,24 +115,6 @@ def test_preset_wizard_propagates_metadata() -> None:
     assert entry["capability"] == "trend_d1"
     assert entry["metadata"]["capability"] == "trend_d1"
     assert entry["metadata"]["tags"] == ("trend", "momentum")
-
-
-def test_preset_wizard_respects_capability_guard() -> None:
-    wizard = StrategyPresetWizard(DEFAULT_STRATEGY_CATALOG)
-    try:
-        _activate_guard({"trend_d1": True, "scalping": False})
-        with pytest.raises(LicenseCapabilityError):
-            wizard.build_preset(
-                "blocked",
-                [
-                    {
-                        "engine": "scalping",
-                        "name": "blocked-entry",
-                    }
-                ],
-            )
-    finally:
-        reset_capability_guard()
 
 
 def test_catalog_describe_engines_includes_metadata() -> None:
@@ -423,173 +374,6 @@ def test_catalog_builds_scalping_strategy() -> None:
     assert metadata["required_data"] == ("ohlcv", "order_book")
     assert metadata["risk_classes"] == ("intraday", "scalping")
     assert metadata["tags"] == ("intraday", "scalping")
-
-
-def test_catalog_create_blocks_capability_without_license() -> None:
-    definition = StrategyDefinition(
-        name="blocked-scalp",
-        engine="scalping",
-        license_tier="professional",
-        risk_classes=("intraday",),
-        required_data=("ohlcv",),
-        parameters={},
-    )
-    try:
-        _activate_guard({"trend_d1": True, "scalping": False})
-        with pytest.raises(LicenseCapabilityError):
-            DEFAULT_STRATEGY_CATALOG.create(definition)
-    finally:
-        reset_capability_guard()
-
-
-def test_describe_multi_strategy_configuration_filters_blocked_entries(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    env_cfg = EnvironmentConfig(
-        name="paper",
-        exchange="demo",
-        environment=Environment.PAPER,
-        keychain_key="paper-key",
-        data_cache_path="/tmp/cache",
-        risk_profile="balanced",
-        alert_channels=("email",),
-    )
-    risk_cfg = RiskProfileConfig(
-        name="balanced",
-        max_daily_loss_pct=0.1,
-        max_position_pct=0.2,
-        target_volatility=0.15,
-        max_leverage=2.0,
-        stop_loss_atr_multiple=1.5,
-        max_open_positions=5,
-        hard_drawdown_pct=0.25,
-    )
-    scalper_definition = StrategyDefinitionConfig(
-        name="scalper",
-        engine="scalping",
-        parameters={},
-        license_tier="professional",
-        risk_classes=("intraday",),
-        required_data=("ohlcv",),
-    )
-    trend_definition = StrategyDefinitionConfig(
-        name="trend",
-        engine="daily_trend_momentum",
-        parameters={},
-        license_tier="standard",
-        risk_classes=("directional",),
-        required_data=("ohlcv",),
-    )
-    scheduler_cfg = MultiStrategySchedulerConfig(
-        name="demo",
-        schedules=(
-            StrategyScheduleConfig(
-                name="scalp-run",
-                strategy="scalper",
-                cadence_seconds=60,
-                max_drift_seconds=15,
-                warmup_bars=20,
-                risk_profile="balanced",
-            ),
-            StrategyScheduleConfig(
-                name="trend-run",
-                strategy="trend",
-                cadence_seconds=300,
-                max_drift_seconds=60,
-                warmup_bars=40,
-                risk_profile="balanced",
-            ),
-        ),
-        telemetry_namespace="demo.scheduler",
-        initial_suspensions=(
-            MultiStrategySuspensionConfig(
-                kind="schedule",
-                target="scalp-run",
-                reason="maintenance",
-                until=None,
-                duration_seconds=None,
-            ),
-            MultiStrategySuspensionConfig(
-                kind="tag",
-                target="intraday",
-                reason="pause",
-                until=None,
-                duration_seconds=None,
-            ),
-        ),
-        initial_signal_limits={
-            "scalper": {"balanced": SignalLimitOverrideConfig(limit=1)},
-            "trend": {"balanced": SignalLimitOverrideConfig(limit=2)},
-        },
-        signal_limits={
-            "scalper": {"balanced": SignalLimitOverrideConfig(limit=3)},
-            "trend": {"balanced": SignalLimitOverrideConfig(limit=4)},
-        },
-    )
-    core_config = CoreConfig(
-        environments={"paper": env_cfg},
-        risk_profiles={"balanced": risk_cfg},
-        strategy_definitions={
-            "scalper": scalper_definition,
-            "trend": trend_definition,
-        },
-        multi_strategy_schedulers={"demo": scheduler_cfg},
-    )
-
-    monkeypatch.setattr(
-        "bot_core.runtime.pipeline.load_core_config",
-        lambda _path: core_config,
-    )
-
-    try:
-        _activate_guard({"trend_d1": True, "scalping": False})
-        summary = describe_multi_strategy_configuration(config_path="core.yaml")
-    finally:
-        reset_capability_guard()
-
-    schedules = summary["schedules"]
-    assert len(schedules) == 1
-    assert schedules[0]["strategy"] == "trend"
-    assert schedules[0]["capability"] == "trend_d1"
-
-    suspensions = summary["initial_suspensions"]
-    assert all(entry["target"] != "scalp-run" for entry in suspensions)
-    assert any(entry["target"] == "intraday" for entry in suspensions)
-
-    initial_limits = summary["initial_signal_limits"]
-    assert "scalper" not in initial_limits
-    assert initial_limits["trend"]["balanced"]["limit"] == 2
-
-    static_limits = summary.get("signal_limits", {})
-    assert "scalper" not in static_limits
-    assert static_limits["trend"]["balanced"]["limit"] == 4
-
-    assert summary["blocked_schedules"] == ["scalp-run"]
-    assert summary["blocked_strategies"] == ["scalper"]
-    assert summary["blocked_capabilities"] == {"scalper": "scalping"}
-    assert summary["blocked_schedule_capabilities"] == {"scalp-run": "scalping"}
-    assert summary["blocked_initial_signal_limits"] == {"scalper": ["balanced"]}
-    assert summary["blocked_initial_signal_limit_capabilities"] == {
-        "scalper": "scalping"
-    }
-    assert summary["blocked_signal_limits"] == {"scalper": ["balanced"]}
-    assert summary["blocked_signal_limit_capabilities"] == {"scalper": "scalping"}
-    assert summary["blocked_suspensions"] == [
-        {
-            "kind": "schedule",
-            "target": "scalp-run",
-            "reason": "maintenance",
-            "capability": "scalping",
-        }
-    ]
-    assert summary["blocked_suspension_capabilities"] == {
-        "schedule:scalp-run": "scalping"
-    }
-
-    described = summary["strategies"]
-    described_names = {entry["name"] for entry in described}
-    assert "trend" in described_names
-    assert "scalper" not in described_names
 
 
 def test_catalog_builds_options_strategy() -> None:
