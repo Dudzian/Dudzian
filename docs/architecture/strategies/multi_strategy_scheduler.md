@@ -21,7 +21,16 @@
 ## Katalog strategii
 
 - Strategia to instancja `StrategyEngine` budowana dynamicznie przez `bot_core.strategies.catalog.StrategyCatalog`.
-- Rejestr domyślny (`DEFAULT_STRATEGY_CATALOG`) obejmuje m.in. silniki: `daily_trend_momentum`, `mean_reversion`, `grid_trading`, `volatility_target`, `cross_exchange_arbitrage`.
+- Rejestr domyślny (`DEFAULT_STRATEGY_CATALOG`) obejmuje następujące silniki wraz z kluczowymi metadanymi:
+  - `daily_trend_momentum` – capability `trend_d1`; klasy ryzyka: `directional`, `momentum`; wymagane dane: `ohlcv`, `technical_indicators`.
+  - `mean_reversion` – capability `mean_reversion`; klasy ryzyka: `statistical`, `mean_reversion`; wymagane dane: `ohlcv`, `spread_history`.
+  - `grid_trading` – capability `grid_trading`; klasy ryzyka: `market_making`; wymagane dane: `order_book`, `ohlcv`.
+  - `volatility_target` – capability `volatility_target`; klasy ryzyka: `risk_control`, `volatility`; wymagane dane: `ohlcv`, `realized_volatility`.
+  - `cross_exchange_arbitrage` – capability `cross_exchange`; klasy ryzyka: `arbitrage`, `liquidity`; wymagane dane: `order_book`, `latency_monitoring`.
+  - **`scalping`** – capability `scalping`; klasy ryzyka: `intraday`, `scalping`; wymagane dane: `ohlcv`, `order_book`.
+  - **`options_income`** – capability `options_income`; klasy ryzyka: `derivatives`, `income`; wymagane dane: `options_chain`, `greeks`, `ohlcv`.
+  - **`statistical_arbitrage`** – capability `stat_arbitrage`; klasy ryzyka: `statistical`, `mean_reversion`; wymagane dane: `ohlcv`, `spread_history`.
+  - **`day_trading`** – capability `day_trading`; klasy ryzyka: `intraday`, `momentum`; wymagane dane: `ohlcv`, `technical_indicators`.
 - Definicje w konfiguracji (`core.yaml`) mogą korzystać z ujednoliconego formatu. Każda pozycja musi podać teraz:
   - `license_tier` – minimalny poziom licencji wymagany przez silnik.
   - `capability` – identyfikator modułu licencyjnego weryfikowany przez strażników (np. `trend_d1`).
@@ -60,25 +69,17 @@ strategies:
 
 - Harmonogramy (`multi_strategy_schedulers`) wskazują strategie z katalogu oraz parametry czasowe. Nowe pola:
   - `signal_limits`: ograniczenia liczby sygnałów per strategia/profil (opcjonalnie, konfigurowane przez API) – wpis może być prostą liczbą lub słownikiem z polami `limit`, `reason`, `until`, `duration_seconds`.
-  - `signal_limits`: ograniczenia liczby sygnałów per strategia/profil (opcjonalnie, konfigurowane przez API).
   - `capital_policy`: nazwa (`equal_weight`, `risk_parity`, `volatility_target`, `signal_strength`, `fixed_weight`) lub słownik z polami `name`, `weights`, `label`, `rebalance_seconds`.
   - `allocation_rebalance_seconds`: wymusza minimalny odstęp pomiędzy obliczeniami alokacji (sekundy).
   - `portfolio_governor`: integracja z PortfolioGovernorem (jak dotychczas), rozszerzona o dynamiczne wagi.
 - `MultiStrategyScheduler` obsługuje polityki alokacji kapitału (`CapitalAllocationPolicy`). Domyślnie stosowana jest wariacja risk-parity (`RiskParityAllocation`), można ją nadpisać przy konstrukcji schedulera lub w konfiguracji YAML. Implementacje dostępne są w module `bot_core.runtime.capital_policies` i mogą być niezależnie wykorzystywane w innych komponentach.
 - Scheduler loguje każde odświeżenie wag (`Capital allocator ... weights: ...`) oraz decyzje PortfolioGovernora, w tym nowe limity sygnałów.
-- API runtime udostępnia `MultiStrategyScheduler.set_capital_policy(...)`, `replace_capital_policy(...)` oraz `rebalance_capital(...)`,
-  dzięki czemu można dynamicznie podmienić politykę kapitału, wymusić przeliczenie wag (z pominięciem cool-downu) oraz
-  wyzwolić natychmiastowe logowanie udziałów.
-  Aktualny stan wag można odczytać metodą `allocation_snapshot()` lub pełną migawkę (surowe/wygładzone/profilowe) przez
-  `capital_allocation_state()`.
 - `capital_policy_diagnostics()` udostępnia ostatnie metadane polityki kapitału (np. kary `DrawdownAdaptiveAllocation`, flagę
   `profile_floor_adjustment` oraz surowe/wygładzone wagi z wrappera `SmoothedCapitalAllocationPolicy`).
 - `configure_signal_limit(...)` pozwala dynamicznie ustawić limit sygnałów dla pary strategia/profil (z opcjonalnym powodem, czasem trwania lub konkretną datą wygaśnięcia), a `signal_limit_snapshot()` zwraca aktualną migawkę override’ów wraz z metadanymi (`limit`, `reason`, `expires_at`, `remaining_seconds`, `active`) wykorzystywaną przez CLI oraz eksport JSON. Wygasające override’y są automatycznie logowane i natychmiast odświeżają aktywny limit harmonogramu, dzięki czemu liczba sygnałów wraca do wartości bazowej bez czekania na kolejne uruchomienie pętli.
 - `describe_schedules()` zwraca aktualną konfigurację i stan wszystkich harmonogramów (strategie, profile ryzyka, limity sygnałów,
   wagi alokatora, aktywne zawieszenia i ostatnie uruchomienia) – wykorzystywane przez CLI do inspekcji konfiguracji.
 - `set_allocation_rebalance_seconds(...)` pozwala dynamicznie nadpisać interwał przeliczeń alokacji – zarówno z kodu, jak i z CLI (`--apply-policy-interval`, `--set-allocation-interval`).
-- W przypadku polityki `RiskProfileBudgetAllocation` można odpytać `profile_allocation_snapshot()` i flagę `floor_adjustment_applied`,
-  a scheduler publikuje również metrykę `allocator_profile_weight` dla każdego harmonogramu oraz dodatkowy log z udziałami profili.
 - Scheduler pozwala na dynamiczne wstrzymanie harmonogramów i całych grup tagów:
   - `suspend_schedule(name, reason=..., duration_seconds=.../until=...)` natychmiast blokuje wykonywanie pojedynczego harmonogramu,
     raportując metryki `suspended`, `suspension_remaining_seconds`, `suspension_tag_indicator` oraz zerując liczbę sygnałów.
@@ -95,9 +96,10 @@ strategies:
   - Analogicznie można zadeklarować startowe nadpisania limitów sygnałów (`initial_signal_limits`) dla par strategia/profil ryzyka;
     wartości zostaną zapisane w schedulerze przed pierwszym uruchomieniem i pojawią się w migawce `signal_limit_snapshot()` oraz
     eksporcie CLI.
-- API runtime udostępnia `MultiStrategyScheduler.set_capital_policy(...)` oraz `replace_capital_policy(...)`,
-  dzięki czemu można dynamicznie podmienić politykę kapitału (np. po zmianie konfiguracji YAML lub interwencji operatora).
-  Aktualny stan wag można odczytać metodą `allocation_snapshot()`.
+- API runtime udostępnia `MultiStrategyScheduler.set_capital_policy(...)`, `replace_capital_policy(...)` oraz `rebalance_capital(...)`,
+  dzięki czemu można dynamicznie podmienić politykę kapitału (np. po zmianie konfiguracji YAML lub interwencji operatora), wymusić natychmiastowe przeliczenie wag
+  oraz wyzwolić logowanie aktualnego stanu alokacji. Aktualny stan można pobrać metodami `allocation_snapshot()` (wagi) lub
+  `capital_allocation_state()` (pełna migawka surowa/wygładzona/profilowa).
 - W przypadku polityki `RiskProfileBudgetAllocation` można odpytać `profile_allocation_snapshot()` i flagę `floor_adjustment_applied`,
   a scheduler publikuje również metrykę `allocator_profile_weight` dla każdego harmonogramu oraz dodatkowy log z udziałami profili.
 
