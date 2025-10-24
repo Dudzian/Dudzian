@@ -1873,6 +1873,7 @@ def show_strategy_catalog(args: argparse.Namespace) -> int:
     definitions: list[Mapping[str, object]] = []
     config_path = getattr(args, "config", None)
     scheduler_name = getattr(args, "scheduler", None)
+    plan_summary: Mapping[str, object] | None = None
     if config_path:
         try:
             core_config = load_core_config(config_path)
@@ -1887,6 +1888,7 @@ def show_strategy_catalog(args: argparse.Namespace) -> int:
                     include_strategy_definitions=True,
                     only_scheduler_definitions=True,
                 )
+                plan_summary = plan
                 definitions = plan.get("strategies", [])  # type: ignore[assignment]
             except Exception as exc:  # pragma: no cover - walidacja konfiguracji
                 raise CLIUsageError(str(exc)) from exc
@@ -1917,6 +1919,109 @@ def show_strategy_catalog(args: argparse.Namespace) -> int:
         if scheduler_name:
             payload["scheduler"] = scheduler_name
         payload["definitions"] = definitions
+        blocked_schedules: list[str] = []
+        blocked_strategies: list[str] = []
+        blocked_capabilities: dict[str, str] = {}
+        blocked_schedule_capabilities: dict[str, str] = {}
+        blocked_initial_limits: dict[str, list[str]] = {}
+        blocked_signal_limits: dict[str, list[str]] = {}
+        blocked_initial_limit_capabilities: dict[str, str] = {}
+        blocked_signal_limit_capabilities: dict[str, str] = {}
+        blocked_suspensions: list[dict[str, object]] = []
+        blocked_suspension_capabilities: dict[str, str] = {}
+
+        if plan_summary:
+            blocked_schedules = [
+                str(item)
+                for item in plan_summary.get("blocked_schedules", [])
+                if str(item).strip()
+            ]
+            blocked_strategies = [
+                str(item)
+                for item in plan_summary.get("blocked_strategies", [])
+                if str(item).strip()
+            ]
+            blocked_capabilities = {
+                str(strategy): str(capability)
+                for strategy, capability in plan_summary.get(
+                    "blocked_capabilities", {}
+                ).items()
+                if str(strategy).strip() and str(capability).strip()
+            }
+            blocked_schedule_capabilities = {
+                str(schedule): str(capability)
+                for schedule, capability in plan_summary.get(
+                    "blocked_schedule_capabilities", {}
+                ).items()
+                if str(schedule).strip() and str(capability).strip()
+            }
+            blocked_initial_limits = {
+                str(strategy): [str(profile) for profile in profiles]
+                for strategy, profiles in plan_summary.get(
+                    "blocked_initial_signal_limits", {}
+                ).items()
+                if str(strategy).strip()
+            }
+            blocked_initial_limit_capabilities = {
+                str(strategy): str(capability)
+                for strategy, capability in plan_summary.get(
+                    "blocked_initial_signal_limit_capabilities", {}
+                ).items()
+                if str(strategy).strip() and str(capability).strip()
+            }
+            blocked_signal_limits = {
+                str(strategy): [str(profile) for profile in profiles]
+                for strategy, profiles in plan_summary.get("blocked_signal_limits", {}).items()
+                if str(strategy).strip()
+            }
+            blocked_signal_limit_capabilities = {
+                str(strategy): str(capability)
+                for strategy, capability in plan_summary.get(
+                    "blocked_signal_limit_capabilities", {}
+                ).items()
+                if str(strategy).strip() and str(capability).strip()
+            }
+            blocked_suspensions = [
+                {
+                    key: value
+                    for key, value in entry.items()
+                    if key and (value not in (None, ""))
+                }
+                for entry in plan_summary.get("blocked_suspensions", [])
+            ]
+            blocked_suspension_capabilities = {
+                str(entry_key): str(capability)
+                for entry_key, capability in plan_summary.get(
+                    "blocked_suspension_capabilities", {}
+                ).items()
+                if str(entry_key).strip() and str(capability).strip()
+            }
+            if blocked_schedules:
+                payload["blocked_schedules"] = blocked_schedules
+            if blocked_strategies:
+                payload["blocked_strategies"] = blocked_strategies
+            if blocked_capabilities:
+                payload["blocked_capabilities"] = blocked_capabilities
+            if blocked_schedule_capabilities:
+                payload["blocked_schedule_capabilities"] = blocked_schedule_capabilities
+            if blocked_initial_limits:
+                payload["blocked_initial_signal_limits"] = blocked_initial_limits
+            if blocked_initial_limit_capabilities:
+                payload["blocked_initial_signal_limit_capabilities"] = (
+                    blocked_initial_limit_capabilities
+                )
+            if blocked_signal_limits:
+                payload["blocked_signal_limits"] = blocked_signal_limits
+            if blocked_signal_limit_capabilities:
+                payload["blocked_signal_limit_capabilities"] = (
+                    blocked_signal_limit_capabilities
+                )
+            if blocked_suspensions:
+                payload["blocked_suspensions"] = blocked_suspensions
+            if blocked_suspension_capabilities:
+                payload["blocked_suspension_capabilities"] = (
+                    blocked_suspension_capabilities
+                )
 
     if output_format in {"json", "json-pretty"}:
         json_kwargs: dict[str, object] = {"ensure_ascii": False}
@@ -1975,6 +2080,59 @@ def show_strategy_catalog(args: argparse.Namespace) -> int:
                         tags=tags,
                     )
                 )
+        if plan_summary and (
+            blocked_schedules
+            or blocked_strategies
+            or blocked_initial_limits
+            or blocked_signal_limits
+            or blocked_suspensions
+        ):
+                print()
+                print("Pominięte przez strażnika licencji:")
+                if blocked_schedules:
+                    print("  Harmonogramy (zablokowana licencja):")
+                    for name in blocked_schedules:
+                        capability = blocked_schedule_capabilities.get(name)
+                        extra = f" (capability: {capability})" if capability else ""
+                        print(f"    - {name}{extra}")
+                if blocked_strategies:
+                    print("  Strategie (zablokowana licencja):")
+                    for name in blocked_strategies:
+                        capability = blocked_capabilities.get(name)
+                        extra = f" (capability: {capability})" if capability else ""
+                        print(f"    - {name}{extra}")
+                if blocked_initial_limits:
+                    print("  Limity sygnałów (początkowe, zablokowane licencją):")
+                    for strategy, profiles in sorted(blocked_initial_limits.items()):
+                        formatted = ", ".join(sorted(filter(None, profiles))) or "-"
+                        capability = blocked_initial_limit_capabilities.get(strategy)
+                        extra = f" (capability: {capability})" if capability else ""
+                        print(f"    - {strategy}{extra}: {formatted}")
+                if blocked_signal_limits:
+                    print("  Limity sygnałów (zablokowane licencją):")
+                    for strategy, profiles in sorted(blocked_signal_limits.items()):
+                        formatted = ", ".join(sorted(filter(None, profiles))) or "-"
+                        capability = blocked_signal_limit_capabilities.get(strategy)
+                        extra = f" (capability: {capability})" if capability else ""
+                        print(f"    - {strategy}{extra}: {formatted}")
+                if blocked_suspensions:
+                    print("  Zawieszenia (zablokowana licencja):")
+                    for entry in blocked_suspensions:
+                        target = entry.get("target") or "-"
+                        kind = entry.get("kind") or "schedule"
+                        reason = entry.get("reason")
+                        capability = entry.get("capability") or (
+                            blocked_suspension_capabilities.get(f"{kind}:{target}")
+                            if target
+                            else None
+                        )
+                        extras = []
+                        if capability:
+                            extras.append(f"capability: {capability}")
+                        if reason:
+                            extras.append(f"powód: {reason}")
+                        suffix = f" ({', '.join(extras)})" if extras else ""
+                        print(f"    - {kind}:{target}{suffix}")
     return 0
 
 
@@ -1991,6 +2149,66 @@ def show_scheduler_plan(args: argparse.Namespace) -> int:
         )
     except Exception as exc:  # pragma: no cover - walidacja konfiguracji
         raise CLIUsageError(str(exc)) from exc
+
+    blocked_schedules = [
+        str(item)
+        for item in plan.get("blocked_schedules", [])
+        if str(item).strip()
+    ]
+    blocked_strategies = [
+        str(item)
+        for item in plan.get("blocked_strategies", [])
+        if str(item).strip()
+    ]
+    blocked_capabilities = {
+        str(strategy): str(capability)
+        for strategy, capability in plan.get("blocked_capabilities", {}).items()
+        if str(strategy).strip() and str(capability).strip()
+    }
+    blocked_schedule_capabilities = {
+        str(schedule): str(capability)
+        for schedule, capability in plan.get("blocked_schedule_capabilities", {}).items()
+        if str(schedule).strip() and str(capability).strip()
+    }
+    blocked_initial_limits = {
+        str(strategy): [str(profile) for profile in profiles]
+        for strategy, profiles in plan.get("blocked_initial_signal_limits", {}).items()
+        if str(strategy).strip()
+    }
+    blocked_initial_limit_capabilities = {
+        str(strategy): str(capability)
+        for strategy, capability in plan.get(
+            "blocked_initial_signal_limit_capabilities", {}
+        ).items()
+        if str(strategy).strip() and str(capability).strip()
+    }
+    blocked_signal_limits = {
+        str(strategy): [str(profile) for profile in profiles]
+        for strategy, profiles in plan.get("blocked_signal_limits", {}).items()
+        if str(strategy).strip()
+    }
+    blocked_signal_limit_capabilities = {
+        str(strategy): str(capability)
+        for strategy, capability in plan.get(
+            "blocked_signal_limit_capabilities", {}
+        ).items()
+        if str(strategy).strip() and str(capability).strip()
+    }
+    blocked_suspensions = [
+        {
+            key: value
+            for key, value in entry.items()
+            if key and (value not in (None, ""))
+        }
+        for entry in plan.get("blocked_suspensions", [])
+    ]
+    blocked_suspension_capabilities = {
+        str(entry_key): str(capability)
+        for entry_key, capability in plan.get(
+            "blocked_suspension_capabilities", {}
+        ).items()
+        if str(entry_key).strip() and str(capability).strip()
+    }
 
     filter_tags = {value.strip().lower() for value in getattr(args, "filter_tags", []) if value}
     filter_strategies = {
@@ -2011,6 +2229,8 @@ def show_scheduler_plan(args: argparse.Namespace) -> int:
         schedules.append(entry)
 
     plan["schedules"] = schedules
+    if blocked_suspension_capabilities:
+        plan["blocked_suspension_capabilities"] = blocked_suspension_capabilities
 
     if include_definitions and "strategies" in plan:
         used_strategies = {entry.get("strategy") for entry in schedules}
@@ -2091,6 +2311,60 @@ def show_scheduler_plan(args: argparse.Namespace) -> int:
         for strategy_name, profiles in plan["signal_limits"].items():
             for profile, payload in profiles.items():
                 print(f"  * {strategy_name}/{profile}: limit={payload.get('limit')}")
+
+    if (
+        blocked_schedules
+        or blocked_strategies
+        or blocked_initial_limits
+        or blocked_signal_limits
+        or blocked_suspensions
+    ):
+        print()
+        print("Pominięte przez strażnika licencji:")
+        if blocked_schedules:
+            print("  Harmonogramy (zablokowana licencja):")
+            for name in blocked_schedules:
+                capability = blocked_schedule_capabilities.get(name)
+                extra = f" (capability: {capability})" if capability else ""
+                print(f"    - {name}{extra}")
+        if blocked_strategies:
+            print("  Strategie (zablokowana licencja):")
+            for name in blocked_strategies:
+                capability = blocked_capabilities.get(name)
+                extra = f" (capability: {capability})" if capability else ""
+                print(f"    - {name}{extra}")
+        if blocked_initial_limits:
+            print("  Limity sygnałów (początkowe, zablokowane licencją):")
+            for strategy, profiles in sorted(blocked_initial_limits.items()):
+                formatted = ", ".join(sorted(filter(None, profiles))) or "-"
+                capability = blocked_initial_limit_capabilities.get(strategy)
+                extra = f" (capability: {capability})" if capability else ""
+                print(f"    - {strategy}{extra}: {formatted}")
+        if blocked_signal_limits:
+            print("  Limity sygnałów (zablokowane licencją):")
+            for strategy, profiles in sorted(blocked_signal_limits.items()):
+                formatted = ", ".join(sorted(filter(None, profiles))) or "-"
+                capability = blocked_signal_limit_capabilities.get(strategy)
+                extra = f" (capability: {capability})" if capability else ""
+                print(f"    - {strategy}{extra}: {formatted}")
+        if blocked_suspensions:
+            print("  Zawieszenia (zablokowana licencja):")
+            for entry in blocked_suspensions:
+                target = entry.get("target") or "-"
+                kind = entry.get("kind") or "schedule"
+                reason = entry.get("reason")
+                capability = entry.get("capability") or (
+                    blocked_suspension_capabilities.get(f"{kind}:{target}")
+                    if target
+                    else None
+                )
+                extras = []
+                if capability:
+                    extras.append(f"capability: {capability}")
+                if reason:
+                    extras.append(f"powód: {reason}")
+                suffix = f" ({', '.join(extras)})" if extras else ""
+                print(f"    - {kind}:{target}{suffix}")
 
     return 0
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from collections import deque
 from dataclasses import dataclass
-from typing import Deque, Dict, List, Sequence
+from typing import Any, Deque, Dict, List, Mapping, Sequence
 
 from bot_core.strategies.base import MarketSnapshot, StrategyEngine, StrategySignal
 
@@ -16,6 +16,33 @@ class StatisticalArbitrageSettings:
     spread_entry_z: float = 2.0
     spread_exit_z: float = 0.5
     max_notional: float = 25_000.0
+
+    def __post_init__(self) -> None:
+        if int(self.lookback) < 10:
+            raise ValueError("lookback must be at least 10 periods")
+        self.lookback = int(self.lookback)
+        self.spread_entry_z = float(self.spread_entry_z)
+        self.spread_exit_z = float(self.spread_exit_z)
+        if self.spread_entry_z <= 0:
+            raise ValueError("spread_entry_z must be positive")
+        if not 0 < self.spread_exit_z < self.spread_entry_z:
+            raise ValueError("spread_exit_z must be positive and lower than entry threshold")
+        self.max_notional = float(self.max_notional)
+        if self.max_notional <= 0:
+            raise ValueError("max_notional must be positive")
+
+    @classmethod
+    def from_parameters(
+        cls, parameters: Mapping[str, Any] | None = None
+    ) -> "StatisticalArbitrageSettings":
+        params = dict(parameters or {})
+        defaults = cls()
+        return cls(
+            lookback=int(params.get("lookback", defaults.lookback)),
+            spread_entry_z=float(params.get("spread_entry_z", defaults.spread_entry_z)),
+            spread_exit_z=float(params.get("spread_exit_z", defaults.spread_exit_z)),
+            max_notional=float(params.get("max_notional", defaults.max_notional)),
+        )
 
 
 @dataclass(slots=True)

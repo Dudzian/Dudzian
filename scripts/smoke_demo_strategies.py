@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping, MutableMapping, Sequence
@@ -11,17 +12,10 @@ from bot_core.config.loader import load_core_config
 from bot_core.data.backtest_library import BacktestDatasetLibrary
 from bot_core.runtime.journal import InMemoryTradingDecisionJournal
 from bot_core.runtime.multi_strategy_scheduler import MultiStrategyScheduler, StrategyDataFeed
-from bot_core.runtime.pipeline import InMemoryStrategySignalSink
+from bot_core.runtime.pipeline import InMemoryStrategySignalSink, _collect_strategy_definitions
+from bot_core.security.guards import LicenseCapabilityError
 from bot_core.strategies.base import MarketSnapshot, StrategyEngine
-from bot_core.strategies.cross_exchange_arbitrage import (
-    CrossExchangeArbitrageSettings,
-    CrossExchangeArbitrageStrategy,
-)
-from bot_core.strategies.mean_reversion import MeanReversionSettings, MeanReversionStrategy
-from bot_core.strategies.volatility_target import (
-    VolatilityTargetSettings,
-    VolatilityTargetStrategy,
-)
+from bot_core.strategies.catalog import DEFAULT_STRATEGY_CATALOG
 
 
 @dataclass(slots=True)
@@ -31,6 +25,9 @@ class SmokeResult:
     cycles: int
     telemetry: Mapping[str, Mapping[str, float]]
     emitted_signals: Mapping[str, int]
+
+
+LOGGER = logging.getLogger(__name__)
 
 
 class _ReplayFeed(StrategyDataFeed):
@@ -54,40 +51,27 @@ class _ReplayFeed(StrategyDataFeed):
 
 
 def _instantiate_strategies(core_config) -> Mapping[str, StrategyEngine]:
+    catalog = DEFAULT_STRATEGY_CATALOG
+    definitions = _collect_strategy_definitions(core_config)
     registry: dict[str, StrategyEngine] = {}
-    for name, cfg in getattr(core_config, "mean_reversion_strategies", {}).items():
-        registry[name] = MeanReversionStrategy(
-            MeanReversionSettings(
-                lookback=cfg.lookback,
-                entry_zscore=cfg.entry_zscore,
-                exit_zscore=cfg.exit_zscore,
-                max_holding_period=cfg.max_holding_period,
-                volatility_cap=cfg.volatility_cap,
-                min_volume_usd=cfg.min_volume_usd,
-            )
-        )
-    for name, cfg in getattr(core_config, "volatility_target_strategies", {}).items():
-        registry[name] = VolatilityTargetStrategy(
-            VolatilityTargetSettings(
-                target_volatility=cfg.target_volatility,
-                lookback=cfg.lookback,
-                rebalance_threshold=cfg.rebalance_threshold,
-                min_allocation=cfg.min_allocation,
-                max_allocation=cfg.max_allocation,
-                floor_volatility=cfg.floor_volatility,
-            )
-        )
-    for name, cfg in getattr(core_config, "cross_exchange_arbitrage_strategies", {}).items():
-        registry[name] = CrossExchangeArbitrageStrategy(
-            CrossExchangeArbitrageSettings(
-                primary_exchange=cfg.primary_exchange,
-                secondary_exchange=cfg.secondary_exchange,
-                spread_entry=cfg.spread_entry,
-                spread_exit=cfg.spread_exit,
-                max_notional=cfg.max_notional,
-                max_open_seconds=cfg.max_open_seconds,
-            )
-        )
+    for name, definition in definitions.items():
+        try:
+            registry[name] = catalog.create(definition)
+        except LicenseCapabilityError as exc:
+            try:
+                spec = catalog.get(definition.engine)
+                capability = spec.capability
+            except KeyError:
+                capability = None
+            if capability:
+                LOGGER.warning(
+                    "Pomijam strategię %s – capability %s zablokowana: %s",
+                    name,
+                    capability,
+                    exc,
+                )
+            else:
+                LOGGER.warning("Pomijam strategię %s – zablokowana licencja: %s", name, exc)
     return registry
 
 
@@ -99,6 +83,14 @@ def _resolve_dataset_name(strategy_name: str) -> str:
         return "volatility_target"
     if "cross_exchange" in lowered:
         return "cross_exchange_arbitrage"
+    if "scalping" in lowered:
+        return "mean_reversion"
+    if "day_trading" in lowered or "intraday" in lowered:
+        return "mean_reversion"
+    if "options" in lowered:
+        return "volatility_target"
+    if "statistical" in lowered or "pairs" in lowered:
+        return "mean_reversion"
     raise KeyError(f"Brak zmapowanego datasetu dla strategii {strategy_name}")
 
 
