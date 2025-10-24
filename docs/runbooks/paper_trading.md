@@ -173,6 +173,11 @@ Jeśli potrzebujesz analizować dynamikę guardrail w czasie (np. ile blokad poj
 2. Zweryfikuj, czy manifest SQLite zaktualizował ostatni timestamp (`python scripts/inspect_manifest.py`).
 3. Jeśli brak reakcji, sprawdź status API giełdy (Binance status page). W razie globalnej awarii odnotuj incydent i zawieś strategię.
 
+### Fallback presetów StrategyRegimeWorkflow
+1. W `logs/runtime/paper_binance.log` oraz telemetrii `EventType.SIGNAL` sprawdź sekcję `metadata.activation` – zawiera hash presetu (`preset_hash`), sygnaturę HMAC oraz flagi `used_fallback` i `license_issues` emitowane przez `StrategyRegimeWorkflow`.
+2. Jeżeli `used_fallback=True` lub `license_issues` nie jest puste, wstrzymaj handel i wykonaj procedurę diagnostyczną: brakujące dane (`missing_data`) uzupełnij backfillem, a blokady licencji eskaluj zgodnie z `docs/runbooks/operations/strategy_incident_playbook.md`.
+3. Po korekcie konfiguracji/presetu uruchom `python scripts/show_regime_status.py --environment paper_binance`, aby potwierdzić, że aktywny preset ma `used_fallback=False` oraz aktualne metadane (hash, podpis) zgodne z rejestrem `StrategyPresetWizard`.
+
 ### Rotacja kluczy API
 1. Uruchom `python scripts/check_key_rotation.py --environment paper_binance --update` po wprowadzeniu nowych kluczy w keychainie.
 2. Potwierdź działanie przez `PYTHONPATH=. python scripts/run_daily_trend.py --mode dry-run`.

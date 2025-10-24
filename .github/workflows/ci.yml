@@ -154,3 +154,48 @@ jobs:
         with:
           name: coverage-runner-smoke
           path: violation.json
+
+  ui-packaging:
+    name: UI Packaging
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux
+          - os: windows-latest
+            platform: windows
+          - os: macos-latest
+            platform: macos
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v3
+        with:
+          version: 6.5.3
+          modules: qtcharts qtquickcontrols2 qtdeclarative
+
+      - name: Build Qt bundle
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          python scripts/packaging/qt_bundle.py \
+            --platform ${{ matrix.platform }} \
+            --build-dir ui/build-${{ matrix.platform }} \
+            --install-dir ui/install-${{ matrix.platform }} \
+            --artifact-dir artifacts/ui/${{ matrix.platform }}
+
+      - name: Upload UI bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-${{ matrix.platform }}
+          path: artifacts/ui/${{ matrix.platform }}
