@@ -36,6 +36,9 @@ void PerformanceTelemetryController::setFrameRateMonitor(FrameRateMonitor* monit
     m_monitor = monitor;
     if (m_monitor) {
         connect(m_monitor, &FrameRateMonitor::frameSampled, this, &PerformanceTelemetryController::handleFrameSample);
+    } else {
+        m_publishTimer.stop();
+        m_hasPendingFps = false;
     }
 }
 

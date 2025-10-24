@@ -28,6 +28,8 @@ private:
     void publishSnapshot(double fps);
     void publishPendingSnapshot();
 
+    void ensurePublishTimer();
+
     QPointer<FrameRateMonitor>  m_monitor;
     QPointer<UiTelemetryReporter> m_uiReporter;
     TelemetryReporter*          m_reporter = nullptr;
