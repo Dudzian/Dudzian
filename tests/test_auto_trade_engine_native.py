@@ -38,6 +38,18 @@ def _make_sync_adapter() -> EmitterAdapter:
     return adapter
 
 
+def _collect_status_payloads(adapter: EmitterAdapter) -> list[dict]:
+    payloads: list[dict] = []
+
+    def _collect(evt_or_batch):
+        batch = evt_or_batch if isinstance(evt_or_batch, list) else [evt_or_batch]
+        for evt in batch:
+            payloads.append(evt.payload)
+
+    adapter.subscribe(EventType.AUTOTRADE_STATUS, _collect)
+    return payloads
+
+
 def test_auto_trade_engine_generates_orders_and_signals(monkeypatch) -> None:
     adapter = _make_sync_adapter()
     orders: list[tuple[str, float]] = []
@@ -443,3 +455,110 @@ def test_auto_risk_freeze_sync_state(monkeypatch) -> None:
     assert engine._auto_risk_frozen is False
     assert engine._risk_frozen_until == 0.0
     assert statuses[-1]["status"] == "auto_risk_unfreeze"
+
+
+def test_auto_trade_snapshot_exposes_read_only_state(monkeypatch) -> None:
+    adapter = _make_sync_adapter()
+    orders: list[tuple[str, float]] = []
+
+    catalog = StrategyCatalog(plugins=(_ConstantTrendStrategy, _ConstantMeanStrategy))
+    base_params = TradingParameters()
+    decision_params = replace(
+        base_params,
+        ema_fast_period=5,
+        ema_slow_period=11,
+        ensemble_weights={"trend_following": 0.3, "mean_reversion": 0.7},
+        day_trading_momentum_window=6,
+        day_trading_volatility_window=9,
+    )
+    assessment = MarketRegimeAssessment(
+        regime=MarketRegime.TREND,
+        confidence=0.61,
+        risk_score=0.42,
+        metrics={},
+        symbol="BTCUSDT",
+    )
+    decision = RegimeSwitchDecision(
+        regime=assessment.regime,
+        assessment=assessment,
+        summary=None,
+        weights=dict(decision_params.ensemble_weights),
+        parameters=decision_params,
+        timestamp=pd.Timestamp.utcnow(),
+    )
+    workflow = _WorkflowStub(decision, catalog)
+
+    cfg = AutoTradeConfig(
+        symbol="BTCUSDT",
+        qty=0.4,
+        activation_threshold=0.1,
+        regime_window=10,
+        breakout_window=4,
+        mean_reversion_window=4,
+    )
+    engine = AutoTradeEngine(
+        adapter,
+        lambda side, qty: orders.append((side, qty)),
+        cfg,
+        strategy_catalog=catalog,
+        regime_workflow=workflow,
+    )
+    engine.apply_params({"fast": 4, "slow": 9})
+
+    base_time = 1_700_400_000.0
+    current_time = {"value": base_time}
+
+    def fake_time() -> float:
+        return current_time["value"]
+
+    monkeypatch.setattr("bot_core.trading.auto_trade.time.time", fake_time)
+    monkeypatch.setattr("bot_core.events.emitter.time.time", fake_time)
+
+    for idx in range(24):
+        price = 200.0 + idx * 0.3
+        bar = {
+            "open_time": float(idx),
+            "close": price,
+            "high": price * 1.001,
+            "low": price * 0.999,
+            "volume": 1800.0 + idx,
+        }
+        current_time["value"] = base_time + idx
+        adapter.publish(EventType.MARKET_TICK, {"symbol": "BTCUSDT", "bar": bar})
+
+    adapter.publish(EventType.RISK_ALERT, {"symbol": "BTCUSDT", "kind": "stress"})
+
+    engine._auto_risk_frozen = True
+    engine._auto_risk_frozen_until = base_time + 600
+    engine._auto_risk_state.risk_level = RiskLevel.CRITICAL
+    engine._auto_risk_state.risk_score = 0.87
+    engine._auto_risk_state.triggered_at = base_time
+    engine._auto_risk_state.last_extension_at = base_time + 30
+    current_time["value"] = base_time + 60
+
+    snapshot = engine.snapshot()
+
+    assert isinstance(snapshot, AutoTradeSnapshot)
+    assert snapshot.symbol == cfg.symbol
+    assert snapshot.enabled is True
+    assert snapshot.trading_parameters == decision_params
+    assert snapshot.strategy_weights == decision_params.ensemble_weights
+    assert isinstance(snapshot.risk, RiskFreezeSnapshot)
+    assert snapshot.risk.manual_active is True
+    assert snapshot.risk.manual_reason == "stress"
+    assert snapshot.risk.auto_active is True
+    assert snapshot.risk.auto_risk_level is RiskLevel.CRITICAL
+    assert snapshot.regime_decision == decision
+    assert snapshot.regime_thresholds == workflow.history.thresholds_snapshot()
+    overrides = snapshot.regime_parameter_overrides
+    assert MarketRegime.TREND.value in overrides
+    assert overrides[MarketRegime.TREND.value]["day_trading_momentum_window"] == cfg.breakout_window
+    assert {entry["name"] for entry in snapshot.strategy_catalog} == {
+        "trend_following",
+        "mean_reversion",
+    }
+
+    snapshot.strategy_weights["trend_following"] = 0.0
+    refreshed = engine.snapshot()
+    assert refreshed.strategy_weights == decision_params.ensemble_weights
+    assert refreshed.risk.combined_until >= snapshot.risk.combined_until

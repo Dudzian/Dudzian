@@ -72,6 +72,7 @@ class AutoTradeConfig:
     auto_risk_freeze: bool = True
     auto_risk_freeze_level: RiskLevel | str = RiskLevel.CRITICAL
     auto_risk_freeze_score: float = 0.8
+    regime_parameter_overrides: Mapping[str, Mapping[str, float | int]] | None = None
 
     def __post_init__(self) -> None:
         if self.default_params is None:
@@ -126,6 +127,29 @@ class AutoTradeConfig:
         self.auto_risk_freeze_score = float(self.auto_risk_freeze_score)
         if not (0.0 <= self.auto_risk_freeze_score <= 1.0):
             raise ValueError("auto_risk_freeze_score must be in the [0, 1] range")
+        if self.regime_parameter_overrides is None:
+            self.regime_parameter_overrides = {}
+        else:
+            cleaned: Dict[str, Dict[str, float | int]] = {}
+            for regime_key, payload in self.regime_parameter_overrides.items():
+                normalised: Dict[str, float | int] = {}
+                for key, value in payload.items():
+                    if isinstance(value, bool):
+                        continue
+                    if isinstance(value, int):
+                        normalised[str(key)] = int(value)
+                        continue
+                    if isinstance(value, float):
+                        normalised[str(key)] = float(value)
+                        continue
+                    try:
+                        coerced = float(value)
+                    except (TypeError, ValueError):
+                        continue
+                    normalised[str(key)] = coerced
+                if normalised:
+                    cleaned[str(regime_key)] = normalised
+            self.regime_parameter_overrides = cleaned
 
 
 class AutoTradeEngine:
@@ -252,6 +276,35 @@ class AutoTradeEngine:
             "params_applied",
             detail={"symbol": self.cfg.symbol, "params": self._params},
         )
+
+    def freeze_risk(
+        self,
+        duration: float | int | None = None,
+        *,
+        reason: str | None = "manual",
+    ) -> None:
+        """Zainicjuj ręczne zamrożenie ryzyka na określony czas."""
+
+        seconds = float(duration if duration is not None else self.cfg.risk_freeze_seconds)
+        if seconds <= 0:
+            raise ValueError("duration must be positive")
+        now = time.time()
+        expiry = now + seconds
+        self._apply_manual_risk_freeze(
+            reason=str(reason or "manual"),
+            expiry=expiry,
+            now=now,
+            source="manual",
+        )
+        self._recompute_risk_freeze_until()
+
+    def unfreeze_risk(self, *, reason: str | None = None) -> None:
+        """Odblokuj ręczne zamrożenie ryzyka, jeżeli jest aktywne."""
+
+        now = time.time()
+        released = self._clear_manual_risk_freeze(now=now, source=reason or "manual")
+        if released:
+            self._recompute_risk_freeze_until()
 
     @staticmethod
     def _normalize_strategy_config(
@@ -560,6 +613,78 @@ class AutoTradeEngine:
             self._last_regime = None
             self._last_summary = None
 
+    def configure_strategy_weights(
+        self,
+        overrides: Mapping[MarketRegime | str, Mapping[str, float]],
+        *,
+        replace: bool = False,
+    ) -> None:
+        """Zaktualizuj domyślne wagi strategii używane przez silnik i workflow."""
+
+        if not overrides:
+            return
+        normalised = self._normalize_strategy_config(overrides)
+        if not normalised:
+            return
+
+        current = {
+            regime: dict(weights)
+            for regime, weights in self._strategy_weights.weights.items()
+        }
+        for regime, payload in normalised.items():
+            if replace:
+                current[regime] = {str(name): float(value) for name, value in payload.items()}
+            else:
+                regime_weights = dict(current.get(regime, {}))
+                regime_weights.update({str(name): float(value) for name, value in payload.items()})
+                current[regime] = regime_weights
+
+        self._strategy_weights = RegimeStrategyWeights(weights=current)
+        self.cfg.strategy_weights = {
+            regime.value: dict(weights) for regime, weights in current.items()
+        }
+
+        workflow = getattr(self, "_regime_workflow", None)
+        update = getattr(workflow, "update_default_weights", None)
+        if callable(update):
+            update(normalised, replace=replace)
+
+    def configure_parameter_overrides(
+        self,
+        overrides: Mapping[MarketRegime | str, Mapping[str, float | int]],
+        *,
+        replace: bool = False,
+    ) -> None:
+        """Zmień domyślne nadpisania parametrów używane przez silnik i workflow."""
+
+        if not overrides:
+            return
+        normalised = self._normalize_parameter_config(overrides)
+        if not normalised:
+            return
+
+        current = {
+            regime: dict(values)
+            for regime, values in self._parameter_overrides.items()
+        }
+        for regime, payload in normalised.items():
+            if replace:
+                current[regime] = {str(name): value for name, value in payload.items()}
+            else:
+                regime_overrides = dict(current.get(regime, {}))
+                regime_overrides.update({str(name): value for name, value in payload.items()})
+                current[regime] = regime_overrides
+
+        self._parameter_overrides = current
+        self.cfg.regime_parameter_overrides = {
+            regime.value: dict(values) for regime, values in current.items()
+        }
+
+        workflow = getattr(self, "_regime_workflow", None)
+        update = getattr(workflow, "update_parameter_overrides", None)
+        if callable(update):
+            update(current, replace=replace)
+
     def _on_wfo_status_batch(self, events: List[Event]) -> None:
         for ev in events:
             st = ev.payload.get("status") if ev.payload else None
@@ -580,57 +705,13 @@ class AutoTradeEngine:
                 continue
             expiry = now + self.cfg.risk_freeze_seconds
             reason_code = str(payload.get("kind") or "risk_alert")
-            manual_active = now < self._manual_risk_frozen_until
-            previous_until = self._manual_risk_frozen_until if manual_active else 0.0
-            if not manual_active:
-                self._manual_risk_state = _ManualRiskFreezeState(
-                    reason=reason_code,
-                    triggered_at=now,
-                    last_extension_at=now,
-                )
-                self._manual_risk_frozen_until = float(expiry)
-                detail = {
-                    "symbol": self.cfg.symbol,
-                    "until": self._manual_risk_frozen_until,
-                    "reason": reason_code,
-                    "triggered_at": now,
-                    "last_extension_at": now,
-                    "released_at": None,
-                    "frozen_for": None,
-                }
-                self.adapter.push_autotrade_status(  # type: ignore[attr-defined]
-                    "risk_freeze",
-                    detail=detail,
-                    level="WARN",
-                )
-            else:
-                should_extend = expiry > self._manual_risk_frozen_until + 1e-6
-                state = self._manual_risk_state
-                if should_extend and state is not None:
-                    previous_reason = state.reason
-                    state.reason = reason_code
-                    state.last_extension_at = now
-                    self._manual_risk_frozen_until = float(expiry)
-                    extend_detail = {
-                        "symbol": self.cfg.symbol,
-                        "extended_from": previous_until,
-                        "until": self._manual_risk_frozen_until,
-                        "reason": reason_code,
-                        "triggered_at": state.triggered_at or now,
-                        "last_extension_at": state.last_extension_at,
-                        "released_at": None,
-                        "frozen_for": None,
-                    }
-                    if previous_reason and previous_reason != reason_code:
-                        extend_detail["previous_reason"] = previous_reason
-                    self.adapter.push_autotrade_status(  # type: ignore[attr-defined]
-                        "risk_freeze_extend",
-                        detail=extend_detail,
-                        level="WARN",
-                    )
-                elif state is not None:
-                    state.reason = reason_code
-                    state.last_extension_at = now
+            source = str(payload.get("source") or reason_code)
+            self._apply_manual_risk_freeze(
+                reason=reason_code,
+                expiry=float(expiry),
+                now=now,
+                source=source,
+            )
             self._recompute_risk_freeze_until()
 
     def _on_ticks_batch(self, events: List[Event]) -> None:
@@ -878,12 +959,13 @@ class AutoTradeEngine:
         now = time.time()
 
         if self._manual_risk_frozen_until and now >= self._manual_risk_frozen_until:
-            self._manual_risk_frozen_until = 0.0
+            self._clear_manual_risk_freeze(now=now, source="expiry")
 
         auto_until = self._auto_risk_frozen_until if self._auto_risk_frozen else 0.0
         if auto_until and now >= auto_until:
             self._auto_risk_frozen = False
             self._auto_risk_frozen_until = 0.0
+            self._auto_risk_state = _AutoRiskFreezeState()
             self.adapter.push_autotrade_status(  # type: ignore[attr-defined]
                 "auto_risk_unfreeze",
                 detail={"symbol": self.cfg.symbol},
@@ -925,6 +1007,12 @@ class AutoTradeEngine:
                         )
                 self._auto_risk_frozen = True
                 self._auto_risk_frozen_until = max(previous_until, new_expiry)
+                if summary is not None:
+                    if not self._auto_risk_state.triggered_at:
+                        self._auto_risk_state.triggered_at = now
+                    self._auto_risk_state.last_extension_at = now
+                    self._auto_risk_state.risk_level = summary.risk_level
+                    self._auto_risk_state.risk_score = float(summary.risk_score)
 
         self._recompute_risk_freeze_until()
 
@@ -934,11 +1022,13 @@ class AutoTradeEngine:
         if manual_until and now >= manual_until:
             manual_until = 0.0
             self._manual_risk_frozen_until = 0.0
+            self._manual_risk_state = None
         auto_until = self._auto_risk_frozen_until if self._auto_risk_frozen else 0.0
         if auto_until and now >= auto_until:
             auto_until = 0.0
             self._auto_risk_frozen_until = 0.0
             self._auto_risk_frozen = False
+            self._auto_risk_state = _AutoRiskFreezeState()
         self._risk_frozen_until = float(max(manual_until, auto_until, 0.0))
 
     def get_last_regime_assessment(self) -> MarketRegimeAssessment | None:
@@ -962,4 +1052,9 @@ class AutoTradeEngine:
         return self._regime_history.thresholds_snapshot()
 
 
-__all__ = ["AutoTradeConfig", "AutoTradeEngine"]
+__all__ = [
+    "AutoTradeConfig",
+    "AutoTradeEngine",
+    "AutoTradeSnapshot",
+    "RiskFreezeSnapshot",
+]
