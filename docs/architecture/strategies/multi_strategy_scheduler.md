@@ -22,12 +22,25 @@
 
 - Strategia to instancja `StrategyEngine` budowana dynamicznie przez `bot_core.strategies.catalog.StrategyCatalog`.
 - Rejestr domyślny (`DEFAULT_STRATEGY_CATALOG`) obejmuje m.in. silniki: `daily_trend_momentum`, `mean_reversion`, `grid_trading`, `volatility_target`, `cross_exchange_arbitrage`.
-- Definicje w konfiguracji (`core.yaml`) mogą korzystać z ujednoliconego formatu:
+- Definicje w konfiguracji (`core.yaml`) mogą korzystać z ujednoliconego formatu. Każda pozycja musi podać teraz:
+  - `license_tier` – minimalny poziom licencji wymagany przez silnik.
+  - `capability` – identyfikator modułu licencyjnego weryfikowany przez strażników (np. `trend_d1`).
+  - `risk_classes` – sklasyfikowanie ekspozycji strategii (wykorzystywane w raportach katalogu oraz filtrach schedulera).
+  - `required_data` – listę kluczowych źródeł danych niezbędnych do działania strategii (np. `ohlcv`, `order_book`).
+
+Jeżeli `capability`, `license_tier`, `risk_classes` lub `required_data` nie zostaną jawnie podane dla silników z katalogu, loader
+konfiguracji uzupełni je na podstawie metadanych `DEFAULT_STRATEGY_CATALOG` (można je jednak nadpisać dla własnych silników).
+
+Przykład definicji po rozszerzeniu metadanych:
 
 ```yaml
 strategies:
   core_daily_trend:
     engine: daily_trend_momentum
+    license_tier: standard
+    capability: trend_d1
+    risk_classes: [directional, momentum]
+    required_data: [ohlcv, technical_indicators]
     risk_profile: balanced
     tags: [core, trend]
     parameters:

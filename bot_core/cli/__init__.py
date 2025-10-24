@@ -8,8 +8,27 @@ import json
 import os
 import re
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterable, Mapping, Sequence
+
+from bot_core.ai.data_monitoring import (
+    ComplianceSignOffError,
+    collect_pending_compliance_sign_offs,
+    ensure_compliance_sign_offs,
+    filter_audit_reports_since,
+    filter_audit_reports_by_tags,
+    filter_audit_reports_by_sign_off_status,
+    filter_audit_reports_by_status,
+    load_recent_data_quality_reports,
+    load_recent_drift_reports,
+    normalize_compliance_sign_off_roles,
+    normalize_sign_off_status,
+    normalize_report_status,
+    get_supported_sign_off_statuses,
+    summarize_data_quality_reports,
+    summarize_drift_reports,
+)
 
 try:
     import tomllib
@@ -43,6 +62,7 @@ _CREDENTIAL_ALIASES = {
 }
 
 _SUPPORTED_HEALTH_CHECKS = ("public_api", "private_api")
+_SINCE_DURATION_RE = re.compile(r"^(?P<value>\d+)(?P<unit>[smhd])$", re.IGNORECASE)
 
 
 class CLIUsageError(RuntimeError):
@@ -390,6 +410,104 @@ def create_parser() -> argparse.ArgumentParser:
     )
     plan.set_defaults(include_definitions=True)
 
+    compliance = subparsers.add_parser(
+        "ai-compliance",
+        help="Analizuje raporty audytu AI i brakujące podpisy compliance.",
+    )
+    compliance.add_argument(
+        "--audit-root",
+        help="Ścieżka do katalogu audytu AI (domyślnie audit/ai_decision).",
+    )
+    compliance.add_argument(
+        "--limit",
+        type=int,
+        help="Liczba raportów do wczytania dla każdej kategorii (domyślnie 20).",
+    )
+    compliance.add_argument(
+        "--since",
+        help=(
+            "Minimalny znacznik czasu raportów (np. '2024-05-01T00:00Z' lub "
+            "'48h' dla ostatnich 48 godzin)."
+        ),
+    )
+    compliance.add_argument(
+        "--data-quality-category",
+        help=(
+            "Ogranicza raporty data_quality do wskazanej kategorii (np. completeness)."
+        ),
+    )
+    compliance.add_argument(
+        "--include-tag",
+        dest="include_tags",
+        action="append",
+        help=(
+            "Wymusza obecność co najmniej jednego z podanych tagów w raporcie ("
+            "podaj wielokrotnie lub rozdziel przecinkami)."
+        ),
+    )
+    compliance.add_argument(
+        "--exclude-tag",
+        dest="exclude_tags",
+        action="append",
+        help=(
+            "Pomija raporty zawierające którykolwiek z podanych tagów ("
+            "można powtarzać lub rozdzielać przecinkami)."
+        ),
+    )
+    compliance.add_argument(
+        "--include-status",
+        dest="include_statuses",
+        action="append",
+        help=(
+            "Zachowuje raporty z podpisami w co najmniej jednym ze wskazanych "
+            "statusów (np. pending, investigating)."
+        ),
+    )
+    compliance.add_argument(
+        "--exclude-status",
+        dest="exclude_statuses",
+        action="append",
+        help=(
+            "Odrzuca raporty zawierające podpisy w niedozwolonych statusach ("
+            "można podawać wielokrotnie lub rozdzielać przecinkami)."
+        ),
+    )
+    compliance.add_argument(
+        "--include-report-status",
+        dest="include_report_statuses",
+        action="append",
+        help=(
+            "Zachowuje raporty o wskazanym statusie (np. alert, warning). "
+            "Argument można podawać wielokrotnie lub rozdzielać przecinkami."
+        ),
+    )
+    compliance.add_argument(
+        "--exclude-report-status",
+        dest="exclude_report_statuses",
+        action="append",
+        help=(
+            "Pomija raporty o niedozwolonym statusie (np. ok). "
+            "Argument można podawać wielokrotnie lub rozdzielać przecinkami."
+        ),
+    )
+    compliance.add_argument(
+        "--role",
+        dest="roles",
+        action="append",
+        help="Wymusza zestaw ról podpisów (można podać wielokrotnie lub rozdzielać przecinkami).",
+    )
+    compliance.add_argument(
+        "--output-format",
+        choices=("text", "json", "json-pretty"),
+        default="text",
+        help="Format wyjścia (text/json/json-pretty).",
+    )
+    compliance.add_argument(
+        "--enforce",
+        action="store_true",
+        help="Zwraca błąd, jeśli brakuje wymaganych podpisów dla wskazanych ról.",
+    )
+
     return parser
 
 
@@ -534,6 +652,127 @@ def _parse_paper_simulator_setting_argument(argument: str) -> tuple[str, float]:
     raise CLIUsageError(
         "Wartość opcji --paper-simulator-setting musi być liczbą zmiennoprzecinkową."
     )
+
+
+def _parse_compliance_roles(arguments: Sequence[str] | None) -> tuple[str, ...] | None:
+    if not arguments:
+        return None
+
+    collected: list[str] = []
+    for argument in arguments:
+        if not argument:
+            continue
+        for part in re.split(r"[,\s]+", argument):
+            normalized = part.strip()
+            if normalized:
+                collected.append(normalized)
+
+    if not collected:
+        return None
+
+    try:
+        return normalize_compliance_sign_off_roles(collected)
+    except ValueError as exc:
+        raise CLIUsageError(str(exc)) from exc
+
+
+def _parse_cli_tags(arguments: Sequence[str] | None) -> tuple[str, ...]:
+    if not arguments:
+        return ()
+
+    collected: list[str] = []
+    for argument in arguments:
+        if not argument:
+            continue
+        for part in re.split(r"[,\s]+", argument):
+            normalized = part.strip()
+            if normalized:
+                collected.append(normalized)
+    return tuple(collected)
+
+
+def _parse_cli_sign_off_statuses(arguments: Sequence[str] | None) -> tuple[str, ...]:
+    if not arguments:
+        return ()
+
+    supported = get_supported_sign_off_statuses()
+    collected: list[str] = []
+    for argument in arguments:
+        if not argument:
+            continue
+        for part in re.split(r"[,\s]+", argument):
+            normalized = normalize_sign_off_status(part)
+            if not normalized:
+                raise CLIUsageError(
+                    "Nieznany status podpisu compliance: {value}. Dozwolone wartości: {choices}".format(
+                        value=part or "",
+                        choices=", ".join(supported),
+                    )
+                )
+            collected.append(normalized)
+
+    # zachowujemy kolejność pierwszego wystąpienia
+    return tuple(dict.fromkeys(collected))
+
+
+def _parse_cli_report_statuses(arguments: Sequence[str] | None) -> tuple[str, ...]:
+    if not arguments:
+        return ()
+
+    collected: list[str] = []
+    for argument in arguments:
+        if not argument:
+            continue
+        for part in re.split(r"[,\s]+", argument):
+            normalized = normalize_report_status(part)
+            if normalized:
+                collected.append(normalized)
+
+    if not collected:
+        return ()
+
+    return tuple(dict.fromkeys(collected))
+
+
+def _resolve_since_cutoff(value: str, *, now: datetime | None = None) -> datetime:
+    if not isinstance(value, str) or not value.strip():
+        raise CLIUsageError("Opcja --since wymaga niepustej wartości.")
+
+    reference = now or datetime.now(timezone.utc)
+    candidate = value.strip()
+    match = _SINCE_DURATION_RE.fullmatch(candidate)
+    if match:
+        amount = int(match.group("value"))
+        unit = match.group("unit").lower()
+        delta_map = {
+            "s": timedelta(seconds=amount),
+            "m": timedelta(minutes=amount),
+            "h": timedelta(hours=amount),
+            "d": timedelta(days=amount),
+        }
+        cutoff = reference - delta_map[unit]
+        return cutoff.astimezone(timezone.utc)
+
+    normalized = candidate
+    if candidate.endswith("Z") or candidate.endswith("z"):
+        normalized = candidate[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError as exc:
+        raise CLIUsageError(
+            "Opcja --since wymaga formatu ISO 8601 lub skrótu (np. 24h, 7d)."
+        ) from exc
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _jsonify_payload(value):
+    if isinstance(value, Mapping):
+        return {str(key): _jsonify_payload(val) for key, val in value.items()}
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return [_jsonify_payload(item) for item in value]
+    return value
 
 
 def _extract_jitter_pair(value: object) -> tuple[float, float] | None:
@@ -1563,6 +1802,239 @@ def show_environment(args: argparse.Namespace) -> int:
     return 0
 
 
+def show_ai_compliance(args: argparse.Namespace) -> int:
+    output_format = getattr(args, "output_format", "text") or "text"
+    enforce = bool(getattr(args, "enforce", False))
+
+    limit_option = getattr(args, "limit", None)
+    if limit_option is None:
+        limit = 20
+    else:
+        if limit_option <= 0:
+            raise CLIUsageError("Opcja --limit wymaga dodatniej liczby całkowitej.")
+        limit = int(limit_option)
+
+    audit_root_value = getattr(args, "audit_root", None)
+    audit_root: Path | None = None
+    if audit_root_value:
+        audit_root = Path(audit_root_value).expanduser()
+
+    since_option = getattr(args, "since", None)
+    since_cutoff: datetime | None = None
+    if since_option:
+        since_cutoff = _resolve_since_cutoff(since_option)
+
+    include_tags = _parse_cli_tags(getattr(args, "include_tags", None))
+    exclude_tags = _parse_cli_tags(getattr(args, "exclude_tags", None))
+    include_statuses = _parse_cli_sign_off_statuses(
+        getattr(args, "include_statuses", None)
+    )
+    exclude_statuses = _parse_cli_sign_off_statuses(
+        getattr(args, "exclude_statuses", None)
+    )
+    include_report_statuses = _parse_cli_report_statuses(
+        getattr(args, "include_report_statuses", None)
+    )
+    exclude_report_statuses = _parse_cli_report_statuses(
+        getattr(args, "exclude_report_statuses", None)
+    )
+
+    roles_param = _parse_compliance_roles(getattr(args, "roles", None))
+    effective_roles = (
+        roles_param
+        if roles_param is not None
+        else normalize_compliance_sign_off_roles(None)
+    )
+
+    load_kwargs: dict[str, object] = {"limit": limit}
+    if audit_root is not None:
+        load_kwargs["audit_root"] = audit_root
+    dq_category = getattr(args, "data_quality_category", None)
+
+    try:
+        dq_kwargs = dict(load_kwargs)
+        if dq_category:
+            dq_kwargs["category"] = dq_category
+        dq_reports = load_recent_data_quality_reports(**dq_kwargs)
+        drift_reports = load_recent_drift_reports(**load_kwargs)
+    except Exception as exc:  # pragma: no cover - przekładamy błąd na CLIUsageError
+        raise CLIUsageError(f"Nie udało się wczytać raportów audytu: {exc}") from exc
+
+    if include_tags or exclude_tags:
+        dq_reports = filter_audit_reports_by_tags(
+            dq_reports, include=include_tags, exclude=exclude_tags
+        )
+        drift_reports = filter_audit_reports_by_tags(
+            drift_reports, include=include_tags, exclude=exclude_tags
+        )
+
+    if include_report_statuses or exclude_report_statuses:
+        dq_reports = filter_audit_reports_by_status(
+            dq_reports, include=include_report_statuses, exclude=exclude_report_statuses
+        )
+        drift_reports = filter_audit_reports_by_status(
+            drift_reports,
+            include=include_report_statuses,
+            exclude=exclude_report_statuses,
+        )
+
+    if include_statuses or exclude_statuses:
+        dq_reports = filter_audit_reports_by_sign_off_status(
+            dq_reports,
+            include=include_statuses,
+            exclude=exclude_statuses,
+            roles=roles_param,
+        )
+        drift_reports = filter_audit_reports_by_sign_off_status(
+            drift_reports,
+            include=include_statuses,
+            exclude=exclude_statuses,
+            roles=roles_param,
+        )
+
+    if since_cutoff is not None:
+        dq_reports = filter_audit_reports_since(dq_reports, since=since_cutoff)
+        drift_reports = filter_audit_reports_since(drift_reports, since=since_cutoff)
+
+    dq_summary = summarize_data_quality_reports(dq_reports, roles=roles_param)
+    drift_summary = summarize_drift_reports(drift_reports, roles=roles_param)
+
+    exit_code = 0
+    try:
+        if enforce:
+            pending_map = ensure_compliance_sign_offs(
+                data_quality_reports=dq_reports,
+                drift_reports=drift_reports,
+                roles=roles_param,
+            )
+        else:
+            pending_map = collect_pending_compliance_sign_offs(
+                data_quality_reports=dq_reports,
+                drift_reports=drift_reports,
+                roles=roles_param,
+            )
+    except ComplianceSignOffError as exc:
+        pending_map = exc.pending
+        exit_code = 3
+
+    missing_entries = {
+        role: tuple(entries)
+        for role, entries in pending_map.items()
+        if entries
+    }
+
+    if output_format in {"json", "json-pretty"}:
+        payload: dict[str, object] = {
+            "roles": list(effective_roles),
+            "enforced": enforce,
+            "limit": limit,
+            "data_quality": _jsonify_payload(dq_summary),
+            "drift": _jsonify_payload(drift_summary),
+            "pending_sign_off": _jsonify_payload(pending_map),
+            "missing_sign_off": {
+                role: len(entries) for role, entries in missing_entries.items()
+            },
+        }
+        if audit_root is not None:
+            payload["audit_root"] = str(audit_root)
+        if since_cutoff is not None:
+            payload["since"] = since_cutoff.replace(microsecond=0).isoformat().replace(
+                "+00:00", "Z"
+            )
+        if include_tags:
+            payload["include_tags"] = list(include_tags)
+        if exclude_tags:
+            payload["exclude_tags"] = list(exclude_tags)
+        if include_report_statuses:
+            payload["include_report_statuses"] = list(include_report_statuses)
+        if exclude_report_statuses:
+            payload["exclude_report_statuses"] = list(exclude_report_statuses)
+        if include_statuses:
+            payload["include_statuses"] = list(include_statuses)
+        if exclude_statuses:
+            payload["exclude_statuses"] = list(exclude_statuses)
+        json_kwargs: dict[str, object] = {"ensure_ascii": False}
+        if output_format == "json-pretty":
+            json_kwargs["indent"] = 2
+            json_kwargs["sort_keys"] = True
+        print(json.dumps(payload, **json_kwargs))  # type: ignore[arg-type]
+        return exit_code
+
+    if audit_root is not None:
+        print(f"Katalog audytu: {audit_root}")
+    if since_cutoff is not None:
+        print(
+            "Minimalny znacznik czasu: "
+            + since_cutoff.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        )
+    if include_tags:
+        print("Wymagane tagi: " + ", ".join(include_tags))
+    if exclude_tags:
+        print("Wykluczone tagi: " + ", ".join(exclude_tags))
+    if include_report_statuses:
+        print("Wymagane statusy raportów: " + ", ".join(include_report_statuses))
+    if exclude_report_statuses:
+        print("Wykluczone statusy raportów: " + ", ".join(exclude_report_statuses))
+    if include_statuses:
+        print("Wymagane statusy podpisów: " + ", ".join(include_statuses))
+    if exclude_statuses:
+        print("Wykluczone statusy podpisów: " + ", ".join(exclude_statuses))
+    print("Wymagane role: " + ", ".join(effective_roles))
+    print(f"Limit raportów: {limit}")
+
+    print(
+        "Raporty jakości danych: total={total} alerts={alerts} enforced={enforced}".format(
+            total=dq_summary.get("total", 0),
+            alerts=dq_summary.get("alerts", 0),
+            enforced=dq_summary.get("enforced_alerts", 0),
+        )
+    )
+    by_category = dq_summary.get("by_category", {})
+    if by_category:
+        print("  Kategorie alertów:")
+        for category, stats in sorted(by_category.items()):
+            print(
+                "    - {category}: total={total} alerts={alerts} enforced={enforced} status={status}".format(
+                    category=category,
+                    total=stats.get("total", 0),
+                    alerts=stats.get("alerts", 0),
+                    enforced=stats.get("enforced_alerts", 0),
+                    status=stats.get("latest_status") or "-",
+                )
+            )
+            latest_path = stats.get("latest_report_path")
+            if latest_path:
+                print(f"      ostatni_raport={latest_path}")
+    else:
+        print("  Kategorie alertów: (brak danych)")
+
+    print(
+        "Raporty dryfu: total={total} przekroczone={exceeds} ostatni={latest} ostatni_alert={latest_exceed}".format(
+            total=drift_summary.get("total", 0),
+            exceeds=drift_summary.get("exceeds_threshold", 0),
+            latest=drift_summary.get("latest_report_path") or "-",
+            latest_exceed=drift_summary.get("latest_exceeding_report_path") or "-",
+        )
+    )
+
+    if missing_entries:
+        print("Brakujące podpisy compliance:")
+        for role, entries in missing_entries.items():
+            print(f"  - {role}: {len(entries)} raport(y)")
+            for entry in entries:
+                category = entry.get("category") or "unknown"
+                status = entry.get("status") or "pending"
+                path = entry.get("report_path") or "-"
+                print(f"      • {category}: status={status} raport={path}")
+    else:
+        print("Brak braków podpisów compliance.")
+
+    if enforce and missing_entries:
+        return 3
+
+    return exit_code
+
+
 def show_strategy_catalog(args: argparse.Namespace) -> int:
     output_format = getattr(args, "output_format", "text") or "text"
     engine_filter = {value.strip().lower() for value in getattr(args, "engines", []) if value}
@@ -1651,7 +2123,19 @@ def show_strategy_catalog(args: argparse.Namespace) -> int:
             engine = entry.get("engine", "(nieznany)")
             capability = entry.get("capability") or "-"
             tags = ", ".join(entry.get("default_tags", [])) or "-"
-            print(f"  * {engine} (capability={capability}, tags={tags})")
+            license_tier = entry.get("license_tier") or "-"
+            risk_classes = ", ".join(str(item) for item in entry.get("risk_classes", [])) or "-"
+            required_data = ", ".join(str(item) for item in entry.get("required_data", [])) or "-"
+            print(
+                "  * {engine} (capability={capability}, license={license}, risk_classes=[{risk}], required_data=[{data}], tags={tags})".format(
+                    engine=engine,
+                    capability=capability,
+                    license=license_tier,
+                    risk=risk_classes,
+                    data=required_data,
+                    tags=tags,
+                )
+            )
 
     if config_path:
         print()
@@ -1665,12 +2149,18 @@ def show_strategy_catalog(args: argparse.Namespace) -> int:
                 risk_profile = entry.get("risk_profile") or "-"
                 tags = ", ".join(entry.get("tags", [])) or "-"
                 capability = entry.get("capability") or "-"
+                license_tier = entry.get("license_tier") or "-"
+                risk_classes = ", ".join(str(item) for item in entry.get("risk_classes", [])) or "-"
+                required_data = ", ".join(str(item) for item in entry.get("required_data", [])) or "-"
                 print(
-                    "  * {name} -> {engine} (risk_profile={risk_profile}, capability={capability}, tags={tags})".format(
+                    "  * {name} -> {engine} (risk_profile={risk_profile}, capability={capability}, license={license}, risk_classes=[{risk}], required_data=[{data}], tags={tags})".format(
                         name=name,
                         engine=engine,
                         risk_profile=risk_profile,
                         capability=capability,
+                        license=license_tier,
+                        risk=risk_classes,
+                        data=required_data,
                         tags=tags,
                     )
                 )
@@ -1748,7 +2238,7 @@ def show_scheduler_plan(args: argparse.Namespace) -> int:
         tags = ", ".join(entry.get("tags", [])) or "-"
         interval = entry.get("interval") or "-"
         print(
-            "  * {name}: {strategy} [profile={profile}] cadence={cadence}s drift={drift}s max_signals={max_signals} interval={interval} tags={tags}".format(
+            "  * {name}: {strategy} [profile={profile}] cadence={cadence}s drift={drift}s max_signals={max_signals} interval={interval} license={license} risk_classes=[{risk}] required_data=[{data}] tags={tags}".format(
                 name=entry.get("name", "(bez nazwy)"),
                 strategy=entry.get("strategy", "(nieznana)"),
                 profile=entry.get("risk_profile", "-"),
@@ -1756,6 +2246,9 @@ def show_scheduler_plan(args: argparse.Namespace) -> int:
                 drift=entry.get("max_drift_seconds", "-"),
                 max_signals=entry.get("max_signals", "-"),
                 interval=interval,
+                license=entry.get("license_tier", "-"),
+                risk=", ".join(str(item) for item in entry.get("risk_classes", [])) or "-",
+                data=", ".join(str(item) for item in entry.get("required_data", [])) or "-",
                 tags=tags,
             )
         )
@@ -1804,6 +2297,8 @@ def main(
             return list_environments(args)
         if args.command == "show-environment":
             return show_environment(args)
+        if args.command == "ai-compliance":
+            return show_ai_compliance(args)
         if args.command == "strategy-catalog":
             return show_strategy_catalog(args)
         if args.command == "scheduler-plan":
@@ -1821,6 +2316,7 @@ __all__ = [
     "CLIUsageError",
     "list_environments",
     "show_environment",
+    "show_ai_compliance",
     "show_strategy_catalog",
     "show_scheduler_plan",
 ]

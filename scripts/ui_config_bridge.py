@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from collections.abc import Iterable, Mapping as MappingABC
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -15,6 +16,8 @@ try:
     from bot_core.config.loader import load_core_config
 except Exception as exc:  # pragma: no cover - import guard
     raise SystemExit(f"Nie można zaimportować bot_core.config.loader: {exc}") from exc
+
+from bot_core.strategies.catalog import DEFAULT_STRATEGY_CATALOG
 
 
 def _read_json_input(path: str | None) -> Any:
@@ -73,15 +76,116 @@ def _dump_decision(raw: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def _normalize_sequence_field(values: Any) -> tuple[str, ...]:
+    if values in (None, "", ()):  # szybkie ścieżki
+        return ()
+    if isinstance(values, str):
+        iterable = (values,)
+    elif isinstance(values, MappingABC):
+        iterable = values.values()
+    elif isinstance(values, Iterable):
+        iterable = values
+    else:
+        return ()
+    cleaned: list[str] = []
+    for item in iterable:
+        text = str(item).strip()
+        if not text:
+            continue
+        if text not in cleaned:
+            cleaned.append(text)
+    return tuple(cleaned)
+
+
+def _collect_strategy_metadata(raw: Mapping[str, Any]) -> dict[str, Mapping[str, Any]]:
+    definitions: dict[str, Mapping[str, Any]] = {}
+
+    def _register(name: str, engine: str, entry: Mapping[str, Any]) -> None:
+        try:
+            spec = DEFAULT_STRATEGY_CATALOG.get(engine)
+        except KeyError:
+            spec = None
+
+        license_tier = str(entry.get("license_tier") or "").strip()
+        risk_classes = _normalize_sequence_field(entry.get("risk_classes"))
+        required_data = _normalize_sequence_field(entry.get("required_data"))
+        tags = _normalize_sequence_field(entry.get("tags"))
+
+        merged_risk = tuple(
+            dict.fromkeys(
+                (*((spec.risk_classes) if spec else ()), *risk_classes)
+            )
+        )
+        merged_data = tuple(
+            dict.fromkeys(
+                (*((spec.required_data) if spec else ()), *required_data)
+            )
+        )
+        merged_tags = tuple(
+            dict.fromkeys(
+                (*((spec.default_tags) if spec else ()), *tags)
+            )
+        )
+
+        capability = str(entry.get("capability") or "").strip()
+        if not capability and spec and spec.capability:
+            capability = spec.capability
+        payload: dict[str, Any] = {
+            "engine": engine,
+            "license_tier": license_tier or (spec.license_tier if spec else None),
+            "risk_classes": merged_risk,
+            "required_data": merged_data,
+            "tags": merged_tags,
+        }
+        if capability:
+            payload["capability"] = capability
+        risk_profile = entry.get("risk_profile")
+        if isinstance(risk_profile, str) and risk_profile.strip():
+            payload["risk_profile"] = risk_profile.strip()
+        definitions[name] = payload
+
+    strategies = raw.get("strategies") or {}
+    if isinstance(strategies, MappingABC):
+        for name, entry in strategies.items():
+            if not isinstance(entry, MappingABC):
+                continue
+            engine = str(entry.get("engine") or "").strip()
+            if not engine:
+                continue
+            _register(str(name), engine, entry)
+
+    def _register_section(section: str, engine: str) -> None:
+        payload = raw.get(section) or {}
+        if not isinstance(payload, MappingABC):
+            return
+        for name, entry in payload.items():
+            if str(name) in definitions:
+                continue
+            entry_mapping: Mapping[str, Any]
+            if isinstance(entry, MappingABC):
+                entry_mapping = entry
+            else:
+                entry_mapping = {}
+            _register(str(name), engine, entry_mapping)
+
+    _register_section("mean_reversion_strategies", "mean_reversion")
+    _register_section("volatility_target_strategies", "volatility_target")
+    _register_section("cross_exchange_arbitrage_strategies", "cross_exchange_arbitrage")
+    _register_section("grid_strategies", "grid_trading")
+
+    return definitions
+
+
 def _dump_schedulers(raw: Mapping[str, Any], *, only: str | None = None) -> dict[str, Any]:
     schedulers_raw = raw.get("multi_strategy_schedulers") or {}
     result: dict[str, Any] = {}
-    if not isinstance(schedulers_raw, Mapping):
+    if not isinstance(schedulers_raw, MappingABC):
         return result
+    strategy_metadata = _collect_strategy_metadata(raw)
     for name, payload in schedulers_raw.items():
         if only and only != name:
             continue
-        if not isinstance(payload, Mapping):
+        if not isinstance(payload, MappingABC):
             continue
         schedules_payload = payload.get("schedules") or []
         schedules: list[dict[str, Any]] = []
@@ -89,18 +193,35 @@ def _dump_schedulers(raw: Mapping[str, Any], *, only: str | None = None) -> dict
             for schedule in schedules_payload:
                 if not isinstance(schedule, Mapping):
                     continue
-                schedules.append(
-                    {
-                        "name": schedule.get("name"),
-                        "strategy": schedule.get("strategy"),
-                        "cadence_seconds": schedule.get("cadence_seconds"),
-                        "max_drift_seconds": schedule.get("max_drift_seconds"),
-                        "warmup_bars": schedule.get("warmup_bars"),
-                        "risk_profile": schedule.get("risk_profile"),
-                        "max_signals": schedule.get("max_signals"),
-                        "interval": schedule.get("interval"),
-                    }
-                )
+                entry_payload: dict[str, Any] = {
+                    "name": schedule.get("name"),
+                    "strategy": schedule.get("strategy"),
+                    "cadence_seconds": schedule.get("cadence_seconds"),
+                    "max_drift_seconds": schedule.get("max_drift_seconds"),
+                    "warmup_bars": schedule.get("warmup_bars"),
+                    "risk_profile": schedule.get("risk_profile"),
+                    "max_signals": schedule.get("max_signals"),
+                    "interval": schedule.get("interval"),
+                }
+                strategy_name = str(schedule.get("strategy") or "").strip()
+                metadata = strategy_metadata.get(strategy_name)
+                if metadata is None and not strategy_name:
+                    fallback_name = str(schedule.get("name") or "").strip()
+                    metadata = strategy_metadata.get(fallback_name)
+                if metadata:
+                    entry_payload["engine"] = metadata.get("engine")
+                    if metadata.get("capability"):
+                        entry_payload["capability"] = metadata.get("capability")
+                    if metadata.get("license_tier"):
+                        entry_payload["license_tier"] = metadata.get("license_tier")
+                    entry_payload["risk_classes"] = list(metadata.get("risk_classes", ()))
+                    entry_payload["required_data"] = list(metadata.get("required_data", ()))
+                    tags = metadata.get("tags", ())
+                    if tags:
+                        entry_payload["tags"] = list(tags)
+                    if metadata.get("risk_profile") and not entry_payload.get("risk_profile"):
+                        entry_payload["definition_risk_profile"] = metadata.get("risk_profile")
+                schedules.append(entry_payload)
         result[name] = {
             "name": name,
             "telemetry_namespace": payload.get("telemetry_namespace"),

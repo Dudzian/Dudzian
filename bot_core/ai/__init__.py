@@ -87,10 +87,38 @@ _EXPORTS: Dict[str, Tuple[str, str]] = {
         ".data_monitoring",
         "collect_pending_compliance_sign_offs",
     ),
+    "filter_audit_reports_since": (
+        ".data_monitoring",
+        "filter_audit_reports_since",
+    ),
+    "filter_audit_reports_by_tags": (
+        ".data_monitoring",
+        "filter_audit_reports_by_tags",
+    ),
+    "filter_audit_reports_by_sign_off_status": (
+        ".data_monitoring",
+        "filter_audit_reports_by_sign_off_status",
+    ),
+    "filter_audit_reports_by_status": (
+        ".data_monitoring",
+        "filter_audit_reports_by_status",
+    ),
     "ensure_compliance_sign_offs": (".data_monitoring", "ensure_compliance_sign_offs"),
     "normalize_compliance_sign_off_roles": (
         ".data_monitoring",
         "normalize_compliance_sign_off_roles",
+    ),
+    "normalize_sign_off_status": (
+        ".data_monitoring",
+        "normalize_sign_off_status",
+    ),
+    "normalize_report_status": (
+        ".data_monitoring",
+        "normalize_report_status",
+    ),
+    "get_supported_sign_off_statuses": (
+        ".data_monitoring",
+        "get_supported_sign_off_statuses",
     ),
     "load_recent_data_quality_reports": (
         ".data_monitoring",
