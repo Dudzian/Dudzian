@@ -142,22 +142,6 @@ class StrategyCatalog:
                 f"Strategy '{definition.name}' requires license tier '{definition.license_tier}' "
                 f"but engine '{spec.key}' is registered for '{spec.license_tier}'"
             )
-        guard = get_capability_guard()
-        if guard is not None:
-            guard.require_license_tier(
-                definition.license_tier,
-                message=(
-                    f"Strategia '{definition.name}' wymaga poziomu licencji '{definition.license_tier}'."
-                ),
-            )
-            capability = spec.capability or definition.metadata.get("capability")
-            if capability:
-                guard.require_strategy(
-                    capability,
-                    message=(
-                        f"Strategia '{definition.name}' wymaga aktywnej capability '{capability}'."
-                    ),
-                )
         tags = tuple(dict.fromkeys((*spec.default_tags, *definition.tags)))
         risk_classes = tuple(dict.fromkeys((*spec.risk_classes, *definition.risk_classes)))
         required_data = tuple(dict.fromkeys((*spec.required_data, *definition.required_data)))
