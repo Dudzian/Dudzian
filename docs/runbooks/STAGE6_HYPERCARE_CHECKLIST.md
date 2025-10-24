@@ -7,7 +7,11 @@ artefakty audytowe.
 
 ## Prerekwizyty
 - Aktualne raporty wejściowe dla Observability (definicje/metyki SLO –
-  repozytoryjny plik `config/observability/slo.yml`), Resilience (plan
+  repozytoryjny plik `config/observability/slo.yml` oraz artefakt
+  `var/audit/observability/metrics.json` skopiowany z pomiarów Stage6
+  (np. `var/metrics/stage6_measurements.json` wygenerowanego według
+  runbooka Observability) lub dopasowany do własnej lokalizacji),
+  Resilience (plan
   failover, manifesty paczek, polityka) oraz Portfolio
   (alokacje, Market Intel, raporty SLO/Stress Lab).
 - Szablon konfiguracji hypercare dostępny w `config/stage6/hypercare.yaml`
@@ -54,14 +58,24 @@ artefakty audytowe.
        slo_report: var/audit/observability/slo_report.json
        stress_report: var/audit/risk/stress_lab.json
    ```
-2. Uruchom orchestratora Stage6, wskazując przygotowany plik konfiguracyjny
+2. Przygotuj pomiary SLO dla Observability. Hypercare domyślnie oczekuje
+   pliku `var/audit/observability/metrics.json`. Jeśli runbook Observability
+   udostępnia pomiary jako `var/metrics/stage6_measurements.json`,
+   skopiuj/konwertuj artefakt do lokalizacji audytowej lub zaktualizuj pole
+   `observability.metrics` w konfiguracji hypercare:
+   ```bash
+   cp var/metrics/stage6_measurements.json var/audit/observability/metrics.json
+   ```
+   W przypadku niestandardowej ścieżki zaktualizuj zarówno konfigurację,
+   jak i kroki runbooków.
+3. Uruchom orchestratora Stage6, wskazując przygotowany plik konfiguracyjny
    (domyślnie `config/stage6/hypercare.yaml`):
    ```bash
    python scripts/run_stage6_hypercare_cycle.py --config config/stage6/hypercare.yaml
    ```
    Skrypt wykona wszystkie cykle, zapisze raport zbiorczy i podpis HMAC, a w
    przypadku ostrzeżeń/błędów wypisze szczegóły w konsoli.
-3. Zweryfikuj podpisany raport zbiorczy (opcjonalnie wymagaj podpisu):
+4. Zweryfikuj podpisany raport zbiorczy (opcjonalnie wymagaj podpisu):
    ```bash
    python scripts/verify_stage6_hypercare_summary.py \
      var/audit/stage6/hypercare_summary.json \
@@ -70,9 +84,9 @@ artefakty audytowe.
    ```
    Polecenie potwierdzi integralność raportu, wypisze wykryte ostrzeżenia lub
    błędy oraz może być archiwizowane w logach hypercare.
-4. W razie potrzeby powtórz wykonanie dla środowisk testowych/produkcyjnych,
+5. W razie potrzeby powtórz wykonanie dla środowisk testowych/produkcyjnych,
    modyfikując sekcję `portfolio` oraz ścieżki artefaktów.
-5. Po uzyskaniu raportu Stage6 dołącz go do pełnego przeglądu hypercare zgodnie
+6. Po uzyskaniu raportu Stage6 dołącz go do pełnego przeglądu hypercare zgodnie
    z runbookiem `FULL_HYPERCARE_CHECKLIST.md` (skrypt
    `python scripts/run_full_hypercare_summary.py`).
 

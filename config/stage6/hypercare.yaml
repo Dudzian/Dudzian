@@ -10,6 +10,10 @@ summary:
 
 observability:
   definitions: config/observability/slo.yml
+  # Domyślna ścieżka wykorzystuje artefakt kopiowany do katalogu audytowego.
+  # Jeśli runbook Stage6 Observability zapisuje pomiary gdzie indziej (np. w
+  # var/metrics/stage6_measurements.json), zaktualizuj to pole lub skopiuj plik
+  # do lokalizacji audytowej.
   metrics: var/audit/observability/metrics.json
   slo:
     json: var/audit/observability/slo_report.json
