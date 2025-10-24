@@ -10,7 +10,8 @@ summary:
 
 observability:
   definitions: config/observability/slo.yml
-  metrics: var/audit/observability/metrics.json
+  # Domyślnie oczekujemy metryk Stage6 wygenerowanych przez runbook w katalogu var/metrics.
+  metrics: var/metrics/stage6_measurements.json
   slo:
     json: var/audit/observability/slo_report.json
     csv: var/audit/observability/slo_report.csv
@@ -84,8 +85,7 @@ portfolio:
   governor: stage6_core
   inputs:
     allocations: var/audit/portfolio/allocations_stage6.yaml
-    market_intel: var/market_intel/stage6_core_market_intel.json  # wygeneruj poleceniem build_market_intel_metrics.py --output <pełna_ścieżka>
-    #  Docelowo raport ląduje w katalogu var/market_intel/ jako <governor>_market_intel.json.
+    market_intel: var/market_intel/stage6_core_market_intel.json  # wygeneruj poleceniem build_market_intel_metrics.py --output var/market_intel/stage6_core_market_intel.json
     portfolio_value: 125000
     slo_report: var/audit/observability/slo_report.json
     stress_report: var/audit/stage6/stress_lab_report.json

@@ -133,6 +133,18 @@ def _parse_observability(config: Mapping[str, Any] | None) -> ObservabilityCycle
     if definitions is None or metrics is None:
         raise ValueError("Sekcja observability wymaga pól definitions i metrics")
 
+    if metrics and not metrics.exists():
+        expected = metrics
+        hint_command = (
+            "python scripts/run_stage6_observability_cycle.py --definitions "
+            f"{definitions} --metrics {expected}"
+        )
+        print(
+            f"[stage6.hypercare] Oczekiwano metryk w {expected}; "
+            f"wygeneruj je poleceniem: {hint_command}",
+            file=sys.stderr,
+        )
+
     slo_cfg = config.get("slo") or {}
     slo_output = SLOOutputConfig(
         json_path=_expand_path(slo_cfg.get("json")) or Path("var/audit/observability/slo_report.json"),

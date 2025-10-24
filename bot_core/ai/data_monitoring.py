@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import math
 import os
 import re
@@ -32,12 +33,28 @@ __all__ = [
 ]
 
 
+logger = logging.getLogger(__name__)
+
+
 _SAFE_FILENAME = re.compile(r"[^a-z0-9]+", re.IGNORECASE)
-_SIGN_OFF_ROLES = frozenset({"risk", "compliance"})
+_SUPPORTED_SIGN_OFF_ROLES = frozenset({"risk", "compliance"})
+_DEFAULT_SIGN_OFF_ROLES = ("risk", "compliance")
 _SIGN_OFF_STATUSES = frozenset(
     {"pending", "approved", "rejected", "escalated", "waived", "investigating"}
 )
 _COMPLETED_SIGN_OFF_STATUSES = frozenset({"approved", "waived"})
+_SIGN_OFF_DEFAULT_NOTES = {
+    "risk": "Awaiting Risk review",
+    "compliance": "Awaiting Compliance sign-off",
+}
+
+
+def _normalize_role(role: object) -> str | None:
+    if isinstance(role, str):
+        normalized = role.strip().lower()
+        if normalized:
+            return normalized
+    return None
 
 
 def _audit_root() -> Path:
@@ -62,21 +79,26 @@ def _timestamp_slug(prefix: str) -> str:
     return f"{now}_{_normalize_slug(prefix)}"
 
 
-def _default_sign_off() -> dict[str, MutableMapping[str, Any]]:
-    return {
-        "risk": {
+def _default_sign_off(
+    *, extra_roles: Sequence[str] | None = None
+) -> dict[str, MutableMapping[str, Any]]:
+    roles = set(_SIGN_OFF_ROLES)
+    for role in extra_roles or ():
+        normalized = _normalize_role(role)
+        if normalized:
+            roles.add(normalized)
+    sign_off: dict[str, MutableMapping[str, Any]] = {}
+    for role in sorted(roles):
+        note = _SIGN_OFF_DEFAULT_NOTES.get(
+            role, f"Awaiting {role.replace('_', ' ').title()} sign-off"
+        )
+        sign_off[role] = {
             "status": "pending",
             "signed_by": None,
             "timestamp": None,
-            "notes": "Awaiting Risk review",
-        },
-        "compliance": {
-            "status": "pending",
-            "signed_by": None,
-            "timestamp": None,
-            "notes": "Awaiting Compliance sign-off",
-        },
-    }
+            "notes": note,
+        }
+    return sign_off
 
 
 def _write_report(directory: Path, prefix: str, payload: Mapping[str, Any]) -> Path:
@@ -162,7 +184,7 @@ def update_sign_off(
     """Aktualizuje sekcję podpisów Risk/Compliance w raporcie i pliku JSON."""
 
     normalized_role = str(role).strip().lower()
-    if normalized_role not in _SIGN_OFF_ROLES:
+    if normalized_role not in _SUPPORTED_SIGN_OFF_ROLES:
         raise ValueError(f"unsupported sign-off role: {role!r}")
     normalized_status = str(status).strip().lower()
     if normalized_status not in _SIGN_OFF_STATUSES:
@@ -299,8 +321,19 @@ def load_recent_drift_reports(
 
 def summarize_data_quality_reports(
     reports: Sequence[Mapping[str, Any]] | None,
+    *,
+    roles: Sequence[str] | None = None,
+    require_sign_off: bool = False,
 ) -> Mapping[str, Any]:
-    """Buduje podsumowanie alertów jakości danych dla compliance i Risk."""
+    """Buduje podsumowanie alertów jakości danych dla compliance i Risk.
+
+    Parametr ``roles`` pozwala ograniczyć analizę do podzbioru wymaganych ról
+    podpisów.  Jeżeli ``require_sign_off`` ustawimy na ``True``, funkcja zgłosi
+    :class:`ComplianceSignOffError` w przypadku wykrycia braków podpisów dla
+    wskazanych ról.
+    """
+
+    normalized_roles = _normalize_required_roles(roles)
 
     normalized: list[Mapping[str, Any]] = [
         report
@@ -313,14 +346,14 @@ def summarize_data_quality_reports(
         "alerts": 0,
         "enforced_alerts": 0,
         "by_category": {},
-        "pending_sign_off": {role: [] for role in _SIGN_OFF_ROLES},
+        "pending_sign_off": {role: [] for role in normalized_roles},
     }
 
     for report in normalized:
         category = str(report.get("category") or "unknown")
         status = str(report.get("status") or "").lower()
         policy = report.get("policy")
-        enforce = True
+        enforce = False
         if isinstance(policy, Mapping):
             raw_enforce = policy.get("enforce")
             if isinstance(raw_enforce, bool):
@@ -351,23 +384,40 @@ def summarize_data_quality_reports(
             if enforce:
                 summary["enforced_alerts"] += 1
                 category_stats["enforced_alerts"] += 1
-                _collect_pending_sign_off(report, category, summary["pending_sign_off"])
+                _collect_pending_sign_off(
+                    report,
+                    category,
+                    summary["pending_sign_off"],
+                    roles=normalized_roles,
+                )
 
     summary["by_category"] = {
         key: MappingProxyType(value) if not isinstance(value, MappingProxyType) else value
         for key, value in summary["by_category"].items()
     }
-    summary["pending_sign_off"] = {
+    pending = {
         role: tuple(entries)
         for role, entries in summary["pending_sign_off"].items()
     }
+    summary["pending_sign_off"] = MappingProxyType(pending)
+    if require_sign_off and any(pending.values()):
+        raise ComplianceSignOffError(pending)
     return MappingProxyType(summary)
 
 
 def summarize_drift_reports(
     reports: Sequence[Mapping[str, Any]] | None,
+    *,
+    roles: Sequence[str] | None = None,
+    require_sign_off: bool = False,
 ) -> Mapping[str, Any]:
-    """Zwraca podsumowanie alertów dryfu oraz brakujących podpisów."""
+    """Zwraca podsumowanie alertów dryfu oraz brakujących podpisów.
+
+    Analogicznie do :func:`summarize_data_quality_reports`, możemy wskazać
+    wymagane role podpisów oraz wymusić zgłoszenie wyjątku przy brakach.
+    """
+
+    normalized_roles = _normalize_required_roles(roles)
 
     normalized: list[Mapping[str, Any]] = [
         report
@@ -380,7 +430,7 @@ def summarize_drift_reports(
         "exceeds_threshold": 0,
         "latest_report_path": None,
         "latest_exceeding_report_path": None,
-        "pending_sign_off": {role: [] for role in _SIGN_OFF_ROLES},
+        "pending_sign_off": {role: [] for role in normalized_roles},
     }
 
     for index, report in enumerate(normalized):
@@ -405,12 +455,16 @@ def summarize_drift_reports(
             report,
             str(report.get("category") or "drift_alert"),
             summary["pending_sign_off"],
+            roles=normalized_roles,
         )
 
-    summary["pending_sign_off"] = {
+    pending = {
         role: tuple(entries)
         for role, entries in summary["pending_sign_off"].items()
     }
+    summary["pending_sign_off"] = MappingProxyType(pending)
+    if require_sign_off and any(pending.values()):
+        raise ComplianceSignOffError(pending)
     return MappingProxyType(summary)
 
 
@@ -418,6 +472,8 @@ def _collect_pending_sign_off(
     report: Mapping[str, Any],
     category: str,
     pending: MutableMapping[str, list[Mapping[str, Any]]],
+    *,
+    roles: Sequence[str],
 ) -> None:
     report_path = report.get("report_path")
     path_str = None
@@ -426,7 +482,12 @@ def _collect_pending_sign_off(
     timestamp = report.get("timestamp")
     sign_off = report.get("sign_off")
     if not isinstance(sign_off, Mapping):
-        for role in _SIGN_OFF_ROLES:
+        logger.warning(
+            "Report %s (%s) lacks sign-off section; marking all roles as pending",
+            path_str or "<memory>",
+            category,
+        )
+        for role in roles:
             pending[role].append(
                 {
                     "category": category,
@@ -437,12 +498,35 @@ def _collect_pending_sign_off(
             )
         return
 
-    for role in _SIGN_OFF_ROLES:
+    for role in roles:
         entry = sign_off.get(role)
         status = "pending"
-        if isinstance(entry, Mapping):
+        if not isinstance(entry, Mapping):
+            logger.warning(
+                "Report %s (%s) missing %s sign-off entry; treating as pending",
+                path_str or "<memory>",
+                category,
+                role,
+            )
+        else:
             status = str(entry.get("status") or "pending").lower()
+            if status not in _SIGN_OFF_STATUSES:
+                logger.warning(
+                    "Report %s (%s) has unsupported %s sign-off status %r; treating as pending",
+                    path_str or "<memory>",
+                    category,
+                    role,
+                    entry.get("status"),
+                )
+                status = "pending"
         if status not in _COMPLETED_SIGN_OFF_STATUSES:
+            logger.warning(
+                "Report %s (%s) awaiting %s sign-off (status: %s)",
+                path_str or "<memory>",
+                category,
+                role,
+                status,
+            )
             pending[role].append(
                 {
                     "category": category,
@@ -453,6 +537,40 @@ def _collect_pending_sign_off(
             )
 
 
+def _normalize_required_roles(roles: Sequence[str] | None) -> tuple[str, ...]:
+    if roles is None:
+        return _DEFAULT_SIGN_OFF_ROLES
+
+    seen: set[str] = set()
+    normalized: list[str] = []
+    for role in roles:
+        if not isinstance(role, str):
+            continue
+        normalized_role = role.strip().lower()
+        if not normalized_role:
+            continue
+        if normalized_role not in _SUPPORTED_SIGN_OFF_ROLES:
+            logger.warning(
+                "Unsupported compliance sign-off role provided: %s", role
+            )
+            raise ValueError(
+                f"unsupported sign-off role: {role!r}"
+            )
+        if normalized_role in seen:
+            continue
+        seen.add(normalized_role)
+        normalized.append(normalized_role)
+
+    if not normalized:
+        logger.warning(
+            "No supported compliance sign-off roles configured; expected one of: %s",
+            ", ".join(sorted(_SUPPORTED_SIGN_OFF_ROLES)),
+        )
+        raise ValueError("roles must include at least one supported sign-off role")
+
+    return tuple(normalized)
+
+
 def ensure_compliance_sign_offs(
     *,
     data_quality_reports: Sequence[Mapping[str, Any]] | None = None,
@@ -461,13 +579,15 @@ def ensure_compliance_sign_offs(
 ) -> Mapping[str, tuple[Mapping[str, Any], ...]]:
     """Weryfikuje, czy wymagane role zatwierdziły alerty data-quality oraz dryfu."""
 
-    required_roles = tuple(str(role).lower() for role in (roles or _SIGN_OFF_ROLES))
+    required_roles = _normalize_required_roles(roles)
     pending: MutableMapping[str, list[Mapping[str, Any]]] = {
         role: [] for role in required_roles
     }
 
-    dq_summary = summarize_data_quality_reports(data_quality_reports)
-    drift_summary = summarize_drift_reports(drift_reports)
+    dq_summary = summarize_data_quality_reports(
+        data_quality_reports, roles=required_roles
+    )
+    drift_summary = summarize_drift_reports(drift_reports, roles=required_roles)
 
     for role in required_roles:
         dq_entries = dq_summary.get("pending_sign_off", {}).get(role, ())
@@ -476,11 +596,18 @@ def ensure_compliance_sign_offs(
         pending[role].extend(dict(entry) for entry in drift_entries)
 
     normalized = {role: tuple(entries) for role, entries in pending.items()}
-    if any(normalized.values()):
-        missing = {role: entries for role, entries in normalized.items() if entries}
-        if missing:
-            raise ComplianceSignOffError(normalized)
-    return normalized
+    missing = {role: entries for role, entries in normalized.items() if entries}
+    if missing:
+        for role, entries in missing.items():
+            categories = sorted({entry.get("category", "unknown") for entry in entries})
+            logger.warning(
+                "Missing %s sign-off for %d audit report(s) (categories: %s)",
+                role,
+                len(entries),
+                ", ".join(categories) or "unknown",
+            )
+        raise ComplianceSignOffError(normalized)
+    return MappingProxyType(normalized)
 def _is_missing(value: object) -> bool:
     if value is None:
         return True

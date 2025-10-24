@@ -577,7 +577,7 @@ class DecisionModelInference:
         self._completeness_watcher = InferenceDataCompletenessWatcher()
         self._bounds_validator = InferenceFeatureBoundsValidator()
         self._last_data_quality_report: dict[str, Mapping[str, object]] | None = None
-        self._enforce_data_alerts = False
+        self._enforce_data_alerts = True
         self._data_quality_enforcement: dict[str, bool] = {}
 
     @property
@@ -618,7 +618,7 @@ class DecisionModelInference:
         self._completeness_watcher.configure_from_metadata(metadata)
         self._bounds_validator.configure_from_metadata(metadata)
         self._last_data_quality_report = None
-        self._enforce_data_alerts = False
+        self._enforce_data_alerts = True
         self._data_quality_enforcement = {}
         drift_config = metadata.get("drift_monitor")
         if isinstance(drift_config, Mapping):
