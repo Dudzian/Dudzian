@@ -30,7 +30,7 @@ fingerprintu w postaci QR, jak i na nośniku USB.
 
 ## Provisioning po stronie OEM
 
-Do wystawienia licencji użyj narzędzia `scripts/oem_provision_license.py`.
+Do wystawienia licencji użyj narzędzia `python scripts/oem_provision_license.py`.
 
 ### Wniosek licencyjny z pliku JSON/YAML
 

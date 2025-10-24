@@ -26,15 +26,15 @@ w `var/audit/acceptance` oraz aktualizację decision logu.
 ## Artefakty/Akceptacja
 - Raport z workflow GitHub Actions (`stage4-multi-strategy-<run>`), skopiowany do
   `var/audit/acceptance/<timestamp>/stage4_smoke`.
-- `smoke_report.json` z `scripts/smoke_demo_strategies.py`, `risk_simulation_report.{json,pdf}`
-  z Paper Labs oraz `load_test.json` z `scripts/load_test_scheduler.py`.
+- `smoke_report.json` z `python scripts/smoke_demo_strategies.py`, `risk_simulation_report.{json,pdf}`
+  z Paper Labs oraz `load_test.json` z `python scripts/load_test_scheduler.py`.
 - `stage4-strategies-<version>.zip` wraz z `stage4-strategies-<version>.manifest.{json,sig}`
   potwierdzonymi podpisem HMAC-SHA384.
 - `observability-bundle-<run_id>.tar.gz` wraz z `manifest.json` i `manifest.sig`
-  wygenerowanymi przez `scripts/export_observability_bundle.py`.
+  wygenerowanymi przez `python scripts/export_observability_bundle.py`.
 - Log kroku GitHub Actions `Validate Prometheus alert rules` potwierdzający poprawność
   reguł w `deploy/prometheus/rules/multi_strategy_rules.yml`.
-- Raport nagłówków `headers_report.json` z `watch_metrics_stream.py`.
+- Raport nagłówków `headers_report.json` z `python scripts/watch_metrics_stream.py`.
 - Wpis w decision logu (`audit/decision_logs/demo.jsonl`) z kategorią `stage4_smoke`, podpisany
   HMAC-SHA384 i zweryfikowany `python scripts/verify_decision_log.py --strict`.
 - Uaktualniona checklista `docs/runbooks/DEMO_PAPER_LIVE_CHECKLIST.md` z numerem joba oraz

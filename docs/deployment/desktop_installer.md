@@ -37,7 +37,7 @@ pip install -r deploy/packaging/requirements-desktop.txt
    ```
    Dostępne opcje:
    * `--reports` – katalog z raportami, które mają zostać dołączone do paczki (domyślnie `var/reports`).
-   * `--updater-script` – alternatywny entrypoint updatera (domyślnie `scripts/desktop_updater.py`).
+  * `--updater-script` – alternatywny entrypoint updatera (domyślnie `python scripts/desktop_updater.py`).
    * `--output` – katalog wynikowy (domyślnie `var/dist/desktop`).
 
 3. Skrypt tworzy strukturę `bot_trading_shell/` zawierającą:
@@ -137,7 +137,7 @@ Konfiguracja dialogów wymaga poprawnych ścieżek w ustawieniach UI:
 ## Pakiet wsparcia
 
 Zakładka **Wsparcie** w panelu administratora wywołuje skrypt
-`scripts/export_support_bundle.py`, który pakuje katalogi `logs/`,
+`python scripts/export_support_bundle.py`, który pakuje katalogi `logs/`,
 `var/reports`, `var/licenses`, `var/metrics` oraz opcjonalnie `var/audit` do
 archiwum `tar.gz` lub `zip`. Operator może wskazać dodatkowe zasoby (`--support-bundle-include label=/ścieżka`) oraz wyłączyć
 domyślne elementy (`--support-bundle-disable logs`). Zmienna

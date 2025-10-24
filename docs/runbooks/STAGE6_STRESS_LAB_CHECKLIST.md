@@ -70,5 +70,5 @@ Zweryfikowanie odporności portfela wielostrate-gicznego przy użyciu modułu `b
 
 ## Odniesienia
 - `bot_core/risk/stress_lab.py`
-- `scripts/run_stress_lab.py`
+- `python scripts/run_stress_lab.py`
 - `deploy/ci/github_actions_stage6_stress_lab.yml` *(po wdrożeniu pipeline’u)*

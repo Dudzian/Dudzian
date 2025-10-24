@@ -28,7 +28,7 @@ Pełne logi testów są wersjonowane w katalogu `logs/` wraz z podpisami HMAC ge
 ## Profil ryzyka i compliance
 - Zachowany brak wykorzystania WebSocketów – wszystkie integracje korzystają z gRPC/HTTP2 lub IPC.
 - Wymuszone RBAC oraz mTLS w kanałach komunikacyjnych runtime’u i modułu scheduler-a, certyfikaty przypięte w konfiguracji;
-  automatyczny audyt `scripts/audit_stage4_compliance.py` monitoruje tokeny, TLS i rotacje.
+  automatyczny audyt `python scripts/audit_stage4_compliance.py` monitoruje tokeny, TLS i rotacje.
 - Decision log w formacie JSONL podpisywany HMAC, z aktualizacją procedury reagowania na force liquidation i dzienne limity strat.
 - Kompatybilność multiplatformowa (Windows/macOS/Linux) utrzymana poprzez abstrakcję ścieżek i brak zależności chmurowych.
 

@@ -74,12 +74,12 @@ Pakiet `proto/` zawiera definicje usług z zamrożonymi polami (brak breaking ch
 * `MetricsService` – `MetricsSnapshot`, `Heartbeat`.
 
 Pliki `.proto` generują stuby C++ (core) oraz Python (bot_core) – spójne testy kontraktowe golden files.
-Artefakty tworzymy skryptem `scripts/generate_trading_stubs.py`, a wzorcowy workflow
+Artefakty tworzymy skryptem `python scripts/generate_trading_stubs.py`, a wzorcowy workflow
 `deploy/ci/github_actions_proto_stubs.yml` buduje je w CI i publikuje jako artefakt.
 
 ### Stub developerski
 
-* Skrypt `scripts/run_trading_stub_server.py` uruchamia lokalny serwer gRPC bezpośrednio na danych z YAML-a
+* Skrypt `python scripts/run_trading_stub_server.py` uruchamia lokalny serwer gRPC bezpośrednio na danych z YAML-a
   lub na domyślnym datasetcie. Parametryzacja obejmuje host/port, wielokrotne `--dataset`, tryb `--shutdown-after`
   (przydatny w CI), `--stream-repeat` do symulacji ciągłego feedu (loop na incrementach) oraz `--stream-interval`
   pozwalający kontrolować kadencję aktualizacji (0 = natychmiast, >0 = odstęp w sekundach). W razie potrzeby można
@@ -120,7 +120,7 @@ Artefakty tworzymy skryptem `scripts/generate_trading_stubs.py`, a wzorcowy work
   benchmarków animacji (60/120 Hz).
 * Workflow CI `deploy/ci/github_actions_proto_stubs.yml` po wygenerowaniu artefaktów może uruchomić stub
   z `--shutdown-after`, aby przeprowadzić szybki smoke test UI lub komponentów gRPC.
-* Skrypt `scripts/run_metrics_service.py` startuje dedykowany serwer MetricsService (host/port, rozmiar historii,
+* Skrypt `python scripts/run_metrics_service.py` startuje dedykowany serwer MetricsService (host/port, rozmiar historii,
   opcjonalny LoggingSink oraz zapis do JSONL z `--jsonl`/`--jsonl-fsync`) – wykorzystywany w CI i lokalnie do
   obserwacji zdarzeń reduce-motion, budżetu overlayów **oraz wykrytych klatek jank** wysyłanych z powłoki.
   Flagi `--ui-alerts-audit-dir/pattern/retention-days`, `--ui-alerts-audit-backend` (auto/file/memory) oraz `--ui-alerts-audit-fsync`
@@ -144,7 +144,7 @@ Artefakty tworzymy skryptem `scripts/generate_trading_stubs.py`, a wzorcowy work
   `audit` z rozstrzygnięciem realnego backendu (`memory` lub `file`), z notatkami `inherited_environment_router`, `file_backend_unavailable`
   albo `memory_backend_not_selected` (np. gdy operator wymusił tryb `memory`, ale router środowiskowy wciąż zapisuje do pliku). Dzięki temu
   pipeline demo→paper→live ma jednoznaczny obraz, czy alerty UI trafiają do trwałego audytu, czy też działamy w trybie degradacji.
-* Narzędzie `scripts/watch_metrics_stream.py` podgląda `MetricsSnapshot` wprost z gRPC (filtry `--event`, `--severity`,
+* Narzędzie `python scripts/watch_metrics_stream.py` podgląda `MetricsSnapshot` wprost z gRPC (filtry `--event`, `--severity`,
   `--severity-min`, `--since`, `--until`, `--screen-index`, `--screen-name`, format `table/json`, limit rekordów) i służy do
   debugowania telemetrycznego w CI oraz na stanowiskach operatorów. Wspiera TLS/mTLS przez flagi `--use-tls`, `--root-cert`,
   `--client-cert`, `--client-key`, `--server-name` oraz pinning `--server-sha256`.  Aby zapobiec przypadkowemu braku
@@ -173,7 +173,7 @@ Artefakty tworzymy skryptem `scripts/generate_trading_stubs.py`, a wzorcowy work
   JSON/YAML przez `--risk-profiles-file` (lub `BOT_CORE_WATCH_METRICS_RISK_PROFILES_FILE`).  Załadowane profile są oznaczane
   w metadanych polem `origin=watcher:…`, dzięki czemu audyt jednoznacznie wskazuje źródło definicji (repozytorium, artefakt CI).
   Jeżeli pipeline potrzebuje przełożyć wybrany profil na konkretne parametry startowe dla `run_metrics_service.py`
-  lub `run_trading_stub_server.py`, pomocniczy skrypt `scripts/telemetry_risk_profiles.py render` generuje zarówno gotowy JSON
+  lub `run_trading_stub_server.py`, pomocniczy skrypt `python scripts/telemetry_risk_profiles.py render` generuje zarówno gotowy JSON
   z nadpisaniami `MetricsService`, równoważny snippet YAML (do bezpośredniego użycia w `core.yaml`), listy flag CLI oraz – od tej iteracji – przypisania zmiennych
   środowiskowych (`RUN_METRICS_SERVICE_*`).  Dzięki temu audyt demo→paper→live może w prosty sposób zbudować plik `.env`
   lub polecenie shellowe bez ręcznego mapowania nazw parametrów.  Operator może zdecydować, czy wynik w formacie `env`
@@ -190,7 +190,7 @@ Artefakty tworzymy skryptem `scripts/generate_trading_stubs.py`, a wzorcowy work
   same zasady obowiązują dla poleceń `list`, `show` i `validate`, które otrzymały przełącznik `--format` – raporty można
   więc seryjnie eksportować w YAML (np. do runbooków) lub JSON (do automatycznej analizy), a rozszerzenie pliku decyduje o
   domyśle, jeśli operator nie podał formatu ręcznie.
-  Nowa komenda `scripts/telemetry_risk_profiles.py diff <bazowy> <docelowy>` buduje natomiast szczegółowe porównanie dwóch
+  Nowa komenda `python scripts/telemetry_risk_profiles.py diff <bazowy> <docelowy>` buduje natomiast szczegółowe porównanie dwóch
   presetów: różnice w nadpisaniach CLI/ENV/Konfiguracji, zmiany limitów `max/min_event_counts`, próg `severity_min`,
   zarejestrowane `extends` oraz pełny łańcuch `extends_chain`, a także ujednolicony skrót metadanych (pochodzenie,
   wymagania screen-info).  Wynik domyślnie generowany jest w formacie JSON, ale dzięki `--format=yaml` można uzyskać
@@ -232,7 +232,7 @@ Artefakty tworzymy skryptem `scripts/generate_trading_stubs.py`, a wzorcowy work
   `..._DECISION_LOG_KEY_ID`) trafia zarówno do metadanych, jak i do podpisów pojedynczych wpisów.  Podpisy (pole `signature`
   z algorytmem, wartością Base64 i opcjonalnym `key_id`) są dodawane do wpisu `metadata` i każdego snapshotu, dzięki czemu pipeline demo→paper→live
   może weryfikować integralność decision logów i łączyć je z rotacją kluczy operacyjnych.
-* Narzędzie uzupełniające `scripts/verify_decision_log.py` służy do walidacji podpisów HMAC
+* Narzędzie uzupełniające `python scripts/verify_decision_log.py` służy do walidacji podpisów HMAC
   w decision logach wygenerowanych przez watcher.  Przyjmuje pliki `.jsonl`, `.jsonl.gz` lub
   dane ze standardowego wejścia, obsługuje te same sekretne klucze przez flagi/zmienne (`--hmac-key`,
   `--hmac-key-file`, `BOT_CORE_VERIFY_DECISION_LOG_HMAC_KEY(_FILE)`) oraz wymusza spójność

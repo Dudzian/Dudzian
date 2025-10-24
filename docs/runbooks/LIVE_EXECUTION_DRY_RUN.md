@@ -8,7 +8,7 @@ instrumenty używane przez środowiska live są spójne i gotowe do startu.
 ## Krok po kroku
 
 1. **Przygotuj środowisko**
-   - Zaktualizuj repozytorium do wersji zawierającej `scripts/live_execution_dry_run.py`.
+   - Zaktualizuj repozytorium do wersji zawierającej `python scripts/live_execution_dry_run.py`.
    - Upewnij się, że plik `config/core.yaml` zawiera aktualne środowiska typu
      `live` oraz poprawnie skonfigurowane instrumenty i routingi.
    - (Opcjonalnie) przygotuj katalog docelowy na raporty, np.

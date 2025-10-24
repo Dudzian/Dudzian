@@ -7,8 +7,8 @@ Zapewnienie w pełni offline'owego procesu wydawania licencji dla bundla Core OE
 | Krok | Odpowiedzialny | Artefakty | Akceptacja |
 | --- | --- | --- | --- |
 | Przygotuj klucz HMAC (`signing.key`) ≥32 bajty oraz zaktualizuj rejestr rotacji (`var/licenses/key_rotation.json`). | Bezpieczeństwo | `signing.key`, `var/licenses/key_rotation.json` | Security Lead |
-| Zweryfikuj status rotacji (`scripts/oem_provision_license.py --rotation-log ... --key-id ... --valid-days ... --fingerprint ... --signing-key-path ... --dry-run`*) i potwierdź, że klucz nie jest przeterminowany. | Bezpieczeństwo | Log skryptu | Security Lead |
-| Uruchom `scripts/oem_provision_license.py` z docelowym fingerprintem i parametrami profilu. | Operator OEM | `var/licenses/registry.jsonl`, logi CLI | OEM Ops |
+| Zweryfikuj status rotacji (`python scripts/oem_provision_license.py --rotation-log ... --key-id ... --valid-days ... --fingerprint ... --signing-key-path ... --dry-run`*) i potwierdź, że klucz nie jest przeterminowany. | Bezpieczeństwo | Log skryptu | Security Lead |
+| Uruchom `python scripts/oem_provision_license.py` z docelowym fingerprintem i parametrami profilu. | Operator OEM | `var/licenses/registry.jsonl`, logi CLI | OEM Ops |
 | (opcjonalnie) Wygeneruj kod QR (`--emit-qr`) i wydruk papierowy dla klienta. | Operator OEM | Wydruk QR | OEM Ops |
 | (opcjonalnie) Wyeksportuj licencję na nośnik (`--usb-target /media/.../license.json`). | Operator OEM | Plik licencyjny na USB | OEM Ops |
 | Zaimportuj licencję w kliencie Qt (ekran aktywacji) i zweryfikuj fingerprint/profil. | Operator OEM | Zrzut ekranu UI, `var/licenses/active/license.json` | Product Owner |
@@ -17,7 +17,7 @@ Zapewnienie w pełni offline'owego procesu wydawania licencji dla bundla Core OE
 
 \* *Tryb dry-run*: ustaw `--no-mark-rotation`, aby wygenerować podpis bez zapisu licencji (służy do testów).* 
 
-## Parametry skryptu `scripts/oem_provision_license.py`
+## Parametry skryptu `python scripts/oem_provision_license.py`
 - `--signing-key-path`: klucz HMAC (min. 32 bajty, najlepiej 48 bajtów SHA-384).
 - `--key-id`: identyfikator klucza wykorzystywany w rotacji i audycie.
 - `--fingerprint` lub `--fingerprint-file`: źródło fingerprintu klienta; jeśli brak parametrów, narzędzie wygeneruje fingerprint lokalnej maszyny.
