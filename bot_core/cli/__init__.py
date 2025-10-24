@@ -1651,7 +1651,19 @@ def show_strategy_catalog(args: argparse.Namespace) -> int:
             engine = entry.get("engine", "(nieznany)")
             capability = entry.get("capability") or "-"
             tags = ", ".join(entry.get("default_tags", [])) or "-"
-            print(f"  * {engine} (capability={capability}, tags={tags})")
+            license_tier = entry.get("license_tier") or "-"
+            risk_classes = ", ".join(str(item) for item in entry.get("risk_classes", [])) or "-"
+            required_data = ", ".join(str(item) for item in entry.get("required_data", [])) or "-"
+            print(
+                "  * {engine} (capability={capability}, license={license}, risk_classes=[{risk}], required_data=[{data}], tags={tags})".format(
+                    engine=engine,
+                    capability=capability,
+                    license=license_tier,
+                    risk=risk_classes,
+                    data=required_data,
+                    tags=tags,
+                )
+            )
 
     if config_path:
         print()
@@ -1665,12 +1677,18 @@ def show_strategy_catalog(args: argparse.Namespace) -> int:
                 risk_profile = entry.get("risk_profile") or "-"
                 tags = ", ".join(entry.get("tags", [])) or "-"
                 capability = entry.get("capability") or "-"
+                license_tier = entry.get("license_tier") or "-"
+                risk_classes = ", ".join(str(item) for item in entry.get("risk_classes", [])) or "-"
+                required_data = ", ".join(str(item) for item in entry.get("required_data", [])) or "-"
                 print(
-                    "  * {name} -> {engine} (risk_profile={risk_profile}, capability={capability}, tags={tags})".format(
+                    "  * {name} -> {engine} (risk_profile={risk_profile}, capability={capability}, license={license}, risk_classes=[{risk}], required_data=[{data}], tags={tags})".format(
                         name=name,
                         engine=engine,
                         risk_profile=risk_profile,
                         capability=capability,
+                        license=license_tier,
+                        risk=risk_classes,
+                        data=required_data,
                         tags=tags,
                     )
                 )
@@ -1748,7 +1766,7 @@ def show_scheduler_plan(args: argparse.Namespace) -> int:
         tags = ", ".join(entry.get("tags", [])) or "-"
         interval = entry.get("interval") or "-"
         print(
-            "  * {name}: {strategy} [profile={profile}] cadence={cadence}s drift={drift}s max_signals={max_signals} interval={interval} tags={tags}".format(
+            "  * {name}: {strategy} [profile={profile}] cadence={cadence}s drift={drift}s max_signals={max_signals} interval={interval} license={license} risk_classes=[{risk}] required_data=[{data}] tags={tags}".format(
                 name=entry.get("name", "(bez nazwy)"),
                 strategy=entry.get("strategy", "(nieznana)"),
                 profile=entry.get("risk_profile", "-"),
@@ -1756,6 +1774,9 @@ def show_scheduler_plan(args: argparse.Namespace) -> int:
                 drift=entry.get("max_drift_seconds", "-"),
                 max_signals=entry.get("max_signals", "-"),
                 interval=interval,
+                license=entry.get("license_tier", "-"),
+                risk=", ".join(str(item) for item in entry.get("risk_classes", [])) or "-",
+                data=", ".join(str(item) for item in entry.get("required_data", [])) or "-",
                 tags=tags,
             )
         )

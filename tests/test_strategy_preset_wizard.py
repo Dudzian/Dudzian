@@ -1,5 +1,4 @@
 import json
-import json
 from pathlib import Path
 
 import pytest
@@ -31,8 +30,53 @@ def test_build_preset_merges_tags() -> None:
     assert entry["engine"] == "grid_trading"
     assert set(entry["tags"]).issuperset({"grid", "market_making", "demo"})
     assert entry["risk_profile"] == "balanced"
-    assert entry["metadata"] == {"exchange": "paper"}
+    assert entry["license_tier"] == "professional"
+    assert entry["risk_classes"] == ["market_making"]
+    assert entry["required_data"] == ["order_book", "ohlcv"]
+    assert entry["metadata"]["license_tier"] == "professional"
+    assert entry["metadata"]["risk_classes"] == ("market_making",)
+    assert entry["metadata"]["required_data"] == ("order_book", "ohlcv")
+    assert entry["metadata"]["exchange"] == "paper"
     assert preset["metadata"] == {"environment": "demo"}
+
+
+def test_build_preset_rejects_mismatched_license() -> None:
+    wizard = StrategyPresetWizard()
+    with pytest.raises(ValueError):
+        wizard.build_preset(
+            "invalid",
+            [
+                {
+                    "engine": "grid_trading",
+                    "license_tier": "enterprise",
+                }
+            ],
+        )
+
+
+def test_build_preset_accepts_scalar_metadata() -> None:
+    wizard = StrategyPresetWizard()
+    preset = wizard.build_preset(
+        "scalar-metadata",
+        [
+            {
+                "engine": "volatility_target",
+                "risk_classes": "tail_risk",
+                "required_data": "stress_metrics",
+            }
+        ],
+    )
+
+    entry = preset["strategies"][0]
+    assert entry["risk_classes"] == ["risk_control", "volatility", "tail_risk"]
+    assert entry["required_data"] == ["ohlcv", "realized_volatility", "stress_metrics"]
+    metadata = entry["metadata"]
+    assert metadata["risk_classes"] == ("risk_control", "volatility", "tail_risk")
+    assert metadata["required_data"] == (
+        "ohlcv",
+        "realized_volatility",
+        "stress_metrics",
+    )
 
 
 def test_export_signed_preset(tmp_path: Path) -> None:
