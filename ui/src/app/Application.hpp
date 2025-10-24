@@ -37,6 +37,7 @@ class SecurityAdminController;         // forward decl (security/SecurityAdminCo
 class ReportCenterController;          // forward decl (reporting/ReportCenterController.hpp)
 class BotCoreLocalService;             // forward decl (grpc/BotCoreLocalService.hpp)
 class StrategyConfigController;        // forward decl (app/StrategyConfigController.hpp)
+class StrategyWorkbenchController;     // forward decl (app/StrategyWorkbenchController.hpp)
 class SupportBundleController;         // forward decl (support/SupportBundleController.hpp)
 class HealthStatusController;          // forward decl (health/HealthStatusController.hpp)
 class OfflineRuntimeBridge;            // forward decl (runtime/OfflineRuntimeBridge.hpp)
@@ -54,6 +55,7 @@ class Application : public QObject {
     Q_PROPERTY(QObject*         activationController READ activationController CONSTANT)
     Q_PROPERTY(QObject*         reportController READ reportController CONSTANT)
     Q_PROPERTY(QObject*         strategyController READ strategyController CONSTANT)
+    Q_PROPERTY(QObject*         workbenchController READ workbenchController CONSTANT)
     Q_PROPERTY(QObject*         supportController READ supportController CONSTANT)
     Q_PROPERTY(QObject*         healthController READ healthController CONSTANT)
     Q_PROPERTY(QObject*         decisionLogModel READ decisionLogModel CONSTANT)
@@ -96,6 +98,7 @@ public:
     QObject*         activationController() const;
     QObject*         reportController() const;
     QObject*         strategyController() const;
+    QObject*         workbenchController() const;
     QObject*         supportController() const;
     QObject*         healthController() const;
     QObject*         decisionLogModel() const;
@@ -354,6 +357,7 @@ private:
     std::unique_ptr<SecurityAdminController>   m_securityController;
     std::unique_ptr<ReportCenterController>    m_reportController;
     std::unique_ptr<StrategyConfigController>  m_strategyController;
+    std::unique_ptr<StrategyWorkbenchController> m_workbenchController;
     std::unique_ptr<SupportBundleController>   m_supportController;
     std::unique_ptr<HealthStatusController>    m_healthController;
 

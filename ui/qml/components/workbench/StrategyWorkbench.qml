@@ -10,6 +10,7 @@ Item {
     // Allow overriding context objects, otherwise fall back to global context properties
     property var appController: null
     property var strategyController: null
+    property var workbenchController: null
     property var riskModel: null
     property var riskHistoryModel: null
     property var licenseController: null
@@ -22,6 +23,7 @@ Item {
         objectName: "strategyWorkbenchViewModel"
         appController: root.appController ? root.appController : (typeof appController !== "undefined" ? appController : null)
         strategyController: root.strategyController ? root.strategyController : (typeof strategyController !== "undefined" ? strategyController : null)
+        workbenchController: root.workbenchController ? root.workbenchController : (typeof workbenchController !== "undefined" ? workbenchController : null)
         riskModel: root.riskModel ? root.riskModel : (typeof riskModel !== "undefined" ? riskModel : null)
         riskHistoryModel: root.riskHistoryModel ? root.riskHistoryModel : (typeof riskHistoryModel !== "undefined" ? riskHistoryModel : null)
         licenseController: root.licenseController ? root.licenseController : (typeof licenseController !== "undefined" ? licenseController : null)
