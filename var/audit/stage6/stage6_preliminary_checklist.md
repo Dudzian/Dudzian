@@ -15,8 +15,12 @@ oraz punkty kontrolne dla skryptów `scripts/run_stage6_*.py` i szablonów w `co
 - [ ] Potwierdzono możliwość generowania raportów Market Intel (`python
       scripts/build_market_intel_metrics.py`) do lokalizacji wskazanych w
       `config/stage6/hypercare.yaml` i `scripts/run_stage6_portfolio_cycle.py`.
-- [ ] Zapewniono katalog `var/metrics/` z metrykami Stage6 (`stage6_measurements.json`) oraz
-      retencję artefaktów w `var/audit/stage6/`.
+- [ ] Zapewniono katalog `var/metrics/` z metrykami Stage6 (`stage6_measurements.json`) –
+      jeśli plik pochodzi z innego repozytorium, użyj
+      `python scripts/sync_stage6_metrics.py --source <plik> --output var/metrics/stage6_measurements.json`,
+      który utworzy katalog docelowy, zweryfikuje poprawność JSON oraz liczbę pomiarów
+      i przygotuje plik do użycia w orchestracji hypercare, oraz zadbaj o retencję
+      artefaktów w `var/audit/stage6/`.
 
 ## 3. PortfolioGovernor & Decision Engine
 - [ ] Zdefiniowano KPI adaptacyjnego zarządzania kapitałem (np. target allocation drift, max

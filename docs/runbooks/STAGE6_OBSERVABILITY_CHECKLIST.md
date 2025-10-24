@@ -10,7 +10,12 @@ PortfolioGovernorem podczas hypercare Stage6.
 - Sekcja `observability.slo_definitions_path` w `config/core.yaml` wskazująca na ten plik (po każdej zmianie definicji zsynkuj oba repozytoria).
 - Zbiór pomiarów Stage6 zapisany w `var/metrics/stage6_measurements.json`
   (jeśli pochodzi z innego środowiska, skopiuj/rozpakuj go do katalogu
-  `var/metrics/`).
+  `var/metrics/`, aby hypercare odczytał tę samą ścieżkę co konfiguracja –
+  skrypt `python scripts/sync_stage6_metrics.py --source <plik>` automatycznie
+  utworzy katalog, zweryfikuje poprawność JSON oraz liczbę pomiarów i
+  przygotuje plik do użycia). Orkiestrator
+  `run_stage6_hypercare_cycle.py` zweryfikuje obecność tego pliku i przerwie
+  działanie z komunikatem, jeśli nie zostanie przygotowany.
 - Klucz HMAC do podpisu raportów w `secrets/hmac/observability.key`.
 
 > **Uwaga:** Wszystkie skrypty Stage6 uruchamiamy poprzez `python <ścieżka_do_skryptu>` (alias `python3` w aktywnym venv). Bezpośrednie `./scripts/...` nie są wspierane, aby zachować spójność zależności i konfiguracji.
@@ -29,8 +34,10 @@ PortfolioGovernorem podczas hypercare Stage6.
 >     --bundle-output-dir var/observability --signing-key-path secrets/hmac/observability.key \
 >     --tag stage6 --annotations-panel-id 1
 > ```
-> Parametry można dostosować do lokalnej struktury. Poniższe kroki opisują wersję
-> manualną krok po kroku.
+> Parametry można dostosować do lokalnej struktury. Jeżeli Twoje środowisko
+> zapisuje metryki pod inną ścieżką, najpierw skopiuj je do katalogu
+> `var/metrics/` (np. `python scripts/sync_stage6_metrics.py --source /mnt/backup/stage6_measurements.json`).
+> Poniższe kroki opisują wersję manualną krok po kroku.
 
 ## Procedura
 1. Uruchom monitor SLO i wygeneruj raport ze statusami Stage6 (wraz z

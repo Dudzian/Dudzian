@@ -11,6 +11,9 @@ summary:
 observability:
   definitions: config/observability/slo.yml
   # Domyślnie oczekujemy metryk Stage6 wygenerowanych przez runbook w katalogu var/metrics.
+  # Jeśli zapisujesz je w innym miejscu, dostosuj ścieżkę poniżej lub użyj skryptu
+  # python scripts/sync_stage6_metrics.py --source <plik> --output var/metrics/stage6_measurements.json
+  # (narzędzie utworzy katalog docelowy, zweryfikuje JSON i potwierdzi liczbę pomiarów).
   metrics: var/metrics/stage6_measurements.json
   slo:
     json: var/audit/observability/slo_report.json

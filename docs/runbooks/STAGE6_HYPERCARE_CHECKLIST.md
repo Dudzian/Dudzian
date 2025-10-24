@@ -9,7 +9,11 @@ artefakty audytowe.
 - Aktualne raporty wejściowe dla Observability (definicje/metyki SLO –
   repozytoryjny plik `config/observability/slo.yml` i plik metryk
   `var/metrics/stage6_measurements.json` wygenerowany według runbooka
-  Observability), Resilience (plan
+  Observability; jeśli otrzymujesz metryki z innego środowiska, skopiuj je
+  lub przekonwertuj do tej ścieżki – możesz użyć
+  `python scripts/sync_stage6_metrics.py --source <plik> --output var/metrics/stage6_measurements.json`,
+  który tworzy katalog docelowy, sprawdza poprawność JSON oraz liczbę
+  pomiarów), Resilience (plan
   failover, manifesty paczek, polityka) oraz Portfolio
   (alokacje, Market Intel, raporty SLO/Stress Lab).
 - Raport Market Intel wygenerowany do oczekiwanej lokalizacji hypercare:
@@ -65,16 +69,20 @@ artefakty audytowe.
        slo_report: var/audit/observability/slo_report.json
        stress_report: var/audit/risk/stress_lab.json
    ```
-2. Jeżeli nie masz jeszcze świeżych metryk SLO, wykonaj cykl observability,
-   aby zapisać plik `var/metrics/stage6_measurements.json` (patrz
-   runbook Observability):
+2. Upewnij się, że w katalogu `var/metrics/` znajduje się aktualny plik
+   `stage6_measurements.json`. Jeżeli otrzymujesz go z innego środowiska,
+   skopiuj lub zsynkuj plik do tej lokalizacji, np.:
    ```bash
-   python scripts/run_stage6_observability_cycle.py \
-     --definitions config/observability/slo.yml \
-     --metrics var/metrics/stage6_measurements.json \
-     --slo-json var/audit/observability/slo_report.json \
-     --slo-csv var/audit/observability/slo_report.csv
+   python scripts/sync_stage6_metrics.py \
+     --source /mnt/backup/stage6_measurements.json \
+     --output var/metrics/stage6_measurements.json
    ```
+   W przypadku generowania nowego zestawu pomiarów wykonaj procedurę z
+   runbooka Observability (kroki przygotowania metryk) i zapisz wynik w tej
+   ścieżce. Skrypt `python scripts/sync_stage6_metrics.py` potwierdzi liczbę
+   odczytanych pomiarów, a `python scripts/run_stage6_hypercare_cycle.py`
+   zakończy się błędem, jeśli plik będzie nieobecny, podając tę ścieżkę oraz
+   przykładowe polecenie kopiujące.
 3. Uruchom orchestratora Stage6, wskazując przygotowany plik konfiguracyjny
    (domyślnie `config/core.yaml`):
    ```bash
