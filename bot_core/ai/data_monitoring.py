@@ -37,8 +37,9 @@ logger = logging.getLogger(__name__)
 
 
 _SAFE_FILENAME = re.compile(r"[^a-z0-9]+", re.IGNORECASE)
-_SUPPORTED_SIGN_OFF_ROLES = frozenset({"risk", "compliance"})
-_DEFAULT_SIGN_OFF_ROLES = ("risk", "compliance")
+_SIGN_OFF_ROLES = ("risk", "compliance")
+_SUPPORTED_SIGN_OFF_ROLES = frozenset(_SIGN_OFF_ROLES)
+_DEFAULT_SIGN_OFF_ROLES = _SIGN_OFF_ROLES
 _SIGN_OFF_STATUSES = frozenset(
     {"pending", "approved", "rejected", "escalated", "waived", "investigating"}
 )
@@ -82,13 +83,15 @@ def _timestamp_slug(prefix: str) -> str:
 def _default_sign_off(
     *, extra_roles: Sequence[str] | None = None
 ) -> dict[str, MutableMapping[str, Any]]:
-    roles = set(_SIGN_OFF_ROLES)
+    base_roles: list[str] = list(_SIGN_OFF_ROLES)
+    extra: set[str] = set()
     for role in extra_roles or ():
         normalized = _normalize_role(role)
-        if normalized:
-            roles.add(normalized)
+        if normalized and normalized not in base_roles:
+            extra.add(normalized)
+    ordered_roles = (*base_roles, *sorted(extra))
     sign_off: dict[str, MutableMapping[str, Any]] = {}
-    for role in sorted(roles):
+    for role in ordered_roles:
         note = _SIGN_OFF_DEFAULT_NOTES.get(
             role, f"Awaiting {role.replace('_', ' ').title()} sign-off"
         )
@@ -528,6 +531,41 @@ def _collect_pending_sign_off(
                 status,
             )
             pending[role].append(
+                {
+                    "category": category,
+                    "status": status,
+                    "report_path": path_str,
+                    "timestamp": timestamp,
+                }
+            )
+
+    known_roles = set(roles)
+    for extra_role, entry in sign_off.items():
+        normalized_role = _normalize_role(extra_role)
+        if normalized_role is None or normalized_role in known_roles:
+            continue
+        bucket = pending.setdefault(normalized_role, [])
+        status = "pending"
+        if isinstance(entry, Mapping):
+            status = str(entry.get("status") or "pending").lower()
+            if status not in _SIGN_OFF_STATUSES:
+                logger.warning(
+                    "Report %s (%s) has unsupported %s sign-off status %r; treating as pending",
+                    path_str or "<memory>",
+                    category,
+                    normalized_role,
+                    entry.get("status"),
+                )
+                status = "pending"
+        else:
+            logger.warning(
+                "Report %s (%s) missing %s sign-off entry; treating as pending",
+                path_str or "<memory>",
+                category,
+                normalized_role,
+            )
+        if status not in _COMPLETED_SIGN_OFF_STATUSES:
+            bucket.append(
                 {
                     "category": category,
                     "status": status,
