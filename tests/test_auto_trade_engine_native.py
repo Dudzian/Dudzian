@@ -750,3 +750,375 @@ def test_auto_trade_snapshot_exposes_read_only_state(monkeypatch) -> None:
     refreshed = engine.snapshot()
     assert refreshed.strategy_weights == expected_snapshot_params.ensemble_weights
     assert refreshed.risk.combined_until >= snapshot.risk.combined_until
+
+
+def test_auto_trade_engine_inspect_regime_presets_reports_availability() -> None:
+    adapter = _make_sync_adapter()
+    catalog = StrategyCatalog(plugins=(_ConstantTrendStrategy,))
+    assessment = MarketRegimeAssessment(
+        regime=MarketRegime.TREND,
+        confidence=0.7,
+        risk_score=0.2,
+        metrics={},
+        symbol="BTCUSDT",
+    )
+    base_params = TradingParameters()
+    strategy_metadata = MappingProxyType(
+        {
+            "trend_following": MappingProxyType(
+                {
+                    "license_tier": "standard",
+                    "risk_classes": ("directional",),
+                    "required_data": ("ohlcv",),
+                    "capability": "trend_d1",
+                    "tags": ("trend",),
+                }
+            )
+        }
+    )
+    decision = RegimeSwitchDecision(
+        regime=assessment.regime,
+        assessment=assessment,
+        summary=None,
+        weights={"trend_following": 1.0},
+        parameters=base_params,
+        timestamp=pd.Timestamp.utcnow(),
+        strategy_metadata=strategy_metadata,
+        license_tiers=("standard",),
+        risk_classes=("directional",),
+        required_data=("ohlcv",),
+        capabilities=("trend_d1",),
+        tags=("trend",),
+    )
+    activation = _activation_from_decision(decision)
+    workflow = _WorkflowStub(activation, catalog)
+    availability = PresetAvailability(
+        regime=MarketRegime.TREND,
+        version=activation.version,
+        ready=False,
+        blocked_reason="missing_data",
+        missing_data=("spread_history",),
+        license_issues=("pro_required",),
+        schedule_blocked=False,
+    )
+    workflow.set_availability((availability,))
+
+    cfg = AutoTradeConfig(symbol="BTCUSDT", qty=0.1, regime_window=6)
+    engine = AutoTradeEngine(
+        adapter,
+        lambda *_: None,
+        cfg,
+        strategy_catalog=catalog,
+        regime_workflow=workflow,
+    )
+
+    reports = engine.inspect_regime_presets(available_data={"ohlcv", "technical_indicators"})
+
+    assert len(reports) == 1
+    report = reports[0]
+    assert report["regime"] == MarketRegime.TREND.value
+    assert report["ready"] is False
+    assert report["missing_data"] == ["spread_history"]
+    assert report["license_issues"] == ["pro_required"]
+    assert report["preset_hash"] == activation.version.hash
+    assert report["preset_signature"]["alg"] == "HMAC-SHA256"
+    assert report["license_tiers"] == ["standard"]
+    assert report["preset_name"] == "autotrade-stub"
+
+
+def test_auto_trade_engine_activation_history_records_and_frame() -> None:
+    adapter = _make_sync_adapter()
+    catalog = StrategyCatalog(plugins=(_ConstantTrendStrategy,))
+    assessment = MarketRegimeAssessment(
+        regime=MarketRegime.TREND,
+        confidence=0.65,
+        risk_score=0.18,
+        metrics={},
+        symbol="BTCUSDT",
+    )
+    base_params = TradingParameters()
+    strategy_metadata = MappingProxyType(
+        {
+            "trend_following": MappingProxyType(
+                {
+                    "license_tier": "standard",
+                    "risk_classes": ("directional",),
+                    "required_data": ("ohlcv",),
+                    "capability": "trend_d1",
+                    "tags": ("trend",),
+                }
+            )
+        }
+    )
+    decision = RegimeSwitchDecision(
+        regime=assessment.regime,
+        assessment=assessment,
+        summary=None,
+        weights={"trend_following": 1.0},
+        parameters=base_params,
+        timestamp=pd.Timestamp.utcnow(),
+        strategy_metadata=strategy_metadata,
+        license_tiers=("standard",),
+        risk_classes=("directional",),
+        required_data=("ohlcv",),
+        capabilities=("trend_d1",),
+        tags=("trend",),
+    )
+    activation = _activation_from_decision(decision)
+    workflow = _WorkflowStub(activation, catalog)
+
+    cfg = AutoTradeConfig(symbol="BTCUSDT", qty=0.2, regime_window=6)
+    engine = AutoTradeEngine(
+        adapter,
+        lambda *_: None,
+        cfg,
+        strategy_catalog=catalog,
+        regime_workflow=workflow,
+    )
+
+    records = engine.regime_activation_history_records()
+    assert len(records) == 1
+    first_record = records[0]
+    assert first_record["preset_name"] == "autotrade-stub"
+    assert first_record["used_fallback"] is False
+
+    frame = engine.regime_activation_history_frame()
+    assert not frame.empty
+    assert frame.iloc[0]["preset_hash"] == activation.version.hash
+
+    sample = pd.DataFrame(
+        {
+            "open": [1.0, 1.1, 1.2],
+            "high": [1.1, 1.2, 1.3],
+            "low": [0.9, 1.0, 1.1],
+            "close": [1.05, 1.15, 1.25],
+            "volume": [1000, 1100, 1200],
+        }
+    )
+    workflow.activate(sample, available_data=("ohlcv",))
+    workflow.activation_history_frame = None  # type: ignore[assignment]
+
+    tail_frame = engine.regime_activation_history_frame(limit=1)
+    assert len(tail_frame) == 1
+    assert tail_frame.iloc[0]["preset_name"] == "autotrade-stub"
+    assert tail_frame.iloc[0]["regime"] == MarketRegime.TREND.value
+
+
+def test_auto_trade_engine_summarizes_preset_availability() -> None:
+    adapter = _make_sync_adapter()
+    catalog = StrategyCatalog(plugins=(_ConstantTrendStrategy, _ConstantMeanStrategy))
+    assessment = MarketRegimeAssessment(
+        regime=MarketRegime.TREND,
+        confidence=0.67,
+        risk_score=0.22,
+        metrics={},
+        symbol="BTCUSDT",
+    )
+    base_params = TradingParameters()
+    strategy_metadata = MappingProxyType(
+        {
+            "trend_following": MappingProxyType(
+                {
+                    "license_tier": "standard",
+                    "risk_classes": ("directional",),
+                    "required_data": ("ohlcv",),
+                    "capability": "trend_d1",
+                    "tags": ("trend",),
+                }
+            ),
+            "mean_reversion": MappingProxyType(
+                {
+                    "license_tier": "professional",
+                    "risk_classes": ("statistical",),
+                    "required_data": ("ohlcv", "spread_history"),
+                    "capability": "mean_reversion",
+                    "tags": ("mean_reversion",),
+                }
+            ),
+        }
+    )
+    decision = RegimeSwitchDecision(
+        regime=assessment.regime,
+        assessment=assessment,
+        summary=None,
+        weights={"trend_following": 0.6, "mean_reversion": 0.4},
+        parameters=base_params,
+        timestamp=pd.Timestamp.utcnow(),
+        strategy_metadata=strategy_metadata,
+        license_tiers=("standard", "professional"),
+        risk_classes=("directional", "statistical"),
+        required_data=("ohlcv", "spread_history"),
+        capabilities=("trend_d1", "mean_reversion"),
+        tags=("trend", "mean_reversion"),
+    )
+    activation = _activation_from_decision(decision)
+    workflow = _WorkflowStub(activation, catalog)
+    secondary_version = replace(
+        activation.version,
+        hash="mean-hash",
+        issued_at=activation.version.issued_at + timedelta(minutes=5),
+        metadata=MappingProxyType(
+            {
+                **dict(activation.version.metadata),
+                "name": "autotrade-mean",
+                "preset_metadata": {"ensemble_weights": {"mean_reversion": 1.0}},
+            }
+        ),
+    )
+    primary_availability = PresetAvailability(
+        regime=MarketRegime.TREND,
+        version=activation.version,
+        ready=True,
+        blocked_reason=None,
+        missing_data=(),
+        license_issues=(),
+        schedule_blocked=False,
+    )
+    secondary_availability = PresetAvailability(
+        regime=MarketRegime.MEAN_REVERSION,
+        version=secondary_version,
+        ready=False,
+        blocked_reason="license_unavailable",
+        missing_data=("order_book", "spread_history"),
+        license_issues=("pro_tier_required",),
+        schedule_blocked=True,
+    )
+    workflow.set_availability((primary_availability, secondary_availability))
+
+    cfg = AutoTradeConfig(symbol="BTCUSDT", qty=0.1, regime_window=6)
+    engine = AutoTradeEngine(
+        adapter,
+        lambda *_: None,
+        cfg,
+        strategy_catalog=catalog,
+        regime_workflow=workflow,
+    )
+
+    summary = engine.summarize_regime_presets(available_data=("ohlcv", "spread_history"))
+
+    assert summary["total_presets"] == 2
+    assert summary["ready_presets"] == 1
+    assert summary["blocked_presets"] == 1
+    assert summary["schedule_blocked_presets"] == 1
+    assert summary["missing_data_counts"]["order_book"] == 1
+    assert summary["license_issue_counts"]["pro_tier_required"] == 1
+    assert summary["blocked_reason_counts"]["license_unavailable"] == 1
+    trend_stats = summary["regimes"][MarketRegime.TREND.value]
+    assert trend_stats["ready_presets"] == 1
+    mean_stats = summary["regimes"][MarketRegime.MEAN_REVERSION.value]
+    assert mean_stats["blocked_presets"] == 1
+    assert set(mean_stats["missing_data"]) == {"order_book", "spread_history"}
+    assert mean_stats["license_issue_counts"]["pro_tier_required"] == 1
+
+
+def test_auto_trade_engine_summarizes_activation_history() -> None:
+    adapter = _make_sync_adapter()
+    catalog = StrategyCatalog(plugins=(_ConstantTrendStrategy, _ConstantMeanStrategy))
+    assessment = MarketRegimeAssessment(
+        regime=MarketRegime.TREND,
+        confidence=0.71,
+        risk_score=0.28,
+        metrics={},
+        symbol="BTCUSDT",
+    )
+    base_params = TradingParameters()
+    strategy_metadata = MappingProxyType(
+        {
+            "trend_following": MappingProxyType(
+                {
+                    "license_tier": "standard",
+                    "risk_classes": ("directional",),
+                    "required_data": ("ohlcv",),
+                    "capability": "trend_d1",
+                    "tags": ("trend",),
+                }
+            ),
+            "mean_reversion": MappingProxyType(
+                {
+                    "license_tier": "professional",
+                    "risk_classes": ("statistical",),
+                    "required_data": ("ohlcv", "spread_history"),
+                    "capability": "mean_reversion",
+                    "tags": ("mean_reversion",),
+                }
+            ),
+        }
+    )
+    decision = RegimeSwitchDecision(
+        regime=assessment.regime,
+        assessment=assessment,
+        summary=None,
+        weights={"trend_following": 0.5, "mean_reversion": 0.5},
+        parameters=base_params,
+        timestamp=pd.Timestamp.utcnow(),
+        strategy_metadata=strategy_metadata,
+        license_tiers=("standard", "professional"),
+        risk_classes=("directional", "statistical"),
+        required_data=("ohlcv", "spread_history"),
+        capabilities=("trend_d1", "mean_reversion"),
+        tags=("trend", "mean_reversion"),
+    )
+    activation = _activation_from_decision(decision)
+    workflow = _WorkflowStub(activation, catalog)
+
+    fallback_activation = replace(
+        activation,
+        regime=MarketRegime.MEAN_REVERSION,
+        preset_regime=MarketRegime.MEAN_REVERSION,
+        activated_at=activation.activated_at + timedelta(minutes=10),
+        version=replace(
+            activation.version,
+            hash="mean-hash",
+            issued_at=activation.version.issued_at + timedelta(minutes=10),
+        ),
+        used_fallback=True,
+        missing_data=("spread_history",),
+        blocked_reason="data_gap",
+        license_issues=("pro_tier_required",),
+        recommendation="backfill_spread",
+    )
+    daily_activation = replace(
+        activation,
+        regime=MarketRegime.DAILY,
+        preset_regime=MarketRegime.DAILY,
+        activated_at=activation.activated_at + timedelta(minutes=20),
+        version=replace(
+            activation.version,
+            hash="arb-hash",
+            issued_at=activation.version.issued_at + timedelta(minutes=20),
+        ),
+        missing_data=(),
+        blocked_reason=None,
+        license_issues=("compliance_hold",),
+        recommendation="escalate_license",
+    )
+    workflow._history_entries = [activation, fallback_activation, daily_activation]
+    workflow.last_activation = daily_activation
+
+    cfg = AutoTradeConfig(symbol="BTCUSDT", qty=0.1, regime_window=6)
+    engine = AutoTradeEngine(
+        adapter,
+        lambda *_: None,
+        cfg,
+        strategy_catalog=catalog,
+        regime_workflow=workflow,
+    )
+
+    summary = engine.summarize_regime_activation_history()
+
+    assert summary["total_activations"] == 3
+    assert summary["fallback_activations"] == 1
+    assert summary["license_issue_activations"] == 2
+    assert summary["missing_data_counts"]["spread_history"] == 1
+    assert summary["license_issue_counts"]["compliance_hold"] == 1
+    assert summary["blocked_reason_counts"]["data_gap"] == 1
+    assert summary["first_activation_at"] == activation.activated_at.isoformat()
+    assert summary["last_activation"]["preset_hash"] == "arb-hash"
+    trend_stats = summary["regimes"][MarketRegime.TREND.value]
+    assert trend_stats["activations"] == 1
+    mean_stats = summary["regimes"][MarketRegime.MEAN_REVERSION.value]
+    assert mean_stats["fallback_activations"] == 1
+    assert mean_stats["license_issue_counts"]["pro_tier_required"] == 1
+    daily_stats = summary["regimes"][MarketRegime.DAILY.value]
+    assert daily_stats["license_issue_activations"] == 1
+    assert daily_stats["last_activation_at"] == daily_activation.activated_at.isoformat()
