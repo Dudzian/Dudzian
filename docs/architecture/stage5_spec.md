@@ -12,11 +12,11 @@ Etap 5 ma na celu przejście z fazy wdrożenia wielostrate-gicznego (Etap 4) do 
   - Dodanie warstwy `DecisionOrchestrator` oceniającej warianty wejść/wyjść strategii z uwzględnieniem kosztów, ryzyka i limitów compliance.
   - Wsparcie dla symulacji scenariuszy (stress testy TCO, worst case latency) oraz gatingu przed przejściem live.
   - Rozszerzenie decision logu o metadane TCO oraz podpisy kroków orkiestracji.
-  - Konfiguracja `decision_engine` w `config/core.yaml` opisująca progi orkiestrowania (koszt, edge, limity ryzyka, stress testy) oraz nowy skrypt smoke `scripts/run_decision_engine_smoke.py`.
+  - Konfiguracja `decision_engine` w `config/core.yaml` opisująca progi orkiestrowania (koszt, edge, limity ryzyka, stress testy) oraz nowy skrypt smoke `python scripts/run_decision_engine_smoke.py`.
 - **Observability & Compliance+:**
   - Monitorowanie SLO (latencja, koszt/ trade, fill rate) z bundlowanym dashboardem „Stage5 – Compliance & Cost Control” oraz checklistą `docs/runbooks/STAGE5_COMPLIANCE_CHECKLIST.md`.
-  - Moduł rotacji kluczy i przypomnienia (CLI `scripts/rotate_keys.py`, alerty) wraz z checklistą audytową oraz playbookiem `docs/runbooks/STAGE5_SUPPORT_PLAYBOOK.md`.
-  - Generowanie podpisanych raportów PDF/CSV dla audytorów (koszty, decyzje, incydenty) oraz paczek obserwowalności (`scripts/export_observability_bundle.py`).
+  - Moduł rotacji kluczy i przypomnienia (CLI `python scripts/rotate_keys.py`, alerty) wraz z checklistą audytową oraz playbookiem `docs/runbooks/STAGE5_SUPPORT_PLAYBOOK.md`.
+  - Generowanie podpisanych raportów PDF/CSV dla audytorów (koszty, decyzje, incydenty) oraz paczek obserwowalności (`python scripts/export_observability_bundle.py`).
 - **Enablement operacyjny:**
   - Checklisty demo→paper→live rozszerzone o progi TCO i audyty decision engine.
   - Warsztaty L1/L2 i scenariusze szkoleniowe dla analityków kosztów oraz operatorów compliance.
@@ -40,7 +40,7 @@ Etap 5 ma na celu przejście z fazy wdrożenia wielostrate-gicznego (Etap 4) do 
 3. **DecisionOrchestrator + risk integration:** rozszerzenie runtime, symulacje, gating compliance, aktualizacja decision logu.
 4. **Observability & Compliance+:** dashboard Stage5, monitoring SLO, bundling raportów, moduł rotacji kluczy.
 5. **Enablement i audyty:** szkolenia, runbooki, playbooki L1/L2, testy regresyjne i finalny audit acceptance Etapu 5, w tym
-   podpisany log warsztatów (`scripts/log_stage5_training.py`).
+   podpisany log warsztatów (`python scripts/log_stage5_training.py`).
 
 ## 6. Ryzyka i mitigacje
 - **Niepełne dane kosztowe:** fallback do modeli estymacyjnych i ujednoliconego API prowizji; wymuszenie checklisty danych przed iteracją.

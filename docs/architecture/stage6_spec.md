@@ -13,47 +13,47 @@ złożoność infrastrukturalną.
    `config.core.portfolio_governor` oraz integracji z schedulerem runtime.
    Implementacja łączy rekomendacje Stress Lab z decyzją oraz logiem HMAC.
    Automatyczny cykl hypercare (`bot_core.portfolio.hypercare`,
-   `scripts/run_stage6_portfolio_cycle.py`) generuje podpisane podsumowania
+   `python scripts/run_stage6_portfolio_cycle.py`) generuje podpisane podsumowania
    JSON/CSV oraz wpisy decision logu na bazie raportów Market Intel, SLO i
    Stress Lab.
 2. **Market Intelligence Aggregator** – konsolidacja metryk zmienności,
    płynności, momentum i spreadów z `data` i cache OHLCV. Udostępnia snapshoty
-   dla PortfolioGovernora i raporty z CLI `scripts/build_market_intel_metrics.py`.
+   dla PortfolioGovernora i raporty z CLI `python scripts/build_market_intel_metrics.py`.
 3. **Stress Lab** – analiza raportów Paper Labs, generowanie adaptacyjnych
    override i rekomendacji dla PortfolioGovernora z uwzględnieniem
    scenariuszy płynności i latencji egzekucji. Raporty JSON/CSV podpisywane HMAC
-   poprzez `scripts/run_stress_lab.py`. Kalibracja progów odbywa się narzędziem
-   `scripts/calibrate_stress_lab_thresholds.py`, które łączy Market Intel i
+   poprzez `python scripts/run_stress_lab.py`. Kalibracja progów odbywa się narzędziem
+   `python scripts/calibrate_stress_lab_thresholds.py`, które łączy Market Intel i
    raporty symulacyjne; narzędzie potrafi automatycznie budować segmenty
    wolumenowe na bazie metryk płynności i przypisywać im prefiksy budżetów
    ryzyka.
 4. **Resilience Stage6** – bundlowanie artefaktów, audyt, polityki, failover
-   drill oraz raporty podpisywane HMAC (`export_resilience_bundle.py`,
-   `verify_resilience_bundle.py`, `audit_resilience_bundles.py`,
-   `failover_drill.py`) wraz z automatycznym self-healingiem restartującym
+   drill oraz raporty podpisywane HMAC (`python scripts/export_resilience_bundle.py`,
+   `python scripts/verify_resilience_bundle.py`, `python scripts/audit_resilience_bundles.py`,
+   `python scripts/failover_drill.py`) wraz z automatycznym self-healingiem restartującym
    moduły runtime (`bot_core/resilience/self_healing.py`). Komponent
    `ResilienceHypercareCycle` (`bot_core/resilience/hypercare.py`) oraz skrypt
-   `run_stage6_resilience_cycle.py` spinają powyższe kroki w jednym przebiegu
+   `python scripts/run_stage6_resilience_cycle.py` spinają powyższe kroki w jednym przebiegu
    hypercare.
 5. **Observability++** – eksport paczek obserwowalności, monitor SLO (wraz z
    kompozytowymi SLO2) oraz integracja statusów SLO z PortfolioGovernorem
-   (`scripts/slo_monitor.py`, generujący raport JSON i CSV, `scripts/export_observability_bundle.py`,
-   `scripts/verify_observability_bundle.py`, `scripts/log_portfolio_decision.py`).
+   (`python scripts/slo_monitor.py`, generujący raport JSON i CSV, `python scripts/export_observability_bundle.py`,
+   `python scripts/verify_observability_bundle.py`, `python scripts/log_portfolio_decision.py`).
    Pełen cykl hypercare można uruchomić jedną komendą dzięki
-   `scripts/run_stage6_observability_cycle.py`, która łączy monitor SLO, override'y,
+   `python scripts/run_stage6_observability_cycle.py`, która łączy monitor SLO, override'y,
    anotacje i budowę paczki w jednym przebiegu z opcjonalną weryfikacją HMAC.
 6. **Stage6 Hypercare Orchestrator** – zautomatyzowane spięcie cykli
    Observability, Resilience i Portfolio w pojedynczym raporcie zbiorczym.
    `bot_core.runtime.stage6_hypercare.Stage6HypercareCycle` generuje podpisany
    JSON z podsumowaniem komponentów, statusami ostrzeżeń/błędów i listą
-   artefaktów. CLI `scripts/run_stage6_hypercare_cycle.py` pobiera definicję w
+   artefaktów. CLI `python scripts/run_stage6_hypercare_cycle.py` pobiera definicję w
    YAML/JSON i uruchamia wszystkie moduły w jednej komendzie, wymuszając HMAC
-   raportu końcowego, a `scripts/verify_stage6_hypercare_summary.py` pozwala
+   raportu końcowego, a `python scripts/verify_stage6_hypercare_summary.py` pozwala
    zweryfikować podpis i integralność zbiorczego raportu. Raporty Stage5 i
   Stage6 można scalić w finalny przegląd hypercare dzięki
   `bot_core.runtime.full_hypercare.FullHypercareSummaryBuilder` oraz CLI
-  `scripts/run_full_hypercare_summary.py`, a poprawność i podpis raportu
-  potwierdza `scripts/verify_full_hypercare_summary.py` z opcjonalną ponowną
+  `python scripts/run_full_hypercare_summary.py`, a poprawność i podpis raportu
+  potwierdza `python scripts/verify_full_hypercare_summary.py` z opcjonalną ponowną
   weryfikacją Stage5/Stage6.
 
 ## Wymagania niefunkcjonalne
@@ -80,11 +80,11 @@ złożoność infrastrukturalną.
 ## Dostarczone artefakty
 - Moduły Python w `bot_core` dla market_intel, portfolio, observability, risk,
   resilience.
-- CLI w `scripts/` odpalane w hypercare: market intel, SLO, bundling, audyt,
+- CLI w `python scripts/` odpalane w hypercare: market intel, SLO, bundling, audyt,
   failover drill, Stress Lab, kalibracja progów Stress Lab, cykl odporności
-  (`run_stage6_resilience_cycle.py`), cykl portfelowy
-  (`run_stage6_portfolio_cycle.py`) oraz pełny przebieg Stage6
-  (`run_stage6_hypercare_cycle.py`).
+  (`python scripts/run_stage6_resilience_cycle.py`), cykl portfelowy
+  (`python scripts/run_stage6_portfolio_cycle.py`) oraz pełny przebieg Stage6
+  (`python scripts/run_stage6_hypercare_cycle.py`).
 - Dashboards i reguły alertów Stage6 w `deploy/grafana` oraz
   `deploy/prometheus`.
 - Testy jednostkowe i integracyjne w `tests/` pokrywające kluczowe scenariusze
@@ -122,12 +122,12 @@ modułową (`bot_core`).
   - Symulator stresowy nowej generacji (`bot_core/risk/stress_lab.py`) obsługujący scenariusze multi-market oraz blackout
     infrastrukturalny.
   - Integracja z pipeline’em demo → paper → live (automatyczne generowanie raportów stresowych i gating release).
-  - Narzędzie `scripts/build_market_intel_metrics.py` generujące podpisane baseline’y JSON na podstawie bazy SQLite.
+  - Narzędzie `python scripts/build_market_intel_metrics.py` generujące podpisane baseline’y JSON na podstawie bazy SQLite.
   - Runbook operacyjny: `docs/runbooks/STAGE6_STRESS_LAB_CHECKLIST.md`.
 - **Strumień Resilience & Failover:**
   - Mechanizmy self-healing runtime (wykrywanie błędów adapterów, automatyczne przełączanie na zapasowe giełdy, rotacja kluczy).
   - Udoskonalony `live_router` z obsługą sekwencji failover oraz audytami latencji w decision logu.
-  - Narzędzia wywoływane przez interpreter (`python scripts/failover_drill.py`, `python scripts/export_resilience_bundle.py`, `python scripts/verify_resilience_bundle.py`) oraz checklisty DR (Disaster Recovery).
+  - Narzędzia `python scripts/failover_drill.py`, `python scripts/export_resilience_bundle.py`, `python scripts/verify_resilience_bundle.py` oraz checklisty DR (Disaster Recovery).
   - Automatyczny workflow `github_actions_stage6_resilience.yml` archiwizujący raporty failover i podpisy HMAC.
 - **Strumień Observability++ & Reporting:**
   - Paczki obserwowalności Stage6 (dashboardy SLO2, alerty DR, raporty PDF/CSV dla audytu resilience) podpisane HMAC.

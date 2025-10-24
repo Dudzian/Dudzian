@@ -13,7 +13,7 @@ UTC, co pozwala na replikowalne testy regresyjne w pipeline’ach demo→paper.
 - `cross_exchange_arbitrage.csv` – dane spreadu DEMEX↔GLOBEX dla detekcji okazji arbitrażowych.
 
 ## Walidacja
-Skrypt `scripts/validate_backtest_datasets.py` wykonuje komplet kontroli:
+Skrypt `python scripts/validate_backtest_datasets.py` wykonuje komplet kontroli:
 - zgodność nagłówków i typów z manifestem,
 - monotoniczne znaczniki czasu z krokiem równym interwałowi,
 - dodatnie ceny, nieujemne wolumeny, przedziały dla pól ograniczonych,

@@ -8,7 +8,7 @@ otrzymuje komplet instrukcji serwisowych.
 ## Lista kontrolna
 | Krok | Odpowiedzialny | Artefakty | Akceptacja |
 | --- | --- | --- | --- |
-| 0. Uruchom `scripts/run_oem_acceptance.py --artifact-root var/audit/acceptance` lub workflow CI | Release Engineer | `var/audit/acceptance/<TS>/metadata.json`, log CLI | Wszystkie kroki `ok`, brak statusów `failed` |
+| 0. Uruchom `python scripts/run_oem_acceptance.py --artifact-root var/audit/acceptance` lub workflow CI | Release Engineer | `var/audit/acceptance/<TS>/metadata.json`, log CLI | Wszystkie kroki `ok`, brak statusów `failed` |
 | 1. Zweryfikuj podpis HMAC `manifest.json` i integralność katalogów `daemon/`, `ui/`, `config/`, `bootstrap/` | Security | `manifest.json`, `manifest.sig`, klucz `OEM_BUNDLE_HMAC_KEY` | Wszystkie sumy SHA-384 zgodne z manifestem i podpis poprawny【F:deploy/packaging/README.md†L1-L44】 |
 | 2. Potwierdź podpisy konfiguracji (`config/*.sig`) i fingerprint (`fingerprint.expected.json`) | Security | `config/*.sig`, `fingerprint.expected.json`, klucz HMAC | `payload` i `signature` zgodne; fingerprint odpowiada urządzeniu docelowemu |
 | 3. Zweryfikuj pakiet mTLS oraz pinning SHA-256 | Security | `secrets/mtls/*`, log z weryfikacji | Certyfikaty ważne, ścieżki TLS zgodne z dokumentacją UI【F:ui/src/grpc/TradingClient.cpp†L88-L175】 |

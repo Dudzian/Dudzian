@@ -80,7 +80,7 @@
    - Oceń `failure_streak` i `cooldown_until` w `audit/ai_decision/scheduler.json`; wartości `failure_streak >= 2` lub przyszłe `cooldown_until` wymagają eskalacji do Platform Ops.
 2. **Diagnoza:**
    - Uruchom `pytest tests/decision/test_scheduler.py -k retrain` w środowisku CI, aby upewnić się, że logika harmonogramu działa poprawnie.
-   - Sprawdź dostępność źródeł danych (`scripts/check_feature_feeds.py`).
+   - Sprawdź dostępność źródeł danych (`python scripts/check_feature_feeds.py`).
 3. **Działania naprawcze:**
    - Jeśli problem wynika z braku danych, skoordynuj się z zespołem DataOps i ponów retrening ręcznie:
      ```bash

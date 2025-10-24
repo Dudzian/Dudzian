@@ -1,6 +1,6 @@
 # Backfill danych OHLCV
 
-Skrypt `scripts/backfill.py` automatyzuje pobieranie oraz odświeżanie danych OHLCV
+Skrypt `python scripts/backfill.py` automatyzuje pobieranie oraz odświeżanie danych OHLCV
 z publicznych API giełd obsługiwanych przez platformę. Mechanizm korzysta z
 `PublicAPIDataSource`, lokalnej pamięci podręcznej Parquet/SQLite oraz
 harmonogramu `OHLCVRefreshScheduler`, dzięki czemu po pierwszym backfillu
@@ -95,7 +95,7 @@ i można go trzymać w retencji ≥24 miesięcy na potrzeby audytu operacyjnego.
 ### Raportowanie luk z pliku audytu
 
 Do szybkiej inspekcji bieżącego stanu luk służy skrypt
-`scripts/gap_audit_report.py`, który wczytuje plik JSONL i agreguje wpisy po
+`python scripts/gap_audit_report.py`, który wczytuje plik JSONL i agreguje wpisy po
 symbolu/interwale. Podstawowe użycie:
 
 ```bash
@@ -114,7 +114,7 @@ tego okna do własnych potrzeb operacyjnych.
 
 W sytuacjach, gdy potrzebna jest szybka inspekcja aktualnego stanu cache bez
 sięgania do logów audytowych, można użyć skryptu
-`scripts/manifest_gap_report.py`. Narzędzie odczytuje manifest SQLite,
+`python scripts/manifest_gap_report.py`. Narzędzie odczytuje manifest SQLite,
 porównuje ostatnie stemple czasowe z bieżącą godziną i stosuje progi ostrzeżeń
 zdefiniowane w `ohlcv_gap_alerts.warning_gap_minutes` (a w razie braku –
 domyślnie dwukrotność interwału). Raport można otrzymać jako tabelę tekstową

@@ -29,7 +29,7 @@ Przekazać zespołom OEM wiedzę i procedury konieczne do utrzymania modułów T
 
 ## Materiały i przygotowanie
 - Dokumenty: `docs/architecture/stage5_spec.md`, `docs/architecture/stage5_discovery.md`, `docs/runbooks/STAGE5_SUPPORT_PLAYBOOK.md`, `docs/runbooks/STAGE5_COMPLIANCE_CHECKLIST.md`.
-- Narzędzia CLI: `run_tco_analysis.py`, `run_decision_engine_smoke.py`, `audit_stage4_compliance.py --profile stage5`, `rotate_keys.py`, `export_observability_bundle.py`, `verify_signature.py`.
+- Narzędzia CLI: `python scripts/run_tco_analysis.py`, `python scripts/run_decision_engine_smoke.py`, `python scripts/audit_stage4_compliance.py --profile stage5`, `python scripts/rotate_keys.py`, `python scripts/export_observability_bundle.py`, `python scripts/verify_signature.py`.
 - Artefakty demonstracyjne:
   - Raport TCO (`var/audit/tco/sample_stage5.csv`), `tco_report.pdf`, sygnatury.
   - Logi decision engine (`logs/decision_engine/sample_incident.json`), `smoke.sig`.
@@ -37,7 +37,7 @@ Przekazać zespołom OEM wiedzę i procedury konieczne do utrzymania modułów T
 - Wymagania wstępne: dostęp do repo OEM, konfiguracja Python 3.11+, uprawnienia do odczytu kluczy Stage5 i decision logu.
 
 ## Notatki dla prowadzącego
-- Zweryfikuj aktualność kluczy HMAC i mTLS (`scripts/rotate_keys.py --status --bundle core-oem`, opcjonalnie skrót `--status core-oem` lub `status core-oem`) oraz przygotuj próbkę rotacji z wpisem w decision logu. Raport `--status` pokazuje sekcję `summary` oraz listę `entries`, dzięki czemu od razu widać wpisy `due/overdue`.
+- Zweryfikuj aktualność kluczy HMAC i mTLS (`python scripts/rotate_keys.py --status --bundle core-oem`, opcjonalnie skrót `--status core-oem` lub `status core-oem`) oraz przygotuj próbkę rotacji z wpisem w decision logu. Raport `--status` pokazuje sekcję `summary` oraz listę `entries`, dzięki czemu od razu widać wpisy `due/overdue`.
 - Przygotuj konto testowe z wypełnionym decision logiem (kategorie `stage5_incident`, `stage5_training`).
 - Zapewnij dostęp do środowiska offline z najnowszym bundlem Stage4/Stage5 (raport `run_oem_acceptance.py`).
 - Po warsztacie zaktualizuj `docs/training/stage5_workshop.md` o listę uczestników i wnioski.
