@@ -10,6 +10,14 @@ artefakty audytowe.
   repozytoryjny plik `config/observability/slo.yml`), Resilience (plan
   failover, manifesty paczek, polityka) oraz Portfolio
   (alokacje, Market Intel, raporty SLO/Stress Lab).
+- Raport Market Intel wygenerowany do oczekiwanej lokalizacji hypercare:
+  ```bash
+  python scripts/build_market_intel_metrics.py \
+    --environment binance_paper \
+    --governor stage6_core \
+    --output var/market_intel/stage6_core_market_intel.json
+  ```
+  Dostosuj `--environment`/`--governor` do konfiguracji portfela.
 - Szablon konfiguracji hypercare dostępny w `config/stage6/hypercare.yaml`
   (możesz go skopiować i uzupełnić o konkretne ścieżki środowiskowe).
 - Klucze HMAC umieszczone w `secrets/hmac/` i przypisane do komponentów Stage6.
