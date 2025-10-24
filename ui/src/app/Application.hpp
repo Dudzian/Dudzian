@@ -319,6 +319,15 @@ private:
     void maybeAutoExportRiskHistory(const QDateTime& snapshotTimestamp);
     QString resolveAutoExportFilePath(const QDir& directory, const QString& basename, const QDateTime& timestamp) const;
     bool setDecisionLogPathInternal(const QString& path, bool emitSignal);
+    void initializeSecurityRefresh();
+    void ensureLicenseRefreshTimerConfigured();
+    void ensureFingerprintRefreshTimerConfigured();
+    void refreshSecurityArtifacts();
+    void refreshFingerprintArtifacts();
+    void processSecurityArtifactsUpdate();
+    void updateSecurityCacheFromControllers();
+    void loadSecurityCache();
+    void persistSecurityCache();
     void setTradingAuthTokenFile(const QString& path);
     void setMetricsAuthTokenFile(const QString& path);
     void setHealthAuthTokenFile(const QString& path);
@@ -462,11 +471,17 @@ private:
     QDateTime                          m_lastLicenseRefreshRequestUtc;
     QDateTime                          m_lastLicenseRefreshUtc;
     QDateTime                          m_nextLicenseRefreshUtc;
+    QTimer                             m_fingerprintRefreshTimer;
+    int                                m_fingerprintRefreshIntervalSeconds = -1;
+    QDateTime                          m_lastFingerprintRefreshRequestUtc;
+    QDateTime                          m_lastFingerprintRefreshUtc;
+    QDateTime                          m_nextFingerprintRefreshUtc;
     QString                            m_licenseCachePath;
     QVariantMap                        m_securityCache;
     bool                               m_loadingSecurityCache = false;
     QString                            m_lastSecurityError;
     bool                               m_licenseRefreshTimerConfigured = false;
+    bool                               m_fingerprintRefreshTimerConfigured = false;
 
     struct OverlayState {
         int  active = 0;

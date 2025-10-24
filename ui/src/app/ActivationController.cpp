@@ -144,6 +144,11 @@ void ActivationController::refresh()
     updateOemLicense();
 }
 
+void ActivationController::refreshFingerprint()
+{
+    updateFingerprint();
+}
+
 void ActivationController::reloadRegistry()
 {
     updateLicenses();
