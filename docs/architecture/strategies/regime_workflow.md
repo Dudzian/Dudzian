@@ -71,6 +71,65 @@ wybrane klucze dostępne w katalogu domyślnym:
 Te metadane są agregowane i deduplikowane w trakcie aktywacji, dzięki czemu
 payloady decyzji zawierają znormalizowane listy licencji, klas ryzyka i tagów.
 
+### Domyślny katalog pluginów workflowu
+
+Warstwa tradingowa (`bot_core.trading.strategies`) udostępnia lżejsze plug-iny
+sygnałowe, które wykorzystuje `RegimeSwitchWorkflow` oraz `AutoTrader`. Każdy
+plugin rejestruje te same metadane, co odpowiadający mu silnik z
+`bot_core.strategies.catalog`, dzięki czemu UI otrzymuje spójne informacje o
+licencji, wymaganych danych, capability i tagach. Synchronizacja odbywa się
+automatycznie przy ładowaniu klas pluginów – wykorzystują one klucz `engine`
+do pobrania bieżących metadanych z `DEFAULT_STRATEGY_CATALOG`, co eliminuje
+ryzyko rozjazdu przy aktualizacjach katalogu silników.
+
+| Plugin (`StrategyCatalog.default()`) | Silnik w `bot_core.strategies.catalog` | Capability | License tier | Klasy ryzyka | Wymagane dane | Tagi |
+|-------------------------------------|----------------------------------------|------------|--------------|--------------|---------------|------|
+| `trend_following`                   | `daily_trend_momentum`                 | `trend_d1` | `standard`   | `directional`, `momentum` | `ohlcv`, `technical_indicators` | `trend`, `momentum` |
+| `day_trading`                       | `day_trading`                          | `day_trading` | `standard` | `intraday`, `momentum` | `ohlcv`, `technical_indicators` | `intraday`, `momentum` |
+| `mean_reversion`                    | `mean_reversion`                       | `mean_reversion` | `professional` | `statistical`, `mean_reversion` | `ohlcv`, `spread_history` | `mean_reversion`, `stat_arbitrage` |
+| `arbitrage`                         | `cross_exchange_arbitrage`             | `cross_exchange` | `enterprise` | `arbitrage`, `liquidity` | `order_book`, `latency_monitoring` | `arbitrage`, `liquidity` |
+| `grid_trading`                      | `grid_trading`                         | `grid_trading` | `professional` | `market_making` | `order_book`, `ohlcv` | `grid`, `market_making` |
+| `volatility_target`                 | `volatility_target`                    | `volatility_target` | `enterprise` | `risk_control`, `volatility` | `ohlcv`, `realized_volatility` | `volatility`, `risk` |
+| `scalping`                          | `scalping`                             | `scalping` | `professional` | `intraday`, `scalping` | `ohlcv`, `order_book` | `intraday`, `scalping` |
+| `options_income`                    | `options_income`                       | `options_income` | `enterprise` | `derivatives`, `income` | `options_chain`, `greeks`, `ohlcv` | `options`, `income` |
+| `statistical_arbitrage`             | `statistical_arbitrage`                | `stat_arbitrage` | `professional` | `statistical`, `mean_reversion` | `ohlcv`, `spread_history` | `stat_arbitrage`, `pairs_trading` |
+
+Każdy plugin udostępnia metodę `metadata()`, a katalog `StrategyCatalog.default()`
+zawiera komplet opisów (`describe()`), co pozwala aplikacjom klienckim
+weryfikować kompatybilność danych i licencji bez konieczności odpytywania
+cięższych silników strategii.
+
+> Wersja domyślna katalogu pluginów waliduje, że każdy silnik z
+> `DEFAULT_STRATEGY_CATALOG` posiada przypisaną implementację pluginu.
+> Brak pokrycia kończy się wyjątkiem podczas budowy katalogu, dzięki czemu
+> testy natychmiast sygnalizują brakujący adapter.
+> Dodatkowo rejestr pluginów blokuje duplikaty `engine_key`, więc nie da się
+> przypadkowo zarejestrować dwóch wtyczek mapujących na ten sam silnik.
+> Jeśli jednak świadomie chcemy zastąpić wbudowany plugin (np. w testach lub
+> środowiskach eksperymentalnych), klasa może zadeklarować
+> `allow_engine_override=True`, zachowując dziedziczenie metadanych z katalogu
+> silników.
+
+### Domyślne wagi strategii w `RegimeSwitchWorkflow`
+
+Workflow rozprowadza ekspozycję na pełny zestaw pluginów – w każdym reżimie
+pojawiają się zarówno strategie bazowe, jak i nowe pozycje. Domyślne wagi (po
+normalizacji) wyglądają następująco:
+
+* **TREND** – `trend_following` (35%), `volatility_target` (20%),
+  `day_trading` (15%), `mean_reversion` (10%), `arbitrage` (10%),
+  `grid_trading` (5%), `options_income` (5%).
+* **DAILY** – `day_trading` (40%), `scalping` (20%), `trend_following` (10%),
+  `volatility_target` (10%), `grid_trading` (10%), `arbitrage` (5%),
+  `statistical_arbitrage` (5%).
+* **MEAN_REVERSION** – `mean_reversion` (35%), `statistical_arbitrage` (25%),
+  `arbitrage` (15%), `grid_trading` (10%), `options_income` (10%),
+  `scalping` (5%).
+
+Dzięki temu raporty workflowu zawierają metadane (licencje, capability,
+wymagane dane i tagi) dla każdego pluginu dostępnego w katalogu, a UI może
+natychmiast zweryfikować gotowość danych i uprawnień.
+
 ## Przykładowe przepływy aktywacji
 
 1. **Standardowa aktywacja** – dla reżimu TREND workflow używa presetu
