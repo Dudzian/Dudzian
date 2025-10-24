@@ -2,9 +2,21 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, List, Sequence
+from typing import Any, Dict, List, Mapping, Sequence
 
 from bot_core.strategies.base import MarketSnapshot, StrategyEngine, StrategySignal
+
+
+def _clamp(value: float, *, field: str, lower: float, upper: float) -> float:
+    if not lower <= value <= upper:
+        raise ValueError(f"{field} must be between {lower} and {upper}")
+    return value
+
+
+def _ensure_positive_int(value: int, *, field: str) -> int:
+    if value < 1:
+        raise ValueError(f"{field} must be at least 1")
+    return value
 
 
 @dataclass(slots=True)
@@ -15,6 +27,23 @@ class OptionsIncomeSettings:
     max_delta: float = 0.35
     min_days_to_expiry: int = 7
     roll_threshold_iv: float = 0.25
+
+    def __post_init__(self) -> None:
+        self.min_iv = _clamp(float(self.min_iv), field="min_iv", lower=0.0, upper=5.0)
+        self.max_delta = _clamp(float(self.max_delta), field="max_delta", lower=0.0, upper=1.0)
+        self.min_days_to_expiry = _ensure_positive_int(int(self.min_days_to_expiry), field="min_days_to_expiry")
+        self.roll_threshold_iv = _clamp(float(self.roll_threshold_iv), field="roll_threshold_iv", lower=0.0, upper=5.0)
+
+    @classmethod
+    def from_parameters(cls, parameters: Mapping[str, Any] | None = None) -> "OptionsIncomeSettings":
+        params = dict(parameters or {})
+        defaults = cls()
+        return cls(
+            min_iv=float(params.get("min_iv", defaults.min_iv)),
+            max_delta=float(params.get("max_delta", defaults.max_delta)),
+            min_days_to_expiry=int(params.get("min_days_to_expiry", defaults.min_days_to_expiry)),
+            roll_threshold_iv=float(params.get("roll_threshold_iv", defaults.roll_threshold_iv)),
+        )
 
 
 @dataclass(slots=True)
