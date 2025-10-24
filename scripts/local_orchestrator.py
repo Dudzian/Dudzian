@@ -12,6 +12,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, Mapping
 
+from bot_core.strategies.catalog import (
+    DEFAULT_STRATEGY_CATALOG,
+    StrategyDefinition,
+)
+
 from bot_core.config.loader import load_core_config
 from bot_core.security.guards import CapabilityGuard, LicenseCapabilityError
 from bot_core.security.license import validate_license_from_config
@@ -69,6 +74,41 @@ def _save_state(path: Path, state: Mapping[str, Any]) -> None:
 
 def _timestamp() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _definition_from_config(cfg: Any) -> StrategyDefinition:
+    """Buduje obiekt `StrategyDefinition` na podstawie wpisu konfiguracji."""
+
+    metadata = dict(getattr(cfg, "metadata", {}) or {})
+    capability = getattr(cfg, "capability", None)
+    if capability and "capability" not in metadata:
+        metadata["capability"] = capability
+
+    try:
+        spec = DEFAULT_STRATEGY_CATALOG.get(getattr(cfg, "engine"))
+    except KeyError:
+        spec = None
+
+    license_tier = getattr(cfg, "license_tier", None) or (spec.license_tier if spec else "unspecified")
+    risk_classes = tuple(getattr(cfg, "risk_classes", ()) or (spec.risk_classes if spec else ("unspecified",)))
+    required_data = tuple(
+        getattr(cfg, "required_data", ()) or (spec.required_data if spec else ("unspecified",))
+    )
+
+    if spec and spec.capability and "capability" not in metadata:
+        metadata.setdefault("capability", spec.capability)
+
+    return StrategyDefinition(
+        name=getattr(cfg, "name"),
+        engine=getattr(cfg, "engine"),
+        license_tier=license_tier,
+        risk_classes=risk_classes,
+        required_data=required_data,
+        parameters=dict(getattr(cfg, "parameters", {}) or {}),
+        risk_profile=getattr(cfg, "risk_profile", None),
+        tags=tuple(getattr(cfg, "tags", ()) or ()),
+        metadata=metadata,
+    )
 
 
 def _ensure_environment(name: str, *, environments: Mapping[str, EnvironmentDefinition]) -> EnvironmentDefinition:
@@ -340,12 +380,94 @@ def cmd_status(args: argparse.Namespace, environments: Mapping[str, EnvironmentD
     env_states = state.get("environments", {})
     report: Dict[str, Any] = {}
     for name, env in environments.items():
-        report[name] = {
+        entry: Dict[str, Any] = {
             "config_path": str(env.config_path),
             "environment_key": env.environment_key,
             "scheduler": env.scheduler_name,
             "state": env_states.get(name, {}),
         }
+        try:
+            core_config = load_core_config(env.config_path)
+        except Exception as exc:  # pragma: no cover - defensywny fallback
+            entry["error"] = str(exc)
+            report[name] = entry
+            continue
+
+        definitions_cfg = getattr(core_config, "strategy_definitions", {})
+        definitions: dict[str, StrategyDefinition] = {}
+        for definition_name, cfg in definitions_cfg.items():
+            try:
+                definition = _definition_from_config(cfg)
+            except ValueError as exc:
+                entry.setdefault("definition_errors", {})[definition_name] = str(exc)
+                continue
+            definitions[definition_name] = definition
+
+        if definitions:
+            definition_summaries = DEFAULT_STRATEGY_CATALOG.describe_definitions(
+                definitions, include_metadata=True
+            )
+            entry["strategies"] = definition_summaries
+            entry["license_tiers"] = sorted(
+                {payload.get("license_tier") for payload in definition_summaries if payload.get("license_tier")}
+            )
+            capabilities = sorted(
+                {payload.get("capability") for payload in definition_summaries if payload.get("capability")}
+            )
+            if capabilities:
+                entry["capabilities"] = capabilities
+        else:
+            entry["strategies"] = []
+
+        summaries_by_name = {payload.get("name"): payload for payload in entry.get("strategies", [])}
+        if env.scheduler_name:
+            scheduler_cfg = getattr(core_config, "multi_strategy_schedulers", {}).get(env.scheduler_name)
+            if scheduler_cfg:
+                schedule_entries: list[dict[str, Any]] = []
+                for schedule in getattr(scheduler_cfg, "schedules", []):
+                    schedule_payload: dict[str, Any] = {
+                        "name": schedule.name,
+                        "strategy": schedule.strategy,
+                        "cadence_seconds": schedule.cadence_seconds,
+                        "max_drift_seconds": schedule.max_drift_seconds,
+                        "warmup_bars": schedule.warmup_bars,
+                        "risk_profile": schedule.risk_profile,
+                        "max_signals": schedule.max_signals,
+                    }
+                    definition_payload = summaries_by_name.get(schedule.strategy)
+                    if definition_payload:
+                        schedule_payload["engine"] = definition_payload.get("engine")
+                        schedule_payload["license_tier"] = definition_payload.get("license_tier")
+                        schedule_payload["risk_classes"] = definition_payload.get("risk_classes")
+                        schedule_payload["required_data"] = definition_payload.get("required_data")
+                        if definition_payload.get("capability"):
+                            schedule_payload["capability"] = definition_payload["capability"]
+                        if definition_payload.get("tags"):
+                            schedule_payload["tags"] = definition_payload["tags"]
+                    schedule_entries.append(schedule_payload)
+
+                license_tiers = sorted(
+                    {
+                        entry.get("license_tier")
+                        for entry in schedule_entries
+                        if entry.get("license_tier")
+                    }
+                )
+                capability_set = sorted(
+                    {entry.get("capability") for entry in schedule_entries if entry.get("capability")}
+                )
+                scheduler_summary: dict[str, Any] = {
+                    "name": scheduler_cfg.name,
+                    "strategies": schedule_entries,
+                }
+                if license_tiers:
+                    scheduler_summary["license_tiers"] = license_tiers
+                if capability_set:
+                    scheduler_summary["capabilities"] = capability_set
+                entry["scheduler_plan"] = scheduler_summary
+
+        report[name] = entry
+
     print(json.dumps(report, ensure_ascii=False, indent=2))
 
 

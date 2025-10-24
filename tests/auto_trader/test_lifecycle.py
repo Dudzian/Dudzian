@@ -218,3 +218,75 @@ def test_auto_trader_lifecycle_with_guardrails_and_recalibrations() -> None:
     assert "auto_trader.recalibration" in categories
 
     assert orchestrator.due_recalibrations() == ()
+
+
+def _stub_guardrail_summary(*_args, **_kwargs):
+    return {}
+
+
+def _stub_decision_summary(*_args, **_kwargs):
+    return {}
+
+
+def _build_trader_for_snapshot() -> AutoTrader:
+    metrics_module._GLOBAL_REGISTRY = metrics_module.MetricsRegistry()
+    trader = AutoTrader(
+        emitter=DummyEmitter(),
+        gui=SimpleNamespace(),
+        symbol_getter=lambda: "BTCUSDT",
+        enable_auto_trade=False,
+        auto_trade_interval_s=0.0,
+    )
+    trader.summarize_guardrail_timeline = _stub_guardrail_summary  # type: ignore[assignment]
+    trader.summarize_risk_decision_timeline = _stub_decision_summary  # type: ignore[assignment]
+    return trader
+
+
+def test_lifecycle_snapshot_includes_strategy_metadata() -> None:
+    trader = _build_trader_for_snapshot()
+    trader.current_strategy = "trend_following"
+
+    snapshot = trader.build_lifecycle_snapshot()
+
+    strategy = snapshot["strategy"]
+    metadata = strategy.get("metadata")
+    summary = strategy.get("metadata_summary")
+
+    assert metadata is not None
+    assert metadata["name"] == "trend_following"
+    assert metadata["license_tier"] == "standard"
+    assert metadata["risk_classes"] == ["directional", "momentum"]
+    assert metadata["required_data"] == ["ohlcv", "technical_indicators"]
+    assert metadata["capability"] == "trend_d1"
+    assert metadata["tags"] == ["trend", "momentum"]
+    assert summary == {
+        "license_tiers": ["standard"],
+        "risk_classes": ["directional", "momentum"],
+        "required_data": ["ohlcv", "technical_indicators"],
+        "capabilities": ["trend_d1"],
+        "tags": ["trend", "momentum"],
+    }
+
+
+def test_lifecycle_snapshot_metadata_uses_aliases_for_probing_variants() -> None:
+    trader = _build_trader_for_snapshot()
+    trader.current_strategy = "intraday_breakout_probing"
+
+    snapshot = trader.build_lifecycle_snapshot()
+
+    strategy = snapshot["strategy"]
+    metadata = strategy.get("metadata")
+    summary = strategy.get("metadata_summary")
+
+    assert metadata is not None
+    assert metadata["name"] == "intraday_breakout_probing"
+    assert metadata["catalog_name"] == "day_trading"
+    assert metadata["license_tier"] == "standard"
+    assert metadata["capability"] == "day_trading"
+    assert summary == {
+        "license_tiers": ["standard"],
+        "risk_classes": ["intraday", "momentum"],
+        "required_data": ["ohlcv", "technical_indicators"],
+        "capabilities": ["day_trading"],
+        "tags": ["intraday", "momentum"],
+    }

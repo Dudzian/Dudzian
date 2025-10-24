@@ -834,6 +834,10 @@ class StrategyDefinitionConfig:
     name: str
     engine: str
     parameters: Mapping[str, float | int | str | bool]
+    license_tier: str | None = None
+    risk_classes: Sequence[str] = field(default_factory=tuple)
+    required_data: Sequence[str] = field(default_factory=tuple)
+    capability: str | None = None
     risk_profile: str | None = None
     tags: Sequence[str] = field(default_factory=tuple)
     metadata: Mapping[str, object] = field(default_factory=dict)

@@ -6,8 +6,10 @@ import logging
 import math
 import time
 from collections import deque
+from collections.abc import Iterable
 from copy import deepcopy
 from dataclasses import dataclass, replace
+from types import MappingProxyType
 from typing import Any, Deque, Dict, List, Mapping, Optional
 
 import numpy as np
@@ -222,6 +224,9 @@ class AutoTradeEngine:
         workflow_parameter_overrides = {
             regime: dict(base_override) for regime in MarketRegime
         }
+        self._workflow_parameter_overrides = {
+            regime: dict(values) for regime, values in workflow_parameter_overrides.items()
+        }
         if regime_workflow is None:
             self._regime_workflow: RegimeSwitchWorkflow | None = RegimeSwitchWorkflow(
                 classifier=self._regime_classifier,
@@ -306,6 +311,45 @@ class AutoTradeEngine:
         if released:
             self._recompute_risk_freeze_until()
 
+    def _apply_manual_risk_freeze(
+        self,
+        *,
+        reason: str,
+        expiry: float,
+        now: float,
+        source: str,
+    ) -> None:
+        state = self._manual_risk_state or _ManualRiskFreezeState()
+        state.reason = reason
+        if not state.triggered_at:
+            state.triggered_at = now
+        state.last_extension_at = now
+        self._manual_risk_state = state
+        self._manual_risk_frozen_until = float(expiry)
+        self.adapter.push_autotrade_status(  # type: ignore[attr-defined]
+            "manual_risk_freeze",
+            detail={
+                "symbol": self.cfg.symbol,
+                "reason": reason,
+                "source": source,
+                "until": float(expiry),
+            },
+            level="WARN",
+        )
+
+    def _clear_manual_risk_freeze(self, *, now: float, source: str) -> bool:
+        if not self._manual_risk_state:
+            return False
+        active = bool(self._manual_risk_frozen_until and self._manual_risk_frozen_until > now)
+        self._manual_risk_state = None
+        self._manual_risk_frozen_until = 0.0
+        if active:
+            self.adapter.push_autotrade_status(  # type: ignore[attr-defined]
+                "manual_risk_unfreeze",
+                detail={"symbol": self.cfg.symbol, "source": source},
+            )
+        return active
+
     @staticmethod
     def _normalize_strategy_config(
         raw: Mapping[str, Mapping[str, float]] | None
@@ -371,10 +415,66 @@ class AutoTradeEngine:
         }
         return replace(base, ensemble_weights=normalized)
 
+    def _collect_strategy_metadata(
+        self, weights: Mapping[str, float]
+    ) -> Mapping[str, Mapping[str, object] | Mapping[str, tuple[str, ...]]]:
+        strategies: Dict[str, Mapping[str, object]] = {}
+        license_tiers: list[str] = []
+        risk_classes: list[str] = []
+        required_data: list[str] = []
+        capabilities: list[str] = []
+        tags: list[str] = []
+
+        def _append_unique(bucket: list[str], values: Iterable[str]) -> None:
+            seen = set(bucket)
+            for value in values:
+                text = str(value).strip()
+                if not text or text in seen:
+                    continue
+                seen.add(text)
+                bucket.append(text)
+
+        for name in sorted(weights):
+            metadata = self._strategy_catalog.metadata_for(name)
+            if not metadata:
+                continue
+            strategies[name] = metadata
+            license_value = metadata.get("license_tier")
+            if isinstance(license_value, str):
+                _append_unique(license_tiers, (license_value,))
+            risk_value = metadata.get("risk_classes")
+            if isinstance(risk_value, Iterable):
+                _append_unique(risk_classes, risk_value)
+            required_value = metadata.get("required_data")
+            if isinstance(required_value, Iterable):
+                _append_unique(required_data, required_value)
+            capability_value = metadata.get("capability")
+            if isinstance(capability_value, str):
+                _append_unique(capabilities, (capability_value,))
+            tags_value = metadata.get("tags")
+            if isinstance(tags_value, Iterable):
+                _append_unique(tags, tags_value)
+
+        return {
+            "strategies": MappingProxyType(
+                {name: MappingProxyType(dict(payload)) for name, payload in strategies.items()}
+            ),
+            "summary": MappingProxyType(
+                {
+                    "license_tiers": tuple(license_tiers),
+                    "risk_classes": tuple(risk_classes),
+                    "required_data": tuple(required_data),
+                    "capabilities": tuple(capabilities),
+                    "tags": tuple(tags),
+                }
+            ),
+        }
+
     def _handle_regime_status(
         self,
         assessment: MarketRegimeAssessment,
         summary: RegimeSummary | None,
+        metadata_summary: Mapping[str, tuple[str, ...]] | None = None,
     ) -> None:
         previous_assessment = self._last_regime
         previous_summary = self._last_summary
@@ -393,6 +493,12 @@ class AutoTradeEngine:
             if summary is not None:
                 detail["summary"] = summary.to_dict()
                 detail["thresholds"] = self._regime_history.thresholds_snapshot()
+            if metadata_summary:
+                detail["metadata"] = {
+                    key: list(values)
+                    for key, values in metadata_summary.items()
+                    if values
+                }
             self.adapter.push_autotrade_status(  # type: ignore[attr-defined]
                 "regime_update",
                 detail=detail,
@@ -410,6 +516,8 @@ class AutoTradeEngine:
         RegimeSummary | None,
         Dict[str, float],
         TradingParameters,
+        Mapping[str, Mapping[str, object]],
+        Mapping[str, tuple[str, ...]],
     ]:
         workflow = getattr(self, "_regime_workflow", None)
         if workflow is not None:
@@ -423,7 +531,11 @@ class AutoTradeEngine:
                 self._logger.debug("Błąd workflow reżimu: %s", exc, exc_info=True)
             else:
                 self._last_regime_decision = decision
-                self._handle_regime_status(decision.assessment, decision.summary)
+                self._handle_regime_status(
+                    decision.assessment,
+                    decision.summary,
+                    decision.metadata_summary,
+                )
                 weights = {
                     str(name): float(value)
                     for name, value in decision.weights.items()
@@ -433,6 +545,8 @@ class AutoTradeEngine:
                     decision.summary,
                     weights,
                     decision.parameters,
+                    decision.strategy_metadata,
+                    decision.metadata_summary,
                 )
         assessment = self._classify_regime(indicator_frame)
         summary = self._regime_history.summarise()
@@ -444,7 +558,15 @@ class AutoTradeEngine:
         normalized = {
             str(name): float(value) for name, value in parameters.ensemble_weights.items()
         }
-        return assessment, summary, normalized, parameters
+        metadata = self._collect_strategy_metadata(normalized)
+        return (
+            assessment,
+            summary,
+            normalized,
+            parameters,
+            metadata["strategies"],
+            metadata["summary"],
+        )
 
     def _prepare_indicator_frame(self, frame: pd.DataFrame) -> pd.DataFrame:
         if frame.empty:
@@ -752,9 +874,14 @@ class AutoTradeEngine:
         indicator_frame = self._prepare_indicator_frame(frame)
         data_for_regime = indicator_frame if not indicator_frame.empty else frame
         base_parameters = self._build_base_trading_parameters()
-        assessment, summary, weights, parameters = self._evaluate_regime_decision(
-            data_for_regime, base_parameters
-        )
+        (
+            assessment,
+            summary,
+            weights,
+            parameters,
+            strategy_metadata,
+            metadata_summary,
+        ) = self._evaluate_regime_decision(data_for_regime, base_parameters)
         self._last_trading_parameters = parameters
         plugin_signals: Dict[str, float] = {}
         if not indicator_frame.empty:
@@ -781,6 +908,20 @@ class AutoTradeEngine:
             numerator += weight * signal_value
             denominator += abs(weight)
         combined = numerator / denominator if denominator else 0.0
+        metadata_payload: dict[str, object] | None = None
+        if strategy_metadata:
+            metadata_payload = {
+                "per_strategy": {
+                    name: dict(payload)
+                    for name, payload in strategy_metadata.items()
+                },
+                "license_tiers": list(metadata_summary.get("license_tiers", ())),
+                "risk_classes": list(metadata_summary.get("risk_classes", ())),
+                "required_data": list(metadata_summary.get("required_data", ())),
+                "capabilities": list(metadata_summary.get("capabilities", ())),
+                "tags": list(metadata_summary.get("tags", ())),
+            }
+
         if self.cfg.emit_signals:
             self.adapter.publish(
                 EventType.SIGNAL,
@@ -800,6 +941,7 @@ class AutoTradeEngine:
                         "arbitrage_confirmation_window": parameters.arbitrage_confirmation_window,
                         "arbitrage_spread_threshold": parameters.arbitrage_spread_threshold,
                     },
+                    **({"metadata": metadata_payload} if metadata_payload else {}),
                 },
             )
         direction = 0
@@ -812,26 +954,32 @@ class AutoTradeEngine:
         if direction > 0 and self._last_signal <= 0:
             self._submit_market("buy", self.cfg.qty)
             self._last_signal = +1
+            detail = {
+                "symbol": self.cfg.symbol,
+                "qty": self.cfg.qty,
+                "regime": assessment.to_dict(),
+                "summary": summary.to_dict() if summary is not None else None,
+            }
+            if metadata_payload:
+                detail["metadata"] = metadata_payload
             self.adapter.push_autotrade_status(  # type: ignore[attr-defined]
                 "entry_long",
-                detail={
-                    "symbol": self.cfg.symbol,
-                    "qty": self.cfg.qty,
-                    "regime": assessment.to_dict(),
-                    "summary": summary.to_dict() if summary is not None else None,
-                },
+                detail=detail,
             )
         elif direction < 0 and self._last_signal >= 0:
             self._submit_market("sell", self.cfg.qty)
             self._last_signal = -1
+            detail = {
+                "symbol": self.cfg.symbol,
+                "qty": self.cfg.qty,
+                "regime": assessment.to_dict(),
+                "summary": summary.to_dict() if summary is not None else None,
+            }
+            if metadata_payload:
+                detail["metadata"] = metadata_payload
             self.adapter.push_autotrade_status(  # type: ignore[attr-defined]
                 "entry_short",
-                detail={
-                    "symbol": self.cfg.symbol,
-                    "qty": self.cfg.qty,
-                    "regime": assessment.to_dict(),
-                    "summary": summary.to_dict() if summary is not None else None,
-                },
+                detail=detail,
             )
 
     @property
@@ -1050,6 +1198,102 @@ class AutoTradeEngine:
         """Udostępnij aktualnie aktywne progi klasyfikatora."""
 
         return self._regime_history.thresholds_snapshot()
+
+    def _build_risk_snapshot(self) -> "RiskFreezeSnapshot":
+        now = time.time()
+        manual_active = bool(
+            self._manual_risk_state
+            and self._manual_risk_frozen_until
+            and self._manual_risk_frozen_until > now
+        )
+        manual_reason = (
+            getattr(self._manual_risk_state, "reason", None) if manual_active else None
+        )
+        manual_until = (
+            float(self._manual_risk_frozen_until) if manual_active else None
+        )
+        auto_active = bool(self._auto_risk_frozen and self._auto_risk_frozen_until > now)
+        auto_until = float(self._auto_risk_frozen_until) if auto_active else None
+        auto_level = self._auto_risk_state.risk_level if auto_active else None
+        auto_score = self._auto_risk_state.risk_score if auto_active else None
+        combined_until = float(self._risk_frozen_until)
+        return RiskFreezeSnapshot(
+            manual_active=manual_active,
+            manual_reason=manual_reason,
+            manual_until=manual_until,
+            auto_active=auto_active,
+            auto_until=auto_until,
+            auto_risk_level=auto_level,
+            auto_risk_score=auto_score,
+            combined_until=combined_until,
+        )
+
+    def snapshot(self) -> "AutoTradeSnapshot":
+        """Zbuduj migawkę stanu autotradera do celów monitoringu/UI."""
+
+        params = self._last_trading_parameters or self._build_base_trading_parameters()
+        weights = dict(params.ensemble_weights)
+        metadata = self._collect_strategy_metadata(weights)
+        catalog_entries = tuple(dict(entry) for entry in self._strategy_catalog.describe())
+        metadata_payload = {
+            "per_strategy": {
+                name: dict(payload) for name, payload in metadata["strategies"].items()
+            },
+            "license_tiers": metadata["summary"]["license_tiers"],
+            "risk_classes": metadata["summary"]["risk_classes"],
+            "required_data": metadata["summary"]["required_data"],
+            "capabilities": metadata["summary"]["capabilities"],
+            "tags": metadata["summary"]["tags"],
+        }
+        workflow = getattr(self, "_regime_workflow", None)
+        overrides_obj = None
+        if workflow is not None:
+            overrides_obj = getattr(workflow, "default_parameter_overrides", None)
+            if callable(overrides_obj):
+                overrides_obj = overrides_obj()
+        overrides = overrides_obj or self._workflow_parameter_overrides
+        overrides_payload: dict[str, Mapping[str, float | int]] = {
+            regime.value if isinstance(regime, MarketRegime) else str(regime): dict(values)
+            for regime, values in (overrides or {}).items()
+        }
+        return AutoTradeSnapshot(
+            symbol=self.cfg.symbol,
+            enabled=bool(self._enabled),
+            trading_parameters=params,
+            strategy_weights=dict(weights),
+            regime_decision=self._last_regime_decision,
+            regime_thresholds=MappingProxyType(dict(self._regime_history.thresholds_snapshot())),
+            regime_parameter_overrides=MappingProxyType(overrides_payload),
+            strategy_catalog=catalog_entries,
+            metadata=MappingProxyType(metadata_payload),
+            risk=self._build_risk_snapshot(),
+        )
+
+
+@dataclass(frozen=True)
+class RiskFreezeSnapshot:
+    manual_active: bool
+    manual_reason: str | None
+    manual_until: float | None
+    auto_active: bool
+    auto_until: float | None
+    auto_risk_level: RiskLevel | None
+    auto_risk_score: float | None
+    combined_until: float
+
+
+@dataclass(frozen=True)
+class AutoTradeSnapshot:
+    symbol: str
+    enabled: bool
+    trading_parameters: TradingParameters
+    strategy_weights: Mapping[str, float]
+    regime_decision: RegimeSwitchDecision | None
+    regime_thresholds: Mapping[str, Any]
+    regime_parameter_overrides: Mapping[str, Mapping[str, float | int]]
+    strategy_catalog: tuple[Mapping[str, object], ...]
+    metadata: Mapping[str, object]
+    risk: RiskFreezeSnapshot
 
 
 __all__ = [

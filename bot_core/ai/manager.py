@@ -52,6 +52,8 @@ from .data_monitoring import (
     ComplianceSignOffError,
     collect_pending_compliance_sign_offs,
     ensure_compliance_sign_offs,
+    load_recent_data_quality_reports,
+    load_recent_drift_reports,
     normalize_compliance_sign_off_roles,
 )
 from .feature_engineering import FeatureDataset
@@ -858,8 +860,8 @@ class AIManager:
             self._compliance_sign_off_roles = None
             return
 
-        normalized = ensure_compliance_sign_offs(roles=roles)
-        self._compliance_sign_off_roles = tuple(normalized.keys())
+        normalized_roles = normalize_compliance_sign_off_roles(roles)
+        self._compliance_sign_off_roles = tuple(normalized_roles)
 
     def register_data_quality_check(self, check: DataQualityCheck) -> None:
         """Rejestruje kontrolę jakości danych wykonywaną podczas pipeline'u."""
