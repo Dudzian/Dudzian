@@ -1,8 +1,6 @@
 import pandas as pd
 
 from bot_core.ai.regime import MarketRegime
-import pytest
-
 from bot_core.trading.engine import TradingParameters
 from bot_core.trading.regime_workflow import RegimeSwitchWorkflow
 
@@ -74,31 +72,3 @@ def test_regime_workflow_accepts_custom_configuration() -> None:
     assert workflow.default_strategy_weights[MarketRegime.TREND]["trend_following"] == 0.8
     assert decision.parameters.signal_threshold == 0.2
     assert workflow.default_parameter_overrides[MarketRegime.MEAN_REVERSION]["rsi_oversold"] == 40
-
-
-def test_regime_workflow_updates_defaults() -> None:
-    workflow = RegimeSwitchWorkflow()
-
-    workflow.update_default_weights({"trend": {"trend_following": 0.9}}, replace=False)
-    weights = workflow.default_strategy_weights[MarketRegime.TREND]
-    assert weights["trend_following"] == pytest.approx(0.9)
-    assert "day_trading" in weights  # pozostali członkowie pozostają przy replace=False
-
-    workflow.update_default_weights(
-        {MarketRegime.TREND: {"trend_following": 0.6, "arbitrage": 0.4}}, replace=True
-    )
-    replaced = workflow.default_strategy_weights[MarketRegime.TREND]
-    assert set(replaced) == {"trend_following", "arbitrage"}
-    assert replaced["trend_following"] == pytest.approx(0.6)
-    assert replaced["arbitrage"] == pytest.approx(0.4)
-
-    workflow.update_parameter_overrides({"daily": {"signal_threshold": 0.25}})
-    overrides = workflow.default_parameter_overrides[MarketRegime.DAILY]
-    assert overrides["signal_threshold"] == pytest.approx(0.25)
-
-    workflow.update_parameter_overrides(
-        {MarketRegime.MEAN_REVERSION: {"rsi_oversold": 45, "rsi_overbought": 55}},
-        replace=True,
-    )
-    replaced_overrides = workflow.default_parameter_overrides[MarketRegime.MEAN_REVERSION]
-    assert replaced_overrides == {"rsi_oversold": 45, "rsi_overbought": 55}

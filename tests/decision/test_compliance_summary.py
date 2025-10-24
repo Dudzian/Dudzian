@@ -11,6 +11,7 @@ from bot_core.ai import (
 )
 from bot_core.ai.audit import load_recent_walk_forward_reports, save_scheduler_state
 from bot_core.ai.data_monitoring import (
+    _SIGN_OFF_ROLES,
     export_data_quality_report,
     export_drift_alert_report,
     load_recent_data_quality_reports,
@@ -77,6 +78,64 @@ def test_collect_pipeline_compliance_summary_flags_missing_sign_offs(tmp_path, m
     pending = summary["pending_sign_off"]
     assert len(pending["risk"]) == 3
     assert len(pending["compliance"]) == 3
+
+
+def test_collect_pipeline_compliance_summary_ignores_legacy_alert_without_policy(
+    tmp_path, monkeypatch
+) -> None:
+    audit_root = tmp_path / "audit"
+    monkeypatch.setenv("AI_DECISION_AUDIT_ROOT", str(audit_root))
+    dataset = _dataset()
+
+    export_data_quality_report(
+        {
+            "category": "completeness",
+            "status": "alert",
+            "issues": [
+                {"code": "missing_bars", "message": "Brak danych", "severity": "critical"}
+            ],
+        }
+    )
+    export_drift_alert_report(
+        {
+            "model_name": "btc-usdt",
+            "drift_score": 0.1,
+            "threshold": 0.6,
+            "window": {"start": "2024-01-01", "end": "2024-01-02"},
+            "backend": "monitor",
+        }
+    )
+    walk_result = WalkForwardResult(
+        windows=({"mae": 0.8, "directional_accuracy": 0.7},),
+        average_mae=0.8,
+        average_directional_accuracy=0.7,
+    )
+    save_walk_forward_report(
+        walk_result,
+        job_name="btc-usdt",
+        dataset=dataset,
+        audit_root=audit_root,
+    )
+
+    dq_report = load_recent_data_quality_reports(limit=1, audit_root=audit_root)[0]
+    drift_report = load_recent_drift_reports(limit=1, audit_root=audit_root)[0]
+    walk_report = load_recent_walk_forward_reports(limit=1, audit_root=audit_root)[0]
+    for report in (dq_report, drift_report, walk_report):
+        update_sign_off(report, role="risk", status="approved", signed_by="RiskOps")
+        update_sign_off(report, role="compliance", status="approved", signed_by="CompOps")
+
+    summary = collect_pipeline_compliance_summary(
+        audit_root=audit_root, include_scheduler=False
+    )
+
+    dq_summary = summary["data_quality"]
+    assert dq_summary["alerts"] == 1
+    assert dq_summary["enforced_alerts"] == 0
+    assert summary["issues"] == ()
+    assert summary["ready"] is True
+    pending = summary["pending_sign_off"]
+    assert pending["risk"] == ()
+    assert pending["compliance"] == ()
 
 
 def test_collect_pipeline_compliance_summary_when_ready(tmp_path, monkeypatch) -> None:
@@ -147,3 +206,122 @@ def test_collect_pipeline_compliance_summary_when_ready(tmp_path, monkeypatch) -
     assert scheduler["is_overdue"] is False
     assert scheduler["cooldown_active"] is False
     assert scheduler["paused"] is False
+
+
+def test_collect_pipeline_compliance_summary_with_all_sign_off_roles(
+    tmp_path, monkeypatch
+) -> None:
+    audit_root = tmp_path / "audit"
+    monkeypatch.setenv("AI_DECISION_AUDIT_ROOT", str(audit_root))
+    dataset = _dataset()
+
+    export_data_quality_report(
+        {
+            "category": "completeness",
+            "status": "ok",
+            "policy": {"enforce": False},
+            "issues": [],
+        }
+    )
+    export_drift_alert_report(
+        {
+            "model_name": "btc-usdt",
+            "drift_score": 0.1,
+            "threshold": 0.6,
+            "window": {"start": "2024-01-01", "end": "2024-01-02"},
+            "backend": "monitor",
+        }
+    )
+    walk_result = WalkForwardResult(
+        windows=({"mae": 0.8, "directional_accuracy": 0.7},),
+        average_mae=0.8,
+        average_directional_accuracy=0.7,
+    )
+    save_walk_forward_report(
+        walk_result,
+        job_name="btc-usdt",
+        dataset=dataset,
+        audit_root=audit_root,
+    )
+
+    dq_report = load_recent_data_quality_reports(limit=1, audit_root=audit_root)[0]
+    drift_report = load_recent_drift_reports(limit=1, audit_root=audit_root)[0]
+    walk_report = load_recent_walk_forward_reports(limit=1, audit_root=audit_root)[0]
+
+    def _signed_by(role: str) -> str:
+        return f"{role.replace('_', ' ').title().replace(' ', '')}Ops"
+
+    for report in (dq_report, drift_report, walk_report):
+        for role in _SIGN_OFF_ROLES:
+            update_sign_off(
+                report,
+                role=role,
+                status="approved",
+                signed_by=_signed_by(role),
+            )
+
+    summary = collect_pipeline_compliance_summary(
+        audit_root=audit_root, include_scheduler=False
+    )
+
+    assert summary["ready"] is True
+    assert summary["issues"] == ()
+    pending = summary["pending_sign_off"]
+    assert set(pending) == set(_SIGN_OFF_ROLES)
+    for role in _SIGN_OFF_ROLES:
+        assert pending[role] == ()
+
+
+def test_collect_pipeline_compliance_summary_includes_additional_roles(
+    tmp_path, monkeypatch
+) -> None:
+    audit_root = tmp_path / "audit"
+    monkeypatch.setenv("AI_DECISION_AUDIT_ROOT", str(audit_root))
+    dataset = _dataset()
+
+    export_data_quality_report(
+        {
+            "category": "completeness",
+            "status": "alert",
+            "policy": {"enforce": True},
+            "issues": [
+                {"code": "missing_bars", "message": "Brak danych", "severity": "critical"}
+            ],
+            "sign_off": {
+                "risk": {"status": "approved"},
+                "compliance": {"status": "approved"},
+                "aml": {"status": "pending"},
+            },
+        }
+    )
+
+    walk_result = WalkForwardResult(
+        windows=({"mae": 0.7, "directional_accuracy": 0.65},),
+        average_mae=0.7,
+        average_directional_accuracy=0.65,
+    )
+    save_walk_forward_report(
+        walk_result,
+        job_name="btc-usdt",
+        dataset=dataset,
+        audit_root=audit_root,
+        sign_off={
+            "risk": {"status": "approved"},
+            "compliance": {"status": "approved"},
+            "aml": {"status": "pending"},
+        },
+    )
+
+    summary = collect_pipeline_compliance_summary(
+        audit_root=audit_root, include_scheduler=False
+    )
+
+    pending = summary["pending_sign_off"]
+    assert pending["risk"] == ()
+    assert pending["compliance"] == ()
+    assert "aml" in pending
+    aml_categories = {entry["category"] for entry in pending["aml"]}
+    assert "completeness" in aml_categories
+    assert "btc-usdt" in aml_categories
+    assert summary["ready"] is False
+    assert "missing_sign_offs" in summary["issues"]

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from . import auto_trade as _auto_trade
 from . import engine as _engine
-from .auto_trade import AutoTradeConfig, AutoTradeEngine, AutoTradeSnapshot, RiskFreezeSnapshot
+from .auto_trade import AutoTradeConfig, AutoTradeEngine
 from .regime_workflow import RegimeSwitchDecision, RegimeSwitchWorkflow
 from .strategies import (
     ArbitrageStrategy,
@@ -18,8 +18,6 @@ from .engine import *  # noqa: F401,F403 - udostępnij publiczne API modułu sil
 __all__ = list(_engine.__all__) + [
     "AutoTradeConfig",
     "AutoTradeEngine",
-    "AutoTradeSnapshot",
-    "RiskFreezeSnapshot",
     "RegimeSwitchDecision",
     "RegimeSwitchWorkflow",
     "StrategyCatalog",

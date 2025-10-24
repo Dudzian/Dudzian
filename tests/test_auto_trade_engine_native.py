@@ -3,7 +3,6 @@ from __future__ import annotations
 import pytest
 
 from dataclasses import replace
-from typing import Any
 
 import pandas as pd
 
@@ -15,12 +14,7 @@ from bot_core.ai.regime import (
     RiskLevel,
 )
 from bot_core.events import EmitterAdapter, Event, EventType
-from bot_core.trading.auto_trade import (
-    AutoTradeConfig,
-    AutoTradeEngine,
-    AutoTradeSnapshot,
-    RiskFreezeSnapshot,
-)
+from bot_core.trading.auto_trade import AutoTradeConfig, AutoTradeEngine
 from bot_core.trading.engine import TradingParameters
 from bot_core.trading.regime_workflow import RegimeSwitchDecision
 from bot_core.trading.strategies import StrategyCatalog, StrategyPlugin
@@ -139,7 +133,7 @@ class _WorkflowStub:
         self.catalog = catalog
         self._decision = decision
         self.last_decision = decision
-        self.calls: list[dict[str, Any]] = []
+        self.calls: list[tuple[pd.DataFrame, TradingParameters, str | None]] = []
 
     def decide(
         self,
@@ -149,14 +143,7 @@ class _WorkflowStub:
         symbol: str | None = None,
         parameter_overrides=None,
     ) -> RegimeSwitchDecision:
-        self.calls.append(
-            {
-                "market_data": market_data.copy(),
-                "base_parameters": base_parameters,
-                "symbol": symbol,
-                "parameter_overrides": parameter_overrides,
-            }
-        )
+        self.calls.append((market_data.copy(), base_parameters, symbol))
         self.history.update(self._decision.assessment)
         return self._decision
 
@@ -220,179 +207,6 @@ def test_auto_trade_engine_uses_strategy_catalog(monkeypatch) -> None:
     last_signals = signal_payloads[-1]["signals"]
     assert last_signals["trend_following"] == 0.75
     assert last_signals["daily_breakout"] == last_signals["day_trading"]
-
-
-def test_manual_risk_freeze_controls(monkeypatch) -> None:
-    adapter = _make_sync_adapter()
-    statuses = _collect_status_payloads(adapter)
-    engine = AutoTradeEngine(adapter, lambda *args, **kwargs: None, AutoTradeConfig())
-
-    base_time = 1_700_400_000.0
-    now_ref = {"value": base_time}
-
-    def fake_time() -> float:
-        return now_ref["value"]
-
-    monkeypatch.setattr("bot_core.trading.auto_trade.time.time", fake_time)
-    monkeypatch.setattr("bot_core.events.emitter.time.time", fake_time)
-
-    engine.freeze_risk(duration=30, reason="ui_hold")
-    freeze_event = next(p for p in statuses if p["status"] == "risk_freeze")
-    assert freeze_event["detail"]["reason"] == "ui_hold"
-    assert freeze_event["detail"]["source"] == "manual"
-    assert freeze_event["detail"]["until"] == pytest.approx(base_time + 30)
-
-    snapshot = engine.snapshot()
-    assert snapshot.risk.manual_active
-    assert snapshot.risk.manual_reason == "ui_hold"
-    assert snapshot.risk.manual_until == pytest.approx(base_time + 30)
-    assert snapshot.risk.combined_until == pytest.approx(base_time + 30)
-
-    now_ref["value"] = base_time + 10
-    engine.freeze_risk(duration=45, reason="ui_extend")
-    extend_event = next(p for p in statuses if p["status"] == "risk_freeze_extend")
-    assert extend_event["detail"]["extended_from"] == pytest.approx(freeze_event["detail"]["until"])
-    assert extend_event["detail"]["until"] == pytest.approx(now_ref["value"] + 45)
-    assert extend_event["detail"]["previous_reason"] == "ui_hold"
-    assert extend_event["detail"]["source"] == "manual"
-
-    snapshot = engine.snapshot()
-    assert snapshot.risk.manual_reason == "ui_extend"
-    assert snapshot.risk.manual_until == pytest.approx(now_ref["value"] + 45)
-
-    now_ref["value"] += 5
-    engine.unfreeze_risk()
-    unfreeze_event = next(p for p in statuses if p["status"] == "risk_unfreeze")
-    assert unfreeze_event["detail"]["reason"] == "ui_extend"
-    assert unfreeze_event["detail"]["source"] == "manual"
-    assert unfreeze_event["detail"]["released_at"] == pytest.approx(now_ref["value"])
-
-    snapshot = engine.snapshot()
-    assert not snapshot.risk.manual_active
-    assert snapshot.risk.manual_until is None
-    assert snapshot.risk.combined_until == pytest.approx(snapshot.risk.auto_until or 0.0)
-
-
-def test_manual_risk_freeze_invalid_duration(monkeypatch) -> None:
-    adapter = _make_sync_adapter()
-    engine = AutoTradeEngine(adapter, lambda *args, **kwargs: None, AutoTradeConfig())
-
-    monkeypatch.setattr("bot_core.trading.auto_trade.time.time", lambda: 1_700_500_000.0)
-    with pytest.raises(ValueError):
-        engine.freeze_risk(duration=0)
-    with pytest.raises(ValueError):
-        engine.freeze_risk(duration=-5)
-
-
-def test_configure_strategy_weights_updates_workflow() -> None:
-    adapter = _make_sync_adapter()
-    engine = AutoTradeEngine(adapter, lambda *args: None)
-
-    engine.configure_strategy_weights(
-        {
-            MarketRegime.TREND: {"trend_following": 3.0, "arbitrage": 1.0},
-            "mean_reversion": {"mean_reversion": 2.0, "arbitrage": 2.0},
-        },
-        replace=True,
-    )
-
-    workflow = engine._regime_workflow
-    assert workflow is not None
-    trend_weights = workflow.default_strategy_weights[MarketRegime.TREND]
-    assert trend_weights == {"trend_following": 3.0, "arbitrage": 1.0}
-    mean_weights = workflow.default_strategy_weights[MarketRegime.MEAN_REVERSION]
-    assert mean_weights == {"mean_reversion": 2.0, "arbitrage": 2.0}
-
-    snapshot = engine.snapshot()
-    assert snapshot.strategy_weights["trend_following"] == pytest.approx(0.75)
-    assert snapshot.strategy_weights["arbitrage"] == pytest.approx(0.25)
-    assert engine.cfg.strategy_weights["trend"]["trend_following"] == pytest.approx(3.0)
-
-
-def test_configure_strategy_weights_merges_without_replace() -> None:
-    adapter = _make_sync_adapter()
-    engine = AutoTradeEngine(adapter, lambda *args: None)
-
-    base_trend = engine._strategy_weights.weights_for(MarketRegime.TREND, normalize=False)
-    assert base_trend["arbitrage"] == pytest.approx(0.15)
-
-    engine.configure_strategy_weights({"trend": {"arbitrage": 0.45}})
-
-    trend_weights = engine._strategy_weights.weights_for(MarketRegime.TREND, normalize=False)
-    assert trend_weights["arbitrage"] == pytest.approx(0.45)
-    assert "day_trading" in trend_weights
-
-
-def test_configure_parameter_overrides_updates_workflow() -> None:
-    adapter = _make_sync_adapter()
-    engine = AutoTradeEngine(adapter, lambda *args: None)
-
-    engine.configure_parameter_overrides(
-        {
-            MarketRegime.TREND: {"signal_threshold": 0.21},
-            "daily": {"day_trading_momentum_window": 12},
-        }
-    )
-
-    workflow = engine._regime_workflow
-    assert workflow is not None
-    overrides = workflow.default_parameter_overrides
-    assert overrides[MarketRegime.TREND]["signal_threshold"] == pytest.approx(0.21)
-    assert overrides[MarketRegime.DAILY]["day_trading_momentum_window"] == 12
-    assert engine.cfg.regime_parameter_overrides["trend"]["signal_threshold"] == pytest.approx(0.21)
-
-    snapshot = engine.snapshot()
-    assert (
-        snapshot.regime_parameter_overrides[MarketRegime.TREND.value]["signal_threshold"]
-        == pytest.approx(0.21)
-    )
-
-
-def test_configure_parameter_overrides_replace() -> None:
-    adapter = _make_sync_adapter()
-    engine = AutoTradeEngine(adapter, lambda *args: None)
-
-    engine.configure_parameter_overrides(
-        {MarketRegime.MEAN_REVERSION: {"rsi_oversold": 47, "rsi_overbought": 53}},
-        replace=True,
-    )
-
-    overrides = engine._parameter_overrides[MarketRegime.MEAN_REVERSION]
-    assert overrides == {"rsi_oversold": 47, "rsi_overbought": 53}
-    workflow = engine._regime_workflow
-    assert workflow is not None
-    assert (
-        workflow.default_parameter_overrides[MarketRegime.MEAN_REVERSION]
-        == {"rsi_oversold": 47, "rsi_overbought": 53}
-    )
-
-
-def test_parameter_overrides_applied_without_workflow(monkeypatch) -> None:
-    adapter = _make_sync_adapter()
-    engine = AutoTradeEngine(adapter, lambda *args: None)
-
-    engine.configure_parameter_overrides(
-        {MarketRegime.TREND: {"signal_threshold": 0.44}},
-        replace=True,
-    )
-    engine._regime_workflow = None
-    engine._last_regime_decision = None
-
-    assessment = MarketRegimeAssessment(
-        regime=MarketRegime.TREND,
-        confidence=0.5,
-        risk_score=0.2,
-        metrics={},
-        symbol="BTCUSDT",
-    )
-
-    monkeypatch.setattr(engine, "_classify_regime", lambda frame: assessment)
-
-    frame = pd.DataFrame({"close": [100.0, 100.5, 101.0]})
-    base_params = engine._build_base_trading_parameters()
-    _, _, _, params = engine._evaluate_regime_decision(frame, base_params)
-
-    assert params.signal_threshold == pytest.approx(0.44)
 
 
 def test_auto_trade_engine_emits_regime_update_with_metrics(monkeypatch) -> None:
@@ -538,9 +352,7 @@ def test_auto_trade_engine_uses_regime_workflow_decision(monkeypatch) -> None:
         adapter.publish(EventType.MARKET_TICK, {"symbol": "BTCUSDT", "bar": bar})
 
     assert workflow.calls, "Expected regime workflow to be invoked"
-    last_call = workflow.calls[-1]
-    call_params = last_call["base_parameters"]
-    assert last_call["parameter_overrides"] == engine._parameter_overrides
+    call_params = workflow.calls[-1][1]
     assert call_params.ema_fast_period == 3
     assert call_params.ema_slow_period == 8
     assert orders, "Expected workflow-driven decision to result in an order"

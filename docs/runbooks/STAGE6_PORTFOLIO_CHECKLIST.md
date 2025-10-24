@@ -7,7 +7,16 @@ podpisami HMAC oraz integracją z obserwowalnością i Market Intelligence.
 > **Uwaga:** Skrypty Stage6 wykonujemy poprzez `python <ścieżka_do_skryptu>` (alias `python3` w aktywnym venv). Bezpośrednie uruchamianie `./scripts/...` może pominąć konfigurację środowiska i nie jest wspierane.
 
 ## Krok po kroku
-1. Uruchom agregację Market Intel dla governora (`python scripts/build_market_intel_metrics.py`).
+1. Uruchom agregację Market Intel dla governora, wskazując docelowy plik
+   hypercare:
+   ```bash
+   python scripts/build_market_intel_metrics.py \
+     --environment <środowisko> \
+     --governor <nazwa_governora> \
+     --output var/market_intel/stage6_core_market_intel.json
+   ```
+   Zastąp `--environment`/`--governor` właściwymi wartościami; pozostaw
+   `--output` zgodnie z oczekiwaną lokalizacją raportu hypercare.
 2. (Opcjonalnie) wykonaj `PYTHONPATH=. python scripts/run_multi_strategy_scheduler.py --run-once`,
    aby koordynator runtime zapisał świeżą decyzję PortfolioGovernora wraz z
    metadanymi scheduler-a. Koordynator automatycznie wczyta raporty SLO oraz

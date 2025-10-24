@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import math
 from datetime import datetime, timezone
 from pathlib import Path
@@ -9,6 +10,7 @@ from typing import Mapping, Sequence
 import pytest
 
 from bot_core.ai import (
+    AIManager,
     DecisionModelInference,
     ComplianceSignOffError,
     DataQualityException,
@@ -16,6 +18,7 @@ from bot_core.ai import (
     InferenceFeatureBoundsValidator,
     ModelArtifact,
     ModelRepository,
+    collect_pending_compliance_sign_offs,
     ensure_compliance_sign_offs,
     export_drift_alert_report,
     export_data_quality_report,
@@ -74,7 +77,9 @@ def _make_artifact(
         "feature_scalers": metadata_scalers,
         "feature_stats": stats,
     }
-    if data_quality is not None:
+    if data_quality is None:
+        metadata["data_quality"] = {"enforce": True}
+    else:
         metadata["data_quality"] = data_quality
     if drift_monitor is not None:
         metadata["drift_monitor"] = drift_monitor
@@ -409,6 +414,32 @@ def test_summarize_data_quality_reports_flags_pending_sign_off(
     assert all(item["status"] != "approved" for item in pending_compliance)
 
 
+def test_summarize_data_quality_reports_preserves_additional_roles() -> None:
+    reports = (
+        {
+            "category": "completeness",
+            "status": "alert",
+            "policy": {"enforce": True},
+            "sign_off": {
+                "risk": {"status": "approved"},
+                "compliance": {"status": "approved"},
+                "aml": {"status": "pending"},
+            },
+            "timestamp": "2024-01-01T00:00:00Z",
+        },
+    )
+
+    summary = summarize_data_quality_reports(reports)
+
+    pending = summary["pending_sign_off"]
+    assert pending["risk"] == ()
+    assert "aml" in pending
+    aml_pending = pending["aml"]
+    assert aml_pending
+    assert aml_pending[0]["status"] == "pending"
+    assert aml_pending[0]["category"] == "completeness"
+
+
 def test_summarize_drift_reports_marks_threshold_excess(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -446,7 +477,8 @@ def test_summarize_drift_reports_marks_threshold_excess(
     assert pending_risk[0]["status"] == "pending"
 
 
-def test_ensure_compliance_sign_offs_detects_pending() -> None:
+def test_ensure_compliance_sign_offs_detects_pending(caplog: pytest.LogCaptureFixture) -> None:
+    caplog.set_level(logging.WARNING, logger="bot_core.ai.data_monitoring")
     reports = (
         {
             "category": "completeness",
@@ -463,6 +495,7 @@ def test_ensure_compliance_sign_offs_detects_pending() -> None:
         ensure_compliance_sign_offs(data_quality_reports=reports)
     assert excinfo.value.pending["risk"]
     assert not excinfo.value.pending["compliance"]
+    assert "awaiting risk sign-off" in caplog.text
 
 
 def test_ensure_compliance_sign_offs_accepts_approved(
@@ -484,4 +517,167 @@ def test_ensure_compliance_sign_offs_accepts_approved(
     report = _read_json(report_path)
     report["report_path"] = str(report_path)
 
-    ensure_compliance_sign_offs(data_quality_reports=(report,))
+    result = ensure_compliance_sign_offs(data_quality_reports=(report,))
+    assert dict(result) == {"risk": (), "compliance": ()}
+
+
+def test_ensure_compliance_sign_offs_respects_custom_roles(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.WARNING, logger="bot_core.ai.data_monitoring")
+    reports = (
+        {
+            "category": "completeness",
+            "status": "alert",
+            "policy": {"enforce": True},
+            "sign_off": {
+                "risk": {"status": "approved"},
+                "compliance": {"status": "pending"},
+            },
+        },
+    )
+
+    result = ensure_compliance_sign_offs(
+        data_quality_reports=reports,
+        roles=("risk",),
+    )
+
+    assert dict(result) == {"risk": ()}
+    assert "Missing" not in caplog.text
+
+
+def test_ensure_compliance_sign_offs_validates_roles() -> None:
+    with pytest.raises(ValueError):
+        ensure_compliance_sign_offs(roles=("unknown",))
+
+
+def test_ensure_compliance_sign_offs_warns_on_empty_roles(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.WARNING, logger="bot_core.ai.data_monitoring")
+
+    with pytest.raises(ValueError):
+        ensure_compliance_sign_offs(roles=())
+
+    assert "No supported compliance sign-off roles configured" in caplog.text
+
+
+def test_summarize_reports_mark_missing_sign_offs() -> None:
+    reports = (
+        {
+            "category": "bounds",
+            "status": "alert",
+            "policy": {"enforce": True},
+        },
+    )
+
+    dq_summary = summarize_data_quality_reports(reports)
+    for role in ("risk", "compliance"):
+        pending = dq_summary["pending_sign_off"][role]
+        assert pending
+        assert pending[0]["status"] == "pending"
+
+
+def test_summarize_reports_require_sign_off_raises() -> None:
+    reports = (
+        {
+            "category": "completeness",
+            "status": "alert",
+            "policy": {"enforce": True},
+            "sign_off": {"risk": {"status": "pending"}},
+        },
+    )
+
+    with pytest.raises(ComplianceSignOffError) as excinfo:
+        summarize_data_quality_reports(reports, require_sign_off=True)
+    assert excinfo.value.pending["risk"]
+    assert excinfo.value.pending["compliance"]
+
+
+def test_summarize_drift_reports_require_sign_off_raises() -> None:
+    reports = (
+        {
+            "category": "drift_alert",
+            "drift_score": 1.0,
+            "threshold": 0.5,
+            "sign_off": {"risk": {"status": "investigating"}},
+        },
+    )
+
+    with pytest.raises(ComplianceSignOffError) as excinfo:
+        summarize_drift_reports(reports, require_sign_off=True)
+    assert excinfo.value.pending["risk"]
+
+
+def test_summarize_reports_supports_custom_roles() -> None:
+    reports = (
+        {
+            "category": "bounds",
+            "status": "alert",
+            "policy": {"enforce": True},
+            "sign_off": {"risk": {"status": "pending"}},
+        },
+    )
+
+    summary = summarize_data_quality_reports(reports, roles=("risk",))
+    assert tuple(summary["pending_sign_off"].keys()) == ("risk",)
+    assert summary["pending_sign_off"]["risk"]
+
+
+def test_ai_manager_validates_custom_sign_off_roles(tmp_path: Path) -> None:
+    manager = AIManager(model_dir=tmp_path / "cache")
+
+    with pytest.raises(ValueError):
+        manager.set_compliance_sign_off_roles(("unknown",))
+
+
+def test_ai_manager_passes_configured_sign_off_roles(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    captured_roles: list[Sequence[str] | None] = []
+
+    def _fake_ensure(**kwargs):
+        roles = kwargs.get("roles")
+        captured_roles.append(roles)
+        if roles is None:
+            roles = ("risk", "compliance")
+        return {role: () for role in roles}
+
+    monkeypatch.setattr("bot_core.ai.manager.ensure_compliance_sign_offs", _fake_ensure)
+
+    manager = AIManager(model_dir=tmp_path / "cache")
+    manager.set_compliance_sign_off_requirement(True)
+    manager.set_compliance_sign_off_roles(("risk",))
+    manager._ensure_compliance_activation_gate()
+    assert captured_roles[-1] == ("risk",)
+
+    manager.set_compliance_sign_off_roles(None)
+    manager._ensure_compliance_activation_gate()
+    assert captured_roles[-1] is None
+
+
+def test_ai_manager_skips_sign_off_gate_when_not_required(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    calls: list[Sequence[str] | None] = []
+
+    def _record_call(**kwargs):
+        roles = kwargs.get("roles")
+        calls.append(roles)
+        effective_roles = roles or ("risk", "compliance")
+        return {role: () for role in effective_roles}
+
+    monkeypatch.setattr("bot_core.ai.manager.ensure_compliance_sign_offs", _record_call)
+
+    manager = AIManager(model_dir=tmp_path / "cache")
+    manager.set_compliance_sign_off_roles(("risk",))
+
+    assert calls == [("risk",)]
+
+    # Domyślnie bramka jest wyłączona, więc helper nie powinien zostać wywołany ponownie.
+    manager._ensure_compliance_activation_gate()
+    assert calls == [("risk",)]
+
+    manager.set_compliance_sign_off_requirement(True)
+    manager._ensure_compliance_activation_gate()
+
+    assert calls[-1] == ("risk",)
+    assert len(calls) == 2

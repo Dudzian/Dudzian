@@ -236,55 +236,6 @@ class RegimeSwitchWorkflow:
             for regime, values in self._parameter_overrides.items()
         }
 
-    def update_default_weights(
-        self,
-        updates: Mapping[MarketRegime | str, Mapping[str, float]],
-        *,
-        replace: bool = False,
-    ) -> None:
-        """Aktualizuj domyślne wagi strategii używane przez workflow.
-
-        Args:
-            updates: Mapowanie reżimu na pary nazwa strategii → waga.
-            replace: Jeżeli ``True`` zastąp istniejącą konfigurację danego reżimu
-                wyłącznie przekazanym słownikiem. W przeciwnym przypadku wpisy są
-                nadpisywane, ale nieusuwane.
-        """
-
-        if not updates:
-            return
-        normalised = self._normalise_regime_mapping(updates)
-        if not normalised:
-            return
-        for regime, payload in normalised.items():
-            if replace:
-                self._default_strategy_weights[regime] = dict(payload)
-                continue
-            current = dict(self._default_strategy_weights.get(regime, {}))
-            current.update({str(name): float(value) for name, value in payload.items()})
-            self._default_strategy_weights[regime] = current
-
-    def update_parameter_overrides(
-        self,
-        overrides: Mapping[MarketRegime | str, Mapping[str, float | int]],
-        *,
-        replace: bool = False,
-    ) -> None:
-        """Aktualizuj domyślne nadpisania parametrów strategii."""
-
-        if not overrides:
-            return
-        normalised = self._normalise_regime_mapping(overrides)
-        if not normalised:
-            return
-        for regime, payload in normalised.items():
-            if replace:
-                self._parameter_overrides[regime] = dict(payload)
-                continue
-            current = dict(self._parameter_overrides.get(regime, {}))
-            current.update({str(name): value for name, value in payload.items()})
-            self._parameter_overrides[regime] = current
-
     def _build_default_weights(
         self,
         custom: Mapping[MarketRegime | str, Mapping[str, float]] | None,
