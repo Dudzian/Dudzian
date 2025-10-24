@@ -804,6 +804,55 @@ class MeanReversionStrategyConfig:
 
 
 @dataclass(slots=True)
+class ScalpingStrategyConfig:
+    """Parametry konfiguracji strategii scalpingowej."""
+
+    name: str
+    min_price_change: float
+    take_profit: float
+    stop_loss: float
+    max_hold_bars: int
+
+
+@dataclass(slots=True)
+class OptionsIncomeStrategyConfig:
+    """Parametry strategii sprzedaży covered-call."""
+
+    name: str
+    min_iv: float
+    max_delta: float
+    min_days_to_expiry: int
+    roll_threshold_iv: float
+
+
+@dataclass(slots=True)
+class StatisticalArbitrageStrategyConfig:
+    """Parametry strategii pairs trading/statystycznego arbitrażu."""
+
+    name: str
+    lookback: int
+    spread_entry_z: float
+    spread_exit_z: float
+    max_notional: float
+
+
+@dataclass(slots=True)
+class DayTradingStrategyConfig:
+    """Parametry intradayowej strategii momentum."""
+
+    name: str
+    momentum_window: int
+    volatility_window: int
+    entry_threshold: float
+    exit_threshold: float
+    take_profit_atr: float
+    stop_loss_atr: float
+    max_holding_bars: int
+    atr_floor: float
+    bias_strength: float
+
+
+@dataclass(slots=True)
 class VolatilityTargetingStrategyConfig:
     """Konfiguracja strategii kontroli zmienności portfela."""
     name: str
@@ -1177,6 +1226,10 @@ class CoreConfig:
     mean_reversion_strategies: Mapping[str, MeanReversionStrategyConfig] = field(default_factory=dict)
     volatility_target_strategies: Mapping[str, VolatilityTargetingStrategyConfig] = field(default_factory=dict)
     cross_exchange_arbitrage_strategies: Mapping[str, CrossExchangeArbitrageStrategyConfig] = field(default_factory=dict)
+    scalping_strategies: Mapping[str, ScalpingStrategyConfig] = field(default_factory=dict)
+    options_income_strategies: Mapping[str, OptionsIncomeStrategyConfig] = field(default_factory=dict)
+    statistical_arbitrage_strategies: Mapping[str, StatisticalArbitrageStrategyConfig] = field(default_factory=dict)
+    day_trading_strategies: Mapping[str, DayTradingStrategyConfig] = field(default_factory=dict)
     multi_strategy_schedulers: Mapping[str, MultiStrategySchedulerConfig] = field(default_factory=dict)
     runtime_entrypoints: Mapping[str, RuntimeEntrypointConfig] = field(default_factory=dict)
 
@@ -1236,6 +1289,10 @@ __all__ = [
     "MeanReversionStrategyConfig",
     "VolatilityTargetingStrategyConfig",
     "CrossExchangeArbitrageStrategyConfig",
+    "ScalpingStrategyConfig",
+    "OptionsIncomeStrategyConfig",
+    "StatisticalArbitrageStrategyConfig",
+    "DayTradingStrategyConfig",
     "StrategyScheduleConfig",
     "MultiStrategySchedulerConfig",
     "SMSProviderSettings",
