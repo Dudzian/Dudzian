@@ -3,7 +3,9 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from bot_core.auto_trader import AutoTrader
+import pandas as pd
+
+from bot_core.auto_trader import AutoTrader, RiskDecision
 from bot_core.auto_trader.audit import DecisionAuditLog
 
 
@@ -135,3 +137,138 @@ def test_auto_trader_exposes_filtered_audit_entries() -> None:
         has_portfolio_snapshot=True,
     )
     assert none_result == ()
+
+
+def test_auto_trader_audit_records_feature_metadata() -> None:
+    log = DecisionAuditLog()
+    trader = _build_trader(log)
+    frame = pd.DataFrame({"close": [1.0, 1.2], "volume": [100.0, 110.0]})
+
+    assert trader._ai_feature_columns(frame) == ["close", "volume"]
+
+    trader._record_decision_audit_stage(
+        "risk_evaluated",
+        symbol="BTCUSDT",
+        payload={"approved": True},
+    )
+
+    entry = trader.get_decision_audit_entries(limit=1)[0]
+    metadata = entry["metadata"]
+    assert metadata is not None
+    assert metadata["feature_columns"] == ["close", "volume"]
+    assert metadata["feature_columns_source"] == "default"
+    assert "configured_feature_columns" not in metadata
+
+
+def test_risk_evaluation_history_records_feature_columns() -> None:
+    log = DecisionAuditLog()
+    emitter = _Emitter()
+    gui = _GUI()
+    trader = AutoTrader(
+        emitter,
+        gui,
+        symbol_getter=lambda: "BTCUSDT",
+        enable_auto_trade=False,
+        decision_audit_log=log,
+    )
+    frame = pd.DataFrame({"close": [1.0, 1.1], "volume": [95.0, 97.0]})
+    assert trader._ai_feature_columns(frame) == ["close", "volume"]
+
+    decision = RiskDecision(
+        should_trade=True,
+        fraction=1.0,
+        state="ready",
+        details={
+            "decision_engine": {
+                "features": {"close": 1.1, "volume": 97.0},
+                **trader._feature_column_metadata(["close", "volume"]),
+            }
+        },
+    )
+
+    trader._record_risk_evaluation(
+        decision,
+        approved=True,
+        normalized=True,
+        response=None,
+        service=None,
+        error=None,
+    )
+
+    evaluations = trader._risk_evaluations  # type: ignore[attr-defined]
+    assert len(evaluations) == 1
+    evaluation = evaluations[0]
+    metadata = evaluation["metadata"]
+    assert metadata["feature_columns"] == ["close", "volume"]
+    assert metadata["feature_columns_source"] == "default"
+    assert "configured_feature_columns" not in metadata
+
+    events = [payload for event, payload in emitter.events if event == "auto_trader.risk_evaluation"]
+    assert len(events) == 1
+    assert events[0]["metadata"]["feature_columns"] == ["close", "volume"]
+
+
+def test_load_risk_evaluations_preserves_feature_metadata() -> None:
+    log = DecisionAuditLog()
+    emitter = _Emitter()
+    gui = _GUI()
+    trader = AutoTrader(
+        emitter,
+        gui,
+        symbol_getter=lambda: "BTCUSDT",
+        enable_auto_trade=False,
+        decision_audit_log=log,
+    )
+
+    metadata = {
+        "feature_columns": ["close", "volume"],
+        "feature_columns_source": "configured",
+        "configured_feature_columns": ["close", "volume", "ema"],
+    }
+    payload = {
+        "version": 1,
+        "entries": [
+            {
+                "timestamp": 1_700_000_000.0,
+                "approved": True,
+                "normalized": True,
+                "decision": {"state": "ready"},
+                "metadata": metadata,
+            }
+        ],
+        "filters": {},
+        "retention": {},
+        "trimmed_by_ttl": 0,
+        "history_size": 1,
+    }
+
+    loaded = trader.load_risk_evaluations(payload, notify_listeners=True)
+    assert loaded == 1
+
+    evaluations = trader._risk_evaluations  # type: ignore[attr-defined]
+    assert len(evaluations) == 1
+    record = evaluations[0]
+    assert record["metadata"] == metadata
+
+    events = [payload for event, payload in emitter.events if event == "auto_trader.risk_evaluation"]
+    assert len(events) == 1
+    assert events[0]["metadata"] == metadata
+
+
+def test_lifecycle_snapshot_includes_feature_columns() -> None:
+    log = DecisionAuditLog()
+    trader = _build_trader(log)
+    frame = pd.DataFrame({"close": [1.0, 1.2], "volume": [100.0, 110.0]})
+
+    # Warm up feature resolver to capture snapshot of available columns.
+    assert trader._ai_feature_columns(frame) == ["close", "volume"]
+
+    trader.summarize_guardrail_timeline = lambda **_: {}  # type: ignore[assignment]
+    trader.summarize_risk_decision_timeline = lambda **_: {}  # type: ignore[assignment]
+
+    snapshot = trader.build_lifecycle_snapshot()
+    risk_section = snapshot["risk_decisions"]
+
+    assert risk_section["feature_columns"] == ["close", "volume"]
+    assert risk_section["feature_columns_source"] == "default"
+    assert "configured_feature_columns" not in risk_section
