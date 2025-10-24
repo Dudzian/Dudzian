@@ -5258,7 +5258,7 @@ def show_ai_compliance(args: argparse.Namespace) -> int:
     include_jobs = _parse_cli_job_names(getattr(args, "include_jobs", None))
     exclude_jobs = _parse_cli_job_names(getattr(args, "exclude_jobs", None))
     include_policy_enforce = _parse_cli_policy_enforcement(
-        getattr(args, "policy_enforce", None)
+        getattr(args, "include_policy_enforce", None)
     )
     exclude_policy_enforce = _parse_cli_policy_enforcement(
         getattr(args, "exclude_policy_enforce", None)
