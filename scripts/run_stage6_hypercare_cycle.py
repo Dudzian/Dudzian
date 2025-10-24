@@ -135,14 +135,21 @@ def _parse_observability(config: Mapping[str, Any] | None) -> ObservabilityCycle
 
     if metrics and not metrics.exists():
         expected = metrics
-        hint_command = (
-            "python scripts/run_stage6_observability_cycle.py --definitions "
-            f"{definitions} --metrics {expected}"
+        sync_command = (
+            "python scripts/sync_stage6_metrics.py "
+            f"--source /ścieżka/do/stage6_measurements.json --output {expected}"
         )
         print(
-            f"[stage6.hypercare] Oczekiwano metryk w {expected}; "
-            f"wygeneruj je poleceniem: {hint_command}",
+            "[stage6.hypercare] Oczekiwano metryk w "
+            f"{expected} (config: observability.metrics).\n"
+            "[stage6.hypercare] Zgodnie z docs/runbooks/STAGE6_OBSERVABILITY_CHECKLIST.md "
+            "skopiuj lub zsynkuj plik do tej ścieżki (np. poleceniem: "
+            f"{sync_command}) – narzędzie potwierdzi liczbę załadowanych pomiarów.",
             file=sys.stderr,
+        )
+        raise FileNotFoundError(
+            "Brak pliku metryk Stage6. Skopiuj/wyeksportuj stage6_measurements.json "
+            f"do {expected} przed uruchomieniem hypercare."
         )
 
     slo_cfg = config.get("slo") or {}
