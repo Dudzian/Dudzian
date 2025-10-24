@@ -25,6 +25,64 @@ from bot_core.ai.data_monitoring import (
     summarize_drift_reports,
 )
 
+from bot_core.ai.data_monitoring import (
+    ComplianceSignOffError,
+    collect_pending_compliance_sign_offs,
+    ensure_compliance_sign_offs,
+    filter_audit_reports_since,
+    filter_audit_reports_by_tags,
+    filter_audit_reports_by_sign_off_status,
+    filter_audit_reports_by_status,
+    filter_audit_reports_by_source,
+    filter_audit_reports_by_schedule,
+    filter_audit_reports_by_category,
+    filter_audit_reports_by_job_name,
+    filter_audit_reports_by_run,
+    filter_audit_reports_by_symbol,
+    filter_audit_reports_by_pipeline,
+    filter_audit_reports_by_environment,
+    filter_audit_reports_by_exchange,
+    filter_audit_reports_by_portfolio,
+    filter_audit_reports_by_profile,
+    filter_audit_reports_by_strategy,
+    filter_audit_reports_by_dataset,
+    filter_audit_reports_by_model,
+    filter_audit_reports_by_model_version,
+    filter_audit_reports_by_license_tier,
+    filter_audit_reports_by_risk_class,
+    filter_audit_reports_by_required_data,
+    filter_audit_reports_by_capability,
+    filter_audit_reports_by_policy_enforcement,
+    load_recent_data_quality_reports,
+    load_recent_drift_reports,
+    normalize_compliance_sign_off_roles,
+    normalize_sign_off_status,
+    normalize_report_status,
+    normalize_report_source,
+    normalize_report_schedule,
+    normalize_report_category,
+    normalize_report_job_name,
+    normalize_report_run,
+    normalize_report_symbol,
+    normalize_report_pipeline,
+    normalize_report_environment,
+    normalize_report_exchange,
+    normalize_report_portfolio,
+    normalize_report_profile,
+    normalize_report_dataset,
+    normalize_report_strategy,
+    normalize_report_model,
+    normalize_report_model_version,
+    normalize_report_license_tier,
+    normalize_report_risk_class,
+    normalize_report_required_data,
+    normalize_report_capability,
+    normalize_policy_enforcement,
+    get_supported_sign_off_statuses,
+    summarize_data_quality_reports,
+    summarize_drift_reports,
+)
+
 try:
     import tomllib
 except ModuleNotFoundError:  # pragma: no cover - Python < 3.11 nie jest wspierany
@@ -593,6 +651,607 @@ def _parse_paper_simulator_setting_argument(argument: str) -> tuple[str, float]:
     raise CLIUsageError(
         "Wartość opcji --paper-simulator-setting musi być liczbą zmiennoprzecinkową."
     )
+
+
+def _parse_compliance_roles(arguments: Sequence[str] | None) -> tuple[str, ...] | None:
+    if not arguments:
+        return None
+
+    collected: list[str] = []
+    for argument in arguments:
+        if not argument:
+            continue
+        for part in re.split(r"[,\s]+", argument):
+            normalized = part.strip()
+            if normalized:
+                collected.append(normalized)
+
+    if not collected:
+        return None
+
+    try:
+        return normalize_compliance_sign_off_roles(collected)
+    except ValueError as exc:
+        raise CLIUsageError(str(exc)) from exc
+
+
+def _parse_cli_tags(arguments: Sequence[str] | None) -> tuple[str, ...]:
+    if not arguments:
+        return ()
+
+    collected: list[str] = []
+    for argument in arguments:
+        if not argument:
+            continue
+        for part in re.split(r"[,\s]+", argument):
+            normalized = part.strip()
+            if normalized:
+                collected.append(normalized)
+    return tuple(collected)
+
+
+def _parse_cli_sign_off_statuses(arguments: Sequence[str] | None) -> tuple[str, ...]:
+    if not arguments:
+        return ()
+
+    supported = get_supported_sign_off_statuses()
+    collected: list[str] = []
+    for argument in arguments:
+        if not argument:
+            continue
+        for part in re.split(r"[,\s]+", argument):
+            normalized = normalize_sign_off_status(part)
+            if not normalized:
+                raise CLIUsageError(
+                    "Nieznany status podpisu compliance: {value}. Dozwolone wartości: {choices}".format(
+                        value=part or "",
+                        choices=", ".join(supported),
+                    )
+                )
+            collected.append(normalized)
+
+    # zachowujemy kolejność pierwszego wystąpienia
+    return tuple(dict.fromkeys(collected))
+
+
+def _parse_cli_report_statuses(arguments: Sequence[str] | None) -> tuple[str, ...]:
+    if not arguments:
+        return ()
+
+    collected: list[str] = []
+    for argument in arguments:
+        if not argument:
+            continue
+        for part in re.split(r"[,\s]+", argument):
+            normalized = normalize_report_status(part)
+            if normalized:
+                collected.append(normalized)
+
+    if not collected:
+        return ()
+
+    return tuple(dict.fromkeys(collected))
+
+
+def _parse_cli_policy_enforcement(arguments: Sequence[str] | None) -> tuple[bool, ...]:
+    if not arguments:
+        return ()
+
+    collected: list[bool] = []
+    for argument in arguments:
+        if not argument:
+            continue
+        for part in re.split(r"[,\s]+", argument):
+            normalized = normalize_policy_enforcement(part)
+            if normalized is None:
+                raise CLIUsageError(
+                    "Nieznana wartość policy.enforce: {value}. Użyj 'enforced' lub 'not-enforced'.".format(
+                        value=part or ""
+                    )
+                )
+            collected.append(normalized)
+
+    if not collected:
+        return ()
+
+    return tuple(dict.fromkeys(collected))
+
+
+def _parse_cli_schedules(arguments: Sequence[str] | None) -> tuple[str, ...]:
+    if not arguments:
+        return ()
+
+    collected: list[str] = []
+    for argument in arguments:
+        if not argument:
+            continue
+        for part in re.split(r"[,\s]+", argument):
+            normalized = normalize_report_schedule(part)
+            if not normalized:
+                raise CLIUsageError(
+                    "Niepoprawny harmonogram audytu: {value}. Podaj niepusty ciąg znaków.".format(
+                        value=part or ""
+                    )
+                )
+            collected.append(normalized)
+
+    if not collected:
+        return ()
+
+    return tuple(dict.fromkeys(collected))
+
+
+def _parse_cli_categories(arguments: Sequence[str] | None) -> tuple[str, ...]:
+    if not arguments:
+        return ()
+
+    collected: list[str] = []
+    for argument in arguments:
+        if not argument:
+            continue
+        for part in re.split(r"[,\s]+", argument):
+            normalized = normalize_report_category(part)
+            if not normalized:
+                raise CLIUsageError(
+                    "Niepoprawna kategoria raportu: {value}. Podaj niepusty ciąg znaków.".format(
+                        value=part or ""
+                    )
+                )
+            collected.append(normalized)
+
+    if not collected:
+        return ()
+
+    return tuple(dict.fromkeys(collected))
+
+
+def _parse_cli_symbols(arguments: Sequence[str] | None) -> tuple[str, ...]:
+    if not arguments:
+        return ()
+
+    collected: list[str] = []
+    for argument in arguments:
+        if not argument:
+            continue
+        for part in re.split(r"[,\s]+", argument):
+            normalized = normalize_report_symbol(part)
+            if not normalized:
+                raise CLIUsageError(
+                    "Niepoprawny symbol raportu: {value}. Podaj niepusty identyfikator rynku.".format(
+                        value=part or ""
+                    )
+                )
+            collected.append(normalized)
+
+    if not collected:
+        return ()
+
+    return tuple(dict.fromkeys(collected))
+
+
+def _parse_cli_job_names(arguments: Sequence[str] | None) -> tuple[str, ...]:
+    if not arguments:
+        return ()
+
+    collected: list[str] = []
+    for argument in arguments:
+        if not argument:
+            continue
+        for part in re.split(r"[,\s]+", argument):
+            normalized = normalize_report_job_name(part)
+            if not normalized:
+                raise CLIUsageError(
+                    "Niepoprawna nazwa zadania audytu: {value}. Podaj niepusty ciąg znaków.".format(
+                        value=part or ""
+                    )
+                )
+            collected.append(normalized)
+
+    if not collected:
+        return ()
+
+    return tuple(dict.fromkeys(collected))
+
+
+def _parse_cli_pipelines(arguments: Sequence[str] | None) -> tuple[str, ...]:
+    if not arguments:
+        return ()
+
+    collected: list[str] = []
+    for argument in arguments:
+        if not argument:
+            continue
+        for part in re.split(r"[,\s]+", argument):
+            normalized = normalize_report_pipeline(part)
+            if not normalized:
+                raise CLIUsageError(
+                    "Niepoprawny pipeline raportu: {value}. Podaj niepusty ciąg znaków.".format(
+                        value=part or ""
+                    )
+                )
+            collected.append(normalized)
+
+    if not collected:
+        return ()
+
+    return tuple(dict.fromkeys(collected))
+
+
+def _parse_cli_capabilities(arguments: Sequence[str] | None) -> tuple[str, ...]:
+    if not arguments:
+        return ()
+
+    collected: list[str] = []
+    for argument in arguments:
+        if not argument:
+            continue
+        for part in re.split(r"[,\s]+", argument):
+            normalized = normalize_report_capability(part)
+            if not normalized:
+                raise CLIUsageError(
+                    "Niepoprawne capability strategii: {value}. Podaj niepusty identyfikator.".format(
+                        value=part or ""
+                    )
+                )
+            collected.append(normalized)
+
+    if not collected:
+        return ()
+
+    return tuple(dict.fromkeys(collected))
+
+
+def _parse_cli_environments(arguments: Sequence[str] | None) -> tuple[str, ...]:
+    if not arguments:
+        return ()
+
+    collected: list[str] = []
+    for argument in arguments:
+        if not argument:
+            continue
+        for part in re.split(r"[,\s]+", argument):
+            normalized = normalize_report_environment(part)
+            if not normalized:
+                raise CLIUsageError(
+                    "Niepoprawne środowisko raportu: {value}. Podaj niepusty ciąg znaków.".format(
+                        value=part or ""
+                    )
+                )
+            collected.append(normalized)
+
+    if not collected:
+        return ()
+
+    return tuple(dict.fromkeys(collected))
+
+
+def _parse_cli_exchanges(arguments: Sequence[str] | None) -> tuple[str, ...]:
+    if not arguments:
+        return ()
+
+    collected: list[str] = []
+    for argument in arguments:
+        if not argument:
+            continue
+        for part in re.split(r"[,\s]+", argument):
+            normalized = normalize_report_exchange(part)
+            if not normalized:
+                raise CLIUsageError(
+                    "Niepoprawna giełda lub źródło danych raportu: {value}. Podaj niepusty ciąg znaków.".format(
+                        value=part or ""
+                    )
+                )
+            collected.append(normalized)
+
+    if not collected:
+        return ()
+
+    return tuple(dict.fromkeys(collected))
+
+
+def _parse_cli_portfolios(arguments: Sequence[str] | None) -> tuple[str, ...]:
+    if not arguments:
+        return ()
+
+    collected: list[str] = []
+    for argument in arguments:
+        if not argument:
+            continue
+        for part in re.split(r"[,\s]+", argument):
+            normalized = normalize_report_portfolio(part)
+            if not normalized:
+                raise CLIUsageError(
+                    "Niepoprawny portfel raportu: {value}. Podaj niepusty ciąg znaków.".format(
+                        value=part or ""
+                    )
+                )
+            collected.append(normalized)
+
+    if not collected:
+        return ()
+
+    return tuple(dict.fromkeys(collected))
+
+
+def _parse_cli_license_tiers(arguments: Sequence[str] | None) -> tuple[str, ...]:
+    if not arguments:
+        return ()
+
+    collected: list[str] = []
+    for argument in arguments:
+        if not argument:
+            continue
+        for part in re.split(r"[,\s]+", argument):
+            normalized = normalize_report_license_tier(part)
+            if not normalized:
+                raise CLIUsageError(
+                    "Niepoprawny poziom licencji: {value}. Podaj niepusty ciąg znaków.".format(
+                        value=part or ""
+                    )
+                )
+            collected.append(normalized)
+
+    if not collected:
+        return ()
+
+    return tuple(dict.fromkeys(collected))
+
+
+def _parse_cli_risk_classes(arguments: Sequence[str] | None) -> tuple[str, ...]:
+    if not arguments:
+        return ()
+
+    collected: list[str] = []
+    for argument in arguments:
+        if not argument:
+            continue
+        for part in re.split(r"[,\s]+", argument):
+            normalized = normalize_report_risk_class(part)
+            if not normalized:
+                raise CLIUsageError(
+                    "Niepoprawna klasa ryzyka: {value}. Podaj niepusty ciąg znaków.".format(
+                        value=part or ""
+                    )
+                )
+            collected.append(normalized)
+
+    if not collected:
+        return ()
+
+    return tuple(dict.fromkeys(collected))
+
+
+def _parse_cli_required_data(arguments: Sequence[str] | None) -> tuple[str, ...]:
+    if not arguments:
+        return ()
+
+    collected: list[str] = []
+    for argument in arguments:
+        if not argument:
+            continue
+        for part in re.split(r"[,\s]+", argument):
+            normalized = normalize_report_required_data(part)
+            if not normalized:
+                raise CLIUsageError(
+                    "Niepoprawne źródło danych: {value}. Podaj niepusty ciąg znaków.".format(
+                        value=part or ""
+                    )
+                )
+            collected.append(normalized)
+
+    if not collected:
+        return ()
+
+    return tuple(dict.fromkeys(collected))
+
+
+def _parse_cli_profiles(arguments: Sequence[str] | None) -> tuple[str, ...]:
+    if not arguments:
+        return ()
+
+    collected: list[str] = []
+    for argument in arguments:
+        if not argument:
+            continue
+        for part in re.split(r"[,\s]+", argument):
+            normalized = normalize_report_profile(part)
+            if not normalized:
+                raise CLIUsageError(
+                    "Niepoprawny profil strategii: {value}. Podaj niepusty identyfikator.".format(
+                        value=part or ""
+                    )
+                )
+            collected.append(normalized)
+
+    if not collected:
+        return ()
+
+    return tuple(dict.fromkeys(collected))
+
+
+def _parse_cli_strategies(arguments: Sequence[str] | None) -> tuple[str, ...]:
+    if not arguments:
+        return ()
+
+    collected: list[str] = []
+    for argument in arguments:
+        if not argument:
+            continue
+        for part in re.split(r"[,\s]+", argument):
+            normalized = normalize_report_strategy(part)
+            if not normalized:
+                raise CLIUsageError(
+                    "Niepoprawny identyfikator strategii: {value}. Podaj niepustą nazwę.".format(
+                        value=part or ""
+                    )
+                )
+            collected.append(normalized)
+
+    if not collected:
+        return ()
+
+    return tuple(dict.fromkeys(collected))
+
+
+def _parse_cli_datasets(arguments: Sequence[str] | None) -> tuple[str, ...]:
+    if not arguments:
+        return ()
+
+    collected: list[str] = []
+    for argument in arguments:
+        if not argument:
+            continue
+        for part in re.split(r"[,\s]+", argument):
+            normalized = normalize_report_dataset(part)
+            if not normalized:
+                raise CLIUsageError(
+                    "Niepoprawny identyfikator zbioru danych: {value}. Podaj niepusty ciąg znaków.".format(
+                        value=part or ""
+                    )
+                )
+            collected.append(normalized)
+
+    if not collected:
+        return ()
+
+    return tuple(dict.fromkeys(collected))
+
+
+def _parse_cli_models(arguments: Sequence[str] | None) -> tuple[str, ...]:
+    if not arguments:
+        return ()
+
+    collected: list[str] = []
+    for argument in arguments:
+        if not argument:
+            continue
+        for part in re.split(r"[,\s]+", argument):
+            normalized = normalize_report_model(part)
+            if not normalized:
+                raise CLIUsageError(
+                    "Niepoprawny identyfikator modelu/artefaktu: {value}. Podaj niepustą nazwę.".format(
+                        value=part or ""
+                    )
+                )
+            collected.append(normalized)
+
+    if not collected:
+        return ()
+
+    return tuple(dict.fromkeys(collected))
+
+
+def _parse_cli_model_versions(arguments: Sequence[str] | None) -> tuple[str, ...]:
+    if not arguments:
+        return ()
+
+    collected: list[str] = []
+    for argument in arguments:
+        if not argument:
+            continue
+        for part in re.split(r"[,\s]+", argument):
+            normalized = normalize_report_model_version(part)
+            if not normalized:
+                raise CLIUsageError(
+                    "Niepoprawna wersja modelu/artefaktu: {value}. Podaj niepustą wartość.".format(
+                        value=part or ""
+                    )
+                )
+            collected.append(normalized)
+
+    if not collected:
+        return ()
+
+    return tuple(dict.fromkeys(collected))
+
+
+def _parse_cli_runs(arguments: Sequence[str] | None) -> tuple[str, ...]:
+    if not arguments:
+        return ()
+
+    collected: list[str] = []
+    for argument in arguments:
+        if not argument:
+            continue
+        for part in re.split(r"[,\s]+", argument):
+            normalized = normalize_report_run(part)
+            if not normalized:
+                raise CLIUsageError(
+                    "Niepoprawny run raportu: {value}. Podaj niepusty ciąg znaków.".format(
+                        value=part or ""
+                    )
+                )
+            collected.append(normalized)
+
+    if not collected:
+        return ()
+
+    return tuple(dict.fromkeys(collected))
+
+
+def _parse_cli_sources(arguments: Sequence[str] | None) -> tuple[str, ...]:
+    if not arguments:
+        return ()
+
+    collected: list[str] = []
+    for argument in arguments:
+        if not argument:
+            continue
+        for part in re.split(r"[,\s]+", argument):
+            normalized = normalize_report_source(part)
+            if not normalized:
+                raise CLIUsageError(
+                    "Niepoprawne źródło raportu: {value}. Podaj niepusty ciąg znaków.".format(
+                        value=part or ""
+                    )
+                )
+            collected.append(normalized)
+
+    if not collected:
+        return ()
+
+    return tuple(dict.fromkeys(collected))
+
+
+def _resolve_since_cutoff(value: str, *, now: datetime | None = None) -> datetime:
+    if not isinstance(value, str) or not value.strip():
+        raise CLIUsageError("Opcja --since wymaga niepustej wartości.")
+
+    reference = now or datetime.now(timezone.utc)
+    candidate = value.strip()
+    match = _SINCE_DURATION_RE.fullmatch(candidate)
+    if match:
+        amount = int(match.group("value"))
+        unit = match.group("unit").lower()
+        delta_map = {
+            "s": timedelta(seconds=amount),
+            "m": timedelta(minutes=amount),
+            "h": timedelta(hours=amount),
+            "d": timedelta(days=amount),
+        }
+        cutoff = reference - delta_map[unit]
+        return cutoff.astimezone(timezone.utc)
+
+    normalized = candidate
+    if candidate.endswith("Z") or candidate.endswith("z"):
+        normalized = candidate[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError as exc:
+        raise CLIUsageError(
+            "Opcja --since wymaga formatu ISO 8601 lub skrótu (np. 24h, 7d)."
+        ) from exc
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _jsonify_payload(value):
+    if isinstance(value, Mapping):
+        return {str(key): _jsonify_payload(val) for key, val in value.items()}
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return [_jsonify_payload(item) for item in value]
+    return value
 
 
 def _parse_compliance_roles(arguments: Sequence[str] | None) -> tuple[str, ...] | None:
