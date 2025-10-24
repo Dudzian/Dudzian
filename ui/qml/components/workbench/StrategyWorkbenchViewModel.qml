@@ -7,9 +7,236 @@ QtObject {
     // External dependencies injected from parent QML
     property var appController: null
     property var strategyController: null
+    property var workbenchController: null
     property var riskModel: null
     property var riskHistoryModel: null
     property var licenseController: null
+
+    property bool catalogReady: false
+    property var catalogEngines: []
+    property var catalogDefinitions: []
+    property var catalogMetadata: ({})
+    property var catalogBlockedDefinitions: ({})
+    property var catalogRegimeTemplates: ({})
+    property var presetDraft: ({ name: "", metadata: ({}), entries: [] })
+    property var presetValidation: ({ ok: false, errors: [], issues: [], preset: null, regime_map: ({}) })
+    property var presetIssues: []
+    property var regimeMappings: ({})
+    property var schedulerHistory: []
+    property bool schedulerHistoryInitialized: false
+    property var presetHistorySnapshots: []
+    property bool workbenchBusy: false
+    property string workbenchError: ""
+
+    function cloneValue(value) {
+        try {
+            return JSON.parse(JSON.stringify(value))
+        } catch (error) {
+            console.warn("StrategyWorkbenchViewModel: cloneValue fallback", error)
+            return value
+        }
+    }
+
+    function deriveRegimeMapFromPreset(preset) {
+        var map = {}
+        if (!preset)
+            return map
+        var items = preset.strategies || []
+        for (var i = 0; i < items.length; ++i) {
+            var entry = items[i]
+            if (!entry)
+                continue
+            var profile = entry.risk_profile
+            if (!profile && entry.metadata)
+                profile = entry.metadata.risk_profile
+            if (!profile)
+                continue
+            var key = String(profile)
+            if (!map[key])
+                map[key] = []
+            map[key].push(entry.name || ("strategy_" + i))
+        }
+        return map
+    }
+
+    function syncCatalog() {
+        if (!workbenchController) {
+            catalogEngines = []
+            catalogDefinitions = []
+            catalogMetadata = {}
+            catalogBlockedDefinitions = {}
+            catalogRegimeTemplates = {}
+            catalogReady = false
+            workbenchError = ""
+            return
+        }
+        catalogEngines = cloneValue(workbenchController.catalogEngines || [])
+        catalogDefinitions = cloneValue(workbenchController.catalogDefinitions || [])
+        catalogMetadata = cloneValue(workbenchController.catalogMetadata || {})
+        catalogBlockedDefinitions = cloneValue(workbenchController.catalogBlockedDefinitions || {})
+        catalogRegimeTemplates = cloneValue(workbenchController.catalogRegimeTemplates || {})
+        if (workbenchController.ready !== undefined)
+            catalogReady = !!workbenchController.ready
+        else
+            catalogReady = catalogDefinitions.length > 0
+        syncError()
+    }
+
+    function syncBusy() {
+        if (!workbenchController) {
+            workbenchBusy = false
+            return
+        }
+        workbenchBusy = !!workbenchController.busy
+    }
+
+    function syncError() {
+        if (!workbenchController) {
+            workbenchError = ""
+            return
+        }
+        var errorValue = workbenchController.lastError
+        workbenchError = errorValue ? String(errorValue) : ""
+    }
+
+    function syncValidation(result) {
+        var payload = result
+        if (payload === undefined)
+            payload = workbenchController ? workbenchController.lastValidation : null
+        if (!payload)
+            payload = { ok: false, errors: [], issues: [], preset: null }
+        presetValidation = payload
+        presetIssues = cloneValue(payload.issues || [])
+        if (payload.regime_map)
+            regimeMappings = cloneValue(payload.regime_map)
+        else if (payload.ok && payload.preset)
+            regimeMappings = deriveRegimeMapFromPreset(payload.preset)
+        else if (!payload.ok)
+            regimeMappings = {}
+    }
+
+    function syncPresetHistory() {
+        if (!workbenchController)
+            return
+        presetHistorySnapshots = cloneValue(workbenchController.presetHistory || [])
+    }
+
+    function ensureSchedulerHistoryInitialized() {
+        if (schedulerHistoryInitialized)
+            return
+        schedulerHistory = []
+        schedulerHistoryInitialized = true
+    }
+
+    function findCatalogDefinition(name) {
+        if (!name)
+            return null
+        for (var i = 0; i < catalogDefinitions.length; ++i) {
+            var entry = catalogDefinitions[i]
+            if (entry && entry.name === name)
+                return entry
+        }
+        return null
+    }
+
+    function updatePresetDraft(newDraft) {
+        if (!newDraft)
+            return
+        presetDraft = newDraft
+    }
+
+    function startPresetDraftFromDefinition(name) {
+        var definition = findCatalogDefinition(name)
+        if (!definition)
+            return false
+        var entry = {
+            name: definition.name,
+            engine: definition.engine,
+            risk_profile: definition.risk_profile || (definition.metadata ? definition.metadata.risk_profile : ""),
+            parameters: cloneValue(definition.parameters || {}),
+            tags: cloneValue(definition.tags || []),
+            license_tier: definition.license_tier,
+            risk_classes: cloneValue(definition.risk_classes || []),
+            required_data: cloneValue(definition.required_data || []),
+            metadata: cloneValue(definition.metadata || {})
+        }
+        updatePresetDraft({
+            name: definition.name + "-preset",
+            metadata: { source: "catalog" },
+            entries: [entry]
+        })
+        return true
+    }
+
+    function updatePresetDraftEntry(index, field, value) {
+        if (!presetDraft || !presetDraft.entries || index < 0 || index >= presetDraft.entries.length)
+            return false
+        var draft = cloneValue(presetDraft)
+        draft.entries[index][field] = value
+        updatePresetDraft(draft)
+        return true
+    }
+
+    function requestPresetValidation() {
+        if (!workbenchController)
+            return false
+        var payload = presetDraft || { name: "", entries: [] }
+        var result = workbenchController.validatePreset(payload)
+        if (result)
+            syncValidation(result)
+        return result && result.ok
+    }
+
+    function applyPresetDraft() {
+        if (!presetValidation || !presetValidation.ok || !presetValidation.preset)
+            return false
+        ensureSchedulerHistoryInitialized()
+        schedulerHistory.push(cloneValue(schedulerEntries))
+        var sanitized = presetValidation.preset
+        var entries = sanitized.strategies || []
+        var normalized = []
+        for (var i = 0; i < entries.length; ++i) {
+            var entry = entries[i]
+            normalized.push({
+                name: entry.name || ("strategy_" + i),
+                engine: entry.engine || "",
+                risk_profile: entry.risk_profile || "",
+                license_tier: entry.license_tier || "",
+                tags: cloneValue(entry.tags || []),
+                metadata: cloneValue(entry.metadata || {}),
+                parameters: cloneValue(entry.parameters || {})
+            })
+        }
+        schedulerEntries = normalized
+        if (presetValidation.regime_map)
+            regimeMappings = cloneValue(presetValidation.regime_map)
+        else
+            regimeMappings = deriveRegimeMapFromPreset(sanitized)
+        if (workbenchController)
+            workbenchController.savePresetSnapshot(presetValidation)
+        syncPresetHistory()
+        return true
+    }
+
+    function rollbackSchedulerConfig() {
+        if (!schedulerHistoryInitialized || schedulerHistory.length === 0)
+            return false
+        var previous = schedulerHistory.pop()
+        schedulerEntries = previous || []
+        var restore = workbenchController ? workbenchController.restorePreviousPreset() : null
+        if (restore && restore.ok) {
+            if (restore.regime_map)
+                regimeMappings = cloneValue(restore.regime_map)
+            else if (restore.preset)
+                regimeMappings = deriveRegimeMapFromPreset(restore.preset)
+        } else if (restore && restore.preset) {
+            regimeMappings = deriveRegimeMapFromPreset(restore.preset)
+        } else if (!restore) {
+            regimeMappings = {}
+        }
+        syncPresetHistory()
+        return true
+    }
 
     // Aggregated state exposed to the UI
     property var schedulerEntries: []
@@ -406,6 +633,14 @@ QtObject {
         strategyConnections.target = strategyController
         refreshFromLive()
     }
+    onWorkbenchControllerChanged: {
+        workbenchConnections.target = workbenchController
+        syncCatalog()
+        syncValidation()
+        syncPresetHistory()
+        syncBusy()
+        syncError()
+    }
     onRiskModelChanged: {
         riskConnections.target = riskModel
         refreshFromLive()
@@ -419,7 +654,21 @@ QtObject {
         refreshFromLive()
     }
 
-    Component.onCompleted: refreshFromLive()
+    Component.onCompleted: {
+        refreshFromLive()
+        syncCatalog()
+        syncValidation()
+        syncPresetHistory()
+        syncBusy()
+        syncError()
+    }
+
+    function clearWorkbenchError() {
+        if (workbenchController && workbenchController.clearLastError)
+            workbenchController.clearLastError()
+        else
+            workbenchError = ""
+    }
 
     Connections {
         id: runtimeConnections
@@ -438,6 +687,17 @@ QtObject {
         target: root.strategyController
         function onSchedulerListChanged() { root.refreshFromLive() }
         function onDecisionConfigChanged() { root.refreshFromLive() }
+    }
+
+    Connections {
+        id: workbenchConnections
+        target: root.workbenchController
+        function onCatalogChanged() { root.syncCatalog() }
+        function onLastValidationChanged() { root.syncValidation() }
+        function onPresetHistoryChanged() { root.syncPresetHistory() }
+        function onReadyChanged() { root.syncCatalog() }
+        function onBusyChanged() { root.syncBusy() }
+        function onLastErrorChanged() { root.syncError() }
     }
 
     Connections {
