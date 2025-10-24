@@ -316,6 +316,15 @@ private:
     void scheduleUiSettingsPersist();
     void persistUiSettings();
     QJsonObject buildUiSettingsPayload() const;
+    void initializeSecurityRefresh();
+    void ensureLicenseRefreshTimerConfigured();
+    void ensureFingerprintRefreshTimerConfigured();
+    void refreshSecurityArtifacts();
+    void refreshFingerprintArtifacts();
+    void processSecurityArtifactsUpdate();
+    void updateSecurityCacheFromControllers();
+    void loadSecurityCache();
+    void persistSecurityCache();
     void maybeAutoExportRiskHistory(const QDateTime& snapshotTimestamp);
     QString resolveAutoExportFilePath(const QDir& directory, const QString& basename, const QDateTime& timestamp) const;
     bool setDecisionLogPathInternal(const QString& path, bool emitSignal);
