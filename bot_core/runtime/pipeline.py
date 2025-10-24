@@ -3093,19 +3093,42 @@ def _collect_strategy_definitions(core_config: CoreConfig) -> dict[str, Strategy
 
     definitions: dict[str, StrategyDefinition] = {}
 
-    def _resolve_metadata(engine: str) -> tuple[str, tuple[str, ...], tuple[str, ...], str | None]:
+    def _resolve_metadata(
+        engine: str,
+    ) -> tuple[str, tuple[str, ...], tuple[str, ...], tuple[str, ...], str | None]:
         try:
             spec = DEFAULT_STRATEGY_CATALOG.get(engine)
         except KeyError:
-            return ("unspecified", ("unspecified",), ("unspecified",), None)
-        return (spec.license_tier, spec.risk_classes, spec.required_data, spec.capability)
+            return (
+                "unspecified",
+                ("unspecified",),
+                ("unspecified",),
+                (),
+                None,
+            )
+        return (
+            spec.license_tier,
+            spec.risk_classes,
+            spec.required_data,
+            spec.default_tags,
+            spec.capability,
+        )
 
     for name, cfg in getattr(core_config, "strategy_definitions", {}).items():
-        license_tier, risk_classes, required_data, capability = _resolve_metadata(cfg.engine)
+        (
+            license_tier,
+            risk_classes,
+            required_data,
+            default_tags,
+            capability,
+        ) = _resolve_metadata(cfg.engine)
         metadata = dict(cfg.metadata)
         resolved_capability = getattr(cfg, "capability", None) or capability
         if resolved_capability and "capability" not in metadata:
             metadata["capability"] = resolved_capability
+        merged_tags = tuple(dict.fromkeys((*default_tags, *tuple(cfg.tags))))
+        if merged_tags and "tags" not in metadata:
+            metadata["tags"] = merged_tags
         definitions[name] = StrategyDefinition(
             name=cfg.name,
             engine=cfg.engine,
@@ -3114,17 +3137,25 @@ def _collect_strategy_definitions(core_config: CoreConfig) -> dict[str, Strategy
             required_data=tuple(cfg.required_data) or required_data,
             parameters=dict(cfg.parameters),
             risk_profile=cfg.risk_profile,
-            tags=tuple(cfg.tags),
+            tags=merged_tags,
             metadata=metadata,
         )
 
     def _fallback(name: str, engine: str, params: Mapping[str, Any]) -> None:
         if name in definitions:
             return
-        license_tier, risk_classes, required_data, capability = _resolve_metadata(engine)
+        (
+            license_tier,
+            risk_classes,
+            required_data,
+            default_tags,
+            capability,
+        ) = _resolve_metadata(engine)
         metadata: dict[str, Any] = {}
         if capability:
             metadata["capability"] = capability
+        if default_tags:
+            metadata["tags"] = default_tags
         definitions[name] = StrategyDefinition(
             name=name,
             engine=engine,
@@ -3132,6 +3163,7 @@ def _collect_strategy_definitions(core_config: CoreConfig) -> dict[str, Strategy
             risk_classes=risk_classes,
             required_data=required_data,
             parameters=dict(params),
+            tags=default_tags,
             metadata=metadata,
         )
 
@@ -3187,6 +3219,59 @@ def _collect_strategy_definitions(core_config: CoreConfig) -> dict[str, Strategy
                 "spread_exit": cfg.spread_exit,
                 "max_notional": cfg.max_notional,
                 "max_open_seconds": cfg.max_open_seconds,
+            },
+        )
+
+    for name, cfg in getattr(core_config, "scalping_strategies", {}).items():
+        _fallback(
+            name,
+            "scalping",
+            {
+                "min_price_change": cfg.min_price_change,
+                "take_profit": cfg.take_profit,
+                "stop_loss": cfg.stop_loss,
+                "max_hold_bars": cfg.max_hold_bars,
+            },
+        )
+
+    for name, cfg in getattr(core_config, "options_income_strategies", {}).items():
+        _fallback(
+            name,
+            "options_income",
+            {
+                "min_iv": cfg.min_iv,
+                "max_delta": cfg.max_delta,
+                "min_days_to_expiry": cfg.min_days_to_expiry,
+                "roll_threshold_iv": cfg.roll_threshold_iv,
+            },
+        )
+
+    for name, cfg in getattr(core_config, "statistical_arbitrage_strategies", {}).items():
+        _fallback(
+            name,
+            "statistical_arbitrage",
+            {
+                "lookback": cfg.lookback,
+                "spread_entry_z": cfg.spread_entry_z,
+                "spread_exit_z": cfg.spread_exit_z,
+                "max_notional": cfg.max_notional,
+            },
+        )
+
+    for name, cfg in getattr(core_config, "day_trading_strategies", {}).items():
+        _fallback(
+            name,
+            "day_trading",
+            {
+                "momentum_window": cfg.momentum_window,
+                "volatility_window": cfg.volatility_window,
+                "entry_threshold": cfg.entry_threshold,
+                "exit_threshold": cfg.exit_threshold,
+                "take_profit_atr": cfg.take_profit_atr,
+                "stop_loss_atr": cfg.stop_loss_atr,
+                "max_holding_bars": cfg.max_holding_bars,
+                "atr_floor": cfg.atr_floor,
+                "bias_strength": cfg.bias_strength,
             },
         )
 

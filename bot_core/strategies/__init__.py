@@ -6,6 +6,7 @@ from bot_core.strategies.base import (
     StrategySignal,
     WalkForwardOptimizer,
 )
+from bot_core.strategies.day_trading import DayTradingSettings, DayTradingStrategy
 from bot_core.strategies.daily_trend import (
     DailyTrendMomentumSettings,
     DailyTrendMomentumStrategy,
@@ -40,6 +41,8 @@ __all__ = [
     "WalkForwardOptimizer",
     "DailyTrendMomentumSettings",
     "DailyTrendMomentumStrategy",
+    "DayTradingSettings",
+    "DayTradingStrategy",
     "StrategyCatalog",
     "StrategyDefinition",
     "StrategyPresetWizard",

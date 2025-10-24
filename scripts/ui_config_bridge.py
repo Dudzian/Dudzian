@@ -171,6 +171,10 @@ def _collect_strategy_metadata(raw: Mapping[str, Any]) -> dict[str, Mapping[str,
     _register_section("mean_reversion_strategies", "mean_reversion")
     _register_section("volatility_target_strategies", "volatility_target")
     _register_section("cross_exchange_arbitrage_strategies", "cross_exchange_arbitrage")
+    _register_section("scalping_strategies", "scalping")
+    _register_section("options_income_strategies", "options_income")
+    _register_section("statistical_arbitrage_strategies", "statistical_arbitrage")
+    _register_section("day_trading_strategies", "day_trading")
     _register_section("grid_strategies", "grid_trading")
 
     return definitions
