@@ -172,6 +172,8 @@ public slots:
     Q_INVOKABLE void stopOfflineAutomation();
     Q_INVOKABLE bool setDecisionLogPath(const QUrl& url);
     Q_INVOKABLE bool reloadDecisionLog();
+    Q_INVOKABLE QString addUiModuleDirectory(const QString& path);
+    Q_INVOKABLE bool removeUiModuleDirectory(const QString& path);
     Q_INVOKABLE bool reloadUiModules();
     Q_INVOKABLE void setUiModuleAutoReloadEnabled(bool enabled);
 
@@ -300,6 +302,7 @@ private:
     void configureSupportBundle(const QCommandLineParser& parser);
     void configureDecisionLog(const QCommandLineParser& parser);
     void configureUiModules(const QCommandLineParser& parser);
+    QString normalizeUiModulePath(const QString& path) const;
     void setUiSettingsPersistenceEnabled(bool enabled);
     void setUiSettingsPath(const QString& path, bool reload = true);
     void loadUiSettings();

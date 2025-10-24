@@ -65,6 +65,7 @@ private slots:
     void environmentProvidesDirectories();
     void fallbackUsesDefaultDirectories();
     void reloadsModulesOnDemand();
+    void managesModuleDirectoriesAtRuntime();
     void autoReloadTriggeredByWatcher();
     void autoReloadWatchesMissingDirectories();
 };
@@ -270,6 +271,111 @@ void ApplicationUiModulesTest::reloadsModulesOnDemand()
         const QVariantMap report = arguments.at(1).toMap();
         QCOMPARE(report.value(QStringLiteral("requestedPaths")).toStringList(), expected);
     }
+}
+
+void ApplicationUiModulesTest::managesModuleDirectoriesAtRuntime()
+{
+    QQmlApplicationEngine engine;
+    Application app(engine);
+
+    auto moduleManager = std::make_unique<RecordingModuleManager>();
+    RecordingModuleManager* recording = moduleManager.get();
+    app.setModuleManagerForTesting(std::move(moduleManager));
+
+    QTemporaryDir dirA;
+    QTemporaryDir dirB;
+    QVERIFY(dirA.isValid());
+    QVERIFY(dirB.isValid());
+
+    QCommandLineParser parser;
+    app.configureParser(parser);
+    const QStringList args{
+        QStringLiteral("test"),
+        QStringLiteral("--endpoint"), QStringLiteral("localhost:50051"),
+        QStringLiteral("--metrics-endpoint"), QStringLiteral("localhost:9000"),
+        QStringLiteral("--ui-module-dir"), dirA.path(),
+    };
+    parser.process(args);
+
+    QVERIFY(app.applyParser(parser));
+
+    const QString normA = absolutePath(dirA.path());
+    const QString normB = absolutePath(dirB.path());
+
+    QStringList expected{ normA };
+    QCOMPARE(app.uiModuleDirectoriesForTesting(), expected);
+    QCOMPARE(recording->loadCallCount, 1);
+    QCOMPARE(recording->recordedPluginPaths, expected);
+
+    QSignalSpy reloadSpy(&app, &Application::uiModulesReloaded);
+    QVERIFY(reloadSpy.isValid());
+    reloadSpy.clear();
+
+    const QString added = app.addUiModuleDirectory(dirB.path());
+    QCOMPARE(added, normB);
+    expected.append(normB);
+    QCOMPARE(app.uiModuleDirectoriesForTesting(), expected);
+    QCOMPARE(recording->loadCallCount, 2);
+    QCOMPARE(recording->recordedPluginPaths, expected);
+    QCOMPARE(reloadSpy.count(), 1);
+    {
+        const QList<QVariant> arguments = reloadSpy.takeFirst();
+        QCOMPARE(arguments.size(), 2);
+        QCOMPARE(arguments.at(0).toBool(), true);
+        const QVariantMap report = arguments.at(1).toMap();
+        QCOMPARE(report.value(QStringLiteral("requestedPaths")).toStringList(), expected);
+    }
+
+    QStringList watched = app.watchedUiModulePathsForTesting();
+    QVERIFY(watched.contains(normA));
+    QVERIFY(watched.contains(normB));
+
+    reloadSpy.clear();
+    QCOMPARE(app.addUiModuleDirectory(dirB.path()), QString());
+    QCOMPARE(recording->loadCallCount, 2);
+    QCOMPARE(reloadSpy.count(), 0);
+
+    QVERIFY(!app.removeUiModuleDirectory(QStringLiteral("/nonexistent/path")));
+    QCOMPARE(recording->loadCallCount, 2);
+
+    reloadSpy.clear();
+    QVERIFY(app.removeUiModuleDirectory(dirA.path()));
+    expected = QStringList{ normB };
+    QCOMPARE(app.uiModuleDirectoriesForTesting(), expected);
+    QCOMPARE(recording->loadCallCount, 3);
+    QCOMPARE(recording->recordedPluginPaths, expected);
+    QCOMPARE(reloadSpy.count(), 1);
+    {
+        const QList<QVariant> arguments = reloadSpy.takeFirst();
+        QCOMPARE(arguments.size(), 2);
+        QCOMPARE(arguments.at(0).toBool(), true);
+        const QVariantMap report = arguments.at(1).toMap();
+        QCOMPARE(report.value(QStringLiteral("requestedPaths")).toStringList(), expected);
+    }
+
+    watched = app.watchedUiModulePathsForTesting();
+    QVERIFY(!watched.contains(normA));
+    QVERIFY(watched.contains(normB));
+
+    reloadSpy.clear();
+    QVERIFY(app.removeUiModuleDirectory(dirB.path()));
+    QStringList empty;
+    QCOMPARE(app.uiModuleDirectoriesForTesting(), empty);
+    QCOMPARE(recording->loadCallCount, 4);
+    QCOMPARE(recording->recordedPluginPaths, empty);
+    QCOMPARE(reloadSpy.count(), 1);
+    {
+        const QList<QVariant> arguments = reloadSpy.takeFirst();
+        QCOMPARE(arguments.size(), 2);
+        QCOMPARE(arguments.at(0).toBool(), true);
+        const QVariantMap report = arguments.at(1).toMap();
+        QCOMPARE(report.value(QStringLiteral("requestedPaths")).toStringList(), empty);
+        QCOMPARE(report.value(QStringLiteral("loadedPlugins")).toStringList(), empty);
+    }
+
+    watched = app.watchedUiModulePathsForTesting();
+    QVERIFY(!watched.contains(normB));
+    QVERIFY(watched.isEmpty());
 }
 
 void ApplicationUiModulesTest::autoReloadTriggeredByWatcher()

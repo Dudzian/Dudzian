@@ -24,6 +24,9 @@ Item {
     property bool reloadStatusError: false
     property var reloadReport: ({})
     property bool autoReloadEnabled: false
+    property string newModuleDirectoryPath: ""
+    property string directoryStatusMessage: ""
+    property bool directoryStatusError: false
 
     signal viewActivated(string viewId)
 
@@ -34,6 +37,13 @@ Item {
         interval: 5000
         repeat: false
         onTriggered: root.reloadStatusMessage = ""
+    }
+
+    Timer {
+        id: directoryStatusTimer
+        interval: 5000
+        repeat: false
+        onTriggered: root.directoryStatusMessage = ""
     }
 
     function metadataValueToString(value) {
@@ -54,6 +64,12 @@ Item {
             results.push({ key: keys[i], value: metadataValueToString(metadata[keys[i]]) });
         }
         return results;
+    }
+
+    function canManageModuleDirectories() {
+        return typeof appController !== "undefined"
+                && typeof appController.addUiModuleDirectory === "function"
+                && typeof appController.removeUiModuleDirectory === "function";
     }
 
     function refreshCategories() {
@@ -197,6 +213,61 @@ Item {
         root.reloadStatusError = false;
         root.reloadStatusMessage = qsTr("Trwa przeładowywanie modułów…");
         appController.reloadUiModules();
+    }
+
+    function submitNewModuleDirectory() {
+        directoryStatusTimer.stop();
+
+        if (!canManageModuleDirectories()) {
+            directoryStatusMessage = qsTr("Zarządzanie katalogami modułów jest niedostępne w tej wersji aplikacji.");
+            directoryStatusError = true;
+            directoryStatusTimer.restart();
+            return;
+        }
+
+        var value = (newModuleDirectoryPath || "").trim();
+        if (value.length === 0) {
+            directoryStatusMessage = qsTr("Podaj ścieżkę katalogu modułów.");
+            directoryStatusError = true;
+            directoryStatusTimer.restart();
+            return;
+        }
+
+        var normalized = appController.addUiModuleDirectory(value);
+        if (normalized && normalized.length > 0) {
+            directoryStatusMessage = qsTr("Dodano katalog modułów: %1").arg(normalized);
+            directoryStatusError = false;
+            newModuleDirectoryPath = "";
+        } else {
+            directoryStatusMessage = qsTr("Nie dodano katalogu modułów – ścieżka jest nieprawidłowa lub już istnieje.");
+            directoryStatusError = true;
+        }
+
+        directoryStatusTimer.restart();
+    }
+
+    function requestRemoveModuleDirectory(path) {
+        directoryStatusTimer.stop();
+
+        if (!canManageModuleDirectories()) {
+            directoryStatusMessage = qsTr("Zarządzanie katalogami modułów jest niedostępne w tej wersji aplikacji.");
+            directoryStatusError = true;
+            directoryStatusTimer.restart();
+            return;
+        }
+
+        if (!path || path.length === 0)
+            return;
+
+        if (appController.removeUiModuleDirectory(path)) {
+            directoryStatusMessage = qsTr("Usunięto katalog modułów: %1").arg(path);
+            directoryStatusError = false;
+        } else {
+            directoryStatusMessage = qsTr("Nie udało się usunąć katalogu modułów: %1").arg(path);
+            directoryStatusError = true;
+        }
+
+        directoryStatusTimer.restart();
     }
 
     onSelectedCategoryChanged: {
@@ -413,6 +484,33 @@ Item {
                 wrapMode: Text.WordWrap
             }
 
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 8
+                visible: canManageModuleDirectories()
+
+                TextField {
+                    id: newModuleDirectoryField
+                    Layout.fillWidth: true
+                    placeholderText: qsTr("Dodaj katalog modułów…")
+                    text: root.newModuleDirectoryPath
+                    selectByMouse: true
+                    onTextChanged: root.newModuleDirectoryPath = text
+                    onAccepted: root.submitNewModuleDirectory()
+                }
+
+                Button {
+                    id: addModuleDirectoryButton
+                    text: qsTr("Dodaj")
+                    icon.name: "list-add"
+                    enabled: root.canManageModuleDirectories() && root.newModuleDirectoryPath.trim().length > 0
+                    onClicked: root.submitNewModuleDirectory()
+                    ToolTip.visible: hovered
+                    ToolTip.delay: 400
+                    ToolTip.text: qsTr("Dodaj katalog do listy i przeładuj pluginy UI")
+                }
+            }
+
             ColumnLayout {
                 Layout.fillWidth: true
                 spacing: 2
@@ -420,14 +518,37 @@ Item {
 
                 Repeater {
                     model: moduleDirectories
-                    delegate: Label {
+                    delegate: RowLayout {
                         Layout.fillWidth: true
-                        text: modelData
-                        wrapMode: Text.WrapAnywhere
-                        color: Qt.rgba(1, 1, 1, 0.65)
+                        spacing: 6
+
+                        Label {
+                            Layout.fillWidth: true
+                            text: modelData
+                            wrapMode: Text.WrapAnywhere
+                            color: Qt.rgba(1, 1, 1, 0.65)
+                        }
+
+                        ToolButton {
+                            visible: root.canManageModuleDirectories()
+                            icon.name: "list-remove"
+                            display: AbstractButton.IconOnly
+                            onClicked: root.requestRemoveModuleDirectory(modelData)
+                            ToolTip.visible: hovered
+                            ToolTip.delay: 400
+                            ToolTip.text: qsTr("Usuń katalog z listy i przeładuj moduły")
+                        }
                     }
                 }
             }
+        }
+
+        Label {
+            Layout.fillWidth: true
+            visible: directoryStatusMessage.length > 0
+            text: directoryStatusMessage
+            color: directoryStatusError ? Qt.rgba(1, 0.45, 0.45, 1) : Qt.rgba(0.55, 0.8, 1.0, 1)
+            wrapMode: Text.WordWrap
         }
 
         Label {

@@ -1658,22 +1658,12 @@ void Application::configureUiModules(const QCommandLineParser& parser)
 
     m_moduleManager->unloadPlugins();
 
-    const auto normalize = [](const QString& raw) -> QString {
-        const QString trimmed = raw.trimmed();
-        if (trimmed.isEmpty())
-            return {};
-        const QString expanded = expandPath(trimmed);
-        if (!expanded.isEmpty())
-            return QFileInfo(expanded).absoluteFilePath();
-        return QFileInfo(trimmed).absoluteFilePath();
-    };
-
     QSet<QString> unique;
     QStringList directories;
 
     const QStringList cliDirs = parser.values(QStringLiteral("ui-module-dir"));
     for (const QString& value : cliDirs) {
-        const QString normalized = normalize(value);
+        const QString normalized = normalizeUiModulePath(value);
         if (normalized.isEmpty() || unique.contains(normalized))
             continue;
         unique.insert(normalized);
@@ -1684,7 +1674,7 @@ void Application::configureUiModules(const QCommandLineParser& parser)
         if (const auto envDirs = envValue(QByteArrayLiteral("BOT_CORE_UI_MODULE_DIRS")); envDirs.has_value()) {
             const auto pieces = envDirs->split(QDir::listSeparator(), Qt::SkipEmptyParts);
             for (const QString& piece : pieces) {
-                const QString normalized = normalize(piece);
+                const QString normalized = normalizeUiModulePath(piece);
                 if (normalized.isEmpty() || unique.contains(normalized))
                     continue;
                 unique.insert(normalized);
@@ -1697,7 +1687,7 @@ void Application::configureUiModules(const QCommandLineParser& parser)
         const QString binaryModules = QDir(QCoreApplication::applicationDirPath()).absoluteFilePath(QStringLiteral("modules"));
         const QString repoModules = QDir::current().absoluteFilePath(QStringLiteral("ui/modules"));
         for (const QString& candidate : {binaryModules, repoModules}) {
-            const QString normalized = normalize(candidate);
+            const QString normalized = normalizeUiModulePath(candidate);
             if (normalized.isEmpty() || unique.contains(normalized))
                 continue;
             unique.insert(normalized);
@@ -1717,6 +1707,49 @@ void Application::configureUiModules(const QCommandLineParser& parser)
         loadedPlugins = report.value(QStringLiteral("loadedPlugins")).toStringList();
     }
     updateUiModuleWatchTargets(m_uiModuleDirectories, loadedPlugins);
+}
+
+QString Application::addUiModuleDirectory(const QString& path)
+{
+    const QString normalized = normalizeUiModulePath(path);
+    if (normalized.isEmpty())
+        return {};
+
+    if (m_uiModuleDirectories.contains(normalized))
+        return {};
+
+    m_uiModuleDirectories.append(normalized);
+    emit uiModuleDirectoriesChanged(m_uiModuleDirectories);
+
+    if (!m_moduleManager) {
+        updateUiModuleWatchTargets(m_uiModuleDirectories, {});
+        return normalized;
+    }
+
+    reloadUiModules();
+    return normalized;
+}
+
+bool Application::removeUiModuleDirectory(const QString& path)
+{
+    const QString normalized = normalizeUiModulePath(path);
+    if (normalized.isEmpty())
+        return false;
+
+    const int index = m_uiModuleDirectories.indexOf(normalized);
+    if (index < 0)
+        return false;
+
+    m_uiModuleDirectories.removeAt(index);
+    emit uiModuleDirectoriesChanged(m_uiModuleDirectories);
+
+    if (!m_moduleManager) {
+        updateUiModuleWatchTargets(m_uiModuleDirectories, {});
+        return true;
+    }
+
+    reloadUiModules();
+    return true;
 }
 
 bool Application::reloadUiModules()
@@ -1747,6 +1780,19 @@ bool Application::reloadUiModules()
 
     emit uiModulesReloaded(success, report);
     return success;
+}
+
+QString Application::normalizeUiModulePath(const QString& path) const
+{
+    const QString trimmed = path.trimmed();
+    if (trimmed.isEmpty())
+        return {};
+
+    QString normalized = expandPath(trimmed);
+    if (normalized.isEmpty())
+        normalized = trimmed;
+
+    return QFileInfo(normalized).absoluteFilePath();
 }
 
 void Application::setUiModuleAutoReloadEnabled(bool enabled)

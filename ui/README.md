@@ -57,7 +57,10 @@ QML-a przez sygnał `uiModulesReloaded`. Zakładka prezentuje te informacje w se
 dzięki czemu operator natychmiast widzi źródło problemów z modułami. Lista
 katalogów i metoda przeładowania są dostępne w QML-u przez
 `appController.uiModuleDirectories` oraz `appController.reloadUiModules()`, więc inne
-komponenty mogą reagować na zmiany katalogów i ręczne odświeżanie. Można też
+komponenty mogą reagować na zmiany katalogów i ręczne odświeżanie. Zakładka
+udostępnia też formularz „Dodaj katalog modułów…” i ikony usuwania wpisów, które
+wykorzystują metody `addUiModuleDirectory(...)` oraz `removeUiModuleDirectory(...)`,
+normalizując ścieżki i od razu uruchamiając ponowne ładowanie pluginów. Można też
 włączyć automatyczne przeładowanie („Auto przeładuj”), które obserwuje katalogi i
 pliki pluginów przy pomocy `QFileSystemWatcher`; po wykryciu zmian aplikacja
 odczekuje krótki debounce i wywołuje `reloadUiModules()`, emitując raport tak jak
