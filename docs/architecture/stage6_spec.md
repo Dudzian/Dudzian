@@ -127,7 +127,7 @@ modułową (`bot_core`).
 - **Strumień Resilience & Failover:**
   - Mechanizmy self-healing runtime (wykrywanie błędów adapterów, automatyczne przełączanie na zapasowe giełdy, rotacja kluczy).
   - Udoskonalony `live_router` z obsługą sekwencji failover oraz audytami latencji w decision logu.
-  - Narzędzia `scripts/failover_drill.py`, `scripts/export_resilience_bundle.py`, `scripts/verify_resilience_bundle.py` oraz checklisty DR (Disaster Recovery).
+  - Narzędzia wywoływane przez interpreter (`python scripts/failover_drill.py`, `python scripts/export_resilience_bundle.py`, `python scripts/verify_resilience_bundle.py`) oraz checklisty DR (Disaster Recovery).
   - Automatyczny workflow `github_actions_stage6_resilience.yml` archiwizujący raporty failover i podpisy HMAC.
 - **Strumień Observability++ & Reporting:**
   - Paczki obserwowalności Stage6 (dashboardy SLO2, alerty DR, raporty PDF/CSV dla audytu resilience) podpisane HMAC.

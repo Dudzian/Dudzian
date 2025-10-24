@@ -9,6 +9,8 @@ PortfolioGovernorem podczas hypercare Stage6.
 - Dostęp do metryk z `var/metrics/` lub źródeł wskazanych w konfiguracji.
 - Klucz HMAC do podpisu raportów w `secrets/hmac/observability.key`.
 
+> **Uwaga:** Wszystkie skrypty Stage6 uruchamiamy poprzez `python <ścieżka_do_skryptu>` (alias `python3` w aktywnym venv). Bezpośrednie `./scripts/...` nie są wspierane, aby zachować spójność zależności i konfiguracji.
+
 > **Skrót automatyczny:** Cały cykl (SLO + override + anotacje + paczka) można
 > wykonać jednym poleceniem:
 > ```bash
@@ -83,12 +85,12 @@ PortfolioGovernorem podczas hypercare Stage6.
    bundel w repozytorium operacyjnym.
 9. Zapisz wynik monitoringu w decision logu Stage6 wraz z referencją do raportów.
 10. (Opcjonalnie) Połącz Observability z pozostałymi modułami Stage6 poprzez
-    `scripts/run_stage6_hypercare_cycle.py` – użyj checklisty Stage6 Hypercare, aby
+    `python scripts/run_stage6_hypercare_cycle.py` – użyj checklisty Stage6 Hypercare, aby
     przygotować wspólną konfigurację i wygenerować podpisany raport zbiorczy.
 
 ## Artefakty/Akceptacja
 - `var/observability/bundle.zip` wraz z podpisem `.sig` i metadanymi `alert_overrides`.
-- Log JSON z `scripts/verify_observability_bundle.py` potwierdzający weryfikację paczki.
+- Log JSON z `python scripts/verify_observability_bundle.py` potwierdzający weryfikację paczki.
 - `var/audit/observability/slo_report.json` oraz podpis `.sig` (wraz z sekcją SLO2).
 - `var/audit/observability/slo_report.csv` z wynikami SLO i kompozytów.
 - `var/audit/observability/alert_overrides.json` oraz podpis `.sig`.

@@ -3,6 +3,8 @@
 Lista kontrolna dla operatorów hypercare obejmująca uruchomienie Stress Lab,
 kalibrację progów płynności/latencji oraz archiwizację podpisanych artefaktów.
 
+> **Uwaga:** Skrypty Stage6 uruchamiamy poprzez `python <ścieżka_do_skryptu>` (alias `python3` w aktywnym venv). Bezpośrednie `./scripts/...` nie są wspierane, aby zachować właściwe zależności i konfigurację środowiska.
+
 ## Przygotowanie
 - [ ] Upewnij się, że raport Paper Labs (`risk_simulation_report.json`) został
       zaktualizowany dla bieżącego tygodnia.
@@ -70,5 +72,5 @@ Zweryfikowanie odporności portfela wielostrate-gicznego przy użyciu modułu `b
 
 ## Odniesienia
 - `bot_core/risk/stress_lab.py`
-- `scripts/run_stress_lab.py`
+- `python scripts/run_stress_lab.py`
 - `deploy/ci/github_actions_stage6_stress_lab.yml` *(po wdrożeniu pipeline’u)*

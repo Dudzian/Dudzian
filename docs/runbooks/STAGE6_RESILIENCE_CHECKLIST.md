@@ -7,8 +7,10 @@ aktualne, podpisane HMAC oraz gotowe do użycia w scenariuszu przełączenia.
 ## Prerekwizyty
 - Aktualne klucze HMAC w `secrets/hmac/` zarejestrowane w hypercare.
 - Paczki i manifesty w `var/resilience/` przygotowane przez
-  `scripts/export_resilience_bundle.py`.
+  `python scripts/export_resilience_bundle.py`.
 - Zdefiniowany plan w `data/stage6/resilience/failover_plan.json`.
+
+> **Uwaga:** Wszystkie polecenia CLI zakładają uruchamianie skryptów Stage6 poprzez `python <ścieżka_do_skryptu>` (alias `python3` w aktywnym venv). Bezpośrednie wywołania `./scripts/...` pomijają konfigurację środowiska i nie są wspierane.
 
 ## Procedura
 1. Zweryfikuj konfigurację i integralność paczek (opcjonalne, przed cyklem):
@@ -29,13 +31,13 @@ aktualne, podpisane HMAC oraz gotowe do użycia w scenariuszu przełączenia.
    ```
    Polecenie zapisze również raporty CSV/podpisy, jeśli wskażesz opcjonalne
    parametry (`--audit-csv`, `--failover-csv`, `--self-heal-signature`).
-3. W razie potrzeby użyj pojedynczych narzędzi (`audit_resilience_bundles.py`,
-   `failover_drill.py`) dla dodatkowych scenariuszy DR lub analizy ręcznej.
+3. W razie potrzeby użyj pojedynczych narzędzi (`python scripts/audit_resilience_bundles.py`,
+   `python scripts/failover_drill.py`) dla dodatkowych scenariuszy DR lub analizy ręcznej.
 4. Zweryfikuj statusy `resilience` w PortfolioGovernor i odnotuj ewentualne
    alerty krytyczne.
 5. Zaktualizuj decision log Stage6 wpisem referencyjnym do wygenerowanych
    artefaktów.
-6. (Opcjonalnie) Użyj `scripts/run_stage6_hypercare_cycle.py`, aby połączyć
+6. (Opcjonalnie) Użyj `python scripts/run_stage6_hypercare_cycle.py`, aby połączyć
    wyniki Resilience z Observability i Portfolio w jednym raporcie zbiorczym –
    szczegóły w checklistcie Stage6 Hypercare.
 
