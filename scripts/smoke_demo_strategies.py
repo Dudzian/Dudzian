@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping, MutableMapping, Sequence
@@ -11,7 +12,8 @@ from bot_core.config.loader import load_core_config
 from bot_core.data.backtest_library import BacktestDatasetLibrary
 from bot_core.runtime.journal import InMemoryTradingDecisionJournal
 from bot_core.runtime.multi_strategy_scheduler import MultiStrategyScheduler, StrategyDataFeed
-from bot_core.runtime.pipeline import InMemoryStrategySignalSink
+from bot_core.runtime.pipeline import InMemoryStrategySignalSink, _collect_strategy_definitions
+from bot_core.security.guards import LicenseCapabilityError
 from bot_core.strategies.base import MarketSnapshot, StrategyEngine
 from bot_core.strategies.cross_exchange_arbitrage import (
     CrossExchangeArbitrageSettings,
@@ -40,6 +42,9 @@ class SmokeResult:
     emitted_signals: Mapping[str, int]
 
 
+LOGGER = logging.getLogger(__name__)
+
+
 class _ReplayFeed(StrategyDataFeed):
     """Prosty feed odtwarzający dane z biblioteki backtestowej."""
 
@@ -61,6 +66,8 @@ class _ReplayFeed(StrategyDataFeed):
 
 
 def _instantiate_strategies(core_config) -> Mapping[str, StrategyEngine]:
+    catalog = DEFAULT_STRATEGY_CATALOG
+    definitions = _collect_strategy_definitions(core_config)
     registry: dict[str, StrategyEngine] = {}
     for name, cfg in getattr(core_config, "mean_reversion_strategies", {}).items():
         registry[name] = MeanReversionStrategy(

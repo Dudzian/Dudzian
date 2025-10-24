@@ -51,6 +51,112 @@ _SIGN_OFF_DEFAULT_NOTES = {
     "risk": "Awaiting Risk review",
     "compliance": "Awaiting Compliance sign-off",
 }
+_POLICY_ENFORCE_TRUE_VALUES = frozenset(
+    {"1", "true", "yes", "on", "enforce", "enforced"}
+)
+_POLICY_ENFORCE_FALSE_VALUES = frozenset(
+    {"0", "false", "no", "off", "skip", "not_enforced", "not-enforced"}
+)
+
+
+def normalize_report_source(value: object) -> str | None:
+    """Normalizuje źródło raportu do małych liter bez otaczających spacji."""
+
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized:
+            return normalized
+    return None
+
+
+def normalize_report_schedule(value: object) -> str | None:
+    """Normalizuje nazwę harmonogramu raportu (np. ``nightly``)."""
+
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized:
+            return normalized
+    return None
+
+
+def normalize_report_category(value: object) -> str | None:
+    """Normalizuje kategorię raportu audytu (np. ``completeness``)."""
+
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized:
+            return normalized
+    return None
+
+
+def normalize_report_job_name(value: object) -> str | None:
+    """Normalizuje nazwę zadania (``job_name``) raportu audytu."""
+
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized:
+            return normalized
+    return None
+
+
+def normalize_report_run(value: object) -> str | None:
+    """Normalizuje nazwę ``run`` raportu audytu do małych liter."""
+
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized:
+            return normalized
+    return None
+
+
+def normalize_report_symbol(value: object) -> str | None:
+    """Normalizuje symbol rynku/modelu do wielkich liter bez spacji."""
+
+    if isinstance(value, str):
+        normalized = value.strip().upper()
+        if normalized:
+            return normalized
+    return None
+
+
+def normalize_report_environment(value: object) -> str | None:
+    """Normalizuje nazwę środowiska raportu do małych liter."""
+
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized:
+            return normalized
+    return None
+
+
+def normalize_report_portfolio(value: object) -> str | None:
+    """Normalizuje nazwę portfela raportu do małych liter."""
+
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized:
+            return normalized
+    return None
+
+
+def normalize_report_capability(value: object) -> str | None:
+    """Normalizuje identyfikator capability raportu do małych liter."""
+
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized:
+            return normalized
+    return None
+
+
+def normalize_report_pipeline(value: object) -> str | None:
+    """Normalizuje identyfikator pipeline'u raportu do małych liter."""
+
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized:
+            return normalized
+    return None
 
 
 def _normalize_role(role: object) -> str | None:
