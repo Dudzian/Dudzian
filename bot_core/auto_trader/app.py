@@ -2113,6 +2113,7 @@ class AutoTrader:
             payload_dict = dict(payload or {})
             if normalized_decision_id is not None:
                 payload_dict.setdefault("decision_id", normalized_decision_id)
+            augmented_metadata = self._augment_metadata_with_feature_columns(metadata)
             record = log.record(
                 stage,
                 symbol,
@@ -2120,7 +2121,7 @@ class AutoTrader:
                 payload=payload_dict,
                 risk_snapshot=risk_snapshot,
                 portfolio_snapshot=portfolio_snapshot,
-                metadata=metadata,
+                metadata=augmented_metadata,
             )
             self._emit_decision_audit_event(record)
         except Exception:  # pragma: no cover - audit log failures should not break trading
@@ -5133,6 +5134,13 @@ class AutoTrader:
             "decision": decision.to_dict(),
         }
         entry["decision_id"] = active_decision_id
+        feature_metadata = self._feature_column_metadata()
+        if feature_metadata:
+            metadata = copy.deepcopy(dict(entry.get("metadata", {})))
+            for key, value in feature_metadata.items():
+                metadata.setdefault(key, copy.deepcopy(value))
+            if metadata:
+                entry["metadata"] = metadata
         if service is not None:
             entry["service"] = type(service).__name__
         if error is not None:
@@ -9887,6 +9895,12 @@ class AutoTrader:
             "recalibrations": recalibrations,
         }
 
+        feature_metadata = self._feature_column_metadata()
+        if feature_metadata:
+            risk_decision_section = snapshot["risk_decisions"]
+            for key, value in feature_metadata.items():
+                risk_decision_section[key] = copy.deepcopy(value)
+
         return snapshot
 
     def risk_evaluations_to_dataframe(
@@ -10601,6 +10615,14 @@ class AutoTrader:
                 record["decision_id"] = (
                     normalized_decision_id if normalized_decision_id is not None else copy.deepcopy(decision_id_value)
                 )
+
+            metadata_payload = entry.get("metadata")
+            if isinstance(metadata_payload, Mapping):
+                record["metadata"] = {
+                    str(key): copy.deepcopy(value) for key, value in metadata_payload.items()
+                }
+            elif metadata_payload is not None:
+                record["metadata"] = copy.deepcopy(metadata_payload)
 
             records.append(record)
 
