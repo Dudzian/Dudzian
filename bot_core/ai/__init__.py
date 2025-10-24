@@ -87,6 +87,10 @@ _EXPORTS: Dict[str, Tuple[str, str]] = {
         ".data_monitoring",
         "collect_pending_compliance_sign_offs",
     ),
+    "filter_audit_reports_since": (
+        ".data_monitoring",
+        "filter_audit_reports_since",
+    ),
     "ensure_compliance_sign_offs": (".data_monitoring", "ensure_compliance_sign_offs"),
     "normalize_compliance_sign_off_roles": (
         ".data_monitoring",

@@ -20,6 +20,7 @@ __all__ = [
     "ComplianceSignOffError",
     "collect_pending_compliance_sign_offs",
     "normalize_compliance_sign_off_roles",
+    "filter_audit_reports_since",
     "DataCompletenessWatcher",
     "FeatureBoundsValidator",
     "export_data_quality_report",
@@ -75,6 +76,33 @@ def _ensure_directory(path: Path) -> Path:
 def _normalize_slug(prefix: str) -> str:
     normalized = _SAFE_FILENAME.sub("_", prefix or "report").strip("_") or "report"
     return normalized.lower()
+
+
+def _parse_report_timestamp(value: object) -> datetime | None:
+    """Konwertuje wartość na znacznik czasu w strefie UTC."""
+
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
+
+    if isinstance(value, str):
+        candidate = value.strip()
+        if not candidate:
+            return None
+        normalized = candidate
+        if candidate.endswith("Z") or candidate.endswith("z"):
+            normalized = candidate[:-1] + "+00:00"
+        try:
+            parsed = datetime.fromisoformat(normalized)
+        except ValueError:
+            logger.debug("Nie udało się sparsować znacznika czasu: %s", value)
+            return None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+
+    return None
 
 
 def _timestamp_slug(prefix: str) -> str:
@@ -322,6 +350,27 @@ def load_recent_drift_reports(
     """Ładuje najnowsze raporty dryfu modelu z audytu."""
 
     return _load_recent_reports(subdir="drift", limit=limit, audit_root=audit_root)
+
+
+def filter_audit_reports_since(
+    reports: Sequence[Mapping[str, Any]] | None,
+    *,
+    since: datetime,
+) -> tuple[Mapping[str, Any], ...]:
+    """Filtruje raporty, pozostawiając wpisy nie starsze niż wskazany czas."""
+
+    if since.tzinfo is None:
+        raise ValueError("argument 'since' musi zawierać informację o strefie czasowej")
+
+    cutoff = since.astimezone(timezone.utc)
+    filtered: list[Mapping[str, Any]] = []
+    for report in reports or ():
+        if not isinstance(report, Mapping):
+            continue
+        timestamp = _parse_report_timestamp(report.get("timestamp"))
+        if timestamp is None or timestamp >= cutoff:
+            filtered.append(report)
+    return tuple(filtered)
 
 
 def summarize_data_quality_reports(
@@ -611,40 +660,6 @@ def _normalize_required_roles(roles: Sequence[str] | None) -> tuple[str, ...]:
     return tuple(normalized)
 
 
-def _normalize_required_roles(roles: Sequence[str] | None) -> tuple[str, ...]:
-    if roles is None:
-        return _DEFAULT_SIGN_OFF_ROLES
-
-    seen: set[str] = set()
-    normalized: list[str] = []
-    for role in roles:
-        if not isinstance(role, str):
-            continue
-        normalized_role = role.strip().lower()
-        if not normalized_role:
-            continue
-        if normalized_role not in _SUPPORTED_SIGN_OFF_ROLES:
-            logger.warning(
-                "Unsupported compliance sign-off role provided: %s", role
-            )
-            raise ValueError(
-                f"unsupported sign-off role: {role!r}"
-            )
-        if normalized_role in seen:
-            continue
-        seen.add(normalized_role)
-        normalized.append(normalized_role)
-
-    if not normalized:
-        logger.warning(
-            "No supported compliance sign-off roles configured; expected one of: %s",
-            ", ".join(sorted(_SUPPORTED_SIGN_OFF_ROLES)),
-        )
-        raise ValueError("roles must include at least one supported sign-off role")
-
-    return tuple(normalized)
-
-
 def normalize_compliance_sign_off_roles(
     roles: Sequence[str] | None,
 ) -> tuple[str, ...]:
@@ -658,6 +673,7 @@ def _collect_pending_sign_off_map(
     data_quality_reports: Sequence[Mapping[str, Any]] | None,
     drift_reports: Sequence[Mapping[str, Any]] | None,
     roles: Sequence[str] | None,
+    raise_on_missing: bool,
 ) -> Mapping[str, tuple[Mapping[str, Any], ...]]:
     """Weryfikuje, czy wymagane role zatwierdziły alerty data-quality oraz dryfu."""
 
@@ -672,8 +688,8 @@ def _collect_pending_sign_off_map(
     drift_summary = summarize_drift_reports(drift_reports, roles=required_roles)
 
     for role in required_roles:
-        dq_entries = dq_summary.get("pending_sign_off", {}).get(role, ())
-        drift_entries = drift_summary.get("pending_sign_off", {}).get(role, ())
+        dq_entries = dq_summary.get("pending_sign_off", ()).get(role, ())
+        drift_entries = drift_summary.get("pending_sign_off", ()).get(role, ())
         pending[role].extend(dict(entry) for entry in dq_entries)
         pending[role].extend(dict(entry) for entry in drift_entries)
 
@@ -688,8 +704,41 @@ def _collect_pending_sign_off_map(
                 len(entries),
                 ", ".join(categories) or "unknown",
             )
-        raise ComplianceSignOffError(normalized)
+        if raise_on_missing:
+            raise ComplianceSignOffError(normalized)
     return MappingProxyType(normalized)
+
+
+def collect_pending_compliance_sign_offs(
+    *,
+    data_quality_reports: Sequence[Mapping[str, Any]] | None = None,
+    drift_reports: Sequence[Mapping[str, Any]] | None = None,
+    roles: Sequence[str] | None = None,
+) -> Mapping[str, tuple[Mapping[str, Any], ...]]:
+    """Zwraca oczekujące podpisy Risk/Compliance dla wskazanych raportów audytu."""
+
+    return _collect_pending_sign_off_map(
+        data_quality_reports=data_quality_reports,
+        drift_reports=drift_reports,
+        roles=roles,
+        raise_on_missing=False,
+    )
+
+
+def ensure_compliance_sign_offs(
+    *,
+    data_quality_reports: Sequence[Mapping[str, Any]] | None = None,
+    drift_reports: Sequence[Mapping[str, Any]] | None = None,
+    roles: Sequence[str] | None = None,
+) -> Mapping[str, tuple[Mapping[str, Any], ...]]:
+    """Gwarantuje, że wymagane role zatwierdziły alerty jakości danych i dryfu."""
+
+    return _collect_pending_sign_off_map(
+        data_quality_reports=data_quality_reports,
+        drift_reports=drift_reports,
+        roles=roles,
+        raise_on_missing=True,
+    )
 def _is_missing(value: object) -> bool:
     if value is None:
         return True

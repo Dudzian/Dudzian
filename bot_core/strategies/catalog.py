@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, MutableMapping, Protocol, Sequence
 
+from bot_core.security.guards import get_capability_guard
 from bot_core.security.signing import build_hmac_signature
 
 from .base import StrategyEngine
