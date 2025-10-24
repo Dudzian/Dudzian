@@ -328,6 +328,18 @@ def _parse_portfolio(config: Mapping[str, Any] | None) -> tuple[PortfolioCycleCo
             "Portfolio.inputs wymaga pól allocations, market_intel oraz portfolio_value"
         )
 
+    market_intel_path = market_intel.expanduser()
+    if not market_intel_path.is_file():
+        suggestion = (
+            "python scripts/build_market_intel_metrics.py "
+            f"--environment {environment} --governor {governor_name} "
+            f"--output {market_intel_path}"
+        )
+        raise FileNotFoundError(
+            f"Raport Market Intel nie istnieje: {market_intel_path}. "
+            f"Uruchom {suggestion}"
+        )
+
     fallback_dirs = tuple(
         _expand_path(item) for item in inputs_cfg.get("fallback_dirs", ()) if item
     )
@@ -335,7 +347,7 @@ def _parse_portfolio(config: Mapping[str, Any] | None) -> tuple[PortfolioCycleCo
 
     inputs = PortfolioCycleInputs(
         allocations_path=allocations,
-        market_intel_path=market_intel,
+        market_intel_path=market_intel_path,
         portfolio_value=float(portfolio_value),
         slo_report_path=_expand_path(inputs_cfg.get("slo_report")),
         stress_report_path=_expand_path(inputs_cfg.get("stress_report")),
