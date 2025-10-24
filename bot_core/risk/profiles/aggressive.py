@@ -18,5 +18,9 @@ class AggressiveProfile(StaticRiskProfile):
     _max_position_pct: float = 0.10
     _target_volatility: float = 0.19
     _stop_loss_atr_multiple: float = 2.0
+    min_sortino_ratio: float = 0.85
+    min_omega_ratio: float = 1.0
+    max_risk_of_ruin_pct: float = 12.0
+    min_hit_ratio_pct: float = 45.0
 
 __all__ = ["AggressiveProfile"]
