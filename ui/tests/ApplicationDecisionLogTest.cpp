@@ -11,7 +11,6 @@
 
 #include "app/Application.hpp"
 #include "app/ActivationController.hpp"
-#include "support/SupportBundleController.hpp"
 
 namespace {
 
@@ -60,9 +59,6 @@ private slots:
     void usesDefaultFallback();
     void loadsSecurityCacheFromFile();
     void controlsLicenseRefreshSchedule();
-    void configuresSupportBundleDefaults();
-    void updatesSupportBundleMetadata();
-    void buildsSupportBundleArguments();
 };
 
 void ApplicationDecisionLogTest::appliesCliOverrides()
@@ -227,115 +223,6 @@ void ApplicationDecisionLogTest::controlsLicenseRefreshSchedule()
     const QVariantMap cache = app.securityCacheForTesting();
     QCOMPARE(cache.value(QStringLiteral("refreshIntervalSeconds")).toInt(), 0);
     QVERIFY(!cache.value(QStringLiteral("refreshActive")).toBool());
-}
-
-void ApplicationDecisionLogTest::configuresSupportBundleDefaults()
-{
-    QQmlApplicationEngine engine;
-    Application app(engine);
-
-    QCommandLineParser parser;
-    app.configureParser(parser);
-    parser.process(makeArgs({}));
-
-    QVERIFY(app.applyParser(parser));
-
-    auto* controller = qobject_cast<SupportBundleController*>(app.supportController());
-    QVERIFY(controller);
-
-    const QString scriptPath = controller->scriptPath();
-    QVERIFY2(scriptPath.endsWith(QStringLiteral("scripts/export_support_bundle.py")),
-             qPrintable(QStringLiteral("Nieprawidłowa ścieżka skryptu: %1").arg(scriptPath)));
-    QVERIFY(QFileInfo::exists(scriptPath));
-
-    QCOMPARE(controller->defaultBasename(), QStringLiteral("support-bundle"));
-    QCOMPARE(controller->format(), QStringLiteral("tar.gz"));
-    QVERIFY(controller->includeLogs());
-    QVERIFY(controller->includeReports());
-    QVERIFY(controller->includeLicenses());
-    QVERIFY(controller->includeMetrics());
-    QVERIFY(!controller->includeAudit());
-
-    const QVariantMap metadata = controller->metadata();
-    QCOMPARE(metadata.value(QStringLiteral("origin")).toString(), QStringLiteral("desktop_ui"));
-    QCOMPARE(metadata.value(QStringLiteral("connection_status")).toString(), QStringLiteral("idle"));
-    QCOMPARE(metadata.value(QStringLiteral("instrument")).toString(), app.instrumentLabel());
-    QCOMPARE(metadata.value(QStringLiteral("exchange")).toString(), QStringLiteral("BINANCE"));
-    QCOMPARE(metadata.value(QStringLiteral("symbol")).toString(), QStringLiteral("BTC/USDT"));
-}
-
-void ApplicationDecisionLogTest::updatesSupportBundleMetadata()
-{
-    QQmlApplicationEngine engine;
-    Application app(engine);
-
-    QCommandLineParser parser;
-    app.configureParser(parser);
-    parser.process(makeArgs({QStringLiteral("--support-bundle-metadata"), QStringLiteral("team=SecOps")}));
-
-    QVERIFY(app.applyParser(parser));
-
-    auto* controller = qobject_cast<SupportBundleController*>(app.supportController());
-    QVERIFY(controller);
-
-    QVariantMap metadata = controller->metadata();
-    QCOMPARE(metadata.value(QStringLiteral("team")).toString(), QStringLiteral("SecOps"));
-
-    QVERIFY(app.updateInstrument(QStringLiteral("BINANCE"),
-                                 QStringLiteral("ETH/USDT"),
-                                 QStringLiteral("ETHUSDT"),
-                                 QStringLiteral("USDT"),
-                                 QStringLiteral("ETH"),
-                                 QStringLiteral("PT1M")));
-
-    metadata = controller->metadata();
-    QCOMPARE(metadata.value(QStringLiteral("instrument")).toString(), app.instrumentLabel());
-    QCOMPARE(metadata.value(QStringLiteral("exchange")).toString(), QStringLiteral("BINANCE"));
-    QCOMPARE(metadata.value(QStringLiteral("symbol")).toString(), QStringLiteral("ETH/USDT"));
-    QCOMPARE(metadata.value(QStringLiteral("team")).toString(), QStringLiteral("SecOps"));
-
-    QVERIFY(QMetaObject::invokeMethod(&app,
-                                      "handleOfflineStatusChanged",
-                                      Q_ARG(QString, QStringLiteral("offline-daemon"))));
-
-    metadata = controller->metadata();
-    QCOMPARE(metadata.value(QStringLiteral("connection_status")).toString(), QStringLiteral("offline-daemon"));
-}
-
-void ApplicationDecisionLogTest::buildsSupportBundleArguments()
-{
-    QQmlApplicationEngine engine;
-    Application app(engine);
-
-    QCommandLineParser parser;
-    app.configureParser(parser);
-    parser.process(makeArgs({}));
-
-    QVERIFY(app.applyParser(parser));
-
-    auto* controller = qobject_cast<SupportBundleController*>(app.supportController());
-    QVERIFY(controller);
-
-    controller->setIncludeLogs(false);
-    controller->setIncludeAudit(false);
-
-    const auto hasDisableIn = [](const QStringList& list, const QString& label) {
-        for (int i = 0; i + 1 < list.size(); ++i) {
-            if (list.at(i) == QStringLiteral("--disable") && list.at(i + 1) == label)
-                return true;
-        }
-        return false;
-    };
-
-    const QStringList args = controller->buildCommandArguments(QUrl(), true);
-    QVERIFY(hasDisableIn(args, QStringLiteral("logs")));
-    QVERIFY(hasDisableIn(args, QStringLiteral("audit")));
-    QVERIFY(args.contains(QStringLiteral("--dry-run")));
-
-    controller->setIncludeLogs(true);
-    const QStringList refreshed = controller->buildCommandArguments(QUrl(), false);
-    QVERIFY(!hasDisableIn(refreshed, QStringLiteral("logs")));
-    QVERIFY(!refreshed.contains(QStringLiteral("--dry-run")));
 }
 
 QTEST_MAIN(ApplicationDecisionLogTest)

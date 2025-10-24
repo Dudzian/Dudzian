@@ -6,6 +6,7 @@
 #include <QDateTime>
 #include <QDebug>
 #include <QDir>
+#include <QColor>
 #include <QFile>
 #include <QFileInfo>
 #include <QFileSystemWatcher>
@@ -43,7 +44,10 @@
 #include "utils/PathUtils.hpp"
 #include "license/LicenseActivationController.hpp"
 #include "app/ActivationController.hpp"
+#include "app/UiModuleManager.hpp"
+#include "app/UiModuleViewsModel.hpp"
 #include "app/StrategyConfigController.hpp"
+#include "app/StrategyWorkbenchController.hpp"
 #include "runtime/OfflineRuntimeBridge.hpp"
 #include "security/SecurityAdminController.hpp"
 #include "support/SupportBundleController.hpp"
@@ -71,11 +75,8 @@ constexpr auto kRiskHistoryAutoExportDirEnv = QByteArrayLiteral("BOT_CORE_UI_RIS
 constexpr auto kRiskHistoryAutoExportLocalTimeEnv = QByteArrayLiteral("BOT_CORE_UI_RISK_HISTORY_AUTO_EXPORT_USE_LOCAL_TIME");
 constexpr auto kDecisionLogPathEnv = QByteArrayLiteral("BOT_CORE_UI_DECISION_LOG");
 constexpr auto kDecisionLogLimitEnv = QByteArrayLiteral("BOT_CORE_UI_DECISION_LOG_LIMIT");
-constexpr int kDefaultLicenseRefreshIntervalSeconds = 600;
-constexpr int kMinLicenseRefreshIntervalSeconds = 60;
-constexpr int kMaxLicenseRefreshIntervalSeconds = 86400;
-constexpr auto kLicenseRefreshIntervalEnv = QByteArrayLiteral("BOT_CORE_UI_LICENSE_REFRESH_INTERVAL");
-constexpr auto kLicenseCachePathEnv = QByteArrayLiteral("BOT_CORE_UI_LICENSE_CACHE_PATH");
+constexpr auto kRegimeThresholdsEnv = QByteArrayLiteral("BOT_CORE_UI_REGIME_THRESHOLDS");
+constexpr auto kRegimeTimelineLimitEnv = QByteArrayLiteral("BOT_CORE_UI_REGIME_TIMELINE_LIMIT");
 
 using bot::shell::utils::expandPath;
 using bot::shell::utils::watchableDirectories;
@@ -218,11 +219,39 @@ Application::Application(QQmlApplicationEngine& engine, QObject* parent)
     m_strategyController->setConfigPath(QDir::current().absoluteFilePath(QStringLiteral("config/core.yaml")));
     m_strategyController->setScriptPath(QDir::current().absoluteFilePath(QStringLiteral("scripts/ui_config_bridge.py")));
 
+    m_workbenchController = std::make_unique<StrategyWorkbenchController>(this);
+    m_workbenchController->setConfigPath(QDir::current().absoluteFilePath(QStringLiteral("config/core.yaml")));
+    m_workbenchController->setScriptPath(QDir::current().absoluteFilePath(QStringLiteral("scripts/ui_config_bridge.py")));
+
     m_supportController = std::make_unique<SupportBundleController>(this);
 
     m_healthController = std::make_unique<HealthStatusController>(this);
 
+    m_moduleManager = std::make_unique<UiModuleManager>(this);
+    m_moduleViewsModel = std::make_unique<UiModuleViewsModel>(this);
+    m_moduleViewsModel->setModuleManager(m_moduleManager.get());
+
     m_decisionLogModel.setParent(this);
+    m_decisionLogFilter.setSourceModel(&m_decisionLogModel);
+    m_performanceTelemetry = std::make_unique<PerformanceTelemetryController>(this);
+    m_performanceTelemetry->setPerformanceGuard(m_guard);
+
+    const QVector<IndicatorSeriesDefinition> indicatorDefinitions = {
+        {QStringLiteral("ema_fast"), tr("EMA 12"), QColor::fromRgbF(0.96, 0.74, 0.23, 1.0), false},
+        {QStringLiteral("ema_slow"), tr("EMA 26"), QColor::fromRgbF(0.62, 0.81, 0.93, 1.0), true},
+        {QStringLiteral("vwap"), tr("VWAP"), QColor::fromRgbF(0.74, 0.53, 0.96, 1.0), true},
+    };
+    m_indicatorModel.setSeriesDefinitions(indicatorDefinitions);
+
+    m_regimeThresholdWatcher.setParent(this);
+    connect(&m_regimeThresholdWatcher,
+            &QFileSystemWatcher::fileChanged,
+            this,
+            &Application::handleRegimeThresholdPathChanged);
+    connect(&m_regimeThresholdWatcher,
+            &QFileSystemWatcher::directoryChanged,
+            this,
+            &Application::handleRegimeThresholdPathChanged);
 
     m_tradingTokenWatcher.setParent(this);
     m_metricsTokenWatcher.setParent(this);
@@ -280,6 +309,20 @@ Application::Application(QQmlApplicationEngine& engine, QObject* parent)
             this,
             &Application::handleHealthTlsPathChanged);
 
+    m_regimeTimelineMaximumSnapshots = m_regimeTimelineModel.maximumSnapshots();
+    connect(&m_regimeTimelineModel,
+            &MarketRegimeTimelineModel::maximumSnapshotsChanged,
+            this,
+            [this]() {
+                const int current = m_regimeTimelineModel.maximumSnapshots();
+                if (m_regimeTimelineMaximumSnapshots == current)
+                    return;
+                m_regimeTimelineMaximumSnapshots = current;
+                Q_EMIT regimeTimelineMaximumSnapshotsChanged();
+                if (!m_loadingUiSettings)
+                    scheduleUiSettingsPersist();
+            });
+
     m_filteredAlertsModel.setSourceModel(&m_alertsModel);
     m_filteredAlertsModel.setSeverityFilter(AlertsFilterProxyModel::WarningsAndCritical);
 
@@ -292,10 +335,13 @@ Application::Application(QQmlApplicationEngine& engine, QObject* parent)
 
     m_repoRoot = locateRepoRoot();
 
-    if (!m_repoRoot.isEmpty())
+    if (!m_repoRoot.isEmpty()) {
+        applyRegimeThresholdPath(QDir(m_repoRoot).absoluteFilePath(QStringLiteral("config/regime_thresholds.yaml")), false);
         setDecisionLogPathInternal(QDir(m_repoRoot).absoluteFilePath(QStringLiteral("logs/decision_journal")), false);
-    else
+    } else {
+        applyRegimeThresholdPath(QDir::current().absoluteFilePath(QStringLiteral("config/regime_thresholds.yaml")), false);
         setDecisionLogPathInternal(QDir::current().absoluteFilePath(QStringLiteral("logs/decision_journal")), false);
+    }
 
     if (m_supportController) {
         if (!m_repoRoot.isEmpty())
@@ -315,6 +361,34 @@ Application::Application(QQmlApplicationEngine& engine, QObject* parent)
     // Połączenia sygnałów klienta (market data)
     connect(&m_client, &TradingClient::historyReceived, this, &Application::handleHistory);
     connect(&m_client, &TradingClient::candleReceived, this, &Application::handleCandle);
+    connect(&m_client,
+            &TradingClient::indicatorSnapshotReceived,
+            this,
+            [this](const QString& id, const QVector<IndicatorSample>& samples) {
+                m_indicatorModel.replaceSamples(id, samples);
+            });
+    connect(&m_client,
+            &TradingClient::indicatorSampleReceived,
+            this,
+            [this](const IndicatorSample& sample) { m_indicatorModel.appendSample(sample); });
+    connect(&m_client,
+            &TradingClient::signalHistoryReceived,
+            this,
+            [this](const QVector<SignalEventEntry>& events) { m_signalModel.resetWithSignals(events); });
+    connect(&m_client,
+            &TradingClient::signalEventReceived,
+            this,
+            [this](const SignalEventEntry& event) { m_signalModel.appendSignal(event); });
+    connect(&m_client,
+            &TradingClient::marketRegimeUpdated,
+            this,
+            [this](const MarketRegimeSnapshotEntry& snapshot) {
+                if (m_regimeTimelineModel.rowCount() == 0) {
+                    m_regimeTimelineModel.resetWithSnapshots({snapshot});
+                } else {
+                    m_regimeTimelineModel.appendSnapshot(snapshot);
+                }
+            });
 
     connect(&m_client, &TradingClient::connectionStateChanged, this,
             [this](const QString& status) {
@@ -329,6 +403,9 @@ Application::Application(QQmlApplicationEngine& engine, QObject* parent)
                 Q_EMIT performanceGuardChanged();
                 if (m_frameMonitor) {
                     m_frameMonitor->setPerformanceGuard(m_guard);
+                }
+                if (m_performanceTelemetry) {
+                    m_performanceTelemetry->setPerformanceGuard(m_guard);
                 }
                 // Telemetria overlay może zależeć od nowych limitów
                 reportOverlayTelemetry();
@@ -412,6 +489,14 @@ void Application::configureParser(QCommandLineParser& parser) const {
                       QStringLiteral("500")});
     parser.addOption({"max-samples", tr("Maksymalna liczba świec w modelu"), tr("samples"),
                       QStringLiteral("10240")});
+    parser.addOption({"regime-timeline-limit",
+                      tr("Limit próbek osi czasu reżimu rynku (0 = bez limitu)"),
+                      tr("count"),
+                      QString()});
+    parser.addOption({"regime-thresholds",
+                      tr("Ścieżka progów MarketRegimeClassifier"),
+                      tr("path"),
+                      QString()});
     parser.addOption({"fps-target", tr("Docelowy FPS"), tr("fps"), QStringLiteral("60")});
     parser.addOption({"reduce-motion-after", tr("Czas (s) po którym ograniczamy animacje"),
                       tr("seconds"), QStringLiteral("1.0")});
@@ -451,6 +536,8 @@ void Application::configureParser(QCommandLineParser& parser) const {
                       tr("Ścieżka do decision logu (plik JSONL lub katalog)"), tr("path"), QString()});
     parser.addOption({"decision-log-limit",
                       tr("Limit liczby przechowywanych wpisów decision logu"), tr("count"), QString()});
+    parser.addOption({"ui-module-dir",
+                      tr("Katalog z pluginami UI (można powtórzyć)"), tr("path"), QString()});
     parser.addOption({"ui-settings-path", tr("Ścieżka pliku ustawień UI"), tr("path"), QString()});
     parser.addOption({"disable-ui-settings", tr("Wyłącza zapisywanie konfiguracji UI")});
     parser.addOption({"enable-ui-settings",
@@ -615,6 +702,8 @@ bool Application::applyParser(const QCommandLineParser& parser) {
     m_instrument = instrument;
     Q_EMIT instrumentChanged();
 
+    configureRegimeThresholds(parser);
+
     // Ogólny TLS (może być nadpisany przez sekcję gRPC)
     TradingClient::TlsConfig tlsConfig;
     tlsConfig.enabled = parser.isSet("use-tls");
@@ -630,6 +719,31 @@ bool Application::applyParser(const QCommandLineParser& parser) {
     m_client.setHistoryLimit(historyLimit);
     if (historyLimit > 0)
         m_historyLimit = historyLimit;
+
+    const QString regimeLimitRaw = parser.value("regime-timeline-limit").trimmed();
+    if (!regimeLimitRaw.isEmpty()) {
+        bool ok = false;
+        const int regimeLimit = regimeLimitRaw.toInt(&ok);
+        if (!ok || regimeLimit < 0) {
+            qCWarning(lcAppMetrics)
+                << "Nieprawidłowy limit próbek reżimu rynku podany w CLI:" << regimeLimitRaw;
+        } else {
+            setRegimeTimelineMaximumSnapshots(regimeLimit);
+        }
+    } else if (const auto regimeEnv = envValue(kRegimeTimelineLimitEnv); regimeEnv.has_value()) {
+        const QString trimmed = regimeEnv->trimmed();
+        if (!trimmed.isEmpty()) {
+            bool ok = false;
+            const int envLimit = trimmed.toInt(&ok);
+            if (!ok || envLimit < 0) {
+                qCWarning(lcAppMetrics)
+                    << "Nieprawidłowy limit próbek reżimu rynku podany w zmiennej"
+                    << QString::fromUtf8(kRegimeTimelineLimitEnv) << ':' << trimmed;
+            } else {
+                setRegimeTimelineMaximumSnapshots(envLimit);
+            }
+        }
+    }
 
     m_maxSamples = parser.value("max-samples").toInt();
     if (m_maxSamples <= 0)
@@ -1013,6 +1127,7 @@ bool Application::applyParser(const QCommandLineParser& parser) {
     configureStrategyBridge(parser);
     configureSupportBundle(parser);
     configureDecisionLog(parser);
+    configureUiModules(parser);
 
     // TLS config (MetricsService)
     TelemetryTlsConfig mtls;
@@ -1384,7 +1499,7 @@ void Application::applyRiskHistoryCliOverrides(const QCommandLineParser& parser)
 
 void Application::configureStrategyBridge(const QCommandLineParser& parser)
 {
-    if (!m_strategyController)
+    if (!m_strategyController && !m_workbenchController)
         return;
 
     QString configPath = parser.value("core-config").trimmed();
@@ -1395,8 +1510,12 @@ void Application::configureStrategyBridge(const QCommandLineParser& parser)
     if (configPath.isEmpty())
         configPath = QStringLiteral("config/core.yaml");
     const QString normalizedConfigPath = expandPath(configPath);
-    if (!normalizedConfigPath.isEmpty())
-        m_strategyController->setConfigPath(normalizedConfigPath);
+    if (!normalizedConfigPath.isEmpty()) {
+        if (m_strategyController)
+            m_strategyController->setConfigPath(normalizedConfigPath);
+        if (m_workbenchController)
+            m_workbenchController->setConfigPath(normalizedConfigPath);
+    }
 
     QString pythonExec = parser.value("strategy-config-python").trimmed();
     if (pythonExec.isEmpty()) {
@@ -1405,8 +1524,12 @@ void Application::configureStrategyBridge(const QCommandLineParser& parser)
     }
     if (!pythonExec.isEmpty()) {
         const QString normalizedPython = expandPath(pythonExec);
-        if (!normalizedPython.isEmpty())
-            m_strategyController->setPythonExecutable(normalizedPython);
+        if (!normalizedPython.isEmpty()) {
+            if (m_strategyController)
+                m_strategyController->setPythonExecutable(normalizedPython);
+            if (m_workbenchController)
+                m_workbenchController->setPythonExecutable(normalizedPython);
+        }
     }
 
     QString bridgePath = parser.value("strategy-config-bridge").trimmed();
@@ -1421,13 +1544,23 @@ void Application::configureStrategyBridge(const QCommandLineParser& parser)
             bridgePath = QDir::current().absoluteFilePath(QStringLiteral("scripts/ui_config_bridge.py"));
     }
     const QString normalizedBridge = expandPath(bridgePath);
-    if (!normalizedBridge.isEmpty())
-        m_strategyController->setScriptPath(normalizedBridge);
+    if (!normalizedBridge.isEmpty()) {
+        if (m_strategyController)
+            m_strategyController->setScriptPath(normalizedBridge);
+        if (m_workbenchController)
+            m_workbenchController->setScriptPath(normalizedBridge);
+    }
 
-    if (!m_strategyController->refresh()) {
+    if (m_strategyController && !m_strategyController->refresh()) {
         const QString error = m_strategyController->lastError();
         if (!error.isEmpty())
             qCWarning(lcAppMetrics) << "Mostek konfiguracji strategii zwrócił błąd:" << error;
+    }
+
+    if (m_workbenchController && !m_workbenchController->refreshCatalog()) {
+        const QString error = m_workbenchController->lastError();
+        if (!error.isEmpty())
+            qCWarning(lcAppMetrics) << "Mostek katalogu strategii zwrócił błąd:" << error;
     }
 }
 
@@ -1659,6 +1792,69 @@ void Application::updateSupportBundleMetadata()
     m_supportController->setMetadata(metadata);
 }
 
+void Application::configureUiModules(const QCommandLineParser& parser)
+{
+    if (!m_moduleManager)
+        return;
+
+    m_moduleManager->unloadPlugins();
+
+    const auto normalize = [](const QString& raw) -> QString {
+        const QString trimmed = raw.trimmed();
+        if (trimmed.isEmpty())
+            return {};
+        const QString expanded = expandPath(trimmed);
+        if (!expanded.isEmpty())
+            return QFileInfo(expanded).absoluteFilePath();
+        return QFileInfo(trimmed).absoluteFilePath();
+    };
+
+    QSet<QString> unique;
+    QStringList directories;
+
+    const QStringList cliDirs = parser.values(QStringLiteral("ui-module-dir"));
+    for (const QString& value : cliDirs) {
+        const QString normalized = normalize(value);
+        if (normalized.isEmpty() || unique.contains(normalized))
+            continue;
+        unique.insert(normalized);
+        directories.append(normalized);
+    }
+
+    if (cliDirs.isEmpty()) {
+        if (const auto envDirs = envValue(QByteArrayLiteral("BOT_CORE_UI_MODULE_DIRS")); envDirs.has_value()) {
+            const auto pieces = envDirs->split(QDir::listSeparator(), Qt::SkipEmptyParts);
+            for (const QString& piece : pieces) {
+                const QString normalized = normalize(piece);
+                if (normalized.isEmpty() || unique.contains(normalized))
+                    continue;
+                unique.insert(normalized);
+                directories.append(normalized);
+            }
+        }
+    }
+
+    if (directories.isEmpty()) {
+        const QString binaryModules = QDir(QCoreApplication::applicationDirPath()).absoluteFilePath(QStringLiteral("modules"));
+        const QString repoModules = QDir::current().absoluteFilePath(QStringLiteral("ui/modules"));
+        for (const QString& candidate : {binaryModules, repoModules}) {
+            const QString normalized = normalize(candidate);
+            if (normalized.isEmpty() || unique.contains(normalized))
+                continue;
+            unique.insert(normalized);
+            directories.append(normalized);
+        }
+    }
+
+    m_uiModuleDirectories = directories;
+    m_moduleManager->setPluginPaths(directories);
+    if (!directories.isEmpty()) {
+        if (!m_moduleManager->loadPlugins()) {
+            qCWarning(lcAppMetrics) << "Nie wszystkie pluginy UI zostały poprawnie załadowane";
+        }
+    }
+}
+
 void Application::configureDecisionLog(const QCommandLineParser& parser)
 {
     QString path = parser.value(QStringLiteral("decision-log")).trimmed();
@@ -1805,6 +2001,16 @@ void Application::loadUiSettings()
         const double intervalSeconds = riskObj.value(QStringLiteral("intervalSeconds"))
                                          .toDouble(static_cast<double>(m_riskRefreshIntervalMs) / 1000.0);
         updateRiskRefresh(enabled, intervalSeconds);
+    }
+
+    if (root.contains(QStringLiteral("marketRegimeTimeline"))
+        && root.value(QStringLiteral("marketRegimeTimeline")).isObject()) {
+        const QJsonObject regimeObj = root.value(QStringLiteral("marketRegimeTimeline")).toObject();
+        const QJsonValue maxValue = regimeObj.value(QStringLiteral("maximumSnapshots"));
+        if (maxValue.isDouble()) {
+            const int limit = std::max(0, maxValue.toInt(m_regimeTimelineMaximumSnapshots));
+            setRegimeTimelineMaximumSnapshots(limit);
+        }
     }
 
     if (root.contains(QStringLiteral("alerts")) && root.value(QStringLiteral("alerts")).isObject()) {
@@ -2265,6 +2471,10 @@ QJsonObject Application::buildUiSettingsPayload() const
     alerts.insert(QStringLiteral("searchText"), m_filteredAlertsModel.searchText());
     root.insert(QStringLiteral("alerts"), alerts);
 
+    QJsonObject regimeTimeline;
+    regimeTimeline.insert(QStringLiteral("maximumSnapshots"), m_regimeTimelineMaximumSnapshots);
+    root.insert(QStringLiteral("marketRegimeTimeline"), regimeTimeline);
+
     QJsonObject history;
     history.insert(QStringLiteral("maximumEntries"), m_riskHistoryModel.maximumEntries());
     const QJsonArray historyEntries = m_riskHistoryModel.toJson();
@@ -2542,6 +2752,7 @@ void Application::configureLocalBotCoreService(const QCommandLineParser& parser,
 
 void Application::start() {
     m_ohlcvModel.setMaximumSamples(m_maxSamples);
+    m_regimeTimelineModel.setMaximumSnapshots(m_regimeTimelineMaximumSnapshots);
     m_riskModel.clear();
     m_riskHistoryModel.clear();
     m_alertsModel.reset();
@@ -2601,6 +2812,8 @@ void Application::stop() {
 
 void Application::handleHistory(const QList<OhlcvPoint>& candles) {
     m_ohlcvModel.resetWithHistory(candles);
+    m_signalModel.resetWithSignals(QVector<SignalEventEntry>());
+    m_regimeTimelineModel.resetWithSnapshots(QVector<MarketRegimeSnapshotEntry>());
 }
 
 void Application::handleCandle(const OhlcvPoint& candle) {
@@ -2633,6 +2846,8 @@ void Application::ensureOfflineBridge()
                 Q_EMIT performanceGuardChanged();
                 if (m_frameMonitor)
                     m_frameMonitor->setPerformanceGuard(m_guard);
+                if (m_performanceTelemetry)
+                    m_performanceTelemetry->setPerformanceGuard(m_guard);
                 reportOverlayTelemetry();
             });
     connect(m_offlineBridge.get(), &OfflineRuntimeBridge::connectionStateChanged, this,
@@ -2770,6 +2985,9 @@ void Application::handleRiskHistorySnapshotRecorded(const QDateTime& timestamp)
 void Application::exposeToQml() {
     m_engine.rootContext()->setContextProperty(QStringLiteral("appController"), this);
     m_engine.rootContext()->setContextProperty(QStringLiteral("ohlcvModel"), &m_ohlcvModel);
+    m_engine.rootContext()->setContextProperty(QStringLiteral("indicatorSeriesModel"), &m_indicatorModel);
+    m_engine.rootContext()->setContextProperty(QStringLiteral("signalListModel"), &m_signalModel);
+    m_engine.rootContext()->setContextProperty(QStringLiteral("marketRegimeTimelineModel"), &m_regimeTimelineModel);
     m_engine.rootContext()->setContextProperty(QStringLiteral("riskModel"), &m_riskModel);
     m_engine.rootContext()->setContextProperty(QStringLiteral("riskHistoryModel"), &m_riskHistoryModel);
     m_engine.rootContext()->setContextProperty(QStringLiteral("alertsModel"), &m_alertsModel);
@@ -2779,9 +2997,12 @@ void Application::exposeToQml() {
     m_engine.rootContext()->setContextProperty(QStringLiteral("securityController"), m_securityController.get());
     m_engine.rootContext()->setContextProperty(QStringLiteral("reportController"), m_reportController.get());
     m_engine.rootContext()->setContextProperty(QStringLiteral("strategyController"), m_strategyController.get());
+    m_engine.rootContext()->setContextProperty(QStringLiteral("workbenchController"), m_workbenchController.get());
     m_engine.rootContext()->setContextProperty(QStringLiteral("supportController"), m_supportController.get());
     m_engine.rootContext()->setContextProperty(QStringLiteral("healthController"), m_healthController.get());
     m_engine.rootContext()->setContextProperty(QStringLiteral("decisionLogModel"), &m_decisionLogModel);
+    m_engine.rootContext()->setContextProperty(QStringLiteral("moduleManager"), m_moduleManager.get());
+    m_engine.rootContext()->setContextProperty(QStringLiteral("moduleViewsModel"), m_moduleViewsModel.get());
 }
 
 QObject* Application::activationController() const
@@ -2799,6 +3020,11 @@ QObject* Application::strategyController() const
     return m_strategyController.get();
 }
 
+QObject* Application::workbenchController() const
+{
+    return m_workbenchController.get();
+}
+
 QObject* Application::supportController() const
 {
     return m_supportController.get();
@@ -2812,6 +3038,31 @@ QObject* Application::healthController() const
 QObject* Application::decisionLogModel() const
 {
     return const_cast<DecisionLogModel*>(&m_decisionLogModel);
+}
+
+QObject* Application::moduleManager() const
+{
+    return m_moduleManager.get();
+}
+
+QObject* Application::moduleViewsModel() const
+{
+    return m_moduleViewsModel.get();
+}
+
+void Application::setModuleManagerForTesting(std::unique_ptr<UiModuleManager> manager)
+{
+    if (manager)
+        manager->setParent(this);
+
+    m_moduleManager = std::move(manager);
+    if (m_moduleViewsModel)
+        m_moduleViewsModel->setModuleManager(m_moduleManager.get());
+
+    if (m_started)
+        m_engine.rootContext()->setContextProperty(QStringLiteral("moduleManager"), m_moduleManager.get());
+    if (m_started)
+        m_engine.rootContext()->setContextProperty(QStringLiteral("moduleViewsModel"), m_moduleViewsModel.get());
 }
 
 void Application::ensureFrameMonitor() {
@@ -2845,6 +3096,9 @@ void Application::ensureFrameMonitor() {
             [this](double frameMs, double thresholdMs) { reportJankTelemetry(frameMs, thresholdMs); });
 
     m_frameMonitor->setPerformanceGuard(m_guard);
+    if (m_performanceTelemetry) {
+        m_performanceTelemetry->setFrameRateMonitor(m_frameMonitor.get());
+    }
 }
 
 void Application::attachWindow(QObject* object) {
@@ -2872,6 +3126,9 @@ void Application::setTelemetryReporter(std::unique_ptr<TelemetryReporter> report
     m_telemetry = std::move(reporter);
     updateTelemetryPendingRetryCount(0);
     ensureTelemetry();
+    if (m_performanceTelemetry) {
+        m_performanceTelemetry->setTelemetryReporter(m_telemetry.get());
+    }
 }
 
 void Application::notifyOverlayUsage(int activeCount, int allowedCount, bool reduceMotionActive) {
@@ -3301,89 +3558,19 @@ bool Application::setRiskHistoryAutoExportUseLocalTime(bool useLocalTime)
     return true;
 }
 
-bool Application::setLicenseRefreshEnabled(bool enabled)
+bool Application::setRegimeTimelineMaximumSnapshots(int maximumSnapshots)
 {
-    ensureLicenseRefreshTimerConfigured();
-
-    if (enabled) {
-        if (m_licenseRefreshIntervalSeconds <= 0)
-            m_licenseRefreshIntervalSeconds = kDefaultLicenseRefreshIntervalSeconds;
-
-        m_licenseRefreshTimer.setInterval(m_licenseRefreshIntervalSeconds * 1000);
-        const bool wasActive = m_licenseRefreshTimer.isActive();
-        if (!wasActive)
-            m_licenseRefreshTimer.start();
-
-        updateSecurityCacheFromControllers();
-        Q_EMIT licenseRefreshScheduleChanged();
-
-        if (!wasActive)
-            refreshSecurityArtifacts();
-        return true;
-    }
-
-    if (!m_licenseRefreshTimer.isActive() && m_licenseRefreshIntervalSeconds == 0)
-        return true;
-
-    if (m_licenseRefreshTimer.isActive())
-        m_licenseRefreshTimer.stop();
-
-    m_nextLicenseRefreshUtc = QDateTime();
-    updateSecurityCacheFromControllers();
-    Q_EMIT licenseRefreshScheduleChanged();
-    return true;
-}
-
-bool Application::setLicenseRefreshIntervalSeconds(int seconds)
-{
-    if (seconds < 0)
+    if (maximumSnapshots < 0) {
+        qCWarning(lcAppMetrics)
+            << "Odmowa ustawienia limitu próbek reżimu rynku – oczekiwano wartości >= 0, otrzymano"
+            << maximumSnapshots;
         return false;
-
-    ensureLicenseRefreshTimerConfigured();
-
-    if (seconds == 0) {
-        if (m_licenseRefreshIntervalSeconds == 0 && !m_licenseRefreshTimer.isActive())
-            return true;
-
-        m_licenseRefreshIntervalSeconds = 0;
-        if (m_licenseRefreshTimer.isActive())
-            m_licenseRefreshTimer.stop();
-        m_nextLicenseRefreshUtc = QDateTime();
-        updateSecurityCacheFromControllers();
-        Q_EMIT licenseRefreshScheduleChanged();
-        return true;
     }
 
-    const int clamped = std::clamp(seconds, kMinLicenseRefreshIntervalSeconds, kMaxLicenseRefreshIntervalSeconds);
-    const bool wasActive = m_licenseRefreshTimer.isActive();
-    if (m_licenseRefreshIntervalSeconds == clamped && !wasActive)
+    if (m_regimeTimelineMaximumSnapshots == maximumSnapshots)
         return true;
 
-    m_licenseRefreshIntervalSeconds = clamped;
-    m_licenseRefreshTimer.setInterval(m_licenseRefreshIntervalSeconds * 1000);
-
-    if (wasActive) {
-        if (m_lastLicenseRefreshRequestUtc.isValid())
-            m_nextLicenseRefreshUtc = m_lastLicenseRefreshRequestUtc.addSecs(m_licenseRefreshIntervalSeconds);
-        else if (m_lastLicenseRefreshUtc.isValid())
-            m_nextLicenseRefreshUtc = m_lastLicenseRefreshUtc.addSecs(m_licenseRefreshIntervalSeconds);
-        else
-            m_nextLicenseRefreshUtc = QDateTime::currentDateTimeUtc().addSecs(m_licenseRefreshIntervalSeconds);
-    } else {
-        m_nextLicenseRefreshUtc = QDateTime();
-    }
-
-    updateSecurityCacheFromControllers();
-    Q_EMIT licenseRefreshScheduleChanged();
-    return true;
-}
-
-bool Application::triggerLicenseRefreshNow()
-{
-    if (!m_activationController)
-        return false;
-
-    refreshSecurityArtifacts();
+    m_regimeTimelineModel.setMaximumSnapshots(maximumSnapshots);
     return true;
 }
 
@@ -3839,7 +4026,7 @@ void Application::configureTokenWatcher(QFileSystemWatcher& watcher,
     trackedFile = info.absoluteFilePath();
     if (QFile::exists(trackedFile)) {
         if (!watcher.addPath(trackedFile)) {
-            qCWarning(lcAppMetrics) << "Nie można obserwować pliku tokenu" << trackedFile << "dla" << label;
+            qCWarning(lcAppMetrics) << "Nie można obserwować pliku" << trackedFile << "dla" << label;
         }
     }
 
@@ -3850,11 +4037,61 @@ void Application::configureTokenWatcher(QFileSystemWatcher& watcher,
         if (trackedDirs.contains(directory))
             continue;
         if (!watcher.addPath(directory)) {
-            qCWarning(lcAppMetrics) << "Nie można obserwować katalogu tokenu" << directory << "dla" << label;
+            qCWarning(lcAppMetrics) << "Nie można obserwować katalogu" << directory << "dla" << label;
             continue;
         }
         trackedDirs.append(directory);
     }
+}
+
+bool Application::applyRegimeThresholdPath(const QString& path, bool warnIfMissing)
+{
+    const QString trimmed = path.trimmed();
+    const QString expanded = expandPath(trimmed);
+
+    QString normalized;
+    if (!expanded.trimmed().isEmpty()) {
+        QFileInfo info(expanded);
+        normalized = QDir::cleanPath(info.absoluteFilePath());
+    }
+
+    if (normalized.isEmpty()) {
+        configureTokenWatcher(m_regimeThresholdWatcher,
+                              m_regimeThresholdWatcherFile,
+                              m_regimeThresholdWatcherDirs,
+                              QString(),
+                              "MarketRegime thresholds");
+        m_regimeThresholdPath.clear();
+        m_client.setRegimeThresholdsPath(QString());
+        return true;
+    }
+
+    const bool existed = QFile::exists(normalized);
+    const bool pathChanged = normalized != m_regimeThresholdPath;
+
+    configureTokenWatcher(m_regimeThresholdWatcher,
+                          m_regimeThresholdWatcherFile,
+                          m_regimeThresholdWatcherDirs,
+                          normalized,
+                          "MarketRegime thresholds");
+
+    if (!pathChanged) {
+        if (!existed && warnIfMissing) {
+            qCWarning(lcAppMetrics)
+                << "Plik progów reżimu rynku nie istnieje:" << normalized;
+        }
+        m_client.reloadRegimeThresholds();
+        return existed;
+    }
+
+    m_regimeThresholdPath = normalized;
+    if (!existed && warnIfMissing) {
+        qCWarning(lcAppMetrics)
+            << "Plik progów reżimu rynku nie istnieje:" << normalized;
+    }
+
+    m_client.setRegimeThresholdsPath(normalized);
+    return existed;
 }
 
 void Application::configureTlsWatcher(QFileSystemWatcher& watcher,
@@ -4090,6 +4327,14 @@ void Application::handleHealthTlsPathChanged(const QString&)
     applyHealthTlsConfig();
 }
 
+void Application::handleRegimeThresholdPathChanged(const QString&)
+{
+    if (m_regimeThresholdPath.isEmpty())
+        return;
+
+    applyRegimeThresholdPath(m_regimeThresholdPath, false);
+}
+
 void Application::handleTradingTokenPathChanged(const QString&)
 {
     configureTokenWatcher(m_tradingTokenWatcher,
@@ -4278,6 +4523,9 @@ void Application::ensureTelemetry() {
     if (!m_telemetry) {
         if (!shouldEnable) {
             updateTelemetryPendingRetryCount(0);
+            if (m_performanceTelemetry) {
+                m_performanceTelemetry->setTelemetryReporter(nullptr);
+            }
             return;
         }
         auto reporter = std::make_unique<UiTelemetryReporter>(this);
@@ -4285,6 +4533,13 @@ void Application::ensureTelemetry() {
     }
     if (!m_telemetry)
         return;
+
+    if (m_performanceTelemetry) {
+        m_performanceTelemetry->setTelemetryReporter(m_telemetry.get());
+        if (m_frameMonitor) {
+            m_performanceTelemetry->setFrameRateMonitor(m_frameMonitor.get());
+        }
+    }
 
     if (auto* uiReporter = dynamic_cast<UiTelemetryReporter*>(m_telemetry.get())) {
         connect(uiReporter, &UiTelemetryReporter::pendingRetryCountChanged,

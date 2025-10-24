@@ -7,7 +7,7 @@ var __db = null;
 
 function database() {
     if (__db === null) {
-        __db = LocalStorage.openDatabaseSync(
+        __db = LocalStorage.LocalStorage.openDatabaseSync(
             "SecurityArtifacts",
             "1.0",
             "Security cache for license audit",
