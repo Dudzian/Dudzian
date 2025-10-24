@@ -10,7 +10,8 @@ summary:
 
 observability:
   definitions: config/observability/slo.yml
-  metrics: var/audit/observability/metrics.json
+  # Domyślnie oczekujemy metryk Stage6 wygenerowanych przez runbook w katalogu var/metrics.
+  metrics: var/metrics/stage6_measurements.json
   slo:
     json: var/audit/observability/slo_report.json
     csv: var/audit/observability/slo_report.csv
