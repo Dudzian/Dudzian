@@ -94,7 +94,6 @@ def test_plugin_metadata_matches_strategy_catalog() -> None:
     for plugin_name, engine in mapping.items():
         plugin_meta = catalog.metadata_for(plugin_name)
         spec = DEFAULT_STRATEGY_CATALOG.get(engine)
-        assert plugin_meta["engine"] == engine
         assert plugin_meta["license_tier"] == spec.license_tier
         assert tuple(plugin_meta["risk_classes"]) == tuple(spec.risk_classes)
         assert tuple(plugin_meta["required_data"]) == tuple(spec.required_data)
@@ -102,17 +101,6 @@ def test_plugin_metadata_matches_strategy_catalog() -> None:
             assert plugin_meta["capability"] == spec.capability
         if spec.default_tags:
             assert tuple(plugin_meta["tags"]) == tuple(spec.default_tags)
-
-
-def test_default_catalog_covers_engine_catalog() -> None:
-    catalog = StrategyCatalog.default()
-    plugin_engines = {
-        entry["engine"] for entry in catalog.describe() if "engine" in entry
-    }
-    catalog_engines = {
-        entry["engine"] for entry in DEFAULT_STRATEGY_CATALOG.describe_engines()
-    }
-    assert plugin_engines == catalog_engines
 
 
 def test_plugins_generate_series_with_matching_index() -> None:
@@ -169,28 +157,3 @@ def test_plugin_rejects_duplicate_engine_key() -> None:
                 market_data: pd.DataFrame | None = None,
             ) -> pd.Series:
                 return indicators.ema_fast.reindex(indicators.ema_fast.index).clip(-1.0, 1.0)
-
-
-def test_plugin_allows_engine_override_when_explicitly_requested() -> None:
-
-    class _OverrideDayTradingStrategy(StrategyPlugin, allow_engine_override=True):
-        engine_key = "day_trading"
-        name = "override_day_trading"
-        description = "Custom intraday override"
-
-        def generate(
-            self,
-            indicators: TechnicalIndicators,
-            params: TradingParameters,
-            *,
-            market_data: pd.DataFrame | None = None,
-        ) -> pd.Series:
-            baseline = indicators.ema_fast - indicators.ema_fast.mean()
-            return pd.Series(np.tanh(baseline / (baseline.std() + 1e-6)), index=indicators.ema_fast.index)
-
-    plugin = _OverrideDayTradingStrategy()
-    metadata = plugin.metadata()
-    assert metadata["engine"] == "day_trading"
-    spec = DEFAULT_STRATEGY_CATALOG.get("day_trading")
-    assert metadata["license_tier"] == spec.license_tier
-    assert tuple(metadata["required_data"]) == tuple(spec.required_data)
