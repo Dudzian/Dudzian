@@ -16,7 +16,7 @@ from .data_monitoring import (
 )
 
 
-_DEFAULT_SIGN_OFF_ROLE_ORDER = tuple(sorted(_SIGN_OFF_ROLES))
+_DEFAULT_SIGN_OFF_ROLE_ORDER = _SIGN_OFF_ROLES
 
 if TYPE_CHECKING:  # pragma: no cover - tylko dla typowania
     from .feature_engineering import FeatureDataset
