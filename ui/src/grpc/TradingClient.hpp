@@ -14,6 +14,7 @@
 
 #include <google/protobuf/repeated_field.h>
 
+#include "models/MarketDataStreams.hpp"
 #include "models/OhlcvListModel.hpp"
 #include "models/RiskTypes.hpp"
 #include "utils/PerformanceGuard.hpp"
@@ -77,6 +78,8 @@ public:
     void setAuthToken(const QString& token);
     void setRbacRole(const QString& role);
     void setRbacScopes(const QStringList& scopes);
+    void setRegimeThresholdsPath(const QString& path);
+    void reloadRegimeThresholds();
 
     QVector<TradableInstrument> listTradableInstruments(const QString& exchange);
 
@@ -99,6 +102,11 @@ signals:
     void streamingChanged();
     void historyReceived(const QList<OhlcvPoint>& history);
     void candleReceived(const OhlcvPoint& candle);
+    void indicatorSnapshotReceived(const QString& id, const QVector<IndicatorSample>& samples);
+    void indicatorSampleReceived(const IndicatorSample& sample);
+    void signalHistoryReceived(const QVector<SignalEventEntry>& events);
+    void signalEventReceived(const SignalEventEntry& event);
+    void marketRegimeUpdated(const MarketRegimeSnapshotEntry& snapshot);
     void performanceGuardUpdated(const PerformanceGuard& guard);
     void connectionStateChanged(const QString& state);
     void riskStateReceived(const RiskSnapshotData& snapshot);
@@ -114,6 +122,12 @@ private:
     void applyAuthMetadata(grpc::ClientContext& context) const;
     std::vector<std::pair<std::string, std::string>> buildAuthMetadata() const;
     void triggerStreamRestart();
+    void rebuildIndicatorSnapshots(const QVector<OhlcvPoint>& history);
+    void computeSignalHistory(const QVector<IndicatorSample>& fast,
+                              const QVector<IndicatorSample>& slow,
+                              const QVector<IndicatorSample>& vwap,
+                              QVector<SignalEventEntry>& signalHistory);
+    std::optional<MarketRegimeSnapshotEntry> evaluateRegimeSnapshotLocked();
 
     // --- Konfiguracja połączenia/rynku ---
     QString m_endpoint = QStringLiteral("127.0.0.1:50061");
@@ -128,6 +142,7 @@ private:
     PerformanceGuard m_guard{};
     int m_historyLimit = 500;
     TlsConfig m_tlsConfig{};
+    QString   m_regimeThresholdPath;
 
     // --- gRPC ---
     std::shared_ptr<grpc::Channel> m_channel;
@@ -146,4 +161,15 @@ private:
     QString m_authToken;
     QString m_rbacRole;
     QStringList m_rbacScopes;
+
+    // --- Market data cache ---
+    mutable std::mutex m_historyMutex;
+    QVector<OhlcvPoint> m_cachedHistory;
+    QVector<IndicatorSample> m_cachedEmaFast;
+    QVector<IndicatorSample> m_cachedEmaSlow;
+    QVector<IndicatorSample> m_cachedVwap;
+    QVector<SignalEventEntry> m_signalHistory;
+    MarketRegimeSnapshotEntry m_lastRegimeSnapshot;
+
+    std::unique_ptr<class MarketRegimeClassifierBridge> m_regimeClassifier;
 };

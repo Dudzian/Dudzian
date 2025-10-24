@@ -15,7 +15,22 @@ from bot_core.runtime.multi_strategy_scheduler import MultiStrategyScheduler, St
 from bot_core.runtime.pipeline import InMemoryStrategySignalSink, _collect_strategy_definitions
 from bot_core.security.guards import LicenseCapabilityError
 from bot_core.strategies.base import MarketSnapshot, StrategyEngine
-from bot_core.strategies.catalog import DEFAULT_STRATEGY_CATALOG
+from bot_core.strategies.cross_exchange_arbitrage import (
+    CrossExchangeArbitrageSettings,
+    CrossExchangeArbitrageStrategy,
+)
+from bot_core.strategies.day_trading import DayTradingSettings, DayTradingStrategy
+from bot_core.strategies.mean_reversion import MeanReversionSettings, MeanReversionStrategy
+from bot_core.strategies.options import OptionsIncomeSettings, OptionsIncomeStrategy
+from bot_core.strategies.scalping import ScalpingSettings, ScalpingStrategy
+from bot_core.strategies.statistical_arbitrage import (
+    StatisticalArbitrageSettings,
+    StatisticalArbitrageStrategy,
+)
+from bot_core.strategies.volatility_target import (
+    VolatilityTargetSettings,
+    VolatilityTargetStrategy,
+)
 
 
 @dataclass(slots=True)
@@ -54,24 +69,80 @@ def _instantiate_strategies(core_config) -> Mapping[str, StrategyEngine]:
     catalog = DEFAULT_STRATEGY_CATALOG
     definitions = _collect_strategy_definitions(core_config)
     registry: dict[str, StrategyEngine] = {}
-    for name, definition in definitions.items():
-        try:
-            registry[name] = catalog.create(definition)
-        except LicenseCapabilityError as exc:
-            try:
-                spec = catalog.get(definition.engine)
-                capability = spec.capability
-            except KeyError:
-                capability = None
-            if capability:
-                LOGGER.warning(
-                    "Pomijam strategię %s – capability %s zablokowana: %s",
-                    name,
-                    capability,
-                    exc,
-                )
-            else:
-                LOGGER.warning("Pomijam strategię %s – zablokowana licencja: %s", name, exc)
+    for name, cfg in getattr(core_config, "mean_reversion_strategies", {}).items():
+        registry[name] = MeanReversionStrategy(
+            MeanReversionSettings(
+                lookback=cfg.lookback,
+                entry_zscore=cfg.entry_zscore,
+                exit_zscore=cfg.exit_zscore,
+                max_holding_period=cfg.max_holding_period,
+                volatility_cap=cfg.volatility_cap,
+                min_volume_usd=cfg.min_volume_usd,
+            )
+        )
+    for name, cfg in getattr(core_config, "volatility_target_strategies", {}).items():
+        registry[name] = VolatilityTargetStrategy(
+            VolatilityTargetSettings(
+                target_volatility=cfg.target_volatility,
+                lookback=cfg.lookback,
+                rebalance_threshold=cfg.rebalance_threshold,
+                min_allocation=cfg.min_allocation,
+                max_allocation=cfg.max_allocation,
+                floor_volatility=cfg.floor_volatility,
+            )
+        )
+    for name, cfg in getattr(core_config, "cross_exchange_arbitrage_strategies", {}).items():
+        registry[name] = CrossExchangeArbitrageStrategy(
+            CrossExchangeArbitrageSettings(
+                primary_exchange=cfg.primary_exchange,
+                secondary_exchange=cfg.secondary_exchange,
+                spread_entry=cfg.spread_entry,
+                spread_exit=cfg.spread_exit,
+                max_notional=cfg.max_notional,
+                max_open_seconds=cfg.max_open_seconds,
+            )
+        )
+    for name, cfg in getattr(core_config, "scalping_strategies", {}).items():
+        registry[name] = ScalpingStrategy(
+            ScalpingSettings(
+                min_price_change=cfg.min_price_change,
+                take_profit=cfg.take_profit,
+                stop_loss=cfg.stop_loss,
+                max_hold_bars=cfg.max_hold_bars,
+            )
+        )
+    for name, cfg in getattr(core_config, "options_income_strategies", {}).items():
+        registry[name] = OptionsIncomeStrategy(
+            OptionsIncomeSettings(
+                min_iv=cfg.min_iv,
+                max_delta=cfg.max_delta,
+                min_days_to_expiry=cfg.min_days_to_expiry,
+                roll_threshold_iv=cfg.roll_threshold_iv,
+            )
+        )
+    for name, cfg in getattr(core_config, "statistical_arbitrage_strategies", {}).items():
+        registry[name] = StatisticalArbitrageStrategy(
+            StatisticalArbitrageSettings(
+                lookback=cfg.lookback,
+                spread_entry_z=cfg.spread_entry_z,
+                spread_exit_z=cfg.spread_exit_z,
+                max_notional=cfg.max_notional,
+            )
+        )
+    for name, cfg in getattr(core_config, "day_trading_strategies", {}).items():
+        registry[name] = DayTradingStrategy(
+            DayTradingSettings(
+                momentum_window=cfg.momentum_window,
+                volatility_window=cfg.volatility_window,
+                entry_threshold=cfg.entry_threshold,
+                exit_threshold=cfg.exit_threshold,
+                take_profit_atr=cfg.take_profit_atr,
+                stop_loss_atr=cfg.stop_loss_atr,
+                max_holding_bars=cfg.max_holding_bars,
+                atr_floor=cfg.atr_floor,
+                bias_strength=cfg.bias_strength,
+            )
+        )
     return registry
 
 

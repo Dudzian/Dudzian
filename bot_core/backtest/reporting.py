@@ -3,29 +3,54 @@
 from __future__ import annotations
 
 import logging
+import math
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Mapping
 
 from .engine import BacktestReport, PerformanceMetrics
 
 logger = logging.getLogger(__name__)
 
 
+def _format_ratio(value: float) -> str:
+    if math.isnan(value):
+        return "n/a"
+    if math.isinf(value):
+        return "∞"
+    return f"{value:.2f}"
+
+
 def _as_rows(metrics: PerformanceMetrics) -> List[tuple[str, str]]:
+    exposure_value = "∞" if math.isinf(metrics.max_exposure_pct) else f"{metrics.max_exposure_pct:.2f}%"
     return [
         ("Total return", f"{metrics.total_return_pct:.2f}%"),
         ("CAGR", f"{metrics.cagr_pct:.2f}%"),
         ("Max drawdown", f"{metrics.max_drawdown_pct:.2f}%"),
-        ("Sharpe", f"{metrics.sharpe_ratio:.2f}"),
+        ("Sharpe", _format_ratio(metrics.sharpe_ratio)),
+        ("Sortino", _format_ratio(metrics.sortino_ratio)),
+        ("Omega", _format_ratio(metrics.omega_ratio)),
         ("Hit ratio", f"{metrics.hit_ratio_pct:.2f}%"),
         ("Risk of ruin", f"{metrics.risk_of_ruin_pct:.2f}%"),
+        ("Max exposure", exposure_value),
         ("Fees paid", f"{metrics.fees_paid:.4f}"),
         ("Slippage cost", f"{metrics.slippage_cost:.4f}"),
     ]
 
 
+def _render_strategy_metadata(metadata: Mapping[str, object]) -> str:
+    if not metadata:
+        return "<tr><td colspan='2'>None</td></tr>"
+    rows: List[str] = []
+    for key in sorted(metadata):
+        value = metadata[key]
+        if isinstance(value, (list, tuple)):
+            value = ", ".join(str(item) for item in value)
+        rows.append(f"<tr><th>{key}</th><td>{value}</td></tr>")
+    return "".join(rows)
+
+
 def render_html_report(report: BacktestReport, *, title: str = "Backtest report") -> str:
-    metrics = report.metrics or PerformanceMetrics(0.0, 0.0, 0.0, 0.0, 0.0, 100.0, 0.0, 0.0)
+    metrics = report.metrics or PerformanceMetrics(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 100.0, 0.0, 0.0, 0.0)
     metrics_rows = "".join(
         f"<tr><th>{name}</th><td>{value}</td></tr>" for name, value in _as_rows(metrics)
     )
@@ -50,6 +75,7 @@ def render_html_report(report: BacktestReport, *, title: str = "Backtest report"
     params_rows = "".join(
         f"<tr><th>{key}</th><td>{value}</td></tr>" for key, value in sorted(report.parameters.items())
     )
+    metadata_rows = _render_strategy_metadata(report.strategy_metadata)
     html = f"""
     <html>
       <head>
@@ -68,6 +94,10 @@ def render_html_report(report: BacktestReport, *, title: str = "Backtest report"
         <section>
           <h2>Parameters</h2>
           <table>{params_rows}</table>
+        </section>
+        <section>
+          <h2>Strategy metadata</h2>
+          <table>{metadata_rows}</table>
         </section>
         <section>
           <h2>Performance</h2>
@@ -113,7 +143,9 @@ def export_report(
         text = canv.beginText(40, A4[1] - 50)
         text.textLine(title)
         text.textLine("Performance metrics:")
-        for name, value in _as_rows(report.metrics or PerformanceMetrics(0.0, 0.0, 0.0, 0.0, 0.0, 100.0, 0.0, 0.0)):
+        for name, value in _as_rows(
+            report.metrics or PerformanceMetrics(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 100.0, 0.0, 0.0, 0.0)
+        ):
             text.textLine(f"  {name}: {value}")
         text.textLine("")
         text.textLine(f"Trades: {len(report.trades)}")

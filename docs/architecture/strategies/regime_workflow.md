@@ -1,56 +1,115 @@
-# RegimeSwitchWorkflow – propagacja metadanych strategii
+# StrategyRegimeWorkflow – zarządzanie presetami strategii
 
-`RegimeSwitchWorkflow` od wersji rozszerzonej o obowiązkowe metadane strategii
-(
-licencje, klasy ryzyka, wymagane dane, capability oraz tagi
-autorskich pluginów) przekazuje komplet informacji o aktywowanych strategiach
-w każdej decyzji reżimowej. Dzięki temu warstwa autotradera i raportowania może
-budować podpisy decyzji spójne z katalogiem strategii.
+`StrategyRegimeWorkflow` zastępuje legacy `RegimeSwitchWorkflow`, rozszerzając go o
+rejestrację wersjonowanych presetów, awaryjne fallbacki, wymuszanie licencji
+oraz raporty statystyczne z historii aktywacji. Workflow bazuje na
+`StrategyPresetWizard`, dzięki czemu podpisuje presety HMAC zgodnie z katalogiem
+strategii i przekazuje komplet metadanych do warstwy decyzyjnej.
 
-## Zawartość decyzji reżimu
+## Rejestracja presetów i fallback
 
-Każdy obiekt `RegimeSwitchDecision` zawiera obecnie:
+* `register_preset(regime=…)` pozwala przypisać dedykowany preset do każdego
+  reżimu (`MarketRegime`). Preset jest budowany przez wizarda na podstawie
+  wpisów `StrategyCatalog`, a następnie podpisywany kluczem HMAC.
+* `register_emergency_preset()` definiuje awaryjny preset uruchamiany, gdy
+  właściwy preset nie spełnia wymagań (brak danych, blokada licencji lub okno
+  harmonogramu). Fallback przechodzi przez te same kontrole co presety
+  standardowe.
+* `activate()` wybiera preset odpowiedni dla rozpoznanego reżimu. Jeżeli brak
+  dedykowanego presetu lub aktywacja jest zablokowana, workflow włącza preset
+  awaryjny i oznacza aktywację flagą `used_fallback=True`.
 
-- `strategy_metadata` – słownik nazw strategii i ich metadanych (licencje,
-  capability, klasy ryzyka, wymagane dane, tagi),
-- `license_tiers`, `risk_classes`, `required_data`, `capabilities`, `tags` –
-  znormalizowane listy unikalnych wartości scalonych z aktywnych strategii.
+Wszystkie kontrole (wymagane dane rynkowe, harmonogram, licencje) są realizowane
+przed zbudowaniem kandydatów `DecisionCandidate`. W przypadku krytycznego braku
+fallbacku workflow zgłasza wyjątek, zabezpieczając pipeline przed podjęciem
+niepełnej decyzji.
 
-Decyzja przekazywana do `AutoTradeEngine` trafia następnie do payloadów sygnałów
-oraz statusów (`regime_update`, `entry_long`, `entry_short`). Operatorzy mogą
-wykorzystać te dane do filtrowania raportów, walidacji licencyjnej i
-monitorowania pokrycia danych.
+## Wersjonowanie presetów i metadane HMAC
 
-## Aktualizacja pluginów strategii
+Każdy zarejestrowany preset otrzymuje strukturę `PresetVersionInfo`, która
+zawiera:
 
-Wbudowane pluginy (`TrendFollowingStrategy`, `DayTradingStrategy`,
-`MeanReversionStrategy`, `ArbitrageStrategy`) zostały uzupełnione o
-metadane kompatybilne z katalogiem strategii:
+- skrót SHA-256 payloadu,
+- podpis HMAC (`build_hmac_signature`) z identyfikatorem klucza,
+- znacznik czasu `issued_at` (UTC),
+- snapshot metadanych strategii (`strategy_keys`, `license_tiers`,
+  `risk_classes`, `required_data`, `capabilities`, `tags`).
 
-| Strategia             | License tier   | Klasy ryzyka                   | Wymagane dane                         | Capability         |
-|-----------------------|----------------|--------------------------------|---------------------------------------|--------------------|
-| trend_following       | `standard`     | `directional`, `momentum`      | `ohlcv`, `technical_indicators`       | `trend_d1`         |
-| day_trading          | `standard`     | `intraday`, `momentum`         | `ohlcv`, `technical_indicators`       | `day_trading`      |
-| mean_reversion       | `professional` | `statistical`, `mean_reversion`| `ohlcv`, `spread_history`             | `mean_reversion`   |
-| arbitrage            | `enterprise`   | `arbitrage`, `liquidity`       | `order_book`, `latency_monitoring`    | `cross_exchange`   |
+Version info pozwala audytować zmiany presetów (np. na potrzeby mostów
+konfiguracyjnych) i potwierdzać integralność payloadu po stronie
+`DecisionOrchestrator`.
 
-Metadane są wykorzystywane zarówno przez workflow, jak i fallbackowy tryb
-autotradera, który agreguje wymagania licencyjne dla zestawu wag wynikowych.
+## Struktury domenowe
 
-## Integracja z autotraderem
+Nowy workflow udostępnia dodatkowe struktury ułatwiające raportowanie i
+monitorowanie:
 
-`AutoTradeEngine` umieszcza metadane w:
+- `RegimePresetActivation` – pełny wynik aktywacji (regime, preset, wersja,
+  kandydaci decyzji, flagi fallbacku/blokad, brakujące dane, ostrzeżenia
+  licencyjne).
+- `PresetAvailability` – raport gotowości presetu względem wymagań danych,
+  harmonogramu i licencji.
+- `ActivationHistoryStats`, `ActivationTransitionStats`,
+  `ActivationCadenceStats`, `ActivationUptimeStats` – statystyki historii
+  aktywacji (liczniki reżimów, macierze przejść, kadencja, uptime presetów,
+  częstotliwość fallbacków, agregacja powodów blokad i braków danych).
 
-- payloadzie sygnałów (`EventType.SIGNAL`) w sekcji `metadata`,
-- statusach wejścia (`entry_long`, `entry_short`),
-- aktualizacjach reżimu (`regime_update`).
+## Katalog strategii i metadane
 
-Dzięki temu UI oraz mosty konfiguracyjne otrzymują takie same informacje,
-jak scheduler i katalog strategii. Wszystkie listy w metadanych są
-normalizowane i deduplikowane, aby ułatwić raportowanie.
+`StrategyPresetWizard` korzysta z wpisów `StrategyCatalog`, dlatego metadane
+presetów są zgodne z definicjami silników strategii. Poniższa tabela przedstawia
+wybrane klucze dostępne w katalogu domyślnym:
+
+| Silnik (`StrategyCatalog`) | License tier | Klasy ryzyka | Wymagane dane | Capability | Tagi domyślne |
+|----------------------------|--------------|--------------|---------------|------------|---------------|
+| `daily_trend_momentum`     | `standard`   | `directional`, `momentum` | `ohlcv`, `technical_indicators` | `trend_d1` | `trend`, `momentum` |
+| `scalping`                 | `professional` | `intraday`, `scalping` | `ohlcv`, `order_book` | `scalping` | `intraday`, `scalping` |
+| `options_income`           | `enterprise` | `derivatives`, `income` | `options_chain`, `greeks`, `ohlcv` | `options_income` | `options`, `income` |
+| `mean_reversion`           | `professional` | `statistical`, `mean_reversion` | `ohlcv`, `spread_history` | `mean_reversion` | `mean_reversion`, `stat_arbitrage` |
+| `cross_exchange_arbitrage` | `enterprise` | `arbitrage`, `liquidity` | `order_book`, `latency_monitoring` | `cross_exchange` | `arbitrage`, `liquidity` |
+
+Te metadane są agregowane i deduplikowane w trakcie aktywacji, dzięki czemu
+payloady decyzji zawierają znormalizowane listy licencji, klas ryzyka i tagów.
+
+## Przykładowe przepływy aktywacji
+
+1. **Standardowa aktywacja** – dla reżimu TREND workflow używa presetu
+   `daily_trend_momentum`, generuje kandydatów decyzji i zapisuje wpis w
+   historii. Metadane wersji potwierdzają podpis HMAC oraz wykorzystany katalog.
+2. **Fallback przy brakujących danych** – jeśli reżim MEAN_REVERSION wymaga
+   `spread_history`, a dane nie są dostępne, aktywacja zostaje oznaczona jako
+   `missing_data`, po czym workflow przełącza się na preset awaryjny (np.
+   `scalping`). W historii pojawia się wpis z `used_fallback=True`.
+3. **Blokada licencji** – gdy strażnik licencyjny (`get_capability_guard`) nie
+   potwierdzi capability presetu (np. `options_income` bez aktywnej licencji),
+   aktywacja jest oznaczona `license_blocked`, a workflow wymusza fallback lub
+   zgłasza wyjątek przy jego braku. Informacja o blokadzie jest dostępna w
+   `RegimePresetActivation.license_issues` oraz agregowana w raportach historii.
+
+## Raporty historii i monitorowanie
+
+Metody `activation_history()`, `activation_history_stats()`,
+`activation_transition_stats()`, `activation_cadence_stats()` oraz
+`activation_uptime_stats()` umożliwiają:
+
+- budowę dashboardów uptime/użycia strategii,
+- analizę przejść między reżimami i fallbackami,
+- monitorowanie najczęstszych powodów blokad i braków danych,
+- walidację kadencji aktywacji względem harmonogramów i progów klasyfikatora.
+
+Dzięki limitom historii (`activation_history_limit`) workflow zachowuje
+pamięć ostatnich aktywacji przy minimalnym narzucie pamięciowym.
+
+## Integracja z warstwą decyzyjną
+
+Workflow buduje kandydatów `DecisionCandidate` w oparciu o zarejestrowany preset
+(oraz deduplikowane metadane). Wersja presetu towarzyszy każdemu kandydatowi,
+pozwalając `DecisionOrchestrator` i raportom UI odtwarzać kontekst decyzji oraz
+licencje wymagane do ich wykonania.
 
 ## Testy regresyjne
 
-Testy `tests/test_regime_switch_workflow.py` oraz
-`tests/test_auto_trade_engine_native.py` weryfikują obecność i poprawność nowych
-metadanych, chroniąc pipeline decyzyjny przed regresjami.
+Scenariusze referencyjne znajdują się w
+`tests/strategies/test_regime_workflow.py` i obejmują m.in. przełączanie presetów,
+fallback przy brakach danych, walidację podpisów HMAC oraz raporty historii
+aktywacji.

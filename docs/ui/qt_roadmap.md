@@ -6,19 +6,32 @@
 2. **Monitoring** – widok sytuacyjny łączący dane rynkowe, sygnały strategii oraz historię klasyfikacji `MarketRegimeClassifier`.
 3. **Kontrola licencji i fingerprintu** – moduł odpowiedzialny za aktywację, audyt oraz egzekwowanie polityki bezpieczeństwa.
 
+## Strategy Workbench ↔ StrategyRegimeWorkflow
+
+* Mostkowanie z `Strategy Workbench` poprzez wywołanie `python scripts/ui_config_bridge.py --describe-catalog` (lub aliasu pakietowego) w celu pobrania aktualnych opisów strategii, statusów dostępności oraz podpisanych wersji presetów.
+* Uruchamianie kreatora presetów (`python scripts/ui_config_bridge.py --preset-wizard --wizard-mode build --input preset_payload.json`) z przekazaniem parametrów kontekstowych wybranych w UI i obsługą zwrotów dotyczących zgodności podpisów.
+* Prezentowanie operatorowi w UI: raportów dostępności strategii, wyników walidacji podpisów, historii wersji presetów oraz sugerowanych działań naprawczych przekazanych przez mostek.
+* Propagowanie do backendu zmian zatwierdzonych w UI (aktualizacje wag reżimów, aktywacje presetów) wraz z metadanymi audytowymi wymaganymi przez `StrategyRegimeWorkflow`.
+
+### Wymagania mostka konfiguracyjnego
+
+* Ścieżka do interpretera Pythona i skryptu mostka są konfigurowane flagami `--strategy-config-python` oraz `--strategy-config-bridge` (lub odpowiadającymi im zmiennymi środowiskowymi), zgodnie z opisem w `ui/README.md`.
+* Wszystkie wspierane flagi (`--describe-catalog`, `--preset-wizard`, `--wizard-mode`, `--input`, `--config`, `--apply`, `--dump`, `--section`, `--scheduler`) są udokumentowane w `scripts/ui_config_bridge.py` i stanowią źródło prawdy dla roadmapy.
+
 ## Kamienie milowe
 
 ### M1 – Fundamenty aplikacji (Sprinty 1-2)
 
 * Skeleton aplikacji Qt (Qt6/QML) z modułem startowym i konfiguracją buildów wieloplatformowych.
-* Integracja z silnikiem tradingowym poprzez warstwę usługową (`TradingEngine`, `StrategyCatalog`, `RegimeSwitchWorkflow`).
+* Integracja z silnikiem tradingowym poprzez warstwę usługową (`TradingEngine`, `StrategyCatalog`, `StrategyRegimeWorkflow`), wraz z obsługą API mostka udostępniającego raporty dostępności strategii oraz metadane wersji presetów konsumowanych przez powłokę Qt.
 * System modułów w UI (pluginy UI) pozwalający na dynamiczne dodawanie widoków.
 
 ### M2 – Konfiguracja strategii (Sprinty 3-4)
 
 * Kreator strategii oparty na `TradingParameters` z walidacją w czasie rzeczywistym.
 * Biblioteka presetów strategii (trend, day-trading, mean-reversion, arbitraż) z możliwością duplikacji i edycji.
-* Widok mapowania strategii na reżimy (wykorzystanie `RegimeSwitchWorkflow`) – edycja wag, progów przełączania, wersjonowanie konfiguracji.
+* Widok mapowania strategii na reżimy (wykorzystanie `StrategyRegimeWorkflow`) – edycja wag, progów przełączania, wersjonowanie konfiguracji oraz prezentacja raportów dostępności i historii wersji presetów zwróconych przez API mostka.
+* Obsługa podpisów kryptograficznych presetów (walidacja i oznaczanie statusu w UI) w oparciu o dane z backendowego katalogu strategii.
 
 ### M3 – Monitoring i telemetria (Sprinty 5-6)
 
@@ -30,6 +43,7 @@
 
 * Ekran zarządzania licencjami: aktywacja, przypisanie do urządzenia, wygasanie, historia.
 * Moduł fingerprint: generowanie identyfikatora sprzętowego, detekcja zmian, alerty bezpieczeństwa.
+* Raportowanie blokad licencyjnych (synchronizacja z backendem, powiadomienia operatora i eksport logów audytowych).
 * Integracja z serwerem licencyjnym (REST/gRPC) z obsługą offline cache i harmonogramem odświeżania.
 
 ### M5 – Twarde testy i wydanie (Sprinty 9-10)

@@ -6,6 +6,8 @@ import sys
 import textwrap
 from pathlib import Path
 
+import pytest
+
 from scripts.promotion_to_live import build_promotion_report
 
 
@@ -108,3 +110,21 @@ def test_cli_execution_writes_report(tmp_path: Path) -> None:
     payload = json.loads(output_path.read_text(encoding="utf-8"))
     assert payload["environment"] == "binance_live"
     assert payload["live_readiness_metadata"]["documents"][0]["name"] == "kyc_packet"
+
+
+def test_promotion_report_blocks_on_guardrail(tmp_path: Path) -> None:
+    config_path = tmp_path / "core.yaml"
+    _write_core_config(config_path)
+    summary_path = tmp_path / "summary.json"
+    summary_path.write_text(
+        json.dumps({"guardrails": {"allowed": False, "reason": "max drawdown breached"}}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(RuntimeError):
+        build_promotion_report(
+            "binance_live",
+            config_path=config_path,
+            skip_license=True,
+            backtest_summary_path=summary_path,
+        )

@@ -5,6 +5,9 @@
 
 namespace bot::shell::utils {
 
+//! Expand environment placeholders (e.g. $VAR or %VAR%) without normalizing the result.
+QString expandEnvironmentPlaceholders(const QString& text);
+
 //! Expand paths supporting '~' and relative segments using current working directory.
 QString expandPath(const QString& path);
 

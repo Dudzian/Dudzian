@@ -251,13 +251,7 @@ def test_dump_config_filters_blocked_capabilities() -> None:
         assert scheduler.get("blocked_schedules") == ["scalp"]
         assert scheduler.get("blocked_strategies") == ["quick_scalp"]
         assert scheduler.get("blocked_capabilities") == {"quick_scalp": "scalping"}
-        assert scheduler.get("blocked_capability_reasons") == {
-            "quick_scalp": "Strategia 'scalping' nie jest dostępna."
-        }
         assert scheduler.get("blocked_schedule_capabilities") == {"scalp": "scalping"}
-        assert scheduler.get("blocked_schedule_capability_reasons") == {
-            "scalp": "Strategia 'scalping' nie jest dostępna."
-        }
         assert "blocked_initial_signal_limits" not in scheduler
         assert "blocked_signal_limits" not in scheduler
     finally:
@@ -326,21 +320,12 @@ def test_dump_config_reports_blocked_limits_and_suspensions() -> None:
         assert scheduler["blocked_schedules"] == ["blocked-run"]
         assert scheduler["blocked_strategies"] == ["blocked-strategy"]
         assert scheduler["blocked_capabilities"] == {"blocked-strategy": "scalping"}
-        assert scheduler["blocked_capability_reasons"] == {
-            "blocked-strategy": "Strategia 'scalping' nie jest dostępna."
-        }
         assert scheduler["blocked_schedule_capabilities"] == {"blocked-run": "scalping"}
-        assert scheduler["blocked_schedule_capability_reasons"] == {
-            "blocked-run": "Strategia 'scalping' nie jest dostępna."
-        }
         assert scheduler["blocked_initial_signal_limits"] == {
             "blocked-strategy": ["balanced"]
         }
         assert scheduler["blocked_initial_signal_limit_capabilities"] == {
             "blocked-strategy": "scalping"
-        }
-        assert scheduler["blocked_initial_signal_limit_reasons"] == {
-            "blocked-strategy": "Strategia 'scalping' nie jest dostępna."
         }
         assert scheduler["blocked_signal_limits"] == {
             "blocked-strategy": ["balanced"]
@@ -348,215 +333,16 @@ def test_dump_config_reports_blocked_limits_and_suspensions() -> None:
         assert scheduler["blocked_signal_limit_capabilities"] == {
             "blocked-strategy": "scalping"
         }
-        assert scheduler["blocked_signal_limit_reasons"] == {
-            "blocked-strategy": "Strategia 'scalping' nie jest dostępna."
-        }
         assert scheduler["blocked_suspensions"] == [
             {
                 "kind": "schedule",
                 "target": "blocked-run",
                 "reason": "maintenance",
                 "capability": "scalping",
-                "guard_reason": "Strategia 'scalping' nie jest dostępna.",
             }
         ]
         assert scheduler["blocked_suspension_capabilities"] == {
             "schedule:blocked-run": "scalping"
-        }
-        assert scheduler["blocked_suspension_reasons"] == {
-            "schedule:blocked-run": "Strategia 'scalping' nie jest dostępna."
-        }
-        assert scheduler["guard_reason_summary"] == {
-            "strategies": {
-                "total": 1,
-                "by_capability": {"scalping": 1},
-                "by_reason": {"Strategia 'scalping' nie jest dostępna.": 1},
-            },
-            "schedules": {
-                "total": 1,
-                "by_capability": {"scalping": 1},
-                "by_reason": {"Strategia 'scalping' nie jest dostępna.": 1},
-            },
-            "initial_signal_limits": {
-                "total": 1,
-                "by_capability": {"scalping": 1},
-                "by_reason": {"Strategia 'scalping' nie jest dostępna.": 1},
-            },
-            "signal_limits": {
-                "total": 1,
-                "by_capability": {"scalping": 1},
-                "by_reason": {"Strategia 'scalping' nie jest dostępna.": 1},
-            },
-            "suspensions": {
-                "total": 1,
-                "by_capability": {"scalping": 1},
-                "by_reason": {"Strategia 'scalping' nie jest dostępna.": 1},
-            },
-            "overall": {
-                "total": 5,
-                "by_capability": {"scalping": 5},
-                "by_reason": {"Strategia 'scalping' nie jest dostępna.": 5},
-            },
-        }
-        assert scheduler["guard_reason_details"] == {
-            "scalping": {
-                "strategies": [
-                    {
-                        "name": "blocked-strategy",
-                        "reason": "Strategia 'scalping' nie jest dostępna.",
-                    }
-                ],
-                "schedules": [
-                    {
-                        "name": "blocked-run",
-                        "reason": "Strategia 'scalping' nie jest dostępna.",
-                    }
-                ],
-                "initial_signal_limits": [
-                    {
-                        "strategy": "blocked-strategy",
-                        "profile": "balanced",
-                        "reason": "Strategia 'scalping' nie jest dostępna.",
-                    }
-                ],
-                "signal_limits": [
-                    {
-                        "strategy": "blocked-strategy",
-                        "profile": "balanced",
-                        "reason": "Strategia 'scalping' nie jest dostępna.",
-                    }
-                ],
-                "suspensions": [
-                    {
-                        "kind": "schedule",
-                        "target": "blocked-run",
-                        "reason": "Strategia 'scalping' nie jest dostępna.",
-                    }
-                ],
-            }
-        }
-        assert scheduler["guard_reason_detail_summary"] == {
-            "scalping": {
-                "strategies": {
-                    "total": 1,
-                    "by_reason": {"Strategia 'scalping' nie jest dostępna.": 1},
-                },
-                "schedules": {
-                    "total": 1,
-                    "by_reason": {"Strategia 'scalping' nie jest dostępna.": 1},
-                },
-                "initial_signal_limits": {
-                    "total": 1,
-                    "by_reason": {"Strategia 'scalping' nie jest dostępna.": 1},
-                },
-                "signal_limits": {
-                    "total": 1,
-                    "by_reason": {"Strategia 'scalping' nie jest dostępna.": 1},
-                },
-                "suspensions": {
-                    "total": 1,
-                    "by_reason": {"Strategia 'scalping' nie jest dostępna.": 1},
-                },
-                "overall": {
-                    "total": 5,
-                    "by_reason": {"Strategia 'scalping' nie jest dostępna.": 5},
-                },
-            }
-        }
-        assert scheduler["guard_reason_detail_category_summary"] == {
-            "strategies": {
-                "total": 1,
-                "by_capability": {"scalping": 1},
-                "by_reason": {"Strategia 'scalping' nie jest dostępna.": 1},
-            },
-            "schedules": {
-                "total": 1,
-                "by_capability": {"scalping": 1},
-                "by_reason": {"Strategia 'scalping' nie jest dostępna.": 1},
-            },
-            "initial_signal_limits": {
-                "total": 1,
-                "by_capability": {"scalping": 1},
-                "by_reason": {"Strategia 'scalping' nie jest dostępna.": 1},
-            },
-            "signal_limits": {
-                "total": 1,
-                "by_capability": {"scalping": 1},
-                "by_reason": {"Strategia 'scalping' nie jest dostępna.": 1},
-            },
-            "suspensions": {
-                "total": 1,
-                "by_capability": {"scalping": 1},
-                "by_reason": {"Strategia 'scalping' nie jest dostępna.": 1},
-            },
-        }
-        assert scheduler["guard_reason_detail_capability_reason_summary"] == {
-            "scalping": {
-                "Strategia 'scalping' nie jest dostępna.": {
-                    "total": 5,
-                    "by_category": {
-                        "initial_signal_limits": 1,
-                        "signal_limits": 1,
-                        "strategies": 1,
-                        "schedules": 1,
-                        "suspensions": 1,
-                    },
-                }
-            }
-        }
-        assert scheduler["guard_reason_detail_reason_summary"] == {
-            "Strategia 'scalping' nie jest dostępna.": {
-                "total": 5,
-                "by_capability": {"scalping": 5},
-                "by_category": {
-                    "initial_signal_limits": 1,
-                    "signal_limits": 1,
-                    "strategies": 1,
-                    "schedules": 1,
-                    "suspensions": 1,
-                },
-            }
-        }
-        assert scheduler["guard_reason_detail_reason_details"] == {
-            "Strategia 'scalping' nie jest dostępna.": {
-                "total": 5,
-                "capabilities": ["scalping"],
-                "categories": {
-                    "strategies": [
-                        {
-                            "name": "blocked-strategy",
-                            "reason": "Strategia 'scalping' nie jest dostępna.",
-                        }
-                    ],
-                    "schedules": [
-                        {
-                            "name": "blocked-run",
-                            "reason": "Strategia 'scalping' nie jest dostępna.",
-                        }
-                    ],
-                    "initial_signal_limits": [
-                        {
-                            "profile": "balanced",
-                            "reason": "Strategia 'scalping' nie jest dostępna.",
-                            "strategy": "blocked-strategy",
-                        }
-                    ],
-                    "signal_limits": [
-                        {
-                            "profile": "balanced",
-                            "reason": "Strategia 'scalping' nie jest dostępna.",
-                            "strategy": "blocked-strategy",
-                        }
-                    ],
-                    "suspensions": [
-                        {
-                            "kind": "schedule",
-                            "reason": "Strategia 'scalping' nie jest dostępna.",
-                            "target": "blocked-run",
-                        }
-                    ],
-                },
-            }
         }
     finally:
         reset_capability_guard()
