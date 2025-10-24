@@ -348,6 +348,7 @@ Application::Application(QQmlApplicationEngine& engine, QObject* parent)
             m_supportController->setScriptPath(QDir(m_repoRoot).absoluteFilePath(QStringLiteral("scripts/export_support_bundle.py")));
         else
             m_supportController->setScriptPath(QDir::current().absoluteFilePath(QStringLiteral("scripts/export_support_bundle.py")));
+        updateSupportBundleMetadata();
     }
 
     initializeSecurityRefresh();
@@ -393,6 +394,7 @@ Application::Application(QQmlApplicationEngine& engine, QObject* parent)
             [this](const QString& status) {
                 m_connectionStatus = status;
                 Q_EMIT connectionStatusChanged();
+                updateSupportBundleMetadata();
             });
 
     connect(&m_client, &TradingClient::performanceGuardUpdated, this,
@@ -415,6 +417,7 @@ Application::Application(QQmlApplicationEngine& engine, QObject* parent)
                                   : QStringLiteral("idle");
         m_connectionStatus = state;
         Q_EMIT connectionStatusChanged();
+        updateSupportBundleMetadata();
     });
 
     // Risk state (jeśli dostępne po stronie serwera)
@@ -1739,14 +1742,7 @@ void Application::configureSupportBundle(const QCommandLineParser& parser)
     }
     m_supportController->setExtraIncludeSpecs(extraSpecs);
 
-    QVariantMap metadata;
-    metadata.insert(QStringLiteral("origin"), QStringLiteral("desktop_ui"));
-    metadata.insert(QStringLiteral("instrument"), instrumentLabel());
-    metadata.insert(QStringLiteral("exchange"), m_instrument.exchange);
-    metadata.insert(QStringLiteral("symbol"), m_instrument.symbol);
-    metadata.insert(QStringLiteral("connection_status"), m_connectionStatus);
-    metadata.insert(QStringLiteral("app_version"), QCoreApplication::applicationVersion());
-    metadata.insert(QStringLiteral("hostname"), QSysInfo::machineHostName());
+    QVariantMap overrides;
 
     const auto applyMetadata = [&](const QString& rawSpec) {
         const QString trimmed = rawSpec.trimmed();
@@ -1761,13 +1757,37 @@ void Application::configureSupportBundle(const QCommandLineParser& parser)
         const QString value = trimmed.mid(eq + 1).trimmed();
         if (key.isEmpty())
             return;
-        metadata.insert(key, value);
+        overrides.insert(key, value);
     };
 
     for (const QString& spec : metadataEnv)
         applyMetadata(spec);
     for (const QString& spec : metadataCli)
         applyMetadata(spec);
+    m_supportMetadataOverrides = overrides;
+    updateSupportBundleMetadata();
+}
+
+void Application::updateSupportBundleMetadata()
+{
+    if (!m_supportController)
+        return;
+
+    QVariantMap metadata;
+    metadata.insert(QStringLiteral("origin"), QStringLiteral("desktop_ui"));
+    metadata.insert(QStringLiteral("instrument"), instrumentLabel());
+    metadata.insert(QStringLiteral("exchange"), m_instrument.exchange);
+    metadata.insert(QStringLiteral("symbol"), m_instrument.symbol);
+    metadata.insert(QStringLiteral("connection_status"), m_connectionStatus);
+    metadata.insert(QStringLiteral("app_version"), QCoreApplication::applicationVersion());
+    metadata.insert(QStringLiteral("hostname"), QSysInfo::machineHostName());
+
+    for (auto it = m_supportMetadataOverrides.constBegin(); it != m_supportMetadataOverrides.constEnd(); ++it) {
+        const QString key = it.key().trimmed();
+        if (key.isEmpty())
+            continue;
+        metadata.insert(key, it.value());
+    }
 
     m_supportController->setMetadata(metadata);
 }
@@ -2846,6 +2866,7 @@ void Application::handleOfflineStatusChanged(const QString& status)
         if (m_connectionStatus != status) {
             m_connectionStatus = status;
             Q_EMIT connectionStatusChanged();
+            updateSupportBundleMetadata();
         }
     }
 }
@@ -3223,6 +3244,7 @@ bool Application::updateInstrument(const QString& exchange,
     m_instrument = config;
     if (m_offlineBridge)
         m_offlineBridge->setInstrument(m_instrument);
+    updateSupportBundleMetadata();
     Q_EMIT instrumentChanged();
 
     if (wasStreaming && !m_offlineMode)
@@ -3607,7 +3629,6 @@ void Application::applyTradingAuthEnvironmentOverrides(const QCommandLineParser&
                                                        bool cliScopesProvided,
                                                        QString& tradingToken,
                                                        QString& tradingTokenFile)
-                                                       bool cliScopesProvided)
 {
     Q_UNUSED(parser);
 
@@ -3640,8 +3661,6 @@ void Application::applyTradingAuthEnvironmentOverrides(const QCommandLineParser&
             if (!tokenFromFile.isEmpty()) {
                 tradingToken = tokenFromFile;
                 tradingTokenFile = expandedPath;
-            const QString tokenFromFile = readTokenFile(envTokenFile->trimmed(), QStringLiteral("TradingService"));
-            if (!tokenFromFile.isEmpty()) {
                 m_tradingAuthToken = tokenFromFile;
                 applied = true;
             }
