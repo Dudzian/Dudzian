@@ -46,6 +46,7 @@ Drawer {
     property string decisionLogStatusMessage: ""
     property color decisionLogStatusColor: palette.highlight
     property var tradableInstrumentList: []
+    property int regimeTimelineMaximumSnapshots: 720
 
     function updateRiskSchedule() {
         if (typeof appController === "undefined")
@@ -84,6 +85,7 @@ Drawer {
             riskHistoryLastAutoExportAt = autoExportAt && autoExportAt.isValid && autoExportAt.isValid() ? autoExportAt : null
             var lastPathUrl = appController.riskHistoryLastAutoExportPath
             riskHistoryLastAutoExportPath = lastPathUrl && lastPathUrl.toLocalFile ? lastPathUrl.toLocalFile() : ""
+            regimeTimelineMaximumSnapshots = appController.regimeTimelineMaximumSnapshots
         }
         if (typeof strategyController !== "undefined") {
             var decisionSnapshot = strategyController.decisionConfigSnapshot()
@@ -881,6 +883,70 @@ Drawer {
                                 from: 0
                                 to: 120
                                 onValueModified: guardForm.disableSecondaryWhenBelow = value
+                            }
+                        }
+                    }
+
+                    GroupBox {
+                        title: qsTr("Strumień reżimu rynku")
+                        Layout.fillWidth: true
+
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            spacing: 8
+
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: 12
+
+                                Label {
+                                    text: qsTr("Limit próbek osi czasu")
+                                    Layout.alignment: Qt.AlignVCenter
+                                }
+
+                                SpinBox {
+                                    id: regimeLimitSpin
+                                    Layout.fillWidth: true
+                                    from: 0
+                                    to: 5000
+                                    stepSize: 10
+                                    editable: true
+                                    value: Math.max(0, regimeTimelineMaximumSnapshots)
+                                    textFromValue: function(value, locale) {
+                                        if (value === 0)
+                                            return qsTr("0 (bez limitu)")
+                                        return Qt.formatLocaleNumber(value, 'f', 0, locale)
+                                    }
+                                    valueFromText: function(text, locale) {
+                                        var trimmed = text.trim()
+                                        if (trimmed.length === 0)
+                                            return regimeLimitSpin.value
+                                        var normalized = trimmed.replace(/\s+\(.+\)$/, "")
+                                        var parsed = Number.fromLocaleString(locale, normalized)
+                                        if (isNaN(parsed))
+                                            parsed = parseInt(normalized)
+                                        if (isNaN(parsed))
+                                            return regimeLimitSpin.value
+                                        return Math.max(from, Math.min(to, Math.round(parsed)))
+                                    }
+                                    onValueModified: regimeTimelineMaximumSnapshots = value
+                                    Binding {
+                                        target: regimeLimitSpin
+                                        property: "value"
+                                        value: Math.max(0, regimeTimelineMaximumSnapshots)
+                                        when: !regimeLimitSpin.activeFocus
+                                    }
+                                }
+                            }
+
+                            Label {
+                                Layout.fillWidth: true
+                                wrapMode: Text.WordWrap
+                                color: palette.mid
+                                text: regimeTimelineMaximumSnapshots === 0
+                                      ? qsTr("0 oznacza brak limitu – wszystkie migawki reżimu zostaną zachowane.")
+                                      : qsTr("Widoki zachowają maksymalnie %1 najnowszych migawek reżimu.")
+                                            .arg(regimeTimelineMaximumSnapshots)
                             }
                         }
                     }
@@ -2035,7 +2101,9 @@ Drawer {
                                             guardForm.jankThresholdMs || 18,
                                             guardForm.maxOverlayCount || 3,
                                             guardForm.disableSecondaryWhenBelow || 0)
-                                if (okInstrument && okGuard) {
+                                const okRegime = appController.setRegimeTimelineMaximumSnapshots(
+                                                Math.max(0, regimeTimelineMaximumSnapshots))
+                                if (okInstrument && okGuard && okRegime) {
                                     statusMessage = qsTr("Zapisano konfigurację strategii")
                                     statusColor = Qt.rgba(0.3, 0.7, 0.4, 1)
                                 } else {
@@ -3014,6 +3082,7 @@ Drawer {
         target: appController
         function onInstrumentChanged() { adminPanel.syncForms() }
         function onPerformanceGuardChanged() { adminPanel.syncForms() }
+        function onRegimeTimelineMaximumSnapshotsChanged() { adminPanel.syncForms() }
         function onRiskRefreshScheduleChanged() { adminPanel.updateRiskSchedule() }
     }
 }
