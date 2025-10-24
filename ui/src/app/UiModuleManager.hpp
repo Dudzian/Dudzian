@@ -19,26 +19,6 @@ class UiModuleManager : public QObject {
     Q_OBJECT
 
 public:
-    struct PluginLoadError {
-        QString path;
-        QString message;
-    };
-
-    struct LoadReport {
-        QStringList requestedPaths;
-        QStringList missingPaths;
-        QStringList invalidEntries;
-        QStringList loadedPlugins;
-        QVector<PluginLoadError> failedPlugins;
-        int directoriesScanned = 0;
-        int filesScanned = 0;
-        int pluginsLoaded = 0;
-        int viewsRegistered = 0;
-        int servicesRegistered = 0;
-
-        QVariantMap toVariantMap() const;
-    };
-
     struct ViewDescriptor {
         QString id;
         QString name;
@@ -65,8 +45,6 @@ public:
     bool unregisterService(const QString& serviceId);
 
     Q_INVOKABLE QVariantList availableViews(const QString& category = QString()) const;
-    Q_INVOKABLE QVariantList availableServices() const;
-    Q_INVOKABLE QVariantMap serviceDescriptor(const QString& serviceId) const;
     Q_INVOKABLE QObject* resolveService(const QString& serviceId) const;
 
     bool hasService(const QString& serviceId) const;
@@ -76,7 +54,6 @@ public:
     QStringList pluginPaths() const;
 
     virtual bool loadPlugins(const QStringList& candidates = {});
-    Q_INVOKABLE QVariantMap lastLoadReport() const;
     void unloadPlugins();
 
     void registerModule(UiModuleInterface* module);
@@ -84,11 +61,8 @@ public:
 signals:
     void viewRegistered(const QString& moduleId, const QVariantMap& descriptor);
     void viewUnregistered(const QString& moduleId, const QString& viewId);
-    void serviceRegistered(const QString& moduleId, const QVariantMap& descriptor);
+    void serviceRegistered(const QString& moduleId, const QString& serviceId);
     void serviceUnregistered(const QString& moduleId, const QString& serviceId);
-
-protected:
-    void setLastLoadReportForTesting(const LoadReport& report);
 
 private:
     struct ViewEntry {
@@ -103,11 +77,9 @@ private:
     };
 
     QVariantMap serializeView(const ViewDescriptor& descriptor, const QString& moduleId) const;
-    QVariantMap serializeService(const ServiceDescriptor& descriptor, const QString& moduleId) const;
     QObject* ensureServiceInstance(ServiceEntry& entry) const;
     bool isValidLibraryPath(const QString& path) const;
 
-    LoadReport m_lastLoadReport;
     QHash<QString, ViewEntry> m_views;
     QHash<QString, ServiceEntry> m_services;
     QStringList m_pluginPaths;

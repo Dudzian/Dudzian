@@ -13,7 +13,6 @@ class UiModuleViewsModelTest : public QObject {
 private slots:
     void reflectsRegisteredViews();
     void filtersByCategory();
-    void filtersBySearchQuery();
     void removesViewsOnUnregister();
     void listsCategories();
 };
@@ -71,61 +70,6 @@ void UiModuleViewsModelTest::filtersByCategory()
     QCOMPARE(model.rowCount(), 2);
     QCOMPARE(model.viewAt(0).value(QStringLiteral("name")).toString(), QStringLiteral("Alpha"));
     QCOMPARE(model.viewAt(1).value(QStringLiteral("name")).toString(), QStringLiteral("Beta"));
-}
-
-void UiModuleViewsModelTest::filtersBySearchQuery()
-{
-    UiModuleManager manager;
-    UiModuleViewsModel model;
-    model.setModuleManager(&manager);
-
-    UiModuleManager::ViewDescriptor riskView;
-    riskView.id = QStringLiteral("risk");
-    riskView.name = QStringLiteral("Risk Overview");
-    riskView.source = QUrl(QStringLiteral("qrc:/risk.qml"));
-    riskView.category = QStringLiteral("analytics");
-    riskView.metadata.insert(QStringLiteral("tags"), QStringList{QStringLiteral("risk"), QStringLiteral("portfolio")});
-    riskView.metadata.insert(QStringLiteral("description"), QStringLiteral("Global risk dashboard"));
-    QVERIFY(manager.registerView(QStringLiteral("analytics.core"), riskView));
-
-    UiModuleManager::ViewDescriptor supportView;
-    supportView.id = QStringLiteral("support");
-    supportView.name = QStringLiteral("Support Tools");
-    supportView.source = QUrl(QStringLiteral("qrc:/support.qml"));
-    supportView.category = QStringLiteral("operations");
-    supportView.metadata.insert(QStringLiteral("owner"), QStringLiteral("Support"));
-    QVERIFY(manager.registerView(QStringLiteral("support.tools"), supportView));
-
-    UiModuleManager::ViewDescriptor neutralView;
-    neutralView.id = QStringLiteral("neutral");
-    neutralView.name = QStringLiteral("Neutral View");
-    neutralView.source = QUrl(QStringLiteral("qrc:/neutral.qml"));
-    QVERIFY(manager.registerView(QStringLiteral("core.metrics"), neutralView));
-
-    QCOMPARE(model.rowCount(), 3);
-
-    model.setSearchFilter(QStringLiteral("risk"));
-    QCOMPARE(model.rowCount(), 1);
-    QCOMPARE(model.viewAt(0).value(QStringLiteral("id")).toString(), QStringLiteral("risk"));
-
-    model.setSearchFilter(QStringLiteral("support"));
-    QCOMPARE(model.rowCount(), 1);
-    QCOMPARE(model.viewAt(0).value(QStringLiteral("id")).toString(), QStringLiteral("support"));
-
-    model.setSearchFilter(QStringLiteral("analytics"));
-    QCOMPARE(model.rowCount(), 1);
-    QCOMPARE(model.viewAt(0).value(QStringLiteral("id")).toString(), QStringLiteral("risk"));
-
-    model.setCategoryFilter(QStringLiteral("analytics"));
-    model.setSearchFilter(QStringLiteral("portfolio"));
-    QCOMPARE(model.rowCount(), 1);
-    QCOMPARE(model.viewAt(0).value(QStringLiteral("id")).toString(), QStringLiteral("risk"));
-
-    model.setSearchFilter(QStringLiteral("tools"));
-    QCOMPARE(model.rowCount(), 0);
-
-    model.setSearchFilter(QString());
-    QCOMPARE(model.rowCount(), 1);
 }
 
 void UiModuleViewsModelTest::removesViewsOnUnregister()

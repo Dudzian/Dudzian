@@ -4,8 +4,11 @@ import pytest
 
 from dataclasses import replace
 
-import pandas as pd
+from datetime import datetime, timezone
 from types import MappingProxyType
+from typing import Iterable
+
+import pandas as pd
 
 from bot_core.ai.regime import (
     MarketRegime,
@@ -22,8 +25,20 @@ from bot_core.trading.auto_trade import (
     RiskFreezeSnapshot,
 )
 from bot_core.trading.engine import TradingParameters
-from bot_core.trading.regime_workflow import RegimeSwitchDecision
 from bot_core.trading.strategies import StrategyCatalog, StrategyPlugin
+from bot_core.strategies.regime_workflow import (
+    PresetVersionInfo,
+    RegimePresetActivation,
+)
+from bot_core.trading.regime_workflow import RegimeSwitchDecision
+
+
+_ENGINE_MAPPING = {
+    "trend_following": "daily_trend_momentum",
+    "day_trading": "day_trading",
+    "mean_reversion": "mean_reversion",
+    "arbitrage": "cross_exchange_arbitrage",
+}
 
 
 def _make_sync_adapter() -> EmitterAdapter:
@@ -54,6 +69,68 @@ def _collect_status_payloads(adapter: EmitterAdapter) -> list[dict]:
 
     adapter.subscribe(EventType.AUTOTRADE_STATUS, _collect)
     return payloads
+
+
+def _activation_from_decision(decision: RegimeSwitchDecision) -> RegimePresetActivation:
+    issued_at = datetime(2024, 1, 1, 12, 0, tzinfo=timezone.utc)
+    version = PresetVersionInfo(
+        hash="stub-hash",
+        signature=MappingProxyType({"alg": "HMAC-SHA256", "key_id": "stub"}),
+        issued_at=issued_at,
+        metadata=MappingProxyType(
+            {
+                "name": "autotrade-stub",
+                "strategy_keys": tuple(decision.weights.keys()),
+                "strategy_names": tuple(decision.weights.keys()),
+                "license_tiers": decision.license_tiers,
+                "risk_classes": decision.risk_classes,
+                "required_data": decision.required_data,
+                "capabilities": decision.capabilities,
+                "tags": decision.tags,
+                "preset_metadata": {
+                    "ensemble_weights": dict(decision.weights),
+                },
+            }
+        ),
+    )
+    strategies: list[dict[str, object]] = []
+    for name, meta in decision.strategy_metadata.items():
+        metadata_payload = dict(meta)
+        metadata_payload.setdefault("name", name)
+        metadata_payload.setdefault("ensemble_weight", decision.weights.get(name, 0.0))
+        entry: dict[str, object] = {
+            "name": name,
+            "engine": _ENGINE_MAPPING.get(name, name),
+            "license_tier": meta.get("license_tier"),
+            "risk_classes": list(meta.get("risk_classes", ())),
+            "required_data": list(meta.get("required_data", ())),
+            "capability": meta.get("capability"),
+            "tags": list(meta.get("tags", ())),
+            "metadata": metadata_payload,
+        }
+        strategies.append(entry)
+    preset = MappingProxyType(
+        {
+            "name": "autotrade-stub",
+            "strategies": strategies,
+            "metadata": {"ensemble_weights": dict(decision.weights)},
+        }
+    )
+    return RegimePresetActivation(
+        regime=decision.regime,
+        assessment=decision.assessment,
+        summary=decision.summary,
+        preset=preset,
+        version=version,
+        decision_candidates=(),
+        activated_at=issued_at,
+        preset_regime=decision.regime,
+        used_fallback=False,
+        missing_data=(),
+        blocked_reason=None,
+        recommendation=None,
+        license_issues=(),
+    )
 
 
 def test_auto_trade_engine_generates_orders_and_signals(monkeypatch) -> None:
@@ -144,27 +221,32 @@ class _ConstantMeanStrategy(StrategyPlugin):
 
 
 class _WorkflowStub:
-    def __init__(self, decision: RegimeSwitchDecision, catalog: StrategyCatalog) -> None:
+    def __init__(self, activation: RegimePresetActivation, catalog: StrategyCatalog) -> None:
         classifier = MarketRegimeClassifier()
         self.classifier = classifier
         self.history = RegimeHistory(thresholds_loader=classifier.thresholds_loader)
         self.history.reload_thresholds(thresholds=classifier.thresholds_snapshot())
         self.catalog = catalog
-        self._decision = decision
-        self.last_decision = decision
-        self.calls: list[tuple[pd.DataFrame, TradingParameters, str | None]] = []
+        self._activation = activation
+        self.last_activation = activation
+        self.calls: list[tuple[pd.DataFrame, tuple[str, ...], str | None]] = []
 
-    def decide(
+    def activate(
         self,
         market_data: pd.DataFrame,
-        base_parameters: TradingParameters,
         *,
+        available_data: Iterable[str] = (),
         symbol: str | None = None,
-        parameter_overrides=None,
-    ) -> RegimeSwitchDecision:
-        self.calls.append((market_data.copy(), base_parameters, symbol))
-        self.history.update(self._decision.assessment)
-        return self._decision
+        now: datetime | None = None,
+    ) -> RegimePresetActivation:
+        self.calls.append((market_data.copy(), tuple(sorted(set(available_data))), symbol))
+        self.history.update(self._activation.assessment)
+        updated = replace(
+            self._activation,
+            activated_at=now or datetime.now(timezone.utc),
+        )
+        self.last_activation = updated
+        return updated
 
 
 def test_auto_trade_engine_uses_strategy_catalog(monkeypatch) -> None:
@@ -360,7 +442,8 @@ def test_auto_trade_engine_uses_regime_workflow_decision(monkeypatch) -> None:
         capabilities=("trend_d1", "mean_reversion"),
         tags=("trend", "mean_reversion"),
     )
-    workflow = _WorkflowStub(decision, catalog)
+    activation = _activation_from_decision(decision)
+    workflow = _WorkflowStub(activation, catalog)
 
     cfg = AutoTradeConfig(
         symbol="BTCUSDT",
@@ -378,6 +461,7 @@ def test_auto_trade_engine_uses_regime_workflow_decision(monkeypatch) -> None:
         regime_workflow=workflow,
     )
     engine.apply_params({"fast": 3, "slow": 8})
+    expected_params = engine._build_base_trading_parameters()
 
     base_time = 1_700_200_000.0
     current_time = {"value": base_time}
@@ -401,19 +485,33 @@ def test_auto_trade_engine_uses_regime_workflow_decision(monkeypatch) -> None:
         adapter.publish(EventType.MARKET_TICK, {"symbol": "BTCUSDT", "bar": bar})
 
     assert workflow.calls, "Expected regime workflow to be invoked"
-    call_params = workflow.calls[-1][1]
-    assert call_params.ema_fast_period == 3
-    assert call_params.ema_slow_period == 8
+    _, available_data, call_symbol = workflow.calls[-1]
+    assert call_symbol == cfg.symbol
+    assert "ohlcv" in available_data
     assert orders, "Expected workflow-driven decision to result in an order"
     assert signal_payloads, "Expected workflow-driven signal payloads"
     latest_signal = signal_payloads[-1]
     assert latest_signal["weights"] == decision.weights
     params_payload = latest_signal["strategy_parameters"]
-    assert params_payload["ema_fast_period"] == decision_params.ema_fast_period
-    assert params_payload["ema_slow_period"] == decision_params.ema_slow_period
+    assert params_payload["ema_fast_period"] == expected_params.ema_fast_period
+    assert params_payload["ema_slow_period"] == expected_params.ema_slow_period
     assert params_payload["ensemble_weights"] == decision_params.ensemble_weights
-    assert latest_signal["metadata"]["license_tiers"] == ["standard", "professional"]
-    assert engine.last_regime_decision is decision
+    assert params_payload["day_trading_momentum_window"] == expected_params.day_trading_momentum_window
+    assert params_payload["day_trading_volatility_window"] == expected_params.day_trading_volatility_window
+    metadata_block = latest_signal["metadata"]
+    assert metadata_block["license_tiers"] == ["standard", "professional"]
+    assert "activation" in metadata_block
+    activation_meta = metadata_block["activation"]
+    assert activation_meta["preset_name"] == "autotrade-stub"
+    assert activation_meta["used_fallback"] is False
+    assert engine.last_regime_decision is not None
+    assert engine.last_regime_decision.weights == decision.weights
+    expected_decision_params = replace(
+        expected_params,
+        ensemble_weights=decision_params.ensemble_weights,
+    )
+    assert engine.last_regime_decision.parameters == expected_decision_params
+    assert engine.last_regime_activation is not None
 
     entry_statuses = [st for st in statuses if st.get("status") in {"entry_long", "entry_short"}]
     assert entry_statuses, "Expected entry status to include workflow metadata"
@@ -421,6 +519,7 @@ def test_auto_trade_engine_uses_regime_workflow_decision(monkeypatch) -> None:
     assert last_entry["detail"]["regime"]["regime"] == assessment.regime.value
     assert "summary" in last_entry["detail"]
     assert last_entry["detail"]["metadata"]["capabilities"] == ["trend_d1", "mean_reversion"]
+    assert last_entry["detail"]["activation"]["preset_name"] == "autotrade-stub"
 
 
 class _DummySummary:
@@ -529,6 +628,28 @@ def test_auto_trade_snapshot_exposes_read_only_state(monkeypatch) -> None:
         metrics={},
         symbol="BTCUSDT",
     )
+    strategy_metadata = MappingProxyType(
+        {
+            "trend_following": MappingProxyType(
+                {
+                    "license_tier": "standard",
+                    "risk_classes": ("directional",),
+                    "required_data": ("ohlcv",),
+                    "capability": "trend_d1",
+                    "tags": ("trend",),
+                }
+            ),
+            "mean_reversion": MappingProxyType(
+                {
+                    "license_tier": "professional",
+                    "risk_classes": ("statistical",),
+                    "required_data": ("ohlcv", "spread_history"),
+                    "capability": "mean_reversion",
+                    "tags": ("mean_reversion",),
+                }
+            ),
+        }
+    )
     decision = RegimeSwitchDecision(
         regime=assessment.regime,
         assessment=assessment,
@@ -536,8 +657,15 @@ def test_auto_trade_snapshot_exposes_read_only_state(monkeypatch) -> None:
         weights=dict(decision_params.ensemble_weights),
         parameters=decision_params,
         timestamp=pd.Timestamp.utcnow(),
+        strategy_metadata=strategy_metadata,
+        license_tiers=("standard", "professional"),
+        risk_classes=("directional", "statistical"),
+        required_data=("ohlcv", "spread_history"),
+        capabilities=("trend_d1", "mean_reversion"),
+        tags=("trend", "mean_reversion"),
     )
-    workflow = _WorkflowStub(decision, catalog)
+    activation = _activation_from_decision(decision)
+    workflow = _WorkflowStub(activation, catalog)
 
     cfg = AutoTradeConfig(
         symbol="BTCUSDT",
@@ -555,6 +683,7 @@ def test_auto_trade_snapshot_exposes_read_only_state(monkeypatch) -> None:
         regime_workflow=workflow,
     )
     engine.apply_params({"fast": 4, "slow": 9})
+    expected_params = engine._build_base_trading_parameters()
 
     base_time = 1_700_400_000.0
     current_time = {"value": base_time}
@@ -592,14 +721,22 @@ def test_auto_trade_snapshot_exposes_read_only_state(monkeypatch) -> None:
     assert isinstance(snapshot, AutoTradeSnapshot)
     assert snapshot.symbol == cfg.symbol
     assert snapshot.enabled is True
-    assert snapshot.trading_parameters == decision_params
-    assert snapshot.strategy_weights == decision_params.ensemble_weights
+    expected_snapshot_params = replace(
+        expected_params,
+        ensemble_weights=decision_params.ensemble_weights,
+    )
+    assert snapshot.trading_parameters == expected_snapshot_params
+    assert snapshot.strategy_weights == expected_snapshot_params.ensemble_weights
     assert isinstance(snapshot.risk, RiskFreezeSnapshot)
     assert snapshot.risk.manual_active is True
     assert snapshot.risk.manual_reason == "stress"
     assert snapshot.risk.auto_active is True
     assert snapshot.risk.auto_risk_level is RiskLevel.CRITICAL
-    assert snapshot.regime_decision == decision
+    assert snapshot.regime_decision is not None
+    assert snapshot.regime_decision.weights == decision.weights
+    assert snapshot.regime_decision.parameters == expected_snapshot_params
+    assert snapshot.regime_activation is not None
+    assert snapshot.regime_activation["preset_name"] == "autotrade-stub"
     assert snapshot.regime_thresholds == workflow.history.thresholds_snapshot()
     overrides = snapshot.regime_parameter_overrides
     assert MarketRegime.TREND.value in overrides
@@ -611,5 +748,5 @@ def test_auto_trade_snapshot_exposes_read_only_state(monkeypatch) -> None:
 
     snapshot.strategy_weights["trend_following"] = 0.0
     refreshed = engine.snapshot()
-    assert refreshed.strategy_weights == decision_params.ensemble_weights
+    assert refreshed.strategy_weights == expected_snapshot_params.ensemble_weights
     assert refreshed.risk.combined_until >= snapshot.risk.combined_until

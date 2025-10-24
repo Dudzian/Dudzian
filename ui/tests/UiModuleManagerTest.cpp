@@ -49,7 +49,6 @@ void UiModuleManagerTest::registersServices()
     UiModuleManager::ServiceDescriptor singletonService;
     singletonService.id = QStringLiteral("telemetry");
     singletonService.name = QStringLiteral("TelemetryService");
-    singletonService.metadata.insert(QStringLiteral("category"), QStringLiteral("metrics"));
     singletonService.factory = [&](QObject* parent) -> QObject* {
         singletonCreated = true;
         auto* object = new QObject(parent);
@@ -81,14 +80,6 @@ void UiModuleManagerTest::registersServices()
     QVERIFY(transientA);
     QVERIFY(transientB);
     QVERIFY(transientA != transientB);
-
-    const QVariantList services = manager.availableServices();
-    QCOMPARE(services.size(), 2);
-    const QVariantMap telemetry = manager.serviceDescriptor(QStringLiteral("telemetry"));
-    QCOMPARE(telemetry.value(QStringLiteral("moduleId")).toString(), QStringLiteral("core"));
-    QCOMPARE(telemetry.value(QStringLiteral("singleton")).toBool(), true);
-    QCOMPARE(telemetry.value(QStringLiteral("metadata")).toMap().value(QStringLiteral("category")).toString(),
-             QStringLiteral("metrics"));
 }
 
 void UiModuleManagerTest::handlesMissingPluginDirectories()
@@ -97,13 +88,6 @@ void UiModuleManagerTest::handlesMissingPluginDirectories()
     manager.setPluginPaths({QStringLiteral("/definitely/missing/path")});
     QVERIFY(!manager.loadPlugins());
     QCOMPARE(manager.availableViews().size(), 0);
-
-    const QVariantMap report = manager.lastLoadReport();
-    QCOMPARE(report.value(QStringLiteral("requestedPaths")).toStringList(),
-             QStringList{QStringLiteral("/definitely/missing/path")});
-    QCOMPARE(report.value(QStringLiteral("missingPaths")).toStringList(),
-             QStringList{QStringLiteral("/definitely/missing/path")});
-    QCOMPARE(report.value(QStringLiteral("pluginsLoaded")).toInt(), 0);
 }
 
 namespace {
@@ -123,7 +107,6 @@ public:
         UiModuleManager::ServiceDescriptor service;
         service.id = QStringLiteral("stub.service");
         service.name = QStringLiteral("Stub Service");
-        service.metadata.insert(QStringLiteral("tags"), QStringList{QStringLiteral("stub"), QStringLiteral("demo")});
         service.factory = [](QObject* parent) -> QObject* {
             auto* object = new QObject(parent);
             object->setObjectName(QStringLiteral("stub-service"));

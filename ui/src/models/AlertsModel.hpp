@@ -53,6 +53,13 @@ public:
     void updateFromRiskSnapshot(const RiskSnapshotData& snapshot);
     void reset();
 
+    void raiseAlert(const QString& alertId,
+                    const QString& title,
+                    const QString& description,
+                    Severity severity,
+                    bool sticky = false);
+    void clearAlert(const QString& alertId);
+
     QStringList acknowledgedAlertIds() const;
     void setAcknowledgedAlertIds(const QStringList& ids);
 
@@ -75,6 +82,7 @@ private:
     int indexOfAlert(const QString& id) const;
     bool upsertAlert(const Alert& alert);
     bool pruneStale();
+    static bool isSecurityAlertId(const QString& id);
     void recomputeCounts();
 
     QList<Alert> m_alerts;

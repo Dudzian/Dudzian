@@ -35,45 +35,9 @@ widoków i serwisów.
 
 Widoki zarejestrowane przez pluginy są prezentowane w zakładce „Moduły”
 (`ModuleBrowser.qml`) dostępnej z głównego okna (`BotAppWindow.qml`). Lista pozwala
-wyszukiwać widoki po nazwie, identyfikatorze, module oraz metadanych, filtrować je po
-kategorii, podglądać deklarowane metadane i ładować pliki QML źródłowe w ramach
-aplikacji. Model `UiModuleViewsModel` udostępnia API do wyszukiwania widoków i
-kategorii wykorzystywane przez interfejs.【F:ui/src/app/UiModuleViewsModel.cpp†L64-L147】【F:ui/qml/components/ModuleBrowser.qml†L1-L409】
-
-Poniżej szczegółów widoku znajduje się sekcja „Zarejestrowane serwisy”, która
-zbiera wszystkie serwisy zadeklarowane przez pluginy wraz z informacją o module,
-trybie tworzenia instancji (singleton lub tworzony na żądanie) oraz uporządkowanymi
-metadanymi. Własne pole wyszukiwania pozwala filtrować listę po identyfikatorze,
-nazwie, module i metadanych serwisu. Dane udostępnia model
-`UiModuleServicesModel`, eksponowany w QML jako `moduleServicesModel` i
-wykorzystywany przez interfejs diagnostyczny modułów.【F:ui/src/app/UiModuleServicesModel.cpp†L1-L212】【F:ui/qml/components/ModuleBrowser.qml†L1-L830】【F:ui/src/app/Application.cpp†L214-L260】【F:ui/src/app/Application.cpp†L2530-L2592】
-
-Panel modułów wyświetla również katalogi skanowane przez menedżer oraz przycisk
-„Przeładuj moduły”, który ponownie ładuje wszystkie pluginy z aktualnych ścieżek.
-Po każdym ładowaniu `UiModuleManager` udostępnia raport (liczbę załadowanych
-pluginów, widoków, pominiętych ścieżek i błędów), który `Application` przekazuje do
-QML-a przez sygnał `uiModulesReloaded`. Zakładka prezentuje te informacje w sekcjach
-„Załadowane pluginy”, „Błędy pluginów”, „Pominięte pliki” i „Brakujące ścieżki”,
-dzięki czemu operator natychmiast widzi źródło problemów z modułami. Lista
-katalogów i metoda przeładowania są dostępne w QML-u przez
-`appController.uiModuleDirectories` oraz `appController.reloadUiModules()`, więc inne
-komponenty mogą reagować na zmiany katalogów i ręczne odświeżanie. Zakładka
-udostępnia też formularz „Dodaj katalog modułów…” i ikony usuwania wpisów, które
-wykorzystują metody `addUiModuleDirectory(...)` oraz `removeUiModuleDirectory(...)`,
-normalizując ścieżki i od razu uruchamiając ponowne ładowanie pluginów. Można też
-włączyć automatyczne przeładowanie („Auto przeładuj”), które obserwuje katalogi i
-pliki pluginów przy pomocy `QFileSystemWatcher`; po wykryciu zmian aplikacja
-odczekuje krótki debounce i wywołuje `reloadUiModules()`, emitując raport tak jak
-przy ręcznym odświeżaniu. Stan funkcji jest dostępny pod
-`appController.uiModuleAutoReloadEnabled`, a QML może go modyfikować przez
-`appController.setUiModuleAutoReloadEnabled(...)`. Lista katalogów oraz stan auto
-reload są zapisywane w `var/state/ui_settings.json` (lub w ścieżce wskazanej przez
-`--ui-settings-path`) i przywracane przy starcie aplikacji, podobnie jak ostatnio
-użyte filtry widoków i serwisów (kategoria, wyszukiwanie) w przeglądarce modułów.
-Dzięki temu nie trzeba ponownie konfigurować modułów ani filtrów po każdym
-uruchomieniu. Testy
-`ApplicationUiModulesTest` obejmują konfigurację katalogów, przeładowanie pluginów
-oraz reakcję na automatyczne odświeżanie.【F:ui/src/app/Application.cpp†L1654-L1761】【F:ui/src/app/Application.cpp†L2004-L2044】【F:ui/src/app/Application.cpp†L2218-L2224】【F:ui/qml/components/ModuleBrowser.qml†L1-L211】【F:ui/tests/ApplicationUiModulesTest.cpp†L63-L477】
+filtrować widoki po kategorii, podglądać deklarowane metadane i ładować pliki QML
+źródłowe w ramach aplikacji. Model `UiModuleViewsModel` udostępnia API do
+wyszukiwania widoków i kategorii wykorzystywane przez interfejs.【F:ui/src/app/UiModuleViewsModel.cpp†L64-L147】【F:ui/qml/components/ModuleBrowser.qml†L1-L409】
 
 ## Uruchomienie ze stubem gRPC
 
@@ -189,6 +153,21 @@ aktualizować m.in. `health_check_interval`, przypisany `portfolio_governor` ora
 każdego zadania (cadence, profil ryzyka, limit sygnałów). UI utrzymuje synchronizację z backendem
 i w przypadku błędów (np. nieistniejącej nazwy zadania) komunikat z mostka wyświetlany jest w
 panelu.
+
+Mostek udostępnia również raporty `StrategyRegimeWorkflow`. Wywołanie
+
+```bash
+python scripts/ui_config_bridge.py \
+  --config config/core.yaml \
+  --describe-regime-workflow \
+  --regime-workflow-dir var/data/strategy_regime_workflow
+```
+
+zwraca w JSON informacje o gotowości presetów (hash, podpis HMAC, brakujące dane,
+blokady harmonogramu, wymagane licencje) oraz statystyki aktywacji i historię
+fallbacków. Domyślnie mostek oczekuje plików `availability.json` oraz
+`activation_history.json` w katalogu wskazanym przez `--regime-workflow-dir` – UI
+może je odczytywać bezpośrednio, aby zasilić widok mapowania strategii na reżimy.
 
 Ścieżki i interpreter mostka można dostosować flagami CLI:
 

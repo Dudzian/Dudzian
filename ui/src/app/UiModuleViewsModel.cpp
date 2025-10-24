@@ -2,8 +2,6 @@
 
 #include <QVariantMap>
 #include <QVariantList>
-#include <QStringList>
-#include <QMetaType>
 
 #include <algorithm>
 #include <QSet>
@@ -70,16 +68,6 @@ void UiModuleViewsModel::setCategoryFilter(const QString& category)
 
     m_categoryFilter = category;
     emit categoryFilterChanged();
-    rebuild();
-}
-
-void UiModuleViewsModel::setSearchFilter(const QString& query)
-{
-    if (m_searchFilter == query)
-        return;
-
-    m_searchFilter = query;
-    emit searchFilterChanged();
     rebuild();
 }
 
@@ -223,12 +211,9 @@ QVector<QString> UiModuleViewsModel::buildOrderedIds() const
 {
     QVector<QString> filtered;
     filtered.reserve(m_registry.size());
-    const QString trimmedSearch = m_searchFilter.trimmed();
     for (auto it = m_registry.cbegin(); it != m_registry.cend(); ++it) {
         const ViewEntry& entry = it.value();
         if (!m_categoryFilter.isEmpty() && entry.descriptor.category != m_categoryFilter)
-            continue;
-        if (!matchesSearch(entry, trimmedSearch))
             continue;
         filtered.append(it.key());
     }
@@ -242,76 +227,5 @@ QVector<QString> UiModuleViewsModel::buildOrderedIds() const
     });
 
     return filtered;
-}
-
-bool UiModuleViewsModel::matchesSearch(const ViewEntry& entry, const QString& query) const
-{
-    if (query.isEmpty())
-        return true;
-
-    auto contains = [&query](const QString& value) {
-        return value.contains(query, Qt::CaseInsensitive);
-    };
-
-    if (contains(entry.descriptor.name))
-        return true;
-    if (contains(entry.descriptor.id))
-        return true;
-    if (contains(entry.descriptor.category))
-        return true;
-    if (contains(entry.moduleId))
-        return true;
-
-    const QVariantMap& metadata = entry.descriptor.metadata;
-    for (auto it = metadata.constBegin(); it != metadata.constEnd(); ++it) {
-        if (contains(it.key()))
-            return true;
-        if (metadataContains(it.value(), query))
-            return true;
-    }
-
-    return false;
-}
-
-bool UiModuleViewsModel::metadataContains(const QVariant& value, const QString& query) const
-{
-    if (!value.isValid())
-        return false;
-
-    if (value.metaType().id() == QMetaType::QVariantMap) {
-        const QVariantMap map = value.toMap();
-        for (auto it = map.constBegin(); it != map.constEnd(); ++it) {
-            if (it.key().contains(query, Qt::CaseInsensitive))
-                return true;
-            if (metadataContains(it.value(), query))
-                return true;
-        }
-        return false;
-    }
-
-    if (value.metaType().id() == QMetaType::QVariantList) {
-        const QVariantList list = value.toList();
-        for (const QVariant& item : list) {
-            if (metadataContains(item, query))
-                return true;
-        }
-        return false;
-    }
-
-    if (value.metaType().id() == QMetaType::QStringList) {
-        const QStringList list = value.toStringList();
-        for (const QString& item : list) {
-            if (item.contains(query, Qt::CaseInsensitive))
-                return true;
-        }
-        return false;
-    }
-
-    if (value.canConvert<QString>()) {
-        const QString str = value.toString();
-        return str.contains(query, Qt::CaseInsensitive);
-    }
-
-    return false;
 }
 
