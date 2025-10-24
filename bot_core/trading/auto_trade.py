@@ -480,11 +480,41 @@ class AutoTradeEngine:
         ohlcv_columns = {"open", "high", "low", "close", "volume"}
         time_columns = {"timestamp", "open_time", "close_time"}
 
-        if normalized_columns & (ohlcv_columns | {"close"}):
+        if normalized_columns & ohlcv_columns:
             available.add("ohlcv")
 
-        indicator_columns = normalized_columns - ohlcv_columns - time_columns
-        if indicator_columns:
+        candidate_columns = normalized_columns - ohlcv_columns - time_columns
+        if not candidate_columns:
+            return available
+
+        dataset_markers: Mapping[str, tuple[str, ...]] = {
+            "spread_history": ("spread", "spread_history"),
+            "order_book": (
+                "order_book",
+                "orderbook",
+                "bid",
+                "ask",
+                "bids",
+                "asks",
+            ),
+            "latency_monitoring": ("latency", "latency_monitoring", "ping"),
+        }
+
+        remaining = set(candidate_columns)
+        for dataset, markers in dataset_markers.items():
+            if any(
+                column.startswith(marker)
+                for column in tuple(remaining)
+                for marker in markers
+            ):
+                available.add(dataset)
+                remaining = {
+                    column
+                    for column in remaining
+                    if not any(column.startswith(marker) for marker in markers)
+                }
+
+        if remaining:
             available.add("technical_indicators")
 
         return available
