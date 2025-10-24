@@ -241,9 +241,6 @@ class AutoTradeEngine:
         self._regime_workflow: StrategyRegimeWorkflow | None = self._initialize_strategy_workflow(
             regime_workflow
         )
-        self._last_trading_parameters: TradingParameters | None = None
-        self._last_regime: MarketRegimeAssessment | None = None
-        self._last_summary: RegimeSummary | None = None
         self._last_regime_decision: RegimeSwitchDecision | None = None
         self._last_regime_activation: RegimePresetActivation | None = None
         self._sync_workflow_state()
@@ -253,6 +250,9 @@ class AutoTradeEngine:
         else:
             self._indicator_service = indicator_service
         self._base_trading_params: TradingParameters = self.cfg.trading_parameters
+        self._last_trading_parameters: TradingParameters | None = None
+        self._last_regime: MarketRegimeAssessment | None = None
+        self._last_summary: RegimeSummary | None = None
 
         batch_rule = DebounceRule(window=0.1, max_batch=1)
         self.bus.subscribe(EventType.MARKET_TICK, self._on_ticks_batch, rule=batch_rule)
