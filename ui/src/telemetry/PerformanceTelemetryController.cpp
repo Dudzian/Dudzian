@@ -9,6 +9,15 @@
 PerformanceTelemetryController::PerformanceTelemetryController(QObject* parent)
     : QObject(parent)
 {
+    m_publishTimer.setInterval(3000);
+    m_publishTimer.setSingleShot(false);
+    connect(&m_publishTimer, &QTimer::timeout, this, [this]() {
+        if (!m_hasPendingFps) {
+            return;
+        }
+        publishSnapshot(m_pendingFps);
+        m_hasPendingFps = false;
+    });
 }
 
 void PerformanceTelemetryController::setTelemetryReporter(TelemetryReporter* reporter)
@@ -28,6 +37,9 @@ void PerformanceTelemetryController::setFrameRateMonitor(FrameRateMonitor* monit
     m_monitor = monitor;
     if (m_monitor) {
         connect(m_monitor, &FrameRateMonitor::frameSampled, this, &PerformanceTelemetryController::handleFrameSample);
+    } else {
+        m_publishTimer.stop();
+        m_hasPendingFps = false;
     }
 }
 
@@ -47,7 +59,13 @@ void PerformanceTelemetryController::recordSystemMetrics(double cpuUtil, double 
 
 void PerformanceTelemetryController::handleFrameSample(double fps)
 {
-    publishSnapshot(fps);
+    m_pendingFps = fps;
+    m_hasPendingFps = true;
+
+    if (!m_publishTimer.isActive()) {
+        publishSnapshot(fps);
+        ensurePublishTimer();
+    }
 }
 
 void PerformanceTelemetryController::publishSnapshot(double fps)
@@ -67,5 +85,12 @@ void PerformanceTelemetryController::publishSnapshot(double fps)
     notes.insert(QStringLiteral("processed_per_second"), static_cast<double>(m_lastProcessed));
 
     m_uiReporter->pushSnapshot(notes, fps);
+}
+
+void PerformanceTelemetryController::ensurePublishTimer()
+{
+    if (!m_publishTimer.isActive()) {
+        m_publishTimer.start();
+    }
 }
 

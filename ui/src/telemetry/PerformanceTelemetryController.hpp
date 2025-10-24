@@ -27,6 +27,8 @@ public slots:
 private:
     void publishSnapshot(double fps);
 
+    void ensurePublishTimer();
+
     QPointer<FrameRateMonitor>  m_monitor;
     QPointer<UiTelemetryReporter> m_uiReporter;
     TelemetryReporter*          m_reporter = nullptr;
@@ -36,5 +38,8 @@ private:
     double                      m_lastRam = 0.0;
     quint64                     m_lastDropped = 0;
     quint64                     m_lastProcessed = 0;
+    QTimer                      m_publishTimer;
+    double                      m_pendingFps = 0.0;
+    bool                        m_hasPendingFps = false;
 };
 
