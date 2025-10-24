@@ -22,8 +22,10 @@ from bot_core.ai import (
     ensure_compliance_sign_offs,
     export_drift_alert_report,
     export_data_quality_report,
+    filter_audit_reports_since,
     load_recent_data_quality_reports,
     load_recent_drift_reports,
+    normalize_report_status,
     score_with_data_monitoring,
     summarize_data_quality_reports,
     summarize_drift_reports,
@@ -477,6 +479,88 @@ def test_summarize_drift_reports_marks_threshold_excess(
     assert pending_risk[0]["status"] == "pending"
 
 
+def test_collect_pending_compliance_sign_offs_merges_sources() -> None:
+    data_quality_reports = (
+        {
+            "category": "completeness",
+            "status": "alert",
+            "policy": {"enforce": True},
+            "sign_off": {
+                "risk": {"status": "pending"},
+                "compliance": {"status": "approved"},
+            },
+            "report_path": "/tmp/completeness.json",
+            "timestamp": "2024-01-01T00:00:00Z",
+        },
+    )
+    drift_reports = (
+        {
+            "category": "drift_alert",
+            "drift_score": 0.7,
+            "threshold": 0.5,
+            "sign_off": {
+                "risk": {"status": "approved"},
+                "compliance": {"status": "investigating"},
+            },
+            "report_path": "/tmp/drift.json",
+            "timestamp": "2024-01-02T00:00:00Z",
+        },
+    )
+
+    pending = collect_pending_compliance_sign_offs(
+        data_quality_reports=data_quality_reports,
+        drift_reports=drift_reports,
+    )
+
+    assert pending["risk"]
+    assert pending["risk"][0]["category"] == "completeness"
+    assert pending["compliance"]
+    assert pending["compliance"][0]["category"] == "drift_alert"
+
+
+def test_collect_pending_compliance_sign_offs_respects_roles() -> None:
+    reports = (
+        {
+            "category": "completeness",
+            "status": "alert",
+            "policy": {"enforce": True},
+            "sign_off": {
+                "risk": {"status": "approved"},
+                "compliance": {"status": "pending"},
+            },
+        },
+    )
+
+    pending = collect_pending_compliance_sign_offs(
+        data_quality_reports=reports,
+        roles=("risk",),
+    )
+
+    assert tuple(pending.keys()) == ("risk",)
+    assert pending["risk"] == ()
+
+
+def test_filter_audit_reports_since_filters_old_entries() -> None:
+    reports = (
+        {"timestamp": "2024-01-10T00:00:00Z", "category": "old"},
+        {"timestamp": "2024-01-20T00:00:00Z", "category": "new"},
+        {"category": "missing"},
+    )
+
+    filtered = filter_audit_reports_since(
+        reports, since=datetime(2024, 1, 15, tzinfo=timezone.utc)
+    )
+
+    assert filtered[0]["category"] == "new"
+    assert filtered[1]["category"] == "missing"
+    assert len(filtered) == 2
+
+
+def test_filter_audit_reports_since_requires_timezone() -> None:
+    with pytest.raises(ValueError):
+        filter_audit_reports_since((), since=datetime(2024, 1, 1))
+
+
 def test_ensure_compliance_sign_offs_detects_pending(caplog: pytest.LogCaptureFixture) -> None:
     caplog.set_level(logging.WARNING, logger="bot_core.ai.data_monitoring")
     reports = (
@@ -646,6 +730,7 @@ def test_ai_manager_passes_configured_sign_off_roles(monkeypatch: pytest.MonkeyP
     manager = AIManager(model_dir=tmp_path / "cache")
     manager.set_compliance_sign_off_requirement(True)
     manager.set_compliance_sign_off_roles(("risk",))
+    assert captured_roles == []
     manager._ensure_compliance_activation_gate()
     assert captured_roles[-1] == ("risk",)
 
@@ -670,14 +755,14 @@ def test_ai_manager_skips_sign_off_gate_when_not_required(
     manager = AIManager(model_dir=tmp_path / "cache")
     manager.set_compliance_sign_off_roles(("risk",))
 
-    assert calls == [("risk",)]
+    assert calls == []
 
-    # Domyślnie bramka jest wyłączona, więc helper nie powinien zostać wywołany ponownie.
+    # Domyślnie bramka jest wyłączona, więc helper nie powinien zostać wywołany.
     manager._ensure_compliance_activation_gate()
-    assert calls == [("risk",)]
+    assert calls == []
 
     manager.set_compliance_sign_off_requirement(True)
     manager._ensure_compliance_activation_gate()
 
     assert calls[-1] == ("risk",)
-    assert len(calls) == 2
+    assert len(calls) == 1

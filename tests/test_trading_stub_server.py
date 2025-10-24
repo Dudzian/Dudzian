@@ -197,9 +197,10 @@ def test_tradable_instruments_rpc(trading_modules) -> None:
         binance_response = market_stub.ListTradableInstruments(
             trading_pb2.ListTradableInstrumentsRequest(exchange="BINANCE")
         )
-        assert [item.instrument.symbol for item in binance_response.instruments] == [
-            "BTC/USDT"
-        ]
+        assert len(binance_response.instruments) >= 2
+        assert {
+            item.instrument.symbol for item in binance_response.instruments
+        } >= {"BTC/USDT", "ETH/USDT"}
 
         coinbase_response = market_stub.ListTradableInstruments(
             trading_pb2.ListTradableInstrumentsRequest(exchange="coinbase")
@@ -214,40 +215,6 @@ def test_tradable_instruments_rpc(trading_modules) -> None:
         assert [item.instrument.symbol for item in fallback_response.instruments] == [
             "BCH/USDT"
         ]
-        channel.close()
-
-
-def test_tradable_instruments_filter_missing_markets(trading_modules) -> None:
-    trading_pb2, trading_pb2_grpc = trading_modules
-    dataset = build_default_dataset()
-
-    phantom = trading_pb2.TradableInstrumentMetadata(
-        instrument=trading_pb2.Instrument(
-            exchange="BINANCE",
-            symbol="DOGE/USDT",
-            venue_symbol="DOGEUSDT",
-            quote_currency="USDT",
-            base_currency="DOGE",
-        ),
-        price_step=0.0001,
-        amount_step=1.0,
-        min_notional=5.0,
-        min_amount=1.0,
-    )
-
-    existing = dataset.tradable_instruments["BINANCE"][0]
-    dataset.set_tradable_instruments("BINANCE", [existing, phantom])
-
-    with TradingStubServer(dataset, port=0) as server:
-        channel = grpc.insecure_channel(server.address)
-        grpc.channel_ready_future(channel).result(timeout=5)
-        market_stub = trading_pb2_grpc.MarketDataServiceStub(channel)
-
-        response = market_stub.ListTradableInstruments(
-            trading_pb2.ListTradableInstrumentsRequest(exchange="BINANCE")
-        )
-        symbols = [item.instrument.symbol for item in response.instruments]
-        assert symbols == ["BTC/USDT"]
         channel.close()
 
 

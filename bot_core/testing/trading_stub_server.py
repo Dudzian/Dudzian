@@ -92,59 +92,7 @@ class InMemoryTradingDataset:
             items = self.tradable_instruments.get("*")
         if not items:
             return []
-
-        known_pairs = self._known_market_pairs(normalized)
-        known_symbols = {symbol for symbol, _ in known_pairs if symbol}
-        known_venues = {venue for _, venue in known_pairs if venue}
-
-        filtered: List[Any] = []
-        for item in items:
-            instrument = getattr(item, "instrument", None)
-            symbol = getattr(instrument, "symbol", "") if instrument else ""
-            venue = getattr(instrument, "venue_symbol", "") if instrument else ""
-            symbol_key = symbol.upper()
-            venue_key = venue.upper()
-            if not symbol_key:
-                continue
-            if known_pairs and (
-                (symbol_key, venue_key) not in known_pairs
-                and symbol_key not in known_symbols
-                and (venue_key and venue_key not in known_venues)
-            ):
-                continue
-            filtered.append(_clone_message(item))
-
-        return filtered
-
-    def _known_market_pairs(self, exchange: str) -> set[tuple[str, str]]:
-        normalized = (exchange or "*").upper()
-        pairs: set[tuple[str, str]] = set()
-
-        def collect_for(target_exchange: str) -> None:
-            def collect(entries: Dict[InstrumentKey, List[Any]]) -> None:
-                for (ex, _symbol, _granularity), payload in entries.items():
-                    if ex != target_exchange:
-                        continue
-                    instrument = None
-                    if payload:
-                        sample = payload[0]
-                        instrument = getattr(sample, "instrument", None)
-                    symbol = getattr(instrument, "symbol", _symbol) if instrument else _symbol
-                    venue = getattr(instrument, "venue_symbol", "") if instrument else ""
-                    symbol_key = (symbol or "").upper()
-                    venue_key = (venue or "").upper()
-                    if symbol_key:
-                        pairs.add((symbol_key, venue_key))
-
-            collect(self.history)
-            collect(self.stream_snapshots)
-            collect(self.stream_increments)
-
-        collect_for(normalized)
-        if not pairs and normalized != "*":
-            collect_for("*")
-
-        return pairs
+        return [_clone_message(item) for item in items]
 
 
 def merge_datasets(

@@ -22,6 +22,10 @@ kalibrację progów płynności/latencji oraz archiwizację podpisanych artefakt
       oraz `.sig`.
 - [ ] Przejrzyj wartości progów (szczególnie segmenty o niskiej płynności) i
       w razie potrzeby zasięgnij opinii zespołu tradingowego.
+- [ ] Potwierdź, że w `config/core.yaml:stress_lab.thresholds` obowiązują wartości
+      z warsztatu 2024-06-07: płynność 0.55, spready 45 bps, wolatylność 0.8,
+      sentyment 0.50, funding 25 bps, latency 150 ms, blackout 40 min,
+      dyspersja 50 bps.
 
 ## Uruchomienie Stress Lab
 - [ ] `python scripts/run_stress_lab.py --risk-report var/audit/stage6/risk_simulation_report.json --config config/core.yaml --governor <gov> --output-json var/audit/stage6/stress_lab_report.json --output-csv var/audit/stage6/stress_lab_insights.csv --overrides-csv var/audit/stage6/stress_lab_overrides.csv --signing-key secrets/hypercare/stage6_hmac.key --signing-key-id stage6` (subkomenda `evaluate` jest opcjonalna – skrypt doda ją automatycznie).
@@ -63,12 +67,26 @@ Zweryfikowanie odporności portfela wielostrate-gicznego przy użyciu modułu `b
    - [ ] Raport JSON zawiera wszystkie scenariusze z konfiguracji i brak błędów deserializacji.
    - [ ] Brak wpisów w polu `failures` dla scenariuszy lub – w razie naruszeń – przeprowadzono procedurę eskalacji.
    - [ ] Plik podpisu `.sig` zawiera algorytm `HMAC-SHA256` i identyfikator klucza.
+   - [ ] Porównano sekcję `thresholds` oraz overrides scenariusza `exchange_blackout_and_latency`
+         (latency 180 ms, blackout 55 min) z wynikami raportu i zanotowano status w decision logu.
 4. **Integracja z pipeline’em demo→paper→live**
    - [ ] Dołączono raport i podpis do artefaktów release’u (CI lub ręczne archiwum `var/audit/acceptance/<TS>`).
    - [ ] Zaktualizowano decision log o wynik Stress Lab (status, timestamp, operator).
 5. **Akceptacja**
    - [ ] Operator L2 zatwierdził raport i potwierdził brak blokujących naruszeń progów Stage6.
    - [ ] Checklistę podpisano i dołączono do pakietu release’owego.
+
+## Automatyczna weryfikacja progów (dodatek)
+- [ ] Użyj wspólnego skryptu audytowego, aby potwierdzić konfigurację bez
+      ręcznego pisania fragmentów Python oraz zarchiwizować wynik audytu:
+  ```bash
+  python scripts/verify_stage6_thresholds.py \
+    --config config/core.yaml \
+    --json-report var/audit/stage6/stress_lab/stage6_thresholds_audit.json
+  ```
+- [ ] Dołącz output skryptu wraz z raportem JSON do
+      `var/audit/stage6/stress_lab/stress_lab_report.json`
+      jako komentarz audytowy i referencję w decision logu.
 
 ## Odniesienia
 - `bot_core/risk/stress_lab.py`

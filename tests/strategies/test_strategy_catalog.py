@@ -1,6 +1,8 @@
 """Testy katalogu strategii Multi-Strategy."""
 from __future__ import annotations
 
+from datetime import date
+
 import pytest
 
 from bot_core.config.loader import _load_strategy_definitions

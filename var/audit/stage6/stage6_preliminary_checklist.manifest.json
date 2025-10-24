@@ -1,0 +1,17 @@
+{
+  "archived_path": "var/audit/stage6/stage6_preliminary_checklist.md",
+  "generated_at": "2024-05-24T19:45:00+00:00",
+  "hashes": {
+    "sha256": "7cf174b8c0257a936d2ce9293c920303269cca1a1b5f75f1e9852b99b428c8ff",
+    "sha384": "f180e80696b1de49d00719e3906a688d00bb129912c49d4b5ba86e109d86838bd6d75d3242eb8fb1167cabc72ce428ee"
+  },
+  "schema": "stage6.runbook.manifest",
+  "schema_version": 1,
+  "source_path": "docs/runbooks/STAGE6_PRELIMINARY_CHECKLIST.md",
+  "signature_path": "var/audit/stage6/stage6_preliminary_checklist.md.sig",
+  "stakeholders": [
+    "product",
+    "compliance",
+    "operations"
+  ]
+}
