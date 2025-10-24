@@ -8,6 +8,7 @@ import shutil
 import subprocess
 from pathlib import Path
 from typing import Final
+from urllib.error import URLError
 from urllib.request import urlopen
 
 import hashlib
@@ -61,8 +62,17 @@ def _has_libgl() -> bool:
 
 
 def _download_deb(url: str, target: Path, expected_sha256: str) -> None:
-    with urlopen(url) as response, target.open("wb") as deb_file:
-        shutil.copyfileobj(response, deb_file)
+    try:
+        with urlopen(url) as response, target.open("wb") as deb_file:
+            shutil.copyfileobj(response, deb_file)
+    except URLError as exc:
+        raise RuntimeError(
+            "Nie udało się pobrać pakietu libGL: brak dostępu do sieci lub repozytorium"
+        ) from exc
+    except OSError as exc:
+        raise RuntimeError(
+            f"Nie udało się zapisać pakietu libGL do {target}: {exc}"
+        ) from exc
 
     digest = hashlib.sha256(target.read_bytes()).hexdigest()
     if digest != expected_sha256:
@@ -73,7 +83,16 @@ def _download_deb(url: str, target: Path, expected_sha256: str) -> None:
 
 
 def _extract_deb(deb_path: Path, destination: Path) -> Path:
-    subprocess.run(["dpkg-deb", "-x", str(deb_path), str(destination)], check=True)
+    try:
+        subprocess.run(["dpkg-deb", "-x", str(deb_path), str(destination)], check=True)
+    except FileNotFoundError as exc:
+        raise RuntimeError(
+            "Polecenie dpkg-deb jest niedostępne w środowisku testowym"
+        ) from exc
+    except subprocess.CalledProcessError as exc:
+        raise RuntimeError(
+            f"Nie udało się rozpakować pakietu libGL przy pomocy dpkg-deb: {exc}"
+        ) from exc
     lib_dir = destination / "usr" / "lib" / "x86_64-linux-gnu"
     return lib_dir
 
