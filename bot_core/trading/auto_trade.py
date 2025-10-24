@@ -480,7 +480,8 @@ class AutoTradeEngine:
         ohlcv_columns = {"open", "high", "low", "close", "volume"}
         time_columns = {"timestamp", "open_time", "close_time"}
 
-        if normalized_columns & (ohlcv_columns | {"close"}):
+        has_ohlcv = bool(normalized_columns & ohlcv_columns)
+        if has_ohlcv:
             available.add("ohlcv")
             # Ramka przygotowana przez `_prepare_indicator_frame` zawiera jedynie kolumny
             # OHLCV, ale wskaźniki techniczne są później wyliczane asynchronicznie przez
@@ -490,7 +491,7 @@ class AutoTradeEngine:
             available.add("technical_indicators")
 
         indicator_columns = normalized_columns - ohlcv_columns - time_columns
-        if indicator_columns:
+        if indicator_columns and not has_ohlcv:
             available.add("technical_indicators")
 
         return available
