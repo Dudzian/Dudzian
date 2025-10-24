@@ -217,6 +217,19 @@ Application::Application(QQmlApplicationEngine& engine, QObject* parent)
     m_moduleServicesModel = std::make_unique<UiModuleServicesModel>(this);
     m_moduleServicesModel->setModuleManager(m_moduleManager.get());
 
+    connect(m_moduleViewsModel.get(), &UiModuleViewsModel::categoryFilterChanged, this, [this]() {
+        if (!m_loadingUiSettings)
+            scheduleUiSettingsPersist();
+    });
+    connect(m_moduleViewsModel.get(), &UiModuleViewsModel::searchFilterChanged, this, [this]() {
+        if (!m_loadingUiSettings)
+            scheduleUiSettingsPersist();
+    });
+    connect(m_moduleServicesModel.get(), &UiModuleServicesModel::searchFilterChanged, this, [this]() {
+        if (!m_loadingUiSettings)
+            scheduleUiSettingsPersist();
+    });
+
     m_uiModuleWatcher.setParent(this);
     connect(&m_uiModuleWatcher,
             &QFileSystemWatcher::directoryChanged,
@@ -2044,6 +2057,28 @@ void Application::loadUiSettings()
                 }
             }
         }
+
+        if (modulesObj.contains(QStringLiteral("views"))
+            && modulesObj.value(QStringLiteral("views")).isObject() && m_moduleViewsModel) {
+            const QJsonObject viewsObj = modulesObj.value(QStringLiteral("views")).toObject();
+            if (viewsObj.contains(QStringLiteral("categoryFilter"))) {
+                const QString category = viewsObj.value(QStringLiteral("categoryFilter")).toString();
+                m_moduleViewsModel->setCategoryFilter(category);
+            }
+            if (viewsObj.contains(QStringLiteral("searchFilter"))) {
+                const QString search = viewsObj.value(QStringLiteral("searchFilter")).toString();
+                m_moduleViewsModel->setSearchFilter(search);
+            }
+        }
+
+        if (modulesObj.contains(QStringLiteral("services"))
+            && modulesObj.value(QStringLiteral("services")).isObject() && m_moduleServicesModel) {
+            const QJsonObject servicesObj = modulesObj.value(QStringLiteral("services")).toObject();
+            if (servicesObj.contains(QStringLiteral("searchFilter"))) {
+                const QString search = servicesObj.value(QStringLiteral("searchFilter")).toString();
+                m_moduleServicesModel->setSearchFilter(search);
+            }
+        }
     }
 
     if (root.contains(QStringLiteral("riskHistory"))) {
@@ -2221,6 +2256,17 @@ QJsonObject Application::buildUiSettingsPayload() const
         moduleDirs.append(path);
     modules.insert(QStringLiteral("directories"), moduleDirs);
     modules.insert(QStringLiteral("autoReload"), m_uiModuleAutoReloadEnabled);
+    if (m_moduleViewsModel) {
+        QJsonObject views;
+        views.insert(QStringLiteral("categoryFilter"), m_moduleViewsModel->categoryFilter());
+        views.insert(QStringLiteral("searchFilter"), m_moduleViewsModel->searchFilter());
+        modules.insert(QStringLiteral("views"), views);
+    }
+    if (m_moduleServicesModel) {
+        QJsonObject services;
+        services.insert(QStringLiteral("searchFilter"), m_moduleServicesModel->searchFilter());
+        modules.insert(QStringLiteral("services"), services);
+    }
     root.insert(QStringLiteral("uiModules"), modules);
 
     QJsonObject history;

@@ -68,8 +68,10 @@ przy ręcznym odświeżaniu. Stan funkcji jest dostępny pod
 `appController.uiModuleAutoReloadEnabled`, a QML może go modyfikować przez
 `appController.setUiModuleAutoReloadEnabled(...)`. Lista katalogów oraz stan auto
 reload są zapisywane w `var/state/ui_settings.json` (lub w ścieżce wskazanej przez
-`--ui-settings-path`) i przywracane przy starcie aplikacji, dzięki czemu nie trzeba
-ponownie konfigurować modułów po każdym uruchomieniu. Testy
+`--ui-settings-path`) i przywracane przy starcie aplikacji, podobnie jak ostatnio
+użyte filtry widoków i serwisów (kategoria, wyszukiwanie) w przeglądarce modułów.
+Dzięki temu nie trzeba ponownie konfigurować modułów ani filtrów po każdym
+uruchomieniu. Testy
 `ApplicationUiModulesTest` obejmują konfigurację katalogów, przeładowanie pluginów
 oraz reakcję na automatyczne odświeżanie.【F:ui/src/app/Application.cpp†L1654-L1761】【F:ui/src/app/Application.cpp†L2004-L2044】【F:ui/src/app/Application.cpp†L2218-L2224】【F:ui/qml/components/ModuleBrowser.qml†L1-L211】【F:ui/tests/ApplicationUiModulesTest.cpp†L63-L477】
 

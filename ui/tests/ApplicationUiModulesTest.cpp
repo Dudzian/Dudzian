@@ -408,7 +408,7 @@ void ApplicationUiModulesTest::persistsUiModulePreferences()
 
     QStringList expected;
 
-    {
+    { 
         QQmlApplicationEngine engine;
         Application app(engine);
 
@@ -442,6 +442,15 @@ void ApplicationUiModulesTest::persistsUiModulePreferences()
         app.setUiModuleAutoReloadEnabled(true);
         QVERIFY(app.uiModuleAutoReloadEnabled());
 
+        auto* viewsModel = app.moduleViewsModelForTesting();
+        QVERIFY(viewsModel);
+        viewsModel->setCategoryFilter(QStringLiteral("diagnostics"));
+        viewsModel->setSearchFilter(QStringLiteral("latency"));
+
+        auto* servicesModel = app.moduleServicesModelForTesting();
+        QVERIFY(servicesModel);
+        servicesModel->setSearchFilter(QStringLiteral("grpc"));
+
         app.saveUiSettingsImmediatelyForTesting();
 
         QFileInfo info(settingsPath);
@@ -474,6 +483,15 @@ void ApplicationUiModulesTest::persistsUiModulePreferences()
             QVERIFY(recording->loadCallCount >= 2);
         else
             QVERIFY(recording->loadCallCount >= 1);
+
+        auto* viewsModel = app.moduleViewsModelForTesting();
+        QVERIFY(viewsModel);
+        QCOMPARE(viewsModel->categoryFilter(), QStringLiteral("diagnostics"));
+        QCOMPARE(viewsModel->searchFilter(), QStringLiteral("latency"));
+
+        auto* servicesModel = app.moduleServicesModelForTesting();
+        QVERIFY(servicesModel);
+        QCOMPARE(servicesModel->searchFilter(), QStringLiteral("grpc"));
     }
 }
 
