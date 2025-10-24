@@ -5,6 +5,16 @@ import importlib
 
 import pytest
 
+from tests.utils.libgl import ensure_libgl_available
+
+try:
+    ensure_libgl_available()
+except RuntimeError as exc:  # pragma: no cover - brak wsparcia libGL w środowisku
+    pytest.skip(
+        f"Pomijam testy środowiska desktopowego: brak libGL ({exc}).",
+        allow_module_level=True,
+    )
+
 DESKTOP_MODULES = [
     "bot_core.ai.manager",
     "bot_core.strategies.cross_exchange_arbitrage",
