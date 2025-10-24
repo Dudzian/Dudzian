@@ -139,7 +139,6 @@ multi_strategy_schedulers:
           limit: 3
           reason: risk_cap
           until: 2024-01-05T12:00:00+00:00
-        balanced: 3
       grid_engine:
         aggressive: 1
     schedules:
@@ -157,6 +156,25 @@ multi_strategy_schedulers:
         warmup_bars: 50
         risk_profile: aggressive
         max_signals: 2
+```
+
+> **Uwaga dotycząca formatu `signal_limits`:** wpis może przyjmować formę słownika z rozszerzonymi metadanymi lub pojedynczej
+> wartości liczbowej. Przykład słownika z metadanymi profilu:
+
+```yaml
+signal_limits:
+  trend_engine:
+    balanced:
+      limit: 3
+      reason: risk_cap
+      until: 2024-01-05T12:00:00+00:00
+```
+
+Przykład wartości skalarnej bez dodatkowych pól pomocniczych:
+
+```yaml
+signal_limits:
+  grid_engine: 2
 ```
 
 Przykładowe początkowe zawieszenia w konfiguracji runtime:
@@ -303,7 +321,6 @@ Polityki `fixed_weight` nadal wspierają dotychczasowy format wag:
         balanced:
           limit: 3
           reason: risk_cap
-        balanced: 3
       grid_engine:
         aggressive: 1
     schedules:
