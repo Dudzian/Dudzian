@@ -4,6 +4,8 @@
 Zapewnić udokumentowane logowanie decyzji portfelowych Stage6 wraz z
 podpisami HMAC oraz integracją z obserwowalnością i Market Intelligence.
 
+> **Uwaga:** Skrypty Stage6 wykonujemy poprzez `python <ścieżka_do_skryptu>` (alias `python3` w aktywnym venv). Bezpośrednie uruchamianie `./scripts/...` może pominąć konfigurację środowiska i nie jest wspierane.
+
 ## Krok po kroku
 1. Uruchom agregację Market Intel dla governora (`python scripts/build_market_intel_metrics.py`).
 2. (Opcjonalnie) wykonaj `PYTHONPATH=. python scripts/run_multi_strategy_scheduler.py --run-once`,

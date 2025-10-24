@@ -22,5 +22,6 @@ Potwierdzić skuteczność procedur failover i zebrać podpisane artefakty rapor
 - Zrzut ekranu z dashboardu Stage6 Observability++ (potwierdzenie metryk failover).
 
 ## Notatki
+> **Uwaga:** Wszystkie skrypty Stage6 uruchamiamy poprzez `python <ścieżka_do_skryptu>` (alias `python3` w naszym venv). Bezpośrednie `./scripts/...` omija aktywne środowisko i nie jest wspierane.
 - Lista fallbacków i progi muszą odpowiadać aktualnym wymaganiom compliance.
 - W przypadku braku danych telemetrycznych dopuszczalne jest użycie datasetów offline opisanych w `data/stage6/resilience/`.

@@ -9,6 +9,8 @@ PortfolioGovernorem podczas hypercare Stage6.
 - Dostęp do metryk z `var/metrics/` lub źródeł wskazanych w konfiguracji.
 - Klucz HMAC do podpisu raportów w `secrets/hmac/observability.key`.
 
+> **Uwaga:** Wszystkie skrypty Stage6 uruchamiamy poprzez `python <ścieżka_do_skryptu>` (alias `python3` w aktywnym venv). Bezpośrednie `./scripts/...` nie są wspierane, aby zachować spójność zależności i konfiguracji.
+
 > **Skrót automatyczny:** Cały cykl (SLO + override + anotacje + paczka) można
 > wykonać jednym poleceniem:
 > ```bash

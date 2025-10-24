@@ -12,6 +12,8 @@ artefakty audytowe.
 - Klucze HMAC umieszczone w `secrets/hmac/` i przypisane do komponentów Stage6.
 - Ścieżki docelowe w `var/audit/...` z uprawnieniami zapisu.
 
+> **Uwaga:** Wszystkie skrypty Stage6 uruchamiamy poprzez `python <ścieżka_do_skryptu>` (alias `python3` w aktywnym venv). Bezpośrednie `./scripts/...` omija ustawienia środowiska i nie jest wspierane.
+
 ## Procedura
 1. Przygotuj plik konfiguracyjny YAML/JSON zawierający sekcje `summary`,
    `observability`, `resilience` oraz `portfolio`. Przykład minimalny (YAML):

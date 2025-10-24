@@ -10,6 +10,8 @@ aktualne, podpisane HMAC oraz gotowe do użycia w scenariuszu przełączenia.
   `python scripts/export_resilience_bundle.py`.
 - Zdefiniowany plan w `data/stage6/resilience/failover_plan.json`.
 
+> **Uwaga:** Wszystkie polecenia CLI zakładają uruchamianie skryptów Stage6 poprzez `python <ścieżka_do_skryptu>` (alias `python3` w aktywnym venv). Bezpośrednie wywołania `./scripts/...` pomijają konfigurację środowiska i nie są wspierane.
+
 ## Procedura
 1. Zweryfikuj konfigurację i integralność paczek (opcjonalne, przed cyklem):
    ```bash
@@ -29,8 +31,8 @@ aktualne, podpisane HMAC oraz gotowe do użycia w scenariuszu przełączenia.
    ```
    Polecenie zapisze również raporty CSV/podpisy, jeśli wskażesz opcjonalne
    parametry (`--audit-csv`, `--failover-csv`, `--self-heal-signature`).
-3. W razie potrzeby użyj pojedynczych narzędzi (`audit_resilience_bundles.py`,
-   `failover_drill.py`) dla dodatkowych scenariuszy DR lub analizy ręcznej.
+3. W razie potrzeby użyj pojedynczych narzędzi (`python scripts/audit_resilience_bundles.py`,
+   `python scripts/failover_drill.py`) dla dodatkowych scenariuszy DR lub analizy ręcznej.
 4. Zweryfikuj statusy `resilience` w PortfolioGovernor i odnotuj ewentualne
    alerty krytyczne.
 5. Zaktualizuj decision log Stage6 wpisem referencyjnym do wygenerowanych
