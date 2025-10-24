@@ -23,14 +23,6 @@ Item {
         ]
     }
 
-    function sideOptions() {
-        return [
-            { text: qsTr("Dowolna strona"), value: "" },
-            { text: qsTr("Kupno"), value: "BUY" },
-            { text: qsTr("Sprzedaż"), value: "SELL" }
-        ]
-    }
-
     FileDialog {
         id: exportDialog
         title: qsTr("Eksportuj dziennik decyzji")
@@ -55,19 +47,7 @@ Item {
             searchField.text = ""
             strategyField.text = ""
             regimeField.text = ""
-            environmentField.text = ""
-            portfolioField.text = ""
-            riskProfileField.text = ""
-            scheduleField.text = ""
-            symbolField.text = ""
-            decisionStateField.text = ""
-            decisionModeField.text = ""
-            decisionReasonField.text = ""
-            eventField.text = ""
             approvalCombo.currentIndex = 0
-            sideCombo.currentIndex = 0
-            startFilterCheck.checked = false
-            endFilterCheck.checked = false
             root._syncingControls = false
             return
         }
@@ -84,42 +64,6 @@ Item {
         if (regimeField.text !== regime)
             regimeField.text = regime
 
-        const environment = decisionFilterModel.environmentFilter || ""
-        if (environmentField.text !== environment)
-            environmentField.text = environment
-
-        const portfolio = decisionFilterModel.portfolioFilter || ""
-        if (portfolioField.text !== portfolio)
-            portfolioField.text = portfolio
-
-        const riskProfile = decisionFilterModel.riskProfileFilter || ""
-        if (riskProfileField.text !== riskProfile)
-            riskProfileField.text = riskProfile
-
-        const schedule = decisionFilterModel.scheduleFilter || ""
-        if (scheduleField.text !== schedule)
-            scheduleField.text = schedule
-
-        const symbol = decisionFilterModel.symbolFilter || ""
-        if (symbolField.text !== symbol)
-            symbolField.text = symbol
-
-        const state = decisionFilterModel.decisionStateFilter || ""
-        if (decisionStateField.text !== state)
-            decisionStateField.text = state
-
-        const mode = decisionFilterModel.decisionModeFilter || ""
-        if (decisionModeField.text !== mode)
-            decisionModeField.text = mode
-
-        const reason = decisionFilterModel.decisionReasonFilter || ""
-        if (decisionReasonField.text !== reason)
-            decisionReasonField.text = reason
-
-        const eventName = decisionFilterModel.eventFilter || ""
-        if (eventField.text !== eventName)
-            eventField.text = eventName
-
         const approval = typeof decisionFilterModel.approvalFilter === "number"
                 ? decisionFilterModel.approvalFilter : 0
         let comboIndex = 0
@@ -131,39 +75,6 @@ Item {
         }
         if (approvalCombo.currentIndex !== comboIndex)
             approvalCombo.currentIndex = comboIndex
-
-        const sideValue = decisionFilterModel.sideFilter || ""
-        let sideIndex = 0
-        for (let i = 0; i < sideCombo.model.length; ++i) {
-            if (sideCombo.model[i].value === sideValue) {
-                sideIndex = i
-                break
-            }
-        }
-        if (sideCombo.currentIndex !== sideIndex)
-            sideCombo.currentIndex = sideIndex
-
-        const start = decisionFilterModel.startTimeFilter
-        const hasStart = !!(start && start.isValid && start.isValid())
-        if (startFilterCheck.checked !== hasStart)
-            startFilterCheck.checked = hasStart
-        if (hasStart) {
-            const startLocal = start.toLocalTime ? start.toLocalTime() : start
-            const startDate = new Date(startLocal.toMSecsSinceEpoch())
-            if (!startDatePicker.dateTime || Math.abs(startDatePicker.dateTime.getTime() - startDate.getTime()) > 1)
-                startDatePicker.dateTime = startDate
-        }
-
-        const end = decisionFilterModel.endTimeFilter
-        const hasEnd = !!(end && end.isValid && end.isValid())
-        if (endFilterCheck.checked !== hasEnd)
-            endFilterCheck.checked = hasEnd
-        if (hasEnd) {
-            const endLocal = end.toLocalTime ? end.toLocalTime() : end
-            const endDate = new Date(endLocal.toMSecsSinceEpoch())
-            if (!endDatePicker.dateTime || Math.abs(endDatePicker.dateTime.getTime() - endDate.getTime()) > 1)
-                endDatePicker.dateTime = endDate
-        }
 
         root._syncingControls = false
     }
@@ -259,138 +170,6 @@ Item {
                         }
                     }
 
-                    ComboBox {
-                        id: sideCombo
-                        Layout.preferredWidth: 140
-                        model: sideOptions()
-                        textRole: "text"
-                        valueRole: "value"
-                        onActivated: {
-                            if (root._syncingControls)
-                                return
-                            const opt = model[index]
-                            if (decisionFilterModel)
-                                decisionFilterModel.sideFilter = opt ? opt.value : ""
-                        }
-                    }
-
-                    TextField {
-                        id: environmentField
-                        Layout.preferredWidth: 160
-                        placeholderText: qsTr("Środowisko")
-                        onTextChanged: {
-                            if (root._syncingControls)
-                                return
-                            if (decisionFilterModel)
-                                decisionFilterModel.environmentFilter = text
-                        }
-                    }
-
-                    TextField {
-                        id: portfolioField
-                        Layout.preferredWidth: 160
-                        placeholderText: qsTr("Portfel")
-                        onTextChanged: {
-                            if (root._syncingControls)
-                                return
-                            if (decisionFilterModel)
-                                decisionFilterModel.portfolioFilter = text
-                        }
-                    }
-
-                    Item { Layout.fillWidth: true }
-                }
-
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: 8
-
-                    TextField {
-                        id: decisionStateField
-                        Layout.preferredWidth: 160
-                        placeholderText: qsTr("Stan decyzji")
-                        onTextChanged: {
-                            if (root._syncingControls)
-                                return
-                            if (decisionFilterModel)
-                                decisionFilterModel.decisionStateFilter = text
-                        }
-                    }
-
-                    TextField {
-                        id: decisionModeField
-                        Layout.preferredWidth: 160
-                        placeholderText: qsTr("Tryb")
-                        onTextChanged: {
-                            if (root._syncingControls)
-                                return
-                            if (decisionFilterModel)
-                                decisionFilterModel.decisionModeFilter = text
-                        }
-                    }
-
-                    TextField {
-                        id: decisionReasonField
-                        Layout.preferredWidth: 200
-                        placeholderText: qsTr("Powód decyzji")
-                        onTextChanged: {
-                            if (root._syncingControls)
-                                return
-                            if (decisionFilterModel)
-                                decisionFilterModel.decisionReasonFilter = text
-                        }
-                    }
-
-                    Item { Layout.fillWidth: true }
-                }
-
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: 8
-
-                    TextField {
-                        id: eventField
-                        Layout.preferredWidth: 160
-                        placeholderText: qsTr("Zdarzenie")
-                        onTextChanged: {
-                            if (root._syncingControls)
-                                return
-                            if (decisionFilterModel)
-                                decisionFilterModel.eventFilter = text
-                        }
-                    }
-
-                    TextField {
-                        id: riskProfileField
-                        Layout.preferredWidth: 160
-                        placeholderText: qsTr("Profil ryzyka")
-                        onTextChanged: {
-                            if (root._syncingControls)
-                                return
-                            if (decisionFilterModel)
-                                decisionFilterModel.riskProfileFilter = text
-                        }
-                    }
-
-                    TextField {
-                        id: scheduleField
-                        Layout.preferredWidth: 160
-                        placeholderText: qsTr("Harmonogram")
-                        onTextChanged: {
-                            if (root._syncingControls)
-                                return
-                            if (decisionFilterModel)
-                                decisionFilterModel.scheduleFilter = text
-                        }
-                    }
-
-                    Item { Layout.fillWidth: true }
-                }
-
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: 8
-
                     TextField {
                         id: strategyField
                         Layout.preferredWidth: 160
@@ -412,128 +191,6 @@ Item {
                                 return
                             if (decisionFilterModel)
                                 decisionFilterModel.regimeFilter = text
-                        }
-                    }
-
-                    TextField {
-                        id: symbolField
-                        Layout.preferredWidth: 160
-                        placeholderText: qsTr("Symbol")
-                        onTextChanged: {
-                            if (root._syncingControls)
-                                return
-                            if (decisionFilterModel)
-                                decisionFilterModel.symbolFilter = text
-                        }
-                    }
-                }
-
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: 8
-
-                    CheckBox {
-                        id: startFilterCheck
-                        text: qsTr("Od")
-                        onToggled: {
-                            if (root._syncingControls || !decisionFilterModel)
-                                return
-                            if (checked) {
-                                decisionFilterModel.startTimeFilter = startDatePicker.dateTime
-                            } else {
-                                decisionFilterModel.clearStartTimeFilter()
-                            }
-                        }
-                    }
-
-                    DateTimeEdit {
-                        id: startDatePicker
-                        Layout.fillWidth: true
-                        enabled: startFilterCheck.checked
-                        displayFormat: "yyyy-MM-dd HH:mm"
-                        onDateTimeChanged: {
-                            if (root._syncingControls || !decisionFilterModel || !startFilterCheck.checked)
-                                return
-                            decisionFilterModel.startTimeFilter = dateTime
-                        }
-                    }
-
-                    ToolButton {
-                        icon.name: "view-refresh"
-                        display: AbstractButton.IconOnly
-                        enabled: startFilterCheck.checked
-                        onClicked: {
-                            const now = new Date()
-                            startDatePicker.dateTime = now
-                            if (root._syncingControls || !decisionFilterModel)
-                                return
-                            decisionFilterModel.startTimeFilter = now
-                        }
-                    }
-
-                    ToolButton {
-                        icon.name: "edit-clear"
-                        display: AbstractButton.IconOnly
-                        enabled: startFilterCheck.checked
-                        onClicked: {
-                            if (root._syncingControls || !decisionFilterModel)
-                                return
-                            decisionFilterModel.clearStartTimeFilter()
-                        }
-                    }
-                }
-
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: 8
-
-                    CheckBox {
-                        id: endFilterCheck
-                        text: qsTr("Do")
-                        onToggled: {
-                            if (root._syncingControls || !decisionFilterModel)
-                                return
-                            if (checked) {
-                                decisionFilterModel.endTimeFilter = endDatePicker.dateTime
-                            } else {
-                                decisionFilterModel.clearEndTimeFilter()
-                            }
-                        }
-                    }
-
-                    DateTimeEdit {
-                        id: endDatePicker
-                        Layout.fillWidth: true
-                        enabled: endFilterCheck.checked
-                        displayFormat: "yyyy-MM-dd HH:mm"
-                        onDateTimeChanged: {
-                            if (root._syncingControls || !decisionFilterModel || !endFilterCheck.checked)
-                                return
-                            decisionFilterModel.endTimeFilter = dateTime
-                        }
-                    }
-
-                    ToolButton {
-                        icon.name: "view-refresh"
-                        display: AbstractButton.IconOnly
-                        enabled: endFilterCheck.checked
-                        onClicked: {
-                            const now = new Date()
-                            endDatePicker.dateTime = now
-                            if (root._syncingControls || !decisionFilterModel)
-                                return
-                            decisionFilterModel.endTimeFilter = now
-                        }
-                    }
-
-                    ToolButton {
-                        icon.name: "edit-clear"
-                        display: AbstractButton.IconOnly
-                        enabled: endFilterCheck.checked
-                        onClicked: {
-                            if (root._syncingControls || !decisionFilterModel)
-                                return
-                            decisionFilterModel.clearEndTimeFilter()
                         }
                     }
                 }

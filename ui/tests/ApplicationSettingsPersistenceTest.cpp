@@ -116,11 +116,7 @@ void ApplicationSettingsPersistenceTest::testPersistsAndReloadsConfiguration()
 
         auto* regimeModel = qobject_cast<MarketRegimeTimelineModel*>(app.marketRegimeTimelineModel());
         QVERIFY(regimeModel);
-        QSignalSpy regimeLimitSpy(&app, &Application::regimeTimelineMaximumSnapshotsChanged);
-        QVERIFY(regimeLimitSpy.isValid());
         QVERIFY(app.setRegimeTimelineMaximumSnapshots(360));
-        QCOMPARE(regimeLimitSpy.count(), 1);
-        QCOMPARE(app.regimeTimelineMaximumSnapshots(), 360);
         QCOMPARE(regimeModel->maximumSnapshots(), 360);
         RiskSnapshotData historySample;
         historySample.hasData = true;

@@ -888,6 +888,7 @@ __all__ = [
     "ActivationHistoryStats",
     "ActivationTransitionStats",
     "ActivationCadenceStats",
+    "ActivationUptimeStats",
     "StrategyRegimeWorkflow",
 ]
 
