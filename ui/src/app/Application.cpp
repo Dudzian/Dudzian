@@ -14,6 +14,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QJsonParseError>
 #include <QLoggingCategory>
 #include <QStringList>
 #include <QPoint>
@@ -70,6 +71,15 @@ constexpr auto kRiskHistoryAutoExportDirEnv = QByteArrayLiteral("BOT_CORE_UI_RIS
 constexpr auto kRiskHistoryAutoExportLocalTimeEnv = QByteArrayLiteral("BOT_CORE_UI_RISK_HISTORY_AUTO_EXPORT_USE_LOCAL_TIME");
 constexpr auto kDecisionLogPathEnv = QByteArrayLiteral("BOT_CORE_UI_DECISION_LOG");
 constexpr auto kDecisionLogLimitEnv = QByteArrayLiteral("BOT_CORE_UI_DECISION_LOG_LIMIT");
+constexpr int kDefaultLicenseRefreshIntervalSeconds = 600;
+constexpr int kMinLicenseRefreshIntervalSeconds = 60;
+constexpr int kMaxLicenseRefreshIntervalSeconds = 86400;
+constexpr auto kLicenseRefreshIntervalEnv = QByteArrayLiteral("BOT_CORE_UI_LICENSE_REFRESH_INTERVAL");
+constexpr auto kLicenseCachePathEnv = QByteArrayLiteral("BOT_CORE_UI_LICENSE_CACHE_PATH");
+constexpr int kDefaultFingerprintRefreshIntervalSeconds = 86400;
+constexpr int kMinFingerprintRefreshIntervalSeconds = 300;
+constexpr int kMaxFingerprintRefreshIntervalSeconds = 604800;
+constexpr auto kFingerprintRefreshIntervalEnv = QByteArrayLiteral("BOT_CORE_UI_FINGERPRINT_REFRESH_INTERVAL");
 
 using bot::shell::utils::expandPath;
 using bot::shell::utils::watchableDirectories;
@@ -180,6 +190,14 @@ Application::Application(QQmlApplicationEngine& engine, QObject* parent)
 {
     m_offlineStatus = tr("Offline daemon: nieaktywny");
     m_activationController = std::make_unique<ActivationController>(this);
+    connect(m_activationController.get(), &ActivationController::errorChanged, this,
+            &Application::handleActivationErrorChanged);
+    connect(m_activationController.get(), &ActivationController::fingerprintChanged, this,
+            &Application::handleActivationFingerprintChanged);
+    connect(m_activationController.get(), &ActivationController::licensesChanged, this,
+            &Application::handleActivationLicensesChanged);
+    connect(m_activationController.get(), &ActivationController::oemLicenseChanged, this,
+            &Application::handleActivationOemLicenseChanged);
 
     // Startowe ustawienia instrumentu z klienta (mogą być nadpisane przez CLI)
     m_instrument = m_client.instrumentConfig();
@@ -288,8 +306,10 @@ Application::Application(QQmlApplicationEngine& engine, QObject* parent)
             m_supportController->setScriptPath(QDir(m_repoRoot).absoluteFilePath(QStringLiteral("scripts/export_support_bundle.py")));
         else
             m_supportController->setScriptPath(QDir::current().absoluteFilePath(QStringLiteral("scripts/export_support_bundle.py")));
+        updateSupportBundleMetadata();
     }
 
+    initializeSecurityRefresh();
     exposeToQml();
 
     // Podłącz okno po utworzeniu (dla FrameRateMonitor)
@@ -304,6 +324,7 @@ Application::Application(QQmlApplicationEngine& engine, QObject* parent)
             [this](const QString& status) {
                 m_connectionStatus = status;
                 Q_EMIT connectionStatusChanged();
+                updateSupportBundleMetadata();
             });
 
     connect(&m_client, &TradingClient::performanceGuardUpdated, this,
@@ -323,6 +344,7 @@ Application::Application(QQmlApplicationEngine& engine, QObject* parent)
                                   : QStringLiteral("idle");
         m_connectionStatus = state;
         Q_EMIT connectionStatusChanged();
+        updateSupportBundleMetadata();
     });
 
     // Risk state (jeśli dostępne po stronie serwera)
@@ -1591,14 +1613,7 @@ void Application::configureSupportBundle(const QCommandLineParser& parser)
     }
     m_supportController->setExtraIncludeSpecs(extraSpecs);
 
-    QVariantMap metadata;
-    metadata.insert(QStringLiteral("origin"), QStringLiteral("desktop_ui"));
-    metadata.insert(QStringLiteral("instrument"), instrumentLabel());
-    metadata.insert(QStringLiteral("exchange"), m_instrument.exchange);
-    metadata.insert(QStringLiteral("symbol"), m_instrument.symbol);
-    metadata.insert(QStringLiteral("connection_status"), m_connectionStatus);
-    metadata.insert(QStringLiteral("app_version"), QCoreApplication::applicationVersion());
-    metadata.insert(QStringLiteral("hostname"), QSysInfo::machineHostName());
+    QVariantMap overrides;
 
     const auto applyMetadata = [&](const QString& rawSpec) {
         const QString trimmed = rawSpec.trimmed();
@@ -1613,13 +1628,37 @@ void Application::configureSupportBundle(const QCommandLineParser& parser)
         const QString value = trimmed.mid(eq + 1).trimmed();
         if (key.isEmpty())
             return;
-        metadata.insert(key, value);
+        overrides.insert(key, value);
     };
 
     for (const QString& spec : metadataEnv)
         applyMetadata(spec);
     for (const QString& spec : metadataCli)
         applyMetadata(spec);
+    m_supportMetadataOverrides = overrides;
+    updateSupportBundleMetadata();
+}
+
+void Application::updateSupportBundleMetadata()
+{
+    if (!m_supportController)
+        return;
+
+    QVariantMap metadata;
+    metadata.insert(QStringLiteral("origin"), QStringLiteral("desktop_ui"));
+    metadata.insert(QStringLiteral("instrument"), instrumentLabel());
+    metadata.insert(QStringLiteral("exchange"), m_instrument.exchange);
+    metadata.insert(QStringLiteral("symbol"), m_instrument.symbol);
+    metadata.insert(QStringLiteral("connection_status"), m_connectionStatus);
+    metadata.insert(QStringLiteral("app_version"), QCoreApplication::applicationVersion());
+    metadata.insert(QStringLiteral("hostname"), QSysInfo::machineHostName());
+
+    for (auto it = m_supportMetadataOverrides.constBegin(); it != m_supportMetadataOverrides.constEnd(); ++it) {
+        const QString key = it.key().trimmed();
+        if (key.isEmpty())
+            continue;
+        metadata.insert(key, it.value());
+    }
 
     m_supportController->setMetadata(metadata);
 }
@@ -1937,6 +1976,434 @@ void Application::persistUiSettings()
     } else {
         qCInfo(lcAppMetrics) << "Zapisano konfigurację UI do" << m_uiSettingsPath;
     }
+}
+
+void Application::ensureLicenseRefreshTimerConfigured()
+{
+    if (m_licenseRefreshTimerConfigured)
+        return;
+
+    m_licenseRefreshTimer.setTimerType(Qt::VeryCoarseTimer);
+    m_licenseRefreshTimer.setSingleShot(false);
+    m_licenseRefreshTimer.setParent(this);
+    connect(&m_licenseRefreshTimer, &QTimer::timeout, this, &Application::refreshSecurityArtifacts);
+    m_licenseRefreshTimerConfigured = true;
+}
+
+void Application::ensureFingerprintRefreshTimerConfigured()
+{
+    if (m_fingerprintRefreshTimerConfigured)
+        return;
+
+    m_fingerprintRefreshTimer.setTimerType(Qt::VeryCoarseTimer);
+    m_fingerprintRefreshTimer.setSingleShot(false);
+    m_fingerprintRefreshTimer.setParent(this);
+    connect(&m_fingerprintRefreshTimer, &QTimer::timeout, this, &Application::refreshFingerprintArtifacts);
+    m_fingerprintRefreshTimerConfigured = true;
+}
+
+void Application::initializeSecurityRefresh()
+{
+    const QByteArray cacheEnv = qgetenv(kLicenseCachePathEnv.constData());
+    if (!cacheEnv.isEmpty())
+        m_licenseCachePath = expandPath(QString::fromUtf8(cacheEnv));
+    else
+        m_licenseCachePath = QDir::current().absoluteFilePath(QStringLiteral("var/cache/ui_license_snapshot.json"));
+
+    if (!m_licenseCachePath.trimmed().isEmpty()) {
+        QDir dir = QFileInfo(m_licenseCachePath).dir();
+        if (!dir.exists())
+            dir.mkpath(QStringLiteral("."));
+    }
+
+    loadSecurityCache();
+
+    int intervalSeconds = kDefaultLicenseRefreshIntervalSeconds;
+    if (qEnvironmentVariableIsSet(kLicenseRefreshIntervalEnv.constData())) {
+        bool ok = false;
+        const QByteArray raw = qgetenv(kLicenseRefreshIntervalEnv.constData());
+        const int candidate = QString::fromUtf8(raw).toInt(&ok);
+        if (ok)
+            intervalSeconds = std::clamp(candidate, kMinLicenseRefreshIntervalSeconds, kMaxLicenseRefreshIntervalSeconds);
+        else
+            qCWarning(lcAppMetrics) << "Nieprawidłowa wartość" << QString::fromUtf8(raw)
+                                    << "dla" << kLicenseRefreshIntervalEnv;
+    }
+
+    if (intervalSeconds <= 0) {
+        m_licenseRefreshIntervalSeconds = 0;
+        ensureLicenseRefreshTimerConfigured();
+        m_licenseRefreshTimer.stop();
+        m_nextLicenseRefreshUtc = QDateTime();
+        updateSecurityCacheFromControllers();
+        Q_EMIT licenseRefreshScheduleChanged();
+    } else {
+        ensureLicenseRefreshTimerConfigured();
+        m_licenseRefreshIntervalSeconds = intervalSeconds;
+        m_licenseRefreshTimer.setInterval(m_licenseRefreshIntervalSeconds * 1000);
+        if (!m_licenseRefreshTimer.isActive())
+            m_licenseRefreshTimer.start();
+    }
+
+    int fingerprintInterval = kDefaultFingerprintRefreshIntervalSeconds;
+    if (qEnvironmentVariableIsSet(kFingerprintRefreshIntervalEnv.constData())) {
+        bool ok = false;
+        const QByteArray raw = qgetenv(kFingerprintRefreshIntervalEnv.constData());
+        const int candidate = QString::fromUtf8(raw).toInt(&ok);
+        if (ok)
+            fingerprintInterval =
+                std::clamp(candidate, kMinFingerprintRefreshIntervalSeconds, kMaxFingerprintRefreshIntervalSeconds);
+        else
+            qCWarning(lcAppMetrics) << "Nieprawidłowa wartość" << QString::fromUtf8(raw)
+                                    << "dla" << kFingerprintRefreshIntervalEnv;
+    }
+
+    if (fingerprintInterval <= 0) {
+        m_fingerprintRefreshIntervalSeconds = 0;
+        ensureFingerprintRefreshTimerConfigured();
+        m_fingerprintRefreshTimer.stop();
+        m_nextFingerprintRefreshUtc = QDateTime();
+        updateSecurityCacheFromControllers();
+        Q_EMIT fingerprintRefreshScheduleChanged();
+    } else {
+        ensureFingerprintRefreshTimerConfigured();
+        m_fingerprintRefreshIntervalSeconds = fingerprintInterval;
+        m_fingerprintRefreshTimer.setInterval(m_fingerprintRefreshIntervalSeconds * 1000);
+        if (!m_fingerprintRefreshTimer.isActive())
+            m_fingerprintRefreshTimer.start();
+    }
+
+    if (m_licenseRefreshTimer.isActive())
+        QTimer::singleShot(0, this, &Application::refreshSecurityArtifacts);
+    else if (m_fingerprintRefreshTimer.isActive())
+        QTimer::singleShot(0, this, &Application::refreshFingerprintArtifacts);
+}
+
+void Application::refreshSecurityArtifacts()
+{
+    if (!m_activationController)
+        return;
+
+    const QDateTime now = QDateTime::currentDateTimeUtc();
+    m_pendingSecurityRefresh = SecurityRefreshKind::Combined;
+    m_lastLicenseRefreshRequestUtc = now;
+    m_lastFingerprintRefreshRequestUtc = now;
+    if (m_licenseRefreshIntervalSeconds > 0)
+        m_nextLicenseRefreshUtc = m_lastLicenseRefreshRequestUtc.addSecs(m_licenseRefreshIntervalSeconds);
+    else
+        m_nextLicenseRefreshUtc = QDateTime();
+    if (m_fingerprintRefreshIntervalSeconds > 0)
+        m_nextFingerprintRefreshUtc = m_lastFingerprintRefreshRequestUtc.addSecs(m_fingerprintRefreshIntervalSeconds);
+    else
+        m_nextFingerprintRefreshUtc = QDateTime();
+    m_activationController->refresh();
+    Q_EMIT licenseRefreshScheduleChanged();
+    Q_EMIT fingerprintRefreshScheduleChanged();
+}
+
+void Application::refreshFingerprintArtifacts()
+{
+    if (!m_activationController)
+        return;
+
+    const QDateTime now = QDateTime::currentDateTimeUtc();
+    m_pendingSecurityRefresh = SecurityRefreshKind::Fingerprint;
+    m_lastFingerprintRefreshRequestUtc = now;
+    if (m_fingerprintRefreshIntervalSeconds > 0)
+        m_nextFingerprintRefreshUtc = now.addSecs(m_fingerprintRefreshIntervalSeconds);
+    else
+        m_nextFingerprintRefreshUtc = QDateTime();
+    m_activationController->refreshFingerprint();
+    Q_EMIT fingerprintRefreshScheduleChanged();
+}
+
+void Application::processSecurityArtifactsUpdate()
+{
+    if (!m_activationController)
+        return;
+
+    const bool loadingFromCache = m_loadingSecurityCache;
+    const QString controllerError = m_activationController->lastError();
+    const bool refreshSucceeded = controllerError.isEmpty();
+
+    SecurityRefreshKind mode = m_pendingSecurityRefresh;
+    if (mode == SecurityRefreshKind::None)
+        mode = SecurityRefreshKind::Combined;
+
+    const auto includesLicense = [mode]() {
+        return mode == SecurityRefreshKind::Combined || mode == SecurityRefreshKind::License;
+    };
+    const auto includesFingerprint = [mode]() {
+        return mode == SecurityRefreshKind::Combined || mode == SecurityRefreshKind::Fingerprint;
+    };
+
+    if (!loadingFromCache) {
+        if (refreshSucceeded) {
+            const QDateTime now = QDateTime::currentDateTimeUtc();
+            if (includesLicense()) {
+                m_lastLicenseError.clear();
+                m_lastLicenseRefreshUtc = now;
+                if (m_licenseRefreshIntervalSeconds > 0) {
+                    if (m_lastLicenseRefreshRequestUtc.isValid())
+                        m_nextLicenseRefreshUtc =
+                            m_lastLicenseRefreshRequestUtc.addSecs(m_licenseRefreshIntervalSeconds);
+                    else
+                        m_nextLicenseRefreshUtc = now.addSecs(m_licenseRefreshIntervalSeconds);
+                } else {
+                    m_nextLicenseRefreshUtc = QDateTime();
+                }
+            }
+            if (includesFingerprint()) {
+                m_lastFingerprintError.clear();
+                m_lastFingerprintRefreshUtc = now;
+                if (m_fingerprintRefreshIntervalSeconds > 0) {
+                    if (m_lastFingerprintRefreshRequestUtc.isValid())
+                        m_nextFingerprintRefreshUtc =
+                            m_lastFingerprintRefreshRequestUtc.addSecs(m_fingerprintRefreshIntervalSeconds);
+                    else
+                        m_nextFingerprintRefreshUtc = now.addSecs(m_fingerprintRefreshIntervalSeconds);
+                } else {
+                    m_nextFingerprintRefreshUtc = QDateTime();
+                }
+            }
+        } else {
+            if (includesLicense())
+                m_lastLicenseError = controllerError;
+            if (includesFingerprint())
+                m_lastFingerprintError = controllerError;
+        }
+    } else if (!controllerError.isEmpty()) {
+        if (includesLicense())
+            m_lastLicenseError = controllerError;
+        if (includesFingerprint())
+            m_lastFingerprintError = controllerError;
+    }
+
+    updateSecurityCacheFromControllers();
+
+    if (refreshSucceeded && !loadingFromCache) {
+        if (includesLicense()) {
+            clearSecurityAlert(QStringLiteral("security:license-refresh"));
+            Q_EMIT licenseRefreshScheduleChanged();
+        }
+        if (includesFingerprint()) {
+            clearSecurityAlert(QStringLiteral("security:fingerprint-refresh"));
+            Q_EMIT fingerprintRefreshScheduleChanged();
+        }
+    }
+
+    m_pendingSecurityRefresh = SecurityRefreshKind::None;
+}
+
+void Application::updateSecurityCacheFromControllers()
+{
+    QVariantMap cache;
+    if (m_activationController) {
+        cache.insert(QStringLiteral("fingerprint"), m_activationController->fingerprint());
+        cache.insert(QStringLiteral("oemLicense"), m_activationController->oemLicense());
+        cache.insert(QStringLiteral("licenseHistory"), QVariant::fromValue(m_activationController->licenses()));
+        if (!m_lastLicenseError.isEmpty())
+            cache.insert(QStringLiteral("lastError"), m_lastLicenseError);
+    }
+    cache.insert(QStringLiteral("refreshIntervalSeconds"), m_licenseRefreshIntervalSeconds);
+    cache.insert(QStringLiteral("refreshActive"), m_licenseRefreshTimer.isActive());
+    if (m_lastLicenseRefreshRequestUtc.isValid())
+        cache.insert(QStringLiteral("lastRequestIso"), m_lastLicenseRefreshRequestUtc.toString(Qt::ISODateWithMs));
+    if (m_lastLicenseRefreshUtc.isValid())
+        cache.insert(QStringLiteral("lastRefreshIso"), m_lastLicenseRefreshUtc.toString(Qt::ISODateWithMs));
+    if (m_nextLicenseRefreshUtc.isValid())
+        cache.insert(QStringLiteral("nextRefreshIso"), m_nextLicenseRefreshUtc.toString(Qt::ISODateWithMs));
+
+    QVariantMap fingerprintSchedule;
+    fingerprintSchedule.insert(QStringLiteral("intervalSeconds"), m_fingerprintRefreshIntervalSeconds);
+    fingerprintSchedule.insert(QStringLiteral("active"), m_fingerprintRefreshTimer.isActive());
+    if (m_lastFingerprintRefreshRequestUtc.isValid())
+        fingerprintSchedule.insert(QStringLiteral("lastRequestIso"),
+                                   m_lastFingerprintRefreshRequestUtc.toString(Qt::ISODateWithMs));
+    if (m_lastFingerprintRefreshUtc.isValid())
+        fingerprintSchedule.insert(QStringLiteral("lastRefreshIso"),
+                                   m_lastFingerprintRefreshUtc.toString(Qt::ISODateWithMs));
+    if (m_nextFingerprintRefreshUtc.isValid())
+        fingerprintSchedule.insert(QStringLiteral("nextRefreshIso"),
+                                   m_nextFingerprintRefreshUtc.toString(Qt::ISODateWithMs));
+    if (!m_lastFingerprintError.isEmpty())
+        fingerprintSchedule.insert(QStringLiteral("lastError"), m_lastFingerprintError);
+
+    cache.insert(QStringLiteral("fingerprintRefresh"), fingerprintSchedule);
+
+    if (cache == m_securityCache)
+        return;
+
+    m_securityCache = cache;
+    Q_EMIT securityCacheChanged();
+    persistSecurityCache();
+}
+
+void Application::loadSecurityCache()
+{
+    if (m_licenseCachePath.trimmed().isEmpty())
+        return;
+
+    QFile file(m_licenseCachePath);
+    if (!file.exists())
+        return;
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        qCWarning(lcAppMetrics) << "Nie udało się odczytać cache licencji" << m_licenseCachePath
+                                << file.errorString();
+        return;
+    }
+
+    const QByteArray data = file.readAll();
+    file.close();
+
+    QJsonParseError parseError{};
+    const QJsonDocument document = QJsonDocument::fromJson(data, &parseError);
+    if (parseError.error != QJsonParseError::NoError || !document.isObject()) {
+        qCWarning(lcAppMetrics) << "Cache licencji ma niepoprawny format" << m_licenseCachePath
+                                << parseError.errorString();
+        return;
+    }
+
+    m_securityCache = document.object().toVariantMap();
+
+    m_lastLicenseError = m_securityCache.value(QStringLiteral("lastError")).toString();
+
+    if (m_securityCache.contains(QStringLiteral("refreshIntervalSeconds"))) {
+        const int cachedInterval = m_securityCache.value(QStringLiteral("refreshIntervalSeconds")).toInt();
+        if (cachedInterval > 0)
+            m_licenseRefreshIntervalSeconds = cachedInterval;
+    }
+
+    const bool cachedActive = m_securityCache.value(QStringLiteral("refreshActive")).toBool();
+
+    const QString lastRefreshIso = m_securityCache.value(QStringLiteral("lastRefreshIso")).toString();
+    if (!lastRefreshIso.isEmpty()) {
+        m_lastLicenseRefreshUtc = QDateTime::fromString(lastRefreshIso, Qt::ISODateWithMs);
+        if (!m_lastLicenseRefreshUtc.isValid())
+            m_lastLicenseRefreshUtc = QDateTime::fromString(lastRefreshIso, Qt::ISODate);
+    }
+    const QString lastRequestIso = m_securityCache.value(QStringLiteral("lastRequestIso")).toString();
+    if (!lastRequestIso.isEmpty()) {
+        m_lastLicenseRefreshRequestUtc = QDateTime::fromString(lastRequestIso, Qt::ISODateWithMs);
+        if (!m_lastLicenseRefreshRequestUtc.isValid())
+            m_lastLicenseRefreshRequestUtc = QDateTime::fromString(lastRequestIso, Qt::ISODate);
+    }
+    const QString nextRefreshIso = m_securityCache.value(QStringLiteral("nextRefreshIso")).toString();
+    if (!nextRefreshIso.isEmpty()) {
+        m_nextLicenseRefreshUtc = QDateTime::fromString(nextRefreshIso, Qt::ISODateWithMs);
+        if (!m_nextLicenseRefreshUtc.isValid())
+            m_nextLicenseRefreshUtc = QDateTime::fromString(nextRefreshIso, Qt::ISODate);
+    }
+
+    if (cachedActive && m_licenseRefreshIntervalSeconds > 0) {
+        ensureLicenseRefreshTimerConfigured();
+        m_licenseRefreshTimer.setInterval(m_licenseRefreshIntervalSeconds * 1000);
+        if (!m_licenseRefreshTimer.isActive())
+            m_licenseRefreshTimer.start();
+    } else if (m_licenseRefreshTimerConfigured && m_licenseRefreshTimer.isActive()) {
+        m_licenseRefreshTimer.stop();
+    }
+
+    const QVariantMap fingerprintSchedule = m_securityCache.value(QStringLiteral("fingerprintRefresh")).toMap();
+    if (!fingerprintSchedule.isEmpty()) {
+        const int fingerprintInterval = fingerprintSchedule.value(QStringLiteral("intervalSeconds"),
+                                                                  m_fingerprintRefreshIntervalSeconds)
+                                        .toInt();
+        if (fingerprintInterval >= 0)
+            m_fingerprintRefreshIntervalSeconds = fingerprintInterval;
+
+        const QString fingerprintError = fingerprintSchedule.value(QStringLiteral("lastError")).toString();
+        if (!fingerprintError.isEmpty())
+            m_lastFingerprintError = fingerprintError;
+
+        const QString fpLastRefreshIso = fingerprintSchedule.value(QStringLiteral("lastRefreshIso")).toString();
+        if (!fpLastRefreshIso.isEmpty()) {
+            m_lastFingerprintRefreshUtc = QDateTime::fromString(fpLastRefreshIso, Qt::ISODateWithMs);
+            if (!m_lastFingerprintRefreshUtc.isValid())
+                m_lastFingerprintRefreshUtc = QDateTime::fromString(fpLastRefreshIso, Qt::ISODate);
+        }
+
+        const QString fpLastRequestIso = fingerprintSchedule.value(QStringLiteral("lastRequestIso")).toString();
+        if (!fpLastRequestIso.isEmpty()) {
+            m_lastFingerprintRefreshRequestUtc = QDateTime::fromString(fpLastRequestIso, Qt::ISODateWithMs);
+            if (!m_lastFingerprintRefreshRequestUtc.isValid())
+                m_lastFingerprintRefreshRequestUtc = QDateTime::fromString(fpLastRequestIso, Qt::ISODate);
+        }
+
+        const QString fpNextRefreshIso = fingerprintSchedule.value(QStringLiteral("nextRefreshIso")).toString();
+        if (!fpNextRefreshIso.isEmpty()) {
+            m_nextFingerprintRefreshUtc = QDateTime::fromString(fpNextRefreshIso, Qt::ISODateWithMs);
+            if (!m_nextFingerprintRefreshUtc.isValid())
+                m_nextFingerprintRefreshUtc = QDateTime::fromString(fpNextRefreshIso, Qt::ISODate);
+        }
+
+        const bool fingerprintActive = fingerprintSchedule.value(QStringLiteral("active")).toBool();
+        ensureFingerprintRefreshTimerConfigured();
+        if (m_fingerprintRefreshIntervalSeconds > 0)
+            m_fingerprintRefreshTimer.setInterval(m_fingerprintRefreshIntervalSeconds * 1000);
+        if (fingerprintActive && m_fingerprintRefreshIntervalSeconds > 0) {
+            if (!m_fingerprintRefreshTimer.isActive())
+                m_fingerprintRefreshTimer.start();
+        } else if (m_fingerprintRefreshTimer.isActive()) {
+            m_fingerprintRefreshTimer.stop();
+        }
+    }
+
+    if (m_activationController) {
+        const QVariantMap fingerprint = m_securityCache.value(QStringLiteral("fingerprint")).toMap();
+        const QVariantMap oemLicense = m_securityCache.value(QStringLiteral("oemLicense")).toMap();
+        const QVariantList history = m_securityCache.value(QStringLiteral("licenseHistory")).toList();
+        m_loadingSecurityCache = true;
+        const auto guard = qScopeGuard([this]() { m_loadingSecurityCache = false; });
+        m_activationController->applyCachedState(fingerprint, oemLicense, history);
+    }
+
+    Q_EMIT securityCacheChanged();
+    Q_EMIT licenseRefreshScheduleChanged();
+    Q_EMIT fingerprintRefreshScheduleChanged();
+}
+
+void Application::persistSecurityCache()
+{
+    if (m_licenseCachePath.trimmed().isEmpty())
+        return;
+
+    QFileInfo info(m_licenseCachePath);
+    QDir dir = info.dir();
+    if (!dir.exists() && !dir.mkpath(QStringLiteral("."))) {
+        qCWarning(lcAppMetrics) << "Nie udało się utworzyć katalogu cache licencji" << dir.absolutePath();
+        return;
+    }
+
+    QSaveFile file(m_licenseCachePath);
+    file.setDirectWriteFallback(true);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        qCWarning(lcAppMetrics) << "Nie udało się zapisać cache licencji" << m_licenseCachePath
+                                << file.errorString();
+        return;
+    }
+
+    const QJsonObject object = QJsonObject::fromVariantMap(m_securityCache);
+    const QByteArray payload = QJsonDocument(object).toJson(QJsonDocument::Compact);
+    if (file.write(payload) != payload.size()) {
+        qCWarning(lcAppMetrics) << "Nie udało się zapisać pełnego cache licencji" << m_licenseCachePath;
+        return;
+    }
+    if (!file.commit())
+        qCWarning(lcAppMetrics) << "Nie udało się zatwierdzić cache licencji" << m_licenseCachePath;
+}
+
+void Application::raiseSecurityAlert(const QString& id,
+                                     AlertsModel::Severity severity,
+                                     const QString& title,
+                                     const QString& description)
+{
+    m_alertsModel.raiseAlert(id, title, description, severity, true);
+}
+
+void Application::clearSecurityAlert(const QString& id)
+{
+    m_alertsModel.clearAlert(id);
 }
 
 QJsonObject Application::buildUiSettingsPayload() const
@@ -2364,6 +2831,7 @@ void Application::handleOfflineStatusChanged(const QString& status)
         if (m_connectionStatus != status) {
             m_connectionStatus = status;
             Q_EMIT connectionStatusChanged();
+            updateSupportBundleMetadata();
         }
     }
 }
@@ -2374,6 +2842,65 @@ void Application::handleOfflineAutomationChanged(bool running)
         return;
     m_offlineAutomationRunning = running;
     Q_EMIT offlineAutomationRunningChanged(running);
+}
+
+void Application::handleActivationErrorChanged()
+{
+    if (!m_activationController)
+        return;
+
+    const QString error = m_activationController->lastError();
+
+    const bool hadLicenseError = !m_lastLicenseError.isEmpty();
+    const bool hadFingerprintError = !m_lastFingerprintError.isEmpty();
+    SecurityRefreshKind mode = m_pendingSecurityRefresh;
+    if (mode == SecurityRefreshKind::None)
+        mode = SecurityRefreshKind::Combined;
+
+    if (!error.isEmpty() || hadLicenseError || hadFingerprintError)
+        processSecurityArtifactsUpdate();
+
+    const auto includesLicense = [mode]() {
+        return mode == SecurityRefreshKind::Combined || mode == SecurityRefreshKind::License;
+    };
+    const auto includesFingerprint = [mode]() {
+        return mode == SecurityRefreshKind::Combined || mode == SecurityRefreshKind::Fingerprint;
+    };
+
+    if (error.isEmpty()) {
+        if (includesLicense())
+            clearSecurityAlert(QStringLiteral("security:license-refresh"));
+        if (includesFingerprint())
+            clearSecurityAlert(QStringLiteral("security:fingerprint-refresh"));
+        return;
+    }
+
+    if (includesLicense())
+        raiseSecurityAlert(QStringLiteral("security:license-refresh"),
+                           AlertsModel::Critical,
+                           tr("Błąd aktualizacji licencji"),
+                           error);
+
+    if (includesFingerprint())
+        raiseSecurityAlert(QStringLiteral("security:fingerprint-refresh"),
+                           AlertsModel::Critical,
+                           tr("Błąd aktualizacji fingerprintu"),
+                           error);
+}
+
+void Application::handleActivationFingerprintChanged()
+{
+    processSecurityArtifactsUpdate();
+}
+
+void Application::handleActivationLicensesChanged()
+{
+    processSecurityArtifactsUpdate();
+}
+
+void Application::handleActivationOemLicenseChanged()
+{
+    processSecurityArtifactsUpdate();
 }
 
 void Application::startOfflineAutomation()
@@ -2408,6 +2935,59 @@ bool Application::setDecisionLogPath(const QUrl& url)
 bool Application::reloadDecisionLog()
 {
     return m_decisionLogModel.reload();
+}
+
+QVariantMap Application::licenseRefreshSchedule() const
+{
+    QVariantMap schedule;
+    schedule.insert(QStringLiteral("intervalSeconds"), m_licenseRefreshIntervalSeconds);
+    schedule.insert(QStringLiteral("active"), m_licenseRefreshTimer.isActive());
+    schedule.insert(QStringLiteral("lastRequestAt"),
+                    m_lastLicenseRefreshRequestUtc.isValid()
+                        ? m_lastLicenseRefreshRequestUtc.toString(Qt::ISODateWithMs)
+                        : QString());
+    schedule.insert(QStringLiteral("lastCompletedAt"),
+                    m_lastLicenseRefreshUtc.isValid()
+                        ? m_lastLicenseRefreshUtc.toString(Qt::ISODateWithMs)
+                        : QString());
+    schedule.insert(QStringLiteral("nextRefreshDueAt"),
+                    m_nextLicenseRefreshUtc.isValid()
+                        ? m_nextLicenseRefreshUtc.toString(Qt::ISODateWithMs)
+                        : QString());
+    double remainingSeconds = -1.0;
+    if (m_nextLicenseRefreshUtc.isValid()) {
+        const qint64 remainingMs = QDateTime::currentDateTimeUtc().msecsTo(m_nextLicenseRefreshUtc);
+        remainingSeconds = remainingMs > 0 ? static_cast<double>(remainingMs) / 1000.0 : 0.0;
+    }
+    schedule.insert(QStringLiteral("nextRefreshInSeconds"), remainingSeconds);
+    return schedule;
+}
+
+QVariantMap Application::fingerprintRefreshSchedule() const
+{
+    QVariantMap schedule;
+    schedule.insert(QStringLiteral("intervalSeconds"), m_fingerprintRefreshIntervalSeconds);
+    schedule.insert(QStringLiteral("active"), m_fingerprintRefreshTimer.isActive());
+    schedule.insert(QStringLiteral("lastRequestAt"),
+                    m_lastFingerprintRefreshRequestUtc.isValid()
+                        ? m_lastFingerprintRefreshRequestUtc.toString(Qt::ISODateWithMs)
+                        : QString());
+    schedule.insert(QStringLiteral("lastCompletedAt"),
+                    m_lastFingerprintRefreshUtc.isValid()
+                        ? m_lastFingerprintRefreshUtc.toString(Qt::ISODateWithMs)
+                        : QString());
+    schedule.insert(QStringLiteral("nextRefreshDueAt"),
+                    m_nextFingerprintRefreshUtc.isValid()
+                        ? m_nextFingerprintRefreshUtc.toString(Qt::ISODateWithMs)
+                        : QString());
+    double remainingSeconds = -1.0;
+    if (m_nextFingerprintRefreshUtc.isValid()) {
+        const qint64 remainingMs = QDateTime::currentDateTimeUtc().msecsTo(m_nextFingerprintRefreshUtc);
+        remainingSeconds = remainingMs > 0 ? static_cast<double>(remainingMs) / 1000.0 : 0.0;
+    }
+    schedule.insert(QStringLiteral("nextRefreshInSeconds"), remainingSeconds);
+    schedule.insert(QStringLiteral("lastError"), m_lastFingerprintError);
+    return schedule;
 }
 
 void Application::handleRiskHistorySnapshotRecorded(const QDateTime& timestamp)
@@ -2638,6 +3218,7 @@ bool Application::updateInstrument(const QString& exchange,
     m_instrument = config;
     if (m_offlineBridge)
         m_offlineBridge->setInstrument(m_instrument);
+    updateSupportBundleMetadata();
     Q_EMIT instrumentChanged();
 
     if (wasStreaming && !m_offlineMode)
@@ -2951,6 +3532,180 @@ bool Application::setRiskHistoryAutoExportUseLocalTime(bool useLocalTime)
     return true;
 }
 
+bool Application::setLicenseRefreshEnabled(bool enabled)
+{
+    ensureLicenseRefreshTimerConfigured();
+
+    if (enabled) {
+        if (m_licenseRefreshIntervalSeconds <= 0)
+            m_licenseRefreshIntervalSeconds = kDefaultLicenseRefreshIntervalSeconds;
+
+        m_licenseRefreshTimer.setInterval(m_licenseRefreshIntervalSeconds * 1000);
+        const bool wasActive = m_licenseRefreshTimer.isActive();
+        if (!wasActive)
+            m_licenseRefreshTimer.start();
+
+        updateSecurityCacheFromControllers();
+        Q_EMIT licenseRefreshScheduleChanged();
+
+        if (!wasActive)
+            refreshSecurityArtifacts();
+        return true;
+    }
+
+    if (!m_licenseRefreshTimer.isActive() && m_licenseRefreshIntervalSeconds == 0)
+        return true;
+
+    if (m_licenseRefreshTimer.isActive())
+        m_licenseRefreshTimer.stop();
+
+    m_nextLicenseRefreshUtc = QDateTime();
+    updateSecurityCacheFromControllers();
+    Q_EMIT licenseRefreshScheduleChanged();
+    return true;
+}
+
+bool Application::setLicenseRefreshIntervalSeconds(int seconds)
+{
+    if (seconds < 0)
+        return false;
+
+    ensureLicenseRefreshTimerConfigured();
+
+    if (seconds == 0) {
+        if (m_licenseRefreshIntervalSeconds == 0 && !m_licenseRefreshTimer.isActive())
+            return true;
+
+        m_licenseRefreshIntervalSeconds = 0;
+        if (m_licenseRefreshTimer.isActive())
+            m_licenseRefreshTimer.stop();
+        m_nextLicenseRefreshUtc = QDateTime();
+        updateSecurityCacheFromControllers();
+        Q_EMIT licenseRefreshScheduleChanged();
+        return true;
+    }
+
+    const int clamped = std::clamp(seconds, kMinLicenseRefreshIntervalSeconds, kMaxLicenseRefreshIntervalSeconds);
+    const bool wasActive = m_licenseRefreshTimer.isActive();
+    if (m_licenseRefreshIntervalSeconds == clamped && !wasActive)
+        return true;
+
+    m_licenseRefreshIntervalSeconds = clamped;
+    m_licenseRefreshTimer.setInterval(m_licenseRefreshIntervalSeconds * 1000);
+
+    if (wasActive) {
+        if (m_lastLicenseRefreshRequestUtc.isValid())
+            m_nextLicenseRefreshUtc = m_lastLicenseRefreshRequestUtc.addSecs(m_licenseRefreshIntervalSeconds);
+        else if (m_lastLicenseRefreshUtc.isValid())
+            m_nextLicenseRefreshUtc = m_lastLicenseRefreshUtc.addSecs(m_licenseRefreshIntervalSeconds);
+        else
+            m_nextLicenseRefreshUtc = QDateTime::currentDateTimeUtc().addSecs(m_licenseRefreshIntervalSeconds);
+    } else {
+        m_nextLicenseRefreshUtc = QDateTime();
+    }
+
+    updateSecurityCacheFromControllers();
+    Q_EMIT licenseRefreshScheduleChanged();
+    return true;
+}
+
+bool Application::triggerLicenseRefreshNow()
+{
+    if (!m_activationController)
+        return false;
+
+    refreshSecurityArtifacts();
+    return true;
+}
+
+bool Application::setFingerprintRefreshEnabled(bool enabled)
+{
+    ensureFingerprintRefreshTimerConfigured();
+
+    if (enabled) {
+        if (m_fingerprintRefreshIntervalSeconds <= 0)
+            m_fingerprintRefreshIntervalSeconds = kDefaultFingerprintRefreshIntervalSeconds;
+
+        m_fingerprintRefreshTimer.setInterval(m_fingerprintRefreshIntervalSeconds * 1000);
+        const bool wasActive = m_fingerprintRefreshTimer.isActive();
+        if (!wasActive)
+            m_fingerprintRefreshTimer.start();
+
+        updateSecurityCacheFromControllers();
+        Q_EMIT fingerprintRefreshScheduleChanged();
+
+        if (!wasActive)
+            refreshFingerprintArtifacts();
+        return true;
+    }
+
+    if (!m_fingerprintRefreshTimer.isActive() && m_fingerprintRefreshIntervalSeconds == 0)
+        return true;
+
+    if (m_fingerprintRefreshTimer.isActive())
+        m_fingerprintRefreshTimer.stop();
+
+    m_nextFingerprintRefreshUtc = QDateTime();
+    updateSecurityCacheFromControllers();
+    Q_EMIT fingerprintRefreshScheduleChanged();
+    return true;
+}
+
+bool Application::setFingerprintRefreshIntervalSeconds(int seconds)
+{
+    if (seconds < 0)
+        return false;
+
+    ensureFingerprintRefreshTimerConfigured();
+
+    if (seconds == 0) {
+        if (m_fingerprintRefreshIntervalSeconds == 0 && !m_fingerprintRefreshTimer.isActive())
+            return true;
+
+        m_fingerprintRefreshIntervalSeconds = 0;
+        if (m_fingerprintRefreshTimer.isActive())
+            m_fingerprintRefreshTimer.stop();
+        m_nextFingerprintRefreshUtc = QDateTime();
+        updateSecurityCacheFromControllers();
+        Q_EMIT fingerprintRefreshScheduleChanged();
+        return true;
+    }
+
+    const int clamped =
+        std::clamp(seconds, kMinFingerprintRefreshIntervalSeconds, kMaxFingerprintRefreshIntervalSeconds);
+    const bool wasActive = m_fingerprintRefreshTimer.isActive();
+    if (m_fingerprintRefreshIntervalSeconds == clamped && !wasActive)
+        return true;
+
+    m_fingerprintRefreshIntervalSeconds = clamped;
+    m_fingerprintRefreshTimer.setInterval(m_fingerprintRefreshIntervalSeconds * 1000);
+
+    if (wasActive) {
+        if (m_lastFingerprintRefreshRequestUtc.isValid())
+            m_nextFingerprintRefreshUtc =
+                m_lastFingerprintRefreshRequestUtc.addSecs(m_fingerprintRefreshIntervalSeconds);
+        else if (m_lastFingerprintRefreshUtc.isValid())
+            m_nextFingerprintRefreshUtc = m_lastFingerprintRefreshUtc.addSecs(m_fingerprintRefreshIntervalSeconds);
+        else
+            m_nextFingerprintRefreshUtc = QDateTime::currentDateTimeUtc().addSecs(m_fingerprintRefreshIntervalSeconds);
+    } else {
+        m_nextFingerprintRefreshUtc = QDateTime();
+    }
+
+    updateSecurityCacheFromControllers();
+    Q_EMIT fingerprintRefreshScheduleChanged();
+    return true;
+}
+
+bool Application::triggerFingerprintRefreshNow()
+{
+    if (!m_activationController)
+        return false;
+
+    refreshFingerprintArtifacts();
+    return true;
+}
+
 void Application::saveUiSettingsImmediatelyForTesting()
 {
     if (m_uiSettingsSaveTimer.isActive())
@@ -3006,7 +3761,6 @@ void Application::applyTradingAuthEnvironmentOverrides(const QCommandLineParser&
                                                        bool cliScopesProvided,
                                                        QString& tradingToken,
                                                        QString& tradingTokenFile)
-                                                       bool cliScopesProvided)
 {
     Q_UNUSED(parser);
 
@@ -3039,8 +3793,6 @@ void Application::applyTradingAuthEnvironmentOverrides(const QCommandLineParser&
             if (!tokenFromFile.isEmpty()) {
                 tradingToken = tokenFromFile;
                 tradingTokenFile = expandedPath;
-            const QString tokenFromFile = readTokenFile(envTokenFile->trimmed(), QStringLiteral("TradingService"));
-            if (!tokenFromFile.isEmpty()) {
                 m_tradingAuthToken = tokenFromFile;
                 applied = true;
             }
