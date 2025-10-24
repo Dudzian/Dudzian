@@ -18,12 +18,16 @@ zarchiwizować w repozytorium audytowym.
      --stage5-summary var/audit/stage5/hypercare/summary.json \
      --stage5-signature var/audit/stage5/hypercare/summary.json.sig \
      --stage5-signing-key-file secrets/stage5_hmac.key \
-     --stage6-summary var/audit/stage6/stage6_hypercare_summary.json \
-     --stage6-signature var/audit/stage6/stage6_hypercare_summary.json.sig \
+     --stage6-summary var/audit/stage6/hypercare_summary.json \
+     --stage6-signature var/audit/stage6/hypercare_summary.sig \
      --stage6-signing-key-file secrets/stage6_hmac.key \
      --signing-key-file secrets/full_hypercare.key \
      --output var/audit/hypercare/full_hypercare_summary.json
    ```
+   > Jeśli korzystasz z domyślnej konfiguracji skryptu Stage6 (bez własnego pliku
+   > konfiguracyjnego), ścieżka raportu może zawierać znacznik czasu w nazwie
+   > `stage6_hypercare_summary_<TS>.json`. Dostosuj argumenty `--stage6-summary`
+   > oraz `--stage6-signature` odpowiednio do wygenerowanych plików.
 4. Opcjonalnie dołącz dodatkowe metadane (np. identyfikator sprintu) poprzez
    parametr `--metadata` wskazujący na plik JSON.
 5. Zweryfikuj raport zbiorczy:

@@ -1,0 +1,109 @@
+summary:
+  path: var/audit/stage6/hypercare_summary.json
+  signature: var/audit/stage6/hypercare_summary.sig
+  metadata:
+    profile: stage6
+    generated_by: sample
+  signing:
+    key_path: secrets/hmac/stage6_summary.key
+    key_id: stage6-summary
+
+observability:
+  definitions: config/observability/slo.yml
+  metrics: var/audit/observability/metrics.json
+  slo:
+    json: var/audit/observability/slo_report.json
+    csv: var/audit/observability/slo_report.csv
+    signature: var/audit/observability/slo_report.sig
+    pretty: true
+  overrides:
+    json: var/audit/observability/alert_overrides.json
+    signature: var/audit/observability/alert_overrides.sig
+    ttl_minutes: 120
+    requested_by: PortfolioGovernor
+    source: slo_monitor
+    include_warning: true
+    tags:
+      - stage6
+    severity_overrides:
+      warning: info
+  dashboard:
+    definition: deploy/grafana/provisioning/dashboards/stage6_resilience_operations.json
+    output: var/audit/observability/dashboard_annotations.json
+    signature: var/audit/observability/dashboard_annotations.sig
+    panel_id: 1
+    pretty: true
+  bundle:
+    output_dir: var/observability
+    bundle_name: stage6-observability
+    sources:
+      - category: dashboards
+        root: deploy/grafana/provisioning/dashboards
+      - category: alert_rules
+        root: deploy/prometheus
+    metadata:
+      profile: stage6
+  signing:
+    key_path: secrets/hmac/observability.key
+    key_id: ops-stage6
+
+resilience:
+  bundle:
+    source: var/audit/resilience
+    output_dir: var/resilience
+    bundle_name: stage6-resilience
+    include:
+      - "**/*.json"
+      - "**/*.sig"
+    metadata:
+      profile: stage6
+  audit:
+    json: var/audit/resilience/audit_summary.json
+    csv: var/audit/resilience/audit_summary.csv
+    signature: var/audit/resilience/audit_summary.sig
+    require_signature: true
+  failover:
+    plan: data/stage6/resilience/failover_plan.json
+    json: var/audit/resilience/failover_summary.json
+    csv: var/audit/resilience/failover_summary.csv
+    signature: var/audit/resilience/failover_summary.sig
+  self_healing:
+    rules: config/stage6/resilience_self_heal.json
+    output: var/audit/resilience/self_healing_report.json
+    signature: var/audit/resilience/self_healing_report.sig
+    mode: plan
+  signing:
+    key_path: secrets/hmac/resilience.key
+    key_id: stage6-resilience
+  audit_hmac:
+    key_path: secrets/hmac/resilience_audit.key
+
+portfolio:
+  core_config: config/core.yaml
+  environment: binance_paper
+  governor: stage6_core
+  inputs:
+    allocations: var/audit/portfolio/allocations_stage6.yaml
+    market_intel: var/audit/stage6/market_intel.json
+    portfolio_value: 125000
+    slo_report: var/audit/observability/slo_report.json
+    stress_report: var/audit/stage6/stress_lab_report.json
+    fallback_dirs:
+      - var/audit/portfolio
+    market_intel_max_age: 180
+    slo_max_age: 180
+    stress_max_age: 180
+  output:
+    summary: var/audit/portfolio/summary.json
+    csv: var/audit/portfolio/summary.csv
+    signature: var/audit/portfolio/summary.sig
+    pretty: true
+  signing:
+    key_path: secrets/hmac/stage6_portfolio.key
+    key_id: stage6-portfolio
+  decision_log:
+    path: var/audit/decision_logs/stage6_portfolio.jsonl
+  metadata:
+    profile: stage6
+  log_context:
+    scope: stage6_hypercare
