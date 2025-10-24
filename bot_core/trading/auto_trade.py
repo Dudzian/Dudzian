@@ -482,6 +482,12 @@ class AutoTradeEngine:
 
         if normalized_columns & (ohlcv_columns | {"close"}):
             available.add("ohlcv")
+            # Ramka przygotowana przez `_prepare_indicator_frame` zawiera jedynie kolumny
+            # OHLCV, ale wskaźniki techniczne są później wyliczane asynchronicznie przez
+            # `_indicator_service.calculate_indicators`.  Utrzymujemy więc ekspozycję
+            # "technical_indicators" zawsze wtedy, gdy mamy dane OHLCV, aby nie
+            # blokować presetów wymagających wskaźników technicznych.
+            available.add("technical_indicators")
 
         indicator_columns = normalized_columns - ohlcv_columns - time_columns
         if indicator_columns:
