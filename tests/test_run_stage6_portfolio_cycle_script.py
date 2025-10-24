@@ -3,6 +3,8 @@ from pathlib import Path
 
 import pytest
 
+from bot_core.portfolio import PortfolioCycleConfig, PortfolioCycleInputs
+from scripts import run_stage6_portfolio_cycle
 from scripts.run_stage6_portfolio_cycle import run as run_cycle
 
 
@@ -152,3 +154,76 @@ def test_run_stage6_portfolio_cycle(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     assert signature["key_id"] == "ops"
     assert csv_path.exists()
     assert log_path.exists()
+
+
+def test_portfolio_cycle_resolves_market_intel_from_fallback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    log_path = tmp_path / "audit" / "decision.jsonl"
+    config_path = tmp_path / "core.yaml"
+    _write_config(config_path, log_path)
+
+    allocations_path = tmp_path / "allocations.json"
+    allocations_path.write_text(json.dumps({"BTC_USDT": 0.3}), encoding="utf-8")
+
+    fallback_dir = tmp_path / "market"
+    fallback_dir.mkdir()
+    candidate = fallback_dir / "market_intel_core_20240701T010203Z.json"
+    candidate.write_text(
+        json.dumps(
+            {
+                "generated_at": "2024-07-01T01:02:03Z",
+                "snapshots": {"BTC_USDT": {"interval": "1h", "bar_count": 12}},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    captured: dict[str, PortfolioCycleInputs] = {}
+
+    class _FakeResult:
+        def __init__(self, summary_path: Path) -> None:
+            self.summary_path = summary_path
+            self.signature_path: Path | None = None
+            self.csv_path: Path | None = None
+
+    class _FakeCycle:
+        def __init__(self, governor: object, config: PortfolioCycleConfig) -> None:
+            captured["inputs"] = config.inputs
+
+        def run(self) -> _FakeResult:
+            output = tmp_path / "artifacts" / "summary.json"
+            output.parent.mkdir(parents=True, exist_ok=True)
+            output.write_text("{}", encoding="utf-8")
+            return _FakeResult(output)
+
+    monkeypatch.setenv("PORTFOLIO_STAGE6_KEY", "cycle-secret")
+    monkeypatch.setattr(
+        run_stage6_portfolio_cycle,
+        "PortfolioHypercareCycle",
+        _FakeCycle,
+    )
+
+    exit_code = run_cycle(
+        [
+            "--config",
+            str(config_path),
+            "--environment",
+            "paper",
+            "--governor",
+            "core",
+            "--allocations",
+            str(allocations_path),
+            "--portfolio-value",
+            "150000",
+            "--market-intel",
+            str(tmp_path / "missing.json"),
+            "--fallback-dir",
+            str(fallback_dir),
+        ]
+    )
+
+    assert exit_code == 0
+    resolved_inputs = captured["inputs"]
+    assert resolved_inputs.market_intel_path == candidate
+    assert resolved_inputs.fallback_directories == (fallback_dir,)

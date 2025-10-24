@@ -8,9 +8,80 @@ import json
 import os
 import re
 import sys
+from collections import Counter
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Iterable, Mapping, Sequence
+from typing import Any, Callable, Iterable, Mapping, Sequence
+
+from bot_core.ai.data_monitoring import (
+    ComplianceSignOffError,
+    collect_pending_compliance_sign_offs,
+    ensure_compliance_sign_offs,
+    filter_audit_reports_since,
+    load_recent_data_quality_reports,
+    load_recent_drift_reports,
+    normalize_compliance_sign_off_roles,
+    summarize_data_quality_reports,
+    summarize_drift_reports,
+)
+
+from bot_core.ai.data_monitoring import (
+    ComplianceSignOffError,
+    collect_pending_compliance_sign_offs,
+    ensure_compliance_sign_offs,
+    filter_audit_reports_since,
+    filter_audit_reports_by_tags,
+    filter_audit_reports_by_sign_off_status,
+    filter_audit_reports_by_status,
+    filter_audit_reports_by_source,
+    filter_audit_reports_by_schedule,
+    filter_audit_reports_by_category,
+    filter_audit_reports_by_job_name,
+    filter_audit_reports_by_run,
+    filter_audit_reports_by_symbol,
+    filter_audit_reports_by_pipeline,
+    filter_audit_reports_by_environment,
+    filter_audit_reports_by_exchange,
+    filter_audit_reports_by_portfolio,
+    filter_audit_reports_by_profile,
+    filter_audit_reports_by_strategy,
+    filter_audit_reports_by_dataset,
+    filter_audit_reports_by_model,
+    filter_audit_reports_by_model_version,
+    filter_audit_reports_by_license_tier,
+    filter_audit_reports_by_risk_class,
+    filter_audit_reports_by_required_data,
+    filter_audit_reports_by_capability,
+    filter_audit_reports_by_policy_enforcement,
+    load_recent_data_quality_reports,
+    load_recent_drift_reports,
+    normalize_compliance_sign_off_roles,
+    normalize_sign_off_status,
+    normalize_report_status,
+    normalize_report_source,
+    normalize_report_schedule,
+    normalize_report_category,
+    normalize_report_job_name,
+    normalize_report_run,
+    normalize_report_symbol,
+    normalize_report_pipeline,
+    normalize_report_environment,
+    normalize_report_exchange,
+    normalize_report_portfolio,
+    normalize_report_profile,
+    normalize_report_dataset,
+    normalize_report_strategy,
+    normalize_report_model,
+    normalize_report_model_version,
+    normalize_report_license_tier,
+    normalize_report_risk_class,
+    normalize_report_required_data,
+    normalize_report_capability,
+    normalize_policy_enforcement,
+    get_supported_sign_off_statuses,
+    summarize_data_quality_reports,
+    summarize_drift_reports,
+)
 
 from bot_core.ai.data_monitoring import (
     ComplianceSignOffError,
@@ -478,457 +549,6 @@ def create_parser() -> argparse.ArgumentParser:
         "--data-quality-category",
         help=(
             "Ogranicza raporty data_quality do wskazanej kategorii (np. completeness)."
-        ),
-    )
-    compliance.add_argument(
-        "--include-tag",
-        dest="include_tags",
-        action="append",
-        help=(
-            "Wymusza obecność co najmniej jednego z podanych tagów w raporcie ("
-            "podaj wielokrotnie lub rozdziel przecinkami)."
-        ),
-    )
-    compliance.add_argument(
-        "--exclude-tag",
-        dest="exclude_tags",
-        action="append",
-        help=(
-            "Pomija raporty zawierające którykolwiek z podanych tagów ("
-            "można powtarzać lub rozdzielać przecinkami)."
-        ),
-    )
-    compliance.add_argument(
-        "--include-status",
-        dest="include_statuses",
-        action="append",
-        help=(
-            "Zachowuje raporty z podpisami w co najmniej jednym ze wskazanych "
-            "statusów (np. pending, investigating)."
-        ),
-    )
-    compliance.add_argument(
-        "--exclude-status",
-        dest="exclude_statuses",
-        action="append",
-        help=(
-            "Odrzuca raporty zawierające podpisy w niedozwolonych statusach ("
-            "można podawać wielokrotnie lub rozdzielać przecinkami)."
-        ),
-    )
-    compliance.add_argument(
-        "--include-report-status",
-        dest="include_report_statuses",
-        action="append",
-        help=(
-            "Zachowuje raporty o wskazanym statusie (np. alert, warning). "
-            "Argument można podawać wielokrotnie lub rozdzielać przecinkami."
-        ),
-    )
-    compliance.add_argument(
-        "--exclude-report-status",
-        dest="exclude_report_statuses",
-        action="append",
-        help=(
-            "Pomija raporty o niedozwolonym statusie (np. ok). "
-            "Argument można podawać wielokrotnie lub rozdzielać przecinkami."
-        ),
-    )
-    compliance.add_argument(
-        "--include-issue",
-        dest="include_issues",
-        action="append",
-        help=(
-            "Zachowuje raporty zawierające co najmniej jeden z podanych kodów problemów "
-            "(np. dq_missing_feature, drift_threshold_exceeded). Argument można podawać "
-            "wielokrotnie lub rozdzielać przecinkami."
-        ),
-    )
-    compliance.add_argument(
-        "--exclude-issue",
-        dest="exclude_issues",
-        action="append",
-        help=(
-            "Pomija raporty zawierające wskazane kody problemów lub alertów. "
-            "Argument można podawać wielokrotnie lub rozdzielać przecinkami."
-        ),
-    )
-    compliance.add_argument(
-        "--include-source",
-        dest="include_sources",
-        action="append",
-        help=(
-            "Zachowuje raporty pochodzące z określonych źródeł (np. pipeline, ohlcv-monitor). "
-            "Argument można podawać wielokrotnie lub rozdzielać przecinkami."
-        ),
-    )
-    compliance.add_argument(
-        "--exclude-source",
-        dest="exclude_sources",
-        action="append",
-        help=(
-            "Odrzuca raporty pochodzące z wskazanych źródeł. "
-            "Argument można podawać wielokrotnie lub rozdzielać przecinkami."
-        ),
-    )
-    compliance.add_argument(
-        "--include-schedule",
-        dest="include_schedules",
-        action="append",
-        help=(
-            "Zachowuje raporty powiązane z wybranymi harmonogramami (np. nightly, eu-open). "
-            "Argument można podawać wielokrotnie lub rozdzielać przecinkami."
-        ),
-    )
-    compliance.add_argument(
-        "--exclude-schedule",
-        dest="exclude_schedules",
-        action="append",
-        help=(
-            "Pomija raporty z określonych harmonogramów audytu. "
-            "Argument można podawać wielokrotnie lub rozdzielać przecinkami."
-        ),
-    )
-    compliance.add_argument(
-        "--include-category",
-        dest="include_categories",
-        action="append",
-        help=(
-            "Zachowuje raporty o wskazanych kategoriach (np. completeness, drift). "
-            "Argument można podawać wielokrotnie lub rozdzielać przecinkami."
-        ),
-    )
-    compliance.add_argument(
-        "--exclude-category",
-        dest="exclude_categories",
-        action="append",
-        help=(
-            "Pomija raporty z niedozwolonych kategorii. "
-            "Argument można podawać wielokrotnie lub rozdzielać przecinkami."
-        ),
-    )
-    compliance.add_argument(
-        "--include-symbol",
-        dest="include_symbols",
-        action="append",
-        help=(
-            "Zachowuje raporty powiązane z wybranymi symbolami (np. BTCUSDT). "
-            "Argument można podawać wielokrotnie lub rozdzielać przecinkami."
-        ),
-    )
-    compliance.add_argument(
-        "--exclude-symbol",
-        dest="exclude_symbols",
-        action="append",
-        help=(
-            "Pomija raporty powiązane z określonymi symbolami. "
-            "Argument można podawać wielokrotnie lub rozdzielać przecinkami."
-        ),
-    )
-    compliance.add_argument(
-        "--include-pipeline",
-        dest="include_pipelines",
-        action="append",
-        help=(
-            "Zachowuje raporty powiązane z wybranymi pipeline'ami (np. nightly, retrain). "
-            "Argument można podawać wielokrotnie lub rozdzielać przecinkami."
-        ),
-    )
-    compliance.add_argument(
-        "--exclude-pipeline",
-        dest="exclude_pipelines",
-        action="append",
-        help=(
-            "Pomija raporty powiązane ze wskazanymi pipeline'ami. "
-            "Argument można podawać wielokrotnie lub rozdzielać przecinkami."
-        ),
-    )
-    compliance.add_argument(
-        "--include-engine",
-        dest="include_engines",
-        action="append",
-        help=(
-            "Zachowuje raporty dotyczące strategii uruchamianych przez wskazane silniki (np. daily_trend_momentum). "
-            "Argument można podawać wielokrotnie lub rozdzielać przecinkami."
-        ),
-    )
-    compliance.add_argument(
-        "--exclude-engine",
-        dest="exclude_engines",
-        action="append",
-        help=(
-            "Pomija raporty związane z niepożądanymi silnikami strategii. "
-            "Argument można podawać wielokrotnie lub rozdzielać przecinkami."
-        ),
-    )
-    compliance.add_argument(
-        "--include-capability",
-        dest="include_capabilities",
-        action="append",
-        help=(
-            "Zachowuje raporty dotyczące wskazanych capability strategii (np. trend_d1). "
-            "Argument można podawać wielokrotnie lub rozdzielać przecinkami."
-        ),
-    )
-    compliance.add_argument(
-        "--exclude-capability",
-        dest="exclude_capabilities",
-        action="append",
-        help=(
-            "Pomija raporty dotyczące niepożądanych capability strategii. "
-            "Argument można podawać wielokrotnie lub rozdzielać przecinkami."
-        ),
-    )
-    compliance.add_argument(
-        "--include-license-tier",
-        dest="include_license_tiers",
-        action="append",
-        help=(
-            "Zachowuje raporty wymagające określonych poziomów licencji strategii (np. standard, enterprise). "
-            "Argument można podawać wielokrotnie lub rozdzielać przecinkami."
-        ),
-    )
-    compliance.add_argument(
-        "--exclude-license-tier",
-        dest="exclude_license_tiers",
-        action="append",
-        help=(
-            "Pomija raporty wymagające wskazanych poziomów licencji strategii. "
-            "Argument można podawać wielokrotnie lub rozdzielać przecinkami."
-        ),
-    )
-    compliance.add_argument(
-        "--include-risk-class",
-        dest="include_risk_classes",
-        action="append",
-        help=(
-            "Zachowuje raporty powiązane z wybranymi klasami ryzyka strategii (np. directional, market_making). "
-            "Argument można podawać wielokrotnie lub rozdzielać przecinkami."
-        ),
-    )
-    compliance.add_argument(
-        "--exclude-risk-class",
-        dest="exclude_risk_classes",
-        action="append",
-        help=(
-            "Pomija raporty dla wskazanych klas ryzyka strategii. "
-            "Argument można podawać wielokrotnie lub rozdzielać przecinkami."
-        ),
-    )
-    compliance.add_argument(
-        "--include-required-data",
-        dest="include_required_data",
-        action="append",
-        help=(
-            "Zachowuje raporty wymagające określonych źródeł danych (np. ohlcv, technical_indicators). "
-            "Argument można podawać wielokrotnie lub rozdzielać przecinkami."
-        ),
-    )
-    compliance.add_argument(
-        "--exclude-required-data",
-        dest="exclude_required_data",
-        action="append",
-        help=(
-            "Pomija raporty wymagające wskazanych źródeł danych. "
-            "Argument można podawać wielokrotnie lub rozdzielać przecinkami."
-        ),
-    )
-    compliance.add_argument(
-        "--include-exchange",
-        dest="include_exchanges",
-        action="append",
-        help=(
-            "Zachowuje raporty pochodzące z określonych giełd lub źródeł danych (np. binance, kraken). "
-            "Argument można podawać wielokrotnie lub rozdzielać przecinkami."
-        ),
-    )
-    compliance.add_argument(
-        "--exclude-exchange",
-        dest="exclude_exchanges",
-        action="append",
-        help=(
-            "Pomija raporty z niedozwolonych giełd lub źródeł danych. "
-            "Argument można podawać wielokrotnie lub rozdzielać przecinkami."
-        ),
-    )
-    compliance.add_argument(
-        "--include-environment",
-        dest="include_environments",
-        action="append",
-        help=(
-            "Zachowuje raporty powiązane z określonymi środowiskami (np. prod, paper). "
-            "Argument można podawać wielokrotnie lub rozdzielać przecinkami."
-        ),
-    )
-    compliance.add_argument(
-        "--exclude-environment",
-        dest="exclude_environments",
-        action="append",
-        help=(
-            "Pomija raporty powiązane ze wskazanymi środowiskami. "
-            "Argument można podawać wielokrotnie lub rozdzielać przecinkami."
-        ),
-    )
-    compliance.add_argument(
-        "--include-portfolio",
-        dest="include_portfolios",
-        action="append",
-        help=(
-            "Zachowuje raporty dotyczące wybranych portfeli (np. core, hf). "
-            "Argument można podawać wielokrotnie lub rozdzielać przecinkami."
-        ),
-    )
-    compliance.add_argument(
-        "--exclude-portfolio",
-        dest="exclude_portfolios",
-        action="append",
-        help=(
-            "Pomija raporty dotyczące określonych portfeli. "
-            "Argument można podawać wielokrotnie lub rozdzielać przecinkami."
-        ),
-    )
-    compliance.add_argument(
-        "--include-profile",
-        dest="include_profiles",
-        action="append",
-        help=(
-            "Zachowuje raporty dla strategii o wskazanych profilach ryzyka (np. conservative, aggressive). "
-            "Argument można podawać wielokrotnie lub rozdzielać przecinkami."
-        ),
-    )
-    compliance.add_argument(
-        "--exclude-profile",
-        dest="exclude_profiles",
-        action="append",
-        help=(
-            "Pomija raporty strategii o zadanych profilach ryzyka. "
-            "Argument można podawać wielokrotnie lub rozdzielać przecinkami."
-        ),
-    )
-    compliance.add_argument(
-        "--include-strategy",
-        dest="include_strategies",
-        action="append",
-        help=(
-            "Zachowuje raporty dotyczące konkretnych strategii (np. mean_reversion, trend-follow). "
-            "Argument można podawać wielokrotnie lub rozdzielać przecinkami."
-        ),
-    )
-    compliance.add_argument(
-        "--exclude-strategy",
-        dest="exclude_strategies",
-        action="append",
-        help=(
-            "Pomija raporty związane z wybranymi strategiami. "
-            "Argument można podawać wielokrotnie lub rozdzielać przecinkami."
-        ),
-    )
-    compliance.add_argument(
-        "--include-dataset",
-        dest="include_datasets",
-        action="append",
-        help=(
-            "Zachowuje raporty powiązane z wybranymi zbiorami danych (np. nightly-features). "
-            "Argument można podawać wielokrotnie lub rozdzielać przecinkami."
-        ),
-    )
-    compliance.add_argument(
-        "--exclude-dataset",
-        dest="exclude_datasets",
-        action="append",
-        help=(
-            "Pomija raporty dotyczące wskazanych zbiorów danych. "
-            "Argument można podawać wielokrotnie lub rozdzielać przecinkami."
-        ),
-    )
-    compliance.add_argument(
-        "--include-model",
-        dest="include_models",
-        action="append",
-        help=(
-            "Zachowuje raporty związane z określonymi modelami lub artefaktami (np. trend_v2). "
-            "Argument można podawać wielokrotnie lub rozdzielać przecinkami."
-        ),
-    )
-    compliance.add_argument(
-        "--exclude-model",
-        dest="exclude_models",
-        action="append",
-        help=(
-            "Pomija raporty dla wybranych modeli lub artefaktów. "
-            "Argument można podawać wielokrotnie lub rozdzielać przecinkami."
-        ),
-    )
-    compliance.add_argument(
-        "--include-model-version",
-        dest="include_model_versions",
-        action="append",
-        help=(
-            "Zachowuje raporty powiązane z konkretnymi wersjami modeli lub artefaktów (np. 1.2.0). "
-            "Argument można podawać wielokrotnie lub rozdzielać przecinkami."
-        ),
-    )
-    compliance.add_argument(
-        "--exclude-model-version",
-        dest="exclude_model_versions",
-        action="append",
-        help=(
-            "Pomija raporty dla wskazanych wersji modeli lub artefaktów. "
-            "Argument można podawać wielokrotnie lub rozdzielać przecinkami."
-        ),
-    )
-    compliance.add_argument(
-        "--include-run",
-        dest="include_runs",
-        action="append",
-        help=(
-            "Zachowuje raporty powiązane z określonymi runami (np. baseline, alert). "
-            "Argument można podawać wielokrotnie lub rozdzielać przecinkami."
-        ),
-    )
-    compliance.add_argument(
-        "--exclude-run",
-        dest="exclude_runs",
-        action="append",
-        help=(
-            "Pomija raporty powiązane ze wskazanymi runami inference. "
-            "Argument można podawać wielokrotnie lub rozdzielać przecinkami."
-        ),
-    )
-    compliance.add_argument(
-        "--include-job",
-        dest="include_jobs",
-        action="append",
-        help=(
-            "Zachowuje raporty powiązane z określonym zadaniem (job_name). "
-            "Argument można podawać wielokrotnie lub rozdzielać przecinkami."
-        ),
-    )
-    compliance.add_argument(
-        "--exclude-job",
-        dest="exclude_jobs",
-        action="append",
-        help=(
-            "Pomija raporty dla wskazanych zadań audytu (job_name). "
-            "Argument można podawać wielokrotnie lub rozdzielać przecinkami."
-        ),
-    )
-    compliance.add_argument(
-        "--policy-enforce",
-        dest="policy_enforce",
-        action="append",
-        help=(
-            "Filtruje raporty po wartości policy.enforce (np. enforced, not-enforced). "
-            "Argument można podawać wielokrotnie lub rozdzielać przecinkami."
-        ),
-    )
-    compliance.add_argument(
-        "--exclude-policy-enforce",
-        dest="exclude_policy_enforce",
-        action="append",
-        help=(
-            "Pomija raporty z określoną wartością policy.enforce (np. enforced). "
-            "Argument można podawać wielokrotnie lub rozdzielać przecinkami."
         ),
     )
     compliance.add_argument(
@@ -1696,6 +1316,670 @@ def _parse_cli_sources(arguments: Sequence[str] | None) -> tuple[str, ...]:
         return ()
 
     return tuple(dict.fromkeys(collected))
+
+
+def _resolve_since_cutoff(value: str, *, now: datetime | None = None) -> datetime:
+    if not isinstance(value, str) or not value.strip():
+        raise CLIUsageError("Opcja --since wymaga niepustej wartości.")
+
+    reference = now or datetime.now(timezone.utc)
+    candidate = value.strip()
+    match = _SINCE_DURATION_RE.fullmatch(candidate)
+    if match:
+        amount = int(match.group("value"))
+        unit = match.group("unit").lower()
+        delta_map = {
+            "s": timedelta(seconds=amount),
+            "m": timedelta(minutes=amount),
+            "h": timedelta(hours=amount),
+            "d": timedelta(days=amount),
+        }
+        cutoff = reference - delta_map[unit]
+        return cutoff.astimezone(timezone.utc)
+
+    normalized = candidate
+    if candidate.endswith("Z") or candidate.endswith("z"):
+        normalized = candidate[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError as exc:
+        raise CLIUsageError(
+            "Opcja --since wymaga formatu ISO 8601 lub skrótu (np. 24h, 7d)."
+        ) from exc
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _jsonify_payload(value):
+    if isinstance(value, Mapping):
+        return {str(key): _jsonify_payload(val) for key, val in value.items()}
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return [_jsonify_payload(item) for item in value]
+    return value
+
+
+def _parse_compliance_roles(arguments: Sequence[str] | None) -> tuple[str, ...] | None:
+    if not arguments:
+        return None
+
+    collected: list[str] = []
+    for argument in arguments:
+        if not argument:
+            continue
+        for part in re.split(r"[,\s]+", argument):
+            normalized = part.strip()
+            if normalized:
+                collected.append(normalized)
+
+    if not collected:
+        return None
+
+    try:
+        return normalize_compliance_sign_off_roles(collected)
+    except ValueError as exc:
+        raise CLIUsageError(str(exc)) from exc
+
+
+def _parse_cli_tags(arguments: Sequence[str] | None) -> tuple[str, ...]:
+    if not arguments:
+        return ()
+
+    collected: list[str] = []
+    for argument in arguments:
+        if not argument:
+            continue
+        for part in re.split(r"[,\s]+", argument):
+            normalized = part.strip()
+            if normalized:
+                collected.append(normalized)
+    return tuple(collected)
+
+
+def _parse_cli_sign_off_statuses(arguments: Sequence[str] | None) -> tuple[str, ...]:
+    if not arguments:
+        return ()
+
+    supported = get_supported_sign_off_statuses()
+    collected: list[str] = []
+    for argument in arguments:
+        if not argument:
+            continue
+        for part in re.split(r"[,\s]+", argument):
+            normalized = normalize_sign_off_status(part)
+            if not normalized:
+                raise CLIUsageError(
+                    "Nieznany status podpisu compliance: {value}. Dozwolone wartości: {choices}".format(
+                        value=part or "",
+                        choices=", ".join(supported),
+                    )
+                )
+            collected.append(normalized)
+
+    # zachowujemy kolejność pierwszego wystąpienia
+    return tuple(dict.fromkeys(collected))
+
+
+def _parse_cli_report_statuses(arguments: Sequence[str] | None) -> tuple[str, ...]:
+    if not arguments:
+        return ()
+
+    collected: list[str] = []
+    for argument in arguments:
+        if not argument:
+            continue
+        for part in re.split(r"[,\s]+", argument):
+            normalized = normalize_report_status(part)
+            if normalized:
+                collected.append(normalized)
+
+    if not collected:
+        return ()
+
+    return tuple(dict.fromkeys(collected))
+
+
+def _parse_cli_policy_enforcement(arguments: Sequence[str] | None) -> tuple[bool, ...]:
+    if not arguments:
+        return ()
+
+    collected: list[bool] = []
+    for argument in arguments:
+        if not argument:
+            continue
+        for part in re.split(r"[,\s]+", argument):
+            normalized = normalize_policy_enforcement(part)
+            if normalized is None:
+                raise CLIUsageError(
+                    "Nieznana wartość policy.enforce: {value}. Użyj 'enforced' lub 'not-enforced'.".format(
+                        value=part or ""
+                    )
+                )
+            collected.append(normalized)
+
+    if not collected:
+        return ()
+
+    return tuple(dict.fromkeys(collected))
+
+
+def _parse_cli_schedules(arguments: Sequence[str] | None) -> tuple[str, ...]:
+    if not arguments:
+        return ()
+
+    collected: list[str] = []
+    for argument in arguments:
+        if not argument:
+            continue
+        for part in re.split(r"[,\s]+", argument):
+            normalized = normalize_report_schedule(part)
+            if not normalized:
+                raise CLIUsageError(
+                    "Niepoprawny harmonogram audytu: {value}. Podaj niepusty ciąg znaków.".format(
+                        value=part or ""
+                    )
+                )
+            collected.append(normalized)
+
+    if not collected:
+        return ()
+
+    return tuple(dict.fromkeys(collected))
+
+
+def _parse_cli_categories(arguments: Sequence[str] | None) -> tuple[str, ...]:
+    if not arguments:
+        return ()
+
+    collected: list[str] = []
+    for argument in arguments:
+        if not argument:
+            continue
+        for part in re.split(r"[,\s]+", argument):
+            normalized = normalize_report_category(part)
+            if not normalized:
+                raise CLIUsageError(
+                    "Niepoprawna kategoria raportu: {value}. Podaj niepusty ciąg znaków.".format(
+                        value=part or ""
+                    )
+                )
+            collected.append(normalized)
+
+    if not collected:
+        return ()
+
+    return tuple(dict.fromkeys(collected))
+
+
+def _parse_cli_symbols(arguments: Sequence[str] | None) -> tuple[str, ...]:
+    if not arguments:
+        return ()
+
+    collected: list[str] = []
+    for argument in arguments:
+        if not argument:
+            continue
+        for part in re.split(r"[,\s]+", argument):
+            normalized = normalize_report_symbol(part)
+            if not normalized:
+                raise CLIUsageError(
+                    "Niepoprawny symbol raportu: {value}. Podaj niepusty identyfikator rynku.".format(
+                        value=part or ""
+                    )
+                )
+            collected.append(normalized)
+
+    if not collected:
+        return ()
+
+    return tuple(dict.fromkeys(collected))
+
+
+def _parse_cli_job_names(arguments: Sequence[str] | None) -> tuple[str, ...]:
+    if not arguments:
+        return ()
+
+    collected: list[str] = []
+    for argument in arguments:
+        if not argument:
+            continue
+        for part in re.split(r"[,\s]+", argument):
+            normalized = normalize_report_job_name(part)
+            if not normalized:
+                raise CLIUsageError(
+                    "Niepoprawna nazwa zadania audytu: {value}. Podaj niepusty ciąg znaków.".format(
+                        value=part or ""
+                    )
+                )
+            collected.append(normalized)
+
+    if not collected:
+        return ()
+
+    return tuple(dict.fromkeys(collected))
+
+
+def _parse_cli_pipelines(arguments: Sequence[str] | None) -> tuple[str, ...]:
+    if not arguments:
+        return ()
+
+    collected: list[str] = []
+    for argument in arguments:
+        if not argument:
+            continue
+        for part in re.split(r"[,\s]+", argument):
+            normalized = normalize_report_pipeline(part)
+            if not normalized:
+                raise CLIUsageError(
+                    "Niepoprawny pipeline raportu: {value}. Podaj niepusty ciąg znaków.".format(
+                        value=part or ""
+                    )
+                )
+            collected.append(normalized)
+
+    if not collected:
+        return ()
+
+    return tuple(dict.fromkeys(collected))
+
+
+def _parse_cli_capabilities(arguments: Sequence[str] | None) -> tuple[str, ...]:
+    if not arguments:
+        return ()
+
+    collected: list[str] = []
+    for argument in arguments:
+        if not argument:
+            continue
+        for part in re.split(r"[,\s]+", argument):
+            normalized = normalize_report_capability(part)
+            if not normalized:
+                raise CLIUsageError(
+                    "Niepoprawne capability strategii: {value}. Podaj niepusty identyfikator.".format(
+                        value=part or ""
+                    )
+                )
+            collected.append(normalized)
+
+    if not collected:
+        return ()
+
+    return tuple(dict.fromkeys(collected))
+
+
+def _parse_cli_environments(arguments: Sequence[str] | None) -> tuple[str, ...]:
+    if not arguments:
+        return ()
+
+    collected: list[str] = []
+    for argument in arguments:
+        if not argument:
+            continue
+        for part in re.split(r"[,\s]+", argument):
+            normalized = normalize_report_environment(part)
+            if not normalized:
+                raise CLIUsageError(
+                    "Niepoprawne środowisko raportu: {value}. Podaj niepusty ciąg znaków.".format(
+                        value=part or ""
+                    )
+                )
+            collected.append(normalized)
+
+    if not collected:
+        return ()
+
+    return tuple(dict.fromkeys(collected))
+
+
+def _parse_cli_exchanges(arguments: Sequence[str] | None) -> tuple[str, ...]:
+    if not arguments:
+        return ()
+
+    collected: list[str] = []
+    for argument in arguments:
+        if not argument:
+            continue
+        for part in re.split(r"[,\s]+", argument):
+            normalized = normalize_report_exchange(part)
+            if not normalized:
+                raise CLIUsageError(
+                    "Niepoprawna giełda lub źródło danych raportu: {value}. Podaj niepusty ciąg znaków.".format(
+                        value=part or ""
+                    )
+                )
+            collected.append(normalized)
+
+    if not collected:
+        return ()
+
+    return tuple(dict.fromkeys(collected))
+
+
+def _parse_cli_portfolios(arguments: Sequence[str] | None) -> tuple[str, ...]:
+    if not arguments:
+        return ()
+
+    collected: list[str] = []
+    for argument in arguments:
+        if not argument:
+            continue
+        for part in re.split(r"[,\s]+", argument):
+            normalized = normalize_report_portfolio(part)
+            if not normalized:
+                raise CLIUsageError(
+                    "Niepoprawny portfel raportu: {value}. Podaj niepusty ciąg znaków.".format(
+                        value=part or ""
+                    )
+                )
+            collected.append(normalized)
+
+    if not collected:
+        return ()
+
+    return tuple(dict.fromkeys(collected))
+
+
+def _parse_cli_license_tiers(arguments: Sequence[str] | None) -> tuple[str, ...]:
+    if not arguments:
+        return ()
+
+    collected: list[str] = []
+    for argument in arguments:
+        if not argument:
+            continue
+        for part in re.split(r"[,\s]+", argument):
+            normalized = normalize_report_license_tier(part)
+            if not normalized:
+                raise CLIUsageError(
+                    "Niepoprawny poziom licencji: {value}. Podaj niepusty ciąg znaków.".format(
+                        value=part or ""
+                    )
+                )
+            collected.append(normalized)
+
+    if not collected:
+        return ()
+
+    return tuple(dict.fromkeys(collected))
+
+
+def _parse_cli_risk_classes(arguments: Sequence[str] | None) -> tuple[str, ...]:
+    if not arguments:
+        return ()
+
+    collected: list[str] = []
+    for argument in arguments:
+        if not argument:
+            continue
+        for part in re.split(r"[,\s]+", argument):
+            normalized = normalize_report_risk_class(part)
+            if not normalized:
+                raise CLIUsageError(
+                    "Niepoprawna klasa ryzyka: {value}. Podaj niepusty ciąg znaków.".format(
+                        value=part or ""
+                    )
+                )
+            collected.append(normalized)
+
+    if not collected:
+        return ()
+
+    return tuple(dict.fromkeys(collected))
+
+
+def _parse_cli_required_data(arguments: Sequence[str] | None) -> tuple[str, ...]:
+    if not arguments:
+        return ()
+
+    collected: list[str] = []
+    for argument in arguments:
+        if not argument:
+            continue
+        for part in re.split(r"[,\s]+", argument):
+            normalized = normalize_report_required_data(part)
+            if not normalized:
+                raise CLIUsageError(
+                    "Niepoprawne źródło danych: {value}. Podaj niepusty ciąg znaków.".format(
+                        value=part or ""
+                    )
+                )
+            collected.append(normalized)
+
+    if not collected:
+        return ()
+
+    return tuple(dict.fromkeys(collected))
+
+
+def _parse_cli_profiles(arguments: Sequence[str] | None) -> tuple[str, ...]:
+    if not arguments:
+        return ()
+
+    collected: list[str] = []
+    for argument in arguments:
+        if not argument:
+            continue
+        for part in re.split(r"[,\s]+", argument):
+            normalized = normalize_report_profile(part)
+            if not normalized:
+                raise CLIUsageError(
+                    "Niepoprawny profil strategii: {value}. Podaj niepusty identyfikator.".format(
+                        value=part or ""
+                    )
+                )
+            collected.append(normalized)
+
+    if not collected:
+        return ()
+
+    return tuple(dict.fromkeys(collected))
+
+
+def _parse_cli_strategies(arguments: Sequence[str] | None) -> tuple[str, ...]:
+    if not arguments:
+        return ()
+
+    collected: list[str] = []
+    for argument in arguments:
+        if not argument:
+            continue
+        for part in re.split(r"[,\s]+", argument):
+            normalized = normalize_report_strategy(part)
+            if not normalized:
+                raise CLIUsageError(
+                    "Niepoprawny identyfikator strategii: {value}. Podaj niepustą nazwę.".format(
+                        value=part or ""
+                    )
+                )
+            collected.append(normalized)
+
+    if not collected:
+        return ()
+
+    return tuple(dict.fromkeys(collected))
+
+
+def _parse_cli_datasets(arguments: Sequence[str] | None) -> tuple[str, ...]:
+    if not arguments:
+        return ()
+
+    collected: list[str] = []
+    for argument in arguments:
+        if not argument:
+            continue
+        for part in re.split(r"[,\s]+", argument):
+            normalized = normalize_report_dataset(part)
+            if not normalized:
+                raise CLIUsageError(
+                    "Niepoprawny identyfikator zbioru danych: {value}. Podaj niepusty ciąg znaków.".format(
+                        value=part or ""
+                    )
+                )
+            collected.append(normalized)
+
+    if not collected:
+        return ()
+
+    return tuple(dict.fromkeys(collected))
+
+
+def _parse_cli_models(arguments: Sequence[str] | None) -> tuple[str, ...]:
+    if not arguments:
+        return ()
+
+    collected: list[str] = []
+    for argument in arguments:
+        if not argument:
+            continue
+        for part in re.split(r"[,\s]+", argument):
+            normalized = normalize_report_model(part)
+            if not normalized:
+                raise CLIUsageError(
+                    "Niepoprawny identyfikator modelu/artefaktu: {value}. Podaj niepustą nazwę.".format(
+                        value=part or ""
+                    )
+                )
+            collected.append(normalized)
+
+    if not collected:
+        return ()
+
+    return tuple(dict.fromkeys(collected))
+
+
+def _parse_cli_model_versions(arguments: Sequence[str] | None) -> tuple[str, ...]:
+    if not arguments:
+        return ()
+
+    collected: list[str] = []
+    for argument in arguments:
+        if not argument:
+            continue
+        for part in re.split(r"[,\s]+", argument):
+            normalized = normalize_report_model_version(part)
+            if not normalized:
+                raise CLIUsageError(
+                    "Niepoprawna wersja modelu/artefaktu: {value}. Podaj niepustą wartość.".format(
+                        value=part or ""
+                    )
+                )
+            collected.append(normalized)
+
+    if not collected:
+        return ()
+
+    return tuple(dict.fromkeys(collected))
+
+
+def _parse_cli_runs(arguments: Sequence[str] | None) -> tuple[str, ...]:
+    if not arguments:
+        return ()
+
+    collected: list[str] = []
+    for argument in arguments:
+        if not argument:
+            continue
+        for part in re.split(r"[,\s]+", argument):
+            normalized = normalize_report_run(part)
+            if not normalized:
+                raise CLIUsageError(
+                    "Niepoprawny run raportu: {value}. Podaj niepusty ciąg znaków.".format(
+                        value=part or ""
+                    )
+                )
+            collected.append(normalized)
+
+    if not collected:
+        return ()
+
+    return tuple(dict.fromkeys(collected))
+
+
+def _parse_cli_sources(arguments: Sequence[str] | None) -> tuple[str, ...]:
+    if not arguments:
+        return ()
+
+    collected: list[str] = []
+    for argument in arguments:
+        if not argument:
+            continue
+        for part in re.split(r"[,\s]+", argument):
+            normalized = normalize_report_source(part)
+            if not normalized:
+                raise CLIUsageError(
+                    "Niepoprawne źródło raportu: {value}. Podaj niepusty ciąg znaków.".format(
+                        value=part or ""
+                    )
+                )
+            collected.append(normalized)
+
+    if not collected:
+        return ()
+
+    return tuple(dict.fromkeys(collected))
+
+
+def _resolve_since_cutoff(value: str, *, now: datetime | None = None) -> datetime:
+    if not isinstance(value, str) or not value.strip():
+        raise CLIUsageError("Opcja --since wymaga niepustej wartości.")
+
+    reference = now or datetime.now(timezone.utc)
+    candidate = value.strip()
+    match = _SINCE_DURATION_RE.fullmatch(candidate)
+    if match:
+        amount = int(match.group("value"))
+        unit = match.group("unit").lower()
+        delta_map = {
+            "s": timedelta(seconds=amount),
+            "m": timedelta(minutes=amount),
+            "h": timedelta(hours=amount),
+            "d": timedelta(days=amount),
+        }
+        cutoff = reference - delta_map[unit]
+        return cutoff.astimezone(timezone.utc)
+
+    normalized = candidate
+    if candidate.endswith("Z") or candidate.endswith("z"):
+        normalized = candidate[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError as exc:
+        raise CLIUsageError(
+            "Opcja --since wymaga formatu ISO 8601 lub skrótu (np. 24h, 7d)."
+        ) from exc
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _jsonify_payload(value):
+    if isinstance(value, Mapping):
+        return {str(key): _jsonify_payload(val) for key, val in value.items()}
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return [_jsonify_payload(item) for item in value]
+    return value
+
+
+def _parse_compliance_roles(arguments: Sequence[str] | None) -> tuple[str, ...] | None:
+    if not arguments:
+        return None
+
+    collected: list[str] = []
+    for argument in arguments:
+        if not argument:
+            continue
+        for part in re.split(r"[,\s]+", argument):
+            normalized = part.strip()
+            if normalized:
+                collected.append(normalized)
+
+    if not collected:
+        return None
+
+    try:
+        return normalize_compliance_sign_off_roles(collected)
+    except ValueError as exc:
+        raise CLIUsageError(str(exc)) from exc
 
 
 def _resolve_since_cutoff(value: str, *, now: datetime | None = None) -> datetime:
@@ -2788,6 +3072,1796 @@ def show_ai_compliance(args: argparse.Namespace) -> int:
     if since_option:
         since_cutoff = _resolve_since_cutoff(since_option)
 
+    roles_param = _parse_compliance_roles(getattr(args, "roles", None))
+    effective_roles = (
+        roles_param
+        if roles_param is not None
+        else normalize_compliance_sign_off_roles(None)
+    )
+
+    load_kwargs: dict[str, object] = {"limit": limit}
+    if audit_root is not None:
+        load_kwargs["audit_root"] = audit_root
+    dq_category = getattr(args, "data_quality_category", None)
+
+    try:
+        dq_kwargs = dict(load_kwargs)
+        if dq_category:
+            dq_kwargs["category"] = dq_category
+        dq_reports = load_recent_data_quality_reports(**dq_kwargs)
+        drift_reports = load_recent_drift_reports(**load_kwargs)
+    except Exception as exc:  # pragma: no cover - przekładamy błąd na CLIUsageError
+        raise CLIUsageError(f"Nie udało się wczytać raportów audytu: {exc}") from exc
+
+    if since_cutoff is not None:
+        dq_reports = filter_audit_reports_since(dq_reports, since=since_cutoff)
+        drift_reports = filter_audit_reports_since(drift_reports, since=since_cutoff)
+
+    dq_summary = summarize_data_quality_reports(dq_reports, roles=roles_param)
+    drift_summary = summarize_drift_reports(drift_reports, roles=roles_param)
+
+    exit_code = 0
+    try:
+        if enforce:
+            pending_map = ensure_compliance_sign_offs(
+                data_quality_reports=dq_reports,
+                drift_reports=drift_reports,
+                roles=roles_param,
+            )
+        else:
+            pending_map = collect_pending_compliance_sign_offs(
+                data_quality_reports=dq_reports,
+                drift_reports=drift_reports,
+                roles=roles_param,
+            )
+    except ComplianceSignOffError as exc:
+        pending_map = exc.pending
+        exit_code = 3
+
+    missing_entries = {
+        role: tuple(entries)
+        for role, entries in pending_map.items()
+        if entries
+    }
+
+    if output_format in {"json", "json-pretty"}:
+        payload: dict[str, object] = {
+            "roles": list(effective_roles),
+            "enforced": enforce,
+            "limit": limit,
+            "data_quality": _jsonify_payload(dq_summary),
+            "drift": _jsonify_payload(drift_summary),
+            "pending_sign_off": _jsonify_payload(pending_map),
+            "missing_sign_off": {
+                role: len(entries) for role, entries in missing_entries.items()
+            },
+        }
+        if audit_root is not None:
+            payload["audit_root"] = str(audit_root)
+        if since_cutoff is not None:
+            payload["since"] = since_cutoff.replace(microsecond=0).isoformat().replace(
+                "+00:00", "Z"
+            )
+        json_kwargs: dict[str, object] = {"ensure_ascii": False}
+        if output_format == "json-pretty":
+            json_kwargs["indent"] = 2
+            json_kwargs["sort_keys"] = True
+        print(json.dumps(payload, **json_kwargs))  # type: ignore[arg-type]
+        return exit_code
+
+    if audit_root is not None:
+        print(f"Katalog audytu: {audit_root}")
+    if since_cutoff is not None:
+        print(
+            "Minimalny znacznik czasu: "
+            + since_cutoff.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        )
+    print("Wymagane role: " + ", ".join(effective_roles))
+    print(f"Limit raportów: {limit}")
+
+    print(
+        "Raporty jakości danych: total={total} alerts={alerts} enforced={enforced}".format(
+            total=dq_summary.get("total", 0),
+            alerts=dq_summary.get("alerts", 0),
+            enforced=dq_summary.get("enforced_alerts", 0),
+        )
+    )
+    by_category = dq_summary.get("by_category", {})
+    if by_category:
+        print("  Kategorie alertów:")
+        for category, stats in sorted(by_category.items()):
+            print(
+                "    - {category}: total={total} alerts={alerts} enforced={enforced} status={status}".format(
+                    category=category,
+                    total=stats.get("total", 0),
+                    alerts=stats.get("alerts", 0),
+                    enforced=stats.get("enforced_alerts", 0),
+                    status=stats.get("latest_status") or "-",
+                )
+            )
+            latest_path = stats.get("latest_report_path")
+            if latest_path:
+                print(f"      ostatni_raport={latest_path}")
+    else:
+        print("  Kategorie alertów: (brak danych)")
+
+    print(
+        "Raporty dryfu: total={total} przekroczone={exceeds} ostatni={latest} ostatni_alert={latest_exceed}".format(
+            total=drift_summary.get("total", 0),
+            exceeds=drift_summary.get("exceeds_threshold", 0),
+            latest=drift_summary.get("latest_report_path") or "-",
+            latest_exceed=drift_summary.get("latest_exceeding_report_path") or "-",
+        )
+    )
+
+    if missing_entries:
+        print("Brakujące podpisy compliance:")
+        for role, entries in missing_entries.items():
+            print(f"  - {role}: {len(entries)} raport(y)")
+            for entry in entries:
+                category = entry.get("category") or "unknown"
+                status = entry.get("status") or "pending"
+                path = entry.get("report_path") or "-"
+                print(f"      • {category}: status={status} raport={path}")
+    else:
+        print("Brak braków podpisów compliance.")
+
+    if enforce and missing_entries:
+        return 3
+
+    return exit_code
+
+
+def _guard_summary_from_counts(
+    counts: Mapping[str, int],
+    capabilities: Mapping[str, str],
+    reasons: Mapping[str, str],
+) -> dict[str, object]:
+    total = 0
+    capability_counts: Counter[str] = Counter()
+    reason_counts: Counter[str] = Counter()
+    for key, value in counts.items():
+        try:
+            count = int(value)
+        except (TypeError, ValueError):
+            continue
+        if count <= 0:
+            continue
+        normalized_key = str(key).strip()
+        if not normalized_key:
+            continue
+        total += count
+        capability = capabilities.get(normalized_key)
+        reason = reasons.get(normalized_key)
+        if capability:
+            capability_counts[str(capability)] += count
+        if reason:
+            reason_counts[str(reason)] += count
+    if total <= 0:
+        return {}
+    summary_entry: dict[str, object] = {"total": int(total)}
+    if capability_counts:
+        summary_entry["by_capability"] = {
+            capability: int(capability_counts[capability])
+            for capability in sorted(capability_counts)
+        }
+    if reason_counts:
+        summary_entry["by_reason"] = {
+            reason: int(reason_counts[reason])
+            for reason in sorted(reason_counts)
+        }
+    return summary_entry
+
+
+def _build_guard_summary_from_blocked(
+    *,
+    blocked_strategies: Iterable[str],
+    blocked_schedules: Iterable[str],
+    blocked_initial_limits: Mapping[str, Iterable[str]],
+    blocked_signal_limits: Mapping[str, Iterable[str]],
+    blocked_suspensions: Iterable[Mapping[str, Any]],
+    blocked_capabilities: Mapping[str, str],
+    blocked_schedule_capabilities: Mapping[str, str],
+    blocked_initial_limit_capabilities: Mapping[str, str],
+    blocked_signal_limit_capabilities: Mapping[str, str],
+    blocked_suspension_capabilities: Mapping[str, str],
+    blocked_capability_reasons: Mapping[str, str],
+    blocked_schedule_reasons: Mapping[str, str],
+    blocked_initial_limit_reasons: Mapping[str, str],
+    blocked_signal_limit_reasons: Mapping[str, str],
+    blocked_suspension_reasons: Mapping[str, str],
+) -> dict[str, object]:
+    guard_summary: dict[str, object] = {}
+    overall_capability_counts: Counter[str] = Counter()
+    overall_reason_counts: Counter[str] = Counter()
+    overall_total = 0
+
+    def _attach_summary(
+        label: str,
+        counts: Mapping[str, int],
+        capabilities: Mapping[str, str],
+        reasons: Mapping[str, str],
+    ) -> None:
+        nonlocal overall_total
+        summary_entry = _guard_summary_from_counts(counts, capabilities, reasons)
+        if not summary_entry:
+            return
+        guard_summary[label] = summary_entry
+        overall_total += int(summary_entry.get("total", 0) or 0)
+        for capability, value in summary_entry.get("by_capability", {}).items():
+            overall_capability_counts[str(capability)] += int(value)
+        for reason, value in summary_entry.get("by_reason", {}).items():
+            overall_reason_counts[str(reason)] += int(value)
+
+    strategy_counts: Counter[str] = Counter(
+        str(name).strip() for name in blocked_strategies if str(name).strip()
+    )
+    schedule_counts: Counter[str] = Counter(
+        str(name).strip() for name in blocked_schedules if str(name).strip()
+    )
+
+    def _count_profiles(entries: Mapping[str, Iterable[str]]) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        for raw_name, profiles in entries.items():
+            name = str(raw_name).strip()
+            if not name:
+                continue
+            values = [str(profile).strip() for profile in profiles]
+            cleaned = [value for value in values if value]
+            count = len(cleaned) if cleaned else len(values)
+            if count <= 0:
+                continue
+            counts[name] = count
+        return counts
+
+    initial_counts = _count_profiles(blocked_initial_limits)
+    signal_counts = _count_profiles(blocked_signal_limits)
+
+    merged_initial_capabilities = dict(blocked_initial_limit_capabilities)
+    for name, capability in blocked_capabilities.items():
+        merged_initial_capabilities.setdefault(name, capability)
+    for name, capability in blocked_schedule_capabilities.items():
+        merged_initial_capabilities.setdefault(name, capability)
+
+    merged_initial_reasons = dict(blocked_initial_limit_reasons)
+    for name, reason in blocked_capability_reasons.items():
+        merged_initial_reasons.setdefault(name, reason)
+    for name, reason in blocked_schedule_reasons.items():
+        merged_initial_reasons.setdefault(name, reason)
+
+    merged_signal_capabilities = dict(blocked_signal_limit_capabilities)
+    for name, capability in blocked_capabilities.items():
+        merged_signal_capabilities.setdefault(name, capability)
+    for name, capability in blocked_schedule_capabilities.items():
+        merged_signal_capabilities.setdefault(name, capability)
+
+    merged_signal_reasons = dict(blocked_signal_limit_reasons)
+    for name, reason in blocked_capability_reasons.items():
+        merged_signal_reasons.setdefault(name, reason)
+    for name, reason in blocked_schedule_reasons.items():
+        merged_signal_reasons.setdefault(name, reason)
+
+    suspension_counts: dict[str, int] = {}
+    for entry in blocked_suspensions:
+        if not isinstance(entry, Mapping):
+            continue
+        kind = str(entry.get("kind") or "schedule")
+        target = str(entry.get("target") or "")
+        key = f"{kind}:{target}".strip(":")
+        if not key:
+            continue
+        suspension_counts[key] = suspension_counts.get(key, 0) + 1
+    for key in blocked_suspension_capabilities:
+        normalized = str(key).strip()
+        if normalized and normalized not in suspension_counts:
+            suspension_counts[normalized] = 1
+    for key in blocked_suspension_reasons:
+        normalized = str(key).strip()
+        if normalized and normalized not in suspension_counts:
+            suspension_counts[normalized] = 1
+
+    _attach_summary(
+        "strategies",
+        strategy_counts,
+        blocked_capabilities,
+        blocked_capability_reasons,
+    )
+    _attach_summary(
+        "schedules",
+        schedule_counts,
+        blocked_schedule_capabilities,
+        blocked_schedule_reasons,
+    )
+    _attach_summary(
+        "initial_signal_limits",
+        initial_counts,
+        merged_initial_capabilities,
+        merged_initial_reasons,
+    )
+    _attach_summary(
+        "signal_limits",
+        signal_counts,
+        merged_signal_capabilities,
+        merged_signal_reasons,
+    )
+    _attach_summary(
+        "suspensions",
+        suspension_counts,
+        blocked_suspension_capabilities,
+        blocked_suspension_reasons,
+    )
+
+    if overall_total > 0:
+        overall_summary: dict[str, object] = {"total": int(overall_total)}
+        if overall_capability_counts:
+            overall_summary["by_capability"] = {
+                capability: int(overall_capability_counts[capability])
+                for capability in sorted(overall_capability_counts)
+            }
+        if overall_reason_counts:
+            overall_summary["by_reason"] = {
+                reason: int(overall_reason_counts[reason])
+                for reason in sorted(overall_reason_counts)
+            }
+        guard_summary["overall"] = overall_summary
+
+    return guard_summary
+
+
+def _build_guard_details_from_blocked(
+    *,
+    blocked_strategies: Iterable[str],
+    blocked_schedules: Iterable[str],
+    blocked_initial_limits: Mapping[str, Iterable[str]],
+    blocked_signal_limits: Mapping[str, Iterable[str]],
+    blocked_suspensions: Iterable[Mapping[str, Any]],
+    blocked_capabilities: Mapping[str, str],
+    blocked_schedule_capabilities: Mapping[str, str],
+    blocked_initial_limit_capabilities: Mapping[str, str],
+    blocked_signal_limit_capabilities: Mapping[str, str],
+    blocked_suspension_capabilities: Mapping[str, str],
+    blocked_capability_reasons: Mapping[str, str],
+    blocked_schedule_reasons: Mapping[str, str],
+    blocked_initial_limit_reasons: Mapping[str, str],
+    blocked_signal_limit_reasons: Mapping[str, str],
+    blocked_suspension_reasons: Mapping[str, str],
+) -> dict[str, dict[str, list[dict[str, str]]]]:
+    details: dict[str, dict[str, list[dict[str, str]]]] = {}
+
+    def _register(
+        capability: str | None,
+        category: str,
+        payload: Mapping[str, object],
+    ) -> None:
+        capability_id = str(capability or "").strip()
+        if not capability_id:
+            return
+        cleaned: dict[str, str] = {}
+        for key, value in payload.items():
+            normalized_key = str(key).strip()
+            if not normalized_key:
+                continue
+            normalized_value = str(value).strip()
+            if not normalized_value and normalized_key not in {"profile", "kind"}:
+                continue
+            cleaned[normalized_key] = normalized_value
+        if not cleaned:
+            return
+        category_entries = details.setdefault(capability_id, {})
+        entries = category_entries.setdefault(category, [])
+        if cleaned in entries:
+            return
+        entries.append(cleaned)
+
+    for name in blocked_strategies:
+        capability = blocked_capabilities.get(name)
+        reason = blocked_capability_reasons.get(name)
+        payload: dict[str, object] = {"name": name}
+        if reason:
+            payload["reason"] = reason
+        _register(capability, "strategies", payload)
+
+    for name in blocked_schedules:
+        capability = blocked_schedule_capabilities.get(name)
+        reason = blocked_schedule_reasons.get(name)
+        payload: dict[str, object] = {"name": name}
+        if reason:
+            payload["reason"] = reason
+        _register(capability, "schedules", payload)
+
+    merged_initial_capabilities = dict(blocked_initial_limit_capabilities)
+    for name, capability in blocked_capabilities.items():
+        merged_initial_capabilities.setdefault(name, capability)
+    for name, capability in blocked_schedule_capabilities.items():
+        merged_initial_capabilities.setdefault(name, capability)
+
+    merged_initial_reasons = dict(blocked_initial_limit_reasons)
+    for name, reason in blocked_capability_reasons.items():
+        merged_initial_reasons.setdefault(name, reason)
+    for name, reason in blocked_schedule_reasons.items():
+        merged_initial_reasons.setdefault(name, reason)
+
+    for strategy, profiles in blocked_initial_limits.items():
+        capability = merged_initial_capabilities.get(strategy)
+        reason = merged_initial_reasons.get(strategy)
+        for profile in profiles:
+            payload: dict[str, object] = {
+                "strategy": strategy,
+                "profile": profile,
+            }
+            if reason:
+                payload["reason"] = reason
+            _register(capability, "initial_signal_limits", payload)
+
+    merged_signal_capabilities = dict(blocked_signal_limit_capabilities)
+    for name, capability in blocked_capabilities.items():
+        merged_signal_capabilities.setdefault(name, capability)
+    for name, capability in blocked_schedule_capabilities.items():
+        merged_signal_capabilities.setdefault(name, capability)
+
+    merged_signal_reasons = dict(blocked_signal_limit_reasons)
+    for name, reason in blocked_capability_reasons.items():
+        merged_signal_reasons.setdefault(name, reason)
+    for name, reason in blocked_schedule_reasons.items():
+        merged_signal_reasons.setdefault(name, reason)
+
+    for strategy, profiles in blocked_signal_limits.items():
+        capability = merged_signal_capabilities.get(strategy)
+        reason = merged_signal_reasons.get(strategy)
+        for profile in profiles:
+            payload = {"strategy": strategy, "profile": profile}
+            if reason:
+                payload["reason"] = reason
+            _register(capability, "signal_limits", payload)
+
+    for entry in blocked_suspensions:
+        if not isinstance(entry, Mapping):
+            continue
+        capability = entry.get("capability")
+        reason = entry.get("guard_reason") or entry.get("reason")
+        payload = {
+            "kind": entry.get("kind", "schedule"),
+            "target": entry.get("target", ""),
+        }
+        if reason:
+            payload["reason"] = reason
+        _register(capability, "suspensions", payload)
+
+    for entry_key, capability in blocked_suspension_capabilities.items():
+        reason = blocked_suspension_reasons.get(entry_key)
+        kind, _, target = str(entry_key).partition(":")
+        payload = {"kind": kind or "schedule", "target": target}
+        if reason:
+            payload["reason"] = reason
+        _register(capability, "suspensions", payload)
+
+    return _normalize_guard_details(details)
+
+
+def _normalize_guard_summary(summary: Mapping[str, Any]) -> dict[str, object]:
+    normalized: dict[str, object] = {}
+    for label, payload in summary.items():
+        if not isinstance(payload, Mapping):
+            continue
+        total = payload.get("total")
+        if not isinstance(total, (int, float)) or int(total) <= 0:
+            continue
+        entry: dict[str, object] = {"total": int(total)}
+        capabilities = payload.get("by_capability")
+        if isinstance(capabilities, Mapping):
+            cleaned_caps = {
+                str(capability): int(value)
+                for capability, value in capabilities.items()
+                if str(capability).strip()
+                and isinstance(value, (int, float))
+                and int(value) > 0
+            }
+            if cleaned_caps:
+                entry["by_capability"] = {
+                    capability: cleaned_caps[capability]
+                    for capability in sorted(cleaned_caps)
+                }
+        reasons = payload.get("by_reason")
+        if isinstance(reasons, Mapping):
+            cleaned_reasons = {
+                str(reason): int(value)
+                for reason, value in reasons.items()
+                if str(reason).strip()
+                and isinstance(value, (int, float))
+                and int(value) > 0
+            }
+            if cleaned_reasons:
+                entry["by_reason"] = {
+                    reason: cleaned_reasons[reason]
+                    for reason in sorted(cleaned_reasons)
+                }
+        if entry:
+            normalized[str(label)] = entry
+    return normalized
+
+
+def _normalize_guard_details(
+    details: Mapping[str, Mapping[str, Iterable[Mapping[str, str]]]],
+) -> dict[str, dict[str, list[dict[str, str]]]]:
+    if not isinstance(details, Mapping):
+        return {}
+
+    def _sort_key(category: str, entry: Mapping[str, str]) -> tuple[str, ...]:
+        if category in {"strategies", "schedules"}:
+            return (
+                entry.get("name", ""),
+                entry.get("reason", ""),
+            )
+        if category in {"initial_signal_limits", "signal_limits"}:
+            return (
+                entry.get("strategy", ""),
+                entry.get("profile", ""),
+                entry.get("reason", ""),
+            )
+        if category == "suspensions":
+            return (
+                entry.get("kind", ""),
+                entry.get("target", ""),
+                entry.get("reason", ""),
+            )
+        return tuple(sorted(entry.items()))
+
+    normalized: dict[str, dict[str, list[dict[str, str]]]] = {}
+    for capability, category_map in details.items():
+        capability_id = str(capability).strip()
+        if not capability_id:
+            continue
+        normalized_categories: dict[str, list[dict[str, str]]] = {}
+        if isinstance(category_map, Mapping):
+            for category, entries in category_map.items():
+                if not isinstance(entries, Iterable):
+                    continue
+                normalized_entries: list[dict[str, str]] = []
+                for entry in entries:
+                    if not isinstance(entry, Mapping):
+                        continue
+                    cleaned_entry = {
+                        str(key).strip(): str(value).strip()
+                        for key, value in entry.items()
+                        if str(key).strip()
+                        and (str(value).strip() or str(key).strip() in {"profile", "kind"})
+                    }
+                    if cleaned_entry:
+                        normalized_entries.append(cleaned_entry)
+                if not normalized_entries:
+                    continue
+                normalized_entries.sort(
+                    key=lambda payload, *, _category=str(category): _sort_key(
+                        str(_category), payload
+                    )
+                )
+                normalized_categories[str(category)] = normalized_entries
+        if normalized_categories:
+            normalized[capability_id] = normalized_categories
+    return normalized
+
+
+def _build_guard_detail_summary_from_details(
+    details: Mapping[str, Mapping[str, Iterable[Mapping[str, str]]]]
+) -> dict[str, dict[str, dict[str, object]]]:
+    if not isinstance(details, Mapping):
+        return {}
+
+    summary: dict[str, dict[str, dict[str, object]]] = {}
+    category_order = (
+        "strategies",
+        "schedules",
+        "initial_signal_limits",
+        "signal_limits",
+        "suspensions",
+    )
+
+    for capability, category_map in details.items():
+        if not isinstance(category_map, Mapping):
+            continue
+        capability_id = str(capability).strip()
+        if not capability_id:
+            continue
+
+        capability_summary: dict[str, dict[str, object]] = {}
+        overall_total = 0
+        overall_reason_counts: Counter[str] = Counter()
+
+        def _summarize_entries(
+            entries: Iterable[Mapping[str, str]]
+        ) -> tuple[int, Counter[str]]:
+            total = 0
+            reason_counts: Counter[str] = Counter()
+            for entry in entries:
+                if not isinstance(entry, Mapping):
+                    continue
+                total += 1
+                reason = str(entry.get("reason", "")).strip()
+                if reason:
+                    reason_counts[reason] += 1
+            return total, reason_counts
+
+        processed_categories: set[str] = set()
+        for category in category_order:
+            entries = category_map.get(category)
+            if not isinstance(entries, Iterable):
+                continue
+            total, reason_counts = _summarize_entries(entries)
+            if total <= 0:
+                continue
+            payload: dict[str, object] = {"total": int(total)}
+            if reason_counts:
+                payload["by_reason"] = {
+                    reason: int(reason_counts[reason])
+                    for reason in sorted(reason_counts)
+                }
+            capability_summary[category] = payload
+            processed_categories.add(str(category))
+            overall_total += total
+            overall_reason_counts.update(reason_counts)
+
+        for category, entries in category_map.items():
+            category_label = str(category)
+            if category_label in processed_categories:
+                continue
+            if not isinstance(entries, Iterable):
+                continue
+            total, reason_counts = _summarize_entries(entries)
+            if total <= 0:
+                continue
+            payload = {"total": int(total)}
+            if reason_counts:
+                payload["by_reason"] = {
+                    reason: int(reason_counts[reason])
+                    for reason in sorted(reason_counts)
+                }
+            capability_summary[category_label] = payload
+            overall_total += total
+            overall_reason_counts.update(reason_counts)
+
+        if overall_total > 0:
+            overall_payload: dict[str, object] = {"total": int(overall_total)}
+            if overall_reason_counts:
+                overall_payload["by_reason"] = {
+                    reason: int(overall_reason_counts[reason])
+                    for reason in sorted(overall_reason_counts)
+                }
+            capability_summary["overall"] = overall_payload
+
+        if capability_summary:
+            summary[capability_id] = capability_summary
+
+    return summary
+
+
+def _build_guard_detail_category_summary_from_details(
+    details: Mapping[str, Mapping[str, Iterable[Mapping[str, str]]]]
+) -> dict[str, dict[str, object]]:
+    if not isinstance(details, Mapping):
+        return {}
+
+    category_counters: dict[str, dict[str, object]] = {}
+    category_order = (
+        "strategies",
+        "schedules",
+        "initial_signal_limits",
+        "signal_limits",
+        "suspensions",
+    )
+    order_set = set(category_order)
+
+    for capability, category_map in details.items():
+        if not isinstance(category_map, Mapping):
+            continue
+        capability_id = str(capability).strip()
+        if not capability_id:
+            continue
+        for category, entries in category_map.items():
+            category_name = str(category).strip()
+            if not category_name or not isinstance(entries, Iterable):
+                continue
+            total = 0
+            reason_counts: Counter[str] = Counter()
+            for entry in entries:
+                if not isinstance(entry, Mapping):
+                    continue
+                total += 1
+                reason = str(entry.get("reason", "")).strip()
+                if reason:
+                    reason_counts[reason] += 1
+            if total <= 0:
+                continue
+            counters = category_counters.setdefault(
+                category_name,
+                {
+                    "total": 0,
+                    "by_capability": Counter(),
+                    "by_reason": Counter(),
+                },
+            )
+            counters["total"] = int(counters["total"]) + total  # type: ignore[index]
+            capability_counter: Counter[str] = counters["by_capability"]  # type: ignore[assignment]
+            capability_counter[capability_id] += total
+            reason_counter: Counter[str] = counters["by_reason"]  # type: ignore[assignment]
+            reason_counter.update(reason_counts)
+
+    if not category_counters:
+        return {}
+
+    def _normalize(payload: Mapping[str, object]) -> dict[str, object] | None:
+        total = payload.get("total")
+        try:
+            total_value = int(total) if total is not None else 0
+        except (TypeError, ValueError):
+            return None
+        if total_value <= 0:
+            return None
+        entry: dict[str, object] = {"total": total_value}
+        capability_counter = payload.get("by_capability")
+        if isinstance(capability_counter, Counter):
+            cleaned_capabilities = {
+                capability: int(capability_counter[capability])
+                for capability in sorted(capability_counter)
+                if capability_counter[capability] > 0
+            }
+            if cleaned_capabilities:
+                entry["by_capability"] = cleaned_capabilities
+        reason_counter = payload.get("by_reason")
+        if isinstance(reason_counter, Counter):
+            cleaned_reasons = {
+                reason: int(reason_counter[reason])
+                for reason in sorted(reason_counter)
+                if reason_counter[reason] > 0
+            }
+            if cleaned_reasons:
+                entry["by_reason"] = cleaned_reasons
+        return entry
+
+    summary: dict[str, dict[str, object]] = {}
+    for category in category_order:
+        counters = category_counters.get(category)
+        if not counters:
+            continue
+        normalized = _normalize(counters)
+        if normalized:
+            summary[category] = normalized
+
+    extra_categories = {
+        name: counters
+        for name, counters in category_counters.items()
+        if name not in order_set
+    }
+    for category in sorted(extra_categories):
+        normalized = _normalize(extra_categories[category])
+        if normalized:
+            summary[category] = normalized
+
+    return summary
+
+
+def _build_guard_detail_reason_summary_from_details(
+    details: Mapping[str, Mapping[str, Iterable[Mapping[str, str]]]],
+    *,
+    resolve_guard_reason: Callable[[str | None], str | None] | None = None,
+) -> dict[str, dict[str, object]]:
+    if not isinstance(details, Mapping):
+        return {}
+
+    reason_counters: dict[str, dict[str, object]] = {}
+
+    def _resolve_reason(capability: str, raw_reason: str | None) -> str | None:
+        normalized = (raw_reason or "").strip()
+        if normalized:
+            return normalized
+        if resolve_guard_reason is not None:
+            resolved = resolve_guard_reason(capability)
+            if resolved:
+                return resolved
+        return None
+
+    for capability, category_map in details.items():
+        if not isinstance(category_map, Mapping):
+            continue
+        capability_id = str(capability).strip()
+        if not capability_id:
+            continue
+        for category, entries in category_map.items():
+            category_name = str(category).strip()
+            if not category_name or not isinstance(entries, Iterable):
+                continue
+            for entry in entries:
+                if not isinstance(entry, Mapping):
+                    continue
+                reason = _resolve_reason(capability_id, entry.get("reason"))
+                if not reason:
+                    continue
+                counters = reason_counters.setdefault(
+                    reason,
+                    {
+                        "total": 0,
+                        "by_capability": Counter(),
+                        "by_category": Counter(),
+                    },
+                )
+                counters["total"] = int(counters.get("total", 0)) + 1  # type: ignore[index]
+                capability_counter: Counter[str] = counters["by_capability"]  # type: ignore[assignment]
+                capability_counter[capability_id] += 1
+                category_counter: Counter[str] = counters["by_category"]  # type: ignore[assignment]
+                category_counter[category_name] += 1
+
+    if not reason_counters:
+        return {}
+
+    def _normalize(payload: Mapping[str, object]) -> dict[str, object] | None:
+        total = payload.get("total")
+        try:
+            total_value = int(total) if total is not None else 0
+        except (TypeError, ValueError):
+            return None
+        if total_value <= 0:
+            return None
+        entry: dict[str, object] = {"total": total_value}
+        capability_counter = payload.get("by_capability")
+        if isinstance(capability_counter, Counter):
+            cleaned_capabilities = {
+                capability: int(capability_counter[capability])
+                for capability in sorted(capability_counter)
+                if capability_counter[capability] > 0
+            }
+            if cleaned_capabilities:
+                entry["by_capability"] = cleaned_capabilities
+        category_counter = payload.get("by_category")
+        if isinstance(category_counter, Counter):
+            cleaned_categories = {
+                category: int(category_counter[category])
+                for category in sorted(category_counter)
+                if category_counter[category] > 0
+            }
+            if cleaned_categories:
+                entry["by_category"] = cleaned_categories
+        return entry
+
+    summary: dict[str, dict[str, object]] = {}
+    for reason, counters in sorted(reason_counters.items()):
+        normalized = _normalize(counters)
+        if normalized:
+            summary[reason] = normalized
+
+    return summary
+
+
+def _build_guard_detail_reason_details_from_details(
+    details: Mapping[str, Mapping[str, Iterable[Mapping[str, str]]]],
+    *,
+    resolve_guard_reason: Callable[[str | None], str | None] | None = None,
+) -> dict[str, dict[str, object]]:
+    if not isinstance(details, Mapping):
+        return {}
+
+    reason_entries: dict[str, dict[str, object]] = {}
+    category_order = (
+        "strategies",
+        "schedules",
+        "initial_signal_limits",
+        "signal_limits",
+        "suspensions",
+    )
+    order_set = set(category_order)
+
+    def _resolve_reason(capability: str | None, reason: str | None) -> str | None:
+        if reason:
+            return reason
+        if resolve_guard_reason is not None:
+            return resolve_guard_reason(capability)
+        return None
+
+    def _sort_key(category: str, entry: Mapping[str, str]) -> tuple[str, ...]:
+        if category in {"strategies", "schedules"}:
+            return (
+                entry.get("name", ""),
+                entry.get("reason", ""),
+            )
+        if category in {"initial_signal_limits", "signal_limits"}:
+            return (
+                entry.get("strategy", ""),
+                entry.get("profile", ""),
+                entry.get("reason", ""),
+            )
+        if category == "suspensions":
+            return (
+                entry.get("kind", ""),
+                entry.get("target", ""),
+                entry.get("reason", ""),
+            )
+        return tuple(sorted(entry.items()))
+
+    for capability, category_map in details.items():
+        if not isinstance(category_map, Mapping):
+            continue
+        capability_id = str(capability).strip()
+        if not capability_id:
+            continue
+        for category, entries in category_map.items():
+            category_name = str(category).strip()
+            if not category_name or not isinstance(entries, Iterable):
+                continue
+            if isinstance(entries, (str, bytes)):
+                continue
+            for entry in entries:
+                if not isinstance(entry, Mapping):
+                    continue
+                reason = _resolve_reason(
+                    capability_id, str(entry.get("reason", "")).strip() or None
+                )
+                if not reason:
+                    continue
+                payload = reason_entries.setdefault(
+                    reason,
+                    {
+                        "total": 0,
+                        "capabilities": set(),
+                        "categories": {},
+                    },
+                )
+                payload["total"] = int(payload.get("total", 0) or 0) + 1
+                capability_set = payload.setdefault("capabilities", set())
+                if isinstance(capability_set, set):
+                    capability_set.add(capability_id)
+                categories_map = payload.setdefault("categories", {})
+                if not isinstance(categories_map, dict):
+                    continue
+                cleaned_entry = {
+                    str(key).strip(): str(value).strip()
+                    for key, value in entry.items()
+                    if str(key).strip()
+                    and (str(value).strip() or str(key).strip() in {"profile", "kind"})
+                }
+                if "reason" not in cleaned_entry and reason:
+                    cleaned_entry["reason"] = reason
+                category_entries = categories_map.setdefault(category_name, [])
+                if not isinstance(category_entries, list):
+                    continue
+                if cleaned_entry not in category_entries:
+                    category_entries.append(cleaned_entry)
+
+    if not reason_entries:
+        return {}
+
+    normalized: dict[str, dict[str, object]] = {}
+    for reason, payload in sorted(reason_entries.items()):
+        try:
+            total = int(payload.get("total", 0) or 0)
+        except (TypeError, ValueError):
+            continue
+        if total <= 0:
+            continue
+        entry: dict[str, object] = {"total": total}
+        capabilities = payload.get("capabilities")
+        if isinstance(capabilities, set):
+            cleaned_caps = sorted(cap for cap in capabilities if str(cap).strip())
+            if cleaned_caps:
+                entry["capabilities"] = [str(cap) for cap in cleaned_caps]
+        categories = payload.get("categories")
+        if isinstance(categories, Mapping):
+            ordered_categories: dict[str, list[dict[str, str]]] = {}
+            for category in category_order:
+                entries = categories.get(category)
+                if not isinstance(entries, list) or not entries:
+                    continue
+                normalized_entries = [
+                    {
+                        str(key).strip(): str(value).strip()
+                        for key, value in entry.items()
+                        if str(key).strip()
+                        and (
+                            str(value).strip()
+                            or str(key).strip() in {"profile", "kind"}
+                            or (str(key).strip() == "reason" and str(value).strip())
+                        )
+                    }
+                    for entry in entries
+                    if isinstance(entry, Mapping)
+                ]
+                normalized_entries = [item for item in normalized_entries if item]
+                if not normalized_entries:
+                    continue
+                normalized_entries.sort(
+                    key=lambda payload, *, _category=category: _sort_key(
+                        str(_category), payload
+                    )
+                )
+                ordered_categories[category] = normalized_entries
+            extra_categories = {
+                str(category): entries
+                for category, entries in categories.items()
+                if str(category) not in order_set
+            }
+            for category in sorted(extra_categories):
+                entries = extra_categories[category]
+                if not isinstance(entries, list) or not entries:
+                    continue
+                normalized_entries = [
+                    {
+                        str(key).strip(): str(value).strip()
+                        for key, value in entry.items()
+                        if str(key).strip()
+                        and (
+                            str(value).strip()
+                            or str(key).strip() in {"profile", "kind"}
+                            or (str(key).strip() == "reason" and str(value).strip())
+                        )
+                    }
+                    for entry in entries
+                    if isinstance(entry, Mapping)
+                ]
+                normalized_entries = [item for item in normalized_entries if item]
+                if not normalized_entries:
+                    continue
+                normalized_entries.sort(
+                    key=lambda payload, *, _category=category: _sort_key(
+                        str(_category), payload
+                    )
+                )
+                ordered_categories[category] = normalized_entries
+            if ordered_categories:
+                entry["categories"] = ordered_categories
+        normalized[reason] = entry
+
+    return normalized
+
+
+def _normalize_guard_detail_summary_entry(
+    payload: Mapping[str, object] | None,
+) -> dict[str, object] | None:
+    if not isinstance(payload, Mapping):
+        return None
+    total = payload.get("total")
+    try:
+        total_value = int(total) if total is not None else 0
+    except (TypeError, ValueError):
+        return None
+    if total_value <= 0:
+        return None
+    entry: dict[str, object] = {"total": total_value}
+    reasons = payload.get("by_reason")
+    if isinstance(reasons, Mapping):
+        cleaned = {
+            str(reason): int(value)
+            for reason, value in reasons.items()
+            if str(reason).strip()
+            and isinstance(value, (int, float))
+            and int(value) > 0
+        }
+        if cleaned:
+            entry["by_reason"] = {
+                reason: cleaned[reason]
+                for reason in sorted(cleaned)
+            }
+    return entry
+
+
+def _normalize_guard_detail_summary(
+    summary: Mapping[str, Mapping[str, object]]
+) -> dict[str, dict[str, dict[str, object]]]:
+    if not isinstance(summary, Mapping):
+        return {}
+
+    normalized: dict[str, dict[str, dict[str, object]]] = {}
+    category_order = (
+        "strategies",
+        "schedules",
+        "initial_signal_limits",
+        "signal_limits",
+        "suspensions",
+        "overall",
+    )
+    order_set = set(category_order)
+
+    for capability, category_map in summary.items():
+        if not isinstance(category_map, Mapping):
+            continue
+        capability_id = str(capability).strip()
+        if not capability_id:
+            continue
+        ordered: dict[str, dict[str, object]] = {}
+        for category in category_order:
+            normalized_entry = _normalize_guard_detail_summary_entry(
+                category_map.get(category)
+            )
+            if normalized_entry:
+                ordered[category] = normalized_entry
+        extra_categories = {
+            str(category): payload
+            for category, payload in category_map.items()
+            if str(category) not in order_set
+        }
+        for category in sorted(extra_categories):
+            normalized_entry = _normalize_guard_detail_summary_entry(
+                extra_categories[category]
+            )
+            if normalized_entry:
+                ordered[category] = normalized_entry
+        if ordered:
+            normalized[capability_id] = ordered
+
+    return normalized
+
+
+def _normalize_guard_detail_category_summary_entry(
+    payload: Mapping[str, object] | None,
+) -> dict[str, object] | None:
+    if not isinstance(payload, Mapping):
+        return None
+    total = payload.get("total")
+    try:
+        total_value = int(total) if total is not None else 0
+    except (TypeError, ValueError):
+        return None
+    if total_value <= 0:
+        return None
+    entry: dict[str, object] = {"total": total_value}
+    capabilities = payload.get("by_capability")
+    if isinstance(capabilities, Mapping):
+        cleaned_caps = {
+            str(capability): int(value)
+            for capability, value in capabilities.items()
+            if str(capability).strip()
+            and isinstance(value, (int, float))
+            and int(value) > 0
+        }
+        if cleaned_caps:
+            entry["by_capability"] = {
+                capability: cleaned_caps[capability]
+                for capability in sorted(cleaned_caps)
+            }
+    reasons = payload.get("by_reason")
+    if isinstance(reasons, Mapping):
+        cleaned_reasons = {
+            str(reason): int(value)
+            for reason, value in reasons.items()
+            if str(reason).strip()
+            and isinstance(value, (int, float))
+            and int(value) > 0
+        }
+        if cleaned_reasons:
+            entry["by_reason"] = {
+                reason: cleaned_reasons[reason]
+                for reason in sorted(cleaned_reasons)
+            }
+    return entry
+
+
+def _normalize_guard_detail_category_summary(
+    summary: Mapping[str, Mapping[str, object]]
+) -> dict[str, dict[str, object]]:
+    if not isinstance(summary, Mapping):
+        return {}
+
+    normalized: dict[str, dict[str, object]] = {}
+    category_order = (
+        "strategies",
+        "schedules",
+        "initial_signal_limits",
+        "signal_limits",
+        "suspensions",
+    )
+    order_set = set(category_order)
+
+    for category in category_order:
+        normalized_entry = _normalize_guard_detail_category_summary_entry(
+            summary.get(category)
+        )
+        if normalized_entry:
+            normalized[category] = normalized_entry
+
+    extra_categories = {
+        str(category): payload
+        for category, payload in summary.items()
+        if str(category) not in order_set
+    }
+    for category in sorted(extra_categories):
+        normalized_entry = _normalize_guard_detail_category_summary_entry(
+            extra_categories[category]
+        )
+        if normalized_entry:
+            normalized[category] = normalized_entry
+
+    return normalized
+
+
+def _normalize_guard_detail_reason_summary_entry(
+    payload: Mapping[str, object]
+) -> dict[str, object] | None:
+    if not isinstance(payload, Mapping):
+        return None
+    total = payload.get("total")
+    try:
+        total_value = int(total) if total is not None else 0
+    except (TypeError, ValueError):
+        return None
+    if total_value <= 0:
+        return None
+    entry: dict[str, object] = {"total": total_value}
+    capabilities = payload.get("by_capability")
+    if isinstance(capabilities, Mapping):
+        cleaned_capabilities = {
+            str(capability): int(capabilities[capability])
+            for capability in capabilities
+            if str(capability).strip()
+            and isinstance(capabilities[capability], (int, float))
+            and int(capabilities[capability]) > 0
+        }
+        if cleaned_capabilities:
+            entry["by_capability"] = {
+                capability: cleaned_capabilities[capability]
+                for capability in sorted(cleaned_capabilities)
+            }
+    categories = payload.get("by_category")
+    if isinstance(categories, Mapping):
+        cleaned_categories = {
+            str(category): int(categories[category])
+            for category in categories
+            if str(category).strip()
+            and isinstance(categories[category], (int, float))
+            and int(categories[category]) > 0
+        }
+        if cleaned_categories:
+            entry["by_category"] = {
+                category: cleaned_categories[category]
+                for category in sorted(cleaned_categories)
+            }
+    return entry
+
+
+def _normalize_guard_detail_reason_summary(
+    summary: Mapping[str, Mapping[str, object]]
+) -> dict[str, dict[str, object]]:
+    if not isinstance(summary, Mapping):
+        return {}
+
+    normalized: dict[str, dict[str, object]] = {}
+    for reason, payload in summary.items():
+        reason_label = str(reason).strip()
+        if not reason_label:
+            continue
+        normalized_entry = _normalize_guard_detail_reason_summary_entry(payload)
+        if normalized_entry:
+            normalized[reason_label] = normalized_entry
+
+    return normalized
+
+def _normalize_guard_detail_reason_details(
+    details: Mapping[str, Mapping[str, object]]
+) -> dict[str, dict[str, object]]:
+    if not isinstance(details, Mapping):
+        return {}
+
+    category_order = (
+        "strategies",
+        "schedules",
+        "initial_signal_limits",
+        "signal_limits",
+        "suspensions",
+    )
+    order_set = set(category_order)
+
+    def _sort_key(category: str, entry: Mapping[str, str]) -> tuple[str, ...]:
+        if category in {"strategies", "schedules"}:
+            return (
+                entry.get("name", ""),
+                entry.get("reason", ""),
+            )
+        if category in {"initial_signal_limits", "signal_limits"}:
+            return (
+                entry.get("strategy", ""),
+                entry.get("profile", ""),
+                entry.get("reason", ""),
+            )
+        if category == "suspensions":
+            return (
+                entry.get("kind", ""),
+                entry.get("target", ""),
+                entry.get("reason", ""),
+            )
+        return tuple(sorted(entry.items()))
+
+    normalized: dict[str, dict[str, object]] = {}
+    for reason, payload in details.items():
+        if not isinstance(payload, Mapping):
+            continue
+        reason_label = str(reason).strip()
+        if not reason_label:
+            continue
+        total = payload.get("total")
+        try:
+            total_value = int(total) if total is not None else 0
+        except (TypeError, ValueError):
+            continue
+        if total_value <= 0:
+            continue
+        entry: dict[str, object] = {"total": total_value}
+        capabilities = payload.get("capabilities")
+        if isinstance(capabilities, (list, tuple, set)):
+            cleaned_caps = sorted(
+                {str(capability).strip() for capability in capabilities if str(capability).strip()}
+            )
+            if cleaned_caps:
+                entry["capabilities"] = cleaned_caps
+        categories = payload.get("categories")
+        if isinstance(categories, Mapping):
+            ordered_categories: dict[str, list[dict[str, str]]] = {}
+            for category in category_order:
+                entries = categories.get(category)
+                if not isinstance(entries, Iterable) or isinstance(entries, (str, bytes)):
+                    continue
+                normalized_entries: list[dict[str, str]] = []
+                for item in entries:
+                    if not isinstance(item, Mapping):
+                        continue
+                    cleaned_entry = {
+                        str(key).strip(): str(value).strip()
+                        for key, value in item.items()
+                        if str(key).strip()
+                        and (
+                            str(value).strip()
+                            or str(key).strip() in {"profile", "kind"}
+                            or (str(key).strip() == "reason" and str(value).strip())
+                        )
+                    }
+                    if not cleaned_entry:
+                        continue
+                    if "reason" not in cleaned_entry and reason_label:
+                        cleaned_entry["reason"] = reason_label
+                    normalized_entries.append(cleaned_entry)
+                if not normalized_entries:
+                    continue
+                normalized_entries.sort(
+                    key=lambda payload, *, _category=str(category): _sort_key(
+                        str(_category), payload
+                    )
+                )
+                ordered_categories[str(category)] = normalized_entries
+            extra_categories = {
+                str(category): entries
+                for category, entries in categories.items()
+                if str(category) not in order_set
+            }
+            for category in sorted(extra_categories):
+                entries = extra_categories[category]
+                if not isinstance(entries, Iterable) or isinstance(entries, (str, bytes)):
+                    continue
+                normalized_entries = []
+                for item in entries:
+                    if not isinstance(item, Mapping):
+                        continue
+                    cleaned_entry = {
+                        str(key).strip(): str(value).strip()
+                        for key, value in item.items()
+                        if str(key).strip()
+                        and (
+                            str(value).strip()
+                            or str(key).strip() in {"profile", "kind"}
+                            or (str(key).strip() == "reason" and str(value).strip())
+                        )
+                    }
+                    if not cleaned_entry:
+                        continue
+                    if "reason" not in cleaned_entry and reason_label:
+                        cleaned_entry["reason"] = reason_label
+                    normalized_entries.append(cleaned_entry)
+                if not normalized_entries:
+                    continue
+                normalized_entries.sort(
+                    key=lambda payload, *, _category=str(category): _sort_key(
+                        str(_category), payload
+                    )
+                )
+                ordered_categories[category] = normalized_entries
+            if ordered_categories:
+                entry["categories"] = ordered_categories
+        normalized[reason_label] = entry
+
+    return normalized
+
+
+def _print_guard_summary(summary: Mapping[str, Any], *, indent: str = "  ") -> None:
+    if not summary:
+        return
+    order = (
+        "overall",
+        "strategies",
+        "schedules",
+        "initial_signal_limits",
+        "signal_limits",
+        "suspensions",
+    )
+    labels = {
+        "overall": "Ogółem",
+        "strategies": "Strategie",
+        "schedules": "Harmonogramy",
+        "initial_signal_limits": "Limity sygnałów (początkowe)",
+        "signal_limits": "Limity sygnałów",
+        "suspensions": "Zawieszenia",
+    }
+    sub_indent = indent + "    "
+    for key in order:
+        payload = summary.get(key)
+        if not isinstance(payload, Mapping):
+            continue
+        total = payload.get("total")
+        if not isinstance(total, (int, float)) or int(total) <= 0:
+            continue
+        print(f"{indent}- {labels.get(key, key)}: {int(total)}")
+        capabilities = payload.get("by_capability")
+        if isinstance(capabilities, Mapping) and capabilities:
+            formatted_caps = ", ".join(
+                f"{capability} ({int(value)})"
+                for capability, value in capabilities.items()
+            )
+            print(f"{sub_indent}capabilities: {formatted_caps}")
+        reasons = payload.get("by_reason")
+        if isinstance(reasons, Mapping) and reasons:
+            formatted_reasons = ", ".join(
+                f"{reason} ({int(value)})" for reason, value in reasons.items()
+            )
+            print(f"{sub_indent}powody: {formatted_reasons}")
+
+
+def _print_guard_details(
+    details: Mapping[str, Mapping[str, Sequence[Mapping[str, str]]]],
+    *,
+    indent: str = "  ",
+) -> None:
+    if not details:
+        return
+    labels = {
+        "strategies": "Strategie",
+        "schedules": "Harmonogramy",
+        "initial_signal_limits": "Limity sygnałów (początkowe)",
+        "signal_limits": "Limity sygnałów",
+        "suspensions": "Zawieszenia",
+    }
+    capability_indent = indent + "  "
+    entry_indent = capability_indent + "  "
+    for capability in sorted(details):
+        category_map = details.get(capability)
+        if not isinstance(category_map, Mapping) or not category_map:
+            continue
+        print(f"{indent}- capability {capability}:")
+        for category, entries in sorted(category_map.items()):
+            label = labels.get(category, category)
+            print(f"{capability_indent}{label}:")
+            if not entries:
+                print(f"{entry_indent}(brak)")
+                continue
+            if category in {"strategies", "schedules"}:
+                for entry in entries:
+                    name = entry.get("name", "-")
+                    reason = entry.get("reason")
+                    suffix = f" (powód strażnika: {reason})" if reason else ""
+                    print(f"{entry_indent}- {name}{suffix}")
+            elif category in {"initial_signal_limits", "signal_limits"}:
+                for entry in entries:
+                    strategy = entry.get("strategy", "-")
+                    profile = entry.get("profile", "*")
+                    reason = entry.get("reason")
+                    suffix = f" (powód strażnika: {reason})" if reason else ""
+                    print(f"{entry_indent}- {strategy} [{profile}]{suffix}")
+            elif category == "suspensions":
+                for entry in entries:
+                    kind = entry.get("kind", "schedule")
+                    target = entry.get("target", "-")
+                    reason = entry.get("reason")
+                    suffix = f" (powód strażnika: {reason})" if reason else ""
+                    print(f"{entry_indent}- {kind}:{target}{suffix}")
+            else:
+                for entry in entries:
+                    formatted = ", ".join(
+                        f"{key}={value}" for key, value in sorted(entry.items())
+                    )
+                    print(f"{entry_indent}- {formatted}")
+
+
+def _print_guard_detail_summary(
+    summary: Mapping[str, Mapping[str, Mapping[str, object]]],
+    *,
+    indent: str = "  ",
+) -> None:
+    if not summary:
+        return
+    labels = {
+        "strategies": "Strategie",
+        "schedules": "Harmonogramy",
+        "initial_signal_limits": "Limity sygnałów (początkowe)",
+        "signal_limits": "Limity sygnałów",
+        "suspensions": "Zawieszenia",
+        "overall": "Ogółem",
+    }
+    category_order = (
+        "strategies",
+        "schedules",
+        "initial_signal_limits",
+        "signal_limits",
+        "suspensions",
+        "overall",
+    )
+    capability_indent = indent + "  "
+    detail_indent = capability_indent + "  "
+    for capability in sorted(summary):
+        category_map = summary.get(capability)
+        if not isinstance(category_map, Mapping) or not category_map:
+            continue
+        print(f"{indent}- capability {capability}:")
+        for category in category_order:
+            payload = category_map.get(category)
+            if not isinstance(payload, Mapping):
+                continue
+            total = payload.get("total")
+            if not isinstance(total, (int, float)) or int(total) <= 0:
+                continue
+            label = labels.get(category, category)
+            print(f"{capability_indent}{label}: {int(total)}")
+            reasons = payload.get("by_reason")
+            if isinstance(reasons, Mapping) and reasons:
+                formatted = ", ".join(
+                    f"{reason} ({int(value)})" for reason, value in reasons.items()
+                )
+                print(f"{detail_indent}powody: {formatted}")
+        extra_categories = {
+            str(category): payload
+            for category, payload in category_map.items()
+            if str(category) not in category_order
+        }
+        for category in sorted(extra_categories):
+            payload = extra_categories[category]
+            if not isinstance(payload, Mapping):
+                continue
+            total = payload.get("total")
+            if not isinstance(total, (int, float)) or int(total) <= 0:
+                continue
+            print(f"{capability_indent}{category}: {int(total)}")
+            reasons = payload.get("by_reason")
+            if isinstance(reasons, Mapping) and reasons:
+                formatted = ", ".join(
+                    f"{reason} ({int(value)})" for reason, value in reasons.items()
+                )
+                print(f"{detail_indent}powody: {formatted}")
+
+
+def _print_guard_detail_category_summary(
+    summary: Mapping[str, Mapping[str, object]],
+    *,
+    indent: str = "  ",
+) -> None:
+    if not summary:
+        return
+
+    labels = {
+        "strategies": "Strategie",
+        "schedules": "Harmonogramy",
+        "initial_signal_limits": "Limity sygnałów (początkowe)",
+        "signal_limits": "Limity sygnałów",
+        "suspensions": "Zawieszenia",
+    }
+    category_order = (
+        "strategies",
+        "schedules",
+        "initial_signal_limits",
+        "signal_limits",
+        "suspensions",
+    )
+    sub_indent = indent + "    "
+
+    def _emit(category: str, payload: Mapping[str, object]) -> None:
+        total = payload.get("total")
+        if not isinstance(total, (int, float)) or int(total) <= 0:
+            return
+        print(f"{indent}- {labels.get(category, category)}: {int(total)}")
+        capabilities = payload.get("by_capability")
+        if isinstance(capabilities, Mapping) and capabilities:
+            formatted_caps = ", ".join(
+                f"{capability} ({int(value)})"
+                for capability, value in capabilities.items()
+            )
+            print(f"{sub_indent}capabilities: {formatted_caps}")
+        reasons = payload.get("by_reason")
+        if isinstance(reasons, Mapping) and reasons:
+            formatted_reasons = ", ".join(
+                f"{reason} ({int(value)})" for reason, value in reasons.items()
+            )
+            print(f"{sub_indent}powody: {formatted_reasons}")
+
+    processed: set[str] = set()
+    for category in category_order:
+        payload = summary.get(category)
+        if isinstance(payload, Mapping):
+            _emit(category, payload)
+            processed.add(category)
+
+    for category in sorted(summary):
+        if category in processed:
+            continue
+        payload = summary.get(category)
+        if isinstance(payload, Mapping):
+            _emit(category, payload)
+
+
+def _print_guard_detail_reason_summary(
+    summary: Mapping[str, Mapping[str, object]],
+    *,
+    indent: str = "  ",
+) -> None:
+    if not summary:
+        return
+
+    category_labels = {
+        "strategies": "Strategie",
+        "schedules": "Harmonogramy",
+        "initial_signal_limits": "Limity sygnałów (początkowe)",
+        "signal_limits": "Limity sygnałów",
+        "suspensions": "Zawieszenia",
+    }
+    category_order = (
+        "strategies",
+        "schedules",
+        "initial_signal_limits",
+        "signal_limits",
+        "suspensions",
+    )
+    sub_indent = indent + "    "
+
+    for reason, payload in summary.items():
+        if not isinstance(payload, Mapping):
+            continue
+        total = payload.get("total")
+        if not isinstance(total, (int, float)) or int(total) <= 0:
+            continue
+        print(f"{indent}- {reason}: {int(total)}")
+        capabilities = payload.get("by_capability")
+        if isinstance(capabilities, Mapping) and capabilities:
+            formatted_caps = ", ".join(
+                f"{capability} ({int(value)})"
+                for capability, value in capabilities.items()
+            )
+            print(f"{sub_indent}capabilities: {formatted_caps}")
+        categories = payload.get("by_category")
+        if isinstance(categories, Mapping) and categories:
+            ordered_categories: list[tuple[str, object]] = []
+            for category in category_order:
+                if category in categories:
+                    ordered_categories.append((category, categories[category]))
+            extra_categories = {
+                str(category): categories[category]
+                for category in categories
+                if str(category) not in category_order
+            }
+            for category in sorted(extra_categories):
+                ordered_categories.append((category, extra_categories[category]))
+            formatted_categories = ", ".join(
+                f"{category_labels.get(category, category)} ({int(value)})"
+                for category, value in ordered_categories
+            )
+            print(f"{sub_indent}kategorie: {formatted_categories}")
+
+
+def _print_guard_detail_reason_details(
+    details: Mapping[str, Mapping[str, object]],
+    *,
+    indent: str = "  ",
+) -> None:
+    if not details:
+        return
+
+    category_labels = {
+        "strategies": "Strategie",
+        "schedules": "Harmonogramy",
+        "initial_signal_limits": "Limity sygnałów (początkowe)",
+        "signal_limits": "Limity sygnałów",
+        "suspensions": "Zawieszenia",
+    }
+    category_order = (
+        "strategies",
+        "schedules",
+        "initial_signal_limits",
+        "signal_limits",
+        "suspensions",
+    )
+    detail_indent = indent + "  "
+    entry_indent = detail_indent + "  "
+
+    for reason, payload in details.items():
+        if not isinstance(payload, Mapping):
+            continue
+        total = payload.get("total")
+        if not isinstance(total, (int, float)) or int(total) <= 0:
+            continue
+        capabilities = payload.get("capabilities")
+        suffix = ""
+        if isinstance(capabilities, Iterable) and not isinstance(capabilities, (str, bytes)):
+            cleaned_caps = [str(item).strip() for item in capabilities if str(item).strip()]
+            if cleaned_caps:
+                suffix = f" (capabilities: {', '.join(cleaned_caps)})"
+        print(f"{indent}- {reason}: {int(total)}{suffix}")
+        categories = payload.get("categories")
+        if not isinstance(categories, Mapping):
+            continue
+        processed: set[str] = set()
+        for category in category_order:
+            entries = categories.get(category)
+            if not isinstance(entries, Sequence) or not entries:
+                continue
+            label = category_labels.get(category, category)
+            print(f"{detail_indent}{label}:")
+            processed.add(category)
+            if category in {"strategies", "schedules"}:
+                for entry in entries:
+                    name = entry.get("name", "-")
+                    reason_text = entry.get("reason")
+                    suffix_text = (
+                        f" (powód strażnika: {reason_text})" if reason_text else ""
+                    )
+                    print(f"{entry_indent}- {name}{suffix_text}")
+            elif category in {"initial_signal_limits", "signal_limits"}:
+                for entry in entries:
+                    strategy = entry.get("strategy", "-")
+                    profile = entry.get("profile", "*")
+                    reason_text = entry.get("reason")
+                    suffix_text = (
+                        f" (powód strażnika: {reason_text})" if reason_text else ""
+                    )
+                    print(f"{entry_indent}- {strategy} [{profile}]{suffix_text}")
+            elif category == "suspensions":
+                for entry in entries:
+                    kind = entry.get("kind", "schedule")
+                    target = entry.get("target", "-")
+                    reason_text = entry.get("reason")
+                    suffix_text = (
+                        f" (powód strażnika: {reason_text})" if reason_text else ""
+                    )
+                    print(f"{entry_indent}- {kind}:{target}{suffix_text}")
+            else:
+                for entry in entries:
+                    formatted = ", ".join(
+                        f"{key}={value}" for key, value in sorted(entry.items())
+                    )
+                    print(f"{entry_indent}- {formatted}")
+        for category, entries in categories.items():
+            if str(category) in processed:
+                continue
+            if not isinstance(entries, Sequence) or not entries:
+                continue
+            print(f"{detail_indent}{category}:")
+            for entry in entries:
+                if not isinstance(entry, Mapping):
+                    continue
+                formatted = ", ".join(
+                    f"{key}={value}" for key, value in sorted(entry.items())
+                )
+                print(f"{entry_indent}- {formatted}")
+
+
+def show_ai_compliance(args: argparse.Namespace) -> int:
+    output_format = getattr(args, "output_format", "text") or "text"
+    enforce = bool(getattr(args, "enforce", False))
+
+    limit_option = getattr(args, "limit", None)
+    if limit_option is None:
+        limit = 20
+    else:
+        if limit_option <= 0:
+            raise CLIUsageError("Opcja --limit wymaga dodatniej liczby całkowitej.")
+        limit = int(limit_option)
+
+    audit_root_value = getattr(args, "audit_root", None)
+    audit_root: Path | None = None
+    if audit_root_value:
+        audit_root = Path(audit_root_value).expanduser()
+
+    since_option = getattr(args, "since", None)
+    since_cutoff: datetime | None = None
+    if since_option:
+        since_cutoff = _resolve_since_cutoff(since_option)
+
     include_tags = _parse_cli_tags(getattr(args, "include_tags", None))
     exclude_tags = _parse_cli_tags(getattr(args, "exclude_tags", None))
     include_statuses = _parse_cli_sign_off_statuses(
@@ -3462,6 +5536,7 @@ def show_strategy_catalog(args: argparse.Namespace) -> int:
     definitions: list[Mapping[str, object]] = []
     config_path = getattr(args, "config", None)
     scheduler_name = getattr(args, "scheduler", None)
+    plan_summary: Mapping[str, object] | None = None
     if config_path:
         try:
             core_config = load_core_config(config_path)
@@ -3476,6 +5551,7 @@ def show_strategy_catalog(args: argparse.Namespace) -> int:
                     include_strategy_definitions=True,
                     only_scheduler_definitions=True,
                 )
+                plan_summary = plan
                 definitions = plan.get("strategies", [])  # type: ignore[assignment]
             except Exception as exc:  # pragma: no cover - walidacja konfiguracji
                 raise CLIUsageError(str(exc)) from exc
@@ -3501,11 +5577,120 @@ def show_strategy_catalog(args: argparse.Namespace) -> int:
         definitions = filtered_definitions
 
     payload: dict[str, object] = {"engines": engines}
+    normalized_guard_summary: dict[str, object] = {}
+    normalized_guard_details: dict[str, dict[str, list[dict[str, str]]]] = {}
+    normalized_guard_detail_summary: dict[str, dict[str, dict[str, object]]] = {}
+    normalized_guard_detail_category_summary: dict[str, dict[str, object]] = {}
+    normalized_guard_detail_reason_summary: dict[str, dict[str, object]] = {}
+    normalized_guard_detail_reason_details: dict[str, dict[str, object]] = {}
     if config_path:
         payload["config_path"] = str(Path(config_path).expanduser())
         if scheduler_name:
             payload["scheduler"] = scheduler_name
         payload["definitions"] = definitions
+        blocked_schedules: list[str] = []
+        blocked_strategies: list[str] = []
+        blocked_capabilities: dict[str, str] = {}
+        blocked_schedule_capabilities: dict[str, str] = {}
+        blocked_initial_limits: dict[str, list[str]] = {}
+        blocked_signal_limits: dict[str, list[str]] = {}
+        blocked_initial_limit_capabilities: dict[str, str] = {}
+        blocked_signal_limit_capabilities: dict[str, str] = {}
+        blocked_suspensions: list[dict[str, object]] = []
+        blocked_suspension_capabilities: dict[str, str] = {}
+
+        if plan_summary:
+            blocked_schedules = [
+                str(item)
+                for item in plan_summary.get("blocked_schedules", [])
+                if str(item).strip()
+            ]
+            blocked_strategies = [
+                str(item)
+                for item in plan_summary.get("blocked_strategies", [])
+                if str(item).strip()
+            ]
+            blocked_capabilities = {
+                str(strategy): str(capability)
+                for strategy, capability in plan_summary.get(
+                    "blocked_capabilities", {}
+                ).items()
+                if str(strategy).strip() and str(capability).strip()
+            }
+            blocked_schedule_capabilities = {
+                str(schedule): str(capability)
+                for schedule, capability in plan_summary.get(
+                    "blocked_schedule_capabilities", {}
+                ).items()
+                if str(schedule).strip() and str(capability).strip()
+            }
+            blocked_initial_limits = {
+                str(strategy): [str(profile) for profile in profiles]
+                for strategy, profiles in plan_summary.get(
+                    "blocked_initial_signal_limits", {}
+                ).items()
+                if str(strategy).strip()
+            }
+            blocked_initial_limit_capabilities = {
+                str(strategy): str(capability)
+                for strategy, capability in plan_summary.get(
+                    "blocked_initial_signal_limit_capabilities", {}
+                ).items()
+                if str(strategy).strip() and str(capability).strip()
+            }
+            blocked_signal_limits = {
+                str(strategy): [str(profile) for profile in profiles]
+                for strategy, profiles in plan_summary.get("blocked_signal_limits", {}).items()
+                if str(strategy).strip()
+            }
+            blocked_signal_limit_capabilities = {
+                str(strategy): str(capability)
+                for strategy, capability in plan_summary.get(
+                    "blocked_signal_limit_capabilities", {}
+                ).items()
+                if str(strategy).strip() and str(capability).strip()
+            }
+            blocked_suspensions = [
+                {
+                    key: value
+                    for key, value in entry.items()
+                    if key and (value not in (None, ""))
+                }
+                for entry in plan_summary.get("blocked_suspensions", [])
+            ]
+            blocked_suspension_capabilities = {
+                str(entry_key): str(capability)
+                for entry_key, capability in plan_summary.get(
+                    "blocked_suspension_capabilities", {}
+                ).items()
+                if str(entry_key).strip() and str(capability).strip()
+            }
+            if blocked_schedules:
+                payload["blocked_schedules"] = blocked_schedules
+            if blocked_strategies:
+                payload["blocked_strategies"] = blocked_strategies
+            if blocked_capabilities:
+                payload["blocked_capabilities"] = blocked_capabilities
+            if blocked_schedule_capabilities:
+                payload["blocked_schedule_capabilities"] = blocked_schedule_capabilities
+            if blocked_initial_limits:
+                payload["blocked_initial_signal_limits"] = blocked_initial_limits
+            if blocked_initial_limit_capabilities:
+                payload["blocked_initial_signal_limit_capabilities"] = (
+                    blocked_initial_limit_capabilities
+                )
+            if blocked_signal_limits:
+                payload["blocked_signal_limits"] = blocked_signal_limits
+            if blocked_signal_limit_capabilities:
+                payload["blocked_signal_limit_capabilities"] = (
+                    blocked_signal_limit_capabilities
+                )
+            if blocked_suspensions:
+                payload["blocked_suspensions"] = blocked_suspensions
+            if blocked_suspension_capabilities:
+                payload["blocked_suspension_capabilities"] = (
+                    blocked_suspension_capabilities
+                )
 
     if output_format in {"json", "json-pretty"}:
         json_kwargs: dict[str, object] = {"ensure_ascii": False}
@@ -3564,6 +5749,59 @@ def show_strategy_catalog(args: argparse.Namespace) -> int:
                         tags=tags,
                     )
                 )
+        if plan_summary and (
+            blocked_schedules
+            or blocked_strategies
+            or blocked_initial_limits
+            or blocked_signal_limits
+            or blocked_suspensions
+        ):
+                print()
+                print("Pominięte przez strażnika licencji:")
+                if blocked_schedules:
+                    print("  Harmonogramy (zablokowana licencja):")
+                    for name in blocked_schedules:
+                        capability = blocked_schedule_capabilities.get(name)
+                        extra = f" (capability: {capability})" if capability else ""
+                        print(f"    - {name}{extra}")
+                if blocked_strategies:
+                    print("  Strategie (zablokowana licencja):")
+                    for name in blocked_strategies:
+                        capability = blocked_capabilities.get(name)
+                        extra = f" (capability: {capability})" if capability else ""
+                        print(f"    - {name}{extra}")
+                if blocked_initial_limits:
+                    print("  Limity sygnałów (początkowe, zablokowane licencją):")
+                    for strategy, profiles in sorted(blocked_initial_limits.items()):
+                        formatted = ", ".join(sorted(filter(None, profiles))) or "-"
+                        capability = blocked_initial_limit_capabilities.get(strategy)
+                        extra = f" (capability: {capability})" if capability else ""
+                        print(f"    - {strategy}{extra}: {formatted}")
+                if blocked_signal_limits:
+                    print("  Limity sygnałów (zablokowane licencją):")
+                    for strategy, profiles in sorted(blocked_signal_limits.items()):
+                        formatted = ", ".join(sorted(filter(None, profiles))) or "-"
+                        capability = blocked_signal_limit_capabilities.get(strategy)
+                        extra = f" (capability: {capability})" if capability else ""
+                        print(f"    - {strategy}{extra}: {formatted}")
+                if blocked_suspensions:
+                    print("  Zawieszenia (zablokowana licencja):")
+                    for entry in blocked_suspensions:
+                        target = entry.get("target") or "-"
+                        kind = entry.get("kind") or "schedule"
+                        reason = entry.get("reason")
+                        capability = entry.get("capability") or (
+                            blocked_suspension_capabilities.get(f"{kind}:{target}")
+                            if target
+                            else None
+                        )
+                        extras = []
+                        if capability:
+                            extras.append(f"capability: {capability}")
+                        if reason:
+                            extras.append(f"powód: {reason}")
+                        suffix = f" ({', '.join(extras)})" if extras else ""
+                        print(f"    - {kind}:{target}{suffix}")
     return 0
 
 
@@ -3580,6 +5818,66 @@ def show_scheduler_plan(args: argparse.Namespace) -> int:
         )
     except Exception as exc:  # pragma: no cover - walidacja konfiguracji
         raise CLIUsageError(str(exc)) from exc
+
+    blocked_schedules = [
+        str(item)
+        for item in plan.get("blocked_schedules", [])
+        if str(item).strip()
+    ]
+    blocked_strategies = [
+        str(item)
+        for item in plan.get("blocked_strategies", [])
+        if str(item).strip()
+    ]
+    blocked_capabilities = {
+        str(strategy): str(capability)
+        for strategy, capability in plan.get("blocked_capabilities", {}).items()
+        if str(strategy).strip() and str(capability).strip()
+    }
+    blocked_schedule_capabilities = {
+        str(schedule): str(capability)
+        for schedule, capability in plan.get("blocked_schedule_capabilities", {}).items()
+        if str(schedule).strip() and str(capability).strip()
+    }
+    blocked_initial_limits = {
+        str(strategy): [str(profile) for profile in profiles]
+        for strategy, profiles in plan.get("blocked_initial_signal_limits", {}).items()
+        if str(strategy).strip()
+    }
+    blocked_initial_limit_capabilities = {
+        str(strategy): str(capability)
+        for strategy, capability in plan.get(
+            "blocked_initial_signal_limit_capabilities", {}
+        ).items()
+        if str(strategy).strip() and str(capability).strip()
+    }
+    blocked_signal_limits = {
+        str(strategy): [str(profile) for profile in profiles]
+        for strategy, profiles in plan.get("blocked_signal_limits", {}).items()
+        if str(strategy).strip()
+    }
+    blocked_signal_limit_capabilities = {
+        str(strategy): str(capability)
+        for strategy, capability in plan.get(
+            "blocked_signal_limit_capabilities", {}
+        ).items()
+        if str(strategy).strip() and str(capability).strip()
+    }
+    blocked_suspensions = [
+        {
+            key: value
+            for key, value in entry.items()
+            if key and (value not in (None, ""))
+        }
+        for entry in plan.get("blocked_suspensions", [])
+    ]
+    blocked_suspension_capabilities = {
+        str(entry_key): str(capability)
+        for entry_key, capability in plan.get(
+            "blocked_suspension_capabilities", {}
+        ).items()
+        if str(entry_key).strip() and str(capability).strip()
+    }
 
     filter_tags = {value.strip().lower() for value in getattr(args, "filter_tags", []) if value}
     filter_strategies = {
@@ -3600,6 +5898,8 @@ def show_scheduler_plan(args: argparse.Namespace) -> int:
         schedules.append(entry)
 
     plan["schedules"] = schedules
+    if blocked_suspension_capabilities:
+        plan["blocked_suspension_capabilities"] = blocked_suspension_capabilities
 
     if include_definitions and "strategies" in plan:
         used_strategies = {entry.get("strategy") for entry in schedules}
@@ -3680,6 +5980,60 @@ def show_scheduler_plan(args: argparse.Namespace) -> int:
         for strategy_name, profiles in plan["signal_limits"].items():
             for profile, payload in profiles.items():
                 print(f"  * {strategy_name}/{profile}: limit={payload.get('limit')}")
+
+    if (
+        blocked_schedules
+        or blocked_strategies
+        or blocked_initial_limits
+        or blocked_signal_limits
+        or blocked_suspensions
+    ):
+        print()
+        print("Pominięte przez strażnika licencji:")
+        if blocked_schedules:
+            print("  Harmonogramy (zablokowana licencja):")
+            for name in blocked_schedules:
+                capability = blocked_schedule_capabilities.get(name)
+                extra = f" (capability: {capability})" if capability else ""
+                print(f"    - {name}{extra}")
+        if blocked_strategies:
+            print("  Strategie (zablokowana licencja):")
+            for name in blocked_strategies:
+                capability = blocked_capabilities.get(name)
+                extra = f" (capability: {capability})" if capability else ""
+                print(f"    - {name}{extra}")
+        if blocked_initial_limits:
+            print("  Limity sygnałów (początkowe, zablokowane licencją):")
+            for strategy, profiles in sorted(blocked_initial_limits.items()):
+                formatted = ", ".join(sorted(filter(None, profiles))) or "-"
+                capability = blocked_initial_limit_capabilities.get(strategy)
+                extra = f" (capability: {capability})" if capability else ""
+                print(f"    - {strategy}{extra}: {formatted}")
+        if blocked_signal_limits:
+            print("  Limity sygnałów (zablokowane licencją):")
+            for strategy, profiles in sorted(blocked_signal_limits.items()):
+                formatted = ", ".join(sorted(filter(None, profiles))) or "-"
+                capability = blocked_signal_limit_capabilities.get(strategy)
+                extra = f" (capability: {capability})" if capability else ""
+                print(f"    - {strategy}{extra}: {formatted}")
+        if blocked_suspensions:
+            print("  Zawieszenia (zablokowana licencja):")
+            for entry in blocked_suspensions:
+                target = entry.get("target") or "-"
+                kind = entry.get("kind") or "schedule"
+                reason = entry.get("reason")
+                capability = entry.get("capability") or (
+                    blocked_suspension_capabilities.get(f"{kind}:{target}")
+                    if target
+                    else None
+                )
+                extras = []
+                if capability:
+                    extras.append(f"capability: {capability}")
+                if reason:
+                    extras.append(f"powód: {reason}")
+                suffix = f" ({', '.join(extras)})" if extras else ""
+                print(f"    - {kind}:{target}{suffix}")
 
     return 0
 

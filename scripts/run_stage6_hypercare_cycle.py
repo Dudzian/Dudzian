@@ -51,6 +51,7 @@ from bot_core.runtime.stage6_hypercare import (  # noqa: E402
     Stage6HypercareCycle,
 )
 from scripts._cli_common import default_decision_log_path, timestamp_slug
+from scripts._market_intel_paths import resolve_market_intel_path as _resolve_market_intel_path
 
 
 def _load_text_config(path: Path) -> Mapping[str, Any]:
@@ -135,14 +136,21 @@ def _parse_observability(config: Mapping[str, Any] | None) -> ObservabilityCycle
 
     if metrics and not metrics.exists():
         expected = metrics
-        hint_command = (
-            "python scripts/run_stage6_observability_cycle.py --definitions "
-            f"{definitions} --metrics {expected}"
+        sync_command = (
+            "python scripts/sync_stage6_metrics.py "
+            f"--source /ścieżka/do/stage6_measurements.json --output {expected}"
         )
         print(
-            f"[stage6.hypercare] Oczekiwano metryk w {expected}; "
-            f"wygeneruj je poleceniem: {hint_command}",
+            "[stage6.hypercare] Oczekiwano metryk w "
+            f"{expected} (config: observability.metrics).\n"
+            "[stage6.hypercare] Zgodnie z docs/runbooks/STAGE6_OBSERVABILITY_CHECKLIST.md "
+            "skopiuj lub zsynkuj plik do tej ścieżki (np. poleceniem: "
+            f"{sync_command}) – narzędzie potwierdzi liczbę załadowanych pomiarów.",
             file=sys.stderr,
+        )
+        raise FileNotFoundError(
+            "Brak pliku metryk Stage6. Skopiuj/wyeksportuj stage6_measurements.json "
+            f"do {expected} przed uruchomieniem hypercare."
         )
 
     slo_cfg = config.get("slo") or {}
@@ -321,28 +329,27 @@ def _parse_portfolio(config: Mapping[str, Any] | None) -> tuple[PortfolioCycleCo
 
     inputs_cfg = config.get("inputs") or {}
     allocations = _expand_path(inputs_cfg.get("allocations"))
-    market_intel = _expand_path(inputs_cfg.get("market_intel"))
+    market_intel_raw = inputs_cfg.get("market_intel")
+    market_intel = _expand_path(market_intel_raw)
     portfolio_value = inputs_cfg.get("portfolio_value")
-    if allocations is None or market_intel is None or portfolio_value is None:
+    if allocations is None or portfolio_value is None:
         raise ValueError(
-            "Portfolio.inputs wymaga pól allocations, market_intel oraz portfolio_value"
-        )
-
-    market_intel_path = market_intel.expanduser()
-    if not market_intel_path.is_file():
-        suggestion = (
-            "python scripts/build_market_intel_metrics.py "
-            f"--environment {environment} --governor {governor_name} "
-            f"--output {market_intel_path}"
-        )
-        raise FileNotFoundError(
-            f"Raport Market Intel nie istnieje: {market_intel_path}. "
-            f"Uruchom {suggestion}"
+            "Portfolio.inputs wymaga pól allocations oraz portfolio_value (market_intel może być pominięty, zostanie użyty domyślny wzorzec)"
         )
 
     fallback_dirs = tuple(
         _expand_path(item) for item in inputs_cfg.get("fallback_dirs", ()) if item
     )
+
+    market_intel_path = _resolve_market_intel_path(
+        market_intel,
+        market_intel_raw,
+        environment=environment,
+        governor=governor_name,
+        fallback_directories=tuple(filter(None, fallback_dirs)),
+        log_context="stage6.hypercare",
+    )
+
     required_symbols = tuple(inputs_cfg.get("market_intel_required", ())) or None
 
     inputs = PortfolioCycleInputs(

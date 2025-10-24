@@ -16,9 +16,16 @@ from .cross_exchange_arbitrage import (
     CrossExchangeArbitrageSettings,
     CrossExchangeArbitrageStrategy,
 )
+from .day_trading import DayTradingSettings, DayTradingStrategy
 from .daily_trend import DailyTrendMomentumSettings, DailyTrendMomentumStrategy
 from .grid import GridTradingSettings, GridTradingStrategy
 from .mean_reversion import MeanReversionSettings, MeanReversionStrategy
+from .options import OptionsIncomeSettings, OptionsIncomeStrategy
+from .scalping import ScalpingSettings, ScalpingStrategy
+from .statistical_arbitrage import (
+    StatisticalArbitrageSettings,
+    StatisticalArbitrageStrategy,
+)
 from .volatility_target import VolatilityTargetSettings, VolatilityTargetStrategy
 
 
@@ -81,8 +88,11 @@ class StrategyDefinition:
         object.__setattr__(self, "license_tier", _normalize_non_empty_str(self.license_tier, field_name="license_tier"))
         object.__setattr__(self, "risk_classes", _normalize_str_sequence(self.risk_classes, field_name="risk_classes"))
         object.__setattr__(self, "required_data", _normalize_str_sequence(self.required_data, field_name="required_data"))
-        if self.tags:
-            object.__setattr__(self, "tags", tuple(dict.fromkeys(str(tag).strip() for tag in self.tags if str(tag).strip())))
+        object.__setattr__(
+            self,
+            "tags",
+            tuple(_normalize_optional_str_sequence(self.tags)),
+        )
         if isinstance(self.metadata, Mapping):
             object.__setattr__(self, "metadata", dict(self.metadata))
         else:
@@ -106,8 +116,11 @@ class StrategyEngineSpec:
         object.__setattr__(self, "license_tier", _normalize_non_empty_str(self.license_tier, field_name="license_tier"))
         object.__setattr__(self, "risk_classes", _normalize_str_sequence(self.risk_classes, field_name="risk_classes"))
         object.__setattr__(self, "required_data", _normalize_str_sequence(self.required_data, field_name="required_data"))
-        if self.default_tags:
-            object.__setattr__(self, "default_tags", tuple(dict.fromkeys(str(tag).strip() for tag in self.default_tags if str(tag).strip())))
+        object.__setattr__(
+            self,
+            "default_tags",
+            tuple(_normalize_optional_str_sequence(self.default_tags)),
+        )
 
     def build(
         self,
@@ -117,6 +130,28 @@ class StrategyEngineSpec:
         metadata: Mapping[str, Any] | None = None,
     ) -> StrategyEngine:
         return self.factory(name=name, parameters=parameters, metadata=metadata)
+
+
+def _ensure_capability_allowed(spec: StrategyEngineSpec, *, strategy_name: str | None = None) -> None:
+    guard = get_capability_guard()
+    if guard is None or not spec.capability:
+        return
+    message = (
+        f"Strategia '{strategy_name}' wymaga aktywnej licencji {spec.capability}."
+        if strategy_name
+        else f"Silnik '{spec.key}' wymaga aktywnej licencji {spec.capability}."
+    )
+    guard.require_strategy(spec.capability, message=message)
+
+
+def _is_capability_allowed(spec: StrategyEngineSpec) -> bool:
+    guard = get_capability_guard()
+    if guard is None or not spec.capability:
+        return True
+    try:
+        return guard.capabilities.is_strategy_enabled(spec.capability)
+    except AttributeError:
+        return True
 
 
 class StrategyCatalog:
@@ -137,27 +172,12 @@ class StrategyCatalog:
 
     def create(self, definition: StrategyDefinition) -> StrategyEngine:
         spec = self.get(definition.engine)
+        _ensure_capability_allowed(spec, strategy_name=definition.name)
         if definition.license_tier != spec.license_tier:
             raise ValueError(
                 f"Strategy '{definition.name}' requires license tier '{definition.license_tier}' "
                 f"but engine '{spec.key}' is registered for '{spec.license_tier}'"
             )
-        guard = get_capability_guard()
-        if guard is not None:
-            guard.require_license_tier(
-                definition.license_tier,
-                message=(
-                    f"Strategia '{definition.name}' wymaga poziomu licencji '{definition.license_tier}'."
-                ),
-            )
-            capability = spec.capability or definition.metadata.get("capability")
-            if capability:
-                guard.require_strategy(
-                    capability,
-                    message=(
-                        f"Strategia '{definition.name}' wymaga aktywnej capability '{capability}'."
-                    ),
-                )
         tags = tuple(dict.fromkeys((*spec.default_tags, *definition.tags)))
         risk_classes = tuple(dict.fromkeys((*spec.risk_classes, *definition.risk_classes)))
         required_data = tuple(dict.fromkeys((*spec.required_data, *definition.required_data)))
@@ -193,6 +213,8 @@ class StrategyCatalog:
         summary: list[Mapping[str, object]] = []
         for key in sorted(self._registry):
             spec = self._registry[key]
+            if not _is_capability_allowed(spec):
+                continue
             payload: dict[str, object] = {
                 "engine": spec.key,
                 "capability": spec.capability,
@@ -231,6 +253,8 @@ class StrategyCatalog:
                 payload["risk_profile"] = definition.risk_profile
             try:
                 spec = self.get(definition.engine)
+                if not _is_capability_allowed(spec):
+                    continue
                 if spec.capability:
                     payload["capability"] = spec.capability
                 payload["license_tier"] = spec.license_tier
@@ -322,6 +346,34 @@ def _build_cross_exchange_strategy(
     return CrossExchangeArbitrageStrategy(settings)
 
 
+def _build_scalping_strategy(
+    *, name: str, parameters: Mapping[str, Any], metadata: Mapping[str, Any] | None = None
+) -> StrategyEngine:
+    settings = ScalpingSettings.from_parameters(parameters)
+    return ScalpingStrategy(settings)
+
+
+def _build_options_income_strategy(
+    *, name: str, parameters: Mapping[str, Any], metadata: Mapping[str, Any] | None = None
+) -> StrategyEngine:
+    settings = OptionsIncomeSettings.from_parameters(parameters)
+    return OptionsIncomeStrategy(settings)
+
+
+def _build_statistical_arbitrage_strategy(
+    *, name: str, parameters: Mapping[str, Any], metadata: Mapping[str, Any] | None = None
+) -> StrategyEngine:
+    settings = StatisticalArbitrageSettings.from_parameters(parameters)
+    return StatisticalArbitrageStrategy(settings)
+
+
+def _build_day_trading_strategy(
+    *, name: str, parameters: Mapping[str, Any], metadata: Mapping[str, Any] | None = None
+) -> StrategyEngine:
+    settings = DayTradingSettings.from_parameters(parameters)
+    return DayTradingStrategy(settings)
+
+
 def build_default_catalog() -> StrategyCatalog:
     catalog = StrategyCatalog()
     catalog.register(
@@ -379,6 +431,50 @@ def build_default_catalog() -> StrategyCatalog:
             default_tags=("arbitrage", "liquidity"),
         )
     )
+    catalog.register(
+        StrategyEngineSpec(
+            key="scalping",
+            factory=_build_scalping_strategy,
+            license_tier="professional",
+            risk_classes=("intraday", "scalping"),
+            required_data=("ohlcv", "order_book"),
+            capability="scalping",
+            default_tags=("intraday", "scalping"),
+        )
+    )
+    catalog.register(
+        StrategyEngineSpec(
+            key="options_income",
+            factory=_build_options_income_strategy,
+            license_tier="enterprise",
+            risk_classes=("derivatives", "income"),
+            required_data=("options_chain", "greeks", "ohlcv"),
+            capability="options_income",
+            default_tags=("options", "income"),
+        )
+    )
+    catalog.register(
+        StrategyEngineSpec(
+            key="statistical_arbitrage",
+            factory=_build_statistical_arbitrage_strategy,
+            license_tier="professional",
+            risk_classes=("statistical", "mean_reversion"),
+            required_data=("ohlcv", "spread_history"),
+            capability="stat_arbitrage",
+            default_tags=("stat_arbitrage", "pairs_trading"),
+        )
+    )
+    catalog.register(
+        StrategyEngineSpec(
+            key="day_trading",
+            factory=_build_day_trading_strategy,
+            license_tier="standard",
+            risk_classes=("intraday", "momentum"),
+            required_data=("ohlcv", "technical_indicators"),
+            capability="day_trading",
+            default_tags=("intraday", "momentum"),
+        )
+    )
     return catalog
 
 
@@ -427,6 +523,7 @@ class StrategyPresetWizard:
         spec = self._catalog.get(engine_name)
 
         name = str(entry.get("name") or spec.key)
+        _ensure_capability_allowed(spec, strategy_name=name)
         parameters = dict(entry.get("parameters") or {})
         risk_profile = entry.get("risk_profile")
         user_tags = tuple(entry.get("tags") or ())
@@ -446,6 +543,8 @@ class StrategyPresetWizard:
         metadata.setdefault("license_tier", spec.license_tier)
         metadata.setdefault("risk_classes", risk_classes)
         metadata.setdefault("required_data", required_data)
+        if merged_tags and "tags" not in metadata:
+            metadata["tags"] = merged_tags
         if spec.capability:
             metadata.setdefault("capability", spec.capability)
 

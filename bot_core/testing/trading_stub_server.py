@@ -5,6 +5,7 @@ from __future__ import annotations
 import itertools
 import threading
 import time
+from collections import defaultdict
 from concurrent import futures
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -55,6 +56,7 @@ class InMemoryTradingDataset:
     metrics: List[Any] = field(default_factory=list)
     health: Any | None = None
     performance_guard: Dict[str, Any] = field(default_factory=dict)
+    tradable_instruments: Dict[str, List[Any]] = field(default_factory=dict)
 
     def add_history(self, instrument: Any, granularity: Any, candles: Sequence[Any]) -> None:
         self.history[_instrument_key(instrument, granularity)] = list(candles)
@@ -78,6 +80,19 @@ class InMemoryTradingDataset:
 
     def set_metrics(self, snapshots: Sequence[Any]) -> None:
         self.metrics = list(snapshots)
+
+    def set_tradable_instruments(self, exchange: str, instruments: Sequence[Any]) -> None:
+        normalized = (exchange or "*").upper()
+        self.tradable_instruments[normalized] = [_clone_message(item) for item in instruments]
+
+    def list_tradable_instruments(self, exchange: str) -> List[Any]:
+        normalized = (exchange or "*").upper()
+        items = self.tradable_instruments.get(normalized)
+        if items is None and normalized != "*":
+            items = self.tradable_instruments.get("*")
+        if not items:
+            return []
+        return [_clone_message(item) for item in items]
 
 
 def merge_datasets(
@@ -109,6 +124,12 @@ def merge_datasets(
 
     if overlay.performance_guard:
         base.performance_guard.update(overlay.performance_guard)
+
+    if overlay.tradable_instruments:
+        for exchange, items in overlay.tradable_instruments.items():
+            base.tradable_instruments[exchange] = [
+                _clone_message(item) for item in items
+            ]
 
     return base
 
@@ -204,6 +225,7 @@ class _MarketDataService:
         self._snapshot_cls = trading_pb2.StreamOhlcvSnapshot
         self._increment_cls = trading_pb2.StreamOhlcvIncrement
         self._update_cls = trading_pb2.StreamOhlcvUpdate
+        self._list_response_cls = trading_pb2.ListTradableInstrumentsResponse
         self._repeat_streams = repeat_streams
         self._stream_interval = max(0.0, stream_interval)
 
@@ -260,6 +282,13 @@ class _MarketDataService:
                 continue
             if not _context_is_active(context):
                 return
+
+    def ListTradableInstruments(self, request, context):  # noqa: N802
+        exchange = (request.exchange or "").strip().upper()
+        entries = self._dataset.list_tradable_instruments(exchange)
+        response = self._list_response_cls()
+        response.instruments.extend(entries)
+        return response
 
     def _build_increment_update(self, candle):
         clone = _clone_message(candle)
@@ -521,6 +550,38 @@ def build_default_dataset() -> InMemoryTradingDataset:
         }
     )
 
+    dataset.set_tradable_instruments(
+        "BINANCE",
+        [
+            trading_pb2.TradableInstrumentMetadata(
+                instrument=_clone_message(instrument),
+                price_step=0.1,
+                amount_step=0.001,
+                min_notional=10.0,
+                min_amount=0.0005,
+                max_amount=5.0,
+                min_price=1.0,
+                max_price=1_000_000.0,
+            ),
+            trading_pb2.TradableInstrumentMetadata(
+                instrument=trading_pb2.Instrument(
+                    exchange="BINANCE",
+                    symbol="ETH/USDT",
+                    venue_symbol="ETHUSDT",
+                    quote_currency="USDT",
+                    base_currency="ETH",
+                ),
+                price_step=0.01,
+                amount_step=0.0001,
+                min_notional=5.0,
+                min_amount=0.001,
+                max_amount=250.0,
+                min_price=0.5,
+                max_price=500_000.0,
+            ),
+        ],
+    )
+
     return dataset
 
 
@@ -643,6 +704,31 @@ def load_dataset_from_yaml(path: str | Path) -> InMemoryTradingDataset:
         guard_cfg = data["performance_guard"]
         if isinstance(guard_cfg, dict):
             dataset.performance_guard.update(guard_cfg)
+
+    listings: Dict[str, list[Any]] = defaultdict(list)
+    for item in data.get("tradable_instruments", []):
+        exchange = (item.get("exchange") or "*").upper()
+        instrument_cfg = item.get("instrument")
+        if not isinstance(instrument_cfg, dict):
+            continue
+        try:
+            instrument = trading_pb2.Instrument(**instrument_cfg)
+        except TypeError:
+            continue
+        metadata = trading_pb2.TradableInstrumentMetadata(
+            instrument=instrument,
+            price_step=float(item.get("price_step", 0.0) or 0.0),
+            amount_step=float(item.get("amount_step", 0.0) or 0.0),
+            min_notional=float(item.get("min_notional", 0.0) or 0.0),
+            min_amount=float(item.get("min_amount", 0.0) or 0.0),
+            max_amount=float(item.get("max_amount", 0.0) or 0.0),
+            min_price=float(item.get("min_price", 0.0) or 0.0),
+            max_price=float(item.get("max_price", 0.0) or 0.0),
+        )
+        listings[exchange].append(metadata)
+
+    for exchange, instruments in listings.items():
+        dataset.set_tradable_instruments(exchange, instruments)
 
     return dataset
 

@@ -12,12 +12,14 @@
 #include <QTemporaryDir>
 #include <QUrl>
 #include <QDir>
+#include <QSignalSpy>
 
 #include "app/Application.hpp"
 #include "models/AlertsModel.hpp"
 #include "models/AlertsFilterProxyModel.hpp"
 #include "models/RiskTypes.hpp"
 #include "models/RiskHistoryModel.hpp"
+#include "models/MarketRegimeTimelineModel.hpp"
 
 namespace {
 
@@ -53,6 +55,8 @@ private slots:
     void testCliOverridesUiSettingsPath();
     void testRiskHistoryCliOverrides();
     void testRiskHistoryEnvOverrides();
+    void testInstrumentValidationRequiresListing();
+    void testRegimeTimelineCliOverride();
 };
 
 void ApplicationSettingsPersistenceTest::testPersistsAndReloadsConfiguration()
@@ -71,6 +75,15 @@ void ApplicationSettingsPersistenceTest::testPersistsAndReloadsConfiguration()
     {
         QQmlApplicationEngine engine;
         Application app(engine);
+
+        TradingClient::TradableInstrument listing;
+        listing.config.exchange = QStringLiteral("TESTX");
+        listing.config.symbol = QStringLiteral("FOO/BAR");
+        listing.config.venueSymbol = QStringLiteral("FOOBAR");
+        listing.config.quoteCurrency = QStringLiteral("BAR");
+        listing.config.baseCurrency = QStringLiteral("FOO");
+        listing.config.granularityIso8601 = QStringLiteral("PT5M");
+        app.setTradableInstrumentsForTesting(QStringLiteral("TESTX"), {listing});
 
         QVERIFY(app.updateInstrument(QStringLiteral("TESTX"),
                                      QStringLiteral("FOO/BAR"),
@@ -100,6 +113,11 @@ void ApplicationSettingsPersistenceTest::testPersistsAndReloadsConfiguration()
         auto* historyModel = qobject_cast<RiskHistoryModel*>(app.riskHistoryModel());
         QVERIFY(historyModel);
         historyModel->setMaximumEntries(75);
+
+        auto* regimeModel = qobject_cast<MarketRegimeTimelineModel*>(app.marketRegimeTimelineModel());
+        QVERIFY(regimeModel);
+        QVERIFY(app.setRegimeTimelineMaximumSnapshots(360));
+        QCOMPARE(regimeModel->maximumSnapshots(), 360);
         RiskSnapshotData historySample;
         historySample.hasData = true;
         historySample.profileLabel = QStringLiteral("Profil testowy");
@@ -175,6 +193,9 @@ void ApplicationSettingsPersistenceTest::testPersistsAndReloadsConfiguration()
         const QJsonArray persistedExposures = historyObject.value(QStringLiteral("exposures")).toArray();
         QCOMPARE(persistedExposures.size(), 2);
         QVERIFY(persistedExposures.at(1).toObject().value(QStringLiteral("breached")).toBool());
+
+        const QJsonObject regimeSection = root.value(QStringLiteral("marketRegimeTimeline")).toObject();
+        QCOMPARE(regimeSection.value(QStringLiteral("maximumSnapshots")).toInt(), 360);
 
         const QJsonObject exportSection = historySection.value(QStringLiteral("export")).toObject();
         QVERIFY(!exportSection.isEmpty());
@@ -265,6 +286,11 @@ void ApplicationSettingsPersistenceTest::testPersistsAndReloadsConfiguration()
         QVERIFY(app.riskHistoryAutoExportUseLocalTime());
         QCOMPARE(app.riskHistoryLastAutoExportAt(), persistedAutoExportAt.toUTC());
         QCOMPARE(app.riskHistoryLastAutoExportPath().toLocalFile(), QFileInfo(autoExportPath).absoluteFilePath());
+
+        auto* regimeModel = qobject_cast<MarketRegimeTimelineModel*>(app.marketRegimeTimelineModel());
+        QVERIFY(regimeModel);
+        QCOMPARE(regimeModel->maximumSnapshots(), 360);
+        QCOMPARE(app.regimeTimelineMaximumSnapshots(), 360);
     }
 }
 
@@ -369,6 +395,53 @@ void ApplicationSettingsPersistenceTest::testCliOverridesUiSettingsPath()
     QCOMPARE(updatedRisk.value(QStringLiteral("intervalSeconds")).toDouble(), 9.0);
 }
 
+void ApplicationSettingsPersistenceTest::testRegimeTimelineCliOverride()
+{
+    constexpr auto kEnvName = QByteArrayLiteral("BOT_CORE_UI_REGIME_TIMELINE_LIMIT");
+    EnvRestore envGuard(kEnvName);
+
+    {
+        QQmlApplicationEngine engine;
+        Application app(engine);
+
+        QCommandLineParser parser;
+        app.configureParser(parser);
+        const QStringList args = {QStringLiteral("app"),
+                                  QStringLiteral("--regime-timeline-limit"),
+                                  QStringLiteral("250")};
+        parser.process(args);
+        QVERIFY(app.applyParser(parser));
+
+        auto* regimeModel = qobject_cast<MarketRegimeTimelineModel*>(app.marketRegimeTimelineModel());
+        QVERIFY(regimeModel);
+        QCOMPARE(regimeModel->maximumSnapshots(), 250);
+        QCOMPARE(app.regimeTimelineMaximumSnapshots(), 250);
+
+        QVERIFY(!app.setRegimeTimelineMaximumSnapshots(-5));
+        QVERIFY(app.setRegimeTimelineMaximumSnapshots(0));
+        QCOMPARE(regimeModel->maximumSnapshots(), 0);
+        QCOMPARE(app.regimeTimelineMaximumSnapshots(), 0);
+    }
+
+    qputenv(kEnvName.constData(), QByteArrayLiteral("180"));
+
+    {
+        QQmlApplicationEngine engine;
+        Application app(engine);
+
+        QCommandLineParser parser;
+        app.configureParser(parser);
+        const QStringList args = {QStringLiteral("app")};
+        parser.process(args);
+        QVERIFY(app.applyParser(parser));
+
+        auto* regimeModel = qobject_cast<MarketRegimeTimelineModel*>(app.marketRegimeTimelineModel());
+        QVERIFY(regimeModel);
+        QCOMPARE(regimeModel->maximumSnapshots(), 180);
+        QCOMPARE(app.regimeTimelineMaximumSnapshots(), 180);
+    }
+}
+
 void ApplicationSettingsPersistenceTest::testRiskHistoryCliOverrides()
 {
     QTemporaryDir dir;
@@ -461,6 +534,36 @@ void ApplicationSettingsPersistenceTest::testRiskHistoryEnvOverrides()
     QCOMPARE(app.riskHistoryAutoExportIntervalMinutes(), 25);
     QCOMPARE(app.riskHistoryAutoExportBasename(), QStringLiteral("Env_Export"));
     QVERIFY(app.riskHistoryAutoExportUseLocalTime());
+}
+
+void ApplicationSettingsPersistenceTest::testInstrumentValidationRequiresListing()
+{
+    QQmlApplicationEngine engine;
+    Application app(engine);
+
+    TradingClient::TradableInstrument listing;
+    listing.config.exchange = QStringLiteral("BINANCE");
+    listing.config.symbol = QStringLiteral("BTC/USDT");
+    listing.config.venueSymbol = QStringLiteral("BTCUSDT");
+    listing.config.quoteCurrency = QStringLiteral("USDT");
+    listing.config.baseCurrency = QStringLiteral("BTC");
+    listing.config.granularityIso8601 = QStringLiteral("PT1M");
+
+    app.setTradableInstrumentsForTesting(QStringLiteral("BINANCE"), {listing});
+
+    QVERIFY(app.updateInstrument(QStringLiteral("BINANCE"),
+                                 QStringLiteral("BTC/USDT"),
+                                 QStringLiteral("BTCUSDT"),
+                                 QStringLiteral("USDT"),
+                                 QStringLiteral("BTC"),
+                                 QStringLiteral("PT1M")));
+
+    QVERIFY(!app.updateInstrument(QStringLiteral("BINANCE"),
+                                  QStringLiteral("ETH/USDT"),
+                                  QStringLiteral("ETHUSDT"),
+                                  QStringLiteral("USDT"),
+                                  QStringLiteral("ETH"),
+                                  QStringLiteral("PT1M")));
 }
 
 QTEST_MAIN(ApplicationSettingsPersistenceTest)

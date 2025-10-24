@@ -6,6 +6,7 @@
 #include <QDateTime>
 #include <QDebug>
 #include <QDir>
+#include <QColor>
 #include <QFile>
 #include <QFileInfo>
 #include <QFileSystemWatcher>
@@ -14,6 +15,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QJsonParseError>
 #include <QLoggingCategory>
 #include <QStringList>
 #include <QPoint>
@@ -42,7 +44,10 @@
 #include "utils/PathUtils.hpp"
 #include "license/LicenseActivationController.hpp"
 #include "app/ActivationController.hpp"
+#include "app/UiModuleManager.hpp"
+#include "app/UiModuleViewsModel.hpp"
 #include "app/StrategyConfigController.hpp"
+#include "app/StrategyWorkbenchController.hpp"
 #include "runtime/OfflineRuntimeBridge.hpp"
 #include "security/SecurityAdminController.hpp"
 #include "support/SupportBundleController.hpp"
@@ -70,6 +75,8 @@ constexpr auto kRiskHistoryAutoExportDirEnv = QByteArrayLiteral("BOT_CORE_UI_RIS
 constexpr auto kRiskHistoryAutoExportLocalTimeEnv = QByteArrayLiteral("BOT_CORE_UI_RISK_HISTORY_AUTO_EXPORT_USE_LOCAL_TIME");
 constexpr auto kDecisionLogPathEnv = QByteArrayLiteral("BOT_CORE_UI_DECISION_LOG");
 constexpr auto kDecisionLogLimitEnv = QByteArrayLiteral("BOT_CORE_UI_DECISION_LOG_LIMIT");
+constexpr auto kRegimeThresholdsEnv = QByteArrayLiteral("BOT_CORE_UI_REGIME_THRESHOLDS");
+constexpr auto kRegimeTimelineLimitEnv = QByteArrayLiteral("BOT_CORE_UI_REGIME_TIMELINE_LIMIT");
 
 using bot::shell::utils::expandPath;
 using bot::shell::utils::watchableDirectories;
@@ -180,6 +187,14 @@ Application::Application(QQmlApplicationEngine& engine, QObject* parent)
 {
     m_offlineStatus = tr("Offline daemon: nieaktywny");
     m_activationController = std::make_unique<ActivationController>(this);
+    connect(m_activationController.get(), &ActivationController::errorChanged, this,
+            &Application::handleActivationErrorChanged);
+    connect(m_activationController.get(), &ActivationController::fingerprintChanged, this,
+            &Application::handleActivationFingerprintChanged);
+    connect(m_activationController.get(), &ActivationController::licensesChanged, this,
+            &Application::handleActivationLicensesChanged);
+    connect(m_activationController.get(), &ActivationController::oemLicenseChanged, this,
+            &Application::handleActivationOemLicenseChanged);
 
     // Startowe ustawienia instrumentu z klienta (mogą być nadpisane przez CLI)
     m_instrument = m_client.instrumentConfig();
@@ -204,11 +219,39 @@ Application::Application(QQmlApplicationEngine& engine, QObject* parent)
     m_strategyController->setConfigPath(QDir::current().absoluteFilePath(QStringLiteral("config/core.yaml")));
     m_strategyController->setScriptPath(QDir::current().absoluteFilePath(QStringLiteral("scripts/ui_config_bridge.py")));
 
+    m_workbenchController = std::make_unique<StrategyWorkbenchController>(this);
+    m_workbenchController->setConfigPath(QDir::current().absoluteFilePath(QStringLiteral("config/core.yaml")));
+    m_workbenchController->setScriptPath(QDir::current().absoluteFilePath(QStringLiteral("scripts/ui_config_bridge.py")));
+
     m_supportController = std::make_unique<SupportBundleController>(this);
 
     m_healthController = std::make_unique<HealthStatusController>(this);
 
+    m_moduleManager = std::make_unique<UiModuleManager>(this);
+    m_moduleViewsModel = std::make_unique<UiModuleViewsModel>(this);
+    m_moduleViewsModel->setModuleManager(m_moduleManager.get());
+
     m_decisionLogModel.setParent(this);
+    m_decisionLogFilter.setSourceModel(&m_decisionLogModel);
+    m_performanceTelemetry = std::make_unique<PerformanceTelemetryController>(this);
+    m_performanceTelemetry->setPerformanceGuard(m_guard);
+
+    const QVector<IndicatorSeriesDefinition> indicatorDefinitions = {
+        {QStringLiteral("ema_fast"), tr("EMA 12"), QColor::fromRgbF(0.96, 0.74, 0.23, 1.0), false},
+        {QStringLiteral("ema_slow"), tr("EMA 26"), QColor::fromRgbF(0.62, 0.81, 0.93, 1.0), true},
+        {QStringLiteral("vwap"), tr("VWAP"), QColor::fromRgbF(0.74, 0.53, 0.96, 1.0), true},
+    };
+    m_indicatorModel.setSeriesDefinitions(indicatorDefinitions);
+
+    m_regimeThresholdWatcher.setParent(this);
+    connect(&m_regimeThresholdWatcher,
+            &QFileSystemWatcher::fileChanged,
+            this,
+            &Application::handleRegimeThresholdPathChanged);
+    connect(&m_regimeThresholdWatcher,
+            &QFileSystemWatcher::directoryChanged,
+            this,
+            &Application::handleRegimeThresholdPathChanged);
 
     m_tradingTokenWatcher.setParent(this);
     m_metricsTokenWatcher.setParent(this);
@@ -266,6 +309,20 @@ Application::Application(QQmlApplicationEngine& engine, QObject* parent)
             this,
             &Application::handleHealthTlsPathChanged);
 
+    m_regimeTimelineMaximumSnapshots = m_regimeTimelineModel.maximumSnapshots();
+    connect(&m_regimeTimelineModel,
+            &MarketRegimeTimelineModel::maximumSnapshotsChanged,
+            this,
+            [this]() {
+                const int current = m_regimeTimelineModel.maximumSnapshots();
+                if (m_regimeTimelineMaximumSnapshots == current)
+                    return;
+                m_regimeTimelineMaximumSnapshots = current;
+                Q_EMIT regimeTimelineMaximumSnapshotsChanged();
+                if (!m_loadingUiSettings)
+                    scheduleUiSettingsPersist();
+            });
+
     m_filteredAlertsModel.setSourceModel(&m_alertsModel);
     m_filteredAlertsModel.setSeverityFilter(AlertsFilterProxyModel::WarningsAndCritical);
 
@@ -278,18 +335,23 @@ Application::Application(QQmlApplicationEngine& engine, QObject* parent)
 
     m_repoRoot = locateRepoRoot();
 
-    if (!m_repoRoot.isEmpty())
+    if (!m_repoRoot.isEmpty()) {
+        applyRegimeThresholdPath(QDir(m_repoRoot).absoluteFilePath(QStringLiteral("config/regime_thresholds.yaml")), false);
         setDecisionLogPathInternal(QDir(m_repoRoot).absoluteFilePath(QStringLiteral("logs/decision_journal")), false);
-    else
+    } else {
+        applyRegimeThresholdPath(QDir::current().absoluteFilePath(QStringLiteral("config/regime_thresholds.yaml")), false);
         setDecisionLogPathInternal(QDir::current().absoluteFilePath(QStringLiteral("logs/decision_journal")), false);
+    }
 
     if (m_supportController) {
         if (!m_repoRoot.isEmpty())
             m_supportController->setScriptPath(QDir(m_repoRoot).absoluteFilePath(QStringLiteral("scripts/export_support_bundle.py")));
         else
             m_supportController->setScriptPath(QDir::current().absoluteFilePath(QStringLiteral("scripts/export_support_bundle.py")));
+        updateSupportBundleMetadata();
     }
 
+    initializeSecurityRefresh();
     exposeToQml();
 
     // Podłącz okno po utworzeniu (dla FrameRateMonitor)
@@ -299,11 +361,40 @@ Application::Application(QQmlApplicationEngine& engine, QObject* parent)
     // Połączenia sygnałów klienta (market data)
     connect(&m_client, &TradingClient::historyReceived, this, &Application::handleHistory);
     connect(&m_client, &TradingClient::candleReceived, this, &Application::handleCandle);
+    connect(&m_client,
+            &TradingClient::indicatorSnapshotReceived,
+            this,
+            [this](const QString& id, const QVector<IndicatorSample>& samples) {
+                m_indicatorModel.replaceSamples(id, samples);
+            });
+    connect(&m_client,
+            &TradingClient::indicatorSampleReceived,
+            this,
+            [this](const IndicatorSample& sample) { m_indicatorModel.appendSample(sample); });
+    connect(&m_client,
+            &TradingClient::signalHistoryReceived,
+            this,
+            [this](const QVector<SignalEventEntry>& events) { m_signalModel.resetWithSignals(events); });
+    connect(&m_client,
+            &TradingClient::signalEventReceived,
+            this,
+            [this](const SignalEventEntry& event) { m_signalModel.appendSignal(event); });
+    connect(&m_client,
+            &TradingClient::marketRegimeUpdated,
+            this,
+            [this](const MarketRegimeSnapshotEntry& snapshot) {
+                if (m_regimeTimelineModel.rowCount() == 0) {
+                    m_regimeTimelineModel.resetWithSnapshots({snapshot});
+                } else {
+                    m_regimeTimelineModel.appendSnapshot(snapshot);
+                }
+            });
 
     connect(&m_client, &TradingClient::connectionStateChanged, this,
             [this](const QString& status) {
                 m_connectionStatus = status;
                 Q_EMIT connectionStatusChanged();
+                updateSupportBundleMetadata();
             });
 
     connect(&m_client, &TradingClient::performanceGuardUpdated, this,
@@ -312,6 +403,9 @@ Application::Application(QQmlApplicationEngine& engine, QObject* parent)
                 Q_EMIT performanceGuardChanged();
                 if (m_frameMonitor) {
                     m_frameMonitor->setPerformanceGuard(m_guard);
+                }
+                if (m_performanceTelemetry) {
+                    m_performanceTelemetry->setPerformanceGuard(m_guard);
                 }
                 // Telemetria overlay może zależeć od nowych limitów
                 reportOverlayTelemetry();
@@ -323,6 +417,7 @@ Application::Application(QQmlApplicationEngine& engine, QObject* parent)
                                   : QStringLiteral("idle");
         m_connectionStatus = state;
         Q_EMIT connectionStatusChanged();
+        updateSupportBundleMetadata();
     });
 
     // Risk state (jeśli dostępne po stronie serwera)
@@ -394,6 +489,14 @@ void Application::configureParser(QCommandLineParser& parser) const {
                       QStringLiteral("500")});
     parser.addOption({"max-samples", tr("Maksymalna liczba świec w modelu"), tr("samples"),
                       QStringLiteral("10240")});
+    parser.addOption({"regime-timeline-limit",
+                      tr("Limit próbek osi czasu reżimu rynku (0 = bez limitu)"),
+                      tr("count"),
+                      QString()});
+    parser.addOption({"regime-thresholds",
+                      tr("Ścieżka progów MarketRegimeClassifier"),
+                      tr("path"),
+                      QString()});
     parser.addOption({"fps-target", tr("Docelowy FPS"), tr("fps"), QStringLiteral("60")});
     parser.addOption({"reduce-motion-after", tr("Czas (s) po którym ograniczamy animacje"),
                       tr("seconds"), QStringLiteral("1.0")});
@@ -433,6 +536,8 @@ void Application::configureParser(QCommandLineParser& parser) const {
                       tr("Ścieżka do decision logu (plik JSONL lub katalog)"), tr("path"), QString()});
     parser.addOption({"decision-log-limit",
                       tr("Limit liczby przechowywanych wpisów decision logu"), tr("count"), QString()});
+    parser.addOption({"ui-module-dir",
+                      tr("Katalog z pluginami UI (można powtórzyć)"), tr("path"), QString()});
     parser.addOption({"ui-settings-path", tr("Ścieżka pliku ustawień UI"), tr("path"), QString()});
     parser.addOption({"disable-ui-settings", tr("Wyłącza zapisywanie konfiguracji UI")});
     parser.addOption({"enable-ui-settings",
@@ -597,6 +702,8 @@ bool Application::applyParser(const QCommandLineParser& parser) {
     m_instrument = instrument;
     Q_EMIT instrumentChanged();
 
+    configureRegimeThresholds(parser);
+
     // Ogólny TLS (może być nadpisany przez sekcję gRPC)
     TradingClient::TlsConfig tlsConfig;
     tlsConfig.enabled = parser.isSet("use-tls");
@@ -612,6 +719,31 @@ bool Application::applyParser(const QCommandLineParser& parser) {
     m_client.setHistoryLimit(historyLimit);
     if (historyLimit > 0)
         m_historyLimit = historyLimit;
+
+    const QString regimeLimitRaw = parser.value("regime-timeline-limit").trimmed();
+    if (!regimeLimitRaw.isEmpty()) {
+        bool ok = false;
+        const int regimeLimit = regimeLimitRaw.toInt(&ok);
+        if (!ok || regimeLimit < 0) {
+            qCWarning(lcAppMetrics)
+                << "Nieprawidłowy limit próbek reżimu rynku podany w CLI:" << regimeLimitRaw;
+        } else {
+            setRegimeTimelineMaximumSnapshots(regimeLimit);
+        }
+    } else if (const auto regimeEnv = envValue(kRegimeTimelineLimitEnv); regimeEnv.has_value()) {
+        const QString trimmed = regimeEnv->trimmed();
+        if (!trimmed.isEmpty()) {
+            bool ok = false;
+            const int envLimit = trimmed.toInt(&ok);
+            if (!ok || envLimit < 0) {
+                qCWarning(lcAppMetrics)
+                    << "Nieprawidłowy limit próbek reżimu rynku podany w zmiennej"
+                    << QString::fromUtf8(kRegimeTimelineLimitEnv) << ':' << trimmed;
+            } else {
+                setRegimeTimelineMaximumSnapshots(envLimit);
+            }
+        }
+    }
 
     m_maxSamples = parser.value("max-samples").toInt();
     if (m_maxSamples <= 0)
@@ -995,6 +1127,7 @@ bool Application::applyParser(const QCommandLineParser& parser) {
     configureStrategyBridge(parser);
     configureSupportBundle(parser);
     configureDecisionLog(parser);
+    configureUiModules(parser);
 
     // TLS config (MetricsService)
     TelemetryTlsConfig mtls;
@@ -1366,7 +1499,7 @@ void Application::applyRiskHistoryCliOverrides(const QCommandLineParser& parser)
 
 void Application::configureStrategyBridge(const QCommandLineParser& parser)
 {
-    if (!m_strategyController)
+    if (!m_strategyController && !m_workbenchController)
         return;
 
     QString configPath = parser.value("core-config").trimmed();
@@ -1377,8 +1510,12 @@ void Application::configureStrategyBridge(const QCommandLineParser& parser)
     if (configPath.isEmpty())
         configPath = QStringLiteral("config/core.yaml");
     const QString normalizedConfigPath = expandPath(configPath);
-    if (!normalizedConfigPath.isEmpty())
-        m_strategyController->setConfigPath(normalizedConfigPath);
+    if (!normalizedConfigPath.isEmpty()) {
+        if (m_strategyController)
+            m_strategyController->setConfigPath(normalizedConfigPath);
+        if (m_workbenchController)
+            m_workbenchController->setConfigPath(normalizedConfigPath);
+    }
 
     QString pythonExec = parser.value("strategy-config-python").trimmed();
     if (pythonExec.isEmpty()) {
@@ -1387,8 +1524,12 @@ void Application::configureStrategyBridge(const QCommandLineParser& parser)
     }
     if (!pythonExec.isEmpty()) {
         const QString normalizedPython = expandPath(pythonExec);
-        if (!normalizedPython.isEmpty())
-            m_strategyController->setPythonExecutable(normalizedPython);
+        if (!normalizedPython.isEmpty()) {
+            if (m_strategyController)
+                m_strategyController->setPythonExecutable(normalizedPython);
+            if (m_workbenchController)
+                m_workbenchController->setPythonExecutable(normalizedPython);
+        }
     }
 
     QString bridgePath = parser.value("strategy-config-bridge").trimmed();
@@ -1403,13 +1544,23 @@ void Application::configureStrategyBridge(const QCommandLineParser& parser)
             bridgePath = QDir::current().absoluteFilePath(QStringLiteral("scripts/ui_config_bridge.py"));
     }
     const QString normalizedBridge = expandPath(bridgePath);
-    if (!normalizedBridge.isEmpty())
-        m_strategyController->setScriptPath(normalizedBridge);
+    if (!normalizedBridge.isEmpty()) {
+        if (m_strategyController)
+            m_strategyController->setScriptPath(normalizedBridge);
+        if (m_workbenchController)
+            m_workbenchController->setScriptPath(normalizedBridge);
+    }
 
-    if (!m_strategyController->refresh()) {
+    if (m_strategyController && !m_strategyController->refresh()) {
         const QString error = m_strategyController->lastError();
         if (!error.isEmpty())
             qCWarning(lcAppMetrics) << "Mostek konfiguracji strategii zwrócił błąd:" << error;
+    }
+
+    if (m_workbenchController && !m_workbenchController->refreshCatalog()) {
+        const QString error = m_workbenchController->lastError();
+        if (!error.isEmpty())
+            qCWarning(lcAppMetrics) << "Mostek katalogu strategii zwrócił błąd:" << error;
     }
 }
 
@@ -1591,14 +1742,7 @@ void Application::configureSupportBundle(const QCommandLineParser& parser)
     }
     m_supportController->setExtraIncludeSpecs(extraSpecs);
 
-    QVariantMap metadata;
-    metadata.insert(QStringLiteral("origin"), QStringLiteral("desktop_ui"));
-    metadata.insert(QStringLiteral("instrument"), instrumentLabel());
-    metadata.insert(QStringLiteral("exchange"), m_instrument.exchange);
-    metadata.insert(QStringLiteral("symbol"), m_instrument.symbol);
-    metadata.insert(QStringLiteral("connection_status"), m_connectionStatus);
-    metadata.insert(QStringLiteral("app_version"), QCoreApplication::applicationVersion());
-    metadata.insert(QStringLiteral("hostname"), QSysInfo::machineHostName());
+    QVariantMap overrides;
 
     const auto applyMetadata = [&](const QString& rawSpec) {
         const QString trimmed = rawSpec.trimmed();
@@ -1613,15 +1757,102 @@ void Application::configureSupportBundle(const QCommandLineParser& parser)
         const QString value = trimmed.mid(eq + 1).trimmed();
         if (key.isEmpty())
             return;
-        metadata.insert(key, value);
+        overrides.insert(key, value);
     };
 
     for (const QString& spec : metadataEnv)
         applyMetadata(spec);
     for (const QString& spec : metadataCli)
         applyMetadata(spec);
+    m_supportMetadataOverrides = overrides;
+    updateSupportBundleMetadata();
+}
+
+void Application::updateSupportBundleMetadata()
+{
+    if (!m_supportController)
+        return;
+
+    QVariantMap metadata;
+    metadata.insert(QStringLiteral("origin"), QStringLiteral("desktop_ui"));
+    metadata.insert(QStringLiteral("instrument"), instrumentLabel());
+    metadata.insert(QStringLiteral("exchange"), m_instrument.exchange);
+    metadata.insert(QStringLiteral("symbol"), m_instrument.symbol);
+    metadata.insert(QStringLiteral("connection_status"), m_connectionStatus);
+    metadata.insert(QStringLiteral("app_version"), QCoreApplication::applicationVersion());
+    metadata.insert(QStringLiteral("hostname"), QSysInfo::machineHostName());
+
+    for (auto it = m_supportMetadataOverrides.constBegin(); it != m_supportMetadataOverrides.constEnd(); ++it) {
+        const QString key = it.key().trimmed();
+        if (key.isEmpty())
+            continue;
+        metadata.insert(key, it.value());
+    }
 
     m_supportController->setMetadata(metadata);
+}
+
+void Application::configureUiModules(const QCommandLineParser& parser)
+{
+    if (!m_moduleManager)
+        return;
+
+    m_moduleManager->unloadPlugins();
+
+    const auto normalize = [](const QString& raw) -> QString {
+        const QString trimmed = raw.trimmed();
+        if (trimmed.isEmpty())
+            return {};
+        const QString expanded = expandPath(trimmed);
+        if (!expanded.isEmpty())
+            return QFileInfo(expanded).absoluteFilePath();
+        return QFileInfo(trimmed).absoluteFilePath();
+    };
+
+    QSet<QString> unique;
+    QStringList directories;
+
+    const QStringList cliDirs = parser.values(QStringLiteral("ui-module-dir"));
+    for (const QString& value : cliDirs) {
+        const QString normalized = normalize(value);
+        if (normalized.isEmpty() || unique.contains(normalized))
+            continue;
+        unique.insert(normalized);
+        directories.append(normalized);
+    }
+
+    if (cliDirs.isEmpty()) {
+        if (const auto envDirs = envValue(QByteArrayLiteral("BOT_CORE_UI_MODULE_DIRS")); envDirs.has_value()) {
+            const auto pieces = envDirs->split(QDir::listSeparator(), Qt::SkipEmptyParts);
+            for (const QString& piece : pieces) {
+                const QString normalized = normalize(piece);
+                if (normalized.isEmpty() || unique.contains(normalized))
+                    continue;
+                unique.insert(normalized);
+                directories.append(normalized);
+            }
+        }
+    }
+
+    if (directories.isEmpty()) {
+        const QString binaryModules = QDir(QCoreApplication::applicationDirPath()).absoluteFilePath(QStringLiteral("modules"));
+        const QString repoModules = QDir::current().absoluteFilePath(QStringLiteral("ui/modules"));
+        for (const QString& candidate : {binaryModules, repoModules}) {
+            const QString normalized = normalize(candidate);
+            if (normalized.isEmpty() || unique.contains(normalized))
+                continue;
+            unique.insert(normalized);
+            directories.append(normalized);
+        }
+    }
+
+    m_uiModuleDirectories = directories;
+    m_moduleManager->setPluginPaths(directories);
+    if (!directories.isEmpty()) {
+        if (!m_moduleManager->loadPlugins()) {
+            qCWarning(lcAppMetrics) << "Nie wszystkie pluginy UI zostały poprawnie załadowane";
+        }
+    }
 }
 
 void Application::configureDecisionLog(const QCommandLineParser& parser)
@@ -1770,6 +2001,16 @@ void Application::loadUiSettings()
         const double intervalSeconds = riskObj.value(QStringLiteral("intervalSeconds"))
                                          .toDouble(static_cast<double>(m_riskRefreshIntervalMs) / 1000.0);
         updateRiskRefresh(enabled, intervalSeconds);
+    }
+
+    if (root.contains(QStringLiteral("marketRegimeTimeline"))
+        && root.value(QStringLiteral("marketRegimeTimeline")).isObject()) {
+        const QJsonObject regimeObj = root.value(QStringLiteral("marketRegimeTimeline")).toObject();
+        const QJsonValue maxValue = regimeObj.value(QStringLiteral("maximumSnapshots"));
+        if (maxValue.isDouble()) {
+            const int limit = std::max(0, maxValue.toInt(m_regimeTimelineMaximumSnapshots));
+            setRegimeTimelineMaximumSnapshots(limit);
+        }
     }
 
     if (root.contains(QStringLiteral("alerts")) && root.value(QStringLiteral("alerts")).isObject()) {
@@ -1939,6 +2180,258 @@ void Application::persistUiSettings()
     }
 }
 
+void Application::ensureLicenseRefreshTimerConfigured()
+{
+    if (m_licenseRefreshTimerConfigured)
+        return;
+
+    m_licenseRefreshTimer.setTimerType(Qt::VeryCoarseTimer);
+    m_licenseRefreshTimer.setSingleShot(false);
+    m_licenseRefreshTimer.setParent(this);
+    connect(&m_licenseRefreshTimer, &QTimer::timeout, this, &Application::refreshSecurityArtifacts);
+    m_licenseRefreshTimerConfigured = true;
+}
+
+void Application::initializeSecurityRefresh()
+{
+    const QByteArray cacheEnv = qgetenv(kLicenseCachePathEnv.constData());
+    if (!cacheEnv.isEmpty())
+        m_licenseCachePath = expandPath(QString::fromUtf8(cacheEnv));
+    else
+        m_licenseCachePath = QDir::current().absoluteFilePath(QStringLiteral("var/cache/ui_license_snapshot.json"));
+
+    if (!m_licenseCachePath.trimmed().isEmpty()) {
+        QDir dir = QFileInfo(m_licenseCachePath).dir();
+        if (!dir.exists())
+            dir.mkpath(QStringLiteral("."));
+    }
+
+    loadSecurityCache();
+
+    int intervalSeconds = kDefaultLicenseRefreshIntervalSeconds;
+    if (qEnvironmentVariableIsSet(kLicenseRefreshIntervalEnv.constData())) {
+        bool ok = false;
+        const QByteArray raw = qgetenv(kLicenseRefreshIntervalEnv.constData());
+        const int candidate = QString::fromUtf8(raw).toInt(&ok);
+        if (ok)
+            intervalSeconds = std::clamp(candidate, kMinLicenseRefreshIntervalSeconds, kMaxLicenseRefreshIntervalSeconds);
+        else
+            qCWarning(lcAppMetrics) << "Nieprawidłowa wartość" << QString::fromUtf8(raw)
+                                    << "dla" << kLicenseRefreshIntervalEnv;
+    }
+
+    if (intervalSeconds <= 0) {
+        m_licenseRefreshIntervalSeconds = 0;
+        ensureLicenseRefreshTimerConfigured();
+        m_licenseRefreshTimer.stop();
+        m_nextLicenseRefreshUtc = QDateTime();
+        updateSecurityCacheFromControllers();
+        Q_EMIT licenseRefreshScheduleChanged();
+        return;
+    }
+
+    ensureLicenseRefreshTimerConfigured();
+    m_licenseRefreshIntervalSeconds = intervalSeconds;
+    m_licenseRefreshTimer.setInterval(m_licenseRefreshIntervalSeconds * 1000);
+    m_licenseRefreshTimer.start();
+    QTimer::singleShot(0, this, &Application::refreshSecurityArtifacts);
+}
+
+void Application::refreshSecurityArtifacts()
+{
+    if (!m_activationController)
+        return;
+
+    m_lastLicenseRefreshRequestUtc = QDateTime::currentDateTimeUtc();
+    m_activationController->refresh();
+    if (m_licenseRefreshIntervalSeconds > 0)
+        m_nextLicenseRefreshUtc = m_lastLicenseRefreshRequestUtc.addSecs(m_licenseRefreshIntervalSeconds);
+    else
+        m_nextLicenseRefreshUtc = QDateTime();
+    Q_EMIT licenseRefreshScheduleChanged();
+}
+
+void Application::processSecurityArtifactsUpdate()
+{
+    if (!m_activationController)
+        return;
+
+    const bool loadingFromCache = m_loadingSecurityCache;
+    const QString controllerError = m_activationController->lastError();
+    const bool refreshSucceeded = controllerError.isEmpty();
+
+    if (!loadingFromCache)
+        m_lastSecurityError = controllerError;
+    else if (!controllerError.isEmpty())
+        m_lastSecurityError = controllerError;
+
+    if (refreshSucceeded && !loadingFromCache) {
+        m_lastLicenseRefreshUtc = QDateTime::currentDateTimeUtc();
+        if (m_licenseRefreshIntervalSeconds > 0) {
+            if (m_lastLicenseRefreshRequestUtc.isValid())
+                m_nextLicenseRefreshUtc =
+                    m_lastLicenseRefreshRequestUtc.addSecs(m_licenseRefreshIntervalSeconds);
+            else
+                m_nextLicenseRefreshUtc = m_lastLicenseRefreshUtc.addSecs(m_licenseRefreshIntervalSeconds);
+        } else {
+            m_nextLicenseRefreshUtc = QDateTime();
+        }
+    }
+
+    updateSecurityCacheFromControllers();
+
+    if (refreshSucceeded && !loadingFromCache) {
+        clearSecurityAlert(QStringLiteral("security:license-refresh"));
+        Q_EMIT licenseRefreshScheduleChanged();
+    }
+}
+
+void Application::updateSecurityCacheFromControllers()
+{
+    QVariantMap cache;
+    if (m_activationController) {
+        cache.insert(QStringLiteral("fingerprint"), m_activationController->fingerprint());
+        cache.insert(QStringLiteral("oemLicense"), m_activationController->oemLicense());
+        cache.insert(QStringLiteral("licenseHistory"), QVariant::fromValue(m_activationController->licenses()));
+        if (!m_lastSecurityError.isEmpty())
+            cache.insert(QStringLiteral("lastError"), m_lastSecurityError);
+    }
+    cache.insert(QStringLiteral("refreshIntervalSeconds"), m_licenseRefreshIntervalSeconds);
+    cache.insert(QStringLiteral("refreshActive"), m_licenseRefreshTimer.isActive());
+    if (m_lastLicenseRefreshRequestUtc.isValid())
+        cache.insert(QStringLiteral("lastRequestIso"), m_lastLicenseRefreshRequestUtc.toString(Qt::ISODateWithMs));
+    if (m_lastLicenseRefreshUtc.isValid())
+        cache.insert(QStringLiteral("lastRefreshIso"), m_lastLicenseRefreshUtc.toString(Qt::ISODateWithMs));
+    if (m_nextLicenseRefreshUtc.isValid())
+        cache.insert(QStringLiteral("nextRefreshIso"), m_nextLicenseRefreshUtc.toString(Qt::ISODateWithMs));
+
+    if (cache == m_securityCache)
+        return;
+
+    m_securityCache = cache;
+    Q_EMIT securityCacheChanged();
+    persistSecurityCache();
+}
+
+void Application::loadSecurityCache()
+{
+    if (m_licenseCachePath.trimmed().isEmpty())
+        return;
+
+    QFile file(m_licenseCachePath);
+    if (!file.exists())
+        return;
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        qCWarning(lcAppMetrics) << "Nie udało się odczytać cache licencji" << m_licenseCachePath
+                                << file.errorString();
+        return;
+    }
+
+    const QByteArray data = file.readAll();
+    file.close();
+
+    QJsonParseError parseError{};
+    const QJsonDocument document = QJsonDocument::fromJson(data, &parseError);
+    if (parseError.error != QJsonParseError::NoError || !document.isObject()) {
+        qCWarning(lcAppMetrics) << "Cache licencji ma niepoprawny format" << m_licenseCachePath
+                                << parseError.errorString();
+        return;
+    }
+
+    m_securityCache = document.object().toVariantMap();
+
+    m_lastSecurityError = m_securityCache.value(QStringLiteral("lastError")).toString();
+
+    if (m_securityCache.contains(QStringLiteral("refreshIntervalSeconds"))) {
+        const int cachedInterval = m_securityCache.value(QStringLiteral("refreshIntervalSeconds")).toInt();
+        if (cachedInterval > 0)
+            m_licenseRefreshIntervalSeconds = cachedInterval;
+    }
+
+    const bool cachedActive = m_securityCache.value(QStringLiteral("refreshActive")).toBool();
+
+    const QString lastRefreshIso = m_securityCache.value(QStringLiteral("lastRefreshIso")).toString();
+    if (!lastRefreshIso.isEmpty()) {
+        m_lastLicenseRefreshUtc = QDateTime::fromString(lastRefreshIso, Qt::ISODateWithMs);
+        if (!m_lastLicenseRefreshUtc.isValid())
+            m_lastLicenseRefreshUtc = QDateTime::fromString(lastRefreshIso, Qt::ISODate);
+    }
+    const QString lastRequestIso = m_securityCache.value(QStringLiteral("lastRequestIso")).toString();
+    if (!lastRequestIso.isEmpty()) {
+        m_lastLicenseRefreshRequestUtc = QDateTime::fromString(lastRequestIso, Qt::ISODateWithMs);
+        if (!m_lastLicenseRefreshRequestUtc.isValid())
+            m_lastLicenseRefreshRequestUtc = QDateTime::fromString(lastRequestIso, Qt::ISODate);
+    }
+    const QString nextRefreshIso = m_securityCache.value(QStringLiteral("nextRefreshIso")).toString();
+    if (!nextRefreshIso.isEmpty()) {
+        m_nextLicenseRefreshUtc = QDateTime::fromString(nextRefreshIso, Qt::ISODateWithMs);
+        if (!m_nextLicenseRefreshUtc.isValid())
+            m_nextLicenseRefreshUtc = QDateTime::fromString(nextRefreshIso, Qt::ISODate);
+    }
+
+    if (cachedActive && m_licenseRefreshIntervalSeconds > 0) {
+        ensureLicenseRefreshTimerConfigured();
+        m_licenseRefreshTimer.setInterval(m_licenseRefreshIntervalSeconds * 1000);
+        if (!m_licenseRefreshTimer.isActive())
+            m_licenseRefreshTimer.start();
+    }
+
+    if (m_activationController) {
+        const QVariantMap fingerprint = m_securityCache.value(QStringLiteral("fingerprint")).toMap();
+        const QVariantMap oemLicense = m_securityCache.value(QStringLiteral("oemLicense")).toMap();
+        const QVariantList history = m_securityCache.value(QStringLiteral("licenseHistory")).toList();
+        m_loadingSecurityCache = true;
+        const auto guard = qScopeGuard([this]() { m_loadingSecurityCache = false; });
+        m_activationController->applyCachedState(fingerprint, oemLicense, history);
+    }
+
+    Q_EMIT securityCacheChanged();
+    Q_EMIT licenseRefreshScheduleChanged();
+}
+
+void Application::persistSecurityCache()
+{
+    if (m_licenseCachePath.trimmed().isEmpty())
+        return;
+
+    QFileInfo info(m_licenseCachePath);
+    QDir dir = info.dir();
+    if (!dir.exists() && !dir.mkpath(QStringLiteral("."))) {
+        qCWarning(lcAppMetrics) << "Nie udało się utworzyć katalogu cache licencji" << dir.absolutePath();
+        return;
+    }
+
+    QSaveFile file(m_licenseCachePath);
+    file.setDirectWriteFallback(true);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        qCWarning(lcAppMetrics) << "Nie udało się zapisać cache licencji" << m_licenseCachePath
+                                << file.errorString();
+        return;
+    }
+
+    const QJsonObject object = QJsonObject::fromVariantMap(m_securityCache);
+    const QByteArray payload = QJsonDocument(object).toJson(QJsonDocument::Compact);
+    if (file.write(payload) != payload.size()) {
+        qCWarning(lcAppMetrics) << "Nie udało się zapisać pełnego cache licencji" << m_licenseCachePath;
+        return;
+    }
+    if (!file.commit())
+        qCWarning(lcAppMetrics) << "Nie udało się zatwierdzić cache licencji" << m_licenseCachePath;
+}
+
+void Application::raiseSecurityAlert(const QString& id,
+                                     AlertsModel::Severity severity,
+                                     const QString& title,
+                                     const QString& description)
+{
+    m_alertsModel.raiseAlert(id, title, description, severity, true);
+}
+
+void Application::clearSecurityAlert(const QString& id)
+{
+    m_alertsModel.clearAlert(id);
+}
+
 QJsonObject Application::buildUiSettingsPayload() const
 {
     QJsonObject root;
@@ -1977,6 +2470,10 @@ QJsonObject Application::buildUiSettingsPayload() const
     alerts.insert(QStringLiteral("sortMode"), static_cast<int>(m_filteredAlertsModel.sortMode()));
     alerts.insert(QStringLiteral("searchText"), m_filteredAlertsModel.searchText());
     root.insert(QStringLiteral("alerts"), alerts);
+
+    QJsonObject regimeTimeline;
+    regimeTimeline.insert(QStringLiteral("maximumSnapshots"), m_regimeTimelineMaximumSnapshots);
+    root.insert(QStringLiteral("marketRegimeTimeline"), regimeTimeline);
 
     QJsonObject history;
     history.insert(QStringLiteral("maximumEntries"), m_riskHistoryModel.maximumEntries());
@@ -2255,6 +2752,7 @@ void Application::configureLocalBotCoreService(const QCommandLineParser& parser,
 
 void Application::start() {
     m_ohlcvModel.setMaximumSamples(m_maxSamples);
+    m_regimeTimelineModel.setMaximumSnapshots(m_regimeTimelineMaximumSnapshots);
     m_riskModel.clear();
     m_riskHistoryModel.clear();
     m_alertsModel.reset();
@@ -2314,6 +2812,8 @@ void Application::stop() {
 
 void Application::handleHistory(const QList<OhlcvPoint>& candles) {
     m_ohlcvModel.resetWithHistory(candles);
+    m_signalModel.resetWithSignals(QVector<SignalEventEntry>());
+    m_regimeTimelineModel.resetWithSnapshots(QVector<MarketRegimeSnapshotEntry>());
 }
 
 void Application::handleCandle(const OhlcvPoint& candle) {
@@ -2346,6 +2846,8 @@ void Application::ensureOfflineBridge()
                 Q_EMIT performanceGuardChanged();
                 if (m_frameMonitor)
                     m_frameMonitor->setPerformanceGuard(m_guard);
+                if (m_performanceTelemetry)
+                    m_performanceTelemetry->setPerformanceGuard(m_guard);
                 reportOverlayTelemetry();
             });
     connect(m_offlineBridge.get(), &OfflineRuntimeBridge::connectionStateChanged, this,
@@ -2364,6 +2866,7 @@ void Application::handleOfflineStatusChanged(const QString& status)
         if (m_connectionStatus != status) {
             m_connectionStatus = status;
             Q_EMIT connectionStatusChanged();
+            updateSupportBundleMetadata();
         }
     }
 }
@@ -2374,6 +2877,41 @@ void Application::handleOfflineAutomationChanged(bool running)
         return;
     m_offlineAutomationRunning = running;
     Q_EMIT offlineAutomationRunningChanged(running);
+}
+
+void Application::handleActivationErrorChanged()
+{
+    if (!m_activationController)
+        return;
+
+    const QString error = m_activationController->lastError();
+
+    if (!error.isEmpty() || !m_lastSecurityError.isEmpty())
+        processSecurityArtifactsUpdate();
+    if (error.isEmpty()) {
+        clearSecurityAlert(QStringLiteral("security:license-refresh"));
+        return;
+    }
+
+    raiseSecurityAlert(QStringLiteral("security:license-refresh"),
+                       AlertsModel::Critical,
+                       tr("Błąd aktualizacji licencji"),
+                       error);
+}
+
+void Application::handleActivationFingerprintChanged()
+{
+    processSecurityArtifactsUpdate();
+}
+
+void Application::handleActivationLicensesChanged()
+{
+    processSecurityArtifactsUpdate();
+}
+
+void Application::handleActivationOemLicenseChanged()
+{
+    processSecurityArtifactsUpdate();
 }
 
 void Application::startOfflineAutomation()
@@ -2410,6 +2948,32 @@ bool Application::reloadDecisionLog()
     return m_decisionLogModel.reload();
 }
 
+QVariantMap Application::licenseRefreshSchedule() const
+{
+    QVariantMap schedule;
+    schedule.insert(QStringLiteral("intervalSeconds"), m_licenseRefreshIntervalSeconds);
+    schedule.insert(QStringLiteral("active"), m_licenseRefreshTimer.isActive());
+    schedule.insert(QStringLiteral("lastRequestAt"),
+                    m_lastLicenseRefreshRequestUtc.isValid()
+                        ? m_lastLicenseRefreshRequestUtc.toString(Qt::ISODateWithMs)
+                        : QString());
+    schedule.insert(QStringLiteral("lastCompletedAt"),
+                    m_lastLicenseRefreshUtc.isValid()
+                        ? m_lastLicenseRefreshUtc.toString(Qt::ISODateWithMs)
+                        : QString());
+    schedule.insert(QStringLiteral("nextRefreshDueAt"),
+                    m_nextLicenseRefreshUtc.isValid()
+                        ? m_nextLicenseRefreshUtc.toString(Qt::ISODateWithMs)
+                        : QString());
+    double remainingSeconds = -1.0;
+    if (m_nextLicenseRefreshUtc.isValid()) {
+        const qint64 remainingMs = QDateTime::currentDateTimeUtc().msecsTo(m_nextLicenseRefreshUtc);
+        remainingSeconds = remainingMs > 0 ? static_cast<double>(remainingMs) / 1000.0 : 0.0;
+    }
+    schedule.insert(QStringLiteral("nextRefreshInSeconds"), remainingSeconds);
+    return schedule;
+}
+
 void Application::handleRiskHistorySnapshotRecorded(const QDateTime& timestamp)
 {
     if (m_loadingUiSettings)
@@ -2421,6 +2985,9 @@ void Application::handleRiskHistorySnapshotRecorded(const QDateTime& timestamp)
 void Application::exposeToQml() {
     m_engine.rootContext()->setContextProperty(QStringLiteral("appController"), this);
     m_engine.rootContext()->setContextProperty(QStringLiteral("ohlcvModel"), &m_ohlcvModel);
+    m_engine.rootContext()->setContextProperty(QStringLiteral("indicatorSeriesModel"), &m_indicatorModel);
+    m_engine.rootContext()->setContextProperty(QStringLiteral("signalListModel"), &m_signalModel);
+    m_engine.rootContext()->setContextProperty(QStringLiteral("marketRegimeTimelineModel"), &m_regimeTimelineModel);
     m_engine.rootContext()->setContextProperty(QStringLiteral("riskModel"), &m_riskModel);
     m_engine.rootContext()->setContextProperty(QStringLiteral("riskHistoryModel"), &m_riskHistoryModel);
     m_engine.rootContext()->setContextProperty(QStringLiteral("alertsModel"), &m_alertsModel);
@@ -2430,9 +2997,12 @@ void Application::exposeToQml() {
     m_engine.rootContext()->setContextProperty(QStringLiteral("securityController"), m_securityController.get());
     m_engine.rootContext()->setContextProperty(QStringLiteral("reportController"), m_reportController.get());
     m_engine.rootContext()->setContextProperty(QStringLiteral("strategyController"), m_strategyController.get());
+    m_engine.rootContext()->setContextProperty(QStringLiteral("workbenchController"), m_workbenchController.get());
     m_engine.rootContext()->setContextProperty(QStringLiteral("supportController"), m_supportController.get());
     m_engine.rootContext()->setContextProperty(QStringLiteral("healthController"), m_healthController.get());
     m_engine.rootContext()->setContextProperty(QStringLiteral("decisionLogModel"), &m_decisionLogModel);
+    m_engine.rootContext()->setContextProperty(QStringLiteral("moduleManager"), m_moduleManager.get());
+    m_engine.rootContext()->setContextProperty(QStringLiteral("moduleViewsModel"), m_moduleViewsModel.get());
 }
 
 QObject* Application::activationController() const
@@ -2450,6 +3020,11 @@ QObject* Application::strategyController() const
     return m_strategyController.get();
 }
 
+QObject* Application::workbenchController() const
+{
+    return m_workbenchController.get();
+}
+
 QObject* Application::supportController() const
 {
     return m_supportController.get();
@@ -2463,6 +3038,31 @@ QObject* Application::healthController() const
 QObject* Application::decisionLogModel() const
 {
     return const_cast<DecisionLogModel*>(&m_decisionLogModel);
+}
+
+QObject* Application::moduleManager() const
+{
+    return m_moduleManager.get();
+}
+
+QObject* Application::moduleViewsModel() const
+{
+    return m_moduleViewsModel.get();
+}
+
+void Application::setModuleManagerForTesting(std::unique_ptr<UiModuleManager> manager)
+{
+    if (manager)
+        manager->setParent(this);
+
+    m_moduleManager = std::move(manager);
+    if (m_moduleViewsModel)
+        m_moduleViewsModel->setModuleManager(m_moduleManager.get());
+
+    if (m_started)
+        m_engine.rootContext()->setContextProperty(QStringLiteral("moduleManager"), m_moduleManager.get());
+    if (m_started)
+        m_engine.rootContext()->setContextProperty(QStringLiteral("moduleViewsModel"), m_moduleViewsModel.get());
 }
 
 void Application::ensureFrameMonitor() {
@@ -2496,6 +3096,9 @@ void Application::ensureFrameMonitor() {
             [this](double frameMs, double thresholdMs) { reportJankTelemetry(frameMs, thresholdMs); });
 
     m_frameMonitor->setPerformanceGuard(m_guard);
+    if (m_performanceTelemetry) {
+        m_performanceTelemetry->setFrameRateMonitor(m_frameMonitor.get());
+    }
 }
 
 void Application::attachWindow(QObject* object) {
@@ -2523,6 +3126,9 @@ void Application::setTelemetryReporter(std::unique_ptr<TelemetryReporter> report
     m_telemetry = std::move(reporter);
     updateTelemetryPendingRetryCount(0);
     ensureTelemetry();
+    if (m_performanceTelemetry) {
+        m_performanceTelemetry->setTelemetryReporter(m_telemetry.get());
+    }
 }
 
 void Application::notifyOverlayUsage(int activeCount, int allowedCount, bool reduceMotionActive) {
@@ -2593,7 +3199,7 @@ bool Application::updateInstrument(const QString& exchange,
                                    const QString& baseCurrency,
                                    const QString& granularityIso8601) {
     TradingClient::InstrumentConfig config;
-    config.exchange = exchange.trimmed();
+    config.exchange = exchange.trimmed().toUpper();
     config.symbol = symbol.trimmed();
     config.venueSymbol = venueSymbol.trimmed();
     config.quoteCurrency = quoteCurrency.trimmed();
@@ -2605,6 +3211,23 @@ bool Application::updateInstrument(const QString& exchange,
         || config.granularityIso8601.isEmpty()) {
         qCWarning(lcAppMetrics) << "Odmowa aktualizacji instrumentu – wymagane pola są puste";
         return false;
+    }
+
+    const auto cached = m_tradableInstrumentCache.constFind(config.exchange);
+    if (cached != m_tradableInstrumentCache.constEnd() && !cached->isEmpty()) {
+        const auto match = std::find_if(cached->cbegin(), cached->cend(), [&](const TradingClient::TradableInstrument& entry) {
+            return entry.config.symbol.compare(config.symbol, Qt::CaseInsensitive) == 0
+                && entry.config.venueSymbol.compare(config.venueSymbol, Qt::CaseInsensitive) == 0;
+        });
+        if (match == cached->cend()) {
+            qCWarning(lcAppMetrics) << "Odmowa aktualizacji instrumentu – symbol" << config.symbol
+                                    << "nie występuje w liście giełdy" << config.exchange;
+            return false;
+        }
+        config.symbol = match->config.symbol;
+        config.venueSymbol = match->config.venueSymbol;
+        config.quoteCurrency = match->config.quoteCurrency;
+        config.baseCurrency = match->config.baseCurrency;
     }
 
     const bool changed = config.exchange != m_instrument.exchange
@@ -2621,6 +3244,7 @@ bool Application::updateInstrument(const QString& exchange,
     m_instrument = config;
     if (m_offlineBridge)
         m_offlineBridge->setInstrument(m_instrument);
+    updateSupportBundleMetadata();
     Q_EMIT instrumentChanged();
 
     if (wasStreaming && !m_offlineMode)
@@ -2689,6 +3313,45 @@ bool Application::updateRiskRefresh(bool enabled, double intervalSeconds)
     }
 
     return true;
+}
+
+QVariantList Application::listTradableInstruments(const QString& exchange)
+{
+    QVariantList result;
+    const QString normalized = exchange.trimmed().toUpper();
+    if (normalized.isEmpty()) {
+        return result;
+    }
+
+    const auto instruments = m_client.listTradableInstruments(normalized);
+    if (instruments.isEmpty()) {
+        m_tradableInstrumentCache.remove(normalized);
+        return result;
+    }
+
+    m_tradableInstrumentCache.insert(normalized, instruments);
+    result.reserve(instruments.size());
+    for (const auto& entry : instruments) {
+        QVariantMap map;
+        map.insert(QStringLiteral("exchange"), entry.config.exchange);
+        map.insert(QStringLiteral("symbol"), entry.config.symbol);
+        map.insert(QStringLiteral("venueSymbol"), entry.config.venueSymbol);
+        map.insert(QStringLiteral("quoteCurrency"), entry.config.quoteCurrency);
+        map.insert(QStringLiteral("baseCurrency"), entry.config.baseCurrency);
+        const QString label = entry.config.venueSymbol.isEmpty()
+            ? entry.config.symbol
+            : QStringLiteral("%1 (%2)").arg(entry.config.symbol, entry.config.venueSymbol);
+        map.insert(QStringLiteral("label"), label);
+        map.insert(QStringLiteral("priceStep"), entry.priceStep);
+        map.insert(QStringLiteral("amountStep"), entry.amountStep);
+        map.insert(QStringLiteral("minNotional"), entry.minNotional);
+        map.insert(QStringLiteral("minAmount"), entry.minAmount);
+        map.insert(QStringLiteral("maxAmount"), entry.maxAmount);
+        map.insert(QStringLiteral("minPrice"), entry.minPrice);
+        map.insert(QStringLiteral("maxPrice"), entry.maxPrice);
+        result.append(map);
+    }
+    return result;
 }
 
 bool Application::triggerRiskRefreshNow()
@@ -2895,6 +3558,22 @@ bool Application::setRiskHistoryAutoExportUseLocalTime(bool useLocalTime)
     return true;
 }
 
+bool Application::setRegimeTimelineMaximumSnapshots(int maximumSnapshots)
+{
+    if (maximumSnapshots < 0) {
+        qCWarning(lcAppMetrics)
+            << "Odmowa ustawienia limitu próbek reżimu rynku – oczekiwano wartości >= 0, otrzymano"
+            << maximumSnapshots;
+        return false;
+    }
+
+    if (m_regimeTimelineMaximumSnapshots == maximumSnapshots)
+        return true;
+
+    m_regimeTimelineModel.setMaximumSnapshots(maximumSnapshots);
+    return true;
+}
+
 void Application::saveUiSettingsImmediatelyForTesting()
 {
     if (m_uiSettingsSaveTimer.isActive())
@@ -2950,7 +3629,6 @@ void Application::applyTradingAuthEnvironmentOverrides(const QCommandLineParser&
                                                        bool cliScopesProvided,
                                                        QString& tradingToken,
                                                        QString& tradingTokenFile)
-                                                       bool cliScopesProvided)
 {
     Q_UNUSED(parser);
 
@@ -2983,8 +3661,6 @@ void Application::applyTradingAuthEnvironmentOverrides(const QCommandLineParser&
             if (!tokenFromFile.isEmpty()) {
                 tradingToken = tokenFromFile;
                 tradingTokenFile = expandedPath;
-            const QString tokenFromFile = readTokenFile(envTokenFile->trimmed(), QStringLiteral("TradingService"));
-            if (!tokenFromFile.isEmpty()) {
                 m_tradingAuthToken = tokenFromFile;
                 applied = true;
             }
@@ -3215,6 +3891,12 @@ void Application::setRiskHistoryAutoExportLastPathForTesting(const QUrl& url)
     Q_EMIT riskHistoryLastAutoExportPathChanged();
 }
 
+void Application::setTradableInstrumentsForTesting(const QString& exchange,
+                                                   const QVector<TradingClient::TradableInstrument>& items)
+{
+    m_tradableInstrumentCache.insert(exchange.trimmed().toUpper(), items);
+}
+
 void Application::applyMetricsEnvironmentOverrides(const QCommandLineParser& parser,
                                                     bool cliTokenProvided,
                                                     bool cliTokenFileProvided,
@@ -3344,7 +4026,7 @@ void Application::configureTokenWatcher(QFileSystemWatcher& watcher,
     trackedFile = info.absoluteFilePath();
     if (QFile::exists(trackedFile)) {
         if (!watcher.addPath(trackedFile)) {
-            qCWarning(lcAppMetrics) << "Nie można obserwować pliku tokenu" << trackedFile << "dla" << label;
+            qCWarning(lcAppMetrics) << "Nie można obserwować pliku" << trackedFile << "dla" << label;
         }
     }
 
@@ -3355,11 +4037,61 @@ void Application::configureTokenWatcher(QFileSystemWatcher& watcher,
         if (trackedDirs.contains(directory))
             continue;
         if (!watcher.addPath(directory)) {
-            qCWarning(lcAppMetrics) << "Nie można obserwować katalogu tokenu" << directory << "dla" << label;
+            qCWarning(lcAppMetrics) << "Nie można obserwować katalogu" << directory << "dla" << label;
             continue;
         }
         trackedDirs.append(directory);
     }
+}
+
+bool Application::applyRegimeThresholdPath(const QString& path, bool warnIfMissing)
+{
+    const QString trimmed = path.trimmed();
+    const QString expanded = expandPath(trimmed);
+
+    QString normalized;
+    if (!expanded.trimmed().isEmpty()) {
+        QFileInfo info(expanded);
+        normalized = QDir::cleanPath(info.absoluteFilePath());
+    }
+
+    if (normalized.isEmpty()) {
+        configureTokenWatcher(m_regimeThresholdWatcher,
+                              m_regimeThresholdWatcherFile,
+                              m_regimeThresholdWatcherDirs,
+                              QString(),
+                              "MarketRegime thresholds");
+        m_regimeThresholdPath.clear();
+        m_client.setRegimeThresholdsPath(QString());
+        return true;
+    }
+
+    const bool existed = QFile::exists(normalized);
+    const bool pathChanged = normalized != m_regimeThresholdPath;
+
+    configureTokenWatcher(m_regimeThresholdWatcher,
+                          m_regimeThresholdWatcherFile,
+                          m_regimeThresholdWatcherDirs,
+                          normalized,
+                          "MarketRegime thresholds");
+
+    if (!pathChanged) {
+        if (!existed && warnIfMissing) {
+            qCWarning(lcAppMetrics)
+                << "Plik progów reżimu rynku nie istnieje:" << normalized;
+        }
+        m_client.reloadRegimeThresholds();
+        return existed;
+    }
+
+    m_regimeThresholdPath = normalized;
+    if (!existed && warnIfMissing) {
+        qCWarning(lcAppMetrics)
+            << "Plik progów reżimu rynku nie istnieje:" << normalized;
+    }
+
+    m_client.setRegimeThresholdsPath(normalized);
+    return existed;
 }
 
 void Application::configureTlsWatcher(QFileSystemWatcher& watcher,
@@ -3595,6 +4327,14 @@ void Application::handleHealthTlsPathChanged(const QString&)
     applyHealthTlsConfig();
 }
 
+void Application::handleRegimeThresholdPathChanged(const QString&)
+{
+    if (m_regimeThresholdPath.isEmpty())
+        return;
+
+    applyRegimeThresholdPath(m_regimeThresholdPath, false);
+}
+
 void Application::handleTradingTokenPathChanged(const QString&)
 {
     configureTokenWatcher(m_tradingTokenWatcher,
@@ -3783,6 +4523,9 @@ void Application::ensureTelemetry() {
     if (!m_telemetry) {
         if (!shouldEnable) {
             updateTelemetryPendingRetryCount(0);
+            if (m_performanceTelemetry) {
+                m_performanceTelemetry->setTelemetryReporter(nullptr);
+            }
             return;
         }
         auto reporter = std::make_unique<UiTelemetryReporter>(this);
@@ -3790,6 +4533,13 @@ void Application::ensureTelemetry() {
     }
     if (!m_telemetry)
         return;
+
+    if (m_performanceTelemetry) {
+        m_performanceTelemetry->setTelemetryReporter(m_telemetry.get());
+        if (m_frameMonitor) {
+            m_performanceTelemetry->setFrameRateMonitor(m_frameMonitor.get());
+        }
+    }
 
     if (auto* uiReporter = dynamic_cast<UiTelemetryReporter*>(m_telemetry.get())) {
         connect(uiReporter, &UiTelemetryReporter::pendingRetryCountChanged,

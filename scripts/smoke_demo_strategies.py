@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping, MutableMapping, Sequence
@@ -11,13 +12,21 @@ from bot_core.config.loader import load_core_config
 from bot_core.data.backtest_library import BacktestDatasetLibrary
 from bot_core.runtime.journal import InMemoryTradingDecisionJournal
 from bot_core.runtime.multi_strategy_scheduler import MultiStrategyScheduler, StrategyDataFeed
-from bot_core.runtime.pipeline import InMemoryStrategySignalSink
+from bot_core.runtime.pipeline import InMemoryStrategySignalSink, _collect_strategy_definitions
+from bot_core.security.guards import LicenseCapabilityError
 from bot_core.strategies.base import MarketSnapshot, StrategyEngine
 from bot_core.strategies.cross_exchange_arbitrage import (
     CrossExchangeArbitrageSettings,
     CrossExchangeArbitrageStrategy,
 )
+from bot_core.strategies.day_trading import DayTradingSettings, DayTradingStrategy
 from bot_core.strategies.mean_reversion import MeanReversionSettings, MeanReversionStrategy
+from bot_core.strategies.options import OptionsIncomeSettings, OptionsIncomeStrategy
+from bot_core.strategies.scalping import ScalpingSettings, ScalpingStrategy
+from bot_core.strategies.statistical_arbitrage import (
+    StatisticalArbitrageSettings,
+    StatisticalArbitrageStrategy,
+)
 from bot_core.strategies.volatility_target import (
     VolatilityTargetSettings,
     VolatilityTargetStrategy,
@@ -31,6 +40,9 @@ class SmokeResult:
     cycles: int
     telemetry: Mapping[str, Mapping[str, float]]
     emitted_signals: Mapping[str, int]
+
+
+LOGGER = logging.getLogger(__name__)
 
 
 class _ReplayFeed(StrategyDataFeed):
@@ -54,6 +66,8 @@ class _ReplayFeed(StrategyDataFeed):
 
 
 def _instantiate_strategies(core_config) -> Mapping[str, StrategyEngine]:
+    catalog = DEFAULT_STRATEGY_CATALOG
+    definitions = _collect_strategy_definitions(core_config)
     registry: dict[str, StrategyEngine] = {}
     for name, cfg in getattr(core_config, "mean_reversion_strategies", {}).items():
         registry[name] = MeanReversionStrategy(
@@ -88,6 +102,47 @@ def _instantiate_strategies(core_config) -> Mapping[str, StrategyEngine]:
                 max_open_seconds=cfg.max_open_seconds,
             )
         )
+    for name, cfg in getattr(core_config, "scalping_strategies", {}).items():
+        registry[name] = ScalpingStrategy(
+            ScalpingSettings(
+                min_price_change=cfg.min_price_change,
+                take_profit=cfg.take_profit,
+                stop_loss=cfg.stop_loss,
+                max_hold_bars=cfg.max_hold_bars,
+            )
+        )
+    for name, cfg in getattr(core_config, "options_income_strategies", {}).items():
+        registry[name] = OptionsIncomeStrategy(
+            OptionsIncomeSettings(
+                min_iv=cfg.min_iv,
+                max_delta=cfg.max_delta,
+                min_days_to_expiry=cfg.min_days_to_expiry,
+                roll_threshold_iv=cfg.roll_threshold_iv,
+            )
+        )
+    for name, cfg in getattr(core_config, "statistical_arbitrage_strategies", {}).items():
+        registry[name] = StatisticalArbitrageStrategy(
+            StatisticalArbitrageSettings(
+                lookback=cfg.lookback,
+                spread_entry_z=cfg.spread_entry_z,
+                spread_exit_z=cfg.spread_exit_z,
+                max_notional=cfg.max_notional,
+            )
+        )
+    for name, cfg in getattr(core_config, "day_trading_strategies", {}).items():
+        registry[name] = DayTradingStrategy(
+            DayTradingSettings(
+                momentum_window=cfg.momentum_window,
+                volatility_window=cfg.volatility_window,
+                entry_threshold=cfg.entry_threshold,
+                exit_threshold=cfg.exit_threshold,
+                take_profit_atr=cfg.take_profit_atr,
+                stop_loss_atr=cfg.stop_loss_atr,
+                max_holding_bars=cfg.max_holding_bars,
+                atr_floor=cfg.atr_floor,
+                bias_strength=cfg.bias_strength,
+            )
+        )
     return registry
 
 
@@ -99,6 +154,14 @@ def _resolve_dataset_name(strategy_name: str) -> str:
         return "volatility_target"
     if "cross_exchange" in lowered:
         return "cross_exchange_arbitrage"
+    if "scalping" in lowered:
+        return "mean_reversion"
+    if "day_trading" in lowered or "intraday" in lowered:
+        return "mean_reversion"
+    if "options" in lowered:
+        return "volatility_target"
+    if "statistical" in lowered or "pairs" in lowered:
+        return "mean_reversion"
     raise KeyError(f"Brak zmapowanego datasetu dla strategii {strategy_name}")
 
 

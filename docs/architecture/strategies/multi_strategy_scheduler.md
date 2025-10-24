@@ -54,7 +54,7 @@ strategies:
       min_momentum: 0.001
 ```
 
-- Sekcje specjalizowane (`mean_reversion_strategies`, `volatility_target_strategies`, `cross_exchange_arbitrage_strategies`, `grid_strategies`) również trafiają do katalogu i mogą być referencjonowane przez harmonogramy.
+- Sekcje specjalizowane (`mean_reversion_strategies`, `volatility_target_strategies`, `cross_exchange_arbitrage_strategies`, `scalping_strategies`, `options_income_strategies`, `statistical_arbitrage_strategies`, `day_trading_strategies`, `grid_strategies`) również trafiają do katalogu i mogą być referencjonowane przez harmonogramy.
 
 ## Definiowanie harmonogramów
 

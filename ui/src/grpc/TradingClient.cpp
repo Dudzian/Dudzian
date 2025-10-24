@@ -19,20 +19,24 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <optional>
 #include <string>
 #include <thread>
+#include <utility>
+
+#include "models/MarketRegimeClassifierBridge.hpp"
 
 #include "trading.grpc.pb.h"
 #include "utils/PathUtils.hpp"
 
 Q_LOGGING_CATEGORY(lcTradingClient, "bot.shell.trading.grpc")
 
-Q_LOGGING_CATEGORY(lcTradingClient, "bot.shell.trading.grpc")
-
 using botcore::trading::v1::GetOhlcvHistoryRequest;
 using botcore::trading::v1::GetOhlcvHistoryResponse;
 using botcore::trading::v1::Instrument;
+using botcore::trading::v1::ListTradableInstrumentsRequest;
+using botcore::trading::v1::ListTradableInstrumentsResponse;
 using botcore::trading::v1::MarketDataService;
 using botcore::trading::v1::OhlcvCandle;
 using botcore::trading::v1::StreamOhlcvRequest;
@@ -94,6 +98,13 @@ TradingClient::TradingClient(QObject* parent)
     qRegisterMetaType<QList<OhlcvPoint>>("QList<OhlcvPoint>");
     qRegisterMetaType<PerformanceGuard>("PerformanceGuard");
     qRegisterMetaType<RiskSnapshotData>("RiskSnapshotData");
+    qRegisterMetaType<IndicatorSample>("IndicatorSample");
+    qRegisterMetaType<QVector<IndicatorSample>>("QVector<IndicatorSample>");
+    qRegisterMetaType<SignalEventEntry>("SignalEventEntry");
+    qRegisterMetaType<QVector<SignalEventEntry>>("QVector<SignalEventEntry>");
+    qRegisterMetaType<MarketRegimeSnapshotEntry>("MarketRegimeSnapshotEntry");
+
+    m_regimeClassifier = std::make_unique<MarketRegimeClassifierBridge>(this);
 }
 
 TradingClient::~TradingClient() {
@@ -182,6 +193,31 @@ void TradingClient::setRbacScopes(const QStringList& scopes)
     triggerStreamRestart();
 }
 
+void TradingClient::setRegimeThresholdsPath(const QString& path)
+{
+    const QString trimmed = path.trimmed();
+    if (m_regimeThresholdPath == trimmed) {
+        reloadRegimeThresholds();
+        return;
+    }
+    m_regimeThresholdPath = trimmed;
+    reloadRegimeThresholds();
+}
+
+void TradingClient::reloadRegimeThresholds()
+{
+    if (!m_regimeClassifier)
+        return;
+
+    if (m_regimeThresholdPath.trimmed().isEmpty())
+        return;
+
+    if (!m_regimeClassifier->loadThresholdsFromFile(m_regimeThresholdPath)) {
+        qCWarning(lcTradingClient)
+            << "Nie udało się wczytać progów MarketRegimeClassifier z" << m_regimeThresholdPath;
+    }
+}
+
 QVector<QPair<QByteArray, QByteArray>> TradingClient::authMetadataForTesting() const
 {
     QVector<QPair<QByteArray, QByteArray>> result;
@@ -223,7 +259,41 @@ void TradingClient::start() {
     auto historyContext = createContext();
     const grpc::Status historyStatus = m_marketDataStub->GetOhlcvHistory(historyContext.get(), historyReq, &historyResp);
     if (historyStatus.ok()) {
-        Q_EMIT historyReceived(convertHistory(historyResp.candles()));
+        const QList<OhlcvPoint> history = convertHistory(historyResp.candles());
+        QVector<IndicatorSample> emaFast;
+        QVector<IndicatorSample> emaSlow;
+        QVector<IndicatorSample> vwap;
+        QVector<SignalEventEntry> signalHistory;
+        std::optional<MarketRegimeSnapshotEntry> regime;
+        {
+            std::lock_guard<std::mutex> lock(m_historyMutex);
+            m_cachedHistory = QVector<OhlcvPoint>::fromList(history);
+            std::sort(m_cachedHistory.begin(), m_cachedHistory.end(), [](const auto& lhs, const auto& rhs) {
+                return lhs.timestampMs < rhs.timestampMs;
+            });
+            if (m_historyLimit > 0 && m_cachedHistory.size() > m_historyLimit) {
+                m_cachedHistory.erase(m_cachedHistory.begin(),
+                                      m_cachedHistory.begin() + (m_cachedHistory.size() - m_historyLimit));
+            }
+            rebuildIndicatorSnapshots(m_cachedHistory);
+            emaFast = m_cachedEmaFast;
+            emaSlow = m_cachedEmaSlow;
+            vwap = m_cachedVwap;
+            computeSignalHistory(m_cachedEmaFast, m_cachedEmaSlow, m_cachedVwap, m_signalHistory);
+            signalHistory = m_signalHistory;
+            regime = evaluateRegimeSnapshotLocked();
+        }
+
+        Q_EMIT historyReceived(history);
+        Q_EMIT indicatorSnapshotReceived(QStringLiteral("ema_fast"), emaFast);
+        Q_EMIT indicatorSnapshotReceived(QStringLiteral("ema_slow"), emaSlow);
+        Q_EMIT indicatorSnapshotReceived(QStringLiteral("vwap"), vwap);
+        if (!signalHistory.isEmpty()) {
+            Q_EMIT signalHistoryReceived(signalHistory);
+        }
+        if (regime.has_value()) {
+            Q_EMIT marketRegimeUpdated(*regime);
+        }
     } else {
         Q_EMIT connectionStateChanged(QStringLiteral("history error: %1")
                                           .arg(QString::fromStdString(historyStatus.error_message())));
@@ -414,17 +484,113 @@ void TradingClient::streamLoop()
             receivedAny = true;
             attempt = 0;
             if (update.has_snapshot()) {
-                const auto history = convertHistory(update.snapshot().candles());
+                const QList<OhlcvPoint> history = convertHistory(update.snapshot().candles());
+                QVector<IndicatorSample> emaFast;
+                QVector<IndicatorSample> emaSlow;
+                QVector<IndicatorSample> vwap;
+                QVector<SignalEventEntry> signalHistory;
+                std::optional<MarketRegimeSnapshotEntry> regime;
+                {
+                    std::lock_guard<std::mutex> lock(m_historyMutex);
+                    m_cachedHistory = QVector<OhlcvPoint>::fromList(history);
+                    std::sort(m_cachedHistory.begin(), m_cachedHistory.end(), [](const auto& lhs, const auto& rhs) {
+                        return lhs.timestampMs < rhs.timestampMs;
+                    });
+                    rebuildIndicatorSnapshots(m_cachedHistory);
+                    emaFast = m_cachedEmaFast;
+                    emaSlow = m_cachedEmaSlow;
+                    vwap = m_cachedVwap;
+                    computeSignalHistory(m_cachedEmaFast, m_cachedEmaSlow, m_cachedVwap, m_signalHistory);
+                    signalHistory = m_signalHistory;
+                    regime = evaluateRegimeSnapshotLocked();
+                }
                 QMetaObject::invokeMethod(
                     this,
-                    [this, history]() { Q_EMIT historyReceived(history); },
+                    [this,
+                     history,
+                     emaFast = std::move(emaFast),
+                     emaSlow = std::move(emaSlow),
+                     vwap = std::move(vwap),
+                     signalHistory = std::move(signalHistory),
+                     regime]() mutable {
+                        Q_EMIT historyReceived(history);
+                        Q_EMIT indicatorSnapshotReceived(QStringLiteral("ema_fast"), emaFast);
+                        Q_EMIT indicatorSnapshotReceived(QStringLiteral("ema_slow"), emaSlow);
+                        Q_EMIT indicatorSnapshotReceived(QStringLiteral("vwap"), vwap);
+                        if (!signalHistory.isEmpty()) {
+                            Q_EMIT signalHistoryReceived(signalHistory);
+                        }
+                        if (regime.has_value()) {
+                            Q_EMIT marketRegimeUpdated(*regime);
+                        }
+                    },
                     Qt::QueuedConnection);
             }
             if (update.has_increment()) {
-                const auto point = convertCandle(update.increment().candle());
+                const OhlcvPoint point = convertCandle(update.increment().candle());
+                IndicatorSample fastSample;
+                IndicatorSample slowSample;
+                IndicatorSample vwapSample;
+                std::optional<SignalEventEntry> latestSignal;
+                std::optional<MarketRegimeSnapshotEntry> regime;
+                {
+                    std::lock_guard<std::mutex> lock(m_historyMutex);
+                    if (!m_cachedHistory.isEmpty()) {
+                        auto& last = m_cachedHistory.last();
+                        if (last.sequence == point.sequence || last.timestampMs == point.timestampMs) {
+                            last = point;
+                        } else {
+                            m_cachedHistory.append(point);
+                            if (m_cachedHistory.size() >= 2 && m_cachedHistory[m_cachedHistory.size() - 2].timestampMs > point.timestampMs) {
+                                std::sort(m_cachedHistory.begin(), m_cachedHistory.end(), [](const auto& lhs, const auto& rhs) {
+                                    return lhs.timestampMs < rhs.timestampMs;
+                                });
+                            }
+                        }
+                    } else {
+                        m_cachedHistory.append(point);
+                    }
+                    if (m_historyLimit > 0 && m_cachedHistory.size() > m_historyLimit) {
+                        const int removeCount = m_cachedHistory.size() - m_historyLimit;
+                        m_cachedHistory.erase(m_cachedHistory.begin(), m_cachedHistory.begin() + removeCount);
+                    }
+                    const qsizetype previousSignals = m_signalHistory.size();
+                    rebuildIndicatorSnapshots(m_cachedHistory);
+                    computeSignalHistory(m_cachedEmaFast, m_cachedEmaSlow, m_cachedVwap, m_signalHistory);
+                    if (!m_cachedEmaFast.isEmpty()) {
+                        fastSample = m_cachedEmaFast.last();
+                    }
+                    if (!m_cachedEmaSlow.isEmpty()) {
+                        slowSample = m_cachedEmaSlow.last();
+                    }
+                    if (!m_cachedVwap.isEmpty()) {
+                        vwapSample = m_cachedVwap.last();
+                    }
+                    if (m_signalHistory.size() > previousSignals && !m_signalHistory.isEmpty()) {
+                        latestSignal = m_signalHistory.last();
+                    }
+                    regime = evaluateRegimeSnapshotLocked();
+                }
                 QMetaObject::invokeMethod(
                     this,
-                    [this, point]() { Q_EMIT candleReceived(point); },
+                    [this, point, fastSample, slowSample, vwapSample, latestSignal, regime]() {
+                        Q_EMIT candleReceived(point);
+                        if (fastSample.timestampMs != 0) {
+                            Q_EMIT indicatorSampleReceived(fastSample);
+                        }
+                        if (slowSample.timestampMs != 0) {
+                            Q_EMIT indicatorSampleReceived(slowSample);
+                        }
+                        if (vwapSample.timestampMs != 0) {
+                            Q_EMIT indicatorSampleReceived(vwapSample);
+                        }
+                        if (latestSignal.has_value()) {
+                            Q_EMIT signalEventReceived(*latestSignal);
+                        }
+                        if (regime.has_value()) {
+                            Q_EMIT marketRegimeUpdated(*regime);
+                        }
+                    },
                     Qt::QueuedConnection);
             }
         }
@@ -498,6 +664,58 @@ void TradingClient::refreshRiskState() {
         qCWarning(lcTradingClient)
             << "GetRiskState nie powiodło się:" << QString::fromStdString(status.error_message());
     }
+}
+
+QVector<TradingClient::TradableInstrument> TradingClient::listTradableInstruments(const QString& exchange)
+{
+    QVector<TradableInstrument> instruments;
+    ensureStub();
+    if (!m_marketDataStub) {
+        qCWarning(lcTradingClient)
+            << "ListTradableInstruments pominięte – brak połączenia z MarketDataService dla" << m_endpoint;
+        return instruments;
+    }
+
+    const QString normalizedExchange = exchange.trimmed().toUpper();
+    if (normalizedExchange.isEmpty()) {
+        return instruments;
+    }
+
+    grpc::ClientContext context;
+    applyAuthMetadata(context);
+    ListTradableInstrumentsRequest request;
+    request.set_exchange(normalizedExchange.toStdString());
+    ListTradableInstrumentsResponse response;
+
+    const grpc::Status status = m_marketDataStub->ListTradableInstruments(&context, request, &response);
+    if (!status.ok()) {
+        qCWarning(lcTradingClient)
+            << "ListTradableInstruments nie powiodło się:" << QString::fromStdString(status.error_message());
+        return instruments;
+    }
+
+    instruments.reserve(static_cast<int>(response.instruments_size()));
+    for (const auto& item : response.instruments()) {
+        TradableInstrument listing;
+        listing.config.exchange = QString::fromStdString(item.instrument().exchange());
+        if (listing.config.exchange.isEmpty()) {
+            listing.config.exchange = normalizedExchange;
+        }
+        listing.config.symbol = QString::fromStdString(item.instrument().symbol());
+        listing.config.venueSymbol = QString::fromStdString(item.instrument().venue_symbol());
+        listing.config.quoteCurrency = QString::fromStdString(item.instrument().quote_currency());
+        listing.config.baseCurrency = QString::fromStdString(item.instrument().base_currency());
+        listing.config.granularityIso8601 = m_instrumentConfig.granularityIso8601;
+        listing.priceStep = item.price_step();
+        listing.amountStep = item.amount_step();
+        listing.minNotional = item.min_notional();
+        listing.minAmount = item.min_amount();
+        listing.maxAmount = item.max_amount();
+        listing.minPrice = item.min_price();
+        listing.maxPrice = item.max_price();
+        instruments.append(listing);
+    }
+    return instruments;
 }
 
 RiskSnapshotData TradingClient::convertRiskState(const RiskState& state) const {
@@ -595,6 +813,144 @@ void TradingClient::triggerStreamRestart()
     if (m_activeContext) {
         m_activeContext->TryCancel();
     }
+}
+
+void TradingClient::rebuildIndicatorSnapshots(const QVector<OhlcvPoint>& history)
+{
+    m_cachedEmaFast.clear();
+    m_cachedEmaSlow.clear();
+    m_cachedVwap.clear();
+
+    m_cachedEmaFast.reserve(history.size());
+    m_cachedEmaSlow.reserve(history.size());
+    m_cachedVwap.reserve(history.size());
+
+    if (history.isEmpty()) {
+        return;
+    }
+
+    const int fastPeriod = 12;
+    const int slowPeriod = 26;
+    const double fastMultiplier = 2.0 / (fastPeriod + 1.0);
+    const double slowMultiplier = 2.0 / (slowPeriod + 1.0);
+
+    double emaFast = history.first().close;
+    double emaSlow = history.first().close;
+    double cumulativePv = 0.0;
+    double cumulativeVolume = 0.0;
+
+    for (int i = 0; i < history.size(); ++i) {
+        const auto& candle = history.at(i);
+        const double price = candle.close;
+
+        if (i == 0) {
+            emaFast = price;
+            emaSlow = price;
+        } else {
+            emaFast = (price - emaFast) * fastMultiplier + emaFast;
+            emaSlow = (price - emaSlow) * slowMultiplier + emaSlow;
+        }
+
+        IndicatorSample fastSample{QStringLiteral("ema_fast"), candle.timestampMs, emaFast};
+        IndicatorSample slowSample{QStringLiteral("ema_slow"), candle.timestampMs, emaSlow};
+        m_cachedEmaFast.append(fastSample);
+        m_cachedEmaSlow.append(slowSample);
+
+        cumulativePv += price * candle.volume;
+        cumulativeVolume += candle.volume;
+        double vwapValue = price;
+        if (cumulativeVolume > 0.0) {
+            vwapValue = cumulativePv / cumulativeVolume;
+        }
+        IndicatorSample vwapSample{QStringLiteral("vwap"), candle.timestampMs, vwapValue};
+        m_cachedVwap.append(vwapSample);
+    }
+}
+
+void TradingClient::computeSignalHistory(const QVector<IndicatorSample>& fast,
+                                         const QVector<IndicatorSample>& slow,
+                                         const QVector<IndicatorSample>& vwap,
+                                         QVector<SignalEventEntry>& signalHistory)
+{
+    signalHistory.clear();
+    const int count = std::min({fast.size(), slow.size(), vwap.size(), m_cachedHistory.size()});
+    if (count == 0) {
+        return;
+    }
+
+    double prevDiff = 0.0;
+    bool   havePrevDiff = false;
+    double prevPrice = m_cachedHistory.first().close;
+    double prevVwap = vwap.first().value;
+
+    for (int i = 0; i < count; ++i) {
+        const double diff = fast.at(i).value - slow.at(i).value;
+        if (havePrevDiff && diff * prevDiff < 0.0) {
+            SignalEventEntry event;
+            event.timestampMs = fast.at(i).timestampMs;
+            if (diff > 0.0) {
+                event.code = QStringLiteral("ema_bullish_cross");
+                event.description = tr("Szybka EMA przecina wolną w górę");
+            } else {
+                event.code = QStringLiteral("ema_bearish_cross");
+                event.description = tr("Szybka EMA przecina wolną w dół");
+            }
+            event.confidence = qBound(0.0, std::abs(diff) / std::max(0.0001, std::abs(slow.at(i).value)), 1.0);
+            event.regime = m_lastRegimeSnapshot.regime;
+            signalHistory.append(event);
+        }
+        prevDiff = diff;
+        havePrevDiff = true;
+
+        const double price = m_cachedHistory.at(i).close;
+        const double vwapValue = vwap.at(i).value;
+        const bool crossedUp = (prevPrice <= prevVwap) && (price > vwapValue);
+        const bool crossedDown = (prevPrice >= prevVwap) && (price < vwapValue);
+        if ((crossedUp || crossedDown) && i > 0) {
+            SignalEventEntry event;
+            event.timestampMs = m_cachedHistory.at(i).timestampMs;
+            if (crossedUp) {
+                event.code = QStringLiteral("vwap_breakout");
+                event.description = tr("Cena wybija powyżej VWAP");
+            } else {
+                event.code = QStringLiteral("vwap_breakdown");
+                event.description = tr("Cena spada poniżej VWAP");
+            }
+            event.confidence = qBound(0.0, std::abs(price - vwapValue) / std::max(0.0001, std::abs(vwapValue)), 1.0);
+            event.regime = m_lastRegimeSnapshot.regime;
+            signalHistory.append(event);
+        }
+        prevPrice = price;
+        prevVwap = vwapValue;
+    }
+
+    std::sort(signalHistory.begin(), signalHistory.end(), [](const auto& lhs, const auto& rhs) {
+        return lhs.timestampMs < rhs.timestampMs;
+    });
+}
+
+std::optional<MarketRegimeSnapshotEntry> TradingClient::evaluateRegimeSnapshotLocked()
+{
+    if (!m_regimeClassifier) {
+        return std::nullopt;
+    }
+    const auto assessment = m_regimeClassifier->classify(m_cachedHistory);
+    if (!assessment.has_value()) {
+        return std::nullopt;
+    }
+
+    const bool sameTimestamp = m_lastRegimeSnapshot.timestampMs == assessment->timestampMs;
+    const bool sameRegime = m_lastRegimeSnapshot.regime == assessment->regime;
+    const bool sameTrend = qFuzzyCompare(1.0 + m_lastRegimeSnapshot.trendConfidence, 1.0 + assessment->trendConfidence);
+    const bool sameMr = qFuzzyCompare(1.0 + m_lastRegimeSnapshot.meanReversionConfidence,
+                                      1.0 + assessment->meanReversionConfidence);
+    const bool sameDaily = qFuzzyCompare(1.0 + m_lastRegimeSnapshot.dailyConfidence, 1.0 + assessment->dailyConfidence);
+
+    m_lastRegimeSnapshot = *assessment;
+    if (sameTimestamp && sameRegime && sameTrend && sameMr && sameDaily) {
+        return std::nullopt;
+    }
+    return assessment;
 }
 
 TradingClient::PreLiveChecklistResult TradingClient::runPreLiveChecklist() const {

@@ -2,9 +2,21 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, List, Sequence
+from typing import Any, Dict, List, Mapping, Sequence
 
 from bot_core.strategies.base import MarketSnapshot, StrategyEngine, StrategySignal
+
+
+def _ensure_ratio(value: float, *, field: str) -> float:
+    if not 0.0 < value < 1.0:
+        raise ValueError(f"{field} must be in the range (0, 1)")
+    return value
+
+
+def _ensure_positive_int(value: int, *, field: str) -> int:
+    if value < 1:
+        raise ValueError(f"{field} must be at least 1")
+    return value
 
 
 @dataclass(slots=True)
@@ -15,6 +27,23 @@ class ScalpingSettings:
     take_profit: float = 0.0010
     stop_loss: float = 0.0007
     max_hold_bars: int = 5
+
+    def __post_init__(self) -> None:
+        self.min_price_change = _ensure_ratio(float(self.min_price_change), field="min_price_change")
+        self.take_profit = _ensure_ratio(float(self.take_profit), field="take_profit")
+        self.stop_loss = _ensure_ratio(float(self.stop_loss), field="stop_loss")
+        self.max_hold_bars = _ensure_positive_int(int(self.max_hold_bars), field="max_hold_bars")
+
+    @classmethod
+    def from_parameters(cls, parameters: Mapping[str, Any] | None = None) -> "ScalpingSettings":
+        params = dict(parameters or {})
+        defaults = cls()
+        return cls(
+            min_price_change=float(params.get("min_price_change", defaults.min_price_change)),
+            take_profit=float(params.get("take_profit", defaults.take_profit)),
+            stop_loss=float(params.get("stop_loss", defaults.stop_loss)),
+            max_hold_bars=int(params.get("max_hold_bars", defaults.max_hold_bars)),
+        )
 
 
 @dataclass(slots=True)

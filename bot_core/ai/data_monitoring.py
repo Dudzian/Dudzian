@@ -20,57 +20,7 @@ __all__ = [
     "ComplianceSignOffError",
     "collect_pending_compliance_sign_offs",
     "normalize_compliance_sign_off_roles",
-    "normalize_sign_off_status",
-    "normalize_report_status",
-    "normalize_report_source",
-    "normalize_report_schedule",
-    "normalize_report_category",
-    "normalize_report_job_name",
-    "normalize_report_run",
-    "normalize_report_symbol",
-    "normalize_report_environment",
-    "normalize_report_dataset",
-    "normalize_report_exchange",
-    "normalize_report_portfolio",
-    "normalize_report_profile",
-    "normalize_report_strategy",
-    "normalize_report_engine",
-    "normalize_report_issue_code",
-    "normalize_report_model",
-    "normalize_report_model_version",
-    "normalize_report_license_tier",
-    "normalize_report_risk_class",
-    "normalize_report_required_data",
-    "normalize_report_capability",
-    "normalize_report_pipeline",
-    "normalize_policy_enforcement",
-    "get_supported_sign_off_statuses",
     "filter_audit_reports_since",
-    "filter_audit_reports_by_tags",
-    "filter_audit_reports_by_sign_off_status",
-    "filter_audit_reports_by_status",
-    "filter_audit_reports_by_source",
-    "filter_audit_reports_by_schedule",
-    "filter_audit_reports_by_category",
-    "filter_audit_reports_by_job_name",
-    "filter_audit_reports_by_run",
-    "filter_audit_reports_by_symbol",
-    "filter_audit_reports_by_pipeline",
-    "filter_audit_reports_by_environment",
-    "filter_audit_reports_by_exchange",
-    "filter_audit_reports_by_portfolio",
-    "filter_audit_reports_by_profile",
-    "filter_audit_reports_by_strategy",
-    "filter_audit_reports_by_engine",
-    "filter_audit_reports_by_issue_code",
-    "filter_audit_reports_by_dataset",
-    "filter_audit_reports_by_model",
-    "filter_audit_reports_by_model_version",
-    "filter_audit_reports_by_license_tier",
-    "filter_audit_reports_by_risk_class",
-    "filter_audit_reports_by_required_data",
-    "filter_audit_reports_by_capability",
-    "filter_audit_reports_by_policy_enforcement",
     "DataCompletenessWatcher",
     "FeatureBoundsValidator",
     "export_data_quality_report",
@@ -179,128 +129,8 @@ def normalize_report_environment(value: object) -> str | None:
     return None
 
 
-def normalize_report_exchange(value: object) -> str | None:
-    """Normalizuje nazwę giełdy/dostawcy danych do małych liter."""
-
-    if isinstance(value, str):
-        normalized = value.strip().lower()
-        if normalized:
-            return normalized
-    return None
-
-
 def normalize_report_portfolio(value: object) -> str | None:
     """Normalizuje nazwę portfela raportu do małych liter."""
-
-    if isinstance(value, str):
-        normalized = value.strip().lower()
-        if normalized:
-            return normalized
-    return None
-
-
-def normalize_report_profile(value: object) -> str | None:
-    """Normalizuje profil ryzyka raportu do małych liter."""
-
-    if isinstance(value, str):
-        normalized = value.strip().lower()
-        if normalized:
-            return normalized
-    return None
-
-
-def normalize_report_dataset(value: object) -> str | None:
-    """Normalizuje identyfikator zbioru danych raportu do małych liter."""
-
-    if isinstance(value, str):
-        normalized = value.strip().lower()
-        if normalized:
-            return normalized
-    return None
-
-
-def normalize_report_strategy(value: object) -> str | None:
-    """Normalizuje identyfikator strategii do małych liter."""
-
-    if isinstance(value, str):
-        normalized = value.strip().lower()
-        if normalized:
-            return normalized
-    return None
-
-
-def normalize_report_engine(value: object) -> str | None:
-    """Normalizuje nazwę silnika strategii do małych liter."""
-
-    if isinstance(value, str):
-        normalized = value.strip().lower()
-        if normalized:
-            return normalized
-    elif isinstance(value, (int, float)):
-        normalized = str(value).strip().lower()
-        if normalized:
-            return normalized
-    return None
-
-
-def normalize_report_issue_code(value: object) -> str | None:
-    """Normalizuje identyfikator problemu/alertu z raportu audytu."""
-
-    if isinstance(value, str):
-        normalized = value.strip().lower()
-        if normalized:
-            return normalized
-    elif isinstance(value, (int, float)):
-        normalized = str(value).strip().lower()
-        if normalized:
-            return normalized
-    return None
-
-
-def normalize_report_model(value: object) -> str | None:
-    """Normalizuje identyfikator modelu lub artefaktu do małych liter."""
-
-    if isinstance(value, str):
-        normalized = value.strip().lower()
-        if normalized:
-            return normalized
-    return None
-
-
-def normalize_report_model_version(value: object) -> str | None:
-    """Normalizuje wersję modelu/artefaktu."""
-
-    if isinstance(value, str):
-        normalized = value.strip().lower()
-        if normalized:
-            return normalized
-    if isinstance(value, (int, float)) and not isinstance(value, bool):
-        return str(value)
-    return None
-
-
-def normalize_report_license_tier(value: object) -> str | None:
-    """Normalizuje poziom licencji raportu do małych liter."""
-
-    if isinstance(value, str):
-        normalized = value.strip().lower()
-        if normalized:
-            return normalized
-    return None
-
-
-def normalize_report_risk_class(value: object) -> str | None:
-    """Normalizuje klasę ryzyka raportu do małych liter."""
-
-    if isinstance(value, str):
-        normalized = value.strip().lower()
-        if normalized:
-            return normalized
-    return None
-
-
-def normalize_report_required_data(value: object) -> str | None:
-    """Normalizuje identyfikator wymaganych danych raportu."""
 
     if isinstance(value, str):
         normalized = value.strip().lower()
@@ -354,28 +184,6 @@ def normalize_report_status(value: object) -> str | None:
         normalized = value.strip().lower()
         if normalized:
             return normalized
-    return None
-
-
-def normalize_policy_enforcement(value: object) -> bool | None:
-    """Normalizuje flagę ``policy.enforce`` do wartości logicznej."""
-
-    if isinstance(value, bool):
-        return value
-
-    if isinstance(value, (int, float)) and not isinstance(value, bool):
-        if math.isnan(value):  # type: ignore[unreachable]
-            return None
-        return bool(value)
-
-    if isinstance(value, str):
-        normalized = value.strip().lower()
-        if not normalized:
-            return None
-        if normalized in _POLICY_ENFORCE_TRUE_VALUES:
-            return True
-        if normalized in _POLICY_ENFORCE_FALSE_VALUES:
-            return False
     return None
 
 
@@ -716,62 +524,14 @@ def _normalize_tags(values: Sequence[object] | None) -> set[str]:
 
 
 def _extract_report_tags(report: Mapping[str, Any]) -> set[str]:
-    collected: list[object] = []
-
-    def _collect(value: object) -> None:
-        if isinstance(value, Mapping):
-            _collect(value.get("tags"))
-            return
-        if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
-            for item in value:
-                _collect(item)
-            return
-        if value is not None:
-            collected.append(value)
-
-    _collect(report.get("tags"))
-
-    metadata = report.get("metadata")
-    if isinstance(metadata, Mapping):
-        _collect(metadata.get("tags"))
-
-    context = report.get("context")
-    if isinstance(context, Mapping):
-        _collect(context.get("tags"))
-
-        context_metadata = context.get("metadata")
-        if isinstance(context_metadata, Mapping):
-            _collect(context_metadata.get("tags"))
-
-        context_strategy = context.get("strategy")
-        if isinstance(context_strategy, Mapping):
-            _collect(context_strategy.get("tags"))
-            context_strategy_metadata = context_strategy.get("metadata")
-            if isinstance(context_strategy_metadata, Mapping):
-                _collect(context_strategy_metadata.get("tags"))
-
-        context_dataset = context.get("dataset")
-        if isinstance(context_dataset, Mapping):
-            _collect(context_dataset.get("tags"))
-            context_dataset_metadata = context_dataset.get("metadata")
-            if isinstance(context_dataset_metadata, Mapping):
-                _collect(context_dataset_metadata.get("tags"))
-
-    dataset = report.get("dataset")
-    if isinstance(dataset, Mapping):
-        _collect(dataset.get("tags"))
-        dataset_metadata = dataset.get("metadata")
-        if isinstance(dataset_metadata, Mapping):
-            _collect(dataset_metadata.get("tags"))
-
-    strategy = report.get("strategy")
-    if isinstance(strategy, Mapping):
-        _collect(strategy.get("tags"))
-        strategy_metadata = strategy.get("metadata")
-        if isinstance(strategy_metadata, Mapping):
-            _collect(strategy_metadata.get("tags"))
-
-    return _normalize_tags(collected)
+    raw_tags = report.get("tags")
+    if isinstance(raw_tags, str):
+        values: Sequence[object] = (raw_tags,)
+    elif isinstance(raw_tags, Sequence) and not isinstance(raw_tags, (bytes, bytearray)):
+        values = raw_tags
+    else:
+        values = ()
+    return _normalize_tags(values)
 
 
 def filter_audit_reports_since(
@@ -1363,127 +1123,6 @@ def _collect_report_strategies(report: Mapping[str, Any]) -> set[str]:
         _add(metadata.get("strategy_name"))
 
     return strategies
-
-
-def _collect_report_engines(report: Mapping[str, Any]) -> set[str]:
-    engines: set[str] = set()
-    seen_mappings: set[int] = set()
-
-    def _add(value: object) -> None:
-        if isinstance(value, Mapping):
-            mapping_id = id(value)
-            if mapping_id in seen_mappings:
-                return
-            seen_mappings.add(mapping_id)
-
-            nested_candidates = (
-                value.get("engine"),
-                value.get("strategy_engine"),
-                value.get("engine_name"),
-            )
-            for candidate in nested_candidates:
-                _add(candidate)
-
-            metadata = value.get("metadata")
-            if isinstance(metadata, Mapping):
-                _add(metadata)
-
-            nested_strategy = value.get("strategy")
-            if isinstance(nested_strategy, Mapping):
-                _add(nested_strategy)
-            return
-
-        if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
-            for item in value:
-                _add(item)
-            return
-
-        normalized = normalize_report_engine(value)
-        if normalized:
-            engines.add(normalized)
-
-    _add(report.get("engine"))
-    _add(report.get("strategy"))
-    _add(report.get("strategy_engine"))
-
-    context = report.get("context")
-    if isinstance(context, Mapping):
-        _add(context.get("engine"))
-        _add(context.get("strategy"))
-
-    dataset = report.get("dataset")
-    if isinstance(dataset, Mapping):
-        _add(dataset.get("engine"))
-        metadata = dataset.get("metadata")
-        if isinstance(metadata, Mapping):
-            _add(metadata)
-
-    metadata = report.get("metadata")
-    if isinstance(metadata, Mapping):
-        _add(metadata)
-
-    return engines
-
-
-def _collect_report_issue_codes(report: Mapping[str, Any]) -> set[str]:
-    codes: set[str] = set()
-    seen_sections: set[int] = set()
-    seen_candidates: set[int] = set()
-
-    def _collect_candidates(value: object) -> None:
-        if isinstance(value, Mapping):
-            mapping_id = id(value)
-            if mapping_id in seen_candidates:
-                return
-            seen_candidates.add(mapping_id)
-
-            for key in ("code", "issue", "issue_code", "identifier", "id", "name", "slug", "key"):
-                normalized = normalize_report_issue_code(value.get(key))
-                if normalized:
-                    codes.add(normalized)
-
-            for nested in value.values():
-                if isinstance(nested, (Mapping, Sequence)) and not isinstance(
-                    nested, (str, bytes, bytearray)
-                ):
-                    _collect_candidates(nested)
-                else:
-                    normalized = normalize_report_issue_code(nested)
-                    if normalized:
-                        codes.add(normalized)
-            return
-
-        if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
-            for item in value:
-                _collect_candidates(item)
-            return
-
-        normalized = normalize_report_issue_code(value)
-        if normalized:
-            codes.add(normalized)
-
-    def _walk(value: object) -> None:
-        if isinstance(value, Mapping):
-            mapping_id = id(value)
-            if mapping_id in seen_sections:
-                return
-            seen_sections.add(mapping_id)
-
-            for key, nested in value.items():
-                if key in {"issues", "issue", "issue_code", "issue_codes", "violations", "alerts", "findings"}:
-                    _collect_candidates(nested)
-                if isinstance(nested, (Mapping, Sequence)) and not isinstance(
-                    nested, (str, bytes, bytearray)
-                ):
-                    _walk(nested)
-            return
-
-        if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
-            for item in value:
-                _walk(item)
-
-    _walk(report)
-    return codes
 
 
 def _collect_report_datasets(report: Mapping[str, Any]) -> set[str]:
@@ -2106,78 +1745,6 @@ def filter_audit_reports_by_strategy(
     return tuple(filtered)
 
 
-def filter_audit_reports_by_engine(
-    reports: Sequence[Mapping[str, Any]] | None,
-    *,
-    include: Sequence[object] | None = None,
-    exclude: Sequence[object] | None = None,
-) -> tuple[Mapping[str, Any], ...]:
-    """Filtruje raporty na podstawie nazwy silnika strategii."""
-
-    include_set = {
-        engine
-        for engine in (normalize_report_engine(item) for item in (include or ()))
-        if engine
-    }
-    exclude_set = {
-        engine
-        for engine in (normalize_report_engine(item) for item in (exclude or ()))
-        if engine
-    }
-
-    filtered: list[Mapping[str, Any]] = []
-    for report in reports or ():
-        if not isinstance(report, Mapping):
-            continue
-
-        engines = _collect_report_engines(report)
-
-        if include_set and not (engines & include_set):
-            continue
-        if exclude_set and (engines & exclude_set):
-            continue
-
-        filtered.append(report)
-
-    return tuple(filtered)
-
-
-def filter_audit_reports_by_issue_code(
-    reports: Sequence[Mapping[str, Any]] | None,
-    *,
-    include: Sequence[object] | None = None,
-    exclude: Sequence[object] | None = None,
-) -> tuple[Mapping[str, Any], ...]:
-    """Filtruje raporty na podstawie kodów problemów/alertów."""
-
-    include_set = {
-        code
-        for code in (normalize_report_issue_code(item) for item in (include or ()))
-        if code
-    }
-    exclude_set = {
-        code
-        for code in (normalize_report_issue_code(item) for item in (exclude or ()))
-        if code
-    }
-
-    filtered: list[Mapping[str, Any]] = []
-    for report in reports or ():
-        if not isinstance(report, Mapping):
-            continue
-
-        codes = _collect_report_issue_codes(report)
-
-        if include_set and not (codes & include_set):
-            continue
-        if exclude_set and (codes & exclude_set):
-            continue
-
-        filtered.append(report)
-
-    return tuple(filtered)
-
-
 def filter_audit_reports_by_dataset(
     reports: Sequence[Mapping[str, Any]] | None,
     *,
@@ -2284,6 +1851,35 @@ def filter_audit_reports_by_model_version(
         filtered.append(report)
 
     return tuple(filtered)
+
+
+def _extract_sign_off_statuses(
+    report: Mapping[str, Any],
+    *,
+    roles: Sequence[str] | None = None,
+) -> dict[str, str]:
+    """Ekstrahuje statusy podpisów z raportu z opcjonalnym filtrem ról."""
+
+    allowed_roles = {
+        normalized
+        for normalized in (_normalize_role(role) for role in (roles or ()))
+        if normalized
+    }
+    sign_off_statuses: dict[str, str] = {}
+    raw_sign_off = report.get("sign_off")
+    if not isinstance(raw_sign_off, Mapping):
+        return sign_off_statuses
+
+    for raw_role, raw_entry in raw_sign_off.items():
+        normalized_role = _normalize_role(raw_role)
+        if allowed_roles and (not normalized_role or normalized_role not in allowed_roles):
+            continue
+        if not isinstance(raw_entry, Mapping):
+            continue
+        status = normalize_sign_off_status(raw_entry.get("status"))
+        if normalized_role and status:
+            sign_off_statuses[normalized_role] = status
+    return sign_off_statuses
 
 
 def filter_audit_reports_by_license_tier(
@@ -2486,6 +2082,27 @@ def filter_audit_reports_by_policy_enforcement(
         if exclude_set and enforce_flag in exclude_set:
             continue
         filtered.append(report)
+    return tuple(filtered)
+
+
+def filter_audit_reports_since(
+    reports: Sequence[Mapping[str, Any]] | None,
+    *,
+    since: datetime,
+) -> tuple[Mapping[str, Any], ...]:
+    """Filtruje raporty, pozostawiając wpisy nie starsze niż wskazany czas."""
+
+    if since.tzinfo is None:
+        raise ValueError("argument 'since' musi zawierać informację o strefie czasowej")
+
+    cutoff = since.astimezone(timezone.utc)
+    filtered: list[Mapping[str, Any]] = []
+    for report in reports or ():
+        if not isinstance(report, Mapping):
+            continue
+        timestamp = _parse_report_timestamp(report.get("timestamp"))
+        if timestamp is None or timestamp >= cutoff:
+            filtered.append(report)
     return tuple(filtered)
 
 
