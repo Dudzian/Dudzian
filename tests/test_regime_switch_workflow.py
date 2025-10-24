@@ -112,6 +112,15 @@ def test_strategy_regime_workflow_uses_fallback_when_data_missing() -> None:
     assert isinstance(decision.parameters, TradingParameters)
     assert decision.parameters.ensemble_weights == decision.weights
     assert abs(sum(decision.weights.values()) - 1.0) < 1e-9
+    assert {
+        "trend_following",
+        "day_trading",
+        "mean_reversion",
+        "arbitrage",
+        "volatility_target",
+        "grid_trading",
+        "options_income",
+    }.issubset(decision.weights.keys())
     assert decision.timestamp.tzinfo is None
     assert decision.license_tiers and "standard" in decision.license_tiers
     assert "trend_following" in decision.strategy_metadata
