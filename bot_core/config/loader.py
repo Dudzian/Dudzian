@@ -3113,7 +3113,46 @@ def _load_observability_config(
         return None
 
     slo_entries: dict[str, SLOThresholdConfig] = {}
-    slo_raw = raw.get("slo") or {}
+    combined_slo_raw: dict[str, Any] = {}
+
+    slo_path_value = (
+        raw.get("slo_definitions_path")
+        or raw.get("slo_file")
+        or raw.get("slo_path")
+    )
+    if slo_path_value not in (None, "", False):
+        normalized_path = _normalize_runtime_path(slo_path_value, base_dir=base_dir)
+        if normalized_path:
+            slo_path = Path(normalized_path)
+            try:
+                slo_payload = yaml.safe_load(slo_path.read_text(encoding="utf-8")) or {}
+            except FileNotFoundError as exc:  # pragma: no cover - propagujemy z kontekstem
+                raise FileNotFoundError(
+                    f"Nie znaleziono pliku definicji SLO: {slo_path}"
+                ) from exc
+            if not isinstance(slo_payload, Mapping):
+                raise ValueError(
+                    f"Plik definicji SLO {slo_path} musi zawierać mapę z wpisami"
+                )
+            file_slo_raw = (
+                slo_payload.get("slo")
+                or slo_payload.get("slos")
+                or slo_payload.get("definitions")
+                or slo_payload
+            )
+            if not isinstance(file_slo_raw, Mapping):
+                raise ValueError(
+                    f"Sekcja SLO w {slo_path} musi być mapą nazwa -> parametry"
+                )
+            combined_slo_raw.update({str(name): entry for name, entry in file_slo_raw.items()})
+
+    inline_slo_raw = raw.get("slo") or {}
+    if inline_slo_raw not in ({}, None):
+        if not isinstance(inline_slo_raw, Mapping):
+            raise ValueError("Sekcja observability.slo musi być mapą z wpisami SLO")
+        combined_slo_raw.update({str(name): entry for name, entry in inline_slo_raw.items()})
+
+    slo_raw: Mapping[str, Any] = combined_slo_raw
     for name, entry in slo_raw.items():
         if not isinstance(entry, Mapping):
             raise ValueError("Definicja SLO musi być mapą z parametrami")

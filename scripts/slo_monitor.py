@@ -109,7 +109,11 @@ def _build_evaluate_parser(sub: argparse._SubParsersAction) -> argparse.Argument
         help="Oblicz SLO z definicji i pomiarów (Stage6-style).",
         description="Wczytuje definicje SLO (YAML/JSON) i pomiary (JSON), generuje raport JSON (+ opcjonalnie CSV) i podpis HMAC."
     )
-    p.add_argument("--definitions", required=True, help="Plik z definicjami SLO (YAML/JSON)")
+    p.add_argument(
+        "--definitions",
+        default="config/observability/slo.yml",
+        help="Plik z definicjami SLO (YAML/JSON); domyślnie config/observability/slo.yml",
+    )
     p.add_argument("--metrics", required=True, help="Plik z pomiarami metryk (JSON)")
     p.add_argument("--output", help="Ścieżka raportu JSON (domyślnie var/audit/observability/slo_report_*.json)")
     p.add_argument("--output-csv", help="Ścieżka raportu CSV (opcjonalnie)")
