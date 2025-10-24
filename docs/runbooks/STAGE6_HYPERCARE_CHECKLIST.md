@@ -7,13 +7,19 @@ artefakty audytowe.
 
 ## Prerekwizyty
 - Aktualne raporty wejściowe dla Observability (definicje/metyki SLO –
-  repozytoryjny plik `config/observability/slo.yml` oraz artefakt
-  `var/audit/observability/metrics.json` skopiowany z pomiarów Stage6
-  (np. `var/metrics/stage6_measurements.json` wygenerowanego według
-  runbooka Observability) lub dopasowany do własnej lokalizacji),
-  Resilience (plan
+  repozytoryjny plik `config/observability/slo.yml` i plik metryk
+  `var/metrics/stage6_measurements.json` wygenerowany według runbooka
+  Observability), Resilience (plan
   failover, manifesty paczek, polityka) oraz Portfolio
   (alokacje, Market Intel, raporty SLO/Stress Lab).
+- Raport Market Intel wygenerowany do oczekiwanej lokalizacji hypercare:
+  ```bash
+  python scripts/build_market_intel_metrics.py \
+    --environment binance_paper \
+    --governor stage6_core \
+    --output var/market_intel/stage6_core_market_intel.json
+  ```
+  Dostosuj `--environment`/`--governor` do konfiguracji portfela.
 - Szablon konfiguracji hypercare dostępny w `config/stage6/hypercare.yaml`
   (możesz go skopiować i uzupełnić o konkretne ścieżki środowiskowe).
 - Klucze HMAC umieszczone w `secrets/hmac/` i przypisane do komponentów Stage6.
@@ -34,7 +40,7 @@ artefakty audytowe.
        key_id: stage6
    observability:
      definitions: config/observability/slo.yml
-     metrics: var/audit/observability/metrics.json
+     metrics: var/metrics/stage6_measurements.json
      slo:
        json: var/audit/observability/slo_report.json
        csv: var/audit/observability/slo_report.csv
@@ -58,16 +64,16 @@ artefakty audytowe.
        slo_report: var/audit/observability/slo_report.json
        stress_report: var/audit/risk/stress_lab.json
    ```
-2. Przygotuj pomiary SLO dla Observability. Hypercare domyślnie oczekuje
-   pliku `var/audit/observability/metrics.json`. Jeśli runbook Observability
-   udostępnia pomiary jako `var/metrics/stage6_measurements.json`,
-   skopiuj/konwertuj artefakt do lokalizacji audytowej lub zaktualizuj pole
-   `observability.metrics` w konfiguracji hypercare:
+2. Jeżeli nie masz jeszcze świeżych metryk SLO, wykonaj cykl observability,
+   aby zapisać plik `var/metrics/stage6_measurements.json` (patrz
+   runbook Observability):
    ```bash
-   cp var/metrics/stage6_measurements.json var/audit/observability/metrics.json
+   python scripts/run_stage6_observability_cycle.py \
+     --definitions config/observability/slo.yml \
+     --metrics var/metrics/stage6_measurements.json \
+     --slo-json var/audit/observability/slo_report.json \
+     --slo-csv var/audit/observability/slo_report.csv
    ```
-   W przypadku niestandardowej ścieżki zaktualizuj zarówno konfigurację,
-   jak i kroki runbooków.
 3. Uruchom orchestratora Stage6, wskazując przygotowany plik konfiguracyjny
    (domyślnie `config/stage6/hypercare.yaml`):
    ```bash
