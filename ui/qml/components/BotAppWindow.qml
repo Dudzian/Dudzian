@@ -206,6 +206,7 @@ ApplicationWindow {
                         anchors.fill: parent
                         appController: appController
                         strategyController: strategyController
+                        workbenchController: workbenchController
                         riskModel: riskModel
                         riskHistoryModel: riskHistoryModel
                         licenseController: licenseController
@@ -213,14 +214,11 @@ ApplicationWindow {
                 }
 
                 Tab {
-                    title: qsTr("Alerty i decyzje")
+                    title: qsTr("Moduły")
 
-                    DecisionAlertLogPanel {
+                    ModuleBrowser {
                         anchors.fill: parent
-                        alertsModel: alertsModel
-                        alertsFilterModel: alertsFilterModel
-                        decisionModel: decisionLogModel
-                        decisionFilterModel: decisionLogFilterModel
+                        viewsModel: moduleViewsModel
                     }
                 }
             }

@@ -15,6 +15,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QJsonParseError>
 #include <QLoggingCategory>
 #include <QStringList>
 #include <QPoint>
@@ -43,7 +44,10 @@
 #include "utils/PathUtils.hpp"
 #include "license/LicenseActivationController.hpp"
 #include "app/ActivationController.hpp"
+#include "app/UiModuleManager.hpp"
+#include "app/UiModuleViewsModel.hpp"
 #include "app/StrategyConfigController.hpp"
+#include "app/StrategyWorkbenchController.hpp"
 #include "runtime/OfflineRuntimeBridge.hpp"
 #include "security/SecurityAdminController.hpp"
 #include "support/SupportBundleController.hpp"
@@ -183,6 +187,14 @@ Application::Application(QQmlApplicationEngine& engine, QObject* parent)
 {
     m_offlineStatus = tr("Offline daemon: nieaktywny");
     m_activationController = std::make_unique<ActivationController>(this);
+    connect(m_activationController.get(), &ActivationController::errorChanged, this,
+            &Application::handleActivationErrorChanged);
+    connect(m_activationController.get(), &ActivationController::fingerprintChanged, this,
+            &Application::handleActivationFingerprintChanged);
+    connect(m_activationController.get(), &ActivationController::licensesChanged, this,
+            &Application::handleActivationLicensesChanged);
+    connect(m_activationController.get(), &ActivationController::oemLicenseChanged, this,
+            &Application::handleActivationOemLicenseChanged);
 
     // Startowe ustawienia instrumentu z klienta (mogą być nadpisane przez CLI)
     m_instrument = m_client.instrumentConfig();
@@ -207,9 +219,17 @@ Application::Application(QQmlApplicationEngine& engine, QObject* parent)
     m_strategyController->setConfigPath(QDir::current().absoluteFilePath(QStringLiteral("config/core.yaml")));
     m_strategyController->setScriptPath(QDir::current().absoluteFilePath(QStringLiteral("scripts/ui_config_bridge.py")));
 
+    m_workbenchController = std::make_unique<StrategyWorkbenchController>(this);
+    m_workbenchController->setConfigPath(QDir::current().absoluteFilePath(QStringLiteral("config/core.yaml")));
+    m_workbenchController->setScriptPath(QDir::current().absoluteFilePath(QStringLiteral("scripts/ui_config_bridge.py")));
+
     m_supportController = std::make_unique<SupportBundleController>(this);
 
     m_healthController = std::make_unique<HealthStatusController>(this);
+
+    m_moduleManager = std::make_unique<UiModuleManager>(this);
+    m_moduleViewsModel = std::make_unique<UiModuleViewsModel>(this);
+    m_moduleViewsModel->setModuleManager(m_moduleManager.get());
 
     m_decisionLogModel.setParent(this);
     m_decisionLogFilter.setSourceModel(&m_decisionLogModel);
@@ -328,8 +348,10 @@ Application::Application(QQmlApplicationEngine& engine, QObject* parent)
             m_supportController->setScriptPath(QDir(m_repoRoot).absoluteFilePath(QStringLiteral("scripts/export_support_bundle.py")));
         else
             m_supportController->setScriptPath(QDir::current().absoluteFilePath(QStringLiteral("scripts/export_support_bundle.py")));
+        updateSupportBundleMetadata();
     }
 
+    initializeSecurityRefresh();
     exposeToQml();
 
     // Podłącz okno po utworzeniu (dla FrameRateMonitor)
@@ -372,6 +394,7 @@ Application::Application(QQmlApplicationEngine& engine, QObject* parent)
             [this](const QString& status) {
                 m_connectionStatus = status;
                 Q_EMIT connectionStatusChanged();
+                updateSupportBundleMetadata();
             });
 
     connect(&m_client, &TradingClient::performanceGuardUpdated, this,
@@ -394,6 +417,7 @@ Application::Application(QQmlApplicationEngine& engine, QObject* parent)
                                   : QStringLiteral("idle");
         m_connectionStatus = state;
         Q_EMIT connectionStatusChanged();
+        updateSupportBundleMetadata();
     });
 
     // Risk state (jeśli dostępne po stronie serwera)
@@ -512,6 +536,8 @@ void Application::configureParser(QCommandLineParser& parser) const {
                       tr("Ścieżka do decision logu (plik JSONL lub katalog)"), tr("path"), QString()});
     parser.addOption({"decision-log-limit",
                       tr("Limit liczby przechowywanych wpisów decision logu"), tr("count"), QString()});
+    parser.addOption({"ui-module-dir",
+                      tr("Katalog z pluginami UI (można powtórzyć)"), tr("path"), QString()});
     parser.addOption({"ui-settings-path", tr("Ścieżka pliku ustawień UI"), tr("path"), QString()});
     parser.addOption({"disable-ui-settings", tr("Wyłącza zapisywanie konfiguracji UI")});
     parser.addOption({"enable-ui-settings",
@@ -1101,6 +1127,7 @@ bool Application::applyParser(const QCommandLineParser& parser) {
     configureStrategyBridge(parser);
     configureSupportBundle(parser);
     configureDecisionLog(parser);
+    configureUiModules(parser);
 
     // TLS config (MetricsService)
     TelemetryTlsConfig mtls;
@@ -1472,7 +1499,7 @@ void Application::applyRiskHistoryCliOverrides(const QCommandLineParser& parser)
 
 void Application::configureStrategyBridge(const QCommandLineParser& parser)
 {
-    if (!m_strategyController)
+    if (!m_strategyController && !m_workbenchController)
         return;
 
     QString configPath = parser.value("core-config").trimmed();
@@ -1483,8 +1510,12 @@ void Application::configureStrategyBridge(const QCommandLineParser& parser)
     if (configPath.isEmpty())
         configPath = QStringLiteral("config/core.yaml");
     const QString normalizedConfigPath = expandPath(configPath);
-    if (!normalizedConfigPath.isEmpty())
-        m_strategyController->setConfigPath(normalizedConfigPath);
+    if (!normalizedConfigPath.isEmpty()) {
+        if (m_strategyController)
+            m_strategyController->setConfigPath(normalizedConfigPath);
+        if (m_workbenchController)
+            m_workbenchController->setConfigPath(normalizedConfigPath);
+    }
 
     QString pythonExec = parser.value("strategy-config-python").trimmed();
     if (pythonExec.isEmpty()) {
@@ -1493,8 +1524,12 @@ void Application::configureStrategyBridge(const QCommandLineParser& parser)
     }
     if (!pythonExec.isEmpty()) {
         const QString normalizedPython = expandPath(pythonExec);
-        if (!normalizedPython.isEmpty())
-            m_strategyController->setPythonExecutable(normalizedPython);
+        if (!normalizedPython.isEmpty()) {
+            if (m_strategyController)
+                m_strategyController->setPythonExecutable(normalizedPython);
+            if (m_workbenchController)
+                m_workbenchController->setPythonExecutable(normalizedPython);
+        }
     }
 
     QString bridgePath = parser.value("strategy-config-bridge").trimmed();
@@ -1509,13 +1544,23 @@ void Application::configureStrategyBridge(const QCommandLineParser& parser)
             bridgePath = QDir::current().absoluteFilePath(QStringLiteral("scripts/ui_config_bridge.py"));
     }
     const QString normalizedBridge = expandPath(bridgePath);
-    if (!normalizedBridge.isEmpty())
-        m_strategyController->setScriptPath(normalizedBridge);
+    if (!normalizedBridge.isEmpty()) {
+        if (m_strategyController)
+            m_strategyController->setScriptPath(normalizedBridge);
+        if (m_workbenchController)
+            m_workbenchController->setScriptPath(normalizedBridge);
+    }
 
-    if (!m_strategyController->refresh()) {
+    if (m_strategyController && !m_strategyController->refresh()) {
         const QString error = m_strategyController->lastError();
         if (!error.isEmpty())
             qCWarning(lcAppMetrics) << "Mostek konfiguracji strategii zwrócił błąd:" << error;
+    }
+
+    if (m_workbenchController && !m_workbenchController->refreshCatalog()) {
+        const QString error = m_workbenchController->lastError();
+        if (!error.isEmpty())
+            qCWarning(lcAppMetrics) << "Mostek katalogu strategii zwrócił błąd:" << error;
     }
 }
 
@@ -1697,14 +1742,7 @@ void Application::configureSupportBundle(const QCommandLineParser& parser)
     }
     m_supportController->setExtraIncludeSpecs(extraSpecs);
 
-    QVariantMap metadata;
-    metadata.insert(QStringLiteral("origin"), QStringLiteral("desktop_ui"));
-    metadata.insert(QStringLiteral("instrument"), instrumentLabel());
-    metadata.insert(QStringLiteral("exchange"), m_instrument.exchange);
-    metadata.insert(QStringLiteral("symbol"), m_instrument.symbol);
-    metadata.insert(QStringLiteral("connection_status"), m_connectionStatus);
-    metadata.insert(QStringLiteral("app_version"), QCoreApplication::applicationVersion());
-    metadata.insert(QStringLiteral("hostname"), QSysInfo::machineHostName());
+    QVariantMap overrides;
 
     const auto applyMetadata = [&](const QString& rawSpec) {
         const QString trimmed = rawSpec.trimmed();
@@ -1719,34 +1757,102 @@ void Application::configureSupportBundle(const QCommandLineParser& parser)
         const QString value = trimmed.mid(eq + 1).trimmed();
         if (key.isEmpty())
             return;
-        metadata.insert(key, value);
+        overrides.insert(key, value);
     };
 
     for (const QString& spec : metadataEnv)
         applyMetadata(spec);
     for (const QString& spec : metadataCli)
         applyMetadata(spec);
+    m_supportMetadataOverrides = overrides;
+    updateSupportBundleMetadata();
+}
+
+void Application::updateSupportBundleMetadata()
+{
+    if (!m_supportController)
+        return;
+
+    QVariantMap metadata;
+    metadata.insert(QStringLiteral("origin"), QStringLiteral("desktop_ui"));
+    metadata.insert(QStringLiteral("instrument"), instrumentLabel());
+    metadata.insert(QStringLiteral("exchange"), m_instrument.exchange);
+    metadata.insert(QStringLiteral("symbol"), m_instrument.symbol);
+    metadata.insert(QStringLiteral("connection_status"), m_connectionStatus);
+    metadata.insert(QStringLiteral("app_version"), QCoreApplication::applicationVersion());
+    metadata.insert(QStringLiteral("hostname"), QSysInfo::machineHostName());
+
+    for (auto it = m_supportMetadataOverrides.constBegin(); it != m_supportMetadataOverrides.constEnd(); ++it) {
+        const QString key = it.key().trimmed();
+        if (key.isEmpty())
+            continue;
+        metadata.insert(key, it.value());
+    }
 
     m_supportController->setMetadata(metadata);
 }
 
-void Application::configureRegimeThresholds(const QCommandLineParser& parser)
+void Application::configureUiModules(const QCommandLineParser& parser)
 {
-    const QString cliPath = parser.value(QStringLiteral("regime-thresholds")).trimmed();
-    if (!cliPath.isEmpty()) {
-        applyRegimeThresholdPath(cliPath, true);
+    if (!m_moduleManager)
         return;
+
+    m_moduleManager->unloadPlugins();
+
+    const auto normalize = [](const QString& raw) -> QString {
+        const QString trimmed = raw.trimmed();
+        if (trimmed.isEmpty())
+            return {};
+        const QString expanded = expandPath(trimmed);
+        if (!expanded.isEmpty())
+            return QFileInfo(expanded).absoluteFilePath();
+        return QFileInfo(trimmed).absoluteFilePath();
+    };
+
+    QSet<QString> unique;
+    QStringList directories;
+
+    const QStringList cliDirs = parser.values(QStringLiteral("ui-module-dir"));
+    for (const QString& value : cliDirs) {
+        const QString normalized = normalize(value);
+        if (normalized.isEmpty() || unique.contains(normalized))
+            continue;
+        unique.insert(normalized);
+        directories.append(normalized);
     }
 
-    if (const auto envPath = envValue(kRegimeThresholdsEnv); envPath.has_value()) {
-        applyRegimeThresholdPath(envPath->trimmed(), true);
-        return;
+    if (cliDirs.isEmpty()) {
+        if (const auto envDirs = envValue(QByteArrayLiteral("BOT_CORE_UI_MODULE_DIRS")); envDirs.has_value()) {
+            const auto pieces = envDirs->split(QDir::listSeparator(), Qt::SkipEmptyParts);
+            for (const QString& piece : pieces) {
+                const QString normalized = normalize(piece);
+                if (normalized.isEmpty() || unique.contains(normalized))
+                    continue;
+                unique.insert(normalized);
+                directories.append(normalized);
+            }
+        }
     }
 
-    const QString fallback = !m_repoRoot.isEmpty()
-        ? QDir(m_repoRoot).absoluteFilePath(QStringLiteral("config/regime_thresholds.yaml"))
-        : QDir::current().absoluteFilePath(QStringLiteral("config/regime_thresholds.yaml"));
-    applyRegimeThresholdPath(fallback, false);
+    if (directories.isEmpty()) {
+        const QString binaryModules = QDir(QCoreApplication::applicationDirPath()).absoluteFilePath(QStringLiteral("modules"));
+        const QString repoModules = QDir::current().absoluteFilePath(QStringLiteral("ui/modules"));
+        for (const QString& candidate : {binaryModules, repoModules}) {
+            const QString normalized = normalize(candidate);
+            if (normalized.isEmpty() || unique.contains(normalized))
+                continue;
+            unique.insert(normalized);
+            directories.append(normalized);
+        }
+    }
+
+    m_uiModuleDirectories = directories;
+    m_moduleManager->setPluginPaths(directories);
+    if (!directories.isEmpty()) {
+        if (!m_moduleManager->loadPlugins()) {
+            qCWarning(lcAppMetrics) << "Nie wszystkie pluginy UI zostały poprawnie załadowane";
+        }
+    }
 }
 
 void Application::configureDecisionLog(const QCommandLineParser& parser)
@@ -2072,6 +2178,258 @@ void Application::persistUiSettings()
     } else {
         qCInfo(lcAppMetrics) << "Zapisano konfigurację UI do" << m_uiSettingsPath;
     }
+}
+
+void Application::ensureLicenseRefreshTimerConfigured()
+{
+    if (m_licenseRefreshTimerConfigured)
+        return;
+
+    m_licenseRefreshTimer.setTimerType(Qt::VeryCoarseTimer);
+    m_licenseRefreshTimer.setSingleShot(false);
+    m_licenseRefreshTimer.setParent(this);
+    connect(&m_licenseRefreshTimer, &QTimer::timeout, this, &Application::refreshSecurityArtifacts);
+    m_licenseRefreshTimerConfigured = true;
+}
+
+void Application::initializeSecurityRefresh()
+{
+    const QByteArray cacheEnv = qgetenv(kLicenseCachePathEnv.constData());
+    if (!cacheEnv.isEmpty())
+        m_licenseCachePath = expandPath(QString::fromUtf8(cacheEnv));
+    else
+        m_licenseCachePath = QDir::current().absoluteFilePath(QStringLiteral("var/cache/ui_license_snapshot.json"));
+
+    if (!m_licenseCachePath.trimmed().isEmpty()) {
+        QDir dir = QFileInfo(m_licenseCachePath).dir();
+        if (!dir.exists())
+            dir.mkpath(QStringLiteral("."));
+    }
+
+    loadSecurityCache();
+
+    int intervalSeconds = kDefaultLicenseRefreshIntervalSeconds;
+    if (qEnvironmentVariableIsSet(kLicenseRefreshIntervalEnv.constData())) {
+        bool ok = false;
+        const QByteArray raw = qgetenv(kLicenseRefreshIntervalEnv.constData());
+        const int candidate = QString::fromUtf8(raw).toInt(&ok);
+        if (ok)
+            intervalSeconds = std::clamp(candidate, kMinLicenseRefreshIntervalSeconds, kMaxLicenseRefreshIntervalSeconds);
+        else
+            qCWarning(lcAppMetrics) << "Nieprawidłowa wartość" << QString::fromUtf8(raw)
+                                    << "dla" << kLicenseRefreshIntervalEnv;
+    }
+
+    if (intervalSeconds <= 0) {
+        m_licenseRefreshIntervalSeconds = 0;
+        ensureLicenseRefreshTimerConfigured();
+        m_licenseRefreshTimer.stop();
+        m_nextLicenseRefreshUtc = QDateTime();
+        updateSecurityCacheFromControllers();
+        Q_EMIT licenseRefreshScheduleChanged();
+        return;
+    }
+
+    ensureLicenseRefreshTimerConfigured();
+    m_licenseRefreshIntervalSeconds = intervalSeconds;
+    m_licenseRefreshTimer.setInterval(m_licenseRefreshIntervalSeconds * 1000);
+    m_licenseRefreshTimer.start();
+    QTimer::singleShot(0, this, &Application::refreshSecurityArtifacts);
+}
+
+void Application::refreshSecurityArtifacts()
+{
+    if (!m_activationController)
+        return;
+
+    m_lastLicenseRefreshRequestUtc = QDateTime::currentDateTimeUtc();
+    m_activationController->refresh();
+    if (m_licenseRefreshIntervalSeconds > 0)
+        m_nextLicenseRefreshUtc = m_lastLicenseRefreshRequestUtc.addSecs(m_licenseRefreshIntervalSeconds);
+    else
+        m_nextLicenseRefreshUtc = QDateTime();
+    Q_EMIT licenseRefreshScheduleChanged();
+}
+
+void Application::processSecurityArtifactsUpdate()
+{
+    if (!m_activationController)
+        return;
+
+    const bool loadingFromCache = m_loadingSecurityCache;
+    const QString controllerError = m_activationController->lastError();
+    const bool refreshSucceeded = controllerError.isEmpty();
+
+    if (!loadingFromCache)
+        m_lastSecurityError = controllerError;
+    else if (!controllerError.isEmpty())
+        m_lastSecurityError = controllerError;
+
+    if (refreshSucceeded && !loadingFromCache) {
+        m_lastLicenseRefreshUtc = QDateTime::currentDateTimeUtc();
+        if (m_licenseRefreshIntervalSeconds > 0) {
+            if (m_lastLicenseRefreshRequestUtc.isValid())
+                m_nextLicenseRefreshUtc =
+                    m_lastLicenseRefreshRequestUtc.addSecs(m_licenseRefreshIntervalSeconds);
+            else
+                m_nextLicenseRefreshUtc = m_lastLicenseRefreshUtc.addSecs(m_licenseRefreshIntervalSeconds);
+        } else {
+            m_nextLicenseRefreshUtc = QDateTime();
+        }
+    }
+
+    updateSecurityCacheFromControllers();
+
+    if (refreshSucceeded && !loadingFromCache) {
+        clearSecurityAlert(QStringLiteral("security:license-refresh"));
+        Q_EMIT licenseRefreshScheduleChanged();
+    }
+}
+
+void Application::updateSecurityCacheFromControllers()
+{
+    QVariantMap cache;
+    if (m_activationController) {
+        cache.insert(QStringLiteral("fingerprint"), m_activationController->fingerprint());
+        cache.insert(QStringLiteral("oemLicense"), m_activationController->oemLicense());
+        cache.insert(QStringLiteral("licenseHistory"), QVariant::fromValue(m_activationController->licenses()));
+        if (!m_lastSecurityError.isEmpty())
+            cache.insert(QStringLiteral("lastError"), m_lastSecurityError);
+    }
+    cache.insert(QStringLiteral("refreshIntervalSeconds"), m_licenseRefreshIntervalSeconds);
+    cache.insert(QStringLiteral("refreshActive"), m_licenseRefreshTimer.isActive());
+    if (m_lastLicenseRefreshRequestUtc.isValid())
+        cache.insert(QStringLiteral("lastRequestIso"), m_lastLicenseRefreshRequestUtc.toString(Qt::ISODateWithMs));
+    if (m_lastLicenseRefreshUtc.isValid())
+        cache.insert(QStringLiteral("lastRefreshIso"), m_lastLicenseRefreshUtc.toString(Qt::ISODateWithMs));
+    if (m_nextLicenseRefreshUtc.isValid())
+        cache.insert(QStringLiteral("nextRefreshIso"), m_nextLicenseRefreshUtc.toString(Qt::ISODateWithMs));
+
+    if (cache == m_securityCache)
+        return;
+
+    m_securityCache = cache;
+    Q_EMIT securityCacheChanged();
+    persistSecurityCache();
+}
+
+void Application::loadSecurityCache()
+{
+    if (m_licenseCachePath.trimmed().isEmpty())
+        return;
+
+    QFile file(m_licenseCachePath);
+    if (!file.exists())
+        return;
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        qCWarning(lcAppMetrics) << "Nie udało się odczytać cache licencji" << m_licenseCachePath
+                                << file.errorString();
+        return;
+    }
+
+    const QByteArray data = file.readAll();
+    file.close();
+
+    QJsonParseError parseError{};
+    const QJsonDocument document = QJsonDocument::fromJson(data, &parseError);
+    if (parseError.error != QJsonParseError::NoError || !document.isObject()) {
+        qCWarning(lcAppMetrics) << "Cache licencji ma niepoprawny format" << m_licenseCachePath
+                                << parseError.errorString();
+        return;
+    }
+
+    m_securityCache = document.object().toVariantMap();
+
+    m_lastSecurityError = m_securityCache.value(QStringLiteral("lastError")).toString();
+
+    if (m_securityCache.contains(QStringLiteral("refreshIntervalSeconds"))) {
+        const int cachedInterval = m_securityCache.value(QStringLiteral("refreshIntervalSeconds")).toInt();
+        if (cachedInterval > 0)
+            m_licenseRefreshIntervalSeconds = cachedInterval;
+    }
+
+    const bool cachedActive = m_securityCache.value(QStringLiteral("refreshActive")).toBool();
+
+    const QString lastRefreshIso = m_securityCache.value(QStringLiteral("lastRefreshIso")).toString();
+    if (!lastRefreshIso.isEmpty()) {
+        m_lastLicenseRefreshUtc = QDateTime::fromString(lastRefreshIso, Qt::ISODateWithMs);
+        if (!m_lastLicenseRefreshUtc.isValid())
+            m_lastLicenseRefreshUtc = QDateTime::fromString(lastRefreshIso, Qt::ISODate);
+    }
+    const QString lastRequestIso = m_securityCache.value(QStringLiteral("lastRequestIso")).toString();
+    if (!lastRequestIso.isEmpty()) {
+        m_lastLicenseRefreshRequestUtc = QDateTime::fromString(lastRequestIso, Qt::ISODateWithMs);
+        if (!m_lastLicenseRefreshRequestUtc.isValid())
+            m_lastLicenseRefreshRequestUtc = QDateTime::fromString(lastRequestIso, Qt::ISODate);
+    }
+    const QString nextRefreshIso = m_securityCache.value(QStringLiteral("nextRefreshIso")).toString();
+    if (!nextRefreshIso.isEmpty()) {
+        m_nextLicenseRefreshUtc = QDateTime::fromString(nextRefreshIso, Qt::ISODateWithMs);
+        if (!m_nextLicenseRefreshUtc.isValid())
+            m_nextLicenseRefreshUtc = QDateTime::fromString(nextRefreshIso, Qt::ISODate);
+    }
+
+    if (cachedActive && m_licenseRefreshIntervalSeconds > 0) {
+        ensureLicenseRefreshTimerConfigured();
+        m_licenseRefreshTimer.setInterval(m_licenseRefreshIntervalSeconds * 1000);
+        if (!m_licenseRefreshTimer.isActive())
+            m_licenseRefreshTimer.start();
+    }
+
+    if (m_activationController) {
+        const QVariantMap fingerprint = m_securityCache.value(QStringLiteral("fingerprint")).toMap();
+        const QVariantMap oemLicense = m_securityCache.value(QStringLiteral("oemLicense")).toMap();
+        const QVariantList history = m_securityCache.value(QStringLiteral("licenseHistory")).toList();
+        m_loadingSecurityCache = true;
+        const auto guard = qScopeGuard([this]() { m_loadingSecurityCache = false; });
+        m_activationController->applyCachedState(fingerprint, oemLicense, history);
+    }
+
+    Q_EMIT securityCacheChanged();
+    Q_EMIT licenseRefreshScheduleChanged();
+}
+
+void Application::persistSecurityCache()
+{
+    if (m_licenseCachePath.trimmed().isEmpty())
+        return;
+
+    QFileInfo info(m_licenseCachePath);
+    QDir dir = info.dir();
+    if (!dir.exists() && !dir.mkpath(QStringLiteral("."))) {
+        qCWarning(lcAppMetrics) << "Nie udało się utworzyć katalogu cache licencji" << dir.absolutePath();
+        return;
+    }
+
+    QSaveFile file(m_licenseCachePath);
+    file.setDirectWriteFallback(true);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        qCWarning(lcAppMetrics) << "Nie udało się zapisać cache licencji" << m_licenseCachePath
+                                << file.errorString();
+        return;
+    }
+
+    const QJsonObject object = QJsonObject::fromVariantMap(m_securityCache);
+    const QByteArray payload = QJsonDocument(object).toJson(QJsonDocument::Compact);
+    if (file.write(payload) != payload.size()) {
+        qCWarning(lcAppMetrics) << "Nie udało się zapisać pełnego cache licencji" << m_licenseCachePath;
+        return;
+    }
+    if (!file.commit())
+        qCWarning(lcAppMetrics) << "Nie udało się zatwierdzić cache licencji" << m_licenseCachePath;
+}
+
+void Application::raiseSecurityAlert(const QString& id,
+                                     AlertsModel::Severity severity,
+                                     const QString& title,
+                                     const QString& description)
+{
+    m_alertsModel.raiseAlert(id, title, description, severity, true);
+}
+
+void Application::clearSecurityAlert(const QString& id)
+{
+    m_alertsModel.clearAlert(id);
 }
 
 QJsonObject Application::buildUiSettingsPayload() const
@@ -2508,6 +2866,7 @@ void Application::handleOfflineStatusChanged(const QString& status)
         if (m_connectionStatus != status) {
             m_connectionStatus = status;
             Q_EMIT connectionStatusChanged();
+            updateSupportBundleMetadata();
         }
     }
 }
@@ -2518,6 +2877,41 @@ void Application::handleOfflineAutomationChanged(bool running)
         return;
     m_offlineAutomationRunning = running;
     Q_EMIT offlineAutomationRunningChanged(running);
+}
+
+void Application::handleActivationErrorChanged()
+{
+    if (!m_activationController)
+        return;
+
+    const QString error = m_activationController->lastError();
+
+    if (!error.isEmpty() || !m_lastSecurityError.isEmpty())
+        processSecurityArtifactsUpdate();
+    if (error.isEmpty()) {
+        clearSecurityAlert(QStringLiteral("security:license-refresh"));
+        return;
+    }
+
+    raiseSecurityAlert(QStringLiteral("security:license-refresh"),
+                       AlertsModel::Critical,
+                       tr("Błąd aktualizacji licencji"),
+                       error);
+}
+
+void Application::handleActivationFingerprintChanged()
+{
+    processSecurityArtifactsUpdate();
+}
+
+void Application::handleActivationLicensesChanged()
+{
+    processSecurityArtifactsUpdate();
+}
+
+void Application::handleActivationOemLicenseChanged()
+{
+    processSecurityArtifactsUpdate();
 }
 
 void Application::startOfflineAutomation()
@@ -2554,6 +2948,32 @@ bool Application::reloadDecisionLog()
     return m_decisionLogModel.reload();
 }
 
+QVariantMap Application::licenseRefreshSchedule() const
+{
+    QVariantMap schedule;
+    schedule.insert(QStringLiteral("intervalSeconds"), m_licenseRefreshIntervalSeconds);
+    schedule.insert(QStringLiteral("active"), m_licenseRefreshTimer.isActive());
+    schedule.insert(QStringLiteral("lastRequestAt"),
+                    m_lastLicenseRefreshRequestUtc.isValid()
+                        ? m_lastLicenseRefreshRequestUtc.toString(Qt::ISODateWithMs)
+                        : QString());
+    schedule.insert(QStringLiteral("lastCompletedAt"),
+                    m_lastLicenseRefreshUtc.isValid()
+                        ? m_lastLicenseRefreshUtc.toString(Qt::ISODateWithMs)
+                        : QString());
+    schedule.insert(QStringLiteral("nextRefreshDueAt"),
+                    m_nextLicenseRefreshUtc.isValid()
+                        ? m_nextLicenseRefreshUtc.toString(Qt::ISODateWithMs)
+                        : QString());
+    double remainingSeconds = -1.0;
+    if (m_nextLicenseRefreshUtc.isValid()) {
+        const qint64 remainingMs = QDateTime::currentDateTimeUtc().msecsTo(m_nextLicenseRefreshUtc);
+        remainingSeconds = remainingMs > 0 ? static_cast<double>(remainingMs) / 1000.0 : 0.0;
+    }
+    schedule.insert(QStringLiteral("nextRefreshInSeconds"), remainingSeconds);
+    return schedule;
+}
+
 void Application::handleRiskHistorySnapshotRecorded(const QDateTime& timestamp)
 {
     if (m_loadingUiSettings)
@@ -2577,10 +2997,12 @@ void Application::exposeToQml() {
     m_engine.rootContext()->setContextProperty(QStringLiteral("securityController"), m_securityController.get());
     m_engine.rootContext()->setContextProperty(QStringLiteral("reportController"), m_reportController.get());
     m_engine.rootContext()->setContextProperty(QStringLiteral("strategyController"), m_strategyController.get());
+    m_engine.rootContext()->setContextProperty(QStringLiteral("workbenchController"), m_workbenchController.get());
     m_engine.rootContext()->setContextProperty(QStringLiteral("supportController"), m_supportController.get());
     m_engine.rootContext()->setContextProperty(QStringLiteral("healthController"), m_healthController.get());
     m_engine.rootContext()->setContextProperty(QStringLiteral("decisionLogModel"), &m_decisionLogModel);
-    m_engine.rootContext()->setContextProperty(QStringLiteral("decisionLogFilterModel"), &m_decisionLogFilter);
+    m_engine.rootContext()->setContextProperty(QStringLiteral("moduleManager"), m_moduleManager.get());
+    m_engine.rootContext()->setContextProperty(QStringLiteral("moduleViewsModel"), m_moduleViewsModel.get());
 }
 
 QObject* Application::activationController() const
@@ -2598,6 +3020,11 @@ QObject* Application::strategyController() const
     return m_strategyController.get();
 }
 
+QObject* Application::workbenchController() const
+{
+    return m_workbenchController.get();
+}
+
 QObject* Application::supportController() const
 {
     return m_supportController.get();
@@ -2611,6 +3038,31 @@ QObject* Application::healthController() const
 QObject* Application::decisionLogModel() const
 {
     return const_cast<DecisionLogModel*>(&m_decisionLogModel);
+}
+
+QObject* Application::moduleManager() const
+{
+    return m_moduleManager.get();
+}
+
+QObject* Application::moduleViewsModel() const
+{
+    return m_moduleViewsModel.get();
+}
+
+void Application::setModuleManagerForTesting(std::unique_ptr<UiModuleManager> manager)
+{
+    if (manager)
+        manager->setParent(this);
+
+    m_moduleManager = std::move(manager);
+    if (m_moduleViewsModel)
+        m_moduleViewsModel->setModuleManager(m_moduleManager.get());
+
+    if (m_started)
+        m_engine.rootContext()->setContextProperty(QStringLiteral("moduleManager"), m_moduleManager.get());
+    if (m_started)
+        m_engine.rootContext()->setContextProperty(QStringLiteral("moduleViewsModel"), m_moduleViewsModel.get());
 }
 
 void Application::ensureFrameMonitor() {
@@ -2792,6 +3244,7 @@ bool Application::updateInstrument(const QString& exchange,
     m_instrument = config;
     if (m_offlineBridge)
         m_offlineBridge->setInstrument(m_instrument);
+    updateSupportBundleMetadata();
     Q_EMIT instrumentChanged();
 
     if (wasStreaming && !m_offlineMode)
@@ -3117,10 +3570,7 @@ bool Application::setRegimeTimelineMaximumSnapshots(int maximumSnapshots)
     if (m_regimeTimelineMaximumSnapshots == maximumSnapshots)
         return true;
 
-    m_regimeTimelineMaximumSnapshots = maximumSnapshots;
     m_regimeTimelineModel.setMaximumSnapshots(maximumSnapshots);
-    Q_EMIT regimeTimelineMaximumSnapshotsChanged();
-    scheduleUiSettingsPersist();
     return true;
 }
 
@@ -3179,7 +3629,6 @@ void Application::applyTradingAuthEnvironmentOverrides(const QCommandLineParser&
                                                        bool cliScopesProvided,
                                                        QString& tradingToken,
                                                        QString& tradingTokenFile)
-                                                       bool cliScopesProvided)
 {
     Q_UNUSED(parser);
 
@@ -3212,8 +3661,6 @@ void Application::applyTradingAuthEnvironmentOverrides(const QCommandLineParser&
             if (!tokenFromFile.isEmpty()) {
                 tradingToken = tokenFromFile;
                 tradingTokenFile = expandedPath;
-            const QString tokenFromFile = readTokenFile(envTokenFile->trimmed(), QStringLiteral("TradingService"));
-            if (!tokenFromFile.isEmpty()) {
                 m_tradingAuthToken = tokenFromFile;
                 applied = true;
             }

@@ -60,98 +60,6 @@ void DecisionLogFilterProxyModel::setRegimeFilter(const QString& regime)
     Q_EMIT filterChanged();
 }
 
-void DecisionLogFilterProxyModel::setEnvironmentFilter(const QString& environment)
-{
-    if (m_environmentFilter == environment) {
-        return;
-    }
-    m_environmentFilter = environment;
-    invalidateFilter();
-    Q_EMIT filterChanged();
-}
-
-void DecisionLogFilterProxyModel::setPortfolioFilter(const QString& portfolio)
-{
-    if (m_portfolioFilter == portfolio) {
-        return;
-    }
-    m_portfolioFilter = portfolio;
-    invalidateFilter();
-    Q_EMIT filterChanged();
-}
-
-void DecisionLogFilterProxyModel::setRiskProfileFilter(const QString& riskProfile)
-{
-    if (m_riskProfileFilter == riskProfile) {
-        return;
-    }
-    m_riskProfileFilter = riskProfile;
-    invalidateFilter();
-    Q_EMIT filterChanged();
-}
-
-void DecisionLogFilterProxyModel::setScheduleFilter(const QString& schedule)
-{
-    if (m_scheduleFilter == schedule) {
-        return;
-    }
-    m_scheduleFilter = schedule;
-    invalidateFilter();
-    Q_EMIT filterChanged();
-}
-
-void DecisionLogFilterProxyModel::setSymbolFilter(const QString& symbol)
-{
-    if (m_symbolFilter == symbol) {
-        return;
-    }
-    m_symbolFilter = symbol;
-    invalidateFilter();
-    Q_EMIT filterChanged();
-}
-
-void DecisionLogFilterProxyModel::setStartTimeFilter(const QDateTime& value)
-{
-    QDateTime normalized = value.isValid() ? value.toUTC() : QDateTime();
-    bool changed = (m_startTimeFilter != normalized);
-    if (normalized.isValid() && m_endTimeFilter.isValid() && normalized > m_endTimeFilter) {
-        m_endTimeFilter = normalized;
-        changed = true;
-    }
-    if (!changed) {
-        return;
-    }
-    m_startTimeFilter = normalized;
-    invalidateFilter();
-    Q_EMIT filterChanged();
-}
-
-void DecisionLogFilterProxyModel::setEndTimeFilter(const QDateTime& value)
-{
-    QDateTime normalized = value.isValid() ? value.toUTC() : QDateTime();
-    bool changed = (m_endTimeFilter != normalized);
-    if (normalized.isValid() && m_startTimeFilter.isValid() && normalized < m_startTimeFilter) {
-        m_startTimeFilter = normalized;
-        changed = true;
-    }
-    if (!changed) {
-        return;
-    }
-    m_endTimeFilter = normalized;
-    invalidateFilter();
-    Q_EMIT filterChanged();
-}
-
-void DecisionLogFilterProxyModel::clearStartTimeFilter()
-{
-    setStartTimeFilter(QDateTime());
-}
-
-void DecisionLogFilterProxyModel::clearEndTimeFilter()
-{
-    setEndTimeFilter(QDateTime());
-}
-
 bool DecisionLogFilterProxyModel::exportFilteredToCsv(const QUrl& destination) const
 {
     if (!destination.isLocalFile()) {
@@ -222,21 +130,6 @@ bool DecisionLogFilterProxyModel::filterAcceptsRow(int sourceRow, const QModelIn
         return false;
     }
 
-    const bool hasTimeConstraint = m_startTimeFilter.isValid() || m_endTimeFilter.isValid();
-    QDateTime timestampUtc;
-    if (hasTimeConstraint) {
-        timestampUtc = sourceModel()->data(idx, DecisionLogModel::TimestampRole).toDateTime().toUTC();
-        if (!timestampUtc.isValid()) {
-            return false;
-        }
-        if (m_startTimeFilter.isValid() && timestampUtc < m_startTimeFilter) {
-            return false;
-        }
-        if (m_endTimeFilter.isValid() && timestampUtc > m_endTimeFilter) {
-            return false;
-        }
-    }
-
     if (!m_searchText.isEmpty()) {
         const QString haystack = (sourceModel()->data(idx, DecisionLogModel::EventRole).toString() + ' '
                                   + sourceModel()->data(idx, DecisionLogModel::StrategyRole).toString() + ' '
@@ -262,36 +155,6 @@ bool DecisionLogFilterProxyModel::filterAcceptsRow(int sourceRow, const QModelIn
 
     if (!m_regimeFilter.isEmpty()) {
         if (!sourceModel()->data(idx, DecisionLogModel::TelemetryNamespaceRole).toString().contains(m_regimeFilter, Qt::CaseInsensitive)) {
-            return false;
-        }
-    }
-
-    if (!m_environmentFilter.isEmpty()) {
-        if (!sourceModel()->data(idx, DecisionLogModel::EnvironmentRole).toString().contains(m_environmentFilter, Qt::CaseInsensitive)) {
-            return false;
-        }
-    }
-
-    if (!m_portfolioFilter.isEmpty()) {
-        if (!sourceModel()->data(idx, DecisionLogModel::PortfolioRole).toString().contains(m_portfolioFilter, Qt::CaseInsensitive)) {
-            return false;
-        }
-    }
-
-    if (!m_riskProfileFilter.isEmpty()) {
-        if (!sourceModel()->data(idx, DecisionLogModel::RiskProfileRole).toString().contains(m_riskProfileFilter, Qt::CaseInsensitive)) {
-            return false;
-        }
-    }
-
-    if (!m_scheduleFilter.isEmpty()) {
-        if (!sourceModel()->data(idx, DecisionLogModel::ScheduleRole).toString().contains(m_scheduleFilter, Qt::CaseInsensitive)) {
-            return false;
-        }
-    }
-
-    if (!m_symbolFilter.isEmpty()) {
-        if (!sourceModel()->data(idx, DecisionLogModel::SymbolRole).toString().contains(m_symbolFilter, Qt::CaseInsensitive)) {
             return false;
         }
     }
