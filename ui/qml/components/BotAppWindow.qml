@@ -208,6 +208,15 @@ ApplicationWindow {
                         licenseController: licenseController
                     }
                 }
+
+                Tab {
+                    title: qsTr("Moduły")
+
+                    ModuleBrowser {
+                        anchors.fill: parent
+                        viewsModel: moduleViewsModel
+                    }
+                }
             }
         }
     }

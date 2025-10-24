@@ -22,6 +22,37 @@ cmake --build ui/build
 
 Artefakt `bot_trading_shell` znajduje się w `ui/build/bot_trading_shell`.
 
+## Moduły UI i pluginy
+
+Powłoka udostępnia menedżer modułów (`UiModuleManager`), który ładuje pluginy QML/C++
+z katalogów wskazanych flagą `--ui-module-dir` (można przekazać wiele ścieżek) lub
+zmienną środowiskową `BOT_CORE_UI_MODULE_DIRS` (separator zgodny z `QDir::listSeparator`).
+Domyślnie skanowane są katalogi `modules/` w folderze binarnym oraz repozytoryjne
+`ui/modules`. Każdy moduł może rejestrować widoki QML (identyfikator, etykieta,
+ścieżka `QUrl`) oraz serwisy dostępne z QML-a. Menedżer jest wystawiony do kontekstu
+QML jako `moduleManager`, a testy `ui/tests/UiModuleManagerTest.cpp` weryfikują rejestrację
+widoków i serwisów.
+
+Widoki zarejestrowane przez pluginy są prezentowane w zakładce „Moduły”
+(`ModuleBrowser.qml`) dostępnej z głównego okna (`BotAppWindow.qml`). Lista pozwala
+wyszukiwać widoki po nazwie, identyfikatorze, module oraz metadanych, filtrować je po
+kategorii, podglądać deklarowane metadane i ładować pliki QML źródłowe w ramach
+aplikacji. Model `UiModuleViewsModel` udostępnia API do wyszukiwania widoków i
+kategorii wykorzystywane przez interfejs.【F:ui/src/app/UiModuleViewsModel.cpp†L64-L147】【F:ui/qml/components/ModuleBrowser.qml†L1-L409】
+
+Panel modułów wyświetla również katalogi skanowane przez menedżer oraz przycisk
+„Przeładuj moduły”, który ponownie ładuje wszystkie pluginy z aktualnych ścieżek.
+Po każdym ładowaniu `UiModuleManager` udostępnia raport (liczbę załadowanych
+pluginów, widoków, pominiętych ścieżek i błędów), który `Application` przekazuje do
+QML-a przez sygnał `uiModulesReloaded`. Zakładka prezentuje te informacje w sekcjach
+„Załadowane pluginy”, „Błędy pluginów”, „Pominięte pliki” i „Brakujące ścieżki”,
+dzięki czemu operator natychmiast widzi źródło problemów z modułami. Lista
+katalogów i metoda przeładowania są dostępne w QML-u przez
+`appController.uiModuleDirectories` oraz `appController.reloadUiModules()`, więc inne
+komponenty mogą reagować na zmiany katalogów i ręczne odświeżanie. Testy
+`ApplicationUiModulesTest` obejmują zarówno konfigurację katalogów, jak i
+przeładowanie pluginów UI.【F:ui/src/app/Application.cpp†L1660-L1726】【F:ui/tests/ApplicationUiModulesTest.cpp†L15-L147】
+
 ## Uruchomienie ze stubem gRPC
 
 W pierwszym terminalu uruchom stub z wieloassetowym datasetem i pętlą strumieniową:
@@ -149,6 +180,22 @@ ui/build/bot_trading_shell \
 Analogiczne wartości mogą pochodzić ze zmiennych środowiskowych
 `BOT_CORE_UI_CORE_CONFIG_PATH`, `BOT_CORE_UI_STRATEGY_PYTHON` oraz
 `BOT_CORE_UI_STRATEGY_BRIDGE`.
+
+## Pakowanie desktopowe
+
+Skrypt `scripts/packaging/qt_bundle.py` automatyzuje konfigurację CMake, build oraz
+tworzenie archiwów (`.zip` na Windows, `.tar.gz` na Linux/macOS). Przykład:
+
+```bash
+python scripts/packaging/qt_bundle.py \
+  --platform auto \
+  --build-dir ui/build-release \
+  --install-dir ui/install-release \
+  --artifact-dir artifacts/ui/linux
+```
+
+Workflow GitHub Actions `ui-packaging` uruchamia pakowanie dla `ubuntu-latest`,
+`windows-latest` i `macos-latest`, publikując artefakty w katalogu `artifacts/`.
 
 ## Pakiet wsparcia i eksport logów
 

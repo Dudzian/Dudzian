@@ -42,6 +42,8 @@
 #include "utils/PathUtils.hpp"
 #include "license/LicenseActivationController.hpp"
 #include "app/ActivationController.hpp"
+#include "app/UiModuleManager.hpp"
+#include "app/UiModuleViewsModel.hpp"
 #include "app/StrategyConfigController.hpp"
 #include "runtime/OfflineRuntimeBridge.hpp"
 #include "security/SecurityAdminController.hpp"
@@ -207,6 +209,10 @@ Application::Application(QQmlApplicationEngine& engine, QObject* parent)
     m_supportController = std::make_unique<SupportBundleController>(this);
 
     m_healthController = std::make_unique<HealthStatusController>(this);
+
+    m_moduleManager = std::make_unique<UiModuleManager>(this);
+    m_moduleViewsModel = std::make_unique<UiModuleViewsModel>(this);
+    m_moduleViewsModel->setModuleManager(m_moduleManager.get());
 
     m_decisionLogModel.setParent(this);
 
@@ -433,6 +439,8 @@ void Application::configureParser(QCommandLineParser& parser) const {
                       tr("Ścieżka do decision logu (plik JSONL lub katalog)"), tr("path"), QString()});
     parser.addOption({"decision-log-limit",
                       tr("Limit liczby przechowywanych wpisów decision logu"), tr("count"), QString()});
+    parser.addOption({"ui-module-dir",
+                      tr("Katalog z pluginami UI (można powtórzyć)"), tr("path"), QString()});
     parser.addOption({"ui-settings-path", tr("Ścieżka pliku ustawień UI"), tr("path"), QString()});
     parser.addOption({"disable-ui-settings", tr("Wyłącza zapisywanie konfiguracji UI")});
     parser.addOption({"enable-ui-settings",
@@ -995,6 +1003,7 @@ bool Application::applyParser(const QCommandLineParser& parser) {
     configureStrategyBridge(parser);
     configureSupportBundle(parser);
     configureDecisionLog(parser);
+    configureUiModules(parser);
 
     // TLS config (MetricsService)
     TelemetryTlsConfig mtls;
@@ -1622,6 +1631,90 @@ void Application::configureSupportBundle(const QCommandLineParser& parser)
         applyMetadata(spec);
 
     m_supportController->setMetadata(metadata);
+}
+
+void Application::configureUiModules(const QCommandLineParser& parser)
+{
+    if (!m_moduleManager)
+        return;
+
+    m_moduleManager->unloadPlugins();
+
+    const auto normalize = [](const QString& raw) -> QString {
+        const QString trimmed = raw.trimmed();
+        if (trimmed.isEmpty())
+            return {};
+        const QString expanded = expandPath(trimmed);
+        if (!expanded.isEmpty())
+            return QFileInfo(expanded).absoluteFilePath();
+        return QFileInfo(trimmed).absoluteFilePath();
+    };
+
+    QSet<QString> unique;
+    QStringList directories;
+
+    const QStringList cliDirs = parser.values(QStringLiteral("ui-module-dir"));
+    for (const QString& value : cliDirs) {
+        const QString normalized = normalize(value);
+        if (normalized.isEmpty() || unique.contains(normalized))
+            continue;
+        unique.insert(normalized);
+        directories.append(normalized);
+    }
+
+    if (cliDirs.isEmpty()) {
+        if (const auto envDirs = envValue(QByteArrayLiteral("BOT_CORE_UI_MODULE_DIRS")); envDirs.has_value()) {
+            const auto pieces = envDirs->split(QDir::listSeparator(), Qt::SkipEmptyParts);
+            for (const QString& piece : pieces) {
+                const QString normalized = normalize(piece);
+                if (normalized.isEmpty() || unique.contains(normalized))
+                    continue;
+                unique.insert(normalized);
+                directories.append(normalized);
+            }
+        }
+    }
+
+    if (directories.isEmpty()) {
+        const QString binaryModules = QDir(QCoreApplication::applicationDirPath()).absoluteFilePath(QStringLiteral("modules"));
+        const QString repoModules = QDir::current().absoluteFilePath(QStringLiteral("ui/modules"));
+        for (const QString& candidate : {binaryModules, repoModules}) {
+            const QString normalized = normalize(candidate);
+            if (normalized.isEmpty() || unique.contains(normalized))
+                continue;
+            unique.insert(normalized);
+            directories.append(normalized);
+        }
+    }
+
+    m_uiModuleDirectories = directories;
+    m_moduleManager->setPluginPaths(directories);
+    emit uiModuleDirectoriesChanged(m_uiModuleDirectories);
+    if (!directories.isEmpty()) {
+        if (!m_moduleManager->loadPlugins()) {
+            qCWarning(lcAppMetrics) << "Nie wszystkie pluginy UI zostały poprawnie załadowane";
+        }
+    }
+}
+
+bool Application::reloadUiModules()
+{
+    if (!m_moduleManager) {
+        QVariantMap report;
+        report.insert(QStringLiteral("requestedPaths"), m_uiModuleDirectories);
+        emit uiModulesReloaded(false, report);
+        return false;
+    }
+
+    m_moduleManager->unloadPlugins();
+
+    m_moduleManager->setPluginPaths(m_uiModuleDirectories);
+    const bool success = m_moduleManager->loadPlugins();
+    if (!success)
+        qCWarning(lcAppMetrics) << "Nie wszystkie pluginy UI zostały poprawnie załadowane podczas przeładowywania";
+
+    emit uiModulesReloaded(success, m_moduleManager->lastLoadReport());
+    return success;
 }
 
 void Application::configureDecisionLog(const QCommandLineParser& parser)
@@ -2433,6 +2526,8 @@ void Application::exposeToQml() {
     m_engine.rootContext()->setContextProperty(QStringLiteral("supportController"), m_supportController.get());
     m_engine.rootContext()->setContextProperty(QStringLiteral("healthController"), m_healthController.get());
     m_engine.rootContext()->setContextProperty(QStringLiteral("decisionLogModel"), &m_decisionLogModel);
+    m_engine.rootContext()->setContextProperty(QStringLiteral("moduleManager"), m_moduleManager.get());
+    m_engine.rootContext()->setContextProperty(QStringLiteral("moduleViewsModel"), m_moduleViewsModel.get());
 }
 
 QObject* Application::activationController() const
@@ -2463,6 +2558,31 @@ QObject* Application::healthController() const
 QObject* Application::decisionLogModel() const
 {
     return const_cast<DecisionLogModel*>(&m_decisionLogModel);
+}
+
+QObject* Application::moduleManager() const
+{
+    return m_moduleManager.get();
+}
+
+QObject* Application::moduleViewsModel() const
+{
+    return m_moduleViewsModel.get();
+}
+
+void Application::setModuleManagerForTesting(std::unique_ptr<UiModuleManager> manager)
+{
+    if (manager)
+        manager->setParent(this);
+
+    m_moduleManager = std::move(manager);
+    if (m_moduleViewsModel)
+        m_moduleViewsModel->setModuleManager(m_moduleManager.get());
+
+    if (m_started)
+        m_engine.rootContext()->setContextProperty(QStringLiteral("moduleManager"), m_moduleManager.get());
+    if (m_started)
+        m_engine.rootContext()->setContextProperty(QStringLiteral("moduleViewsModel"), m_moduleViewsModel.get());
 }
 
 void Application::ensureFrameMonitor() {
