@@ -18,5 +18,9 @@ class BalancedProfile(StaticRiskProfile):
     _max_position_pct: float = 0.05
     _target_volatility: float = 0.11
     _stop_loss_atr_multiple: float = 1.5
+    min_sortino_ratio: float = 1.2
+    min_omega_ratio: float = 1.1
+    max_risk_of_ruin_pct: float = 7.5
+    min_hit_ratio_pct: float = 50.0
 
 __all__ = ["BalancedProfile"]

@@ -3562,13 +3562,8 @@ def show_strategy_catalog(args: argparse.Namespace) -> int:
         blocked_signal_limits: dict[str, list[str]] = {}
         blocked_initial_limit_capabilities: dict[str, str] = {}
         blocked_signal_limit_capabilities: dict[str, str] = {}
-        blocked_initial_limit_reasons: dict[str, str] = {}
-        blocked_signal_limit_reasons: dict[str, str] = {}
         blocked_suspensions: list[dict[str, object]] = []
         blocked_suspension_capabilities: dict[str, str] = {}
-        blocked_capability_reasons: dict[str, str] = {}
-        blocked_schedule_reasons: dict[str, str] = {}
-        blocked_suspension_reasons: dict[str, str] = {}
 
         if plan_summary:
             blocked_schedules = [
@@ -3642,42 +3637,13 @@ def show_strategy_catalog(args: argparse.Namespace) -> int:
                 payload["blocked_strategies"] = blocked_strategies
             if blocked_capabilities:
                 payload["blocked_capabilities"] = blocked_capabilities
-            blocked_capability_reasons = {
-                str(strategy): str(reason)
-                for strategy, reason in plan_summary.get(
-                    "blocked_capability_reasons", {}
-                ).items()
-                if str(strategy).strip() and str(reason).strip()
-            }
-            if blocked_capability_reasons:
-                payload["blocked_capability_reasons"] = blocked_capability_reasons
             if blocked_schedule_capabilities:
                 payload["blocked_schedule_capabilities"] = blocked_schedule_capabilities
-            blocked_schedule_reasons = {
-                str(schedule): str(reason)
-                for schedule, reason in plan_summary.get(
-                    "blocked_schedule_capability_reasons", {}
-                ).items()
-                if str(schedule).strip() and str(reason).strip()
-            }
-            if blocked_schedule_reasons:
-                payload["blocked_schedule_capability_reasons"] = blocked_schedule_reasons
             if blocked_initial_limits:
                 payload["blocked_initial_signal_limits"] = blocked_initial_limits
             if blocked_initial_limit_capabilities:
                 payload["blocked_initial_signal_limit_capabilities"] = (
                     blocked_initial_limit_capabilities
-                )
-            blocked_initial_limit_reasons = {
-                str(strategy): str(reason)
-                for strategy, reason in plan_summary.get(
-                    "blocked_initial_signal_limit_reasons", {}
-                ).items()
-                if str(strategy).strip() and str(reason).strip()
-            }
-            if blocked_initial_limit_reasons:
-                payload["blocked_initial_signal_limit_reasons"] = (
-                    blocked_initial_limit_reasons
                 )
             if blocked_signal_limits:
                 payload["blocked_signal_limits"] = blocked_signal_limits
@@ -3685,139 +3651,12 @@ def show_strategy_catalog(args: argparse.Namespace) -> int:
                 payload["blocked_signal_limit_capabilities"] = (
                     blocked_signal_limit_capabilities
                 )
-            blocked_signal_limit_reasons = {
-                str(strategy): str(reason)
-                for strategy, reason in plan_summary.get(
-                    "blocked_signal_limit_reasons", {}
-                ).items()
-                if str(strategy).strip() and str(reason).strip()
-            }
-            if blocked_signal_limit_reasons:
-                payload["blocked_signal_limit_reasons"] = blocked_signal_limit_reasons
             if blocked_suspensions:
                 payload["blocked_suspensions"] = blocked_suspensions
             if blocked_suspension_capabilities:
                 payload["blocked_suspension_capabilities"] = (
                     blocked_suspension_capabilities
                 )
-            blocked_suspension_reasons = {
-                str(entry_key): str(reason)
-                for entry_key, reason in plan_summary.get(
-                    "blocked_suspension_reasons", {}
-                ).items()
-                if str(entry_key).strip() and str(reason).strip()
-            }
-            if blocked_suspension_reasons:
-                payload["blocked_suspension_reasons"] = blocked_suspension_reasons
-
-            guard_summary_raw = plan_summary.get("guard_reason_summary")
-            if isinstance(guard_summary_raw, Mapping):
-                normalized_guard_summary = _normalize_guard_summary(guard_summary_raw)
-            if not normalized_guard_summary:
-                normalized_guard_summary = _build_guard_summary_from_blocked(
-                    blocked_strategies=blocked_strategies,
-                    blocked_schedules=blocked_schedules,
-                    blocked_initial_limits=blocked_initial_limits,
-                    blocked_signal_limits=blocked_signal_limits,
-                    blocked_suspensions=blocked_suspensions,
-                    blocked_capabilities=blocked_capabilities,
-                    blocked_schedule_capabilities=blocked_schedule_capabilities,
-                    blocked_initial_limit_capabilities=blocked_initial_limit_capabilities,
-                    blocked_signal_limit_capabilities=blocked_signal_limit_capabilities,
-                    blocked_suspension_capabilities=blocked_suspension_capabilities,
-                    blocked_capability_reasons=blocked_capability_reasons,
-                    blocked_schedule_reasons=blocked_schedule_reasons,
-                    blocked_initial_limit_reasons=blocked_initial_limit_reasons,
-                    blocked_signal_limit_reasons=blocked_signal_limit_reasons,
-                    blocked_suspension_reasons=blocked_suspension_reasons,
-                )
-            if normalized_guard_summary:
-                payload["guard_reason_summary"] = normalized_guard_summary
-            guard_details_raw = plan_summary.get("guard_reason_details")
-            if isinstance(guard_details_raw, Mapping):
-                normalized_guard_details = _normalize_guard_details(guard_details_raw)
-            if not normalized_guard_details:
-                normalized_guard_details = _build_guard_details_from_blocked(
-                    blocked_strategies=blocked_strategies,
-                    blocked_schedules=blocked_schedules,
-                    blocked_initial_limits=blocked_initial_limits,
-                    blocked_signal_limits=blocked_signal_limits,
-                    blocked_suspensions=blocked_suspensions,
-                    blocked_capabilities=blocked_capabilities,
-                    blocked_schedule_capabilities=blocked_schedule_capabilities,
-                    blocked_initial_limit_capabilities=blocked_initial_limit_capabilities,
-                    blocked_signal_limit_capabilities=blocked_signal_limit_capabilities,
-                    blocked_suspension_capabilities=blocked_suspension_capabilities,
-                    blocked_capability_reasons=blocked_capability_reasons,
-                    blocked_schedule_reasons=blocked_schedule_reasons,
-                    blocked_initial_limit_reasons=blocked_initial_limit_reasons,
-                    blocked_signal_limit_reasons=blocked_signal_limit_reasons,
-                    blocked_suspension_reasons=blocked_suspension_reasons,
-                )
-            if normalized_guard_details:
-                payload["guard_reason_details"] = normalized_guard_details
-                detail_summary_raw = plan_summary.get("guard_reason_detail_summary")
-                if isinstance(detail_summary_raw, Mapping):
-                    normalized_guard_detail_summary = _normalize_guard_detail_summary(
-                        detail_summary_raw
-                    )
-                if not normalized_guard_detail_summary:
-                    normalized_guard_detail_summary = (
-                        _build_guard_detail_summary_from_details(normalized_guard_details)
-                    )
-                category_summary_raw = plan_summary.get(
-                    "guard_reason_detail_category_summary"
-                )
-                if isinstance(category_summary_raw, Mapping):
-                    normalized_guard_detail_category_summary = (
-                        _normalize_guard_detail_category_summary(category_summary_raw)
-                    )
-                if not normalized_guard_detail_category_summary:
-                    normalized_guard_detail_category_summary = (
-                        _build_guard_detail_category_summary_from_details(
-                            normalized_guard_details
-                        )
-                    )
-                reason_summary_raw = plan_summary.get(
-                    "guard_reason_detail_reason_summary"
-                )
-                if isinstance(reason_summary_raw, Mapping):
-                    normalized_guard_detail_reason_summary = (
-                        _normalize_guard_detail_reason_summary(reason_summary_raw)
-                    )
-                if not normalized_guard_detail_reason_summary:
-                    normalized_guard_detail_reason_summary = (
-                        _build_guard_detail_reason_summary_from_details(
-                            normalized_guard_details
-                        )
-                    )
-                reason_details_raw = plan_summary.get(
-                    "guard_reason_detail_reason_details"
-                )
-                if isinstance(reason_details_raw, Mapping):
-                    normalized_guard_detail_reason_details = (
-                        _normalize_guard_detail_reason_details(reason_details_raw)
-                    )
-                if not normalized_guard_detail_reason_details:
-                    normalized_guard_detail_reason_details = (
-                        _build_guard_detail_reason_details_from_details(
-                            normalized_guard_details
-                        )
-                    )
-        if normalized_guard_detail_summary:
-            payload["guard_reason_detail_summary"] = normalized_guard_detail_summary
-        if normalized_guard_detail_category_summary:
-            payload["guard_reason_detail_category_summary"] = (
-                normalized_guard_detail_category_summary
-            )
-        if normalized_guard_detail_reason_summary:
-            payload["guard_reason_detail_reason_summary"] = (
-                normalized_guard_detail_reason_summary
-            )
-        if normalized_guard_detail_reason_details:
-            payload["guard_reason_detail_reason_details"] = (
-                normalized_guard_detail_reason_details
-            )
 
     if output_format in {"json", "json-pretty"}:
         json_kwargs: dict[str, object] = {"ensure_ascii": False}
@@ -3889,52 +3728,28 @@ def show_strategy_catalog(args: argparse.Namespace) -> int:
                     print("  Harmonogramy (zablokowana licencja):")
                     for name in blocked_schedules:
                         capability = blocked_schedule_capabilities.get(name)
-                        reason = blocked_schedule_reasons.get(name)
-                        extras = []
-                        if capability:
-                            extras.append(f"capability: {capability}")
-                        if reason:
-                            extras.append(f"powód strażnika: {reason}")
-                        suffix = f" ({', '.join(extras)})" if extras else ""
-                        print(f"    - {name}{suffix}")
+                        extra = f" (capability: {capability})" if capability else ""
+                        print(f"    - {name}{extra}")
                 if blocked_strategies:
                     print("  Strategie (zablokowana licencja):")
                     for name in blocked_strategies:
                         capability = blocked_capabilities.get(name)
-                        reason = blocked_capability_reasons.get(name)
-                        extras = []
-                        if capability:
-                            extras.append(f"capability: {capability}")
-                        if reason:
-                            extras.append(f"powód strażnika: {reason}")
-                        suffix = f" ({', '.join(extras)})" if extras else ""
-                        print(f"    - {name}{suffix}")
+                        extra = f" (capability: {capability})" if capability else ""
+                        print(f"    - {name}{extra}")
                 if blocked_initial_limits:
                     print("  Limity sygnałów (początkowe, zablokowane licencją):")
                     for strategy, profiles in sorted(blocked_initial_limits.items()):
                         formatted = ", ".join(sorted(filter(None, profiles))) or "-"
                         capability = blocked_initial_limit_capabilities.get(strategy)
-                        reason = blocked_initial_limit_reasons.get(strategy)
-                        extras = []
-                        if capability:
-                            extras.append(f"capability: {capability}")
-                        if reason:
-                            extras.append(f"powód strażnika: {reason}")
-                        suffix = f" ({', '.join(extras)})" if extras else ""
-                        print(f"    - {strategy}{suffix}: {formatted}")
+                        extra = f" (capability: {capability})" if capability else ""
+                        print(f"    - {strategy}{extra}: {formatted}")
                 if blocked_signal_limits:
                     print("  Limity sygnałów (zablokowane licencją):")
                     for strategy, profiles in sorted(blocked_signal_limits.items()):
                         formatted = ", ".join(sorted(filter(None, profiles))) or "-"
                         capability = blocked_signal_limit_capabilities.get(strategy)
-                        reason = blocked_signal_limit_reasons.get(strategy)
-                        extras = []
-                        if capability:
-                            extras.append(f"capability: {capability}")
-                        if reason:
-                            extras.append(f"powód strażnika: {reason}")
-                        suffix = f" ({', '.join(extras)})" if extras else ""
-                        print(f"    - {strategy}{suffix}: {formatted}")
+                        extra = f" (capability: {capability})" if capability else ""
+                        print(f"    - {strategy}{extra}: {formatted}")
                 if blocked_suspensions:
                     print("  Zawieszenia (zablokowana licencja):")
                     for entry in blocked_suspensions:
@@ -3946,50 +3761,13 @@ def show_strategy_catalog(args: argparse.Namespace) -> int:
                             if target
                             else None
                         )
-                        guard_reason = entry.get("guard_reason") or (
-                            blocked_suspension_reasons.get(f"{kind}:{target}")
-                            if target
-                            else None
-                        )
                         extras = []
                         if capability:
                             extras.append(f"capability: {capability}")
                         if reason:
                             extras.append(f"powód: {reason}")
-                        if guard_reason and guard_reason != reason:
-                            extras.append(f"powód strażnika: {guard_reason}")
                         suffix = f" ({', '.join(extras)})" if extras else ""
                         print(f"    - {kind}:{target}{suffix}")
-        if normalized_guard_summary:
-            print()
-            print("Podsumowanie blokad strażnika:")
-            _print_guard_summary(normalized_guard_summary)
-        if normalized_guard_details:
-            print()
-            print("Szczegóły blokad wg capability:")
-            _print_guard_details(normalized_guard_details)
-        if normalized_guard_detail_summary:
-            print()
-            print("Podsumowanie blokad wg capability:")
-            _print_guard_detail_summary(normalized_guard_detail_summary)
-        if normalized_guard_detail_category_summary:
-            print()
-            print("Podsumowanie blokad wg kategorii:")
-            _print_guard_detail_category_summary(
-                normalized_guard_detail_category_summary
-            )
-        if normalized_guard_detail_reason_summary:
-            print()
-            print("Podsumowanie blokad wg powodów:")
-            _print_guard_detail_reason_summary(
-                normalized_guard_detail_reason_summary
-            )
-        if normalized_guard_detail_reason_details:
-            print()
-            print("Szczegóły blokad wg powodów:")
-            _print_guard_detail_reason_details(
-                normalized_guard_detail_reason_details
-            )
     return 0
 
 
@@ -4051,30 +3829,6 @@ def show_scheduler_plan(args: argparse.Namespace) -> int:
         ).items()
         if str(strategy).strip() and str(capability).strip()
     }
-    blocked_capability_reasons = {
-        str(strategy): str(reason)
-        for strategy, reason in plan.get("blocked_capability_reasons", {}).items()
-        if str(strategy).strip() and str(reason).strip()
-    }
-    blocked_schedule_reasons = {
-        str(schedule): str(reason)
-        for schedule, reason in plan.get(
-            "blocked_schedule_capability_reasons", {}
-        ).items()
-        if str(schedule).strip() and str(reason).strip()
-    }
-    blocked_initial_limit_reasons = {
-        str(strategy): str(reason)
-        for strategy, reason in plan.get(
-            "blocked_initial_signal_limit_reasons", {}
-        ).items()
-        if str(strategy).strip() and str(reason).strip()
-    }
-    blocked_signal_limit_reasons = {
-        str(strategy): str(reason)
-        for strategy, reason in plan.get("blocked_signal_limit_reasons", {}).items()
-        if str(strategy).strip() and str(reason).strip()
-    }
     blocked_suspensions = [
         {
             key: value
@@ -4090,121 +3844,6 @@ def show_scheduler_plan(args: argparse.Namespace) -> int:
         ).items()
         if str(entry_key).strip() and str(capability).strip()
     }
-    blocked_suspension_reasons = {
-        str(entry_key): str(reason)
-        for entry_key, reason in plan.get("blocked_suspension_reasons", {}).items()
-        if str(entry_key).strip() and str(reason).strip()
-    }
-
-    normalized_guard_summary: dict[str, object] = {}
-    normalized_guard_detail_summary: dict[str, dict[str, dict[str, object]]] = {}
-    normalized_guard_detail_category_summary: dict[str, dict[str, object]] = {}
-    normalized_guard_detail_reason_summary: dict[str, dict[str, object]] = {}
-    normalized_guard_detail_reason_details: dict[str, dict[str, object]] = {}
-    guard_summary_raw = plan.get("guard_reason_summary")
-    if isinstance(guard_summary_raw, Mapping):
-        normalized_guard_summary = _normalize_guard_summary(guard_summary_raw)
-    if not normalized_guard_summary:
-        normalized_guard_summary = _build_guard_summary_from_blocked(
-            blocked_strategies=blocked_strategies,
-            blocked_schedules=blocked_schedules,
-            blocked_initial_limits=blocked_initial_limits,
-            blocked_signal_limits=blocked_signal_limits,
-            blocked_suspensions=blocked_suspensions,
-            blocked_capabilities=blocked_capabilities,
-            blocked_schedule_capabilities=blocked_schedule_capabilities,
-            blocked_initial_limit_capabilities=blocked_initial_limit_capabilities,
-            blocked_signal_limit_capabilities=blocked_signal_limit_capabilities,
-            blocked_suspension_capabilities=blocked_suspension_capabilities,
-            blocked_capability_reasons=blocked_capability_reasons,
-            blocked_schedule_reasons=blocked_schedule_reasons,
-            blocked_initial_limit_reasons=blocked_initial_limit_reasons,
-            blocked_signal_limit_reasons=blocked_signal_limit_reasons,
-            blocked_suspension_reasons=blocked_suspension_reasons,
-        )
-    if normalized_guard_summary:
-        plan["guard_reason_summary"] = normalized_guard_summary
-
-    normalized_guard_details: dict[str, dict[str, list[dict[str, str]]]] = {}
-    guard_details_raw = plan.get("guard_reason_details")
-    if isinstance(guard_details_raw, Mapping):
-        normalized_guard_details = _normalize_guard_details(guard_details_raw)
-    if not normalized_guard_details:
-        normalized_guard_details = _build_guard_details_from_blocked(
-            blocked_strategies=blocked_strategies,
-            blocked_schedules=blocked_schedules,
-            blocked_initial_limits=blocked_initial_limits,
-            blocked_signal_limits=blocked_signal_limits,
-            blocked_suspensions=blocked_suspensions,
-            blocked_capabilities=blocked_capabilities,
-            blocked_schedule_capabilities=blocked_schedule_capabilities,
-            blocked_initial_limit_capabilities=blocked_initial_limit_capabilities,
-            blocked_signal_limit_capabilities=blocked_signal_limit_capabilities,
-            blocked_suspension_capabilities=blocked_suspension_capabilities,
-            blocked_capability_reasons=blocked_capability_reasons,
-            blocked_schedule_reasons=blocked_schedule_reasons,
-            blocked_initial_limit_reasons=blocked_initial_limit_reasons,
-            blocked_signal_limit_reasons=blocked_signal_limit_reasons,
-            blocked_suspension_reasons=blocked_suspension_reasons,
-        )
-    if normalized_guard_details:
-        plan["guard_reason_details"] = normalized_guard_details
-        detail_summary_raw = plan.get("guard_reason_detail_summary")
-        if isinstance(detail_summary_raw, Mapping):
-            normalized_guard_detail_summary = _normalize_guard_detail_summary(
-                detail_summary_raw
-            )
-        if not normalized_guard_detail_summary:
-            normalized_guard_detail_summary = _build_guard_detail_summary_from_details(
-                normalized_guard_details
-            )
-        category_summary_raw = plan.get("guard_reason_detail_category_summary")
-        if isinstance(category_summary_raw, Mapping):
-            normalized_guard_detail_category_summary = (
-                _normalize_guard_detail_category_summary(category_summary_raw)
-            )
-        if not normalized_guard_detail_category_summary:
-            normalized_guard_detail_category_summary = (
-                _build_guard_detail_category_summary_from_details(
-                    normalized_guard_details
-                )
-            )
-        reason_summary_raw = plan.get("guard_reason_detail_reason_summary")
-        if isinstance(reason_summary_raw, Mapping):
-            normalized_guard_detail_reason_summary = (
-                _normalize_guard_detail_reason_summary(reason_summary_raw)
-            )
-        if not normalized_guard_detail_reason_summary:
-            normalized_guard_detail_reason_summary = (
-                _build_guard_detail_reason_summary_from_details(
-                    normalized_guard_details
-                )
-            )
-        reason_details_raw = plan.get("guard_reason_detail_reason_details")
-        if isinstance(reason_details_raw, Mapping):
-            normalized_guard_detail_reason_details = (
-                _normalize_guard_detail_reason_details(reason_details_raw)
-            )
-        if not normalized_guard_detail_reason_details:
-            normalized_guard_detail_reason_details = (
-                _build_guard_detail_reason_details_from_details(
-                    normalized_guard_details
-                )
-            )
-    if normalized_guard_detail_summary:
-        plan["guard_reason_detail_summary"] = normalized_guard_detail_summary
-    if normalized_guard_detail_category_summary:
-        plan["guard_reason_detail_category_summary"] = (
-            normalized_guard_detail_category_summary
-        )
-    if normalized_guard_detail_reason_summary:
-        plan["guard_reason_detail_reason_summary"] = (
-            normalized_guard_detail_reason_summary
-        )
-    if normalized_guard_detail_reason_details:
-        plan["guard_reason_detail_reason_details"] = (
-            normalized_guard_detail_reason_details
-        )
 
     filter_tags = {value.strip().lower() for value in getattr(args, "filter_tags", []) if value}
     filter_strategies = {
@@ -4227,16 +3866,6 @@ def show_scheduler_plan(args: argparse.Namespace) -> int:
     plan["schedules"] = schedules
     if blocked_suspension_capabilities:
         plan["blocked_suspension_capabilities"] = blocked_suspension_capabilities
-    if blocked_capability_reasons:
-        plan["blocked_capability_reasons"] = blocked_capability_reasons
-    if blocked_schedule_reasons:
-        plan["blocked_schedule_capability_reasons"] = blocked_schedule_reasons
-    if blocked_initial_limit_reasons:
-        plan["blocked_initial_signal_limit_reasons"] = blocked_initial_limit_reasons
-    if blocked_signal_limit_reasons:
-        plan["blocked_signal_limit_reasons"] = blocked_signal_limit_reasons
-    if blocked_suspension_reasons:
-        plan["blocked_suspension_reasons"] = blocked_suspension_reasons
 
     if include_definitions and "strategies" in plan:
         used_strategies = {entry.get("strategy") for entry in schedules}
@@ -4331,52 +3960,28 @@ def show_scheduler_plan(args: argparse.Namespace) -> int:
             print("  Harmonogramy (zablokowana licencja):")
             for name in blocked_schedules:
                 capability = blocked_schedule_capabilities.get(name)
-                reason = blocked_schedule_reasons.get(name)
-                extras = []
-                if capability:
-                    extras.append(f"capability: {capability}")
-                if reason:
-                    extras.append(f"powód strażnika: {reason}")
-                suffix = f" ({', '.join(extras)})" if extras else ""
-                print(f"    - {name}{suffix}")
+                extra = f" (capability: {capability})" if capability else ""
+                print(f"    - {name}{extra}")
         if blocked_strategies:
             print("  Strategie (zablokowana licencja):")
             for name in blocked_strategies:
                 capability = blocked_capabilities.get(name)
-                reason = blocked_capability_reasons.get(name)
-                extras = []
-                if capability:
-                    extras.append(f"capability: {capability}")
-                if reason:
-                    extras.append(f"powód strażnika: {reason}")
-                suffix = f" ({', '.join(extras)})" if extras else ""
-                print(f"    - {name}{suffix}")
+                extra = f" (capability: {capability})" if capability else ""
+                print(f"    - {name}{extra}")
         if blocked_initial_limits:
             print("  Limity sygnałów (początkowe, zablokowane licencją):")
             for strategy, profiles in sorted(blocked_initial_limits.items()):
                 formatted = ", ".join(sorted(filter(None, profiles))) or "-"
                 capability = blocked_initial_limit_capabilities.get(strategy)
-                reason = blocked_initial_limit_reasons.get(strategy)
-                extras = []
-                if capability:
-                    extras.append(f"capability: {capability}")
-                if reason:
-                    extras.append(f"powód strażnika: {reason}")
-                suffix = f" ({', '.join(extras)})" if extras else ""
-                print(f"    - {strategy}{suffix}: {formatted}")
+                extra = f" (capability: {capability})" if capability else ""
+                print(f"    - {strategy}{extra}: {formatted}")
         if blocked_signal_limits:
             print("  Limity sygnałów (zablokowane licencją):")
             for strategy, profiles in sorted(blocked_signal_limits.items()):
                 formatted = ", ".join(sorted(filter(None, profiles))) or "-"
                 capability = blocked_signal_limit_capabilities.get(strategy)
-                reason = blocked_signal_limit_reasons.get(strategy)
-                extras = []
-                if capability:
-                    extras.append(f"capability: {capability}")
-                if reason:
-                    extras.append(f"powód strażnika: {reason}")
-                suffix = f" ({', '.join(extras)})" if extras else ""
-                print(f"    - {strategy}{suffix}: {formatted}")
+                extra = f" (capability: {capability})" if capability else ""
+                print(f"    - {strategy}{extra}: {formatted}")
         if blocked_suspensions:
             print("  Zawieszenia (zablokowana licencja):")
             for entry in blocked_suspensions:
@@ -4388,54 +3993,13 @@ def show_scheduler_plan(args: argparse.Namespace) -> int:
                     if target
                     else None
                 )
-                guard_reason = entry.get("guard_reason") or (
-                    blocked_suspension_reasons.get(f"{kind}:{target}")
-                    if target
-                    else None
-                )
                 extras = []
                 if capability:
                     extras.append(f"capability: {capability}")
                 if reason:
                     extras.append(f"powód: {reason}")
-                if guard_reason and guard_reason != reason:
-                    extras.append(f"powód strażnika: {guard_reason}")
                 suffix = f" ({', '.join(extras)})" if extras else ""
                 print(f"    - {kind}:{target}{suffix}")
-    if normalized_guard_summary:
-        print()
-        print("Podsumowanie blokad strażnika:")
-        _print_guard_summary(normalized_guard_summary)
-
-    if normalized_guard_details:
-        print()
-        print("Szczegóły blokad wg capability:")
-        _print_guard_details(normalized_guard_details)
-
-    if normalized_guard_detail_summary:
-        print()
-        print("Podsumowanie blokad wg capability:")
-        _print_guard_detail_summary(normalized_guard_detail_summary)
-
-    if normalized_guard_detail_category_summary:
-        print()
-        print("Podsumowanie blokad wg kategorii:")
-        _print_guard_detail_category_summary(
-            normalized_guard_detail_category_summary
-        )
-    if normalized_guard_detail_reason_summary:
-        print()
-        print("Podsumowanie blokad wg powodów:")
-        _print_guard_detail_reason_summary(
-            normalized_guard_detail_reason_summary
-        )
-
-    if normalized_guard_detail_reason_details:
-        print()
-        print("Szczegóły blokad wg powodów:")
-        _print_guard_detail_reason_details(
-            normalized_guard_detail_reason_details
-        )
 
     return 0
 

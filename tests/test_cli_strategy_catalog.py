@@ -68,36 +68,20 @@ def test_show_strategy_catalog_reports_blocked_entries(
         "blocked_schedules": ["blocked-schedule"],
         "blocked_strategies": ["blocked-strategy"],
         "blocked_capabilities": {"blocked-strategy": "scalping"},
-        "blocked_capability_reasons": {
-            "blocked-strategy": "Strategia 'scalping' nie jest dostępna."
-        },
         "blocked_schedule_capabilities": {"blocked-schedule": "scalping"},
-        "blocked_schedule_capability_reasons": {
-            "blocked-schedule": "Strategia 'scalping' nie jest dostępna."
-        },
         "blocked_initial_signal_limits": {"blocked-strategy": ["balanced"]},
         "blocked_initial_signal_limit_capabilities": {"blocked-strategy": "scalping"},
-        "blocked_initial_signal_limit_reasons": {
-            "blocked-strategy": "Strategia 'scalping' nie jest dostępna."
-        },
         "blocked_signal_limits": {"blocked-strategy": ["aggressive"]},
         "blocked_signal_limit_capabilities": {"blocked-strategy": "scalping"},
-        "blocked_signal_limit_reasons": {
-            "blocked-strategy": "Strategia 'scalping' nie jest dostępna."
-        },
         "blocked_suspensions": [
             {
                 "kind": "schedule",
                 "target": "blocked-schedule",
                 "reason": "license",
                 "capability": "scalping",
-                "guard_reason": "Strategia 'scalping' nie jest dostępna.",
             }
         ],
         "blocked_suspension_capabilities": {"schedule:blocked-schedule": "scalping"},
-        "blocked_suspension_reasons": {
-            "schedule:blocked-schedule": "Strategia 'scalping' nie jest dostępna."
-        },
     }
 
     monkeypatch.setattr(
@@ -115,19 +99,3 @@ def test_show_strategy_catalog_reports_blocked_entries(
     assert "Limity sygnałów (początkowe" in captured
     assert "aggressive" in captured
     assert "license" in captured
-    assert "Strategia 'scalping' nie jest dostępna." in captured
-    assert "Podsumowanie blokad strażnika:" in captured
-    assert "Ogółem: 5" in captured
-    assert "Szczegóły blokad wg capability:" in captured
-    assert "capability scalping" in captured
-    assert "Strategie:" in captured
-    assert "Podsumowanie blokad wg capability:" in captured
-    assert "powody: Strategia 'scalping' nie jest dostępna. (5)" in captured
-    assert "Podsumowanie blokad wg kategorii:" in captured
-    assert "- Strategie: 1" in captured
-    assert "capabilities: scalping (1)" in captured
-    assert "Podsumowanie blokad wg powodów:" in captured
-    assert "Strategia 'scalping' nie jest dostępna.: 5" in captured
-    assert "kategorie: Strategie (1), Harmonogramy (1), Limity sygnałów (początkowe) (1), Limity sygnałów (1), Zawieszenia (1)" in captured
-    assert "Szczegóły blokad wg powodów:" in captured
-    assert "- Strategia 'scalping' nie jest dostępna.: 5" in captured
