@@ -2050,6 +2050,73 @@ void Application::loadUiSettings()
         }
     }
 
+    if (root.contains(QStringLiteral("uiModules")) && root.value(QStringLiteral("uiModules")).isObject()) {
+        const QJsonObject modulesObj = root.value(QStringLiteral("uiModules")).toObject();
+
+        if (modulesObj.contains(QStringLiteral("autoReload"))) {
+            const bool autoReload = modulesObj.value(QStringLiteral("autoReload"))
+                                       .toBool(m_uiModuleAutoReloadEnabled);
+            setUiModuleAutoReloadEnabled(autoReload);
+        }
+
+        if (!m_uiModuleDirectoriesExplicit && modulesObj.value(QStringLiteral("directories")).isArray()) {
+            const QJsonArray directoriesArray = modulesObj.value(QStringLiteral("directories")).toArray();
+            QStringList directories;
+            QSet<QString> seen;
+            for (const QJsonValue& value : directoriesArray) {
+                if (!value.isString())
+                    continue;
+                const QString normalized = normalizeUiModulePath(value.toString());
+                if (normalized.isEmpty() || seen.contains(normalized))
+                    continue;
+                seen.insert(normalized);
+                directories.append(normalized);
+            }
+
+            if (directories != m_uiModuleDirectories) {
+                m_uiModuleDirectories = directories;
+                emit uiModuleDirectoriesChanged(m_uiModuleDirectories);
+
+                if (m_moduleManager) {
+                    m_moduleManager->unloadPlugins();
+                    m_moduleManager->setPluginPaths(m_uiModuleDirectories);
+                    const bool loadSuccess = m_moduleManager->loadPlugins();
+                    if (!loadSuccess) {
+                        qCWarning(lcAppMetrics)
+                            << "Nie wszystkie pluginy UI zostały poprawnie załadowane podczas przywracania ustawień.";
+                    }
+                    const QVariantMap report = m_moduleManager->lastLoadReport();
+                    updateUiModuleWatchTargets(m_uiModuleDirectories,
+                                               report.value(QStringLiteral("loadedPlugins")).toStringList());
+                } else {
+                    updateUiModuleWatchTargets(m_uiModuleDirectories, {});
+                }
+            }
+        }
+
+        if (modulesObj.contains(QStringLiteral("views"))
+            && modulesObj.value(QStringLiteral("views")).isObject() && m_moduleViewsModel) {
+            const QJsonObject viewsObj = modulesObj.value(QStringLiteral("views")).toObject();
+            if (viewsObj.contains(QStringLiteral("categoryFilter"))) {
+                const QString category = viewsObj.value(QStringLiteral("categoryFilter")).toString();
+                m_moduleViewsModel->setCategoryFilter(category);
+            }
+            if (viewsObj.contains(QStringLiteral("searchFilter"))) {
+                const QString search = viewsObj.value(QStringLiteral("searchFilter")).toString();
+                m_moduleViewsModel->setSearchFilter(search);
+            }
+        }
+
+        if (modulesObj.contains(QStringLiteral("services"))
+            && modulesObj.value(QStringLiteral("services")).isObject() && m_moduleServicesModel) {
+            const QJsonObject servicesObj = modulesObj.value(QStringLiteral("services")).toObject();
+            if (servicesObj.contains(QStringLiteral("searchFilter"))) {
+                const QString search = servicesObj.value(QStringLiteral("searchFilter")).toString();
+                m_moduleServicesModel->setSearchFilter(search);
+            }
+        }
+    }
+
     if (root.contains(QStringLiteral("riskHistory"))) {
         const QJsonValue riskHistoryValue = root.value(QStringLiteral("riskHistory"));
         if (riskHistoryValue.isArray()) {
@@ -4277,6 +4344,87 @@ void Application::reloadHealthTokenFromFile()
 
     m_healthAuthToken = token.trimmed();
     applyHealthAuthTokenToController();
+}
+
+void Application::updateUiModuleWatchTargets(const QStringList& directories, const QStringList& pluginFiles)
+{
+    const QStringList currentDirs = m_uiModuleWatcher.directories();
+    if (!currentDirs.isEmpty())
+        m_uiModuleWatcher.removePaths(currentDirs);
+    const QStringList currentFiles = m_uiModuleWatcher.files();
+    if (!currentFiles.isEmpty())
+        m_uiModuleWatcher.removePaths(currentFiles);
+
+    m_watchedUiModuleDirectories.clear();
+    m_watchedUiModuleFiles.clear();
+
+    auto appendUnique = [](QStringList& list, const QString& value) {
+        if (value.isEmpty())
+            return;
+        if (!list.contains(value))
+            list.append(value);
+    };
+
+    auto appendWatchableDirectories = [&](const QString& basePath) {
+        const QStringList candidates = watchableDirectories(basePath);
+        for (const QString& candidate : candidates)
+            appendUnique(directoryTargets, candidate);
+    };
+
+    QStringList directoryTargets;
+    QStringList fileTargets;
+
+    for (const QString& entry : directories) {
+        const QString trimmed = entry.trimmed();
+        if (trimmed.isEmpty())
+            continue;
+        QFileInfo info(trimmed);
+        if (info.exists() && info.isFile()) {
+            appendUnique(fileTargets, info.absoluteFilePath());
+            appendWatchableDirectories(info.absolutePath());
+            continue;
+        }
+
+        appendWatchableDirectories(info.absoluteFilePath());
+        if (!info.exists())
+            appendWatchableDirectories(info.absolutePath());
+    }
+
+    for (const QString& plugin : pluginFiles) {
+        const QString trimmed = plugin.trimmed();
+        if (trimmed.isEmpty())
+            continue;
+        QFileInfo info(trimmed);
+        if (!info.exists()) {
+            appendWatchableDirectories(info.absolutePath());
+            continue;
+        }
+        appendUnique(fileTargets, info.absoluteFilePath());
+        appendWatchableDirectories(info.absolutePath());
+    }
+
+    if (!directoryTargets.isEmpty()) {
+        const QStringList failures = m_uiModuleWatcher.addPaths(directoryTargets);
+        QStringList filteredDirs = directoryTargets;
+        for (const QString& failed : failures) {
+            filteredDirs.removeAll(failed);
+            qCWarning(lcAppMetrics) << "Nie można obserwować katalogu modułów UI" << failed;
+        }
+        directoryTargets = filteredDirs;
+    }
+
+    if (!fileTargets.isEmpty()) {
+        const QStringList failures = m_uiModuleWatcher.addPaths(fileTargets);
+        QStringList filteredFiles = fileTargets;
+        for (const QString& failed : failures) {
+            filteredFiles.removeAll(failed);
+            qCWarning(lcAppMetrics) << "Nie można obserwować pliku modułu UI" << failed;
+        }
+        fileTargets = filteredFiles;
+    }
+
+    m_watchedUiModuleDirectories = directoryTargets;
+    m_watchedUiModuleFiles = fileTargets;
 }
 
 void Application::applyHealthAuthTokenToController()
