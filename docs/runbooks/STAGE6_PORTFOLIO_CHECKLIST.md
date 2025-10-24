@@ -20,8 +20,8 @@ podpisami HMAC oraz integracją z obserwowalnością i Market Intelligence.
 2. (Opcjonalnie) wykonaj `PYTHONPATH=. python scripts/run_multi_strategy_scheduler.py --run-once`,
    aby koordynator runtime zapisał świeżą decyzję PortfolioGovernora wraz z
    metadanymi scheduler-a. Koordynator automatycznie wczyta raporty SLO oraz
-   Stress Lab ze ścieżek zdefiniowanych w `runtime.multi_strategy_schedulers.*.
-   portfolio_inputs`.
+ Stress Lab ze ścieżek zdefiniowanych w `runtime.multi_strategy_schedulers.*.
+  portfolio_inputs`.
 3. Wygeneruj bieżący raport SLO (`python scripts/slo_monitor.py`) z podpisem HMAC.
 4. Przygotuj plik alokacji (np. `var/audit/allocations/<data>.json`) z wagami
    aktywów przekazanymi z runtime lub Stress Lab oraz raport Stress Lab
@@ -56,6 +56,19 @@ podpisami HMAC oraz integracją z obserwowalnością i Market Intelligence.
 9. (Opcjonalnie) Uruchom `python scripts/run_stage6_hypercare_cycle.py`, aby w jednym
    kroku połączyć wyniki Portfolio, Observability i Resilience – konfigurację
    znajdziesz w checklistcie Stage6 Hypercare.
+
+## Kontrola progów po warsztacie 2024-06-07
+10. Zweryfikuj progi Stage6, korzystając z przygotowanego skryptu audytowego i
+    od razu zarchiwizuj raport JSON:
+    ```bash
+    python scripts/verify_stage6_thresholds.py \
+      --config config/core.yaml \
+      --json-report var/audit/stage6/stage6_thresholds_portfolio.json
+    ```
+    Skrypt potwierdza wartości Market Intel, Portfolio Governora oraz Stress Lab
+    względem warsztatowych uzgodnień (w tym limity strategii i mnożniki sygnałów)
+    i zapisuje wynik audytu do pliku, który dołącz do decision journala.
+11. Zarchiwizuj output i raport JSON z kroku 10 w decision journalu hypercare.
 
 ## Artefakty / Akceptacja
 - `var/audit/decision_log/*.jsonl` – wpisy PortfolioGovernora z polem

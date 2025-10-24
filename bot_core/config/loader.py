@@ -2070,7 +2070,7 @@ def _load_market_intel_config(
         output_directory = "../data/stage6/metrics"
 
     manifest_path = _normalize_runtime_path(section.get("manifest_path"), base_dir=base_dir)
-    default_weight = float(section.get("default_weight", 1.0))
+    default_weight = float(section.get("default_weight", 1.15))
 
     required_raw = section.get("required_symbols") or ()
     if not isinstance(required_raw, Sequence):
@@ -3263,22 +3263,22 @@ def _load_portfolio_governor_config(
         return None
 
     enabled = bool(section.get("enabled", False))
-    interval_value = float(section.get("rebalance_interval_minutes", 15.0))
-    smoothing_value = float(section.get("smoothing", 0.5))
-    default_baseline = float(section.get("default_baseline_weight", 0.25))
-    default_min = float(section.get("default_min_weight", 0.05))
+    interval_value = float(section.get("rebalance_interval_minutes", 20.0))
+    smoothing_value = float(section.get("smoothing", 0.55))
+    default_baseline = float(section.get("default_baseline_weight", 0.28))
+    default_min = float(section.get("default_min_weight", 0.08))
     default_max = float(section.get("default_max_weight", 0.5))
     require_complete = bool(section.get("require_complete_metrics", True))
-    min_score_threshold = float(section.get("min_score_threshold", 0.0))
-    default_cost_bps = float(section.get("default_cost_bps", 0.0))
+    min_score_threshold = float(section.get("min_score_threshold", 0.08))
+    default_cost_bps = float(section.get("default_cost_bps", 5.0))
     max_signal_floor = int(section.get("max_signal_floor", 1))
 
     scoring_raw = section.get("scoring") or {}
     scoring = PortfolioGovernorScoringWeights(
-        alpha=float(scoring_raw.get("alpha", 1.0)),
-        cost=float(scoring_raw.get("cost", 1.0)),
-        slo=float(scoring_raw.get("slo", 1.0)),
-        risk=float(scoring_raw.get("risk", 0.5)),
+        alpha=float(scoring_raw.get("alpha", 0.9)),
+        cost=float(scoring_raw.get("cost", 1.3)),
+        slo=float(scoring_raw.get("slo", 1.2)),
+        risk=float(scoring_raw.get("risk", 0.8)),
     )
 
     strategies_raw = section.get("strategies") or {}
