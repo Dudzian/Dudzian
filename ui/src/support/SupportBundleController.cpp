@@ -4,6 +4,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QLoggingCategory>
+#include <QRegularExpression>
 
 #include "utils/PathUtils.hpp"
 
@@ -21,6 +22,21 @@ QString normalizePath(const QString& raw)
     if (path == QStringLiteral("~"))
         return QDir::homePath();
     return path;
+}
+
+QString quoteArgument(const QString& raw)
+{
+    if (raw.isEmpty())
+        return QStringLiteral("\"\"");
+
+    static const QRegularExpression needsQuote(QStringLiteral("[\\s\"'\\\\]"));
+    if (!needsQuote.match(raw).hasMatch())
+        return raw;
+
+    QString escaped = raw;
+    escaped.replace(QLatin1Char('\\'), QStringLiteral("\\\\"));
+    escaped.replace(QLatin1Char('"'), QStringLiteral("\\\""));
+    return QStringLiteral("\"%1\"").arg(escaped);
 }
 
 } // namespace
@@ -177,9 +193,15 @@ void SupportBundleController::setAuditPath(const QString& path)
 
 void SupportBundleController::setMetadata(const QVariantMap& metadata)
 {
-    m_metadata = metadata;
-    if (!m_metadata.contains(QStringLiteral("origin")))
-        m_metadata.insert(QStringLiteral("origin"), QStringLiteral("desktop_ui"));
+    QVariantMap normalized = metadata;
+    if (!normalized.contains(QStringLiteral("origin")))
+        normalized.insert(QStringLiteral("origin"), QStringLiteral("desktop_ui"));
+
+    if (normalized == m_metadata)
+        return;
+
+    m_metadata = normalized;
+    Q_EMIT metadataChanged();
 }
 
 void SupportBundleController::setExtraIncludeSpecs(const QStringList& specs)
@@ -189,8 +211,7 @@ void SupportBundleController::setExtraIncludeSpecs(const QStringList& specs)
 
 QString SupportBundleController::expandPath(const QString& path) const
 {
-    return bot::shell::utils::expandPath(path);
-    return normalizePath(path);
+    return bot::shell::utils::expandPath(normalizePath(path));
 }
 
 QString SupportBundleController::sanitizeFormat(const QString& requested) const
@@ -229,6 +250,24 @@ QStringList SupportBundleController::buildIncludeArguments() const
     return arguments;
 }
 
+QStringList SupportBundleController::buildDisableArguments() const
+{
+    QStringList arguments;
+    const auto appendDisable = [&arguments](bool includeFlag, const QString& label) {
+        if (includeFlag)
+            return;
+        arguments << QStringLiteral("--disable") << label;
+    };
+
+    appendDisable(m_includeLogs, QStringLiteral("logs"));
+    appendDisable(m_includeReports, QStringLiteral("reports"));
+    appendDisable(m_includeLicenses, QStringLiteral("licenses"));
+    appendDisable(m_includeMetrics, QStringLiteral("metrics"));
+    appendDisable(m_includeAudit, QStringLiteral("audit"));
+
+    return arguments;
+}
+
 QStringList SupportBundleController::buildMetadataArguments() const
 {
     QStringList arguments;
@@ -254,6 +293,58 @@ QStringList SupportBundleController::buildExtraIncludeArguments() const
     return arguments;
 }
 
+QStringList SupportBundleController::buildCommandArguments(const QUrl& destination, bool dryRun) const
+{
+    QStringList args;
+
+    if (!destination.isEmpty()) {
+        if (destination.isLocalFile())
+            args << QStringLiteral("--output") << destination.toLocalFile();
+        else
+            args << QStringLiteral("--output") << destination.toString();
+    } else if (!m_outputDirectory.trimmed().isEmpty()) {
+        args << QStringLiteral("--output-dir") << m_outputDirectory;
+    }
+
+    args << QStringLiteral("--basename") << m_defaultBasename;
+    args << QStringLiteral("--format") << m_format;
+
+    args.append(buildIncludeArguments());
+    args.append(buildDisableArguments());
+    args.append(buildExtraIncludeArguments());
+    args.append(buildMetadataArguments());
+
+    if (dryRun)
+        args << QStringLiteral("--dry-run");
+
+    return args;
+}
+
+QString SupportBundleController::commandPreview(const QUrl& destination, bool dryRun) const
+{
+    QString program = m_pythonExecutable.trimmed();
+    if (program.isEmpty())
+        program = QStringLiteral("python3");
+
+    QStringList args = buildCommandArguments(destination, dryRun);
+    const QString script = m_scriptPath.trimmed();
+    if (!script.isEmpty())
+        args.prepend(script);
+
+    QStringList tokens;
+    tokens.reserve(args.size() + 1);
+    tokens.append(quoteArgument(program));
+    for (const QString& arg : args)
+        tokens.append(quoteArgument(arg));
+
+    return tokens.join(QLatin1Char(' '));
+}
+
+QString SupportBundleController::defaultCommandPreview(bool dryRun) const
+{
+    return commandPreview(QUrl(), dryRun);
+}
+
 bool SupportBundleController::exportBundle(const QUrl& destination, bool dryRun)
 {
     if (m_busy) {
@@ -269,27 +360,8 @@ bool SupportBundleController::exportBundle(const QUrl& destination, bool dryRun)
     if (program.isEmpty())
         program = QStringLiteral("python3");
 
-    QStringList args;
-    args << m_scriptPath;
-
-    if (!destination.isEmpty()) {
-        if (destination.isLocalFile())
-            args << QStringLiteral("--output") << destination.toLocalFile();
-        else
-            args << QStringLiteral("--output") << destination.toString();
-    } else if (!m_outputDirectory.trimmed().isEmpty()) {
-        args << QStringLiteral("--output-dir") << m_outputDirectory;
-    }
-
-    args << QStringLiteral("--basename") << m_defaultBasename;
-    args << QStringLiteral("--format") << m_format;
-
-    args.append(buildIncludeArguments());
-    args.append(buildExtraIncludeArguments());
-    args.append(buildMetadataArguments());
-
-    if (dryRun)
-        args << QStringLiteral("--dry-run");
+    QStringList args = buildCommandArguments(destination, dryRun);
+    args.prepend(m_scriptPath);
 
     if (m_process) {
         m_process->disconnect(this);

@@ -3,10 +3,15 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QQmlApplicationEngine>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
 
 #include "app/Application.hpp"
+#include "app/ActivationController.hpp"
+#include "support/SupportBundleController.hpp"
 
 namespace {
 
@@ -53,6 +58,12 @@ private slots:
     void appliesCliOverrides();
     void appliesEnvironmentOverrides();
     void usesDefaultFallback();
+    void loadsSecurityCacheFromFile();
+    void controlsLicenseRefreshSchedule();
+    void controlsFingerprintRefreshSchedule();
+    void configuresSupportBundleDefaults();
+    void updatesSupportBundleMetadata();
+    void buildsSupportBundleArguments();
 };
 
 void ApplicationDecisionLogTest::appliesCliOverrides()
@@ -121,6 +132,271 @@ void ApplicationDecisionLogTest::usesDefaultFallback()
     QVERIFY(QFileInfo(path).isAbsolute());
     QVERIFY(path.endsWith(QStringLiteral("logs/decision_journal")));
     QCOMPARE(app.decisionLogModelForTesting()->maximumEntries(), 250);
+}
+
+void ApplicationDecisionLogTest::loadsSecurityCacheFromFile()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    const QString cachePath = dir.filePath(QStringLiteral("cache.json"));
+    QFile cacheFile(cachePath);
+    QVERIFY(cacheFile.open(QIODevice::WriteOnly | QIODevice::Text));
+
+    QJsonObject fingerprintPayload;
+    fingerprintPayload.insert(QStringLiteral("fingerprint"), QStringLiteral("DEVICE-XYZ"));
+    QJsonObject fingerprint;
+    fingerprint.insert(QStringLiteral("payload"), fingerprintPayload);
+
+    QJsonObject licenseSummary;
+    licenseSummary.insert(QStringLiteral("edition"), QStringLiteral("Enterprise"));
+
+    QJsonObject historyEntry;
+    historyEntry.insert(QStringLiteral("licenseId"), QStringLiteral("OEM-123"));
+
+    QJsonObject root;
+    root.insert(QStringLiteral("fingerprint"), fingerprint);
+    root.insert(QStringLiteral("oemLicense"), licenseSummary);
+    root.insert(QStringLiteral("licenseHistory"), QJsonArray{historyEntry});
+    root.insert(QStringLiteral("lastRefreshIso"), QStringLiteral("2024-01-01T00:00:00.000Z"));
+    root.insert(QStringLiteral("lastRequestIso"), QStringLiteral("2024-01-01T00:00:00.000Z"));
+    root.insert(QStringLiteral("nextRefreshIso"), QStringLiteral("2024-01-02T00:00:00.000Z"));
+    root.insert(QStringLiteral("lastError"), QStringLiteral("Timeout podczas walidacji"));
+
+    QJsonObject fingerprintRefresh;
+    fingerprintRefresh.insert(QStringLiteral("intervalSeconds"), 7200);
+    fingerprintRefresh.insert(QStringLiteral("active"), true);
+    fingerprintRefresh.insert(QStringLiteral("lastRefreshIso"), QStringLiteral("2024-01-01T00:00:00.000Z"));
+    fingerprintRefresh.insert(QStringLiteral("lastRequestIso"), QStringLiteral("2024-01-01T00:00:00.000Z"));
+    fingerprintRefresh.insert(QStringLiteral("nextRefreshIso"), QStringLiteral("2024-01-03T00:00:00.000Z"));
+    fingerprintRefresh.insert(QStringLiteral("lastError"), QStringLiteral("Fingerprint timeout"));
+    root.insert(QStringLiteral("fingerprintRefresh"), fingerprintRefresh);
+
+    cacheFile.write(QJsonDocument(root).toJson(QJsonDocument::Compact));
+    cacheFile.close();
+
+    EnvRestore cacheGuard(QByteArrayLiteral("BOT_CORE_UI_LICENSE_CACHE_PATH"));
+    EnvRestore intervalGuard(QByteArrayLiteral("BOT_CORE_UI_LICENSE_REFRESH_INTERVAL"));
+    EnvRestore fingerprintGuard(QByteArrayLiteral("BOT_CORE_UI_FINGERPRINT_REFRESH_INTERVAL"));
+    qputenv("BOT_CORE_UI_LICENSE_CACHE_PATH", cachePath.toUtf8());
+    qputenv("BOT_CORE_UI_LICENSE_REFRESH_INTERVAL", QByteArrayLiteral("0"));
+
+    QQmlApplicationEngine engine;
+    Application app(engine);
+
+    const QVariantMap cache = app.securityCacheForTesting();
+    const QVariantMap cachedFingerprint = cache.value(QStringLiteral("fingerprint")).toMap();
+    QCOMPARE(cachedFingerprint.value(QStringLiteral("payload")).toMap().value(QStringLiteral("fingerprint")).toString(),
+             QStringLiteral("DEVICE-XYZ"));
+    QCOMPARE(cache.value(QStringLiteral("oemLicense")).toMap().value(QStringLiteral("edition")).toString(),
+             QStringLiteral("Enterprise"));
+    QCOMPARE(cache.value(QStringLiteral("lastError")).toString(), QStringLiteral("Timeout podczas walidacji"));
+
+    auto activation = qobject_cast<ActivationController*>(app.activationController());
+    QVERIFY(activation);
+    QCOMPARE(activation->fingerprint().value(QStringLiteral("payload")).toMap().value(QStringLiteral("fingerprint")).toString(),
+             QStringLiteral("DEVICE-XYZ"));
+    QVERIFY(!activation->licenses().isEmpty());
+    QCOMPARE(activation->licenses().first().toMap().value(QStringLiteral("licenseId")).toString(),
+             QStringLiteral("OEM-123"));
+
+    const QVariantMap schedule = app.licenseRefreshSchedule();
+    QCOMPARE(schedule.value(QStringLiteral("lastCompletedAt")).toString(),
+             QStringLiteral("2024-01-01T00:00:00.000Z"));
+    QCOMPARE(schedule.value(QStringLiteral("nextRefreshDueAt")).toString(),
+             QStringLiteral("2024-01-02T00:00:00.000Z"));
+    QVERIFY(!schedule.value(QStringLiteral("active")).toBool());
+
+    const QVariantMap fingerprintSchedule = app.fingerprintRefreshSchedule();
+    QCOMPARE(fingerprintSchedule.value(QStringLiteral("intervalSeconds")).toInt(), 7200);
+    QCOMPARE(fingerprintSchedule.value(QStringLiteral("lastError")).toString(),
+             QStringLiteral("Fingerprint timeout"));
+    QCOMPARE(fingerprintSchedule.value(QStringLiteral("nextRefreshDueAt")).toString(),
+             QStringLiteral("2024-01-03T00:00:00.000Z"));
+    QVERIFY(fingerprintSchedule.value(QStringLiteral("active")).toBool());
+}
+
+void ApplicationDecisionLogTest::controlsLicenseRefreshSchedule()
+{
+    QQmlApplicationEngine engine;
+    Application app(engine);
+
+    QVERIFY(app.setLicenseRefreshEnabled(false));
+    QVariantMap schedule = app.licenseRefreshSchedule();
+    QVERIFY(!schedule.value(QStringLiteral("active")).toBool());
+
+    QVERIFY(app.setLicenseRefreshIntervalSeconds(120));
+    schedule = app.licenseRefreshSchedule();
+    QCOMPARE(schedule.value(QStringLiteral("intervalSeconds")).toInt(), 120);
+
+    QVERIFY(app.setLicenseRefreshEnabled(true));
+    schedule = app.licenseRefreshSchedule();
+    QVERIFY(schedule.value(QStringLiteral("active")).toBool());
+    QCOMPARE(schedule.value(QStringLiteral("intervalSeconds")).toInt(), 120);
+
+    QVERIFY(app.triggerLicenseRefreshNow());
+    schedule = app.licenseRefreshSchedule();
+    QVERIFY(!schedule.value(QStringLiteral("lastRequestAt")).toString().isEmpty());
+
+    QVERIFY(app.setLicenseRefreshIntervalSeconds(0));
+    schedule = app.licenseRefreshSchedule();
+    QCOMPARE(schedule.value(QStringLiteral("intervalSeconds")).toInt(), 0);
+    QVERIFY(!schedule.value(QStringLiteral("active")).toBool());
+
+    const QVariantMap cache = app.securityCacheForTesting();
+    QCOMPARE(cache.value(QStringLiteral("refreshIntervalSeconds")).toInt(), 0);
+    QVERIFY(!cache.value(QStringLiteral("refreshActive")).toBool());
+}
+
+void ApplicationDecisionLogTest::controlsFingerprintRefreshSchedule()
+{
+    QQmlApplicationEngine engine;
+    Application app(engine);
+
+    QVERIFY(app.setFingerprintRefreshEnabled(false));
+    QVariantMap schedule = app.fingerprintRefreshSchedule();
+    QVERIFY(!schedule.value(QStringLiteral("active")).toBool());
+
+    QVERIFY(app.setFingerprintRefreshIntervalSeconds(3600));
+    schedule = app.fingerprintRefreshSchedule();
+    QCOMPARE(schedule.value(QStringLiteral("intervalSeconds")).toInt(), 3600);
+
+    QVERIFY(app.setFingerprintRefreshEnabled(true));
+    schedule = app.fingerprintRefreshSchedule();
+    QVERIFY(schedule.value(QStringLiteral("active")).toBool());
+    QCOMPARE(schedule.value(QStringLiteral("intervalSeconds")).toInt(), 3600);
+
+    QVERIFY(app.triggerFingerprintRefreshNow());
+    schedule = app.fingerprintRefreshSchedule();
+    QVERIFY(!schedule.value(QStringLiteral("lastRequestAt")).toString().isEmpty());
+
+    QVERIFY(app.setFingerprintRefreshIntervalSeconds(0));
+    schedule = app.fingerprintRefreshSchedule();
+    QCOMPARE(schedule.value(QStringLiteral("intervalSeconds")).toInt(), 0);
+    QVERIFY(!schedule.value(QStringLiteral("active")).toBool());
+
+    const QVariantMap cache = app.securityCacheForTesting();
+    const QVariantMap fingerprintCache = cache.value(QStringLiteral("fingerprintRefresh")).toMap();
+    QCOMPARE(fingerprintCache.value(QStringLiteral("intervalSeconds")).toInt(), 0);
+    QVERIFY(!fingerprintCache.value(QStringLiteral("active")).toBool());
+}
+
+void ApplicationDecisionLogTest::configuresSupportBundleDefaults()
+{
+    QQmlApplicationEngine engine;
+    Application app(engine);
+
+    QCommandLineParser parser;
+    app.configureParser(parser);
+    parser.process(makeArgs({}));
+
+    QVERIFY(app.applyParser(parser));
+
+    auto* controller = qobject_cast<SupportBundleController*>(app.supportController());
+    QVERIFY(controller);
+
+    const QString scriptPath = controller->scriptPath();
+    QVERIFY2(scriptPath.endsWith(QStringLiteral("scripts/export_support_bundle.py")),
+             qPrintable(QStringLiteral("Nieprawidłowa ścieżka skryptu: %1").arg(scriptPath)));
+    QVERIFY(QFileInfo::exists(scriptPath));
+
+    QCOMPARE(controller->defaultBasename(), QStringLiteral("support-bundle"));
+    QCOMPARE(controller->format(), QStringLiteral("tar.gz"));
+    QVERIFY(controller->includeLogs());
+    QVERIFY(controller->includeReports());
+    QVERIFY(controller->includeLicenses());
+    QVERIFY(controller->includeMetrics());
+    QVERIFY(!controller->includeAudit());
+
+    const QVariantMap metadata = controller->metadata();
+    QCOMPARE(metadata.value(QStringLiteral("origin")).toString(), QStringLiteral("desktop_ui"));
+    QCOMPARE(metadata.value(QStringLiteral("connection_status")).toString(), QStringLiteral("idle"));
+    QCOMPARE(metadata.value(QStringLiteral("instrument")).toString(), app.instrumentLabel());
+    QCOMPARE(metadata.value(QStringLiteral("exchange")).toString(), QStringLiteral("BINANCE"));
+    QCOMPARE(metadata.value(QStringLiteral("symbol")).toString(), QStringLiteral("BTC/USDT"));
+}
+
+void ApplicationDecisionLogTest::updatesSupportBundleMetadata()
+{
+    QQmlApplicationEngine engine;
+    Application app(engine);
+
+    QCommandLineParser parser;
+    app.configureParser(parser);
+    parser.process(makeArgs({QStringLiteral("--support-bundle-metadata"), QStringLiteral("team=SecOps")}));
+
+    QVERIFY(app.applyParser(parser));
+
+    auto* controller = qobject_cast<SupportBundleController*>(app.supportController());
+    QVERIFY(controller);
+
+    QVariantMap metadata = controller->metadata();
+    QCOMPARE(metadata.value(QStringLiteral("team")).toString(), QStringLiteral("SecOps"));
+
+    QVERIFY(app.updateInstrument(QStringLiteral("BINANCE"),
+                                 QStringLiteral("ETH/USDT"),
+                                 QStringLiteral("ETHUSDT"),
+                                 QStringLiteral("USDT"),
+                                 QStringLiteral("ETH"),
+                                 QStringLiteral("PT1M")));
+
+    metadata = controller->metadata();
+    QCOMPARE(metadata.value(QStringLiteral("instrument")).toString(), app.instrumentLabel());
+    QCOMPARE(metadata.value(QStringLiteral("exchange")).toString(), QStringLiteral("BINANCE"));
+    QCOMPARE(metadata.value(QStringLiteral("symbol")).toString(), QStringLiteral("ETH/USDT"));
+    QCOMPARE(metadata.value(QStringLiteral("team")).toString(), QStringLiteral("SecOps"));
+
+    QVERIFY(QMetaObject::invokeMethod(&app,
+                                      "handleOfflineStatusChanged",
+                                      Q_ARG(QString, QStringLiteral("offline-daemon"))));
+
+    metadata = controller->metadata();
+    QCOMPARE(metadata.value(QStringLiteral("connection_status")).toString(), QStringLiteral("offline-daemon"));
+}
+
+void ApplicationDecisionLogTest::buildsSupportBundleArguments()
+{
+    QQmlApplicationEngine engine;
+    Application app(engine);
+
+    QCommandLineParser parser;
+    app.configureParser(parser);
+    parser.process(makeArgs({}));
+
+    QVERIFY(app.applyParser(parser));
+
+    auto* controller = qobject_cast<SupportBundleController*>(app.supportController());
+    QVERIFY(controller);
+
+    controller->setIncludeLogs(false);
+    controller->setIncludeAudit(false);
+
+    const auto hasDisableIn = [](const QStringList& list, const QString& label) {
+        for (int i = 0; i + 1 < list.size(); ++i) {
+            if (list.at(i) == QStringLiteral("--disable") && list.at(i + 1) == label)
+                return true;
+        }
+        return false;
+    };
+
+    const QStringList args = controller->buildCommandArguments(QUrl(), true);
+    QVERIFY(hasDisableIn(args, QStringLiteral("logs")));
+    QVERIFY(hasDisableIn(args, QStringLiteral("audit")));
+    QVERIFY(args.contains(QStringLiteral("--dry-run")));
+
+    const QString previewDryRun = controller->defaultCommandPreview(true);
+    QVERIFY(previewDryRun.contains(QStringLiteral("--dry-run")));
+    QVERIFY(previewDryRun.contains(QStringLiteral("--disable")));
+    QVERIFY(previewDryRun.contains(controller->scriptPath()));
+
+    controller->setIncludeLogs(true);
+    const QStringList refreshed = controller->buildCommandArguments(QUrl(), false);
+    QVERIFY(!hasDisableIn(refreshed, QStringLiteral("logs")));
+    QVERIFY(!refreshed.contains(QStringLiteral("--dry-run")));
+
+    const QString preview = controller->defaultCommandPreview(false);
+    QVERIFY(!preview.contains(QStringLiteral("--dry-run")));
+    QVERIFY(!preview.contains(QStringLiteral("--disable logs")));
 }
 
 QTEST_MAIN(ApplicationDecisionLogTest)
