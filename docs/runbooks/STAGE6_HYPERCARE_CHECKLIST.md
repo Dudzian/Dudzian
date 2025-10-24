@@ -21,9 +21,14 @@ artefakty audytowe.
   python scripts/build_market_intel_metrics.py \
     --environment binance_paper \
     --governor stage6_core \
-    --output var/market_intel/stage6_core_market_intel.json
+    --output "var/market_intel/market_intel_stage6_core_$(date -u +%Y%m%dT%H%M%SZ).json"
   ```
-  Dostosuj `--environment`/`--governor` do konfiguracji portfela.
+  Dostosuj `--environment`/`--governor` do konfiguracji portfela; parametr
+  `--output` zachowaj, aby raport trafił do lokalizacji oczekiwanej przez
+  Hypercare (domyślny wzorzec skryptu to `market_intel_{governor}_{timestamp}.json`).
+  Jeżeli w konfiguracji Hypercare pominiesz pole `portfolio.inputs.market_intel`,
+  orchestrator automatycznie użyje wzorca `var/market_intel/market_intel_<governor>_<timestamp>.json`
+  i wybierze najświeższy plik z katalogu `var/market_intel`.
 - Szablon konfiguracji hypercare dostępny w `config/core.yaml`
   (możesz go skopiować i uzupełnić o konkretne ścieżki środowiskowe; w razie
   potrzeby rozszerz struktury sekcji o dodatkowe pola specyficzne dla Stage6).
