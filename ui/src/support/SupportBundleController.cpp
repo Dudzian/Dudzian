@@ -4,6 +4,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QLoggingCategory>
+#include <QRegularExpression>
 
 #include "utils/PathUtils.hpp"
 
@@ -21,6 +22,21 @@ QString normalizePath(const QString& raw)
     if (path == QStringLiteral("~"))
         return QDir::homePath();
     return path;
+}
+
+QString quoteArgument(const QString& raw)
+{
+    if (raw.isEmpty())
+        return QStringLiteral("\"\"");
+
+    static const QRegularExpression needsQuote(QStringLiteral("[\\s\"'\\\\]"));
+    if (!needsQuote.match(raw).hasMatch())
+        return raw;
+
+    QString escaped = raw;
+    escaped.replace(QLatin1Char('\\'), QStringLiteral("\\\\"));
+    escaped.replace(QLatin1Char('"'), QStringLiteral("\\\""));
+    return QStringLiteral("\"%1\"").arg(escaped);
 }
 
 } // namespace

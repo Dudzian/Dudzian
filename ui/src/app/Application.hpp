@@ -210,6 +210,7 @@ signals:
     void reduceMotionActiveChanged();
     void telemetryPendingRetryCountChanged(int pending);
     void riskRefreshScheduleChanged();
+    void fingerprintRefreshScheduleChanged();
     void riskHistoryExportLimitEnabledChanged();
     void riskHistoryExportLimitValueChanged();
     void riskHistoryExportLastDirectoryChanged();
