@@ -107,13 +107,14 @@ def test_cached_source_fallbacks_to_cache_on_network_error(tmp_path: Path):
     manifest = SQLiteCacheStorage(tmp_path / "manifest.sqlite", store_rows=False)
     storage = DualCacheStorage(parquet, manifest)
 
-    storage.write(
-        "BTC/USDT::1m",
-        {
-            "columns": ["open_time", "open", "high", "low", "close", "volume"],
-            "rows": _sample_rows(),
-        },
-    )
+    cached_payload = {
+        "columns": ["open_time", "open", "high", "low", "close", "volume"],
+        "rows": [
+            [120_000.0, 10.0, 11.0, 9.5, 10.5, 31.0],
+            [180_000.0, 10.5, 11.5, 10.0, 11.0, 29.0],
+        ],
+    }
+    storage.write("BTC/USDT::1m", cached_payload)
 
     adapter = _FakeAdapter()
     upstream = _FailingUpstream(exchange_adapter=adapter)
@@ -126,7 +127,7 @@ def test_cached_source_fallbacks_to_cache_on_network_error(tmp_path: Path):
     request = OHLCVRequest(symbol="BTC/USDT", interval="1m", start=0, end=180_000, limit=2)
     response = source.fetch_ohlcv(request)
 
-    assert response.rows == _sample_rows()
+    assert response.rows == cached_payload["rows"]
 
 
 def test_snapshot_fetcher_merges_latest_rows(tmp_path: Path):
@@ -147,7 +148,7 @@ def test_snapshot_fetcher_merges_latest_rows(tmp_path: Path):
         snapshots_enabled=True,
     )
 
-    request = OHLCVRequest(symbol="BTC/USDT", interval="1m", start=0, end=180_000, limit=3)
+    request = OHLCVRequest(symbol="BTC/USDT", interval="1m", start=0, end=180_000, limit=2)
     rows = source.fetch_ohlcv(request).rows
 
     assert rows[-1][0] == pytest.approx(request.end)
@@ -176,10 +177,308 @@ def test_cached_source_rehydrates_snapshot_when_missing(tmp_path: Path):
     cached = source.fetch_ohlcv(request)
 
     assert cached.rows
+    assert len(adapter.calls) == 1
+    (snapshot_call,) = adapter.calls
+    assert snapshot_call[0] == "fetch_ohlcv" and snapshot_call[1][2] >= 60_000
+    assert source.snapshot_fetcher is not None
+
+
+def test_cached_source_skips_upstream_when_cache_suffices(tmp_path: Path):
+    adapter = _FakeAdapter()
+
+    parquet = ParquetCacheStorage(tmp_path / "cache", namespace="fallback_ready")
+    manifest = SQLiteCacheStorage(tmp_path / "manifest.sqlite", store_rows=False)
+    storage = DualCacheStorage(parquet, manifest)
+
+    storage.write(
+        "BTC/USDT::1m",
+        {
+            "columns": ["open_time", "open", "high", "low", "close", "volume"],
+            "rows": [
+                [120_000.0, 10.0, 11.0, 9.5, 10.5, 31.0],
+                [180_000.0, 10.5, 11.5, 10.0, 11.0, 29.0],
+            ],
+        },
+    )
+
+    upstream = PublicAPIDataSource(exchange_adapter=adapter)
+    source = CachedOHLCVSource(
+        storage=storage,
+        upstream=upstream,
+        snapshot_fetcher=None,
+        snapshots_enabled=True,
+    )
+
+    request = OHLCVRequest(symbol="BTC/USDT", interval="1m", start=0, end=180_000, limit=2)
+    response = source.fetch_ohlcv(request)
+
+    assert response.rows
+    assert len(adapter.calls) == 1
+    (snapshot_call,) = adapter.calls
+    assert snapshot_call[0] == "fetch_ohlcv" and snapshot_call[1][2] >= 60_000
+    assert source.snapshot_fetcher is not None
+
+
+def test_cached_source_hits_upstream_when_limit_not_met(tmp_path: Path):
+    adapter = _FakeAdapter()
+
+    parquet = ParquetCacheStorage(tmp_path / "cache", namespace="limit_gap")
+    manifest = SQLiteCacheStorage(tmp_path / "manifest.sqlite", store_rows=False)
+    storage = DualCacheStorage(parquet, manifest)
+
+    storage.write(
+        "BTC/USDT::1m",
+        {
+            "columns": ["open_time", "open", "high", "low", "close", "volume"],
+            "rows": _sample_rows(),
+        },
+    )
+
+    upstream = PublicAPIDataSource(exchange_adapter=adapter)
+    source = CachedOHLCVSource(
+        storage=storage,
+        upstream=upstream,
+        snapshot_fetcher=None,
+        snapshots_enabled=True,
+    )
+
+    request = OHLCVRequest(symbol="BTC/USDT", interval="1m", start=0, end=180_000, limit=3)
+    response = source.fetch_ohlcv(request)
+
+    assert response.rows  # upstream powinien spróbować uzupełnić brakującą świecę
+    assert len(adapter.calls) >= 1
+    first_call = adapter.calls[0]
+    assert first_call[0] == "fetch_ohlcv" and first_call[1][2] == 0
+
+
+def test_cached_source_refreshes_stale_limit_window(tmp_path: Path):
+    adapter = _FakeAdapter()
+
+    parquet = ParquetCacheStorage(tmp_path / "cache", namespace="stale_limit")
+    manifest = SQLiteCacheStorage(tmp_path / "manifest.sqlite", store_rows=False)
+    storage = DualCacheStorage(parquet, manifest)
+
+    # Cache zawiera zbyt stare świece – powinien nastąpić refresh upstream.
+    storage.write(
+        "BTC/USDT::1m",
+        {
+            "columns": ["open_time", "open", "high", "low", "close", "volume"],
+            "rows": [
+                [0.0, 10.0, 11.0, 9.5, 10.5, 30.0],
+                [60_000.0, 10.5, 11.5, 10.0, 11.0, 28.0],
+            ],
+        },
+    )
+
+    upstream = PublicAPIDataSource(exchange_adapter=adapter)
+    source = CachedOHLCVSource(
+        storage=storage,
+        upstream=upstream,
+        snapshot_fetcher=None,
+        snapshots_enabled=True,
+    )
+
+    request = OHLCVRequest(symbol="BTC/USDT", interval="1m", start=0, end=240_000, limit=2)
+
+    response = source.fetch_ohlcv(request)
+
+    assert len(response.rows) == 2
+    assert response.rows[-1][0] == pytest.approx(request.end)
+
     assert len(adapter.calls) == 2
     first_call, second_call = adapter.calls
     assert first_call[0] == "fetch_ohlcv" and first_call[1][2] == 0
-    assert second_call[0] == "fetch_ohlcv" and second_call[1][2] >= 60_000
+    assert second_call[0] == "fetch_ohlcv" and second_call[1][2] >= 120_000
+
+
+def test_cached_source_refreshes_when_limit_window_has_gaps(tmp_path: Path):
+    adapter = _FakeAdapter()
+
+    parquet = ParquetCacheStorage(tmp_path / "cache", namespace="limit_gap_refresh")
+    manifest = SQLiteCacheStorage(tmp_path / "manifest.sqlite", store_rows=False)
+    storage = DualCacheStorage(parquet, manifest)
+
+    storage.write(
+        "BTC/USDT::1m",
+        {
+            "columns": ["open_time", "open", "high", "low", "close", "volume"],
+            "rows": [
+                [120_000.0, 10.0, 11.0, 9.5, 10.5, 31.0],
+                [240_000.0, 10.5, 11.5, 10.0, 11.0, 29.0],
+                [360_000.0, 11.0, 12.0, 10.5, 11.5, 27.0],
+            ],
+        },
+    )
+
+    upstream = PublicAPIDataSource(exchange_adapter=adapter)
+    source = CachedOHLCVSource(
+        storage=storage,
+        upstream=upstream,
+        snapshot_fetcher=None,
+        snapshots_enabled=True,
+    )
+
+    request = OHLCVRequest(symbol="BTC/USDT", interval="1m", start=0, end=360_000, limit=3)
+
+    response = source.fetch_ohlcv(request)
+
+    assert len(response.rows) == 3
+    assert response.rows[-1][0] == pytest.approx(request.end)
+
+    assert len(adapter.calls) == 2
+    first_call, second_call = adapter.calls
+    assert first_call[0] == "fetch_ohlcv" and first_call[1][2] == 0
+    assert second_call[0] == "fetch_ohlcv" and second_call[1][2] >= 240_000
+
+
+def test_cached_source_skips_upstream_for_contiguous_range(tmp_path: Path):
+    adapter = _FakeAdapter()
+
+    parquet = ParquetCacheStorage(tmp_path / "cache", namespace="range_ready")
+    manifest = SQLiteCacheStorage(tmp_path / "manifest.sqlite", store_rows=False)
+    storage = DualCacheStorage(parquet, manifest)
+
+    storage.write(
+        "BTC/USDT::1m",
+        {
+            "columns": ["open_time", "open", "high", "low", "close", "volume"],
+            "rows": [
+                [0.0, 10.0, 11.0, 9.5, 10.5, 31.0],
+                [60_000.0, 10.5, 11.5, 10.0, 11.0, 29.0],
+                [120_000.0, 11.0, 12.0, 10.5, 11.5, 27.0],
+            ],
+        },
+    )
+
+    upstream = PublicAPIDataSource(exchange_adapter=adapter)
+
+    def _snapshot(req: OHLCVRequest):
+        return [[req.end, 11.5, 12.5, 10.8, 11.9, 25.0]]
+
+    source = CachedOHLCVSource(
+        storage=storage,
+        upstream=upstream,
+        snapshot_fetcher=_snapshot,
+        snapshots_enabled=True,
+    )
+
+    request = OHLCVRequest(symbol="BTC/USDT", interval="1m", start=0, end=120_000, limit=None)
+    response = source.fetch_ohlcv(request)
+
+    assert response.rows[-1][0] == pytest.approx(request.end)
+    assert adapter.calls == []
+
+
+def test_cached_source_refreshes_range_request_with_gaps(tmp_path: Path):
+    adapter = _FakeAdapter()
+
+    parquet = ParquetCacheStorage(tmp_path / "cache", namespace="range_gap")
+    manifest = SQLiteCacheStorage(tmp_path / "manifest.sqlite", store_rows=False)
+    storage = DualCacheStorage(parquet, manifest)
+
+    storage.write(
+        "BTC/USDT::1m",
+        {
+            "columns": ["open_time", "open", "high", "low", "close", "volume"],
+            "rows": [
+                [0.0, 10.0, 11.0, 9.5, 10.5, 31.0],
+                [120_000.0, 10.5, 11.5, 10.0, 11.0, 29.0],
+                [240_000.0, 11.0, 12.0, 10.5, 11.5, 27.0],
+            ],
+        },
+    )
+
+    upstream = PublicAPIDataSource(exchange_adapter=adapter)
+    source = CachedOHLCVSource(
+        storage=storage,
+        upstream=upstream,
+        snapshot_fetcher=None,
+        snapshots_enabled=False,
+    )
+
+    request = OHLCVRequest(symbol="BTC/USDT", interval="1m", start=0, end=240_000, limit=None)
+    response = source.fetch_ohlcv(request)
+
+    assert len(response.rows) >= 3
+    assert adapter.calls == [
+        ("fetch_ohlcv", ("BTC/USDT", "1m", 0, 240_000, None)),
+    ]
+
+
+def test_snapshot_rows_align_with_request_end_and_manifest(tmp_path: Path):
+    adapter = _FakeAdapter()
+
+    def _snapshot(req: OHLCVRequest):
+        return [[req.end - 60_000, 2.0, 3.0, 1.5, 2.5, 15.0]]
+
+    parquet = ParquetCacheStorage(tmp_path / "cache", namespace="manifest")
+    manifest = SQLiteCacheStorage(tmp_path / "manifest.sqlite", store_rows=False)
+    storage = DualCacheStorage(parquet, manifest)
+
+    upstream = PublicAPIDataSource(exchange_adapter=adapter)
+    source = CachedOHLCVSource(
+        storage=storage,
+        upstream=upstream,
+        snapshot_fetcher=_snapshot,
+        snapshots_enabled=True,
+    )
+
+    request = OHLCVRequest(symbol="BTC/USDT", interval="1m", start=0, end=180_000, limit=3)
+    response = source.fetch_ohlcv(request)
+
+    assert response.rows[-1][0] == pytest.approx(request.end)
+
+    metadata = manifest.metadata()
+    last_key = "last_timestamp::BTC/USDT::1m"
+    count_key = "row_count::BTC/USDT::1m"
+    assert metadata[last_key] == str(int(request.end))
+    assert int(metadata[count_key]) >= 3
+
+
+def test_snapshot_fetcher_handles_network_errors(tmp_path: Path):
+    adapter = _FakeAdapter()
+
+    def _snapshot(_: OHLCVRequest):
+        raise ExchangeNetworkError("snapshot-down")
+
+    parquet = ParquetCacheStorage(tmp_path / "cache", namespace="snapshot_error")
+    manifest = SQLiteCacheStorage(tmp_path / "manifest.sqlite", store_rows=False)
+    storage = DualCacheStorage(parquet, manifest)
+
+    upstream = PublicAPIDataSource(exchange_adapter=adapter)
+    source = CachedOHLCVSource(
+        storage=storage,
+        upstream=upstream,
+        snapshot_fetcher=_snapshot,
+        snapshots_enabled=True,
+    )
+
+    request = OHLCVRequest(symbol="BTC/USDT", interval="1m", start=0, end=120_000, limit=2)
+    response = source.fetch_ohlcv(request)
+
+    assert len(response.rows) == 2
+    assert any(call[0] == "fetch_ohlcv" for call in adapter.calls)
+
+
+def test_public_api_data_source_uses_exchange_adapter():
+    adapter = _FakeAdapter()
+    source = PublicAPIDataSource(exchange_adapter=adapter)
+
+    request = OHLCVRequest(symbol="BTC/USDT", interval="1m", start=0, end=120_000, limit=2)
+    response = source.fetch_ohlcv(request)
+
+    assert response.columns == (
+        "open_time",
+        "open",
+        "high",
+        "low",
+        "close",
+        "volume",
+    )
+    assert len(response.rows) == 2
+    assert adapter.calls == [
+        ("fetch_ohlcv", ("BTC/USDT", "1m", 0, 120_000, 2)),
+    ]
 
 
 def test_offline_source_avoids_network_and_snapshots(tmp_path: Path):

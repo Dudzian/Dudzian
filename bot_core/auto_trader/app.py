@@ -817,21 +817,6 @@ class AutoTrader:
             metadata["feature_columns_source"] = self._ai_feature_column_source
         return metadata
 
-    def _augment_metadata_with_feature_columns(
-        self, metadata: Mapping[str, object] | None
-    ) -> Mapping[str, object] | None:
-        feature_metadata = self._feature_column_metadata()
-        if not feature_metadata and metadata is None:
-            return None
-
-        merged: dict[str, Any] = {}
-        if metadata is not None:
-            merged.update(copy.deepcopy(dict(metadata)))
-        if feature_metadata:
-            for key, value in feature_metadata.items():
-                merged.setdefault(key, copy.deepcopy(value))
-        return merged or None
-
     def _normalise_cycle_history_limit(self, limit: int | None) -> int:
         if limit is None:
             return -1

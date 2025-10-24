@@ -386,9 +386,24 @@ class RegimeStrategyWeights:
     def default(cls) -> "RegimeStrategyWeights":
         return cls(
             weights={
-                MarketRegime.TREND: {"trend_following": 0.6, "daily_breakout": 0.3, "mean_reversion": 0.1},
-                MarketRegime.DAILY: {"trend_following": 0.2, "daily_breakout": 0.6, "mean_reversion": 0.2},
-                MarketRegime.MEAN_REVERSION: {"trend_following": 0.1, "daily_breakout": 0.2, "mean_reversion": 0.7},
+                MarketRegime.TREND: {
+                    "trend_following": 0.55,
+                    "day_trading": 0.15,
+                    "mean_reversion": 0.15,
+                    "arbitrage": 0.15,
+                },
+                MarketRegime.DAILY: {
+                    "trend_following": 0.25,
+                    "day_trading": 0.45,
+                    "mean_reversion": 0.15,
+                    "arbitrage": 0.15,
+                },
+                MarketRegime.MEAN_REVERSION: {
+                    "trend_following": 0.2,
+                    "day_trading": 0.15,
+                    "mean_reversion": 0.45,
+                    "arbitrage": 0.2,
+                },
             }
         )
 
