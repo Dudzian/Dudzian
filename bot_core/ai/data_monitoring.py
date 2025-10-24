@@ -38,7 +38,8 @@ logger = logging.getLogger(__name__)
 
 _SAFE_FILENAME = re.compile(r"[^a-z0-9]+", re.IGNORECASE)
 _SUPPORTED_SIGN_OFF_ROLES = frozenset({"risk", "compliance"})
-_DEFAULT_SIGN_OFF_ROLES = ("risk", "compliance")
+_SIGN_OFF_ROLES = tuple(sorted(_SUPPORTED_SIGN_OFF_ROLES))
+_DEFAULT_SIGN_OFF_ROLES = _SIGN_OFF_ROLES
 _SIGN_OFF_STATUSES = frozenset(
     {"pending", "approved", "rejected", "escalated", "waived", "investigating"}
 )
@@ -528,6 +529,41 @@ def _collect_pending_sign_off(
                 status,
             )
             pending[role].append(
+                {
+                    "category": category,
+                    "status": status,
+                    "report_path": path_str,
+                    "timestamp": timestamp,
+                }
+            )
+
+    known_roles = set(roles)
+    for extra_role, entry in sign_off.items():
+        normalized_role = _normalize_role(extra_role)
+        if normalized_role is None or normalized_role in known_roles:
+            continue
+        bucket = pending.setdefault(normalized_role, [])
+        status = "pending"
+        if isinstance(entry, Mapping):
+            status = str(entry.get("status") or "pending").lower()
+            if status not in _SIGN_OFF_STATUSES:
+                logger.warning(
+                    "Report %s (%s) has unsupported %s sign-off status %r; treating as pending",
+                    path_str or "<memory>",
+                    category,
+                    normalized_role,
+                    entry.get("status"),
+                )
+                status = "pending"
+        else:
+            logger.warning(
+                "Report %s (%s) missing %s sign-off entry; treating as pending",
+                path_str or "<memory>",
+                category,
+                normalized_role,
+            )
+        if status not in _COMPLETED_SIGN_OFF_STATUSES:
+            bucket.append(
                 {
                     "category": category,
                     "status": status,
