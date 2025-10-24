@@ -7,11 +7,11 @@ zarchiwizować w repozytorium audytowym.
 
 ## Kroki
 1. Upewnij się, że zakończono indywidualne cykle hypercare:
-   - Stage5: `scripts/run_stage5_hypercare_cycle.py`
-   - Stage6: `scripts/run_stage6_hypercare_cycle.py`
+   - Stage5: `python scripts/run_stage5_hypercare_cycle.py`
+   - Stage6: `python scripts/run_stage6_hypercare_cycle.py`
 2. Zweryfikuj oba raporty przy pomocy:
-   - `scripts/verify_stage5_hypercare_summary.py`
-   - `scripts/verify_stage6_hypercare_summary.py`
+   - `python scripts/verify_stage5_hypercare_summary.py`
+   - `python scripts/verify_stage6_hypercare_summary.py`
 3. Uruchom agregację raportów:
    ```bash
    python scripts/run_full_hypercare_summary.py \

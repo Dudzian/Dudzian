@@ -66,7 +66,7 @@ artefakty audytowe.
    modyfikując sekcję `portfolio` oraz ścieżki artefaktów.
 5. Po uzyskaniu raportu Stage6 dołącz go do pełnego przeglądu hypercare zgodnie
    z runbookiem `FULL_HYPERCARE_CHECKLIST.md` (skrypt
-   `scripts/run_full_hypercare_summary.py`).
+   `python scripts/run_full_hypercare_summary.py`).
 
 ## Artefakty/Akceptacja
 - `var/audit/stage6/hypercare_summary.json` z podsumowaniem komponentów i

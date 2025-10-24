@@ -75,7 +75,7 @@ bot_core/exchanges/binance/
 | Etap | Zakres | Narzędzia |
 | --- | --- | --- |
 | Testy jednostkowe | Retry, podpis, parsowanie sald, triangulacja kursów | `pytest`, fixture’y lokalne |
-| Backtest OOS | Walidacja danych OHLCV z cache Parquet (`BTC/USDT`, `ETH/USDT`) | `scripts/validate_parquet_cache.py` |
+| Backtest OOS | Walidacja danych OHLCV z cache Parquet (`BTC/USDT`, `ETH/USDT`) | `python scripts/validate_parquet_cache.py` |
 | Testnet | Symulacja zleceń limit/market na `testnet.binance.vision` z kontrolą limitów | VPN + allowlist, konto testnet |
 | Paper trading | Integracja z lokalnym symulatorem prowizji, porównanie fill rate z testnetem | `paper_trading_engine` |
 | Live (po audycie) | Checklista compliance, testy w okienkach niskiej płynności | Runbook operacyjny |

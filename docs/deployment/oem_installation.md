@@ -62,7 +62,7 @@ Dokument opisuje proces przygotowania kompletu artefaktów OEM dla środowisk
   ```
   Kluczowe elementy procesu:
    * `deploy/packaging/build_pyinstaller_bundle.py` uruchamia PyInstaller dla
-     `scripts/run_multi_strategy_scheduler.py`, dołączając wymagane moduły.
+    `python scripts/run_multi_strategy_scheduler.py`, dołączając wymagane moduły.
    * Katalog Qt (`--qt-dist`) kopiowany jest do `ui/` w strukturze bundla.
    * Wygenerowany `manifest.json` zawiera sumy SHA-384 wszystkich artefaktów i
     może zostać podpisany przy użyciu HMAC (`manifest.sig`). Dodatkowo można
@@ -132,7 +132,7 @@ python scripts/local_orchestrator.py verify-update demo \
 
 ## Lokalne środowiska demo/paper/live
 
-`scripts/local_orchestrator.py` konsoliduje typowe operacje operatorskie:
+`python scripts/local_orchestrator.py` konsoliduje typowe operacje operatorskie:
 
 * `prepare <env>` – tworzy katalogi robocze (`logs/`, `bundles/`, `dist/`).
 * `bundle <env>` – buduje bundla PyInstaller/Briefcase i zapisuje metadane w

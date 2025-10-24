@@ -9,11 +9,11 @@ Potwierdzić skuteczność procedur failover i zebrać podpisane artefakty rapor
 - [ ] Zapełniono katalog `var/audit/stage6/resilience` i zapewniono uprawnienia 700.
 
 ## Wykonanie
-1. [ ] Uruchom `scripts/failover_drill.py --config config/core.yaml --fail-on-breach`.
+1. [ ] Uruchom `python scripts/failover_drill.py --config config/core.yaml --fail-on-breach`.
 2. [ ] Sprawdź logi w konsoli (brak błędów I/O, potwierdzenie zapisania raportu i podpisu).
 3. [ ] Zbierz raport JSON (`resilience_failover_report.json`) oraz podpis `.sig` do artefaktów.
-4. [ ] Zbuduj paczkę resilience: `scripts/export_resilience_bundle.py --version <tag> --output-dir var/audit/stage6/resilience --signing-key-env STAGE6_RESILIENCE_SIGNING_KEY`.
-5. [ ] Zweryfikuj paczkę offline poleceniem `scripts/verify_resilience_bundle.py --bundle var/audit/stage6/resilience/resilience-bundle-<tag>.tar.gz --signing-key-env STAGE6_RESILIENCE_SIGNING_KEY`.
+4. [ ] Zbuduj paczkę resilience: `python scripts/export_resilience_bundle.py --version <tag> --output-dir var/audit/stage6/resilience --signing-key-env STAGE6_RESILIENCE_SIGNING_KEY`.
+5. [ ] Zweryfikuj paczkę offline poleceniem `python scripts/verify_resilience_bundle.py --bundle var/audit/stage6/resilience/resilience-bundle-<tag>.tar.gz --signing-key-env STAGE6_RESILIENCE_SIGNING_KEY`.
 6. [ ] Jeżeli którykolwiek drill posiada status `failed`, eskaluj do L2 i powtórz po weryfikacji przyczyn.
 
 ## Artefakty / Akceptacja

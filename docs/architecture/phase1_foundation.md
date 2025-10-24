@@ -97,7 +97,7 @@ podziałem na okna czasowe oraz deduplikacją zapisów. Domyślna konfiguracja w
 `exchange/symbol/granularity/year=YYYY/month=MM/`) z lekkim manifestem w `SQLiteCacheStorage`
 (`ohlcv_manifest.sqlite`). Dzięki temu Parquet jest „źródłem prawdy” dla świeczek, a manifest
 przechowuje metadane (ostatni timestamp, liczba rekordów) bez konieczności otwierania wszystkich
-plików. Zarówno nowy skrypt `scripts/backfill.py`, jak i uproszczony `scripts/backfill_ohlcv.py`
+plików. Zarówno nowy skrypt `python scripts/backfill.py`, jak i uproszczony `python scripts/backfill_ohlcv.py`
 wykorzystują tę samą warstwę storage, dzięki czemu backtesty i runtime paper/live czytają identyczne dane.
 `OHLCVBackfillService` domyślnie wprowadza throttling zapytań (konfigurowalny interwał, jitter i limit
 retry z wykładniczym backoffem), co pozwala realizować długie zasypy historii w duchu „good citizen” wobec
@@ -136,7 +136,7 @@ docelowo podmienić implementację `SecretStorage` na wariant oparty o zaszyfrow
 
 Uzupełniająco moduł `security.rotation` utrzymuje rejestr dat wymiany kluczy w pliku
 `security/rotation_log.json` (per środowisko) i udostępnia API do obliczania, ile czasu pozostało do
-kolejnej rotacji. Skrypt `scripts/check_key_rotation.py` korzysta z `core.yaml`, generuje raport dla
+kolejnej rotacji. Skrypt `python scripts/check_key_rotation.py` korzysta z `core.yaml`, generuje raport dla
 wszystkich środowisk oraz – opcjonalnie – zapisuje nową datę rotacji po zakończeniu procedury
 „bez-downtime”. Dzięki temu proces wymiany co 90 dni posiada mierzalne wsparcie operacyjne i łatwo
 go audytować.

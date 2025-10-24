@@ -14,7 +14,7 @@ funkcje, limity i moduły w ramach aplikacji bot_core oraz launcherów KryptoŁo
 | `bot_core/security/clock.py` | Monotoniczny zegar zapisujący ostatnią datę użycia licencji (anti-rollback). |
 | `bot_core/security/hwid.py` | Dostawca fingerprintu sprzętowego zgodnego z `bot_core.security.fingerprint`. |
 | `bot_core/security/guards.py` | Runtime'owe strażniki do egzekwowania limitów i wymagań edycji/modułów. |
-| `scripts/generate_license.py` | CLI do podpisywania payloadów JSON i generowania pakietów `.lic`. |
+| `python scripts/generate_license.py` | CLI do podpisywania payloadów JSON i generowania pakietów `.lic`. |
 
 ## Integracja runtime
 

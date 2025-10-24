@@ -83,12 +83,12 @@ PortfolioGovernorem podczas hypercare Stage6.
    bundel w repozytorium operacyjnym.
 9. Zapisz wynik monitoringu w decision logu Stage6 wraz z referencją do raportów.
 10. (Opcjonalnie) Połącz Observability z pozostałymi modułami Stage6 poprzez
-    `scripts/run_stage6_hypercare_cycle.py` – użyj checklisty Stage6 Hypercare, aby
+    `python scripts/run_stage6_hypercare_cycle.py` – użyj checklisty Stage6 Hypercare, aby
     przygotować wspólną konfigurację i wygenerować podpisany raport zbiorczy.
 
 ## Artefakty/Akceptacja
 - `var/observability/bundle.zip` wraz z podpisem `.sig` i metadanymi `alert_overrides`.
-- Log JSON z `scripts/verify_observability_bundle.py` potwierdzający weryfikację paczki.
+- Log JSON z `python scripts/verify_observability_bundle.py` potwierdzający weryfikację paczki.
 - `var/audit/observability/slo_report.json` oraz podpis `.sig` (wraz z sekcją SLO2).
 - `var/audit/observability/slo_report.csv` z wynikami SLO i kompozytów.
 - `var/audit/observability/alert_overrides.json` oraz podpis `.sig`.
