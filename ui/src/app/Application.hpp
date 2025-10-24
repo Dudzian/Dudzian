@@ -325,9 +325,10 @@ private:
     void reloadTradingTokenFromFile();
     void reloadMetricsTokenFromFile();
     void reloadHealthTokenFromFile();
+    void updateUiModuleWatchTargets(const QStringList& directories, const QStringList& pluginFiles);
     void configureTokenWatcher(QFileSystemWatcher& watcher,
                                QString& trackedFile,
-                               QString& trackedDir,
+                               QStringList& trackedDirs,
                                const QString& filePath,
                                const char* label);
     bool applyRegimeThresholdPath(const QString& path, bool warnIfMissing);

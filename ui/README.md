@@ -164,19 +164,10 @@ python scripts/ui_config_bridge.py \
 ```
 
 zwraca w JSON informacje o gotowości presetów (hash, podpis HMAC, brakujące dane,
-blokady harmonogramu, wymagane licencje), kandydatów decyzji, podsumowania reżimów,
-wydzieloną listę fallbacków oraz statystyki aktywacji. Payload zawiera również mapę
-wersji (`versions`), dzięki czemu UI może łatwo łączyć wpisy historii z podpisami
-HMAC i metadanymi presetów. Domyślnie mostek oczekuje plików `availability.json` oraz
+blokady harmonogramu, wymagane licencje) oraz statystyki aktywacji i historię
+fallbacków. Domyślnie mostek oczekuje plików `availability.json` oraz
 `activation_history.json` w katalogu wskazanym przez `--regime-workflow-dir` – UI
 może je odczytywać bezpośrednio, aby zasilić widok mapowania strategii na reżimy.
-Jeżeli w snapshotach brakuje znacznika `issued_at`, mostek uzupełnia go
-domyślną wartością `1970-01-01T00:00:00Z`, a wersje aktywacji są odnajdywane
-na podstawie samego `version_hash`, więc panel otrzymuje komplet podpisów i
-metadanych nawet przy okrojonych logach. Sekcja `availability_stats` agreguje
-raporty gotowości (liczba reżimów, brakujące dane, blokady licencyjne, blokady
-harmonogramu), więc UI może bezpośrednio wyświetlać podsumowania bez dodatkowych
-obliczeń.
 
 Ścieżki i interpreter mostka można dostosować flagami CLI:
 

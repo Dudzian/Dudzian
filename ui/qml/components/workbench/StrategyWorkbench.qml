@@ -43,8 +43,15 @@ Item {
     }
 
     ScrollView {
+        id: mainScroll
         anchors.fill: parent
+        enabled: viewModel.catalogReady && !viewModel.workbenchBusy
+        opacity: (viewModel.catalogReady && !viewModel.workbenchBusy) ? 1 : 0.4
         ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+
+        Behavior on opacity {
+            NumberAnimation { duration: 160 }
+        }
 
         ColumnLayout {
             id: content
@@ -433,6 +440,126 @@ Item {
                         Label { text: (viewModel.licenseStatus.runtime || []).join(", ") }
                     }
                 }
+            }
+        }
+    }
+
+    Frame {
+        id: workbenchErrorBanner
+        visible: viewModel.catalogReady && viewModel.workbenchError.length > 0
+        anchors {
+            left: parent.left
+            right: parent.right
+            top: parent.top
+            margins: 16
+        }
+        z: 25
+        padding: 12
+        background: Rectangle {
+            color: Qt.rgba(0.35, 0.07, 0.07, 0.9)
+            radius: 8
+            border.color: Qt.rgba(0.85, 0.35, 0.32, 0.9)
+            border.width: 1
+        }
+
+        RowLayout {
+            anchors.fill: parent
+            spacing: 12
+
+            Label {
+                text: viewModel.workbenchError
+                wrapMode: Text.WordWrap
+                Layout.fillWidth: true
+                color: "#ffd7d7"
+            }
+
+            Button {
+                text: qsTr("Ukryj")
+                visible: viewModel.workbenchError.length > 0
+                onClicked: viewModel.clearWorkbenchError()
+            }
+        }
+    }
+
+    Item {
+        anchors.fill: parent
+        visible: !viewModel.catalogReady && !viewModel.workbenchBusy
+        z: 20
+
+        Rectangle {
+            anchors.fill: parent
+            color: Qt.rgba(0, 0, 0, 0.55)
+        }
+
+        MouseArea {
+            anchors.fill: parent
+            acceptedButtons: Qt.AllButtons
+            hoverEnabled: true
+        }
+
+        Column {
+            anchors.centerIn: parent
+            spacing: 12
+            width: Math.min(parent.width * 0.75, 460)
+
+            Label {
+                text: qsTr("Katalog strategii nie jest gotowy")
+                wrapMode: Text.WordWrap
+                horizontalAlignment: Text.AlignHCenter
+                font.pointSize: 16
+                font.bold: true
+                color: "#ffffff"
+            }
+
+            Label {
+                visible: viewModel.workbenchError.length > 0
+                text: viewModel.workbenchError
+                wrapMode: Text.WordWrap
+                horizontalAlignment: Text.AlignHCenter
+                color: "#ffd7d7"
+            }
+
+            Label {
+                text: qsTr("Uzupełnij ścieżki do core.yaml, ui_config_bridge.py oraz interpretera Pythona, aby wczytać katalog dla Workbencha.")
+                wrapMode: Text.WordWrap
+                horizontalAlignment: Text.AlignHCenter
+                color: "#f0f0f0"
+            }
+        }
+    }
+
+    Item {
+        anchors.fill: parent
+        visible: viewModel.workbenchBusy
+        z: 30
+
+        Rectangle {
+            anchors.fill: parent
+            color: Qt.rgba(0, 0, 0, 0.35)
+        }
+
+        MouseArea {
+            anchors.fill: parent
+            acceptedButtons: Qt.AllButtons
+            hoverEnabled: true
+        }
+
+        Column {
+            anchors.centerIn: parent
+            spacing: 12
+
+            BusyIndicator {
+                id: busyIndicator
+                running: viewModel.workbenchBusy
+                implicitWidth: 64
+                implicitHeight: 64
+            }
+
+            Label {
+                text: qsTr("Ładowanie katalogu strategii…")
+                color: "#ffffff"
+                horizontalAlignment: Text.AlignHCenter
+                wrapMode: Text.WordWrap
             }
         }
     }

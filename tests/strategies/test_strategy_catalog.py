@@ -5,6 +5,8 @@ from datetime import date
 
 import pytest
 
+from bot_core.security.capabilities import build_capabilities_from_payload
+from bot_core.security.guards import install_capability_guard, reset_capability_guard
 from bot_core.config.loader import (
     _load_day_trading_strategies,
     _load_options_income_strategies,
@@ -27,6 +29,18 @@ from bot_core.strategies.catalog import (
     StrategyPresetWizard,
 )
 from bot_core.runtime.pipeline import _collect_strategy_definitions
+
+
+def _activate_guard(strategies: dict[str, bool]) -> None:
+    capabilities = build_capabilities_from_payload(
+        {
+            "edition": "standard",
+            "strategies": strategies,
+            "environments": ["paper"],
+        },
+        effective_date=date(2025, 1, 1),
+    )
+    install_capability_guard(capabilities)
 
 
 def test_catalog_builds_trend_strategy() -> None:

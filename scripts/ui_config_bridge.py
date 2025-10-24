@@ -14,15 +14,7 @@ from typing import Any, Callable, Mapping
 
 import yaml
 
-from bot_core.ai import (
-    MarketRegime,
-    MarketRegimeAssessment,
-    RegimeHistory,
-    RegimeSnapshot,
-    RegimeSummary,
-    RiskLevel,
-)
-from bot_core.decision.models import DecisionCandidate
+from bot_core.ai import MarketRegime, MarketRegimeAssessment, RegimeHistory
 
 try:
     from bot_core.config.loader import load_core_config
@@ -41,65 +33,6 @@ from bot_core.strategies.regime_workflow import (
     PresetVersionInfo,
     RegimePresetActivation,
     StrategyRegimeWorkflow,
-)
-
-
-_DEFAULT_VERSION_ISSUED_AT = datetime.fromtimestamp(0, tz=timezone.utc)
-
-_REGIME_SNAPSHOT_FLOAT_FIELDS = (
-    "confidence",
-    "risk_score",
-    "drawdown",
-    "volatility",
-    "volume_trend",
-    "volatility_ratio",
-    "return_skew",
-    "return_kurtosis",
-    "volume_imbalance",
-)
-
-_REGIME_SUMMARY_FLOAT_FIELDS = (
-    "confidence",
-    "risk_score",
-    "stability",
-    "risk_trend",
-    "risk_volatility",
-    "regime_persistence",
-    "transition_rate",
-    "confidence_trend",
-    "confidence_volatility",
-    "instability_score",
-    "confidence_decay",
-    "avg_drawdown",
-    "avg_volume_trend",
-    "drawdown_pressure",
-    "liquidity_pressure",
-    "volatility_ratio",
-    "regime_entropy",
-    "tail_risk_index",
-    "shock_frequency",
-    "volatility_of_volatility",
-    "stress_index",
-    "severe_event_rate",
-    "cooldown_score",
-    "recovery_potential",
-    "resilience_score",
-    "stress_balance",
-    "liquidity_gap",
-    "confidence_resilience",
-    "stress_projection",
-    "stress_momentum",
-    "liquidity_trend",
-    "confidence_fragility",
-    "volatility_trend",
-    "drawdown_trend",
-    "volume_trend_volatility",
-    "stability_projection",
-    "degradation_score",
-    "skewness_bias",
-    "kurtosis_excess",
-    "volume_imbalance",
-    "distribution_pressure",
 )
 
 
@@ -185,75 +118,22 @@ def _normalize_regime_value(value: Any) -> MarketRegime | None:
         raise SystemExit(f"Nieznany reżim rynku: {value!r}") from exc
 
 
-def _normalize_string_mapping(value: Any, *, field: str) -> dict[str, str]:
-    if value in (None, "", ()):  # szybkie ścieżki
-        return {}
-    if not isinstance(value, MappingABC):
-        raise SystemExit(f"Sekcja {field} musi być słownikiem")
-    normalized: dict[str, str] = {}
-    for key, payload in value.items():
-        normalized[str(key)] = str(payload)
-    return normalized
-
-
-def _coerce_issued_at(value: Any, *, field: str) -> datetime:
-    if value is None:
-        return _DEFAULT_VERSION_ISSUED_AT
-    if isinstance(value, datetime):
-        timestamp = value
-        if timestamp.tzinfo is None:
-            timestamp = timestamp.replace(tzinfo=timezone.utc)
-        return timestamp
-    if isinstance(value, (bytes, bytearray)):
-        try:
-            value = value.decode("utf-8")
-        except Exception as exc:  # pragma: no cover - defensywne
-            raise SystemExit(
-                f"Pole {field} ma nieobsługiwany format znacznika czasu"
-            ) from exc
-    if isinstance(value, str):
-        candidate = value.strip()
-        if not candidate:
-            return _DEFAULT_VERSION_ISSUED_AT
-        return _parse_iso_datetime(candidate, field=field)
-    if isinstance(value, (int, float)) and not isinstance(value, bool):
-        try:
-            return datetime.fromtimestamp(float(value), tz=timezone.utc)
-        except (OverflowError, OSError, ValueError) as exc:
-            raise SystemExit(
-                f"Pole {field} zawiera niepoprawny znacznik czasu: {value!r}"
-            ) from exc
-    raise SystemExit(
-        f"Pole {field} ma nieobsługiwany typ znacznika czasu: {type(value).__name__}"
-    )
-
-
-def _coerce_metadata(payload: Any) -> Mapping[str, Any]:
-    if isinstance(payload, MappingABC):
-        return {str(key): _normalize_json_value(payload[key]) for key in payload.keys()}
-    return {}
-
-
 def _build_version_info_from_payload(payload: Mapping[str, Any], *, field: str) -> PresetVersionInfo:
     if not isinstance(payload, MappingABC):
         raise SystemExit(f"Sekcja {field} musi być słownikiem")
-    hash_value: str | None = None
-    for key in ("hash", "version_hash", "preset_hash", "id"):
-        candidate = payload.get(key)
-        if isinstance(candidate, str):
-            candidate_value = candidate.strip()
-        elif candidate is None:
-            candidate_value = ""
-        else:
-            candidate_value = str(candidate).strip()
-        if candidate_value:
-            hash_value = candidate_value
-            break
-    if not hash_value:
-        raise SystemExit(f"Sekcja {field} musi zawierać identyfikator wersji (hash)")
-    signature = _normalize_string_mapping(payload.get("signature"), field=f"{field}.signature")
-    issued_at = _coerce_issued_at(payload.get("issued_at"), field=f"{field}.issued_at")
-    metadata = _coerce_metadata(payload.get("metadata"))
+    hash_value = payload.get("hash")
+    if not isinstance(hash_value, str) or not hash_value.strip():
+        raise SystemExit(f"Sekcja {field}.hash musi być niepustym ciągiem znaków")
+    signature_payload = payload.get("signature") or {}
+    if not isinstance(signature_payload, MappingABC):
+        raise SystemExit(f"Sekcja {field}.signature musi być słownikiem")
+    signature = {str(key): str(signature_payload[key]) for key in signature_payload.keys()}
+    issued_at = _parse_iso_datetime(payload.get("issued_at"), field=f"{field}.issued_at")
+    metadata_payload = payload.get("metadata") or {}
+    if isinstance(metadata_payload, MappingABC):
+        metadata = {str(key): metadata_payload[key] for key in metadata_payload.keys()}
+    else:
+        metadata = {}
     return PresetVersionInfo(
         hash=hash_value,
         signature=signature,
@@ -299,143 +179,6 @@ def _build_assessment_from_payload(
         metrics=metrics,
         symbol=symbol,
     )
-
-
-def _normalize_risk_level(value: Any, *, field: str) -> RiskLevel:
-    if isinstance(value, RiskLevel):
-        return value
-    if value in (None, ""):
-        return RiskLevel.CALM
-    candidate = str(value).strip().lower().replace(" ", "_")
-    candidate = candidate.replace("-", "_")
-    try:
-        return RiskLevel(candidate)
-    except ValueError as exc:
-        raise SystemExit(
-            f"Pole {field} zawiera nieznany poziom ryzyka: {value!r}"
-        ) from exc
-
-
-def _build_regime_snapshot_from_payload(
-    payload: Mapping[str, Any],
-    *,
-    field: str,
-    default_regime: MarketRegime,
-) -> RegimeSnapshot:
-    regime = _normalize_regime_value(payload.get("regime")) or default_regime
-    if regime is None:
-        raise SystemExit(f"Pole {field} musi definiować reżim rynku")
-
-    def _extract_float(key: str) -> float:
-        raw_value = payload.get(key, 0.0)
-        if raw_value in (None, ""):
-            return 0.0
-        try:
-            return float(raw_value)
-        except (TypeError, ValueError) as exc:
-            raise SystemExit(f"Pole {field}.{key} musi być liczbą zmiennoprzecinkową") from exc
-
-    return RegimeSnapshot(
-        regime=regime,
-        **{name: _extract_float(name) for name in _REGIME_SNAPSHOT_FLOAT_FIELDS},
-    )
-
-
-def _build_regime_summary(
-    default_regime: MarketRegime,
-    payload: Any,
-    *,
-    field: str,
-) -> RegimeSummary | None:
-    if payload in (None, "", {}):
-        return None
-    if not isinstance(payload, MappingABC):
-        raise SystemExit(f"Sekcja {field} musi być słownikiem")
-
-    regime = _normalize_regime_value(payload.get("regime")) or default_regime
-    if regime is None:
-        raise SystemExit(f"Sekcja {field} musi określać reżim rynku")
-
-    def _extract_float(key: str) -> float:
-        raw_value = payload.get(key, 0.0)
-        if raw_value in (None, ""):
-            return 0.0
-        try:
-            return float(raw_value)
-        except (TypeError, ValueError) as exc:
-            raise SystemExit(f"Pole {field}.{key} musi być liczbą zmiennoprzecinkową") from exc
-
-    def _extract_int(key: str) -> int:
-        raw_value = payload.get(key, 0)
-        if raw_value in (None, ""):
-            return 0
-        try:
-            return int(raw_value)
-        except (TypeError, ValueError) as exc:
-            raise SystemExit(f"Pole {field}.{key} musi być liczbą całkowitą") from exc
-
-    history_payload = payload.get("history")
-    history: tuple[RegimeSnapshot, ...] = ()
-    if isinstance(history_payload, Iterable) and not isinstance(history_payload, (str, bytes)):
-        snapshots: list[RegimeSnapshot] = []
-        for index, entry in enumerate(history_payload):
-            if not isinstance(entry, MappingABC):
-                raise SystemExit(
-                    f"Pozycja {field}.history[{index}] ma niepoprawny format"
-                )
-            snapshots.append(
-                _build_regime_snapshot_from_payload(
-                    entry,
-                    field=f"{field}.history[{index}]",
-                    default_regime=regime,
-                )
-            )
-        history = tuple(snapshots)
-
-    summary_kwargs: dict[str, Any] = {
-        name: _extract_float(name) for name in _REGIME_SUMMARY_FLOAT_FIELDS
-    }
-    summary_kwargs.update(
-        {
-            "regime": regime,
-            "risk_level": _normalize_risk_level(
-                payload.get("risk_level"), field=f"{field}.risk_level"
-            ),
-            "regime_streak": _extract_int("regime_streak"),
-            "history": history,
-        }
-    )
-    return RegimeSummary(**summary_kwargs)
-
-
-def _build_decision_candidates(
-    payload: Any,
-    *,
-    field: str,
-) -> tuple[DecisionCandidate, ...]:
-    if payload in (None, "", ()):  # szybkie ścieżki
-        return ()
-    if isinstance(payload, MappingABC):
-        payload_iterable = payload.values()
-    elif isinstance(payload, Iterable) and not isinstance(payload, (str, bytes)):
-        payload_iterable = payload
-    else:
-        raise SystemExit(f"Sekcja {field} musi zawierać listę kandydatów decyzji")
-
-    candidates: list[DecisionCandidate] = []
-    for index, entry in enumerate(payload_iterable):
-        if not isinstance(entry, MappingABC):
-            raise SystemExit(
-                f"Pozycja {field}[{index}] ma niepoprawny format (oczekiwano słownika)"
-            )
-        try:
-            candidate = DecisionCandidate.from_mapping(entry)
-        except Exception as exc:  # pragma: no cover - walidacja danych wejściowych
-            raise SystemExit(
-                f"Pozycja {field}[{index}] ma niepoprawne pola: {exc}"
-            ) from exc
-        candidates.append(candidate)
-    return tuple(candidates)
 
 
 def _normalize_json_value(value: Any) -> Any:
@@ -754,58 +497,6 @@ def _serialize_preset_availability(report: PresetAvailability) -> dict[str, Any]
     }
 
 
-def _build_availability_stats(
-    availability: tuple[PresetAvailability, ...]
-) -> dict[str, Any]:
-    total = len(availability)
-    ready = sum(1 for entry in availability if entry.ready)
-    blocked = total - ready
-    schedule_blocked = sum(1 for entry in availability if entry.schedule_blocked)
-
-    regime_counts: Counter[str | None] = Counter()
-    blocked_reasons: Counter[str] = Counter()
-    missing_data: Counter[str] = Counter()
-    license_issues: Counter[str] = Counter()
-
-    for entry in availability:
-        key = entry.regime.value if isinstance(entry.regime, MarketRegime) else None
-        regime_counts[key] += 1
-        if entry.blocked_reason:
-            blocked_reasons[entry.blocked_reason] += 1
-        missing_data.update(entry.missing_data)
-        license_issues.update(entry.license_issues)
-
-    def _serialize_counter(
-        counter: Counter[str | None], *, key_name: str
-    ) -> list[dict[str, Any]]:
-        serialized: list[dict[str, Any]] = []
-        for key, value in counter.items():
-            payload_key: str | None
-            if isinstance(key, MarketRegime):  # pragma: no cover - defensywne
-                payload_key = key.value
-            else:
-                payload_key = key
-            serialized.append({key_name: payload_key, "count": value})
-        serialized.sort(key=lambda item: (-item["count"], str(item[key_name]) if item[key_name] is not None else ""))
-        return serialized
-
-    def _serialize_simple_counter(counter: Counter[str], *, key_name: str) -> list[dict[str, Any]]:
-        serialized = [{key_name: key, "count": value} for key, value in counter.items()]
-        serialized.sort(key=lambda item: (-item["count"], item[key_name]))
-        return serialized
-
-    return {
-        "total": total,
-        "ready": ready,
-        "blocked": blocked,
-        "schedule_blocked": schedule_blocked,
-        "regime_counts": _serialize_counter(regime_counts, key_name="regime"),
-        "blocked_reasons": _serialize_simple_counter(blocked_reasons, key_name="reason"),
-        "missing_data": _serialize_simple_counter(missing_data, key_name="name"),
-        "license_issues": _serialize_simple_counter(license_issues, key_name="issue"),
-    }
-
-
 def _serialize_activation(activation: RegimePresetActivation) -> dict[str, Any]:
     regime_value = activation.regime.value if isinstance(activation.regime, MarketRegime) else None
     preset_regime_value = (
@@ -818,7 +509,7 @@ def _serialize_activation(activation: RegimePresetActivation) -> dict[str, Any]:
         "metrics": {str(key): float(value) for key, value in activation.assessment.metrics.items()},
         "symbol": activation.assessment.symbol,
     }
-    result: dict[str, Any] = {
+    return {
         "regime": regime_value,
         "preset_regime": preset_regime_value,
         "activated_at": activation.activated_at.astimezone(timezone.utc).isoformat(),
@@ -831,14 +522,6 @@ def _serialize_activation(activation: RegimePresetActivation) -> dict[str, Any]:
         "preset": _normalize_json_value(activation.preset),
         "assessment": assessment_payload,
     }
-    if activation.summary is not None:
-        result["summary"] = _normalize_json_value(dict(activation.summary.to_dict()))
-    if activation.decision_candidates:
-        result["decision_candidates"] = [
-            _normalize_json_value(candidate.to_mapping())
-            for candidate in activation.decision_candidates
-        ]
-    return result
 
 
 def _serialize_history_stats(stats: Any) -> dict[str, Any]:
@@ -951,12 +634,10 @@ def _serialize_uptime_stats(stats: Any) -> dict[str, Any]:
     }
 
 
-def _load_regime_workflow_availability(
-    base_dir: Path,
-) -> tuple[tuple[PresetAvailability, ...], dict[str, PresetVersionInfo]]:
+def _load_regime_workflow_availability(base_dir: Path) -> tuple[PresetAvailability, ...]:
     path = base_dir / "availability.json"
     if not path.exists():
-        return (), {}
+        return ()
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
@@ -964,7 +645,6 @@ def _load_regime_workflow_availability(
     if not isinstance(payload, list):
         raise SystemExit(f"Plik {path} musi zawierać listę raportów dostępności")
     reports: list[PresetAvailability] = []
-    versions: dict[str, PresetVersionInfo] = {}
     for index, entry in enumerate(payload):
         if not isinstance(entry, MappingABC):
             raise SystemExit(f"Pozycja availability[{index}] ma niepoprawny format")
@@ -974,7 +654,6 @@ def _load_regime_workflow_availability(
             version_payload,
             field=f"availability[{index}].version",
         )
-        versions.setdefault(version.hash, version)
         blocked_reason_raw = entry.get("blocked_reason")
         blocked_reason = None
         if isinstance(blocked_reason_raw, str) and blocked_reason_raw.strip():
@@ -1000,57 +679,10 @@ def _load_regime_workflow_availability(
                 schedule_blocked=schedule_blocked,
             )
         )
-    return tuple(reports), versions
+    return tuple(reports)
 
 
-def _resolve_version_for_history_entry(
-    entry: Mapping[str, Any],
-    *,
-    field: str,
-    known_versions: dict[str, PresetVersionInfo],
-) -> PresetVersionInfo:
-    version_payload = entry.get("version")
-    if isinstance(version_payload, MappingABC):
-        return _build_version_info_from_payload(version_payload, field=field)
-
-    candidate_hashes: list[str] = []
-    if isinstance(version_payload, str):
-        candidate_hashes.append(version_payload.strip())
-    for key in ("version_hash", "hash", "preset_version_hash"):
-        candidate = entry.get(key)
-        if isinstance(candidate, str):
-            normalized = candidate.strip()
-        elif candidate is None:
-            normalized = ""
-        else:
-            normalized = str(candidate).strip()
-        if normalized:
-            candidate_hashes.append(normalized)
-
-    for candidate in candidate_hashes:
-        version = known_versions.get(candidate)
-        if version is not None:
-            return version
-
-    if candidate_hashes:
-        hash_value = next((item for item in candidate_hashes if item), None)
-        if hash_value:
-            return PresetVersionInfo(
-                hash=hash_value,
-                signature={},
-                issued_at=_DEFAULT_VERSION_ISSUED_AT,
-                metadata={},
-            )
-    raise SystemExit(
-        f"Pozycja {field} musi zawierać informacje o wersji preset (hash lub sekcję version)"
-    )
-
-
-def _load_regime_workflow_history(
-    base_dir: Path,
-    *,
-    known_versions: dict[str, PresetVersionInfo],
-) -> tuple[RegimePresetActivation, ...]:
+def _load_regime_workflow_history(base_dir: Path) -> tuple[RegimePresetActivation, ...]:
     path = base_dir / "activation_history.json"
     if not path.exists():
         return ()
@@ -1072,12 +704,10 @@ def _load_regime_workflow_history(
             entry.get("activated_at"),
             field=f"activation_history[{index}].activated_at",
         )
-        version = _resolve_version_for_history_entry(
-            entry,
+        version = _build_version_info_from_payload(
+            entry.get("version"),
             field=f"activation_history[{index}].version",
-            known_versions=known_versions,
         )
-        known_versions.setdefault(version.hash, version)
         assessment = _build_assessment_from_payload(regime, entry.get("assessment"))
         blocked_reason_raw = entry.get("blocked_reason")
         blocked_reason = None
@@ -1088,31 +718,18 @@ def _load_regime_workflow_history(
         if isinstance(recommendation_raw, str) and recommendation_raw.strip():
             recommendation = recommendation_raw.strip()
         preset_payload = entry.get("preset")
-        if preset_payload is None:
-            preset = {}
+        if isinstance(preset_payload, MappingABC):
+            preset = {str(key): preset_payload[key] for key in preset_payload.keys()}
         else:
-            normalized_preset = _normalize_json_value(preset_payload)
-            if isinstance(normalized_preset, MappingABC):
-                preset = {str(key): normalized_preset[key] for key in normalized_preset.keys()}
-            else:
-                preset = {"value": normalized_preset}
-        summary = _build_regime_summary(
-            regime,
-            entry.get("summary"),
-            field=f"activation_history[{index}].summary",
-        )
-        decision_candidates = _build_decision_candidates(
-            entry.get("decision_candidates"),
-            field=f"activation_history[{index}].decision_candidates",
-        )
+            preset = {}
         history.append(
             RegimePresetActivation(
                 regime=regime,
                 assessment=assessment,
-                summary=summary,
+                summary=None,
                 preset=preset,
                 version=version,
-                decision_candidates=decision_candidates,
+                decision_candidates=tuple(),
                 activated_at=activated_at,
                 preset_regime=preset_regime,
                 used_fallback=bool(entry.get("used_fallback")),
@@ -1131,7 +748,7 @@ def _build_regime_workflow_stats(history: tuple[RegimePresetActivation, ...]) ->
         history=RegimeHistory(thresholds_loader=lambda: {}),
         activation_history_limit=history_limit,
     )
-    workflow.clear_history()
+    workflow._activation_history.clear()
     workflow._activation_history.extend(history)
     history_stats = _serialize_history_stats(workflow.activation_history_stats())
     transition_stats = _serialize_transition_stats(workflow.activation_transition_stats())
@@ -1150,43 +767,16 @@ def describe_regime_workflow(base_dir: Path) -> dict[str, Any]:
         raise SystemExit(f"Katalog z danymi StrategyRegimeWorkflow {base_dir} nie istnieje")
     if not base_dir.is_dir():
         raise SystemExit(f"Ścieżka {base_dir} nie jest katalogiem")
-    availability, known_versions = _load_regime_workflow_availability(base_dir)
-    history = _load_regime_workflow_history(base_dir, known_versions=known_versions)
+    availability = _load_regime_workflow_availability(base_dir)
+    history = _load_regime_workflow_history(base_dir)
     stats = _build_regime_workflow_stats(history)
-    fallbacks: list[dict[str, Any]] = []
-    for activation in history:
-        if not activation.used_fallback:
-            continue
-        fallbacks.append(
-            {
-                "regime": activation.regime.value
-                if isinstance(activation.regime, MarketRegime)
-                else None,
-                "preset_regime": activation.preset_regime.value
-                if isinstance(activation.preset_regime, MarketRegime)
-                else None,
-                "activated_at": activation.activated_at.astimezone(timezone.utc).isoformat(),
-                "blocked_reason": activation.blocked_reason,
-                "missing_data": list(activation.missing_data),
-                "license_issues": list(activation.license_issues),
-                "recommendation": activation.recommendation,
-                "version": _serialize_version_info(activation.version),
-            }
-        )
-    versions_payload = {
-        hash_value: _serialize_version_info(version)
-        for hash_value, version in sorted(known_versions.items())
-    }
     return {
         "regime_workflow": {
             "availability": [_serialize_preset_availability(entry) for entry in availability],
-            "availability_stats": _build_availability_stats(availability),
             "history": {
                 "activations": [_serialize_activation(entry) for entry in history],
                 "stats": stats,
-                "fallbacks": fallbacks,
             },
-            "versions": versions_payload,
         }
     }
 
