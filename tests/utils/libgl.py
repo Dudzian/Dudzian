@@ -63,23 +63,30 @@ def _has_libgl() -> bool:
 
 def _download_deb(url: str, target: Path, expected_sha256: str) -> None:
     try:
-        with urlopen(url) as response, target.open("wb") as deb_file:
-            shutil.copyfileobj(response, deb_file)
-    except URLError as exc:
-        raise RuntimeError(
-            "Nie udało się pobrać pakietu libGL: brak dostępu do sieci lub repozytorium"
-        ) from exc
-    except OSError as exc:
-        raise RuntimeError(
-            f"Nie udało się zapisać pakietu libGL do {target}: {exc}"
-        ) from exc
+        try:
+            with urlopen(url) as response, target.open("wb") as deb_file:
+                shutil.copyfileobj(response, deb_file)
+        except URLError as exc:
+            raise RuntimeError(
+                "Nie udało się pobrać pakietu libGL: brak dostępu do sieci lub repozytorium"
+            ) from exc
+        except OSError as exc:
+            raise RuntimeError(
+                f"Nie udało się zapisać pakietu libGL do {target}: {exc}"
+            ) from exc
 
-    digest = hashlib.sha256(target.read_bytes()).hexdigest()
-    if digest != expected_sha256:
+        digest = hashlib.sha256(target.read_bytes()).hexdigest()
+        if digest != expected_sha256:
+            raise RuntimeError(
+                "Niepoprawna suma SHA256 dla pobranego pakietu libGL: "
+                f"{digest} != {expected_sha256}"
+            )
+    except Exception as exc:  # pragma: no cover - defensywny fallback
+        if isinstance(exc, RuntimeError):
+            raise
         raise RuntimeError(
-            "Niepoprawna suma SHA256 dla pobranego pakietu libGL: "
-            f"{digest} != {expected_sha256}"
-        )
+            "Nie udało się przygotować pakietu libGL do użycia w testach"
+        ) from exc
 
 
 def _extract_deb(deb_path: Path, destination: Path) -> Path:
@@ -92,6 +99,10 @@ def _extract_deb(deb_path: Path, destination: Path) -> Path:
     except subprocess.CalledProcessError as exc:
         raise RuntimeError(
             f"Nie udało się rozpakować pakietu libGL przy pomocy dpkg-deb: {exc}"
+        ) from exc
+    except OSError as exc:  # pragma: no cover - awarie środowiska
+        raise RuntimeError(
+            "Nie udało się uruchomić dpkg-deb w środowisku testowym"
         ) from exc
     lib_dir = destination / "usr" / "lib" / "x86_64-linux-gnu"
     return lib_dir
