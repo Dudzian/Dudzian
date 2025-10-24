@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -33,16 +34,58 @@ class StrategyFactory(Protocol):
         ...
 
 
+def _normalize_non_empty_str(value: str, *, field_name: str) -> str:
+    value = str(value).strip()
+    if not value:
+        raise ValueError(f"{field_name} is required")
+    return value
+
+
+def _normalize_str_sequence(values: Iterable[str], *, field_name: str) -> tuple[str, ...]:
+    normalized = tuple(dict.fromkeys(str(item).strip() for item in values if str(item).strip()))
+    if not normalized:
+        raise ValueError(f"{field_name} must define at least one entry")
+    return normalized
+
+
+def _normalize_optional_str_sequence(values: Any) -> tuple[str, ...]:
+    if values in (None, ""):
+        return ()
+    if isinstance(values, str):
+        candidates = (values,)
+    elif isinstance(values, Iterable):
+        candidates = tuple(values)
+    else:
+        raise TypeError("Expected iterable of strings or string")
+    return tuple(dict.fromkeys(str(item).strip() for item in candidates if str(item).strip()))
+
+
 @dataclass(slots=True)
 class StrategyDefinition:
     """Opis pojedynczej strategii dostępnej w katalogu."""
 
     name: str
     engine: str
+    license_tier: str
+    risk_classes: Sequence[str]
+    required_data: Sequence[str]
     parameters: Mapping[str, Any] = field(default_factory=dict)
     risk_profile: str | None = None
     tags: Sequence[str] = field(default_factory=tuple)
     metadata: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "name", _normalize_non_empty_str(self.name, field_name="name"))
+        object.__setattr__(self, "engine", _normalize_non_empty_str(self.engine, field_name="engine"))
+        object.__setattr__(self, "license_tier", _normalize_non_empty_str(self.license_tier, field_name="license_tier"))
+        object.__setattr__(self, "risk_classes", _normalize_str_sequence(self.risk_classes, field_name="risk_classes"))
+        object.__setattr__(self, "required_data", _normalize_str_sequence(self.required_data, field_name="required_data"))
+        if self.tags:
+            object.__setattr__(self, "tags", tuple(dict.fromkeys(str(tag).strip() for tag in self.tags if str(tag).strip())))
+        if isinstance(self.metadata, Mapping):
+            object.__setattr__(self, "metadata", dict(self.metadata))
+        else:
+            raise TypeError("metadata must be a mapping")
 
 
 @dataclass(slots=True)
@@ -51,8 +94,19 @@ class StrategyEngineSpec:
 
     key: str
     factory: StrategyFactory
+    license_tier: str
+    risk_classes: Sequence[str]
+    required_data: Sequence[str]
     capability: str | None = None
     default_tags: Sequence[str] = field(default_factory=tuple)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "key", _normalize_non_empty_str(self.key, field_name="key"))
+        object.__setattr__(self, "license_tier", _normalize_non_empty_str(self.license_tier, field_name="license_tier"))
+        object.__setattr__(self, "risk_classes", _normalize_str_sequence(self.risk_classes, field_name="risk_classes"))
+        object.__setattr__(self, "required_data", _normalize_str_sequence(self.required_data, field_name="required_data"))
+        if self.default_tags:
+            object.__setattr__(self, "default_tags", tuple(dict.fromkeys(str(tag).strip() for tag in self.default_tags if str(tag).strip())))
 
     def build(
         self,
@@ -82,10 +136,22 @@ class StrategyCatalog:
 
     def create(self, definition: StrategyDefinition) -> StrategyEngine:
         spec = self.get(definition.engine)
+        if definition.license_tier != spec.license_tier:
+            raise ValueError(
+                f"Strategy '{definition.name}' requires license tier '{definition.license_tier}' "
+                f"but engine '{spec.key}' is registered for '{spec.license_tier}'"
+            )
         tags = tuple(dict.fromkeys((*spec.default_tags, *definition.tags)))
+        risk_classes = tuple(dict.fromkeys((*spec.risk_classes, *definition.risk_classes)))
+        required_data = tuple(dict.fromkeys((*spec.required_data, *definition.required_data)))
         metadata = dict(definition.metadata)
         if tags and "tags" not in metadata:
             metadata["tags"] = tags
+        if spec.capability and "capability" not in metadata:
+            metadata["capability"] = spec.capability
+        metadata.setdefault("license_tier", spec.license_tier)
+        metadata.setdefault("risk_classes", risk_classes)
+        metadata.setdefault("required_data", required_data)
         engine = spec.build(
             name=definition.name,
             parameters=definition.parameters,
@@ -114,6 +180,9 @@ class StrategyCatalog:
                 "engine": spec.key,
                 "capability": spec.capability,
                 "default_tags": list(spec.default_tags),
+                "license_tier": spec.license_tier,
+                "risk_classes": list(spec.risk_classes),
+                "required_data": list(spec.required_data),
             }
             summary.append(payload)
         return summary
@@ -137,6 +206,9 @@ class StrategyCatalog:
                 "name": name,
                 "engine": definition.engine,
                 "tags": list(merged_tags),
+                "license_tier": definition.license_tier,
+                "risk_classes": list(definition.risk_classes),
+                "required_data": list(definition.required_data),
             }
             if definition.risk_profile:
                 payload["risk_profile"] = definition.risk_profile
@@ -144,8 +216,17 @@ class StrategyCatalog:
                 spec = self.get(definition.engine)
                 if spec.capability:
                     payload["capability"] = spec.capability
+                payload["license_tier"] = spec.license_tier
+                payload["risk_classes"] = list(
+                    dict.fromkeys((*spec.risk_classes, *definition.risk_classes))
+                )
+                payload["required_data"] = list(
+                    dict.fromkeys((*spec.required_data, *definition.required_data))
+                )
             except KeyError:
                 pass
+            if "capability" not in payload and "capability" in definition.metadata:
+                payload["capability"] = definition.metadata["capability"]
             if include_metadata and definition.metadata:
                 payload["metadata"] = dict(definition.metadata)
             if definition.parameters:
@@ -230,6 +311,9 @@ def build_default_catalog() -> StrategyCatalog:
         StrategyEngineSpec(
             key="daily_trend_momentum",
             factory=_build_daily_trend_strategy,
+            license_tier="standard",
+            risk_classes=("directional", "momentum"),
+            required_data=("ohlcv", "technical_indicators"),
             capability="trend_d1",
             default_tags=("trend", "momentum"),
         )
@@ -238,6 +322,9 @@ def build_default_catalog() -> StrategyCatalog:
         StrategyEngineSpec(
             key="mean_reversion",
             factory=_build_mean_reversion_strategy,
+            license_tier="professional",
+            risk_classes=("statistical", "mean_reversion"),
+            required_data=("ohlcv", "spread_history"),
             capability="mean_reversion",
             default_tags=("mean_reversion", "stat_arbitrage"),
         )
@@ -246,6 +333,9 @@ def build_default_catalog() -> StrategyCatalog:
         StrategyEngineSpec(
             key="grid_trading",
             factory=_build_grid_strategy,
+            license_tier="professional",
+            risk_classes=("market_making",),
+            required_data=("order_book", "ohlcv"),
             capability="grid_trading",
             default_tags=("grid", "market_making"),
         )
@@ -254,6 +344,9 @@ def build_default_catalog() -> StrategyCatalog:
         StrategyEngineSpec(
             key="volatility_target",
             factory=_build_volatility_target_strategy,
+            license_tier="enterprise",
+            risk_classes=("risk_control", "volatility"),
+            required_data=("ohlcv", "realized_volatility"),
             capability="volatility_target",
             default_tags=("volatility", "risk"),
         )
@@ -262,6 +355,9 @@ def build_default_catalog() -> StrategyCatalog:
         StrategyEngineSpec(
             key="cross_exchange_arbitrage",
             factory=_build_cross_exchange_strategy,
+            license_tier="enterprise",
+            risk_classes=("arbitrage", "liquidity"),
+            required_data=("order_book", "latency_monitoring"),
             capability="cross_exchange",
             default_tags=("arbitrage", "liquidity"),
         )
@@ -318,13 +414,32 @@ class StrategyPresetWizard:
         risk_profile = entry.get("risk_profile")
         user_tags = tuple(entry.get("tags") or ())
         merged_tags = tuple(dict.fromkeys((*spec.default_tags, *user_tags)))
+        license_tier = str(entry.get("license_tier") or spec.license_tier).strip()
+        if license_tier != spec.license_tier:
+            raise ValueError(
+                f"Preset entry '{name}' declares license tier '{license_tier}' incompatible with engine '{spec.key}'"
+            )
+        risk_classes = tuple(
+            dict.fromkeys((*spec.risk_classes, *_normalize_optional_str_sequence(entry.get("risk_classes"))))
+        )
+        required_data = tuple(
+            dict.fromkeys((*spec.required_data, *_normalize_optional_str_sequence(entry.get("required_data"))))
+        )
         metadata = dict(entry.get("metadata") or {})
+        metadata.setdefault("license_tier", spec.license_tier)
+        metadata.setdefault("risk_classes", risk_classes)
+        metadata.setdefault("required_data", required_data)
+        if spec.capability:
+            metadata.setdefault("capability", spec.capability)
 
         payload: dict[str, Any] = {
             "name": name,
             "engine": spec.key,
             "parameters": parameters,
             "tags": list(merged_tags),
+            "license_tier": spec.license_tier,
+            "risk_classes": list(risk_classes),
+            "required_data": list(required_data),
         }
         if risk_profile:
             payload["risk_profile"] = str(risk_profile)

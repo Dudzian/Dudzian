@@ -3093,20 +3093,47 @@ def _collect_strategy_definitions(core_config: CoreConfig) -> dict[str, Strategy
 
     definitions: dict[str, StrategyDefinition] = {}
 
+    def _resolve_metadata(engine: str) -> tuple[str, tuple[str, ...], tuple[str, ...], str | None]:
+        try:
+            spec = DEFAULT_STRATEGY_CATALOG.get(engine)
+        except KeyError:
+            return ("unspecified", ("unspecified",), ("unspecified",), None)
+        return (spec.license_tier, spec.risk_classes, spec.required_data, spec.capability)
+
     for name, cfg in getattr(core_config, "strategy_definitions", {}).items():
+        license_tier, risk_classes, required_data, capability = _resolve_metadata(cfg.engine)
+        metadata = dict(cfg.metadata)
+        resolved_capability = getattr(cfg, "capability", None) or capability
+        if resolved_capability and "capability" not in metadata:
+            metadata["capability"] = resolved_capability
         definitions[name] = StrategyDefinition(
             name=cfg.name,
             engine=cfg.engine,
+            license_tier=cfg.license_tier or license_tier,
+            risk_classes=tuple(cfg.risk_classes) or risk_classes,
+            required_data=tuple(cfg.required_data) or required_data,
             parameters=dict(cfg.parameters),
             risk_profile=cfg.risk_profile,
             tags=tuple(cfg.tags),
-            metadata=dict(cfg.metadata),
+            metadata=metadata,
         )
 
     def _fallback(name: str, engine: str, params: Mapping[str, Any]) -> None:
         if name in definitions:
             return
-        definitions[name] = StrategyDefinition(name=name, engine=engine, parameters=dict(params))
+        license_tier, risk_classes, required_data, capability = _resolve_metadata(engine)
+        metadata: dict[str, Any] = {}
+        if capability:
+            metadata["capability"] = capability
+        definitions[name] = StrategyDefinition(
+            name=name,
+            engine=engine,
+            license_tier=license_tier,
+            risk_classes=risk_classes,
+            required_data=required_data,
+            parameters=dict(params),
+            metadata=metadata,
+        )
 
     for name, cfg in getattr(core_config, "strategies", {}).items():
         _fallback(
@@ -3199,33 +3226,8 @@ def describe_strategy_definitions(
 
     catalog = catalog or DEFAULT_STRATEGY_CATALOG
     definitions = _collect_strategy_definitions(core_config)
-    summary: list[Mapping[str, object]] = []
-
-    for name, definition in definitions.items():
-        try:
-            spec = catalog.get(definition.engine)
-            capability = spec.capability
-            tags = tuple(dict.fromkeys((*spec.default_tags, *definition.tags)))
-        except KeyError:
-            capability = None
-            tags = tuple(dict.fromkeys(definition.tags))
-
-        payload: dict[str, object] = {
-            "name": name,
-            "engine": definition.engine,
-            "parameters": dict(definition.parameters),
-            "tags": list(tags),
-        }
-        if definition.risk_profile:
-            payload["risk_profile"] = definition.risk_profile
-        if capability:
-            payload["capability"] = capability
-        if definition.metadata:
-            payload["metadata"] = dict(definition.metadata)
-        summary.append(payload)
-
-    summary.sort(key=lambda item: item["name"])  # type: ignore[index]
-    return summary
+    described = catalog.describe_definitions(definitions, include_metadata=True)
+    return list(described)
 
 
 def describe_multi_strategy_configuration(
@@ -3275,9 +3277,24 @@ def describe_multi_strategy_configuration(
                 entry["tags"] = list(tags)
                 if spec.capability:
                     entry["capability"] = spec.capability
+                entry["license_tier"] = spec.license_tier
+                entry["risk_classes"] = list(
+                    dict.fromkeys((*spec.risk_classes, *definition.risk_classes))
+                )
+                entry["required_data"] = list(
+                    dict.fromkeys((*spec.required_data, *definition.required_data))
+                )
             except KeyError:
                 if definition.tags:
                     entry["tags"] = list(dict.fromkeys(definition.tags))
+                if definition.license_tier:
+                    entry["license_tier"] = definition.license_tier
+                if definition.risk_classes:
+                    entry["risk_classes"] = list(dict.fromkeys(definition.risk_classes))
+                if definition.required_data:
+                    entry["required_data"] = list(
+                        dict.fromkeys(definition.required_data)
+                    )
         schedules.append(entry)
 
     schedules.sort(key=lambda item: item["name"])
