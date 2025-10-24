@@ -17,130 +17,60 @@ from bot_core.ai.data_monitoring import (
     ComplianceSignOffError,
     collect_pending_compliance_sign_offs,
     ensure_compliance_sign_offs,
-    filter_audit_reports_since,
-    load_recent_data_quality_reports,
-    load_recent_drift_reports,
-    normalize_compliance_sign_off_roles,
-    summarize_data_quality_reports,
-    summarize_drift_reports,
-)
-
-from bot_core.ai.data_monitoring import (
-    ComplianceSignOffError,
-    collect_pending_compliance_sign_offs,
-    ensure_compliance_sign_offs,
-    filter_audit_reports_since,
-    filter_audit_reports_by_tags,
-    filter_audit_reports_by_sign_off_status,
-    filter_audit_reports_by_status,
-    filter_audit_reports_by_source,
-    filter_audit_reports_by_schedule,
-    filter_audit_reports_by_category,
-    filter_audit_reports_by_job_name,
-    filter_audit_reports_by_run,
-    filter_audit_reports_by_symbol,
-    filter_audit_reports_by_pipeline,
-    filter_audit_reports_by_environment,
-    filter_audit_reports_by_exchange,
-    filter_audit_reports_by_portfolio,
-    filter_audit_reports_by_profile,
-    filter_audit_reports_by_strategy,
-    filter_audit_reports_by_dataset,
-    filter_audit_reports_by_model,
-    filter_audit_reports_by_model_version,
-    filter_audit_reports_by_license_tier,
-    filter_audit_reports_by_risk_class,
-    filter_audit_reports_by_required_data,
     filter_audit_reports_by_capability,
-    filter_audit_reports_by_policy_enforcement,
-    load_recent_data_quality_reports,
-    load_recent_drift_reports,
-    normalize_compliance_sign_off_roles,
-    normalize_sign_off_status,
-    normalize_report_status,
-    normalize_report_source,
-    normalize_report_schedule,
-    normalize_report_category,
-    normalize_report_job_name,
-    normalize_report_run,
-    normalize_report_symbol,
-    normalize_report_pipeline,
-    normalize_report_environment,
-    normalize_report_exchange,
-    normalize_report_portfolio,
-    normalize_report_profile,
-    normalize_report_dataset,
-    normalize_report_strategy,
-    normalize_report_model,
-    normalize_report_model_version,
-    normalize_report_license_tier,
-    normalize_report_risk_class,
-    normalize_report_required_data,
-    normalize_report_capability,
-    normalize_policy_enforcement,
-    get_supported_sign_off_statuses,
-    summarize_data_quality_reports,
-    summarize_drift_reports,
-)
-
-from bot_core.ai.data_monitoring import (
-    ComplianceSignOffError,
-    collect_pending_compliance_sign_offs,
-    ensure_compliance_sign_offs,
-    filter_audit_reports_since,
-    filter_audit_reports_by_tags,
-    filter_audit_reports_by_sign_off_status,
-    filter_audit_reports_by_status,
-    filter_audit_reports_by_source,
-    filter_audit_reports_by_schedule,
     filter_audit_reports_by_category,
-    filter_audit_reports_by_job_name,
-    filter_audit_reports_by_run,
-    filter_audit_reports_by_symbol,
-    filter_audit_reports_by_pipeline,
-    filter_audit_reports_by_environment,
-    filter_audit_reports_by_exchange,
-    filter_audit_reports_by_portfolio,
-    filter_audit_reports_by_profile,
-    filter_audit_reports_by_strategy,
+    filter_audit_reports_by_dataset,
     filter_audit_reports_by_engine,
+    filter_audit_reports_by_environment,
+    filter_audit_reports_by_exchange,
     filter_audit_reports_by_issue_code,
-    filter_audit_reports_by_dataset,
+    filter_audit_reports_by_job_name,
+    filter_audit_reports_by_license_tier,
     filter_audit_reports_by_model,
     filter_audit_reports_by_model_version,
-    filter_audit_reports_by_license_tier,
-    filter_audit_reports_by_risk_class,
-    filter_audit_reports_by_required_data,
-    filter_audit_reports_by_capability,
+    filter_audit_reports_by_pipeline,
     filter_audit_reports_by_policy_enforcement,
+    filter_audit_reports_by_portfolio,
+    filter_audit_reports_by_profile,
+    filter_audit_reports_by_required_data,
+    filter_audit_reports_by_risk_class,
+    filter_audit_reports_by_run,
+    filter_audit_reports_by_schedule,
+    filter_audit_reports_by_sign_off_status,
+    filter_audit_reports_by_source,
+    filter_audit_reports_by_status,
+    filter_audit_reports_by_strategy,
+    filter_audit_reports_by_symbol,
+    filter_audit_reports_by_tags,
+    filter_audit_reports_since,
+    get_supported_sign_off_statuses,
     load_recent_data_quality_reports,
     load_recent_drift_reports,
     normalize_compliance_sign_off_roles,
-    normalize_sign_off_status,
-    normalize_report_status,
-    normalize_report_source,
-    normalize_report_schedule,
+    normalize_policy_enforcement,
+    normalize_report_capability,
     normalize_report_category,
-    normalize_report_job_name,
-    normalize_report_run,
-    normalize_report_symbol,
-    normalize_report_pipeline,
+    normalize_report_dataset,
+    normalize_report_engine,
     normalize_report_environment,
     normalize_report_exchange,
-    normalize_report_portfolio,
-    normalize_report_profile,
-    normalize_report_dataset,
-    normalize_report_strategy,
-    normalize_report_engine,
     normalize_report_issue_code,
+    normalize_report_job_name,
+    normalize_report_license_tier,
     normalize_report_model,
     normalize_report_model_version,
-    normalize_report_license_tier,
-    normalize_report_risk_class,
+    normalize_report_pipeline,
+    normalize_report_portfolio,
+    normalize_report_profile,
     normalize_report_required_data,
-    normalize_report_capability,
-    normalize_policy_enforcement,
-    get_supported_sign_off_statuses,
+    normalize_report_risk_class,
+    normalize_report_run,
+    normalize_report_schedule,
+    normalize_report_source,
+    normalize_report_status,
+    normalize_report_strategy,
+    normalize_report_symbol,
+    normalize_sign_off_status,
     summarize_data_quality_reports,
     summarize_drift_reports,
 )
@@ -569,7 +499,392 @@ def create_parser() -> argparse.ArgumentParser:
         help="Zwraca błąd, jeśli brakuje wymaganych podpisów dla wskazanych ról.",
     )
 
+    _register_ai_compliance_filters(compliance)
+
     return parser
+
+
+def _register_ai_compliance_filters(parser: argparse.ArgumentParser) -> None:
+    """Dodaje opcje filtrowania dla komendy ``ai-compliance``."""
+
+    def _add(
+        include_flags: tuple[str, ...],
+        exclude_flags: tuple[str, ...],
+        *,
+        dest: str,
+        metavar: str,
+        include_help: str,
+        exclude_help: str,
+    ) -> None:
+        parser.add_argument(
+            *include_flags,
+            dest=f"include_{dest}",
+            action="append",
+            metavar=metavar,
+            help=include_help,
+        )
+        parser.add_argument(
+            *exclude_flags,
+            dest=f"exclude_{dest}",
+            action="append",
+            metavar=metavar,
+            help=exclude_help,
+        )
+
+    common_note = (
+        "Argument można podać wielokrotnie lub przekazać listę rozdzieloną przecinkami."
+    )
+
+    _add(
+        ("--include-tag", "--include-tags"),
+        ("--exclude-tag", "--exclude-tags"),
+        dest="tags",
+        metavar="TAG",
+        include_help=(
+            "Wymaga raportów oznaczonych wskazanym tagiem (np. risk_alert). "
+            f"{common_note}"
+        ),
+        exclude_help=(
+            "Pomija raporty oznaczone wskazanym tagiem (np. risk_alert). "
+            f"{common_note}"
+        ),
+    )
+    _add(
+        ("--include-signoff-status", "--include-sign-off-status"),
+        ("--exclude-signoff-status", "--exclude-sign-off-status"),
+        dest="statuses",
+        metavar="STATUS",
+        include_help=(
+            "Wymaga raportów z podpisem w podanym statusie (np. pending, approved). "
+            f"{common_note}"
+        ),
+        exclude_help=(
+            "Pomija raporty z podpisem w podanym statusie (np. pending, approved). "
+            f"{common_note}"
+        ),
+    )
+    _add(
+        ("--include-report-status", "--include-report-statuses"),
+        ("--exclude-report-status", "--exclude-report-statuses"),
+        dest="report_statuses",
+        metavar="REPORT_STATUS",
+        include_help=(
+            "Wymaga raportów o wskazanym statusie (np. alert, ok). "
+            f"{common_note}"
+        ),
+        exclude_help=(
+            "Pomija raporty o wskazanym statusie (np. alert, ok). "
+            f"{common_note}"
+        ),
+    )
+    _add(
+        ("--include-issue", "--include-issues"),
+        ("--exclude-issue", "--exclude-issues"),
+        dest="issues",
+        metavar="ISSUE",
+        include_help=(
+            "Wymaga raportów o podanym kodzie problemu (np. dq, scheduler). "
+            f"{common_note}"
+        ),
+        exclude_help=(
+            "Pomija raporty o podanym kodzie problemu (np. dq, scheduler). "
+            f"{common_note}"
+        ),
+    )
+    _add(
+        ("--include-source", "--include-sources"),
+        ("--exclude-source", "--exclude-sources"),
+        dest="sources",
+        metavar="SOURCE",
+        include_help=(
+            "Wymaga raportów pochodzących z danego źródła (np. scheduler). "
+            f"{common_note}"
+        ),
+        exclude_help=(
+            "Pomija raporty pochodzące z danego źródła (np. scheduler). "
+            f"{common_note}"
+        ),
+    )
+    _add(
+        ("--include-schedule", "--include-schedules"),
+        ("--exclude-schedule", "--exclude-schedules"),
+        dest="schedules",
+        metavar="SCHEDULE",
+        include_help=(
+            "Wymaga raportów z określonego harmonogramu (np. nightly). "
+            f"{common_note}"
+        ),
+        exclude_help=(
+            "Pomija raporty z określonego harmonogramu (np. nightly). "
+            f"{common_note}"
+        ),
+    )
+    _add(
+        ("--include-category", "--include-categories"),
+        ("--exclude-category", "--exclude-categories"),
+        dest="categories",
+        metavar="CATEGORY",
+        include_help=(
+            "Wymaga raportów z danej kategorii audytu (np. completeness). "
+            f"{common_note}"
+        ),
+        exclude_help=(
+            "Pomija raporty z danej kategorii audytu (np. completeness). "
+            f"{common_note}"
+        ),
+    )
+    _add(
+        ("--include-symbol", "--include-symbols"),
+        ("--exclude-symbol", "--exclude-symbols"),
+        dest="symbols",
+        metavar="SYMBOL",
+        include_help=(
+            "Wymaga raportów dotyczących wybranych symboli (np. BTC/USDT). "
+            f"{common_note}"
+        ),
+        exclude_help=(
+            "Pomija raporty dotyczące wybranych symboli (np. BTC/USDT). "
+            f"{common_note}"
+        ),
+    )
+    _add(
+        ("--include-pipeline", "--include-pipelines"),
+        ("--exclude-pipeline", "--exclude-pipelines"),
+        dest="pipelines",
+        metavar="PIPELINE",
+        include_help=(
+            "Wymaga raportów dla wskazanego pipeline'u audytowego. "
+            f"{common_note}"
+        ),
+        exclude_help=(
+            "Pomija raporty dla wskazanego pipeline'u audytowego. "
+            f"{common_note}"
+        ),
+    )
+    _add(
+        ("--include-engine", "--include-engines"),
+        ("--exclude-engine", "--exclude-engines"),
+        dest="engines",
+        metavar="ENGINE",
+        include_help=(
+            "Wymaga raportów powiązanych z danym silnikiem strategii. "
+            f"{common_note}"
+        ),
+        exclude_help=(
+            "Pomija raporty powiązane z danym silnikiem strategii. "
+            f"{common_note}"
+        ),
+    )
+    _add(
+        ("--include-capability", "--include-capabilities"),
+        ("--exclude-capability", "--exclude-capabilities"),
+        dest="capabilities",
+        metavar="CAPABILITY",
+        include_help=(
+            "Wymaga raportów przypisanych do wskazanego capability. "
+            f"{common_note}"
+        ),
+        exclude_help=(
+            "Pomija raporty przypisane do wskazanego capability. "
+            f"{common_note}"
+        ),
+    )
+    _add(
+        ("--include-license-tier", "--include-license-tiers"),
+        ("--exclude-license-tier", "--exclude-license-tiers"),
+        dest="license_tiers",
+        metavar="TIER",
+        include_help=(
+            "Wymaga raportów dla podanego poziomu licencji (np. pro). "
+            f"{common_note}"
+        ),
+        exclude_help=(
+            "Pomija raporty dla podanego poziomu licencji (np. pro). "
+            f"{common_note}"
+        ),
+    )
+    _add(
+        ("--include-risk-class", "--include-risk-classes"),
+        ("--exclude-risk-class", "--exclude-risk-classes"),
+        dest="risk_classes",
+        metavar="RISK",
+        include_help=(
+            "Wymaga raportów o określonej klasie ryzyka (np. moderate). "
+            f"{common_note}"
+        ),
+        exclude_help=(
+            "Pomija raporty o określonej klasie ryzyka (np. moderate). "
+            f"{common_note}"
+        ),
+    )
+    _add(
+        ("--include-required-data",),
+        ("--exclude-required-data",),
+        dest="required_data",
+        metavar="DATA",
+        include_help=(
+            "Wymaga raportów wymagających podanego źródła danych (np. ohlcv). "
+            f"{common_note}"
+        ),
+        exclude_help=(
+            "Pomija raporty wymagające podanego źródła danych (np. ohlcv). "
+            f"{common_note}"
+        ),
+    )
+    _add(
+        ("--include-exchange", "--include-exchanges"),
+        ("--exclude-exchange", "--exclude-exchanges"),
+        dest="exchanges",
+        metavar="EXCHANGE",
+        include_help=(
+            "Wymaga raportów przypisanych do wskazanej giełdy lub dostawcy danych. "
+            f"{common_note}"
+        ),
+        exclude_help=(
+            "Pomija raporty przypisane do wskazanej giełdy lub dostawcy danych. "
+            f"{common_note}"
+        ),
+    )
+    _add(
+        ("--include-environment", "--include-environments"),
+        ("--exclude-environment", "--exclude-environments"),
+        dest="environments",
+        metavar="ENV",
+        include_help=(
+            "Wymaga raportów z określonego środowiska (np. prod). "
+            f"{common_note}"
+        ),
+        exclude_help=(
+            "Pomija raporty z określonego środowiska (np. prod). "
+            f"{common_note}"
+        ),
+    )
+    _add(
+        ("--include-portfolio", "--include-portfolios"),
+        ("--exclude-portfolio", "--exclude-portfolios"),
+        dest="portfolios",
+        metavar="PORTFOLIO",
+        include_help=(
+            "Wymaga raportów powiązanych z podanym portfelem (np. core). "
+            f"{common_note}"
+        ),
+        exclude_help=(
+            "Pomija raporty powiązane z podanym portfelem (np. core). "
+            f"{common_note}"
+        ),
+    )
+    _add(
+        ("--include-profile", "--include-profiles"),
+        ("--exclude-profile", "--exclude-profiles"),
+        dest="profiles",
+        metavar="PROFILE",
+        include_help=(
+            "Wymaga raportów dotyczących profili ryzyka (np. balanced). "
+            f"{common_note}"
+        ),
+        exclude_help=(
+            "Pomija raporty dotyczące profili ryzyka (np. balanced). "
+            f"{common_note}"
+        ),
+    )
+    _add(
+        ("--include-strategy", "--include-strategies"),
+        ("--exclude-strategy", "--exclude-strategies"),
+        dest="strategies",
+        metavar="STRATEGY",
+        include_help=(
+            "Wymaga raportów dla wskazanych strategii (np. mean_reversion). "
+            f"{common_note}"
+        ),
+        exclude_help=(
+            "Pomija raporty dla wskazanych strategii (np. mean_reversion). "
+            f"{common_note}"
+        ),
+    )
+    _add(
+        ("--include-dataset", "--include-datasets"),
+        ("--exclude-dataset", "--exclude-datasets"),
+        dest="datasets",
+        metavar="DATASET",
+        include_help=(
+            "Wymaga raportów dotyczących wskazanych zbiorów danych. "
+            f"{common_note}"
+        ),
+        exclude_help=(
+            "Pomija raporty dotyczące wskazanych zbiorów danych. "
+            f"{common_note}"
+        ),
+    )
+    _add(
+        ("--include-model", "--include-models"),
+        ("--exclude-model", "--exclude-models"),
+        dest="models",
+        metavar="MODEL",
+        include_help=(
+            "Wymaga raportów dotyczących wskazanych modeli lub artefaktów. "
+            f"{common_note}"
+        ),
+        exclude_help=(
+            "Pomija raporty dotyczące wskazanych modeli lub artefaktów. "
+            f"{common_note}"
+        ),
+    )
+    _add(
+        ("--include-model-version", "--include-model-versions"),
+        ("--exclude-model-version", "--exclude-model-versions"),
+        dest="model_versions",
+        metavar="VERSION",
+        include_help=(
+            "Wymaga raportów dla podanych wersji modeli (np. v2). "
+            f"{common_note}"
+        ),
+        exclude_help=(
+            "Pomija raporty dla podanych wersji modeli (np. v2). "
+            f"{common_note}"
+        ),
+    )
+    _add(
+        ("--include-run", "--include-runs"),
+        ("--exclude-run", "--exclude-runs"),
+        dest="runs",
+        metavar="RUN",
+        include_help=(
+            "Wymaga raportów o konkretnych runach (np. nightly_20240501). "
+            f"{common_note}"
+        ),
+        exclude_help=(
+            "Pomija raporty o konkretnych runach (np. nightly_20240501). "
+            f"{common_note}"
+        ),
+    )
+    _add(
+        ("--include-job", "--include-jobs"),
+        ("--exclude-job", "--exclude-jobs"),
+        dest="jobs",
+        metavar="JOB",
+        include_help=(
+            "Wymaga raportów pochodzących z podanych zadań audytu. "
+            f"{common_note}"
+        ),
+        exclude_help=(
+            "Pomija raporty pochodzące z podanych zadań audytu. "
+            f"{common_note}"
+        ),
+    )
+    _add(
+        ("--include-policy-enforce", "--include-policy-enforcement"),
+        ("--exclude-policy-enforce", "--exclude-policy-enforcement"),
+        dest="policy_enforce",
+        metavar="FLAG",
+        include_help=(
+            "Wymaga raportów z flagą policy.enforce ustawioną na 'enforced' lub 'not-enforced'. "
+            f"{common_note}"
+        ),
+        exclude_help=(
+            "Pomija raporty z flagą policy.enforce ustawioną na 'enforced' lub 'not-enforced'. "
+            f"{common_note}"
+        ),
+    )
 
 
 def _load_exchange_profile(path: str | Path | None, exchange: str) -> dict[str, object]:
@@ -7416,6 +7731,9 @@ def show_strategy_catalog(args: argparse.Namespace) -> int:
     normalized_guard_detail_category_summary: dict[str, dict[str, object]] = {}
     normalized_guard_detail_reason_summary: dict[str, dict[str, object]] = {}
     normalized_guard_detail_reason_details: dict[str, dict[str, object]] = {}
+    normalized_guard_detail_capability_reason_summary: dict[
+        str, dict[str, object]
+    ] = {}
     if config_path:
         payload["config_path"] = str(Path(config_path).expanduser())
         if scheduler_name:
@@ -7674,6 +7992,9 @@ def show_scheduler_plan(args: argparse.Namespace) -> int:
         )
     except Exception as exc:  # pragma: no cover - walidacja konfiguracji
         raise CLIUsageError(str(exc)) from exc
+
+    normalized_guard_details: dict[str, dict[str, list[dict[str, str]]]] = {}
+    normalized_guard_detail_capability_reason_summary: dict[str, dict[str, object]] = {}
 
     blocked_schedules = [
         str(item)
