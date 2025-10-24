@@ -18,6 +18,10 @@ class ManualProfile(StaticRiskProfile):
     _max_position_pct: float
     _target_volatility: float
     _stop_loss_atr_multiple: float
+    min_sortino_ratio: float | None
+    min_omega_ratio: float | None
+    max_risk_of_ruin_pct: float | None
+    min_hit_ratio_pct: float | None
 
     def __init__(
         self,
@@ -30,6 +34,10 @@ class ManualProfile(StaticRiskProfile):
         max_position_pct: float,
         target_volatility: float,
         stop_loss_atr_multiple: float,
+        min_sortino_ratio: float | None = None,
+        min_omega_ratio: float | None = None,
+        max_risk_of_ruin_pct: float | None = None,
+        min_hit_ratio_pct: float | None = None,
     ) -> None:
         self.name = name
         self._max_positions = max_positions
@@ -39,5 +47,9 @@ class ManualProfile(StaticRiskProfile):
         self._max_position_pct = max_position_pct
         self._target_volatility = target_volatility
         self._stop_loss_atr_multiple = stop_loss_atr_multiple
+        self.min_sortino_ratio = min_sortino_ratio
+        self.min_omega_ratio = min_omega_ratio
+        self.max_risk_of_ruin_pct = max_risk_of_ruin_pct
+        self.min_hit_ratio_pct = min_hit_ratio_pct
 
 __all__ = ["ManualProfile"]

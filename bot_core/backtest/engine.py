@@ -117,6 +117,59 @@ def _safe_timeframe_to_seconds(value: str) -> int | None:
     return amount * factor
 
 
+def _normalize_required_data(value: Any) -> Tuple[str, ...] | None:
+    if value is None:
+        return None
+    collected: List[str] = []
+    seen: set[str] = set()
+
+    def _consume(item: Any) -> None:
+        text = str(item).strip()
+        if text and text not in seen:
+            seen.add(text)
+            collected.append(text)
+
+    if isinstance(value, str):
+        for segment in value.split(","):
+            _consume(segment)
+    elif isinstance(value, Mapping):
+        for item in value.values():
+            _consume(item)
+    elif isinstance(value, Iterable):
+        for item in value:
+            _consume(item)
+    else:
+        _consume(value)
+
+    return tuple(collected) if collected else None
+
+
+def _normalize_strategy_metadata(metadata: Any) -> Dict[str, Any]:
+    if metadata is None:
+        return {}
+    if isinstance(metadata, Mapping):
+        result: Dict[str, Any] = {}
+        risk_profile = metadata.get("risk_profile")
+        if isinstance(risk_profile, str) and risk_profile.strip():
+            result["risk_profile"] = risk_profile.strip()
+        elif risk_profile not in (None, ""):
+            result["risk_profile"] = str(risk_profile)
+
+        normalized_required = _normalize_required_data(metadata.get("required_data"))
+        if normalized_required:
+            result["required_data"] = normalized_required
+
+        for key, value in metadata.items():
+            if key in {"risk_profile", "required_data"}:
+                continue
+            result[key] = value
+
+        if not result:
+            result["raw"] = dict(metadata)
+        return result
+    return {"raw": metadata}
+
+
 @dataclass(slots=True)
 class BacktestTrade:
     direction: str
@@ -137,8 +190,11 @@ class PerformanceMetrics:
     cagr_pct: float
     max_drawdown_pct: float
     sharpe_ratio: float
+    sortino_ratio: float
+    omega_ratio: float
     hit_ratio_pct: float
     risk_of_ruin_pct: float
+    max_exposure_pct: float
     fees_paid: float
     slippage_cost: float
 
@@ -154,6 +210,7 @@ class BacktestReport:
     metrics: PerformanceMetrics | None = None
     warnings: List[str] = field(default_factory=list)
     parameters: Dict[str, Any] = field(default_factory=dict)
+    strategy_metadata: Dict[str, Any] = field(default_factory=dict)
 
 
 class HistoricalDataProvider(DataProviderProtocol):
@@ -356,6 +413,13 @@ class BacktestEngine:
         self._matching_engine = MatchingEngine(matching)
         self._data_provider = HistoricalDataProvider(data, symbol, timeframe)
         self._metadata = metadata
+        self._strategy_metadata = _normalize_strategy_metadata(metadata)
+        self._available_data = tuple(str(col) for col in self._data_provider.dataframe.columns)
+        required = self._strategy_metadata.get("required_data")
+        if isinstance(required, (list, tuple)):
+            self._required_data = tuple(str(item) for item in required)
+        else:
+            self._required_data: Tuple[str, ...] = ()
         self._context_extra = dict(context_extra or {})
         self._session = StrategyBacktestSession(
             strategy_factory,
@@ -375,6 +439,19 @@ class BacktestEngine:
         equity_curve: List[float] = []
         equity_ts: List[datetime] = []
         warnings: List[str] = []
+        max_exposure_ratio = 0.0
+
+        strategy_metadata = dict(self._strategy_metadata)
+        strategy_metadata["available_data"] = self._available_data
+        missing_required = tuple(
+            item for item in self._required_data if item not in self._available_data
+        )
+        if missing_required:
+            warnings.append(
+                "Strategia wymaga danych, których nie znaleziono w zestawie historycznym: "
+                + ", ".join(missing_required)
+            )
+            strategy_metadata["required_data_missing"] = missing_required
 
         context = self._session.build_context(
             timestamp=datetime.now(timezone.utc), portfolio_value=cash, position=0.0
@@ -576,6 +653,14 @@ class BacktestEngine:
             if previous_equity:
                 returns.append((equity - previous_equity) / previous_equity)
             previous_equity = equity
+            notional = abs(position * bar["close"])
+            if notional > 0.0:
+                if equity <= 0.0:
+                    exposure_ratio = float("inf")
+                else:
+                    exposure_ratio = notional / equity
+                if exposure_ratio > max_exposure_ratio:
+                    max_exposure_ratio = exposure_ratio
 
             context = self._session.build_context(
                 timestamp=timestamp, portfolio_value=equity, position=position
@@ -626,6 +711,14 @@ class BacktestEngine:
                 if previous_equity:
                     returns.append((final_equity - previous_equity) / previous_equity)
                 previous_equity = final_equity
+                final_notional = abs(position * last_bar["close"])
+                if final_notional > 0.0:
+                    if final_equity <= 0.0:
+                        exposure_ratio = float("inf")
+                    else:
+                        exposure_ratio = final_notional / max(final_equity, 1e-9)
+                    if exposure_ratio > max_exposure_ratio:
+                        max_exposure_ratio = exposure_ratio
 
         _finalize_zero_volume_warning()
 
@@ -637,10 +730,29 @@ class BacktestEngine:
             total_fees,
             total_slippage,
             trades,
+            max_exposure_ratio,
         )
         if not trades:
             warnings.append("Brak domkniętych transakcji w badanym okresie")
         final_balance = equity_curve[-1] if equity_curve else self._initial_balance
+        parameters: Dict[str, Any] = {
+            "strategy": self._strategy_factory.__name__
+            if hasattr(self._strategy_factory, "__name__")
+            else repr(self._strategy_factory),
+            "symbol": self._symbol,
+            "timeframe": self._timeframe,
+            "initial_balance": self._initial_balance,
+            "matching": {
+                "latency_bars": self._matching_config.latency_bars,
+                "slippage_bps": self._matching_config.slippage_bps,
+                "fee_bps": self._matching_config.fee_bps,
+                "liquidity_share": self._matching_config.liquidity_share,
+            },
+        }
+        if metrics is not None:
+            parameters["max_exposure_pct"] = metrics.max_exposure_pct
+        if strategy_metadata:
+            parameters["strategy_metadata"] = dict(strategy_metadata)
         return BacktestReport(
             trades=trades,
             fills=fills,
@@ -650,20 +762,8 @@ class BacktestEngine:
             final_balance=final_balance,
             metrics=metrics,
             warnings=warnings,
-            parameters={
-                "strategy": self._strategy_factory.__name__
-                if hasattr(self._strategy_factory, "__name__")
-                else repr(self._strategy_factory),
-                "symbol": self._symbol,
-                "timeframe": self._timeframe,
-                "initial_balance": self._initial_balance,
-                "matching": {
-                    "latency_bars": self._matching_config.latency_bars,
-                    "slippage_bps": self._matching_config.slippage_bps,
-                    "fee_bps": self._matching_config.fee_bps,
-                    "liquidity_share": self._matching_config.liquidity_share,
-                },
-            },
+            parameters=parameters,
+            strategy_metadata=strategy_metadata,
         )
 
     def _determine_size(
@@ -704,6 +804,7 @@ class BacktestEngine:
         total_fees: float,
         total_slippage: float,
         trades: Sequence[BacktestTrade],
+        max_exposure_ratio: float,
     ) -> PerformanceMetrics | None:
         if not equity_curve:
             return None
@@ -724,22 +825,47 @@ class BacktestEngine:
             drawdown = (peak - value) / peak if peak else 0.0
             max_drawdown = max(max_drawdown, drawdown)
         sharpe = 0.0
+        sortino = 0.0
+        omega = 0.0
         if returns:
-            avg_return = sum(returns) / len(returns)
-            variance = sum((r - avg_return) ** 2 for r in returns) / len(returns)
+            periods = len(returns)
+            avg_return = sum(returns) / periods
+            variance = sum((r - avg_return) ** 2 for r in returns) / periods
             std_dev = math.sqrt(variance)
             if std_dev > 0:
                 sharpe = (avg_return / std_dev) * (252 ** 0.5)
+            downside = [r for r in returns if r < 0]
+            if downside:
+                downside_dev = math.sqrt(sum(r**2 for r in downside) / periods)
+                if downside_dev > 0:
+                    sortino = (avg_return / downside_dev) * (252 ** 0.5)
+            elif avg_return > 0:
+                sortino = float("inf")
+            gains = [max(0.0, r) for r in returns]
+            losses = [max(0.0, -r) for r in returns]
+            gain_total = sum(gains)
+            loss_total = sum(losses)
+            if loss_total > 0:
+                omega = gain_total / loss_total
+            elif gain_total > 0:
+                omega = float("inf")
         wins = sum(1 for trade in trades if trade.pnl > 0)
         hit_ratio = (wins / len(trades)) * 100 if trades else 0.0
         risk_of_ruin = max_drawdown * 100
+        if math.isfinite(max_exposure_ratio):
+            max_exposure_pct = max_exposure_ratio * 100
+        else:
+            max_exposure_pct = float("inf")
         return PerformanceMetrics(
             total_return_pct=total_return,
             cagr_pct=cagr,
             max_drawdown_pct=max_drawdown * 100,
             sharpe_ratio=sharpe,
+            sortino_ratio=sortino,
+            omega_ratio=omega,
             hit_ratio_pct=hit_ratio,
             risk_of_ruin_pct=risk_of_ruin,
+            max_exposure_pct=max_exposure_pct,
             fees_paid=total_fees,
             slippage_cost=total_slippage,
         )

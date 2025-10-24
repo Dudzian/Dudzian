@@ -18,5 +18,9 @@ class ConservativeProfile(StaticRiskProfile):
     _max_position_pct: float = 0.03
     _target_volatility: float = 0.07
     _stop_loss_atr_multiple: float = 1.0
+    min_sortino_ratio: float = 1.6
+    min_omega_ratio: float = 1.3
+    max_risk_of_ruin_pct: float = 4.0
+    min_hit_ratio_pct: float = 55.0
 
 __all__ = ["ConservativeProfile"]
