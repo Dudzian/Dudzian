@@ -33,6 +33,8 @@ Q_LOGGING_CATEGORY(lcTradingClient, "bot.shell.trading.grpc")
 using botcore::trading::v1::GetOhlcvHistoryRequest;
 using botcore::trading::v1::GetOhlcvHistoryResponse;
 using botcore::trading::v1::Instrument;
+using botcore::trading::v1::ListTradableInstrumentsRequest;
+using botcore::trading::v1::ListTradableInstrumentsResponse;
 using botcore::trading::v1::MarketDataService;
 using botcore::trading::v1::OhlcvCandle;
 using botcore::trading::v1::StreamOhlcvRequest;
@@ -498,6 +500,58 @@ void TradingClient::refreshRiskState() {
         qCWarning(lcTradingClient)
             << "GetRiskState nie powiodło się:" << QString::fromStdString(status.error_message());
     }
+}
+
+QVector<TradingClient::TradableInstrument> TradingClient::listTradableInstruments(const QString& exchange)
+{
+    QVector<TradableInstrument> instruments;
+    ensureStub();
+    if (!m_marketDataStub) {
+        qCWarning(lcTradingClient)
+            << "ListTradableInstruments pominięte – brak połączenia z MarketDataService dla" << m_endpoint;
+        return instruments;
+    }
+
+    const QString normalizedExchange = exchange.trimmed().toUpper();
+    if (normalizedExchange.isEmpty()) {
+        return instruments;
+    }
+
+    grpc::ClientContext context;
+    applyAuthMetadata(context);
+    ListTradableInstrumentsRequest request;
+    request.set_exchange(normalizedExchange.toStdString());
+    ListTradableInstrumentsResponse response;
+
+    const grpc::Status status = m_marketDataStub->ListTradableInstruments(&context, request, &response);
+    if (!status.ok()) {
+        qCWarning(lcTradingClient)
+            << "ListTradableInstruments nie powiodło się:" << QString::fromStdString(status.error_message());
+        return instruments;
+    }
+
+    instruments.reserve(static_cast<int>(response.instruments_size()));
+    for (const auto& item : response.instruments()) {
+        TradableInstrument listing;
+        listing.config.exchange = QString::fromStdString(item.instrument().exchange());
+        if (listing.config.exchange.isEmpty()) {
+            listing.config.exchange = normalizedExchange;
+        }
+        listing.config.symbol = QString::fromStdString(item.instrument().symbol());
+        listing.config.venueSymbol = QString::fromStdString(item.instrument().venue_symbol());
+        listing.config.quoteCurrency = QString::fromStdString(item.instrument().quote_currency());
+        listing.config.baseCurrency = QString::fromStdString(item.instrument().base_currency());
+        listing.config.granularityIso8601 = m_instrumentConfig.granularityIso8601;
+        listing.priceStep = item.price_step();
+        listing.amountStep = item.amount_step();
+        listing.minNotional = item.min_notional();
+        listing.minAmount = item.min_amount();
+        listing.maxAmount = item.max_amount();
+        listing.minPrice = item.min_price();
+        listing.maxPrice = item.max_price();
+        instruments.append(listing);
+    }
+    return instruments;
 }
 
 RiskSnapshotData TradingClient::convertRiskState(const RiskState& state) const {

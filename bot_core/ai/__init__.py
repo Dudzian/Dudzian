@@ -91,62 +91,6 @@ _EXPORTS: Dict[str, Tuple[str, str]] = {
         ".data_monitoring",
         "filter_audit_reports_since",
     ),
-    "filter_audit_reports_by_tags": (
-        ".data_monitoring",
-        "filter_audit_reports_by_tags",
-    ),
-    "filter_audit_reports_by_sign_off_status": (
-        ".data_monitoring",
-        "filter_audit_reports_by_sign_off_status",
-    ),
-    "filter_audit_reports_by_status": (
-        ".data_monitoring",
-        "filter_audit_reports_by_status",
-    ),
-    "filter_audit_reports_by_source": (
-        ".data_monitoring",
-        "filter_audit_reports_by_source",
-    ),
-    "filter_audit_reports_by_schedule": (
-        ".data_monitoring",
-        "filter_audit_reports_by_schedule",
-    ),
-    "filter_audit_reports_by_category": (
-        ".data_monitoring",
-        "filter_audit_reports_by_category",
-    ),
-    "filter_audit_reports_by_job_name": (
-        ".data_monitoring",
-        "filter_audit_reports_by_job_name",
-    ),
-    "filter_audit_reports_by_run": (
-        ".data_monitoring",
-        "filter_audit_reports_by_run",
-    ),
-    "filter_audit_reports_by_symbol": (
-        ".data_monitoring",
-        "filter_audit_reports_by_symbol",
-    ),
-    "filter_audit_reports_by_pipeline": (
-        ".data_monitoring",
-        "filter_audit_reports_by_pipeline",
-    ),
-    "filter_audit_reports_by_environment": (
-        ".data_monitoring",
-        "filter_audit_reports_by_environment",
-    ),
-    "filter_audit_reports_by_portfolio": (
-        ".data_monitoring",
-        "filter_audit_reports_by_portfolio",
-    ),
-    "filter_audit_reports_by_capability": (
-        ".data_monitoring",
-        "filter_audit_reports_by_capability",
-    ),
-    "filter_audit_reports_by_policy_enforcement": (
-        ".data_monitoring",
-        "filter_audit_reports_by_policy_enforcement",
-    ),
     "ensure_compliance_sign_offs": (".data_monitoring", "ensure_compliance_sign_offs"),
     "normalize_compliance_sign_off_roles": (
         ".data_monitoring",
@@ -159,50 +103,6 @@ _EXPORTS: Dict[str, Tuple[str, str]] = {
     "normalize_report_status": (
         ".data_monitoring",
         "normalize_report_status",
-    ),
-    "normalize_report_source": (
-        ".data_monitoring",
-        "normalize_report_source",
-    ),
-    "normalize_report_schedule": (
-        ".data_monitoring",
-        "normalize_report_schedule",
-    ),
-    "normalize_report_category": (
-        ".data_monitoring",
-        "normalize_report_category",
-    ),
-    "normalize_report_job_name": (
-        ".data_monitoring",
-        "normalize_report_job_name",
-    ),
-    "normalize_report_run": (
-        ".data_monitoring",
-        "normalize_report_run",
-    ),
-    "normalize_report_symbol": (
-        ".data_monitoring",
-        "normalize_report_symbol",
-    ),
-    "normalize_report_pipeline": (
-        ".data_monitoring",
-        "normalize_report_pipeline",
-    ),
-    "normalize_report_environment": (
-        ".data_monitoring",
-        "normalize_report_environment",
-    ),
-    "normalize_report_portfolio": (
-        ".data_monitoring",
-        "normalize_report_portfolio",
-    ),
-    "normalize_report_capability": (
-        ".data_monitoring",
-        "normalize_report_capability",
-    ),
-    "normalize_policy_enforcement": (
-        ".data_monitoring",
-        "normalize_policy_enforcement",
     ),
     "get_supported_sign_off_statuses": (
         ".data_monitoring",

@@ -17,37 +17,9 @@ from bot_core.ai.data_monitoring import (
     collect_pending_compliance_sign_offs,
     ensure_compliance_sign_offs,
     filter_audit_reports_since,
-    filter_audit_reports_by_tags,
-    filter_audit_reports_by_sign_off_status,
-    filter_audit_reports_by_status,
-    filter_audit_reports_by_source,
-    filter_audit_reports_by_schedule,
-    filter_audit_reports_by_category,
-    filter_audit_reports_by_job_name,
-    filter_audit_reports_by_run,
-    filter_audit_reports_by_symbol,
-    filter_audit_reports_by_pipeline,
-    filter_audit_reports_by_environment,
-    filter_audit_reports_by_portfolio,
-    filter_audit_reports_by_capability,
-    filter_audit_reports_by_policy_enforcement,
     load_recent_data_quality_reports,
     load_recent_drift_reports,
     normalize_compliance_sign_off_roles,
-    normalize_sign_off_status,
-    normalize_report_status,
-    normalize_report_source,
-    normalize_report_schedule,
-    normalize_report_category,
-    normalize_report_job_name,
-    normalize_report_run,
-    normalize_report_symbol,
-    normalize_report_pipeline,
-    normalize_report_environment,
-    normalize_report_portfolio,
-    normalize_report_capability,
-    normalize_policy_enforcement,
-    get_supported_sign_off_statuses,
     summarize_data_quality_reports,
     summarize_drift_reports,
 )
@@ -459,258 +431,6 @@ def create_parser() -> argparse.ArgumentParser:
         ),
     )
     compliance.add_argument(
-        "--include-tag",
-        dest="include_tags",
-        action="append",
-        help=(
-            "Wymusza obecność co najmniej jednego z podanych tagów w raporcie ("
-            "podaj wielokrotnie lub rozdziel przecinkami)."
-        ),
-    )
-    compliance.add_argument(
-        "--exclude-tag",
-        dest="exclude_tags",
-        action="append",
-        help=(
-            "Pomija raporty zawierające którykolwiek z podanych tagów ("
-            "można powtarzać lub rozdzielać przecinkami)."
-        ),
-    )
-    compliance.add_argument(
-        "--include-status",
-        dest="include_statuses",
-        action="append",
-        help=(
-            "Zachowuje raporty z podpisami w co najmniej jednym ze wskazanych "
-            "statusów (np. pending, investigating)."
-        ),
-    )
-    compliance.add_argument(
-        "--exclude-status",
-        dest="exclude_statuses",
-        action="append",
-        help=(
-            "Odrzuca raporty zawierające podpisy w niedozwolonych statusach ("
-            "można podawać wielokrotnie lub rozdzielać przecinkami)."
-        ),
-    )
-    compliance.add_argument(
-        "--include-report-status",
-        dest="include_report_statuses",
-        action="append",
-        help=(
-            "Zachowuje raporty o wskazanym statusie (np. alert, warning). "
-            "Argument można podawać wielokrotnie lub rozdzielać przecinkami."
-        ),
-    )
-    compliance.add_argument(
-        "--exclude-report-status",
-        dest="exclude_report_statuses",
-        action="append",
-        help=(
-            "Pomija raporty o niedozwolonym statusie (np. ok). "
-            "Argument można podawać wielokrotnie lub rozdzielać przecinkami."
-        ),
-    )
-    compliance.add_argument(
-        "--include-source",
-        dest="include_sources",
-        action="append",
-        help=(
-            "Zachowuje raporty pochodzące z określonych źródeł (np. pipeline, ohlcv-monitor). "
-            "Argument można podawać wielokrotnie lub rozdzielać przecinkami."
-        ),
-    )
-    compliance.add_argument(
-        "--exclude-source",
-        dest="exclude_sources",
-        action="append",
-        help=(
-            "Odrzuca raporty pochodzące z wskazanych źródeł. "
-            "Argument można podawać wielokrotnie lub rozdzielać przecinkami."
-        ),
-    )
-    compliance.add_argument(
-        "--include-schedule",
-        dest="include_schedules",
-        action="append",
-        help=(
-            "Zachowuje raporty powiązane z wybranymi harmonogramami (np. nightly, eu-open). "
-            "Argument można podawać wielokrotnie lub rozdzielać przecinkami."
-        ),
-    )
-    compliance.add_argument(
-        "--exclude-schedule",
-        dest="exclude_schedules",
-        action="append",
-        help=(
-            "Pomija raporty z określonych harmonogramów audytu. "
-            "Argument można podawać wielokrotnie lub rozdzielać przecinkami."
-        ),
-    )
-    compliance.add_argument(
-        "--include-category",
-        dest="include_categories",
-        action="append",
-        help=(
-            "Zachowuje raporty o wskazanych kategoriach (np. completeness, drift). "
-            "Argument można podawać wielokrotnie lub rozdzielać przecinkami."
-        ),
-    )
-    compliance.add_argument(
-        "--exclude-category",
-        dest="exclude_categories",
-        action="append",
-        help=(
-            "Pomija raporty z niedozwolonych kategorii. "
-            "Argument można podawać wielokrotnie lub rozdzielać przecinkami."
-        ),
-    )
-    compliance.add_argument(
-        "--include-symbol",
-        dest="include_symbols",
-        action="append",
-        help=(
-            "Zachowuje raporty powiązane z wybranymi symbolami (np. BTCUSDT). "
-            "Argument można podawać wielokrotnie lub rozdzielać przecinkami."
-        ),
-    )
-    compliance.add_argument(
-        "--exclude-symbol",
-        dest="exclude_symbols",
-        action="append",
-        help=(
-            "Pomija raporty powiązane z określonymi symbolami. "
-            "Argument można podawać wielokrotnie lub rozdzielać przecinkami."
-        ),
-    )
-    compliance.add_argument(
-        "--include-pipeline",
-        dest="include_pipelines",
-        action="append",
-        help=(
-            "Zachowuje raporty powiązane z wybranymi pipeline'ami (np. nightly, retrain). "
-            "Argument można podawać wielokrotnie lub rozdzielać przecinkami."
-        ),
-    )
-    compliance.add_argument(
-        "--exclude-pipeline",
-        dest="exclude_pipelines",
-        action="append",
-        help=(
-            "Pomija raporty powiązane ze wskazanymi pipeline'ami. "
-            "Argument można podawać wielokrotnie lub rozdzielać przecinkami."
-        ),
-    )
-    compliance.add_argument(
-        "--include-capability",
-        dest="include_capabilities",
-        action="append",
-        help=(
-            "Zachowuje raporty dotyczące wskazanych capability strategii (np. trend_d1). "
-            "Argument można podawać wielokrotnie lub rozdzielać przecinkami."
-        ),
-    )
-    compliance.add_argument(
-        "--exclude-capability",
-        dest="exclude_capabilities",
-        action="append",
-        help=(
-            "Pomija raporty dotyczące niepożądanych capability strategii. "
-            "Argument można podawać wielokrotnie lub rozdzielać przecinkami."
-        ),
-    )
-    compliance.add_argument(
-        "--include-environment",
-        dest="include_environments",
-        action="append",
-        help=(
-            "Zachowuje raporty powiązane z określonymi środowiskami (np. prod, paper). "
-            "Argument można podawać wielokrotnie lub rozdzielać przecinkami."
-        ),
-    )
-    compliance.add_argument(
-        "--exclude-environment",
-        dest="exclude_environments",
-        action="append",
-        help=(
-            "Pomija raporty powiązane ze wskazanymi środowiskami. "
-            "Argument można podawać wielokrotnie lub rozdzielać przecinkami."
-        ),
-    )
-    compliance.add_argument(
-        "--include-portfolio",
-        dest="include_portfolios",
-        action="append",
-        help=(
-            "Zachowuje raporty dotyczące wybranych portfeli (np. core, hf). "
-            "Argument można podawać wielokrotnie lub rozdzielać przecinkami."
-        ),
-    )
-    compliance.add_argument(
-        "--exclude-portfolio",
-        dest="exclude_portfolios",
-        action="append",
-        help=(
-            "Pomija raporty dotyczące określonych portfeli. "
-            "Argument można podawać wielokrotnie lub rozdzielać przecinkami."
-        ),
-    )
-    compliance.add_argument(
-        "--include-run",
-        dest="include_runs",
-        action="append",
-        help=(
-            "Zachowuje raporty powiązane z określonymi runami (np. baseline, alert). "
-            "Argument można podawać wielokrotnie lub rozdzielać przecinkami."
-        ),
-    )
-    compliance.add_argument(
-        "--exclude-run",
-        dest="exclude_runs",
-        action="append",
-        help=(
-            "Pomija raporty powiązane ze wskazanymi runami inference. "
-            "Argument można podawać wielokrotnie lub rozdzielać przecinkami."
-        ),
-    )
-    compliance.add_argument(
-        "--include-job",
-        dest="include_jobs",
-        action="append",
-        help=(
-            "Zachowuje raporty powiązane z określonym zadaniem (job_name). "
-            "Argument można podawać wielokrotnie lub rozdzielać przecinkami."
-        ),
-    )
-    compliance.add_argument(
-        "--exclude-job",
-        dest="exclude_jobs",
-        action="append",
-        help=(
-            "Pomija raporty dla wskazanych zadań audytu (job_name). "
-            "Argument można podawać wielokrotnie lub rozdzielać przecinkami."
-        ),
-    )
-    compliance.add_argument(
-        "--policy-enforce",
-        dest="policy_enforce",
-        action="append",
-        help=(
-            "Filtruje raporty po wartości policy.enforce (np. enforced, not-enforced). "
-            "Argument można podawać wielokrotnie lub rozdzielać przecinkami."
-        ),
-    )
-    compliance.add_argument(
-        "--exclude-policy-enforce",
-        dest="exclude_policy_enforce",
-        action="append",
-        help=(
-            "Pomija raporty z określoną wartością policy.enforce (np. enforced). "
-            "Argument można podawać wielokrotnie lub rozdzielać przecinkami."
-        ),
-    )
-    compliance.add_argument(
         "--role",
         dest="roles",
         action="append",
@@ -894,328 +614,6 @@ def _parse_compliance_roles(arguments: Sequence[str] | None) -> tuple[str, ...] 
         return normalize_compliance_sign_off_roles(collected)
     except ValueError as exc:
         raise CLIUsageError(str(exc)) from exc
-
-
-def _parse_cli_tags(arguments: Sequence[str] | None) -> tuple[str, ...]:
-    if not arguments:
-        return ()
-
-    collected: list[str] = []
-    for argument in arguments:
-        if not argument:
-            continue
-        for part in re.split(r"[,\s]+", argument):
-            normalized = part.strip()
-            if normalized:
-                collected.append(normalized)
-    return tuple(collected)
-
-
-def _parse_cli_sign_off_statuses(arguments: Sequence[str] | None) -> tuple[str, ...]:
-    if not arguments:
-        return ()
-
-    supported = get_supported_sign_off_statuses()
-    collected: list[str] = []
-    for argument in arguments:
-        if not argument:
-            continue
-        for part in re.split(r"[,\s]+", argument):
-            normalized = normalize_sign_off_status(part)
-            if not normalized:
-                raise CLIUsageError(
-                    "Nieznany status podpisu compliance: {value}. Dozwolone wartości: {choices}".format(
-                        value=part or "",
-                        choices=", ".join(supported),
-                    )
-                )
-            collected.append(normalized)
-
-    # zachowujemy kolejność pierwszego wystąpienia
-    return tuple(dict.fromkeys(collected))
-
-
-def _parse_cli_report_statuses(arguments: Sequence[str] | None) -> tuple[str, ...]:
-    if not arguments:
-        return ()
-
-    collected: list[str] = []
-    for argument in arguments:
-        if not argument:
-            continue
-        for part in re.split(r"[,\s]+", argument):
-            normalized = normalize_report_status(part)
-            if normalized:
-                collected.append(normalized)
-
-    if not collected:
-        return ()
-
-    return tuple(dict.fromkeys(collected))
-
-
-def _parse_cli_policy_enforcement(arguments: Sequence[str] | None) -> tuple[bool, ...]:
-    if not arguments:
-        return ()
-
-    collected: list[bool] = []
-    for argument in arguments:
-        if not argument:
-            continue
-        for part in re.split(r"[,\s]+", argument):
-            normalized = normalize_policy_enforcement(part)
-            if normalized is None:
-                raise CLIUsageError(
-                    "Nieznana wartość policy.enforce: {value}. Użyj 'enforced' lub 'not-enforced'.".format(
-                        value=part or ""
-                    )
-                )
-            collected.append(normalized)
-
-    if not collected:
-        return ()
-
-    return tuple(dict.fromkeys(collected))
-
-
-def _parse_cli_schedules(arguments: Sequence[str] | None) -> tuple[str, ...]:
-    if not arguments:
-        return ()
-
-    collected: list[str] = []
-    for argument in arguments:
-        if not argument:
-            continue
-        for part in re.split(r"[,\s]+", argument):
-            normalized = normalize_report_schedule(part)
-            if not normalized:
-                raise CLIUsageError(
-                    "Niepoprawny harmonogram audytu: {value}. Podaj niepusty ciąg znaków.".format(
-                        value=part or ""
-                    )
-                )
-            collected.append(normalized)
-
-    if not collected:
-        return ()
-
-    return tuple(dict.fromkeys(collected))
-
-
-def _parse_cli_categories(arguments: Sequence[str] | None) -> tuple[str, ...]:
-    if not arguments:
-        return ()
-
-    collected: list[str] = []
-    for argument in arguments:
-        if not argument:
-            continue
-        for part in re.split(r"[,\s]+", argument):
-            normalized = normalize_report_category(part)
-            if not normalized:
-                raise CLIUsageError(
-                    "Niepoprawna kategoria raportu: {value}. Podaj niepusty ciąg znaków.".format(
-                        value=part or ""
-                    )
-                )
-            collected.append(normalized)
-
-    if not collected:
-        return ()
-
-    return tuple(dict.fromkeys(collected))
-
-
-def _parse_cli_symbols(arguments: Sequence[str] | None) -> tuple[str, ...]:
-    if not arguments:
-        return ()
-
-    collected: list[str] = []
-    for argument in arguments:
-        if not argument:
-            continue
-        for part in re.split(r"[,\s]+", argument):
-            normalized = normalize_report_symbol(part)
-            if not normalized:
-                raise CLIUsageError(
-                    "Niepoprawny symbol raportu: {value}. Podaj niepusty identyfikator rynku.".format(
-                        value=part or ""
-                    )
-                )
-            collected.append(normalized)
-
-    if not collected:
-        return ()
-
-    return tuple(dict.fromkeys(collected))
-
-
-def _parse_cli_job_names(arguments: Sequence[str] | None) -> tuple[str, ...]:
-    if not arguments:
-        return ()
-
-    collected: list[str] = []
-    for argument in arguments:
-        if not argument:
-            continue
-        for part in re.split(r"[,\s]+", argument):
-            normalized = normalize_report_job_name(part)
-            if not normalized:
-                raise CLIUsageError(
-                    "Niepoprawna nazwa zadania audytu: {value}. Podaj niepusty ciąg znaków.".format(
-                        value=part or ""
-                    )
-                )
-            collected.append(normalized)
-
-    if not collected:
-        return ()
-
-    return tuple(dict.fromkeys(collected))
-
-
-def _parse_cli_pipelines(arguments: Sequence[str] | None) -> tuple[str, ...]:
-    if not arguments:
-        return ()
-
-    collected: list[str] = []
-    for argument in arguments:
-        if not argument:
-            continue
-        for part in re.split(r"[,\s]+", argument):
-            normalized = normalize_report_pipeline(part)
-            if not normalized:
-                raise CLIUsageError(
-                    "Niepoprawny pipeline raportu: {value}. Podaj niepusty ciąg znaków.".format(
-                        value=part or ""
-                    )
-                )
-            collected.append(normalized)
-
-    if not collected:
-        return ()
-
-    return tuple(dict.fromkeys(collected))
-
-
-def _parse_cli_capabilities(arguments: Sequence[str] | None) -> tuple[str, ...]:
-    if not arguments:
-        return ()
-
-    collected: list[str] = []
-    for argument in arguments:
-        if not argument:
-            continue
-        for part in re.split(r"[,\s]+", argument):
-            normalized = normalize_report_capability(part)
-            if not normalized:
-                raise CLIUsageError(
-                    "Niepoprawne capability strategii: {value}. Podaj niepusty identyfikator.".format(
-                        value=part or ""
-                    )
-                )
-            collected.append(normalized)
-
-    if not collected:
-        return ()
-
-    return tuple(dict.fromkeys(collected))
-
-
-def _parse_cli_environments(arguments: Sequence[str] | None) -> tuple[str, ...]:
-    if not arguments:
-        return ()
-
-    collected: list[str] = []
-    for argument in arguments:
-        if not argument:
-            continue
-        for part in re.split(r"[,\s]+", argument):
-            normalized = normalize_report_environment(part)
-            if not normalized:
-                raise CLIUsageError(
-                    "Niepoprawne środowisko raportu: {value}. Podaj niepusty ciąg znaków.".format(
-                        value=part or ""
-                    )
-                )
-            collected.append(normalized)
-
-    if not collected:
-        return ()
-
-    return tuple(dict.fromkeys(collected))
-
-
-def _parse_cli_portfolios(arguments: Sequence[str] | None) -> tuple[str, ...]:
-    if not arguments:
-        return ()
-
-    collected: list[str] = []
-    for argument in arguments:
-        if not argument:
-            continue
-        for part in re.split(r"[,\s]+", argument):
-            normalized = normalize_report_portfolio(part)
-            if not normalized:
-                raise CLIUsageError(
-                    "Niepoprawny portfel raportu: {value}. Podaj niepusty ciąg znaków.".format(
-                        value=part or ""
-                    )
-                )
-            collected.append(normalized)
-
-    if not collected:
-        return ()
-
-    return tuple(dict.fromkeys(collected))
-
-
-def _parse_cli_runs(arguments: Sequence[str] | None) -> tuple[str, ...]:
-    if not arguments:
-        return ()
-
-    collected: list[str] = []
-    for argument in arguments:
-        if not argument:
-            continue
-        for part in re.split(r"[,\s]+", argument):
-            normalized = normalize_report_run(part)
-            if not normalized:
-                raise CLIUsageError(
-                    "Niepoprawny run raportu: {value}. Podaj niepusty ciąg znaków.".format(
-                        value=part or ""
-                    )
-                )
-            collected.append(normalized)
-
-    if not collected:
-        return ()
-
-    return tuple(dict.fromkeys(collected))
-
-
-def _parse_cli_sources(arguments: Sequence[str] | None) -> tuple[str, ...]:
-    if not arguments:
-        return ()
-
-    collected: list[str] = []
-    for argument in arguments:
-        if not argument:
-            continue
-        for part in re.split(r"[,\s]+", argument):
-            normalized = normalize_report_source(part)
-            if not normalized:
-                raise CLIUsageError(
-                    "Niepoprawne źródło raportu: {value}. Podaj niepusty ciąg znaków.".format(
-                        value=part or ""
-                    )
-                )
-            collected.append(normalized)
-
-    if not collected:
-        return ()
-
-    return tuple(dict.fromkeys(collected))
 
 
 def _resolve_since_cutoff(value: str, *, now: datetime | None = None) -> datetime:
@@ -2308,55 +1706,6 @@ def show_ai_compliance(args: argparse.Namespace) -> int:
     if since_option:
         since_cutoff = _resolve_since_cutoff(since_option)
 
-    include_tags = _parse_cli_tags(getattr(args, "include_tags", None))
-    exclude_tags = _parse_cli_tags(getattr(args, "exclude_tags", None))
-    include_statuses = _parse_cli_sign_off_statuses(
-        getattr(args, "include_statuses", None)
-    )
-    exclude_statuses = _parse_cli_sign_off_statuses(
-        getattr(args, "exclude_statuses", None)
-    )
-    include_report_statuses = _parse_cli_report_statuses(
-        getattr(args, "include_report_statuses", None)
-    )
-    exclude_report_statuses = _parse_cli_report_statuses(
-        getattr(args, "exclude_report_statuses", None)
-    )
-    include_sources = _parse_cli_sources(getattr(args, "include_sources", None))
-    exclude_sources = _parse_cli_sources(getattr(args, "exclude_sources", None))
-    include_schedules = _parse_cli_schedules(getattr(args, "include_schedules", None))
-    exclude_schedules = _parse_cli_schedules(getattr(args, "exclude_schedules", None))
-    include_categories = _parse_cli_categories(getattr(args, "include_categories", None))
-    exclude_categories = _parse_cli_categories(getattr(args, "exclude_categories", None))
-    include_symbols = _parse_cli_symbols(getattr(args, "include_symbols", None))
-    exclude_symbols = _parse_cli_symbols(getattr(args, "exclude_symbols", None))
-    include_pipelines = _parse_cli_pipelines(getattr(args, "include_pipelines", None))
-    exclude_pipelines = _parse_cli_pipelines(getattr(args, "exclude_pipelines", None))
-    include_capabilities = _parse_cli_capabilities(
-        getattr(args, "include_capabilities", None)
-    )
-    exclude_capabilities = _parse_cli_capabilities(
-        getattr(args, "exclude_capabilities", None)
-    )
-    include_environments = _parse_cli_environments(
-        getattr(args, "include_environments", None)
-    )
-    exclude_environments = _parse_cli_environments(
-        getattr(args, "exclude_environments", None)
-    )
-    include_portfolios = _parse_cli_portfolios(getattr(args, "include_portfolios", None))
-    exclude_portfolios = _parse_cli_portfolios(getattr(args, "exclude_portfolios", None))
-    include_runs = _parse_cli_runs(getattr(args, "include_runs", None))
-    exclude_runs = _parse_cli_runs(getattr(args, "exclude_runs", None))
-    include_jobs = _parse_cli_job_names(getattr(args, "include_jobs", None))
-    exclude_jobs = _parse_cli_job_names(getattr(args, "exclude_jobs", None))
-    include_policy_enforce = _parse_cli_policy_enforcement(
-        getattr(args, "policy_enforce", None)
-    )
-    exclude_policy_enforce = _parse_cli_policy_enforcement(
-        getattr(args, "exclude_policy_enforce", None)
-    )
-
     roles_param = _parse_compliance_roles(getattr(args, "roles", None))
     effective_roles = (
         roles_param
@@ -2377,128 +1726,6 @@ def show_ai_compliance(args: argparse.Namespace) -> int:
         drift_reports = load_recent_drift_reports(**load_kwargs)
     except Exception as exc:  # pragma: no cover - przekładamy błąd na CLIUsageError
         raise CLIUsageError(f"Nie udało się wczytać raportów audytu: {exc}") from exc
-
-    if include_tags or exclude_tags:
-        dq_reports = filter_audit_reports_by_tags(
-            dq_reports, include=include_tags, exclude=exclude_tags
-        )
-        drift_reports = filter_audit_reports_by_tags(
-            drift_reports, include=include_tags, exclude=exclude_tags
-        )
-
-    if include_report_statuses or exclude_report_statuses:
-        dq_reports = filter_audit_reports_by_status(
-            dq_reports, include=include_report_statuses, exclude=exclude_report_statuses
-        )
-        drift_reports = filter_audit_reports_by_status(
-            drift_reports,
-            include=include_report_statuses,
-            exclude=exclude_report_statuses,
-        )
-
-    if include_sources or exclude_sources:
-        dq_reports = filter_audit_reports_by_source(
-            dq_reports, include=include_sources, exclude=exclude_sources
-        )
-        drift_reports = filter_audit_reports_by_source(
-            drift_reports, include=include_sources, exclude=exclude_sources
-        )
-
-    if include_schedules or exclude_schedules:
-        dq_reports = filter_audit_reports_by_schedule(
-            dq_reports, include=include_schedules, exclude=exclude_schedules
-        )
-        drift_reports = filter_audit_reports_by_schedule(
-            drift_reports, include=include_schedules, exclude=exclude_schedules
-        )
-
-    if include_categories or exclude_categories:
-        dq_reports = filter_audit_reports_by_category(
-            dq_reports, include=include_categories, exclude=exclude_categories
-        )
-        drift_reports = filter_audit_reports_by_category(
-            drift_reports, include=include_categories, exclude=exclude_categories
-        )
-
-    if include_symbols or exclude_symbols:
-        dq_reports = filter_audit_reports_by_symbol(
-            dq_reports, include=include_symbols, exclude=exclude_symbols
-        )
-        drift_reports = filter_audit_reports_by_symbol(
-            drift_reports, include=include_symbols, exclude=exclude_symbols
-        )
-
-    if include_pipelines or exclude_pipelines:
-        dq_reports = filter_audit_reports_by_pipeline(
-            dq_reports, include=include_pipelines, exclude=exclude_pipelines
-        )
-        drift_reports = filter_audit_reports_by_pipeline(
-            drift_reports, include=include_pipelines, exclude=exclude_pipelines
-        )
-
-    if include_capabilities or exclude_capabilities:
-        dq_reports = filter_audit_reports_by_capability(
-            dq_reports, include=include_capabilities, exclude=exclude_capabilities
-        )
-        drift_reports = filter_audit_reports_by_capability(
-            drift_reports,
-            include=include_capabilities,
-            exclude=exclude_capabilities,
-        )
-
-    if include_environments or exclude_environments:
-        dq_reports = filter_audit_reports_by_environment(
-            dq_reports, include=include_environments, exclude=exclude_environments
-        )
-        drift_reports = filter_audit_reports_by_environment(
-            drift_reports, include=include_environments, exclude=exclude_environments
-        )
-
-    if include_portfolios or exclude_portfolios:
-        dq_reports = filter_audit_reports_by_portfolio(
-            dq_reports, include=include_portfolios, exclude=exclude_portfolios
-        )
-        drift_reports = filter_audit_reports_by_portfolio(
-            drift_reports, include=include_portfolios, exclude=exclude_portfolios
-        )
-
-    if include_runs or exclude_runs:
-        dq_reports = filter_audit_reports_by_run(
-            dq_reports, include=include_runs, exclude=exclude_runs
-        )
-        drift_reports = filter_audit_reports_by_run(
-            drift_reports, include=include_runs, exclude=exclude_runs
-        )
-
-    if include_jobs or exclude_jobs:
-        dq_reports = filter_audit_reports_by_job_name(
-            dq_reports, include=include_jobs, exclude=exclude_jobs
-        )
-        drift_reports = filter_audit_reports_by_job_name(
-            drift_reports, include=include_jobs, exclude=exclude_jobs
-        )
-
-    if include_policy_enforce or exclude_policy_enforce:
-        dq_reports = filter_audit_reports_by_policy_enforcement(
-            dq_reports, include=include_policy_enforce, exclude=exclude_policy_enforce
-        )
-        drift_reports = filter_audit_reports_by_policy_enforcement(
-            drift_reports, include=include_policy_enforce, exclude=exclude_policy_enforce
-        )
-
-    if include_statuses or exclude_statuses:
-        dq_reports = filter_audit_reports_by_sign_off_status(
-            dq_reports,
-            include=include_statuses,
-            exclude=exclude_statuses,
-            roles=roles_param,
-        )
-        drift_reports = filter_audit_reports_by_sign_off_status(
-            drift_reports,
-            include=include_statuses,
-            exclude=exclude_statuses,
-            roles=roles_param,
-        )
 
     if since_cutoff is not None:
         dq_reports = filter_audit_reports_since(dq_reports, since=since_cutoff)
@@ -2549,66 +1776,6 @@ def show_ai_compliance(args: argparse.Namespace) -> int:
             payload["since"] = since_cutoff.replace(microsecond=0).isoformat().replace(
                 "+00:00", "Z"
             )
-        if include_tags:
-            payload["include_tags"] = list(include_tags)
-        if exclude_tags:
-            payload["exclude_tags"] = list(exclude_tags)
-        if include_report_statuses:
-            payload["include_report_statuses"] = list(include_report_statuses)
-        if exclude_report_statuses:
-            payload["exclude_report_statuses"] = list(exclude_report_statuses)
-        if include_policy_enforce:
-            payload["policy_enforce"] = [
-                "enforced" if flag else "not-enforced" for flag in include_policy_enforce
-            ]
-        if exclude_policy_enforce:
-            payload["exclude_policy_enforce"] = [
-                "enforced" if flag else "not-enforced" for flag in exclude_policy_enforce
-            ]
-        if include_statuses:
-            payload["include_statuses"] = list(include_statuses)
-        if exclude_statuses:
-            payload["exclude_statuses"] = list(exclude_statuses)
-        if include_sources:
-            payload["include_sources"] = list(include_sources)
-        if exclude_sources:
-            payload["exclude_sources"] = list(exclude_sources)
-        if include_schedules:
-            payload["include_schedules"] = list(include_schedules)
-        if exclude_schedules:
-            payload["exclude_schedules"] = list(exclude_schedules)
-        if include_categories:
-            payload["include_categories"] = list(include_categories)
-        if exclude_categories:
-            payload["exclude_categories"] = list(exclude_categories)
-        if include_symbols:
-            payload["include_symbols"] = list(include_symbols)
-        if exclude_symbols:
-            payload["exclude_symbols"] = list(exclude_symbols)
-        if include_pipelines:
-            payload["include_pipelines"] = list(include_pipelines)
-        if exclude_pipelines:
-            payload["exclude_pipelines"] = list(exclude_pipelines)
-        if include_capabilities:
-            payload["include_capabilities"] = list(include_capabilities)
-        if exclude_capabilities:
-            payload["exclude_capabilities"] = list(exclude_capabilities)
-        if include_environments:
-            payload["include_environments"] = list(include_environments)
-        if exclude_environments:
-            payload["exclude_environments"] = list(exclude_environments)
-        if include_portfolios:
-            payload["include_portfolios"] = list(include_portfolios)
-        if exclude_portfolios:
-            payload["exclude_portfolios"] = list(exclude_portfolios)
-        if include_runs:
-            payload["include_runs"] = list(include_runs)
-        if exclude_runs:
-            payload["exclude_runs"] = list(exclude_runs)
-        if include_jobs:
-            payload["include_jobs"] = list(include_jobs)
-        if exclude_jobs:
-            payload["exclude_jobs"] = list(exclude_jobs)
         json_kwargs: dict[str, object] = {"ensure_ascii": False}
         if output_format == "json-pretty":
             json_kwargs["indent"] = 2
@@ -2623,66 +1790,6 @@ def show_ai_compliance(args: argparse.Namespace) -> int:
             "Minimalny znacznik czasu: "
             + since_cutoff.replace(microsecond=0).isoformat().replace("+00:00", "Z")
         )
-    if include_tags:
-        print("Wymagane tagi: " + ", ".join(include_tags))
-    if exclude_tags:
-        print("Wykluczone tagi: " + ", ".join(exclude_tags))
-    if include_report_statuses:
-        print("Wymagane statusy raportów: " + ", ".join(include_report_statuses))
-    if exclude_report_statuses:
-        print("Wykluczone statusy raportów: " + ", ".join(exclude_report_statuses))
-    if include_policy_enforce:
-        human = ", ".join("enforced" if flag else "not-enforced" for flag in include_policy_enforce)
-        print("Wymagane policy.enforce: " + human)
-    if exclude_policy_enforce:
-        human = ", ".join(
-            "enforced" if flag else "not-enforced" for flag in exclude_policy_enforce
-        )
-        print("Wykluczone policy.enforce: " + human)
-    if include_statuses:
-        print("Wymagane statusy podpisów: " + ", ".join(include_statuses))
-    if exclude_statuses:
-        print("Wykluczone statusy podpisów: " + ", ".join(exclude_statuses))
-    if include_sources:
-        print("Wymagane źródła: " + ", ".join(include_sources))
-    if exclude_sources:
-        print("Wykluczone źródła: " + ", ".join(exclude_sources))
-    if include_schedules:
-        print("Wymagane harmonogramy: " + ", ".join(include_schedules))
-    if exclude_schedules:
-        print("Wykluczone harmonogramy: " + ", ".join(exclude_schedules))
-    if include_categories:
-        print("Wymagane kategorie: " + ", ".join(include_categories))
-    if exclude_categories:
-        print("Wykluczone kategorie: " + ", ".join(exclude_categories))
-    if include_symbols:
-        print("Wymagane symbole: " + ", ".join(include_symbols))
-    if exclude_symbols:
-        print("Wykluczone symbole: " + ", ".join(exclude_symbols))
-    if include_pipelines:
-        print("Wymagane pipeline'y: " + ", ".join(include_pipelines))
-    if exclude_pipelines:
-        print("Wykluczone pipeline'y: " + ", ".join(exclude_pipelines))
-    if include_capabilities:
-        print("Wymagane capability: " + ", ".join(include_capabilities))
-    if exclude_capabilities:
-        print("Wykluczone capability: " + ", ".join(exclude_capabilities))
-    if include_environments:
-        print("Wymagane środowiska: " + ", ".join(include_environments))
-    if exclude_environments:
-        print("Wykluczone środowiska: " + ", ".join(exclude_environments))
-    if include_portfolios:
-        print("Wymagane portfele: " + ", ".join(include_portfolios))
-    if exclude_portfolios:
-        print("Wykluczone portfele: " + ", ".join(exclude_portfolios))
-    if include_runs:
-        print("Wymagane runy: " + ", ".join(include_runs))
-    if exclude_runs:
-        print("Wykluczone runy: " + ", ".join(exclude_runs))
-    if include_jobs:
-        print("Wymagane zadania: " + ", ".join(include_jobs))
-    if exclude_jobs:
-        print("Wykluczone zadania: " + ", ".join(exclude_jobs))
     print("Wymagane role: " + ", ".join(effective_roles))
     print(f"Limit raportów: {limit}")
 
@@ -2766,6 +1873,7 @@ def show_strategy_catalog(args: argparse.Namespace) -> int:
     definitions: list[Mapping[str, object]] = []
     config_path = getattr(args, "config", None)
     scheduler_name = getattr(args, "scheduler", None)
+    plan_summary: Mapping[str, object] | None = None
     if config_path:
         try:
             core_config = load_core_config(config_path)
@@ -2780,6 +1888,7 @@ def show_strategy_catalog(args: argparse.Namespace) -> int:
                     include_strategy_definitions=True,
                     only_scheduler_definitions=True,
                 )
+                plan_summary = plan
                 definitions = plan.get("strategies", [])  # type: ignore[assignment]
             except Exception as exc:  # pragma: no cover - walidacja konfiguracji
                 raise CLIUsageError(str(exc)) from exc
@@ -2810,6 +1919,109 @@ def show_strategy_catalog(args: argparse.Namespace) -> int:
         if scheduler_name:
             payload["scheduler"] = scheduler_name
         payload["definitions"] = definitions
+        blocked_schedules: list[str] = []
+        blocked_strategies: list[str] = []
+        blocked_capabilities: dict[str, str] = {}
+        blocked_schedule_capabilities: dict[str, str] = {}
+        blocked_initial_limits: dict[str, list[str]] = {}
+        blocked_signal_limits: dict[str, list[str]] = {}
+        blocked_initial_limit_capabilities: dict[str, str] = {}
+        blocked_signal_limit_capabilities: dict[str, str] = {}
+        blocked_suspensions: list[dict[str, object]] = []
+        blocked_suspension_capabilities: dict[str, str] = {}
+
+        if plan_summary:
+            blocked_schedules = [
+                str(item)
+                for item in plan_summary.get("blocked_schedules", [])
+                if str(item).strip()
+            ]
+            blocked_strategies = [
+                str(item)
+                for item in plan_summary.get("blocked_strategies", [])
+                if str(item).strip()
+            ]
+            blocked_capabilities = {
+                str(strategy): str(capability)
+                for strategy, capability in plan_summary.get(
+                    "blocked_capabilities", {}
+                ).items()
+                if str(strategy).strip() and str(capability).strip()
+            }
+            blocked_schedule_capabilities = {
+                str(schedule): str(capability)
+                for schedule, capability in plan_summary.get(
+                    "blocked_schedule_capabilities", {}
+                ).items()
+                if str(schedule).strip() and str(capability).strip()
+            }
+            blocked_initial_limits = {
+                str(strategy): [str(profile) for profile in profiles]
+                for strategy, profiles in plan_summary.get(
+                    "blocked_initial_signal_limits", {}
+                ).items()
+                if str(strategy).strip()
+            }
+            blocked_initial_limit_capabilities = {
+                str(strategy): str(capability)
+                for strategy, capability in plan_summary.get(
+                    "blocked_initial_signal_limit_capabilities", {}
+                ).items()
+                if str(strategy).strip() and str(capability).strip()
+            }
+            blocked_signal_limits = {
+                str(strategy): [str(profile) for profile in profiles]
+                for strategy, profiles in plan_summary.get("blocked_signal_limits", {}).items()
+                if str(strategy).strip()
+            }
+            blocked_signal_limit_capabilities = {
+                str(strategy): str(capability)
+                for strategy, capability in plan_summary.get(
+                    "blocked_signal_limit_capabilities", {}
+                ).items()
+                if str(strategy).strip() and str(capability).strip()
+            }
+            blocked_suspensions = [
+                {
+                    key: value
+                    for key, value in entry.items()
+                    if key and (value not in (None, ""))
+                }
+                for entry in plan_summary.get("blocked_suspensions", [])
+            ]
+            blocked_suspension_capabilities = {
+                str(entry_key): str(capability)
+                for entry_key, capability in plan_summary.get(
+                    "blocked_suspension_capabilities", {}
+                ).items()
+                if str(entry_key).strip() and str(capability).strip()
+            }
+            if blocked_schedules:
+                payload["blocked_schedules"] = blocked_schedules
+            if blocked_strategies:
+                payload["blocked_strategies"] = blocked_strategies
+            if blocked_capabilities:
+                payload["blocked_capabilities"] = blocked_capabilities
+            if blocked_schedule_capabilities:
+                payload["blocked_schedule_capabilities"] = blocked_schedule_capabilities
+            if blocked_initial_limits:
+                payload["blocked_initial_signal_limits"] = blocked_initial_limits
+            if blocked_initial_limit_capabilities:
+                payload["blocked_initial_signal_limit_capabilities"] = (
+                    blocked_initial_limit_capabilities
+                )
+            if blocked_signal_limits:
+                payload["blocked_signal_limits"] = blocked_signal_limits
+            if blocked_signal_limit_capabilities:
+                payload["blocked_signal_limit_capabilities"] = (
+                    blocked_signal_limit_capabilities
+                )
+            if blocked_suspensions:
+                payload["blocked_suspensions"] = blocked_suspensions
+            if blocked_suspension_capabilities:
+                payload["blocked_suspension_capabilities"] = (
+                    blocked_suspension_capabilities
+                )
 
     if output_format in {"json", "json-pretty"}:
         json_kwargs: dict[str, object] = {"ensure_ascii": False}
@@ -2868,6 +2080,59 @@ def show_strategy_catalog(args: argparse.Namespace) -> int:
                         tags=tags,
                     )
                 )
+        if plan_summary and (
+            blocked_schedules
+            or blocked_strategies
+            or blocked_initial_limits
+            or blocked_signal_limits
+            or blocked_suspensions
+        ):
+                print()
+                print("Pominięte przez strażnika licencji:")
+                if blocked_schedules:
+                    print("  Harmonogramy (zablokowana licencja):")
+                    for name in blocked_schedules:
+                        capability = blocked_schedule_capabilities.get(name)
+                        extra = f" (capability: {capability})" if capability else ""
+                        print(f"    - {name}{extra}")
+                if blocked_strategies:
+                    print("  Strategie (zablokowana licencja):")
+                    for name in blocked_strategies:
+                        capability = blocked_capabilities.get(name)
+                        extra = f" (capability: {capability})" if capability else ""
+                        print(f"    - {name}{extra}")
+                if blocked_initial_limits:
+                    print("  Limity sygnałów (początkowe, zablokowane licencją):")
+                    for strategy, profiles in sorted(blocked_initial_limits.items()):
+                        formatted = ", ".join(sorted(filter(None, profiles))) or "-"
+                        capability = blocked_initial_limit_capabilities.get(strategy)
+                        extra = f" (capability: {capability})" if capability else ""
+                        print(f"    - {strategy}{extra}: {formatted}")
+                if blocked_signal_limits:
+                    print("  Limity sygnałów (zablokowane licencją):")
+                    for strategy, profiles in sorted(blocked_signal_limits.items()):
+                        formatted = ", ".join(sorted(filter(None, profiles))) or "-"
+                        capability = blocked_signal_limit_capabilities.get(strategy)
+                        extra = f" (capability: {capability})" if capability else ""
+                        print(f"    - {strategy}{extra}: {formatted}")
+                if blocked_suspensions:
+                    print("  Zawieszenia (zablokowana licencja):")
+                    for entry in blocked_suspensions:
+                        target = entry.get("target") or "-"
+                        kind = entry.get("kind") or "schedule"
+                        reason = entry.get("reason")
+                        capability = entry.get("capability") or (
+                            blocked_suspension_capabilities.get(f"{kind}:{target}")
+                            if target
+                            else None
+                        )
+                        extras = []
+                        if capability:
+                            extras.append(f"capability: {capability}")
+                        if reason:
+                            extras.append(f"powód: {reason}")
+                        suffix = f" ({', '.join(extras)})" if extras else ""
+                        print(f"    - {kind}:{target}{suffix}")
     return 0
 
 
@@ -2884,6 +2149,66 @@ def show_scheduler_plan(args: argparse.Namespace) -> int:
         )
     except Exception as exc:  # pragma: no cover - walidacja konfiguracji
         raise CLIUsageError(str(exc)) from exc
+
+    blocked_schedules = [
+        str(item)
+        for item in plan.get("blocked_schedules", [])
+        if str(item).strip()
+    ]
+    blocked_strategies = [
+        str(item)
+        for item in plan.get("blocked_strategies", [])
+        if str(item).strip()
+    ]
+    blocked_capabilities = {
+        str(strategy): str(capability)
+        for strategy, capability in plan.get("blocked_capabilities", {}).items()
+        if str(strategy).strip() and str(capability).strip()
+    }
+    blocked_schedule_capabilities = {
+        str(schedule): str(capability)
+        for schedule, capability in plan.get("blocked_schedule_capabilities", {}).items()
+        if str(schedule).strip() and str(capability).strip()
+    }
+    blocked_initial_limits = {
+        str(strategy): [str(profile) for profile in profiles]
+        for strategy, profiles in plan.get("blocked_initial_signal_limits", {}).items()
+        if str(strategy).strip()
+    }
+    blocked_initial_limit_capabilities = {
+        str(strategy): str(capability)
+        for strategy, capability in plan.get(
+            "blocked_initial_signal_limit_capabilities", {}
+        ).items()
+        if str(strategy).strip() and str(capability).strip()
+    }
+    blocked_signal_limits = {
+        str(strategy): [str(profile) for profile in profiles]
+        for strategy, profiles in plan.get("blocked_signal_limits", {}).items()
+        if str(strategy).strip()
+    }
+    blocked_signal_limit_capabilities = {
+        str(strategy): str(capability)
+        for strategy, capability in plan.get(
+            "blocked_signal_limit_capabilities", {}
+        ).items()
+        if str(strategy).strip() and str(capability).strip()
+    }
+    blocked_suspensions = [
+        {
+            key: value
+            for key, value in entry.items()
+            if key and (value not in (None, ""))
+        }
+        for entry in plan.get("blocked_suspensions", [])
+    ]
+    blocked_suspension_capabilities = {
+        str(entry_key): str(capability)
+        for entry_key, capability in plan.get(
+            "blocked_suspension_capabilities", {}
+        ).items()
+        if str(entry_key).strip() and str(capability).strip()
+    }
 
     filter_tags = {value.strip().lower() for value in getattr(args, "filter_tags", []) if value}
     filter_strategies = {
@@ -2904,6 +2229,8 @@ def show_scheduler_plan(args: argparse.Namespace) -> int:
         schedules.append(entry)
 
     plan["schedules"] = schedules
+    if blocked_suspension_capabilities:
+        plan["blocked_suspension_capabilities"] = blocked_suspension_capabilities
 
     if include_definitions and "strategies" in plan:
         used_strategies = {entry.get("strategy") for entry in schedules}
@@ -2984,6 +2311,60 @@ def show_scheduler_plan(args: argparse.Namespace) -> int:
         for strategy_name, profiles in plan["signal_limits"].items():
             for profile, payload in profiles.items():
                 print(f"  * {strategy_name}/{profile}: limit={payload.get('limit')}")
+
+    if (
+        blocked_schedules
+        or blocked_strategies
+        or blocked_initial_limits
+        or blocked_signal_limits
+        or blocked_suspensions
+    ):
+        print()
+        print("Pominięte przez strażnika licencji:")
+        if blocked_schedules:
+            print("  Harmonogramy (zablokowana licencja):")
+            for name in blocked_schedules:
+                capability = blocked_schedule_capabilities.get(name)
+                extra = f" (capability: {capability})" if capability else ""
+                print(f"    - {name}{extra}")
+        if blocked_strategies:
+            print("  Strategie (zablokowana licencja):")
+            for name in blocked_strategies:
+                capability = blocked_capabilities.get(name)
+                extra = f" (capability: {capability})" if capability else ""
+                print(f"    - {name}{extra}")
+        if blocked_initial_limits:
+            print("  Limity sygnałów (początkowe, zablokowane licencją):")
+            for strategy, profiles in sorted(blocked_initial_limits.items()):
+                formatted = ", ".join(sorted(filter(None, profiles))) or "-"
+                capability = blocked_initial_limit_capabilities.get(strategy)
+                extra = f" (capability: {capability})" if capability else ""
+                print(f"    - {strategy}{extra}: {formatted}")
+        if blocked_signal_limits:
+            print("  Limity sygnałów (zablokowane licencją):")
+            for strategy, profiles in sorted(blocked_signal_limits.items()):
+                formatted = ", ".join(sorted(filter(None, profiles))) or "-"
+                capability = blocked_signal_limit_capabilities.get(strategy)
+                extra = f" (capability: {capability})" if capability else ""
+                print(f"    - {strategy}{extra}: {formatted}")
+        if blocked_suspensions:
+            print("  Zawieszenia (zablokowana licencja):")
+            for entry in blocked_suspensions:
+                target = entry.get("target") or "-"
+                kind = entry.get("kind") or "schedule"
+                reason = entry.get("reason")
+                capability = entry.get("capability") or (
+                    blocked_suspension_capabilities.get(f"{kind}:{target}")
+                    if target
+                    else None
+                )
+                extras = []
+                if capability:
+                    extras.append(f"capability: {capability}")
+                if reason:
+                    extras.append(f"powód: {reason}")
+                suffix = f" ({', '.join(extras)})" if extras else ""
+                print(f"    - {kind}:{target}{suffix}")
 
     return 0
 
