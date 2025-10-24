@@ -10,6 +10,8 @@ artefakty audytowe.
   repozytoryjny plik `config/observability/slo.yml`), Resilience (plan
   failover, manifesty paczek, polityka) oraz Portfolio
   (alokacje, Market Intel, raporty SLO/Stress Lab).
+- Szablon konfiguracji hypercare dostępny w `config/stage6/hypercare.yaml`
+  (możesz go skopiować i uzupełnić o konkretne ścieżki środowiskowe).
 - Klucze HMAC umieszczone w `secrets/hmac/` i przypisane do komponentów Stage6.
 - Ścieżki docelowe w `var/audit/...` z uprawnieniami zapisu.
 
@@ -17,7 +19,9 @@ artefakty audytowe.
 
 ## Procedura
 1. Przygotuj plik konfiguracyjny YAML/JSON zawierający sekcje `summary`,
-   `observability`, `resilience` oraz `portfolio`. Przykład minimalny (YAML):
+   `observability`, `resilience` oraz `portfolio`. Repozytorium udostępnia
+   startowy szablon w `config/stage6/hypercare.yaml`, który możesz skopiować i
+   dostosować. Przykład minimalny (YAML):
    ```yaml
    summary:
      path: var/audit/stage6/hypercare_summary.json
@@ -50,9 +54,10 @@ artefakty audytowe.
        slo_report: var/audit/observability/slo_report.json
        stress_report: var/audit/risk/stress_lab.json
    ```
-2. Uruchom orchestratora Stage6, wskazując plik konfiguracyjny:
+2. Uruchom orchestratora Stage6, wskazując przygotowany plik konfiguracyjny
+   (domyślnie `config/stage6/hypercare.yaml`):
    ```bash
-   python scripts/run_stage6_hypercare_cycle.py --config configs/stage6_hypercare.yaml
+   python scripts/run_stage6_hypercare_cycle.py --config config/stage6/hypercare.yaml
    ```
    Skrypt wykona wszystkie cykle, zapisze raport zbiorczy i podpis HMAC, a w
    przypadku ostrzeżeń/błędów wypisze szczegóły w konsoli.

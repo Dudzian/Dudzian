@@ -1,0 +1,58 @@
+{
+  "rules": [
+    {
+      "name": "Disable orchestrator when failover reports critical",
+      "service_pattern": "decision_orchestrator*",
+      "statuses": ["failed", "critical"],
+      "severity": "critical",
+      "tags": ["stage6", "orchestrator"],
+      "metadata": {
+        "playbook": "stage5_support"
+      },
+      "actions": [
+        {
+          "module": "scripts.disable_multi_strategy",
+          "command": [
+            "python",
+            "scripts/disable_multi_strategy.py",
+            "--component",
+            "decision_orchestrator",
+            "--reason",
+            "stage6_self_heal"
+          ],
+          "delay_seconds": 0,
+          "tags": ["automated"],
+          "metadata": {
+            "scope": "decision_orchestrator"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Restart resilience watchdog",
+      "service_pattern": "resilience_watchdog",
+      "statuses": ["failed", "degraded"],
+      "severity": "warning",
+      "tags": ["stage6", "resilience"],
+      "metadata": {
+        "playbook": "stage6_resilience"
+      },
+      "actions": [
+        {
+          "module": "ops.restart_watchdog",
+          "command": [
+            "/usr/bin/env",
+            "bash",
+            "-lc",
+            "systemctl restart stage6-resilience-watchdog"
+          ],
+          "delay_seconds": 5,
+          "tags": ["ops"],
+          "metadata": {
+            "ticket_template": "STAGE6-RES-WATCHDOG"
+          }
+        }
+      ]
+    }
+  ]
+}
