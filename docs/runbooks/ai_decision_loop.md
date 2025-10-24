@@ -64,14 +64,17 @@
    python - <<'PY'
    from bot_core.ai.data_monitoring import (
        ComplianceSignOffError,
-       collect_pending_compliance_sign_offs,
        ensure_compliance_sign_offs,
+       load_recent_data_quality_reports,
+       load_recent_drift_reports,
    )
 
+   dq = load_recent_data_quality_reports(limit=5)
+   drift = load_recent_drift_reports(limit=5)
    try:
        ensure_compliance_sign_offs(
-           audit_root="audit/ai_decision",
-           limit=5,
+           data_quality_reports=dq,
+           drift_reports=drift,
            roles=("risk", "compliance"),
        )
    except ComplianceSignOffError as exc:
@@ -80,16 +83,9 @@
        raise
    else:
        print("Sign-off gate passed")
-
-   pending_map = collect_pending_compliance_sign_offs(
-       audit_root="audit/ai_decision",
-       limit=5,
-       roles=("risk",),
-   )
-   print("Pending summary:", {role: len(entries) for role, entries in pending_map.items()})
    PY
    ```
-   Wyjątek `ComplianceSignOffError` blokuje aktywację – eskaluj do zespołów Risk/Compliance i uzyskaj podpisy w `docs/compliance/ai_pipeline_signoff.md`. Do bieżącej kontroli braków możesz wykorzystać `AIManager.get_pending_compliance_sign_offs()` po ustawieniu katalogu audytu.
+   Wyjątek `ComplianceSignOffError` blokuje aktywację – eskaluj do zespołów Risk/Compliance i uzyskaj podpisy w `docs/compliance/ai_pipeline_signoff.md`.
    Jeśli dana aktywacja wymaga innego zestawu ról, skonfiguruj go uprzednio przez `AIManager.set_compliance_sign_off_requirement(True)` oraz `AIManager.set_compliance_sign_off_roles(("risk",))` (wywołanie z `None` przywraca domyślny duet Risk/Compliance, a `False` w `set_compliance_sign_off_requirement` wyłącza bramkę).
 3. **Decision journal** – po aktywacji modelu zweryfikuj wpis `ai_retraining`/`ai_drift_report` z linkiem do artefaktu i raportów audytu. Brak wpisu wymaga powtórzenia rejestracji.
 

@@ -858,28 +858,8 @@ class AIManager:
             self._compliance_sign_off_roles = None
             return
 
-        normalized = normalize_compliance_sign_off_roles(roles)
-        self._compliance_sign_off_roles = normalized
-
-    def get_pending_compliance_sign_offs(
-        self, limit: int | None = None
-    ) -> Mapping[str, tuple[Mapping[str, Any], ...]]:
-        """Zwraca oczekujące podpisy compliance na podstawie audytu."""
-
-        if limit is None:
-            query_limit = 5
-        else:
-            try:
-                query_limit = int(limit)
-            except (TypeError, ValueError) as exc:  # pragma: no cover - defensywnie
-                raise ValueError("limit must be greater than zero") from exc
-        if query_limit <= 0:
-            raise ValueError("limit must be greater than zero")
-
-        kwargs: Dict[str, Any] = {"limit": query_limit, "roles": self._compliance_sign_off_roles}
-        if self._audit_root is not None:
-            kwargs["audit_root"] = self._audit_root
-        return collect_pending_compliance_sign_offs(**kwargs)
+        normalized = ensure_compliance_sign_offs(roles=roles)
+        self._compliance_sign_off_roles = tuple(normalized.keys())
 
     def register_data_quality_check(self, check: DataQualityCheck) -> None:
         """Rejestruje kontrolę jakości danych wykonywaną podczas pipeline'u."""
@@ -1008,9 +988,15 @@ class AIManager:
                 "Pomijam bramkę podpisów compliance – wymaganie wyłączone."
             )
             return
+        if self._audit_root is not None:
+            kwargs: Dict[str, Any] = {"audit_root": self._audit_root}
+        else:
+            kwargs = {}
+        data_reports = load_recent_data_quality_reports(limit=5, **kwargs)
+        drift_reports = load_recent_drift_reports(limit=5, **kwargs)
         ensure_compliance_sign_offs(
-            audit_root=self._audit_root,
-            limit=5,
+            data_quality_reports=data_reports,
+            drift_reports=drift_reports,
             roles=self._compliance_sign_off_roles,
         )
 

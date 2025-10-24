@@ -1,0 +1,51 @@
+# Roadmap UI Desktop (Qt)
+
+## Cele nadrzędne
+
+1. **Konfiguracja strategii** – wizualne zarządzanie katalogiem pluginów, parametrami `TradingParameters` oraz mapowaniem na reżimy rynkowe.
+2. **Monitoring** – widok sytuacyjny łączący dane rynkowe, sygnały strategii oraz historię klasyfikacji `MarketRegimeClassifier`.
+3. **Kontrola licencji i fingerprintu** – moduł odpowiedzialny za aktywację, audyt oraz egzekwowanie polityki bezpieczeństwa.
+
+## Kamienie milowe
+
+### M1 – Fundamenty aplikacji (Sprinty 1-2)
+
+* Skeleton aplikacji Qt (Qt6/QML) z modułem startowym i konfiguracją buildów wieloplatformowych.
+* Integracja z silnikiem tradingowym poprzez warstwę usługową (`TradingEngine`, `StrategyCatalog`, `RegimeSwitchWorkflow`).
+* System modułów w UI (pluginy UI) pozwalający na dynamiczne dodawanie widoków.
+
+### M2 – Konfiguracja strategii (Sprinty 3-4)
+
+* Kreator strategii oparty na `TradingParameters` z walidacją w czasie rzeczywistym.
+* Biblioteka presetów strategii (trend, day-trading, mean-reversion, arbitraż) z możliwością duplikacji i edycji.
+* Widok mapowania strategii na reżimy (wykorzystanie `RegimeSwitchWorkflow`) – edycja wag, progów przełączania, wersjonowanie konfiguracji.
+
+### M3 – Monitoring i telemetria (Sprinty 5-6)
+
+* Panel główny z widżetami: notowania (candlestick + wskaźniki), sygnały pluginów, aktualny reżim i wskaźniki ryzyka.
+* Rejestr zdarzeń (logi, alerty ryzyka, decyzje workflow) z możliwością filtrowania i eksportu.
+* Analiza post-trade: przebieg pozycji, statystyki portfela, wizualizacja wyników z backtestów.
+
+### M4 – Kontrola licencji i fingerprint (Sprinty 7-8)
+
+* Ekran zarządzania licencjami: aktywacja, przypisanie do urządzenia, wygasanie, historia.
+* Moduł fingerprint: generowanie identyfikatora sprzętowego, detekcja zmian, alerty bezpieczeństwa.
+* Integracja z serwerem licencyjnym (REST/gRPC) z obsługą offline cache i harmonogramem odświeżania.
+
+### M5 – Twarde testy i wydanie (Sprinty 9-10)
+
+* Testy E2E (Qt Test, pytest-qt) obejmujące konfigurację, workflow reżimów i autoryzację.
+* Profilowanie wydajności (Qt Quick Profiler, cProfile) oraz optymalizacje UI.
+* Przygotowanie pakietów instalacyjnych (Windows/MSIX, macOS/.dmg, Linux/AppImage) oraz dokumentacja użytkownika.
+
+## Ryzyka i zależności
+
+* Wysokie skomplikowanie modeli danych (`TradingParameters`, historia reżimów) – konieczny system walidacji i migracji konfiguracji.
+* Integracja z backendem licencyjnym – wymagane mocki i środowisko testowe.
+* Utrzymanie spójności pomiędzy pluginami strategii a interfejsem użytkownika (synchronizacja opisów, parametrów, wersji).
+
+## Wskaźniki sukcesu
+
+* < 5 minut na pełną konfigurację strategii i aktywację reżimów w UI.
+* 99% skuteczność w detekcji zmian fingerprintu i blokadzie nieautoryzowanych urządzeń.
+* Stabilność aplikacji w testach długotrwałych (>72h) bez regresji wydajności.

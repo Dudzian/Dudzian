@@ -85,8 +85,9 @@ kontroli compliance opisanych w `docs/compliance/ai_pipeline_signoff.md`.
      from pathlib import Path
      from bot_core.ai import (
          ComplianceSignOffError,
-         collect_pending_compliance_sign_offs,
          ensure_compliance_sign_offs,
+         load_recent_data_quality_reports,
+         load_recent_drift_reports,
      )
      from bot_core.ai.validation import validate_model_artifact_schema
      from bot_core.ai.inference import ModelRepository
@@ -96,22 +97,16 @@ kontroli compliance opisanych w `docs/compliance/ai_pipeline_signoff.md`.
      validate_model_artifact_schema(artifact)
      try:
          ensure_compliance_sign_offs(
-             audit_root="audit/ai_decision",
-             limit=5,
+             data_quality_reports=load_recent_data_quality_reports(limit=5),
+             drift_reports=load_recent_drift_reports(limit=5),
          )
      except ComplianceSignOffError as exc:
          for role, entries in exc.missing.items():
              print("Brak podpisu", role, "przy rollbacku", len(entries), "raportów")
          raise
-
-     pending_map = collect_pending_compliance_sign_offs(
-         audit_root="audit/ai_decision",
-         limit=5,
-     )
-     print({role: len(entries) for role, entries in pending_map.items()})
      PY
      ```
-    Jeśli procedura wymaga innego zestawu ról (np. tylko Risk), skonfiguruj go wcześniej przez `AIManager.set_compliance_sign_off_requirement(True)` oraz `AIManager.set_compliance_sign_off_roles(("risk",))`; wywołanie z `None` przywróci domyślne role Risk/Compliance, a `False` w `set_compliance_sign_off_requirement` wyłącza bramkę. Aktualny stan braków podpisów sprawdzisz komendą `AIManager.get_pending_compliance_sign_offs()`.
+    Jeśli procedura wymaga innego zestawu ról (np. tylko Risk), skonfiguruj go wcześniej przez `AIManager.set_compliance_sign_off_requirement(True)` oraz `AIManager.set_compliance_sign_off_roles(("risk",))`; wywołanie z `None` przywróci domyślne role Risk/Compliance, a `False` w `set_compliance_sign_off_requirement` wyłącza bramkę.
 
 4. **Przywróć artefakt**
    - Wczytaj model i podłącz inference:

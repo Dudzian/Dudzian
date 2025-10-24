@@ -30,6 +30,8 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Protocol, Tuple, Union
 
+from bot_core.trading.strategies import StrategyCatalog
+
 import numpy as np
 import pandas as pd
 from numpy.typing import NDArray
@@ -178,7 +180,10 @@ class TradingParameters:
     # Signal generation
     signal_threshold: float = 0.1
     ensemble_weights: Dict[str, float] = field(default_factory=lambda: {
-        'trend': 0.3, 'mean_reversion': 0.2, 'momentum': 0.3, 'volatility_breakout': 0.2
+        'trend_following': 0.4,
+        'day_trading': 0.2,
+        'mean_reversion': 0.25,
+        'arbitrage': 0.15,
     })
     
     # Risk management
@@ -194,6 +199,14 @@ class TradingParameters:
     # Position sizing
     volatility_target: float = 0.15
     kelly_fraction: float = 0.25
+
+    # Intraday/day-trading tuning
+    day_trading_momentum_window: int = 5
+    day_trading_volatility_window: int = 14
+
+    # Cross-asset/arbitrage tuning
+    arbitrage_spread_threshold: float = 0.0025
+    arbitrage_confirmation_window: int = 3
 
     def __post_init__(self):
         """Validate parameters after creation."""
@@ -218,10 +231,21 @@ class TradingParameters:
             raise ValueError("Signal threshold must be between 0 and 1")
         if self.stop_loss_atr_mult < 0 or self.take_profit_atr_mult < 0:
             raise ValueError("ATR multipliers must be positive")
-        if not abs(sum(self.ensemble_weights.values()) - 1.0) < 0.001:
-            raise ValueError("Ensemble weights must sum to 1.0")
+        if not self.ensemble_weights:
+            raise ValueError("Ensemble weights cannot be empty")
+        weight_sum = sum(float(weight) for weight in self.ensemble_weights.values())
+        if not np.isfinite(weight_sum) or weight_sum <= 0:
+            raise ValueError("Ensemble weights must be finite and sum to a positive value")
         if int(self.max_position_size) < 1:
             raise ValueError("max_position_size must be at least 1")
+        if self.day_trading_momentum_window < 1:
+            raise ValueError("day_trading_momentum_window must be at least 1")
+        if self.day_trading_volatility_window < 1:
+            raise ValueError("day_trading_volatility_window must be at least 1")
+        if self.arbitrage_spread_threshold <= 0:
+            raise ValueError("arbitrage_spread_threshold must be positive")
+        if self.arbitrage_confirmation_window < 1:
+            raise ValueError("arbitrage_confirmation_window must be at least 1")
 
 # =================== Enhanced Custom Exceptions ===================
 
@@ -654,138 +678,58 @@ class TechnicalIndicatorsService:
 
 # =================== Enhanced Signal Generation Service ===================
 
+
 class TradingSignalService:
     """Enhanced service for generating trading signals using ensemble methods."""
-    
-    def __init__(self, logger: logging.Logger):
+
+    def __init__(self, logger: logging.Logger, catalog: StrategyCatalog | None = None):
         self._logger = logger
-    
+        self._catalog = catalog or StrategyCatalog.default()
+
+    def register_plugin(self, plugin) -> None:
+        """Register an additional strategy plugin at runtime."""
+
+        self._catalog.register(plugin)
+
     def generate_signals(self, indicators: TechnicalIndicators, params: TradingParameters) -> pd.Series:
-        """
-        Generate ensemble trading signals with improved logic.
-        
-        Args:
-            indicators: Technical indicators
-            params: Trading parameters
-            
-        Returns:
-            Series with trading signals (-1, 0, 1)
-        """
-        # Generate individual signals
-        signals_dict = {
-            'trend': self._trend_following_signal(indicators, params),
-            'mean_reversion': self._mean_reversion_signal(indicators, params),
-            'momentum': self._momentum_signal(indicators, params),
-            'volatility_breakout': self._volatility_breakout_signal(indicators, params)
-        }
-        
-        # Combine using ensemble weights
-        ensemble_signal = pd.Series(0.0, index=indicators.rsi.index)
-        for signal_name, signal in signals_dict.items():
-            weight = params.ensemble_weights.get(signal_name, 0.0)
-            ensemble_signal += signal * weight
-        
-        # Apply threshold and generate final signals
+        """Generate ensemble signals from the configured plugin catalog."""
+
+        available_signals: Dict[str, pd.Series] = {}
+        active_weights: Dict[str, float] = {}
+        for name, weight in params.ensemble_weights.items():
+            if weight <= 0:
+                continue
+            plugin = self._catalog.create(name)
+            if plugin is None:
+                self._logger.warning("Strategy plugin '%s' is not registered", name)
+                continue
+            try:
+                signal = plugin.generate(indicators, params)
+            except Exception as exc:  # pragma: no cover - defensive logging
+                self._logger.exception("Strategy plugin '%s' failed: %s", name, exc)
+                continue
+            available_signals[name] = signal
+            active_weights[name] = float(weight)
+
+        if not available_signals:
+            return pd.Series(SignalType.FLAT.value, index=indicators.rsi.index, dtype=int)
+
+        weight_sum = sum(active_weights.values())
+        if weight_sum <= 0:
+            weight_sum = float(len(active_weights))
+            active_weights = {key: 1.0 for key in active_weights}
+
+        ensemble_signal = pd.Series(0.0, index=indicators.rsi.index, dtype=float)
+        for name, signal in available_signals.items():
+            normalized_weight = active_weights[name] / weight_sum
+            ensemble_signal = ensemble_signal.add(signal * normalized_weight, fill_value=0.0)
+
         final_signals = pd.Series(SignalType.FLAT.value, index=ensemble_signal.index, dtype=int)
         final_signals[ensemble_signal > params.signal_threshold] = SignalType.LONG.value
         final_signals[ensemble_signal < -params.signal_threshold] = SignalType.SHORT.value
-        
-        # Apply signal smoothing to reduce noise
+
         final_signals = self._smooth_signals(final_signals)
-        
         return final_signals
-    
-    def _trend_following_signal(self, indicators: TechnicalIndicators, params: TradingParameters) -> pd.Series:
-        """Generate trend following signals with proper Series handling."""
-        # EMA crossover signal
-        ema_diff = indicators.ema_fast - indicators.ema_slow
-        ema_signal = pd.Series(
-            np.where(ema_diff > 0, 1.0, -1.0),
-            index=indicators.ema_fast.index
-        )
-        
-        # Price vs SMA trend
-        price_vs_sma = indicators.ema_fast - indicators.sma_trend
-        trend_signal = pd.Series(
-            np.where(price_vs_sma > 0, 1.0, -1.0),
-            index=indicators.ema_fast.index
-        )
-        
-        # Combine with proper weighting
-        combined_signal = ema_signal * 0.6 + trend_signal * 0.4
-        return combined_signal
-    
-    def _mean_reversion_signal(self, indicators: TechnicalIndicators, params: TradingParameters) -> pd.Series:
-        """Generate mean reversion signals with RSI and Bollinger Bands."""
-        # RSI-based signals
-        rsi_signal = pd.Series(0.0, index=indicators.rsi.index)
-        rsi_signal[indicators.rsi < params.rsi_oversold] = 1.0
-        rsi_signal[indicators.rsi > params.rsi_overbought] = -1.0
-        
-        # Bollinger Bands signals
-        bb_signal = pd.Series(0.0, index=indicators.ema_fast.index)
-        bb_signal[indicators.ema_fast < indicators.bollinger_lower] = 1.0
-        bb_signal[indicators.ema_fast > indicators.bollinger_upper] = -1.0
-        
-        # Combine signals
-        combined_signal = rsi_signal * 0.5 + bb_signal * 0.5
-        return combined_signal
-    
-    def _momentum_signal(self, indicators: TechnicalIndicators, params: TradingParameters) -> pd.Series:
-        """Generate momentum signals using MACD and Stochastic."""
-        # MACD signal
-        macd_signal = pd.Series(
-            np.where(indicators.macd > indicators.macd_signal, 1.0, -1.0),
-            index=indicators.macd.index
-        )
-        
-        # Stochastic signal with overbought/oversold levels
-        stoch_signal = pd.Series(0.0, index=indicators.stochastic_k.index)
-        
-        # Buy signal when %K crosses above %D and not overbought
-        buy_condition = (
-            (indicators.stochastic_k > indicators.stochastic_d) & 
-            (indicators.stochastic_k < 80)
-        )
-        
-        # Sell signal when %K crosses below %D and not oversold
-        sell_condition = (
-            (indicators.stochastic_k < indicators.stochastic_d) & 
-            (indicators.stochastic_k > 20)
-        )
-        
-        stoch_signal[buy_condition] = 1.0
-        stoch_signal[sell_condition] = -1.0
-        
-        # Combine signals
-        combined_signal = macd_signal * 0.6 + stoch_signal * 0.4
-        return combined_signal
-    
-    def _volatility_breakout_signal(self, indicators: TechnicalIndicators, params: TradingParameters) -> pd.Series:
-        """Generate volatility breakout signals."""
-        # ATR-based volatility measure
-        atr_pct = indicators.atr / indicators.ema_fast
-        atr_threshold = atr_pct.rolling(20).quantile(0.8)
-        high_vol = atr_pct > atr_threshold
-        
-        # Bollinger Band width expansion
-        bb_width = (indicators.bollinger_upper - indicators.bollinger_lower) / indicators.bollinger_middle
-        bb_expanding = bb_width > bb_width.rolling(20).mean()
-        
-        # Trend direction
-        trend_up = indicators.ema_fast > indicators.ema_slow
-        trend_down = indicators.ema_fast < indicators.ema_slow
-        
-        # Generate breakout signals
-        breakout_signal = pd.Series(0.0, index=indicators.atr.index)
-        
-        long_condition = high_vol & bb_expanding & trend_up
-        short_condition = high_vol & bb_expanding & trend_down
-        
-        breakout_signal[long_condition] = 1.0
-        breakout_signal[short_condition] = -1.0
-        
-        return breakout_signal
     
     def _smooth_signals(self, signals: pd.Series, window: int = 3) -> pd.Series:
         """Smooth signals to reduce noise and whipsaws."""

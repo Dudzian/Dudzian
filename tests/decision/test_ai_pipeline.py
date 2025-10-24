@@ -720,5 +720,8 @@ def test_regime_strategy_weights_normalize() -> None:
     weights = RegimeStrategyWeights.default()
     trend = weights.weights_for(MarketRegime.TREND)
     assert pytest.approx(sum(trend.values()), rel=1e-6) == 1.0
+    assert set(trend) == {"trend_following", "day_trading", "mean_reversion", "arbitrage"}
+    assert "daily_breakout" not in trend
     mr = weights.weights_for(MarketRegime.MEAN_REVERSION)
     assert pytest.approx(sum(mr.values()), rel=1e-6) == 1.0
+    assert set(mr) == {"trend_following", "day_trading", "mean_reversion", "arbitrage"}
