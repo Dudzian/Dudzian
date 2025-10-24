@@ -59,12 +59,6 @@ troubleshootingu fingerprintu i logów bezpieczeństwa.
   katalogu strategii. Przed wdrożeniem sprawdź, czy podpis HMAC (`key_id`)
   odpowiada oczekiwanemu kluczowi.
 
-* **Weryfikacja środowiska** – polecenie `python scripts/local_orchestrator.py \
-  status` wypisuje teraz dla każdego środowiska scalone metadane strategii
-  (licencje, capability, klasy ryzyka, wymagane dane) oraz plan schedulera.
-  Dzięki temu przed wdrożeniem można upewnić się, że konfiguracja jest zgodna z
-  posiadaną licencją, a UI otrzyma kompletny kontekst katalogu strategii.
-
 ### Szybka lista kontrolna operatora
 
 1. `export OEM_BUNDLE_HMAC_KEY=...`

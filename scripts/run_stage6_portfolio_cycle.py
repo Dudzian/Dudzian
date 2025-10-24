@@ -23,6 +23,7 @@ from bot_core.portfolio import (  # noqa: E402
     resolve_decision_log_config,
 )
 from scripts._cli_common import default_decision_log_path
+from scripts._market_intel_paths import resolve_market_intel_path
 
 
 def _default_summary_path(governor: str) -> Path:
@@ -120,9 +121,20 @@ def run(argv: Sequence[str] | None = None) -> int:
         signing_key = _load_signing_key(args.signing_key, args.signing_key_path, args.signing_key_env)
 
         fallback_dirs = tuple(Path(item).expanduser() for item in args.fallback_dir or [])
+        raw_market_intel = args.market_intel
+        market_intel_candidate = Path(raw_market_intel).expanduser()
+        market_intel_path = resolve_market_intel_path(
+            market_intel_candidate,
+            raw_market_intel,
+            environment=args.environment,
+            governor=args.governor,
+            fallback_directories=fallback_dirs,
+            log_context="stage6.portfolio",
+        )
+
         inputs = PortfolioCycleInputs(
             allocations_path=Path(args.allocations).expanduser(),
-            market_intel_path=Path(args.market_intel).expanduser(),
+            market_intel_path=market_intel_path,
             portfolio_value=float(args.portfolio_value),
             slo_report_path=Path(args.slo_report).expanduser() if args.slo_report else None,
             stress_report_path=Path(args.stress_report).expanduser() if args.stress_report else None,

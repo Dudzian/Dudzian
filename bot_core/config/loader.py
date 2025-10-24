@@ -108,6 +108,19 @@ except Exception:  # brak rozszerzonej biblioteki strategii
     VolatilityTargetingStrategyConfig = None  # type: ignore
 
 try:
+    from bot_core.config.models import (
+        DayTradingStrategyConfig,
+        OptionsIncomeStrategyConfig,
+        ScalpingStrategyConfig,
+        StatisticalArbitrageStrategyConfig,
+    )
+except Exception:  # opcjonalne strategie intraday/opcyjne
+    DayTradingStrategyConfig = None  # type: ignore
+    OptionsIncomeStrategyConfig = None  # type: ignore
+    ScalpingStrategyConfig = None  # type: ignore
+    StatisticalArbitrageStrategyConfig = None  # type: ignore
+
+try:
     from bot_core.config.models import (  # type: ignore
         DecisionEngineConfig,
         DecisionEngineTCOConfig,
@@ -587,6 +600,75 @@ def _load_cross_exchange_arbitrage_strategies(raw: Mapping[str, Any]):
     return strategies
 
 
+def _load_scalping_strategies(raw: Mapping[str, Any]):
+    if ScalpingStrategyConfig is None:
+        return {}
+    strategies: dict[str, ScalpingStrategyConfig] = {}
+    for name, entry in (raw.get("scalping_strategies", {}) or {}).items():
+        params = entry.get("parameters", entry) or {}
+        strategies[name] = ScalpingStrategyConfig(
+            name=name,
+            min_price_change=float(params.get("min_price_change", 0.0005)),
+            take_profit=float(params.get("take_profit", 0.0010)),
+            stop_loss=float(params.get("stop_loss", 0.0007)),
+            max_hold_bars=int(params.get("max_hold_bars", 5)),
+        )
+    return strategies
+
+
+def _load_options_income_strategies(raw: Mapping[str, Any]):
+    if OptionsIncomeStrategyConfig is None:
+        return {}
+    strategies: dict[str, OptionsIncomeStrategyConfig] = {}
+    for name, entry in (raw.get("options_income_strategies", {}) or {}).items():
+        params = entry.get("parameters", entry) or {}
+        strategies[name] = OptionsIncomeStrategyConfig(
+            name=name,
+            min_iv=float(params.get("min_iv", 0.35)),
+            max_delta=float(params.get("max_delta", 0.35)),
+            min_days_to_expiry=int(params.get("min_days_to_expiry", 7)),
+            roll_threshold_iv=float(params.get("roll_threshold_iv", 0.25)),
+        )
+    return strategies
+
+
+def _load_statistical_arbitrage_strategies(raw: Mapping[str, Any]):
+    if StatisticalArbitrageStrategyConfig is None:
+        return {}
+    strategies: dict[str, StatisticalArbitrageStrategyConfig] = {}
+    for name, entry in (raw.get("statistical_arbitrage_strategies", {}) or {}).items():
+        params = entry.get("parameters", entry) or {}
+        strategies[name] = StatisticalArbitrageStrategyConfig(
+            name=name,
+            lookback=int(params.get("lookback", 30)),
+            spread_entry_z=float(params.get("spread_entry_z", 2.0)),
+            spread_exit_z=float(params.get("spread_exit_z", 0.5)),
+            max_notional=float(params.get("max_notional", 25_000.0)),
+        )
+    return strategies
+
+
+def _load_day_trading_strategies(raw: Mapping[str, Any]):
+    if DayTradingStrategyConfig is None:
+        return {}
+    strategies: dict[str, DayTradingStrategyConfig] = {}
+    for name, entry in (raw.get("day_trading_strategies", {}) or {}).items():
+        params = entry.get("parameters", entry) or {}
+        strategies[name] = DayTradingStrategyConfig(
+            name=name,
+            momentum_window=int(params.get("momentum_window", 6)),
+            volatility_window=int(params.get("volatility_window", 10)),
+            entry_threshold=float(params.get("entry_threshold", 0.75)),
+            exit_threshold=float(params.get("exit_threshold", 0.25)),
+            take_profit_atr=float(params.get("take_profit_atr", 2.0)),
+            stop_loss_atr=float(params.get("stop_loss_atr", 2.5)),
+            max_holding_bars=int(params.get("max_holding_bars", 12)),
+            atr_floor=float(params.get("atr_floor", 0.0005)),
+            bias_strength=float(params.get("bias_strength", 0.2)),
+        )
+    return strategies
+
+
 def _load_strategy_definitions(raw: Mapping[str, Any]):
     if StrategyDefinitionConfig is None:
         return {}
@@ -636,6 +718,11 @@ def _load_strategy_definitions(raw: Mapping[str, Any]):
         if capability and "capability" not in metadata:
             metadata = dict(metadata)
             metadata["capability"] = capability
+        if spec:
+            tags = tuple(dict.fromkeys((*spec.default_tags, *tags)))
+        if tags and "tags" not in metadata:
+            metadata = dict(metadata)
+            metadata["tags"] = tags
         definitions[name] = StrategyDefinitionConfig(
             name=name,
             engine=engine,
@@ -658,14 +745,18 @@ def _load_strategy_definitions(raw: Mapping[str, Any]):
             risk_classes = spec.risk_classes
             required_data = spec.required_data
             capability = spec.capability
+            default_tags = spec.default_tags
         except KeyError:
             license_tier = None
             risk_classes = ()
             required_data = ()
             capability = None
+            default_tags = ()
         metadata: dict[str, Any] = {}
         if capability:
             metadata["capability"] = capability
+        if default_tags:
+            metadata["tags"] = default_tags
         definitions[name] = StrategyDefinitionConfig(
             name=name,
             engine=engine,
@@ -674,6 +765,7 @@ def _load_strategy_definitions(raw: Mapping[str, Any]):
             risk_classes=risk_classes,
             required_data=required_data,
             capability=capability,
+            tags=default_tags,
             metadata=metadata,
         )
 
@@ -688,6 +780,22 @@ def _load_strategy_definitions(raw: Mapping[str, Any]):
     for name, entry in (raw.get("cross_exchange_arbitrage_strategies", {}) or {}).items():
         params = entry.get("parameters", entry) or {}
         _ensure(name, "cross_exchange_arbitrage", params)
+
+    for name, entry in (raw.get("scalping_strategies", {}) or {}).items():
+        params = entry.get("parameters", entry) or {}
+        _ensure(name, "scalping", params)
+
+    for name, entry in (raw.get("options_income_strategies", {}) or {}).items():
+        params = entry.get("parameters", entry) or {}
+        _ensure(name, "options_income", params)
+
+    for name, entry in (raw.get("statistical_arbitrage_strategies", {}) or {}).items():
+        params = entry.get("parameters", entry) or {}
+        _ensure(name, "statistical_arbitrage", params)
+
+    for name, entry in (raw.get("day_trading_strategies", {}) or {}).items():
+        params = entry.get("parameters", entry) or {}
+        _ensure(name, "day_trading", params)
 
     for name, entry in (raw.get("grid_strategies", {}) or {}).items():
         params = entry.get("parameters", entry) or {}
@@ -2070,7 +2178,7 @@ def _load_market_intel_config(
         output_directory = "../data/stage6/metrics"
 
     manifest_path = _normalize_runtime_path(section.get("manifest_path"), base_dir=base_dir)
-    default_weight = float(section.get("default_weight", 1.0))
+    default_weight = float(section.get("default_weight", 1.15))
 
     required_raw = section.get("required_symbols") or ()
     if not isinstance(required_raw, Sequence):
@@ -3263,22 +3371,22 @@ def _load_portfolio_governor_config(
         return None
 
     enabled = bool(section.get("enabled", False))
-    interval_value = float(section.get("rebalance_interval_minutes", 15.0))
-    smoothing_value = float(section.get("smoothing", 0.5))
-    default_baseline = float(section.get("default_baseline_weight", 0.25))
-    default_min = float(section.get("default_min_weight", 0.05))
+    interval_value = float(section.get("rebalance_interval_minutes", 20.0))
+    smoothing_value = float(section.get("smoothing", 0.55))
+    default_baseline = float(section.get("default_baseline_weight", 0.28))
+    default_min = float(section.get("default_min_weight", 0.08))
     default_max = float(section.get("default_max_weight", 0.5))
     require_complete = bool(section.get("require_complete_metrics", True))
-    min_score_threshold = float(section.get("min_score_threshold", 0.0))
-    default_cost_bps = float(section.get("default_cost_bps", 0.0))
+    min_score_threshold = float(section.get("min_score_threshold", 0.08))
+    default_cost_bps = float(section.get("default_cost_bps", 5.0))
     max_signal_floor = int(section.get("max_signal_floor", 1))
 
     scoring_raw = section.get("scoring") or {}
     scoring = PortfolioGovernorScoringWeights(
-        alpha=float(scoring_raw.get("alpha", 1.0)),
-        cost=float(scoring_raw.get("cost", 1.0)),
-        slo=float(scoring_raw.get("slo", 1.0)),
-        risk=float(scoring_raw.get("risk", 0.5)),
+        alpha=float(scoring_raw.get("alpha", 0.9)),
+        cost=float(scoring_raw.get("cost", 1.3)),
+        slo=float(scoring_raw.get("slo", 1.2)),
+        risk=float(scoring_raw.get("risk", 0.8)),
     )
 
     strategies_raw = section.get("strategies") or {}
@@ -3910,6 +4018,10 @@ def load_core_config(path: str | Path) -> CoreConfig:
     mean_reversion_strategies = _load_mean_reversion_strategies(raw)
     volatility_target_strategies = _load_volatility_target_strategies(raw)
     cross_exchange_arbitrage_strategies = _load_cross_exchange_arbitrage_strategies(raw)
+    scalping_strategies = _load_scalping_strategies(raw)
+    options_income_strategies = _load_options_income_strategies(raw)
+    statistical_arbitrage_strategies = _load_statistical_arbitrage_strategies(raw)
+    day_trading_strategies = _load_day_trading_strategies(raw)
     strategy_definitions = _load_strategy_definitions(raw)
     scheduler_configs = _load_multi_strategy_schedulers(raw)
     portfolio_governor_configs = _load_portfolio_governors(raw)
@@ -3976,6 +4088,14 @@ def load_core_config(path: str | Path) -> CoreConfig:
         core_kwargs["volatility_target_strategies"] = volatility_target_strategies
     if _core_has("cross_exchange_arbitrage_strategies"):
         core_kwargs["cross_exchange_arbitrage_strategies"] = cross_exchange_arbitrage_strategies
+    if _core_has("scalping_strategies"):
+        core_kwargs["scalping_strategies"] = scalping_strategies
+    if _core_has("options_income_strategies"):
+        core_kwargs["options_income_strategies"] = options_income_strategies
+    if _core_has("statistical_arbitrage_strategies"):
+        core_kwargs["statistical_arbitrage_strategies"] = statistical_arbitrage_strategies
+    if _core_has("day_trading_strategies"):
+        core_kwargs["day_trading_strategies"] = day_trading_strategies
     if _core_has("multi_strategy_schedulers"):
         core_kwargs["multi_strategy_schedulers"] = scheduler_configs
     if _core_has("portfolio_governors"):

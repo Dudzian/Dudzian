@@ -13,6 +13,30 @@ import sys
 from pathlib import Path
 
 
+def _resolve_builtin_proto_paths() -> list[str]:
+    """Return include paths for well-known Google protos if available."""
+
+    google_paths: list[str] = []
+    grpc_paths: list[str] = []
+
+    try:
+        import google.protobuf  # type: ignore
+    except ImportError:  # pragma: no cover - optional dependency
+        pass
+    else:
+        package_path = Path(google.protobuf.__file__).resolve().parent
+        google_paths.append(str(package_path.parent.parent))
+
+    try:
+        import grpc_tools  # type: ignore
+    except ImportError:  # pragma: no cover - optional dependency
+        pass
+    else:
+        grpc_paths.append(str(Path(grpc_tools.__file__).resolve().parent / "_proto"))
+
+    return [*google_paths, *grpc_paths]
+
+
 def _patch_python_package_imports(output_dir: Path, proto_file: str) -> None:
     """Upewnia się, że wygenerowane stuby używają względnych importów w pakiecie."""
     module_base = Path(proto_file).stem + "_pb2"
@@ -87,15 +111,21 @@ def _generate_python_stubs(args: argparse.Namespace) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
 
     proto_file = Path(args.proto_path) / args.proto_file
+    include_paths = [args.proto_path, *_resolve_builtin_proto_paths()]
     cmd = [
         sys.executable,
         "-m",
         "grpc_tools.protoc",
-        f"--proto_path={args.proto_path}",
-        f"--python_out={output_dir}",
-        f"--grpc_python_out={output_dir}",
-        str(proto_file),
     ]
+    for path in include_paths:
+        cmd.append(f"--proto_path={path}")
+    cmd.extend(
+        [
+            f"--python_out={output_dir}",
+            f"--grpc_python_out={output_dir}",
+            str(proto_file),
+        ]
+    )
     _run_command(cmd, args.dry_run)
 
     if not args.dry_run:
@@ -116,14 +146,20 @@ def _generate_cpp_stubs(args: argparse.Namespace) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
 
     proto_file = Path(args.proto_path) / args.proto_file
+    include_paths = [args.proto_path, *_resolve_builtin_proto_paths()]
     cmd = [
         protoc,
-        f"--proto_path={args.proto_path}",
-        f"--cpp_out={output_dir}",
-        f"--grpc_out={output_dir}",
-        f"--plugin=protoc-gen-grpc={plugin}",
-        str(proto_file),
     ]
+    for path in include_paths:
+        cmd.append(f"--proto_path={path}")
+    cmd.extend(
+        [
+            f"--cpp_out={output_dir}",
+            f"--grpc_out={output_dir}",
+            f"--plugin=protoc-gen-grpc={plugin}",
+            str(proto_file),
+        ]
+    )
     _run_command(cmd, args.dry_run)
 
 

@@ -6,6 +6,7 @@ from bot_core.strategies.base import (
     StrategySignal,
     WalkForwardOptimizer,
 )
+from bot_core.strategies.day_trading import DayTradingSettings, DayTradingStrategy
 from bot_core.strategies.daily_trend import (
     DailyTrendMomentumSettings,
     DailyTrendMomentumStrategy,
@@ -15,6 +16,15 @@ from bot_core.strategies.catalog import (
     StrategyCatalog,
     StrategyDefinition,
     StrategyPresetWizard,
+)
+from bot_core.strategies.regime_workflow import (
+    ActivationCadenceStats,
+    ActivationHistoryStats,
+    ActivationTransitionStats,
+    ActivationUptimeStats,
+    PresetVersionInfo,
+    RegimePresetActivation,
+    StrategyRegimeWorkflow,
 )
 from bot_core.strategies.cross_exchange_arbitrage import (
     CrossExchangeArbitrageSettings,
@@ -40,9 +50,18 @@ __all__ = [
     "WalkForwardOptimizer",
     "DailyTrendMomentumSettings",
     "DailyTrendMomentumStrategy",
+    "DayTradingSettings",
+    "DayTradingStrategy",
     "StrategyCatalog",
     "StrategyDefinition",
     "StrategyPresetWizard",
+    "StrategyRegimeWorkflow",
+    "ActivationHistoryStats",
+    "ActivationTransitionStats",
+    "ActivationCadenceStats",
+    "ActivationUptimeStats",
+    "PresetVersionInfo",
+    "RegimePresetActivation",
     "DEFAULT_STRATEGY_CATALOG",
     "GridTradingSettings",
     "GridTradingStrategy",

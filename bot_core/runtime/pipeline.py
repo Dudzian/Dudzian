@@ -3093,19 +3093,42 @@ def _collect_strategy_definitions(core_config: CoreConfig) -> dict[str, Strategy
 
     definitions: dict[str, StrategyDefinition] = {}
 
-    def _resolve_metadata(engine: str) -> tuple[str, tuple[str, ...], tuple[str, ...], str | None]:
+    def _resolve_metadata(
+        engine: str,
+    ) -> tuple[str, tuple[str, ...], tuple[str, ...], tuple[str, ...], str | None]:
         try:
             spec = DEFAULT_STRATEGY_CATALOG.get(engine)
         except KeyError:
-            return ("unspecified", ("unspecified",), ("unspecified",), None)
-        return (spec.license_tier, spec.risk_classes, spec.required_data, spec.capability)
+            return (
+                "unspecified",
+                ("unspecified",),
+                ("unspecified",),
+                (),
+                None,
+            )
+        return (
+            spec.license_tier,
+            spec.risk_classes,
+            spec.required_data,
+            spec.default_tags,
+            spec.capability,
+        )
 
     for name, cfg in getattr(core_config, "strategy_definitions", {}).items():
-        license_tier, risk_classes, required_data, capability = _resolve_metadata(cfg.engine)
+        (
+            license_tier,
+            risk_classes,
+            required_data,
+            default_tags,
+            capability,
+        ) = _resolve_metadata(cfg.engine)
         metadata = dict(cfg.metadata)
         resolved_capability = getattr(cfg, "capability", None) or capability
         if resolved_capability and "capability" not in metadata:
             metadata["capability"] = resolved_capability
+        merged_tags = tuple(dict.fromkeys((*default_tags, *tuple(cfg.tags))))
+        if merged_tags and "tags" not in metadata:
+            metadata["tags"] = merged_tags
         definitions[name] = StrategyDefinition(
             name=cfg.name,
             engine=cfg.engine,
@@ -3114,17 +3137,25 @@ def _collect_strategy_definitions(core_config: CoreConfig) -> dict[str, Strategy
             required_data=tuple(cfg.required_data) or required_data,
             parameters=dict(cfg.parameters),
             risk_profile=cfg.risk_profile,
-            tags=tuple(cfg.tags),
+            tags=merged_tags,
             metadata=metadata,
         )
 
     def _fallback(name: str, engine: str, params: Mapping[str, Any]) -> None:
         if name in definitions:
             return
-        license_tier, risk_classes, required_data, capability = _resolve_metadata(engine)
+        (
+            license_tier,
+            risk_classes,
+            required_data,
+            default_tags,
+            capability,
+        ) = _resolve_metadata(engine)
         metadata: dict[str, Any] = {}
         if capability:
             metadata["capability"] = capability
+        if default_tags:
+            metadata["tags"] = default_tags
         definitions[name] = StrategyDefinition(
             name=name,
             engine=engine,
@@ -3132,6 +3163,7 @@ def _collect_strategy_definitions(core_config: CoreConfig) -> dict[str, Strategy
             risk_classes=risk_classes,
             required_data=required_data,
             parameters=dict(params),
+            tags=default_tags,
             metadata=metadata,
         )
 
@@ -3187,6 +3219,59 @@ def _collect_strategy_definitions(core_config: CoreConfig) -> dict[str, Strategy
                 "spread_exit": cfg.spread_exit,
                 "max_notional": cfg.max_notional,
                 "max_open_seconds": cfg.max_open_seconds,
+            },
+        )
+
+    for name, cfg in getattr(core_config, "scalping_strategies", {}).items():
+        _fallback(
+            name,
+            "scalping",
+            {
+                "min_price_change": cfg.min_price_change,
+                "take_profit": cfg.take_profit,
+                "stop_loss": cfg.stop_loss,
+                "max_hold_bars": cfg.max_hold_bars,
+            },
+        )
+
+    for name, cfg in getattr(core_config, "options_income_strategies", {}).items():
+        _fallback(
+            name,
+            "options_income",
+            {
+                "min_iv": cfg.min_iv,
+                "max_delta": cfg.max_delta,
+                "min_days_to_expiry": cfg.min_days_to_expiry,
+                "roll_threshold_iv": cfg.roll_threshold_iv,
+            },
+        )
+
+    for name, cfg in getattr(core_config, "statistical_arbitrage_strategies", {}).items():
+        _fallback(
+            name,
+            "statistical_arbitrage",
+            {
+                "lookback": cfg.lookback,
+                "spread_entry_z": cfg.spread_entry_z,
+                "spread_exit_z": cfg.spread_exit_z,
+                "max_notional": cfg.max_notional,
+            },
+        )
+
+    for name, cfg in getattr(core_config, "day_trading_strategies", {}).items():
+        _fallback(
+            name,
+            "day_trading",
+            {
+                "momentum_window": cfg.momentum_window,
+                "volatility_window": cfg.volatility_window,
+                "entry_threshold": cfg.entry_threshold,
+                "exit_threshold": cfg.exit_threshold,
+                "take_profit_atr": cfg.take_profit_atr,
+                "stop_loss_atr": cfg.stop_loss_atr,
+                "max_holding_bars": cfg.max_holding_bars,
+                "atr_floor": cfg.atr_floor,
+                "bias_strength": cfg.bias_strength,
             },
         )
 
@@ -3252,7 +3337,13 @@ def describe_multi_strategy_configuration(
         raise KeyError(f"Nie znaleziono scheduler-a '{resolved_name}'.")
 
     definitions = _collect_strategy_definitions(core_config)
+    guard = get_capability_guard()
     schedules: list[dict[str, object]] = []
+    blocked_schedules: list[str] = []
+    blocked_strategies: list[str] = []
+    blocked_strategy_capabilities: dict[str, str] = {}
+    blocked_schedule_capabilities: dict[str, str] = {}
+    strategy_capabilities: dict[str, str] = {}
 
     for schedule in scheduler_cfg.schedules:
         entry: dict[str, object] = {
@@ -3267,12 +3358,18 @@ def describe_multi_strategy_configuration(
         if schedule.interval:
             entry["interval"] = schedule.interval
         definition = definitions.get(schedule.strategy)
+        capability_id: str | None = None
         if definition is not None:
             entry["engine"] = definition.engine
             if definition.risk_profile:
                 entry["definition_risk_profile"] = definition.risk_profile
+            raw_capability = definition.metadata.get("capability")
+            if raw_capability not in (None, ""):
+                capability_id = str(raw_capability).strip() or None
             try:
                 spec = resolved_catalog.get(definition.engine)
+                if spec.capability:
+                    capability_id = spec.capability
                 tags = tuple(dict.fromkeys((*spec.default_tags, *definition.tags)))
                 entry["tags"] = list(tags)
                 if spec.capability:
@@ -3295,9 +3392,35 @@ def describe_multi_strategy_configuration(
                     entry["required_data"] = list(
                         dict.fromkeys(definition.required_data)
                     )
+                if capability_id is None:
+                    extra_capability = definition.metadata.get("capability")
+                    if extra_capability not in (None, ""):
+                        capability_id = str(extra_capability).strip() or None
+        normalized_strategy = (schedule.strategy or "").strip()
+        if capability_id and normalized_strategy:
+            strategy_capabilities.setdefault(normalized_strategy, capability_id)
+
+        if guard is not None and capability_id:
+            try:
+                if not guard.capabilities.is_strategy_enabled(capability_id):
+                    if schedule.name not in blocked_schedules:
+                        blocked_schedules.append(schedule.name)
+                    strategy_name = schedule.strategy
+                    if strategy_name not in blocked_strategies:
+                        blocked_strategies.append(strategy_name)
+                    if capability_id and strategy_name:
+                        blocked_strategy_capabilities.setdefault(strategy_name, capability_id)
+                    if schedule.name and capability_id:
+                        blocked_schedule_capabilities.setdefault(schedule.name, capability_id)
+                    continue
+            except AttributeError:
+                pass
         schedules.append(entry)
 
     schedules.sort(key=lambda item: item["name"])
+    allowed_strategies = {
+        str(entry["strategy"]) for entry in schedules if entry.get("strategy")
+    }
 
     policy_spec = getattr(scheduler_cfg, "capital_policy", None)
     policy, policy_interval = _resolve_capital_policy(policy_spec, _allow_profile=False)
@@ -3313,9 +3436,31 @@ def describe_multi_strategy_configuration(
         except (TypeError, ValueError):
             policy_summary["configured_rebalance_seconds"] = cfg_interval
 
-    def _serialize_limit_tree(tree: Mapping[str, Mapping[str, object]]) -> Mapping[str, Mapping[str, object]]:
+    def _serialize_limit_tree(
+        tree: Mapping[str, Mapping[str, object]],
+        *,
+        blocked: dict[str, set[str]] | None = None,
+        blocked_capabilities: dict[str, str] | None = None,
+    ) -> Mapping[str, Mapping[str, object]]:
         result: dict[str, dict[str, object]] = {}
         for strategy_name, profiles in (tree or {}).items():
+            strategy_key = str(strategy_name)
+            if allowed_strategies and strategy_key not in allowed_strategies:
+                if blocked is not None:
+                    blocked_profiles = blocked.setdefault(strategy_key, set())
+                    if isinstance(profiles, Mapping):
+                        for profile_name in profiles.keys():
+                            blocked_profiles.add(str(profile_name))
+                    else:
+                        blocked_profiles.add("*")
+                if blocked_capabilities is not None:
+                    capability_id = (
+                        blocked_strategy_capabilities.get(strategy_key)
+                        or strategy_capabilities.get(strategy_key)
+                    )
+                    if capability_id:
+                        blocked_capabilities.setdefault(strategy_key, capability_id)
+                continue
             if not isinstance(profiles, Mapping):
                 continue
             profile_entry: dict[str, object] = {}
@@ -3335,27 +3480,62 @@ def describe_multi_strategy_configuration(
                     except (TypeError, ValueError):
                         continue
             if profile_entry:
-                result[strategy_name] = profile_entry
+                result[strategy_key] = profile_entry
         return result
 
     suspensions_payload: list[dict[str, object]] = []
+    blocked_suspensions: list[dict[str, object]] = []
+    blocked_suspension_capabilities: dict[str, str] = {}
     for suspension in getattr(scheduler_cfg, "initial_suspensions", ()):
         payload: dict[str, object] = {
             "kind": suspension.kind,
             "target": suspension.target,
         }
+        kind = (suspension.kind or "schedule").lower()
+        target = str(suspension.target)
         if suspension.reason:
             payload["reason"] = suspension.reason
         if suspension.until:
             payload["until"] = suspension.until.isoformat()
         if suspension.duration_seconds is not None:
             payload["duration_seconds"] = float(suspension.duration_seconds)
+        if kind != "tag" and allowed_strategies and target not in allowed_strategies:
+            capability_id: str | None = None
+            if kind == "schedule":
+                capability_id = (
+                    blocked_schedule_capabilities.get(target)
+                    or strategy_capabilities.get(target)
+                    or blocked_strategy_capabilities.get(target)
+                )
+            else:
+                capability_id = (
+                    blocked_strategy_capabilities.get(target)
+                    or strategy_capabilities.get(target)
+                )
+            if capability_id:
+                payload["capability"] = capability_id
+                key = f"{kind}:{target}".strip(":")
+                if key:
+                    blocked_suspension_capabilities.setdefault(key, capability_id)
+            blocked_suspensions.append(dict(payload))
+            continue
         suspensions_payload.append(payload)
 
+    blocked_initial_limits: dict[str, set[str]] = {}
+    blocked_static_limits: dict[str, set[str]] = {}
+    blocked_initial_limit_capabilities: dict[str, str] = {}
+    blocked_static_limit_capabilities: dict[str, str] = {}
+
     initial_limits = _serialize_limit_tree(
-        getattr(scheduler_cfg, "initial_signal_limits", {})
+        getattr(scheduler_cfg, "initial_signal_limits", {}),
+        blocked=blocked_initial_limits,
+        blocked_capabilities=blocked_initial_limit_capabilities,
     )
-    static_limits = _serialize_limit_tree(getattr(scheduler_cfg, "signal_limits", {}))
+    static_limits = _serialize_limit_tree(
+        getattr(scheduler_cfg, "signal_limits", {}),
+        blocked=blocked_static_limits,
+        blocked_capabilities=blocked_static_limit_capabilities,
+    )
 
     summary: dict[str, object] = {
         "config_path": str(Path(config_path).expanduser()),
@@ -3365,8 +3545,70 @@ def describe_multi_strategy_configuration(
         "initial_suspensions": suspensions_payload,
         "initial_signal_limits": initial_limits,
     }
+    if blocked_schedules:
+        summary["blocked_schedules"] = blocked_schedules
+    if blocked_strategies:
+        summary["blocked_strategies"] = blocked_strategies
+    if blocked_strategy_capabilities:
+        summary["blocked_capabilities"] = {
+            name: blocked_strategy_capabilities[name]
+            for name in blocked_strategies
+            if name in blocked_strategy_capabilities
+        }
+    if blocked_schedule_capabilities:
+        summary["blocked_schedule_capabilities"] = {
+            name: blocked_schedule_capabilities[name]
+            for name in blocked_schedules
+            if name in blocked_schedule_capabilities
+        }
+    if blocked_suspensions:
+        summary["blocked_suspensions"] = blocked_suspensions
+    if blocked_suspension_capabilities:
+        summary["blocked_suspension_capabilities"] = {
+            name: blocked_suspension_capabilities[name]
+            for name in sorted(blocked_suspension_capabilities)
+        }
     if static_limits:
         summary["signal_limits"] = static_limits
+    merged_initial_capabilities: dict[str, str] = dict(blocked_initial_limit_capabilities)
+    if blocked_initial_limits:
+        summary["blocked_initial_signal_limits"] = {
+            name: sorted(profiles)
+            for name, profiles in blocked_initial_limits.items()
+        }
+        for name in blocked_initial_limits:
+            capability_id = (
+                merged_initial_capabilities.get(name)
+                or blocked_strategy_capabilities.get(name)
+                or strategy_capabilities.get(name)
+            )
+            if capability_id:
+                merged_initial_capabilities[name] = capability_id
+    if merged_initial_capabilities:
+        summary["blocked_initial_signal_limit_capabilities"] = {
+            name: merged_initial_capabilities[name]
+            for name in sorted(merged_initial_capabilities)
+        }
+
+    merged_static_capabilities: dict[str, str] = dict(blocked_static_limit_capabilities)
+    if blocked_static_limits:
+        summary["blocked_signal_limits"] = {
+            name: sorted(profiles)
+            for name, profiles in blocked_static_limits.items()
+        }
+        for name in blocked_static_limits:
+            capability_id = (
+                merged_static_capabilities.get(name)
+                or blocked_strategy_capabilities.get(name)
+                or strategy_capabilities.get(name)
+            )
+            if capability_id:
+                merged_static_capabilities[name] = capability_id
+    if merged_static_capabilities:
+        summary["blocked_signal_limit_capabilities"] = {
+            name: merged_static_capabilities[name]
+            for name in sorted(merged_static_capabilities)
+        }
     if getattr(scheduler_cfg, "portfolio_governor", None):
         summary["portfolio_governor"] = scheduler_cfg.portfolio_governor
     if include_strategy_definitions:

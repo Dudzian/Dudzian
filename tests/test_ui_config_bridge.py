@@ -1,9 +1,13 @@
 import io
 import json
+from datetime import date
 from pathlib import Path
 
 import pytest
 import yaml
+
+from bot_core.security.capabilities import build_capabilities_from_payload
+from bot_core.security.guards import install_capability_guard, reset_capability_guard
 
 from scripts import ui_config_bridge
 
@@ -98,6 +102,10 @@ def test_dump_config_sections(sample_config: Path) -> None:
     assert first_schedule["risk_classes"] == ["directional", "momentum"]
     assert first_schedule["required_data"] == ["ohlcv", "technical_indicators"]
     assert first_schedule["tags"] == ["trend", "momentum", "custom-tag"]
+    assert default_scheduler["initial_suspensions"] == []
+    assert default_scheduler["initial_signal_limits"] == {}
+    assert "blocked_schedules" not in default_scheduler
+    assert "blocked_initial_signal_limits" not in default_scheduler
 
 
 def test_apply_updates_writes_yaml(sample_config: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -192,4 +200,150 @@ def test_main_dump_outputs_json(sample_config: Path, capsys: pytest.CaptureFixtu
     data = json.loads(captured.out)
     assert "schedulers" in data
     assert list(data["schedulers"].keys()) == ["default"]
+
+
+def test_dump_config_filters_blocked_capabilities() -> None:
+    raw = {
+        "strategies": {
+            "trend-follow": {
+                "engine": "daily_trend_momentum",
+                "tags": ["custom"],
+            }
+        },
+        "scalping_strategies": {
+            "quick_scalp": {}
+        },
+        "multi_strategy_schedulers": {
+            "default": {
+                "schedules": [
+                    {"name": "trend", "strategy": "trend-follow"},
+                    {"name": "scalp", "strategy": "quick_scalp"},
+                ]
+            }
+        },
+    }
+
+    try:
+        capabilities = build_capabilities_from_payload(
+            {
+                "edition": "pro",
+                "environments": ["paper"],
+                "exchanges": {},
+                "strategies": {"trend_d1": True, "scalping": False},
+                "runtime": {},
+                "modules": {},
+                "limits": {},
+            },
+            effective_date=date(2025, 1, 1),
+        )
+        install_capability_guard(capabilities)
+
+        dumped = ui_config_bridge.dump_config(raw, section="scheduler", scheduler=None)
+        scheduler = dumped["schedulers"]["default"]
+        schedules = scheduler["schedules"]
+
+        assert len(schedules) == 1
+        trend_entry = schedules[0]
+        assert trend_entry["name"] == "trend"
+        assert trend_entry["engine"] == "daily_trend_momentum"
+        assert trend_entry["capability"] == "trend_d1"
+
+        assert scheduler.get("blocked_schedules") == ["scalp"]
+        assert scheduler.get("blocked_strategies") == ["quick_scalp"]
+        assert scheduler.get("blocked_capabilities") == {"quick_scalp": "scalping"}
+        assert scheduler.get("blocked_schedule_capabilities") == {"scalp": "scalping"}
+        assert "blocked_initial_signal_limits" not in scheduler
+        assert "blocked_signal_limits" not in scheduler
+    finally:
+        reset_capability_guard()
+
+
+def test_dump_config_reports_blocked_limits_and_suspensions() -> None:
+    raw = {
+        "strategies": {
+            "trend": {"engine": "daily_trend_momentum"},
+            "blocked-strategy": {"engine": "scalping"},
+        },
+        "multi_strategy_schedulers": {
+            "default": {
+                "schedules": [
+                    {"name": "trend-run", "strategy": "trend"},
+                    {"name": "blocked-run", "strategy": "blocked-strategy"},
+                ],
+                "initial_signal_limits": {
+                    "trend": {"balanced": {"limit": 2}},
+                    "blocked-strategy": {"balanced": {"limit": 1}},
+                },
+                "signal_limits": {
+                    "trend": {"balanced": {"limit": 3}},
+                    "blocked-strategy": {"balanced": {"limit": 2}},
+                },
+                "initial_suspensions": [
+                    {"kind": "schedule", "target": "blocked-run", "reason": "maintenance"},
+                    {"kind": "tag", "target": "intraday", "reason": "tag-pause"},
+                ],
+            }
+        },
+    }
+
+    try:
+        capabilities = build_capabilities_from_payload(
+            {
+                "edition": "pro",
+                "environments": ["paper"],
+                "exchanges": {},
+                "strategies": {"trend_d1": True, "scalping": False},
+                "runtime": {},
+                "modules": {},
+                "limits": {},
+            },
+            effective_date=date(2025, 1, 1),
+        )
+        install_capability_guard(capabilities)
+
+        dumped = ui_config_bridge.dump_config(raw, section="scheduler", scheduler=None)
+        scheduler = dumped["schedulers"]["default"]
+
+        schedules = scheduler["schedules"]
+        assert len(schedules) == 1
+        assert schedules[0]["strategy"] == "trend"
+
+        assert scheduler["initial_signal_limits"] == {
+            "trend": {"balanced": {"limit": 2}}
+        }
+        assert scheduler["signal_limits"] == {
+            "trend": {"balanced": {"limit": 3}}
+        }
+        assert scheduler["initial_suspensions"] == [
+            {"kind": "tag", "target": "intraday", "reason": "tag-pause"}
+        ]
+        assert scheduler["blocked_schedules"] == ["blocked-run"]
+        assert scheduler["blocked_strategies"] == ["blocked-strategy"]
+        assert scheduler["blocked_capabilities"] == {"blocked-strategy": "scalping"}
+        assert scheduler["blocked_schedule_capabilities"] == {"blocked-run": "scalping"}
+        assert scheduler["blocked_initial_signal_limits"] == {
+            "blocked-strategy": ["balanced"]
+        }
+        assert scheduler["blocked_initial_signal_limit_capabilities"] == {
+            "blocked-strategy": "scalping"
+        }
+        assert scheduler["blocked_signal_limits"] == {
+            "blocked-strategy": ["balanced"]
+        }
+        assert scheduler["blocked_signal_limit_capabilities"] == {
+            "blocked-strategy": "scalping"
+        }
+        assert scheduler["blocked_suspensions"] == [
+            {
+                "kind": "schedule",
+                "target": "blocked-run",
+                "reason": "maintenance",
+                "capability": "scalping",
+            }
+        ]
+        assert scheduler["blocked_suspension_capabilities"] == {
+            "schedule:blocked-run": "scalping"
+        }
+    finally:
+        reset_capability_guard()
 
