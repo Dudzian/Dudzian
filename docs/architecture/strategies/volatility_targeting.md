@@ -24,3 +24,9 @@
 - Jednostkowe: `tests/test_volatility_target_strategy.py`.
 - Regresyjne: plan w `stage4_test_plan.md` (sekcja volatility) – obejmuje symulacje stresowe i porównanie z benchmarkiem HV.
 
+## Metadane katalogu strategii
+- `license_tier`: `enterprise` – wykorzystywana przez raporty licencyjne schedulerów.
+- `risk_classes`: `risk_control`, `volatility` – klasy ekspozycji wykorzystywane do budowy presetów i filtrów.
+- `required_data`: `ohlcv`, `realized_volatility` – minimalny zestaw danych wymagany przez silnik.
+- `capability`: `volatility_target` – umożliwia strażnikom licencyjnym blokowanie brakujących modułów.
+

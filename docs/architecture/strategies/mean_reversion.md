@@ -27,3 +27,9 @@
 - Telemetria: liczba sygnałów, średni z-score, dryf schedulera.
 - Audyt: każda decyzja logowana w `TradingDecisionJournal` z HMAC.
 
+## Metadane katalogu strategii
+- `license_tier`: `professional` – wymaga rozszerzonego poziomu licencji ze względu na arbitraż statystyczny.
+- `risk_classes`: `statistical`, `mean_reversion` – wykorzystywane do raportów i filtrów schedulera.
+- `required_data`: `ohlcv`, `spread_history` – minimalne źródła danych wymagane przy budowaniu presetów.
+- `capability`: `mean_reversion` – wykorzystywana przy walidacji licencji i budowie presetów katalogu.
+

@@ -718,6 +718,9 @@ execution:
 strategies:
   core_daily_trend:
     engine: daily_trend_momentum
+    license_tier: standard
+    risk_classes: [directional, momentum]
+    required_data: [ohlcv, technical_indicators]
     parameters:
       fast_ma: 25
       slow_ma: 100
@@ -730,6 +733,9 @@ strategies:
 
 mean_reversion_strategies:
   core_mean_reversion:
+    license_tier: professional
+    risk_classes: [statistical, mean_reversion]
+    required_data: [ohlcv, spread_history]
     parameters:
       lookback: 96
       entry_zscore: 1.9
@@ -740,6 +746,9 @@ mean_reversion_strategies:
 
 volatility_target_strategies:
   core_volatility_target:
+    license_tier: enterprise
+    risk_classes: [risk_control, volatility]
+    required_data: [ohlcv, realized_volatility]
     parameters:
       target_volatility: 0.1
       lookback: 60
@@ -750,6 +759,9 @@ volatility_target_strategies:
 
 cross_exchange_arbitrage_strategies:
   core_cross_exchange:
+    license_tier: enterprise
+    risk_classes: [arbitrage, liquidity]
+    required_data: [order_book, latency_monitoring]
     parameters:
       primary_exchange: binance_spot
       secondary_exchange: kraken_spot
