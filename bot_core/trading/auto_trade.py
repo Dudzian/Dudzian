@@ -470,12 +470,23 @@ class AutoTradeEngine:
             )
 
     def _infer_available_data(self, frame: pd.DataFrame) -> set[str]:
-        available: set[str] = {"ohlcv"}
-        if not frame.empty:
+        available: set[str] = set()
+        if frame.empty:
+            return available
+
+        normalized_columns = {
+            str(column).strip().lower() for column in frame.columns if str(column).strip()
+        }
+        ohlcv_columns = {"open", "high", "low", "close", "volume"}
+        time_columns = {"timestamp", "open_time", "close_time"}
+
+        if normalized_columns & (ohlcv_columns | {"close"}):
+            available.add("ohlcv")
+
+        indicator_columns = normalized_columns - ohlcv_columns - time_columns
+        if indicator_columns:
             available.add("technical_indicators")
-            available.add("spread_history")
-            available.add("order_book")
-            available.add("latency_monitoring")
+
         return available
 
     def _activation_weights(
