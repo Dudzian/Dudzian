@@ -15,7 +15,8 @@ podpisami HMAC oraz integracją z obserwowalnością i Market Intelligence.
 4. Przygotuj plik alokacji (np. `var/audit/allocations/<data>.json`) z wagami
    aktywów przekazanymi z runtime lub Stress Lab oraz raport Stress Lab
    (`var/audit/stress_lab/<data>.json`) jeśli generował overridy.
-5. Uruchom automatyczny cykl hypercare portfela:
+5. Uruchom automatyczny cykl hypercare portfela (zapisując podpis do osobnego
+   pliku):
    ```bash
    python scripts/run_stage6_portfolio_cycle.py \
      --config config/core.yaml \
@@ -27,7 +28,10 @@ podpisami HMAC oraz integracją z obserwowalnością i Market Intelligence.
      --slo-report <raport_slo.json> \
      --stress-report <raport_stress_lab.json> \
      --summary var/audit/portfolio/summary.json \
-     --summary-csv var/audit/portfolio/summary.csv
+     --summary-csv var/audit/portfolio/summary.csv \
+     --summary-signature var/audit/portfolio/summary.sig \
+     --signing-key-path secrets/hmac/stage6_portfolio.key \
+     --signing-key-id stage6-portfolio
    ```
    Komenda wygeneruje podsumowanie JSON/CSV, podpis HMAC oraz wpis w decision
    logu korzystając z konfiguracji `runtime.portfolio_decision_log`.
