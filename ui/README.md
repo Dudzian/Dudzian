@@ -154,6 +154,21 @@ każdego zadania (cadence, profil ryzyka, limit sygnałów). UI utrzymuje synchr
 i w przypadku błędów (np. nieistniejącej nazwy zadania) komunikat z mostka wyświetlany jest w
 panelu.
 
+Mostek udostępnia również raporty `StrategyRegimeWorkflow`. Wywołanie
+
+```bash
+python scripts/ui_config_bridge.py \
+  --config config/core.yaml \
+  --describe-regime-workflow \
+  --regime-workflow-dir var/data/strategy_regime_workflow
+```
+
+zwraca w JSON informacje o gotowości presetów (hash, podpis HMAC, brakujące dane,
+blokady harmonogramu, wymagane licencje) oraz statystyki aktywacji i historię
+fallbacków. Domyślnie mostek oczekuje plików `availability.json` oraz
+`activation_history.json` w katalogu wskazanym przez `--regime-workflow-dir` – UI
+może je odczytywać bezpośrednio, aby zasilić widok mapowania strategii na reżimy.
+
 Ścieżki i interpreter mostka można dostosować flagami CLI:
 
 ```bash

@@ -107,11 +107,29 @@ def test_strategy_regime_workflow_uses_fallback_when_data_missing() -> None:
         signing_key=signing_key,
         metadata={"ensemble_weights": {"mean_reversion": 1.0}},
     )
-    workflow.register_emergency_preset(
-        name="fallback",
-        entries=[{"engine": "daily_trend_momentum"}],
-        signing_key=signing_key,
-        metadata={"ensemble_weights": {"trend_following": 1.0}},
+    decision = workflow.decide(_sample_market_data(), TradingParameters())
+
+    assert isinstance(decision.parameters, TradingParameters)
+    assert decision.parameters.ensemble_weights == decision.weights
+    assert abs(sum(decision.weights.values()) - 1.0) < 1e-9
+    assert decision.timestamp.tzinfo is None
+    assert decision.license_tiers and "standard" in decision.license_tiers
+    assert "trend_following" in decision.strategy_metadata
+    strategy_meta = decision.strategy_metadata["trend_following"]
+    assert strategy_meta["license_tier"] == "standard"
+    assert "trend_d1" in decision.capabilities
+    assert tuple(strategy_meta["risk_classes"]) == ("directional", "momentum")
+    assert set(strategy_meta["required_data"]) == {"ohlcv", "technical_indicators"}
+    assert set(strategy_meta["tags"]) >= {"trend", "momentum"}
+    assert "momentum" in decision.tags
+    assert "technical_indicators" in decision.required_data
+
+
+def test_regime_workflow_respects_cooldown() -> None:
+    workflow = RegimeSwitchWorkflow(
+        confidence_threshold=0.2,
+        persistence_threshold=0.05,
+        min_switch_cooldown=5,
     )
 
     activation = workflow.activate(

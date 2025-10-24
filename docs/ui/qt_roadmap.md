@@ -9,6 +9,7 @@
 ## Strategy Workbench ↔ StrategyRegimeWorkflow
 
 * Mostkowanie z `Strategy Workbench` poprzez wywołanie `python scripts/ui_config_bridge.py --describe-catalog` (lub aliasu pakietowego) w celu pobrania aktualnych opisów strategii, statusów dostępności oraz podpisanych wersji presetów.
+* Pobieranie raportów `StrategyRegimeWorkflow` (dostępność presetów, podpisy HMAC, blokady harmonogramu, historia fallbacków i statystyki aktywacji) przy pomocy `python scripts/ui_config_bridge.py --describe-regime-workflow --regime-workflow-dir var/data/strategy_regime_workflow`.
 * Uruchamianie kreatora presetów (`python scripts/ui_config_bridge.py --preset-wizard --wizard-mode build --input preset_payload.json`) z przekazaniem parametrów kontekstowych wybranych w UI i obsługą zwrotów dotyczących zgodności podpisów.
 * Prezentowanie operatorowi w UI: raportów dostępności strategii, wyników walidacji podpisów, historii wersji presetów oraz sugerowanych działań naprawczych przekazanych przez mostek.
 * Propagowanie do backendu zmian zatwierdzonych w UI (aktualizacje wag reżimów, aktywacje presetów) wraz z metadanymi audytowymi wymaganymi przez `StrategyRegimeWorkflow`.
@@ -16,7 +17,7 @@
 ### Wymagania mostka konfiguracyjnego
 
 * Ścieżka do interpretera Pythona i skryptu mostka są konfigurowane flagami `--strategy-config-python` oraz `--strategy-config-bridge` (lub odpowiadającymi im zmiennymi środowiskowymi), zgodnie z opisem w `ui/README.md`.
-* Wszystkie wspierane flagi (`--describe-catalog`, `--preset-wizard`, `--wizard-mode`, `--input`, `--config`, `--apply`, `--dump`, `--section`, `--scheduler`) są udokumentowane w `scripts/ui_config_bridge.py` i stanowią źródło prawdy dla roadmapy.
+* Wszystkie wspierane flagi (`--describe-catalog`, `--describe-regime-workflow`, `--regime-workflow-dir`, `--preset-wizard`, `--wizard-mode`, `--input`, `--config`, `--apply`, `--dump`, `--section`, `--scheduler`) są udokumentowane w `scripts/ui_config_bridge.py` i stanowią źródło prawdy dla roadmapy.
 
 ## Kamienie milowe
 

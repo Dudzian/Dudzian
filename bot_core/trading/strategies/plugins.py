@@ -1,8 +1,6 @@
 """Strategy plugin implementations using :class:`TradingParameters`."""
 from __future__ import annotations
 
-from __future__ import annotations
-
 from abc import ABC, abstractmethod
 from types import MappingProxyType
 from typing import (
@@ -193,6 +191,11 @@ class StrategyCatalog:
                 DayTradingStrategy,
                 MeanReversionStrategy,
                 ArbitrageStrategy,
+                GridTradingStrategy,
+                VolatilityTargetStrategy,
+                ScalpingStrategy,
+                OptionsIncomeStrategy,
+                StatisticalArbitrageStrategy,
             )
         )
 
@@ -325,4 +328,169 @@ class ArbitrageStrategy(StrategyPlugin):
 
         dampening = np.tanh(np.abs(confirmed) / (threshold * 3.0))
         return (signal * dampening).clip(-1.0, 1.0)
+
+
+class GridTradingStrategy(StrategyPlugin):
+    """Market-making grid reacting to deviations around a slow anchor."""
+
+    name = "grid_trading"
+    description = "Neutral grid around SMA with ATR-aware band sizing."
+    license_tier = "professional"
+    risk_classes = ("market_making",)
+    required_data = ("order_book", "ohlcv")
+    capability = "grid_trading"
+    tags = ("grid", "market_making")
+
+    def generate(
+        self,
+        indicators: "TechnicalIndicators",
+        params: "TradingParameters",
+        *,
+        market_data: Optional[pd.DataFrame] = None,
+    ) -> pd.Series:
+        anchor = indicators.sma_trend
+        price = indicators.ema_fast
+        atr = indicators.atr.replace(0.0, np.nan)
+        deviation = ((price - anchor) / atr).fillna(0.0)
+
+        grid_signal = pd.Series(0.0, index=price.index)
+        grid_signal[deviation > 0.75] = -1.0
+        grid_signal[deviation < -0.75] = 1.0
+
+        soft_bias = deviation.clip(-2.0, 2.0) / 2.0
+        combined = (grid_signal * 0.6 + soft_bias * 0.4).clip(-1.0, 1.0)
+        return combined
+
+
+class VolatilityTargetStrategy(StrategyPlugin):
+    """Adjust exposure to steer realised volatility toward target."""
+
+    name = "volatility_target"
+    description = "Dynamically scales exposure to hit target volatility."
+    license_tier = "enterprise"
+    risk_classes = ("risk_control", "volatility")
+    required_data = ("ohlcv", "realized_volatility")
+    capability = "volatility_target"
+    tags = ("volatility", "risk")
+
+    def generate(
+        self,
+        indicators: "TechnicalIndicators",
+        params: "TradingParameters",
+        *,
+        market_data: Optional[pd.DataFrame] = None,
+    ) -> pd.Series:
+        price = indicators.ema_fast
+        atr = indicators.atr.replace(0.0, np.nan)
+        realized_vol = (atr / (price.abs() + 1e-12)).rolling(window=5, min_periods=1).mean()
+        target = max(1e-4, float(params.volatility_target))
+        vol_gap = (target - realized_vol).fillna(0.0) / target
+
+        trend_bias = (price - indicators.ema_slow) / (atr * 2.0)
+        trend_bias = trend_bias.replace([np.inf, -np.inf], 0.0).fillna(0.0).clip(-1.0, 1.0)
+
+        adjustment = pd.Series(np.tanh(vol_gap * 2.5), index=price.index)
+        combined = (adjustment * 0.7 + trend_bias * 0.3).clip(-1.0, 1.0)
+        return combined
+
+
+class ScalpingStrategy(StrategyPlugin):
+    """Fast mean-reversion around short momentum for low-latency trading."""
+
+    name = "scalping"
+    description = "MACD micro-divergence with stochastic confirmation."
+    license_tier = "professional"
+    risk_classes = ("intraday", "scalping")
+    required_data = ("ohlcv", "order_book")
+    capability = "scalping"
+    tags = ("intraday", "scalping")
+
+    def generate(
+        self,
+        indicators: "TechnicalIndicators",
+        params: "TradingParameters",
+        *,
+        market_data: Optional[pd.DataFrame] = None,
+    ) -> pd.Series:
+        macd_diff = indicators.macd - indicators.macd_signal
+        atr = indicators.atr.replace(0.0, np.nan)
+        momentum = (macd_diff / (atr / 2.0 + 1e-12)).clip(-4.0, 4.0)
+        stochastic_bias = (indicators.stochastic_k - 50.0) / 50.0
+
+        signal = (np.tanh(momentum) * 0.65 + stochastic_bias * 0.35).clip(-1.0, 1.0)
+        return pd.Series(signal, index=indicators.macd.index)
+
+
+class OptionsIncomeStrategy(StrategyPlugin):
+    """Simplified theta harvesting profile informed by volatility spreads."""
+
+    name = "options_income"
+    description = "Harvests premium when implied volatility outruns realised."
+    license_tier = "enterprise"
+    risk_classes = ("derivatives", "income")
+    required_data = ("options_chain", "greeks", "ohlcv")
+    capability = "options_income"
+    tags = ("options", "income")
+
+    def generate(
+        self,
+        indicators: "TechnicalIndicators",
+        params: "TradingParameters",
+        *,
+        market_data: Optional[pd.DataFrame] = None,
+    ) -> pd.Series:
+        index = indicators.ema_fast.index
+        atr = indicators.atr.replace(0.0, np.nan)
+        realized = (atr / (indicators.ema_fast.abs() + 1e-12)).rolling(window=10, min_periods=1).mean()
+
+        implied: Optional[pd.Series]
+        implied = None
+        if market_data is not None:
+            if "implied_volatility" in market_data:
+                implied = market_data["implied_volatility"].reindex(index).interpolate(limit_direction="both")
+            elif "iv" in market_data:
+                implied = market_data["iv"].reindex(index).interpolate(limit_direction="both")
+        if implied is None:
+            implied = realized * 1.1
+
+        vol_spread = (implied - realized).fillna(0.0)
+        theta_bias = np.tanh(vol_spread / (realized.replace(0.0, np.nan).fillna(1e-4)))
+
+        trend_anchor = (indicators.ema_fast - indicators.sma_trend) / (atr + 1e-12)
+        delta_neutraliser = trend_anchor.clip(-1.0, 1.0) * 0.3
+
+        signal = (theta_bias * 0.7 - delta_neutraliser).clip(-1.0, 1.0)
+        return pd.Series(signal, index=index)
+
+
+class StatisticalArbitrageStrategy(StrategyPlugin):
+    """Pairs-style mean reversion using MACD and Bollinger spreads."""
+
+    name = "statistical_arbitrage"
+    description = "Pairs spreads using MACD z-score and Bollinger confirmation."
+    license_tier = "professional"
+    risk_classes = ("statistical", "mean_reversion")
+    required_data = ("ohlcv", "spread_history")
+    capability = "stat_arbitrage"
+    tags = ("stat_arbitrage", "pairs_trading")
+
+    def generate(
+        self,
+        indicators: "TechnicalIndicators",
+        params: "TradingParameters",
+        *,
+        market_data: Optional[pd.DataFrame] = None,
+    ) -> pd.Series:
+        macd_z = indicators.macd - indicators.macd_signal
+        atr = indicators.atr.replace(0.0, np.nan)
+        macd_norm = (macd_z / (atr + 1e-12)).clip(-5.0, 5.0)
+
+        mid = indicators.bollinger_middle
+        spread = (indicators.ema_fast - mid) / (
+            (indicators.bollinger_upper - mid).replace(0.0, np.nan)
+        )
+        spread = spread.replace([np.inf, -np.inf], 0.0).fillna(0.0)
+
+        signal = (-np.tanh(macd_norm) * 0.6 - spread * 0.4).clip(-1.0, 1.0)
+        return pd.Series(signal, index=indicators.macd.index)
 
