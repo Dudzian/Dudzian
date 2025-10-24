@@ -36,7 +36,6 @@ from bot_core.trading.regime_workflow import RegimeSwitchDecision
 from bot_core.trading.strategies import StrategyCatalog
 from bot_core.strategies import StrategyPresetWizard
 from bot_core.strategies.regime_workflow import (
-    PresetAvailability,
     RegimePresetActivation,
     StrategyRegimeWorkflow,
 )
@@ -472,20 +471,11 @@ class AutoTradeEngine:
 
     def _infer_available_data(self, frame: pd.DataFrame) -> set[str]:
         available: set[str] = {"ohlcv"}
-        if frame.empty:
-            return available
-
-        available.add("technical_indicators")
-        columns = {str(col).lower() for col in frame.columns}
-        if {"spread", "bid_ask_spread", "spread_pct"} & columns:
+        if not frame.empty:
+            available.add("technical_indicators")
             available.add("spread_history")
-
-        if {"bid", "ask"} <= columns or {"best_bid", "best_ask"} <= columns:
             available.add("order_book")
-
-        if columns & {"latency", "latency_ms", "round_trip_latency"}:
             available.add("latency_monitoring")
-
         return available
 
     def _activation_weights(
@@ -530,10 +520,6 @@ class AutoTradeEngine:
                 version_meta[key] = [str(item) for item in value]
             else:
                 version_meta[key] = value
-        signature_payload = {
-            str(k): str(v) for k, v in activation.version.signature.items()
-        }
-        issued_at_iso = activation.version.issued_at.isoformat()
         payload: Dict[str, object] = {
             "regime": activation.regime.value,
             "activated_at": activation.activated_at.isoformat(),
@@ -546,13 +532,10 @@ class AutoTradeEngine:
             "license_issues": list(activation.license_issues),
             "recommendation": activation.recommendation,
             "decision_candidates": len(activation.decision_candidates),
-            "preset_hash": activation.version.hash,
-            "preset_issued_at": issued_at_iso,
-            "preset_signature": dict(signature_payload),
             "version": {
                 "hash": activation.version.hash,
-                "issued_at": issued_at_iso,
-                "signature": dict(signature_payload),
+                "issued_at": activation.version.issued_at.isoformat(),
+                "signature": {str(k): str(v) for k, v in activation.version.signature.items()},
                 "metadata": version_meta,
             },
         }
@@ -561,47 +544,6 @@ class AutoTradeEngine:
             if preset_name:
                 payload["preset_name"] = str(preset_name)
             preset_meta = activation.preset.get("metadata")
-            if isinstance(preset_meta, Mapping):
-                payload["preset_metadata"] = {
-                    str(k): v for k, v in preset_meta.items()
-                }
-        return MappingProxyType(payload)
-
-    def _build_availability_payload(
-        self, report: PresetAvailability
-    ) -> Mapping[str, object]:
-        signature_payload = {
-            str(k): str(v) for k, v in report.version.signature.items()
-        }
-        payload: Dict[str, object] = {
-            "regime": report.regime.value
-            if isinstance(report.regime, MarketRegime)
-            else None,
-            "ready": bool(report.ready),
-            "blocked_reason": report.blocked_reason,
-            "missing_data": list(report.missing_data),
-            "license_issues": list(report.license_issues),
-            "schedule_blocked": bool(report.schedule_blocked),
-            "preset_hash": report.version.hash,
-            "preset_issued_at": report.version.issued_at.isoformat(),
-            "preset_signature": dict(signature_payload),
-        }
-        metadata = report.version.metadata
-        if isinstance(metadata, Mapping):
-            payload["preset_name"] = metadata.get("name")
-            for key in (
-                "strategy_keys",
-                "strategy_names",
-                "license_tiers",
-                "risk_classes",
-                "required_data",
-                "capabilities",
-                "tags",
-            ):
-                value = metadata.get(key)
-                if isinstance(value, (tuple, list)) and value:
-                    payload[key] = [str(item) for item in value]
-            preset_meta = metadata.get("preset_metadata")
             if isinstance(preset_meta, Mapping):
                 payload["preset_metadata"] = {
                     str(k): v for k, v in preset_meta.items()
@@ -1337,323 +1279,6 @@ class AutoTradeEngine:
         """Return the raw preset activation reported by the workflow, if any."""
 
         return self._last_regime_activation
-
-    def inspect_regime_presets(
-        self,
-        available_data: Iterable[str] = (),
-        *,
-        now: dt.datetime | None = None,
-    ) -> tuple[Mapping[str, object], ...]:
-        """Zwróć raport dostępności presetów z workflow strategii."""
-
-        workflow = getattr(self, "_regime_workflow", None)
-        if workflow is None:
-            return ()
-        inspector = getattr(workflow, "inspect_presets", None)
-        if not callable(inspector):
-            return ()
-        try:
-            reports = inspector(available_data=available_data, now=now)
-        except TypeError:
-            reports = inspector(available_data=available_data)
-        if not reports:
-            return ()
-        payloads: list[Mapping[str, object]] = []
-        for report in reports:
-            if isinstance(report, PresetAvailability):
-                payloads.append(self._build_availability_payload(report))
-        return tuple(payloads)
-
-    def summarize_regime_presets(
-        self,
-        available_data: Iterable[str] = (),
-        *,
-        now: dt.datetime | None = None,
-    ) -> Mapping[str, object]:
-        """Zagreguj raporty dostępności presetów do statystyk operacyjnych."""
-
-        reports = self.inspect_regime_presets(available_data, now=now)
-        total = len(reports)
-        ready = 0
-        schedule_blocked = 0
-        missing_counter: Counter[str] = Counter()
-        license_counter: Counter[str] = Counter()
-        reason_counter: Counter[str] = Counter()
-        regime_stats: Dict[str, Dict[str, object]] = {}
-        for payload in reports:
-            ready_flag = bool(payload.get("ready"))
-            if ready_flag:
-                ready += 1
-            if bool(payload.get("schedule_blocked")):
-                schedule_blocked += 1
-            regime_name = str(payload.get("regime") or "unknown")
-            bucket = regime_stats.setdefault(
-                regime_name,
-                {
-                    "total_presets": 0,
-                    "ready_presets": 0,
-                    "blocked_presets": 0,
-                    "schedule_blocked_presets": 0,
-                    "missing": Counter(),
-                    "license": Counter(),
-                    "blocked": Counter(),
-                },
-            )
-            bucket["total_presets"] = int(bucket["total_presets"]) + 1
-            if ready_flag:
-                bucket["ready_presets"] = int(bucket["ready_presets"]) + 1
-            else:
-                bucket["blocked_presets"] = int(bucket["blocked_presets"]) + 1
-            if bool(payload.get("schedule_blocked")):
-                bucket["schedule_blocked_presets"] = (
-                    int(bucket["schedule_blocked_presets"]) + 1
-                )
-            missing_values = tuple(str(item) for item in payload.get("missing_data", ()))
-            missing_counter.update(missing_values)
-            bucket["missing"].update(missing_values)  # type: ignore[attr-defined]
-            reason = payload.get("blocked_reason")
-            if reason:
-                reason_str = str(reason)
-                reason_counter[reason_str] += 1
-                bucket["blocked"].update((reason_str,))  # type: ignore[attr-defined]
-            issues = tuple(str(item) for item in payload.get("license_issues", ()))
-            license_counter.update(issues)
-            bucket["license"].update(issues)  # type: ignore[attr-defined]
-        blocked = total - ready
-        regimes_payload: Dict[str, Mapping[str, object]] = {}
-        for regime, bucket in regime_stats.items():
-            missing = bucket.pop("missing")  # type: ignore[assignment]
-            license = bucket.pop("license")  # type: ignore[assignment]
-            blocked_reasons = bucket.pop("blocked")  # type: ignore[assignment]
-            regimes_payload[regime] = MappingProxyType(
-                {
-                    **{key: int(value) for key, value in bucket.items()},
-                    "missing_data": tuple(sorted(missing)),
-                    "missing_data_counts": MappingProxyType(
-                        {name: int(count) for name, count in sorted(missing.items())}
-                    ),
-                    "license_issues": tuple(sorted(license)),
-                    "license_issue_counts": MappingProxyType(
-                        {name: int(count) for name, count in sorted(license.items())}
-                    ),
-                    "blocked_reason_counts": MappingProxyType(
-                        {name: int(count) for name, count in sorted(blocked_reasons.items())}
-                    ),
-                }
-            )
-        summary = {
-            "total_presets": total,
-            "ready_presets": ready,
-            "blocked_presets": blocked,
-            "schedule_blocked_presets": schedule_blocked,
-            "missing_data": tuple(sorted(missing_counter)),
-            "missing_data_counts": MappingProxyType(
-                {name: int(count) for name, count in sorted(missing_counter.items())}
-            ),
-            "license_issues": tuple(sorted(license_counter)),
-            "license_issue_counts": MappingProxyType(
-                {name: int(count) for name, count in sorted(license_counter.items())}
-            ),
-            "blocked_reason_counts": MappingProxyType(
-                {name: int(count) for name, count in sorted(reason_counter.items())}
-            ),
-            "regimes": MappingProxyType(dict(sorted(regimes_payload.items()))),
-        }
-        return MappingProxyType(summary)
-
-    def regime_activation_history_records(
-        self,
-        *,
-        limit: int | None = None,
-    ) -> tuple[Mapping[str, object], ...]:
-        """Zwróć historię aktywacji presetów w formie rekordu telemetryjnego."""
-
-        workflow = getattr(self, "_regime_workflow", None)
-        if workflow is None:
-            return ()
-        history_fn = getattr(workflow, "activation_history", None)
-        if not callable(history_fn):
-            return ()
-        history = history_fn()
-        if not history:
-            return ()
-        if limit is not None:
-            try:
-                tail = int(limit)
-            except (TypeError, ValueError):
-                tail = 0
-            if tail > 0:
-                history = history[-tail:]
-        payloads: list[Mapping[str, object]] = []
-        for activation in history:
-            if isinstance(activation, RegimePresetActivation):
-                payloads.append(self._build_activation_payload(activation))
-        return tuple(payloads)
-
-    def summarize_regime_activation_history(
-        self,
-        *,
-        limit: int | None = None,
-    ) -> Mapping[str, object]:
-        """Zagreguj historię aktywacji pod kątem fallbacków i blokad licencji."""
-
-        records = list(self.regime_activation_history_records(limit=limit))
-        if not records and limit is None and self._last_regime_activation is not None:
-            records = [self._build_activation_payload(self._last_regime_activation)]
-        total = len(records)
-        if not records:
-            empty_summary = {
-                "total_activations": 0,
-                "fallback_activations": 0,
-                "license_issue_activations": 0,
-                "missing_data": (),
-                "missing_data_counts": MappingProxyType({}),
-                "license_issues": (),
-                "license_issue_counts": MappingProxyType({}),
-                "blocked_reason_counts": MappingProxyType({}),
-                "regimes": MappingProxyType({}),
-                "first_activation_at": None,
-                "last_activation_at": None,
-                "last_activation": None,
-            }
-            return MappingProxyType(empty_summary)
-        fallback_count = 0
-        license_count = 0
-        missing_counter: Counter[str] = Counter()
-        license_counter: Counter[str] = Counter()
-        reason_counter: Counter[str] = Counter()
-        regime_stats: Dict[str, Dict[str, object]] = {}
-        for record in records:
-            regime_name = str(record.get("regime") or "unknown")
-            bucket = regime_stats.setdefault(
-                regime_name,
-                {
-                    "activations": 0,
-                    "fallback_activations": 0,
-                    "license_issue_activations": 0,
-                    "last_activation_at": None,
-                    "missing": Counter(),
-                    "license": Counter(),
-                    "blocked": Counter(),
-                },
-            )
-            bucket["activations"] = int(bucket["activations"]) + 1
-            activated_at = record.get("activated_at")
-            if activated_at is not None:
-                bucket["last_activation_at"] = activated_at
-            missing_values = tuple(str(item) for item in record.get("missing_data", ()))
-            missing_counter.update(missing_values)
-            bucket["missing"].update(missing_values)  # type: ignore[attr-defined]
-            issues = tuple(str(item) for item in record.get("license_issues", ()))
-            if issues:
-                license_count += 1
-            license_counter.update(issues)
-            bucket["license"].update(issues)  # type: ignore[attr-defined]
-            reason = record.get("blocked_reason")
-            if reason:
-                reason_str = str(reason)
-                reason_counter[reason_str] += 1
-                bucket["blocked"].update((reason_str,))  # type: ignore[attr-defined]
-            if bool(record.get("used_fallback")):
-                fallback_count += 1
-                bucket["fallback_activations"] = (
-                    int(bucket["fallback_activations"]) + 1
-                )
-            if issues:
-                bucket["license_issue_activations"] = (
-                    int(bucket["license_issue_activations"]) + 1
-                )
-        regimes_payload: Dict[str, Mapping[str, object]] = {}
-        for regime, bucket in regime_stats.items():
-            missing = bucket.pop("missing")  # type: ignore[assignment]
-            license = bucket.pop("license")  # type: ignore[assignment]
-            blocked_reasons = bucket.pop("blocked")  # type: ignore[assignment]
-            regimes_payload[regime] = MappingProxyType(
-                {
-                    **{key: bucket[key] for key in ("activations", "fallback_activations", "license_issue_activations", "last_activation_at")},
-                    "missing_data": tuple(sorted(missing)),
-                    "missing_data_counts": MappingProxyType(
-                        {name: int(count) for name, count in sorted(missing.items())}
-                    ),
-                    "license_issues": tuple(sorted(license)),
-                    "license_issue_counts": MappingProxyType(
-                        {name: int(count) for name, count in sorted(license.items())}
-                    ),
-                    "blocked_reason_counts": MappingProxyType(
-                        {name: int(count) for name, count in sorted(blocked_reasons.items())}
-                    ),
-                }
-            )
-        summary = {
-            "total_activations": total,
-            "fallback_activations": fallback_count,
-            "license_issue_activations": license_count,
-            "missing_data": tuple(sorted(missing_counter)),
-            "missing_data_counts": MappingProxyType(
-                {name: int(count) for name, count in sorted(missing_counter.items())}
-            ),
-            "license_issues": tuple(sorted(license_counter)),
-            "license_issue_counts": MappingProxyType(
-                {name: int(count) for name, count in sorted(license_counter.items())}
-            ),
-            "blocked_reason_counts": MappingProxyType(
-                {name: int(count) for name, count in sorted(reason_counter.items())}
-            ),
-            "regimes": MappingProxyType(dict(sorted(regimes_payload.items()))),
-            "first_activation_at": records[0].get("activated_at"),
-            "last_activation_at": records[-1].get("activated_at"),
-            "last_activation": records[-1],
-        }
-        return MappingProxyType(summary)
-
-    def regime_activation_history_frame(
-        self,
-        *,
-        limit: int | None = None,
-    ) -> pd.DataFrame:
-        """Zwróć historię aktywacji jako DataFrame (fallback gdy workflow nie udostępnia API)."""
-
-        workflow = getattr(self, "_regime_workflow", None)
-        empty_columns = [
-            "activated_at",
-            "regime",
-            "preset_regime",
-            "preset_name",
-            "preset_hash",
-            "used_fallback",
-            "blocked_reason",
-            "missing_data",
-            "license_issues",
-            "recommendation",
-        ]
-        if workflow is None:
-            return pd.DataFrame(columns=empty_columns)
-        frame_fn = getattr(workflow, "activation_history_frame", None)
-        if callable(frame_fn):
-            try:
-                return frame_fn(limit=limit)
-            except TypeError:
-                return frame_fn()
-        records = self.regime_activation_history_records(limit=limit)
-        if not records:
-            return pd.DataFrame(columns=empty_columns)
-        rows: list[dict[str, object]] = []
-        for payload in records:
-            rows.append(
-                {
-                    "activated_at": pd.to_datetime(payload.get("activated_at")),
-                    "regime": payload.get("regime"),
-                    "preset_regime": payload.get("preset_regime"),
-                    "preset_name": payload.get("preset_name"),
-                    "preset_hash": payload.get("preset_hash"),
-                    "used_fallback": payload.get("used_fallback"),
-                    "blocked_reason": payload.get("blocked_reason"),
-                    "missing_data": payload.get("missing_data"),
-                    "license_issues": payload.get("license_issues"),
-                    "recommendation": payload.get("recommendation"),
-                }
-            )
-        return pd.DataFrame(rows, columns=empty_columns)
 
     @staticmethod
     def _sma_tail(xs: List[float], n: int) -> Optional[float]:

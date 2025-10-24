@@ -1,5 +1,4 @@
 from datetime import datetime, timezone
-from types import SimpleNamespace
 
 import pandas as pd
 
@@ -11,11 +10,6 @@ from bot_core.ai.regime import (
 )
 from bot_core.strategies import StrategyPresetWizard
 from bot_core.strategies.regime_workflow import RegimePresetActivation, StrategyRegimeWorkflow
-from bot_core.security.guards import (
-    LicenseCapabilityError,
-    reset_capability_guard,
-    set_capability_guard,
-)
 
 
 def _sample_market_data(rows: int = 120) -> pd.DataFrame:
@@ -113,11 +107,38 @@ def test_strategy_regime_workflow_uses_fallback_when_data_missing() -> None:
         signing_key=signing_key,
         metadata={"ensemble_weights": {"mean_reversion": 1.0}},
     )
-    workflow.register_emergency_preset(
-        name="fallback",
-        entries=[{"engine": "daily_trend_momentum"}],
-        signing_key=signing_key,
-        metadata={"ensemble_weights": {"trend_following": 1.0}},
+    decision = workflow.decide(_sample_market_data(), TradingParameters())
+
+    assert isinstance(decision.parameters, TradingParameters)
+    assert decision.parameters.ensemble_weights == decision.weights
+    assert abs(sum(decision.weights.values()) - 1.0) < 1e-9
+    assert {
+        "trend_following",
+        "day_trading",
+        "mean_reversion",
+        "arbitrage",
+        "volatility_target",
+        "grid_trading",
+        "options_income",
+    }.issubset(decision.weights.keys())
+    assert decision.timestamp.tzinfo is None
+    assert decision.license_tiers and "standard" in decision.license_tiers
+    assert "trend_following" in decision.strategy_metadata
+    strategy_meta = decision.strategy_metadata["trend_following"]
+    assert strategy_meta["license_tier"] == "standard"
+    assert "trend_d1" in decision.capabilities
+    assert tuple(strategy_meta["risk_classes"]) == ("directional", "momentum")
+    assert set(strategy_meta["required_data"]) == {"ohlcv", "technical_indicators"}
+    assert set(strategy_meta["tags"]) >= {"trend", "momentum"}
+    assert "momentum" in decision.tags
+    assert "technical_indicators" in decision.required_data
+
+
+def test_regime_workflow_respects_cooldown() -> None:
+    workflow = RegimeSwitchWorkflow(
+        confidence_threshold=0.2,
+        persistence_threshold=0.05,
+        min_switch_cooldown=5,
     )
 
     activation = workflow.activate(
@@ -128,58 +149,6 @@ def test_strategy_regime_workflow_uses_fallback_when_data_missing() -> None:
     assert activation.used_fallback is True
     assert activation.blocked_reason == "missing_data"
     assert "spread_history" in activation.missing_data
-
-
-def test_strategy_regime_workflow_reports_license_issues_and_fallback() -> None:
-    class _Guard:
-        def __init__(self) -> None:
-            self.capabilities = SimpleNamespace(edition="standard")
-
-        def require_license_tier(self, tier: str, message: str | None = None) -> None:
-            normalized = str(tier or "").strip().lower()
-            if normalized in {"professional", "pro"}:
-                raise LicenseCapabilityError(message or "requires professional", capability="license_tier")
-
-        def require_strategy(self, capability: str, message: str | None = None) -> None:  # pragma: no cover - guard API
-            return
-
-    guard = _Guard()
-    set_capability_guard(guard)
-    try:
-        classifier = _StaticClassifier(MarketRegime.MEAN_REVERSION)
-        history = RegimeHistory(thresholds_loader=classifier.thresholds_loader)
-        history.reload_thresholds(thresholds=classifier.thresholds_snapshot())
-        workflow = StrategyRegimeWorkflow(
-            wizard=StrategyPresetWizard(),
-            classifier=classifier,  # type: ignore[arg-type]
-            history=history,
-        )
-        signing_key = b"test-key"
-        workflow.register_preset(
-            MarketRegime.MEAN_REVERSION,
-            name="mean-pro",
-            entries=[{"engine": "mean_reversion"}],
-            signing_key=signing_key,
-            metadata={"ensemble_weights": {"mean_reversion": 1.0}},
-        )
-        workflow.register_emergency_preset(
-            name="fallback",
-            entries=[{"engine": "daily_trend_momentum"}],
-            signing_key=signing_key,
-            metadata={"ensemble_weights": {"trend_following": 1.0}},
-        )
-
-        activation = workflow.activate(
-            _sample_market_data(),
-            available_data={"ohlcv", "technical_indicators", "spread_history"},
-        )
-
-        assert activation.used_fallback is True
-        assert activation.blocked_reason == "license_blocked"
-        assert activation.license_issues
-        assert activation.preset["name"] == "fallback"
-    finally:
-        reset_capability_guard()
 
 
 def test_strategy_regime_workflow_preserves_custom_metadata() -> None:

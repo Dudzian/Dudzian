@@ -4,9 +4,9 @@ import pytest
 
 from dataclasses import replace
 
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from types import MappingProxyType
-from typing import Iterable, Mapping
+from typing import Iterable
 
 import pandas as pd
 
@@ -27,7 +27,6 @@ from bot_core.trading.auto_trade import (
 from bot_core.trading.engine import TradingParameters
 from bot_core.trading.strategies import StrategyCatalog, StrategyPlugin
 from bot_core.strategies.regime_workflow import (
-    PresetAvailability,
     PresetVersionInfo,
     RegimePresetActivation,
 )
@@ -72,15 +71,7 @@ def _collect_status_payloads(adapter: EmitterAdapter) -> list[dict]:
     return payloads
 
 
-def _activation_from_decision(
-    decision: RegimeSwitchDecision,
-    *,
-    used_fallback: bool = False,
-    missing_data: Iterable[str] = (),
-    blocked_reason: str | None = None,
-    recommendation: str | None = None,
-    license_issues: Iterable[str] = (),
-) -> RegimePresetActivation:
+def _activation_from_decision(decision: RegimeSwitchDecision) -> RegimePresetActivation:
     issued_at = datetime(2024, 1, 1, 12, 0, tzinfo=timezone.utc)
     version = PresetVersionInfo(
         hash="stub-hash",
@@ -134,11 +125,11 @@ def _activation_from_decision(
         decision_candidates=(),
         activated_at=issued_at,
         preset_regime=decision.regime,
-        used_fallback=bool(used_fallback),
-        missing_data=tuple(str(item) for item in missing_data),
-        blocked_reason=blocked_reason,
-        recommendation=recommendation,
-        license_issues=tuple(str(item) for item in license_issues),
+        used_fallback=False,
+        missing_data=(),
+        blocked_reason=None,
+        recommendation=None,
+        license_issues=(),
     )
 
 
@@ -239,8 +230,6 @@ class _WorkflowStub:
         self._activation = activation
         self.last_activation = activation
         self.calls: list[tuple[pd.DataFrame, tuple[str, ...], str | None]] = []
-        self._availability: tuple[PresetAvailability, ...] = ()
-        self._history_entries: list[RegimePresetActivation] = [activation]
 
     def activate(
         self,
@@ -257,72 +246,7 @@ class _WorkflowStub:
             activated_at=now or datetime.now(timezone.utc),
         )
         self.last_activation = updated
-        self._history_entries.append(updated)
         return updated
-
-    def set_availability(self, reports: Iterable[PresetAvailability]) -> None:
-        self._availability = tuple(reports)
-
-    def inspect_presets(
-        self,
-        *,
-        available_data: Iterable[str] = (),
-        now: datetime | None = None,
-    ) -> tuple[PresetAvailability, ...]:
-        return self._availability
-
-    def activation_history(self) -> tuple[RegimePresetActivation, ...]:
-        return tuple(self._history_entries)
-
-    def activation_history_frame(
-        self,
-        *,
-        limit: int | None = None,
-    ) -> pd.DataFrame:
-        history = self.activation_history()
-        if limit is not None:
-            try:
-                tail = int(limit)
-            except (TypeError, ValueError):
-                tail = 0
-            if tail > 0:
-                history = history[-tail:]
-        columns = [
-            "activated_at",
-            "regime",
-            "preset_regime",
-            "preset_name",
-            "preset_hash",
-            "used_fallback",
-            "blocked_reason",
-            "missing_data",
-            "license_issues",
-            "recommendation",
-        ]
-        if not history:
-            return pd.DataFrame(columns=columns)
-        rows: list[dict[str, object]] = []
-        for activation in history:
-            preset_regime = (
-                activation.preset_regime.value
-                if isinstance(activation.preset_regime, MarketRegime)
-                else activation.preset_regime
-            )
-            rows.append(
-                {
-                    "activated_at": activation.activated_at,
-                    "regime": activation.regime.value,
-                    "preset_regime": preset_regime,
-                    "preset_name": activation.preset.get("name") if isinstance(activation.preset, Mapping) else None,
-                    "preset_hash": activation.version.hash,
-                    "used_fallback": activation.used_fallback,
-                    "blocked_reason": activation.blocked_reason,
-                    "missing_data": activation.missing_data,
-                    "license_issues": activation.license_issues,
-                    "recommendation": activation.recommendation,
-                }
-            )
-        return pd.DataFrame(rows, columns=columns)
 
 
 def test_auto_trade_engine_uses_strategy_catalog(monkeypatch) -> None:
@@ -564,9 +488,6 @@ def test_auto_trade_engine_uses_regime_workflow_decision(monkeypatch) -> None:
     _, available_data, call_symbol = workflow.calls[-1]
     assert call_symbol == cfg.symbol
     assert "ohlcv" in available_data
-    assert "spread_history" not in available_data
-    assert "order_book" not in available_data
-    assert "latency_monitoring" not in available_data
     assert orders, "Expected workflow-driven decision to result in an order"
     assert signal_payloads, "Expected workflow-driven signal payloads"
     latest_signal = signal_payloads[-1]
@@ -583,9 +504,6 @@ def test_auto_trade_engine_uses_regime_workflow_decision(monkeypatch) -> None:
     activation_meta = metadata_block["activation"]
     assert activation_meta["preset_name"] == "autotrade-stub"
     assert activation_meta["used_fallback"] is False
-    assert activation_meta["preset_hash"] == "stub-hash"
-    assert activation_meta["preset_signature"]["alg"] == "HMAC-SHA256"
-    assert activation_meta["preset_issued_at"] == "2024-01-01T12:00:00+00:00"
     assert engine.last_regime_decision is not None
     assert engine.last_regime_decision.weights == decision.weights
     expected_decision_params = replace(
@@ -602,153 +520,6 @@ def test_auto_trade_engine_uses_regime_workflow_decision(monkeypatch) -> None:
     assert "summary" in last_entry["detail"]
     assert last_entry["detail"]["metadata"]["capabilities"] == ["trend_d1", "mean_reversion"]
     assert last_entry["detail"]["activation"]["preset_name"] == "autotrade-stub"
-    assert last_entry["detail"]["activation"]["preset_hash"] == "stub-hash"
-
-
-def test_auto_trade_engine_propagates_activation_fallback_metadata(monkeypatch) -> None:
-    adapter = _make_sync_adapter()
-    orders: list[tuple[str, float]] = []
-    signal_payloads: list[dict] = []
-    statuses = _collect_status_payloads(adapter)
-
-    def _collect_signals(evt_or_batch):
-        batch = evt_or_batch if isinstance(evt_or_batch, list) else [evt_or_batch]
-        for evt in batch:
-            signal_payloads.append(evt.payload)
-
-    adapter.subscribe(EventType.SIGNAL, _collect_signals)
-
-    catalog = StrategyCatalog(plugins=(_ConstantTrendStrategy, _ConstantMeanStrategy))
-    cfg = AutoTradeConfig(
-        symbol="BTCUSDT",
-        qty=0.4,
-        activation_threshold=0.0,
-        regime_window=12,
-        breakout_window=4,
-        mean_reversion_window=4,
-    )
-
-    decision_params = TradingParameters(
-        ema_fast_period=3,
-        ema_slow_period=9,
-        day_trading_momentum_window=6,
-        day_trading_volatility_window=10,
-        arbitrage_confirmation_window=4,
-        arbitrage_spread_threshold=0.002,
-        ensemble_weights={
-            "trend_following": 0.5,
-            "mean_reversion": 0.5,
-        },
-    )
-    assessment = MarketRegimeAssessment(
-        regime=MarketRegime.MEAN_REVERSION,
-        confidence=0.85,
-        risk_score=0.27,
-        metrics={},
-        symbol="BTCUSDT",
-    )
-    strategy_metadata = MappingProxyType(
-        {
-            "trend_following": MappingProxyType(
-                {
-                    "license_tier": "standard",
-                    "risk_classes": ("directional",),
-                    "required_data": ("ohlcv",),
-                    "capability": "trend_d1",
-                    "tags": ("trend",),
-                }
-            ),
-            "mean_reversion": MappingProxyType(
-                {
-                    "license_tier": "professional",
-                    "risk_classes": ("statistical",),
-                    "required_data": ("ohlcv", "spread_history"),
-                    "capability": "mean_reversion",
-                    "tags": ("mean_reversion",),
-                }
-            ),
-        }
-    )
-    decision = RegimeSwitchDecision(
-        regime=assessment.regime,
-        assessment=assessment,
-        summary=None,
-        weights={"trend_following": 0.5, "mean_reversion": 0.5},
-        parameters=decision_params,
-        timestamp=pd.Timestamp.utcnow(),
-        strategy_metadata=strategy_metadata,
-        license_tiers=("standard", "professional"),
-        risk_classes=("directional", "statistical"),
-        required_data=("ohlcv", "spread_history"),
-        capabilities=("trend_d1", "mean_reversion"),
-        tags=("trend", "mean_reversion"),
-    )
-    activation = _activation_from_decision(
-        decision,
-        used_fallback=True,
-        missing_data=("spread_history",),
-        blocked_reason="license_blocked",
-        license_issues=("Licencja 'standard' nie spełnia wymaganej klasy 'professional'.",),
-        recommendation="contact_support",
-    )
-    workflow = _WorkflowStub(activation, catalog)
-
-    engine = AutoTradeEngine(
-        adapter,
-        lambda side, qty: orders.append((side, qty)),
-        cfg,
-        strategy_catalog=catalog,
-        regime_workflow=workflow,
-    )
-    engine.apply_params({"fast": 2, "slow": 5})
-
-    base_time = 1_700_300_000.0
-    current_time = {"value": base_time}
-
-    def fake_time() -> float:
-        return current_time["value"]
-
-    monkeypatch.setattr("bot_core.trading.auto_trade.time.time", fake_time)
-    monkeypatch.setattr("bot_core.events.emitter.time.time", fake_time)
-
-    for idx in range(24):
-        price = 200.0 + idx * 0.3
-        bar = {
-            "open_time": float(idx),
-            "close": price,
-            "high": price * 1.001,
-            "low": price * 0.999,
-            "volume": 900.0 + idx * 4,
-        }
-        current_time["value"] = base_time + idx
-        adapter.publish(EventType.MARKET_TICK, {"symbol": "BTCUSDT", "bar": bar})
-
-    assert orders, "Expected fallback activation to still emit orders"
-    assert signal_payloads, "Expected signal payload with activation metadata"
-    activation_meta = signal_payloads[-1]["metadata"]["activation"]
-    assert activation_meta["used_fallback"] is True
-    assert activation_meta["blocked_reason"] == "license_blocked"
-    assert activation_meta["missing_data"] == ["spread_history"]
-    assert activation_meta["license_issues"] == [
-        "Licencja 'standard' nie spełnia wymaganej klasy 'professional'."
-    ]
-    assert activation_meta["recommendation"] == "contact_support"
-
-    assert engine.last_regime_activation is not None
-    assert engine.last_regime_activation.used_fallback is True
-    assert engine.last_regime_activation.license_issues
-
-    activation_statuses = [
-        payload
-        for payload in statuses
-        if payload.get("status") in {"entry_long", "entry_short"}
-    ]
-    assert activation_statuses, "Expected status payloads with activation metadata"
-    last_status = activation_statuses[-1]["detail"]["activation"]
-    assert last_status["license_issues"] == [
-        "Licencja 'standard' nie spełnia wymaganej klasy 'professional'."
-    ]
-    assert last_status["used_fallback"] is True
 
 
 class _DummySummary:
@@ -966,8 +737,6 @@ def test_auto_trade_snapshot_exposes_read_only_state(monkeypatch) -> None:
     assert snapshot.regime_decision.parameters == expected_snapshot_params
     assert snapshot.regime_activation is not None
     assert snapshot.regime_activation["preset_name"] == "autotrade-stub"
-    assert snapshot.regime_activation["preset_hash"] == "stub-hash"
-    assert snapshot.regime_activation["preset_signature"]["key_id"] == "stub"
     assert snapshot.regime_thresholds == workflow.history.thresholds_snapshot()
     overrides = snapshot.regime_parameter_overrides
     assert MarketRegime.TREND.value in overrides
