@@ -45,6 +45,7 @@
 #include "app/UiModuleManager.hpp"
 #include "app/UiModuleViewsModel.hpp"
 #include "app/StrategyConfigController.hpp"
+#include "app/StrategyWorkbenchController.hpp"
 #include "runtime/OfflineRuntimeBridge.hpp"
 #include "security/SecurityAdminController.hpp"
 #include "support/SupportBundleController.hpp"
@@ -205,6 +206,10 @@ Application::Application(QQmlApplicationEngine& engine, QObject* parent)
     m_strategyController = std::make_unique<StrategyConfigController>(this);
     m_strategyController->setConfigPath(QDir::current().absoluteFilePath(QStringLiteral("config/core.yaml")));
     m_strategyController->setScriptPath(QDir::current().absoluteFilePath(QStringLiteral("scripts/ui_config_bridge.py")));
+
+    m_workbenchController = std::make_unique<StrategyWorkbenchController>(this);
+    m_workbenchController->setConfigPath(QDir::current().absoluteFilePath(QStringLiteral("config/core.yaml")));
+    m_workbenchController->setScriptPath(QDir::current().absoluteFilePath(QStringLiteral("scripts/ui_config_bridge.py")));
 
     m_supportController = std::make_unique<SupportBundleController>(this);
 
@@ -1375,7 +1380,7 @@ void Application::applyRiskHistoryCliOverrides(const QCommandLineParser& parser)
 
 void Application::configureStrategyBridge(const QCommandLineParser& parser)
 {
-    if (!m_strategyController)
+    if (!m_strategyController && !m_workbenchController)
         return;
 
     QString configPath = parser.value("core-config").trimmed();
@@ -1386,8 +1391,12 @@ void Application::configureStrategyBridge(const QCommandLineParser& parser)
     if (configPath.isEmpty())
         configPath = QStringLiteral("config/core.yaml");
     const QString normalizedConfigPath = expandPath(configPath);
-    if (!normalizedConfigPath.isEmpty())
-        m_strategyController->setConfigPath(normalizedConfigPath);
+    if (!normalizedConfigPath.isEmpty()) {
+        if (m_strategyController)
+            m_strategyController->setConfigPath(normalizedConfigPath);
+        if (m_workbenchController)
+            m_workbenchController->setConfigPath(normalizedConfigPath);
+    }
 
     QString pythonExec = parser.value("strategy-config-python").trimmed();
     if (pythonExec.isEmpty()) {
@@ -1396,8 +1405,12 @@ void Application::configureStrategyBridge(const QCommandLineParser& parser)
     }
     if (!pythonExec.isEmpty()) {
         const QString normalizedPython = expandPath(pythonExec);
-        if (!normalizedPython.isEmpty())
-            m_strategyController->setPythonExecutable(normalizedPython);
+        if (!normalizedPython.isEmpty()) {
+            if (m_strategyController)
+                m_strategyController->setPythonExecutable(normalizedPython);
+            if (m_workbenchController)
+                m_workbenchController->setPythonExecutable(normalizedPython);
+        }
     }
 
     QString bridgePath = parser.value("strategy-config-bridge").trimmed();
@@ -1412,13 +1425,23 @@ void Application::configureStrategyBridge(const QCommandLineParser& parser)
             bridgePath = QDir::current().absoluteFilePath(QStringLiteral("scripts/ui_config_bridge.py"));
     }
     const QString normalizedBridge = expandPath(bridgePath);
-    if (!normalizedBridge.isEmpty())
-        m_strategyController->setScriptPath(normalizedBridge);
+    if (!normalizedBridge.isEmpty()) {
+        if (m_strategyController)
+            m_strategyController->setScriptPath(normalizedBridge);
+        if (m_workbenchController)
+            m_workbenchController->setScriptPath(normalizedBridge);
+    }
 
-    if (!m_strategyController->refresh()) {
+    if (m_strategyController && !m_strategyController->refresh()) {
         const QString error = m_strategyController->lastError();
         if (!error.isEmpty())
             qCWarning(lcAppMetrics) << "Mostek konfiguracji strategii zwrócił błąd:" << error;
+    }
+
+    if (m_workbenchController && !m_workbenchController->refreshCatalog()) {
+        const QString error = m_workbenchController->lastError();
+        if (!error.isEmpty())
+            qCWarning(lcAppMetrics) << "Mostek katalogu strategii zwrócił błąd:" << error;
     }
 }
 
@@ -2502,6 +2525,7 @@ void Application::exposeToQml() {
     m_engine.rootContext()->setContextProperty(QStringLiteral("securityController"), m_securityController.get());
     m_engine.rootContext()->setContextProperty(QStringLiteral("reportController"), m_reportController.get());
     m_engine.rootContext()->setContextProperty(QStringLiteral("strategyController"), m_strategyController.get());
+    m_engine.rootContext()->setContextProperty(QStringLiteral("workbenchController"), m_workbenchController.get());
     m_engine.rootContext()->setContextProperty(QStringLiteral("supportController"), m_supportController.get());
     m_engine.rootContext()->setContextProperty(QStringLiteral("healthController"), m_healthController.get());
     m_engine.rootContext()->setContextProperty(QStringLiteral("decisionLogModel"), &m_decisionLogModel);
@@ -2522,6 +2546,11 @@ QObject* Application::reportController() const
 QObject* Application::strategyController() const
 {
     return m_strategyController.get();
+}
+
+QObject* Application::workbenchController() const
+{
+    return m_workbenchController.get();
 }
 
 QObject* Application::supportController() const

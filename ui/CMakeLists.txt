@@ -63,6 +63,7 @@ set(UI_SOURCES
     src/app/UiModuleViewsModel.cpp
     src/app/ActivationController.cpp
     src/app/StrategyConfigController.cpp
+    src/app/StrategyWorkbenchController.cpp
     src/grpc/BotCoreLocalService.cpp
     src/grpc/TradingClient.cpp
     src/grpc/MetricsClient.cpp
@@ -92,6 +93,7 @@ set(UI_HEADERS
     src/app/UiModuleViewsModel.hpp
     src/app/ActivationController.hpp
     src/app/StrategyConfigController.hpp
+    src/app/StrategyWorkbenchController.hpp
     src/grpc/BotCoreLocalService.hpp
     src/grpc/TradingClient.hpp
     src/grpc/MetricsClient.hpp
@@ -609,6 +611,18 @@ if(BUILD_TESTING)
             Qt6::Test
     )
     add_test(NAME strategy_workbench_e2e_tests COMMAND strategy_workbench_e2e_tests)
+
+    add_executable(strategy_workbench_controller_tests
+        tests/StrategyWorkbenchControllerTest.cpp
+        src/app/StrategyWorkbenchController.cpp
+    )
+    target_include_directories(strategy_workbench_controller_tests PRIVATE src)
+    target_link_libraries(strategy_workbench_controller_tests
+        PRIVATE
+            Qt6::Core
+            Qt6::Test
+    )
+    add_test(NAME strategy_workbench_controller_tests COMMAND strategy_workbench_controller_tests)
 
     add_executable(bot_core_local_service_tests
         tests/BotCoreLocalServiceTest.cpp

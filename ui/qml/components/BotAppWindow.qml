@@ -203,6 +203,7 @@ ApplicationWindow {
                         anchors.fill: parent
                         appController: appController
                         strategyController: strategyController
+                        workbenchController: workbenchController
                         riskModel: riskModel
                         riskHistoryModel: riskHistoryModel
                         licenseController: licenseController
