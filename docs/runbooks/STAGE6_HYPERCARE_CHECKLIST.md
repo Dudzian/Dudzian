@@ -20,8 +20,9 @@ artefakty audytowe.
     --output var/market_intel/stage6_core_market_intel.json
   ```
   Dostosuj `--environment`/`--governor` do konfiguracji portfela.
-- Szablon konfiguracji hypercare dostępny w `config/stage6/hypercare.yaml`
-  (możesz go skopiować i uzupełnić o konkretne ścieżki środowiskowe).
+- Szablon konfiguracji hypercare dostępny w `config/core.yaml`
+  (możesz go skopiować i uzupełnić o konkretne ścieżki środowiskowe; w razie
+  potrzeby rozszerz struktury sekcji o dodatkowe pola specyficzne dla Stage6).
 - Klucze HMAC umieszczone w `secrets/hmac/` i przypisane do komponentów Stage6.
 - Ścieżki docelowe w `var/audit/...` z uprawnieniami zapisu.
 
@@ -30,8 +31,8 @@ artefakty audytowe.
 ## Procedura
 1. Przygotuj plik konfiguracyjny YAML/JSON zawierający sekcje `summary`,
    `observability`, `resilience` oraz `portfolio`. Repozytorium udostępnia
-   startowy szablon w `config/stage6/hypercare.yaml`, który możesz skopiować i
-   dostosować. Przykład minimalny (YAML):
+   startowy szablon w `config/core.yaml`, który możesz skopiować i dostosować.
+   Przykład minimalny (YAML):
    ```yaml
    summary:
      path: var/audit/stage6/hypercare_summary.json
@@ -75,9 +76,9 @@ artefakty audytowe.
      --slo-csv var/audit/observability/slo_report.csv
    ```
 3. Uruchom orchestratora Stage6, wskazując przygotowany plik konfiguracyjny
-   (domyślnie `config/stage6/hypercare.yaml`):
+   (domyślnie `config/core.yaml`):
    ```bash
-   python scripts/run_stage6_hypercare_cycle.py --config config/stage6/hypercare.yaml
+   python scripts/run_stage6_hypercare_cycle.py --config config/core.yaml
    ```
    Skrypt wykona wszystkie cykle, zapisze raport zbiorczy i podpis HMAC, a w
    przypadku ostrzeżeń/błędów wypisze szczegóły w konsoli.
@@ -95,6 +96,53 @@ artefakty audytowe.
 6. Po uzyskaniu raportu Stage6 dołącz go do pełnego przeglądu hypercare zgodnie
    z runbookiem `FULL_HYPERCARE_CHECKLIST.md` (skrypt
    `python scripts/run_full_hypercare_summary.py`).
+
+## Automatyzacja i CI
+
+- **Planowany workflow GitHub Actions.** Repozytorium udostępnia workflow
+  `Stage6 hypercare cycle` (`deploy/ci/github_actions_stage6_hypercare.yml`),
+  który codziennie o 03:20 UTC uruchamia polecenie z predefiniowanym plikiem
+  Stage6 (`config/core.yaml`):
+
+  ```bash
+  python scripts/run_stage6_hypercare_cycle.py --config config/core.yaml
+  ```
+
+  Aby uruchomić go ręcznie, przejdź do zakładki **Actions → Stage6 hypercare
+  cycle** i wybierz **Run workflow**. Podsumowanie joba automatycznie wypisuje
+  skrócony raport JSON (z kodem `json`), status ogólny raportu oraz tabelę
+  statusów komponentów. Sekcje „Problemy” i „Ostrzeżenia” prezentują kluczowe
+  komunikaty znalezione w raporcie, a tabela artefaktów z manifestu (kolumny:
+  typ pliku, cele podpisu, rozmiar i skrót SHA-256) pozwala szybko ocenić
+  kompletność archiwum bez pobierania paczki.
+- **Artefakty raportów z CI.** Po każdym przebiegu workflow zestaw plików z
+  katalogu `var/audit/stage6/` (raporty JSON oraz towarzyszące podpisy HMAC
+  `*.sig`/`*.hmac`) wraz z plikiem `artifact_manifest.json` jest publikowany
+  jako artefakt o nazwie `stage6-hypercare-<run_number>`. Manifest zawiera
+  teraz dla każdego pliku jego rozmiar w bajtach, skrót SHA-256 oraz typ pliku
+  (`kind = audit_json` lub `signature`). Dla podpisów manifest dopisuje pole
+  `targets` wskazujące pliki, które podpis obejmuje, co ułatwia automatyczną
+  walidację kompletności zestawu. Raport można pobrać przez interfejs Actions
+  (**Artifacts → Download**) lub poleceniem:
+
+  ```bash
+  gh run download <run-id> --name stage6-hypercare-<run_number>
+  ```
+
+  Po rozpakowaniu znajdziesz najświeższy raport hypercare Stage6 oraz podpis,
+  a także plik `artifact_manifest.json` z listą wszystkich spakowanych plików.
+  Manifest ułatwia szybkie sprawdzenie, czy w artefakcie znajdują się np.
+  podpisy HMAC lub raporty cząstkowe, a dodatkowe pola `size_bytes`, `sha256`,
+  `kind` i `targets` pozwalają potwierdzić integralność oraz zgodność podpisów
+  (te same informacje są widoczne w tabeli podsumowania workflow) przed ich
+  weryfikacją narzędziem
+  `python scripts/verify_stage6_hypercare_summary.py`.
+
+- **Tabela spójności podpisów w podsumowaniu CI.** Podsumowanie joba zawiera
+  teraz dodatkową tabelę „Spójność podpisów”, która dla każdego raportu JSON
+  wypisuje, czy znaleziono odpowiadające podpisy (`*.sig`/`*.hmac`) oraz czy
+  manifest wskazuje właściwy plik. Osierocone podpisy również są wypisane, co
+  przyspiesza diagnozę brakujących raportów bez pobierania artefaktów.
 
 ## Artefakty/Akceptacja
 - `var/audit/stage6/hypercare_summary.json` z podsumowaniem komponentów i
