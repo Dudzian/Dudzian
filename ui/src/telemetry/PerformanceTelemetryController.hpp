@@ -26,6 +26,7 @@ public slots:
 
 private:
     void publishSnapshot(double fps);
+    void publishPendingSnapshot();
 
     void ensurePublishTimer();
 

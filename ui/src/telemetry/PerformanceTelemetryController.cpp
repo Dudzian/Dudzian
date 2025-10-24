@@ -2,22 +2,21 @@
 
 #include <QJsonObject>
 #include <QMetaObject>
+#include <QTimer>
 
 #include "telemetry/UiTelemetryReporter.hpp"
 #include "utils/FrameRateMonitor.hpp"
 
+namespace {
+constexpr int kSnapshotIntervalMs = 2000;
+}
+
 PerformanceTelemetryController::PerformanceTelemetryController(QObject* parent)
     : QObject(parent)
 {
-    m_publishTimer.setInterval(3000);
-    m_publishTimer.setSingleShot(false);
-    connect(&m_publishTimer, &QTimer::timeout, this, [this]() {
-        if (!m_hasPendingFps) {
-            return;
-        }
-        publishSnapshot(m_pendingFps);
-        m_hasPendingFps = false;
-    });
+    m_publishTimer.setInterval(kSnapshotIntervalMs);
+    m_publishTimer.setSingleShot(true);
+    connect(&m_publishTimer, &QTimer::timeout, this, &PerformanceTelemetryController::publishPendingSnapshot);
 }
 
 void PerformanceTelemetryController::setTelemetryReporter(TelemetryReporter* reporter)
@@ -61,10 +60,8 @@ void PerformanceTelemetryController::handleFrameSample(double fps)
 {
     m_pendingFps = fps;
     m_hasPendingFps = true;
-
     if (!m_publishTimer.isActive()) {
-        publishSnapshot(fps);
-        ensurePublishTimer();
+        m_publishTimer.start();
     }
 }
 
@@ -87,10 +84,13 @@ void PerformanceTelemetryController::publishSnapshot(double fps)
     m_uiReporter->pushSnapshot(notes, fps);
 }
 
-void PerformanceTelemetryController::ensurePublishTimer()
+void PerformanceTelemetryController::publishPendingSnapshot()
 {
-    if (!m_publishTimer.isActive()) {
-        m_publishTimer.start();
+    if (!m_hasPendingFps) {
+        return;
     }
+
+    publishSnapshot(m_pendingFps);
+    m_hasPendingFps = false;
 }
 
