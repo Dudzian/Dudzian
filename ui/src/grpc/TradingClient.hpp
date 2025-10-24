@@ -47,6 +47,17 @@ public:
         QString granularityIso8601;
     };
 
+    struct TradableInstrument {
+        InstrumentConfig config;
+        double priceStep = 0.0;
+        double amountStep = 0.0;
+        double minNotional = 0.0;
+        double minAmount = 0.0;
+        double maxAmount = 0.0;
+        double minPrice = 0.0;
+        double maxPrice = 0.0;
+    };
+
     using TlsConfig = GrpcTlsConfig;
 
     struct PreLiveChecklistResult {
@@ -66,6 +77,8 @@ public:
     void setAuthToken(const QString& token);
     void setRbacRole(const QString& role);
     void setRbacScopes(const QStringList& scopes);
+
+    QVector<TradableInstrument> listTradableInstruments(const QString& exchange);
 
     QVector<QPair<QByteArray, QByteArray>> authMetadataForTesting() const;
 

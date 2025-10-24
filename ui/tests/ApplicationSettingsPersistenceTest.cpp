@@ -53,6 +53,7 @@ private slots:
     void testCliOverridesUiSettingsPath();
     void testRiskHistoryCliOverrides();
     void testRiskHistoryEnvOverrides();
+    void testInstrumentValidationRequiresListing();
 };
 
 void ApplicationSettingsPersistenceTest::testPersistsAndReloadsConfiguration()
@@ -71,6 +72,15 @@ void ApplicationSettingsPersistenceTest::testPersistsAndReloadsConfiguration()
     {
         QQmlApplicationEngine engine;
         Application app(engine);
+
+        TradingClient::TradableInstrument listing;
+        listing.config.exchange = QStringLiteral("TESTX");
+        listing.config.symbol = QStringLiteral("FOO/BAR");
+        listing.config.venueSymbol = QStringLiteral("FOOBAR");
+        listing.config.quoteCurrency = QStringLiteral("BAR");
+        listing.config.baseCurrency = QStringLiteral("FOO");
+        listing.config.granularityIso8601 = QStringLiteral("PT5M");
+        app.setTradableInstrumentsForTesting(QStringLiteral("TESTX"), {listing});
 
         QVERIFY(app.updateInstrument(QStringLiteral("TESTX"),
                                      QStringLiteral("FOO/BAR"),
@@ -461,6 +471,36 @@ void ApplicationSettingsPersistenceTest::testRiskHistoryEnvOverrides()
     QCOMPARE(app.riskHistoryAutoExportIntervalMinutes(), 25);
     QCOMPARE(app.riskHistoryAutoExportBasename(), QStringLiteral("Env_Export"));
     QVERIFY(app.riskHistoryAutoExportUseLocalTime());
+}
+
+void ApplicationSettingsPersistenceTest::testInstrumentValidationRequiresListing()
+{
+    QQmlApplicationEngine engine;
+    Application app(engine);
+
+    TradingClient::TradableInstrument listing;
+    listing.config.exchange = QStringLiteral("BINANCE");
+    listing.config.symbol = QStringLiteral("BTC/USDT");
+    listing.config.venueSymbol = QStringLiteral("BTCUSDT");
+    listing.config.quoteCurrency = QStringLiteral("USDT");
+    listing.config.baseCurrency = QStringLiteral("BTC");
+    listing.config.granularityIso8601 = QStringLiteral("PT1M");
+
+    app.setTradableInstrumentsForTesting(QStringLiteral("BINANCE"), {listing});
+
+    QVERIFY(app.updateInstrument(QStringLiteral("BINANCE"),
+                                 QStringLiteral("BTC/USDT"),
+                                 QStringLiteral("BTCUSDT"),
+                                 QStringLiteral("USDT"),
+                                 QStringLiteral("BTC"),
+                                 QStringLiteral("PT1M")));
+
+    QVERIFY(!app.updateInstrument(QStringLiteral("BINANCE"),
+                                  QStringLiteral("ETH/USDT"),
+                                  QStringLiteral("ETHUSDT"),
+                                  QStringLiteral("USDT"),
+                                  QStringLiteral("ETH"),
+                                  QStringLiteral("PT1M")));
 }
 
 QTEST_MAIN(ApplicationSettingsPersistenceTest)

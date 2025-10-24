@@ -1013,6 +1013,16 @@ except Exception:  # pragma: no cover - brak wygenerowanych stubów lub grpcio
     create_metrics_server = None  # type: ignore
     build_metrics_server_from_config = None  # type: ignore
 
+# --- Market data service (opcjonalny – zależny od stubów) ---
+try:
+    from bot_core.runtime.market_data_service import (  # type: ignore
+        MarketDataServer,
+        MarketDataServiceServicer,
+    )
+except Exception:  # pragma: no cover - brak modułu rynku danych
+    MarketDataServer = None  # type: ignore
+    MarketDataServiceServicer = None  # type: ignore
+
 # --- Risk service (opcjonalny – zależy od wygenerowanych stubów) ---
 try:
     from bot_core.runtime.risk_service import (  # type: ignore
@@ -1135,6 +1145,9 @@ if MetricsServer is not None:
             "build_metrics_server_from_config",
         ]
     )
+
+if MarketDataServer is not None:
+    __all__.extend(["MarketDataServer", "MarketDataServiceServicer"])
 
 # Eksport elementów risk service tylko jeśli są dostępne
 if RiskServer is not None:
