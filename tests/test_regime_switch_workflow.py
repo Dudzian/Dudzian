@@ -1,8 +1,15 @@
+from datetime import datetime, timezone
+
 import pandas as pd
 
-from bot_core.ai.regime import MarketRegime
-from bot_core.trading.engine import TradingParameters
-from bot_core.trading.regime_workflow import RegimeSwitchWorkflow
+from bot_core.ai.regime import (
+    MarketRegime,
+    MarketRegimeAssessment,
+    MarketRegimeClassifier,
+    RegimeHistory,
+)
+from bot_core.strategies import StrategyPresetWizard
+from bot_core.strategies.regime_workflow import RegimePresetActivation, StrategyRegimeWorkflow
 
 
 def _sample_market_data(rows: int = 120) -> pd.DataFrame:
@@ -13,20 +20,92 @@ def _sample_market_data(rows: int = 120) -> pd.DataFrame:
     low = close - 0.5
     open_ = close.shift(1).fillna(close)
     volume = pd.Series(1000, index=index, dtype=float)
-    return pd.DataFrame({
-        "open": open_,
-        "high": high,
-        "low": low,
-        "close": close,
-        "volume": volume,
-    })
+    return pd.DataFrame(
+        {
+            "open": open_,
+            "high": high,
+            "low": low,
+            "close": close,
+            "volume": volume,
+        }
+    )
 
 
-def test_regime_workflow_produces_parameters_with_weights() -> None:
-    workflow = RegimeSwitchWorkflow(
-        confidence_threshold=0.2,
-        persistence_threshold=0.1,
-        min_switch_cooldown=0,
+def _workflow() -> StrategyRegimeWorkflow:
+    classifier = MarketRegimeClassifier()
+    history = RegimeHistory(thresholds_loader=classifier.thresholds_loader)
+    history.reload_thresholds(thresholds=classifier.thresholds_snapshot())
+    return StrategyRegimeWorkflow(
+        wizard=StrategyPresetWizard(),
+        classifier=classifier,
+        history=history,
+    )
+
+
+class _StaticClassifier:
+    def __init__(self, regime: MarketRegime) -> None:
+        self._regime = regime
+        self.thresholds_loader = lambda: {}
+        self.thresholds_snapshot = lambda: {}
+
+    def assess(self, market_data, *, symbol: str | None = None) -> MarketRegimeAssessment:
+        return MarketRegimeAssessment(
+            regime=self._regime,
+            confidence=0.9,
+            risk_score=0.3,
+            metrics={},
+            symbol=symbol or "TEST",
+        )
+
+
+def test_strategy_regime_workflow_produces_activation_metadata() -> None:
+    classifier = _StaticClassifier(MarketRegime.TREND)
+    history = RegimeHistory(thresholds_loader=classifier.thresholds_loader)
+    history.reload_thresholds(thresholds=classifier.thresholds_snapshot())
+    workflow = StrategyRegimeWorkflow(
+        wizard=StrategyPresetWizard(),
+        classifier=classifier,  # type: ignore[arg-type]
+        history=history,
+    )
+    signing_key = b"test-key"
+    workflow.register_preset(
+        MarketRegime.TREND,
+        name="trend-core",
+        entries=[{"engine": "daily_trend_momentum"}],
+        signing_key=signing_key,
+        metadata={"ensemble_weights": {"trend_following": 1.0}},
+    )
+
+    activation = workflow.activate(
+        _sample_market_data(),
+        available_data={"ohlcv", "technical_indicators"},
+    )
+
+    assert isinstance(activation, RegimePresetActivation)
+    assert activation.regime is MarketRegime.TREND
+    assert activation.version.metadata["license_tiers"]
+    preset_meta = activation.version.metadata.get("preset_metadata", {})
+    assert preset_meta["ensemble_weights"]["trend_following"] == 1.0
+    assert activation.decision_candidates
+    assert activation.activated_at.tzinfo is timezone.utc
+
+
+def test_strategy_regime_workflow_uses_fallback_when_data_missing() -> None:
+    classifier = _StaticClassifier(MarketRegime.MEAN_REVERSION)
+    history = RegimeHistory(thresholds_loader=classifier.thresholds_loader)
+    history.reload_thresholds(thresholds=classifier.thresholds_snapshot())
+    workflow = StrategyRegimeWorkflow(
+        wizard=StrategyPresetWizard(),
+        classifier=classifier,  # type: ignore[arg-type]
+        history=history,
+    )
+    signing_key = b"test-key"
+    workflow.register_preset(
+        MarketRegime.MEAN_REVERSION,
+        name="mean-core",
+        entries=[{"engine": "mean_reversion"}],
+        signing_key=signing_key,
+        metadata={"ensemble_weights": {"mean_reversion": 1.0}},
     )
     decision = workflow.decide(_sample_market_data(), TradingParameters())
 
@@ -52,33 +131,40 @@ def test_regime_workflow_respects_cooldown() -> None:
         persistence_threshold=0.05,
         min_switch_cooldown=5,
     )
-    data = _sample_market_data()
-    first = workflow.decide(data, TradingParameters())
-    second = workflow.decide(data, TradingParameters())
 
-    assert second.regime == first.regime
-
-
-def test_regime_workflow_accepts_custom_configuration() -> None:
-    custom_weights = {
-        "trend": {"trend_following": 0.8, "arbitrage": 0.2},
-        MarketRegime.DAILY: {"day_trading": 1.0},
-    }
-    custom_overrides = {
-        MarketRegime.TREND: {"signal_threshold": 0.2},
-        "mean_reversion": {"rsi_oversold": 40, "rsi_overbought": 60},
-    }
-
-    workflow = RegimeSwitchWorkflow(
-        confidence_threshold=0.2,
-        persistence_threshold=0.05,
-        min_switch_cooldown=0,
-        default_weights=custom_weights,
-        default_parameter_overrides=custom_overrides,
+    activation = workflow.activate(
+        _sample_market_data(),
+        available_data={"ohlcv", "technical_indicators"},  # brak spread_history wymusi fallback
     )
 
-    decision = workflow.decide(_sample_market_data(), TradingParameters())
+    assert activation.used_fallback is True
+    assert activation.blocked_reason == "missing_data"
+    assert "spread_history" in activation.missing_data
 
-    assert workflow.default_strategy_weights[MarketRegime.TREND]["trend_following"] == 0.8
-    assert decision.parameters.signal_threshold == 0.2
-    assert workflow.default_parameter_overrides[MarketRegime.MEAN_REVERSION]["rsi_oversold"] == 40
+
+def test_strategy_regime_workflow_preserves_custom_metadata() -> None:
+    workflow = _workflow()
+    signing_key = b"test-key"
+    workflow.register_preset(
+        MarketRegime.TREND,
+        name="trend-custom",
+        entries=[
+            {
+                "engine": "daily_trend_momentum",
+                "metadata": {"custom_flag": True},
+            }
+        ],
+        signing_key=signing_key,
+        metadata={"ensemble_weights": {"trend_following": 1.0}, "notes": "demo"},
+    )
+
+    activation = workflow.activate(
+        _sample_market_data(),
+        available_data={"ohlcv", "technical_indicators"},
+        now=datetime(2024, 1, 1, 9, 0, tzinfo=timezone.utc),
+    )
+
+    preset_meta = activation.version.metadata["preset_metadata"]
+    assert preset_meta["notes"] == "demo"
+    strategy_entry = activation.preset["strategies"][0]
+    assert strategy_entry["metadata"]["custom_flag"] is True
