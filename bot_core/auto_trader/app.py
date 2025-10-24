@@ -324,6 +324,12 @@ class AutoTrader:
         self.auto_trade_interval_s = float(auto_trade_interval_s)
 
         self.signal_service = signal_service
+        self._ai_feature_column_names: tuple[str, ...] | None = None
+        self._ai_feature_column_source: str = "default"
+        self._ai_feature_column_snapshot: tuple[str, ...] = ()
+        self._ai_feature_columns: Callable[[pd.DataFrame], list[str]] = (
+            self._default_ai_feature_columns
+        )
         self.risk_service = risk_service
         self.execution_service = execution_service
         self.data_provider = data_provider
@@ -366,6 +372,8 @@ class AutoTrader:
 
         if self._decision_engine_config is None:
             self._decision_engine_config = self._build_default_decision_engine_config()
+
+        self.configure_ai_feature_columns_from_signal_service()
 
         if bootstrap_orchestrator is not None:
             self.decision_orchestrator = bootstrap_orchestrator
@@ -632,6 +640,182 @@ class AutoTrader:
             direction = "sell"
         context["direction"] = direction
         return context
+
+    def _default_ai_feature_columns(self, market_data: pd.DataFrame) -> list[str]:
+        """Return ordered feature columns available in ``market_data``.
+
+        Guardrail logic and historical integrations expect this helper to be
+        tolerant – the return value must only contain columns that exist in the
+        provided frame.  We prefer the canonical OHLCV ordering but fall back
+        to whatever string columns the frame exposes to avoid crashes when the
+        upstream service provides bespoke inputs.
+        """
+
+        self._ai_feature_column_source = "default"
+        preferred = ("open", "high", "low", "close", "volume")
+        available = [column for column in preferred if column in market_data.columns]
+        if available:
+            self._ai_feature_column_snapshot = tuple(available)
+            return available
+        fallback = self._deduplicate_feature_columns(
+            column for column in market_data.columns if isinstance(column, str)
+        )
+        self._ai_feature_column_snapshot = tuple(fallback)
+        return fallback
+
+    @staticmethod
+    def _normalize_feature_column_sequence(columns: Iterable[str]) -> list[str]:
+        """Return a deduplicated list of non-empty column names."""
+
+        seen: set[str] = set()
+        normalised: list[str] = []
+        for column in columns:
+            candidate = column.strip()
+            if not candidate or candidate in seen:
+                continue
+            seen.add(candidate)
+            normalised.append(candidate)
+        return normalised
+
+    @staticmethod
+    def _deduplicate_feature_columns(columns: Iterable[str]) -> list[str]:
+        """Return original column names deduplicated by their stripped value."""
+
+        seen: set[str] = set()
+        deduplicated: list[str] = []
+        for column in columns:
+            candidate = column.strip()
+            if not candidate or candidate in seen:
+                continue
+            seen.add(candidate)
+            deduplicated.append(column)
+        return deduplicated
+
+    def configure_ai_feature_columns(
+        self,
+        columns: Iterable[str] | None,
+        *,
+        allow_fallback: bool = True,
+    ) -> None:
+        """Configure the callable providing AI feature columns.
+
+        ``columns`` can originate from runtime services (``signal_service``)
+        or configuration objects.  The values are normalised to strings and the
+        resulting callable filters them against the actual market data to avoid
+        stale configuration errors.  When ``allow_fallback`` is ``True`` and no
+        configured column is available we fall back to the default OHLCV-based
+        heuristic for backward compatibility with existing guardrails.
+        """
+
+        normalised = tuple(
+            self._normalize_feature_column_sequence(
+                column for column in (columns or ()) if isinstance(column, str)
+            )
+        )
+
+        if not normalised:
+            self._ai_feature_column_names = None
+            self._ai_feature_column_source = "default"
+            self._ai_feature_column_snapshot = ()
+            self._ai_feature_columns = self._default_ai_feature_columns
+            return
+
+        self._ai_feature_column_names = normalised
+        self._ai_feature_column_source = "configured"
+        self._ai_feature_column_snapshot = ()
+
+        def _configured_feature_columns(market_data: pd.DataFrame) -> list[str]:
+            column_map: dict[str, str] = {}
+            for raw in market_data.columns:
+                if not isinstance(raw, str):
+                    continue
+                key = raw.strip()
+                if key and key not in column_map:
+                    column_map[key] = raw
+            resolved: list[str] = []
+            for column in normalised:
+                actual = column_map.get(column, column)
+                if actual in market_data.columns:
+                    resolved.append(actual)
+            selected = self._deduplicate_feature_columns(resolved)
+            if selected or not allow_fallback:
+                self._ai_feature_column_source = "configured"
+                self._ai_feature_column_snapshot = tuple(selected)
+                return selected
+            fallback = self._default_ai_feature_columns(market_data)
+            self._ai_feature_column_source = "fallback"
+            self._ai_feature_column_snapshot = tuple(fallback)
+            return fallback
+
+        self._ai_feature_columns = _configured_feature_columns
+
+    def configure_ai_feature_columns_from_signal_service(self) -> None:
+        """Initialise AI feature columns using runtime metadata.
+
+        The resolver honours overrides present on ``_decision_engine_config``
+        (to maintain compatibility with existing hooks) and falls back to
+        probing ``signal_service`` for hints.  Errors are logged at DEBUG level
+        to avoid polluting normal operation – guardrails rely on the
+        configuration being resilient in degraded environments.
+        """
+
+        columns: Iterable[str] | None = None
+
+        config = getattr(self, "_decision_engine_config", None)
+        if config is not None:
+            columns = getattr(config, "ai_feature_columns", None)
+
+        if not columns:
+            service = getattr(self, "signal_service", None)
+            if service is not None:
+                resolver = getattr(service, "get_ai_feature_columns", None)
+                if callable(resolver):
+                    try:
+                        columns = resolver()
+                    except TypeError:
+                        try:
+                            columns = resolver(self)
+                        except Exception:
+                            columns = None
+                            self._log(
+                                "Signal service feature column resolver failed", level=logging.DEBUG
+                            )
+                    except Exception:
+                        columns = None
+                        self._log(
+                            "Signal service feature column resolver failed", level=logging.DEBUG
+                        )
+                if not columns:
+                    candidate = getattr(service, "ai_feature_columns", None)
+                    if candidate is None:
+                        candidate = getattr(service, "feature_columns", None)
+                    if candidate is None:
+                        candidate = getattr(service, "FEATURE_COLUMNS", None)
+                    columns = candidate
+
+        if columns:
+            self.configure_ai_feature_columns(columns)
+
+    def _feature_column_metadata(
+        self, selected: Iterable[str] | None = None
+    ) -> dict[str, Any]:
+        metadata: dict[str, Any] = {}
+        configured = self._ai_feature_column_names
+        if configured:
+            metadata["configured_feature_columns"] = [str(column) for column in configured]
+        if selected is not None:
+            columns = self._deduplicate_feature_columns(
+                str(column)
+                for column in selected
+                if isinstance(column, str) and str(column).strip()
+            )
+        else:
+            columns = self._deduplicate_feature_columns(self._ai_feature_column_snapshot)
+        if columns:
+            metadata["feature_columns"] = columns
+        if metadata:
+            metadata["feature_columns_source"] = self._ai_feature_column_source
+        return metadata
 
     def _normalise_cycle_history_limit(self, limit: int | None) -> int:
         if limit is None:
@@ -2782,11 +2966,23 @@ class AutoTrader:
         except Exception:
             return None
         features: Dict[str, float] = {}
-        for key, value in row.items():
-            try:
-                features[str(key)] = float(value)
-            except (TypeError, ValueError):
-                continue
+        decision_section: Dict[str, Any]
+        selected_columns = [
+            column for column in feature_cols if column in getattr(row, "index", ())
+        ]
+        if selected_columns:
+            for column in selected_columns:
+                value = row.get(column)
+                try:
+                    features[str(column)] = float(value)  # type: ignore[arg-type]
+                except (TypeError, ValueError):
+                    continue
+        else:
+            for key, value in row.items():
+                try:
+                    features[str(key)] = float(value)
+                except (TypeError, ValueError):
+                    continue
         features["assessment_confidence"] = float(assessment.confidence)
         features["assessment_risk"] = float(assessment.risk_score)
         features["signal_direction"] = 1.0 if signal == "buy" else -1.0
@@ -2802,6 +2998,7 @@ class AutoTrader:
             },
         }
         decision_section = metadata["decision_engine"]
+        decision_section.update(self._feature_column_metadata(selected_columns))
         expected_return = float(last_return * 10_000.0)
         if signal == "sell":
             expected_return = -abs(expected_return)
@@ -2896,6 +3093,26 @@ class AutoTrader:
                 evaluation, "model_success_probability", None
             ),
         }
+        candidate = getattr(evaluation, "candidate", None)
+        if candidate is not None:
+            candidate_metadata = getattr(candidate, "metadata", None)
+            if isinstance(candidate_metadata, Mapping):
+                decision_meta = candidate_metadata.get("decision_engine")
+                if isinstance(decision_meta, Mapping):
+                    features = decision_meta.get("features")
+                    if isinstance(features, Mapping):
+                        payload.setdefault("features", dict(features))
+                    for key in (
+                        "feature_columns",
+                        "feature_columns_source",
+                        "configured_feature_columns",
+                    ):
+                        if key in decision_meta:
+                            payload.setdefault(key, copy.deepcopy(decision_meta[key]))
+                    if "ai" in decision_meta and "ai" not in payload:
+                        ai_payload = decision_meta["ai"]
+                        if isinstance(ai_payload, Mapping):
+                            payload["ai"] = copy.deepcopy(ai_payload)
         selection = getattr(evaluation, "model_selection", None)
         if selection is not None and hasattr(selection, "to_mapping"):
             try:
@@ -4013,6 +4230,12 @@ class AutoTrader:
                 decision_engine,
                 thresholds=self._decision_threshold_snapshot(),
             )
+        feature_metadata = self._feature_column_metadata()
+        if feature_metadata:
+            if decision_payload is None:
+                decision_payload = {}
+            for key, value in feature_metadata.items():
+                decision_payload.setdefault(key, copy.deepcopy(value))
         if ai_context:
             base_return_raw = ai_context.get("prediction_bps", 0.0)
             try:
