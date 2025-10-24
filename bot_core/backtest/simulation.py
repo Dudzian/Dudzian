@@ -149,6 +149,45 @@ class MatchingEngine:
             order.remaining = 0.0
         return [fill]
 
+    def force_fill(
+        self,
+        *,
+        side: str,
+        size: float,
+        timestamp: datetime,
+        bar: Mapping[str, object],
+    ) -> BacktestFill:
+        direction = (side or "").lower()
+        if direction not in {"buy", "sell"}:
+            raise ValueError(f"Unsupported side for force_fill: {side!r}")
+        quantity = float(size)
+        if quantity <= 0.0:
+            raise ValueError("Force fill size must be positive")
+        price = self._extract_price(bar)
+        if price is None:
+            raise ValueError("Cannot determine execution price for force fill")
+        slippage_value = price * self._slippage_rate
+        if direction == "buy":
+            execution_price = price + slippage_value
+            signed_slippage = slippage_value
+        else:
+            execution_price = max(0.0, price - slippage_value)
+            signed_slippage = -slippage_value
+        fee = abs(execution_price * quantity) * self._fee_rate
+        ts = self._ensure_timestamp(timestamp)
+        order_id = self._next_order_id
+        self._next_order_id += 1
+        return BacktestFill(
+            order_id=order_id,
+            side=direction,
+            size=quantity,
+            price=execution_price,
+            fee=fee,
+            slippage=signed_slippage * quantity,
+            timestamp=ts,
+            partial=False,
+        )
+
     @staticmethod
     def _ensure_timestamp(value: datetime) -> datetime:
         if value.tzinfo is None:
