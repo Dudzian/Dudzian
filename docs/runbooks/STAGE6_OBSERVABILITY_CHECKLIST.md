@@ -6,6 +6,8 @@ PortfolioGovernorem podczas hypercare Stage6.
 
 ## Prerekwizyty
 - Aktualne definicje SLO w `config/observability/slo.yml`.
+  Skrypty Stage6 korzystają z tej ścieżki domyślnie, więc przy pracy na repozytoryjnych definicjach nie musisz podawać `--definitions`.
+- Sekcja `observability.slo_definitions_path` w `config/core.yaml` wskazująca na ten plik (po każdej zmianie definicji zsynkuj oba repozytoria).
 - Dostęp do metryk z `var/metrics/` lub źródeł wskazanych w konfiguracji.
 - Klucz HMAC do podpisu raportów w `secrets/hmac/observability.key`.
 

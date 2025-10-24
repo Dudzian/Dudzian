@@ -523,27 +523,7 @@ resilience:
       description: Failover z Kraken Futures na Binance Futures.
 
 observability:
-  slo:
-    decision_latency:
-      metric: bot_core_decision_latency_ms
-      objective: 220.0
-      comparator: "<="
-      aggregation: p95
-      window_minutes: 1440.0
-      label_filters:
-        schedule: core_multi_pipeline
-    trade_cost:
-      metric: bot_core_trade_cost_bps
-      objective: 12.0
-      comparator: "<="
-      aggregation: average
-      window_minutes: 1440.0
-    fill_rate:
-      metric: bot_core_fill_rate_pct
-      objective: 0.94
-      comparator: ">="
-      aggregation: average
-      window_minutes: 1440.0
+  slo_definitions_path: observability/slo.yml
   key_rotation:
     registry_path: var/security/key_rotation.json
     default_interval_days: 90.0

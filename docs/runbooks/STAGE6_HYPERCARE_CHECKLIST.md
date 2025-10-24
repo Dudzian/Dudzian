@@ -6,8 +6,9 @@ jednym poleceniem, uzyskując podpisany raport zbiorczy oraz powiązane
 artefakty audytowe.
 
 ## Prerekwizyty
-- Aktualne raporty wejściowe dla Observability (definicje/metyki SLO),
-  Resilience (plan failover, manifesty paczek, polityka) oraz Portfolio
+- Aktualne raporty wejściowe dla Observability (definicje/metyki SLO –
+  repozytoryjny plik `config/observability/slo.yml`), Resilience (plan
+  failover, manifesty paczek, polityka) oraz Portfolio
   (alokacje, Market Intel, raporty SLO/Stress Lab).
 - Klucze HMAC umieszczone w `secrets/hmac/` i przypisane do komponentów Stage6.
 - Ścieżki docelowe w `var/audit/...` z uprawnieniami zapisu.
@@ -24,7 +25,7 @@ artefakty audytowe.
        key_path: secrets/hmac/stage6_summary.key
        key_id: stage6
    observability:
-     definitions: data/stage6/observability/slo.yaml
+     definitions: config/observability/slo.yml
      metrics: var/audit/observability/metrics.json
      slo:
        json: var/audit/observability/slo_report.json

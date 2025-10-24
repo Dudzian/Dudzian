@@ -92,7 +92,11 @@ def _load_signing_key(args: argparse.Namespace) -> tuple[bytes | None, str | Non
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Wykonuje pełny cykl Observability Stage6")
-    parser.add_argument("--definitions", required=True, help="Plik z definicjami SLO (YAML/JSON)")
+    parser.add_argument(
+        "--definitions",
+        default="config/observability/slo.yml",
+        help="Plik z definicjami SLO (YAML/JSON); domyślnie config/observability/slo.yml",
+    )
     parser.add_argument("--metrics", required=True, help="Plik z pomiarami metryk (JSON)")
     parser.add_argument(
         "--slo-json",
