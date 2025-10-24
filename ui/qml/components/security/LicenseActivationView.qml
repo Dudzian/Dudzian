@@ -406,8 +406,5 @@ Item {
         function onLicenseRefreshScheduleChanged() {
             syncScheduleFromController()
         }
-        function onSecurityCacheChanged() {
-            refreshAudit()
-        }
     }
 }

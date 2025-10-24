@@ -150,12 +150,6 @@ void ActivationController::reloadRegistry()
     updateOemLicense();
 }
 
-void ActivationController::refreshFingerprint()
-{
-    updateFingerprint();
-    updateOemLicense();
-}
-
 void ActivationController::applyCachedState(const QVariantMap& fingerprint,
                                             const QVariantMap& oemLicense,
                                             const QVariantList& licenses)

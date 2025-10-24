@@ -17,7 +17,7 @@
 
 namespace {
 
-QString expandEnvironmentVariables(const QString& input)
+QString expandEnvironmentVariablesImpl(const QString& input)
 {
     QString result;
     result.reserve(input.size());
@@ -129,12 +129,17 @@ QString resolveUserHomeDirectory(const QString& user)
 
 namespace bot::shell::utils {
 
+QString expandEnvironmentPlaceholders(const QString& text)
+{
+    return expandEnvironmentVariablesImpl(text);
+}
+
 QString expandPath(const QString& path)
 {
     if (path.trimmed().isEmpty())
         return {};
 
-    QString expanded = expandEnvironmentVariables(path.trimmed());
+    QString expanded = expandEnvironmentVariablesImpl(path.trimmed());
 
     if (expanded.startsWith(QStringLiteral("file:"), Qt::CaseInsensitive)) {
         const QUrl url = QUrl::fromUserInput(expanded);

@@ -7,6 +7,7 @@ ChartView {
 
     // --- Inputs ---------------------------------------------------------------
     property var model
+    property var indicatorModel: null
     property PerformanceGuard performanceGuard
     property bool reduceMotion: false
 
@@ -191,6 +192,14 @@ ChartView {
         }
     }
 
+    Connections {
+        target: indicatorModel
+        function onModelReset() { chartView.updateOverlays() }
+        function onRowsInserted() { chartView.updateOverlays() }
+        function onRowsRemoved() { chartView.updateOverlays() }
+        function onDataChanged() { chartView.updateOverlays() }
+    }
+
     // --- API ------------------------------------------------------------------
     function rebuild() {
         candleSeries.clear()
@@ -291,18 +300,40 @@ ChartView {
         updateOverlays()
     }
 
+    function seriesEntry(seriesId) {
+        if (!indicatorModel || indicatorModel.count === undefined) return null
+        for (let row = 0; row < indicatorModel.count; ++row) {
+            const entry = indicatorModel.get(row)
+            if (entry && entry.seriesId === seriesId)
+                return entry
+        }
+        return null
+    }
+
+    function samplesForSeries(seriesId) {
+        const entry = seriesEntry(seriesId)
+        if (entry && entry.samples !== undefined)
+            return entry.samples
+        if (model && typeof model.overlaySeries === "function")
+            return model.overlaySeries(seriesId) || []
+        return []
+    }
+
     function updateOverlays() {
-        if (!model) return
+        if (!model && !indicatorModel) return
         for (var i = 0; i < overlaySeriesList.length; ++i) {
             var series = overlaySeriesList[i]
             if (!series) continue
             series.clear()
             if (!series.visible) continue
             var def = overlayDefinitions[i]
-            var samples = model.overlaySeries(def.key) || []
+            var entry = seriesEntry(def.key)
+            if (entry && entry.color !== undefined)
+                series.color = entry.color
+            var samples = samplesForSeries(def.key)
             for (var j = 0; j < samples.length; ++j) {
                 var sample = samples[j]
-                if (sample.timestamp === undefined || sample.value === undefined) continue
+                if (!sample || sample.timestamp === undefined || sample.value === undefined) continue
                 series.append(new Date(sample.timestamp), sample.value)
             }
         }

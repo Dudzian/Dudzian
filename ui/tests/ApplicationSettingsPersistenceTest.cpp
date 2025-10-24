@@ -12,12 +12,14 @@
 #include <QTemporaryDir>
 #include <QUrl>
 #include <QDir>
+#include <QSignalSpy>
 
 #include "app/Application.hpp"
 #include "models/AlertsModel.hpp"
 #include "models/AlertsFilterProxyModel.hpp"
 #include "models/RiskTypes.hpp"
 #include "models/RiskHistoryModel.hpp"
+#include "models/MarketRegimeTimelineModel.hpp"
 
 namespace {
 
@@ -54,6 +56,7 @@ private slots:
     void testRiskHistoryCliOverrides();
     void testRiskHistoryEnvOverrides();
     void testInstrumentValidationRequiresListing();
+    void testRegimeTimelineCliOverride();
 };
 
 void ApplicationSettingsPersistenceTest::testPersistsAndReloadsConfiguration()
@@ -110,6 +113,11 @@ void ApplicationSettingsPersistenceTest::testPersistsAndReloadsConfiguration()
         auto* historyModel = qobject_cast<RiskHistoryModel*>(app.riskHistoryModel());
         QVERIFY(historyModel);
         historyModel->setMaximumEntries(75);
+
+        auto* regimeModel = qobject_cast<MarketRegimeTimelineModel*>(app.marketRegimeTimelineModel());
+        QVERIFY(regimeModel);
+        QVERIFY(app.setRegimeTimelineMaximumSnapshots(360));
+        QCOMPARE(regimeModel->maximumSnapshots(), 360);
         RiskSnapshotData historySample;
         historySample.hasData = true;
         historySample.profileLabel = QStringLiteral("Profil testowy");
@@ -185,6 +193,9 @@ void ApplicationSettingsPersistenceTest::testPersistsAndReloadsConfiguration()
         const QJsonArray persistedExposures = historyObject.value(QStringLiteral("exposures")).toArray();
         QCOMPARE(persistedExposures.size(), 2);
         QVERIFY(persistedExposures.at(1).toObject().value(QStringLiteral("breached")).toBool());
+
+        const QJsonObject regimeSection = root.value(QStringLiteral("marketRegimeTimeline")).toObject();
+        QCOMPARE(regimeSection.value(QStringLiteral("maximumSnapshots")).toInt(), 360);
 
         const QJsonObject exportSection = historySection.value(QStringLiteral("export")).toObject();
         QVERIFY(!exportSection.isEmpty());
@@ -275,6 +286,11 @@ void ApplicationSettingsPersistenceTest::testPersistsAndReloadsConfiguration()
         QVERIFY(app.riskHistoryAutoExportUseLocalTime());
         QCOMPARE(app.riskHistoryLastAutoExportAt(), persistedAutoExportAt.toUTC());
         QCOMPARE(app.riskHistoryLastAutoExportPath().toLocalFile(), QFileInfo(autoExportPath).absoluteFilePath());
+
+        auto* regimeModel = qobject_cast<MarketRegimeTimelineModel*>(app.marketRegimeTimelineModel());
+        QVERIFY(regimeModel);
+        QCOMPARE(regimeModel->maximumSnapshots(), 360);
+        QCOMPARE(app.regimeTimelineMaximumSnapshots(), 360);
     }
 }
 
@@ -377,6 +393,53 @@ void ApplicationSettingsPersistenceTest::testCliOverridesUiSettingsPath()
     const QJsonObject updatedRisk = updated.object().value(QStringLiteral("riskRefresh")).toObject();
     QVERIFY(updatedRisk.value(QStringLiteral("enabled")).toBool());
     QCOMPARE(updatedRisk.value(QStringLiteral("intervalSeconds")).toDouble(), 9.0);
+}
+
+void ApplicationSettingsPersistenceTest::testRegimeTimelineCliOverride()
+{
+    constexpr auto kEnvName = QByteArrayLiteral("BOT_CORE_UI_REGIME_TIMELINE_LIMIT");
+    EnvRestore envGuard(kEnvName);
+
+    {
+        QQmlApplicationEngine engine;
+        Application app(engine);
+
+        QCommandLineParser parser;
+        app.configureParser(parser);
+        const QStringList args = {QStringLiteral("app"),
+                                  QStringLiteral("--regime-timeline-limit"),
+                                  QStringLiteral("250")};
+        parser.process(args);
+        QVERIFY(app.applyParser(parser));
+
+        auto* regimeModel = qobject_cast<MarketRegimeTimelineModel*>(app.marketRegimeTimelineModel());
+        QVERIFY(regimeModel);
+        QCOMPARE(regimeModel->maximumSnapshots(), 250);
+        QCOMPARE(app.regimeTimelineMaximumSnapshots(), 250);
+
+        QVERIFY(!app.setRegimeTimelineMaximumSnapshots(-5));
+        QVERIFY(app.setRegimeTimelineMaximumSnapshots(0));
+        QCOMPARE(regimeModel->maximumSnapshots(), 0);
+        QCOMPARE(app.regimeTimelineMaximumSnapshots(), 0);
+    }
+
+    qputenv(kEnvName.constData(), QByteArrayLiteral("180"));
+
+    {
+        QQmlApplicationEngine engine;
+        Application app(engine);
+
+        QCommandLineParser parser;
+        app.configureParser(parser);
+        const QStringList args = {QStringLiteral("app")};
+        parser.process(args);
+        QVERIFY(app.applyParser(parser));
+
+        auto* regimeModel = qobject_cast<MarketRegimeTimelineModel*>(app.marketRegimeTimelineModel());
+        QVERIFY(regimeModel);
+        QCOMPARE(regimeModel->maximumSnapshots(), 180);
+        QCOMPARE(app.regimeTimelineMaximumSnapshots(), 180);
+    }
 }
 
 void ApplicationSettingsPersistenceTest::testRiskHistoryCliOverrides()

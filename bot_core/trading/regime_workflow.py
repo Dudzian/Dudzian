@@ -322,22 +322,30 @@ class RegimeSwitchWorkflow:
     ) -> Dict[MarketRegime, Dict[str, float]]:
         base: Dict[MarketRegime, Dict[str, float]] = {
             MarketRegime.TREND: {
-                "trend_following": 0.55,
+                "trend_following": 0.35,
                 "day_trading": 0.15,
-                "mean_reversion": 0.15,
-                "arbitrage": 0.15,
+                "mean_reversion": 0.1,
+                "arbitrage": 0.1,
+                "volatility_target": 0.2,
+                "grid_trading": 0.05,
+                "options_income": 0.05,
             },
             MarketRegime.DAILY: {
-                "trend_following": 0.25,
-                "day_trading": 0.45,
-                "mean_reversion": 0.15,
-                "arbitrage": 0.15,
+                "day_trading": 0.4,
+                "scalping": 0.2,
+                "trend_following": 0.1,
+                "volatility_target": 0.1,
+                "grid_trading": 0.1,
+                "arbitrage": 0.05,
+                "statistical_arbitrage": 0.05,
             },
             MarketRegime.MEAN_REVERSION: {
-                "trend_following": 0.2,
-                "day_trading": 0.15,
-                "mean_reversion": 0.45,
-                "arbitrage": 0.2,
+                "mean_reversion": 0.35,
+                "statistical_arbitrage": 0.25,
+                "arbitrage": 0.15,
+                "grid_trading": 0.1,
+                "options_income": 0.1,
+                "scalping": 0.05,
             },
         }
         if not custom:
