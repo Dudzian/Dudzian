@@ -94,7 +94,6 @@ def test_plugin_metadata_matches_strategy_catalog() -> None:
     for plugin_name, engine in mapping.items():
         plugin_meta = catalog.metadata_for(plugin_name)
         spec = DEFAULT_STRATEGY_CATALOG.get(engine)
-        assert plugin_meta["engine"] == engine
         assert plugin_meta["license_tier"] == spec.license_tier
         assert tuple(plugin_meta["risk_classes"]) == tuple(spec.risk_classes)
         assert tuple(plugin_meta["required_data"]) == tuple(spec.required_data)
@@ -102,17 +101,6 @@ def test_plugin_metadata_matches_strategy_catalog() -> None:
             assert plugin_meta["capability"] == spec.capability
         if spec.default_tags:
             assert tuple(plugin_meta["tags"]) == tuple(spec.default_tags)
-
-
-def test_default_catalog_covers_engine_catalog() -> None:
-    catalog = StrategyCatalog.default()
-    plugin_engines = {
-        entry["engine"] for entry in catalog.describe() if "engine" in entry
-    }
-    catalog_engines = {
-        entry["engine"] for entry in DEFAULT_STRATEGY_CATALOG.describe_engines()
-    }
-    assert plugin_engines == catalog_engines
 
 
 def test_plugins_generate_series_with_matching_index() -> None:

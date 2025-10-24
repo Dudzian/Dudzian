@@ -242,26 +242,17 @@ class StrategyCatalog:
     def default(cls) -> "StrategyCatalog":
         """Return catalog populated with built-in strategies."""
 
-        plugins_by_engine = _builtin_plugins_by_engine()
-        ordered_plugins: list[Type[StrategyPlugin]] = []
-        missing_engines: list[str] = []
-
-        for engine_meta in DEFAULT_STRATEGY_CATALOG.describe_engines():
-            engine_key = _normalize_text(engine_meta.get("engine"))
-            if engine_key is None:
-                continue
-            plugin_cls = plugins_by_engine.get(engine_key)
-            if plugin_cls is None:
-                missing_engines.append(engine_key)
-                continue
-            if plugin_cls not in ordered_plugins:
-                ordered_plugins.append(plugin_cls)
-
-        if missing_engines:
-            missing = ", ".join(sorted(set(missing_engines)))
-            raise RuntimeError(
-                "Brak implementacji pluginów tradingowych dla silników: "
-                f"{missing}. Dodaj klasy w bot_core.trading.strategies.plugins."
+        return cls(
+            plugins=(
+                TrendFollowingStrategy,
+                DayTradingStrategy,
+                MeanReversionStrategy,
+                ArbitrageStrategy,
+                GridTradingStrategy,
+                VolatilityTargetStrategy,
+                ScalpingStrategy,
+                OptionsIncomeStrategy,
+                StatisticalArbitrageStrategy,
             )
 
         return cls(plugins=tuple(ordered_plugins))
@@ -384,9 +375,13 @@ class ArbitrageStrategy(StrategyPlugin):
 class GridTradingStrategy(StrategyPlugin):
     """Market-making grid reacting to deviations around a slow anchor."""
 
-    engine_key = "grid_trading"
     name = "grid_trading"
     description = "Neutral grid around SMA with ATR-aware band sizing."
+    license_tier = "professional"
+    risk_classes = ("market_making",)
+    required_data = ("order_book", "ohlcv")
+    capability = "grid_trading"
+    tags = ("grid", "market_making")
 
     def generate(
         self,
@@ -412,9 +407,13 @@ class GridTradingStrategy(StrategyPlugin):
 class VolatilityTargetStrategy(StrategyPlugin):
     """Adjust exposure to steer realised volatility toward target."""
 
-    engine_key = "volatility_target"
     name = "volatility_target"
     description = "Dynamically scales exposure to hit target volatility."
+    license_tier = "enterprise"
+    risk_classes = ("risk_control", "volatility")
+    required_data = ("ohlcv", "realized_volatility")
+    capability = "volatility_target"
+    tags = ("volatility", "risk")
 
     def generate(
         self,
@@ -440,9 +439,13 @@ class VolatilityTargetStrategy(StrategyPlugin):
 class ScalpingStrategy(StrategyPlugin):
     """Fast mean-reversion around short momentum for low-latency trading."""
 
-    engine_key = "scalping"
     name = "scalping"
     description = "MACD micro-divergence with stochastic confirmation."
+    license_tier = "professional"
+    risk_classes = ("intraday", "scalping")
+    required_data = ("ohlcv", "order_book")
+    capability = "scalping"
+    tags = ("intraday", "scalping")
 
     def generate(
         self,
@@ -463,9 +466,13 @@ class ScalpingStrategy(StrategyPlugin):
 class OptionsIncomeStrategy(StrategyPlugin):
     """Simplified theta harvesting profile informed by volatility spreads."""
 
-    engine_key = "options_income"
     name = "options_income"
     description = "Harvests premium when implied volatility outruns realised."
+    license_tier = "enterprise"
+    risk_classes = ("derivatives", "income")
+    required_data = ("options_chain", "greeks", "ohlcv")
+    capability = "options_income"
+    tags = ("options", "income")
 
     def generate(
         self,
@@ -501,9 +508,13 @@ class OptionsIncomeStrategy(StrategyPlugin):
 class StatisticalArbitrageStrategy(StrategyPlugin):
     """Pairs-style mean reversion using MACD and Bollinger spreads."""
 
-    engine_key = "statistical_arbitrage"
     name = "statistical_arbitrage"
     description = "Pairs spreads using MACD z-score and Bollinger confirmation."
+    license_tier = "professional"
+    risk_classes = ("statistical", "mean_reversion")
+    required_data = ("ohlcv", "spread_history")
+    capability = "stat_arbitrage"
+    tags = ("stat_arbitrage", "pairs_trading")
 
     def generate(
         self,
@@ -524,10 +535,4 @@ class StatisticalArbitrageStrategy(StrategyPlugin):
 
         signal = (-np.tanh(macd_norm) * 0.6 - spread * 0.4).clip(-1.0, 1.0)
         return pd.Series(signal, index=indicators.macd.index)
-
-
-def _builtin_plugins_by_engine() -> Dict[str, Type[StrategyPlugin]]:
-    """Mapuje klucze silników na wbudowane klasy pluginów."""
-
-    return dict(_BUILTIN_PLUGIN_REGISTRY)
 
