@@ -1,0 +1,421 @@
+name: Stage6 hypercare cycle
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '20 3 * * *'
+
+permissions:
+  contents: read
+  actions: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  stage6-hypercare-cycle:
+    name: Stage6 Hypercare Cycle
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    concurrency:
+      group: stage6-hypercare-${{ github.ref }}
+      cancel-in-progress: false
+    env:
+      PYTHONUNBUFFERED: "1"
+      HYPERCARE_AUDIT_DIR: var/audit/stage6
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: pyproject.toml
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install '.[dev]'
+
+      - name: Prepare workspace
+        run: |
+          mkdir -p "$HYPERCARE_AUDIT_DIR"
+          mkdir -p secrets/hmac
+
+      - name: Run Stage6 hypercare cycle
+        run: |
+          python scripts/run_stage6_hypercare_cycle.py --config config/core.yaml
+
+      - name: Przygotuj manifest artefaktów
+        if: always()
+        run: |
+          python - <<'PY'
+import json
+import os
+import sys
+from pathlib import Path
+from datetime import datetime, timezone
+import hashlib
+
+audit_dir = Path(os.environ["HYPERCARE_AUDIT_DIR"])
+audit_dir.mkdir(parents=True, exist_ok=True)
+allowed_suffixes = {".json", ".sig", ".hmac"}
+files = [p for p in audit_dir.iterdir() if p.is_file() and p.suffix.lower() in allowed_suffixes]
+
+def resolve_targets(path: Path) -> list[str]:
+    suffix = path.suffix.lower()
+    if suffix == ".json":
+        return []
+    if suffix in {".sig", ".hmac"}:
+        return [path.name[: -len(suffix)]]
+    return []
+
+
+def detect_kind(path: Path) -> str:
+    suffix = path.suffix.lower()
+    if suffix == ".json":
+        return "audit_json"
+    if suffix in {".sig", ".hmac"}:
+        return "signature"
+    return "unknown"
+
+
+def describe_file(path: Path) -> dict:
+    data = path.read_bytes()
+    return {
+        "name": path.name,
+        "size_bytes": path.stat().st_size,
+        "sha256": hashlib.sha256(data).hexdigest(),
+        "kind": detect_kind(path),
+        "targets": resolve_targets(path),
+    }
+
+manifest = {
+    "generated_at": datetime.now(timezone.utc).isoformat(),
+    "run_id": os.environ.get("GITHUB_RUN_ID"),
+    "files": [describe_file(p) for p in sorted(files)],
+}
+manifest_path = audit_dir / "artifact_manifest.json"
+manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+print(f"Manifest zapisany w {manifest_path}")
+if not manifest["files"]:
+    print("[stage6.hypercare] Brak artefaktów JSON/HMAC do zarchiwizowania", file=sys.stderr)
+PY
+
+      - name: Upload Stage6 hypercare artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage6-hypercare-${{ github.run_number }}
+          if-no-files-found: warn
+          path: |
+            ${{ env.HYPERCARE_AUDIT_DIR }}/*.json
+            ${{ env.HYPERCARE_AUDIT_DIR }}/*.sig
+            ${{ env.HYPERCARE_AUDIT_DIR }}/*.hmac
+            ${{ env.HYPERCARE_AUDIT_DIR }}/artifact_manifest.json
+          retention-days: 30
+
+      - name: Publish summary
+        if: always()
+        run: |
+          python - <<'PY'
+import json
+import os
+import sys
+from pathlib import Path
+
+SIGNATURE_SUFFIXES = (".sig", ".hmac")
+
+STATUS_LABELS = {
+    "ok": "✅ OK",
+    "warn": "⚠️ WARN",
+    "warning": "⚠️ WARN",
+    "fail": "❌ FAIL",
+    "error": "❌ FAIL",
+    "skipped": "⏭️ POMINIĘTO",
+}
+
+
+def render_status(value):
+    if isinstance(value, str):
+        normalised = value.strip().lower()
+        if not normalised:
+            return "ℹ️ n/d"
+        return STATUS_LABELS.get(normalised, f"ℹ️ {value}")
+    if value is None:
+        return "ℹ️ n/d"
+    return f"ℹ️ {value}"
+
+
+def normalise_manifest_entries(raw_entries):
+    if raw_entries and isinstance(raw_entries[0], str):
+        return [{"name": name} for name in raw_entries]
+    return raw_entries
+
+
+def manifest_signature_targets(entries):
+    mapping = {}
+    for entry in entries:
+        name = entry.get("name")
+        if not name:
+            continue
+        kind = entry.get("kind")
+        suffix = Path(name).suffix.lower()
+        if kind != "signature" and suffix not in SIGNATURE_SUFFIXES:
+            continue
+        targets = entry.get("targets") or []
+        if not targets and suffix in SIGNATURE_SUFFIXES:
+            targets = [name[: -len(suffix)]]
+        for target in targets:
+            mapping.setdefault(target, []).append(name)
+    return mapping
+
+
+def manifest_signature_names(entries):
+    names = set()
+    for entry in entries:
+        name = entry.get("name")
+        if not name:
+            continue
+        kind = entry.get("kind")
+        suffix = Path(name).suffix.lower()
+        if kind == "signature" or suffix in SIGNATURE_SUFFIXES:
+            names.add(name)
+    return names
+
+
+def manifest_entry_kind(entry):
+    kind = entry.get("kind")
+    if isinstance(kind, str) and kind.strip():
+        return kind.strip()
+    name = entry.get("name")
+    if name:
+        suffix = Path(name).suffix.lower()
+        if suffix == ".json":
+            return "audit_json"
+        if suffix in SIGNATURE_SUFFIXES:
+            return "signature"
+    return "n/d"
+
+
+def manifest_entry_targets(entry):
+    value = entry.get("targets")
+    if value is None:
+        value = []
+    if isinstance(value, str):
+        value = [value]
+    if not value:
+        name = entry.get("name")
+        if name:
+            suffix = Path(name).suffix.lower()
+            if suffix in SIGNATURE_SUFFIXES:
+                value = [name[: -len(suffix)]]
+    return [str(item) for item in value if str(item).strip()]
+
+
+def collect_directory_state(directory: Path):
+    json_files = []
+    signatures = {}
+    for path in directory.iterdir():
+        if path.name == "artifact_manifest.json" or not path.is_file():
+            continue
+        lower = path.suffix.lower()
+        if lower == ".json":
+            json_files.append(path)
+        elif lower in SIGNATURE_SUFFIXES:
+            base = path.name[: -len(lower)]
+            signatures.setdefault(base, []).append(path)
+    return json_files, signatures
+
+
+audit_dir = Path(os.environ["HYPERCARE_AUDIT_DIR"])
+manifest_path = audit_dir / "artifact_manifest.json"
+manifest_entries = []
+if manifest_path.is_file():
+    try:
+        parsed = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest_entries = normalise_manifest_entries(parsed.get("files", []))
+    except Exception as exc:  # noqa: BLE001 - logujemy wyjątek w podsumowaniu
+        manifest_entries = []
+        print(f"Nie udało się wczytać manifestu artefaktów: {exc}", file=sys.stderr)
+
+json_files, signature_files = collect_directory_state(audit_dir)
+
+
+def describe_signature_state():
+    rows = []
+    manifest_targets = manifest_signature_targets(manifest_entries)
+    manifest_sig_names = manifest_signature_names(manifest_entries)
+
+    for json_path in sorted(json_files, key=lambda p: p.name):
+        name = json_path.name
+        present_signatures = signature_files.get(name, [])
+        declared_signatures = manifest_targets.get(name, [])
+        present_names = {p.name for p in present_signatures}
+
+        status_parts = []
+        if present_signatures:
+            signature_list = ", ".join(f"`{p.name}`" for p in sorted(present_signatures))
+            status_parts.append(f"✅ {signature_list}")
+        else:
+            status_parts.append("⚠️ brak podpisu")
+
+        missing_from_fs = [sig for sig in declared_signatures if sig not in present_names]
+        if missing_from_fs:
+            missing_list = ", ".join(f"`{sig}`" for sig in missing_from_fs)
+            status_parts.append(f"⚠️ brak plików z manifestu: {missing_list}")
+
+        if present_signatures and not declared_signatures and manifest_sig_names:
+            status_parts.append("ℹ️ podpis nieopisany w manifeście")
+
+        rows.append((name, "; ".join(status_parts)))
+
+    # Wykryj osierocone podpisy
+    for base_name, paths in sorted(signature_files.items()):
+        if all(base_name != json_path.name for json_path in json_files):
+            orphan_list = ", ".join(f"`{p.name}`" for p in sorted(paths))
+            rows.append((f"(brak JSON) {base_name}", f"⚠️ osierocone: {orphan_list}"))
+
+    # Manifest może wskazywać pliki, które nie istnieją na dysku
+    declared_bases = set(manifest_targets)
+    missing_json_from_manifest = declared_bases.difference({p.name for p in json_files})
+    for base_name in sorted(missing_json_from_manifest):
+        declared_signatures = ", ".join(f"`{sig}`" for sig in manifest_targets.get(base_name, []))
+        rows.append((f"(brak JSON w FS) {base_name}", f"⚠️ manifest deklaruje podpisy: {declared_signatures}"))
+
+    return rows
+
+
+def extract_messages(value):
+    if value is None:
+        return [], None
+    if isinstance(value, (list, tuple)):
+        return [str(item) for item in value], None
+    return [], f"Nieobsługiwany format: {type(value).__name__}"
+
+
+def describe_components(value):
+    rows = []
+    note = None
+    if value is None:
+        return rows, note
+    if isinstance(value, dict):
+        for name in sorted(value):
+            component = value[name]
+            status = None
+            if isinstance(component, dict):
+                status = component.get("status")
+            elif isinstance(component, str):
+                status = component
+            rows.append((name, render_status(status)))
+    else:
+        note = f"Nieobsługiwany format komponentów: {type(value).__name__}"
+    return rows, note
+
+
+summary_path = None
+for candidate in sorted(audit_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True):
+    if candidate.name == "artifact_manifest.json":
+        continue
+    summary_path = candidate
+    break
+
+summary_data = None
+summary_text = None
+summary_error = None
+if summary_path:
+    try:
+        summary_text = summary_path.read_text(encoding="utf-8")
+        summary_data = json.loads(summary_text)
+    except Exception as exc:  # noqa: BLE001 - chcemy zapisać surowy JSON i informację o błędzie
+        summary_error = str(exc)
+        try:
+            summary_text = summary_path.read_text(encoding="utf-8")
+        except Exception as inner_exc:  # noqa: BLE001 - finalne ostrzeżenie
+            summary_text = None
+            summary_error = f"{summary_error}; dodatkowo nie udało się odczytać pliku: {inner_exc}"
+
+step_summary = Path(os.environ["GITHUB_STEP_SUMMARY"])
+with step_summary.open("a", encoding="utf-8") as handle:
+    handle.write("### Stage6 hypercare summary\n")
+    if summary_path:
+        handle.write(f"_Źródło raportu_: {summary_path.as_posix()}\n\n")
+        if summary_data and isinstance(summary_data, dict):
+            overall_status = render_status(summary_data.get("overall_status"))
+            handle.write(f"**Status ogólny:** {overall_status}\n\n")
+
+            component_rows, component_note = describe_components(summary_data.get("components"))
+            if component_rows:
+                handle.write("#### Status komponentów\n")
+                handle.write("| Komponent | Status |\n")
+                handle.write("| --- | --- |\n")
+                for component_name, status in component_rows:
+                    handle.write(f"| `{component_name}` | {status} |\n")
+                handle.write("\n")
+            if component_note:
+                handle.write(f"> ⚠️ {component_note}\n\n")
+
+            issues, issues_note = extract_messages(summary_data.get("issues"))
+            handle.write("#### Problemy\n")
+            if issues:
+                for item in issues:
+                    handle.write(f"- {item}\n")
+            else:
+                handle.write("- brak\n")
+            if issues_note:
+                handle.write(f"> ⚠️ {issues_note}\n")
+            handle.write("\n")
+
+            warnings, warnings_note = extract_messages(summary_data.get("warnings"))
+            handle.write("#### Ostrzeżenia\n")
+            if warnings:
+                for item in warnings:
+                    handle.write(f"- {item}\n")
+            else:
+                handle.write("- brak\n")
+            if warnings_note:
+                handle.write(f"> ⚠️ {warnings_note}\n")
+            handle.write("\n")
+        if summary_error:
+            handle.write(f"> ⚠️ Nie udało się zinterpretować raportu JSON: {summary_error}\n\n")
+
+        if summary_data is not None:
+            summary_dump = json.dumps(summary_data, ensure_ascii=False, indent=2)
+        else:
+            summary_dump = summary_text or "(brak danych JSON)"
+        handle.write("```json\n")
+        handle.write(summary_dump)
+        handle.write("\n```\n\n")
+    else:
+        handle.write("Brak plików JSON z raportem hypercare Stage6.\n\n")
+
+    handle.write("#### Zarchiwizowane artefakty\n")
+    if manifest_entries:
+        handle.write("| Plik | Typ | Cele podpisu | Rozmiar (B) | SHA-256 |\n")
+        handle.write("| --- | --- | --- | ---: | --- |\n")
+        for entry in manifest_entries:
+            name = entry.get("name", "n/d")
+            size_bytes = entry.get("size_bytes")
+            sha256 = entry.get("sha256")
+            size_fmt = "n/d" if size_bytes is None else f"{size_bytes:,}".replace(",", " ")
+            sha_fmt = "n/d" if not sha256 else f"`{sha256[:12]}…`"
+            kind_fmt = manifest_entry_kind(entry)
+            targets = manifest_entry_targets(entry)
+            targets_fmt = ", ".join(f"`{target}`" for target in targets) if targets else "–"
+            handle.write(
+                f"| `{name}` | `{kind_fmt}` | {targets_fmt} | {size_fmt} | {sha_fmt} |\n"
+            )
+    else:
+        handle.write("- brak artefaktów JSON/HMAC do wypisania\n")
+
+    signature_rows = describe_signature_state()
+    if signature_rows:
+        handle.write("\n#### Spójność podpisów\n")
+        handle.write("| Raport JSON | Status podpisów |\n")
+        handle.write("| --- | --- |\n")
+        for report_name, status in signature_rows:
+            handle.write(f"| `{report_name}` | {status} |\n")
+PY

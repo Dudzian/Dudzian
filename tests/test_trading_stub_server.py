@@ -155,6 +155,69 @@ def test_orders_risk_metrics_and_health(trading_modules) -> None:
         channel.close()
 
 
+def test_tradable_instruments_rpc(trading_modules) -> None:
+    trading_pb2, trading_pb2_grpc = trading_modules
+    dataset = build_default_dataset()
+
+    fallback = trading_pb2.TradableInstrumentMetadata(
+        instrument=trading_pb2.Instrument(
+            exchange="GENERIC",
+            symbol="BCH/USDT",
+            venue_symbol="BCHUSDT",
+            quote_currency="USDT",
+            base_currency="BCH",
+        ),
+        price_step=0.01,
+        amount_step=0.1,
+        min_notional=25.0,
+        min_amount=0.01,
+    )
+    dataset.set_tradable_instruments("*", [fallback])
+
+    specific = trading_pb2.TradableInstrumentMetadata(
+        instrument=trading_pb2.Instrument(
+            exchange="COINBASE",
+            symbol="SOL/USD",
+            venue_symbol="SOLUSD",
+            quote_currency="USD",
+            base_currency="SOL",
+        ),
+        price_step=0.01,
+        amount_step=0.001,
+        min_notional=1.0,
+        min_amount=0.01,
+    )
+    dataset.set_tradable_instruments("COINBASE", [specific])
+
+    with TradingStubServer(dataset, port=0) as server:
+        channel = grpc.insecure_channel(server.address)
+        grpc.channel_ready_future(channel).result(timeout=5)
+        market_stub = trading_pb2_grpc.MarketDataServiceStub(channel)
+
+        binance_response = market_stub.ListTradableInstruments(
+            trading_pb2.ListTradableInstrumentsRequest(exchange="BINANCE")
+        )
+        assert len(binance_response.instruments) >= 2
+        assert {
+            item.instrument.symbol for item in binance_response.instruments
+        } >= {"BTC/USDT", "ETH/USDT"}
+
+        coinbase_response = market_stub.ListTradableInstruments(
+            trading_pb2.ListTradableInstrumentsRequest(exchange="coinbase")
+        )
+        assert [item.instrument.symbol for item in coinbase_response.instruments] == [
+            "SOL/USD"
+        ]
+
+        fallback_response = market_stub.ListTradableInstruments(
+            trading_pb2.ListTradableInstrumentsRequest(exchange="UNKNOWN")
+        )
+        assert [item.instrument.symbol for item in fallback_response.instruments] == [
+            "BCH/USDT"
+        ]
+        channel.close()
+
+
 def test_yaml_loader_builds_dataset(tmp_path: Path, trading_modules) -> None:
     trading_pb2, _ = trading_modules
     cfg_path = tmp_path / "stub.yaml"
@@ -228,8 +291,24 @@ def test_yaml_loader_builds_dataset(tmp_path: Path, trading_modules) -> None:
             "git_commit": "abcdef1",
             "started_at": "2024-03-01T00:00:00Z",
         },
+        "tradable_instruments": [
+            {
+                "exchange": "KRAKEN",
+                "instrument": {
+                    "exchange": "KRAKEN",
+                    "symbol": "ADA/EUR",
+                    "venue_symbol": "ADAEUR",
+                    "quote_currency": "EUR",
+                    "base_currency": "ADA",
+                },
+                "price_step": 0.0001,
+                "amount_step": 1.0,
+                "min_notional": 10.0,
+                "min_amount": 5.0,
+            }
+        ],
     }
-    cfg_path.write_text(yaml.safe_dump(cfg))
+    cfg_path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
 
     dataset = load_dataset_from_yaml(cfg_path)
     key = next(iter(dataset.history.keys()))
@@ -238,6 +317,9 @@ def test_yaml_loader_builds_dataset(tmp_path: Path, trading_modules) -> None:
     assert dataset.stream_increments[key]
     assert dataset.metrics
     assert dataset.health.version == "stub-ci"
+    listings = dataset.list_tradable_instruments("KRAKEN")
+    assert len(listings) == 1
+    assert listings[0].instrument.venue_symbol == "ADAEUR"
 
 
 def test_multi_asset_dataset_and_performance_guard(trading_modules) -> None:

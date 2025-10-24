@@ -262,10 +262,10 @@ class KeyRotationConfig:
 @dataclass(slots=True)
 class PortfolioGovernorScoringWeights:
     """Wagi komponentów scoringu PortfolioGovernora."""
-    alpha: float = 1.0
-    cost: float = 1.0
-    slo: float = 1.0
-    risk: float = 0.5
+    alpha: float = 0.9
+    cost: float = 1.3
+    slo: float = 1.2
+    risk: float = 0.8
 
 
 @dataclass(slots=True)
@@ -284,16 +284,16 @@ class PortfolioGovernorStrategyConfig:
 class PortfolioGovernorConfig:
     """Ustawienia PortfolioGovernora sterującego alokacją między strategiami (Stage5)."""
     enabled: bool = False
-    rebalance_interval_minutes: float = 15.0
-    smoothing: float = 0.5
+    rebalance_interval_minutes: float = 20.0
+    smoothing: float = 0.55
     scoring: PortfolioGovernorScoringWeights = field(default_factory=PortfolioGovernorScoringWeights)
     strategies: Mapping[str, PortfolioGovernorStrategyConfig] = field(default_factory=dict)
-    default_baseline_weight: float = 0.25
-    default_min_weight: float = 0.05
+    default_baseline_weight: float = 0.28
+    default_min_weight: float = 0.08
     default_max_weight: float = 0.5
     require_complete_metrics: bool = True
-    min_score_threshold: float = 0.0
-    default_cost_bps: float = 0.0
+    min_score_threshold: float = 0.08
+    default_cost_bps: float = 5.0
     max_signal_floor: int = 1
 
 
@@ -320,7 +320,7 @@ class MarketIntelConfig:
     manifest_path: str | None = None
     sqlite: MarketIntelSqliteConfig | None = None
     required_symbols: Sequence[str] = field(default_factory=tuple)
-    default_weight: float = 1.0
+    default_weight: float = 1.15
 
 
 @dataclass(slots=True)
@@ -344,14 +344,14 @@ class StressLabShockConfig:
 @dataclass(slots=True)
 class StressLabThresholdsConfig:
     """Progi oceny scenariuszy Stress Lab."""
-    max_liquidity_loss_pct: float = 0.65
+    max_liquidity_loss_pct: float = 0.55
     max_spread_increase_bps: float = 45.0
-    max_volatility_increase_pct: float = 0.85
-    max_sentiment_drawdown: float = 0.55
-    max_funding_change_bps: float = 30.0
-    max_latency_spike_ms: float = 160.0
-    max_blackout_minutes: float = 45.0
-    max_dispersion_bps: float = 55.0
+    max_volatility_increase_pct: float = 0.8
+    max_sentiment_drawdown: float = 0.5
+    max_funding_change_bps: float = 25.0
+    max_latency_spike_ms: float = 150.0
+    max_blackout_minutes: float = 40.0
+    max_dispersion_bps: float = 50.0
 
 
 @dataclass(slots=True)

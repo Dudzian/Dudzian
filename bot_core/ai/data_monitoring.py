@@ -20,13 +20,7 @@ __all__ = [
     "ComplianceSignOffError",
     "collect_pending_compliance_sign_offs",
     "normalize_compliance_sign_off_roles",
-    "normalize_sign_off_status",
-    "normalize_report_status",
-    "get_supported_sign_off_statuses",
     "filter_audit_reports_since",
-    "filter_audit_reports_by_tags",
-    "filter_audit_reports_by_sign_off_status",
-    "filter_audit_reports_by_status",
     "DataCompletenessWatcher",
     "FeatureBoundsValidator",
     "export_data_quality_report",
@@ -413,27 +407,6 @@ def load_recent_drift_reports(
     return _load_recent_reports(subdir="drift", limit=limit, audit_root=audit_root)
 
 
-def _normalize_tags(values: Sequence[object] | None) -> set[str]:
-    normalized: set[str] = set()
-    for entry in values or ():
-        if isinstance(entry, str):
-            candidate = entry.strip().lower()
-            if candidate:
-                normalized.add(candidate)
-    return normalized
-
-
-def _extract_report_tags(report: Mapping[str, Any]) -> set[str]:
-    raw_tags = report.get("tags")
-    if isinstance(raw_tags, str):
-        values: Sequence[object] = (raw_tags,)
-    elif isinstance(raw_tags, Sequence) and not isinstance(raw_tags, (bytes, bytearray)):
-        values = raw_tags
-    else:
-        values = ()
-    return _normalize_tags(values)
-
-
 def filter_audit_reports_since(
     reports: Sequence[Mapping[str, Any]] | None,
     *,
@@ -452,107 +425,6 @@ def filter_audit_reports_since(
         timestamp = _parse_report_timestamp(report.get("timestamp"))
         if timestamp is None or timestamp >= cutoff:
             filtered.append(report)
-    return tuple(filtered)
-
-
-def filter_audit_reports_by_tags(
-    reports: Sequence[Mapping[str, Any]] | None,
-    *,
-    include: Sequence[str] | None = None,
-    exclude: Sequence[str] | None = None,
-) -> tuple[Mapping[str, Any], ...]:
-    """Filtruje raporty na podstawie zestawu tagów.
-
-    Argument ``include`` wymusza obecność przynajmniej jednego z podanych
-    tagów, natomiast ``exclude`` odrzuca raporty zawierające jakikolwiek z
-    wymienionych tagów.  Porównania są nieczułe na wielkość liter.
-    """
-
-    include_set = _normalize_tags(include)
-    exclude_set = _normalize_tags(exclude)
-
-    filtered: list[Mapping[str, Any]] = []
-    for report in reports or ():
-        if not isinstance(report, Mapping):
-            continue
-        tags = _extract_report_tags(report)
-        if include_set and not (tags & include_set):
-            continue
-        if exclude_set and (tags & exclude_set):
-            continue
-        filtered.append(report)
-    return tuple(filtered)
-
-
-def filter_audit_reports_by_sign_off_status(
-    reports: Sequence[Mapping[str, Any]] | None,
-    *,
-    include: Sequence[str] | None = None,
-    exclude: Sequence[str] | None = None,
-    roles: Sequence[str] | None = None,
-) -> tuple[Mapping[str, Any], ...]:
-    """Filtruje raporty na podstawie statusów podpisów compliance.
-
-    Argument ``include`` wymusza obecność przynajmniej jednego z podanych
-    statusów (po znormalizowaniu), natomiast ``exclude`` odrzuca raporty,
-    w których występuje dowolny z niedozwolonych statusów. Opcjonalny
-    parametr ``roles`` pozwala ograniczyć analizę statusów do wskazanych
-    ról podpisów.
-    """
-
-    include_set = {
-        status
-        for status in (normalize_sign_off_status(item) for item in (include or ()))
-        if status
-    }
-    exclude_set = {
-        status
-        for status in (normalize_sign_off_status(item) for item in (exclude or ()))
-        if status
-    }
-
-    filtered: list[Mapping[str, Any]] = []
-    for report in reports or ():
-        if not isinstance(report, Mapping):
-            continue
-        statuses = set(_extract_sign_off_statuses(report, roles=roles).values())
-        if include_set and not (statuses & include_set):
-            continue
-        if exclude_set and (statuses & exclude_set):
-            continue
-        filtered.append(report)
-    return tuple(filtered)
-
-
-def filter_audit_reports_by_status(
-    reports: Sequence[Mapping[str, Any]] | None,
-    *,
-    include: Sequence[str] | None = None,
-    exclude: Sequence[str] | None = None,
-) -> tuple[Mapping[str, Any], ...]:
-    """Filtruje raporty na podstawie ich głównego statusu (np. ``alert``)."""
-
-    include_set = {
-        status
-        for status in (normalize_report_status(item) for item in (include or ()))
-        if status
-    }
-    exclude_set = {
-        status
-        for status in (normalize_report_status(item) for item in (exclude or ()))
-        if status
-    }
-
-    filtered: list[Mapping[str, Any]] = []
-    for report in reports or ():
-        if not isinstance(report, Mapping):
-            continue
-        status = normalize_report_status(report.get("status"))
-        if include_set and (status is None or status not in include_set):
-            continue
-        if exclude_set and status in exclude_set:
-            continue
-        filtered.append(report)
     return tuple(filtered)
 
 

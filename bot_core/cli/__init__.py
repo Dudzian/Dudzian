@@ -17,15 +17,9 @@ from bot_core.ai.data_monitoring import (
     collect_pending_compliance_sign_offs,
     ensure_compliance_sign_offs,
     filter_audit_reports_since,
-    filter_audit_reports_by_tags,
-    filter_audit_reports_by_sign_off_status,
-    filter_audit_reports_by_status,
     load_recent_data_quality_reports,
     load_recent_drift_reports,
     normalize_compliance_sign_off_roles,
-    normalize_sign_off_status,
-    normalize_report_status,
-    get_supported_sign_off_statuses,
     summarize_data_quality_reports,
     summarize_drift_reports,
 )
@@ -437,60 +431,6 @@ def create_parser() -> argparse.ArgumentParser:
         ),
     )
     compliance.add_argument(
-        "--include-tag",
-        dest="include_tags",
-        action="append",
-        help=(
-            "Wymusza obecność co najmniej jednego z podanych tagów w raporcie ("
-            "podaj wielokrotnie lub rozdziel przecinkami)."
-        ),
-    )
-    compliance.add_argument(
-        "--exclude-tag",
-        dest="exclude_tags",
-        action="append",
-        help=(
-            "Pomija raporty zawierające którykolwiek z podanych tagów ("
-            "można powtarzać lub rozdzielać przecinkami)."
-        ),
-    )
-    compliance.add_argument(
-        "--include-status",
-        dest="include_statuses",
-        action="append",
-        help=(
-            "Zachowuje raporty z podpisami w co najmniej jednym ze wskazanych "
-            "statusów (np. pending, investigating)."
-        ),
-    )
-    compliance.add_argument(
-        "--exclude-status",
-        dest="exclude_statuses",
-        action="append",
-        help=(
-            "Odrzuca raporty zawierające podpisy w niedozwolonych statusach ("
-            "można podawać wielokrotnie lub rozdzielać przecinkami)."
-        ),
-    )
-    compliance.add_argument(
-        "--include-report-status",
-        dest="include_report_statuses",
-        action="append",
-        help=(
-            "Zachowuje raporty o wskazanym statusie (np. alert, warning). "
-            "Argument można podawać wielokrotnie lub rozdzielać przecinkami."
-        ),
-    )
-    compliance.add_argument(
-        "--exclude-report-status",
-        dest="exclude_report_statuses",
-        action="append",
-        help=(
-            "Pomija raporty o niedozwolonym statusie (np. ok). "
-            "Argument można podawać wielokrotnie lub rozdzielać przecinkami."
-        ),
-    )
-    compliance.add_argument(
         "--role",
         dest="roles",
         action="append",
@@ -674,64 +614,6 @@ def _parse_compliance_roles(arguments: Sequence[str] | None) -> tuple[str, ...] 
         return normalize_compliance_sign_off_roles(collected)
     except ValueError as exc:
         raise CLIUsageError(str(exc)) from exc
-
-
-def _parse_cli_tags(arguments: Sequence[str] | None) -> tuple[str, ...]:
-    if not arguments:
-        return ()
-
-    collected: list[str] = []
-    for argument in arguments:
-        if not argument:
-            continue
-        for part in re.split(r"[,\s]+", argument):
-            normalized = part.strip()
-            if normalized:
-                collected.append(normalized)
-    return tuple(collected)
-
-
-def _parse_cli_sign_off_statuses(arguments: Sequence[str] | None) -> tuple[str, ...]:
-    if not arguments:
-        return ()
-
-    supported = get_supported_sign_off_statuses()
-    collected: list[str] = []
-    for argument in arguments:
-        if not argument:
-            continue
-        for part in re.split(r"[,\s]+", argument):
-            normalized = normalize_sign_off_status(part)
-            if not normalized:
-                raise CLIUsageError(
-                    "Nieznany status podpisu compliance: {value}. Dozwolone wartości: {choices}".format(
-                        value=part or "",
-                        choices=", ".join(supported),
-                    )
-                )
-            collected.append(normalized)
-
-    # zachowujemy kolejność pierwszego wystąpienia
-    return tuple(dict.fromkeys(collected))
-
-
-def _parse_cli_report_statuses(arguments: Sequence[str] | None) -> tuple[str, ...]:
-    if not arguments:
-        return ()
-
-    collected: list[str] = []
-    for argument in arguments:
-        if not argument:
-            continue
-        for part in re.split(r"[,\s]+", argument):
-            normalized = normalize_report_status(part)
-            if normalized:
-                collected.append(normalized)
-
-    if not collected:
-        return ()
-
-    return tuple(dict.fromkeys(collected))
 
 
 def _resolve_since_cutoff(value: str, *, now: datetime | None = None) -> datetime:
@@ -1824,21 +1706,6 @@ def show_ai_compliance(args: argparse.Namespace) -> int:
     if since_option:
         since_cutoff = _resolve_since_cutoff(since_option)
 
-    include_tags = _parse_cli_tags(getattr(args, "include_tags", None))
-    exclude_tags = _parse_cli_tags(getattr(args, "exclude_tags", None))
-    include_statuses = _parse_cli_sign_off_statuses(
-        getattr(args, "include_statuses", None)
-    )
-    exclude_statuses = _parse_cli_sign_off_statuses(
-        getattr(args, "exclude_statuses", None)
-    )
-    include_report_statuses = _parse_cli_report_statuses(
-        getattr(args, "include_report_statuses", None)
-    )
-    exclude_report_statuses = _parse_cli_report_statuses(
-        getattr(args, "exclude_report_statuses", None)
-    )
-
     roles_param = _parse_compliance_roles(getattr(args, "roles", None))
     effective_roles = (
         roles_param
@@ -1859,38 +1726,6 @@ def show_ai_compliance(args: argparse.Namespace) -> int:
         drift_reports = load_recent_drift_reports(**load_kwargs)
     except Exception as exc:  # pragma: no cover - przekładamy błąd na CLIUsageError
         raise CLIUsageError(f"Nie udało się wczytać raportów audytu: {exc}") from exc
-
-    if include_tags or exclude_tags:
-        dq_reports = filter_audit_reports_by_tags(
-            dq_reports, include=include_tags, exclude=exclude_tags
-        )
-        drift_reports = filter_audit_reports_by_tags(
-            drift_reports, include=include_tags, exclude=exclude_tags
-        )
-
-    if include_report_statuses or exclude_report_statuses:
-        dq_reports = filter_audit_reports_by_status(
-            dq_reports, include=include_report_statuses, exclude=exclude_report_statuses
-        )
-        drift_reports = filter_audit_reports_by_status(
-            drift_reports,
-            include=include_report_statuses,
-            exclude=exclude_report_statuses,
-        )
-
-    if include_statuses or exclude_statuses:
-        dq_reports = filter_audit_reports_by_sign_off_status(
-            dq_reports,
-            include=include_statuses,
-            exclude=exclude_statuses,
-            roles=roles_param,
-        )
-        drift_reports = filter_audit_reports_by_sign_off_status(
-            drift_reports,
-            include=include_statuses,
-            exclude=exclude_statuses,
-            roles=roles_param,
-        )
 
     if since_cutoff is not None:
         dq_reports = filter_audit_reports_since(dq_reports, since=since_cutoff)
@@ -1941,18 +1776,6 @@ def show_ai_compliance(args: argparse.Namespace) -> int:
             payload["since"] = since_cutoff.replace(microsecond=0).isoformat().replace(
                 "+00:00", "Z"
             )
-        if include_tags:
-            payload["include_tags"] = list(include_tags)
-        if exclude_tags:
-            payload["exclude_tags"] = list(exclude_tags)
-        if include_report_statuses:
-            payload["include_report_statuses"] = list(include_report_statuses)
-        if exclude_report_statuses:
-            payload["exclude_report_statuses"] = list(exclude_report_statuses)
-        if include_statuses:
-            payload["include_statuses"] = list(include_statuses)
-        if exclude_statuses:
-            payload["exclude_statuses"] = list(exclude_statuses)
         json_kwargs: dict[str, object] = {"ensure_ascii": False}
         if output_format == "json-pretty":
             json_kwargs["indent"] = 2
@@ -1967,18 +1790,6 @@ def show_ai_compliance(args: argparse.Namespace) -> int:
             "Minimalny znacznik czasu: "
             + since_cutoff.replace(microsecond=0).isoformat().replace("+00:00", "Z")
         )
-    if include_tags:
-        print("Wymagane tagi: " + ", ".join(include_tags))
-    if exclude_tags:
-        print("Wykluczone tagi: " + ", ".join(exclude_tags))
-    if include_report_statuses:
-        print("Wymagane statusy raportów: " + ", ".join(include_report_statuses))
-    if exclude_report_statuses:
-        print("Wykluczone statusy raportów: " + ", ".join(exclude_report_statuses))
-    if include_statuses:
-        print("Wymagane statusy podpisów: " + ", ".join(include_statuses))
-    if exclude_statuses:
-        print("Wykluczone statusy podpisów: " + ", ".join(exclude_statuses))
     print("Wymagane role: " + ", ".join(effective_roles))
     print(f"Limit raportów: {limit}")
 

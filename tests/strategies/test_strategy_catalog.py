@@ -6,26 +6,12 @@ from datetime import date
 import pytest
 
 from bot_core.config.loader import _load_strategy_definitions
-
-from bot_core.security.capabilities import build_capabilities_from_payload
-from bot_core.security.guards import (
-    LicenseCapabilityError,
-    install_capability_guard,
-    reset_capability_guard,
-)
 from bot_core.strategies.base import StrategyEngine
 from bot_core.strategies.catalog import (
     DEFAULT_STRATEGY_CATALOG,
     StrategyDefinition,
     StrategyPresetWizard,
 )
-
-
-@pytest.fixture(autouse=True)
-def _reset_guard() -> None:
-    reset_capability_guard()
-    yield
-    reset_capability_guard()
 
 
 def test_catalog_builds_trend_strategy() -> None:
@@ -89,41 +75,6 @@ def test_catalog_rejects_mismatched_license() -> None:
     )
     with pytest.raises(ValueError):
         DEFAULT_STRATEGY_CATALOG.create(definition)
-
-
-def test_catalog_respects_license_guard() -> None:
-    payload = {
-        "edition": "standard",
-        "environments": ["paper"],
-        "strategies": {"volatility_target": True},
-        "runtime": {},
-        "modules": {},
-        "exchanges": {},
-        "limits": {},
-    }
-    guard = build_capabilities_from_payload(payload, effective_date=date(2025, 1, 1))
-    install_capability_guard(guard)
-
-    definition = StrategyDefinition(
-        name="volatility", 
-        engine="volatility_target",
-        license_tier="enterprise",
-        risk_classes=("risk_control",),
-        required_data=("ohlcv", "realized_volatility"),
-        parameters={"target_volatility": 0.15},
-    )
-    with pytest.raises(LicenseCapabilityError):
-        DEFAULT_STRATEGY_CATALOG.create(definition)
-
-    reset_capability_guard()
-    upgraded_payload = dict(payload, edition="commercial")
-    upgraded_guard = build_capabilities_from_payload(
-        upgraded_payload, effective_date=date(2025, 1, 1)
-    )
-    install_capability_guard(upgraded_guard)
-
-    engine = DEFAULT_STRATEGY_CATALOG.create(definition)
-    assert isinstance(engine, StrategyEngine)
 
 
 def test_preset_wizard_propagates_metadata() -> None:

@@ -11,6 +11,7 @@
 #include <QJsonObject>
 #include <QDir>
 #include <QFileSystemWatcher>
+#include <QHash>
 
 #include <memory>
 #include <optional>
@@ -140,6 +141,7 @@ public slots:
                                             int maxOverlayCount,
                                             int disableSecondaryWhenBelow);
     Q_INVOKABLE bool updateRiskRefresh(bool enabled, double intervalSeconds);
+    Q_INVOKABLE QVariantList listTradableInstruments(const QString& exchange);
     Q_INVOKABLE bool triggerRiskRefreshNow();
     Q_INVOKABLE bool updateRiskHistoryLimit(int maximumEntries);
     Q_INVOKABLE void clearRiskHistory();
@@ -164,6 +166,8 @@ public slots:
     void setRiskHistoryAutoExportLastPathForTesting(const QUrl& url);
     QString decisionLogPathForTesting() const { return m_decisionLogPath; }
     DecisionLogModel* decisionLogModelForTesting() { return &m_decisionLogModel; }
+    void setTradableInstrumentsForTesting(const QString& exchange,
+                                          const QVector<TradingClient::TradableInstrument>& items);
 
     // Test helpers
     void ingestFpsSampleForTesting(double fps);
@@ -322,6 +326,7 @@ private:
     QString                m_tradingAuthTokenFile;
     QString                m_tradingRbacRole;
     QStringList            m_tradingRbacScopes;
+    QHash<QString, QVector<TradingClient::TradableInstrument>> m_tradableInstrumentCache;
 
     TradingClient::InstrumentConfig m_instrument{
         QStringLiteral("BINANCE"),

@@ -154,9 +154,6 @@ Komenda ładuje ostatnie raporty `data_quality` i `drift`, wypisuje brakujące p
 
 - `--data-quality-category completeness` ogranicza ładowanie raportów `data_quality` do wskazanej kategorii (np. kompletności, zakresów, driftu cech).
 - `--since 48h` filtruje raporty starsze niż określony okres (akceptowane są skróty `Xs`, `Xm`, `Xh`, `Xd` oraz znaczniki ISO 8601, np. `2024-05-01T00:00Z`).
-- `--include-tag pipeline` wymaga obecności przynajmniej jednego z podanych tagów (możesz podawać opcję wielokrotnie lub rozdzielać tagi przecinkami), natomiast `--exclude-tag legacy` usuwa raporty z niedozwolonymi tagami.
-- `--include-report-status alert` filtruje tylko raporty o wskazanym statusie (np. `alert`, `warning`), a `--exclude-report-status ok` usuwa wpisy z niepożądanymi statusami.
-- `--include-status pending` filtruje tylko raporty, w których występuje wskazany status podpisu (np. pending, investigating), a `--exclude-status approved` usuwa wpisy z niepożądanymi statusami. Parametry współdziałają z `--role`, dzięki czemu możesz analizować statusy konkretnych zespołów.
 
 ### 2.6 Monitoring inference
 

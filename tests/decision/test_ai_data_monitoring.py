@@ -22,9 +22,6 @@ from bot_core.ai import (
     ensure_compliance_sign_offs,
     export_drift_alert_report,
     export_data_quality_report,
-    filter_audit_reports_by_tags,
-    filter_audit_reports_by_sign_off_status,
-    filter_audit_reports_by_status,
     filter_audit_reports_since,
     load_recent_data_quality_reports,
     load_recent_drift_reports,
@@ -562,103 +559,6 @@ def test_filter_audit_reports_since_filters_old_entries() -> None:
 def test_filter_audit_reports_since_requires_timezone() -> None:
     with pytest.raises(ValueError):
         filter_audit_reports_since((), since=datetime(2024, 1, 1))
-
-
-def test_filter_audit_reports_by_tags_filters_include_and_exclude() -> None:
-    reports = (
-        {"tags": ["pipeline", "nightly"], "category": "keep"},
-        {"tags": ["Legacy"], "category": "drop-exclude"},
-        {"tags": [], "category": "no-tags"},
-        {"category": "missing"},
-    )
-
-    filtered_include = filter_audit_reports_by_tags(reports, include=("pipeline",))
-    assert len(filtered_include) == 1
-    assert filtered_include[0]["category"] == "keep"
-
-    filtered_exclude = filter_audit_reports_by_tags(reports, exclude=("legacy",))
-    categories = {entry["category"] for entry in filtered_exclude}
-    assert "drop-exclude" not in categories
-    assert categories == {"keep", "no-tags", "missing"}
-
-    filtered_both = filter_audit_reports_by_tags(
-        reports, include=("pipeline",), exclude=("nightly",)
-    )
-    assert filtered_both == ()
-
-
-def test_normalize_report_status_handles_inputs() -> None:
-    assert normalize_report_status(" Alert ") == "alert"
-    assert normalize_report_status("ok") == "ok"
-    assert normalize_report_status(" ") is None
-    assert normalize_report_status(None) is None
-
-
-def test_filter_audit_reports_by_status_filters_values() -> None:
-    reports = (
-        {"status": "Alert", "category": "keep-include"},
-        {"status": "ok", "category": "drop-exclude"},
-        {"category": "no-status"},
-    )
-
-    filtered_include = filter_audit_reports_by_status(reports, include=("alert",))
-    assert len(filtered_include) == 1
-    assert filtered_include[0]["category"] == "keep-include"
-
-    filtered_exclude = filter_audit_reports_by_status(reports, exclude=("ok",))
-    categories = {entry.get("category") for entry in filtered_exclude}
-    assert "drop-exclude" not in categories
-    assert "keep-include" in categories
-
-    filtered_both = filter_audit_reports_by_status(
-        reports, include=("alert",), exclude=("alert",)
-    )
-    assert filtered_both == ()
-
-
-def test_filter_audit_reports_by_sign_off_status_supports_include_and_roles() -> None:
-    reports = (
-        {
-            "category": "keep",
-            "sign_off": {
-                "risk": {"status": "Pending"},
-                "compliance": {"status": "approved"},
-            },
-        },
-        {
-            "category": "drop-include",
-            "sign_off": {
-                "risk": {"status": "waived"},
-                "compliance": {"status": "approved"},
-            },
-        },
-        {
-            "category": "keep-role",
-            "sign_off": {
-                "risk": {"status": "approved"},
-                "compliance": {"status": "Investigating"},
-            },
-        },
-    )
-
-    filtered_include = filter_audit_reports_by_sign_off_status(
-        reports, include=("pending",)
-    )
-    assert len(filtered_include) == 1
-    assert filtered_include[0]["category"] == "keep"
-
-    filtered_exclude = filter_audit_reports_by_sign_off_status(
-        reports, exclude=("waived",)
-    )
-    categories = {entry["category"] for entry in filtered_exclude}
-    assert "drop-include" not in categories
-    assert categories == {"keep", "keep-role"}
-
-    filtered_roles = filter_audit_reports_by_sign_off_status(
-        reports, include=("investigating",), roles=("compliance",)
-    )
-    assert len(filtered_roles) == 1
-    assert filtered_roles[0]["category"] == "keep-role"
 
 
 def test_ensure_compliance_sign_offs_detects_pending(caplog: pytest.LogCaptureFixture) -> None:

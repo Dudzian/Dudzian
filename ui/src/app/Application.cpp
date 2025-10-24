@@ -2593,7 +2593,7 @@ bool Application::updateInstrument(const QString& exchange,
                                    const QString& baseCurrency,
                                    const QString& granularityIso8601) {
     TradingClient::InstrumentConfig config;
-    config.exchange = exchange.trimmed();
+    config.exchange = exchange.trimmed().toUpper();
     config.symbol = symbol.trimmed();
     config.venueSymbol = venueSymbol.trimmed();
     config.quoteCurrency = quoteCurrency.trimmed();
@@ -2605,6 +2605,23 @@ bool Application::updateInstrument(const QString& exchange,
         || config.granularityIso8601.isEmpty()) {
         qCWarning(lcAppMetrics) << "Odmowa aktualizacji instrumentu – wymagane pola są puste";
         return false;
+    }
+
+    const auto cached = m_tradableInstrumentCache.constFind(config.exchange);
+    if (cached != m_tradableInstrumentCache.constEnd() && !cached->isEmpty()) {
+        const auto match = std::find_if(cached->cbegin(), cached->cend(), [&](const TradingClient::TradableInstrument& entry) {
+            return entry.config.symbol.compare(config.symbol, Qt::CaseInsensitive) == 0
+                && entry.config.venueSymbol.compare(config.venueSymbol, Qt::CaseInsensitive) == 0;
+        });
+        if (match == cached->cend()) {
+            qCWarning(lcAppMetrics) << "Odmowa aktualizacji instrumentu – symbol" << config.symbol
+                                    << "nie występuje w liście giełdy" << config.exchange;
+            return false;
+        }
+        config.symbol = match->config.symbol;
+        config.venueSymbol = match->config.venueSymbol;
+        config.quoteCurrency = match->config.quoteCurrency;
+        config.baseCurrency = match->config.baseCurrency;
     }
 
     const bool changed = config.exchange != m_instrument.exchange
@@ -2689,6 +2706,45 @@ bool Application::updateRiskRefresh(bool enabled, double intervalSeconds)
     }
 
     return true;
+}
+
+QVariantList Application::listTradableInstruments(const QString& exchange)
+{
+    QVariantList result;
+    const QString normalized = exchange.trimmed().toUpper();
+    if (normalized.isEmpty()) {
+        return result;
+    }
+
+    const auto instruments = m_client.listTradableInstruments(normalized);
+    if (instruments.isEmpty()) {
+        m_tradableInstrumentCache.remove(normalized);
+        return result;
+    }
+
+    m_tradableInstrumentCache.insert(normalized, instruments);
+    result.reserve(instruments.size());
+    for (const auto& entry : instruments) {
+        QVariantMap map;
+        map.insert(QStringLiteral("exchange"), entry.config.exchange);
+        map.insert(QStringLiteral("symbol"), entry.config.symbol);
+        map.insert(QStringLiteral("venueSymbol"), entry.config.venueSymbol);
+        map.insert(QStringLiteral("quoteCurrency"), entry.config.quoteCurrency);
+        map.insert(QStringLiteral("baseCurrency"), entry.config.baseCurrency);
+        const QString label = entry.config.venueSymbol.isEmpty()
+            ? entry.config.symbol
+            : QStringLiteral("%1 (%2)").arg(entry.config.symbol, entry.config.venueSymbol);
+        map.insert(QStringLiteral("label"), label);
+        map.insert(QStringLiteral("priceStep"), entry.priceStep);
+        map.insert(QStringLiteral("amountStep"), entry.amountStep);
+        map.insert(QStringLiteral("minNotional"), entry.minNotional);
+        map.insert(QStringLiteral("minAmount"), entry.minAmount);
+        map.insert(QStringLiteral("maxAmount"), entry.maxAmount);
+        map.insert(QStringLiteral("minPrice"), entry.minPrice);
+        map.insert(QStringLiteral("maxPrice"), entry.maxPrice);
+        result.append(map);
+    }
+    return result;
 }
 
 bool Application::triggerRiskRefreshNow()
@@ -3213,6 +3269,12 @@ void Application::setRiskHistoryAutoExportLastPathForTesting(const QUrl& url)
 {
     m_lastRiskHistoryAutoExportPath = url;
     Q_EMIT riskHistoryLastAutoExportPathChanged();
+}
+
+void Application::setTradableInstrumentsForTesting(const QString& exchange,
+                                                   const QVector<TradingClient::TradableInstrument>& items)
+{
+    m_tradableInstrumentCache.insert(exchange.trimmed().toUpper(), items);
 }
 
 void Application::applyMetricsEnvironmentOverrides(const QCommandLineParser& parser,
