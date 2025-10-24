@@ -221,6 +221,13 @@ def test_regime_workflow_respects_license_guard() -> None:
     assert workflow.activation_history()[-1].blocked_reason == "license_blocked"
 
 
+def test_regime_workflow_star_import_exposes_activation_uptime_stats() -> None:
+    namespace: dict[str, object] = {}
+    exec("from bot_core.strategies.regime_workflow import *", namespace)
+
+    assert "ActivationUptimeStats" in namespace
+
+
 def test_regime_workflow_uses_fallback_when_regime_missing() -> None:
     workflow = _workflow([MarketRegime.DAILY])
     signing_key = b"license-key"

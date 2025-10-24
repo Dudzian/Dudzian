@@ -25,8 +25,6 @@ QtObject {
     property var schedulerHistory: []
     property bool schedulerHistoryInitialized: false
     property var presetHistorySnapshots: []
-    property bool workbenchBusy: false
-    property string workbenchError: ""
 
     function cloneValue(value) {
         try {
@@ -60,43 +58,14 @@ QtObject {
     }
 
     function syncCatalog() {
-        if (!workbenchController) {
-            catalogEngines = []
-            catalogDefinitions = []
-            catalogMetadata = {}
-            catalogBlockedDefinitions = {}
-            catalogRegimeTemplates = {}
-            catalogReady = false
-            workbenchError = ""
+        if (!workbenchController)
             return
-        }
         catalogEngines = cloneValue(workbenchController.catalogEngines || [])
         catalogDefinitions = cloneValue(workbenchController.catalogDefinitions || [])
         catalogMetadata = cloneValue(workbenchController.catalogMetadata || {})
         catalogBlockedDefinitions = cloneValue(workbenchController.catalogBlockedDefinitions || {})
         catalogRegimeTemplates = cloneValue(workbenchController.catalogRegimeTemplates || {})
-        if (workbenchController.ready !== undefined)
-            catalogReady = !!workbenchController.ready
-        else
-            catalogReady = catalogDefinitions.length > 0
-        syncError()
-    }
-
-    function syncBusy() {
-        if (!workbenchController) {
-            workbenchBusy = false
-            return
-        }
-        workbenchBusy = !!workbenchController.busy
-    }
-
-    function syncError() {
-        if (!workbenchController) {
-            workbenchError = ""
-            return
-        }
-        var errorValue = workbenchController.lastError
-        workbenchError = errorValue ? String(errorValue) : ""
+        catalogReady = catalogDefinitions.length > 0
     }
 
     function syncValidation(result) {
@@ -638,8 +607,6 @@ QtObject {
         syncCatalog()
         syncValidation()
         syncPresetHistory()
-        syncBusy()
-        syncError()
     }
     onRiskModelChanged: {
         riskConnections.target = riskModel
@@ -659,15 +626,6 @@ QtObject {
         syncCatalog()
         syncValidation()
         syncPresetHistory()
-        syncBusy()
-        syncError()
-    }
-
-    function clearWorkbenchError() {
-        if (workbenchController && workbenchController.clearLastError)
-            workbenchController.clearLastError()
-        else
-            workbenchError = ""
     }
 
     Connections {
@@ -695,9 +653,6 @@ QtObject {
         function onCatalogChanged() { root.syncCatalog() }
         function onLastValidationChanged() { root.syncValidation() }
         function onPresetHistoryChanged() { root.syncPresetHistory() }
-        function onReadyChanged() { root.syncCatalog() }
-        function onBusyChanged() { root.syncBusy() }
-        function onLastErrorChanged() { root.syncError() }
     }
 
     Connections {

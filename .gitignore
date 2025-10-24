@@ -16,3 +16,4 @@ bot_core/generated/*
 core/generated/*
 !core/generated/.gitkeep
 data/risk/*.parquet
+tests/utils/.libgl-cache/

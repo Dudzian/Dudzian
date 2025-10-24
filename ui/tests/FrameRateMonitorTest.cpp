@@ -3,11 +3,14 @@
 #include "utils/FrameRateMonitor.hpp"
 #include "utils/PerformanceGuard.hpp"
 
+#include <QtMath>
+
 class FrameRateMonitorTest : public QObject {
     Q_OBJECT
 private slots:
     void reducesMotionAfterLowFps();
     void recoversAfterHighFps();
+    void handles120HzProfiles();
 };
 
 void FrameRateMonitorTest::reducesMotionAfterLowFps() {
@@ -57,6 +60,27 @@ void FrameRateMonitorTest::recoversAfterHighFps() {
 
     QVERIFY(events.last() == false);
     QVERIFY(events.contains(false));
+}
+
+void FrameRateMonitorTest::handles120HzProfiles() {
+    FrameRateMonitor monitor;
+    PerformanceGuard guard;
+    guard.fpsTarget = 120;
+    guard.reduceMotionAfterSeconds = 1.0;
+    monitor.setPerformanceGuard(guard);
+
+    bool reduceSuggested = false;
+    QObject::connect(&monitor, &FrameRateMonitor::reduceMotionSuggested, [&reduceSuggested](bool enabled) {
+        if (enabled)
+            reduceSuggested = true;
+    });
+
+    for (int i = 0; i < 240; ++i) {
+        monitor.simulateFrameIntervalForTest(1.0 / 120.0);
+    }
+
+    QVERIFY(!reduceSuggested);
+    QVERIFY(qAbs(monitor.lastFps() - 120.0) < 0.5);
 }
 
 QTEST_MAIN(FrameRateMonitorTest)

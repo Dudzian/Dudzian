@@ -12,7 +12,6 @@ class StrategyWorkbenchController : public QObject
 {
     Q_OBJECT
     Q_PROPERTY(bool busy READ busy NOTIFY busyChanged)
-    Q_PROPERTY(bool ready READ ready NOTIFY readyChanged)
     Q_PROPERTY(QString lastError READ lastError NOTIFY lastErrorChanged)
     Q_PROPERTY(QVariantList catalogEngines READ catalogEngines NOTIFY catalogChanged)
     Q_PROPERTY(QVariantList catalogDefinitions READ catalogDefinitions NOTIFY catalogChanged)
@@ -32,7 +31,6 @@ public:
 
     [[nodiscard]] bool busy() const { return m_busy; }
     [[nodiscard]] QString lastError() const { return m_lastError; }
-    [[nodiscard]] bool ready() const { return m_ready; }
 
     [[nodiscard]] QVariantList catalogEngines() const { return m_catalogEngines; }
     [[nodiscard]] QVariantList catalogDefinitions() const { return m_catalogDefinitions; }
@@ -51,7 +49,6 @@ public:
 Q_SIGNALS:
     void busyChanged();
     void lastErrorChanged();
-    void readyChanged();
     void catalogChanged();
     void lastValidationChanged();
     void presetHistoryChanged();
@@ -63,18 +60,16 @@ private:
         QByteArray stdoutData;
     };
 
-    [[nodiscard]] bool ensureReady(QString* errorMessage = nullptr) const;
+    [[nodiscard]] bool ensureReady() const;
     BridgeResult invokeBridge(const QStringList& args, const QByteArray& stdinData = QByteArray()) const;
     bool parseCatalogPayload(const QByteArray& payload);
     void setLastError(const QString& message);
-    void setReady(bool ready);
     void updateWatcherPaths();
     void clearWatcherPaths();
     void handleWatchedPathChanged(const QString& path);
     void scheduleAutoRefresh();
     void handleDebouncedReload();
     void maybeTriggerInitialRefresh();
-    void invalidateWorkbenchData();
 
     QString m_configPath;
     QString m_pythonExecutable = QStringLiteral("python3");
@@ -83,7 +78,6 @@ private:
     bool m_busy = false;
     QString m_lastError;
     bool m_catalogInitialized = false;
-    bool m_ready = false;
 
     QVariantList m_catalogEngines;
     QVariantList m_catalogDefinitions;

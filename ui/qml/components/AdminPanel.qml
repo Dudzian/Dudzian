@@ -3,6 +3,7 @@ import QtQuick.Controls
 import QtQuick.Dialogs
 import QtQuick.Layouts
 import QtCore
+import "security"
 
 Drawer {
     id: adminPanel
@@ -46,6 +47,7 @@ Drawer {
     property string decisionLogStatusMessage: ""
     property color decisionLogStatusColor: palette.highlight
     property var tradableInstrumentList: []
+    property int regimeTimelineMaximumSnapshots: 720
 
     function updateRiskSchedule() {
         if (typeof appController === "undefined")
@@ -84,6 +86,7 @@ Drawer {
             riskHistoryLastAutoExportAt = autoExportAt && autoExportAt.isValid && autoExportAt.isValid() ? autoExportAt : null
             var lastPathUrl = appController.riskHistoryLastAutoExportPath
             riskHistoryLastAutoExportPath = lastPathUrl && lastPathUrl.toLocalFile ? lastPathUrl.toLocalFile() : ""
+            regimeTimelineMaximumSnapshots = appController.regimeTimelineMaximumSnapshots
         }
         if (typeof strategyController !== "undefined") {
             var decisionSnapshot = strategyController.decisionConfigSnapshot()
@@ -111,379 +114,6 @@ Drawer {
         }
         loadTradableInstruments()
         updateInstrumentSelection()
-
-        Tab {
-            title: qsTr("Wsparcie")
-
-            property string pendingPathTarget: ""
-
-            Flickable {
-                anchors.fill: parent
-                contentWidth: width
-                contentHeight: supportLayout.implicitHeight
-                clip: true
-
-                ColumnLayout {
-                    id: supportLayout
-                    width: parent.width
-                    spacing: 16
-                    padding: 16
-
-                    GroupBox {
-                        title: qsTr("Zakres pakietu")
-                        Layout.fillWidth: true
-
-                        ColumnLayout {
-                            spacing: 12
-
-                            Repeater {
-                                model: [
-                                    {
-                                        label: qsTr("Logi runtime"),
-                                        enabledProperty: "includeLogs",
-                                        pathProperty: "logsPath",
-                                        target: "logs"
-                                    },
-                                    {
-                                        label: qsTr("Raporty i eksporty"),
-                                        enabledProperty: "includeReports",
-                                        pathProperty: "reportsPath",
-                                        target: "reports"
-                                    },
-                                    {
-                                        label: qsTr("Licencje OEM"),
-                                        enabledProperty: "includeLicenses",
-                                        pathProperty: "licensesPath",
-                                        target: "licenses"
-                                    },
-                                    {
-                                        label: qsTr("Telemetria / metryki"),
-                                        enabledProperty: "includeMetrics",
-                                        pathProperty: "metricsPath",
-                                        target: "metrics"
-                                    },
-                                    {
-                                        label: qsTr("Artefakty audytu"),
-                                        enabledProperty: "includeAudit",
-                                        pathProperty: "auditPath",
-                                        target: "audit"
-                                    }
-                                ]
-
-                                delegate: RowLayout {
-                                    required property string label
-                                    required property string enabledProperty
-                                    required property string pathProperty
-                                    required property string target
-
-                                    Layout.fillWidth: true
-                                    spacing: 12
-
-                                    CheckBox {
-                                        text: label
-                                        checked: supportController && supportController[enabledProperty]
-                                        enabled: supportController && !supportController.busy
-                                        onToggled: {
-                                            if (!supportController)
-                                                return
-                                            supportController[enabledProperty] = checked
-                                        }
-                                    }
-
-                                    TextField {
-                                        Layout.fillWidth: true
-                                        readOnly: true
-                                        text: supportController ? supportController[pathProperty] : ""
-                                        placeholderText: qsTr("Ścieżka nieustawiona")
-                                        color: enabled ? palette.text : palette.mid
-                                    }
-
-                                    Button {
-                                        text: qsTr("Wybierz…")
-                                        enabled: supportController && !supportController.busy
-                                        onClicked: {
-                                            if (!supportController)
-                                                return
-                                            pendingPathTarget = target
-                                            const basePath = supportController[pathProperty]
-                                                    ? QUrl.fromLocalFile(supportController[pathProperty])
-                                                    : Qt.resolvedUrl(".")
-                                            supportFolderDialog.folder = basePath
-                                            supportFolderDialog.open()
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    GroupBox {
-                        title: qsTr("Eksport")
-                        Layout.fillWidth: true
-
-                        GridLayout {
-                            columns: 3
-                            columnSpacing: 12
-                            rowSpacing: 8
-                            Layout.fillWidth: true
-
-                            Label { text: qsTr("Format") }
-                            ComboBox {
-                                id: supportFormatCombo
-                                Layout.fillWidth: true
-                                model: ["tar.gz", "zip"]
-                                enabled: supportController && !supportController.busy
-                                onActivated: {
-                                    if (supportController)
-                                        supportController.format = model[index]
-                                }
-                                Component.onCompleted: {
-                                    if (supportController) {
-                                        const idx = model.indexOf(supportController.format)
-                                        currentIndex = idx >= 0 ? idx : 0
-                                    }
-                                }
-                                Binding {
-                                    target: supportFormatCombo
-                                    property: "currentIndex"
-                                    value: {
-                                        if (!supportController)
-                                            return 0
-                                        const idx = model.indexOf(supportController.format)
-                                        return idx >= 0 ? idx : 0
-                                    }
-                                    when: supportController && !supportFormatCombo.activeFocus
-                                }
-                            }
-                            Item {}
-
-                            Label { text: qsTr("Katalog wyjściowy") }
-                            TextField {
-                                Layout.fillWidth: true
-                                readOnly: true
-                                text: supportController ? supportController.outputDirectory : ""
-                                placeholderText: qsTr("Domyślnie var/support")
-                            }
-                            Button {
-                                text: qsTr("Wybierz…")
-                                enabled: supportController && !supportController.busy
-                                onClicked: {
-                                    pendingPathTarget = "output"
-                                    const dir = supportController && supportController.outputDirectory
-                                            ? QUrl.fromLocalFile(supportController.outputDirectory)
-                                            : Qt.resolvedUrl(".")
-                                    supportFolderDialog.folder = dir
-                                    supportFolderDialog.open()
-                                }
-                            }
-
-                            Label { text: qsTr("Bazowa nazwa pliku") }
-                            TextField {
-                                Layout.fillWidth: true
-                                enabled: supportController && !supportController.busy
-                                text: supportController ? supportController.defaultBasename : "support-bundle"
-                                onEditingFinished: {
-                                    if (supportController && text.length > 0)
-                                        supportController.defaultBasename = text.trim()
-                                }
-                            }
-                            Item {}
-
-                            Item { Layout.columnSpan: 3; Layout.fillWidth: true }
-                        }
-                    }
-
-                    GroupBox {
-                        title: qsTr("Status")
-                        Layout.fillWidth: true
-
-                        ColumnLayout {
-                            spacing: 8
-
-                            RowLayout {
-                                spacing: 12
-                                Label {
-                                    text: supportController && supportController.busy
-                                            ? qsTr("Trwa eksport pakietu wsparcia…")
-                                            : qsTr("Gotowe do eksportu")
-                                    font.bold: true
-                                }
-                                BusyIndicator {
-                                    running: supportController && supportController.busy
-                                    visible: running
-                                }
-                            }
-
-                            Label {
-                                visible: supportController && supportController.lastStatusMessage.length > 0
-                                text: supportController ? supportController.lastStatusMessage : ""
-                                color: Qt.rgba(0.3, 0.7, 0.4, 1)
-                                wrapMode: Text.WordWrap
-                            }
-
-                            Label {
-                                visible: supportController && supportController.lastErrorMessage.length > 0
-                                text: supportController ? supportController.lastErrorMessage : ""
-                                color: Qt.rgba(0.9, 0.4, 0.3, 1)
-                                wrapMode: Text.WordWrap
-                            }
-
-                            RowLayout {
-                                visible: supportController && supportController.lastBundlePath.length > 0
-                                spacing: 8
-
-                                Label { text: qsTr("Ostatni pakiet:") }
-                                TextField {
-                                    Layout.fillWidth: true
-                                    readOnly: true
-                                    text: supportController ? supportController.lastBundlePath : ""
-                                }
-                                Button {
-                                    text: qsTr("Otwórz")
-                                    onClicked: {
-                                        if (supportController && supportController.lastBundlePath.length > 0)
-                                            Qt.openUrlExternally(QUrl.fromLocalFile(supportController.lastBundlePath))
-                                    }
-                                }
-                            }
-
-                            RowLayout {
-                                spacing: 12
-
-                                Button {
-                                    text: qsTr("Eksportuj…")
-                                    enabled: supportController && !supportController.busy
-                                    onClicked: supportBundleDialog.open()
-                                }
-
-                                Button {
-                                    text: qsTr("Szybki eksport")
-                                    enabled: supportController && !supportController.busy
-                                    onClicked: {
-                                        if (supportController)
-                                            supportController.exportBundle()
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    GroupBox {
-                        title: qsTr("Ostatni manifest")
-                        Layout.fillWidth: true
-
-                        ColumnLayout {
-                            spacing: 6
-
-                            ListView {
-                                id: supportEntriesView
-                                Layout.fillWidth: true
-                                Layout.preferredHeight: Math.min(contentHeight, 240)
-                                clip: true
-                                model: supportController && supportController.lastResult
-                                       && supportController.lastResult.entries
-                                       ? supportController.lastResult.entries
-                                       : []
-                                delegate: Frame {
-                                    required property var modelData
-                                    Layout.fillWidth: true
-                                    padding: 8
-                                    background: Rectangle {
-                                        color: Qt.rgba(0.18, 0.24, 0.32, 0.4)
-                                        radius: 6
-                                    }
-
-                                    ColumnLayout {
-                                        anchors.fill: parent
-                                        spacing: 4
-
-                                        Label {
-                                            text: modelData.label || qsTr("nieznany zasób")
-                                            font.bold: true
-                                        }
-
-                                        Label {
-                                            text: modelData.source || ""
-                                            wrapMode: Text.WordWrap
-                                            color: palette.midlight
-                                        }
-
-                                        Label {
-                                            text: qsTr("Pliki: %1, rozmiar: %2 B").arg(modelData.file_count || 0)
-                                                      .arg(modelData.size_bytes || 0)
-                                        }
-
-                                        Label {
-                                            visible: modelData.exists === false
-                                            text: qsTr("Uwaga: ścieżka nie istnieje")
-                                            color: Qt.rgba(0.95, 0.45, 0.3, 1)
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            FolderDialog {
-                id: supportFolderDialog
-                title: qsTr("Wybierz katalog")
-                onAccepted: {
-                    if (!supportController)
-                        return
-                    const url = supportFolderDialog.selectedFolder
-                                 ? supportFolderDialog.selectedFolder
-                                 : (currentFolder || folder)
-                    if (!url)
-                        return
-                    const localPath = url.toLocalFile ? url.toLocalFile() : url.toString().replace("file://", "")
-                    switch (pendingPathTarget) {
-                    case "logs": supportController.logsPath = localPath; break
-                    case "reports": supportController.reportsPath = localPath; break
-                    case "licenses": supportController.licensesPath = localPath; break
-                    case "metrics": supportController.metricsPath = localPath; break
-                    case "audit": supportController.auditPath = localPath; break
-                    case "output": supportController.outputDirectory = localPath; break
-                    }
-                }
-            }
-
-            FileDialog {
-                id: supportBundleDialog
-                title: qsTr("Zapisz pakiet wsparcia")
-                fileMode: FileDialog.SaveFile
-                defaultSuffix: supportController && supportController.format === "zip" ? "zip" : "tar.gz"
-                nameFilters: [qsTr("Archiwa (*.tar.gz *.zip)"), qsTr("Wszystkie pliki (*)")]
-                onAccepted: {
-                    if (supportController)
-                        supportController.exportBundle(selectedFile)
-                }
-            }
-
-            FileDialog {
-                id: decisionLogFileDialog
-                title: qsTr("Wybierz plik decision logu")
-                fileMode: FileDialog.OpenFile
-                nameFilters: [qsTr("Logi JSONL (*.jsonl)"), qsTr("Wszystkie pliki (*)")]
-                onAccepted: {
-                    if (selectedFile)
-                        applyDecisionLogPath(selectedFile)
-                }
-            }
-
-            FolderDialog {
-                id: decisionLogFolderDialog
-                title: qsTr("Wybierz katalog decision logu")
-                onAccepted: {
-                    var url = decisionLogFolderDialog.selectedFolder
-                              ? decisionLogFolderDialog.selectedFolder
-                              : decisionLogFolderDialog.folder
-                    if (url)
-                        applyDecisionLogPath(url)
-                }
-            }
-        }
     }
 
     function refreshData() {
@@ -881,6 +511,70 @@ Drawer {
                                 from: 0
                                 to: 120
                                 onValueModified: guardForm.disableSecondaryWhenBelow = value
+                            }
+                        }
+                    }
+
+                    GroupBox {
+                        title: qsTr("Strumień reżimu rynku")
+                        Layout.fillWidth: true
+
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            spacing: 8
+
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: 12
+
+                                Label {
+                                    text: qsTr("Limit próbek osi czasu")
+                                    Layout.alignment: Qt.AlignVCenter
+                                }
+
+                                SpinBox {
+                                    id: regimeLimitSpin
+                                    Layout.fillWidth: true
+                                    from: 0
+                                    to: 5000
+                                    stepSize: 10
+                                    editable: true
+                                    value: Math.max(0, regimeTimelineMaximumSnapshots)
+                                    textFromValue: function(value, locale) {
+                                        if (value === 0)
+                                            return qsTr("0 (bez limitu)")
+                                        return Qt.formatLocaleNumber(value, 'f', 0, locale)
+                                    }
+                                    valueFromText: function(text, locale) {
+                                        var trimmed = text.trim()
+                                        if (trimmed.length === 0)
+                                            return regimeLimitSpin.value
+                                        var normalized = trimmed.replace(/\s+\(.+\)$/, "")
+                                        var parsed = Number.fromLocaleString(locale, normalized)
+                                        if (isNaN(parsed))
+                                            parsed = parseInt(normalized)
+                                        if (isNaN(parsed))
+                                            return regimeLimitSpin.value
+                                        return Math.max(from, Math.min(to, Math.round(parsed)))
+                                    }
+                                    onValueModified: regimeTimelineMaximumSnapshots = value
+                                    Binding {
+                                        target: regimeLimitSpin
+                                        property: "value"
+                                        value: Math.max(0, regimeTimelineMaximumSnapshots)
+                                        when: !regimeLimitSpin.activeFocus
+                                    }
+                                }
+                            }
+
+                            Label {
+                                Layout.fillWidth: true
+                                wrapMode: Text.WordWrap
+                                color: palette.mid
+                                text: regimeTimelineMaximumSnapshots === 0
+                                      ? qsTr("0 oznacza brak limitu – wszystkie migawki reżimu zostaną zachowane.")
+                                      : qsTr("Widoki zachowają maksymalnie %1 najnowszych migawek reżimu.")
+                                            .arg(regimeTimelineMaximumSnapshots)
                             }
                         }
                     }
@@ -2035,7 +1729,9 @@ Drawer {
                                             guardForm.jankThresholdMs || 18,
                                             guardForm.maxOverlayCount || 3,
                                             guardForm.disableSecondaryWhenBelow || 0)
-                                if (okInstrument && okGuard) {
+                                const okRegime = appController.setRegimeTimelineMaximumSnapshots(
+                                                Math.max(0, regimeTimelineMaximumSnapshots))
+                                if (okInstrument && okGuard && okRegime) {
                                     statusMessage = qsTr("Zapisano konfigurację strategii")
                                     statusColor = Qt.rgba(0.3, 0.7, 0.4, 1)
                                 } else {
@@ -2564,6 +2260,339 @@ Drawer {
                             color: riskHistoryStatusColor
                             wrapMode: Text.WordWrap
                         }
+                    }
+                }
+
+                GroupBox {
+                    title: qsTr("Historia ryzyka")
+                    Layout.fillWidth: true
+
+                    ColumnLayout {
+                        anchors.fill: parent
+                        spacing: 10
+
+                        Label {
+                            text: qsTr("Limit przechowywanych próbek")
+                        }
+
+                        SpinBox {
+                            id: historyLimitSpin
+                            from: 1
+                            to: 500
+                            stepSize: 1
+                            editable: true
+                            Layout.fillWidth: true
+                            valueFromText: function(text, locale) {
+                                var number = Number.fromLocaleString(locale, text)
+                                if (isNaN(number))
+                                    number = parseFloat(text)
+                                if (isNaN(number))
+                                    return value
+                                return Math.max(from, Math.min(to, Math.round(number)))
+                            }
+                            textFromValue: function(value, locale) {
+                                return Qt.formatLocaleNumber(value, 'f', 0, locale)
+                            }
+                            onValueModified: {
+                                if (typeof appController === "undefined")
+                                    return
+                                const ok = appController.updateRiskHistoryLimit(value)
+                                if (ok) {
+                                    riskHistoryStatusMessage = qsTr("Ustawiono limit historii na %1 próbek").arg(value)
+                                    riskHistoryStatusColor = Qt.rgba(0.3, 0.7, 0.4, 1)
+                                } else {
+                                    riskHistoryStatusMessage = qsTr("Nie udało się ustawić limitu historii ryzyka")
+                                    riskHistoryStatusColor = Qt.rgba(0.9, 0.4, 0.3, 1)
+                                    if (riskHistoryModel)
+                                        historyLimitSpin.value = riskHistoryModel.maximumEntries
+                                }
+                            }
+                            Binding {
+                                target: historyLimitSpin
+                                property: "value"
+                                value: riskHistoryModel ? riskHistoryModel.maximumEntries : 50
+                                when: !historyLimitSpin.activeFocus
+                            }
+                        }
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 12
+
+                            Button {
+                                text: qsTr("Wyczyść historię")
+                                onClicked: {
+                                    if (typeof appController === "undefined")
+                                        return
+                                    appController.clearRiskHistory()
+                                    riskHistoryStatusMessage = qsTr("Wyczyszczono zapisane próbki ryzyka")
+                                    riskHistoryStatusColor = Qt.rgba(0.9, 0.55, 0.25, 1)
+                                }
+                            }
+
+                            Button {
+                                text: qsTr("Eksportuj do CSV…")
+                                enabled: riskHistoryModel && riskHistoryModel.hasSamples
+                                onClicked: historyExportDialog.open()
+                            }
+
+                            Item { Layout.fillWidth: true }
+
+                            Label {
+                                text: riskHistoryModel && riskHistoryModel.hasSamples
+                                      ? qsTr("Zapisanych próbek: %1").arg(riskHistoryModel.entryCount)
+                                      : qsTr("Brak zapisanych próbek")
+                                color: palette.midlight
+                            }
+                        }
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 12
+
+                            CheckBox {
+                                id: exportLimitCheckbox
+                                text: qsTr("Eksportuj tylko ostatnie")
+                                checked: riskHistoryExportLimitEnabled
+                                enabled: riskHistoryModel && riskHistoryModel.hasSamples
+                                onToggled: {
+                                    riskHistoryExportLimitEnabled = checked
+                                    if (typeof appController !== "undefined")
+                                        appController.setRiskHistoryExportLimitEnabled(checked)
+                                }
+                            }
+
+                            SpinBox {
+                                id: exportLimitSpin
+                                from: 1
+                                to: riskHistoryModel && riskHistoryModel.hasSamples
+                                        ? Math.max(riskHistoryModel.entryCount, 1)
+                                        : Math.max(riskHistoryExportLimitValue, 1)
+                                stepSize: 1
+                                enabled: exportLimitCheckbox.checked && riskHistoryModel && riskHistoryModel.hasSamples
+                                Layout.preferredWidth: 120
+                                onValueModified: {
+                                    var normalized = Math.max(1, Math.round(value))
+                                    if (value !== normalized)
+                                        value = normalized
+                                    riskHistoryExportLimitValue = normalized
+                                    if (typeof appController !== "undefined")
+                                        appController.setRiskHistoryExportLimitValue(normalized)
+                                }
+                                Component.onCompleted: value = Math.max(1, riskHistoryExportLimitValue)
+                            }
+
+                            Label {
+                                text: qsTr("próbek")
+                                visible: exportLimitCheckbox.checked
+                            }
+
+                            Item { Layout.fillWidth: true }
+
+                            data: [
+                                Binding {
+                                    target: exportLimitSpin
+                                    property: "value"
+                                    value: Math.max(1, Math.min(riskHistoryExportLimitValue, exportLimitSpin.to))
+                                    when: !exportLimitSpin.activeFocus
+                                }
+                            ]
+                        }
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 12
+
+                            CheckBox {
+                                id: autoExportCheckbox
+                                text: qsTr("Automatyczny eksport")
+                                checked: riskHistoryAutoExportEnabled
+                                enabled: typeof appController !== "undefined"
+                                onToggled: {
+                                    riskHistoryAutoExportEnabled = checked
+                                    if (typeof appController !== "undefined")
+                                        appController.setRiskHistoryAutoExportEnabled(checked)
+                                    riskHistoryStatusMessage = checked
+                                            ? qsTr("Automatyczny eksport historii ryzyka włączony")
+                                            : qsTr("Automatyczny eksport historii ryzyka wyłączony")
+                                    riskHistoryStatusColor = checked
+                                            ? Qt.rgba(0.3, 0.7, 0.4, 1)
+                                            : Qt.rgba(0.9, 0.55, 0.25, 1)
+                                }
+                            }
+
+                            Label {
+                                text: qsTr("co")
+                                visible: autoExportCheckbox.checked
+                            }
+
+                            SpinBox {
+                                id: autoExportIntervalSpin
+                                from: 1
+                                to: 1440
+                                stepSize: 1
+                                enabled: autoExportCheckbox.checked
+                                Layout.preferredWidth: 120
+                                value: Math.max(1, riskHistoryAutoExportIntervalMinutes)
+                                valueFromText: function(text, locale) {
+                                    var number = Number.fromLocaleString(locale, text)
+                                    if (isNaN(number))
+                                        number = parseFloat(text)
+                                    if (isNaN(number))
+                                        return value
+                                    return Math.max(from, Math.min(to, Math.round(number)))
+                                }
+                                textFromValue: function(value, locale) {
+                                    return Qt.formatLocaleNumber(value, 'f', 0, locale)
+                                }
+                                onValueModified: {
+                                    var normalized = Math.max(1, Math.round(value))
+                                    if (normalized !== value)
+                                        value = normalized
+                                    riskHistoryAutoExportIntervalMinutes = normalized
+                                    if (typeof appController !== "undefined")
+                                        appController.setRiskHistoryAutoExportIntervalMinutes(normalized)
+                                }
+                                Binding {
+                                    target: autoExportIntervalSpin
+                                    property: "value"
+                                    value: Math.max(1, Math.min(riskHistoryAutoExportIntervalMinutes, autoExportIntervalSpin.to))
+                                    when: !autoExportIntervalSpin.activeFocus
+                                }
+                            }
+
+                            Label {
+                                text: qsTr("min")
+                                visible: autoExportCheckbox.checked
+                            }
+
+                            Item { Layout.fillWidth: true }
+                        }
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 12
+                            visible: autoExportCheckbox.checked
+
+                            Label {
+                                text: qsTr("Prefiks pliku")
+                                Layout.preferredWidth: 140
+                            }
+
+                            TextField {
+                                id: autoExportBasenameField
+                                Layout.fillWidth: true
+                                text: riskHistoryAutoExportBasename
+                                placeholderText: qsTr("np. risk-history")
+                                inputMethodHints: Qt.ImhPreferLowercase | Qt.ImhNoPredictiveText
+                                enabled: autoExportCheckbox.checked
+                                onEditingFinished: {
+                                    var requested = text
+                                    if (typeof appController !== "undefined")
+                                        appController.setRiskHistoryAutoExportBasename(requested)
+                                    riskHistoryAutoExportBasename = appController
+                                            ? appController.riskHistoryAutoExportBasename
+                                            : riskHistoryAutoExportBasename
+                                    if (text !== riskHistoryAutoExportBasename)
+                                        text = riskHistoryAutoExportBasename
+                                }
+                                Binding {
+                                    target: autoExportBasenameField
+                                    property: "text"
+                                    value: riskHistoryAutoExportBasename
+                                    when: !autoExportBasenameField.activeFocus
+                                }
+                            }
+                        }
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 12
+                            visible: autoExportCheckbox.checked
+
+                            CheckBox {
+                                id: autoExportLocalTimeCheckbox
+                                text: qsTr("Użyj czasu lokalnego w nazwach plików")
+                                checked: riskHistoryAutoExportUseLocalTime
+                                enabled: typeof appController !== "undefined"
+                                onToggled: {
+                                    riskHistoryAutoExportUseLocalTime = checked
+                                    if (typeof appController !== "undefined")
+                                        appController.setRiskHistoryAutoExportUseLocalTime(checked)
+                                    riskHistoryStatusMessage = checked
+                                            ? qsTr("Autoeksport będzie używał czasu lokalnego i znacznika strefy w nazwach plików")
+                                            : qsTr("Autoeksport będzie używał znaczników czasu UTC w nazwach plików")
+                                    riskHistoryStatusColor = Qt.rgba(0.3, 0.7, 0.4, 1)
+                                }
+                            }
+
+                            Item { Layout.fillWidth: true }
+                        }
+
+                        Label {
+                            Layout.fillWidth: true
+                            visible: riskHistoryLastAutoExportAt && riskHistoryLastAutoExportAt.isValid && riskHistoryLastAutoExportAt.isValid()
+                            text: {
+                                if (!riskHistoryLastAutoExportAt || !riskHistoryLastAutoExportAt.isValid || !riskHistoryLastAutoExportAt.isValid())
+                                    return ""
+                                var timestampText = formatTimestamp(riskHistoryLastAutoExportAt)
+                                var pathText = riskHistoryLastAutoExportPath ? riskHistoryLastAutoExportPath : ""
+                                if (pathText.length > 0)
+                                    return qsTr("Ostatni auto-eksport: %1\nPlik: %2").arg(timestampText).arg(pathText)
+                                return qsTr("Ostatni auto-eksport: %1").arg(timestampText)
+                            }
+                            color: palette.midlight
+                            wrapMode: Text.WordWrap
+                        }
+
+                        FileDialog {
+                            id: historyExportDialog
+                            title: qsTr("Zapisz historię ryzyka jako CSV")
+                            fileMode: FileDialog.SaveFile
+                            defaultSuffix: "csv"
+                            folder: riskHistoryExportLastDirectory.length > 0
+                                    ? riskHistoryExportLastDirectory
+                                    : defaultExportFolder()
+                            nameFilters: [qsTr("Pliki CSV (*.csv)"), qsTr("Wszystkie pliki (*)")]
+                            onAccepted: {
+                                if (typeof appController === "undefined")
+                                    return
+                                const requestedLimit = exportLimitCheckbox.checked
+                                        ? Math.max(1, Math.round(exportLimitSpin.value))
+                                        : -1
+                                const ok = appController.exportRiskHistoryToCsv(selectedFile, requestedLimit)
+                                if (ok) {
+                                    var folderUrl = historyExportDialog.currentFolder || historyExportDialog.folder
+                                    if (folderUrl && folderUrl.length > 0) {
+                                        riskHistoryExportLastDirectory = folderUrl
+                                        appController.setRiskHistoryExportLastDirectory(folderUrl)
+                                    }
+                                    if (exportLimitCheckbox.checked && riskHistoryModel) {
+                                        const exported = Math.min(requestedLimit, riskHistoryModel.entryCount)
+                                        riskHistoryStatusMessage = qsTr("Wyeksportowano %1 najnowszych próbek ryzyka do %2")
+                                                                     .arg(exported)
+                                                                     .arg(selectedFile.toString())
+                                    } else {
+                                        riskHistoryStatusMessage = qsTr("Wyeksportowano historię ryzyka do %1")
+                                                                       .arg(selectedFile.toString())
+                                    }
+                                    riskHistoryStatusColor = Qt.rgba(0.3, 0.7, 0.4, 1)
+                                } else {
+                                    riskHistoryStatusMessage = qsTr("Nie udało się wyeksportować historii ryzyka")
+                                    riskHistoryStatusColor = Qt.rgba(0.9, 0.4, 0.3, 1)
+                                }
+                            }
+                        }
+                    }
+                }
+
+                        Label {
+                            Layout.fillWidth: true
+                            visible: riskHistoryStatusMessage.length > 0
+                            text: riskHistoryStatusMessage
+                            color: riskHistoryStatusColor
+                            wrapMode: Text.WordWrap
+                        }
 
                         Connections {
                             target: riskHistoryModel
@@ -2638,6 +2667,319 @@ Drawer {
                     Layout.fillHeight: true
                     model: riskModel
                     historyModel: riskHistoryModel
+                }
+            }
+        }
+
+        Tab {
+            title: qsTr("Wsparcie")
+
+            property string pendingPathTarget: ""
+
+            Flickable {
+                anchors.fill: parent
+                contentWidth: width
+                contentHeight: supportLayout.implicitHeight
+                clip: true
+
+                ColumnLayout {
+                    id: supportLayout
+                    width: parent.width
+                    spacing: 16
+                    padding: 16
+
+                    GroupBox {
+                        title: qsTr("Zakres pakietu")
+                        Layout.fillWidth: true
+
+                        ColumnLayout {
+                            spacing: 12
+
+                            Repeater {
+                                model: [
+                                    {
+                                        label: qsTr("Logi runtime"),
+                                        enabledProperty: "includeLogs",
+                                        pathProperty: "logsPath",
+                                        target: "logs"
+                                    },
+                                    {
+                                        label: qsTr("Raporty i eksporty"),
+                                        enabledProperty: "includeReports",
+                                        pathProperty: "reportsPath",
+                                        target: "reports"
+                                    },
+                                    {
+                                        label: qsTr("Licencje OEM"),
+                                        enabledProperty: "includeLicenses",
+                                        pathProperty: "licensesPath",
+                                        target: "licenses"
+                                    },
+                                    {
+                                        label: qsTr("Telemetria / metryki"),
+                                        enabledProperty: "includeMetrics",
+                                        pathProperty: "metricsPath",
+                                        target: "metrics"
+                                    },
+                                    {
+                                        label: qsTr("Artefakty audytu"),
+                                        enabledProperty: "includeAudit",
+                                        pathProperty: "auditPath",
+                                        target: "audit"
+                                    }
+                                ]
+
+                                delegate: RowLayout {
+                                    required property string label
+                                    required property string enabledProperty
+                                    required property string pathProperty
+                                    required property string target
+
+                                    Layout.fillWidth: true
+                                    spacing: 12
+
+                                    CheckBox {
+                                        text: label
+                                        checked: supportController && supportController[enabledProperty]
+                                        enabled: supportController && !supportController.busy
+                                        onToggled: {
+                                            if (!supportController)
+                                                return
+                                            supportController[enabledProperty] = checked
+                                        }
+                                    }
+
+                                    TextField {
+                                        Layout.fillWidth: true
+                                        readOnly: true
+                                        text: supportController ? supportController[pathProperty] : ""
+                                        placeholderText: qsTr("Ścieżka nieustawiona")
+                                        color: enabled ? palette.text : palette.mid
+                                    }
+
+                                    Button {
+                                        text: qsTr("Wybierz…")
+                                        enabled: supportController && !supportController.busy
+                                        onClicked: {
+                                            if (!supportController)
+                                                return
+                                            pendingPathTarget = target
+                                            const basePath = supportController[pathProperty]
+                                                    ? QUrl.fromLocalFile(supportController[pathProperty])
+                                                    : Qt.resolvedUrl(".")
+                                            supportFolderDialog.folder = basePath
+                                            supportFolderDialog.open()
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    GroupBox {
+                        title: qsTr("Eksport")
+                        Layout.fillWidth: true
+
+                        GridLayout {
+                            columns: 3
+                            columnSpacing: 12
+                            rowSpacing: 8
+                            Layout.fillWidth: true
+
+                            Label { text: qsTr("Format") }
+                            ComboBox {
+                                id: supportFormatCombo
+                                Layout.fillWidth: true
+                                model: ["tar.gz", "zip"]
+                                enabled: supportController && !supportController.busy
+                                onActivated: {
+                                    if (supportController)
+                                        supportController.format = model[index]
+                                }
+                                Component.onCompleted: {
+                                    if (supportController) {
+                                        const idx = model.indexOf(supportController.format)
+                                        currentIndex = idx >= 0 ? idx : 0
+                                    }
+                                }
+                                Binding {
+                                    target: supportFormatCombo
+                                    property: "currentIndex"
+                                    value: {
+                                        if (!supportController)
+                                            return 0
+                                        const idx = model.indexOf(supportController.format)
+                                        return idx >= 0 ? idx : 0
+                                    }
+                                    when: supportController && !supportFormatCombo.activeFocus
+                                }
+                            }
+                            Item {}
+
+                            Label { text: qsTr("Katalog wyjściowy") }
+                            TextField {
+                                Layout.fillWidth: true
+                                readOnly: true
+                                text: supportController ? supportController.outputDirectory : ""
+                                placeholderText: qsTr("Domyślnie var/support")
+                            }
+                            Button {
+                                text: qsTr("Wybierz…")
+                                enabled: supportController && !supportController.busy
+                                onClicked: {
+                                    pendingPathTarget = "output"
+                                    const dir = supportController && supportController.outputDirectory
+                                            ? QUrl.fromLocalFile(supportController.outputDirectory)
+                                            : Qt.resolvedUrl(".")
+                                    supportFolderDialog.folder = dir
+                                    supportFolderDialog.open()
+                                }
+                            }
+
+                            Label { text: qsTr("Bazowa nazwa pliku") }
+                            TextField {
+                                Layout.fillWidth: true
+                                enabled: supportController && !supportController.busy
+                                text: supportController ? supportController.defaultBasename : "support-bundle"
+                                onEditingFinished: {
+                                    if (supportController && text.length > 0)
+                                        supportController.defaultBasename = text.trim()
+                                }
+                            }
+                            Item {}
+
+                            Item { Layout.columnSpan: 3; Layout.fillWidth: true }
+                        }
+                    }
+
+                    GroupBox {
+                        title: qsTr("Status")
+                        Layout.fillWidth: true
+
+                        ColumnLayout {
+                            spacing: 8
+
+                            RowLayout {
+                                spacing: 12
+                                Label {
+                                    text: supportController && supportController.busy
+                                            ? qsTr("Trwa eksport pakietu wsparcia…")
+                                            : qsTr("Gotowe do eksportu")
+                                    font.bold: true
+                                }
+                                BusyIndicator {
+                                    running: supportController && supportController.busy
+                                    visible: running
+                                }
+                            }
+
+                            Label {
+                                visible: supportController && supportController.lastStatusMessage.length > 0
+                                text: supportController ? supportController.lastStatusMessage : ""
+                                color: Qt.rgba(0.3, 0.7, 0.4, 1)
+                                wrapMode: Text.WordWrap
+                            }
+
+                            Label {
+                                visible: supportController && supportController.lastErrorMessage.length > 0
+                                text: supportController ? supportController.lastErrorMessage : ""
+                                color: Qt.rgba(0.9, 0.4, 0.3, 1)
+                                wrapMode: Text.WordWrap
+                            }
+
+                            RowLayout {
+                                visible: supportController && supportController.lastBundlePath.length > 0
+                                spacing: 8
+
+                                Label { text: qsTr("Ostatni pakiet:") }
+                                TextField {
+                                    Layout.fillWidth: true
+                                    readOnly: true
+                                    text: supportController ? supportController.lastBundlePath : ""
+                                }
+                                Button {
+                                    text: qsTr("Otwórz")
+                                    onClicked: {
+                                        if (supportController && supportController.lastBundlePath.length > 0)
+                                            Qt.openUrlExternally(QUrl.fromLocalFile(supportController.lastBundlePath))
+                                    }
+                                }
+                            }
+
+                            RowLayout {
+                                spacing: 12
+
+                                Button {
+                                    text: qsTr("Eksportuj…")
+                                    enabled: supportController && !supportController.busy
+                                    onClicked: supportBundleDialog.open()
+                                }
+
+                                Button {
+                                    text: qsTr("Szybki eksport")
+                                    enabled: supportController && !supportController.busy
+                                    onClicked: {
+                                        if (supportController)
+                                            supportController.exportBundle()
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    GroupBox {
+                        title: qsTr("Ostatni manifest")
+                        Layout.fillWidth: true
+
+                        ColumnLayout {
+                            spacing: 6
+
+                            ListView {
+                                id: supportEntriesView
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: Math.min(contentHeight, 240)
+                                clip: true
+                                model: supportController && supportController.lastResult
+                                       && supportController.lastResult.entries
+                                       ? supportController.lastResult.entries
+                                       : []
+                                delegate: Frame {
+                                    required property var modelData
+                                    Layout.fillWidth: true
+                                    padding: 8
+                                    background: Rectangle {
+                                        color: Qt.rgba(0.18, 0.24, 0.32, 0.4)
+                                        radius: 6
+                                    }
+
+                                    ColumnLayout {
+                                        anchors.fill: parent
+                                        spacing: 4
+
+                                        Label {
+                                            text: modelData.path || qsTr("(brak ścieżki)")
+                                            font.family: "monospace"
+                                            wrapMode: Text.WordWrap
+                                        }
+
+                                        Label {
+                                            text: modelData.size_bytes
+                                                  ? qsTr("Rozmiar: %1 bajtów").arg(modelData.size_bytes)
+                                                  : qsTr("Rozmiar: n/d")
+                                            color: palette.mid
+                                        }
+
+                                        Label {
+                                            text: modelData.description && modelData.description.length > 0
+                                                  ? modelData.description
+                                                  : qsTr("Brak opisu")
+                                            wrapMode: Text.WordWrap
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -2800,90 +3142,40 @@ Drawer {
                     padding: 16
 
                     GroupBox {
-                        title: qsTr("Licencja OEM")
+                        title: qsTr("Aktywacja licencji OEM")
                         Layout.fillWidth: true
 
-                        GridLayout {
-                            columns: 2
-                            columnSpacing: 12
-                            rowSpacing: 8
-                            Layout.fillWidth: true
+                        LicenseActivationView {
+                            anchors.left: parent.left
+                            anchors.right: parent.right
+                            licenseControllerRef: licenseController
+                            activationControllerRef: activationController
+                            appControllerRef: appController
+                        }
+                    }
 
-                            Label { text: qsTr("Status") }
-                            Label { text: securityController && securityController.licenseInfo.status || qsTr("n/d") }
+                    GroupBox {
+                        title: qsTr("Fingerprint i HWID")
+                        Layout.fillWidth: true
 
-                            Label { text: qsTr("Edycja") }
-                            Label { text: securityController && securityController.licenseInfo.edition || qsTr("n/d") }
+                        HwidManagementView {
+                            anchors.left: parent.left
+                            anchors.right: parent.right
+                            activationControllerRef: activationController
+                            licenseControllerRef: licenseController
+                        }
+                    }
 
-                            Label { text: qsTr("Utrzymanie do") }
-                            Label { text: securityController && securityController.licenseInfo.maintenance_until || qsTr("n/d") }
+                    GroupBox {
+                        title: qsTr("Historia licencji")
+                        Layout.fillWidth: true
 
-                            Label { text: qsTr("Trial") }
-                            Label {
-                                text: securityController && securityController.licenseInfo.trial_active
-                                      ? (securityController.licenseInfo.trial_expires_at || qsTr("aktywny"))
-                                      : qsTr("nieaktywny")
-                            }
-
-                            Label { text: qsTr("Odbiorca") }
-                            Label {
-                                wrapMode: Text.WrapAnywhere
-                                text: {
-                                    if (!securityController || !securityController.licenseInfo.holder)
-                                        return qsTr("n/d");
-                                    const holder = securityController.licenseInfo.holder;
-                                    let base = holder.name || qsTr("n/d");
-                                    if (holder.email)
-                                        base += " (" + holder.email + ")";
-                                    return base;
-                                }
-                            }
-
-                            Label { text: qsTr("Seats") }
-                            Label {
-                                text: securityController && securityController.licenseInfo.seats !== undefined
-                                      ? securityController.licenseInfo.seats
-                                      : qsTr("n/d")
-                            }
-
-                            Label { text: qsTr("Fingerprint") }
-                            Label {
-                                text: securityController && securityController.licenseInfo.fingerprint || qsTr("n/d")
-                                wrapMode: Text.WrapAnywhere
-                            }
-
-                            Label { text: qsTr("Moduły") }
-                            Label {
-                                wrapMode: Text.WordWrap
-                                text: {
-                                    if (!securityController || !securityController.licenseInfo.modules)
-                                        return qsTr("brak");
-                                    const modules = securityController.licenseInfo.modules;
-                                    return modules.length > 0 ? modules.join(", ") : qsTr("brak");
-                                }
-                            }
-
-                            Label { text: qsTr("Środowiska") }
-                            Label {
-                                wrapMode: Text.WordWrap
-                                text: {
-                                    if (!securityController || !securityController.licenseInfo.environments)
-                                        return qsTr("brak");
-                                    const envs = securityController.licenseInfo.environments;
-                                    return envs.length > 0 ? envs.join(", ") : qsTr("brak");
-                                }
-                            }
-
-                            Label { text: qsTr("Runtime") }
-                            Label {
-                                wrapMode: Text.WordWrap
-                                text: {
-                                    if (!securityController || !securityController.licenseInfo.runtime)
-                                        return qsTr("brak");
-                                    const runtime = securityController.licenseInfo.runtime;
-                                    return runtime.length > 0 ? runtime.join(", ") : qsTr("brak");
-                                }
-                            }
+                        LicenseHistoryView {
+                            anchors.left: parent.left
+                            anchors.right: parent.right
+                            activationControllerRef: activationController
+                            appControllerRef: appController
+                            securityControllerRef: securityController
                         }
                     }
 
@@ -3014,6 +3306,7 @@ Drawer {
         target: appController
         function onInstrumentChanged() { adminPanel.syncForms() }
         function onPerformanceGuardChanged() { adminPanel.syncForms() }
+        function onRegimeTimelineMaximumSnapshotsChanged() { adminPanel.syncForms() }
         function onRiskRefreshScheduleChanged() { adminPanel.updateRiskSchedule() }
     }
 }
