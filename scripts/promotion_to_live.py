@@ -83,6 +83,7 @@ def build_promotion_report(
     *,
     config_path: str | Path,
     skip_license: bool = False,
+    backtest_summary_path: str | Path | None = None,
 ) -> Mapping[str, Any]:
     """Buduje raport synchronizacji przed uruchomieniem środowiska live."""
 
@@ -154,6 +155,26 @@ def build_promotion_report(
             "documents": documents,
         }
 
+    if backtest_summary_path:
+        summary_path = Path(backtest_summary_path)
+        report["backtest_summary_path"] = str(summary_path)
+        try:
+            payload = json.loads(summary_path.read_text(encoding="utf-8"))
+        except FileNotFoundError as exc:
+            raise FileNotFoundError(
+                f"Backtest summary '{summary_path}' not found"
+            ) from exc
+        guardrails = payload.get("guardrails") if isinstance(payload, Mapping) else None
+        if guardrails is not None:
+            report["backtest_guardrails"] = guardrails
+            if not bool(guardrails.get("allowed", False)):
+                reason = guardrails.get("reason") or "Risk guardrails rejected strategy"
+                raise RuntimeError(
+                    f"Strategia odrzucona przez risk guardrails: {reason}"
+                )
+        else:
+            report["backtest_guardrails"] = None
+
     return report
 
 
@@ -179,6 +200,10 @@ def _parse_args() -> argparse.Namespace:
         action="store_true",
         help="Pomiń walidację licencji (np. w środowisku CI bez aktywnej licencji)",
     )
+    parser.add_argument(
+        "--backtest-summary",
+        help="Ścieżka do raportu guardrails wygenerowanego przez backtest harness",
+    )
     return parser.parse_args()
 
 
@@ -188,6 +213,7 @@ def main() -> int:
         args.environment,
         config_path=args.config,
         skip_license=args.skip_license,
+        backtest_summary_path=args.backtest_summary,
     )
 
     json_kwargs = {"ensure_ascii": False}

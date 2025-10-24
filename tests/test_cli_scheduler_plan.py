@@ -1,70 +1,60 @@
 import copy
 from argparse import Namespace
-from pathlib import Path
 
 import pytest
 
-from bot_core.cli import show_strategy_catalog
+from bot_core.cli import show_scheduler_plan
 
 
 def _build_args(**overrides):
     defaults = {
+        "config": "config/core.yaml",
+        "scheduler": "demo",
         "output_format": "text",
-        "engines": [],
-        "capabilities": [],
-        "tags": [],
-        "config": None,
-        "scheduler": None,
-        "include_parameters": False,
+        "filter_tags": [],
+        "filter_strategies": [],
+        "include_definitions": True,
     }
     defaults.update(overrides)
     return Namespace(**defaults)
 
 
-def test_show_strategy_catalog_prints_engine_metadata(capfd) -> None:
-    args = _build_args()
-    assert show_strategy_catalog(args) == 0
-    captured = capfd.readouterr().out
-    assert "capability=" in captured
-    assert "license=" in captured
-    assert "risk_classes=[" in captured
-    assert "required_data=[" in captured
-
-
-def test_show_strategy_catalog_prints_definition_metadata(capfd) -> None:
-    config_path = Path("config/core.yaml")
-    args = _build_args(config=str(config_path))
-    assert show_strategy_catalog(args) == 0
-    captured = capfd.readouterr().out
-    assert "Definicje strategii:" in captured
-    assert "license=" in captured
-    assert "required_data=" in captured
-
-
-def test_show_strategy_catalog_reports_blocked_entries(
+def test_show_scheduler_plan_reports_blocked_entries(
     monkeypatch: pytest.MonkeyPatch, capfd
 ) -> None:
-    config_path = Path("config/core.yaml")
     plan = {
-        "config_path": str(config_path),
+        "config_path": "config/core.yaml",
         "scheduler": "demo",
+        "capital_policy": {"name": "demo"},
         "schedules": [
             {
-                "name": "trend-plan",
+                "name": "trend-run",
                 "strategy": "trend",
+                "risk_profile": "balanced",
+                "cadence_seconds": 60,
+                "max_drift_seconds": 15,
+                "max_signals": 3,
+                "interval": "5m",
+                "license_tier": "standard",
+                "risk_classes": ["directional"],
+                "required_data": ["ohlcv"],
+                "tags": ["trend"],
             }
         ],
         "strategies": [
             {
                 "name": "trend",
                 "engine": "daily_trend_momentum",
-                "tags": ["trend"],
                 "capability": "trend_d1",
                 "license_tier": "standard",
                 "risk_classes": ["directional"],
                 "required_data": ["ohlcv"],
+                "tags": ["trend"],
             }
         ],
+        "initial_suspensions": [],
+        "initial_signal_limits": {},
+        "signal_limits": {},
         "blocked_schedules": ["blocked-schedule"],
         "blocked_strategies": ["blocked-strategy"],
         "blocked_capabilities": {"blocked-strategy": "scalping"},
@@ -89,8 +79,8 @@ def test_show_strategy_catalog_reports_blocked_entries(
         lambda **kwargs: copy.deepcopy(plan),
     )
 
-    args = _build_args(config=str(config_path), scheduler="demo")
-    assert show_strategy_catalog(args) == 0
+    args = _build_args()
+    assert show_scheduler_plan(args) == 0
     captured = capfd.readouterr().out
     assert "Pominięte przez strażnika licencji:" in captured
     assert "blocked-schedule" in captured
