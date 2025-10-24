@@ -7,138 +7,10 @@
 #include <QLoggingCategory>
 #include <QProcess>
 #include <QStandardPaths>
-#include <QtGlobal>
 
 Q_LOGGING_CATEGORY(lcStrategyWorkbench, "bot.shell.strategy.workbench")
 
 namespace {
-QString expandHomeShortcut(const QString& path)
-{
-    if (path.isEmpty())
-        return path;
-
-    if (path == QStringLiteral("~"))
-        return QDir::homePath();
-
-    if (path.size() >= 2 && path.at(0) == QLatin1Char('~')
-        && (path.at(1) == QLatin1Char('/') || path.at(1) == QLatin1Char('\'))) {
-        const QString home = QDir::homePath();
-        if (home.isEmpty())
-            return path;
-        QDir homeDir(home);
-        return QDir::cleanPath(homeDir.filePath(path.mid(2)));
-    }
-
-    return path;
-}
-
-QString expandEnvironmentVariables(const QString& path)
-{
-    if (path.isEmpty())
-        return path;
-
-    QString result;
-    result.reserve(path.size());
-
-    auto appendEnvValue = [](const QString& name) {
-        if (name.isEmpty())
-            return QString();
-        const QByteArray encoded = name.toUtf8();
-        return QString::fromLocal8Bit(qgetenv(encoded.constData()));
-    };
-
-    auto isIdentifierStart = [](QChar ch) {
-        return ch.isLetter() || ch == QLatin1Char('_');
-    };
-
-    auto isIdentifierChar = [](QChar ch) {
-        return ch.isLetterOrNumber() || ch == QLatin1Char('_');
-    };
-
-    for (int index = 0; index < path.size();) {
-        const QChar current = path.at(index);
-        if (current == QLatin1Char('$')) {
-            if (index + 1 < path.size() && path.at(index + 1) == QLatin1Char('{')) {
-                const int closing = path.indexOf(QLatin1Char('}'), index + 2);
-                if (closing != -1) {
-                    const QString name = path.mid(index + 2, closing - (index + 2));
-                    result.append(appendEnvValue(name));
-                    index = closing + 1;
-                    continue;
-                }
-            }
-
-            int end = index + 1;
-            if (end < path.size() && isIdentifierStart(path.at(end))) {
-                ++end;
-                while (end < path.size() && isIdentifierChar(path.at(end)))
-                    ++end;
-                const QString name = path.mid(index + 1, end - (index + 1));
-                result.append(appendEnvValue(name));
-                index = end;
-                continue;
-            }
-
-            result.append(current);
-            ++index;
-            continue;
-        }
-
-        if (current == QLatin1Char('%')) {
-            const int closing = path.indexOf(QLatin1Char('%'), index + 1);
-            if (closing > index + 1) {
-                const QString name = path.mid(index + 1, closing - (index + 1));
-                result.append(appendEnvValue(name));
-                index = closing + 1;
-                continue;
-            }
-        }
-
-        result.append(current);
-        ++index;
-    }
-
-    return result;
-}
-
-QString normalizedFilePath(const QString& path)
-{
-    QString expanded = expandEnvironmentVariables(path);
-    expanded = expandHomeShortcut(expanded);
-    if (expanded.isEmpty())
-        return expanded;
-
-    if (QDir::isRelativePath(expanded)) {
-        QDir cwd(QDir::currentPath());
-        expanded = QDir::cleanPath(cwd.absoluteFilePath(expanded));
-    } else {
-        expanded = QDir::cleanPath(expanded);
-    }
-
-    return expanded;
-}
-
-QString normalizedExecutablePath(const QString& path)
-{
-    QString expanded = expandEnvironmentVariables(path);
-    expanded = expandHomeShortcut(expanded);
-    if (expanded.isEmpty())
-        return expanded;
-
-    const bool hasSeparator = expanded.contains(QLatin1Char('/')) || expanded.contains(QLatin1Char('\'))
-        || expanded.startsWith(QLatin1Char('.'));
-    if (hasSeparator) {
-        if (QDir::isRelativePath(expanded)) {
-            QDir cwd(QDir::currentPath());
-            expanded = QDir::cleanPath(cwd.absoluteFilePath(expanded));
-        } else {
-            expanded = QDir::cleanPath(expanded);
-        }
-    }
-
-    return expanded;
-}
-
 QVariantMap jsonToVariantMap(const QByteArray& payload, bool* ok)
 {
     if (ok)
@@ -187,11 +59,9 @@ StrategyWorkbenchController::~StrategyWorkbenchController() = default;
 void StrategyWorkbenchController::setConfigPath(const QString& path)
 {
     const QString trimmed = path.trimmed();
-    const QString normalized = normalizedFilePath(trimmed);
-    const QString effective = normalized.isEmpty() ? trimmed : normalized;
-    if (m_configPath == effective)
+    if (m_configPath == trimmed)
         return;
-    m_configPath = effective;
+    m_configPath = trimmed;
     m_catalogInitialized = false;
     updateWatcherPaths();
     maybeTriggerInitialRefresh();
@@ -203,13 +73,10 @@ void StrategyWorkbenchController::setPythonExecutable(const QString& executable)
     if (trimmed.isEmpty())
         return;
 
-    QString resolved = normalizedExecutablePath(trimmed);
-    if (resolved.isEmpty())
-        return;
-
-    const QFileInfo info(resolved);
+    QString resolved = trimmed;
+    const QFileInfo info(trimmed);
     if (!info.isAbsolute()) {
-        const QString candidate = QStandardPaths::findExecutable(resolved);
+        const QString candidate = QStandardPaths::findExecutable(trimmed);
         if (!candidate.isEmpty())
             resolved = candidate;
     }
@@ -226,11 +93,9 @@ void StrategyWorkbenchController::setPythonExecutable(const QString& executable)
 void StrategyWorkbenchController::setScriptPath(const QString& path)
 {
     const QString trimmed = path.trimmed();
-    const QString normalized = normalizedFilePath(trimmed);
-    const QString effective = normalized.isEmpty() ? trimmed : normalized;
-    if (m_scriptPath == effective)
+    if (m_scriptPath == trimmed)
         return;
-    m_scriptPath = effective;
+    m_scriptPath = trimmed;
     m_catalogInitialized = false;
     updateWatcherPaths();
     maybeTriggerInitialRefresh();
@@ -247,11 +112,8 @@ void StrategyWorkbenchController::clearLastError()
 bool StrategyWorkbenchController::refreshCatalog()
 {
     m_pendingRefresh = false;
-    QString readinessError;
-    if (!ensureReady(&readinessError)) {
-        setLastError(readinessError.isEmpty()
-                          ? tr("Mostek katalogu strategii nie jest poprawnie skonfigurowany.")
-                          : readinessError);
+    if (!ensureReady()) {
+        setLastError(tr("Mostek katalogu strategii nie jest poprawnie skonfigurowany."));
         return false;
     }
 
@@ -284,11 +146,8 @@ bool StrategyWorkbenchController::refreshCatalog()
 QVariantMap StrategyWorkbenchController::validatePreset(const QVariantMap& presetPayload)
 {
     QVariantMap result;
-    QString readinessError;
-    if (!ensureReady(&readinessError)) {
-        const QString message = readinessError.isEmpty()
-            ? tr("Mostek katalogu strategii nie jest poprawnie skonfigurowany.")
-            : readinessError;
+    if (!ensureReady()) {
+        const QString message = tr("Mostek katalogu strategii nie jest poprawnie skonfigurowany.");
         setLastError(message);
         result = makeErrorResult(message);
         m_lastValidation = result;
@@ -370,86 +229,16 @@ QVariantMap StrategyWorkbenchController::restorePreviousPreset()
     return result;
 }
 
-bool StrategyWorkbenchController::ensureReady(QString* errorMessage) const
+bool StrategyWorkbenchController::ensureReady() const
 {
-    auto setError = [errorMessage](const QString& message) {
-        if (errorMessage)
-            *errorMessage = message;
-    };
-
     if (m_configPath.isEmpty()) {
         qCWarning(lcStrategyWorkbench) << "Brak ścieżki pliku core.yaml";
-        setError(tr("Nie ustawiono ścieżki konfiguracji strategii."));
         return false;
     }
-
-    const QFileInfo configInfo(m_configPath);
-    if (!configInfo.exists() || !configInfo.isFile()) {
-        qCWarning(lcStrategyWorkbench) << "Plik core.yaml nie istnieje" << m_configPath;
-        setError(tr("Plik konfiguracji strategii nie istnieje: %1").arg(m_configPath));
-        return false;
-    }
-
-    if (!configInfo.isReadable()) {
-        qCWarning(lcStrategyWorkbench) << "Plik core.yaml nie posiada uprawnień do odczytu" << m_configPath;
-        setError(tr("Plik konfiguracji strategii nie posiada uprawnień do odczytu: %1").arg(m_configPath));
-        return false;
-    }
-
     if (m_scriptPath.isEmpty()) {
         qCWarning(lcStrategyWorkbench) << "Brak ścieżki do scripts/ui_config_bridge.py";
-        setError(tr("Nie ustawiono ścieżki mostka konfiguracji strategii."));
         return false;
     }
-
-    const QFileInfo scriptInfo(m_scriptPath);
-    if (!scriptInfo.exists() || !scriptInfo.isFile()) {
-        qCWarning(lcStrategyWorkbench) << "Plik mostka nie istnieje" << m_scriptPath;
-        setError(tr("Plik mostka konfiguracji strategii nie istnieje: %1").arg(m_scriptPath));
-        return false;
-    }
-
-    if (!scriptInfo.isReadable()) {
-        qCWarning(lcStrategyWorkbench) << "Plik mostka nie posiada uprawnień do odczytu" << m_scriptPath;
-        setError(tr("Plik mostka konfiguracji strategii nie posiada uprawnień do odczytu: %1").arg(m_scriptPath));
-        return false;
-    }
-
-    if (m_pythonExecutable.isEmpty()) {
-        qCWarning(lcStrategyWorkbench) << "Brak interpretera Pythona";
-        setError(tr("Nie ustawiono interpretera Pythona."));
-        return false;
-    }
-
-    const QFileInfo pythonInfo(m_pythonExecutable);
-    if (pythonInfo.isAbsolute()) {
-        if (!pythonInfo.exists() || !pythonInfo.isFile()) {
-            qCWarning(lcStrategyWorkbench) << "Interpreter Pythona nie istnieje" << m_pythonExecutable;
-            setError(tr("Interpreter Pythona nie jest dostępny: %1").arg(m_pythonExecutable));
-            return false;
-        }
-        if (!pythonInfo.isReadable()) {
-            qCWarning(lcStrategyWorkbench) << "Interpreter Pythona nie posiada uprawnień do odczytu"
-                                           << m_pythonExecutable;
-            setError(tr("Interpreter Pythona nie posiada uprawnień do odczytu: %1").arg(m_pythonExecutable));
-            return false;
-        }
-        if (!(pythonInfo.isExecutable()
-              || pythonInfo.suffix().compare(QStringLiteral("exe"), Qt::CaseInsensitive) == 0)) {
-            qCWarning(lcStrategyWorkbench) << "Interpreter Pythona nie jest wykonywalny" << m_pythonExecutable;
-            setError(tr("Interpreter Pythona nie posiada uprawnień do uruchomienia: %1").arg(m_pythonExecutable));
-            return false;
-        }
-    } else {
-        const QString resolved = QStandardPaths::findExecutable(m_pythonExecutable);
-        if (resolved.isEmpty()) {
-            qCWarning(lcStrategyWorkbench)
-                << "Interpreter Pythona nie został odnaleziony w PATH" << m_pythonExecutable;
-            setError(tr("Interpreter Pythona nie został odnaleziony w PATH: %1").arg(m_pythonExecutable));
-            return false;
-        }
-    }
-
     return true;
 }
 
@@ -567,11 +356,6 @@ void StrategyWorkbenchController::updateWatcherPaths()
             const QString filePath = info.absoluteFilePath();
             if (!m_configWatcher.files().contains(filePath))
                 m_configWatcher.addPath(filePath);
-
-            const QString canonical = info.canonicalFilePath();
-            if (!canonical.isEmpty() && canonical != filePath
-                && !m_configWatcher.files().contains(canonical))
-                m_configWatcher.addPath(canonical);
         }
 
         if (allowDirectoryWhenMissing || info.exists()) {

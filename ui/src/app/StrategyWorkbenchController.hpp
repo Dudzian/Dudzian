@@ -60,7 +60,7 @@ private:
         QByteArray stdoutData;
     };
 
-    [[nodiscard]] bool ensureReady(QString* errorMessage = nullptr) const;
+    [[nodiscard]] bool ensureReady() const;
     BridgeResult invokeBridge(const QStringList& args, const QByteArray& stdinData = QByteArray()) const;
     bool parseCatalogPayload(const QByteArray& payload);
     void setLastError(const QString& message);

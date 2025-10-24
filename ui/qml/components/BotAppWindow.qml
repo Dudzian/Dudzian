@@ -185,10 +185,13 @@ ApplicationWindow {
                     Item {
                         anchors.fill: parent
 
-                        CandlestickChartView {
+                        MarketMultiStreamView {
                             id: chartView
                             anchors.fill: parent
-                            model: ohlcvModel
+                            priceModel: ohlcvModel
+                            indicatorModel: indicatorSeriesModel
+                            signalModel: signalListModel
+                            regimeModel: marketRegimeTimelineModel
                             performanceGuard: guardModel.guard
                             reduceMotion: appController.reduceMotionActive
                         }
@@ -207,6 +210,15 @@ ApplicationWindow {
                         riskModel: riskModel
                         riskHistoryModel: riskHistoryModel
                         licenseController: licenseController
+                    }
+                }
+
+                Tab {
+                    title: qsTr("Moduły")
+
+                    ModuleBrowser {
+                        anchors.fill: parent
+                        viewsModel: moduleViewsModel
                     }
                 }
             }
