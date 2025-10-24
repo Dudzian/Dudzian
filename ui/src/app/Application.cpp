@@ -42,6 +42,9 @@
 #include "utils/PathUtils.hpp"
 #include "license/LicenseActivationController.hpp"
 #include "app/ActivationController.hpp"
+#include "app/UiModuleManager.hpp"
+#include "app/UiModuleServicesModel.hpp"
+#include "app/UiModuleViewsModel.hpp"
 #include "app/StrategyConfigController.hpp"
 #include "runtime/OfflineRuntimeBridge.hpp"
 #include "security/SecurityAdminController.hpp"
@@ -207,6 +210,27 @@ Application::Application(QQmlApplicationEngine& engine, QObject* parent)
     m_supportController = std::make_unique<SupportBundleController>(this);
 
     m_healthController = std::make_unique<HealthStatusController>(this);
+
+    m_moduleManager = std::make_unique<UiModuleManager>(this);
+    m_moduleViewsModel = std::make_unique<UiModuleViewsModel>(this);
+    m_moduleViewsModel->setModuleManager(m_moduleManager.get());
+    m_moduleServicesModel = std::make_unique<UiModuleServicesModel>(this);
+    m_moduleServicesModel->setModuleManager(m_moduleManager.get());
+
+    m_uiModuleWatcher.setParent(this);
+    connect(&m_uiModuleWatcher,
+            &QFileSystemWatcher::directoryChanged,
+            this,
+            &Application::handleUiModulePathChanged);
+    connect(&m_uiModuleWatcher,
+            &QFileSystemWatcher::fileChanged,
+            this,
+            &Application::handleUiModulePathChanged);
+
+    m_uiModuleReloadTimer.setParent(this);
+    m_uiModuleReloadTimer.setInterval(750);
+    m_uiModuleReloadTimer.setSingleShot(true);
+    connect(&m_uiModuleReloadTimer, &QTimer::timeout, this, &Application::handleUiModuleReloadTimeout);
 
     m_decisionLogModel.setParent(this);
 
@@ -433,6 +457,8 @@ void Application::configureParser(QCommandLineParser& parser) const {
                       tr("Ścieżka do decision logu (plik JSONL lub katalog)"), tr("path"), QString()});
     parser.addOption({"decision-log-limit",
                       tr("Limit liczby przechowywanych wpisów decision logu"), tr("count"), QString()});
+    parser.addOption({"ui-module-dir",
+                      tr("Katalog z pluginami UI (można powtórzyć)"), tr("path"), QString()});
     parser.addOption({"ui-settings-path", tr("Ścieżka pliku ustawień UI"), tr("path"), QString()});
     parser.addOption({"disable-ui-settings", tr("Wyłącza zapisywanie konfiguracji UI")});
     parser.addOption({"enable-ui-settings",
@@ -995,6 +1021,7 @@ bool Application::applyParser(const QCommandLineParser& parser) {
     configureStrategyBridge(parser);
     configureSupportBundle(parser);
     configureDecisionLog(parser);
+    configureUiModules(parser);
 
     // TLS config (MetricsService)
     TelemetryTlsConfig mtls;
@@ -1622,6 +1649,115 @@ void Application::configureSupportBundle(const QCommandLineParser& parser)
         applyMetadata(spec);
 
     m_supportController->setMetadata(metadata);
+}
+
+void Application::configureUiModules(const QCommandLineParser& parser)
+{
+    if (!m_moduleManager)
+        return;
+
+    m_moduleManager->unloadPlugins();
+
+    const auto normalize = [](const QString& raw) -> QString {
+        const QString trimmed = raw.trimmed();
+        if (trimmed.isEmpty())
+            return {};
+        const QString expanded = expandPath(trimmed);
+        if (!expanded.isEmpty())
+            return QFileInfo(expanded).absoluteFilePath();
+        return QFileInfo(trimmed).absoluteFilePath();
+    };
+
+    QSet<QString> unique;
+    QStringList directories;
+
+    const QStringList cliDirs = parser.values(QStringLiteral("ui-module-dir"));
+    for (const QString& value : cliDirs) {
+        const QString normalized = normalize(value);
+        if (normalized.isEmpty() || unique.contains(normalized))
+            continue;
+        unique.insert(normalized);
+        directories.append(normalized);
+    }
+
+    if (cliDirs.isEmpty()) {
+        if (const auto envDirs = envValue(QByteArrayLiteral("BOT_CORE_UI_MODULE_DIRS")); envDirs.has_value()) {
+            const auto pieces = envDirs->split(QDir::listSeparator(), Qt::SkipEmptyParts);
+            for (const QString& piece : pieces) {
+                const QString normalized = normalize(piece);
+                if (normalized.isEmpty() || unique.contains(normalized))
+                    continue;
+                unique.insert(normalized);
+                directories.append(normalized);
+            }
+        }
+    }
+
+    if (directories.isEmpty()) {
+        const QString binaryModules = QDir(QCoreApplication::applicationDirPath()).absoluteFilePath(QStringLiteral("modules"));
+        const QString repoModules = QDir::current().absoluteFilePath(QStringLiteral("ui/modules"));
+        for (const QString& candidate : {binaryModules, repoModules}) {
+            const QString normalized = normalize(candidate);
+            if (normalized.isEmpty() || unique.contains(normalized))
+                continue;
+            unique.insert(normalized);
+            directories.append(normalized);
+        }
+    }
+
+    m_uiModuleDirectories = directories;
+    m_moduleManager->setPluginPaths(directories);
+    emit uiModuleDirectoriesChanged(m_uiModuleDirectories);
+    QStringList loadedPlugins;
+    if (!directories.isEmpty()) {
+        if (!m_moduleManager->loadPlugins()) {
+            qCWarning(lcAppMetrics) << "Nie wszystkie pluginy UI zostały poprawnie załadowane";
+        }
+        const QVariantMap report = m_moduleManager->lastLoadReport();
+        loadedPlugins = report.value(QStringLiteral("loadedPlugins")).toStringList();
+    }
+    updateUiModuleWatchTargets(m_uiModuleDirectories, loadedPlugins);
+}
+
+bool Application::reloadUiModules()
+{
+    if (!m_moduleManager) {
+        QVariantMap report;
+        report.insert(QStringLiteral("requestedPaths"), m_uiModuleDirectories);
+        emit uiModulesReloaded(false, report);
+        return false;
+    }
+
+    if (m_uiModuleReloadTimer.isActive())
+        m_uiModuleReloadTimer.stop();
+    if (m_uiModuleReloadInProgress)
+        return false;
+
+    m_uiModuleReloadInProgress = true;
+    const auto resetReloadFlag = qScopeGuard([&]() { m_uiModuleReloadInProgress = false; });
+
+    m_moduleManager->unloadPlugins();
+
+    m_moduleManager->setPluginPaths(m_uiModuleDirectories);
+    const bool success = m_moduleManager->loadPlugins();
+    const QVariantMap report = m_moduleManager->lastLoadReport();
+    updateUiModuleWatchTargets(m_uiModuleDirectories, report.value(QStringLiteral("loadedPlugins")).toStringList());
+    if (!success)
+        qCWarning(lcAppMetrics) << "Nie wszystkie pluginy UI zostały poprawnie załadowane podczas przeładowywania";
+
+    emit uiModulesReloaded(success, report);
+    return success;
+}
+
+void Application::setUiModuleAutoReloadEnabled(bool enabled)
+{
+    if (m_uiModuleAutoReloadEnabled == enabled)
+        return;
+
+    m_uiModuleAutoReloadEnabled = enabled;
+    if (!enabled && m_uiModuleReloadTimer.isActive())
+        m_uiModuleReloadTimer.stop();
+    emit uiModuleAutoReloadEnabledChanged(enabled);
 }
 
 void Application::configureDecisionLog(const QCommandLineParser& parser)
@@ -2433,6 +2569,9 @@ void Application::exposeToQml() {
     m_engine.rootContext()->setContextProperty(QStringLiteral("supportController"), m_supportController.get());
     m_engine.rootContext()->setContextProperty(QStringLiteral("healthController"), m_healthController.get());
     m_engine.rootContext()->setContextProperty(QStringLiteral("decisionLogModel"), &m_decisionLogModel);
+    m_engine.rootContext()->setContextProperty(QStringLiteral("moduleManager"), m_moduleManager.get());
+    m_engine.rootContext()->setContextProperty(QStringLiteral("moduleViewsModel"), m_moduleViewsModel.get());
+    m_engine.rootContext()->setContextProperty(QStringLiteral("moduleServicesModel"), m_moduleServicesModel.get());
 }
 
 QObject* Application::activationController() const
@@ -2463,6 +2602,62 @@ QObject* Application::healthController() const
 QObject* Application::decisionLogModel() const
 {
     return const_cast<DecisionLogModel*>(&m_decisionLogModel);
+}
+
+QObject* Application::moduleManager() const
+{
+    return m_moduleManager.get();
+}
+
+QObject* Application::moduleViewsModel() const
+{
+    return m_moduleViewsModel.get();
+}
+
+QObject* Application::moduleServicesModel() const
+{
+    return m_moduleServicesModel.get();
+}
+
+void Application::setModuleManagerForTesting(std::unique_ptr<UiModuleManager> manager)
+{
+    if (manager)
+        manager->setParent(this);
+
+    m_moduleManager = std::move(manager);
+    if (m_moduleViewsModel)
+        m_moduleViewsModel->setModuleManager(m_moduleManager.get());
+    if (m_moduleServicesModel)
+        m_moduleServicesModel->setModuleManager(m_moduleManager.get());
+
+    if (m_started)
+        m_engine.rootContext()->setContextProperty(QStringLiteral("moduleManager"), m_moduleManager.get());
+    if (m_started)
+        m_engine.rootContext()->setContextProperty(QStringLiteral("moduleViewsModel"), m_moduleViewsModel.get());
+    if (m_started)
+        m_engine.rootContext()->setContextProperty(QStringLiteral("moduleServicesModel"), m_moduleServicesModel.get());
+}
+
+QStringList Application::watchedUiModulePathsForTesting() const
+{
+    QStringList paths = m_watchedUiModuleDirectories;
+    for (const QString& file : m_watchedUiModuleFiles) {
+        if (!paths.contains(file))
+            paths.append(file);
+    }
+    return paths;
+}
+
+void Application::triggerUiModuleWatcherForTesting(const QString& path)
+{
+    handleUiModulePathChanged(path);
+}
+
+void Application::setUiModuleAutoReloadDebounceForTesting(int milliseconds)
+{
+    if (milliseconds < 0)
+        milliseconds = 0;
+    m_uiModuleReloadTimer.setInterval(milliseconds);
 }
 
 void Application::ensureFrameMonitor() {
@@ -3609,6 +3804,78 @@ void Application::reloadHealthTokenFromFile()
     applyHealthAuthTokenToController();
 }
 
+void Application::updateUiModuleWatchTargets(const QStringList& directories, const QStringList& pluginFiles)
+{
+    const QStringList currentDirs = m_uiModuleWatcher.directories();
+    if (!currentDirs.isEmpty())
+        m_uiModuleWatcher.removePaths(currentDirs);
+    const QStringList currentFiles = m_uiModuleWatcher.files();
+    if (!currentFiles.isEmpty())
+        m_uiModuleWatcher.removePaths(currentFiles);
+
+    m_watchedUiModuleDirectories.clear();
+    m_watchedUiModuleFiles.clear();
+
+    auto appendUnique = [](QStringList& list, const QString& value) {
+        if (value.isEmpty())
+            return;
+        if (!list.contains(value))
+            list.append(value);
+    };
+
+    QStringList directoryTargets;
+    QStringList fileTargets;
+
+    for (const QString& entry : directories) {
+        const QString trimmed = entry.trimmed();
+        if (trimmed.isEmpty())
+            continue;
+        QFileInfo info(trimmed);
+        if (!info.exists())
+            continue;
+        if (info.isDir()) {
+            appendUnique(directoryTargets, info.absoluteFilePath());
+        } else if (info.isFile()) {
+            appendUnique(fileTargets, info.absoluteFilePath());
+            appendUnique(directoryTargets, info.absolutePath());
+        }
+    }
+
+    for (const QString& plugin : pluginFiles) {
+        const QString trimmed = plugin.trimmed();
+        if (trimmed.isEmpty())
+            continue;
+        QFileInfo info(trimmed);
+        if (!info.exists())
+            continue;
+        appendUnique(fileTargets, info.absoluteFilePath());
+        appendUnique(directoryTargets, info.absolutePath());
+    }
+
+    if (!directoryTargets.isEmpty()) {
+        const QStringList failures = m_uiModuleWatcher.addPaths(directoryTargets);
+        QStringList filteredDirs = directoryTargets;
+        for (const QString& failed : failures) {
+            filteredDirs.removeAll(failed);
+            qCWarning(lcAppMetrics) << "Nie można obserwować katalogu modułów UI" << failed;
+        }
+        directoryTargets = filteredDirs;
+    }
+
+    if (!fileTargets.isEmpty()) {
+        const QStringList failures = m_uiModuleWatcher.addPaths(fileTargets);
+        QStringList filteredFiles = fileTargets;
+        for (const QString& failed : failures) {
+            filteredFiles.removeAll(failed);
+            qCWarning(lcAppMetrics) << "Nie można obserwować pliku modułu UI" << failed;
+        }
+        fileTargets = filteredFiles;
+    }
+
+    m_watchedUiModuleDirectories = directoryTargets;
+    m_watchedUiModuleFiles = fileTargets;
+}
+
 void Application::applyHealthAuthTokenToController()
 {
     if (!m_healthController)
@@ -3655,6 +3922,32 @@ void Application::handleHealthTlsPathChanged(const QString&)
 {
     configureHealthTlsWatchers();
     applyHealthTlsConfig();
+}
+
+void Application::handleUiModulePathChanged(const QString& path)
+{
+    Q_UNUSED(path);
+    if (!m_moduleManager)
+        return;
+    if (!m_uiModuleAutoReloadEnabled)
+        return;
+    if (m_uiModuleReloadInProgress)
+        return;
+
+    m_uiModuleReloadTimer.start();
+}
+
+void Application::handleUiModuleReloadTimeout()
+{
+    if (!m_moduleManager)
+        return;
+    if (!m_uiModuleAutoReloadEnabled)
+        return;
+    if (m_uiModuleReloadInProgress)
+        return;
+
+    qCInfo(lcAppMetrics) << "Wykryto zmiany w modułach UI – uruchamiam automatyczne przeładowanie";
+    reloadUiModules();
 }
 
 void Application::handleTradingTokenPathChanged(const QString&)

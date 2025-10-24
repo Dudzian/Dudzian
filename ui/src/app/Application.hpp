@@ -12,6 +12,7 @@
 #include <QDir>
 #include <QFileSystemWatcher>
 #include <QHash>
+#include <QStringList>
 
 #include <memory>
 #include <optional>
@@ -40,6 +41,9 @@ class StrategyConfigController;        // forward decl (app/StrategyConfigContro
 class SupportBundleController;         // forward decl (support/SupportBundleController.hpp)
 class HealthStatusController;          // forward decl (health/HealthStatusController.hpp)
 class OfflineRuntimeBridge;            // forward decl (runtime/OfflineRuntimeBridge.hpp)
+class UiModuleManager;                 // forward decl (app/UiModuleManager.hpp)
+class UiModuleViewsModel;              // forward decl (app/UiModuleViewsModel.hpp)
+class UiModuleServicesModel;           // forward decl (app/UiModuleServicesModel.hpp)
 
 class Application : public QObject {
     Q_OBJECT
@@ -57,6 +61,12 @@ class Application : public QObject {
     Q_PROPERTY(QObject*         supportController READ supportController CONSTANT)
     Q_PROPERTY(QObject*         healthController READ healthController CONSTANT)
     Q_PROPERTY(QObject*         decisionLogModel READ decisionLogModel CONSTANT)
+    Q_PROPERTY(QObject*         moduleManager READ moduleManager CONSTANT)
+    Q_PROPERTY(QObject*         moduleViewsModel READ moduleViewsModel CONSTANT)
+    Q_PROPERTY(QObject*         moduleServicesModel READ moduleServicesModel CONSTANT)
+    Q_PROPERTY(QStringList      uiModuleDirectories READ uiModuleDirectories NOTIFY uiModuleDirectoriesChanged)
+    Q_PROPERTY(bool             uiModuleAutoReloadEnabled READ uiModuleAutoReloadEnabled WRITE setUiModuleAutoReloadEnabled
+                   NOTIFY uiModuleAutoReloadEnabledChanged)
     Q_PROPERTY(QString          decisionLogPath READ decisionLogPath NOTIFY decisionLogPathChanged)
     Q_PROPERTY(int              telemetryPendingRetryCount READ telemetryPendingRetryCount NOTIFY telemetryPendingRetryCountChanged)
     Q_PROPERTY(QVariantMap      riskRefreshSchedule READ riskRefreshSchedule NOTIFY riskRefreshScheduleChanged)
@@ -99,6 +109,11 @@ public:
     QObject*         supportController() const;
     QObject*         healthController() const;
     QObject*         decisionLogModel() const;
+    QObject*         moduleManager() const;
+    QObject*         moduleViewsModel() const;
+    QObject*         moduleServicesModel() const;
+    QStringList      uiModuleDirectories() const { return m_uiModuleDirectories; }
+    bool             uiModuleAutoReloadEnabled() const { return m_uiModuleAutoReloadEnabled; }
     QObject*         alertsModel() const { return const_cast<AlertsModel*>(&m_alertsModel); }
     QObject*         alertsFilterModel() const { return const_cast<AlertsFilterProxyModel*>(&m_filteredAlertsModel); }
     QObject*         riskHistoryModel() const { return const_cast<RiskHistoryModel*>(&m_riskHistoryModel); }
@@ -157,6 +172,8 @@ public slots:
     Q_INVOKABLE void stopOfflineAutomation();
     Q_INVOKABLE bool setDecisionLogPath(const QUrl& url);
     Q_INVOKABLE bool reloadDecisionLog();
+    Q_INVOKABLE bool reloadUiModules();
+    Q_INVOKABLE void setUiModuleAutoReloadEnabled(bool enabled);
 
     // Test helpers (persistent UI state)
     void saveUiSettingsImmediatelyForTesting();
@@ -168,6 +185,14 @@ public slots:
     DecisionLogModel* decisionLogModelForTesting() { return &m_decisionLogModel; }
     void setTradableInstrumentsForTesting(const QString& exchange,
                                           const QVector<TradingClient::TradableInstrument>& items);
+    void setModuleManagerForTesting(std::unique_ptr<UiModuleManager> manager);
+    UiModuleManager* moduleManagerForTesting() const { return m_moduleManager.get(); }
+    UiModuleViewsModel* moduleViewsModelForTesting() const { return m_moduleViewsModel.get(); }
+    UiModuleServicesModel* moduleServicesModelForTesting() const { return m_moduleServicesModel.get(); }
+    QStringList uiModuleDirectoriesForTesting() const { return m_uiModuleDirectories; }
+    QStringList watchedUiModulePathsForTesting() const;
+    void triggerUiModuleWatcherForTesting(const QString& path);
+    void setUiModuleAutoReloadDebounceForTesting(int milliseconds);
 
     // Test helpers
     void ingestFpsSampleForTesting(double fps);
@@ -188,6 +213,9 @@ signals:
     void riskHistoryAutoExportIntervalMinutesChanged();
     void riskHistoryAutoExportBasenameChanged();
     void riskHistoryAutoExportUseLocalTimeChanged();
+    void uiModuleDirectoriesChanged(const QStringList& directories);
+    void uiModulesReloaded(bool success, const QVariantMap& report);
+    void uiModuleAutoReloadEnabledChanged(bool enabled);
     void riskHistoryLastAutoExportAtChanged();
     void riskHistoryLastAutoExportPathChanged();
     void offlineDaemonStatusChanged();
@@ -206,6 +234,8 @@ private slots:
     void handleHealthTokenPathChanged(const QString& path);
     void handleOfflineStatusChanged(const QString& status);
     void handleOfflineAutomationChanged(bool running);
+    void handleUiModulePathChanged(const QString& path);
+    void handleUiModuleReloadTimeout();
 
 private:
     // Rejestracja obiektów w kontekście QML
@@ -269,6 +299,7 @@ private:
     void configureStrategyBridge(const QCommandLineParser& parser);
     void configureSupportBundle(const QCommandLineParser& parser);
     void configureDecisionLog(const QCommandLineParser& parser);
+    void configureUiModules(const QCommandLineParser& parser);
     void setUiSettingsPersistenceEnabled(bool enabled);
     void setUiSettingsPath(const QString& path, bool reload = true);
     void loadUiSettings();
@@ -284,9 +315,10 @@ private:
     void reloadTradingTokenFromFile();
     void reloadMetricsTokenFromFile();
     void reloadHealthTokenFromFile();
+    void updateUiModuleWatchTargets(const QStringList& directories, const QStringList& pluginFiles);
     void configureTokenWatcher(QFileSystemWatcher& watcher,
                                QString& trackedFile,
-                               QString& trackedDir,
+                               QStringList& trackedDirs,
                                const QString& filePath,
                                const char* label);
     void configureTlsWatcher(QFileSystemWatcher& watcher,
@@ -356,6 +388,15 @@ private:
     std::unique_ptr<StrategyConfigController>  m_strategyController;
     std::unique_ptr<SupportBundleController>   m_supportController;
     std::unique_ptr<HealthStatusController>    m_healthController;
+    std::unique_ptr<UiModuleManager>           m_moduleManager;
+    std::unique_ptr<UiModuleViewsModel>        m_moduleViewsModel;
+    std::unique_ptr<UiModuleServicesModel>     m_moduleServicesModel;
+    QFileSystemWatcher                         m_uiModuleWatcher;
+    QTimer                                     m_uiModuleReloadTimer;
+    QStringList                                m_watchedUiModuleDirectories;
+    QStringList                                m_watchedUiModuleFiles;
+    bool                                       m_uiModuleAutoReloadEnabled = false;
+    bool                                       m_uiModuleReloadInProgress = false;
 
     // --- Telemetry state ---
     std::unique_ptr<TelemetryReporter> m_telemetry;
@@ -442,6 +483,7 @@ private:
     QStringList                                        m_metricsTlsWatcherDirs;
     QStringList                                        m_healthTlsWatcherFiles;
     QStringList                                        m_healthTlsWatcherDirs;
+    QStringList                                        m_uiModuleDirectories;
     quint64                                            m_tradingTlsReloadGeneration = 0;
     quint64                                            m_metricsTlsReloadGeneration = 0;
     quint64                                            m_healthTlsReloadGeneration = 0;
