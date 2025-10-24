@@ -34,10 +34,23 @@ __all__ = [
 
 _SAFE_FILENAME = re.compile(r"[^a-z0-9]+", re.IGNORECASE)
 _SIGN_OFF_ROLES = frozenset({"risk", "compliance"})
+_DEFAULT_SIGN_OFF_ROLE_ORDER = tuple(sorted(_SIGN_OFF_ROLES))
 _SIGN_OFF_STATUSES = frozenset(
     {"pending", "approved", "rejected", "escalated", "waived", "investigating"}
 )
 _COMPLETED_SIGN_OFF_STATUSES = frozenset({"approved", "waived"})
+_SIGN_OFF_DEFAULT_NOTES = {
+    "risk": "Awaiting Risk review",
+    "compliance": "Awaiting Compliance sign-off",
+}
+
+
+def _normalize_role(role: object) -> str | None:
+    if isinstance(role, str):
+        normalized = role.strip().lower()
+        if normalized:
+            return normalized
+    return None
 
 
 def _audit_root() -> Path:
@@ -62,21 +75,26 @@ def _timestamp_slug(prefix: str) -> str:
     return f"{now}_{_normalize_slug(prefix)}"
 
 
-def _default_sign_off() -> dict[str, MutableMapping[str, Any]]:
-    return {
-        "risk": {
+def _default_sign_off(
+    *, extra_roles: Sequence[str] | None = None
+) -> dict[str, MutableMapping[str, Any]]:
+    roles = set(_SIGN_OFF_ROLES)
+    for role in extra_roles or ():
+        normalized = _normalize_role(role)
+        if normalized:
+            roles.add(normalized)
+    sign_off: dict[str, MutableMapping[str, Any]] = {}
+    for role in sorted(roles):
+        note = _SIGN_OFF_DEFAULT_NOTES.get(
+            role, f"Awaiting {role.replace('_', ' ').title()} sign-off"
+        )
+        sign_off[role] = {
             "status": "pending",
             "signed_by": None,
             "timestamp": None,
-            "notes": "Awaiting Risk review",
-        },
-        "compliance": {
-            "status": "pending",
-            "signed_by": None,
-            "timestamp": None,
-            "notes": "Awaiting Compliance sign-off",
-        },
-    }
+            "notes": note,
+        }
+    return sign_off
 
 
 def _write_report(directory: Path, prefix: str, payload: Mapping[str, Any]) -> Path:
@@ -313,14 +331,16 @@ def summarize_data_quality_reports(
         "alerts": 0,
         "enforced_alerts": 0,
         "by_category": {},
-        "pending_sign_off": {role: [] for role in _SIGN_OFF_ROLES},
+        "pending_sign_off": {
+            role: [] for role in _DEFAULT_SIGN_OFF_ROLE_ORDER
+        },
     }
 
     for report in normalized:
         category = str(report.get("category") or "unknown")
         status = str(report.get("status") or "").lower()
         policy = report.get("policy")
-        enforce = True
+        enforce = False
         if isinstance(policy, Mapping):
             raw_enforce = policy.get("enforce")
             if isinstance(raw_enforce, bool):
@@ -357,9 +377,17 @@ def summarize_data_quality_reports(
         key: MappingProxyType(value) if not isinstance(value, MappingProxyType) else value
         for key, value in summary["by_category"].items()
     }
+    pending_roles = list(_DEFAULT_SIGN_OFF_ROLE_ORDER)
+    pending_roles.extend(
+        sorted(
+            role
+            for role in summary["pending_sign_off"].keys()
+            if role not in _SIGN_OFF_ROLES
+        )
+    )
     summary["pending_sign_off"] = {
-        role: tuple(entries)
-        for role, entries in summary["pending_sign_off"].items()
+        role: tuple(summary["pending_sign_off"].get(role, ()))
+        for role in pending_roles
     }
     return MappingProxyType(summary)
 
@@ -380,7 +408,9 @@ def summarize_drift_reports(
         "exceeds_threshold": 0,
         "latest_report_path": None,
         "latest_exceeding_report_path": None,
-        "pending_sign_off": {role: [] for role in _SIGN_OFF_ROLES},
+        "pending_sign_off": {
+            role: [] for role in _DEFAULT_SIGN_OFF_ROLE_ORDER
+        },
     }
 
     for index, report in enumerate(normalized):
@@ -407,9 +437,17 @@ def summarize_drift_reports(
             summary["pending_sign_off"],
         )
 
+    pending_roles = list(_DEFAULT_SIGN_OFF_ROLE_ORDER)
+    pending_roles.extend(
+        sorted(
+            role
+            for role in summary["pending_sign_off"].keys()
+            if role not in _SIGN_OFF_ROLES
+        )
+    )
     summary["pending_sign_off"] = {
-        role: tuple(entries)
-        for role, entries in summary["pending_sign_off"].items()
+        role: tuple(summary["pending_sign_off"].get(role, ()))
+        for role in pending_roles
     }
     return MappingProxyType(summary)
 
@@ -424,10 +462,21 @@ def _collect_pending_sign_off(
     if isinstance(report_path, (str, PathLike)):
         path_str = str(report_path)
     timestamp = report.get("timestamp")
-    sign_off = report.get("sign_off")
-    if not isinstance(sign_off, Mapping):
-        for role in _SIGN_OFF_ROLES:
-            pending[role].append(
+    raw_sign_off = report.get("sign_off")
+    normalized_entries: dict[str, Mapping[str, Any]] = {}
+    if isinstance(raw_sign_off, Mapping):
+        for raw_role, payload in raw_sign_off.items():
+            role_key = _normalize_role(raw_role)
+            if role_key:
+                normalized_entries[role_key] = payload
+
+    roles = set(_SIGN_OFF_ROLES)
+    roles.update(normalized_entries.keys())
+
+    if not normalized_entries and not isinstance(raw_sign_off, Mapping):
+        for role in roles:
+            bucket = pending.setdefault(role, [])
+            bucket.append(
                 {
                     "category": category,
                     "status": "pending",
@@ -437,13 +486,16 @@ def _collect_pending_sign_off(
             )
         return
 
-    for role in _SIGN_OFF_ROLES:
-        entry = sign_off.get(role)
+    for role in sorted(roles):
+        bucket = pending.setdefault(role, [])
+        entry = normalized_entries.get(role)
         status = "pending"
         if isinstance(entry, Mapping):
-            status = str(entry.get("status") or "pending").lower()
+            status_raw = entry.get("status")
+            if isinstance(status_raw, str):
+                status = status_raw.strip().lower()
         if status not in _COMPLETED_SIGN_OFF_STATUSES:
-            pending[role].append(
+            bucket.append(
                 {
                     "category": category,
                     "status": status,

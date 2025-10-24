@@ -8,6 +8,16 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Mapping, MutableMapping, Sequence, TYPE_CHECKING
 
+from .data_monitoring import (
+    _COMPLETED_SIGN_OFF_STATUSES,
+    _SIGN_OFF_DEFAULT_NOTES,
+    _SIGN_OFF_ROLES,
+    _SIGN_OFF_STATUSES,
+)
+
+
+_DEFAULT_SIGN_OFF_ROLE_ORDER = tuple(sorted(_SIGN_OFF_ROLES))
+
 if TYPE_CHECKING:  # pragma: no cover - tylko dla typowania
     from .feature_engineering import FeatureDataset
     from .models import ModelArtifact
@@ -49,32 +59,54 @@ def _json_safe(value: object) -> object:
     return str(value)
 
 
-def _default_sign_off() -> dict[str, dict[str, object]]:
-    return {
-        "risk": {
+_DEFAULT_SIGN_OFF_NOTES = MappingProxyType(dict(_SIGN_OFF_DEFAULT_NOTES))
+
+
+def _normalize_role(role: object) -> str | None:
+    if isinstance(role, str):
+        normalized = role.strip().lower()
+        if normalized:
+            return normalized
+    return None
+
+
+def _default_sign_off(
+    *, extra_roles: Sequence[str] | None = None
+) -> dict[str, dict[str, object]]:
+    roles = set(_SIGN_OFF_ROLES)
+    for role in extra_roles or ():
+        normalized = _normalize_role(role)
+        if normalized:
+            roles.add(normalized)
+    sign_off: dict[str, dict[str, object]] = {}
+    for role in sorted(roles):
+        note = _DEFAULT_SIGN_OFF_NOTES.get(
+            role, f"Awaiting {role.replace('_', ' ').title()} sign-off"
+        )
+        sign_off[role] = {
             "status": "pending",
             "signed_by": None,
             "timestamp": None,
-            "notes": "Awaiting Risk review",
-        },
-        "compliance": {
-            "status": "pending",
-            "signed_by": None,
-            "timestamp": None,
-            "notes": "Awaiting Compliance sign-off",
-        },
-    }
+            "notes": note,
+        }
+    return sign_off
 
 
 def _normalize_sign_off(
     sign_off: Mapping[str, Mapping[str, Any]] | None
 ) -> Mapping[str, Mapping[str, Any]]:
-    normalized: dict[str, dict[str, Any]] = _default_sign_off()
+    extra_roles: list[str] = []
+    if isinstance(sign_off, Mapping):
+        for role in sign_off.keys():
+            role_key = _normalize_role(role)
+            if role_key:
+                extra_roles.append(role_key)
+    normalized: dict[str, dict[str, Any]] = _default_sign_off(extra_roles=extra_roles)
     if not isinstance(sign_off, Mapping):
         return normalized
     for role, payload in sign_off.items():
-        role_key = str(role).strip().lower()
-        if role_key not in _SIGN_OFF_ROLES:
+        role_key = _normalize_role(role)
+        if role_key is None:
             continue
         base = dict(normalized.get(role_key, {}))
         if isinstance(payload, Mapping):
@@ -232,9 +264,21 @@ def _collect_pending_sign_off(
     path_str = None
     if isinstance(report_path, (str, PathLike)):
         path_str = str(report_path)
-    if not isinstance(sign_off, Mapping):
-        for role in _SIGN_OFF_ROLES:
-            pending.setdefault(role, []).append(
+
+    normalized_entries: dict[str, Mapping[str, Any]] = {}
+    if isinstance(sign_off, Mapping):
+        for raw_role, payload in sign_off.items():
+            role_key = _normalize_role(raw_role)
+            if role_key:
+                normalized_entries[role_key] = payload
+
+    roles = set(_SIGN_OFF_ROLES)
+    roles.update(normalized_entries.keys())
+
+    if not normalized_entries and not isinstance(sign_off, Mapping):
+        for role in roles:
+            bucket = pending.setdefault(role, [])
+            bucket.append(
                 {
                     "category": category,
                     "status": "pending",
@@ -243,15 +287,17 @@ def _collect_pending_sign_off(
                 }
             )
         return
-    for role in _SIGN_OFF_ROLES:
-        entry = sign_off.get(role)
+
+    for role in sorted(roles):
+        bucket = pending.setdefault(role, [])
+        entry = normalized_entries.get(role)
         status = "pending"
         if isinstance(entry, Mapping):
             status_raw = entry.get("status")
             if isinstance(status_raw, str):
                 status = status_raw.strip().lower()
         if status not in _COMPLETED_SIGN_OFF_STATUSES:
-            pending.setdefault(role, []).append(
+            bucket.append(
                 {
                     "category": category,
                     "status": status,
@@ -275,7 +321,7 @@ def summarize_walk_forward_reports(
     best_accuracy: float | None = None
     total_windows = 0
     pending: MutableMapping[str, list[Mapping[str, Any]]] = {
-        role: [] for role in _SIGN_OFF_ROLES
+        role: [] for role in _DEFAULT_SIGN_OFF_ROLE_ORDER
     }
 
     summary: MutableMapping[str, Any] = {
@@ -291,7 +337,7 @@ def summarize_walk_forward_reports(
             "worst_directional_accuracy": None,
             "best_directional_accuracy": None,
         },
-        "pending_sign_off": {role: () for role in _SIGN_OFF_ROLES},
+        "pending_sign_off": {role: () for role in _DEFAULT_SIGN_OFF_ROLE_ORDER},
     }
 
     for index, report in enumerate(normalized):
@@ -377,8 +423,12 @@ def summarize_walk_forward_reports(
             float(best_accuracy) if best_accuracy is not None else None
         ),
     }
+    ordered_roles = list(_DEFAULT_SIGN_OFF_ROLE_ORDER)
+    ordered_roles.extend(
+        sorted(role for role in pending.keys() if role not in _SIGN_OFF_ROLES)
+    )
     summary["pending_sign_off"] = {
-        role: tuple(entries) for role, entries in pending.items()
+        role: tuple(pending.get(role, ())) for role in ordered_roles
     }
     return MappingProxyType(summary)
 

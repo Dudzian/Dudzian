@@ -409,6 +409,32 @@ def test_summarize_data_quality_reports_flags_pending_sign_off(
     assert all(item["status"] != "approved" for item in pending_compliance)
 
 
+def test_summarize_data_quality_reports_preserves_additional_roles() -> None:
+    reports = (
+        {
+            "category": "completeness",
+            "status": "alert",
+            "policy": {"enforce": True},
+            "sign_off": {
+                "risk": {"status": "approved"},
+                "compliance": {"status": "approved"},
+                "aml": {"status": "pending"},
+            },
+            "timestamp": "2024-01-01T00:00:00Z",
+        },
+    )
+
+    summary = summarize_data_quality_reports(reports)
+
+    pending = summary["pending_sign_off"]
+    assert pending["risk"] == ()
+    assert "aml" in pending
+    aml_pending = pending["aml"]
+    assert aml_pending
+    assert aml_pending[0]["status"] == "pending"
+    assert aml_pending[0]["category"] == "completeness"
+
+
 def test_summarize_drift_reports_marks_threshold_excess(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -444,6 +470,29 @@ def test_summarize_drift_reports_marks_threshold_excess(
     pending_risk = summary["pending_sign_off"]["risk"]
     assert pending_risk
     assert pending_risk[0]["status"] == "pending"
+
+
+def test_summarize_drift_reports_preserves_additional_roles() -> None:
+    reports = (
+        {
+            "drift_score": 0.9,
+            "threshold": 0.5,
+            "timestamp": "2024-01-02T00:00:00Z",
+            "sign_off": {
+                "risk": {"status": "approved"},
+                "aml": {"status": "pending"},
+            },
+        },
+    )
+
+    summary = summarize_drift_reports(reports)
+
+    pending = summary["pending_sign_off"]
+    assert pending["risk"] == ()
+    assert "aml" in pending
+    aml_pending = pending["aml"]
+    assert aml_pending
+    assert aml_pending[0]["status"] == "pending"
 
 
 def test_ensure_compliance_sign_offs_detects_pending() -> None:
