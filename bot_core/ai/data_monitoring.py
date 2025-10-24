@@ -83,13 +83,15 @@ def _timestamp_slug(prefix: str) -> str:
 def _default_sign_off(
     *, extra_roles: Sequence[str] | None = None
 ) -> dict[str, MutableMapping[str, Any]]:
-    roles = set(_SIGN_OFF_ROLES)
+    base_roles: list[str] = list(_SIGN_OFF_ROLES)
+    extra: set[str] = set()
     for role in extra_roles or ():
         normalized = _normalize_role(role)
-        if normalized:
-            roles.add(normalized)
+        if normalized and normalized not in base_roles:
+            extra.add(normalized)
+    ordered_roles = (*base_roles, *sorted(extra))
     sign_off: dict[str, MutableMapping[str, Any]] = {}
-    for role in sorted(roles):
+    for role in ordered_roles:
         note = _SIGN_OFF_DEFAULT_NOTES.get(
             role, f"Awaiting {role.replace('_', ' ').title()} sign-off"
         )
