@@ -86,23 +86,30 @@ class CachedOHLCVSource(DataSource):
         cache_key = self._cache_key(request.symbol, request.interval)
         cached_rows, columns = self._load_cached_payload(cache_key)
 
-        filtered_cached_rows = [
+        snapshot_fetcher = self.snapshot_fetcher
+        if snapshot_fetcher is None and self.snapshots_enabled:
+            snapshot_fetcher = self._fallback_snapshot_fetcher()
+            if snapshot_fetcher is not None:
+                self.snapshot_fetcher = snapshot_fetcher
+
+        matching_cached_rows = [
             row for row in cached_rows if row and request.start <= float(row[0]) <= request.end
         ]
-        if request.limit is not None:
-            filtered_cached_rows = filtered_cached_rows[: request.limit]
 
-        cache_covers_request = bool(filtered_cached_rows)
-        if request.limit is None and cached_rows:
-            timestamps = [float(row[0]) for row in cached_rows if row]
-            if timestamps:
-                cache_covers_request = (
-                    request.start >= min(timestamps)
-                    and request.end <= max(timestamps)
+        cache_covers_request = False
+        if matching_cached_rows:
+            deduped_timestamps = sorted({float(row[0]) for row in matching_cached_rows if row})
+            if request.limit is not None:
+                cache_covers_request = self._cached_rows_cover_limit_window(
+                    request, deduped_timestamps
+                )
+            else:
+                cache_covers_request = self._cached_rows_cover_range(
+                    request, deduped_timestamps
                 )
 
         should_hit_upstream = not (
-            cache_covers_request and self.snapshot_fetcher is not None
+            cache_covers_request and snapshot_fetcher is not None
         )
 
         rows = cached_rows
@@ -120,9 +127,9 @@ class CachedOHLCVSource(DataSource):
                     },
                 )
                 columns = selected_columns
-        if self.snapshot_fetcher is not None:
+        if snapshot_fetcher is not None:
             try:
-                snapshot_rows = tuple(snapshot_fetcher(request))
+                raw_snapshot_rows = tuple(snapshot_fetcher(request))
             except ExchangeNetworkError as exc:
                 _LOGGER.warning(
                     "Snapshot API niedostępne – pozostaję przy danych z cache (%s %s): %s",
@@ -130,11 +137,12 @@ class CachedOHLCVSource(DataSource):
                     request.interval,
                     exc,
                 )
-                snapshot_rows = ()
+                raw_snapshot_rows = ()
             except Exception as exc:  # pragma: no cover - logowanie diagnostyczne
                 _LOGGER.exception("Nieudany snapshot OHLCV (%s %s): %s", request.symbol, request.interval, exc)
-                snapshot_rows = ()
+                raw_snapshot_rows = ()
 
+            snapshot_rows = self._normalize_snapshot_rows(raw_snapshot_rows, request)
             if snapshot_rows:
                 rows = self._merge_rows(rows, snapshot_rows)
                 if not columns:
@@ -154,10 +162,103 @@ class CachedOHLCVSource(DataSource):
             for row in rows
             if request.start <= float(row[0]) <= request.end
         ]
-        if request.limit is not None:
-            filtered = filtered[: request.limit]
+        if request.limit is not None and request.limit > 0:
+            filtered = filtered[-request.limit :]
 
         return OHLCVResponse(columns=columns, rows=filtered)
+
+    def _cached_rows_cover_limit_window(
+        self,
+        request: OHLCVRequest,
+        deduped_timestamps: Sequence[float],
+    ) -> bool:
+        if request.limit is None or request.limit <= 0:
+            return False
+
+        if len(deduped_timestamps) < request.limit:
+            return False
+
+        try:
+            interval_ms = interval_to_milliseconds(request.interval)
+        except (KeyError, ValueError):  # pragma: no cover - brak znanych interwałów
+            interval_ms = 0
+
+        recent_timestamps = deduped_timestamps[-request.limit :]
+        latest = recent_timestamps[-1]
+
+        if interval_ms <= 0:
+            return latest >= request.end
+
+        max_allowed_gap = interval_ms
+        min_expected_start = request.end - interval_ms * max(request.limit - 1, 1)
+
+        covers_end = request.end - max_allowed_gap <= latest <= request.end
+        if not covers_end:
+            return False
+
+        if request.limit == 1:
+            return True
+
+        earliest = recent_timestamps[0]
+        if earliest < min_expected_start:
+            return False
+
+        # Pozwól na drobne odchylenia (np. agregatory zwracające wartości w sekundach).
+        tolerance = max(1.0, interval_ms * 0.05)
+        allowed_gap = max_allowed_gap + tolerance
+        for previous, current in zip(recent_timestamps, recent_timestamps[1:]):
+            if current - previous > allowed_gap:
+                return False
+
+        return True
+
+    def _cached_rows_cover_range(
+        self,
+        request: OHLCVRequest,
+        deduped_timestamps: Sequence[float],
+    ) -> bool:
+        if not deduped_timestamps:
+            return False
+
+        try:
+            interval_ms = interval_to_milliseconds(request.interval)
+        except (KeyError, ValueError):  # pragma: no cover - brak znanych interwałów
+            return (
+                request.start >= deduped_timestamps[0]
+                and request.end <= deduped_timestamps[-1]
+            )
+
+        tolerance = max(1.0, interval_ms * 0.05)
+        allowed_gap = interval_ms + tolerance
+
+        start_gap = deduped_timestamps[0] - request.start
+        end_gap = request.end - deduped_timestamps[-1]
+
+        if start_gap > tolerance or end_gap > tolerance:
+            return False
+
+        for previous, current in zip(deduped_timestamps, deduped_timestamps[1:]):
+            if current - previous > allowed_gap:
+                return False
+
+        return True
+
+    def _normalize_snapshot_rows(
+        self,
+        snapshot_rows: Sequence[Sequence[float]],
+        request: OHLCVRequest,
+    ) -> list[Sequence[float]]:
+        normalized: list[Sequence[float]] = [tuple(row) for row in snapshot_rows if row]
+        if not normalized:
+            return []
+
+        last_row = list(normalized[-1])
+        if last_row and float(last_row[0]) != float(request.end):
+            adjusted_row = list(last_row)
+            adjusted_row[0] = float(request.end)
+            normalized.append(tuple(adjusted_row))
+
+        return normalized
 
     def warm_cache(self, symbols: Iterable[str], intervals: Iterable[str]) -> None:
         """Aktualizuje metadane cache, ułatwiając audyt i monitoring."""
