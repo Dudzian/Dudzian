@@ -66,9 +66,12 @@ pliki pluginów przy pomocy `QFileSystemWatcher`; po wykryciu zmian aplikacja
 odczekuje krótki debounce i wywołuje `reloadUiModules()`, emitując raport tak jak
 przy ręcznym odświeżaniu. Stan funkcji jest dostępny pod
 `appController.uiModuleAutoReloadEnabled`, a QML może go modyfikować przez
-`appController.setUiModuleAutoReloadEnabled(...)`. Testy
+`appController.setUiModuleAutoReloadEnabled(...)`. Lista katalogów oraz stan auto
+reload są zapisywane w `var/state/ui_settings.json` (lub w ścieżce wskazanej przez
+`--ui-settings-path`) i przywracane przy starcie aplikacji, dzięki czemu nie trzeba
+ponownie konfigurować modułów po każdym uruchomieniu. Testy
 `ApplicationUiModulesTest` obejmują konfigurację katalogów, przeładowanie pluginów
-oraz reakcję na automatyczne odświeżanie.【F:ui/src/app/Application.cpp†L1660-L1767】【F:ui/src/app/Application.cpp†L1788-L1855】【F:ui/src/app/Application.cpp†L3778-L3848】【F:ui/qml/components/ModuleBrowser.qml†L1-L211】【F:ui/tests/ApplicationUiModulesTest.cpp†L15-L280】
+oraz reakcję na automatyczne odświeżanie.【F:ui/src/app/Application.cpp†L1654-L1761】【F:ui/src/app/Application.cpp†L2004-L2044】【F:ui/src/app/Application.cpp†L2218-L2224】【F:ui/qml/components/ModuleBrowser.qml†L1-L211】【F:ui/tests/ApplicationUiModulesTest.cpp†L63-L477】
 
 ## Uruchomienie ze stubem gRPC
 

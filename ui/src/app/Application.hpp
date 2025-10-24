@@ -487,6 +487,7 @@ private:
     QStringList                                        m_healthTlsWatcherFiles;
     QStringList                                        m_healthTlsWatcherDirs;
     QStringList                                        m_uiModuleDirectories;
+    bool                                               m_uiModuleDirectoriesExplicit = false;
     quint64                                            m_tradingTlsReloadGeneration = 0;
     quint64                                            m_metricsTlsReloadGeneration = 0;
     quint64                                            m_healthTlsReloadGeneration = 0;

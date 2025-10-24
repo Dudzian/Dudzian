@@ -1658,10 +1658,12 @@ void Application::configureUiModules(const QCommandLineParser& parser)
 
     m_moduleManager->unloadPlugins();
 
+    m_uiModuleDirectoriesExplicit = false;
     QSet<QString> unique;
     QStringList directories;
 
     const QStringList cliDirs = parser.values(QStringLiteral("ui-module-dir"));
+    const bool cliProvided = !cliDirs.isEmpty();
     for (const QString& value : cliDirs) {
         const QString normalized = normalizeUiModulePath(value);
         if (normalized.isEmpty() || unique.contains(normalized))
@@ -1673,6 +1675,7 @@ void Application::configureUiModules(const QCommandLineParser& parser)
     if (cliDirs.isEmpty()) {
         if (const auto envDirs = envValue(QByteArrayLiteral("BOT_CORE_UI_MODULE_DIRS")); envDirs.has_value()) {
             const auto pieces = envDirs->split(QDir::listSeparator(), Qt::SkipEmptyParts);
+            const bool envProvided = !pieces.isEmpty();
             for (const QString& piece : pieces) {
                 const QString normalized = normalizeUiModulePath(piece);
                 if (normalized.isEmpty() || unique.contains(normalized))
@@ -1680,8 +1683,12 @@ void Application::configureUiModules(const QCommandLineParser& parser)
                 unique.insert(normalized);
                 directories.append(normalized);
             }
+            m_uiModuleDirectoriesExplicit = envProvided;
         }
     }
+
+    if (!m_uiModuleDirectoriesExplicit)
+        m_uiModuleDirectoriesExplicit = cliProvided;
 
     if (directories.isEmpty()) {
         const QString binaryModules = QDir(QCoreApplication::applicationDirPath()).absoluteFilePath(QStringLiteral("modules"));
@@ -1720,6 +1727,7 @@ QString Application::addUiModuleDirectory(const QString& path)
 
     m_uiModuleDirectories.append(normalized);
     emit uiModuleDirectoriesChanged(m_uiModuleDirectories);
+    scheduleUiSettingsPersist();
 
     if (!m_moduleManager) {
         updateUiModuleWatchTargets(m_uiModuleDirectories, {});
@@ -1742,6 +1750,7 @@ bool Application::removeUiModuleDirectory(const QString& path)
 
     m_uiModuleDirectories.removeAt(index);
     emit uiModuleDirectoriesChanged(m_uiModuleDirectories);
+    scheduleUiSettingsPersist();
 
     if (!m_moduleManager) {
         updateUiModuleWatchTargets(m_uiModuleDirectories, {});
@@ -1804,6 +1813,7 @@ void Application::setUiModuleAutoReloadEnabled(bool enabled)
     if (!enabled && m_uiModuleReloadTimer.isActive())
         m_uiModuleReloadTimer.stop();
     emit uiModuleAutoReloadEnabledChanged(enabled);
+    scheduleUiSettingsPersist();
 }
 
 void Application::configureDecisionLog(const QCommandLineParser& parser)
@@ -1991,6 +2001,51 @@ void Application::loadUiSettings()
         }
     }
 
+    if (root.contains(QStringLiteral("uiModules")) && root.value(QStringLiteral("uiModules")).isObject()) {
+        const QJsonObject modulesObj = root.value(QStringLiteral("uiModules")).toObject();
+
+        if (modulesObj.contains(QStringLiteral("autoReload"))) {
+            const bool autoReload = modulesObj.value(QStringLiteral("autoReload"))
+                                       .toBool(m_uiModuleAutoReloadEnabled);
+            setUiModuleAutoReloadEnabled(autoReload);
+        }
+
+        if (!m_uiModuleDirectoriesExplicit && modulesObj.value(QStringLiteral("directories")).isArray()) {
+            const QJsonArray directoriesArray = modulesObj.value(QStringLiteral("directories")).toArray();
+            QStringList directories;
+            QSet<QString> seen;
+            for (const QJsonValue& value : directoriesArray) {
+                if (!value.isString())
+                    continue;
+                const QString normalized = normalizeUiModulePath(value.toString());
+                if (normalized.isEmpty() || seen.contains(normalized))
+                    continue;
+                seen.insert(normalized);
+                directories.append(normalized);
+            }
+
+            if (directories != m_uiModuleDirectories) {
+                m_uiModuleDirectories = directories;
+                emit uiModuleDirectoriesChanged(m_uiModuleDirectories);
+
+                if (m_moduleManager) {
+                    m_moduleManager->unloadPlugins();
+                    m_moduleManager->setPluginPaths(m_uiModuleDirectories);
+                    const bool loadSuccess = m_moduleManager->loadPlugins();
+                    if (!loadSuccess) {
+                        qCWarning(lcAppMetrics)
+                            << "Nie wszystkie pluginy UI zostały poprawnie załadowane podczas przywracania ustawień.";
+                    }
+                    const QVariantMap report = m_moduleManager->lastLoadReport();
+                    updateUiModuleWatchTargets(m_uiModuleDirectories,
+                                               report.value(QStringLiteral("loadedPlugins")).toStringList());
+                } else {
+                    updateUiModuleWatchTargets(m_uiModuleDirectories, {});
+                }
+            }
+        }
+    }
+
     if (root.contains(QStringLiteral("riskHistory"))) {
         const QJsonValue riskHistoryValue = root.value(QStringLiteral("riskHistory"));
         if (riskHistoryValue.isArray()) {
@@ -2159,6 +2214,14 @@ QJsonObject Application::buildUiSettingsPayload() const
     alerts.insert(QStringLiteral("sortMode"), static_cast<int>(m_filteredAlertsModel.sortMode()));
     alerts.insert(QStringLiteral("searchText"), m_filteredAlertsModel.searchText());
     root.insert(QStringLiteral("alerts"), alerts);
+
+    QJsonObject modules;
+    QJsonArray moduleDirs;
+    for (const QString& path : m_uiModuleDirectories)
+        moduleDirs.append(path);
+    modules.insert(QStringLiteral("directories"), moduleDirs);
+    modules.insert(QStringLiteral("autoReload"), m_uiModuleAutoReloadEnabled);
+    root.insert(QStringLiteral("uiModules"), modules);
 
     QJsonObject history;
     history.insert(QStringLiteral("maximumEntries"), m_riskHistoryModel.maximumEntries());

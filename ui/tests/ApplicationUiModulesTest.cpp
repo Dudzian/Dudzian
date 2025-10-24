@@ -66,6 +66,7 @@ private slots:
     void fallbackUsesDefaultDirectories();
     void reloadsModulesOnDemand();
     void managesModuleDirectoriesAtRuntime();
+    void persistsUiModulePreferences();
     void autoReloadTriggeredByWatcher();
     void autoReloadWatchesMissingDirectories();
 };
@@ -202,6 +203,7 @@ void ApplicationUiModulesTest::fallbackUsesDefaultDirectories()
     const QString repoModules = absolutePath(QDir::current().absoluteFilePath(QStringLiteral("ui/modules")));
 
     QStringList expected;
+    QStringList initial;
     if (!binaryModules.isEmpty())
         expected.append(binaryModules);
     if (!repoModules.isEmpty() && !expected.contains(repoModules))
@@ -376,6 +378,103 @@ void ApplicationUiModulesTest::managesModuleDirectoriesAtRuntime()
     watched = app.watchedUiModulePathsForTesting();
     QVERIFY(!watched.contains(normB));
     QVERIFY(watched.isEmpty());
+}
+
+void ApplicationUiModulesTest::persistsUiModulePreferences()
+{
+    QTemporaryDir settingsDir;
+    QVERIFY(settingsDir.isValid());
+
+    const QString settingsPath = settingsDir.filePath(QStringLiteral("ui_settings.json"));
+    const QByteArray originalSettings = qgetenv("BOT_CORE_UI_SETTINGS_PATH");
+    qputenv("BOT_CORE_UI_SETTINGS_PATH", settingsPath.toUtf8());
+    const auto restoreSettingsEnv = qScopeGuard(
+        [&]() { restoreEnv(QByteArrayLiteral("BOT_CORE_UI_SETTINGS_PATH"), originalSettings); });
+
+    const QByteArray originalDisable = qgetenv("BOT_CORE_UI_SETTINGS_DISABLE");
+    qunsetenv("BOT_CORE_UI_SETTINGS_DISABLE");
+    const auto restoreDisableEnv = qScopeGuard(
+        [&]() { restoreEnv(QByteArrayLiteral("BOT_CORE_UI_SETTINGS_DISABLE"), originalDisable); });
+
+    const QByteArray originalModulesEnv = qgetenv("BOT_CORE_UI_MODULE_DIRS");
+    qunsetenv("BOT_CORE_UI_MODULE_DIRS");
+    const auto restoreModulesEnv =
+        qScopeGuard([&]() { restoreEnv(QByteArrayLiteral("BOT_CORE_UI_MODULE_DIRS"), originalModulesEnv); });
+
+    QTemporaryDir dirA;
+    QTemporaryDir dirB;
+    QVERIFY(dirA.isValid());
+    QVERIFY(dirB.isValid());
+
+    QStringList expected;
+
+    {
+        QQmlApplicationEngine engine;
+        Application app(engine);
+
+        auto moduleManager = std::make_unique<RecordingModuleManager>();
+        app.setModuleManagerForTesting(std::move(moduleManager));
+
+        QCommandLineParser parser;
+        app.configureParser(parser);
+        const QStringList args{
+            QStringLiteral("test"),
+            QStringLiteral("--endpoint"), QStringLiteral("localhost:50051"),
+            QStringLiteral("--metrics-endpoint"), QStringLiteral("localhost:9000"),
+        };
+        parser.process(args);
+
+        QVERIFY(app.applyParser(parser));
+
+        expected = app.uiModuleDirectoriesForTesting();
+        initial = expected;
+
+        const QString normalizedA = app.addUiModuleDirectory(dirA.path());
+        QVERIFY(!normalizedA.isEmpty());
+        if (!expected.contains(normalizedA))
+            expected.append(normalizedA);
+
+        const QString normalizedB = app.addUiModuleDirectory(dirB.path());
+        QVERIFY(!normalizedB.isEmpty());
+        if (!expected.contains(normalizedB))
+            expected.append(normalizedB);
+
+        app.setUiModuleAutoReloadEnabled(true);
+        QVERIFY(app.uiModuleAutoReloadEnabled());
+
+        app.saveUiSettingsImmediatelyForTesting();
+
+        QFileInfo info(settingsPath);
+        QVERIFY(info.exists());
+    }
+
+    {
+        QQmlApplicationEngine engine;
+        Application app(engine);
+
+        auto moduleManager = std::make_unique<RecordingModuleManager>();
+        RecordingModuleManager* recording = moduleManager.get();
+        app.setModuleManagerForTesting(std::move(moduleManager));
+
+        QCommandLineParser parser;
+        app.configureParser(parser);
+        const QStringList args{
+            QStringLiteral("test"),
+            QStringLiteral("--endpoint"), QStringLiteral("localhost:50051"),
+            QStringLiteral("--metrics-endpoint"), QStringLiteral("localhost:9000"),
+        };
+        parser.process(args);
+
+        QVERIFY(app.applyParser(parser));
+
+        QCOMPARE(app.uiModuleDirectoriesForTesting(), expected);
+        QCOMPARE(recording->pluginPaths(), expected);
+        QVERIFY(app.uiModuleAutoReloadEnabled());
+        if (expected != initial)
+            QVERIFY(recording->loadCallCount >= 2);
+        else
+            QVERIFY(recording->loadCallCount >= 1);
+    }
 }
 
 void ApplicationUiModulesTest::autoReloadTriggeredByWatcher()
