@@ -368,57 +368,57 @@ ai_model_management:
 
 portfolio_governor:
   enabled: true
-  rebalance_interval_minutes: 30
-  smoothing: 0.6
-  default_baseline_weight: 0.3
-  default_min_weight: 0.05
-  default_max_weight: 0.55
+  rebalance_interval_minutes: 20
+  smoothing: 0.55
+  default_baseline_weight: 0.28
+  default_min_weight: 0.08
+  default_max_weight: 0.5
   require_complete_metrics: true
-  min_score_threshold: 0.05
-  default_cost_bps: 4.5
+  min_score_threshold: 0.08
+  default_cost_bps: 5.0
   max_signal_floor: 1
   scoring:
-    alpha: 1.0
-    cost: 1.2
-    slo: 1.1
-    risk: 0.6
+    alpha: 0.9
+    cost: 1.3
+    slo: 1.2
+    risk: 0.8
   strategies:
     core_daily_trend:
-      baseline_weight: 0.4
-      min_weight: 0.25
-      max_weight: 0.65
-      baseline_max_signals: 4
-      max_signal_factor: 1.3
+      baseline_weight: 0.38
+      min_weight: 0.22
+      max_weight: 0.6
+      baseline_max_signals: 3
+      max_signal_factor: 1.25
       risk_profile: balanced
       tags:
         - core
         - trend
     core_mean_reversion:
-      baseline_weight: 0.3
+      baseline_weight: 0.27
       min_weight: 0.1
-      max_weight: 0.5
-      baseline_max_signals: 6
-      max_signal_factor: 1.6
+      max_weight: 0.45
+      baseline_max_signals: 5
+      max_signal_factor: 1.45
       risk_profile: conservative
       tags:
         - core
         - mean_reversion
     core_volatility_target:
-      baseline_weight: 0.2
-      min_weight: 0.1
-      max_weight: 0.45
+      baseline_weight: 0.23
+      min_weight: 0.12
+      max_weight: 0.4
       baseline_max_signals: 3
-      max_signal_factor: 1.2
+      max_signal_factor: 1.15
       risk_profile: balanced
       tags:
         - volatility
         - stabilizer
     core_cross_exchange:
-      baseline_weight: 0.1
+      baseline_weight: 0.12
       min_weight: 0.05
-      max_weight: 0.3
-      baseline_max_signals: 5
-      max_signal_factor: 1.4
+      max_weight: 0.28
+      baseline_max_signals: 4
+      max_signal_factor: 1.3
       risk_profile: aggressive
       tags:
         - arbitrage
@@ -428,10 +428,11 @@ market_intel:
   enabled: true
   output_directory: ../data/stage6/metrics
   manifest_path: ../var/audit/stage6/market_intel/manifest.json
-  default_weight: 1.0
+  default_weight: 1.15
   required_symbols:
     - BTCUSDT
     - ETHUSDT
+    - SOLUSDT
   sqlite:
     path: ../var/stage6/market_intel/market_metrics.sqlite
     table: market_metrics
@@ -442,14 +443,14 @@ stress_lab:
   report_directory: var/audit/stage6/stress_lab
   signing_key_env: STRESS_LAB_SIGNING_KEY
   thresholds:
-    max_liquidity_loss_pct: 0.7
-    max_spread_increase_bps: 60.0
-    max_volatility_increase_pct: 0.95
-    max_sentiment_drawdown: 0.6
-    max_funding_change_bps: 35.0
-    max_latency_spike_ms: 190.0
-    max_blackout_minutes: 60.0
-    max_dispersion_bps: 70.0
+    max_liquidity_loss_pct: 0.55
+    max_spread_increase_bps: 45.0
+    max_volatility_increase_pct: 0.8
+    max_sentiment_drawdown: 0.5
+    max_funding_change_bps: 25.0
+    max_latency_spike_ms: 150.0
+    max_blackout_minutes: 40.0
+    max_dispersion_bps: 50.0
   datasets:
     BTCUSDT:
       symbol: BTCUSDT
@@ -489,8 +490,8 @@ stress_lab:
         - type: sentiment_crash
           intensity: 0.5
       threshold_overrides:
-        max_latency_spike_ms: 220.0
-        max_blackout_minutes: 75.0
+        max_latency_spike_ms: 180.0
+        max_blackout_minutes: 55.0
 
 resilience:
   enabled: true
