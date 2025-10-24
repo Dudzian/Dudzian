@@ -72,9 +72,15 @@ set(UI_SOURCES
     src/models/RiskHistoryModel.cpp
     src/models/RiskStateModel.cpp
     src/models/DecisionLogModel.cpp
+    src/models/DecisionLogFilterProxyModel.cpp
+    src/models/IndicatorSeriesModel.cpp
+    src/models/MarketRegimeClassifierBridge.cpp
+    src/models/MarketRegimeTimelineModel.cpp
+    src/models/SignalListModel.cpp
     src/utils/PerformanceGuard.cpp
     src/utils/FrameRateMonitor.cpp
     src/utils/PathUtils.cpp
+    src/telemetry/PerformanceTelemetryController.cpp
     src/telemetry/UiTelemetryReporter.cpp
     src/license/LicenseActivationController.cpp
     src/security/SecurityAdminController.cpp
@@ -99,11 +105,18 @@ set(UI_HEADERS
     src/models/RiskHistoryModel.hpp
     src/models/RiskStateModel.hpp
     src/models/DecisionLogModel.hpp
+    src/models/DecisionLogFilterProxyModel.hpp
+    src/models/IndicatorSeriesModel.hpp
+    src/models/MarketDataStreams.hpp
+    src/models/MarketRegimeClassifierBridge.hpp
+    src/models/MarketRegimeTimelineModel.hpp
+    src/models/SignalListModel.hpp
     src/models/RiskTypes.hpp
     src/utils/PerformanceGuard.hpp
     src/utils/FrameRateMonitor.hpp
     src/utils/PathUtils.hpp
     src/telemetry/TelemetryReporter.hpp
+    src/telemetry/PerformanceTelemetryController.hpp
     src/telemetry/UiTelemetryReporter.hpp
     src/license/LicenseActivationController.hpp
     src/security/SecurityAdminController.hpp
@@ -378,6 +391,17 @@ if(BUILD_TESTING)
     target_link_libraries(frame_rate_monitor_tests PRIVATE Qt6::Core Qt6::Test)
     add_test(NAME frame_rate_monitor_tests COMMAND frame_rate_monitor_tests)
 
+    add_executable(performance_telemetry_controller_tests
+        tests/PerformanceTelemetryControllerTest.cpp
+        src/telemetry/PerformanceTelemetryController.cpp
+        src/telemetry/UiTelemetryReporter.cpp
+        src/utils/PerformanceGuard.cpp
+    )
+    target_include_directories(performance_telemetry_controller_tests PRIVATE src ${GENERATED_DIR})
+    target_link_libraries(performance_telemetry_controller_tests
+        PRIVATE Qt6::Core Qt6::Test protobuf::libprotobuf gRPC::grpc++)
+    add_test(NAME performance_telemetry_controller_tests COMMAND performance_telemetry_controller_tests)
+
     # CandlestickChartView tests (needs QML/Charts)
     add_executable(candlestick_chart_view_tests
         tests/CandlestickChartViewTest.cpp
@@ -392,6 +416,34 @@ if(BUILD_TESTING)
         PRIVATE Qt6::Gui Qt6::Qml Qt6::Quick Qt6::Charts Qt6::Test
     )
     add_test(NAME candlestick_chart_view_tests COMMAND candlestick_chart_view_tests)
+
+    add_executable(market_regime_timeline_model_tests
+        tests/MarketRegimeTimelineModelTest.cpp
+        src/models/MarketRegimeTimelineModel.cpp
+    )
+    target_include_directories(market_regime_timeline_model_tests PRIVATE src ${GENERATED_DIR})
+    target_link_libraries(market_regime_timeline_model_tests PRIVATE Qt6::Core Qt6::Test)
+    add_test(NAME market_regime_timeline_model_tests COMMAND market_regime_timeline_model_tests)
+
+    add_executable(market_multi_stream_view_tests
+        tests/MarketMultiStreamViewTest.cpp
+        src/models/OhlcvListModel.cpp
+        src/models/IndicatorSeriesModel.cpp
+        src/models/SignalListModel.cpp
+        src/models/MarketRegimeTimelineModel.cpp
+        src/utils/PerformanceGuard.cpp
+    )
+    target_include_directories(market_multi_stream_view_tests PRIVATE src ${GENERATED_DIR})
+    qt_add_resources(market_multi_stream_view_tests market_multi_stream_view_qml
+        PREFIX "/qml/components"
+        FILES
+            qml/components/MarketMultiStreamView.qml
+            qml/components/CandlestickChartView.qml
+    )
+    target_link_libraries(market_multi_stream_view_tests
+        PRIVATE Qt6::Gui Qt6::Qml Qt6::Quick Qt6::QuickControls2 Qt6::Charts Qt6::Test
+    )
+    add_test(NAME market_multi_stream_view_tests COMMAND market_multi_stream_view_tests)
 
     # RiskStateModel tests
     add_executable(risk_state_model_tests
@@ -417,6 +469,22 @@ if(BUILD_TESTING)
     target_include_directories(decision_log_model_tests PRIVATE src)
     target_link_libraries(decision_log_model_tests PRIVATE Qt6::Core Qt6::Test)
     add_test(NAME decision_log_model_tests COMMAND decision_log_model_tests)
+
+    add_executable(decision_log_filter_proxy_model_tests
+        tests/DecisionLogFilterProxyModelTest.cpp
+        src/models/DecisionLogFilterProxyModel.cpp
+    )
+    target_include_directories(decision_log_filter_proxy_model_tests PRIVATE src)
+    target_link_libraries(decision_log_filter_proxy_model_tests PRIVATE Qt6::Core Qt6::Test)
+    add_test(NAME decision_log_filter_proxy_model_tests COMMAND decision_log_filter_proxy_model_tests)
+
+    add_executable(market_regime_classifier_tests
+        tests/MarketRegimeClassifierBridgeTest.cpp
+        src/models/MarketRegimeClassifierBridge.cpp
+    )
+    target_include_directories(market_regime_classifier_tests PRIVATE src)
+    target_link_libraries(market_regime_classifier_tests PRIVATE Qt6::Core Qt6::Test)
+    add_test(NAME market_regime_classifier_tests COMMAND market_regime_classifier_tests)
 
     add_executable(alerts_model_tests
         tests/AlertsModelTest.cpp
