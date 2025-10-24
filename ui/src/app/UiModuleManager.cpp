@@ -31,32 +31,6 @@ UiModuleManager::UiModuleManager(QObject* parent)
 {
 }
 
-QVariantMap UiModuleManager::LoadReport::toVariantMap() const
-{
-    QVariantMap map;
-    map.insert(QStringLiteral("requestedPaths"), requestedPaths);
-    map.insert(QStringLiteral("missingPaths"), missingPaths);
-    map.insert(QStringLiteral("invalidEntries"), invalidEntries);
-    map.insert(QStringLiteral("loadedPlugins"), loadedPlugins);
-    map.insert(QStringLiteral("directoriesScanned"), directoriesScanned);
-    map.insert(QStringLiteral("filesScanned"), filesScanned);
-    map.insert(QStringLiteral("pluginsLoaded"), pluginsLoaded);
-    map.insert(QStringLiteral("viewsRegistered"), viewsRegistered);
-    map.insert(QStringLiteral("servicesRegistered"), servicesRegistered);
-
-    QVariantList errorList;
-    errorList.reserve(failedPlugins.size());
-    for (const PluginLoadError& error : failedPlugins) {
-        QVariantMap entry;
-        entry.insert(QStringLiteral("path"), error.path);
-        entry.insert(QStringLiteral("message"), error.message);
-        errorList.append(entry);
-    }
-    map.insert(QStringLiteral("failedPlugins"), errorList);
-
-    return map;
-}
-
 UiModuleManager::~UiModuleManager()
 {
     unloadPlugins();
@@ -178,24 +152,18 @@ bool UiModuleManager::loadPlugins(const QStringList& candidates)
     const QStringList targets = candidates.isEmpty() ? m_pluginPaths : candidates;
     bool success = true;
 
-    LoadReport report;
-    report.requestedPaths = targets;
-
     for (const QString& target : targets) {
         QFileInfo info(target);
         if (!info.exists()) {
             qWarning() << "UiModuleManager: pominięto ścieżkę pluginów" << target;
             success = false;
-            report.missingPaths.append(target);
             continue;
         }
 
         if (info.isFile()) {
-            report.filesScanned++;
             if (!isValidLibraryPath(info.absoluteFilePath())) {
                 qWarning() << "UiModuleManager: pominięto nieobsługiwany plik" << info.absoluteFilePath();
                 success = false;
-                report.invalidEntries.append(info.absoluteFilePath());
                 continue;
             }
             auto loader = std::make_unique<QPluginLoader>(info.absoluteFilePath());
@@ -203,30 +171,23 @@ bool UiModuleManager::loadPlugins(const QStringList& candidates)
                 if (auto module = qobject_cast<UiModuleInterface*>(plugin)) {
                     module->registerComponents(*this);
                     m_pluginLoaders.push_back(std::move(loader));
-                    report.loadedPlugins.append(info.absoluteFilePath());
                 } else {
                     qWarning() << "UiModuleManager: plugin" << info.absoluteFilePath() << "nie implementuje UiModuleInterface";
                     loader->unload();
                     success = false;
-                    report.failedPlugins.append({info.absoluteFilePath(),
-                                                 QStringLiteral("Plugin nie implementuje UiModuleInterface")});
                 }
             } else {
                 qWarning() << "UiModuleManager: nie udało się załadować pluginu" << info.absoluteFilePath()
                            << loader->errorString();
                 success = false;
-                report.failedPlugins.append({info.absoluteFilePath(), loader->errorString()});
             }
             continue;
         }
 
         QDir dir(info.absoluteFilePath());
-        report.directoriesScanned++;
         const QFileInfoList entries = dir.entryInfoList(QDir::Files | QDir::NoDotAndDotDot);
         for (const QFileInfo& fileInfo : entries) {
-            report.filesScanned++;
             if (!isValidLibraryPath(fileInfo.fileName())) {
-                report.invalidEntries.append(fileInfo.absoluteFilePath());
                 continue;
             }
             auto loader = std::make_unique<QPluginLoader>(fileInfo.absoluteFilePath());
@@ -234,28 +195,19 @@ bool UiModuleManager::loadPlugins(const QStringList& candidates)
                 if (auto module = qobject_cast<UiModuleInterface*>(plugin)) {
                     module->registerComponents(*this);
                     m_pluginLoaders.push_back(std::move(loader));
-                    report.loadedPlugins.append(fileInfo.absoluteFilePath());
                 } else {
                     qWarning() << "UiModuleManager: plugin" << fileInfo.absoluteFilePath()
                                << "nie implementuje UiModuleInterface";
                     loader->unload();
                     success = false;
-                    report.failedPlugins.append({fileInfo.absoluteFilePath(),
-                                                 QStringLiteral("Plugin nie implementuje UiModuleInterface")});
                 }
             } else {
                 qWarning() << "UiModuleManager: nie udało się załadować pluginu" << fileInfo.absoluteFilePath()
                            << loader->errorString();
                 success = false;
-                report.failedPlugins.append({fileInfo.absoluteFilePath(), loader->errorString()});
             }
         }
     }
-
-    report.pluginsLoaded = report.loadedPlugins.size();
-    report.viewsRegistered = m_views.size();
-    report.servicesRegistered = m_services.size();
-    m_lastLoadReport = report;
 
     return success;
 }
@@ -328,15 +280,5 @@ QObject* UiModuleManager::ensureServiceInstance(ServiceEntry& entry) const
 bool UiModuleManager::isValidLibraryPath(const QString& path) const
 {
     return hasLibrarySuffix(path);
-}
-
-QVariantMap UiModuleManager::lastLoadReport() const
-{
-    return m_lastLoadReport.toVariantMap();
-}
-
-void UiModuleManager::setLastLoadReportForTesting(const LoadReport& report)
-{
-    m_lastLoadReport = report;
 }
 

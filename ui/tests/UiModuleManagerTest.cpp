@@ -88,13 +88,6 @@ void UiModuleManagerTest::handlesMissingPluginDirectories()
     manager.setPluginPaths({QStringLiteral("/definitely/missing/path")});
     QVERIFY(!manager.loadPlugins());
     QCOMPARE(manager.availableViews().size(), 0);
-
-    const QVariantMap report = manager.lastLoadReport();
-    QCOMPARE(report.value(QStringLiteral("requestedPaths")).toStringList(),
-             QStringList{QStringLiteral("/definitely/missing/path")});
-    QCOMPARE(report.value(QStringLiteral("missingPaths")).toStringList(),
-             QStringList{QStringLiteral("/definitely/missing/path")});
-    QCOMPARE(report.value(QStringLiteral("pluginsLoaded")).toInt(), 0);
 }
 
 namespace {

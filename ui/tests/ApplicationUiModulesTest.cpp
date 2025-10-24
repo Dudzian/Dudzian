@@ -8,7 +8,6 @@
 #include <QScopeGuard>
 #include <QTemporaryDir>
 #include <QUrl>
-#include <QSignalSpy>
 
 #include "app/Application.hpp"
 #include "app/UiModuleManager.hpp"
@@ -25,12 +24,6 @@ public:
         ++loadCallCount;
         lastCandidates = candidates;
         recordedPluginPaths = UiModuleManager::pluginPaths();
-        LoadReport report;
-        report.requestedPaths = candidates.isEmpty() ? recordedPluginPaths : candidates;
-        report.pluginsLoaded = 0;
-        report.viewsRegistered = 0;
-        report.servicesRegistered = 0;
-        setLastLoadReportForTesting(report);
         return loadResult;
     }
 
@@ -62,7 +55,6 @@ private slots:
     void cliOverridesModuleDirectories();
     void environmentProvidesDirectories();
     void fallbackUsesDefaultDirectories();
-    void reloadsModulesOnDemand();
 };
 
 void ApplicationUiModulesTest::cliOverridesModuleDirectories()
@@ -194,67 +186,6 @@ void ApplicationUiModulesTest::fallbackUsesDefaultDirectories()
     QCOMPARE(recording->pluginPaths(), expected);
     QCOMPARE(app.uiModuleDirectoriesForTesting(), expected);
     QCOMPARE(recording->loadCallCount, expected.isEmpty() ? 0 : 1);
-}
-
-void ApplicationUiModulesTest::reloadsModulesOnDemand()
-{
-    QQmlApplicationEngine engine;
-    Application app(engine);
-
-    auto moduleManager = std::make_unique<RecordingModuleManager>();
-    RecordingModuleManager* recording = moduleManager.get();
-    app.setModuleManagerForTesting(std::move(moduleManager));
-
-    QTemporaryDir dirA;
-    QVERIFY(dirA.isValid());
-
-    QCommandLineParser parser;
-    app.configureParser(parser);
-    const QStringList args{
-        QStringLiteral("test"),
-        QStringLiteral("--endpoint"), QStringLiteral("localhost:50051"),
-        QStringLiteral("--metrics-endpoint"), QStringLiteral("localhost:9000"),
-        QStringLiteral("--ui-module-dir"), dirA.path(),
-    };
-    parser.process(args);
-
-    QVERIFY(app.applyParser(parser));
-
-    const QStringList expected{ absolutePath(dirA.path()) };
-    QCOMPARE(recording->loadCallCount, 1);
-    QCOMPARE(recording->pluginPaths(), expected);
-    QCOMPARE(app.uiModuleDirectoriesForTesting(), expected);
-
-    QSignalSpy reloadSpy(&app, &Application::uiModulesReloaded);
-    QVERIFY(reloadSpy.isValid());
-
-    recording->loadResult = true;
-    QVERIFY(app.reloadUiModules());
-    QCOMPARE(recording->loadCallCount, 2);
-    QCOMPARE(recording->recordedPluginPaths, expected);
-    QCOMPARE(recording->lastCandidates, QStringList());
-    QCOMPARE(reloadSpy.count(), 1);
-    {
-        const QList<QVariant> arguments = reloadSpy.takeFirst();
-        QCOMPARE(arguments.size(), 2);
-        QCOMPARE(arguments.at(0).toBool(), true);
-        const QVariantMap report = arguments.at(1).toMap();
-        QCOMPARE(report.value(QStringLiteral("requestedPaths")).toStringList(), expected);
-    }
-
-    recording->loadResult = false;
-    QVERIFY(!app.reloadUiModules());
-    QCOMPARE(recording->loadCallCount, 3);
-    QCOMPARE(recording->recordedPluginPaths, expected);
-    QCOMPARE(recording->lastCandidates, QStringList());
-    QCOMPARE(reloadSpy.count(), 1);
-    {
-        const QList<QVariant> arguments = reloadSpy.takeFirst();
-        QCOMPARE(arguments.size(), 2);
-        QCOMPARE(arguments.at(0).toBool(), false);
-        const QVariantMap report = arguments.at(1).toMap();
-        QCOMPARE(report.value(QStringLiteral("requestedPaths")).toStringList(), expected);
-    }
 }
 
 QTEST_MAIN(ApplicationUiModulesTest)

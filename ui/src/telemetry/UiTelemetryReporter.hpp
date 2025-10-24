@@ -57,6 +57,7 @@ public:
     int pendingRetryCount() const;
 
 private:
+    friend class PerformanceTelemetryController;
     void pushSnapshot(const QJsonObject& notes, std::optional<double> fpsValue);
     void flushRetryBuffer();
     void resetRetryBuffer();

@@ -185,10 +185,13 @@ ApplicationWindow {
                     Item {
                         anchors.fill: parent
 
-                        CandlestickChartView {
+                        MarketMultiStreamView {
                             id: chartView
                             anchors.fill: parent
-                            model: ohlcvModel
+                            priceModel: ohlcvModel
+                            indicatorModel: indicatorSeriesModel
+                            signalModel: signalListModel
+                            regimeModel: marketRegimeTimelineModel
                             performanceGuard: guardModel.guard
                             reduceMotion: appController.reduceMotionActive
                         }
@@ -203,6 +206,7 @@ ApplicationWindow {
                         anchors.fill: parent
                         appController: appController
                         strategyController: strategyController
+                        workbenchController: workbenchController
                         riskModel: riskModel
                         riskHistoryModel: riskHistoryModel
                         licenseController: licenseController

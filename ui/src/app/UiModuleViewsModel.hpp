@@ -3,7 +3,6 @@
 #include <QAbstractListModel>
 #include <QHash>
 #include <QStringList>
-#include <QVariant>
 #include <QVector>
 
 #include <optional>
@@ -13,7 +12,6 @@
 class UiModuleViewsModel : public QAbstractListModel {
     Q_OBJECT
     Q_PROPERTY(QString categoryFilter READ categoryFilter WRITE setCategoryFilter NOTIFY categoryFilterChanged)
-    Q_PROPERTY(QString searchFilter READ searchFilter WRITE setSearchFilter NOTIFY searchFilterChanged)
 
 public:
     enum Roles {
@@ -34,9 +32,6 @@ public:
     QString categoryFilter() const { return m_categoryFilter; }
     void setCategoryFilter(const QString& category);
 
-    QString searchFilter() const { return m_searchFilter; }
-    void setSearchFilter(const QString& query);
-
     void setModuleManager(UiModuleManager* manager);
     UiModuleManager* moduleManager() const { return m_manager; }
 
@@ -46,7 +41,6 @@ public:
 
 signals:
     void categoryFilterChanged();
-    void searchFilterChanged();
 
 private slots:
     void handleViewRegistered(const QString& moduleId, const QVariantMap& descriptor);
@@ -63,14 +57,11 @@ private:
     QVector<QString> buildOrderedIds() const;
     void rebuild();
     QVariantMap toVariantMap(const ViewEntry& entry) const;
-    bool matchesSearch(const ViewEntry& entry, const QString& query) const;
-    bool metadataContains(const QVariant& value, const QString& query) const;
 
     UiModuleManager* m_manager = nullptr;
     QMetaObject::Connection m_destroyConnection;
     QHash<QString, ViewEntry> m_registry;  // key = view id
     QVector<QString> m_orderedIds;
     QString m_categoryFilter;
-    QString m_searchFilter;
 };
 

@@ -11,26 +11,12 @@ Item {
     property string selectedCategoryLabel: ""
     property url selectedSource: ""
     property string selectedCategory: ""
-    property string searchQuery: ""
     property var categoryOptions: []
     property bool suppressCategorySync: false
-    property bool suppressSearchSync: false
-    readonly property var moduleDirectories: typeof appController !== "undefined" ? appController.uiModuleDirectories : []
-    property bool reloadingModules: false
-    property string reloadStatusMessage: ""
-    property bool reloadStatusError: false
-    property var reloadReport: ({})
 
     signal viewActivated(string viewId)
 
     ListModel { id: metadataModel }
-
-    Timer {
-        id: reloadStatusTimer
-        interval: 5000
-        repeat: false
-        onTriggered: root.reloadStatusMessage = ""
-    }
 
     function metadataValueToString(value) {
         if (value === null || value === undefined)
@@ -78,14 +64,6 @@ Item {
         suppressCategorySync = true;
         selectedCategory = viewsModel.categoryFilter || "";
         suppressCategorySync = false;
-    }
-
-    function syncSearchFromModel() {
-        if (!viewsModel)
-            return;
-        suppressSearchSync = true;
-        searchQuery = viewsModel.searchFilter || "";
-        suppressSearchSync = false;
     }
 
     function descriptorMatchesSelection(descriptor) {
@@ -163,18 +141,6 @@ Item {
         selectIndex(index);
     }
 
-    function triggerReload() {
-        if (root.reloadingModules)
-            return;
-        if (typeof appController === "undefined" || !appController.reloadUiModules)
-            return;
-        root.reloadingModules = true;
-        reloadStatusTimer.stop();
-        root.reloadStatusError = false;
-        root.reloadStatusMessage = qsTr("Trwa przeładowywanie modułów…");
-        appController.reloadUiModules();
-    }
-
     onSelectedCategoryChanged: {
         if (suppressCategorySync)
             return;
@@ -183,26 +149,13 @@ Item {
         Qt.callLater(ensureSelectionValid);
     }
 
-    onSearchQueryChanged: {
-        if (suppressSearchSync)
-            return;
-        if (viewsModel && viewsModel.searchFilter !== searchQuery)
-            viewsModel.searchFilter = searchQuery;
-        Qt.callLater(ensureSelectionValid);
-    }
-
     Connections {
         target: viewsModel
         function onCategoryFilterChanged() {
             syncCategoryFromModel();
         }
-        function onSearchFilterChanged() {
-            syncSearchFromModel();
-            Qt.callLater(ensureSelectionValid);
-        }
         function onModelReset() {
             refreshCategories();
-            syncSearchFromModel();
             Qt.callLater(ensureSelectionValid);
         }
         function onRowsInserted() {
@@ -215,52 +168,10 @@ Item {
         }
     }
 
-    Connections {
-        target: typeof appController !== "undefined" ? appController : null
-        function onUiModulesReloaded(success, report) {
-            root.reloadingModules = false;
-            reloadReport = report || {};
-            var message = "";
-            var error = false;
-            var pluginCount = reloadReport.pluginsLoaded || 0;
-            var viewCount = reloadReport.viewsRegistered || 0;
-            if (moduleDirectories.length === 0) {
-                message = success
-                        ? qsTr("Brak skonfigurowanych katalogów modułów.")
-                        : qsTr("Nie udało się przeładować modułów – brak katalogów.");
-                error = !success;
-            } else if (success) {
-                if (pluginCount === 0 && viewCount === 0)
-                    message = qsTr("Przeładowano moduły, ale nie znaleziono widoków.");
-                else
-                    message = qsTr("Przeładowano %1 pluginów i %2 widoków.")
-                            .arg(pluginCount)
-                            .arg(viewCount);
-            } else {
-                message = qsTr("Nie udało się przeładować wszystkich modułów – sprawdź logi aplikacji.");
-                error = true;
-            }
-            root.reloadStatusMessage = message;
-            root.reloadStatusError = error;
-            if (message.length > 0)
-                reloadStatusTimer.restart();
-        }
-        function onUiModuleDirectoriesChanged() {
-            root.reloadingModules = false;
-            reloadStatusTimer.stop();
-            root.reloadStatusMessage = "";
-            root.reloadStatusError = false;
-            reloadReport = {};
-        }
-    }
-
     Component.onCompleted: {
         syncCategoryFromModel();
-        syncSearchFromModel();
         refreshCategories();
         ensureSelectionValid();
-        if (typeof appController !== "undefined" && appController.moduleManager && appController.moduleManager.lastLoadReport)
-            reloadReport = appController.moduleManager.lastLoadReport();
     }
 
     ColumnLayout {
@@ -276,17 +187,6 @@ Item {
                 font.pixelSize: 20
                 font.bold: true
                 Layout.fillWidth: true
-            }
-
-            TextField {
-                id: searchField
-                Layout.preferredWidth: 240
-                placeholderText: qsTr("Szukaj widoków…")
-                text: root.searchQuery
-                selectByMouse: true
-                onTextChanged: root.searchQuery = text
-                ToolTip.visible: hovered && text.length === 0
-                ToolTip.text: qsTr("Filtruj po nazwie, identyfikatorze, module lub metadanych")
             }
 
             ComboBox {
@@ -311,165 +211,6 @@ Item {
                             categoryCombo.currentIndex = modelIndex
                         else if (modelIndex < 0 && categoryCombo.currentIndex !== 0)
                             categoryCombo.currentIndex = 0
-                    }
-                }
-            }
-
-            Button {
-                id: reloadButton
-                Layout.preferredWidth: 160
-                text: root.reloadingModules ? qsTr("Przeładowywanie…") : qsTr("Przeładuj moduły")
-                icon.name: "view-refresh"
-                enabled: !root.reloadingModules && moduleDirectories.length > 0 && typeof appController !== "undefined" && !!appController.reloadUiModules
-                onClicked: root.triggerReload()
-                ToolTip.visible: hovered
-                ToolTip.delay: 400
-                ToolTip.text: moduleDirectories.length > 0
-                    ? qsTr("Ponownie wczytaj pluginy UI z aktualnych katalogów")
-                    : qsTr("Skonfiguruj katalogi modułów przed przeładowaniem")
-            }
-        }
-
-        ColumnLayout {
-            Layout.fillWidth: true
-            spacing: 4
-
-            Label {
-                Layout.fillWidth: true
-                text: moduleDirectories.length > 0
-                    ? qsTr("Skonfigurowane katalogi modułów:")
-                    : qsTr("Brak skonfigurowanych katalogów modułów. Użyj flagi --ui-module-dir lub zmiennej BOT_CORE_UI_MODULE_DIRS.")
-                color: moduleDirectories.length > 0 ? Qt.rgba(1, 1, 1, 0.7) : Qt.rgba(1, 0.6, 0.6, 1)
-                wrapMode: Text.WordWrap
-            }
-
-            ColumnLayout {
-                Layout.fillWidth: true
-                spacing: 2
-                visible: moduleDirectories.length > 0
-
-                Repeater {
-                    model: moduleDirectories
-                    delegate: Label {
-                        Layout.fillWidth: true
-                        text: modelData
-                        wrapMode: Text.WrapAnywhere
-                        color: Qt.rgba(1, 1, 1, 0.65)
-                    }
-                }
-            }
-        }
-
-        Label {
-            Layout.fillWidth: true
-            visible: reloadStatusMessage.length > 0
-            text: reloadStatusMessage
-            color: reloadStatusError ? Qt.rgba(1, 0.45, 0.45, 1) : Qt.rgba(0.55, 0.85, 0.6, 1)
-            wrapMode: Text.WordWrap
-        }
-
-        RowLayout {
-            Layout.fillWidth: true
-            spacing: 12
-            visible: (reloadReport.loadedPlugins && reloadReport.loadedPlugins.length > 0)
-                     || (reloadReport.failedPlugins && reloadReport.failedPlugins.length > 0)
-
-            GroupBox {
-                Layout.fillWidth: true
-                visible: reloadReport.loadedPlugins && reloadReport.loadedPlugins.length > 0
-                title: qsTr("Załadowane pluginy (%1)").arg(reloadReport.loadedPlugins ? reloadReport.loadedPlugins.length : 0)
-
-                ScrollView {
-                    implicitHeight: Math.min(160, loadedPluginsView.contentHeight)
-                    ListView {
-                        id: loadedPluginsView
-                        width: parent.width
-                        model: reloadReport.loadedPlugins || []
-                        clip: true
-                        delegate: Label {
-                            width: ListView.view ? ListView.view.width : 0
-                            text: modelData
-                            wrapMode: Text.WrapAnywhere
-                        }
-                    }
-                }
-            }
-
-            GroupBox {
-                Layout.fillWidth: true
-                visible: reloadReport.failedPlugins && reloadReport.failedPlugins.length > 0
-                title: qsTr("Błędy pluginów (%1)").arg(reloadReport.failedPlugins ? reloadReport.failedPlugins.length : 0)
-
-                ScrollView {
-                    implicitHeight: Math.min(160, failedPluginsView.contentHeight)
-                    ListView {
-                        id: failedPluginsView
-                        width: parent.width
-                        model: reloadReport.failedPlugins || []
-                        clip: true
-                        delegate: Column {
-                            width: ListView.view ? ListView.view.width : 0
-                            spacing: 4
-
-                            Label {
-                                text: modelData.path
-                                wrapMode: Text.WrapAnywhere
-                                font.bold: true
-                            }
-
-                            Label {
-                                text: modelData.message
-                                wrapMode: Text.WordWrap
-                                color: Qt.rgba(1, 0.6, 0.6, 1)
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        RowLayout {
-            Layout.fillWidth: true
-            spacing: 12
-            visible: (reloadReport.invalidEntries && reloadReport.invalidEntries.length > 0)
-                     || (reloadReport.missingPaths && reloadReport.missingPaths.length > 0)
-
-            GroupBox {
-                Layout.fillWidth: true
-                visible: reloadReport.invalidEntries && reloadReport.invalidEntries.length > 0
-                title: qsTr("Pominięte pliki (%1)").arg(reloadReport.invalidEntries ? reloadReport.invalidEntries.length : 0)
-
-                ColumnLayout {
-                    Layout.fillWidth: true
-                    spacing: 4
-
-                    Repeater {
-                        model: reloadReport.invalidEntries || []
-                        delegate: Label {
-                            Layout.fillWidth: true
-                            text: modelData
-                            wrapMode: Text.WrapAnywhere
-                        }
-                    }
-                }
-            }
-
-            GroupBox {
-                Layout.fillWidth: true
-                visible: reloadReport.missingPaths && reloadReport.missingPaths.length > 0
-                title: qsTr("Brakujące ścieżki (%1)").arg(reloadReport.missingPaths ? reloadReport.missingPaths.length : 0)
-
-                ColumnLayout {
-                    Layout.fillWidth: true
-                    spacing: 4
-
-                    Repeater {
-                        model: reloadReport.missingPaths || []
-                        delegate: Label {
-                            Layout.fillWidth: true
-                            text: modelData
-                            wrapMode: Text.WrapAnywhere
-                        }
                     }
                 }
             }
