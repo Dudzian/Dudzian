@@ -101,6 +101,25 @@ message StreamOhlcvIncrement {
   OhlcvCandle candle = 1;
 }
 
+message ListTradableInstrumentsRequest {
+  string exchange = 1;
+}
+
+message TradableInstrumentMetadata {
+  Instrument instrument = 1;
+  double price_step = 2;
+  double amount_step = 3;
+  double min_notional = 4;
+  double min_amount = 5;
+  double max_amount = 6;
+  double min_price = 7;
+  double max_price = 8;
+}
+
+message ListTradableInstrumentsResponse {
+  repeated TradableInstrumentMetadata instruments = 1;
+}
+
 message SubmitOrderRequest {
   Instrument instrument = 1;
   OrderSide side = 2;
@@ -195,6 +214,8 @@ message HealthCheckResponse {
 service MarketDataService {
   rpc GetOhlcvHistory(GetOhlcvHistoryRequest) returns (GetOhlcvHistoryResponse);
   rpc StreamOhlcv(StreamOhlcvRequest) returns (stream StreamOhlcvUpdate);
+  rpc ListTradableInstruments(ListTradableInstrumentsRequest)
+      returns (ListTradableInstrumentsResponse);
 }
 
 service OrderService {

@@ -45,6 +45,7 @@ Drawer {
     property string riskHistoryLastAutoExportPath: ""
     property string decisionLogStatusMessage: ""
     property color decisionLogStatusColor: palette.highlight
+    property var tradableInstrumentList: []
 
     function updateRiskSchedule() {
         if (typeof appController === "undefined")
@@ -108,6 +109,8 @@ Drawer {
                 selectedScheduleIndex = -1
             }
         }
+        loadTradableInstruments()
+        updateInstrumentSelection()
 
         Tab {
             title: qsTr("Wsparcie")
@@ -493,6 +496,40 @@ Drawer {
             reportController.refresh()
     }
 
+    function instrumentSelectionIndex() {
+        if (!tradableInstrumentList || tradableInstrumentList.length === 0)
+            return -1
+        var currentSymbol = instrumentForm.symbol || ""
+        var currentVenue = instrumentForm.venueSymbol || ""
+        for (var i = 0; i < tradableInstrumentList.length; ++i) {
+            var item = tradableInstrumentList[i]
+            if ((item.symbol || "") === currentSymbol && (item.venueSymbol || "") === currentVenue)
+                return i
+        }
+        return -1
+    }
+
+    function updateInstrumentSelection() {
+        if (typeof instrumentSymbolCombo === "undefined" || !instrumentSymbolCombo)
+            return
+        instrumentSymbolCombo.currentIndex = instrumentSelectionIndex()
+    }
+
+    function loadTradableInstruments() {
+        if (typeof appController === "undefined")
+            return
+        var exchange = instrumentForm.exchange || ""
+        exchange = exchange.toString().trim()
+        if (!exchange) {
+            tradableInstrumentList = []
+            updateInstrumentSelection()
+            return
+        }
+        var list = appController.listTradableInstruments(exchange)
+        tradableInstrumentList = list ? list : []
+        updateInstrumentSelection()
+    }
+
     function currentSchedule() {
         if (!schedulerSchedules || schedulerSchedules.length === 0)
             return null
@@ -686,35 +723,59 @@ Drawer {
                             Label { text: qsTr("Giełda") }
                             TextField {
                                 text: instrumentForm.exchange || ""
-                                onEditingFinished: instrumentForm.exchange = text
+                                onEditingFinished: {
+                                    instrumentForm.exchange = text
+                                    loadTradableInstruments()
+                                }
                                 Layout.fillWidth: true
                             }
 
                             Label { text: qsTr("Symbol logiczny") }
-                            TextField {
-                                text: instrumentForm.symbol || ""
-                                onEditingFinished: instrumentForm.symbol = text
+                            ComboBox {
+                                id: instrumentSymbolCombo
                                 Layout.fillWidth: true
+                                model: tradableInstrumentList
+                                textRole: "label"
+                                onActivated: function(index) {
+                                    if (index < 0 || index >= tradableInstrumentList.length)
+                                        return
+                                    var item = tradableInstrumentList[index]
+                                    instrumentForm.symbol = item.symbol || ""
+                                    instrumentForm.venueSymbol = item.venueSymbol || ""
+                                    instrumentForm.quoteCurrency = item.quoteCurrency || ""
+                                    instrumentForm.baseCurrency = item.baseCurrency || ""
+                                }
+                                onCurrentIndexChanged: {
+                                    if (currentIndex < 0 || currentIndex >= tradableInstrumentList.length)
+                                        return
+                                    var item = tradableInstrumentList[currentIndex]
+                                    if (item) {
+                                        instrumentForm.symbol = item.symbol || instrumentForm.symbol
+                                        instrumentForm.venueSymbol = item.venueSymbol || instrumentForm.venueSymbol
+                                        instrumentForm.quoteCurrency = item.quoteCurrency || instrumentForm.quoteCurrency
+                                        instrumentForm.baseCurrency = item.baseCurrency || instrumentForm.baseCurrency
+                                    }
+                                }
                             }
 
                             Label { text: qsTr("Symbol na giełdzie") }
                             TextField {
                                 text: instrumentForm.venueSymbol || ""
-                                onEditingFinished: instrumentForm.venueSymbol = text
+                                readOnly: true
                                 Layout.fillWidth: true
                             }
 
                             Label { text: qsTr("Waluta kwotowana") }
                             TextField {
                                 text: instrumentForm.quoteCurrency || ""
-                                onEditingFinished: instrumentForm.quoteCurrency = text
+                                readOnly: true
                                 Layout.fillWidth: true
                             }
 
                             Label { text: qsTr("Waluta bazowa") }
                             TextField {
                                 text: instrumentForm.baseCurrency || ""
-                                onEditingFinished: instrumentForm.baseCurrency = text
+                                readOnly: true
                                 Layout.fillWidth: true
                             }
 

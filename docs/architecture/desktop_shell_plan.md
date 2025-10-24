@@ -12,7 +12,7 @@ oraz mechanizmy IPC oferowane przez Qt/OS.
 
 | Katalog | Zakres | Język | Uwagi |
 | --- | --- | --- | --- |
-| `/proto` | Kontrakty Protobuf v1 dla komunikacji shell↔core | `.proto` | Stały zestaw komunikatów: `GetOhlcvHistory`, `StreamOhlcv`, `SubmitOrder`, `CancelOrder`, `RiskState`, `Metrics`. |
+| `/proto` | Kontrakty Protobuf v1 dla komunikacji shell↔core | `.proto` | Stały zestaw komunikatów: `GetOhlcvHistory`, `StreamOhlcv`, `ListTradableInstruments`, `SubmitOrder`, `CancelOrder`, `RiskState`, `Metrics`. |
 | `/core` | Demon C++17/20 implementujący logikę rynku, ryzyka, zamówień i metryk | C++ | gRPC + OpenTelemetry, Prometheus, mTLS. |
 | `/ui` | Powłoka Qt Quick + Qt Charts + QML | QML/Qt | Brak logiki domenowej, jedynie prezentacja i interakcje. |
 | `/packaging` | Skrypty budujące instalatory (MSI, DMG, AppImage, .deb/.rpm) | Python/CMake/Qt IFW | Kanały `alpha/beta/stable`, podpisy EV, notarization. |
@@ -68,7 +68,7 @@ potwierdzeniem statusów.
 
 Pakiet `proto/` zawiera definicje usług z zamrożonymi polami (brak breaking change):
 
-* `MarketDataService` – `GetOhlcvHistory`, `StreamOhlcv`.
+* `MarketDataService` – `GetOhlcvHistory`, `StreamOhlcv`, `ListTradableInstruments`.
 * `OrderService` – `SubmitOrder`, `CancelOrder` (z `client_order_id`, `time_in_force`, `slippage_bps`).
 * `RiskService` – `RiskState` (limity, użycie, profile), strumień incydentów.
 * `MetricsService` – `MetricsSnapshot`, `Heartbeat`.
