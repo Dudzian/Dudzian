@@ -5,6 +5,7 @@ import pytest
 from dataclasses import replace
 
 import pandas as pd
+from types import MappingProxyType
 
 from bot_core.ai.regime import (
     MarketRegime,
@@ -14,7 +15,12 @@ from bot_core.ai.regime import (
     RiskLevel,
 )
 from bot_core.events import EmitterAdapter, Event, EventType
-from bot_core.trading.auto_trade import AutoTradeConfig, AutoTradeEngine
+from bot_core.trading.auto_trade import (
+    AutoTradeConfig,
+    AutoTradeEngine,
+    AutoTradeSnapshot,
+    RiskFreezeSnapshot,
+)
 from bot_core.trading.engine import TradingParameters
 from bot_core.trading.regime_workflow import RegimeSwitchDecision
 from bot_core.trading.strategies import StrategyCatalog, StrategyPlugin
@@ -102,11 +108,19 @@ def test_auto_trade_engine_generates_orders_and_signals(monkeypatch) -> None:
     signal_detail = signal_payloads[-1]["signals"]
     assert {"trend_following", "day_trading", "mean_reversion", "arbitrage"} <= set(signal_detail)
     assert signal_detail["daily_breakout"] == signal_detail["day_trading"]
+    metadata = signal_payloads[-1]["metadata"]
+    assert "standard" in metadata["license_tiers"]
+    assert "trend_d1" in metadata["capabilities"]
 
 
 class _ConstantTrendStrategy(StrategyPlugin):
     name = "trend_following"
     description = "Stały sygnał dodatni do testów."
+    license_tier = "standard"
+    risk_classes = ("directional",)
+    required_data = ("ohlcv",)
+    capability = "trend_d1"
+    tags = ("trend",)
 
     def generate(self, indicators, params, *, market_data=None):  # type: ignore[override]
         series = indicators.ema_fast.copy()
@@ -117,6 +131,11 @@ class _ConstantTrendStrategy(StrategyPlugin):
 class _ConstantMeanStrategy(StrategyPlugin):
     name = "mean_reversion"
     description = "Stały sygnał średni do testów."
+    license_tier = "professional"
+    risk_classes = ("statistical",)
+    required_data = ("ohlcv", "spread_history")
+    capability = "mean_reversion"
+    tags = ("mean_reversion",)
 
     def generate(self, indicators, params, *, market_data=None):  # type: ignore[override]
         series = indicators.ema_fast.copy()
@@ -207,6 +226,8 @@ def test_auto_trade_engine_uses_strategy_catalog(monkeypatch) -> None:
     last_signals = signal_payloads[-1]["signals"]
     assert last_signals["trend_following"] == 0.75
     assert last_signals["daily_breakout"] == last_signals["day_trading"]
+    metadata = signal_payloads[-1]["metadata"]
+    assert metadata["per_strategy"]["trend_following"]["license_tier"] == "standard"
 
 
 def test_auto_trade_engine_emits_regime_update_with_metrics(monkeypatch) -> None:
@@ -303,6 +324,28 @@ def test_auto_trade_engine_uses_regime_workflow_decision(monkeypatch) -> None:
         metrics={},
         symbol="BTCUSDT",
     )
+    strategy_metadata = MappingProxyType(
+        {
+            "trend_following": MappingProxyType(
+                {
+                    "license_tier": "standard",
+                    "risk_classes": ("directional",),
+                    "required_data": ("ohlcv",),
+                    "capability": "trend_d1",
+                    "tags": ("trend",),
+                }
+            ),
+            "mean_reversion": MappingProxyType(
+                {
+                    "license_tier": "professional",
+                    "risk_classes": ("statistical",),
+                    "required_data": ("ohlcv", "spread_history"),
+                    "capability": "mean_reversion",
+                    "tags": ("mean_reversion",),
+                }
+            ),
+        }
+    )
     decision = RegimeSwitchDecision(
         regime=assessment.regime,
         assessment=assessment,
@@ -310,6 +353,12 @@ def test_auto_trade_engine_uses_regime_workflow_decision(monkeypatch) -> None:
         weights={"trend_following": 0.2, "mean_reversion": 0.8},
         parameters=decision_params,
         timestamp=pd.Timestamp.utcnow(),
+        strategy_metadata=strategy_metadata,
+        license_tiers=("standard", "professional"),
+        risk_classes=("directional", "statistical"),
+        required_data=("ohlcv", "spread_history"),
+        capabilities=("trend_d1", "mean_reversion"),
+        tags=("trend", "mean_reversion"),
     )
     workflow = _WorkflowStub(decision, catalog)
 
@@ -363,6 +412,7 @@ def test_auto_trade_engine_uses_regime_workflow_decision(monkeypatch) -> None:
     assert params_payload["ema_fast_period"] == decision_params.ema_fast_period
     assert params_payload["ema_slow_period"] == decision_params.ema_slow_period
     assert params_payload["ensemble_weights"] == decision_params.ensemble_weights
+    assert latest_signal["metadata"]["license_tiers"] == ["standard", "professional"]
     assert engine.last_regime_decision is decision
 
     entry_statuses = [st for st in statuses if st.get("status") in {"entry_long", "entry_short"}]
@@ -370,6 +420,7 @@ def test_auto_trade_engine_uses_regime_workflow_decision(monkeypatch) -> None:
     last_entry = entry_statuses[-1]
     assert last_entry["detail"]["regime"]["regime"] == assessment.regime.value
     assert "summary" in last_entry["detail"]
+    assert last_entry["detail"]["metadata"]["capabilities"] == ["trend_d1", "mean_reversion"]
 
 
 class _DummySummary:

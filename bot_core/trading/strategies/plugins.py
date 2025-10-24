@@ -1,7 +1,10 @@
 """Strategy plugin implementations using :class:`TradingParameters`."""
 from __future__ import annotations
 
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
+from types import MappingProxyType
 from typing import (
     TYPE_CHECKING,
     Callable,
@@ -24,6 +27,27 @@ if TYPE_CHECKING:  # pragma: no cover - hints only
 TStrategy = TypeVar("TStrategy", bound="StrategyPlugin")
 
 
+def _normalize_text(value: str | None) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _normalize_sequence(values: Iterable[str] | None) -> Tuple[str, ...]:
+    if not values:
+        return ()
+    seen: Dict[str, None] = {}
+    result: list[str] = []
+    for raw in values:
+        text = _normalize_text(str(raw))
+        if text is None or text in seen:
+            continue
+        seen[text] = None
+        result.append(text)
+    return tuple(result)
+
+
 class StrategyPlugin(ABC):
     """Base class for reusable trading strategy plugins."""
 
@@ -32,6 +56,13 @@ class StrategyPlugin(ABC):
 
     #: Optional description for UI/help contexts.
     description: str = ""
+
+    #: Optional metadata describing licensing and risk constraints.
+    license_tier: str | None = None
+    risk_classes: Tuple[str, ...] = ()
+    required_data: Tuple[str, ...] = ()
+    capability: str | None = None
+    tags: Tuple[str, ...] = ()
 
     def __repr__(self) -> str:  # pragma: no cover - debugging helper
         return f"{self.__class__.__name__}(name={self.name!r})"
@@ -57,6 +88,28 @@ class StrategyPlugin(ABC):
         if series.index.equals(reference):
             return series
         return series.reindex(reference, method="nearest", tolerance=None).fillna(0.0)
+
+    def metadata(self) -> Mapping[str, object]:
+        """Return normalized metadata describing the strategy plugin."""
+
+        payload: Dict[str, object] = {}
+        license_tier = _normalize_text(self.license_tier)
+        if license_tier:
+            payload["license_tier"] = license_tier
+        risk_classes = _normalize_sequence(self.risk_classes)
+        if risk_classes:
+            payload["risk_classes"] = risk_classes
+        required_data = _normalize_sequence(self.required_data)
+        if required_data:
+            payload["required_data"] = required_data
+        capability = _normalize_text(self.capability)
+        if capability:
+            payload["capability"] = capability
+        tags = _normalize_sequence(self.tags)
+        if tags:
+            payload["tags"] = tags
+        payload["description"] = str(self.description or "")
+        return MappingProxyType(payload)
 
 
 class StrategyCatalog:
@@ -110,13 +163,25 @@ class StrategyCatalog:
     def describe(self) -> Tuple[Mapping[str, str], ...]:
         """Zwraca uproszczony opis strategii przydatny w UI."""
 
-        summary: list[Mapping[str, str]] = []
+        summary: list[Mapping[str, object]] = []
         for name in self.available():
             plugin = self.create(name)
             if plugin is None:
                 continue
-            summary.append({"name": name, "description": plugin.description})
+            metadata = dict(plugin.metadata())
+            metadata.setdefault("name", name)
+            summary.append(metadata)
         return tuple(summary)
+
+    def metadata_for(self, name: str) -> Mapping[str, object]:
+        """Return normalized metadata for strategy ``name``."""
+
+        plugin = self.create(name)
+        if plugin is None:
+            return MappingProxyType({})
+        metadata = dict(plugin.metadata())
+        metadata.setdefault("name", name)
+        return MappingProxyType(metadata)
 
     @classmethod
     def default(cls) -> "StrategyCatalog":
@@ -137,6 +202,11 @@ class TrendFollowingStrategy(StrategyPlugin):
 
     name = "trend_following"
     description = "EMA and SMA crossovers highlighting persistent direction."
+    license_tier = "standard"
+    risk_classes = ("directional", "momentum")
+    required_data = ("ohlcv", "technical_indicators")
+    capability = "trend_d1"
+    tags = ("trend", "momentum")
 
     def generate(
         self,
@@ -160,6 +230,11 @@ class DayTradingStrategy(StrategyPlugin):
 
     name = "day_trading"
     description = "Short momentum bursts with volatility-aware scaling."
+    license_tier = "standard"
+    risk_classes = ("intraday", "momentum")
+    required_data = ("ohlcv", "technical_indicators")
+    capability = "day_trading"
+    tags = ("intraday", "momentum")
 
     def generate(
         self,
@@ -195,6 +270,11 @@ class MeanReversionStrategy(StrategyPlugin):
 
     name = "mean_reversion"
     description = "Fade extremes using RSI and Bollinger Bands confirmation."
+    license_tier = "professional"
+    risk_classes = ("statistical", "mean_reversion")
+    required_data = ("ohlcv", "spread_history")
+    capability = "mean_reversion"
+    tags = ("mean_reversion", "stat_arbitrage")
 
     def generate(
         self,
@@ -220,6 +300,11 @@ class ArbitrageStrategy(StrategyPlugin):
 
     name = "arbitrage"
     description = "Exploit deviations from the Bollinger mid-band as proxy spreads."
+    license_tier = "enterprise"
+    risk_classes = ("arbitrage", "liquidity")
+    required_data = ("order_book", "latency_monitoring")
+    capability = "cross_exchange"
+    tags = ("arbitrage", "liquidity")
 
     def generate(
         self,

@@ -34,6 +34,11 @@ def test_regime_workflow_produces_parameters_with_weights() -> None:
     assert decision.parameters.ensemble_weights == decision.weights
     assert abs(sum(decision.weights.values()) - 1.0) < 1e-9
     assert decision.timestamp.tzinfo is None
+    assert decision.license_tiers and "standard" in decision.license_tiers
+    assert "trend_following" in decision.strategy_metadata
+    strategy_meta = decision.strategy_metadata["trend_following"]
+    assert strategy_meta["license_tier"] == "standard"
+    assert "trend_d1" in decision.capabilities
 
 
 def test_regime_workflow_respects_cooldown() -> None:
