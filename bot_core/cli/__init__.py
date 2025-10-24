@@ -83,6 +83,68 @@ from bot_core.ai.data_monitoring import (
     summarize_drift_reports,
 )
 
+from bot_core.ai.data_monitoring import (
+    ComplianceSignOffError,
+    collect_pending_compliance_sign_offs,
+    ensure_compliance_sign_offs,
+    filter_audit_reports_since,
+    filter_audit_reports_by_tags,
+    filter_audit_reports_by_sign_off_status,
+    filter_audit_reports_by_status,
+    filter_audit_reports_by_source,
+    filter_audit_reports_by_schedule,
+    filter_audit_reports_by_category,
+    filter_audit_reports_by_job_name,
+    filter_audit_reports_by_run,
+    filter_audit_reports_by_symbol,
+    filter_audit_reports_by_pipeline,
+    filter_audit_reports_by_environment,
+    filter_audit_reports_by_exchange,
+    filter_audit_reports_by_portfolio,
+    filter_audit_reports_by_profile,
+    filter_audit_reports_by_strategy,
+    filter_audit_reports_by_engine,
+    filter_audit_reports_by_issue_code,
+    filter_audit_reports_by_dataset,
+    filter_audit_reports_by_model,
+    filter_audit_reports_by_model_version,
+    filter_audit_reports_by_license_tier,
+    filter_audit_reports_by_risk_class,
+    filter_audit_reports_by_required_data,
+    filter_audit_reports_by_capability,
+    filter_audit_reports_by_policy_enforcement,
+    load_recent_data_quality_reports,
+    load_recent_drift_reports,
+    normalize_compliance_sign_off_roles,
+    normalize_sign_off_status,
+    normalize_report_status,
+    normalize_report_source,
+    normalize_report_schedule,
+    normalize_report_category,
+    normalize_report_job_name,
+    normalize_report_run,
+    normalize_report_symbol,
+    normalize_report_pipeline,
+    normalize_report_environment,
+    normalize_report_exchange,
+    normalize_report_portfolio,
+    normalize_report_profile,
+    normalize_report_dataset,
+    normalize_report_strategy,
+    normalize_report_engine,
+    normalize_report_issue_code,
+    normalize_report_model,
+    normalize_report_model_version,
+    normalize_report_license_tier,
+    normalize_report_risk_class,
+    normalize_report_required_data,
+    normalize_report_capability,
+    normalize_policy_enforcement,
+    get_supported_sign_off_statuses,
+    summarize_data_quality_reports,
+    summarize_drift_reports,
+)
+
 try:
     import tomllib
 except ModuleNotFoundError:  # pragma: no cover - Python < 3.11 nie jest wspierany
@@ -651,6 +713,650 @@ def _parse_paper_simulator_setting_argument(argument: str) -> tuple[str, float]:
     raise CLIUsageError(
         "Wartość opcji --paper-simulator-setting musi być liczbą zmiennoprzecinkową."
     )
+
+
+def _parse_compliance_roles(arguments: Sequence[str] | None) -> tuple[str, ...] | None:
+    if not arguments:
+        return None
+
+    collected: list[str] = []
+    for argument in arguments:
+        if not argument:
+            continue
+        for part in re.split(r"[,\s]+", argument):
+            normalized = part.strip()
+            if normalized:
+                collected.append(normalized)
+
+    if not collected:
+        return None
+
+    try:
+        return normalize_compliance_sign_off_roles(collected)
+    except ValueError as exc:
+        raise CLIUsageError(str(exc)) from exc
+
+
+def _parse_cli_tags(arguments: Sequence[str] | None) -> tuple[str, ...]:
+    if not arguments:
+        return ()
+
+    collected: list[str] = []
+    for argument in arguments:
+        if not argument:
+            continue
+        for part in re.split(r"[,\s]+", argument):
+            normalized = part.strip()
+            if normalized:
+                collected.append(normalized)
+    return tuple(collected)
+
+
+def _parse_cli_sign_off_statuses(arguments: Sequence[str] | None) -> tuple[str, ...]:
+    if not arguments:
+        return ()
+
+    supported = get_supported_sign_off_statuses()
+    collected: list[str] = []
+    for argument in arguments:
+        if not argument:
+            continue
+        for part in re.split(r"[,\s]+", argument):
+            normalized = normalize_sign_off_status(part)
+            if not normalized:
+                raise CLIUsageError(
+                    "Nieznany status podpisu compliance: {value}. Dozwolone wartości: {choices}".format(
+                        value=part or "",
+                        choices=", ".join(supported),
+                    )
+                )
+            collected.append(normalized)
+
+    # zachowujemy kolejność pierwszego wystąpienia
+    return tuple(dict.fromkeys(collected))
+
+
+def _parse_cli_report_statuses(arguments: Sequence[str] | None) -> tuple[str, ...]:
+    if not arguments:
+        return ()
+
+    collected: list[str] = []
+    for argument in arguments:
+        if not argument:
+            continue
+        for part in re.split(r"[,\s]+", argument):
+            normalized = normalize_report_status(part)
+            if normalized:
+                collected.append(normalized)
+
+    if not collected:
+        return ()
+
+    return tuple(dict.fromkeys(collected))
+
+
+def _parse_cli_issue_codes(arguments: Sequence[str] | None) -> tuple[str, ...]:
+    if not arguments:
+        return ()
+
+    collected: list[str] = []
+    for argument in arguments:
+        if not argument:
+            continue
+        for part in re.split(r"[,\s]+", argument):
+            normalized = normalize_report_issue_code(part)
+            if normalized:
+                collected.append(normalized)
+
+    if not collected:
+        return ()
+
+    return tuple(dict.fromkeys(collected))
+
+
+def _parse_cli_policy_enforcement(arguments: Sequence[str] | None) -> tuple[bool, ...]:
+    if not arguments:
+        return ()
+
+    collected: list[bool] = []
+    for argument in arguments:
+        if not argument:
+            continue
+        for part in re.split(r"[,\s]+", argument):
+            normalized = normalize_policy_enforcement(part)
+            if normalized is None:
+                raise CLIUsageError(
+                    "Nieznana wartość policy.enforce: {value}. Użyj 'enforced' lub 'not-enforced'.".format(
+                        value=part or ""
+                    )
+                )
+            collected.append(normalized)
+
+    if not collected:
+        return ()
+
+    return tuple(dict.fromkeys(collected))
+
+
+def _parse_cli_schedules(arguments: Sequence[str] | None) -> tuple[str, ...]:
+    if not arguments:
+        return ()
+
+    collected: list[str] = []
+    for argument in arguments:
+        if not argument:
+            continue
+        for part in re.split(r"[,\s]+", argument):
+            normalized = normalize_report_schedule(part)
+            if not normalized:
+                raise CLIUsageError(
+                    "Niepoprawny harmonogram audytu: {value}. Podaj niepusty ciąg znaków.".format(
+                        value=part or ""
+                    )
+                )
+            collected.append(normalized)
+
+    if not collected:
+        return ()
+
+    return tuple(dict.fromkeys(collected))
+
+
+def _parse_cli_categories(arguments: Sequence[str] | None) -> tuple[str, ...]:
+    if not arguments:
+        return ()
+
+    collected: list[str] = []
+    for argument in arguments:
+        if not argument:
+            continue
+        for part in re.split(r"[,\s]+", argument):
+            normalized = normalize_report_category(part)
+            if not normalized:
+                raise CLIUsageError(
+                    "Niepoprawna kategoria raportu: {value}. Podaj niepusty ciąg znaków.".format(
+                        value=part or ""
+                    )
+                )
+            collected.append(normalized)
+
+    if not collected:
+        return ()
+
+    return tuple(dict.fromkeys(collected))
+
+
+def _parse_cli_symbols(arguments: Sequence[str] | None) -> tuple[str, ...]:
+    if not arguments:
+        return ()
+
+    collected: list[str] = []
+    for argument in arguments:
+        if not argument:
+            continue
+        for part in re.split(r"[,\s]+", argument):
+            normalized = normalize_report_symbol(part)
+            if not normalized:
+                raise CLIUsageError(
+                    "Niepoprawny symbol raportu: {value}. Podaj niepusty identyfikator rynku.".format(
+                        value=part or ""
+                    )
+                )
+            collected.append(normalized)
+
+    if not collected:
+        return ()
+
+    return tuple(dict.fromkeys(collected))
+
+
+def _parse_cli_job_names(arguments: Sequence[str] | None) -> tuple[str, ...]:
+    if not arguments:
+        return ()
+
+    collected: list[str] = []
+    for argument in arguments:
+        if not argument:
+            continue
+        for part in re.split(r"[,\s]+", argument):
+            normalized = normalize_report_job_name(part)
+            if not normalized:
+                raise CLIUsageError(
+                    "Niepoprawna nazwa zadania audytu: {value}. Podaj niepusty ciąg znaków.".format(
+                        value=part or ""
+                    )
+                )
+            collected.append(normalized)
+
+    if not collected:
+        return ()
+
+    return tuple(dict.fromkeys(collected))
+
+
+def _parse_cli_pipelines(arguments: Sequence[str] | None) -> tuple[str, ...]:
+    if not arguments:
+        return ()
+
+    collected: list[str] = []
+    for argument in arguments:
+        if not argument:
+            continue
+        for part in re.split(r"[,\s]+", argument):
+            normalized = normalize_report_pipeline(part)
+            if not normalized:
+                raise CLIUsageError(
+                    "Niepoprawny pipeline raportu: {value}. Podaj niepusty ciąg znaków.".format(
+                        value=part or ""
+                    )
+                )
+            collected.append(normalized)
+
+    if not collected:
+        return ()
+
+    return tuple(dict.fromkeys(collected))
+
+
+def _parse_cli_engines(arguments: Sequence[str] | None) -> tuple[str, ...]:
+    if not arguments:
+        return ()
+
+    collected: list[str] = []
+    for argument in arguments:
+        if not argument:
+            continue
+        for part in re.split(r"[,\s]+", argument):
+            normalized = normalize_report_engine(part)
+            if not normalized:
+                raise CLIUsageError(
+                    "Niepoprawna nazwa silnika strategii: {value}. Podaj niepusty identyfikator.".format(
+                        value=part or ""
+                    )
+                )
+            collected.append(normalized)
+
+    if not collected:
+        return ()
+
+    return tuple(dict.fromkeys(collected))
+
+
+def _parse_cli_capabilities(arguments: Sequence[str] | None) -> tuple[str, ...]:
+    if not arguments:
+        return ()
+
+    collected: list[str] = []
+    for argument in arguments:
+        if not argument:
+            continue
+        for part in re.split(r"[,\s]+", argument):
+            normalized = normalize_report_capability(part)
+            if not normalized:
+                raise CLIUsageError(
+                    "Niepoprawne capability strategii: {value}. Podaj niepusty identyfikator.".format(
+                        value=part or ""
+                    )
+                )
+            collected.append(normalized)
+
+    if not collected:
+        return ()
+
+    return tuple(dict.fromkeys(collected))
+
+
+def _parse_cli_environments(arguments: Sequence[str] | None) -> tuple[str, ...]:
+    if not arguments:
+        return ()
+
+    collected: list[str] = []
+    for argument in arguments:
+        if not argument:
+            continue
+        for part in re.split(r"[,\s]+", argument):
+            normalized = normalize_report_environment(part)
+            if not normalized:
+                raise CLIUsageError(
+                    "Niepoprawne środowisko raportu: {value}. Podaj niepusty ciąg znaków.".format(
+                        value=part or ""
+                    )
+                )
+            collected.append(normalized)
+
+    if not collected:
+        return ()
+
+    return tuple(dict.fromkeys(collected))
+
+
+def _parse_cli_exchanges(arguments: Sequence[str] | None) -> tuple[str, ...]:
+    if not arguments:
+        return ()
+
+    collected: list[str] = []
+    for argument in arguments:
+        if not argument:
+            continue
+        for part in re.split(r"[,\s]+", argument):
+            normalized = normalize_report_exchange(part)
+            if not normalized:
+                raise CLIUsageError(
+                    "Niepoprawna giełda lub źródło danych raportu: {value}. Podaj niepusty ciąg znaków.".format(
+                        value=part or ""
+                    )
+                )
+            collected.append(normalized)
+
+    if not collected:
+        return ()
+
+    return tuple(dict.fromkeys(collected))
+
+
+def _parse_cli_portfolios(arguments: Sequence[str] | None) -> tuple[str, ...]:
+    if not arguments:
+        return ()
+
+    collected: list[str] = []
+    for argument in arguments:
+        if not argument:
+            continue
+        for part in re.split(r"[,\s]+", argument):
+            normalized = normalize_report_portfolio(part)
+            if not normalized:
+                raise CLIUsageError(
+                    "Niepoprawny portfel raportu: {value}. Podaj niepusty ciąg znaków.".format(
+                        value=part or ""
+                    )
+                )
+            collected.append(normalized)
+
+    if not collected:
+        return ()
+
+    return tuple(dict.fromkeys(collected))
+
+
+def _parse_cli_license_tiers(arguments: Sequence[str] | None) -> tuple[str, ...]:
+    if not arguments:
+        return ()
+
+    collected: list[str] = []
+    for argument in arguments:
+        if not argument:
+            continue
+        for part in re.split(r"[,\s]+", argument):
+            normalized = normalize_report_license_tier(part)
+            if not normalized:
+                raise CLIUsageError(
+                    "Niepoprawny poziom licencji: {value}. Podaj niepusty ciąg znaków.".format(
+                        value=part or ""
+                    )
+                )
+            collected.append(normalized)
+
+    if not collected:
+        return ()
+
+    return tuple(dict.fromkeys(collected))
+
+
+def _parse_cli_risk_classes(arguments: Sequence[str] | None) -> tuple[str, ...]:
+    if not arguments:
+        return ()
+
+    collected: list[str] = []
+    for argument in arguments:
+        if not argument:
+            continue
+        for part in re.split(r"[,\s]+", argument):
+            normalized = normalize_report_risk_class(part)
+            if not normalized:
+                raise CLIUsageError(
+                    "Niepoprawna klasa ryzyka: {value}. Podaj niepusty ciąg znaków.".format(
+                        value=part or ""
+                    )
+                )
+            collected.append(normalized)
+
+    if not collected:
+        return ()
+
+    return tuple(dict.fromkeys(collected))
+
+
+def _parse_cli_required_data(arguments: Sequence[str] | None) -> tuple[str, ...]:
+    if not arguments:
+        return ()
+
+    collected: list[str] = []
+    for argument in arguments:
+        if not argument:
+            continue
+        for part in re.split(r"[,\s]+", argument):
+            normalized = normalize_report_required_data(part)
+            if not normalized:
+                raise CLIUsageError(
+                    "Niepoprawne źródło danych: {value}. Podaj niepusty ciąg znaków.".format(
+                        value=part or ""
+                    )
+                )
+            collected.append(normalized)
+
+    if not collected:
+        return ()
+
+    return tuple(dict.fromkeys(collected))
+
+
+def _parse_cli_profiles(arguments: Sequence[str] | None) -> tuple[str, ...]:
+    if not arguments:
+        return ()
+
+    collected: list[str] = []
+    for argument in arguments:
+        if not argument:
+            continue
+        for part in re.split(r"[,\s]+", argument):
+            normalized = normalize_report_profile(part)
+            if not normalized:
+                raise CLIUsageError(
+                    "Niepoprawny profil strategii: {value}. Podaj niepusty identyfikator.".format(
+                        value=part or ""
+                    )
+                )
+            collected.append(normalized)
+
+    if not collected:
+        return ()
+
+    return tuple(dict.fromkeys(collected))
+
+
+def _parse_cli_strategies(arguments: Sequence[str] | None) -> tuple[str, ...]:
+    if not arguments:
+        return ()
+
+    collected: list[str] = []
+    for argument in arguments:
+        if not argument:
+            continue
+        for part in re.split(r"[,\s]+", argument):
+            normalized = normalize_report_strategy(part)
+            if not normalized:
+                raise CLIUsageError(
+                    "Niepoprawny identyfikator strategii: {value}. Podaj niepustą nazwę.".format(
+                        value=part or ""
+                    )
+                )
+            collected.append(normalized)
+
+    if not collected:
+        return ()
+
+    return tuple(dict.fromkeys(collected))
+
+
+def _parse_cli_datasets(arguments: Sequence[str] | None) -> tuple[str, ...]:
+    if not arguments:
+        return ()
+
+    collected: list[str] = []
+    for argument in arguments:
+        if not argument:
+            continue
+        for part in re.split(r"[,\s]+", argument):
+            normalized = normalize_report_dataset(part)
+            if not normalized:
+                raise CLIUsageError(
+                    "Niepoprawny identyfikator zbioru danych: {value}. Podaj niepusty ciąg znaków.".format(
+                        value=part or ""
+                    )
+                )
+            collected.append(normalized)
+
+    if not collected:
+        return ()
+
+    return tuple(dict.fromkeys(collected))
+
+
+def _parse_cli_models(arguments: Sequence[str] | None) -> tuple[str, ...]:
+    if not arguments:
+        return ()
+
+    collected: list[str] = []
+    for argument in arguments:
+        if not argument:
+            continue
+        for part in re.split(r"[,\s]+", argument):
+            normalized = normalize_report_model(part)
+            if not normalized:
+                raise CLIUsageError(
+                    "Niepoprawny identyfikator modelu/artefaktu: {value}. Podaj niepustą nazwę.".format(
+                        value=part or ""
+                    )
+                )
+            collected.append(normalized)
+
+    if not collected:
+        return ()
+
+    return tuple(dict.fromkeys(collected))
+
+
+def _parse_cli_model_versions(arguments: Sequence[str] | None) -> tuple[str, ...]:
+    if not arguments:
+        return ()
+
+    collected: list[str] = []
+    for argument in arguments:
+        if not argument:
+            continue
+        for part in re.split(r"[,\s]+", argument):
+            normalized = normalize_report_model_version(part)
+            if not normalized:
+                raise CLIUsageError(
+                    "Niepoprawna wersja modelu/artefaktu: {value}. Podaj niepustą wartość.".format(
+                        value=part or ""
+                    )
+                )
+            collected.append(normalized)
+
+    if not collected:
+        return ()
+
+    return tuple(dict.fromkeys(collected))
+
+
+def _parse_cli_runs(arguments: Sequence[str] | None) -> tuple[str, ...]:
+    if not arguments:
+        return ()
+
+    collected: list[str] = []
+    for argument in arguments:
+        if not argument:
+            continue
+        for part in re.split(r"[,\s]+", argument):
+            normalized = normalize_report_run(part)
+            if not normalized:
+                raise CLIUsageError(
+                    "Niepoprawny run raportu: {value}. Podaj niepusty ciąg znaków.".format(
+                        value=part or ""
+                    )
+                )
+            collected.append(normalized)
+
+    if not collected:
+        return ()
+
+    return tuple(dict.fromkeys(collected))
+
+
+def _parse_cli_sources(arguments: Sequence[str] | None) -> tuple[str, ...]:
+    if not arguments:
+        return ()
+
+    collected: list[str] = []
+    for argument in arguments:
+        if not argument:
+            continue
+        for part in re.split(r"[,\s]+", argument):
+            normalized = normalize_report_source(part)
+            if not normalized:
+                raise CLIUsageError(
+                    "Niepoprawne źródło raportu: {value}. Podaj niepusty ciąg znaków.".format(
+                        value=part or ""
+                    )
+                )
+            collected.append(normalized)
+
+    if not collected:
+        return ()
+
+    return tuple(dict.fromkeys(collected))
+
+
+def _resolve_since_cutoff(value: str, *, now: datetime | None = None) -> datetime:
+    if not isinstance(value, str) or not value.strip():
+        raise CLIUsageError("Opcja --since wymaga niepustej wartości.")
+
+    reference = now or datetime.now(timezone.utc)
+    candidate = value.strip()
+    match = _SINCE_DURATION_RE.fullmatch(candidate)
+    if match:
+        amount = int(match.group("value"))
+        unit = match.group("unit").lower()
+        delta_map = {
+            "s": timedelta(seconds=amount),
+            "m": timedelta(minutes=amount),
+            "h": timedelta(hours=amount),
+            "d": timedelta(days=amount),
+        }
+        cutoff = reference - delta_map[unit]
+        return cutoff.astimezone(timezone.utc)
+
+    normalized = candidate
+    if candidate.endswith("Z") or candidate.endswith("z"):
+        normalized = candidate[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError as exc:
+        raise CLIUsageError(
+            "Opcja --since wymaga formatu ISO 8601 lub skrótu (np. 24h, 7d)."
+        ) from exc
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _jsonify_payload(value):
+    if isinstance(value, Mapping):
+        return {str(key): _jsonify_payload(val) for key, val in value.items()}
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return [_jsonify_payload(item) for item in value]
+    return value
 
 
 def _parse_compliance_roles(arguments: Sequence[str] | None) -> tuple[str, ...] | None:
@@ -4132,6 +4838,675 @@ def _print_guard_detail_reason_details(
                     f"{key}={value}" for key, value in sorted(entry.items())
                 )
                 print(f"{entry_indent}- {formatted}")
+
+
+def show_ai_compliance(args: argparse.Namespace) -> int:
+    output_format = getattr(args, "output_format", "text") or "text"
+    enforce = bool(getattr(args, "enforce", False))
+
+    limit_option = getattr(args, "limit", None)
+    if limit_option is None:
+        limit = 20
+    else:
+        if limit_option <= 0:
+            raise CLIUsageError("Opcja --limit wymaga dodatniej liczby całkowitej.")
+        limit = int(limit_option)
+
+    audit_root_value = getattr(args, "audit_root", None)
+    audit_root: Path | None = None
+    if audit_root_value:
+        audit_root = Path(audit_root_value).expanduser()
+
+    since_option = getattr(args, "since", None)
+    since_cutoff: datetime | None = None
+    if since_option:
+        since_cutoff = _resolve_since_cutoff(since_option)
+
+    include_tags = _parse_cli_tags(getattr(args, "include_tags", None))
+    exclude_tags = _parse_cli_tags(getattr(args, "exclude_tags", None))
+    include_statuses = _parse_cli_sign_off_statuses(
+        getattr(args, "include_statuses", None)
+    )
+    exclude_statuses = _parse_cli_sign_off_statuses(
+        getattr(args, "exclude_statuses", None)
+    )
+    include_report_statuses = _parse_cli_report_statuses(
+        getattr(args, "include_report_statuses", None)
+    )
+    exclude_report_statuses = _parse_cli_report_statuses(
+        getattr(args, "exclude_report_statuses", None)
+    )
+    include_issues = _parse_cli_issue_codes(getattr(args, "include_issues", None))
+    exclude_issues = _parse_cli_issue_codes(getattr(args, "exclude_issues", None))
+    include_sources = _parse_cli_sources(getattr(args, "include_sources", None))
+    exclude_sources = _parse_cli_sources(getattr(args, "exclude_sources", None))
+    include_schedules = _parse_cli_schedules(getattr(args, "include_schedules", None))
+    exclude_schedules = _parse_cli_schedules(getattr(args, "exclude_schedules", None))
+    include_categories = _parse_cli_categories(getattr(args, "include_categories", None))
+    exclude_categories = _parse_cli_categories(getattr(args, "exclude_categories", None))
+    include_symbols = _parse_cli_symbols(getattr(args, "include_symbols", None))
+    exclude_symbols = _parse_cli_symbols(getattr(args, "exclude_symbols", None))
+    include_pipelines = _parse_cli_pipelines(getattr(args, "include_pipelines", None))
+    exclude_pipelines = _parse_cli_pipelines(getattr(args, "exclude_pipelines", None))
+    include_engines = _parse_cli_engines(getattr(args, "include_engines", None))
+    exclude_engines = _parse_cli_engines(getattr(args, "exclude_engines", None))
+    include_capabilities = _parse_cli_capabilities(
+        getattr(args, "include_capabilities", None)
+    )
+    exclude_capabilities = _parse_cli_capabilities(
+        getattr(args, "exclude_capabilities", None)
+    )
+    include_license_tiers = _parse_cli_license_tiers(
+        getattr(args, "include_license_tiers", None)
+    )
+    exclude_license_tiers = _parse_cli_license_tiers(
+        getattr(args, "exclude_license_tiers", None)
+    )
+    include_risk_classes = _parse_cli_risk_classes(
+        getattr(args, "include_risk_classes", None)
+    )
+    exclude_risk_classes = _parse_cli_risk_classes(
+        getattr(args, "exclude_risk_classes", None)
+    )
+    include_required_data = _parse_cli_required_data(
+        getattr(args, "include_required_data", None)
+    )
+    exclude_required_data = _parse_cli_required_data(
+        getattr(args, "exclude_required_data", None)
+    )
+    include_exchanges = _parse_cli_exchanges(getattr(args, "include_exchanges", None))
+    exclude_exchanges = _parse_cli_exchanges(getattr(args, "exclude_exchanges", None))
+    include_environments = _parse_cli_environments(
+        getattr(args, "include_environments", None)
+    )
+    exclude_environments = _parse_cli_environments(
+        getattr(args, "exclude_environments", None)
+    )
+    include_portfolios = _parse_cli_portfolios(getattr(args, "include_portfolios", None))
+    exclude_portfolios = _parse_cli_portfolios(getattr(args, "exclude_portfolios", None))
+    include_profiles = _parse_cli_profiles(getattr(args, "include_profiles", None))
+    exclude_profiles = _parse_cli_profiles(getattr(args, "exclude_profiles", None))
+    include_strategies = _parse_cli_strategies(getattr(args, "include_strategies", None))
+    exclude_strategies = _parse_cli_strategies(getattr(args, "exclude_strategies", None))
+    include_datasets = _parse_cli_datasets(getattr(args, "include_datasets", None))
+    exclude_datasets = _parse_cli_datasets(getattr(args, "exclude_datasets", None))
+    include_models = _parse_cli_models(getattr(args, "include_models", None))
+    exclude_models = _parse_cli_models(getattr(args, "exclude_models", None))
+    include_model_versions = _parse_cli_model_versions(
+        getattr(args, "include_model_versions", None)
+    )
+    exclude_model_versions = _parse_cli_model_versions(
+        getattr(args, "exclude_model_versions", None)
+    )
+    include_runs = _parse_cli_runs(getattr(args, "include_runs", None))
+    exclude_runs = _parse_cli_runs(getattr(args, "exclude_runs", None))
+    include_jobs = _parse_cli_job_names(getattr(args, "include_jobs", None))
+    exclude_jobs = _parse_cli_job_names(getattr(args, "exclude_jobs", None))
+    include_policy_enforce = _parse_cli_policy_enforcement(
+        getattr(args, "policy_enforce", None)
+    )
+    exclude_policy_enforce = _parse_cli_policy_enforcement(
+        getattr(args, "exclude_policy_enforce", None)
+    )
+
+    roles_param = _parse_compliance_roles(getattr(args, "roles", None))
+    effective_roles = (
+        roles_param
+        if roles_param is not None
+        else normalize_compliance_sign_off_roles(None)
+    )
+
+    load_kwargs: dict[str, object] = {"limit": limit}
+    if audit_root is not None:
+        load_kwargs["audit_root"] = audit_root
+    dq_category = getattr(args, "data_quality_category", None)
+
+    try:
+        dq_kwargs = dict(load_kwargs)
+        if dq_category:
+            dq_kwargs["category"] = dq_category
+        dq_reports = load_recent_data_quality_reports(**dq_kwargs)
+        drift_reports = load_recent_drift_reports(**load_kwargs)
+    except Exception as exc:  # pragma: no cover - przekładamy błąd na CLIUsageError
+        raise CLIUsageError(f"Nie udało się wczytać raportów audytu: {exc}") from exc
+
+    if include_tags or exclude_tags:
+        dq_reports = filter_audit_reports_by_tags(
+            dq_reports, include=include_tags, exclude=exclude_tags
+        )
+        drift_reports = filter_audit_reports_by_tags(
+            drift_reports, include=include_tags, exclude=exclude_tags
+        )
+
+    if include_report_statuses or exclude_report_statuses:
+        dq_reports = filter_audit_reports_by_status(
+            dq_reports, include=include_report_statuses, exclude=exclude_report_statuses
+        )
+        drift_reports = filter_audit_reports_by_status(
+            drift_reports,
+            include=include_report_statuses,
+            exclude=exclude_report_statuses,
+        )
+
+    if include_issues or exclude_issues:
+        dq_reports = filter_audit_reports_by_issue_code(
+            dq_reports, include=include_issues, exclude=exclude_issues
+        )
+        drift_reports = filter_audit_reports_by_issue_code(
+            drift_reports, include=include_issues, exclude=exclude_issues
+        )
+
+    if include_sources or exclude_sources:
+        dq_reports = filter_audit_reports_by_source(
+            dq_reports, include=include_sources, exclude=exclude_sources
+        )
+        drift_reports = filter_audit_reports_by_source(
+            drift_reports, include=include_sources, exclude=exclude_sources
+        )
+
+    if include_schedules or exclude_schedules:
+        dq_reports = filter_audit_reports_by_schedule(
+            dq_reports, include=include_schedules, exclude=exclude_schedules
+        )
+        drift_reports = filter_audit_reports_by_schedule(
+            drift_reports, include=include_schedules, exclude=exclude_schedules
+        )
+
+    if include_categories or exclude_categories:
+        dq_reports = filter_audit_reports_by_category(
+            dq_reports, include=include_categories, exclude=exclude_categories
+        )
+        drift_reports = filter_audit_reports_by_category(
+            drift_reports, include=include_categories, exclude=exclude_categories
+        )
+
+    if include_symbols or exclude_symbols:
+        dq_reports = filter_audit_reports_by_symbol(
+            dq_reports, include=include_symbols, exclude=exclude_symbols
+        )
+        drift_reports = filter_audit_reports_by_symbol(
+            drift_reports, include=include_symbols, exclude=exclude_symbols
+        )
+
+    if include_pipelines or exclude_pipelines:
+        dq_reports = filter_audit_reports_by_pipeline(
+            dq_reports, include=include_pipelines, exclude=exclude_pipelines
+        )
+        drift_reports = filter_audit_reports_by_pipeline(
+            drift_reports, include=include_pipelines, exclude=exclude_pipelines
+        )
+
+    if include_engines or exclude_engines:
+        dq_reports = filter_audit_reports_by_engine(
+            dq_reports, include=include_engines, exclude=exclude_engines
+        )
+        drift_reports = filter_audit_reports_by_engine(
+            drift_reports, include=include_engines, exclude=exclude_engines
+        )
+
+    if include_capabilities or exclude_capabilities:
+        dq_reports = filter_audit_reports_by_capability(
+            dq_reports, include=include_capabilities, exclude=exclude_capabilities
+        )
+        drift_reports = filter_audit_reports_by_capability(
+            drift_reports,
+            include=include_capabilities,
+            exclude=exclude_capabilities,
+        )
+
+    if include_license_tiers or exclude_license_tiers:
+        dq_reports = filter_audit_reports_by_license_tier(
+            dq_reports, include=include_license_tiers, exclude=exclude_license_tiers
+        )
+        drift_reports = filter_audit_reports_by_license_tier(
+            drift_reports, include=include_license_tiers, exclude=exclude_license_tiers
+        )
+
+    if include_risk_classes or exclude_risk_classes:
+        dq_reports = filter_audit_reports_by_risk_class(
+            dq_reports, include=include_risk_classes, exclude=exclude_risk_classes
+        )
+        drift_reports = filter_audit_reports_by_risk_class(
+            drift_reports, include=include_risk_classes, exclude=exclude_risk_classes
+        )
+
+    if include_required_data or exclude_required_data:
+        dq_reports = filter_audit_reports_by_required_data(
+            dq_reports, include=include_required_data, exclude=exclude_required_data
+        )
+        drift_reports = filter_audit_reports_by_required_data(
+            drift_reports, include=include_required_data, exclude=exclude_required_data
+        )
+
+    if include_exchanges or exclude_exchanges:
+        dq_reports = filter_audit_reports_by_exchange(
+            dq_reports, include=include_exchanges, exclude=exclude_exchanges
+        )
+        drift_reports = filter_audit_reports_by_exchange(
+            drift_reports, include=include_exchanges, exclude=exclude_exchanges
+        )
+
+    if include_environments or exclude_environments:
+        dq_reports = filter_audit_reports_by_environment(
+            dq_reports, include=include_environments, exclude=exclude_environments
+        )
+        drift_reports = filter_audit_reports_by_environment(
+            drift_reports, include=include_environments, exclude=exclude_environments
+        )
+
+    if include_portfolios or exclude_portfolios:
+        dq_reports = filter_audit_reports_by_portfolio(
+            dq_reports, include=include_portfolios, exclude=exclude_portfolios
+        )
+        drift_reports = filter_audit_reports_by_portfolio(
+            drift_reports, include=include_portfolios, exclude=exclude_portfolios
+        )
+    if include_profiles or exclude_profiles:
+        dq_reports = filter_audit_reports_by_profile(
+            dq_reports, include=include_profiles, exclude=exclude_profiles
+        )
+        drift_reports = filter_audit_reports_by_profile(
+            drift_reports, include=include_profiles, exclude=exclude_profiles
+        )
+    if include_strategies or exclude_strategies:
+        dq_reports = filter_audit_reports_by_strategy(
+            dq_reports, include=include_strategies, exclude=exclude_strategies
+        )
+        drift_reports = filter_audit_reports_by_strategy(
+            drift_reports, include=include_strategies, exclude=exclude_strategies
+        )
+
+    if include_datasets or exclude_datasets:
+        dq_reports = filter_audit_reports_by_dataset(
+            dq_reports, include=include_datasets, exclude=exclude_datasets
+        )
+        drift_reports = filter_audit_reports_by_dataset(
+            drift_reports, include=include_datasets, exclude=exclude_datasets
+        )
+
+    if include_models or exclude_models:
+        dq_reports = filter_audit_reports_by_model(
+            dq_reports, include=include_models, exclude=exclude_models
+        )
+        drift_reports = filter_audit_reports_by_model(
+            drift_reports, include=include_models, exclude=exclude_models
+        )
+
+    if include_model_versions or exclude_model_versions:
+        dq_reports = filter_audit_reports_by_model_version(
+            dq_reports,
+            include=include_model_versions,
+            exclude=exclude_model_versions,
+        )
+        drift_reports = filter_audit_reports_by_model_version(
+            drift_reports,
+            include=include_model_versions,
+            exclude=exclude_model_versions,
+        )
+
+    if include_runs or exclude_runs:
+        dq_reports = filter_audit_reports_by_run(
+            dq_reports, include=include_runs, exclude=exclude_runs
+        )
+        drift_reports = filter_audit_reports_by_run(
+            drift_reports, include=include_runs, exclude=exclude_runs
+        )
+
+    if include_jobs or exclude_jobs:
+        dq_reports = filter_audit_reports_by_job_name(
+            dq_reports, include=include_jobs, exclude=exclude_jobs
+        )
+        drift_reports = filter_audit_reports_by_job_name(
+            drift_reports, include=include_jobs, exclude=exclude_jobs
+        )
+
+    if include_policy_enforce or exclude_policy_enforce:
+        dq_reports = filter_audit_reports_by_policy_enforcement(
+            dq_reports, include=include_policy_enforce, exclude=exclude_policy_enforce
+        )
+        drift_reports = filter_audit_reports_by_policy_enforcement(
+            drift_reports, include=include_policy_enforce, exclude=exclude_policy_enforce
+        )
+
+    if include_statuses or exclude_statuses:
+        dq_reports = filter_audit_reports_by_sign_off_status(
+            dq_reports,
+            include=include_statuses,
+            exclude=exclude_statuses,
+            roles=roles_param,
+        )
+        drift_reports = filter_audit_reports_by_sign_off_status(
+            drift_reports,
+            include=include_statuses,
+            exclude=exclude_statuses,
+            roles=roles_param,
+        )
+
+    if since_cutoff is not None:
+        dq_reports = filter_audit_reports_since(dq_reports, since=since_cutoff)
+        drift_reports = filter_audit_reports_since(drift_reports, since=since_cutoff)
+
+    dq_summary = summarize_data_quality_reports(dq_reports, roles=roles_param)
+    drift_summary = summarize_drift_reports(drift_reports, roles=roles_param)
+
+    exit_code = 0
+    try:
+        if enforce:
+            pending_map = ensure_compliance_sign_offs(
+                data_quality_reports=dq_reports,
+                drift_reports=drift_reports,
+                roles=roles_param,
+            )
+        else:
+            pending_map = collect_pending_compliance_sign_offs(
+                data_quality_reports=dq_reports,
+                drift_reports=drift_reports,
+                roles=roles_param,
+            )
+    except ComplianceSignOffError as exc:
+        pending_map = exc.pending
+        exit_code = 3
+
+    missing_entries = {
+        role: tuple(entries)
+        for role, entries in pending_map.items()
+        if entries
+    }
+
+    if output_format in {"json", "json-pretty"}:
+        payload: dict[str, object] = {
+            "roles": list(effective_roles),
+            "enforced": enforce,
+            "limit": limit,
+            "data_quality": _jsonify_payload(dq_summary),
+            "drift": _jsonify_payload(drift_summary),
+            "pending_sign_off": _jsonify_payload(pending_map),
+            "missing_sign_off": {
+                role: len(entries) for role, entries in missing_entries.items()
+            },
+        }
+        if audit_root is not None:
+            payload["audit_root"] = str(audit_root)
+        if since_cutoff is not None:
+            payload["since"] = since_cutoff.replace(microsecond=0).isoformat().replace(
+                "+00:00", "Z"
+            )
+        if include_tags:
+            payload["include_tags"] = list(include_tags)
+        if exclude_tags:
+            payload["exclude_tags"] = list(exclude_tags)
+        if include_report_statuses:
+            payload["include_report_statuses"] = list(include_report_statuses)
+        if exclude_report_statuses:
+            payload["exclude_report_statuses"] = list(exclude_report_statuses)
+        if include_issues:
+            payload["include_issues"] = list(include_issues)
+        if exclude_issues:
+            payload["exclude_issues"] = list(exclude_issues)
+        if include_policy_enforce:
+            payload["policy_enforce"] = [
+                "enforced" if flag else "not-enforced" for flag in include_policy_enforce
+            ]
+        if exclude_policy_enforce:
+            payload["exclude_policy_enforce"] = [
+                "enforced" if flag else "not-enforced" for flag in exclude_policy_enforce
+            ]
+        if include_statuses:
+            payload["include_statuses"] = list(include_statuses)
+        if exclude_statuses:
+            payload["exclude_statuses"] = list(exclude_statuses)
+        if include_sources:
+            payload["include_sources"] = list(include_sources)
+        if exclude_sources:
+            payload["exclude_sources"] = list(exclude_sources)
+        if include_schedules:
+            payload["include_schedules"] = list(include_schedules)
+        if exclude_schedules:
+            payload["exclude_schedules"] = list(exclude_schedules)
+        if include_categories:
+            payload["include_categories"] = list(include_categories)
+        if exclude_categories:
+            payload["exclude_categories"] = list(exclude_categories)
+        if include_symbols:
+            payload["include_symbols"] = list(include_symbols)
+        if exclude_symbols:
+            payload["exclude_symbols"] = list(exclude_symbols)
+        if include_pipelines:
+            payload["include_pipelines"] = list(include_pipelines)
+        if exclude_pipelines:
+            payload["exclude_pipelines"] = list(exclude_pipelines)
+        if include_engines:
+            payload["include_engines"] = list(include_engines)
+        if exclude_engines:
+            payload["exclude_engines"] = list(exclude_engines)
+        if include_capabilities:
+            payload["include_capabilities"] = list(include_capabilities)
+        if exclude_capabilities:
+            payload["exclude_capabilities"] = list(exclude_capabilities)
+        if include_license_tiers:
+            payload["include_license_tiers"] = list(include_license_tiers)
+        if exclude_license_tiers:
+            payload["exclude_license_tiers"] = list(exclude_license_tiers)
+        if include_risk_classes:
+            payload["include_risk_classes"] = list(include_risk_classes)
+        if exclude_risk_classes:
+            payload["exclude_risk_classes"] = list(exclude_risk_classes)
+        if include_required_data:
+            payload["include_required_data"] = list(include_required_data)
+        if exclude_required_data:
+            payload["exclude_required_data"] = list(exclude_required_data)
+        if include_exchanges:
+            payload["include_exchanges"] = list(include_exchanges)
+        if exclude_exchanges:
+            payload["exclude_exchanges"] = list(exclude_exchanges)
+        if include_environments:
+            payload["include_environments"] = list(include_environments)
+        if exclude_environments:
+            payload["exclude_environments"] = list(exclude_environments)
+        if include_portfolios:
+            payload["include_portfolios"] = list(include_portfolios)
+        if include_profiles:
+            payload["include_profiles"] = list(include_profiles)
+        if include_strategies:
+            payload["include_strategies"] = list(include_strategies)
+        if include_datasets:
+            payload["include_datasets"] = list(include_datasets)
+        if include_models:
+            payload["include_models"] = list(include_models)
+        if include_model_versions:
+            payload["include_model_versions"] = list(include_model_versions)
+        if exclude_portfolios:
+            payload["exclude_portfolios"] = list(exclude_portfolios)
+        if exclude_profiles:
+            payload["exclude_profiles"] = list(exclude_profiles)
+        if exclude_strategies:
+            payload["exclude_strategies"] = list(exclude_strategies)
+        if exclude_datasets:
+            payload["exclude_datasets"] = list(exclude_datasets)
+        if exclude_models:
+            payload["exclude_models"] = list(exclude_models)
+        if exclude_model_versions:
+            payload["exclude_model_versions"] = list(exclude_model_versions)
+        if include_runs:
+            payload["include_runs"] = list(include_runs)
+        if exclude_runs:
+            payload["exclude_runs"] = list(exclude_runs)
+        if include_jobs:
+            payload["include_jobs"] = list(include_jobs)
+        if exclude_jobs:
+            payload["exclude_jobs"] = list(exclude_jobs)
+        json_kwargs: dict[str, object] = {"ensure_ascii": False}
+        if output_format == "json-pretty":
+            json_kwargs["indent"] = 2
+            json_kwargs["sort_keys"] = True
+        print(json.dumps(payload, **json_kwargs))  # type: ignore[arg-type]
+        return exit_code
+
+    if audit_root is not None:
+        print(f"Katalog audytu: {audit_root}")
+    if since_cutoff is not None:
+        print(
+            "Minimalny znacznik czasu: "
+            + since_cutoff.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        )
+    if include_tags:
+        print("Wymagane tagi: " + ", ".join(include_tags))
+    if exclude_tags:
+        print("Wykluczone tagi: " + ", ".join(exclude_tags))
+    if include_report_statuses:
+        print("Wymagane statusy raportów: " + ", ".join(include_report_statuses))
+    if exclude_report_statuses:
+        print("Wykluczone statusy raportów: " + ", ".join(exclude_report_statuses))
+    if include_issues:
+        print("Wymagane kody problemów: " + ", ".join(include_issues))
+    if exclude_issues:
+        print("Wykluczone kody problemów: " + ", ".join(exclude_issues))
+    if include_policy_enforce:
+        human = ", ".join("enforced" if flag else "not-enforced" for flag in include_policy_enforce)
+        print("Wymagane policy.enforce: " + human)
+    if exclude_policy_enforce:
+        human = ", ".join(
+            "enforced" if flag else "not-enforced" for flag in exclude_policy_enforce
+        )
+        print("Wykluczone policy.enforce: " + human)
+    if include_statuses:
+        print("Wymagane statusy podpisów: " + ", ".join(include_statuses))
+    if exclude_statuses:
+        print("Wykluczone statusy podpisów: " + ", ".join(exclude_statuses))
+    if include_sources:
+        print("Wymagane źródła: " + ", ".join(include_sources))
+    if exclude_sources:
+        print("Wykluczone źródła: " + ", ".join(exclude_sources))
+    if include_schedules:
+        print("Wymagane harmonogramy: " + ", ".join(include_schedules))
+    if exclude_schedules:
+        print("Wykluczone harmonogramy: " + ", ".join(exclude_schedules))
+    if include_categories:
+        print("Wymagane kategorie: " + ", ".join(include_categories))
+    if exclude_categories:
+        print("Wykluczone kategorie: " + ", ".join(exclude_categories))
+    if include_symbols:
+        print("Wymagane symbole: " + ", ".join(include_symbols))
+    if exclude_symbols:
+        print("Wykluczone symbole: " + ", ".join(exclude_symbols))
+    if include_pipelines:
+        print("Wymagane pipeline'y: " + ", ".join(include_pipelines))
+    if exclude_pipelines:
+        print("Wykluczone pipeline'y: " + ", ".join(exclude_pipelines))
+    if include_engines:
+        print("Wymagane silniki strategii: " + ", ".join(include_engines))
+    if exclude_engines:
+        print("Wykluczone silniki strategii: " + ", ".join(exclude_engines))
+    if include_capabilities:
+        print("Wymagane capability: " + ", ".join(include_capabilities))
+    if exclude_capabilities:
+        print("Wykluczone capability: " + ", ".join(exclude_capabilities))
+    if include_license_tiers:
+        print("Wymagane poziomy licencji: " + ", ".join(include_license_tiers))
+    if exclude_license_tiers:
+        print("Wykluczone poziomy licencji: " + ", ".join(exclude_license_tiers))
+    if include_risk_classes:
+        print("Wymagane klasy ryzyka: " + ", ".join(include_risk_classes))
+    if exclude_risk_classes:
+        print("Wykluczone klasy ryzyka: " + ", ".join(exclude_risk_classes))
+    if include_required_data:
+        print("Wymagane źródła danych: " + ", ".join(include_required_data))
+    if exclude_required_data:
+        print("Wykluczone źródła danych: " + ", ".join(exclude_required_data))
+    if include_exchanges:
+        print("Wymagane giełdy/źródła danych: " + ", ".join(include_exchanges))
+    if exclude_exchanges:
+        print("Wykluczone giełdy/źródła danych: " + ", ".join(exclude_exchanges))
+    if include_environments:
+        print("Wymagane środowiska: " + ", ".join(include_environments))
+    if exclude_environments:
+        print("Wykluczone środowiska: " + ", ".join(exclude_environments))
+    if include_portfolios:
+        print("Wymagane portfele: " + ", ".join(include_portfolios))
+    if include_profiles:
+        print("Wymagane profile: " + ", ".join(include_profiles))
+    if include_strategies:
+        print("Wymagane strategie: " + ", ".join(include_strategies))
+    if include_datasets:
+        print("Wymagane zbiory danych: " + ", ".join(include_datasets))
+    if include_models:
+        print("Wymagane modele/artefakty: " + ", ".join(include_models))
+    if include_model_versions:
+        print("Wymagane wersje modeli: " + ", ".join(include_model_versions))
+    if exclude_portfolios:
+        print("Wykluczone portfele: " + ", ".join(exclude_portfolios))
+    if exclude_profiles:
+        print("Wykluczone profile: " + ", ".join(exclude_profiles))
+    if exclude_strategies:
+        print("Wykluczone strategie: " + ", ".join(exclude_strategies))
+    if exclude_datasets:
+        print("Wykluczone zbiory danych: " + ", ".join(exclude_datasets))
+    if exclude_models:
+        print("Wykluczone modele/artefakty: " + ", ".join(exclude_models))
+    if exclude_model_versions:
+        print("Wykluczone wersje modeli: " + ", ".join(exclude_model_versions))
+    if include_runs:
+        print("Wymagane runy: " + ", ".join(include_runs))
+    if exclude_runs:
+        print("Wykluczone runy: " + ", ".join(exclude_runs))
+    if include_jobs:
+        print("Wymagane zadania: " + ", ".join(include_jobs))
+    if exclude_jobs:
+        print("Wykluczone zadania: " + ", ".join(exclude_jobs))
+    print("Wymagane role: " + ", ".join(effective_roles))
+    print(f"Limit raportów: {limit}")
+
+    print(
+        "Raporty jakości danych: total={total} alerts={alerts} enforced={enforced}".format(
+            total=dq_summary.get("total", 0),
+            alerts=dq_summary.get("alerts", 0),
+            enforced=dq_summary.get("enforced_alerts", 0),
+        )
+    )
+    by_category = dq_summary.get("by_category", {})
+    if by_category:
+        print("  Kategorie alertów:")
+        for category, stats in sorted(by_category.items()):
+            print(
+                "    - {category}: total={total} alerts={alerts} enforced={enforced} status={status}".format(
+                    category=category,
+                    total=stats.get("total", 0),
+                    alerts=stats.get("alerts", 0),
+                    enforced=stats.get("enforced_alerts", 0),
+                    status=stats.get("latest_status") or "-",
+                )
+            )
+            latest_path = stats.get("latest_report_path")
+            if latest_path:
+                print(f"      ostatni_raport={latest_path}")
+    else:
+        print("  Kategorie alertów: (brak danych)")
+
+    print(
+        "Raporty dryfu: total={total} przekroczone={exceeds} ostatni={latest} ostatni_alert={latest_exceed}".format(
+            total=drift_summary.get("total", 0),
+            exceeds=drift_summary.get("exceeds_threshold", 0),
+            latest=drift_summary.get("latest_report_path") or "-",
+            latest_exceed=drift_summary.get("latest_exceeding_report_path") or "-",
+        )
+    )
+
+    if missing_entries:
+        print("Brakujące podpisy compliance:")
+        for role, entries in missing_entries.items():
+            print(f"  - {role}: {len(entries)} raport(y)")
+            for entry in entries:
+                category = entry.get("category") or "unknown"
+                status = entry.get("status") or "pending"
+                path = entry.get("report_path") or "-"
+                print(f"      • {category}: status={status} raport={path}")
+    else:
+        print("Brak braków podpisów compliance.")
+
+    if enforce and missing_entries:
+        return 3
+
+    return exit_code
 
 
 def show_strategy_catalog(args: argparse.Namespace) -> int:

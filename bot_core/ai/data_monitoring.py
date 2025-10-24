@@ -1882,10 +1882,13 @@ def _extract_sign_off_statuses(
     return sign_off_statuses
 
 
-def export_data_quality_report(
-    payload: Mapping[str, Any], *, category: str = "completeness"
-) -> Path:
-    """Persistuje raport jakości danych do katalogu audytowego."""
+def filter_audit_reports_by_license_tier(
+    reports: Sequence[Mapping[str, Any]] | None,
+    *,
+    include: Sequence[object] | None = None,
+    exclude: Sequence[object] | None = None,
+) -> tuple[Mapping[str, Any], ...]:
+    """Filtruje raporty na podstawie poziomu licencji strategii."""
 
     include_set = {
         license_tier
