@@ -42,6 +42,7 @@ __all__ = [
     "filter_audit_reports_by_portfolio",
     "filter_audit_reports_by_profile",
     "filter_audit_reports_by_required_data",
+    "filter_audit_reports_by_risk_class",
     "filter_audit_reports_by_run",
     "filter_audit_reports_by_schedule",
     "filter_audit_reports_by_sign_off_status",
@@ -50,7 +51,6 @@ __all__ = [
     "filter_audit_reports_by_strategy",
     "filter_audit_reports_by_symbol",
     "filter_audit_reports_by_tags",
-    "filter_audit_reports_by_risk_class",
     "filter_audit_reports_since",
     "get_supported_sign_off_statuses",
     "load_recent_data_quality_reports",
@@ -63,6 +63,7 @@ __all__ = [
     "normalize_report_engine",
     "normalize_report_environment",
     "normalize_report_exchange",
+    "normalize_report_issue_code",
     "normalize_report_job_name",
     "normalize_report_license_tier",
     "normalize_report_model",
@@ -106,6 +107,33 @@ _POLICY_ENFORCE_TRUE_VALUES = frozenset(
 _POLICY_ENFORCE_FALSE_VALUES = frozenset(
     {"0", "false", "no", "off", "skip", "not_enforced", "not-enforced"}
 )
+_IDENTIFIER_SANITIZE = re.compile(r"[^\w.-]+")
+
+
+def _stringify_identifier(value: object) -> str | None:
+    if isinstance(value, str):
+        candidate = value.strip()
+    elif isinstance(value, (int, float)) and not isinstance(value, bool):
+        if isinstance(value, float) and not math.isfinite(value):
+            return None
+        candidate = str(value).strip()
+    else:
+        return None
+    if not candidate:
+        return None
+    return candidate
+
+
+def _normalize_identifier(value: object) -> str | None:
+    candidate = _stringify_identifier(value)
+    if candidate is None:
+        return None
+    candidate = re.sub(r"\s+", "_", candidate)
+    candidate = _IDENTIFIER_SANITIZE.sub("_", candidate)
+    candidate = candidate.strip("_")
+    if not candidate:
+        return None
+    return candidate.lower()
 
 
 def _normalize_lower_identifier(value: object) -> str | None:
@@ -235,64 +263,75 @@ def normalize_report_pipeline(value: object) -> str | None:
     return None
 
 
-def normalize_report_strategy(value: object) -> str | None:
-    """Normalizuje identyfikator strategii."""
+def normalize_report_exchange(value: object) -> str | None:
+    """Normalizuje identyfikator giełdy lub dostawcy danych."""
 
-    return _normalize_lower_identifier(value)
+    return _normalize_identifier(value)
+
+
+def normalize_report_profile(value: object) -> str | None:
+    """Normalizuje nazwę profilu strategii lub ryzyka."""
+
+    return _normalize_identifier(value)
+
+
+def normalize_report_strategy(value: object) -> str | None:
+    """Normalizuje identyfikator strategii lub presetu."""
+
+    return _normalize_identifier(value)
 
 
 def normalize_report_dataset(value: object) -> str | None:
     """Normalizuje identyfikator zbioru danych."""
 
-    return _normalize_lower_identifier(value)
+    return _normalize_identifier(value)
 
 
 def normalize_report_model(value: object) -> str | None:
-    """Normalizuje identyfikator modelu."""
+    """Normalizuje identyfikator modelu lub artefaktu ML."""
 
-    return _normalize_lower_identifier(value)
+    return _normalize_identifier(value)
 
 
 def normalize_report_model_version(value: object) -> str | None:
-    """Normalizuje wersję modelu zachowując reprezentację tekstową."""
+    """Normalizuje wersję modelu lub artefaktu."""
 
-    normalized = _normalize_lower_identifier(value)
-    if normalized is not None:
-        return normalized
-    if isinstance(value, str):
-        candidate = value.strip()
-        return candidate or None
-    return None
+    return _normalize_identifier(value)
 
 
 def normalize_report_license_tier(value: object) -> str | None:
-    """Normalizuje poziom licencji."""
+    """Normalizuje poziom licencji strategii."""
 
-    return _normalize_lower_identifier(value)
+    return _normalize_identifier(value)
 
 
 def normalize_report_risk_class(value: object) -> str | None:
-    """Normalizuje klasę ryzyka."""
+    """Normalizuje klasę ryzyka strategii."""
 
-    return _normalize_lower_identifier(value)
+    return _normalize_identifier(value)
 
 
 def normalize_report_required_data(value: object) -> str | None:
-    """Normalizuje wymagane dane."""
+    """Normalizuje nazwę wymaganych źródeł danych."""
 
-    return _normalize_lower_identifier(value)
+    return _normalize_identifier(value)
 
 
 def normalize_report_engine(value: object) -> str | None:
-    """Normalizuje identyfikator silnika lub modułu wykonawczego."""
+    """Normalizuje nazwę silnika strategii."""
 
-    return _normalize_lower_identifier(value)
+    return _normalize_identifier(value)
 
 
 def normalize_report_issue_code(value: object) -> str | None:
-    """Normalizuje kod problemu raportu."""
+    """Normalizuje kod problemu raportu audytu (prefiks przed dwukropkiem)."""
 
-    return _normalize_lower_identifier(value)
+    base = _stringify_identifier(value)
+    if base is None:
+        return None
+    prefix, _, _ = base.partition(":")
+    candidate = prefix or base
+    return _normalize_identifier(candidate)
 
 
 def _normalize_role(role: object) -> str | None:
@@ -324,27 +363,25 @@ def normalize_report_status(value: object) -> str | None:
 
 
 def normalize_policy_enforcement(value: object) -> bool | None:
-    """Normalizuje flagę egzekwowania polityki do wartości logicznej."""
+    """Normalizuje wartość ``policy.enforce`` do boola lub ``None``."""
 
     if isinstance(value, bool):
         return value
-
+    if value is None:
+        return None
     if isinstance(value, (int, float)) and not isinstance(value, bool):
-        if math.isfinite(value):
-            if int(value) == 1:
-                return True
-            if int(value) == 0:
-                return False
-
-    if isinstance(value, str):
-        candidate = value.strip().lower()
-        if not candidate:
+        if isinstance(value, float) and not math.isfinite(value):
             return None
-        if candidate in _POLICY_ENFORCE_TRUE_VALUES:
+        return bool(value)
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if not normalized:
+            return None
+        if normalized in _POLICY_ENFORCE_TRUE_VALUES:
             return True
-        if candidate in _POLICY_ENFORCE_FALSE_VALUES:
+        if normalized in _POLICY_ENFORCE_FALSE_VALUES:
             return False
-
+        return None
     return None
 
 
@@ -1147,6 +1184,66 @@ def _collect_report_pipelines(report: Mapping[str, Any]) -> set[str]:
     return pipelines
 
 
+def _collect_report_engines(report: Mapping[str, Any]) -> set[str]:
+    engines: set[str] = set()
+    seen_mappings: set[int] = set()
+
+    def _add(value: object) -> None:
+        if isinstance(value, Mapping):
+            mapping_id = id(value)
+            if mapping_id in seen_mappings:
+                return
+            seen_mappings.add(mapping_id)
+
+            _add(value.get("engine"))
+            _add(value.get("engines"))
+            _add(value.get("strategy_engine"))
+            _add(value.get("strategy_engines"))
+            return
+        if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+            for item in value:
+                _add(item)
+            return
+        normalized = normalize_report_engine(value)
+        if normalized:
+            engines.add(normalized)
+
+    _add(report.get("engine"))
+    _add(report.get("engines"))
+    _add(report.get("strategies"))
+
+    context = report.get("context")
+    if isinstance(context, Mapping):
+        _add(context.get("engine"))
+        _add(context.get("engines"))
+        _add(context.get("strategies"))
+
+    dataset = report.get("dataset")
+    if isinstance(dataset, Mapping):
+        _add(dataset.get("engine"))
+        _add(dataset.get("engines"))
+        metadata = dataset.get("metadata")
+        if isinstance(metadata, Mapping):
+            _add(metadata.get("engine"))
+            _add(metadata.get("engines"))
+
+    strategy = report.get("strategy")
+    if isinstance(strategy, Mapping):
+        _add(strategy.get("engine"))
+        _add(strategy.get("engines"))
+        strategy_metadata = strategy.get("metadata")
+        if isinstance(strategy_metadata, Mapping):
+            _add(strategy_metadata.get("engine"))
+            _add(strategy_metadata.get("engines"))
+
+    metadata = report.get("metadata")
+    if isinstance(metadata, Mapping):
+        _add(metadata.get("engine"))
+        _add(metadata.get("engines"))
+
+    return engines
+
+
 def _collect_report_portfolios(report: Mapping[str, Any]) -> set[str]:
     portfolios: set[str] = set()
 
@@ -1780,6 +1877,72 @@ def _collect_report_required_data(report: Mapping[str, Any]) -> set[str]:
     return required_data
 
 
+def _collect_report_issue_codes(report: Mapping[str, Any]) -> set[str]:
+    issue_codes: set[str] = set()
+    seen_mappings: set[int] = set()
+
+    def _add(value: object) -> None:
+        if isinstance(value, Mapping):
+            mapping_id = id(value)
+            if mapping_id in seen_mappings:
+                return
+            seen_mappings.add(mapping_id)
+
+            _add(value.get("issue_code"))
+            _add(value.get("issue_codes"))
+            _add(value.get("code"))
+            _add(value.get("codes"))
+            _add(value.get("issues"))
+            return
+        if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+            for item in value:
+                _add(item)
+            return
+        normalized = normalize_report_issue_code(value)
+        if normalized:
+            issue_codes.add(normalized)
+
+    _add(report.get("issue_code"))
+    _add(report.get("issue_codes"))
+    _add(report.get("issues"))
+
+    context = report.get("context")
+    if isinstance(context, Mapping):
+        _add(context.get("issue_code"))
+        _add(context.get("issue_codes"))
+        _add(context.get("issues"))
+
+    dataset = report.get("dataset")
+    if isinstance(dataset, Mapping):
+        _add(dataset.get("issue_code"))
+        _add(dataset.get("issue_codes"))
+        _add(dataset.get("issues"))
+        metadata = dataset.get("metadata")
+        if isinstance(metadata, Mapping):
+            _add(metadata.get("issue_code"))
+            _add(metadata.get("issue_codes"))
+            _add(metadata.get("issues"))
+
+    strategy = report.get("strategy")
+    if isinstance(strategy, Mapping):
+        _add(strategy.get("issue_code"))
+        _add(strategy.get("issue_codes"))
+        _add(strategy.get("issues"))
+        strategy_metadata = strategy.get("metadata")
+        if isinstance(strategy_metadata, Mapping):
+            _add(strategy_metadata.get("issue_code"))
+            _add(strategy_metadata.get("issue_codes"))
+            _add(strategy_metadata.get("issues"))
+
+    metadata = report.get("metadata")
+    if isinstance(metadata, Mapping):
+        _add(metadata.get("issue_code"))
+        _add(metadata.get("issue_codes"))
+        _add(metadata.get("issues"))
+
+    return issue_codes
+
+
 def filter_audit_reports_by_symbol(
     reports: Sequence[Mapping[str, Any]] | None,
     *,
@@ -2076,6 +2239,42 @@ def filter_audit_reports_by_strategy(
     return tuple(filtered)
 
 
+def filter_audit_reports_by_engine(
+    reports: Sequence[Mapping[str, Any]] | None,
+    *,
+    include: Sequence[object] | None = None,
+    exclude: Sequence[object] | None = None,
+) -> tuple[Mapping[str, Any], ...]:
+    """Filtruje raporty na podstawie silnika strategii."""
+
+    include_set = {
+        engine
+        for engine in (normalize_report_engine(item) for item in (include or ()))
+        if engine
+    }
+    exclude_set = {
+        engine
+        for engine in (normalize_report_engine(item) for item in (exclude or ()))
+        if engine
+    }
+
+    filtered: list[Mapping[str, Any]] = []
+    for report in reports or ():
+        if not isinstance(report, Mapping):
+            continue
+
+        engines = _collect_report_engines(report)
+
+        if include_set and not (engines & include_set):
+            continue
+        if exclude_set and (engines & exclude_set):
+            continue
+
+        filtered.append(report)
+
+    return tuple(filtered)
+
+
 def filter_audit_reports_by_issue_code(
     reports: Sequence[Mapping[str, Any]] | None,
     *,
@@ -2085,18 +2284,14 @@ def filter_audit_reports_by_issue_code(
     """Filtruje raporty na podstawie kodów problemów."""
 
     include_set = {
-        issue_code
-        for issue_code in (
-            normalize_report_issue_code(item) for item in (include or ())
-        )
-        if issue_code
+        code
+        for code in (normalize_report_issue_code(item) for item in (include or ()))
+        if code
     }
     exclude_set = {
-        issue_code
-        for issue_code in (
-            normalize_report_issue_code(item) for item in (exclude or ())
-        )
-        if issue_code
+        code
+        for code in (normalize_report_issue_code(item) for item in (exclude or ()))
+        if code
     }
 
     filtered: list[Mapping[str, Any]] = []

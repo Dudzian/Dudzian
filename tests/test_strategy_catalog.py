@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from bot_core.strategies.catalog import DEFAULT_STRATEGY_CATALOG
 from bot_core.trading.engine import TechnicalIndicators, TradingParameters
@@ -16,6 +17,7 @@ from bot_core.trading.strategies import (
     ScalpingStrategy,
     StatisticalArbitrageStrategy,
     StrategyCatalog,
+    StrategyPlugin,
     TrendFollowingStrategy,
     VolatilityTargetStrategy,
 )
@@ -121,3 +123,37 @@ def test_plugins_generate_series_with_matching_index() -> None:
         signal = plugin.generate(indicators, params, market_data=market_data)
         assert list(signal.index) == list(indicators.rsi.index)
         assert ((signal >= -1.000001) & (signal <= 1.000001)).all()
+
+
+def test_plugin_requires_known_engine_key() -> None:
+    with pytest.raises(ValueError):
+
+        class _UnknownEngineStrategy(StrategyPlugin):
+            engine_key = "missing_engine"
+            name = "unknown_engine"
+
+            def generate(
+                self,
+                indicators: TechnicalIndicators,
+                params: TradingParameters,
+                *,
+                market_data: pd.DataFrame | None = None,
+            ) -> pd.Series:
+                return indicators.rsi.reindex(indicators.rsi.index).clip(-1.0, 1.0)
+
+
+def test_plugin_rejects_duplicate_engine_key() -> None:
+    with pytest.raises(ValueError):
+
+        class _DuplicateDayTradingStrategy(StrategyPlugin):
+            engine_key = "day_trading"
+            name = "duplicate_day_trading"
+
+            def generate(
+                self,
+                indicators: TechnicalIndicators,
+                params: TradingParameters,
+                *,
+                market_data: pd.DataFrame | None = None,
+            ) -> pd.Series:
+                return indicators.ema_fast.reindex(indicators.ema_fast.index).clip(-1.0, 1.0)

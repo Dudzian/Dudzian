@@ -5,6 +5,16 @@ import importlib
 
 import pytest
 
+from tests.utils.libgl import ensure_libgl_available
+
+try:
+    ensure_libgl_available()
+except RuntimeError as exc:  # pragma: no cover - brak wsparcia libGL w środowisku
+    pytest.skip(
+        f"Pomijam testy środowiska desktopowego: brak libGL ({exc}).",
+        allow_module_level=True,
+    )
+
 DESKTOP_MODULES = [
     "bot_core.ai.manager",
     "bot_core.strategies.cross_exchange_arbitrage",
@@ -26,3 +36,22 @@ def test_numeric_stack_is_available() -> None:
     assert hasattr(numpy, "__version__"), "Brak atrybutu wersji w numpy"
     assert hasattr(pandas, "__version__"), "Brak atrybutu wersji w pandas"
     assert hasattr(joblib, "__version__"), "Brak atrybutu wersji w joblib"
+
+
+def test_qt_binding_provides_basic_types() -> None:
+    """Weryfikuje, że środowisko testowe udostępnia Qt dla modułów UI."""
+
+    PySide6 = pytest.importorskip(
+        "PySide6",
+        reason=(
+            "Środowisko testowe nie udostępnia jeszcze biblioteki Qt (pakiet PySide6)."
+            " Dodaj ją do obrazu CI, aby uruchomić testy UI."
+        ),
+    )
+
+    qtcore = importlib.import_module("PySide6.QtCore")
+    qtqml = importlib.import_module("PySide6.QtQml")
+
+    assert hasattr(qtcore, "QTimer"), "Brak podstawowego typu QTimer w QtCore"
+    assert hasattr(PySide6, "__version__"), "Moduł PySide6 nie posiada atrybutu wersji"
+    assert hasattr(qtqml, "QQmlApplicationEngine"), "Brak QQmlApplicationEngine w QtQml"

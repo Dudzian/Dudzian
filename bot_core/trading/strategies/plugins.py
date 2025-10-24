@@ -9,6 +9,7 @@ from typing import (
     Dict,
     Iterable,
     Mapping,
+    MutableMapping,
     Optional,
     Tuple,
     Type,
@@ -21,6 +22,11 @@ import pandas as pd
 
 if TYPE_CHECKING:  # pragma: no cover - hints only
     from bot_core.trading.engine import TechnicalIndicators, TradingParameters
+
+from bot_core.strategies.catalog import DEFAULT_STRATEGY_CATALOG
+
+_BUILTIN_PLUGIN_REGISTRY: MutableMapping[str, Type["StrategyPlugin"]] = {}
+_REGISTERED_ENGINE_KEYS: set[str] = set()
 
 TStrategy = TypeVar("TStrategy", bound="StrategyPlugin")
 
@@ -61,6 +67,54 @@ class StrategyPlugin(ABC):
     required_data: Tuple[str, ...] = ()
     capability: str | None = None
     tags: Tuple[str, ...] = ()
+    engine_key: str | None = None
+    extra_tags: Tuple[str, ...] = ()
+
+    def __init_subclass__(cls, **kwargs: object) -> None:
+        super().__init_subclass__(**kwargs)
+        engine_key = _normalize_text(getattr(cls, "engine_key", None))
+        if engine_key is None:
+            return
+
+        cls.engine_key = engine_key
+
+        try:
+            spec = DEFAULT_STRATEGY_CATALOG.get(engine_key)
+        except KeyError as exc:  # pragma: no cover - sanity guard
+            raise ValueError(
+                "Strategy plugin '%s' declares engine_key='%s' which is not registered "
+                "in DEFAULT_STRATEGY_CATALOG" % (cls.__name__, engine_key)
+            ) from exc
+
+        cls.license_tier = spec.license_tier
+        cls.risk_classes = tuple(spec.risk_classes)
+        cls.required_data = tuple(spec.required_data)
+        cls.capability = spec.capability
+
+        base_tags = _normalize_sequence(spec.default_tags)
+        extra_tags = _normalize_sequence(getattr(cls, "extra_tags", ()))
+        override_tags = _normalize_sequence(getattr(cls, "tags", ()))
+
+        if override_tags:
+            tags = tuple(dict.fromkeys((*base_tags, *override_tags)))
+        elif extra_tags:
+            tags = tuple(dict.fromkeys((*base_tags, *extra_tags)))
+        else:
+            tags = base_tags
+
+        cls.tags = tags
+
+        if engine_key in _REGISTERED_ENGINE_KEYS:
+            existing = _BUILTIN_PLUGIN_REGISTRY.get(engine_key)
+            existing_name = existing.__name__ if existing else "<external>"
+            raise ValueError(
+                "Zduplikowano plugin dla engine_key='%s' (zarejestrowany: %s, nowy: %s)"
+                % (engine_key, existing_name, cls.__name__)
+            )
+        _REGISTERED_ENGINE_KEYS.add(engine_key)
+
+        if cls.__module__ == __name__:
+            _BUILTIN_PLUGIN_REGISTRY[engine_key] = cls
 
     def __repr__(self) -> str:  # pragma: no cover - debugging helper
         return f"{self.__class__.__name__}(name={self.name!r})"
@@ -106,6 +160,9 @@ class StrategyPlugin(ABC):
         tags = _normalize_sequence(self.tags)
         if tags:
             payload["tags"] = tags
+        engine_key = _normalize_text(getattr(type(self), "engine_key", None))
+        if engine_key:
+            payload["engine"] = engine_key
         payload["description"] = str(self.description or "")
         return MappingProxyType(payload)
 
@@ -158,8 +215,8 @@ class StrategyCatalog:
     def __contains__(self, name: str) -> bool:  # pragma: no cover - trivial
         return name in self._registry
 
-    def describe(self) -> Tuple[Mapping[str, str], ...]:
-        """Zwraca uproszczony opis strategii przydatny w UI."""
+    def describe(self) -> Tuple[Mapping[str, object], ...]:
+        """Zwraca pełny opis metadanych strategii dla warstw klienckich."""
 
         summary: list[Mapping[str, object]] = []
         for name in self.available():
@@ -197,19 +254,16 @@ class StrategyCatalog:
                 OptionsIncomeStrategy,
                 StatisticalArbitrageStrategy,
             )
-        )
+
+        return cls(plugins=tuple(ordered_plugins))
 
 
 class TrendFollowingStrategy(StrategyPlugin):
     """Classic trend-following ensemble built on moving averages."""
 
+    engine_key = "daily_trend_momentum"
     name = "trend_following"
     description = "EMA and SMA crossovers highlighting persistent direction."
-    license_tier = "standard"
-    risk_classes = ("directional", "momentum")
-    required_data = ("ohlcv", "technical_indicators")
-    capability = "trend_d1"
-    tags = ("trend", "momentum")
 
     def generate(
         self,
@@ -231,13 +285,9 @@ class TrendFollowingStrategy(StrategyPlugin):
 class DayTradingStrategy(StrategyPlugin):
     """Intraday momentum strategy focusing on short-lived swings."""
 
+    engine_key = "day_trading"
     name = "day_trading"
     description = "Short momentum bursts with volatility-aware scaling."
-    license_tier = "standard"
-    risk_classes = ("intraday", "momentum")
-    required_data = ("ohlcv", "technical_indicators")
-    capability = "day_trading"
-    tags = ("intraday", "momentum")
 
     def generate(
         self,
@@ -271,13 +321,9 @@ class DayTradingStrategy(StrategyPlugin):
 class MeanReversionStrategy(StrategyPlugin):
     """RSI/Bollinger-based contrarian strategy."""
 
+    engine_key = "mean_reversion"
     name = "mean_reversion"
     description = "Fade extremes using RSI and Bollinger Bands confirmation."
-    license_tier = "professional"
-    risk_classes = ("statistical", "mean_reversion")
-    required_data = ("ohlcv", "spread_history")
-    capability = "mean_reversion"
-    tags = ("mean_reversion", "stat_arbitrage")
 
     def generate(
         self,
@@ -301,13 +347,9 @@ class MeanReversionStrategy(StrategyPlugin):
 class ArbitrageStrategy(StrategyPlugin):
     """Light-weight spread arbitrage approximation using a synthetic benchmark."""
 
+    engine_key = "cross_exchange_arbitrage"
     name = "arbitrage"
     description = "Exploit deviations from the Bollinger mid-band as proxy spreads."
-    license_tier = "enterprise"
-    risk_classes = ("arbitrage", "liquidity")
-    required_data = ("order_book", "latency_monitoring")
-    capability = "cross_exchange"
-    tags = ("arbitrage", "liquidity")
 
     def generate(
         self,
