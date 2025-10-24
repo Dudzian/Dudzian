@@ -2227,14 +2227,48 @@ void Application::initializeSecurityRefresh()
         m_nextLicenseRefreshUtc = QDateTime();
         updateSecurityCacheFromControllers();
         Q_EMIT licenseRefreshScheduleChanged();
-        return;
+    } else {
+        ensureLicenseRefreshTimerConfigured();
+        m_licenseRefreshIntervalSeconds = intervalSeconds;
+        m_licenseRefreshTimer.setInterval(m_licenseRefreshIntervalSeconds * 1000);
+        if (!m_licenseRefreshTimer.isActive())
+            m_licenseRefreshTimer.start();
     }
 
-    ensureLicenseRefreshTimerConfigured();
-    m_licenseRefreshIntervalSeconds = intervalSeconds;
-    m_licenseRefreshTimer.setInterval(m_licenseRefreshIntervalSeconds * 1000);
-    m_licenseRefreshTimer.start();
-    QTimer::singleShot(0, this, &Application::refreshSecurityArtifacts);
+    int fingerprintInterval = m_fingerprintRefreshIntervalSeconds;
+    if (fingerprintInterval < 0)
+        fingerprintInterval = kDefaultFingerprintRefreshIntervalSeconds;
+    if (qEnvironmentVariableIsSet(kFingerprintRefreshIntervalEnv.constData())) {
+        bool ok = false;
+        const QByteArray raw = qgetenv(kFingerprintRefreshIntervalEnv.constData());
+        const int candidate = QString::fromUtf8(raw).toInt(&ok);
+        if (ok)
+            fingerprintInterval =
+                std::clamp(candidate, kMinFingerprintRefreshIntervalSeconds, kMaxFingerprintRefreshIntervalSeconds);
+        else
+            qCWarning(lcAppMetrics) << "Nieprawidłowa wartość" << QString::fromUtf8(raw)
+                                    << "dla" << kFingerprintRefreshIntervalEnv;
+    }
+
+    if (fingerprintInterval <= 0) {
+        m_fingerprintRefreshIntervalSeconds = 0;
+        ensureFingerprintRefreshTimerConfigured();
+        m_fingerprintRefreshTimer.stop();
+        m_nextFingerprintRefreshUtc = QDateTime();
+        updateSecurityCacheFromControllers();
+        Q_EMIT fingerprintRefreshScheduleChanged();
+    } else {
+        ensureFingerprintRefreshTimerConfigured();
+        m_fingerprintRefreshIntervalSeconds = fingerprintInterval;
+        m_fingerprintRefreshTimer.setInterval(m_fingerprintRefreshIntervalSeconds * 1000);
+        if (!m_fingerprintRefreshTimer.isActive())
+            m_fingerprintRefreshTimer.start();
+    }
+
+    if (m_licenseRefreshTimer.isActive())
+        QTimer::singleShot(0, this, &Application::refreshSecurityArtifacts);
+    else if (m_fingerprintRefreshTimer.isActive())
+        QTimer::singleShot(0, this, &Application::refreshFingerprintArtifacts);
 }
 
 void Application::refreshSecurityArtifacts()
