@@ -150,6 +150,28 @@ void ActivationController::reloadRegistry()
     updateOemLicense();
 }
 
+void ActivationController::applyCachedState(const QVariantMap& fingerprint,
+                                            const QVariantMap& oemLicense,
+                                            const QVariantList& licenses)
+{
+    bool changed = false;
+    if (!fingerprint.isEmpty() && m_fingerprint != fingerprint) {
+        m_fingerprint = fingerprint;
+        changed = true;
+        Q_EMIT fingerprintChanged();
+    }
+    if (!oemLicense.isEmpty() && m_oemLicenseSummary != oemLicense) {
+        m_oemLicenseSummary = oemLicense;
+        Q_EMIT oemLicenseChanged();
+    }
+    if (!licenses.isEmpty() && m_licenses != licenses) {
+        m_licenses = licenses;
+        Q_EMIT licensesChanged();
+    }
+    if (changed)
+        clearError();
+}
+
 bool ActivationController::exportFingerprint(const QUrl& destination) const
 {
     if (!destination.isValid())
