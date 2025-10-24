@@ -96,6 +96,18 @@ _EXPORTS: Dict[str, Tuple[str, str]] = {
         ".data_monitoring",
         "normalize_compliance_sign_off_roles",
     ),
+    "normalize_sign_off_status": (
+        ".data_monitoring",
+        "normalize_sign_off_status",
+    ),
+    "normalize_report_status": (
+        ".data_monitoring",
+        "normalize_report_status",
+    ),
+    "get_supported_sign_off_statuses": (
+        ".data_monitoring",
+        "get_supported_sign_off_statuses",
+    ),
     "load_recent_data_quality_reports": (
         ".data_monitoring",
         "load_recent_data_quality_reports",

@@ -61,6 +61,32 @@ def _normalize_role(role: object) -> str | None:
     return None
 
 
+def normalize_sign_off_status(value: object) -> str | None:
+    """Zwraca znormalizowany status podpisu compliance lub ``None``."""
+
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized and normalized in _SIGN_OFF_STATUSES:
+            return normalized
+    return None
+
+
+def normalize_report_status(value: object) -> str | None:
+    """Zwraca znormalizowany status raportu (niezależnie od słownika wartości)."""
+
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized:
+            return normalized
+    return None
+
+
+def get_supported_sign_off_statuses() -> tuple[str, ...]:
+    """Zwraca krotkę obsługiwanych statusów podpisów compliance."""
+
+    return tuple(sorted(_SIGN_OFF_STATUSES))
+
+
 def _audit_root() -> Path:
     root_override = os.environ.get("AI_DECISION_AUDIT_ROOT")
     if root_override:
@@ -182,6 +208,35 @@ def _apply_sign_off_to_payload(
         sign_off = _default_sign_off()
     sign_off[role] = dict(entry)
     payload["sign_off"] = sign_off
+
+
+def _extract_sign_off_statuses(
+    report: Mapping[str, Any],
+    *,
+    roles: Sequence[str] | None = None,
+) -> dict[str, str]:
+    """Ekstrahuje statusy podpisów z raportu z opcjonalnym filtrem ról."""
+
+    allowed_roles = {
+        normalized
+        for normalized in (_normalize_role(role) for role in (roles or ()))
+        if normalized
+    }
+    sign_off_statuses: dict[str, str] = {}
+    raw_sign_off = report.get("sign_off")
+    if not isinstance(raw_sign_off, Mapping):
+        return sign_off_statuses
+
+    for raw_role, raw_entry in raw_sign_off.items():
+        normalized_role = _normalize_role(raw_role)
+        if allowed_roles and (not normalized_role or normalized_role not in allowed_roles):
+            continue
+        if not isinstance(raw_entry, Mapping):
+            continue
+        status = normalize_sign_off_status(raw_entry.get("status"))
+        if normalized_role and status:
+            sign_off_statuses[normalized_role] = status
+    return sign_off_statuses
 
 
 def export_data_quality_report(
