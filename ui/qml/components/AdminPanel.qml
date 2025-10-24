@@ -3,6 +3,7 @@ import QtQuick.Controls
 import QtQuick.Dialogs
 import QtQuick.Layouts
 import QtCore
+import "security"
 
 Drawer {
     id: adminPanel
@@ -111,379 +112,6 @@ Drawer {
         }
         loadTradableInstruments()
         updateInstrumentSelection()
-
-        Tab {
-            title: qsTr("Wsparcie")
-
-            property string pendingPathTarget: ""
-
-            Flickable {
-                anchors.fill: parent
-                contentWidth: width
-                contentHeight: supportLayout.implicitHeight
-                clip: true
-
-                ColumnLayout {
-                    id: supportLayout
-                    width: parent.width
-                    spacing: 16
-                    padding: 16
-
-                    GroupBox {
-                        title: qsTr("Zakres pakietu")
-                        Layout.fillWidth: true
-
-                        ColumnLayout {
-                            spacing: 12
-
-                            Repeater {
-                                model: [
-                                    {
-                                        label: qsTr("Logi runtime"),
-                                        enabledProperty: "includeLogs",
-                                        pathProperty: "logsPath",
-                                        target: "logs"
-                                    },
-                                    {
-                                        label: qsTr("Raporty i eksporty"),
-                                        enabledProperty: "includeReports",
-                                        pathProperty: "reportsPath",
-                                        target: "reports"
-                                    },
-                                    {
-                                        label: qsTr("Licencje OEM"),
-                                        enabledProperty: "includeLicenses",
-                                        pathProperty: "licensesPath",
-                                        target: "licenses"
-                                    },
-                                    {
-                                        label: qsTr("Telemetria / metryki"),
-                                        enabledProperty: "includeMetrics",
-                                        pathProperty: "metricsPath",
-                                        target: "metrics"
-                                    },
-                                    {
-                                        label: qsTr("Artefakty audytu"),
-                                        enabledProperty: "includeAudit",
-                                        pathProperty: "auditPath",
-                                        target: "audit"
-                                    }
-                                ]
-
-                                delegate: RowLayout {
-                                    required property string label
-                                    required property string enabledProperty
-                                    required property string pathProperty
-                                    required property string target
-
-                                    Layout.fillWidth: true
-                                    spacing: 12
-
-                                    CheckBox {
-                                        text: label
-                                        checked: supportController && supportController[enabledProperty]
-                                        enabled: supportController && !supportController.busy
-                                        onToggled: {
-                                            if (!supportController)
-                                                return
-                                            supportController[enabledProperty] = checked
-                                        }
-                                    }
-
-                                    TextField {
-                                        Layout.fillWidth: true
-                                        readOnly: true
-                                        text: supportController ? supportController[pathProperty] : ""
-                                        placeholderText: qsTr("Ścieżka nieustawiona")
-                                        color: enabled ? palette.text : palette.mid
-                                    }
-
-                                    Button {
-                                        text: qsTr("Wybierz…")
-                                        enabled: supportController && !supportController.busy
-                                        onClicked: {
-                                            if (!supportController)
-                                                return
-                                            pendingPathTarget = target
-                                            const basePath = supportController[pathProperty]
-                                                    ? QUrl.fromLocalFile(supportController[pathProperty])
-                                                    : Qt.resolvedUrl(".")
-                                            supportFolderDialog.folder = basePath
-                                            supportFolderDialog.open()
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    GroupBox {
-                        title: qsTr("Eksport")
-                        Layout.fillWidth: true
-
-                        GridLayout {
-                            columns: 3
-                            columnSpacing: 12
-                            rowSpacing: 8
-                            Layout.fillWidth: true
-
-                            Label { text: qsTr("Format") }
-                            ComboBox {
-                                id: supportFormatCombo
-                                Layout.fillWidth: true
-                                model: ["tar.gz", "zip"]
-                                enabled: supportController && !supportController.busy
-                                onActivated: {
-                                    if (supportController)
-                                        supportController.format = model[index]
-                                }
-                                Component.onCompleted: {
-                                    if (supportController) {
-                                        const idx = model.indexOf(supportController.format)
-                                        currentIndex = idx >= 0 ? idx : 0
-                                    }
-                                }
-                                Binding {
-                                    target: supportFormatCombo
-                                    property: "currentIndex"
-                                    value: {
-                                        if (!supportController)
-                                            return 0
-                                        const idx = model.indexOf(supportController.format)
-                                        return idx >= 0 ? idx : 0
-                                    }
-                                    when: supportController && !supportFormatCombo.activeFocus
-                                }
-                            }
-                            Item {}
-
-                            Label { text: qsTr("Katalog wyjściowy") }
-                            TextField {
-                                Layout.fillWidth: true
-                                readOnly: true
-                                text: supportController ? supportController.outputDirectory : ""
-                                placeholderText: qsTr("Domyślnie var/support")
-                            }
-                            Button {
-                                text: qsTr("Wybierz…")
-                                enabled: supportController && !supportController.busy
-                                onClicked: {
-                                    pendingPathTarget = "output"
-                                    const dir = supportController && supportController.outputDirectory
-                                            ? QUrl.fromLocalFile(supportController.outputDirectory)
-                                            : Qt.resolvedUrl(".")
-                                    supportFolderDialog.folder = dir
-                                    supportFolderDialog.open()
-                                }
-                            }
-
-                            Label { text: qsTr("Bazowa nazwa pliku") }
-                            TextField {
-                                Layout.fillWidth: true
-                                enabled: supportController && !supportController.busy
-                                text: supportController ? supportController.defaultBasename : "support-bundle"
-                                onEditingFinished: {
-                                    if (supportController && text.length > 0)
-                                        supportController.defaultBasename = text.trim()
-                                }
-                            }
-                            Item {}
-
-                            Item { Layout.columnSpan: 3; Layout.fillWidth: true }
-                        }
-                    }
-
-                    GroupBox {
-                        title: qsTr("Status")
-                        Layout.fillWidth: true
-
-                        ColumnLayout {
-                            spacing: 8
-
-                            RowLayout {
-                                spacing: 12
-                                Label {
-                                    text: supportController && supportController.busy
-                                            ? qsTr("Trwa eksport pakietu wsparcia…")
-                                            : qsTr("Gotowe do eksportu")
-                                    font.bold: true
-                                }
-                                BusyIndicator {
-                                    running: supportController && supportController.busy
-                                    visible: running
-                                }
-                            }
-
-                            Label {
-                                visible: supportController && supportController.lastStatusMessage.length > 0
-                                text: supportController ? supportController.lastStatusMessage : ""
-                                color: Qt.rgba(0.3, 0.7, 0.4, 1)
-                                wrapMode: Text.WordWrap
-                            }
-
-                            Label {
-                                visible: supportController && supportController.lastErrorMessage.length > 0
-                                text: supportController ? supportController.lastErrorMessage : ""
-                                color: Qt.rgba(0.9, 0.4, 0.3, 1)
-                                wrapMode: Text.WordWrap
-                            }
-
-                            RowLayout {
-                                visible: supportController && supportController.lastBundlePath.length > 0
-                                spacing: 8
-
-                                Label { text: qsTr("Ostatni pakiet:") }
-                                TextField {
-                                    Layout.fillWidth: true
-                                    readOnly: true
-                                    text: supportController ? supportController.lastBundlePath : ""
-                                }
-                                Button {
-                                    text: qsTr("Otwórz")
-                                    onClicked: {
-                                        if (supportController && supportController.lastBundlePath.length > 0)
-                                            Qt.openUrlExternally(QUrl.fromLocalFile(supportController.lastBundlePath))
-                                    }
-                                }
-                            }
-
-                            RowLayout {
-                                spacing: 12
-
-                                Button {
-                                    text: qsTr("Eksportuj…")
-                                    enabled: supportController && !supportController.busy
-                                    onClicked: supportBundleDialog.open()
-                                }
-
-                                Button {
-                                    text: qsTr("Szybki eksport")
-                                    enabled: supportController && !supportController.busy
-                                    onClicked: {
-                                        if (supportController)
-                                            supportController.exportBundle()
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    GroupBox {
-                        title: qsTr("Ostatni manifest")
-                        Layout.fillWidth: true
-
-                        ColumnLayout {
-                            spacing: 6
-
-                            ListView {
-                                id: supportEntriesView
-                                Layout.fillWidth: true
-                                Layout.preferredHeight: Math.min(contentHeight, 240)
-                                clip: true
-                                model: supportController && supportController.lastResult
-                                       && supportController.lastResult.entries
-                                       ? supportController.lastResult.entries
-                                       : []
-                                delegate: Frame {
-                                    required property var modelData
-                                    Layout.fillWidth: true
-                                    padding: 8
-                                    background: Rectangle {
-                                        color: Qt.rgba(0.18, 0.24, 0.32, 0.4)
-                                        radius: 6
-                                    }
-
-                                    ColumnLayout {
-                                        anchors.fill: parent
-                                        spacing: 4
-
-                                        Label {
-                                            text: modelData.label || qsTr("nieznany zasób")
-                                            font.bold: true
-                                        }
-
-                                        Label {
-                                            text: modelData.source || ""
-                                            wrapMode: Text.WordWrap
-                                            color: palette.midlight
-                                        }
-
-                                        Label {
-                                            text: qsTr("Pliki: %1, rozmiar: %2 B").arg(modelData.file_count || 0)
-                                                      .arg(modelData.size_bytes || 0)
-                                        }
-
-                                        Label {
-                                            visible: modelData.exists === false
-                                            text: qsTr("Uwaga: ścieżka nie istnieje")
-                                            color: Qt.rgba(0.95, 0.45, 0.3, 1)
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            FolderDialog {
-                id: supportFolderDialog
-                title: qsTr("Wybierz katalog")
-                onAccepted: {
-                    if (!supportController)
-                        return
-                    const url = supportFolderDialog.selectedFolder
-                                 ? supportFolderDialog.selectedFolder
-                                 : (currentFolder || folder)
-                    if (!url)
-                        return
-                    const localPath = url.toLocalFile ? url.toLocalFile() : url.toString().replace("file://", "")
-                    switch (pendingPathTarget) {
-                    case "logs": supportController.logsPath = localPath; break
-                    case "reports": supportController.reportsPath = localPath; break
-                    case "licenses": supportController.licensesPath = localPath; break
-                    case "metrics": supportController.metricsPath = localPath; break
-                    case "audit": supportController.auditPath = localPath; break
-                    case "output": supportController.outputDirectory = localPath; break
-                    }
-                }
-            }
-
-            FileDialog {
-                id: supportBundleDialog
-                title: qsTr("Zapisz pakiet wsparcia")
-                fileMode: FileDialog.SaveFile
-                defaultSuffix: supportController && supportController.format === "zip" ? "zip" : "tar.gz"
-                nameFilters: [qsTr("Archiwa (*.tar.gz *.zip)"), qsTr("Wszystkie pliki (*)")]
-                onAccepted: {
-                    if (supportController)
-                        supportController.exportBundle(selectedFile)
-                }
-            }
-
-            FileDialog {
-                id: decisionLogFileDialog
-                title: qsTr("Wybierz plik decision logu")
-                fileMode: FileDialog.OpenFile
-                nameFilters: [qsTr("Logi JSONL (*.jsonl)"), qsTr("Wszystkie pliki (*)")]
-                onAccepted: {
-                    if (selectedFile)
-                        applyDecisionLogPath(selectedFile)
-                }
-            }
-
-            FolderDialog {
-                id: decisionLogFolderDialog
-                title: qsTr("Wybierz katalog decision logu")
-                onAccepted: {
-                    var url = decisionLogFolderDialog.selectedFolder
-                              ? decisionLogFolderDialog.selectedFolder
-                              : decisionLogFolderDialog.folder
-                    if (url)
-                        applyDecisionLogPath(url)
-                }
-            }
-        }
     }
 
     function refreshData() {
@@ -2643,6 +2271,319 @@ Drawer {
         }
 
         Tab {
+            title: qsTr("Wsparcie")
+
+            property string pendingPathTarget: ""
+
+            Flickable {
+                anchors.fill: parent
+                contentWidth: width
+                contentHeight: supportLayout.implicitHeight
+                clip: true
+
+                ColumnLayout {
+                    id: supportLayout
+                    width: parent.width
+                    spacing: 16
+                    padding: 16
+
+                    GroupBox {
+                        title: qsTr("Zakres pakietu")
+                        Layout.fillWidth: true
+
+                        ColumnLayout {
+                            spacing: 12
+
+                            Repeater {
+                                model: [
+                                    {
+                                        label: qsTr("Logi runtime"),
+                                        enabledProperty: "includeLogs",
+                                        pathProperty: "logsPath",
+                                        target: "logs"
+                                    },
+                                    {
+                                        label: qsTr("Raporty i eksporty"),
+                                        enabledProperty: "includeReports",
+                                        pathProperty: "reportsPath",
+                                        target: "reports"
+                                    },
+                                    {
+                                        label: qsTr("Licencje OEM"),
+                                        enabledProperty: "includeLicenses",
+                                        pathProperty: "licensesPath",
+                                        target: "licenses"
+                                    },
+                                    {
+                                        label: qsTr("Telemetria / metryki"),
+                                        enabledProperty: "includeMetrics",
+                                        pathProperty: "metricsPath",
+                                        target: "metrics"
+                                    },
+                                    {
+                                        label: qsTr("Artefakty audytu"),
+                                        enabledProperty: "includeAudit",
+                                        pathProperty: "auditPath",
+                                        target: "audit"
+                                    }
+                                ]
+
+                                delegate: RowLayout {
+                                    required property string label
+                                    required property string enabledProperty
+                                    required property string pathProperty
+                                    required property string target
+
+                                    Layout.fillWidth: true
+                                    spacing: 12
+
+                                    CheckBox {
+                                        text: label
+                                        checked: supportController && supportController[enabledProperty]
+                                        enabled: supportController && !supportController.busy
+                                        onToggled: {
+                                            if (!supportController)
+                                                return
+                                            supportController[enabledProperty] = checked
+                                        }
+                                    }
+
+                                    TextField {
+                                        Layout.fillWidth: true
+                                        readOnly: true
+                                        text: supportController ? supportController[pathProperty] : ""
+                                        placeholderText: qsTr("Ścieżka nieustawiona")
+                                        color: enabled ? palette.text : palette.mid
+                                    }
+
+                                    Button {
+                                        text: qsTr("Wybierz…")
+                                        enabled: supportController && !supportController.busy
+                                        onClicked: {
+                                            if (!supportController)
+                                                return
+                                            pendingPathTarget = target
+                                            const basePath = supportController[pathProperty]
+                                                    ? QUrl.fromLocalFile(supportController[pathProperty])
+                                                    : Qt.resolvedUrl(".")
+                                            supportFolderDialog.folder = basePath
+                                            supportFolderDialog.open()
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    GroupBox {
+                        title: qsTr("Eksport")
+                        Layout.fillWidth: true
+
+                        GridLayout {
+                            columns: 3
+                            columnSpacing: 12
+                            rowSpacing: 8
+                            Layout.fillWidth: true
+
+                            Label { text: qsTr("Format") }
+                            ComboBox {
+                                id: supportFormatCombo
+                                Layout.fillWidth: true
+                                model: ["tar.gz", "zip"]
+                                enabled: supportController && !supportController.busy
+                                onActivated: {
+                                    if (supportController)
+                                        supportController.format = model[index]
+                                }
+                                Component.onCompleted: {
+                                    if (supportController) {
+                                        const idx = model.indexOf(supportController.format)
+                                        currentIndex = idx >= 0 ? idx : 0
+                                    }
+                                }
+                                Binding {
+                                    target: supportFormatCombo
+                                    property: "currentIndex"
+                                    value: {
+                                        if (!supportController)
+                                            return 0
+                                        const idx = model.indexOf(supportController.format)
+                                        return idx >= 0 ? idx : 0
+                                    }
+                                    when: supportController && !supportFormatCombo.activeFocus
+                                }
+                            }
+                            Item {}
+
+                            Label { text: qsTr("Katalog wyjściowy") }
+                            TextField {
+                                Layout.fillWidth: true
+                                readOnly: true
+                                text: supportController ? supportController.outputDirectory : ""
+                                placeholderText: qsTr("Domyślnie var/support")
+                            }
+                            Button {
+                                text: qsTr("Wybierz…")
+                                enabled: supportController && !supportController.busy
+                                onClicked: {
+                                    pendingPathTarget = "output"
+                                    const dir = supportController && supportController.outputDirectory
+                                            ? QUrl.fromLocalFile(supportController.outputDirectory)
+                                            : Qt.resolvedUrl(".")
+                                    supportFolderDialog.folder = dir
+                                    supportFolderDialog.open()
+                                }
+                            }
+
+                            Label { text: qsTr("Bazowa nazwa pliku") }
+                            TextField {
+                                Layout.fillWidth: true
+                                enabled: supportController && !supportController.busy
+                                text: supportController ? supportController.defaultBasename : "support-bundle"
+                                onEditingFinished: {
+                                    if (supportController && text.length > 0)
+                                        supportController.defaultBasename = text.trim()
+                                }
+                            }
+                            Item {}
+
+                            Item { Layout.columnSpan: 3; Layout.fillWidth: true }
+                        }
+                    }
+
+                    GroupBox {
+                        title: qsTr("Status")
+                        Layout.fillWidth: true
+
+                        ColumnLayout {
+                            spacing: 8
+
+                            RowLayout {
+                                spacing: 12
+                                Label {
+                                    text: supportController && supportController.busy
+                                            ? qsTr("Trwa eksport pakietu wsparcia…")
+                                            : qsTr("Gotowe do eksportu")
+                                    font.bold: true
+                                }
+                                BusyIndicator {
+                                    running: supportController && supportController.busy
+                                    visible: running
+                                }
+                            }
+
+                            Label {
+                                visible: supportController && supportController.lastStatusMessage.length > 0
+                                text: supportController ? supportController.lastStatusMessage : ""
+                                color: Qt.rgba(0.3, 0.7, 0.4, 1)
+                                wrapMode: Text.WordWrap
+                            }
+
+                            Label {
+                                visible: supportController && supportController.lastErrorMessage.length > 0
+                                text: supportController ? supportController.lastErrorMessage : ""
+                                color: Qt.rgba(0.9, 0.4, 0.3, 1)
+                                wrapMode: Text.WordWrap
+                            }
+
+                            RowLayout {
+                                visible: supportController && supportController.lastBundlePath.length > 0
+                                spacing: 8
+
+                                Label { text: qsTr("Ostatni pakiet:") }
+                                TextField {
+                                    Layout.fillWidth: true
+                                    readOnly: true
+                                    text: supportController ? supportController.lastBundlePath : ""
+                                }
+                                Button {
+                                    text: qsTr("Otwórz")
+                                    onClicked: {
+                                        if (supportController && supportController.lastBundlePath.length > 0)
+                                            Qt.openUrlExternally(QUrl.fromLocalFile(supportController.lastBundlePath))
+                                    }
+                                }
+                            }
+
+                            RowLayout {
+                                spacing: 12
+
+                                Button {
+                                    text: qsTr("Eksportuj…")
+                                    enabled: supportController && !supportController.busy
+                                    onClicked: supportBundleDialog.open()
+                                }
+
+                                Button {
+                                    text: qsTr("Szybki eksport")
+                                    enabled: supportController && !supportController.busy
+                                    onClicked: {
+                                        if (supportController)
+                                            supportController.exportBundle()
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    GroupBox {
+                        title: qsTr("Ostatni manifest")
+                        Layout.fillWidth: true
+
+                        ColumnLayout {
+                            spacing: 6
+
+                            ListView {
+                                id: supportEntriesView
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: Math.min(contentHeight, 240)
+                                clip: true
+                                model: supportController && supportController.lastResult
+                                       && supportController.lastResult.entries
+                                       ? supportController.lastResult.entries
+                                       : []
+                                delegate: Frame {
+                                    required property var modelData
+                                    Layout.fillWidth: true
+                                    padding: 8
+                                    background: Rectangle {
+                                        color: Qt.rgba(0.18, 0.24, 0.32, 0.4)
+                                        radius: 6
+                                    }
+
+                                    ColumnLayout {
+                                        anchors.fill: parent
+                                        spacing: 4
+
+                                        Label {
+                                            text: modelData.path || qsTr("(brak ścieżki)")
+                                            font.family: "monospace"
+                                            wrapMode: Text.WordWrap
+                                        }
+
+                                        Label {
+                                            text: modelData.size_bytes
+                                                  ? qsTr("Rozmiar: %1 bajtów").arg(modelData.size_bytes)
+                                                  : qsTr("Rozmiar: n/d")
+                                            color: palette.mid
+                                        }
+
+                                        Label {
+                                            text: modelData.description && modelData.description.length > 0
+                                                  ? modelData.description
+                                                  : qsTr("Brak opisu")
+                                            wrapMode: Text.WordWrap
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Tab {
             title: qsTr("Monitorowanie")
 
             Item {
@@ -2800,90 +2741,40 @@ Drawer {
                     padding: 16
 
                     GroupBox {
-                        title: qsTr("Licencja OEM")
+                        title: qsTr("Aktywacja licencji OEM")
                         Layout.fillWidth: true
 
-                        GridLayout {
-                            columns: 2
-                            columnSpacing: 12
-                            rowSpacing: 8
-                            Layout.fillWidth: true
+                        LicenseActivationView {
+                            anchors.left: parent.left
+                            anchors.right: parent.right
+                            licenseControllerRef: licenseController
+                            activationControllerRef: activationController
+                            appControllerRef: appController
+                        }
+                    }
 
-                            Label { text: qsTr("Status") }
-                            Label { text: securityController && securityController.licenseInfo.status || qsTr("n/d") }
+                    GroupBox {
+                        title: qsTr("Fingerprint i HWID")
+                        Layout.fillWidth: true
 
-                            Label { text: qsTr("Edycja") }
-                            Label { text: securityController && securityController.licenseInfo.edition || qsTr("n/d") }
+                        HwidManagementView {
+                            anchors.left: parent.left
+                            anchors.right: parent.right
+                            activationControllerRef: activationController
+                            licenseControllerRef: licenseController
+                        }
+                    }
 
-                            Label { text: qsTr("Utrzymanie do") }
-                            Label { text: securityController && securityController.licenseInfo.maintenance_until || qsTr("n/d") }
+                    GroupBox {
+                        title: qsTr("Historia licencji")
+                        Layout.fillWidth: true
 
-                            Label { text: qsTr("Trial") }
-                            Label {
-                                text: securityController && securityController.licenseInfo.trial_active
-                                      ? (securityController.licenseInfo.trial_expires_at || qsTr("aktywny"))
-                                      : qsTr("nieaktywny")
-                            }
-
-                            Label { text: qsTr("Odbiorca") }
-                            Label {
-                                wrapMode: Text.WrapAnywhere
-                                text: {
-                                    if (!securityController || !securityController.licenseInfo.holder)
-                                        return qsTr("n/d");
-                                    const holder = securityController.licenseInfo.holder;
-                                    let base = holder.name || qsTr("n/d");
-                                    if (holder.email)
-                                        base += " (" + holder.email + ")";
-                                    return base;
-                                }
-                            }
-
-                            Label { text: qsTr("Seats") }
-                            Label {
-                                text: securityController && securityController.licenseInfo.seats !== undefined
-                                      ? securityController.licenseInfo.seats
-                                      : qsTr("n/d")
-                            }
-
-                            Label { text: qsTr("Fingerprint") }
-                            Label {
-                                text: securityController && securityController.licenseInfo.fingerprint || qsTr("n/d")
-                                wrapMode: Text.WrapAnywhere
-                            }
-
-                            Label { text: qsTr("Moduły") }
-                            Label {
-                                wrapMode: Text.WordWrap
-                                text: {
-                                    if (!securityController || !securityController.licenseInfo.modules)
-                                        return qsTr("brak");
-                                    const modules = securityController.licenseInfo.modules;
-                                    return modules.length > 0 ? modules.join(", ") : qsTr("brak");
-                                }
-                            }
-
-                            Label { text: qsTr("Środowiska") }
-                            Label {
-                                wrapMode: Text.WordWrap
-                                text: {
-                                    if (!securityController || !securityController.licenseInfo.environments)
-                                        return qsTr("brak");
-                                    const envs = securityController.licenseInfo.environments;
-                                    return envs.length > 0 ? envs.join(", ") : qsTr("brak");
-                                }
-                            }
-
-                            Label { text: qsTr("Runtime") }
-                            Label {
-                                wrapMode: Text.WordWrap
-                                text: {
-                                    if (!securityController || !securityController.licenseInfo.runtime)
-                                        return qsTr("brak");
-                                    const runtime = securityController.licenseInfo.runtime;
-                                    return runtime.length > 0 ? runtime.join(", ") : qsTr("brak");
-                                }
-                            }
+                        LicenseHistoryView {
+                            anchors.left: parent.left
+                            anchors.right: parent.right
+                            activationControllerRef: activationController
+                            appControllerRef: appController
+                            securityControllerRef: securityController
                         }
                     }
 

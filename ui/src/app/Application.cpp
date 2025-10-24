@@ -14,6 +14,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QJsonParseError>
 #include <QLoggingCategory>
 #include <QStringList>
 #include <QPoint>
@@ -70,6 +71,11 @@ constexpr auto kRiskHistoryAutoExportDirEnv = QByteArrayLiteral("BOT_CORE_UI_RIS
 constexpr auto kRiskHistoryAutoExportLocalTimeEnv = QByteArrayLiteral("BOT_CORE_UI_RISK_HISTORY_AUTO_EXPORT_USE_LOCAL_TIME");
 constexpr auto kDecisionLogPathEnv = QByteArrayLiteral("BOT_CORE_UI_DECISION_LOG");
 constexpr auto kDecisionLogLimitEnv = QByteArrayLiteral("BOT_CORE_UI_DECISION_LOG_LIMIT");
+constexpr int kDefaultLicenseRefreshIntervalSeconds = 600;
+constexpr int kMinLicenseRefreshIntervalSeconds = 60;
+constexpr int kMaxLicenseRefreshIntervalSeconds = 86400;
+constexpr auto kLicenseRefreshIntervalEnv = QByteArrayLiteral("BOT_CORE_UI_LICENSE_REFRESH_INTERVAL");
+constexpr auto kLicenseCachePathEnv = QByteArrayLiteral("BOT_CORE_UI_LICENSE_CACHE_PATH");
 
 using bot::shell::utils::expandPath;
 using bot::shell::utils::watchableDirectories;
@@ -180,6 +186,14 @@ Application::Application(QQmlApplicationEngine& engine, QObject* parent)
 {
     m_offlineStatus = tr("Offline daemon: nieaktywny");
     m_activationController = std::make_unique<ActivationController>(this);
+    connect(m_activationController.get(), &ActivationController::errorChanged, this,
+            &Application::handleActivationErrorChanged);
+    connect(m_activationController.get(), &ActivationController::fingerprintChanged, this,
+            &Application::handleActivationFingerprintChanged);
+    connect(m_activationController.get(), &ActivationController::licensesChanged, this,
+            &Application::handleActivationLicensesChanged);
+    connect(m_activationController.get(), &ActivationController::oemLicenseChanged, this,
+            &Application::handleActivationOemLicenseChanged);
 
     // Startowe ustawienia instrumentu z klienta (mogą być nadpisane przez CLI)
     m_instrument = m_client.instrumentConfig();
@@ -290,6 +304,7 @@ Application::Application(QQmlApplicationEngine& engine, QObject* parent)
             m_supportController->setScriptPath(QDir::current().absoluteFilePath(QStringLiteral("scripts/export_support_bundle.py")));
     }
 
+    initializeSecurityRefresh();
     exposeToQml();
 
     // Podłącz okno po utworzeniu (dla FrameRateMonitor)
@@ -1939,6 +1954,258 @@ void Application::persistUiSettings()
     }
 }
 
+void Application::ensureLicenseRefreshTimerConfigured()
+{
+    if (m_licenseRefreshTimerConfigured)
+        return;
+
+    m_licenseRefreshTimer.setTimerType(Qt::VeryCoarseTimer);
+    m_licenseRefreshTimer.setSingleShot(false);
+    m_licenseRefreshTimer.setParent(this);
+    connect(&m_licenseRefreshTimer, &QTimer::timeout, this, &Application::refreshSecurityArtifacts);
+    m_licenseRefreshTimerConfigured = true;
+}
+
+void Application::initializeSecurityRefresh()
+{
+    const QByteArray cacheEnv = qgetenv(kLicenseCachePathEnv.constData());
+    if (!cacheEnv.isEmpty())
+        m_licenseCachePath = expandPath(QString::fromUtf8(cacheEnv));
+    else
+        m_licenseCachePath = QDir::current().absoluteFilePath(QStringLiteral("var/cache/ui_license_snapshot.json"));
+
+    if (!m_licenseCachePath.trimmed().isEmpty()) {
+        QDir dir = QFileInfo(m_licenseCachePath).dir();
+        if (!dir.exists())
+            dir.mkpath(QStringLiteral("."));
+    }
+
+    loadSecurityCache();
+
+    int intervalSeconds = kDefaultLicenseRefreshIntervalSeconds;
+    if (qEnvironmentVariableIsSet(kLicenseRefreshIntervalEnv.constData())) {
+        bool ok = false;
+        const QByteArray raw = qgetenv(kLicenseRefreshIntervalEnv.constData());
+        const int candidate = QString::fromUtf8(raw).toInt(&ok);
+        if (ok)
+            intervalSeconds = std::clamp(candidate, kMinLicenseRefreshIntervalSeconds, kMaxLicenseRefreshIntervalSeconds);
+        else
+            qCWarning(lcAppMetrics) << "Nieprawidłowa wartość" << QString::fromUtf8(raw)
+                                    << "dla" << kLicenseRefreshIntervalEnv;
+    }
+
+    if (intervalSeconds <= 0) {
+        m_licenseRefreshIntervalSeconds = 0;
+        ensureLicenseRefreshTimerConfigured();
+        m_licenseRefreshTimer.stop();
+        m_nextLicenseRefreshUtc = QDateTime();
+        updateSecurityCacheFromControllers();
+        Q_EMIT licenseRefreshScheduleChanged();
+        return;
+    }
+
+    ensureLicenseRefreshTimerConfigured();
+    m_licenseRefreshIntervalSeconds = intervalSeconds;
+    m_licenseRefreshTimer.setInterval(m_licenseRefreshIntervalSeconds * 1000);
+    m_licenseRefreshTimer.start();
+    QTimer::singleShot(0, this, &Application::refreshSecurityArtifacts);
+}
+
+void Application::refreshSecurityArtifacts()
+{
+    if (!m_activationController)
+        return;
+
+    m_lastLicenseRefreshRequestUtc = QDateTime::currentDateTimeUtc();
+    m_activationController->refresh();
+    if (m_licenseRefreshIntervalSeconds > 0)
+        m_nextLicenseRefreshUtc = m_lastLicenseRefreshRequestUtc.addSecs(m_licenseRefreshIntervalSeconds);
+    else
+        m_nextLicenseRefreshUtc = QDateTime();
+    Q_EMIT licenseRefreshScheduleChanged();
+}
+
+void Application::processSecurityArtifactsUpdate()
+{
+    if (!m_activationController)
+        return;
+
+    const bool loadingFromCache = m_loadingSecurityCache;
+    const QString controllerError = m_activationController->lastError();
+    const bool refreshSucceeded = controllerError.isEmpty();
+
+    if (!loadingFromCache)
+        m_lastSecurityError = controllerError;
+    else if (!controllerError.isEmpty())
+        m_lastSecurityError = controllerError;
+
+    if (refreshSucceeded && !loadingFromCache) {
+        m_lastLicenseRefreshUtc = QDateTime::currentDateTimeUtc();
+        if (m_licenseRefreshIntervalSeconds > 0) {
+            if (m_lastLicenseRefreshRequestUtc.isValid())
+                m_nextLicenseRefreshUtc =
+                    m_lastLicenseRefreshRequestUtc.addSecs(m_licenseRefreshIntervalSeconds);
+            else
+                m_nextLicenseRefreshUtc = m_lastLicenseRefreshUtc.addSecs(m_licenseRefreshIntervalSeconds);
+        } else {
+            m_nextLicenseRefreshUtc = QDateTime();
+        }
+    }
+
+    updateSecurityCacheFromControllers();
+
+    if (refreshSucceeded && !loadingFromCache) {
+        clearSecurityAlert(QStringLiteral("security:license-refresh"));
+        Q_EMIT licenseRefreshScheduleChanged();
+    }
+}
+
+void Application::updateSecurityCacheFromControllers()
+{
+    QVariantMap cache;
+    if (m_activationController) {
+        cache.insert(QStringLiteral("fingerprint"), m_activationController->fingerprint());
+        cache.insert(QStringLiteral("oemLicense"), m_activationController->oemLicense());
+        cache.insert(QStringLiteral("licenseHistory"), QVariant::fromValue(m_activationController->licenses()));
+        if (!m_lastSecurityError.isEmpty())
+            cache.insert(QStringLiteral("lastError"), m_lastSecurityError);
+    }
+    cache.insert(QStringLiteral("refreshIntervalSeconds"), m_licenseRefreshIntervalSeconds);
+    cache.insert(QStringLiteral("refreshActive"), m_licenseRefreshTimer.isActive());
+    if (m_lastLicenseRefreshRequestUtc.isValid())
+        cache.insert(QStringLiteral("lastRequestIso"), m_lastLicenseRefreshRequestUtc.toString(Qt::ISODateWithMs));
+    if (m_lastLicenseRefreshUtc.isValid())
+        cache.insert(QStringLiteral("lastRefreshIso"), m_lastLicenseRefreshUtc.toString(Qt::ISODateWithMs));
+    if (m_nextLicenseRefreshUtc.isValid())
+        cache.insert(QStringLiteral("nextRefreshIso"), m_nextLicenseRefreshUtc.toString(Qt::ISODateWithMs));
+
+    if (cache == m_securityCache)
+        return;
+
+    m_securityCache = cache;
+    Q_EMIT securityCacheChanged();
+    persistSecurityCache();
+}
+
+void Application::loadSecurityCache()
+{
+    if (m_licenseCachePath.trimmed().isEmpty())
+        return;
+
+    QFile file(m_licenseCachePath);
+    if (!file.exists())
+        return;
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        qCWarning(lcAppMetrics) << "Nie udało się odczytać cache licencji" << m_licenseCachePath
+                                << file.errorString();
+        return;
+    }
+
+    const QByteArray data = file.readAll();
+    file.close();
+
+    QJsonParseError parseError{};
+    const QJsonDocument document = QJsonDocument::fromJson(data, &parseError);
+    if (parseError.error != QJsonParseError::NoError || !document.isObject()) {
+        qCWarning(lcAppMetrics) << "Cache licencji ma niepoprawny format" << m_licenseCachePath
+                                << parseError.errorString();
+        return;
+    }
+
+    m_securityCache = document.object().toVariantMap();
+
+    m_lastSecurityError = m_securityCache.value(QStringLiteral("lastError")).toString();
+
+    if (m_securityCache.contains(QStringLiteral("refreshIntervalSeconds"))) {
+        const int cachedInterval = m_securityCache.value(QStringLiteral("refreshIntervalSeconds")).toInt();
+        if (cachedInterval > 0)
+            m_licenseRefreshIntervalSeconds = cachedInterval;
+    }
+
+    const bool cachedActive = m_securityCache.value(QStringLiteral("refreshActive")).toBool();
+
+    const QString lastRefreshIso = m_securityCache.value(QStringLiteral("lastRefreshIso")).toString();
+    if (!lastRefreshIso.isEmpty()) {
+        m_lastLicenseRefreshUtc = QDateTime::fromString(lastRefreshIso, Qt::ISODateWithMs);
+        if (!m_lastLicenseRefreshUtc.isValid())
+            m_lastLicenseRefreshUtc = QDateTime::fromString(lastRefreshIso, Qt::ISODate);
+    }
+    const QString lastRequestIso = m_securityCache.value(QStringLiteral("lastRequestIso")).toString();
+    if (!lastRequestIso.isEmpty()) {
+        m_lastLicenseRefreshRequestUtc = QDateTime::fromString(lastRequestIso, Qt::ISODateWithMs);
+        if (!m_lastLicenseRefreshRequestUtc.isValid())
+            m_lastLicenseRefreshRequestUtc = QDateTime::fromString(lastRequestIso, Qt::ISODate);
+    }
+    const QString nextRefreshIso = m_securityCache.value(QStringLiteral("nextRefreshIso")).toString();
+    if (!nextRefreshIso.isEmpty()) {
+        m_nextLicenseRefreshUtc = QDateTime::fromString(nextRefreshIso, Qt::ISODateWithMs);
+        if (!m_nextLicenseRefreshUtc.isValid())
+            m_nextLicenseRefreshUtc = QDateTime::fromString(nextRefreshIso, Qt::ISODate);
+    }
+
+    if (cachedActive && m_licenseRefreshIntervalSeconds > 0) {
+        ensureLicenseRefreshTimerConfigured();
+        m_licenseRefreshTimer.setInterval(m_licenseRefreshIntervalSeconds * 1000);
+        if (!m_licenseRefreshTimer.isActive())
+            m_licenseRefreshTimer.start();
+    }
+
+    if (m_activationController) {
+        const QVariantMap fingerprint = m_securityCache.value(QStringLiteral("fingerprint")).toMap();
+        const QVariantMap oemLicense = m_securityCache.value(QStringLiteral("oemLicense")).toMap();
+        const QVariantList history = m_securityCache.value(QStringLiteral("licenseHistory")).toList();
+        m_loadingSecurityCache = true;
+        const auto guard = qScopeGuard([this]() { m_loadingSecurityCache = false; });
+        m_activationController->applyCachedState(fingerprint, oemLicense, history);
+    }
+
+    Q_EMIT securityCacheChanged();
+    Q_EMIT licenseRefreshScheduleChanged();
+}
+
+void Application::persistSecurityCache()
+{
+    if (m_licenseCachePath.trimmed().isEmpty())
+        return;
+
+    QFileInfo info(m_licenseCachePath);
+    QDir dir = info.dir();
+    if (!dir.exists() && !dir.mkpath(QStringLiteral("."))) {
+        qCWarning(lcAppMetrics) << "Nie udało się utworzyć katalogu cache licencji" << dir.absolutePath();
+        return;
+    }
+
+    QSaveFile file(m_licenseCachePath);
+    file.setDirectWriteFallback(true);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        qCWarning(lcAppMetrics) << "Nie udało się zapisać cache licencji" << m_licenseCachePath
+                                << file.errorString();
+        return;
+    }
+
+    const QJsonObject object = QJsonObject::fromVariantMap(m_securityCache);
+    const QByteArray payload = QJsonDocument(object).toJson(QJsonDocument::Compact);
+    if (file.write(payload) != payload.size()) {
+        qCWarning(lcAppMetrics) << "Nie udało się zapisać pełnego cache licencji" << m_licenseCachePath;
+        return;
+    }
+    if (!file.commit())
+        qCWarning(lcAppMetrics) << "Nie udało się zatwierdzić cache licencji" << m_licenseCachePath;
+}
+
+void Application::raiseSecurityAlert(const QString& id,
+                                     AlertsModel::Severity severity,
+                                     const QString& title,
+                                     const QString& description)
+{
+    m_alertsModel.raiseAlert(id, title, description, severity, true);
+}
+
+void Application::clearSecurityAlert(const QString& id)
+{
+    m_alertsModel.clearAlert(id);
+}
+
 QJsonObject Application::buildUiSettingsPayload() const
 {
     QJsonObject root;
@@ -2376,6 +2643,41 @@ void Application::handleOfflineAutomationChanged(bool running)
     Q_EMIT offlineAutomationRunningChanged(running);
 }
 
+void Application::handleActivationErrorChanged()
+{
+    if (!m_activationController)
+        return;
+
+    const QString error = m_activationController->lastError();
+
+    if (!error.isEmpty() || !m_lastSecurityError.isEmpty())
+        processSecurityArtifactsUpdate();
+    if (error.isEmpty()) {
+        clearSecurityAlert(QStringLiteral("security:license-refresh"));
+        return;
+    }
+
+    raiseSecurityAlert(QStringLiteral("security:license-refresh"),
+                       AlertsModel::Critical,
+                       tr("Błąd aktualizacji licencji"),
+                       error);
+}
+
+void Application::handleActivationFingerprintChanged()
+{
+    processSecurityArtifactsUpdate();
+}
+
+void Application::handleActivationLicensesChanged()
+{
+    processSecurityArtifactsUpdate();
+}
+
+void Application::handleActivationOemLicenseChanged()
+{
+    processSecurityArtifactsUpdate();
+}
+
 void Application::startOfflineAutomation()
 {
     if (!m_offlineMode)
@@ -2408,6 +2710,32 @@ bool Application::setDecisionLogPath(const QUrl& url)
 bool Application::reloadDecisionLog()
 {
     return m_decisionLogModel.reload();
+}
+
+QVariantMap Application::licenseRefreshSchedule() const
+{
+    QVariantMap schedule;
+    schedule.insert(QStringLiteral("intervalSeconds"), m_licenseRefreshIntervalSeconds);
+    schedule.insert(QStringLiteral("active"), m_licenseRefreshTimer.isActive());
+    schedule.insert(QStringLiteral("lastRequestAt"),
+                    m_lastLicenseRefreshRequestUtc.isValid()
+                        ? m_lastLicenseRefreshRequestUtc.toString(Qt::ISODateWithMs)
+                        : QString());
+    schedule.insert(QStringLiteral("lastCompletedAt"),
+                    m_lastLicenseRefreshUtc.isValid()
+                        ? m_lastLicenseRefreshUtc.toString(Qt::ISODateWithMs)
+                        : QString());
+    schedule.insert(QStringLiteral("nextRefreshDueAt"),
+                    m_nextLicenseRefreshUtc.isValid()
+                        ? m_nextLicenseRefreshUtc.toString(Qt::ISODateWithMs)
+                        : QString());
+    double remainingSeconds = -1.0;
+    if (m_nextLicenseRefreshUtc.isValid()) {
+        const qint64 remainingMs = QDateTime::currentDateTimeUtc().msecsTo(m_nextLicenseRefreshUtc);
+        remainingSeconds = remainingMs > 0 ? static_cast<double>(remainingMs) / 1000.0 : 0.0;
+    }
+    schedule.insert(QStringLiteral("nextRefreshInSeconds"), remainingSeconds);
+    return schedule;
 }
 
 void Application::handleRiskHistorySnapshotRecorded(const QDateTime& timestamp)
@@ -2948,6 +3276,92 @@ bool Application::setRiskHistoryAutoExportUseLocalTime(bool useLocalTime)
     m_riskHistoryAutoExportUseLocalTime = useLocalTime;
     Q_EMIT riskHistoryAutoExportUseLocalTimeChanged();
     scheduleUiSettingsPersist();
+    return true;
+}
+
+bool Application::setLicenseRefreshEnabled(bool enabled)
+{
+    ensureLicenseRefreshTimerConfigured();
+
+    if (enabled) {
+        if (m_licenseRefreshIntervalSeconds <= 0)
+            m_licenseRefreshIntervalSeconds = kDefaultLicenseRefreshIntervalSeconds;
+
+        m_licenseRefreshTimer.setInterval(m_licenseRefreshIntervalSeconds * 1000);
+        const bool wasActive = m_licenseRefreshTimer.isActive();
+        if (!wasActive)
+            m_licenseRefreshTimer.start();
+
+        updateSecurityCacheFromControllers();
+        Q_EMIT licenseRefreshScheduleChanged();
+
+        if (!wasActive)
+            refreshSecurityArtifacts();
+        return true;
+    }
+
+    if (!m_licenseRefreshTimer.isActive() && m_licenseRefreshIntervalSeconds == 0)
+        return true;
+
+    if (m_licenseRefreshTimer.isActive())
+        m_licenseRefreshTimer.stop();
+
+    m_nextLicenseRefreshUtc = QDateTime();
+    updateSecurityCacheFromControllers();
+    Q_EMIT licenseRefreshScheduleChanged();
+    return true;
+}
+
+bool Application::setLicenseRefreshIntervalSeconds(int seconds)
+{
+    if (seconds < 0)
+        return false;
+
+    ensureLicenseRefreshTimerConfigured();
+
+    if (seconds == 0) {
+        if (m_licenseRefreshIntervalSeconds == 0 && !m_licenseRefreshTimer.isActive())
+            return true;
+
+        m_licenseRefreshIntervalSeconds = 0;
+        if (m_licenseRefreshTimer.isActive())
+            m_licenseRefreshTimer.stop();
+        m_nextLicenseRefreshUtc = QDateTime();
+        updateSecurityCacheFromControllers();
+        Q_EMIT licenseRefreshScheduleChanged();
+        return true;
+    }
+
+    const int clamped = std::clamp(seconds, kMinLicenseRefreshIntervalSeconds, kMaxLicenseRefreshIntervalSeconds);
+    const bool wasActive = m_licenseRefreshTimer.isActive();
+    if (m_licenseRefreshIntervalSeconds == clamped && !wasActive)
+        return true;
+
+    m_licenseRefreshIntervalSeconds = clamped;
+    m_licenseRefreshTimer.setInterval(m_licenseRefreshIntervalSeconds * 1000);
+
+    if (wasActive) {
+        if (m_lastLicenseRefreshRequestUtc.isValid())
+            m_nextLicenseRefreshUtc = m_lastLicenseRefreshRequestUtc.addSecs(m_licenseRefreshIntervalSeconds);
+        else if (m_lastLicenseRefreshUtc.isValid())
+            m_nextLicenseRefreshUtc = m_lastLicenseRefreshUtc.addSecs(m_licenseRefreshIntervalSeconds);
+        else
+            m_nextLicenseRefreshUtc = QDateTime::currentDateTimeUtc().addSecs(m_licenseRefreshIntervalSeconds);
+    } else {
+        m_nextLicenseRefreshUtc = QDateTime();
+    }
+
+    updateSecurityCacheFromControllers();
+    Q_EMIT licenseRefreshScheduleChanged();
+    return true;
+}
+
+bool Application::triggerLicenseRefreshNow()
+{
+    if (!m_activationController)
+        return false;
+
+    refreshSecurityArtifacts();
     return true;
 }
 
