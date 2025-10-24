@@ -4,7 +4,8 @@ from datetime import date
 import sys
 import types
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from typing import Callable
+from unittest.mock import MagicMock
 
 from bot_core.runtime.paths import DesktopAppPaths
 from bot_core.security.capabilities import build_capabilities_from_payload
@@ -66,6 +67,7 @@ def _build_state(
     mode: str = "Spot",
     guard: CapabilityGuard | None = None,
     capabilities=None,
+    notify_error: Callable[[str, str], None] | None = None,
 ) -> AppState:
     return AppState(
         paths=_paths(),
@@ -82,6 +84,7 @@ def _build_state(
         capability_guard=guard,
         license_summary=DummyVar(""),
         license_notice=DummyVar(""),
+        notify_error=notify_error,
     )
 
 
@@ -154,8 +157,7 @@ def test_build_license_ui_context_flags_missing_modules() -> None:
     assert "Licencja wygasła" in context.notice
 
 
-@patch("bot_core.ui.trading.controller.messagebox.showerror")
-def test_controller_blocks_live_without_permission(mock_messagebox: MagicMock) -> None:
+def test_controller_blocks_live_without_permission() -> None:
     payload = {
         "edition": "standard",
         "environments": ["demo", "paper"],
@@ -164,7 +166,13 @@ def test_controller_blocks_live_without_permission(mock_messagebox: MagicMock) -
     }
     capabilities = build_capabilities_from_payload(payload, effective_date=date.today())
     guard = CapabilityGuard(capabilities)
-    state = _build_state(network="Live", guard=guard, capabilities=capabilities)
+    notifications: list[tuple[str, str]] = []
+    state = _build_state(
+        network="Live",
+        guard=guard,
+        capabilities=capabilities,
+        notify_error=lambda title, message: notifications.append((title, message)),
+    )
     controller = _make_controller(state)
 
     controller.start()
@@ -172,11 +180,11 @@ def test_controller_blocks_live_without_permission(mock_messagebox: MagicMock) -
     assert state.running is False
     assert "Tryb live" in str(state.status.get())
     assert controller._reserved_slot is None
-    mock_messagebox.assert_called()
+    assert notifications
+    assert notifications[0][0] == "Licencja"
 
 
-@patch("bot_core.ui.trading.controller.messagebox.showerror")
-def test_controller_reserves_and_releases_slot(mock_messagebox: MagicMock) -> None:
+def test_controller_reserves_and_releases_slot() -> None:
     payload = {
         "edition": "pro",
         "environments": ["demo", "paper", "live"],
@@ -185,7 +193,13 @@ def test_controller_reserves_and_releases_slot(mock_messagebox: MagicMock) -> No
     }
     capabilities = build_capabilities_from_payload(payload, effective_date=date.today())
     guard = CapabilityGuard(capabilities)
-    state = _build_state(network="Live", guard=guard, capabilities=capabilities)
+    notifications: list[tuple[str, str]] = []
+    state = _build_state(
+        network="Live",
+        guard=guard,
+        capabilities=capabilities,
+        notify_error=lambda title, message: notifications.append((title, message)),
+    )
     controller = _make_controller(state)
 
     controller.start()
@@ -196,11 +210,10 @@ def test_controller_reserves_and_releases_slot(mock_messagebox: MagicMock) -> No
     controller.stop()
     assert state.running is False
     assert guard._slots["live_controller"] == 0
-    assert mock_messagebox.call_count == 0
+    assert notifications == []
 
 
-@patch("bot_core.ui.trading.controller.messagebox.showerror")
-def test_controller_blocks_futures_without_module(mock_messagebox: MagicMock) -> None:
+def test_controller_blocks_futures_without_module() -> None:
     payload = {
         "edition": "pro",
         "environments": ["demo", "paper"],
@@ -209,7 +222,14 @@ def test_controller_blocks_futures_without_module(mock_messagebox: MagicMock) ->
     }
     capabilities = build_capabilities_from_payload(payload, effective_date=date.today())
     guard = CapabilityGuard(capabilities)
-    state = _build_state(network="Testnet", mode="Futures", guard=guard, capabilities=capabilities)
+    notifications: list[tuple[str, str]] = []
+    state = _build_state(
+        network="Testnet",
+        mode="Futures",
+        guard=guard,
+        capabilities=capabilities,
+        notify_error=lambda title, message: notifications.append((title, message)),
+    )
     controller = _make_controller(state)
 
     controller.start()
@@ -217,11 +237,11 @@ def test_controller_blocks_futures_without_module(mock_messagebox: MagicMock) ->
     assert state.running is False
     assert "Dodaj moduł Futures" in str(state.status.get())
     assert controller._reserved_slot is None
-    mock_messagebox.assert_called()
+    assert notifications
+    assert notifications[0][0] == "Licencja"
 
 
-@patch("bot_core.ui.trading.controller.messagebox.showerror")
-def test_controller_blocks_autotrader_when_disabled(mock_messagebox: MagicMock) -> None:
+def test_controller_blocks_autotrader_when_disabled() -> None:
     payload = {
         "edition": "standard",
         "environments": ["demo", "paper"],
@@ -230,7 +250,14 @@ def test_controller_blocks_autotrader_when_disabled(mock_messagebox: MagicMock) 
     }
     capabilities = build_capabilities_from_payload(payload, effective_date=date.today())
     guard = CapabilityGuard(capabilities)
-    state = _build_state(network="Testnet", mode="Spot", guard=guard, capabilities=capabilities)
+    notifications: list[tuple[str, str]] = []
+    state = _build_state(
+        network="Testnet",
+        mode="Spot",
+        guard=guard,
+        capabilities=capabilities,
+        notify_error=lambda title, message: notifications.append((title, message)),
+    )
     controller = _make_controller(state)
 
     controller.start()
@@ -238,4 +265,5 @@ def test_controller_blocks_autotrader_when_disabled(mock_messagebox: MagicMock) 
     assert state.running is False
     assert "AutoTrader" in str(state.status.get())
     assert controller._reserved_slot is None
-    mock_messagebox.assert_called()
+    assert notifications
+    assert notifications[0][0] == "Licencja"

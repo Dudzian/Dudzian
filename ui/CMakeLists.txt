@@ -59,8 +59,11 @@ target_link_libraries(trading_proto
 set(UI_SOURCES
     src/main.cpp
     src/app/Application.cpp
+    src/app/UiModuleManager.cpp
+    src/app/UiModuleViewsModel.cpp
     src/app/ActivationController.cpp
     src/app/StrategyConfigController.cpp
+    src/app/StrategyWorkbenchController.cpp
     src/grpc/BotCoreLocalService.cpp
     src/grpc/TradingClient.cpp
     src/grpc/MetricsClient.cpp
@@ -72,9 +75,15 @@ set(UI_SOURCES
     src/models/RiskHistoryModel.cpp
     src/models/RiskStateModel.cpp
     src/models/DecisionLogModel.cpp
+    src/models/DecisionLogFilterProxyModel.cpp
+    src/models/IndicatorSeriesModel.cpp
+    src/models/MarketRegimeClassifierBridge.cpp
+    src/models/MarketRegimeTimelineModel.cpp
+    src/models/SignalListModel.cpp
     src/utils/PerformanceGuard.cpp
     src/utils/FrameRateMonitor.cpp
     src/utils/PathUtils.cpp
+    src/telemetry/PerformanceTelemetryController.cpp
     src/telemetry/UiTelemetryReporter.cpp
     src/license/LicenseActivationController.cpp
     src/security/SecurityAdminController.cpp
@@ -85,8 +94,12 @@ set(UI_SOURCES
 
 set(UI_HEADERS
     src/app/Application.hpp
+    src/app/UiModuleManager.hpp
+    src/app/UiModuleInterface.hpp
+    src/app/UiModuleViewsModel.hpp
     src/app/ActivationController.hpp
     src/app/StrategyConfigController.hpp
+    src/app/StrategyWorkbenchController.hpp
     src/grpc/BotCoreLocalService.hpp
     src/grpc/TradingClient.hpp
     src/grpc/MetricsClient.hpp
@@ -99,11 +112,18 @@ set(UI_HEADERS
     src/models/RiskHistoryModel.hpp
     src/models/RiskStateModel.hpp
     src/models/DecisionLogModel.hpp
+    src/models/DecisionLogFilterProxyModel.hpp
+    src/models/IndicatorSeriesModel.hpp
+    src/models/MarketDataStreams.hpp
+    src/models/MarketRegimeClassifierBridge.hpp
+    src/models/MarketRegimeTimelineModel.hpp
+    src/models/SignalListModel.hpp
     src/models/RiskTypes.hpp
     src/utils/PerformanceGuard.hpp
     src/utils/FrameRateMonitor.hpp
     src/utils/PathUtils.hpp
     src/telemetry/TelemetryReporter.hpp
+    src/telemetry/PerformanceTelemetryController.hpp
     src/telemetry/UiTelemetryReporter.hpp
     src/license/LicenseActivationController.hpp
     src/security/SecurityAdminController.hpp
@@ -154,6 +174,7 @@ if(BUILD_TESTING)
         tests/ApplicationHealthConfigTest.cpp
         tests/ApplicationAuthTokenWatcherTest.cpp
         src/app/Application.cpp
+        src/app/UiModuleViewsModel.cpp
         src/models/DecisionLogModel.cpp
         src/utils/PathUtils.cpp
         src/grpc/TradingClient.cpp
@@ -241,6 +262,7 @@ if(BUILD_TESTING)
     add_executable(application_risk_refresh_tests
         tests/ApplicationRiskRefreshTest.cpp
         src/app/Application.cpp
+        src/app/UiModuleViewsModel.cpp
         src/utils/PathUtils.cpp
         src/grpc/TradingClient.cpp
         src/grpc/BotCoreLocalService.cpp
@@ -273,6 +295,7 @@ if(BUILD_TESTING)
     add_executable(application_settings_persistence_tests
         tests/ApplicationSettingsPersistenceTest.cpp
         src/app/Application.cpp
+        src/app/UiModuleViewsModel.cpp
         src/utils/PathUtils.cpp
         src/grpc/TradingClient.cpp
         src/grpc/BotCoreLocalService.cpp
@@ -302,9 +325,35 @@ if(BUILD_TESTING)
     )
     add_test(NAME application_settings_persistence_tests COMMAND application_settings_persistence_tests)
 
+    add_executable(ui_module_manager_tests
+        tests/UiModuleManagerTest.cpp
+        src/app/UiModuleManager.cpp
+    )
+    target_include_directories(ui_module_manager_tests PRIVATE src)
+    target_link_libraries(ui_module_manager_tests
+        PRIVATE
+            Qt6::Core
+            Qt6::Test
+    )
+    add_test(NAME ui_module_manager_tests COMMAND ui_module_manager_tests)
+
+    add_executable(ui_module_views_model_tests
+        tests/UiModuleViewsModelTest.cpp
+        src/app/UiModuleManager.cpp
+        src/app/UiModuleViewsModel.cpp
+    )
+    target_include_directories(ui_module_views_model_tests PRIVATE src)
+    target_link_libraries(ui_module_views_model_tests
+        PRIVATE
+            Qt6::Core
+            Qt6::Test
+    )
+    add_test(NAME ui_module_views_model_tests COMMAND ui_module_views_model_tests)
+
     add_executable(application_risk_history_auto_export_tests
         tests/ApplicationRiskHistoryAutoExportTest.cpp
         src/app/Application.cpp
+        src/app/UiModuleViewsModel.cpp
         src/utils/PathUtils.cpp
         src/grpc/TradingClient.cpp
         src/grpc/BotCoreLocalService.cpp
@@ -337,6 +386,8 @@ if(BUILD_TESTING)
     add_executable(application_decision_log_tests
         tests/ApplicationDecisionLogTest.cpp
         src/app/Application.cpp
+        src/app/UiModuleViewsModel.cpp
+        src/app/UiModuleManager.cpp
         src/utils/PathUtils.cpp
         src/grpc/TradingClient.cpp
         src/grpc/BotCoreLocalService.cpp
@@ -368,6 +419,42 @@ if(BUILD_TESTING)
     )
     add_test(NAME application_decision_log_tests COMMAND application_decision_log_tests)
 
+    add_executable(application_ui_modules_tests
+        tests/ApplicationUiModulesTest.cpp
+        src/app/Application.cpp
+        src/app/UiModuleManager.cpp
+        src/app/UiModuleViewsModel.cpp
+        src/utils/PathUtils.cpp
+        src/grpc/TradingClient.cpp
+        src/grpc/BotCoreLocalService.cpp
+        src/models/OhlcvListModel.cpp
+        src/models/AlertsModel.cpp
+        src/models/AlertsFilterProxyModel.cpp
+        src/models/RiskHistoryModel.cpp
+        src/models/RiskStateModel.cpp
+        src/models/DecisionLogModel.cpp
+        src/utils/PerformanceGuard.cpp
+        src/utils/FrameRateMonitor.cpp
+        src/telemetry/UiTelemetryReporter.cpp
+        src/license/LicenseActivationController.cpp
+        src/security/SecurityAdminController.cpp
+        src/reporting/ReportCenterController.cpp
+        src/support/SupportBundleController.cpp
+        src/health/HealthStatusController.cpp
+    )
+    target_include_directories(application_ui_modules_tests PRIVATE src ${GENERATED_DIR})
+    target_link_libraries(application_ui_modules_tests
+        PRIVATE
+            Qt6::Core
+            Qt6::Gui
+            Qt6::Quick
+            Qt6::Test
+            trading_proto
+            protobuf::libprotobuf
+            gRPC::grpc++
+    )
+    add_test(NAME application_ui_modules_tests COMMAND application_ui_modules_tests)
+
     # FrameRateMonitor tests
     add_executable(frame_rate_monitor_tests
         tests/FrameRateMonitorTest.cpp
@@ -377,6 +464,17 @@ if(BUILD_TESTING)
     target_include_directories(frame_rate_monitor_tests PRIVATE src)
     target_link_libraries(frame_rate_monitor_tests PRIVATE Qt6::Core Qt6::Test)
     add_test(NAME frame_rate_monitor_tests COMMAND frame_rate_monitor_tests)
+
+    add_executable(performance_telemetry_controller_tests
+        tests/PerformanceTelemetryControllerTest.cpp
+        src/telemetry/PerformanceTelemetryController.cpp
+        src/telemetry/UiTelemetryReporter.cpp
+        src/utils/PerformanceGuard.cpp
+    )
+    target_include_directories(performance_telemetry_controller_tests PRIVATE src ${GENERATED_DIR})
+    target_link_libraries(performance_telemetry_controller_tests
+        PRIVATE Qt6::Core Qt6::Test protobuf::libprotobuf gRPC::grpc++)
+    add_test(NAME performance_telemetry_controller_tests COMMAND performance_telemetry_controller_tests)
 
     # CandlestickChartView tests (needs QML/Charts)
     add_executable(candlestick_chart_view_tests
@@ -392,6 +490,34 @@ if(BUILD_TESTING)
         PRIVATE Qt6::Gui Qt6::Qml Qt6::Quick Qt6::Charts Qt6::Test
     )
     add_test(NAME candlestick_chart_view_tests COMMAND candlestick_chart_view_tests)
+
+    add_executable(market_regime_timeline_model_tests
+        tests/MarketRegimeTimelineModelTest.cpp
+        src/models/MarketRegimeTimelineModel.cpp
+    )
+    target_include_directories(market_regime_timeline_model_tests PRIVATE src ${GENERATED_DIR})
+    target_link_libraries(market_regime_timeline_model_tests PRIVATE Qt6::Core Qt6::Test)
+    add_test(NAME market_regime_timeline_model_tests COMMAND market_regime_timeline_model_tests)
+
+    add_executable(market_multi_stream_view_tests
+        tests/MarketMultiStreamViewTest.cpp
+        src/models/OhlcvListModel.cpp
+        src/models/IndicatorSeriesModel.cpp
+        src/models/SignalListModel.cpp
+        src/models/MarketRegimeTimelineModel.cpp
+        src/utils/PerformanceGuard.cpp
+    )
+    target_include_directories(market_multi_stream_view_tests PRIVATE src ${GENERATED_DIR})
+    qt_add_resources(market_multi_stream_view_tests market_multi_stream_view_qml
+        PREFIX "/qml/components"
+        FILES
+            qml/components/MarketMultiStreamView.qml
+            qml/components/CandlestickChartView.qml
+    )
+    target_link_libraries(market_multi_stream_view_tests
+        PRIVATE Qt6::Gui Qt6::Qml Qt6::Quick Qt6::QuickControls2 Qt6::Charts Qt6::Test
+    )
+    add_test(NAME market_multi_stream_view_tests COMMAND market_multi_stream_view_tests)
 
     # RiskStateModel tests
     add_executable(risk_state_model_tests
@@ -417,6 +543,22 @@ if(BUILD_TESTING)
     target_include_directories(decision_log_model_tests PRIVATE src)
     target_link_libraries(decision_log_model_tests PRIVATE Qt6::Core Qt6::Test)
     add_test(NAME decision_log_model_tests COMMAND decision_log_model_tests)
+
+    add_executable(decision_log_filter_proxy_model_tests
+        tests/DecisionLogFilterProxyModelTest.cpp
+        src/models/DecisionLogFilterProxyModel.cpp
+    )
+    target_include_directories(decision_log_filter_proxy_model_tests PRIVATE src)
+    target_link_libraries(decision_log_filter_proxy_model_tests PRIVATE Qt6::Core Qt6::Test)
+    add_test(NAME decision_log_filter_proxy_model_tests COMMAND decision_log_filter_proxy_model_tests)
+
+    add_executable(market_regime_classifier_tests
+        tests/MarketRegimeClassifierBridgeTest.cpp
+        src/models/MarketRegimeClassifierBridge.cpp
+    )
+    target_include_directories(market_regime_classifier_tests PRIVATE src)
+    target_link_libraries(market_regime_classifier_tests PRIVATE Qt6::Core Qt6::Test)
+    add_test(NAME market_regime_classifier_tests COMMAND market_regime_classifier_tests)
 
     add_executable(alerts_model_tests
         tests/AlertsModelTest.cpp
@@ -537,6 +679,18 @@ if(BUILD_TESTING)
             Qt6::Test
     )
     add_test(NAME strategy_workbench_e2e_tests COMMAND strategy_workbench_e2e_tests)
+
+    add_executable(strategy_workbench_controller_tests
+        tests/StrategyWorkbenchControllerTest.cpp
+        src/app/StrategyWorkbenchController.cpp
+    )
+    target_include_directories(strategy_workbench_controller_tests PRIVATE src)
+    target_link_libraries(strategy_workbench_controller_tests
+        PRIVATE
+            Qt6::Core
+            Qt6::Test
+    )
+    add_test(NAME strategy_workbench_controller_tests COMMAND strategy_workbench_controller_tests)
 
     add_executable(bot_core_local_service_tests
         tests/BotCoreLocalServiceTest.cpp

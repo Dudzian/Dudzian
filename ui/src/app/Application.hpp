@@ -20,14 +20,19 @@
 #include "grpc/TradingClient.hpp"
 #include "models/AlertsModel.hpp"
 #include "models/AlertsFilterProxyModel.hpp"
+#include "models/DecisionLogFilterProxyModel.hpp"
 #include "models/DecisionLogModel.hpp"
+#include "models/IndicatorSeriesModel.hpp"
+#include "models/MarketRegimeTimelineModel.hpp"
 #include "models/OhlcvListModel.hpp"
 #include "models/RiskStateModel.hpp"
 #include "models/RiskHistoryModel.hpp"
+#include "models/SignalListModel.hpp"
 #include "utils/PerformanceGuard.hpp"
 #include "utils/FrameRateMonitor.hpp"
 #include "telemetry/TelemetryReporter.hpp"
 #include "telemetry/TelemetryTlsConfig.hpp"
+#include "telemetry/PerformanceTelemetryController.hpp"
 
 class QQuickWindow;
 class QScreen;
@@ -37,9 +42,12 @@ class SecurityAdminController;         // forward decl (security/SecurityAdminCo
 class ReportCenterController;          // forward decl (reporting/ReportCenterController.hpp)
 class BotCoreLocalService;             // forward decl (grpc/BotCoreLocalService.hpp)
 class StrategyConfigController;        // forward decl (app/StrategyConfigController.hpp)
+class StrategyWorkbenchController;     // forward decl (app/StrategyWorkbenchController.hpp)
 class SupportBundleController;         // forward decl (support/SupportBundleController.hpp)
 class HealthStatusController;          // forward decl (health/HealthStatusController.hpp)
 class OfflineRuntimeBridge;            // forward decl (runtime/OfflineRuntimeBridge.hpp)
+class UiModuleManager;                 // forward decl (app/UiModuleManager.hpp)
+class UiModuleViewsModel;              // forward decl (app/UiModuleViewsModel.hpp)
 
 class Application : public QObject {
     Q_OBJECT
@@ -51,12 +59,19 @@ class Application : public QObject {
     Q_PROPERTY(QObject*         riskHistoryModel     READ riskHistoryModel    CONSTANT)
     Q_PROPERTY(QObject*         alertsModel         READ alertsModel         CONSTANT)
     Q_PROPERTY(QObject*         alertsFilterModel   READ alertsFilterModel   CONSTANT)
+    Q_PROPERTY(QObject*         indicatorSeriesModel READ indicatorSeriesModel CONSTANT)
+    Q_PROPERTY(QObject*         signalListModel READ signalListModel CONSTANT)
+    Q_PROPERTY(QObject*         marketRegimeTimelineModel READ marketRegimeTimelineModel CONSTANT)
+    Q_PROPERTY(int              regimeTimelineMaximumSnapshots READ regimeTimelineMaximumSnapshots WRITE setRegimeTimelineMaximumSnapshots NOTIFY regimeTimelineMaximumSnapshotsChanged)
     Q_PROPERTY(QObject*         activationController READ activationController CONSTANT)
     Q_PROPERTY(QObject*         reportController READ reportController CONSTANT)
     Q_PROPERTY(QObject*         strategyController READ strategyController CONSTANT)
+    Q_PROPERTY(QObject*         workbenchController READ workbenchController CONSTANT)
     Q_PROPERTY(QObject*         supportController READ supportController CONSTANT)
     Q_PROPERTY(QObject*         healthController READ healthController CONSTANT)
     Q_PROPERTY(QObject*         decisionLogModel READ decisionLogModel CONSTANT)
+    Q_PROPERTY(QObject*         moduleManager READ moduleManager CONSTANT)
+    Q_PROPERTY(QObject*         moduleViewsModel READ moduleViewsModel CONSTANT)
     Q_PROPERTY(QString          decisionLogPath READ decisionLogPath NOTIFY decisionLogPathChanged)
     Q_PROPERTY(int              telemetryPendingRetryCount READ telemetryPendingRetryCount NOTIFY telemetryPendingRetryCountChanged)
     Q_PROPERTY(QVariantMap      riskRefreshSchedule READ riskRefreshSchedule NOTIFY riskRefreshScheduleChanged)
@@ -98,9 +113,12 @@ public:
     QObject*         activationController() const;
     QObject*         reportController() const;
     QObject*         strategyController() const;
+    QObject*         workbenchController() const;
     QObject*         supportController() const;
     QObject*         healthController() const;
     QObject*         decisionLogModel() const;
+    QObject*         moduleManager() const;
+    QObject*         moduleViewsModel() const;
     QObject*         alertsModel() const { return const_cast<AlertsModel*>(&m_alertsModel); }
     QObject*         alertsFilterModel() const { return const_cast<AlertsFilterProxyModel*>(&m_filteredAlertsModel); }
     QObject*         riskHistoryModel() const { return const_cast<RiskHistoryModel*>(&m_riskHistoryModel); }
@@ -157,9 +175,7 @@ public slots:
     Q_INVOKABLE bool setRiskHistoryAutoExportIntervalMinutes(int minutes);
     Q_INVOKABLE bool setRiskHistoryAutoExportBasename(const QString& basename);
     Q_INVOKABLE bool setRiskHistoryAutoExportUseLocalTime(bool useLocalTime);
-    Q_INVOKABLE bool setLicenseRefreshEnabled(bool enabled);
-    Q_INVOKABLE bool setLicenseRefreshIntervalSeconds(int seconds);
-    Q_INVOKABLE bool triggerLicenseRefreshNow();
+    Q_INVOKABLE bool setRegimeTimelineMaximumSnapshots(int maximumSnapshots);
     Q_INVOKABLE void startOfflineAutomation();
     Q_INVOKABLE void stopOfflineAutomation();
     Q_INVOKABLE bool setDecisionLogPath(const QUrl& url);
@@ -175,6 +191,10 @@ public slots:
     DecisionLogModel* decisionLogModelForTesting() { return &m_decisionLogModel; }
     void setTradableInstrumentsForTesting(const QString& exchange,
                                           const QVector<TradingClient::TradableInstrument>& items);
+    void setModuleManagerForTesting(std::unique_ptr<UiModuleManager> manager);
+    UiModuleManager* moduleManagerForTesting() const { return m_moduleManager.get(); }
+    UiModuleViewsModel* moduleViewsModelForTesting() const { return m_moduleViewsModel.get(); }
+    QStringList uiModuleDirectoriesForTesting() const { return m_uiModuleDirectories; }
 
     // Test helpers
     void ingestFpsSampleForTesting(double fps);
@@ -197,6 +217,7 @@ signals:
     void riskHistoryAutoExportUseLocalTimeChanged();
     void riskHistoryLastAutoExportAtChanged();
     void riskHistoryLastAutoExportPathChanged();
+    void regimeTimelineMaximumSnapshotsChanged();
     void offlineDaemonStatusChanged();
     void offlineAutomationRunningChanged(bool running);
     void offlineStrategyPathChanged();
@@ -281,19 +302,9 @@ private:
     void applyRiskHistoryCliOverrides(const QCommandLineParser& parser);
     void configureStrategyBridge(const QCommandLineParser& parser);
     void configureSupportBundle(const QCommandLineParser& parser);
+    void configureRegimeThresholds(const QCommandLineParser& parser);
     void configureDecisionLog(const QCommandLineParser& parser);
-    void initializeSecurityRefresh();
-    void refreshSecurityArtifacts();
-    void processSecurityArtifactsUpdate();
-    void updateSecurityCacheFromControllers();
-    void loadSecurityCache();
-    void persistSecurityCache();
-    void ensureLicenseRefreshTimerConfigured();
-    void raiseSecurityAlert(const QString& id,
-                            AlertsModel::Severity severity,
-                            const QString& title,
-                            const QString& description);
-    void clearSecurityAlert(const QString& id);
+    void configureUiModules(const QCommandLineParser& parser);
     void setUiSettingsPersistenceEnabled(bool enabled);
     void setUiSettingsPath(const QString& path, bool reload = true);
     void loadUiSettings();
@@ -314,6 +325,7 @@ private:
                                QString& trackedDir,
                                const QString& filePath,
                                const char* label);
+    bool applyRegimeThresholdPath(const QString& path, bool warnIfMissing);
     void configureTlsWatcher(QFileSystemWatcher& watcher,
                               QStringList& trackedFiles,
                               QStringList& trackedDirs,
@@ -329,13 +341,18 @@ private:
     void handleTradingTlsPathChanged(const QString& path);
     void handleMetricsTlsPathChanged(const QString& path);
     void handleHealthTlsPathChanged(const QString& path);
+    void handleRegimeThresholdPathChanged(const QString& path);
 
     // --- Stan i komponenty ---
     QQmlApplicationEngine& m_engine;
     OhlcvListModel         m_ohlcvModel;
+    IndicatorSeriesModel   m_indicatorModel;
+    SignalListModel        m_signalModel;
+    MarketRegimeTimelineModel m_regimeTimelineModel;
     RiskStateModel         m_riskModel;
     RiskHistoryModel       m_riskHistoryModel;
     DecisionLogModel       m_decisionLogModel;
+    DecisionLogFilterProxyModel m_decisionLogFilter;
     TradingClient          m_client;
     std::unique_ptr<OfflineRuntimeBridge> m_offlineBridge;
     AlertsModel            m_alertsModel;
@@ -346,6 +363,7 @@ private:
     PerformanceGuard       m_guard{};
     int                    m_maxSamples = 10240;
     int                    m_historyLimit = 500;
+    int                    m_regimeTimelineMaximumSnapshots = 720;
     TradingClient::TlsConfig m_tradingTlsConfig{};
     QString                m_tradingAuthToken;
     QString                m_tradingAuthTokenFile;
@@ -379,10 +397,14 @@ private:
     std::unique_ptr<SecurityAdminController>   m_securityController;
     std::unique_ptr<ReportCenterController>    m_reportController;
     std::unique_ptr<StrategyConfigController>  m_strategyController;
+    std::unique_ptr<StrategyWorkbenchController> m_workbenchController;
     std::unique_ptr<SupportBundleController>   m_supportController;
     std::unique_ptr<HealthStatusController>    m_healthController;
+    std::unique_ptr<UiModuleManager>           m_moduleManager;
+    std::unique_ptr<UiModuleViewsModel>        m_moduleViewsModel;
 
     // --- Telemetry state ---
+    std::unique_ptr<PerformanceTelemetryController> m_performanceTelemetry;
     std::unique_ptr<TelemetryReporter> m_telemetry;
     QString                            m_metricsEndpoint;
     QString                            m_metricsTag;
@@ -465,6 +487,7 @@ private:
     QFileSystemWatcher                                 m_tradingTlsWatcher;
     QFileSystemWatcher                                 m_metricsTlsWatcher;
     QFileSystemWatcher                                 m_healthTlsWatcher;
+    QFileSystemWatcher                                 m_regimeThresholdWatcher;
     QString                                            m_tradingTokenWatcherFile;
     QStringList                                        m_tradingTokenWatcherDirs;
     QString                                            m_metricsTokenWatcherFile;
@@ -477,6 +500,7 @@ private:
     QStringList                                        m_metricsTlsWatcherDirs;
     QStringList                                        m_healthTlsWatcherFiles;
     QStringList                                        m_healthTlsWatcherDirs;
+    QStringList                                        m_uiModuleDirectories;
     quint64                                            m_tradingTlsReloadGeneration = 0;
     quint64                                            m_metricsTlsReloadGeneration = 0;
     quint64                                            m_healthTlsReloadGeneration = 0;
