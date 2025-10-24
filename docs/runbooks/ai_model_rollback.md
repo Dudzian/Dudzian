@@ -84,9 +84,10 @@ kontroli compliance opisanych w `docs/compliance/ai_pipeline_signoff.md`.
      python - <<'PY'
      from pathlib import Path
      from bot_core.ai import (
-         load_recent_drift_reports,
-         load_recent_data_quality_reports,
+         ComplianceSignOffError,
          ensure_compliance_sign_offs,
+         load_recent_data_quality_reports,
+         load_recent_drift_reports,
      )
      from bot_core.ai.validation import validate_model_artifact_schema
      from bot_core.ai.inference import ModelRepository
@@ -94,12 +95,18 @@ kontroli compliance opisanych w `docs/compliance/ai_pipeline_signoff.md`.
      repo = ModelRepository(Path('models/decision_engine'))
      artifact = repo.load('models/decision_engine/rollback_target.json')
      validate_model_artifact_schema(artifact)
-     ensure_compliance_sign_offs(
-         data_quality_reports=load_recent_data_quality_reports(limit=5),
-         drift_reports=load_recent_drift_reports(limit=5),
-     )
+     try:
+         ensure_compliance_sign_offs(
+             data_quality_reports=load_recent_data_quality_reports(limit=5),
+             drift_reports=load_recent_drift_reports(limit=5),
+         )
+     except ComplianceSignOffError as exc:
+         for role, entries in exc.missing.items():
+             print("Brak podpisu", role, "przy rollbacku", len(entries), "raportów")
+         raise
      PY
      ```
+    Jeśli procedura wymaga innego zestawu ról (np. tylko Risk), skonfiguruj go wcześniej przez `AIManager.set_compliance_sign_off_requirement(True)` oraz `AIManager.set_compliance_sign_off_roles(("risk",))`; wywołanie z `None` przywróci domyślne role Risk/Compliance, a `False` w `set_compliance_sign_off_requirement` wyłącza bramkę.
 
 4. **Przywróć artefakt**
    - Wczytaj model i podłącz inference:
