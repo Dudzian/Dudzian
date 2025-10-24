@@ -50,9 +50,9 @@ from ._license import ensure_ai_signals_enabled
 from .audit import list_audit_reports, load_audit_report, save_data_quality_report, save_drift_report
 from .data_monitoring import (
     ComplianceSignOffError,
+    collect_pending_compliance_sign_offs,
     ensure_compliance_sign_offs,
-    load_recent_data_quality_reports,
-    load_recent_drift_reports,
+    normalize_compliance_sign_off_roles,
 )
 from .feature_engineering import FeatureDataset
 from .inference import DecisionModelInference, ModelRepository
@@ -763,6 +763,7 @@ class AIManager:
         self._last_drift_report_path: Path | None = None
         self._last_data_quality_report_path: Path | None = None
         self._require_compliance_sign_offs = False
+        self._compliance_sign_off_roles: tuple[str, ...] | None = None
         self._decision_journal = decision_journal
         if decision_journal_context is not None and not isinstance(decision_journal_context, Mapping):
             raise TypeError("decision_journal_context musi być mapowaniem lub None")
@@ -849,6 +850,36 @@ class AIManager:
         """Włącza lub wyłącza bramkę podpisów compliance dla aktywacji modeli."""
 
         self._require_compliance_sign_offs = bool(enabled)
+
+    def set_compliance_sign_off_roles(self, roles: Sequence[str] | None) -> None:
+        """Konfiguruje role wymagane do aktywacji inference w bramce compliance."""
+
+        if roles is None:
+            self._compliance_sign_off_roles = None
+            return
+
+        normalized = normalize_compliance_sign_off_roles(roles)
+        self._compliance_sign_off_roles = normalized
+
+    def get_pending_compliance_sign_offs(
+        self, limit: int | None = None
+    ) -> Mapping[str, tuple[Mapping[str, Any], ...]]:
+        """Zwraca oczekujące podpisy compliance na podstawie audytu."""
+
+        if limit is None:
+            query_limit = 5
+        else:
+            try:
+                query_limit = int(limit)
+            except (TypeError, ValueError) as exc:  # pragma: no cover - defensywnie
+                raise ValueError("limit must be greater than zero") from exc
+        if query_limit <= 0:
+            raise ValueError("limit must be greater than zero")
+
+        kwargs: Dict[str, Any] = {"limit": query_limit, "roles": self._compliance_sign_off_roles}
+        if self._audit_root is not None:
+            kwargs["audit_root"] = self._audit_root
+        return collect_pending_compliance_sign_offs(**kwargs)
 
     def register_data_quality_check(self, check: DataQualityCheck) -> None:
         """Rejestruje kontrolę jakości danych wykonywaną podczas pipeline'u."""
@@ -972,15 +1003,15 @@ class AIManager:
         return list_audit_reports("data_quality", audit_root=self._audit_root, limit=limit)
 
     def _ensure_compliance_activation_gate(self) -> None:
-        if self._audit_root is not None:
-            kwargs: Dict[str, Any] = {"audit_root": self._audit_root}
-        else:
-            kwargs = {}
-        data_reports = load_recent_data_quality_reports(limit=5, **kwargs)
-        drift_reports = load_recent_drift_reports(limit=5, **kwargs)
+        if not self._require_compliance_sign_offs:
+            logger.debug(
+                "Pomijam bramkę podpisów compliance – wymaganie wyłączone."
+            )
+            return
         ensure_compliance_sign_offs(
-            data_quality_reports=data_reports,
-            drift_reports=drift_reports,
+            audit_root=self._audit_root,
+            limit=5,
+            roles=self._compliance_sign_off_roles,
         )
 
     def _load_audit_payload(self, *, path: Path | None, subdirectory: str) -> Mapping[str, Any] | None:

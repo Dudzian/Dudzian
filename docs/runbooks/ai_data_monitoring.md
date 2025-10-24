@@ -13,7 +13,7 @@ Runbook opisuje monitorowanie jakości danych oraz dryfu cech dla pipeline'u AI.
 2. **Dryf cech** – porównaj zbiór treningowy z oknem produkcyjnym za pomocą `FeatureDriftAnalyzer`. Zweryfikuj `assessment.summary.triggered_features`, `metrics.feature_drift.psi` oraz `distribution_summary.max_ks`. Trigger > progów PSI/KS wymaga wpisu w decision journalu oraz przeglądu risk/compliance.
 3. **Zakres cech inference** – podczas obsługi alertu sprawdź `InferenceFeatureBoundsValidator.observe()` dla ostatnich próbek inference. Jeśli którekolwiek `feature_out_of_bounds`, zatrzymaj scoring i potwierdź wznowienie z risk.
 4. **Automatyczny audyt pipeline'u** – zweryfikuj, że `AIManager.get_last_data_quality_report_path()` wskazuje świeży raport (`pipeline:<symbol>:<kontrola>`) po ostatnim `run_pipeline`. Brak raportu oznacza, że kontrola nie została zarejestrowana.
-5. **Bramka podpisów** – przed promocją modelu do DecisionOrchestratora uruchom `ensure_compliance_sign_offs(...)`, aby potwierdzić, że ostatnie alerty `data_quality` i `drift` mają status `approved/waived` dla ról Risk i Compliance.
+5. **Bramka podpisów** – przed promocją modelu do DecisionOrchestratora uruchom `ensure_compliance_sign_offs(...)`, aby potwierdzić, że ostatnie alerty `data_quality` i `drift` mają status `approved/waived` dla ról Risk i Compliance. Do szybkiego podglądu braków wykorzystaj `collect_pending_compliance_sign_offs(...)` lub `AIManager.get_pending_compliance_sign_offs()`. Jeśli wymagany jest inny zestaw odpowiedzialności, ustaw go wcześniej przez `AIManager.set_compliance_sign_off_roles(("risk",))` lub podobną konfigurację i włącz wymóg podpisów (`AIManager.set_compliance_sign_off_requirement(True)`).
 
 ## 2. Procedura operacyjna
 
@@ -105,15 +105,56 @@ Po wykonaniu pipeline'u raport znajdziesz w `audit/ai_decision/data_quality/<tim
 Do walidacji podpisów compliance użyj helperów inference:
 
 ```python
-from bot_core.ai.data_monitoring import ensure_compliance_sign_offs, load_recent_data_quality_reports, load_recent_drift_reports
-
-pending = ensure_compliance_sign_offs(
-    data_quality_reports=load_recent_data_quality_reports(limit=5),
-    drift_reports=load_recent_drift_reports(limit=5),
+from bot_core.ai.data_monitoring import (
+    ComplianceSignOffError,
+    collect_pending_compliance_sign_offs,
+    ensure_compliance_sign_offs,
 )
-assert all(not entries for entries in pending.values())
+
+try:
+    pending = ensure_compliance_sign_offs(
+        audit_root="audit/ai_decision",
+        limit=5,
+        roles=("risk", "compliance"),  # możesz ograniczyć wymagane role
+    )
+except ComplianceSignOffError as exc:
+    # exc.missing zawiera tylko role z brakami podpisów
+    for role, entries in exc.missing.items():
+        print("Brak podpisu", role, "dla raportów:")
+        for entry in entries:
+            print(" -", entry.get("category"), entry.get("report_path"))
+    raise
+else:
+    assert all(not entries for entries in pending.values())
+
+pending_map = collect_pending_compliance_sign_offs(
+    audit_root="audit/ai_decision",
+    limit=10,
+    roles=("risk",),
+)
+for role, entries in pending_map.items():
+    print(role, "=>", len(entries))
+
+# Konfiguracja wymagań podpisów przed aktywacją inference
+manager.set_compliance_sign_off_requirement(True)
+manager.set_compliance_sign_off_roles(("risk",))  # wymaga tylko podpisu zespołu Risk
+
+# Podgląd oczekujących podpisów bezpośrednio z managera
+print(manager.get_pending_compliance_sign_offs())
 ```
 `ComplianceSignOffError` sygnalizuje brak wymaganych podpisów – aktualizuj `docs/compliance/ai_pipeline_signoff.md` i eskaluj do właścicieli raportu.
+
+Włącz wymóg podpisów i – opcjonalnie – zawęź wymagane role przed aktywacją inference:
+
+```python
+manager.set_compliance_sign_off_requirement(True)
+manager.set_compliance_sign_off_roles(("risk",))  # wymaga tylko podpisu zespołu Risk
+```
+
+Ustawienie `None` przywraca domyślny zestaw (`risk`, `compliance`), a `False` w `set_compliance_sign_off_requirement` ponownie wyłącza bramkę.
+
+Jeśli musisz wymusić blokadę w samych podsumowaniach, helpery `summarize_data_quality_reports(..., require_sign_off=True)` oraz
+`summarize_drift_reports(..., require_sign_off=True)` zgłoszą ten sam wyjątek, gdy dla wskazanych ról pozostaną otwarte zadania.
 
 ### 2.5 Monitoring inference
 
