@@ -21,6 +21,14 @@ class LicenseCapabilityError(PermissionError):
 
 
 _EDITION_ORDER = ("community", "standard", "pro", "commercial")
+_LICENSE_TIER_TO_EDITION = {
+    "community": "community",
+    "standard": "standard",
+    "professional": "pro",
+    "pro": "pro",
+    "enterprise": "commercial",
+    "commercial": "commercial",
+}
 _GLOBAL_GUARD: "CapabilityGuard | None" = None
 
 
@@ -98,6 +106,21 @@ class CapabilityGuard:
                 message or f"Licencja '{current}' nie spełnia wymagań edycji '{min_edition}'.",
                 capability="edition",
             )
+
+    def require_license_tier(self, license_tier: str, message: str | None = None) -> None:
+        normalized = (license_tier or "").strip().lower()
+        if not normalized or normalized in {"unspecified", "none"}:
+            return
+        mapped = _LICENSE_TIER_TO_EDITION.get(normalized)
+        if mapped is None:
+            raise LicenseCapabilityError(
+                f"Nieznany poziom licencyjny '{license_tier}'.",
+                capability="license_tier",
+            )
+        default_message = (
+            f"Licencja '{self.capabilities.edition}' nie spełnia wymaganej klasy '{normalized}'."
+        )
+        self.require_edition(mapped, message=message or default_message)
 
     def require_maintenance(self) -> None:
         if not self.capabilities.is_maintenance_active():

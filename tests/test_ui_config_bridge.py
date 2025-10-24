@@ -39,6 +39,15 @@ def sample_config(tmp_path: Path) -> Path:
                 }
             },
         },
+        "strategies": {
+            "trend-follow": {
+                "engine": "daily_trend_momentum",
+                "license_tier": "standard",
+                "risk_classes": ["directional"],
+                "required_data": ["ohlcv"],
+                "tags": ["custom-tag"],
+            }
+        },
         "multi_strategy_schedulers": {
             "default": {
                 "telemetry_namespace": "telemetry/main",
@@ -82,6 +91,13 @@ def test_dump_config_sections(sample_config: Path) -> None:
     default_scheduler = dumped["schedulers"]["default"]
     assert default_scheduler["telemetry_namespace"] == "telemetry/main"
     assert default_scheduler["schedules"][0]["name"] == "open-session"
+    first_schedule = default_scheduler["schedules"][0]
+    assert first_schedule["engine"] == "daily_trend_momentum"
+    assert first_schedule["capability"] == "trend_d1"
+    assert first_schedule["license_tier"] == "standard"
+    assert first_schedule["risk_classes"] == ["directional", "momentum"]
+    assert first_schedule["required_data"] == ["ohlcv", "technical_indicators"]
+    assert first_schedule["tags"] == ["trend", "momentum", "custom-tag"]
 
 
 def test_apply_updates_writes_yaml(sample_config: Path, monkeypatch: pytest.MonkeyPatch) -> None:

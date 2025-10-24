@@ -1443,6 +1443,104 @@ Drawer {
                                     }
                                 }
 
+                                Label { text: qsTr("Silnik katalogu") }
+                                Label {
+                                    Layout.fillWidth: true
+                                    text: {
+                                        var schedule = currentSchedule()
+                                        if (!schedule || !schedule.engine)
+                                            return "-"
+                                        return schedule.engine
+                                    }
+                                }
+
+                                Label { text: qsTr("Capability") }
+                                Label {
+                                    Layout.fillWidth: true
+                                    text: {
+                                        var schedule = currentSchedule()
+                                        if (!schedule || !schedule.capability)
+                                            return "-"
+                                        return schedule.capability
+                                    }
+                                }
+
+                                Label { text: qsTr("Tier licencji") }
+                                Label {
+                                    Layout.fillWidth: true
+                                    text: {
+                                        var schedule = currentSchedule()
+                                        if (!schedule || !schedule.license_tier)
+                                            return "-"
+                                        return schedule.license_tier
+                                    }
+                                }
+
+                                Label { text: qsTr("Klasy ryzyka") }
+                                Label {
+                                    Layout.fillWidth: true
+                                    wrapMode: Text.WordWrap
+                                    text: {
+                                        var schedule = currentSchedule()
+                                        if (!schedule)
+                                            return "-"
+                                        var value = schedule.risk_classes
+                                        if (!value)
+                                            return "-"
+                                        if (Array.isArray(value))
+                                            return value.length > 0 ? value.join(", ") : "-"
+                                        var textValue = String(value)
+                                        return textValue.length > 0 ? textValue : "-"
+                                    }
+                                }
+
+                                Label { text: qsTr("Wymagane dane") }
+                                Label {
+                                    Layout.fillWidth: true
+                                    wrapMode: Text.WordWrap
+                                    text: {
+                                        var schedule = currentSchedule()
+                                        if (!schedule)
+                                            return "-"
+                                        var value = schedule.required_data
+                                        if (!value)
+                                            return "-"
+                                        if (Array.isArray(value))
+                                            return value.length > 0 ? value.join(", ") : "-"
+                                        var textValue = String(value)
+                                        return textValue.length > 0 ? textValue : "-"
+                                    }
+                                }
+
+                                Label { text: qsTr("Tagi katalogu") }
+                                Label {
+                                    Layout.fillWidth: true
+                                    wrapMode: Text.WordWrap
+                                    text: {
+                                        var schedule = currentSchedule()
+                                        if (!schedule)
+                                            return "-"
+                                        var value = schedule.tags
+                                        if (!value)
+                                            return "-"
+                                        if (Array.isArray(value))
+                                            return value.length > 0 ? value.join(", ") : "-"
+                                        var textValue = String(value)
+                                        return textValue.length > 0 ? textValue : "-"
+                                    }
+                                }
+
+                                Label { text: qsTr("Profil z definicji") }
+                                Label {
+                                    Layout.fillWidth: true
+                                    text: {
+                                        var schedule = currentSchedule()
+                                        if (!schedule || !schedule.definition_risk_profile)
+                                            return "-"
+                                        return schedule.definition_risk_profile
+                                    }
+                                }
+
                                 Label { text: qsTr("Ryzyko (profil)") }
                                 TextField {
                                     id: scheduleRiskField
