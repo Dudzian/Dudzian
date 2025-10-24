@@ -3093,19 +3093,42 @@ def _collect_strategy_definitions(core_config: CoreConfig) -> dict[str, Strategy
 
     definitions: dict[str, StrategyDefinition] = {}
 
-    def _resolve_metadata(engine: str) -> tuple[str, tuple[str, ...], tuple[str, ...], str | None]:
+    def _resolve_metadata(
+        engine: str,
+    ) -> tuple[str, tuple[str, ...], tuple[str, ...], tuple[str, ...], str | None]:
         try:
             spec = DEFAULT_STRATEGY_CATALOG.get(engine)
         except KeyError:
-            return ("unspecified", ("unspecified",), ("unspecified",), None)
-        return (spec.license_tier, spec.risk_classes, spec.required_data, spec.capability)
+            return (
+                "unspecified",
+                ("unspecified",),
+                ("unspecified",),
+                (),
+                None,
+            )
+        return (
+            spec.license_tier,
+            spec.risk_classes,
+            spec.required_data,
+            spec.default_tags,
+            spec.capability,
+        )
 
     for name, cfg in getattr(core_config, "strategy_definitions", {}).items():
-        license_tier, risk_classes, required_data, capability = _resolve_metadata(cfg.engine)
+        (
+            license_tier,
+            risk_classes,
+            required_data,
+            default_tags,
+            capability,
+        ) = _resolve_metadata(cfg.engine)
         metadata = dict(cfg.metadata)
         resolved_capability = getattr(cfg, "capability", None) or capability
         if resolved_capability and "capability" not in metadata:
             metadata["capability"] = resolved_capability
+        merged_tags = tuple(dict.fromkeys((*default_tags, *tuple(cfg.tags))))
+        if merged_tags and "tags" not in metadata:
+            metadata["tags"] = merged_tags
         definitions[name] = StrategyDefinition(
             name=cfg.name,
             engine=cfg.engine,
@@ -3114,17 +3137,25 @@ def _collect_strategy_definitions(core_config: CoreConfig) -> dict[str, Strategy
             required_data=tuple(cfg.required_data) or required_data,
             parameters=dict(cfg.parameters),
             risk_profile=cfg.risk_profile,
-            tags=tuple(cfg.tags),
+            tags=merged_tags,
             metadata=metadata,
         )
 
     def _fallback(name: str, engine: str, params: Mapping[str, Any]) -> None:
         if name in definitions:
             return
-        license_tier, risk_classes, required_data, capability = _resolve_metadata(engine)
+        (
+            license_tier,
+            risk_classes,
+            required_data,
+            default_tags,
+            capability,
+        ) = _resolve_metadata(engine)
         metadata: dict[str, Any] = {}
         if capability:
             metadata["capability"] = capability
+        if default_tags:
+            metadata["tags"] = default_tags
         definitions[name] = StrategyDefinition(
             name=name,
             engine=engine,
@@ -3132,6 +3163,7 @@ def _collect_strategy_definitions(core_config: CoreConfig) -> dict[str, Strategy
             risk_classes=risk_classes,
             required_data=required_data,
             parameters=dict(params),
+            tags=default_tags,
             metadata=metadata,
         )
 
@@ -3187,6 +3219,59 @@ def _collect_strategy_definitions(core_config: CoreConfig) -> dict[str, Strategy
                 "spread_exit": cfg.spread_exit,
                 "max_notional": cfg.max_notional,
                 "max_open_seconds": cfg.max_open_seconds,
+            },
+        )
+
+    for name, cfg in getattr(core_config, "scalping_strategies", {}).items():
+        _fallback(
+            name,
+            "scalping",
+            {
+                "min_price_change": cfg.min_price_change,
+                "take_profit": cfg.take_profit,
+                "stop_loss": cfg.stop_loss,
+                "max_hold_bars": cfg.max_hold_bars,
+            },
+        )
+
+    for name, cfg in getattr(core_config, "options_income_strategies", {}).items():
+        _fallback(
+            name,
+            "options_income",
+            {
+                "min_iv": cfg.min_iv,
+                "max_delta": cfg.max_delta,
+                "min_days_to_expiry": cfg.min_days_to_expiry,
+                "roll_threshold_iv": cfg.roll_threshold_iv,
+            },
+        )
+
+    for name, cfg in getattr(core_config, "statistical_arbitrage_strategies", {}).items():
+        _fallback(
+            name,
+            "statistical_arbitrage",
+            {
+                "lookback": cfg.lookback,
+                "spread_entry_z": cfg.spread_entry_z,
+                "spread_exit_z": cfg.spread_exit_z,
+                "max_notional": cfg.max_notional,
+            },
+        )
+
+    for name, cfg in getattr(core_config, "day_trading_strategies", {}).items():
+        _fallback(
+            name,
+            "day_trading",
+            {
+                "momentum_window": cfg.momentum_window,
+                "volatility_window": cfg.volatility_window,
+                "entry_threshold": cfg.entry_threshold,
+                "exit_threshold": cfg.exit_threshold,
+                "take_profit_atr": cfg.take_profit_atr,
+                "stop_loss_atr": cfg.stop_loss_atr,
+                "max_holding_bars": cfg.max_holding_bars,
+                "atr_floor": cfg.atr_floor,
+                "bias_strength": cfg.bias_strength,
             },
         )
 
@@ -3252,7 +3337,495 @@ def describe_multi_strategy_configuration(
         raise KeyError(f"Nie znaleziono scheduler-a '{resolved_name}'.")
 
     definitions = _collect_strategy_definitions(core_config)
+    guard = get_capability_guard()
     schedules: list[dict[str, object]] = []
+    blocked_schedules: list[str] = []
+    blocked_strategies: list[str] = []
+    blocked_strategy_capabilities: dict[str, str] = {}
+    blocked_schedule_capabilities: dict[str, str] = {}
+    blocked_strategy_reasons: dict[str, str] = {}
+    blocked_schedule_reasons: dict[str, str] = {}
+    strategy_capabilities: dict[str, str] = {}
+    guard_reason_summary: dict[str, object] = {}
+    guard_reason_details: dict[str, dict[str, list[dict[str, str]]]] = {}
+    guard_reason_detail_summary: dict[str, dict[str, dict[str, object]]] = {}
+
+    def _register_guard_detail(
+        capability: str | None,
+        category: str,
+        payload: Mapping[str, object],
+    ) -> None:
+        capability_id = str(capability or "").strip()
+        if not capability_id:
+            return
+        cleaned: dict[str, str] = {}
+        for key, value in payload.items():
+            normalized_key = str(key).strip()
+            if not normalized_key:
+                continue
+            normalized_value = str(value).strip()
+            if not normalized_value and normalized_key not in {"profile", "kind"}:
+                continue
+            cleaned[normalized_key] = normalized_value
+        if not cleaned:
+            return
+        category_entries = guard_reason_details.setdefault(capability_id, {})
+        entries = category_entries.setdefault(category, [])
+        if cleaned in entries:
+            return
+        entries.append(cleaned)
+
+    def _build_guard_detail_summary_from_details(
+        details: Mapping[str, Mapping[str, Sequence[Mapping[str, str]]]]
+    ) -> dict[str, dict[str, dict[str, object]]]:
+        summary: dict[str, dict[str, dict[str, object]]] = {}
+
+        category_order = (
+            "strategies",
+            "schedules",
+            "initial_signal_limits",
+            "signal_limits",
+            "suspensions",
+        )
+        ordered_categories = set(category_order)
+
+        for capability, category_map in details.items():
+            if not isinstance(category_map, Mapping):
+                continue
+            capability_id = str(capability).strip()
+            if not capability_id:
+                continue
+
+            capability_summary: dict[str, dict[str, object]] = {}
+            overall_total = 0
+            overall_reason_counts: Counter[str] = Counter()
+
+            def _payload_from_entries(
+                entries: Sequence[Mapping[str, str]],
+            ) -> dict[str, object] | None:
+                if not entries:
+                    return None
+                total = len(entries)
+                reason_counts: Counter[str] = Counter()
+                for entry in entries:
+                    if not isinstance(entry, Mapping):
+                        continue
+                    reason = str(entry.get("reason", "")).strip()
+                    if not reason:
+                        reason = (_resolve_guard_reason(capability_id) or "").strip()
+                    if reason:
+                        reason_counts[reason] += 1
+                payload: dict[str, object] = {"total": int(total)}
+                if reason_counts:
+                    payload["by_reason"] = {
+                        reason: int(reason_counts[reason])
+                        for reason in sorted(reason_counts)
+                    }
+                return payload
+
+            for category in category_order:
+                entries = category_map.get(category)
+                if not isinstance(entries, Sequence):
+                    continue
+                payload = _payload_from_entries(entries)
+                if not payload:
+                    continue
+                capability_summary[category] = payload
+                overall_total += int(payload.get("total", 0))
+                for reason, count in payload.get("by_reason", {}).items():
+                    overall_reason_counts[str(reason)] += int(count)
+
+            remaining_categories = {
+                str(category): entries
+                for category, entries in category_map.items()
+                if str(category) not in ordered_categories
+            }
+            for category in sorted(remaining_categories):
+                entries = remaining_categories[category]
+                if not isinstance(entries, Sequence):
+                    continue
+                payload = _payload_from_entries(entries)
+                if not payload:
+                    continue
+                capability_summary[category] = payload
+                overall_total += int(payload.get("total", 0))
+                for reason, count in payload.get("by_reason", {}).items():
+                    overall_reason_counts[str(reason)] += int(count)
+
+            if overall_total > 0:
+                overall_payload: dict[str, object] = {"total": int(overall_total)}
+                if overall_reason_counts:
+                    overall_payload["by_reason"] = {
+                        reason: int(overall_reason_counts[reason])
+                        for reason in sorted(overall_reason_counts)
+                    }
+                capability_summary["overall"] = overall_payload
+
+            if capability_summary:
+                summary[capability_id] = capability_summary
+
+        return summary
+
+    def _build_guard_detail_category_summary_from_details(
+        details: Mapping[str, Mapping[str, Sequence[Mapping[str, str]]]]
+    ) -> dict[str, dict[str, object]]:
+        if not isinstance(details, Mapping):
+            return {}
+
+        category_counters: dict[str, dict[str, object]] = {}
+        category_order = (
+            "strategies",
+            "schedules",
+            "initial_signal_limits",
+            "signal_limits",
+            "suspensions",
+        )
+        order_set = set(category_order)
+
+        for capability, category_map in details.items():
+            if not isinstance(category_map, Mapping):
+                continue
+            capability_id = str(capability).strip()
+            if not capability_id:
+                continue
+            for category, entries in category_map.items():
+                category_name = str(category).strip()
+                if not category_name or not isinstance(entries, Sequence):
+                    continue
+                total = 0
+                reason_counts: Counter[str] = Counter()
+                for entry in entries:
+                    if not isinstance(entry, Mapping):
+                        continue
+                    total += 1
+                    reason = str(entry.get("reason", "")).strip()
+                    if not reason:
+                        reason = (_resolve_guard_reason(capability_id) or "").strip()
+                    if reason:
+                        reason_counts[reason] += 1
+                if total <= 0:
+                    continue
+                counters = category_counters.setdefault(
+                    category_name,
+                    {
+                        "total": 0,
+                        "by_capability": Counter(),
+                        "by_reason": Counter(),
+                    },
+                )
+                counters["total"] = int(counters["total"]) + total  # type: ignore[index]
+                capability_counter: Counter[str] = counters["by_capability"]  # type: ignore[assignment]
+                capability_counter[capability_id] += total
+                reason_counter: Counter[str] = counters["by_reason"]  # type: ignore[assignment]
+                reason_counter.update(reason_counts)
+
+        if not category_counters:
+            return {}
+
+        def _normalize(payload: Mapping[str, object]) -> dict[str, object] | None:
+            total = payload.get("total")
+            try:
+                total_value = int(total) if total is not None else 0
+            except (TypeError, ValueError):
+                return None
+            if total_value <= 0:
+                return None
+            entry: dict[str, object] = {"total": total_value}
+            capability_counter = payload.get("by_capability")
+            if isinstance(capability_counter, Counter):
+                cleaned_capabilities = {
+                    capability: int(capability_counter[capability])
+                    for capability in sorted(capability_counter)
+                    if capability_counter[capability] > 0
+                }
+                if cleaned_capabilities:
+                    entry["by_capability"] = cleaned_capabilities
+            reason_counter = payload.get("by_reason")
+            if isinstance(reason_counter, Counter):
+                cleaned_reasons = {
+                    reason: int(reason_counter[reason])
+                    for reason in sorted(reason_counter)
+                    if reason_counter[reason] > 0
+                }
+                if cleaned_reasons:
+                    entry["by_reason"] = cleaned_reasons
+            return entry
+
+        summary: dict[str, dict[str, object]] = {}
+        for category in category_order:
+            counters = category_counters.get(category)
+            if not counters:
+                continue
+            normalized = _normalize(counters)
+            if normalized:
+                summary[category] = normalized
+
+        extra_categories = {
+            name: counters
+            for name, counters in category_counters.items()
+            if name not in order_set
+        }
+        for category in sorted(extra_categories):
+            normalized = _normalize(extra_categories[category])
+            if normalized:
+                summary[category] = normalized
+
+        return summary
+
+    def _build_guard_detail_reason_summary_from_details(
+        details: Mapping[str, Mapping[str, Sequence[Mapping[str, str]]]]
+    ) -> dict[str, dict[str, object]]:
+        if not isinstance(details, Mapping):
+            return {}
+
+        reason_counters: dict[str, dict[str, object]] = {}
+
+        def _resolve_reason(capability: str, reason: str | None) -> str | None:
+            normalized = (reason or "").strip()
+            if normalized:
+                return normalized
+            return (_resolve_guard_reason(capability) or "").strip() or None
+
+        for capability, category_map in details.items():
+            if not isinstance(category_map, Mapping):
+                continue
+            capability_id = str(capability).strip()
+            if not capability_id:
+                continue
+            for category, entries in category_map.items():
+                category_name = str(category).strip()
+                if not category_name or not isinstance(entries, Sequence):
+                    continue
+                for entry in entries:
+                    if not isinstance(entry, Mapping):
+                        continue
+                    reason = _resolve_reason(capability_id, entry.get("reason"))
+                    if not reason:
+                        continue
+                    counters = reason_counters.setdefault(
+                        reason,
+                        {
+                            "total": 0,
+                            "by_capability": Counter(),
+                            "by_category": Counter(),
+                        },
+                    )
+                    counters["total"] = int(counters.get("total", 0)) + 1  # type: ignore[index]
+                    capability_counter: Counter[str] = counters["by_capability"]  # type: ignore[assignment]
+                    capability_counter[capability_id] += 1
+                    category_counter: Counter[str] = counters["by_category"]  # type: ignore[assignment]
+                    category_counter[category_name] += 1
+
+        if not reason_counters:
+            return {}
+
+        def _normalize(payload: Mapping[str, object]) -> dict[str, object] | None:
+            total = payload.get("total")
+            try:
+                total_value = int(total) if total is not None else 0
+            except (TypeError, ValueError):
+                return None
+            if total_value <= 0:
+                return None
+            entry: dict[str, object] = {"total": total_value}
+            capability_counter = payload.get("by_capability")
+            if isinstance(capability_counter, Counter):
+                cleaned_capabilities = {
+                    capability: int(capability_counter[capability])
+                    for capability in sorted(capability_counter)
+                    if capability_counter[capability] > 0
+                }
+                if cleaned_capabilities:
+                    entry["by_capability"] = cleaned_capabilities
+            category_counter = payload.get("by_category")
+            if isinstance(category_counter, Counter):
+                cleaned_categories = {
+                    category: int(category_counter[category])
+                    for category in sorted(category_counter)
+                    if category_counter[category] > 0
+                }
+                if cleaned_categories:
+                    entry["by_category"] = cleaned_categories
+            return entry
+
+        summary: dict[str, dict[str, object]] = {}
+        for reason, counters in sorted(reason_counters.items()):
+            normalized = _normalize(counters)
+            if normalized:
+                summary[reason] = normalized
+
+        return summary
+
+    def _build_guard_detail_reason_details_from_details(
+        details: Mapping[str, Mapping[str, Sequence[Mapping[str, str]]]],
+        *,
+        sort_key: Callable[[str, Mapping[str, str]], Sequence[str]],
+    ) -> dict[str, dict[str, object]]:
+        if not isinstance(details, Mapping):
+            return {}
+
+        reason_entries: dict[str, dict[str, object]] = {}
+        category_order = (
+            "strategies",
+            "schedules",
+            "initial_signal_limits",
+            "signal_limits",
+            "suspensions",
+        )
+        order_set = set(category_order)
+
+        for capability, category_map in details.items():
+            if not isinstance(category_map, Mapping):
+                continue
+            capability_id = str(capability).strip()
+            if not capability_id:
+                continue
+            for category, entries in category_map.items():
+                category_name = str(category).strip()
+                if not category_name or not isinstance(entries, Sequence):
+                    continue
+                for entry in entries:
+                    if not isinstance(entry, Mapping):
+                        continue
+                    reason = str(entry.get("reason", "")).strip()
+                    if not reason:
+                        reason = (_resolve_guard_reason(capability_id) or "").strip()
+                    if not reason:
+                        continue
+                    payload = reason_entries.setdefault(
+                        reason,
+                        {
+                            "total": 0,
+                            "capabilities": set(),
+                            "categories": {},
+                        },
+                    )
+                    payload["total"] = int(payload.get("total", 0) or 0) + 1
+                    capability_set = payload.setdefault("capabilities", set())
+                    if isinstance(capability_set, set):
+                        capability_set.add(capability_id)
+                    categories_map = payload.setdefault("categories", {})
+                    if not isinstance(categories_map, dict):
+                        continue
+                    normalized_entry = {
+                        str(key).strip(): str(value).strip()
+                        for key, value in entry.items()
+                        if str(key).strip()
+                        and (str(value).strip() or str(key).strip() in {"profile", "kind"})
+                    }
+                    if "reason" not in normalized_entry and reason:
+                        normalized_entry["reason"] = reason
+                    category_entries = categories_map.setdefault(category_name, [])
+                    if isinstance(category_entries, list) and normalized_entry not in category_entries:
+                        category_entries.append(normalized_entry)
+
+        if not reason_entries:
+            return {}
+
+        normalized: dict[str, dict[str, object]] = {}
+        for reason, payload in sorted(reason_entries.items()):
+            try:
+                total = int(payload.get("total", 0))
+            except (TypeError, ValueError):
+                continue
+            if total <= 0:
+                continue
+            entry_result: dict[str, object] = {"total": total}
+            capabilities = payload.get("capabilities")
+            if isinstance(capabilities, set):
+                cleaned_capabilities = sorted(cap for cap in capabilities if str(cap).strip())
+                if cleaned_capabilities:
+                    entry_result["capabilities"] = [str(cap) for cap in cleaned_capabilities]
+            categories = payload.get("categories")
+            if isinstance(categories, Mapping):
+                ordered_categories: dict[str, list[dict[str, str]]] = {}
+                for category in category_order:
+                    entries = categories.get(category)
+                    if not isinstance(entries, list) or not entries:
+                        continue
+                    sorted_entries = sorted(
+                        (dict(item) for item in entries if isinstance(item, Mapping)),
+                        key=lambda payload, *, _category=category: tuple(
+                            sort_key(_category, payload)
+                        ),
+                    )
+                    if sorted_entries:
+                        ordered_categories[category] = sorted_entries
+                extra_categories = {
+                    str(category): entries
+                    for category, entries in categories.items()
+                    if str(category) not in order_set
+                }
+                for category in sorted(extra_categories):
+                    entries = extra_categories[category]
+                    if not isinstance(entries, list) or not entries:
+                        continue
+                    sorted_entries = sorted(
+                        (dict(item) for item in entries if isinstance(item, Mapping)),
+                        key=lambda payload, *, _category=category: tuple(
+                            sort_key(_category, payload)
+                        ),
+                    )
+                    if sorted_entries:
+                        ordered_categories[category] = sorted_entries
+                if ordered_categories:
+                    entry_result["categories"] = ordered_categories
+            normalized[reason] = entry_result
+
+        return normalized
+
+    def _resolve_guard_reason(capability: str | None) -> str | None:
+        if guard is None or not capability:
+            return None
+        try:
+            guard.require_strategy(capability)
+        except LicenseCapabilityError as exc:  # pragma: no cover - komunikaty strażnika
+            return str(exc)
+        except Exception as exc:  # pragma: no cover - brak kompatybilności strażnika
+            _LOGGER.debug(
+                "Nie udało się ustalić komunikatu strażnika dla capability %s: %s",
+                capability,
+                exc,
+            )
+        return None
+
+    def _guard_summary_from_counts(
+        counts: Mapping[str, int],
+        capabilities: Mapping[str, str],
+        reasons: Mapping[str, str],
+    ) -> dict[str, object]:
+        total = 0
+        capability_counts: Counter[str] = Counter()
+        reason_counts: Counter[str] = Counter()
+        for key, value in counts.items():
+            try:
+                count = int(value)
+            except (TypeError, ValueError):
+                continue
+            if count <= 0:
+                continue
+            normalized_key = str(key)
+            total += count
+            capability = capabilities.get(normalized_key)
+            reason = reasons.get(normalized_key)
+            if capability:
+                capability_counts[str(capability)] += count
+            if reason:
+                reason_counts[str(reason)] += count
+        if total <= 0:
+            return {}
+        summary_entry: dict[str, object] = {"total": int(total)}
+        if capability_counts:
+            summary_entry["by_capability"] = {
+                capability: int(capability_counts[capability])
+                for capability in sorted(capability_counts)
+            }
+        if reason_counts:
+            summary_entry["by_reason"] = {
+                reason: int(reason_counts[reason])
+                for reason in sorted(reason_counts)
+            }
+        return summary_entry
 
     for schedule in scheduler_cfg.schedules:
         entry: dict[str, object] = {
@@ -3267,12 +3840,18 @@ def describe_multi_strategy_configuration(
         if schedule.interval:
             entry["interval"] = schedule.interval
         definition = definitions.get(schedule.strategy)
+        capability_id: str | None = None
         if definition is not None:
             entry["engine"] = definition.engine
             if definition.risk_profile:
                 entry["definition_risk_profile"] = definition.risk_profile
+            raw_capability = definition.metadata.get("capability")
+            if raw_capability not in (None, ""):
+                capability_id = str(raw_capability).strip() or None
             try:
                 spec = resolved_catalog.get(definition.engine)
+                if spec.capability:
+                    capability_id = spec.capability
                 tags = tuple(dict.fromkeys((*spec.default_tags, *definition.tags)))
                 entry["tags"] = list(tags)
                 if spec.capability:
@@ -3295,9 +3874,56 @@ def describe_multi_strategy_configuration(
                     entry["required_data"] = list(
                         dict.fromkeys(definition.required_data)
                     )
+                if capability_id is None:
+                    extra_capability = definition.metadata.get("capability")
+                    if extra_capability not in (None, ""):
+                        capability_id = str(extra_capability).strip() or None
+        normalized_strategy = (schedule.strategy or "").strip()
+        if capability_id and normalized_strategy:
+            strategy_capabilities.setdefault(normalized_strategy, capability_id)
+
+        if guard is not None and capability_id:
+            try:
+                if not guard.capabilities.is_strategy_enabled(capability_id):
+                    reason = _resolve_guard_reason(capability_id)
+                    if schedule.name not in blocked_schedules:
+                        blocked_schedules.append(schedule.name)
+                        if schedule.name and reason:
+                            blocked_schedule_reasons.setdefault(schedule.name, reason)
+                    strategy_name = schedule.strategy
+                    if strategy_name not in blocked_strategies:
+                        blocked_strategies.append(strategy_name)
+                        if strategy_name and reason:
+                            blocked_strategy_reasons.setdefault(strategy_name, reason)
+                    if capability_id and schedule.name:
+                        _register_guard_detail(
+                            capability_id,
+                            "schedules",
+                            {"name": schedule.name, "reason": reason or ""},
+                        )
+                    if capability_id and strategy_name:
+                        blocked_strategy_capabilities.setdefault(strategy_name, capability_id)
+                    if strategy_name and reason:
+                        blocked_strategy_reasons.setdefault(strategy_name, reason)
+                    if capability_id and strategy_name:
+                        _register_guard_detail(
+                            capability_id,
+                            "strategies",
+                            {"name": strategy_name, "reason": reason or ""},
+                        )
+                    if schedule.name and capability_id:
+                        blocked_schedule_capabilities.setdefault(schedule.name, capability_id)
+                    if schedule.name and reason:
+                        blocked_schedule_reasons.setdefault(schedule.name, reason)
+                    continue
+            except AttributeError:
+                pass
         schedules.append(entry)
 
     schedules.sort(key=lambda item: item["name"])
+    allowed_strategies = {
+        str(entry["strategy"]) for entry in schedules if entry.get("strategy")
+    }
 
     policy_spec = getattr(scheduler_cfg, "capital_policy", None)
     policy, policy_interval = _resolve_capital_policy(policy_spec, _allow_profile=False)
@@ -3313,9 +3939,66 @@ def describe_multi_strategy_configuration(
         except (TypeError, ValueError):
             policy_summary["configured_rebalance_seconds"] = cfg_interval
 
-    def _serialize_limit_tree(tree: Mapping[str, Mapping[str, object]]) -> Mapping[str, Mapping[str, object]]:
+    def _serialize_limit_tree(
+        tree: Mapping[str, Mapping[str, object]],
+        *,
+        category: str,
+        blocked: dict[str, set[str]] | None = None,
+        blocked_capabilities: dict[str, str] | None = None,
+        blocked_reasons: dict[str, str] | None = None,
+    ) -> Mapping[str, Mapping[str, object]]:
         result: dict[str, dict[str, object]] = {}
         for strategy_name, profiles in (tree or {}).items():
+            strategy_key = str(strategy_name)
+            if allowed_strategies and strategy_key not in allowed_strategies:
+                detail_reason: str | None = None
+                detail_capability: str | None = None
+                if blocked is not None:
+                    blocked_profiles = blocked.setdefault(strategy_key, set())
+                    if isinstance(profiles, Mapping):
+                        for profile_name in profiles.keys():
+                            blocked_profiles.add(str(profile_name))
+                    else:
+                        blocked_profiles.add("*")
+                if blocked_capabilities is not None:
+                    detail_capability = (
+                        blocked_strategy_capabilities.get(strategy_key)
+                        or strategy_capabilities.get(strategy_key)
+                    )
+                    if detail_capability:
+                        blocked_capabilities.setdefault(strategy_key, detail_capability)
+                if detail_capability is None:
+                    detail_capability = (
+                        blocked_strategy_capabilities.get(strategy_key)
+                        or strategy_capabilities.get(strategy_key)
+                    )
+                if detail_reason is None:
+                    detail_reason = (
+                        blocked_strategy_reasons.get(strategy_key)
+                        or blocked_schedule_reasons.get(strategy_key)
+                    )
+                if detail_reason is None and detail_capability:
+                    detail_reason = _resolve_guard_reason(detail_capability)
+                if (
+                    blocked_reasons is not None
+                    and detail_reason
+                    and strategy_key not in blocked_reasons
+                ):
+                    blocked_reasons[strategy_key] = detail_reason
+                detail_profiles: list[str] = []
+                if isinstance(profiles, Mapping):
+                    detail_profiles = [str(name) for name in profiles.keys()]
+                else:
+                    detail_profiles = ["*"]
+                for profile_name in detail_profiles:
+                    payload: dict[str, object] = {
+                        "strategy": strategy_key,
+                        "profile": profile_name,
+                    }
+                    if detail_reason:
+                        payload["reason"] = detail_reason
+                    _register_guard_detail(detail_capability, category, payload)
+                continue
             if not isinstance(profiles, Mapping):
                 continue
             profile_entry: dict[str, object] = {}
@@ -3335,27 +4018,88 @@ def describe_multi_strategy_configuration(
                     except (TypeError, ValueError):
                         continue
             if profile_entry:
-                result[strategy_name] = profile_entry
+                result[strategy_key] = profile_entry
         return result
 
     suspensions_payload: list[dict[str, object]] = []
+    blocked_suspensions: list[dict[str, object]] = []
+    blocked_suspension_capabilities: dict[str, str] = {}
+    blocked_suspension_reasons: dict[str, str] = {}
     for suspension in getattr(scheduler_cfg, "initial_suspensions", ()):
         payload: dict[str, object] = {
             "kind": suspension.kind,
             "target": suspension.target,
         }
+        kind = (suspension.kind or "schedule").lower()
+        target = str(suspension.target)
         if suspension.reason:
             payload["reason"] = suspension.reason
         if suspension.until:
             payload["until"] = suspension.until.isoformat()
         if suspension.duration_seconds is not None:
             payload["duration_seconds"] = float(suspension.duration_seconds)
+        if kind != "tag" and allowed_strategies and target not in allowed_strategies:
+            capability_id: str | None = None
+            if kind == "schedule":
+                capability_id = (
+                    blocked_schedule_capabilities.get(target)
+                    or strategy_capabilities.get(target)
+                    or blocked_strategy_capabilities.get(target)
+                )
+            else:
+                capability_id = (
+                    blocked_strategy_capabilities.get(target)
+                    or strategy_capabilities.get(target)
+                )
+            if capability_id:
+                payload["capability"] = capability_id
+                key = f"{kind}:{target}".strip(":")
+                if key:
+                    blocked_suspension_capabilities.setdefault(key, capability_id)
+                    reason = (
+                        blocked_schedule_reasons.get(target)
+                        if kind == "schedule"
+                        else blocked_strategy_reasons.get(target)
+                    )
+                    if not reason:
+                        reason = _resolve_guard_reason(capability_id)
+                    if reason:
+                        payload["guard_reason"] = reason
+                        blocked_suspension_reasons.setdefault(key, reason)
+                detail_payload: dict[str, object] = {
+                    "kind": kind,
+                    "target": target,
+                }
+                if payload.get("guard_reason"):
+                    detail_payload["reason"] = payload["guard_reason"]
+                elif payload.get("reason"):
+                    detail_payload["reason"] = payload["reason"]
+                _register_guard_detail(capability_id, "suspensions", detail_payload)
+            blocked_suspensions.append(dict(payload))
+            continue
         suspensions_payload.append(payload)
 
+    blocked_initial_limits: dict[str, set[str]] = {}
+    blocked_static_limits: dict[str, set[str]] = {}
+    blocked_initial_limit_capabilities: dict[str, str] = {}
+    blocked_static_limit_capabilities: dict[str, str] = {}
+    blocked_initial_limit_reasons: dict[str, str] = {}
+    blocked_static_limit_reasons: dict[str, str] = {}
+
     initial_limits = _serialize_limit_tree(
-        getattr(scheduler_cfg, "initial_signal_limits", {})
+        getattr(scheduler_cfg, "initial_signal_limits", {}),
+        category="initial_signal_limits",
+        blocked=blocked_initial_limits,
+        blocked_capabilities=blocked_initial_limit_capabilities,
+        blocked_reasons=blocked_initial_limit_reasons,
     )
-    static_limits = _serialize_limit_tree(getattr(scheduler_cfg, "signal_limits", {}))
+    static_limits = _serialize_limit_tree(
+        getattr(scheduler_cfg, "signal_limits", {}),
+        category="signal_limits",
+        blocked=blocked_static_limits,
+        blocked_capabilities=blocked_static_limit_capabilities,
+        blocked_reasons=blocked_static_limit_reasons,
+    )
 
     summary: dict[str, object] = {
         "config_path": str(Path(config_path).expanduser()),
@@ -3365,8 +4109,332 @@ def describe_multi_strategy_configuration(
         "initial_suspensions": suspensions_payload,
         "initial_signal_limits": initial_limits,
     }
+    if blocked_schedules:
+        summary["blocked_schedules"] = blocked_schedules
+    if blocked_strategies:
+        summary["blocked_strategies"] = blocked_strategies
+    if blocked_strategy_capabilities:
+        summary["blocked_capabilities"] = {
+            name: blocked_strategy_capabilities[name]
+            for name in blocked_strategies
+            if name in blocked_strategy_capabilities
+        }
+    if blocked_strategy_reasons:
+        summary["blocked_capability_reasons"] = {
+            name: blocked_strategy_reasons[name]
+            for name in blocked_strategies
+            if name in blocked_strategy_reasons
+        }
+    if blocked_schedule_capabilities:
+        summary["blocked_schedule_capabilities"] = {
+            name: blocked_schedule_capabilities[name]
+            for name in blocked_schedules
+            if name in blocked_schedule_capabilities
+        }
+    if blocked_schedule_reasons:
+        summary["blocked_schedule_capability_reasons"] = {
+            name: blocked_schedule_reasons[name]
+            for name in blocked_schedules
+            if name in blocked_schedule_reasons
+        }
+    if blocked_suspensions:
+        summary["blocked_suspensions"] = blocked_suspensions
+    if blocked_suspension_capabilities:
+        summary["blocked_suspension_capabilities"] = {
+            name: blocked_suspension_capabilities[name]
+            for name in sorted(blocked_suspension_capabilities)
+        }
+    if blocked_suspension_reasons:
+        summary["blocked_suspension_reasons"] = {
+            name: blocked_suspension_reasons[name]
+            for name in sorted(blocked_suspension_reasons)
+        }
     if static_limits:
         summary["signal_limits"] = static_limits
+    merged_initial_capabilities: dict[str, str] = dict(blocked_initial_limit_capabilities)
+    merged_initial_reasons: dict[str, str] = dict(blocked_initial_limit_reasons)
+    if blocked_initial_limits:
+        summary["blocked_initial_signal_limits"] = {
+            name: sorted(profiles)
+            for name, profiles in blocked_initial_limits.items()
+        }
+        for name in blocked_initial_limits:
+            capability_id = (
+                merged_initial_capabilities.get(name)
+                or blocked_strategy_capabilities.get(name)
+                or strategy_capabilities.get(name)
+            )
+            if capability_id:
+                merged_initial_capabilities[name] = capability_id
+            reason = (
+                merged_initial_reasons.get(name)
+                or blocked_strategy_reasons.get(name)
+                or blocked_schedule_reasons.get(name)
+            )
+            if not reason and capability_id:
+                reason = _resolve_guard_reason(capability_id)
+            if reason:
+                merged_initial_reasons[name] = reason
+    if merged_initial_capabilities:
+        summary["blocked_initial_signal_limit_capabilities"] = {
+            name: merged_initial_capabilities[name]
+            for name in sorted(merged_initial_capabilities)
+        }
+    if merged_initial_reasons:
+        summary["blocked_initial_signal_limit_reasons"] = {
+            name: merged_initial_reasons[name]
+            for name in sorted(merged_initial_reasons)
+        }
+
+    merged_static_capabilities: dict[str, str] = dict(blocked_static_limit_capabilities)
+    merged_static_reasons: dict[str, str] = dict(blocked_static_limit_reasons)
+    if blocked_static_limits:
+        summary["blocked_signal_limits"] = {
+            name: sorted(profiles)
+            for name, profiles in blocked_static_limits.items()
+        }
+        for name in blocked_static_limits:
+            capability_id = (
+                merged_static_capabilities.get(name)
+                or blocked_strategy_capabilities.get(name)
+                or strategy_capabilities.get(name)
+            )
+            if capability_id:
+                merged_static_capabilities[name] = capability_id
+            reason = (
+                merged_static_reasons.get(name)
+                or blocked_strategy_reasons.get(name)
+                or blocked_schedule_reasons.get(name)
+            )
+            if not reason and capability_id:
+                reason = _resolve_guard_reason(capability_id)
+            if reason:
+                merged_static_reasons[name] = reason
+    if merged_static_capabilities:
+        summary["blocked_signal_limit_capabilities"] = {
+            name: merged_static_capabilities[name]
+            for name in sorted(merged_static_capabilities)
+        }
+    if merged_static_reasons:
+        summary["blocked_signal_limit_reasons"] = {
+            name: merged_static_reasons[name]
+            for name in sorted(merged_static_reasons)
+        }
+    overall_capability_counts: Counter[str] = Counter()
+    overall_reason_counts: Counter[str] = Counter()
+    overall_total = 0
+
+    def _attach_guard_summary(
+        label: str,
+        counts: Mapping[str, int],
+        capabilities: Mapping[str, str],
+        reasons: Mapping[str, str],
+    ) -> None:
+        nonlocal overall_total
+        summary_entry = _guard_summary_from_counts(counts, capabilities, reasons)
+        if not summary_entry:
+            return
+        guard_reason_summary[label] = summary_entry
+        overall_total += int(summary_entry.get("total", 0) or 0)
+        for capability, value in summary_entry.get("by_capability", {}).items():
+            overall_capability_counts[str(capability)] += int(value)
+        for reason, value in summary_entry.get("by_reason", {}).items():
+            overall_reason_counts[str(reason)] += int(value)
+
+    _attach_guard_summary(
+        "strategies",
+        {name: 1 for name in blocked_strategies},
+        blocked_strategy_capabilities,
+        blocked_strategy_reasons,
+    )
+    _attach_guard_summary(
+        "schedules",
+        {name: 1 for name in blocked_schedules},
+        blocked_schedule_capabilities,
+        blocked_schedule_reasons,
+    )
+    _attach_guard_summary(
+        "initial_signal_limits",
+        {name: len(profiles) for name, profiles in blocked_initial_limits.items()},
+        merged_initial_capabilities,
+        merged_initial_reasons,
+    )
+    _attach_guard_summary(
+        "signal_limits",
+        {name: len(profiles) for name, profiles in blocked_static_limits.items()},
+        merged_static_capabilities,
+        merged_static_reasons,
+    )
+    suspension_counts: dict[str, int] = {}
+    for entry in blocked_suspensions:
+        kind = str(entry.get("kind") or "schedule")
+        target = str(entry.get("target") or "")
+        key = f"{kind}:{target}".strip(":")
+        if not key:
+            continue
+        suspension_counts[key] = suspension_counts.get(key, 0) + 1
+    for key in blocked_suspension_capabilities:
+        suspension_counts.setdefault(key, 1)
+    for key in blocked_suspension_reasons:
+        suspension_counts.setdefault(key, 1)
+    _attach_guard_summary(
+        "suspensions",
+        suspension_counts,
+        blocked_suspension_capabilities,
+        blocked_suspension_reasons,
+    )
+
+    if overall_total > 0:
+        overall_summary: dict[str, object] = {"total": int(overall_total)}
+        if overall_capability_counts:
+            overall_summary["by_capability"] = {
+                capability: int(overall_capability_counts[capability])
+                for capability in sorted(overall_capability_counts)
+            }
+        if overall_reason_counts:
+            overall_summary["by_reason"] = {
+                reason: int(overall_reason_counts[reason])
+                for reason in sorted(overall_reason_counts)
+            }
+        guard_reason_summary["overall"] = overall_summary
+
+    normalized_guard_details: dict[
+        str, dict[str, list[dict[str, str]]]
+    ] = {}
+
+    if guard_reason_details:
+        def _detail_sort_key(category: str, entry: Mapping[str, str]) -> tuple[str, ...]:
+            if category == "strategies":
+                return (
+                    entry.get("name", ""),
+                    entry.get("reason", ""),
+                )
+            if category == "schedules":
+                return (
+                    entry.get("name", ""),
+                    entry.get("reason", ""),
+                )
+            if category in {"initial_signal_limits", "signal_limits"}:
+                return (
+                    entry.get("strategy", ""),
+                    entry.get("profile", ""),
+                    entry.get("reason", ""),
+                )
+            if category == "suspensions":
+                return (
+                    entry.get("kind", ""),
+                    entry.get("target", ""),
+                    entry.get("reason", ""),
+                )
+            return tuple(sorted(entry.items()))
+
+        normalized_guard_details = {
+            capability: {
+                category: [
+                    dict(item)
+                    for item in sorted(
+                        (dict(detail) for detail in entries),
+                        key=lambda payload, *, _category=category: _detail_sort_key(
+                            _category, payload
+                        ),
+                    )
+                ]
+                for category, entries in sorted(category_map.items())
+                if entries
+            }
+            for capability, category_map in sorted(guard_reason_details.items())
+        }
+        if normalized_guard_details:
+            summary["guard_reason_details"] = normalized_guard_details
+            reason_detail_details = _build_guard_detail_reason_details_from_details(
+                normalized_guard_details,
+                sort_key=_detail_sort_key,
+            )
+            if reason_detail_details:
+                summary["guard_reason_detail_reason_details"] = reason_detail_details
+            guard_reason_detail_summary = _build_guard_detail_summary_from_details(
+                normalized_guard_details
+            )
+            if guard_reason_detail_summary:
+                category_order = (
+                    "strategies",
+                    "schedules",
+                    "initial_signal_limits",
+                    "signal_limits",
+                    "suspensions",
+                    "overall",
+                )
+                order_set = set(category_order)
+                ordered_summary: dict[str, dict[str, dict[str, object]]] = {}
+                for capability, category_map in sorted(
+                    guard_reason_detail_summary.items()
+                ):
+                    ordered_categories: dict[str, dict[str, object]] = {}
+                    for category in category_order:
+                        payload = category_map.get(category)
+                        if not isinstance(payload, Mapping):
+                            continue
+                        total = payload.get("total")
+                        try:
+                            total_value = int(total) if total is not None else 0
+                        except (TypeError, ValueError):
+                            continue
+                        if total_value <= 0:
+                            continue
+                        entry: dict[str, object] = {"total": total_value}
+                        reasons = payload.get("by_reason")
+                        if isinstance(reasons, Mapping) and reasons:
+                            entry["by_reason"] = {
+                                str(reason): int(reasons[reason])
+                                for reason in sorted(reasons)
+                                if isinstance(reasons[reason], (int, float))
+                                and int(reasons[reason]) > 0
+                            }
+                        ordered_categories[category] = entry
+                    extra_categories = {
+                        category: payload
+                        for category, payload in category_map.items()
+                        if category not in order_set
+                    }
+                    for category in sorted(extra_categories):
+                        payload = extra_categories[category]
+                        if not isinstance(payload, Mapping):
+                            continue
+                        total = payload.get("total")
+                        try:
+                            total_value = int(total) if total is not None else 0
+                        except (TypeError, ValueError):
+                            continue
+                        if total_value <= 0:
+                            continue
+                        entry: dict[str, object] = {"total": total_value}
+                        reasons = payload.get("by_reason")
+                        if isinstance(reasons, Mapping) and reasons:
+                            entry["by_reason"] = {
+                                str(reason): int(reasons[reason])
+                                for reason in sorted(reasons)
+                                if isinstance(reasons[reason], (int, float))
+                                and int(reasons[reason]) > 0
+                            }
+                        ordered_categories[category] = entry
+                    if ordered_categories:
+                        ordered_summary[capability] = ordered_categories
+                if ordered_summary:
+                    summary["guard_reason_detail_summary"] = ordered_summary
+
+            category_summary = _build_guard_detail_category_summary_from_details(
+                normalized_guard_details
+            )
+            if category_summary:
+                summary["guard_reason_detail_category_summary"] = category_summary
+            reason_summary = _build_guard_detail_reason_summary_from_details(
+                normalized_guard_details
+            )
+            if reason_summary:
+                summary["guard_reason_detail_reason_summary"] = reason_summary
+
+    if guard_reason_summary:
+        summary["guard_reason_summary"] = guard_reason_summary
     if getattr(scheduler_cfg, "portfolio_governor", None):
         summary["portfolio_governor"] = scheduler_cfg.portfolio_governor
     if include_strategy_definitions:
