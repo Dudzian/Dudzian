@@ -135,10 +135,49 @@ void AlertsModel::acknowledgeAll()
     Q_EMIT acknowledgementsChanged();
 }
 
+void AlertsModel::raiseAlert(const QString& alertId,
+                             const QString& title,
+                             const QString& description,
+                             Severity severity,
+                             bool sticky)
+{
+    Alert alert;
+    alert.id = alertId;
+    alert.title = title;
+    alert.description = description;
+    alert.severity = severity;
+    alert.raisedAt = QDateTime::currentDateTimeUtc();
+    alert.sticky = sticky;
+
+    const bool ackChanged = upsertAlert(alert);
+    recomputeCounts();
+    if (ackChanged)
+        Q_EMIT acknowledgementsChanged();
+}
+
+void AlertsModel::clearAlert(const QString& alertId)
+{
+    const int index = indexOfAlert(alertId);
+    if (index < 0)
+        return;
+
+    beginRemoveRows(QModelIndex(), index, index);
+    const QString id = m_alerts.at(index).id;
+    m_alerts.removeAt(index);
+    endRemoveRows();
+
+    const bool ackChanged = m_acknowledgedIds.remove(id);
+    recomputeCounts();
+    if (ackChanged)
+        Q_EMIT acknowledgementsChanged();
+}
+
 void AlertsModel::updateFromRiskSnapshot(const RiskSnapshotData& snapshot)
 {
-    for (Alert& alert : m_alerts)
-        alert.stale = true;
+    for (Alert& alert : m_alerts) {
+        if (!isSecurityAlertId(alert.id))
+            alert.stale = true;
+    }
 
     bool ackChanged = false;
 
@@ -281,6 +320,11 @@ bool AlertsModel::pruneStale()
         }
     }
     return ackChanged;
+}
+
+bool AlertsModel::isSecurityAlertId(const QString& id)
+{
+    return id.startsWith(QStringLiteral("security:"));
 }
 
 void AlertsModel::recomputeCounts()
