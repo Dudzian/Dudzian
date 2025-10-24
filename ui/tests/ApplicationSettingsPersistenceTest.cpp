@@ -12,6 +12,7 @@
 #include <QTemporaryDir>
 #include <QUrl>
 #include <QDir>
+#include <QSignalSpy>
 
 #include "app/Application.hpp"
 #include "models/AlertsModel.hpp"
