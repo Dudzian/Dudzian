@@ -7416,6 +7416,9 @@ def show_strategy_catalog(args: argparse.Namespace) -> int:
     normalized_guard_detail_category_summary: dict[str, dict[str, object]] = {}
     normalized_guard_detail_reason_summary: dict[str, dict[str, object]] = {}
     normalized_guard_detail_reason_details: dict[str, dict[str, object]] = {}
+    normalized_guard_detail_capability_reason_summary: dict[
+        str, dict[str, dict[str, object]]
+    ] = {}
     if config_path:
         payload["config_path"] = str(Path(config_path).expanduser())
         if scheduler_name:
@@ -7674,6 +7677,11 @@ def show_scheduler_plan(args: argparse.Namespace) -> int:
         )
     except Exception as exc:  # pragma: no cover - walidacja konfiguracji
         raise CLIUsageError(str(exc)) from exc
+
+    normalized_guard_details: dict[str, dict[str, list[dict[str, str]]]] = {}
+    normalized_guard_detail_capability_reason_summary: dict[
+        str, dict[str, dict[str, object]]
+    ] = {}
 
     blocked_schedules = [
         str(item)
