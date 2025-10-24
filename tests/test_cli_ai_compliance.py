@@ -206,3 +206,59 @@ def test_show_ai_compliance_filters_since(monkeypatch: pytest.MonkeyPatch, capfd
     assert "category" not in captured_kwargs["drift"]
     assert filter_calls
     assert all(call[1] == datetime(2024, 2, 1, tzinfo=timezone.utc) for call in filter_calls)
+
+
+def test_show_ai_compliance_filters_policy_enforce(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dq_reports = ({"policy": {"enforce": True}},)
+    drift_reports = ({"policy": {"enforce": False}},)
+
+    filter_calls: list[dict[str, object]] = []
+
+    def _fake_load_dq(**_kwargs):
+        return dq_reports
+
+    def _fake_load_drift(**_kwargs):
+        return drift_reports
+
+    def _fake_filter(reports, *, include, exclude):
+        filter_calls.append({
+            "reports": tuple(reports),
+            "include": include,
+            "exclude": exclude,
+        })
+        return reports
+
+    def _fake_collect(**_kwargs):
+        return {"risk": (), "compliance": ()}
+
+    monkeypatch.setattr("bot_core.cli.load_recent_data_quality_reports", _fake_load_dq)
+    monkeypatch.setattr("bot_core.cli.load_recent_drift_reports", _fake_load_drift)
+    monkeypatch.setattr(
+        "bot_core.cli.filter_audit_reports_by_policy_enforcement", _fake_filter
+    )
+    monkeypatch.setattr(
+        "bot_core.cli.collect_pending_compliance_sign_offs", _fake_collect
+    )
+    def _fail_ensure(**_kwargs):
+        raise AssertionError("enforce should be disabled")
+
+    monkeypatch.setattr("bot_core.cli.ensure_compliance_sign_offs", _fail_ensure)
+    monkeypatch.setattr(
+        "bot_core.cli.summarize_data_quality_reports",
+        lambda *_args, **_kwargs: {"total": 0, "alerts": 0, "enforced_alerts": 0},
+    )
+    monkeypatch.setattr(
+        "bot_core.cli.summarize_drift_reports",
+        lambda *_args, **_kwargs: {"total": 0, "alerts": 0, "enforced_alerts": 0},
+    )
+
+    args = _build_args(include_policy_enforce=["enforced"])
+
+    exit_code = show_ai_compliance(args)
+    assert exit_code == 0
+
+    assert filter_calls
+    assert all(call["include"] == (True,) for call in filter_calls)
+    assert all(call["exclude"] == () for call in filter_calls)
