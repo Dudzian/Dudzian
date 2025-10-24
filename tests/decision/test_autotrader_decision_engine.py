@@ -121,6 +121,11 @@ def test_decision_orchestrator_allows_positive_signal(tmp_path: Path) -> None:
     assert evaluation is not None
     assert evaluation.accepted is True
     assert evaluation.thresholds_snapshot is not None
+    assert trader._ai_feature_columns(data) == ["close", "volume"]
+    decision_metadata = evaluation.candidate.metadata["decision_engine"]
+    assert decision_metadata["feature_columns"] == ["close", "volume"]
+    assert decision_metadata["feature_columns_source"] == "default"
+    assert "configured_feature_columns" not in decision_metadata
     decision = trader._build_risk_decision(
         "BTCUSDT",
         "buy",
@@ -183,6 +188,11 @@ def test_auto_trader_attaches_ai_context_to_decision(tmp_path: Path) -> None:
     ai_meta = evaluation.candidate.metadata["decision_engine"]["ai"]
     assert ai_meta["prediction_bps"] == pytest.approx(30.0)
     assert ai_meta["direction"] == "buy"
+    assert trader._ai_feature_columns(data) == ["close", "volume"]
+    decision_meta = evaluation.candidate.metadata["decision_engine"]
+    assert decision_meta["feature_columns"] == ["close", "volume"]
+    assert decision_meta["feature_columns_source"] == "default"
+    assert "configured_feature_columns" not in decision_meta
 
     decision = trader._build_risk_decision(
         "ETHUSDT",
@@ -201,6 +211,180 @@ def test_auto_trader_attaches_ai_context_to_decision(tmp_path: Path) -> None:
     ai_details = decision.details["decision_engine"]["ai"]
     assert ai_details["prediction_bps"] == pytest.approx(30.0)
     assert ai_details["direction"] == "buy"
+    decision_meta = decision.details["decision_engine"]
+    assert decision_meta["feature_columns"] == ["close", "volume"]
+    assert decision_meta["feature_columns_source"] == "default"
+    assert "configured_feature_columns" not in decision_meta
+
+
+def test_auto_trader_uses_signal_service_feature_columns(tmp_path: Path) -> None:
+    artifact = _train_artifact(tmp_path)
+    orchestrator = DecisionOrchestrator(_orchestrator_config())
+    register_model_artifact(
+        orchestrator,
+        artifact,
+        name="autotrader",
+        repository_root=tmp_path,
+        set_default=True,
+    )
+    signal_service = types.SimpleNamespace(
+        ai_feature_columns=("volume", "ema", "volume", "close", "close")
+    )
+    trader = AutoTrader(
+        _Emitter(),
+        _GUI(),
+        lambda: "SOLUSDT",
+        bootstrap_context=_bootstrap_context(orchestrator),
+        signal_service=signal_service,
+    )
+    data = pd.DataFrame({"close": [1.0, 1.1], "volume": [90.0, 95.0]})
+    assert trader._ai_feature_columns(data) == ["volume", "close"]
+    assessment = MarketRegimeAssessment(
+        regime=MarketRegime.TREND,
+        confidence=0.65,
+        risk_score=0.18,
+        metrics={},
+    )
+    evaluation = trader._evaluate_decision_candidate(
+        symbol="SOLUSDT",
+        signal="buy",
+        market_data=data,
+        assessment=assessment,
+        last_return=0.01,
+    )
+    assert evaluation is not None
+    decision_meta = evaluation.candidate.metadata["decision_engine"]
+    assert decision_meta["feature_columns"] == ["volume", "close"]
+    assert decision_meta["feature_columns_source"] == "configured"
+    assert decision_meta["configured_feature_columns"] == ["volume", "ema", "close"]
+    assert len(decision_meta["configured_feature_columns"]) == len(
+        set(decision_meta["configured_feature_columns"])
+    )
+    assert "ema" not in decision_meta["features"]
+    assert set(decision_meta["features"]).issuperset(
+        {"volume", "close", "assessment_confidence", "assessment_risk", "signal_direction"}
+    )
+    decision = trader._build_risk_decision(
+        "SOLUSDT",
+        "buy",
+        assessment,
+        effective_risk=0.18,
+        summary=None,
+        cooldown_active=False,
+        cooldown_remaining=0.0,
+        cooldown_reason=None,
+        guardrail_reasons=[],
+        guardrail_triggers=[],
+        decision_engine=evaluation,
+    )
+    final_meta = decision.details["decision_engine"]
+    assert final_meta["feature_columns"] == ["volume", "close"]
+    assert final_meta["feature_columns_source"] == "configured"
+    assert final_meta["configured_feature_columns"] == ["volume", "ema", "close"]
+
+
+def test_auto_trader_falls_back_when_signal_service_columns_missing(tmp_path: Path) -> None:
+    artifact = _train_artifact(tmp_path)
+    orchestrator = DecisionOrchestrator(_orchestrator_config())
+    register_model_artifact(
+        orchestrator,
+        artifact,
+        name="autotrader",
+        repository_root=tmp_path,
+        set_default=True,
+    )
+    signal_service = types.SimpleNamespace(ai_feature_columns=("ema", "vwma", "ema", "vwma"))
+    trader = AutoTrader(
+        _Emitter(),
+        _GUI(),
+        lambda: "ADAUSDT",
+        bootstrap_context=_bootstrap_context(orchestrator),
+        signal_service=signal_service,
+    )
+    data = pd.DataFrame({"close": [1.0, 1.05], "volume": [100.0, 102.0]})
+    assert trader._ai_feature_columns(data) == ["close", "volume"]
+    assessment = MarketRegimeAssessment(
+        regime=MarketRegime.TREND,
+        confidence=0.6,
+        risk_score=0.15,
+        metrics={},
+    )
+    evaluation = trader._evaluate_decision_candidate(
+        symbol="ADAUSDT",
+        signal="buy",
+        market_data=data,
+        assessment=assessment,
+        last_return=0.008,
+    )
+    assert evaluation is not None
+    decision_meta = evaluation.candidate.metadata["decision_engine"]
+    assert decision_meta["feature_columns"] == ["close", "volume"]
+    assert decision_meta["feature_columns_source"] == "fallback"
+    assert decision_meta["configured_feature_columns"] == ["ema", "vwma"]
+    assert set(decision_meta["features"]).issuperset(
+        {"close", "volume", "assessment_confidence", "assessment_risk", "signal_direction"}
+    )
+    decision = trader._build_risk_decision(
+        "ADAUSDT",
+        "buy",
+        assessment,
+        effective_risk=0.22,
+        summary=None,
+        cooldown_active=False,
+        cooldown_remaining=0.0,
+        cooldown_reason=None,
+        guardrail_reasons=[],
+        guardrail_triggers=[],
+        decision_engine=evaluation,
+    )
+    final_meta = decision.details["decision_engine"]
+    assert final_meta["feature_columns"] == ["close", "volume"]
+    assert final_meta["feature_columns_source"] == "fallback"
+    assert final_meta["configured_feature_columns"] == ["ema", "vwma"]
+
+
+def test_auto_trader_exposes_feature_columns_without_decision_evaluation(tmp_path: Path) -> None:
+    artifact = _train_artifact(tmp_path)
+    orchestrator = DecisionOrchestrator(_orchestrator_config())
+    register_model_artifact(
+        orchestrator,
+        artifact,
+        name="autotrader",
+        repository_root=tmp_path,
+        set_default=True,
+    )
+    trader = AutoTrader(
+        _Emitter(),
+        _GUI(),
+        lambda: "BTCUSDT",
+        bootstrap_context=_bootstrap_context(orchestrator),
+    )
+    data = pd.DataFrame({"close": [1.0, 1.1], "volume": [100.0, 105.0]})
+    assert trader._ai_feature_columns(data) == ["close", "volume"]
+    assessment = MarketRegimeAssessment(
+        regime=MarketRegime.TREND,
+        confidence=0.7,
+        risk_score=0.2,
+        metrics={},
+    )
+    decision = trader._build_risk_decision(
+        "BTCUSDT",
+        "hold",
+        assessment,
+        effective_risk=0.2,
+        summary=None,
+        cooldown_active=False,
+        cooldown_remaining=0.0,
+        cooldown_reason=None,
+        guardrail_reasons=[],
+        guardrail_triggers=[],
+        decision_engine=None,
+        ai_context=None,
+    )
+    decision_meta = decision.details["decision_engine"]
+    assert decision_meta["feature_columns"] == ["close", "volume"]
+    assert decision_meta["feature_columns_source"] == "default"
+    assert "configured_feature_columns" not in decision_meta
 
 
 def test_decision_orchestrator_blocks_negative_signal(tmp_path: Path) -> None:
