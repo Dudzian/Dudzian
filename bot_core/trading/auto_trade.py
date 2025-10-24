@@ -2,12 +2,13 @@
 from __future__ import annotations
 
 import datetime as dt
+import logging
 import math
 import time
 from collections import deque
 from copy import deepcopy
-from dataclasses import dataclass
-from typing import Any, Deque, Dict, Iterable, List, Mapping, Optional
+from dataclasses import dataclass, replace
+from typing import Any, Deque, Dict, List, Mapping, Optional
 
 import numpy as np
 import pandas as pd
@@ -23,6 +24,14 @@ from bot_core.ai.regime import (
 )
 from bot_core.backtest.ma import simulate_trades_ma  # noqa: F401 - zachowaj kompatybilność API
 from bot_core.events import DebounceRule, Event, EventBus, EventType, EmitterAdapter
+from bot_core.trading.engine import (
+    EngineConfig,
+    TechnicalIndicators,
+    TechnicalIndicatorsService,
+    TradingParameters,
+)
+from bot_core.trading.regime_workflow import RegimeSwitchDecision, RegimeSwitchWorkflow
+from bot_core.trading.strategies import StrategyCatalog
 
 
 @dataclass
@@ -34,6 +43,13 @@ class _AutoRiskFreezeState:
 
 
 @dataclass
+class _ManualRiskFreezeState:
+    reason: str | None = None
+    triggered_at: float | None = None
+    last_extension_at: float | None = None
+
+
+@dataclass
 class AutoTradeConfig:
     symbol: str = "BTCUSDT"
     qty: float = 0.01
@@ -42,11 +58,15 @@ class AutoTradeConfig:
     default_params: Dict[str, int] | None = None
     risk_freeze_seconds: int = 300
     strategy_weights: Mapping[str, Mapping[str, float]] | None = None
+    trading_parameters: TradingParameters | Mapping[str, Any] | None = None
     regime_window: int = 60
     activation_threshold: float = 0.2
     breakout_window: int = 24
     mean_reversion_window: int = 20
     mean_reversion_z: float = 1.25
+    arbitrage_window: int = 20
+    arbitrage_threshold: float = 0.003
+    arbitrage_confirmation_window: int = 4
     regime_history_maxlen: int = 5
     regime_history_decay: float = 0.65
     auto_risk_freeze: bool = True
@@ -62,6 +82,22 @@ class AutoTradeConfig:
                 regime.value: dict(weights)
                 for regime, weights in defaults.weights.items()
             }
+        params = self.trading_parameters
+        if params is None:
+            self.trading_parameters = TradingParameters()
+        elif isinstance(params, Mapping):
+            self.trading_parameters = TradingParameters(**{str(k): v for k, v in params.items()})
+        elif not isinstance(params, TradingParameters):
+            raise TypeError(
+                "trading_parameters must be TradingParameters, mapping or None"
+            )
+        self.breakout_window = int(self.breakout_window)
+        if self.breakout_window < 2:
+            raise ValueError("breakout_window must be at least 2")
+        self.mean_reversion_window = int(self.mean_reversion_window)
+        if self.mean_reversion_window < 3:
+            raise ValueError("mean_reversion_window must be at least 3")
+        self.mean_reversion_z = float(self.mean_reversion_z)
         self.regime_history_maxlen = int(self.regime_history_maxlen)
         self.regime_history_decay = float(self.regime_history_decay)
         if self.regime_history_maxlen < 1:
@@ -69,6 +105,15 @@ class AutoTradeConfig:
         if not (0.0 < self.regime_history_decay <= 1.0):
             raise ValueError("regime_history_decay must be in the (0, 1] range")
         self.auto_risk_freeze = bool(self.auto_risk_freeze)
+        self.arbitrage_window = int(self.arbitrage_window)
+        if self.arbitrage_window < 2:
+            raise ValueError("arbitrage_window must be at least 2")
+        self.arbitrage_confirmation_window = int(self.arbitrage_confirmation_window)
+        if self.arbitrage_confirmation_window < 1:
+            raise ValueError("arbitrage_confirmation_window must be at least 1")
+        self.arbitrage_threshold = float(self.arbitrage_threshold)
+        if self.arbitrage_threshold <= 0:
+            raise ValueError("arbitrage_threshold must be positive")
         level = self.auto_risk_freeze_level
         if isinstance(level, str):
             try:
@@ -102,10 +147,15 @@ class AutoTradeEngine:
         *,
         regime_classifier: MarketRegimeClassifier | None = None,
         regime_history: RegimeHistory | None = None,
+        strategy_catalog: StrategyCatalog | None = None,
+        regime_workflow: RegimeSwitchWorkflow | None = None,
+        indicator_service: TechnicalIndicatorsService | None = None,
+        indicator_config: EngineConfig | None = None,
     ) -> None:
         self.adapter = adapter
         self.bus: EventBus = adapter.bus
         self.cfg = cfg or AutoTradeConfig()
+        self._logger = logging.getLogger(__name__)
         self._closes: List[float] = []
         self._bars: Deque[Mapping[str, float]] = deque(maxlen=max(self.cfg.regime_window * 3, 200))
         self._params = dict(self.cfg.default_params)
@@ -116,22 +166,62 @@ class AutoTradeEngine:
         self._auto_risk_frozen_until: float = 0.0
         self._auto_risk_frozen: bool = False
         self._auto_risk_state = _AutoRiskFreezeState()
+        self._manual_risk_state: _ManualRiskFreezeState | None = None
         self._submit_market = broker_submit_market
-        self._regime_classifier = MarketRegimeClassifier()
+        self._regime_classifier = regime_classifier or MarketRegimeClassifier()
         self._regime_history = RegimeHistory(
             thresholds_loader=self._regime_classifier.thresholds_loader
         )
         self._regime_history.reload_thresholds(
             thresholds=self._regime_classifier.thresholds_snapshot()
         )
+        normalized_weights = self._normalize_strategy_config(self.cfg.strategy_weights)
         self._strategy_weights = RegimeStrategyWeights(
             weights={
-                MarketRegime(regime): dict(weights)
-                for regime, weights in self._normalize_strategy_config(self.cfg.strategy_weights).items()
+                regime: dict(weights)
+                for regime, weights in normalized_weights.items()
             }
         )
+        catalog = strategy_catalog or StrategyCatalog.default()
+        self._strategy_catalog = catalog
+        workflow_weight_defaults = {
+            regime: dict(weights) for regime, weights in normalized_weights.items()
+        }
+        base_override = {
+            "day_trading_momentum_window": int(max(1, self.cfg.breakout_window)),
+            "day_trading_volatility_window": int(
+                max(1, math.ceil(self.cfg.breakout_window * 1.5))
+            ),
+            "arbitrage_confirmation_window": int(self.cfg.arbitrage_confirmation_window),
+            "arbitrage_spread_threshold": float(self.cfg.arbitrage_threshold),
+        }
+        workflow_parameter_overrides = {
+            regime: dict(base_override) for regime in MarketRegime
+        }
+        if regime_workflow is None:
+            self._regime_workflow: RegimeSwitchWorkflow | None = RegimeSwitchWorkflow(
+                classifier=self._regime_classifier,
+                history=self._regime_history,
+                catalog=self._strategy_catalog,
+                default_weights=workflow_weight_defaults,
+                default_parameter_overrides=workflow_parameter_overrides,
+                logger=self._logger,
+            )
+        else:
+            self._regime_workflow = regime_workflow
+        self._sync_workflow_state()
+        if indicator_service is None:
+            indicator_cfg = indicator_config or EngineConfig(cache_indicators=False)
+            self._indicator_service = TechnicalIndicatorsService(self._logger, indicator_cfg)
+        else:
+            self._indicator_service = indicator_service
+        self._base_trading_params: TradingParameters = self.cfg.trading_parameters
+        self._last_trading_parameters: TradingParameters | None = None
         self._last_regime: MarketRegimeAssessment | None = None
         self._last_summary: RegimeSummary | None = None
+        self._last_regime_decision: RegimeSwitchDecision | None = getattr(
+            self._regime_workflow, "last_decision", None
+        )
 
         batch_rule = DebounceRule(window=0.1, max_batch=1)
         self.bus.subscribe(EventType.MARKET_TICK, self._on_ticks_batch, rule=batch_rule)
@@ -144,6 +234,7 @@ class AutoTradeEngine:
         self._auto_risk_frozen_until = 0.0
         self._auto_risk_frozen = False
         self._auto_risk_state = _AutoRiskFreezeState()
+        self._manual_risk_state = None
         self._recompute_risk_freeze_until()
         self.adapter.push_autotrade_status("enabled", detail={"symbol": self.cfg.symbol})  # type: ignore[attr-defined]
 
@@ -183,6 +274,202 @@ class AutoTradeEngine:
                     regime = MarketRegime.TREND
             normalized[regime] = {str(name): float(value) for name, value in weights.items()}
         return normalized
+
+    def _sync_workflow_state(self) -> None:
+        """Synchronise shared components with an injected workflow."""
+
+        workflow = getattr(self, "_regime_workflow", None)
+        if workflow is None:
+            return
+        classifier = getattr(workflow, "classifier", None)
+        if isinstance(classifier, MarketRegimeClassifier):
+            self._regime_classifier = classifier
+        history = getattr(workflow, "history", None)
+        if isinstance(history, RegimeHistory):
+            self._regime_history = history
+        catalog = getattr(workflow, "catalog", None)
+        if isinstance(catalog, StrategyCatalog):
+            self._strategy_catalog = catalog
+        self._last_regime_decision = getattr(workflow, "last_decision", None)
+
+    def _build_base_trading_parameters(self) -> TradingParameters:
+        base = self._base_trading_params
+        fast = int(self._params.get("fast", base.ema_fast_period))
+        slow = int(self._params.get("slow", base.ema_slow_period))
+        if slow <= fast:
+            slow = fast + 1
+        overrides = {
+            "ema_fast_period": fast,
+            "ema_slow_period": slow,
+            "day_trading_momentum_window": int(max(1, self.cfg.breakout_window)),
+            "day_trading_volatility_window": int(
+                max(1, math.ceil(self.cfg.breakout_window * 1.5))
+            ),
+            "arbitrage_confirmation_window": int(self.cfg.arbitrage_confirmation_window),
+            "arbitrage_spread_threshold": float(self.cfg.arbitrage_threshold),
+        }
+        return replace(base, **overrides)
+
+    def _compose_trading_parameters(self, weights: Mapping[str, float]) -> TradingParameters:
+        base = self._build_base_trading_parameters()
+        total = sum(float(v) for v in weights.values()) or 1.0
+        normalized = {
+            str(name): float(value) / total for name, value in weights.items()
+        }
+        return replace(base, ensemble_weights=normalized)
+
+    def _handle_regime_status(
+        self,
+        assessment: MarketRegimeAssessment,
+        summary: RegimeSummary | None,
+    ) -> None:
+        previous_assessment = self._last_regime
+        previous_summary = self._last_summary
+        should_emit = previous_assessment is None or (
+            previous_assessment.regime != assessment.regime
+        )
+        if not should_emit and summary is not None and previous_summary is not None:
+            if summary.risk_level != previous_summary.risk_level:
+                should_emit = True
+            else:
+                risk_delta = abs(summary.risk_score - previous_summary.risk_score)
+                if risk_delta >= 0.1:
+                    should_emit = True
+        if should_emit:
+            detail = assessment.to_dict()
+            if summary is not None:
+                detail["summary"] = summary.to_dict()
+                detail["thresholds"] = self._regime_history.thresholds_snapshot()
+            self.adapter.push_autotrade_status(  # type: ignore[attr-defined]
+                "regime_update",
+                detail=detail,
+            )
+        self._last_regime = assessment
+        if summary is not None:
+            self._last_summary = summary
+
+    def _evaluate_regime_decision(
+        self,
+        indicator_frame: pd.DataFrame,
+        base_parameters: TradingParameters,
+    ) -> tuple[
+        MarketRegimeAssessment,
+        RegimeSummary | None,
+        Dict[str, float],
+        TradingParameters,
+    ]:
+        workflow = getattr(self, "_regime_workflow", None)
+        if workflow is not None:
+            try:
+                decision = workflow.decide(
+                    indicator_frame,
+                    base_parameters,
+                    symbol=self.cfg.symbol,
+                )
+            except Exception as exc:  # pragma: no cover - defensywne logowanie
+                self._logger.debug("Błąd workflow reżimu: %s", exc, exc_info=True)
+            else:
+                self._last_regime_decision = decision
+                self._handle_regime_status(decision.assessment, decision.summary)
+                weights = {
+                    str(name): float(value)
+                    for name, value in decision.weights.items()
+                }
+                return (
+                    decision.assessment,
+                    decision.summary,
+                    weights,
+                    decision.parameters,
+                )
+        assessment = self._classify_regime(indicator_frame)
+        summary = self._regime_history.summarise()
+        weights = {
+            str(name): float(value)
+            for name, value in self._strategy_weights.weights_for(assessment.regime).items()
+        }
+        parameters = self._compose_trading_parameters(weights)
+        normalized = {
+            str(name): float(value) for name, value in parameters.ensemble_weights.items()
+        }
+        return assessment, summary, normalized, parameters
+
+    def _prepare_indicator_frame(self, frame: pd.DataFrame) -> pd.DataFrame:
+        if frame.empty:
+            return frame
+        data = frame.copy()
+        if "timestamp" in data.columns:
+            ts = pd.to_datetime(data["timestamp"], unit="s", errors="coerce")
+            if ts.notna().all():
+                data = data.drop(columns=["timestamp"]).set_index(ts)
+            else:
+                data = data.drop(columns=["timestamp"], errors="ignore")
+                data.index = pd.RangeIndex(len(data))
+        elif "open_time" in data.columns:
+            ts = pd.to_datetime(data["open_time"], unit="s", errors="coerce")
+            if ts.notna().all():
+                data = data.drop(columns=["open_time"]).set_index(ts)
+            else:
+                data.index = pd.RangeIndex(len(data))
+        else:
+            data.index = pd.RangeIndex(len(data))
+        data = data.sort_index()
+        for column in ("open", "high", "low", "close", "volume"):
+            if column not in data.columns:
+                if column == "open":
+                    data[column] = data.get("close", 0.0)
+                else:
+                    data[column] = 0.0
+            series = pd.to_numeric(data[column], errors="coerce")
+            if column == "open":
+                series = series.ffill().bfill()
+                if "close" in data.columns:
+                    series = series.fillna(pd.to_numeric(data["close"], errors="coerce"))
+            else:
+                series = series.fillna(0.0)
+            data[column] = series.astype(float)
+        data = data.loc[~data.index.duplicated(keep="last")]
+        return data[["open", "high", "low", "close", "volume"]]
+
+    def _generate_plugin_signals(
+        self,
+        indicators: TechnicalIndicators,
+        params: TradingParameters,
+        data: pd.DataFrame,
+        weights: Mapping[str, float],
+    ) -> Dict[str, float]:
+        candidate_names = set(self._strategy_catalog.available()) | set(weights)
+        signals: Dict[str, float] = {}
+        for name in sorted(candidate_names):
+            plugin = self._strategy_catalog.create(name)
+            if plugin is None:
+                continue
+            try:
+                series = plugin.generate(indicators, params, market_data=data)
+            except Exception as exc:  # pragma: no cover - defensywne logowanie
+                self._logger.debug(
+                    "Strategia plugin '%s' zgłosiła wyjątek: %s", name, exc, exc_info=True
+                )
+                continue
+            if series.empty:
+                continue
+            value = float(series.iloc[-1])
+            if not np.isfinite(value):
+                continue
+            signals[name] = float(np.clip(value, -1.0, 1.0))
+        return signals
+
+    def _legacy_signal_bundle(self, closes: List[float], frame: pd.DataFrame) -> Dict[str, float]:
+        trend_signal = float(self._trend_following_signal(closes))
+        day_signal = float(self._day_trading_signal(frame))
+        mean_signal = float(self._mean_reversion_signal(closes))
+        arbitrage_signal = float(self._arbitrage_signal(frame))
+        return {
+            "trend_following": trend_signal,
+            "day_trading": day_signal,
+            "mean_reversion": mean_signal,
+            "arbitrage": arbitrage_signal,
+            "daily_breakout": day_signal,
+        }
 
     def _install_regime_components(
         self,
@@ -381,15 +668,37 @@ class AutoTradeEngine:
         if len(self._bars) < self.cfg.regime_window:
             return
         frame = pd.DataFrame(list(self._bars)[-self.cfg.regime_window :])
-        regime = self._classify_regime(frame)
-        weights = self._strategy_weights.weights_for(regime.regime)
-        signals = {
-            "trend_following": float(self._trend_following_signal(closes)),
-            "daily_breakout": float(self._daily_breakout_signal(frame)),
-            "mean_reversion": float(self._mean_reversion_signal(closes)),
-        }
-        numerator = sum(weights.get(name, 0.0) * signals[name] for name in signals)
-        denominator = sum(abs(weights.get(name, 0.0)) for name in signals)
+        indicator_frame = self._prepare_indicator_frame(frame)
+        data_for_regime = indicator_frame if not indicator_frame.empty else frame
+        base_parameters = self._build_base_trading_parameters()
+        assessment, summary, weights, parameters = self._evaluate_regime_decision(
+            data_for_regime, base_parameters
+        )
+        self._last_trading_parameters = parameters
+        plugin_signals: Dict[str, float] = {}
+        if not indicator_frame.empty:
+            try:
+                indicators = self._indicator_service.calculate_indicators(indicator_frame, parameters)
+            except Exception as exc:  # pragma: no cover - defensywna degradacja
+                self._logger.debug("Błąd wyliczania wskaźników: %s", exc, exc_info=True)
+            else:
+                plugin_signals = self._generate_plugin_signals(
+                    indicators,
+                    parameters,
+                    indicator_frame,
+                    weights,
+                )
+        fallback_signals = self._legacy_signal_bundle(closes, frame)
+        signals = dict(fallback_signals)
+        if plugin_signals:
+            signals.update(plugin_signals)
+        signals["daily_breakout"] = signals.get("day_trading", fallback_signals["day_trading"])
+        numerator = 0.0
+        denominator = 0.0
+        for name, weight in weights.items():
+            signal_value = signals.get(name, 0.0)
+            numerator += weight * signal_value
+            denominator += abs(weight)
         combined = numerator / denominator if denominator else 0.0
         if self.cfg.emit_signals:
             self.adapter.publish(
@@ -398,9 +707,18 @@ class AutoTradeEngine:
                     "symbol": self.cfg.symbol,
                     "direction": combined,
                     "params": dict(self._params),
-                    "regime": regime.regime.value,
+                    "regime": assessment.regime.value,
                     "weights": weights,
                     "signals": signals,
+                    "strategy_parameters": {
+                        "ema_fast_period": parameters.ema_fast_period,
+                        "ema_slow_period": parameters.ema_slow_period,
+                        "ensemble_weights": parameters.ensemble_weights,
+                        "day_trading_momentum_window": parameters.day_trading_momentum_window,
+                        "day_trading_volatility_window": parameters.day_trading_volatility_window,
+                        "arbitrage_confirmation_window": parameters.arbitrage_confirmation_window,
+                        "arbitrage_spread_threshold": parameters.arbitrage_spread_threshold,
+                    },
                 },
             )
         direction = 0
@@ -415,15 +733,31 @@ class AutoTradeEngine:
             self._last_signal = +1
             self.adapter.push_autotrade_status(  # type: ignore[attr-defined]
                 "entry_long",
-                detail={"symbol": self.cfg.symbol, "qty": self.cfg.qty, "regime": regime.to_dict()},
+                detail={
+                    "symbol": self.cfg.symbol,
+                    "qty": self.cfg.qty,
+                    "regime": assessment.to_dict(),
+                    "summary": summary.to_dict() if summary is not None else None,
+                },
             )
         elif direction < 0 and self._last_signal >= 0:
             self._submit_market("sell", self.cfg.qty)
             self._last_signal = -1
             self.adapter.push_autotrade_status(  # type: ignore[attr-defined]
                 "entry_short",
-                detail={"symbol": self.cfg.symbol, "qty": self.cfg.qty, "regime": regime.to_dict()},
+                detail={
+                    "symbol": self.cfg.symbol,
+                    "qty": self.cfg.qty,
+                    "regime": assessment.to_dict(),
+                    "summary": summary.to_dict() if summary is not None else None,
+                },
             )
+
+    @property
+    def last_regime_decision(self) -> RegimeSwitchDecision | None:
+        """Return the most recent decision produced by the regime workflow."""
+
+        return self._last_regime_decision
 
     @staticmethod
     def _sma_tail(xs: List[float], n: int) -> Optional[float]:
@@ -454,7 +788,7 @@ class AutoTradeEngine:
         signal = self._last_cross_signal(closes, fast, slow)
         return 0 if signal is None else signal
 
-    def _daily_breakout_signal(self, frame: pd.DataFrame) -> int:
+    def _day_trading_signal(self, frame: pd.DataFrame) -> int:
         window = max(2, int(self.cfg.breakout_window))
         if frame.empty or len(frame) < window:
             return 0
@@ -468,21 +802,45 @@ class AutoTradeEngine:
             return -1
         return 0
 
-    def _mean_reversion_signal(self, closes: List[float]) -> int:
+    def _daily_breakout_signal(self, frame: pd.DataFrame) -> int:
+        """Alias zachowujący kompatybilność z wcześniejszym API."""
+
+        return self._day_trading_signal(frame)
+
+    def _mean_reversion_signal(self, closes: List[float]) -> float:
         window = max(3, int(self.cfg.mean_reversion_window))
         if len(closes) < window:
-            return 0
+            return 0.0
         subset = np.asarray(closes[-window:], dtype=float)
         mean = float(subset.mean())
         std = float(subset.std())
         if std == 0.0:
-            return 0
+            return 0.0
         zscore = (subset[-1] - mean) / std
         if zscore > self.cfg.mean_reversion_z:
-            return -1
+            return -1.0
         if zscore < -self.cfg.mean_reversion_z:
-            return +1
-        return 0
+            return +1.0
+        return 0.0
+
+    def _arbitrage_signal(self, frame: pd.DataFrame) -> float:
+        if frame.empty:
+            return 0.0
+        closes = frame["close"].astype(float)
+        window = max(2, int(self.cfg.arbitrage_window))
+        reference = closes.rolling(window=window, min_periods=1).mean()
+        spread = (closes - reference) / (reference.abs() + 1e-9)
+        confirm = max(1, int(self.cfg.arbitrage_confirmation_window))
+        confirmed = spread.rolling(window=confirm, min_periods=1).mean().iloc[-1]
+        threshold = float(self.cfg.arbitrage_threshold)
+        if confirmed > threshold:
+            return -1.0
+        if confirmed < -threshold:
+            return +1.0
+        if threshold <= 0:
+            return 0.0
+        latest = float(spread.iloc[-1])
+        return float(np.tanh(latest / threshold))
 
     def _classify_regime(self, frame: pd.DataFrame) -> MarketRegimeAssessment:
         if frame.empty:
@@ -513,28 +871,7 @@ class AutoTradeEngine:
         )
         self._regime_history.update(assessment)
         summary = self._regime_history.summarise()
-        should_emit = self._last_regime is None or (
-            self._last_regime.regime != assessment.regime
-        )
-        if not should_emit and summary is not None and self._last_summary is not None:
-            if summary.risk_level != self._last_summary.risk_level:
-                should_emit = True
-            else:
-                risk_delta = abs(summary.risk_score - self._last_summary.risk_score)
-                if risk_delta >= 0.1:
-                    should_emit = True
-        if should_emit:
-            detail = assessment.to_dict()
-            if summary is not None:
-                detail["summary"] = summary.to_dict()
-                detail["thresholds"] = self._regime_history.thresholds_snapshot()
-            self.adapter.push_autotrade_status(  # type: ignore[attr-defined]
-                "regime_update",
-                detail=detail,
-            )
-        self._last_regime = assessment
-        if summary is not None:
-            self._last_summary = summary
+        self._handle_regime_status(assessment, summary)
         return assessment
 
     def _sync_freeze_state(self) -> None:

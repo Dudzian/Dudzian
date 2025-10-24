@@ -763,6 +763,7 @@ class AIManager:
         self._last_drift_report_path: Path | None = None
         self._last_data_quality_report_path: Path | None = None
         self._require_compliance_sign_offs = False
+        self._compliance_sign_off_roles: tuple[str, ...] | None = None
         self._decision_journal = decision_journal
         if decision_journal_context is not None and not isinstance(decision_journal_context, Mapping):
             raise TypeError("decision_journal_context musi być mapowaniem lub None")
@@ -849,6 +850,16 @@ class AIManager:
         """Włącza lub wyłącza bramkę podpisów compliance dla aktywacji modeli."""
 
         self._require_compliance_sign_offs = bool(enabled)
+
+    def set_compliance_sign_off_roles(self, roles: Sequence[str] | None) -> None:
+        """Konfiguruje role wymagane do aktywacji inference w bramce compliance."""
+
+        if roles is None:
+            self._compliance_sign_off_roles = None
+            return
+
+        normalized = ensure_compliance_sign_offs(roles=roles)
+        self._compliance_sign_off_roles = tuple(normalized.keys())
 
     def register_data_quality_check(self, check: DataQualityCheck) -> None:
         """Rejestruje kontrolę jakości danych wykonywaną podczas pipeline'u."""
@@ -972,6 +983,11 @@ class AIManager:
         return list_audit_reports("data_quality", audit_root=self._audit_root, limit=limit)
 
     def _ensure_compliance_activation_gate(self) -> None:
+        if not self._require_compliance_sign_offs:
+            logger.debug(
+                "Pomijam bramkę podpisów compliance – wymaganie wyłączone."
+            )
+            return
         if self._audit_root is not None:
             kwargs: Dict[str, Any] = {"audit_root": self._audit_root}
         else:
@@ -981,6 +997,7 @@ class AIManager:
         ensure_compliance_sign_offs(
             data_quality_reports=data_reports,
             drift_reports=drift_reports,
+            roles=self._compliance_sign_off_roles,
         )
 
     def _load_audit_payload(self, *, path: Path | None, subdirectory: str) -> Mapping[str, Any] | None:
