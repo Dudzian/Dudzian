@@ -47,6 +47,7 @@ Drawer {
     property string decisionLogStatusMessage: ""
     property color decisionLogStatusColor: palette.highlight
     property var tradableInstrumentList: []
+    property int regimeTimelineMaximumSnapshots: 720
 
     function updateRiskSchedule() {
         if (typeof appController === "undefined")
@@ -85,6 +86,7 @@ Drawer {
             riskHistoryLastAutoExportAt = autoExportAt && autoExportAt.isValid && autoExportAt.isValid() ? autoExportAt : null
             var lastPathUrl = appController.riskHistoryLastAutoExportPath
             riskHistoryLastAutoExportPath = lastPathUrl && lastPathUrl.toLocalFile ? lastPathUrl.toLocalFile() : ""
+            regimeTimelineMaximumSnapshots = appController.regimeTimelineMaximumSnapshots
         }
         if (typeof strategyController !== "undefined") {
             var decisionSnapshot = strategyController.decisionConfigSnapshot()
@@ -509,6 +511,70 @@ Drawer {
                                 from: 0
                                 to: 120
                                 onValueModified: guardForm.disableSecondaryWhenBelow = value
+                            }
+                        }
+                    }
+
+                    GroupBox {
+                        title: qsTr("Strumień reżimu rynku")
+                        Layout.fillWidth: true
+
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            spacing: 8
+
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: 12
+
+                                Label {
+                                    text: qsTr("Limit próbek osi czasu")
+                                    Layout.alignment: Qt.AlignVCenter
+                                }
+
+                                SpinBox {
+                                    id: regimeLimitSpin
+                                    Layout.fillWidth: true
+                                    from: 0
+                                    to: 5000
+                                    stepSize: 10
+                                    editable: true
+                                    value: Math.max(0, regimeTimelineMaximumSnapshots)
+                                    textFromValue: function(value, locale) {
+                                        if (value === 0)
+                                            return qsTr("0 (bez limitu)")
+                                        return Qt.formatLocaleNumber(value, 'f', 0, locale)
+                                    }
+                                    valueFromText: function(text, locale) {
+                                        var trimmed = text.trim()
+                                        if (trimmed.length === 0)
+                                            return regimeLimitSpin.value
+                                        var normalized = trimmed.replace(/\s+\(.+\)$/, "")
+                                        var parsed = Number.fromLocaleString(locale, normalized)
+                                        if (isNaN(parsed))
+                                            parsed = parseInt(normalized)
+                                        if (isNaN(parsed))
+                                            return regimeLimitSpin.value
+                                        return Math.max(from, Math.min(to, Math.round(parsed)))
+                                    }
+                                    onValueModified: regimeTimelineMaximumSnapshots = value
+                                    Binding {
+                                        target: regimeLimitSpin
+                                        property: "value"
+                                        value: Math.max(0, regimeTimelineMaximumSnapshots)
+                                        when: !regimeLimitSpin.activeFocus
+                                    }
+                                }
+                            }
+
+                            Label {
+                                Layout.fillWidth: true
+                                wrapMode: Text.WordWrap
+                                color: palette.mid
+                                text: regimeTimelineMaximumSnapshots === 0
+                                      ? qsTr("0 oznacza brak limitu – wszystkie migawki reżimu zostaną zachowane.")
+                                      : qsTr("Widoki zachowają maksymalnie %1 najnowszych migawek reżimu.")
+                                            .arg(regimeTimelineMaximumSnapshots)
                             }
                         }
                     }
@@ -1663,7 +1729,9 @@ Drawer {
                                             guardForm.jankThresholdMs || 18,
                                             guardForm.maxOverlayCount || 3,
                                             guardForm.disableSecondaryWhenBelow || 0)
-                                if (okInstrument && okGuard) {
+                                const okRegime = appController.setRegimeTimelineMaximumSnapshots(
+                                                Math.max(0, regimeTimelineMaximumSnapshots))
+                                if (okInstrument && okGuard && okRegime) {
                                     statusMessage = qsTr("Zapisano konfigurację strategii")
                                     statusColor = Qt.rgba(0.3, 0.7, 0.4, 1)
                                 } else {
@@ -2192,6 +2260,339 @@ Drawer {
                             color: riskHistoryStatusColor
                             wrapMode: Text.WordWrap
                         }
+                    }
+                }
+
+                GroupBox {
+                    title: qsTr("Historia ryzyka")
+                    Layout.fillWidth: true
+
+                    ColumnLayout {
+                        anchors.fill: parent
+                        spacing: 10
+
+                        Label {
+                            text: qsTr("Limit przechowywanych próbek")
+                        }
+
+                        SpinBox {
+                            id: historyLimitSpin
+                            from: 1
+                            to: 500
+                            stepSize: 1
+                            editable: true
+                            Layout.fillWidth: true
+                            valueFromText: function(text, locale) {
+                                var number = Number.fromLocaleString(locale, text)
+                                if (isNaN(number))
+                                    number = parseFloat(text)
+                                if (isNaN(number))
+                                    return value
+                                return Math.max(from, Math.min(to, Math.round(number)))
+                            }
+                            textFromValue: function(value, locale) {
+                                return Qt.formatLocaleNumber(value, 'f', 0, locale)
+                            }
+                            onValueModified: {
+                                if (typeof appController === "undefined")
+                                    return
+                                const ok = appController.updateRiskHistoryLimit(value)
+                                if (ok) {
+                                    riskHistoryStatusMessage = qsTr("Ustawiono limit historii na %1 próbek").arg(value)
+                                    riskHistoryStatusColor = Qt.rgba(0.3, 0.7, 0.4, 1)
+                                } else {
+                                    riskHistoryStatusMessage = qsTr("Nie udało się ustawić limitu historii ryzyka")
+                                    riskHistoryStatusColor = Qt.rgba(0.9, 0.4, 0.3, 1)
+                                    if (riskHistoryModel)
+                                        historyLimitSpin.value = riskHistoryModel.maximumEntries
+                                }
+                            }
+                            Binding {
+                                target: historyLimitSpin
+                                property: "value"
+                                value: riskHistoryModel ? riskHistoryModel.maximumEntries : 50
+                                when: !historyLimitSpin.activeFocus
+                            }
+                        }
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 12
+
+                            Button {
+                                text: qsTr("Wyczyść historię")
+                                onClicked: {
+                                    if (typeof appController === "undefined")
+                                        return
+                                    appController.clearRiskHistory()
+                                    riskHistoryStatusMessage = qsTr("Wyczyszczono zapisane próbki ryzyka")
+                                    riskHistoryStatusColor = Qt.rgba(0.9, 0.55, 0.25, 1)
+                                }
+                            }
+
+                            Button {
+                                text: qsTr("Eksportuj do CSV…")
+                                enabled: riskHistoryModel && riskHistoryModel.hasSamples
+                                onClicked: historyExportDialog.open()
+                            }
+
+                            Item { Layout.fillWidth: true }
+
+                            Label {
+                                text: riskHistoryModel && riskHistoryModel.hasSamples
+                                      ? qsTr("Zapisanych próbek: %1").arg(riskHistoryModel.entryCount)
+                                      : qsTr("Brak zapisanych próbek")
+                                color: palette.midlight
+                            }
+                        }
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 12
+
+                            CheckBox {
+                                id: exportLimitCheckbox
+                                text: qsTr("Eksportuj tylko ostatnie")
+                                checked: riskHistoryExportLimitEnabled
+                                enabled: riskHistoryModel && riskHistoryModel.hasSamples
+                                onToggled: {
+                                    riskHistoryExportLimitEnabled = checked
+                                    if (typeof appController !== "undefined")
+                                        appController.setRiskHistoryExportLimitEnabled(checked)
+                                }
+                            }
+
+                            SpinBox {
+                                id: exportLimitSpin
+                                from: 1
+                                to: riskHistoryModel && riskHistoryModel.hasSamples
+                                        ? Math.max(riskHistoryModel.entryCount, 1)
+                                        : Math.max(riskHistoryExportLimitValue, 1)
+                                stepSize: 1
+                                enabled: exportLimitCheckbox.checked && riskHistoryModel && riskHistoryModel.hasSamples
+                                Layout.preferredWidth: 120
+                                onValueModified: {
+                                    var normalized = Math.max(1, Math.round(value))
+                                    if (value !== normalized)
+                                        value = normalized
+                                    riskHistoryExportLimitValue = normalized
+                                    if (typeof appController !== "undefined")
+                                        appController.setRiskHistoryExportLimitValue(normalized)
+                                }
+                                Component.onCompleted: value = Math.max(1, riskHistoryExportLimitValue)
+                            }
+
+                            Label {
+                                text: qsTr("próbek")
+                                visible: exportLimitCheckbox.checked
+                            }
+
+                            Item { Layout.fillWidth: true }
+
+                            data: [
+                                Binding {
+                                    target: exportLimitSpin
+                                    property: "value"
+                                    value: Math.max(1, Math.min(riskHistoryExportLimitValue, exportLimitSpin.to))
+                                    when: !exportLimitSpin.activeFocus
+                                }
+                            ]
+                        }
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 12
+
+                            CheckBox {
+                                id: autoExportCheckbox
+                                text: qsTr("Automatyczny eksport")
+                                checked: riskHistoryAutoExportEnabled
+                                enabled: typeof appController !== "undefined"
+                                onToggled: {
+                                    riskHistoryAutoExportEnabled = checked
+                                    if (typeof appController !== "undefined")
+                                        appController.setRiskHistoryAutoExportEnabled(checked)
+                                    riskHistoryStatusMessage = checked
+                                            ? qsTr("Automatyczny eksport historii ryzyka włączony")
+                                            : qsTr("Automatyczny eksport historii ryzyka wyłączony")
+                                    riskHistoryStatusColor = checked
+                                            ? Qt.rgba(0.3, 0.7, 0.4, 1)
+                                            : Qt.rgba(0.9, 0.55, 0.25, 1)
+                                }
+                            }
+
+                            Label {
+                                text: qsTr("co")
+                                visible: autoExportCheckbox.checked
+                            }
+
+                            SpinBox {
+                                id: autoExportIntervalSpin
+                                from: 1
+                                to: 1440
+                                stepSize: 1
+                                enabled: autoExportCheckbox.checked
+                                Layout.preferredWidth: 120
+                                value: Math.max(1, riskHistoryAutoExportIntervalMinutes)
+                                valueFromText: function(text, locale) {
+                                    var number = Number.fromLocaleString(locale, text)
+                                    if (isNaN(number))
+                                        number = parseFloat(text)
+                                    if (isNaN(number))
+                                        return value
+                                    return Math.max(from, Math.min(to, Math.round(number)))
+                                }
+                                textFromValue: function(value, locale) {
+                                    return Qt.formatLocaleNumber(value, 'f', 0, locale)
+                                }
+                                onValueModified: {
+                                    var normalized = Math.max(1, Math.round(value))
+                                    if (normalized !== value)
+                                        value = normalized
+                                    riskHistoryAutoExportIntervalMinutes = normalized
+                                    if (typeof appController !== "undefined")
+                                        appController.setRiskHistoryAutoExportIntervalMinutes(normalized)
+                                }
+                                Binding {
+                                    target: autoExportIntervalSpin
+                                    property: "value"
+                                    value: Math.max(1, Math.min(riskHistoryAutoExportIntervalMinutes, autoExportIntervalSpin.to))
+                                    when: !autoExportIntervalSpin.activeFocus
+                                }
+                            }
+
+                            Label {
+                                text: qsTr("min")
+                                visible: autoExportCheckbox.checked
+                            }
+
+                            Item { Layout.fillWidth: true }
+                        }
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 12
+                            visible: autoExportCheckbox.checked
+
+                            Label {
+                                text: qsTr("Prefiks pliku")
+                                Layout.preferredWidth: 140
+                            }
+
+                            TextField {
+                                id: autoExportBasenameField
+                                Layout.fillWidth: true
+                                text: riskHistoryAutoExportBasename
+                                placeholderText: qsTr("np. risk-history")
+                                inputMethodHints: Qt.ImhPreferLowercase | Qt.ImhNoPredictiveText
+                                enabled: autoExportCheckbox.checked
+                                onEditingFinished: {
+                                    var requested = text
+                                    if (typeof appController !== "undefined")
+                                        appController.setRiskHistoryAutoExportBasename(requested)
+                                    riskHistoryAutoExportBasename = appController
+                                            ? appController.riskHistoryAutoExportBasename
+                                            : riskHistoryAutoExportBasename
+                                    if (text !== riskHistoryAutoExportBasename)
+                                        text = riskHistoryAutoExportBasename
+                                }
+                                Binding {
+                                    target: autoExportBasenameField
+                                    property: "text"
+                                    value: riskHistoryAutoExportBasename
+                                    when: !autoExportBasenameField.activeFocus
+                                }
+                            }
+                        }
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 12
+                            visible: autoExportCheckbox.checked
+
+                            CheckBox {
+                                id: autoExportLocalTimeCheckbox
+                                text: qsTr("Użyj czasu lokalnego w nazwach plików")
+                                checked: riskHistoryAutoExportUseLocalTime
+                                enabled: typeof appController !== "undefined"
+                                onToggled: {
+                                    riskHistoryAutoExportUseLocalTime = checked
+                                    if (typeof appController !== "undefined")
+                                        appController.setRiskHistoryAutoExportUseLocalTime(checked)
+                                    riskHistoryStatusMessage = checked
+                                            ? qsTr("Autoeksport będzie używał czasu lokalnego i znacznika strefy w nazwach plików")
+                                            : qsTr("Autoeksport będzie używał znaczników czasu UTC w nazwach plików")
+                                    riskHistoryStatusColor = Qt.rgba(0.3, 0.7, 0.4, 1)
+                                }
+                            }
+
+                            Item { Layout.fillWidth: true }
+                        }
+
+                        Label {
+                            Layout.fillWidth: true
+                            visible: riskHistoryLastAutoExportAt && riskHistoryLastAutoExportAt.isValid && riskHistoryLastAutoExportAt.isValid()
+                            text: {
+                                if (!riskHistoryLastAutoExportAt || !riskHistoryLastAutoExportAt.isValid || !riskHistoryLastAutoExportAt.isValid())
+                                    return ""
+                                var timestampText = formatTimestamp(riskHistoryLastAutoExportAt)
+                                var pathText = riskHistoryLastAutoExportPath ? riskHistoryLastAutoExportPath : ""
+                                if (pathText.length > 0)
+                                    return qsTr("Ostatni auto-eksport: %1\nPlik: %2").arg(timestampText).arg(pathText)
+                                return qsTr("Ostatni auto-eksport: %1").arg(timestampText)
+                            }
+                            color: palette.midlight
+                            wrapMode: Text.WordWrap
+                        }
+
+                        FileDialog {
+                            id: historyExportDialog
+                            title: qsTr("Zapisz historię ryzyka jako CSV")
+                            fileMode: FileDialog.SaveFile
+                            defaultSuffix: "csv"
+                            folder: riskHistoryExportLastDirectory.length > 0
+                                    ? riskHistoryExportLastDirectory
+                                    : defaultExportFolder()
+                            nameFilters: [qsTr("Pliki CSV (*.csv)"), qsTr("Wszystkie pliki (*)")]
+                            onAccepted: {
+                                if (typeof appController === "undefined")
+                                    return
+                                const requestedLimit = exportLimitCheckbox.checked
+                                        ? Math.max(1, Math.round(exportLimitSpin.value))
+                                        : -1
+                                const ok = appController.exportRiskHistoryToCsv(selectedFile, requestedLimit)
+                                if (ok) {
+                                    var folderUrl = historyExportDialog.currentFolder || historyExportDialog.folder
+                                    if (folderUrl && folderUrl.length > 0) {
+                                        riskHistoryExportLastDirectory = folderUrl
+                                        appController.setRiskHistoryExportLastDirectory(folderUrl)
+                                    }
+                                    if (exportLimitCheckbox.checked && riskHistoryModel) {
+                                        const exported = Math.min(requestedLimit, riskHistoryModel.entryCount)
+                                        riskHistoryStatusMessage = qsTr("Wyeksportowano %1 najnowszych próbek ryzyka do %2")
+                                                                     .arg(exported)
+                                                                     .arg(selectedFile.toString())
+                                    } else {
+                                        riskHistoryStatusMessage = qsTr("Wyeksportowano historię ryzyka do %1")
+                                                                       .arg(selectedFile.toString())
+                                    }
+                                    riskHistoryStatusColor = Qt.rgba(0.3, 0.7, 0.4, 1)
+                                } else {
+                                    riskHistoryStatusMessage = qsTr("Nie udało się wyeksportować historii ryzyka")
+                                    riskHistoryStatusColor = Qt.rgba(0.9, 0.4, 0.3, 1)
+                                }
+                            }
+                        }
+                    }
+                }
+
+                        Label {
+                            Layout.fillWidth: true
+                            visible: riskHistoryStatusMessage.length > 0
+                            text: riskHistoryStatusMessage
+                            color: riskHistoryStatusColor
+                            wrapMode: Text.WordWrap
+                        }
 
                         Connections {
                             target: riskHistoryModel
@@ -2527,42 +2928,6 @@ Drawer {
                     }
 
                     GroupBox {
-                        title: qsTr("Podgląd polecenia CLI")
-                        Layout.fillWidth: true
-
-                        ColumnLayout {
-                            spacing: 8
-
-                            RowLayout {
-                                spacing: 12
-
-                                CheckBox {
-                                    id: supportDryRunPreview
-                                    text: qsTr("Uwzględnij --dry-run")
-                                    checked: true
-                                    enabled: !!supportController
-                                }
-
-                                Item { Layout.fillWidth: true }
-                            }
-
-                            TextArea {
-                                id: supportCommandPreview
-                                Layout.fillWidth: true
-                                Layout.preferredHeight: 96
-                                readOnly: true
-                                wrapMode: TextEdit.WrapAnywhere
-                                selectByMouse: true
-                                font.family: "monospace"
-                                placeholderText: qsTr("Polecenie zostanie wygenerowane automatycznie")
-                                text: supportController
-                                      ? supportController.defaultCommandPreview(supportDryRunPreview.checked)
-                                      : ""
-                            }
-                        }
-                    }
-
-                    GroupBox {
                         title: qsTr("Ostatni manifest")
                         Layout.fillWidth: true
 
@@ -2798,7 +3163,6 @@ Drawer {
                             anchors.right: parent.right
                             activationControllerRef: activationController
                             licenseControllerRef: licenseController
-                            appControllerRef: appController
                         }
                     }
 
@@ -2942,6 +3306,7 @@ Drawer {
         target: appController
         function onInstrumentChanged() { adminPanel.syncForms() }
         function onPerformanceGuardChanged() { adminPanel.syncForms() }
+        function onRegimeTimelineMaximumSnapshotsChanged() { adminPanel.syncForms() }
         function onRiskRefreshScheduleChanged() { adminPanel.updateRiskSchedule() }
     }
 }

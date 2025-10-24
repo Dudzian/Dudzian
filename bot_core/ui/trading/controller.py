@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Optional
-
-from tkinter import messagebox
+from typing import Any, Callable, Optional
 
 from bot_core.security.guards import (
     CapabilityGuard,
@@ -45,6 +43,7 @@ class TradingSessionController:
         *,
         exchange_manager: Optional[Any] = None,
         market_intel: Optional[Any] = None,
+        notifier: Optional[Callable[[str, str], None]] = None,
     ) -> None:
         self.state = state
         self.db = db
@@ -56,6 +55,7 @@ class TradingSessionController:
         self.exchange = exchange_manager
         self.market_intel = market_intel
         self._reserved_slot: str | None = None
+        self._notifier = notifier
 
     # ------------------------------------------------------------------
     def _resolve_guard(self) -> CapabilityGuard | None:
@@ -121,7 +121,7 @@ class TradingSessionController:
                         notice_var.set(str(exc))
                     except Exception:  # pragma: no cover - defensywne logowanie
                         logger.debug("Nie udało się zaktualizować komunikatu licencji", exc_info=True)
-                messagebox.showerror("Licencja", str(exc))
+                self._notify_error("Licencja", str(exc))
                 return
 
         try:
@@ -135,7 +135,7 @@ class TradingSessionController:
                 except Exception:  # pragma: no cover - defensywne logowanie
                     logger.debug("Nie udało się zwolnić slotu licencyjnego", exc_info=True)
             self._reserved_slot = None
-            messagebox.showerror("Trading GUI", str(exc))
+            self._notify_error("Trading GUI", str(exc))
             return
 
         self.state.running = True
@@ -171,3 +171,15 @@ class TradingSessionController:
     # ------------------------------------------------------------------
     def get_exchange(self) -> Any | None:
         return self.exchange
+
+    # ------------------------------------------------------------------
+    def _notify_error(self, title: str, message: str) -> None:
+        handler: Optional[Callable[[str, str], None]] = self._notifier
+        if handler is None:
+            handler = getattr(self.state, "notify_error", None)
+        if not callable(handler):
+            return
+        try:
+            handler(title, message)
+        except Exception:  # pragma: no cover - defensywne logowanie
+            logger.debug("Wyjątek podczas wywołania notyfikatora UI", exc_info=True)

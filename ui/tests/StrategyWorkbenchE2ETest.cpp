@@ -311,12 +311,110 @@ private:
     QStringList m_environments;
 };
 
+class MockWorkbenchController : public QObject {
+    Q_OBJECT
+    Q_PROPERTY(QVariantList catalogEngines READ catalogEngines NOTIFY catalogChanged)
+    Q_PROPERTY(QVariantList catalogDefinitions READ catalogDefinitions NOTIFY catalogChanged)
+    Q_PROPERTY(QVariantMap catalogMetadata READ catalogMetadata NOTIFY catalogChanged)
+    Q_PROPERTY(QVariantMap catalogBlockedDefinitions READ catalogBlockedDefinitions NOTIFY catalogChanged)
+    Q_PROPERTY(QVariantMap catalogRegimeTemplates READ catalogRegimeTemplates NOTIFY catalogChanged)
+    Q_PROPERTY(QVariantMap lastValidation READ lastValidation NOTIFY lastValidationChanged)
+    Q_PROPERTY(QVariantList presetHistory READ presetHistory NOTIFY presetHistoryChanged)
+
+public:
+    explicit MockWorkbenchController(QObject* parent = nullptr)
+        : QObject(parent)
+    {
+    }
+
+    QVariantList catalogEngines() const { return m_catalogEngines; }
+    QVariantList catalogDefinitions() const { return m_catalogDefinitions; }
+    QVariantMap catalogMetadata() const { return m_catalogMetadata; }
+    QVariantMap catalogBlockedDefinitions() const { return m_catalogBlockedDefinitions; }
+    QVariantMap catalogRegimeTemplates() const { return m_catalogRegimeTemplates; }
+    QVariantMap lastValidation() const { return m_lastValidation; }
+    QVariantList presetHistory() const { return m_presetHistory; }
+    QVariantMap lastPresetPayload() const { return m_lastPayload; }
+
+    void setCatalog(const QVariantList& definitions,
+                    const QVariantMap& metadata = QVariantMap(),
+                    const QVariantMap& blocked = QVariantMap(),
+                    const QVariantMap& regimes = QVariantMap())
+    {
+        m_catalogDefinitions = definitions;
+        m_catalogMetadata = metadata;
+        m_catalogBlockedDefinitions = blocked;
+        m_catalogRegimeTemplates = regimes;
+        Q_EMIT catalogChanged();
+    }
+
+    void setValidationResult(const QVariantMap& result)
+    {
+        m_validationResponse = result;
+        m_lastValidation = result;
+        Q_EMIT lastValidationChanged();
+    }
+
+    Q_INVOKABLE QVariantMap validatePreset(const QVariantMap& preset)
+    {
+        m_lastPayload = preset;
+        if (!m_validationResponse.isEmpty()) {
+            m_lastValidation = m_validationResponse;
+            Q_EMIT lastValidationChanged();
+        }
+        return m_validationResponse;
+    }
+
+    Q_INVOKABLE void savePresetSnapshot(const QVariantMap& snapshot)
+    {
+        m_presetHistory.append(snapshot);
+        Q_EMIT presetHistoryChanged();
+    }
+
+    Q_INVOKABLE QVariantMap restorePreviousPreset()
+    {
+        QVariantMap result;
+        if (m_presetHistory.size() < 2) {
+            result.insert(QStringLiteral("ok"), false);
+            return result;
+        }
+        m_presetHistory.removeLast();
+        const QVariantMap previous = m_presetHistory.last().toMap();
+        result.insert(QStringLiteral("ok"), true);
+        result.insert(QStringLiteral("snapshot"), previous);
+        if (previous.contains(QStringLiteral("preset")))
+            result.insert(QStringLiteral("preset"), previous.value(QStringLiteral("preset")));
+        if (previous.contains(QStringLiteral("regime_map")))
+            result.insert(QStringLiteral("regime_map"), previous.value(QStringLiteral("regime_map")));
+        Q_EMIT presetHistoryChanged();
+        return result;
+    }
+
+Q_SIGNALS:
+    void catalogChanged();
+    void lastValidationChanged();
+    void presetHistoryChanged();
+
+private:
+    QVariantList m_catalogEngines;
+    QVariantList m_catalogDefinitions;
+    QVariantMap  m_catalogMetadata;
+    QVariantMap  m_catalogBlockedDefinitions;
+    QVariantMap  m_catalogRegimeTemplates;
+    QVariantMap  m_lastValidation;
+    QVariantMap  m_validationResponse;
+    QVariantMap  m_lastPayload;
+    QVariantList m_presetHistory;
+};
+
 class StrategyWorkbenchE2ETest : public QObject {
     Q_OBJECT
 
 private slots:
     void shouldExposeLiveDataFromControllers();
     void shouldSwitchDemoMode();
+    void shouldEditPresetWithRealtimeValidation();
+    void shouldRollbackSchedulerFromHistory();
 };
 
 static QVariantMap makeInstrument(const QString& exchange,
@@ -345,6 +443,7 @@ void StrategyWorkbenchE2ETest::shouldExposeLiveDataFromControllers()
     RiskStateModel riskModel;
     RiskHistoryModel riskHistoryModel;
     MockLicenseController licenseController;
+    MockWorkbenchController workbenchController;
 
     appController.setConnectionStatus(QStringLiteral("Połączono"));
     appController.setReduceMotionActive(false);
@@ -405,6 +504,7 @@ void StrategyWorkbenchE2ETest::shouldExposeLiveDataFromControllers()
     engine.rootContext()->setContextProperty(QStringLiteral("riskModel"), &riskModel);
     engine.rootContext()->setContextProperty(QStringLiteral("riskHistoryModel"), &riskHistoryModel);
     engine.rootContext()->setContextProperty(QStringLiteral("licenseController"), &licenseController);
+    engine.rootContext()->setContextProperty(QStringLiteral("workbenchController"), &workbenchController);
 
     QQmlComponent component(&engine, QUrl(QStringLiteral("qrc:/qml/components/workbench/StrategyWorkbench.qml")));
     QObject* object = component.create(engine.rootContext());
@@ -468,6 +568,221 @@ void StrategyWorkbenchE2ETest::shouldSwitchDemoMode()
 
     QVERIFY(QMetaObject::invokeMethod(viewModel, "disableDemoMode"));
     QVERIFY(!viewModel->property("demoModeActive").toBool());
+}
+
+void StrategyWorkbenchE2ETest::shouldEditPresetWithRealtimeValidation()
+{
+    QQmlEngine engine;
+
+    MockAppController appController;
+    MockStrategyController strategyController;
+    RiskStateModel riskModel;
+    RiskHistoryModel riskHistoryModel;
+    MockLicenseController licenseController;
+    MockWorkbenchController workbenchController;
+
+    QVariantList definitions;
+    QVariantMap definition;
+    definition.insert(QStringLiteral("name"), QStringLiteral("core_daily_trend"));
+    definition.insert(QStringLiteral("engine"), QStringLiteral("daily_trend_momentum"));
+    definition.insert(QStringLiteral("license_tier"), QStringLiteral("standard"));
+    definition.insert(QStringLiteral("risk_profile"), QStringLiteral("balanced"));
+    definition.insert(QStringLiteral("parameters"), QVariantMap{{QStringLiteral("fast_ma"), 20}});
+    definition.insert(QStringLiteral("tags"), QVariantList{QStringLiteral("trend")});
+    definition.insert(QStringLiteral("metadata"), QVariantMap{{QStringLiteral("risk_profile"), QStringLiteral("balanced")}});
+    definitions.append(definition);
+    workbenchController.setCatalog(definitions);
+
+    QVariantMap presetEntry;
+    presetEntry.insert(QStringLiteral("name"), QStringLiteral("core_daily_trend"));
+    presetEntry.insert(QStringLiteral("engine"), QStringLiteral("daily_trend_momentum"));
+    presetEntry.insert(QStringLiteral("risk_profile"), QStringLiteral("balanced"));
+    presetEntry.insert(QStringLiteral("license_tier"), QStringLiteral("standard"));
+    presetEntry.insert(QStringLiteral("tags"), QVariantList{QStringLiteral("trend")});
+    presetEntry.insert(QStringLiteral("metadata"), QVariantMap{{QStringLiteral("risk_profile"), QStringLiteral("balanced")}});
+
+    QVariantMap preset;
+    preset.insert(QStringLiteral("strategies"), QVariantList{presetEntry});
+
+    QVariantMap validation;
+    validation.insert(QStringLiteral("ok"), true);
+    validation.insert(QStringLiteral("preset"), preset);
+    validation.insert(QStringLiteral("issues"), QVariantList{});
+    validation.insert(QStringLiteral("regime_map"), QVariantMap{{QStringLiteral("balanced"), QVariantList{QStringLiteral("core_daily_trend")}}});
+    workbenchController.setValidationResult(validation);
+
+    engine.rootContext()->setContextProperty(QStringLiteral("appController"), &appController);
+    engine.rootContext()->setContextProperty(QStringLiteral("strategyController"), &strategyController);
+    engine.rootContext()->setContextProperty(QStringLiteral("riskModel"), &riskModel);
+    engine.rootContext()->setContextProperty(QStringLiteral("riskHistoryModel"), &riskHistoryModel);
+    engine.rootContext()->setContextProperty(QStringLiteral("licenseController"), &licenseController);
+    engine.rootContext()->setContextProperty(QStringLiteral("workbenchController"), &workbenchController);
+
+    QQmlComponent component(&engine, QUrl(QStringLiteral("qrc:/qml/components/workbench/StrategyWorkbench.qml")));
+    QObject* object = component.create(engine.rootContext());
+    QVERIFY2(object, qPrintable(component.errorString()));
+    QScopedPointer<QObject> guard(object);
+
+    QObject* viewModel = object->findChild<QObject*>(QStringLiteral("strategyWorkbenchViewModel"));
+    QVERIFY(viewModel);
+
+    QVariant result;
+    QVERIFY(QMetaObject::invokeMethod(viewModel,
+                                      "startPresetDraftFromDefinition",
+                                      Q_RETURN_ARG(QVariant, result),
+                                      Q_ARG(QVariant, QStringLiteral("core_daily_trend"))));
+    QVERIFY(result.toBool());
+
+    QVERIFY(QMetaObject::invokeMethod(viewModel,
+                                      "updatePresetDraftEntry",
+                                      Q_RETURN_ARG(QVariant, result),
+                                      Q_ARG(QVariant, 0),
+                                      Q_ARG(QVariant, QStringLiteral("risk_profile")),
+                                      Q_ARG(QVariant, QStringLiteral("balanced"))));
+    QVERIFY(result.toBool());
+
+    QVERIFY(QMetaObject::invokeMethod(viewModel,
+                                      "requestPresetValidation",
+                                      Q_RETURN_ARG(QVariant, result)));
+    QVERIFY(result.toBool());
+
+    const QVariantMap validationState = viewModel->property("presetValidation").toMap();
+    QCOMPARE(validationState.value(QStringLiteral("ok")).toBool(), true);
+    const QVariantList sanitizedStrategies = validationState.value(QStringLiteral("preset")).toMap().value(QStringLiteral("strategies")).toList();
+    QCOMPARE(sanitizedStrategies.first().toMap().value(QStringLiteral("engine")).toString(), QStringLiteral("daily_trend_momentum"));
+
+    const QVariantMap regime = viewModel->property("regimeMappings").toMap();
+    QCOMPARE(regime.value(QStringLiteral("balanced")).toList().first().toString(), QStringLiteral("core_daily_trend"));
+
+    const QVariantMap payload = workbenchController.lastPresetPayload();
+    QCOMPARE(payload.value(QStringLiteral("entries")).toList().size(), 1);
+}
+
+void StrategyWorkbenchE2ETest::shouldRollbackSchedulerFromHistory()
+{
+    QQmlEngine engine;
+
+    MockAppController appController;
+    MockStrategyController strategyController;
+    RiskStateModel riskModel;
+    RiskHistoryModel riskHistoryModel;
+    MockLicenseController licenseController;
+    MockWorkbenchController workbenchController;
+
+    QVariantList schedulers;
+    QVariantMap first;
+    first.insert(QStringLiteral("name"), QStringLiteral("Momentum Alpha"));
+    first.insert(QStringLiteral("enabled"), true);
+    first.insert(QStringLiteral("timezone"), QStringLiteral("UTC"));
+    first.insert(QStringLiteral("schedules"), QVariantList{});
+    schedulers.append(first);
+    strategyController.setSchedulerList(schedulers);
+
+    QVariantList definitions;
+    QVariantMap daily;
+    daily.insert(QStringLiteral("name"), QStringLiteral("core_daily_trend"));
+    daily.insert(QStringLiteral("engine"), QStringLiteral("daily_trend_momentum"));
+    daily.insert(QStringLiteral("license_tier"), QStringLiteral("standard"));
+    daily.insert(QStringLiteral("metadata"), QVariantMap{{QStringLiteral("risk_profile"), QStringLiteral("balanced")}});
+    definitions.append(daily);
+
+    QVariantMap mean;
+    mean.insert(QStringLiteral("name"), QStringLiteral("core_mean_reversion"));
+    mean.insert(QStringLiteral("engine"), QStringLiteral("mean_reversion"));
+    mean.insert(QStringLiteral("license_tier"), QStringLiteral("professional"));
+    mean.insert(QStringLiteral("metadata"), QVariantMap{{QStringLiteral("risk_profile"), QStringLiteral("neutral")}});
+    definitions.append(mean);
+    workbenchController.setCatalog(definitions);
+
+    QVariantMap presetDaily;
+    presetDaily.insert(QStringLiteral("strategies"), QVariantList{QVariantMap{
+                                           {QStringLiteral("name"), QStringLiteral("core_daily_trend")},
+                                           {QStringLiteral("engine"), QStringLiteral("daily_trend_momentum")},
+                                           {QStringLiteral("risk_profile"), QStringLiteral("balanced")},
+                                           {QStringLiteral("metadata"), QVariantMap{{QStringLiteral("risk_profile"), QStringLiteral("balanced")}}}
+                                       }});
+    QVariantMap validationDaily;
+    validationDaily.insert(QStringLiteral("ok"), true);
+    validationDaily.insert(QStringLiteral("preset"), presetDaily);
+    validationDaily.insert(QStringLiteral("issues"), QVariantList{});
+    validationDaily.insert(QStringLiteral("regime_map"), QVariantMap{{QStringLiteral("balanced"), QVariantList{QStringLiteral("core_daily_trend")}}});
+    workbenchController.setValidationResult(validationDaily);
+
+    engine.rootContext()->setContextProperty(QStringLiteral("appController"), &appController);
+    engine.rootContext()->setContextProperty(QStringLiteral("strategyController"), &strategyController);
+    engine.rootContext()->setContextProperty(QStringLiteral("riskModel"), &riskModel);
+    engine.rootContext()->setContextProperty(QStringLiteral("riskHistoryModel"), &riskHistoryModel);
+    engine.rootContext()->setContextProperty(QStringLiteral("licenseController"), &licenseController);
+    engine.rootContext()->setContextProperty(QStringLiteral("workbenchController"), &workbenchController);
+
+    QQmlComponent component(&engine, QUrl(QStringLiteral("qrc:/qml/components/workbench/StrategyWorkbench.qml")));
+    QObject* object = component.create(engine.rootContext());
+    QVERIFY2(object, qPrintable(component.errorString()));
+    QScopedPointer<QObject> guard(object);
+
+    QObject* viewModel = object->findChild<QObject*>(QStringLiteral("strategyWorkbenchViewModel"));
+    QVERIFY(viewModel);
+
+    QVariant result;
+    QVERIFY(QMetaObject::invokeMethod(viewModel,
+                                      "startPresetDraftFromDefinition",
+                                      Q_RETURN_ARG(QVariant, result),
+                                      Q_ARG(QVariant, QStringLiteral("core_daily_trend"))));
+    QVERIFY(result.toBool());
+    QVERIFY(QMetaObject::invokeMethod(viewModel,
+                                      "requestPresetValidation",
+                                      Q_RETURN_ARG(QVariant, result)));
+    QVERIFY(result.toBool());
+    QVERIFY(QMetaObject::invokeMethod(viewModel,
+                                      "applyPresetDraft",
+                                      Q_RETURN_ARG(QVariant, result)));
+    QVERIFY(result.toBool());
+
+    QVariantList schedulerEntries = viewModel->property("schedulerEntries").toList();
+    QCOMPARE(schedulerEntries.size(), 1);
+    QCOMPARE(schedulerEntries.first().toMap().value(QStringLiteral("name")).toString(), QStringLiteral("core_daily_trend"));
+
+    QVariantMap presetMean;
+    presetMean.insert(QStringLiteral("strategies"), QVariantList{QVariantMap{
+                                         {QStringLiteral("name"), QStringLiteral("core_mean_reversion")},
+                                         {QStringLiteral("engine"), QStringLiteral("mean_reversion")},
+                                         {QStringLiteral("risk_profile"), QStringLiteral("neutral")},
+                                         {QStringLiteral("metadata"), QVariantMap{{QStringLiteral("risk_profile"), QStringLiteral("neutral")}}}
+                                     }});
+    QVariantMap validationMean;
+    validationMean.insert(QStringLiteral("ok"), true);
+    validationMean.insert(QStringLiteral("preset"), presetMean);
+    validationMean.insert(QStringLiteral("issues"), QVariantList{});
+    validationMean.insert(QStringLiteral("regime_map"), QVariantMap{{QStringLiteral("neutral"), QVariantList{QStringLiteral("core_mean_reversion")}}});
+    workbenchController.setValidationResult(validationMean);
+
+    QVERIFY(QMetaObject::invokeMethod(viewModel,
+                                      "startPresetDraftFromDefinition",
+                                      Q_RETURN_ARG(QVariant, result),
+                                      Q_ARG(QVariant, QStringLiteral("core_mean_reversion"))));
+    QVERIFY(result.toBool());
+    QVERIFY(QMetaObject::invokeMethod(viewModel,
+                                      "requestPresetValidation",
+                                      Q_RETURN_ARG(QVariant, result)));
+    QVERIFY(result.toBool());
+    QVERIFY(QMetaObject::invokeMethod(viewModel,
+                                      "applyPresetDraft",
+                                      Q_RETURN_ARG(QVariant, result)));
+    QVERIFY(result.toBool());
+
+    schedulerEntries = viewModel->property("schedulerEntries").toList();
+    QCOMPARE(schedulerEntries.first().toMap().value(QStringLiteral("name")).toString(), QStringLiteral("core_mean_reversion"));
+
+    QVERIFY(QMetaObject::invokeMethod(viewModel,
+                                      "rollbackSchedulerConfig",
+                                      Q_RETURN_ARG(QVariant, result)));
+    QVERIFY(result.toBool());
+
+    schedulerEntries = viewModel->property("schedulerEntries").toList();
+    QCOMPARE(schedulerEntries.first().toMap().value(QStringLiteral("name")).toString(), QStringLiteral("core_daily_trend"));
+
+    const QVariantMap regime = viewModel->property("regimeMappings").toMap();
+    QVERIFY(regime.contains(QStringLiteral("balanced")));
 }
 
 QTEST_MAIN(StrategyWorkbenchE2ETest)

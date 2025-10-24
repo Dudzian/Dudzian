@@ -93,8 +93,6 @@ public:
 
     Q_INVOKABLE bool exportBundle(const QUrl& destination = QUrl(), bool dryRun = false);
     Q_INVOKABLE QStringList buildCommandArguments(const QUrl& destination = QUrl(), bool dryRun = false) const;
-    Q_INVOKABLE QString commandPreview(const QUrl& destination = QUrl(), bool dryRun = false) const;
-    Q_INVOKABLE QString defaultCommandPreview(bool dryRun = false) const;
     void setMetadata(const QVariantMap& metadata);
     void setExtraIncludeSpecs(const QStringList& specs);
 

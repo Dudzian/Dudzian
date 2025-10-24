@@ -7,8 +7,6 @@ Item {
     id: root
     property var activationControllerRef: typeof activationController !== "undefined" ? activationController : null
     property var licenseControllerRef: typeof licenseController !== "undefined" ? licenseController : null
-    property var appControllerRef: typeof appController !== "undefined" ? appController : null
-    property bool scheduleAutoEnabled: false
 
     implicitWidth: parent ? parent.width : 640
 
@@ -28,51 +26,6 @@ Item {
             return document.payload.fingerprint
         return ""
     }
-
-    function fingerprintSchedule() {
-        if (appControllerRef && appControllerRef.fingerprintRefreshSchedule)
-            return appControllerRef.fingerprintRefreshSchedule
-        if (appControllerRef && appControllerRef.securityCache)
-            return appControllerRef.securityCache.fingerprintRefresh || {}
-        return {}
-    }
-
-    function syncScheduleFromController() {
-        var schedule = fingerprintSchedule()
-        scheduleAutoEnabled = !!schedule.active
-        if (intervalSpin && !intervalSpin.activeFocus) {
-            var interval = schedule.intervalSeconds
-            if (!interval || interval <= 0)
-                interval = 86400
-            intervalSpin.value = interval
-        }
-    }
-
-    function formatRemaining(seconds) {
-        if (seconds === undefined || seconds === null)
-            return qsTr("n/d")
-        if (seconds < 0)
-            return qsTr("n/d")
-        if (seconds < 60)
-            return qsTr("%1 s").arg(Math.round(seconds))
-        var minutes = Math.floor(seconds / 60)
-        if (minutes < 60)
-            return qsTr("%1 min").arg(minutes)
-        var hours = Math.floor(minutes / 60)
-        var remainingMinutes = minutes % 60
-        if (remainingMinutes === 0)
-            return qsTr("%1 h").arg(hours)
-        return qsTr("%1 h %2 min").arg(hours).arg(remainingMinutes)
-    }
-
-    function lastFingerprintError() {
-        var schedule = fingerprintSchedule()
-        if (schedule && schedule.lastError)
-            return schedule.lastError
-        return ""
-    }
-
-    Component.onCompleted: syncScheduleFromController()
 
     ColumnLayout {
         anchors.fill: parent
@@ -133,103 +86,6 @@ Item {
             }
         }
 
-        GroupBox {
-            title: qsTr("Harmonogram fingerprintu")
-            Layout.fillWidth: true
-
-            ColumnLayout {
-                anchors.fill: parent
-                spacing: 8
-
-                GridLayout {
-                    columns: 2
-                    columnSpacing: 12
-                    rowSpacing: 6
-                    Layout.fillWidth: true
-
-                    property var schedule: fingerprintSchedule()
-
-                    Label { text: qsTr("Status") }
-                    Label {
-                        text: schedule.active ? qsTr("aktywny") : qsTr("wstrzymany")
-                        font.bold: true
-                    }
-
-                    Label { text: qsTr("Ostatnie zapytanie") }
-                    Label { text: schedule.lastRequestAt || qsTr("n/d") }
-
-                    Label { text: qsTr("Ostatnie odświeżenie") }
-                    Label { text: schedule.lastCompletedAt || qsTr("n/d") }
-
-                    Label { text: qsTr("Następne odświeżenie") }
-                    Label { text: schedule.nextRefreshDueAt || qsTr("n/d") }
-
-                    Label { text: qsTr("Pozostały czas") }
-                    Label { text: formatRemaining(schedule.nextRefreshInSeconds) }
-
-                    Label { text: qsTr("Ostatni błąd") }
-                    Label {
-                        wrapMode: Text.WordWrap
-                        text: lastFingerprintError() || qsTr("brak")
-                        color: lastFingerprintError().length > 0
-                               ? Qt.rgba(0.9, 0.35, 0.35, 1)
-                               : palette.text
-                    }
-                }
-
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: 8
-
-                    CheckBox {
-                        id: autoRefreshToggle
-                        text: qsTr("Automatyczne odświeżanie")
-                        checked: root.scheduleAutoEnabled
-                        enabled: !!appControllerRef
-                        onToggled: {
-                            if (!appControllerRef)
-                                return
-                            if (!appControllerRef.setFingerprintRefreshEnabled(checked))
-                                root.scheduleAutoEnabled = !checked
-                            else
-                                root.scheduleAutoEnabled = checked
-                        }
-                    }
-
-                    Label {
-                        text: qsTr("Interwał (s)")
-                        enabled: autoRefreshToggle.checked
-                    }
-
-                    SpinBox {
-                        id: intervalSpin
-                        from: 300
-                        to: 604800
-                        stepSize: 60
-                        enabled: autoRefreshToggle.checked && !!appControllerRef
-                        value: 86400
-                        onValueModified: {
-                            if (!appControllerRef)
-                                return
-                            appControllerRef.setFingerprintRefreshIntervalSeconds(value)
-                        }
-                        onActiveFocusChanged: {
-                            if (!activeFocus)
-                                syncScheduleFromController()
-                        }
-                    }
-
-                    Button {
-                        text: qsTr("Odśwież teraz")
-                        enabled: !!appControllerRef
-                        onClicked: appControllerRef && appControllerRef.triggerFingerprintRefreshNow()
-                    }
-
-                    Item { Layout.fillWidth: true }
-                }
-            }
-        }
-
         RowLayout {
             Layout.fillWidth: true
             spacing: 8
@@ -275,16 +131,6 @@ Item {
                 return
             if (selectedFile)
                 activationControllerRef.exportFingerprint(selectedFile)
-        }
-    }
-
-    Connections {
-        target: appControllerRef
-        function onFingerprintRefreshScheduleChanged() {
-            syncScheduleFromController()
-        }
-        function onSecurityCacheChanged() {
-            syncScheduleFromController()
         }
     }
 }

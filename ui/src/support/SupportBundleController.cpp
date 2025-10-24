@@ -320,31 +320,6 @@ QStringList SupportBundleController::buildCommandArguments(const QUrl& destinati
     return args;
 }
 
-QString SupportBundleController::commandPreview(const QUrl& destination, bool dryRun) const
-{
-    QString program = m_pythonExecutable.trimmed();
-    if (program.isEmpty())
-        program = QStringLiteral("python3");
-
-    QStringList args = buildCommandArguments(destination, dryRun);
-    const QString script = m_scriptPath.trimmed();
-    if (!script.isEmpty())
-        args.prepend(script);
-
-    QStringList tokens;
-    tokens.reserve(args.size() + 1);
-    tokens.append(quoteArgument(program));
-    for (const QString& arg : args)
-        tokens.append(quoteArgument(arg));
-
-    return tokens.join(QLatin1Char(' '));
-}
-
-QString SupportBundleController::defaultCommandPreview(bool dryRun) const
-{
-    return commandPreview(QUrl(), dryRun);
-}
-
 bool SupportBundleController::exportBundle(const QUrl& destination, bool dryRun)
 {
     if (m_busy) {
