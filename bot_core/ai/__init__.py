@@ -83,7 +83,15 @@ _EXPORTS: Dict[str, Tuple[str, str]] = {
     "apply_policy_to_report": (".data_monitoring", "apply_policy_to_report"),
     "update_sign_off": (".data_monitoring", "update_sign_off"),
     "ComplianceSignOffError": (".data_monitoring", "ComplianceSignOffError"),
+    "collect_pending_compliance_sign_offs": (
+        ".data_monitoring",
+        "collect_pending_compliance_sign_offs",
+    ),
     "ensure_compliance_sign_offs": (".data_monitoring", "ensure_compliance_sign_offs"),
+    "normalize_compliance_sign_off_roles": (
+        ".data_monitoring",
+        "normalize_compliance_sign_off_roles",
+    ),
     "load_recent_data_quality_reports": (
         ".data_monitoring",
         "load_recent_data_quality_reports",

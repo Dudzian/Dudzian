@@ -18,6 +18,8 @@ from bot_core.alerts import DriftAlertPayload
 
 __all__ = [
     "ComplianceSignOffError",
+    "collect_pending_compliance_sign_offs",
+    "normalize_compliance_sign_off_roles",
     "DataCompletenessWatcher",
     "FeatureBoundsValidator",
     "export_data_quality_report",
@@ -609,11 +611,53 @@ def _normalize_required_roles(roles: Sequence[str] | None) -> tuple[str, ...]:
     return tuple(normalized)
 
 
-def ensure_compliance_sign_offs(
+def _normalize_required_roles(roles: Sequence[str] | None) -> tuple[str, ...]:
+    if roles is None:
+        return _DEFAULT_SIGN_OFF_ROLES
+
+    seen: set[str] = set()
+    normalized: list[str] = []
+    for role in roles:
+        if not isinstance(role, str):
+            continue
+        normalized_role = role.strip().lower()
+        if not normalized_role:
+            continue
+        if normalized_role not in _SUPPORTED_SIGN_OFF_ROLES:
+            logger.warning(
+                "Unsupported compliance sign-off role provided: %s", role
+            )
+            raise ValueError(
+                f"unsupported sign-off role: {role!r}"
+            )
+        if normalized_role in seen:
+            continue
+        seen.add(normalized_role)
+        normalized.append(normalized_role)
+
+    if not normalized:
+        logger.warning(
+            "No supported compliance sign-off roles configured; expected one of: %s",
+            ", ".join(sorted(_SUPPORTED_SIGN_OFF_ROLES)),
+        )
+        raise ValueError("roles must include at least one supported sign-off role")
+
+    return tuple(normalized)
+
+
+def normalize_compliance_sign_off_roles(
+    roles: Sequence[str] | None,
+) -> tuple[str, ...]:
+    """Zwraca przefiltrowane i znormalizowane role podpisów compliance."""
+
+    return _normalize_required_roles(roles)
+
+
+def _collect_pending_sign_off_map(
     *,
-    data_quality_reports: Sequence[Mapping[str, Any]] | None = None,
-    drift_reports: Sequence[Mapping[str, Any]] | None = None,
-    roles: Sequence[str] | None = None,
+    data_quality_reports: Sequence[Mapping[str, Any]] | None,
+    drift_reports: Sequence[Mapping[str, Any]] | None,
+    roles: Sequence[str] | None,
 ) -> Mapping[str, tuple[Mapping[str, Any], ...]]:
     """Weryfikuje, czy wymagane role zatwierdziły alerty data-quality oraz dryfu."""
 

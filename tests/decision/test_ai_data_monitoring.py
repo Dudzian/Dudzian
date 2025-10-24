@@ -18,6 +18,7 @@ from bot_core.ai import (
     InferenceFeatureBoundsValidator,
     ModelArtifact,
     ModelRepository,
+    collect_pending_compliance_sign_offs,
     ensure_compliance_sign_offs,
     export_drift_alert_report,
     export_data_quality_report,
