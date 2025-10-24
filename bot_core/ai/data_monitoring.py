@@ -37,8 +37,8 @@ logger = logging.getLogger(__name__)
 
 
 _SAFE_FILENAME = re.compile(r"[^a-z0-9]+", re.IGNORECASE)
-_SIGN_OFF_ROLES = ("risk", "compliance")
-_SUPPORTED_SIGN_OFF_ROLES = frozenset(_SIGN_OFF_ROLES)
+_SUPPORTED_SIGN_OFF_ROLES = frozenset({"risk", "compliance"})
+_SIGN_OFF_ROLES = tuple(sorted(_SUPPORTED_SIGN_OFF_ROLES))
 _DEFAULT_SIGN_OFF_ROLES = _SIGN_OFF_ROLES
 _SIGN_OFF_STATUSES = frozenset(
     {"pending", "approved", "rejected", "escalated", "waived", "investigating"}
