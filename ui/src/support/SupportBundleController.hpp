@@ -5,6 +5,7 @@
 #include <QUrl>
 #include <QVariantMap>
 #include <QVector>
+#include <QStringList>
 
 #include <memory>
 
@@ -31,6 +32,7 @@ class SupportBundleController : public QObject {
     Q_PROPERTY(QString lastStatusMessage READ lastStatusMessage NOTIFY lastStatusMessageChanged)
     Q_PROPERTY(QString lastErrorMessage READ lastErrorMessage NOTIFY lastErrorMessageChanged)
     Q_PROPERTY(QVariantMap lastResult READ lastResult NOTIFY lastResultChanged)
+    Q_PROPERTY(QVariantMap metadata READ metadata NOTIFY metadataChanged)
 
 public:
     explicit SupportBundleController(QObject* parent = nullptr);
@@ -87,8 +89,10 @@ public:
     QString lastStatusMessage() const { return m_lastStatusMessage; }
     QString lastErrorMessage() const { return m_lastErrorMessage; }
     QVariantMap lastResult() const { return m_lastResult; }
+    QVariantMap metadata() const { return m_metadata; }
 
     Q_INVOKABLE bool exportBundle(const QUrl& destination = QUrl(), bool dryRun = false);
+    Q_INVOKABLE QStringList buildCommandArguments(const QUrl& destination = QUrl(), bool dryRun = false) const;
     void setMetadata(const QVariantMap& metadata);
     void setExtraIncludeSpecs(const QStringList& specs);
 
@@ -113,6 +117,7 @@ signals:
     void lastStatusMessageChanged();
     void lastErrorMessageChanged();
     void lastResultChanged();
+    void metadataChanged();
     void exportFinished(bool success, const QVariantMap& payload);
 
 private:
@@ -120,6 +125,7 @@ private:
     QString sanitizeFormat(const QString& requested) const;
     QString buildDefaultDestination() const;
     QStringList buildIncludeArguments() const;
+    QStringList buildDisableArguments() const;
     QStringList buildMetadataArguments() const;
     QStringList buildExtraIncludeArguments() const;
     void handleProcessFinished(int exitCode, QProcess::ExitStatus status);

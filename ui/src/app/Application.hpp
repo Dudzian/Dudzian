@@ -12,6 +12,7 @@
 #include <QDir>
 #include <QFileSystemWatcher>
 #include <QHash>
+#include <QStringList>
 
 #include <memory>
 #include <optional>
@@ -20,14 +21,19 @@
 #include "grpc/TradingClient.hpp"
 #include "models/AlertsModel.hpp"
 #include "models/AlertsFilterProxyModel.hpp"
+#include "models/DecisionLogFilterProxyModel.hpp"
 #include "models/DecisionLogModel.hpp"
+#include "models/IndicatorSeriesModel.hpp"
+#include "models/MarketRegimeTimelineModel.hpp"
 #include "models/OhlcvListModel.hpp"
 #include "models/RiskStateModel.hpp"
 #include "models/RiskHistoryModel.hpp"
+#include "models/SignalListModel.hpp"
 #include "utils/PerformanceGuard.hpp"
 #include "utils/FrameRateMonitor.hpp"
 #include "telemetry/TelemetryReporter.hpp"
 #include "telemetry/TelemetryTlsConfig.hpp"
+#include "telemetry/PerformanceTelemetryController.hpp"
 
 class QQuickWindow;
 class QScreen;
@@ -41,6 +47,8 @@ class StrategyWorkbenchController;     // forward decl (app/StrategyWorkbenchCon
 class SupportBundleController;         // forward decl (support/SupportBundleController.hpp)
 class HealthStatusController;          // forward decl (health/HealthStatusController.hpp)
 class OfflineRuntimeBridge;            // forward decl (runtime/OfflineRuntimeBridge.hpp)
+class UiModuleManager;                 // forward decl (app/UiModuleManager.hpp)
+class UiModuleViewsModel;              // forward decl (app/UiModuleViewsModel.hpp)
 
 class Application : public QObject {
     Q_OBJECT
@@ -52,6 +60,10 @@ class Application : public QObject {
     Q_PROPERTY(QObject*         riskHistoryModel     READ riskHistoryModel    CONSTANT)
     Q_PROPERTY(QObject*         alertsModel         READ alertsModel         CONSTANT)
     Q_PROPERTY(QObject*         alertsFilterModel   READ alertsFilterModel   CONSTANT)
+    Q_PROPERTY(QObject*         indicatorSeriesModel READ indicatorSeriesModel CONSTANT)
+    Q_PROPERTY(QObject*         signalListModel READ signalListModel CONSTANT)
+    Q_PROPERTY(QObject*         marketRegimeTimelineModel READ marketRegimeTimelineModel CONSTANT)
+    Q_PROPERTY(int              regimeTimelineMaximumSnapshots READ regimeTimelineMaximumSnapshots WRITE setRegimeTimelineMaximumSnapshots NOTIFY regimeTimelineMaximumSnapshotsChanged)
     Q_PROPERTY(QObject*         activationController READ activationController CONSTANT)
     Q_PROPERTY(QObject*         reportController READ reportController CONSTANT)
     Q_PROPERTY(QObject*         strategyController READ strategyController CONSTANT)
@@ -59,9 +71,13 @@ class Application : public QObject {
     Q_PROPERTY(QObject*         supportController READ supportController CONSTANT)
     Q_PROPERTY(QObject*         healthController READ healthController CONSTANT)
     Q_PROPERTY(QObject*         decisionLogModel READ decisionLogModel CONSTANT)
+    Q_PROPERTY(QObject*         moduleManager READ moduleManager CONSTANT)
+    Q_PROPERTY(QObject*         moduleViewsModel READ moduleViewsModel CONSTANT)
     Q_PROPERTY(QString          decisionLogPath READ decisionLogPath NOTIFY decisionLogPathChanged)
     Q_PROPERTY(int              telemetryPendingRetryCount READ telemetryPendingRetryCount NOTIFY telemetryPendingRetryCountChanged)
     Q_PROPERTY(QVariantMap      riskRefreshSchedule READ riskRefreshSchedule NOTIFY riskRefreshScheduleChanged)
+    Q_PROPERTY(QVariantMap      licenseRefreshSchedule READ licenseRefreshSchedule NOTIFY licenseRefreshScheduleChanged)
+    Q_PROPERTY(QVariantMap      securityCache READ securityCache NOTIFY securityCacheChanged)
     Q_PROPERTY(bool             riskHistoryExportLimitEnabled READ riskHistoryExportLimitEnabled WRITE setRiskHistoryExportLimitEnabled NOTIFY riskHistoryExportLimitEnabledChanged)
     Q_PROPERTY(int              riskHistoryExportLimitValue READ riskHistoryExportLimitValue WRITE setRiskHistoryExportLimitValue NOTIFY riskHistoryExportLimitValueChanged)
     Q_PROPERTY(QUrl             riskHistoryExportLastDirectory READ riskHistoryExportLastDirectory WRITE setRiskHistoryExportLastDirectory NOTIFY riskHistoryExportLastDirectoryChanged)
@@ -102,6 +118,8 @@ public:
     QObject*         supportController() const;
     QObject*         healthController() const;
     QObject*         decisionLogModel() const;
+    QObject*         moduleManager() const;
+    QObject*         moduleViewsModel() const;
     QObject*         alertsModel() const { return const_cast<AlertsModel*>(&m_alertsModel); }
     QObject*         alertsFilterModel() const { return const_cast<AlertsFilterProxyModel*>(&m_filteredAlertsModel); }
     QObject*         riskHistoryModel() const { return const_cast<RiskHistoryModel*>(&m_riskHistoryModel); }
@@ -132,6 +150,8 @@ public slots:
     Q_INVOKABLE QVariantMap performanceGuardSnapshot() const;
     Q_INVOKABLE QVariantMap riskRefreshSnapshot() const;
     QVariantMap riskRefreshSchedule() const { return riskRefreshSnapshot(); }
+    QVariantMap licenseRefreshSchedule() const;
+    QVariantMap securityCache() const { return m_securityCache; }
     Q_INVOKABLE bool updateInstrument(const QString& exchange,
                                       const QString& symbol,
                                       const QString& venueSymbol,
@@ -156,10 +176,12 @@ public slots:
     Q_INVOKABLE bool setRiskHistoryAutoExportIntervalMinutes(int minutes);
     Q_INVOKABLE bool setRiskHistoryAutoExportBasename(const QString& basename);
     Q_INVOKABLE bool setRiskHistoryAutoExportUseLocalTime(bool useLocalTime);
+    Q_INVOKABLE bool setRegimeTimelineMaximumSnapshots(int maximumSnapshots);
     Q_INVOKABLE void startOfflineAutomation();
     Q_INVOKABLE void stopOfflineAutomation();
     Q_INVOKABLE bool setDecisionLogPath(const QUrl& url);
     Q_INVOKABLE bool reloadDecisionLog();
+    Q_INVOKABLE bool reloadUiModules();
 
     // Test helpers (persistent UI state)
     void saveUiSettingsImmediatelyForTesting();
@@ -171,6 +193,10 @@ public slots:
     DecisionLogModel* decisionLogModelForTesting() { return &m_decisionLogModel; }
     void setTradableInstrumentsForTesting(const QString& exchange,
                                           const QVector<TradingClient::TradableInstrument>& items);
+    void setModuleManagerForTesting(std::unique_ptr<UiModuleManager> manager);
+    UiModuleManager* moduleManagerForTesting() const { return m_moduleManager.get(); }
+    UiModuleViewsModel* moduleViewsModelForTesting() const { return m_moduleViewsModel.get(); }
+    QStringList uiModuleDirectoriesForTesting() const { return m_uiModuleDirectories; }
 
     // Test helpers
     void ingestFpsSampleForTesting(double fps);
@@ -191,12 +217,17 @@ signals:
     void riskHistoryAutoExportIntervalMinutesChanged();
     void riskHistoryAutoExportBasenameChanged();
     void riskHistoryAutoExportUseLocalTimeChanged();
+    void uiModuleDirectoriesChanged(const QStringList& directories);
+    void uiModulesReloaded(bool success, const QVariantMap& report);
     void riskHistoryLastAutoExportAtChanged();
     void riskHistoryLastAutoExportPathChanged();
+    void regimeTimelineMaximumSnapshotsChanged();
     void offlineDaemonStatusChanged();
     void offlineAutomationRunningChanged(bool running);
     void offlineStrategyPathChanged();
     void decisionLogPathChanged();
+    void licenseRefreshScheduleChanged();
+    void securityCacheChanged();
 
 private slots:
     void handleHistory(const QList<OhlcvPoint>& candles);
@@ -209,6 +240,10 @@ private slots:
     void handleHealthTokenPathChanged(const QString& path);
     void handleOfflineStatusChanged(const QString& status);
     void handleOfflineAutomationChanged(bool running);
+    void handleActivationErrorChanged();
+    void handleActivationFingerprintChanged();
+    void handleActivationLicensesChanged();
+    void handleActivationOemLicenseChanged();
 
 private:
     // Rejestracja obiektów w kontekście QML
@@ -271,7 +306,9 @@ private:
     void applyRiskHistoryCliOverrides(const QCommandLineParser& parser);
     void configureStrategyBridge(const QCommandLineParser& parser);
     void configureSupportBundle(const QCommandLineParser& parser);
+    void configureRegimeThresholds(const QCommandLineParser& parser);
     void configureDecisionLog(const QCommandLineParser& parser);
+    void configureUiModules(const QCommandLineParser& parser);
     void setUiSettingsPersistenceEnabled(bool enabled);
     void setUiSettingsPath(const QString& path, bool reload = true);
     void loadUiSettings();
@@ -292,6 +329,7 @@ private:
                                QString& trackedDir,
                                const QString& filePath,
                                const char* label);
+    bool applyRegimeThresholdPath(const QString& path, bool warnIfMissing);
     void configureTlsWatcher(QFileSystemWatcher& watcher,
                               QStringList& trackedFiles,
                               QStringList& trackedDirs,
@@ -307,13 +345,18 @@ private:
     void handleTradingTlsPathChanged(const QString& path);
     void handleMetricsTlsPathChanged(const QString& path);
     void handleHealthTlsPathChanged(const QString& path);
+    void handleRegimeThresholdPathChanged(const QString& path);
 
     // --- Stan i komponenty ---
     QQmlApplicationEngine& m_engine;
     OhlcvListModel         m_ohlcvModel;
+    IndicatorSeriesModel   m_indicatorModel;
+    SignalListModel        m_signalModel;
+    MarketRegimeTimelineModel m_regimeTimelineModel;
     RiskStateModel         m_riskModel;
     RiskHistoryModel       m_riskHistoryModel;
     DecisionLogModel       m_decisionLogModel;
+    DecisionLogFilterProxyModel m_decisionLogFilter;
     TradingClient          m_client;
     std::unique_ptr<OfflineRuntimeBridge> m_offlineBridge;
     AlertsModel            m_alertsModel;
@@ -324,6 +367,7 @@ private:
     PerformanceGuard       m_guard{};
     int                    m_maxSamples = 10240;
     int                    m_historyLimit = 500;
+    int                    m_regimeTimelineMaximumSnapshots = 720;
     TradingClient::TlsConfig m_tradingTlsConfig{};
     QString                m_tradingAuthToken;
     QString                m_tradingAuthTokenFile;
@@ -360,8 +404,11 @@ private:
     std::unique_ptr<StrategyWorkbenchController> m_workbenchController;
     std::unique_ptr<SupportBundleController>   m_supportController;
     std::unique_ptr<HealthStatusController>    m_healthController;
+    std::unique_ptr<UiModuleManager>           m_moduleManager;
+    std::unique_ptr<UiModuleViewsModel>        m_moduleViewsModel;
 
     // --- Telemetry state ---
+    std::unique_ptr<PerformanceTelemetryController> m_performanceTelemetry;
     std::unique_ptr<TelemetryReporter> m_telemetry;
     QString                            m_metricsEndpoint;
     QString                            m_metricsTag;
@@ -409,6 +456,16 @@ private:
     QDateTime                          m_lastRiskHistoryAutoExportUtc;
     QUrl                               m_lastRiskHistoryAutoExportPath;
     bool                               m_riskHistoryAutoExportDirectoryWarned = false;
+    QTimer                             m_licenseRefreshTimer;
+    int                                m_licenseRefreshIntervalSeconds = 600;
+    QDateTime                          m_lastLicenseRefreshRequestUtc;
+    QDateTime                          m_lastLicenseRefreshUtc;
+    QDateTime                          m_nextLicenseRefreshUtc;
+    QString                            m_licenseCachePath;
+    QVariantMap                        m_securityCache;
+    bool                               m_loadingSecurityCache = false;
+    QString                            m_lastSecurityError;
+    bool                               m_licenseRefreshTimerConfigured = false;
 
     struct OverlayState {
         int  active = 0;
@@ -434,6 +491,7 @@ private:
     QFileSystemWatcher                                 m_tradingTlsWatcher;
     QFileSystemWatcher                                 m_metricsTlsWatcher;
     QFileSystemWatcher                                 m_healthTlsWatcher;
+    QFileSystemWatcher                                 m_regimeThresholdWatcher;
     QString                                            m_tradingTokenWatcherFile;
     QStringList                                        m_tradingTokenWatcherDirs;
     QString                                            m_metricsTokenWatcherFile;
@@ -446,6 +504,7 @@ private:
     QStringList                                        m_metricsTlsWatcherDirs;
     QStringList                                        m_healthTlsWatcherFiles;
     QStringList                                        m_healthTlsWatcherDirs;
+    QStringList                                        m_uiModuleDirectories;
     quint64                                            m_tradingTlsReloadGeneration = 0;
     quint64                                            m_metricsTlsReloadGeneration = 0;
     quint64                                            m_healthTlsReloadGeneration = 0;
@@ -462,4 +521,5 @@ public: // test helpers
     quint64 tradingTlsReloadGenerationForTesting() const { return m_tradingTlsReloadGeneration; }
     quint64 metricsTlsReloadGenerationForTesting() const { return m_metricsTlsReloadGeneration; }
     quint64 healthTlsReloadGenerationForTesting() const { return m_healthTlsReloadGeneration; }
+    QVariantMap securityCacheForTesting() const { return m_securityCache; }
 };
