@@ -1,8 +1,6 @@
 """Strategy plugin implementations using :class:`TradingParameters`."""
 from __future__ import annotations
 
-from __future__ import annotations
-
 from abc import ABC, abstractmethod
 from types import MappingProxyType
 from typing import (
@@ -11,6 +9,7 @@ from typing import (
     Dict,
     Iterable,
     Mapping,
+    MutableMapping,
     Optional,
     Tuple,
     Type,
@@ -23,6 +22,11 @@ import pandas as pd
 
 if TYPE_CHECKING:  # pragma: no cover - hints only
     from bot_core.trading.engine import TechnicalIndicators, TradingParameters
+
+from bot_core.strategies.catalog import DEFAULT_STRATEGY_CATALOG
+
+_BUILTIN_PLUGIN_REGISTRY: MutableMapping[str, Type["StrategyPlugin"]] = {}
+_REGISTERED_ENGINE_KEYS: set[str] = set()
 
 TStrategy = TypeVar("TStrategy", bound="StrategyPlugin")
 
@@ -63,6 +67,54 @@ class StrategyPlugin(ABC):
     required_data: Tuple[str, ...] = ()
     capability: str | None = None
     tags: Tuple[str, ...] = ()
+    engine_key: str | None = None
+    extra_tags: Tuple[str, ...] = ()
+
+    def __init_subclass__(cls, **kwargs: object) -> None:
+        super().__init_subclass__(**kwargs)
+        engine_key = _normalize_text(getattr(cls, "engine_key", None))
+        if engine_key is None:
+            return
+
+        cls.engine_key = engine_key
+
+        try:
+            spec = DEFAULT_STRATEGY_CATALOG.get(engine_key)
+        except KeyError as exc:  # pragma: no cover - sanity guard
+            raise ValueError(
+                "Strategy plugin '%s' declares engine_key='%s' which is not registered "
+                "in DEFAULT_STRATEGY_CATALOG" % (cls.__name__, engine_key)
+            ) from exc
+
+        cls.license_tier = spec.license_tier
+        cls.risk_classes = tuple(spec.risk_classes)
+        cls.required_data = tuple(spec.required_data)
+        cls.capability = spec.capability
+
+        base_tags = _normalize_sequence(spec.default_tags)
+        extra_tags = _normalize_sequence(getattr(cls, "extra_tags", ()))
+        override_tags = _normalize_sequence(getattr(cls, "tags", ()))
+
+        if override_tags:
+            tags = tuple(dict.fromkeys((*base_tags, *override_tags)))
+        elif extra_tags:
+            tags = tuple(dict.fromkeys((*base_tags, *extra_tags)))
+        else:
+            tags = base_tags
+
+        cls.tags = tags
+
+        if engine_key in _REGISTERED_ENGINE_KEYS:
+            existing = _BUILTIN_PLUGIN_REGISTRY.get(engine_key)
+            existing_name = existing.__name__ if existing else "<external>"
+            raise ValueError(
+                "Zduplikowano plugin dla engine_key='%s' (zarejestrowany: %s, nowy: %s)"
+                % (engine_key, existing_name, cls.__name__)
+            )
+        _REGISTERED_ENGINE_KEYS.add(engine_key)
+
+        if cls.__module__ == __name__:
+            _BUILTIN_PLUGIN_REGISTRY[engine_key] = cls
 
     def __repr__(self) -> str:  # pragma: no cover - debugging helper
         return f"{self.__class__.__name__}(name={self.name!r})"
@@ -108,6 +160,9 @@ class StrategyPlugin(ABC):
         tags = _normalize_sequence(self.tags)
         if tags:
             payload["tags"] = tags
+        engine_key = _normalize_text(getattr(type(self), "engine_key", None))
+        if engine_key:
+            payload["engine"] = engine_key
         payload["description"] = str(self.description or "")
         return MappingProxyType(payload)
 
@@ -160,8 +215,8 @@ class StrategyCatalog:
     def __contains__(self, name: str) -> bool:  # pragma: no cover - trivial
         return name in self._registry
 
-    def describe(self) -> Tuple[Mapping[str, str], ...]:
-        """Zwraca uproszczony opis strategii przydatny w UI."""
+    def describe(self) -> Tuple[Mapping[str, object], ...]:
+        """Zwraca pełny opis metadanych strategii dla warstw klienckich."""
 
         summary: list[Mapping[str, object]] = []
         for name in self.available():
@@ -187,26 +242,37 @@ class StrategyCatalog:
     def default(cls) -> "StrategyCatalog":
         """Return catalog populated with built-in strategies."""
 
-        return cls(
-            plugins=(
-                TrendFollowingStrategy,
-                DayTradingStrategy,
-                MeanReversionStrategy,
-                ArbitrageStrategy,
+        plugins_by_engine = _builtin_plugins_by_engine()
+        ordered_plugins: list[Type[StrategyPlugin]] = []
+        missing_engines: list[str] = []
+
+        for engine_meta in DEFAULT_STRATEGY_CATALOG.describe_engines():
+            engine_key = _normalize_text(engine_meta.get("engine"))
+            if engine_key is None:
+                continue
+            plugin_cls = plugins_by_engine.get(engine_key)
+            if plugin_cls is None:
+                missing_engines.append(engine_key)
+                continue
+            if plugin_cls not in ordered_plugins:
+                ordered_plugins.append(plugin_cls)
+
+        if missing_engines:
+            missing = ", ".join(sorted(set(missing_engines)))
+            raise RuntimeError(
+                "Brak implementacji pluginów tradingowych dla silników: "
+                f"{missing}. Dodaj klasy w bot_core.trading.strategies.plugins."
             )
-        )
+
+        return cls(plugins=tuple(ordered_plugins))
 
 
 class TrendFollowingStrategy(StrategyPlugin):
     """Classic trend-following ensemble built on moving averages."""
 
+    engine_key = "daily_trend_momentum"
     name = "trend_following"
     description = "EMA and SMA crossovers highlighting persistent direction."
-    license_tier = "standard"
-    risk_classes = ("directional", "momentum")
-    required_data = ("ohlcv", "technical_indicators")
-    capability = "trend_d1"
-    tags = ("trend", "momentum")
 
     def generate(
         self,
@@ -228,13 +294,9 @@ class TrendFollowingStrategy(StrategyPlugin):
 class DayTradingStrategy(StrategyPlugin):
     """Intraday momentum strategy focusing on short-lived swings."""
 
+    engine_key = "day_trading"
     name = "day_trading"
     description = "Short momentum bursts with volatility-aware scaling."
-    license_tier = "standard"
-    risk_classes = ("intraday", "momentum")
-    required_data = ("ohlcv", "technical_indicators")
-    capability = "day_trading"
-    tags = ("intraday", "momentum")
 
     def generate(
         self,
@@ -268,13 +330,9 @@ class DayTradingStrategy(StrategyPlugin):
 class MeanReversionStrategy(StrategyPlugin):
     """RSI/Bollinger-based contrarian strategy."""
 
+    engine_key = "mean_reversion"
     name = "mean_reversion"
     description = "Fade extremes using RSI and Bollinger Bands confirmation."
-    license_tier = "professional"
-    risk_classes = ("statistical", "mean_reversion")
-    required_data = ("ohlcv", "spread_history")
-    capability = "mean_reversion"
-    tags = ("mean_reversion", "stat_arbitrage")
 
     def generate(
         self,
@@ -298,13 +356,9 @@ class MeanReversionStrategy(StrategyPlugin):
 class ArbitrageStrategy(StrategyPlugin):
     """Light-weight spread arbitrage approximation using a synthetic benchmark."""
 
+    engine_key = "cross_exchange_arbitrage"
     name = "arbitrage"
     description = "Exploit deviations from the Bollinger mid-band as proxy spreads."
-    license_tier = "enterprise"
-    risk_classes = ("arbitrage", "liquidity")
-    required_data = ("order_book", "latency_monitoring")
-    capability = "cross_exchange"
-    tags = ("arbitrage", "liquidity")
 
     def generate(
         self,
@@ -325,4 +379,155 @@ class ArbitrageStrategy(StrategyPlugin):
 
         dampening = np.tanh(np.abs(confirmed) / (threshold * 3.0))
         return (signal * dampening).clip(-1.0, 1.0)
+
+
+class GridTradingStrategy(StrategyPlugin):
+    """Market-making grid reacting to deviations around a slow anchor."""
+
+    engine_key = "grid_trading"
+    name = "grid_trading"
+    description = "Neutral grid around SMA with ATR-aware band sizing."
+
+    def generate(
+        self,
+        indicators: "TechnicalIndicators",
+        params: "TradingParameters",
+        *,
+        market_data: Optional[pd.DataFrame] = None,
+    ) -> pd.Series:
+        anchor = indicators.sma_trend
+        price = indicators.ema_fast
+        atr = indicators.atr.replace(0.0, np.nan)
+        deviation = ((price - anchor) / atr).fillna(0.0)
+
+        grid_signal = pd.Series(0.0, index=price.index)
+        grid_signal[deviation > 0.75] = -1.0
+        grid_signal[deviation < -0.75] = 1.0
+
+        soft_bias = deviation.clip(-2.0, 2.0) / 2.0
+        combined = (grid_signal * 0.6 + soft_bias * 0.4).clip(-1.0, 1.0)
+        return combined
+
+
+class VolatilityTargetStrategy(StrategyPlugin):
+    """Adjust exposure to steer realised volatility toward target."""
+
+    engine_key = "volatility_target"
+    name = "volatility_target"
+    description = "Dynamically scales exposure to hit target volatility."
+
+    def generate(
+        self,
+        indicators: "TechnicalIndicators",
+        params: "TradingParameters",
+        *,
+        market_data: Optional[pd.DataFrame] = None,
+    ) -> pd.Series:
+        price = indicators.ema_fast
+        atr = indicators.atr.replace(0.0, np.nan)
+        realized_vol = (atr / (price.abs() + 1e-12)).rolling(window=5, min_periods=1).mean()
+        target = max(1e-4, float(params.volatility_target))
+        vol_gap = (target - realized_vol).fillna(0.0) / target
+
+        trend_bias = (price - indicators.ema_slow) / (atr * 2.0)
+        trend_bias = trend_bias.replace([np.inf, -np.inf], 0.0).fillna(0.0).clip(-1.0, 1.0)
+
+        adjustment = pd.Series(np.tanh(vol_gap * 2.5), index=price.index)
+        combined = (adjustment * 0.7 + trend_bias * 0.3).clip(-1.0, 1.0)
+        return combined
+
+
+class ScalpingStrategy(StrategyPlugin):
+    """Fast mean-reversion around short momentum for low-latency trading."""
+
+    engine_key = "scalping"
+    name = "scalping"
+    description = "MACD micro-divergence with stochastic confirmation."
+
+    def generate(
+        self,
+        indicators: "TechnicalIndicators",
+        params: "TradingParameters",
+        *,
+        market_data: Optional[pd.DataFrame] = None,
+    ) -> pd.Series:
+        macd_diff = indicators.macd - indicators.macd_signal
+        atr = indicators.atr.replace(0.0, np.nan)
+        momentum = (macd_diff / (atr / 2.0 + 1e-12)).clip(-4.0, 4.0)
+        stochastic_bias = (indicators.stochastic_k - 50.0) / 50.0
+
+        signal = (np.tanh(momentum) * 0.65 + stochastic_bias * 0.35).clip(-1.0, 1.0)
+        return pd.Series(signal, index=indicators.macd.index)
+
+
+class OptionsIncomeStrategy(StrategyPlugin):
+    """Simplified theta harvesting profile informed by volatility spreads."""
+
+    engine_key = "options_income"
+    name = "options_income"
+    description = "Harvests premium when implied volatility outruns realised."
+
+    def generate(
+        self,
+        indicators: "TechnicalIndicators",
+        params: "TradingParameters",
+        *,
+        market_data: Optional[pd.DataFrame] = None,
+    ) -> pd.Series:
+        index = indicators.ema_fast.index
+        atr = indicators.atr.replace(0.0, np.nan)
+        realized = (atr / (indicators.ema_fast.abs() + 1e-12)).rolling(window=10, min_periods=1).mean()
+
+        implied: Optional[pd.Series]
+        implied = None
+        if market_data is not None:
+            if "implied_volatility" in market_data:
+                implied = market_data["implied_volatility"].reindex(index).interpolate(limit_direction="both")
+            elif "iv" in market_data:
+                implied = market_data["iv"].reindex(index).interpolate(limit_direction="both")
+        if implied is None:
+            implied = realized * 1.1
+
+        vol_spread = (implied - realized).fillna(0.0)
+        theta_bias = np.tanh(vol_spread / (realized.replace(0.0, np.nan).fillna(1e-4)))
+
+        trend_anchor = (indicators.ema_fast - indicators.sma_trend) / (atr + 1e-12)
+        delta_neutraliser = trend_anchor.clip(-1.0, 1.0) * 0.3
+
+        signal = (theta_bias * 0.7 - delta_neutraliser).clip(-1.0, 1.0)
+        return pd.Series(signal, index=index)
+
+
+class StatisticalArbitrageStrategy(StrategyPlugin):
+    """Pairs-style mean reversion using MACD and Bollinger spreads."""
+
+    engine_key = "statistical_arbitrage"
+    name = "statistical_arbitrage"
+    description = "Pairs spreads using MACD z-score and Bollinger confirmation."
+
+    def generate(
+        self,
+        indicators: "TechnicalIndicators",
+        params: "TradingParameters",
+        *,
+        market_data: Optional[pd.DataFrame] = None,
+    ) -> pd.Series:
+        macd_z = indicators.macd - indicators.macd_signal
+        atr = indicators.atr.replace(0.0, np.nan)
+        macd_norm = (macd_z / (atr + 1e-12)).clip(-5.0, 5.0)
+
+        mid = indicators.bollinger_middle
+        spread = (indicators.ema_fast - mid) / (
+            (indicators.bollinger_upper - mid).replace(0.0, np.nan)
+        )
+        spread = spread.replace([np.inf, -np.inf], 0.0).fillna(0.0)
+
+        signal = (-np.tanh(macd_norm) * 0.6 - spread * 0.4).clip(-1.0, 1.0)
+        return pd.Series(signal, index=indicators.macd.index)
+
+
+def _builtin_plugins_by_engine() -> Dict[str, Type[StrategyPlugin]]:
+    """Mapuje klucze silników na wbudowane klasy pluginów."""
+
+    return dict(_BUILTIN_PLUGIN_REGISTRY)
 

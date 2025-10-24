@@ -33,12 +33,40 @@ def test_regime_workflow_produces_parameters_with_weights() -> None:
     assert isinstance(decision.parameters, TradingParameters)
     assert decision.parameters.ensemble_weights == decision.weights
     assert abs(sum(decision.weights.values()) - 1.0) < 1e-9
+    assert {
+        "trend_following",
+        "day_trading",
+        "mean_reversion",
+        "arbitrage",
+        "volatility_target",
+        "grid_trading",
+        "options_income",
+    }.issubset(decision.weights.keys())
     assert decision.timestamp.tzinfo is None
     assert decision.license_tiers and "standard" in decision.license_tiers
     assert "trend_following" in decision.strategy_metadata
     strategy_meta = decision.strategy_metadata["trend_following"]
     assert strategy_meta["license_tier"] == "standard"
     assert "trend_d1" in decision.capabilities
+    assert tuple(strategy_meta["risk_classes"]) == ("directional", "momentum")
+    assert set(strategy_meta["required_data"]) == {"ohlcv", "technical_indicators"}
+    assert set(strategy_meta["tags"]) >= {"trend", "momentum"}
+    assert "volatility_target" in decision.strategy_metadata
+    vol_meta = decision.strategy_metadata["volatility_target"]
+    assert vol_meta["license_tier"] == "enterprise"
+    assert "volatility_target" in decision.capabilities
+    assert set(vol_meta["required_data"]) >= {"ohlcv", "realized_volatility"}
+    assert set(decision.required_data) >= {
+        "ohlcv",
+        "technical_indicators",
+        "realized_volatility",
+        "order_book",
+        "options_chain",
+    }
+    assert "momentum" in decision.tags
+    assert "risk" in decision.tags
+    assert "options_income" in decision.capabilities
+    assert "technical_indicators" in decision.required_data
 
 
 def test_regime_workflow_respects_cooldown() -> None:
