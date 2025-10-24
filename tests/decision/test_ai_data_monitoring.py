@@ -22,8 +22,33 @@ from bot_core.ai import (
     ensure_compliance_sign_offs,
     export_drift_alert_report,
     export_data_quality_report,
+    filter_audit_reports_by_tags,
+    filter_audit_reports_by_sign_off_status,
+    filter_audit_reports_by_status,
+    filter_audit_reports_by_source,
+    filter_audit_reports_by_schedule,
+    filter_audit_reports_by_category,
+    filter_audit_reports_by_job_name,
+    filter_audit_reports_by_run,
+    filter_audit_reports_by_symbol,
+    filter_audit_reports_by_pipeline,
+    filter_audit_reports_by_capability,
+    filter_audit_reports_by_environment,
+    filter_audit_reports_by_portfolio,
+    filter_audit_reports_by_policy_enforcement,
+    filter_audit_reports_since,
     load_recent_data_quality_reports,
     load_recent_drift_reports,
+    normalize_report_status,
+    normalize_report_source,
+    normalize_report_schedule,
+    normalize_report_category,
+    normalize_report_pipeline,
+    normalize_report_capability,
+    normalize_report_environment,
+    normalize_report_portfolio,
+    normalize_policy_enforcement,
+    normalize_report_symbol,
     score_with_data_monitoring,
     summarize_data_quality_reports,
     summarize_drift_reports,
@@ -477,6 +502,505 @@ def test_summarize_drift_reports_marks_threshold_excess(
     assert pending_risk[0]["status"] == "pending"
 
 
+def test_collect_pending_compliance_sign_offs_merges_sources() -> None:
+    data_quality_reports = (
+        {
+            "category": "completeness",
+            "status": "alert",
+            "policy": {"enforce": True},
+            "sign_off": {
+                "risk": {"status": "pending"},
+                "compliance": {"status": "approved"},
+            },
+            "report_path": "/tmp/completeness.json",
+            "timestamp": "2024-01-01T00:00:00Z",
+        },
+    )
+    drift_reports = (
+        {
+            "category": "drift_alert",
+            "drift_score": 0.7,
+            "threshold": 0.5,
+            "sign_off": {
+                "risk": {"status": "approved"},
+                "compliance": {"status": "investigating"},
+            },
+            "report_path": "/tmp/drift.json",
+            "timestamp": "2024-01-02T00:00:00Z",
+        },
+    )
+
+    pending = collect_pending_compliance_sign_offs(
+        data_quality_reports=data_quality_reports,
+        drift_reports=drift_reports,
+    )
+
+    assert pending["risk"]
+    assert pending["risk"][0]["category"] == "completeness"
+    assert pending["compliance"]
+    assert pending["compliance"][0]["category"] == "drift_alert"
+
+
+def test_collect_pending_compliance_sign_offs_respects_roles() -> None:
+    reports = (
+        {
+            "category": "completeness",
+            "status": "alert",
+            "policy": {"enforce": True},
+            "sign_off": {
+                "risk": {"status": "approved"},
+                "compliance": {"status": "pending"},
+            },
+        },
+    )
+
+    pending = collect_pending_compliance_sign_offs(
+        data_quality_reports=reports,
+        roles=("risk",),
+    )
+
+    assert tuple(pending.keys()) == ("risk",)
+    assert pending["risk"] == ()
+
+
+def test_filter_audit_reports_since_filters_old_entries() -> None:
+    reports = (
+        {"timestamp": "2024-01-10T00:00:00Z", "category": "old"},
+        {"timestamp": "2024-01-20T00:00:00Z", "category": "new"},
+        {"category": "missing"},
+    )
+
+    filtered = filter_audit_reports_since(
+        reports, since=datetime(2024, 1, 15, tzinfo=timezone.utc)
+    )
+
+    assert filtered[0]["category"] == "new"
+    assert filtered[1]["category"] == "missing"
+    assert len(filtered) == 2
+
+
+def test_filter_audit_reports_since_requires_timezone() -> None:
+    with pytest.raises(ValueError):
+        filter_audit_reports_since((), since=datetime(2024, 1, 1))
+
+
+def test_filter_audit_reports_by_tags_filters_include_and_exclude() -> None:
+    reports = (
+        {"tags": ["pipeline", "nightly"], "category": "keep"},
+        {"tags": ["Legacy"], "category": "drop-exclude"},
+        {"tags": [], "category": "no-tags"},
+        {"category": "missing"},
+    )
+
+    filtered_include = filter_audit_reports_by_tags(reports, include=("pipeline",))
+    assert len(filtered_include) == 1
+    assert filtered_include[0]["category"] == "keep"
+
+    filtered_exclude = filter_audit_reports_by_tags(reports, exclude=("legacy",))
+    categories = {entry["category"] for entry in filtered_exclude}
+    assert "drop-exclude" not in categories
+    assert categories == {"keep", "no-tags", "missing"}
+
+    filtered_both = filter_audit_reports_by_tags(
+        reports, include=("pipeline",), exclude=("nightly",)
+    )
+    assert filtered_both == ()
+
+
+def test_normalize_report_status_handles_inputs() -> None:
+    assert normalize_report_status(" Alert ") == "alert"
+    assert normalize_report_status("ok") == "ok"
+    assert normalize_report_status(" ") is None
+    assert normalize_report_status(None) is None
+
+
+def test_normalize_report_source_handles_inputs() -> None:
+    assert normalize_report_source(" Pipeline ") == "pipeline"
+    assert normalize_report_source("") is None
+    assert normalize_report_source(None) is None
+    assert normalize_report_source("legacy") == "legacy"
+
+
+def test_normalize_report_schedule_handles_inputs() -> None:
+    assert normalize_report_schedule(" Nightly ") == "nightly"
+    assert normalize_report_schedule(" ") is None
+    assert normalize_report_schedule(None) is None
+    assert normalize_report_schedule("eu-open") == "eu-open"
+
+
+def test_normalize_report_category_handles_inputs() -> None:
+    assert normalize_report_category(" Completeness ") == "completeness"
+    assert normalize_report_category(" ") is None
+    assert normalize_report_category(None) is None
+    assert normalize_report_category("drift") == "drift"
+
+
+def test_normalize_report_pipeline_handles_inputs() -> None:
+    assert normalize_report_pipeline(" Nightly ") == "nightly"
+    assert normalize_report_pipeline(" ") is None
+    assert normalize_report_pipeline(None) is None
+    assert normalize_report_pipeline("Retrain") == "retrain"
+
+
+def test_normalize_policy_enforcement_handles_inputs() -> None:
+    assert normalize_policy_enforcement(True) is True
+    assert normalize_policy_enforcement(False) is False
+    assert normalize_policy_enforcement(" enforced ") is True
+    assert normalize_policy_enforcement("not-enforced") is False
+    assert normalize_policy_enforcement("0") is False
+    assert normalize_policy_enforcement("unknown") is None
+    assert normalize_policy_enforcement(1) is True
+
+
+def test_filter_audit_reports_by_status_filters_values() -> None:
+    reports = (
+        {"status": "Alert", "category": "keep-include"},
+        {"status": "ok", "category": "drop-exclude"},
+        {"category": "no-status"},
+    )
+
+    filtered_include = filter_audit_reports_by_status(reports, include=("alert",))
+    assert len(filtered_include) == 1
+    assert filtered_include[0]["category"] == "keep-include"
+
+    filtered_exclude = filter_audit_reports_by_status(reports, exclude=("ok",))
+    categories = {entry.get("category") for entry in filtered_exclude}
+    assert "drop-exclude" not in categories
+    assert "keep-include" in categories
+
+    filtered_both = filter_audit_reports_by_status(
+        reports, include=("alert",), exclude=("alert",)
+    )
+    assert filtered_both == ()
+
+
+def test_filter_audit_reports_by_category_filters_values() -> None:
+    reports = (
+        {"category": "Completeness", "status": "alert"},
+        {"category": "drift", "status": "warning"},
+        {"category": "legacy", "status": "ok"},
+        {"status": "alert"},
+    )
+
+    filtered_include = filter_audit_reports_by_category(
+        reports, include=("completeness", "drift")
+    )
+    categories = {entry.get("category") for entry in filtered_include}
+    assert categories == {"Completeness", "drift"}
+
+    filtered_exclude = filter_audit_reports_by_category(reports, exclude=("legacy",))
+    categories = {entry.get("category") for entry in filtered_exclude}
+    assert "legacy" not in categories
+    assert "Completeness" in categories
+
+    filtered_both = filter_audit_reports_by_category(
+        reports, include=("drift",), exclude=("drift",)
+    )
+    assert filtered_both == ()
+
+
+def test_filter_audit_reports_by_symbol() -> None:
+    reports = (
+        {"symbol": "btcusdt", "category": "keep-direct"},
+        {"symbols": ("ethusdt", "ltcusdt"), "category": "keep-multi"},
+        {"dataset": {"metadata": {"symbol": "xrpusdt"}}, "category": "keep-dataset"},
+        {"context": {"symbols": ["adausdt", "maticusdt"]}, "category": "keep-context"},
+        {"category": "missing"},
+    )
+
+    filtered_include = filter_audit_reports_by_symbol(reports, include=("BTCUSDT", "ADAUSDT"))
+    categories = {entry.get("category") for entry in filtered_include}
+    assert categories == {"keep-direct", "keep-context"}
+
+    filtered_exclude = filter_audit_reports_by_symbol(reports, exclude=("LTCUSDT", "XRPUSDT"))
+    categories = {entry.get("category") for entry in filtered_exclude}
+    assert "keep-multi" not in categories
+    assert "keep-dataset" not in categories
+    assert "missing" in categories
+
+    filtered_both = filter_audit_reports_by_symbol(
+        reports, include=("ETHUSDT",), exclude=("ETHUSDT",)
+    )
+    assert filtered_both == ()
+
+
+def test_filter_audit_reports_by_pipeline() -> None:
+    reports = (
+        {"context": {"pipeline": "Nightly"}, "category": "keep-context"},
+        {"dataset": {"metadata": {"pipeline": "Retrain"}}, "category": "keep-dataset"},
+        {"pipeline": "LEGACY", "category": "drop"},
+        {"category": "missing"},
+    )
+
+    filtered_include = filter_audit_reports_by_pipeline(reports, include=("nightly",))
+    categories = {entry.get("category") for entry in filtered_include}
+    assert categories == {"keep-context"}
+
+    filtered_exclude = filter_audit_reports_by_pipeline(reports, exclude=("legacy",))
+    categories = {entry.get("category") for entry in filtered_exclude}
+    assert "drop" not in categories
+    assert "keep-context" in categories
+    assert "keep-dataset" in categories
+
+    filtered_both = filter_audit_reports_by_pipeline(
+        reports, include=("nightly", "retrain"), exclude=("legacy",)
+    )
+    categories = {entry.get("category") for entry in filtered_both}
+    assert categories == {"keep-context", "keep-dataset"}
+
+
+def test_filter_audit_reports_by_capability() -> None:
+    reports = (
+        {"capability": "TREND_D1", "category": "keep-direct"},
+        {"context": {"capability": "legacy"}, "category": "drop-context"},
+        {"dataset": {"metadata": {"capability": "trend_d1"}}, "category": "keep-dataset"},
+        {"metadata": {"capability": "legacy"}, "category": "drop-metadata"},
+        {"strategy": {"capability": "trend_d1"}, "category": "keep-strategy"},
+        {"category": "missing"},
+    )
+
+    filtered_include = filter_audit_reports_by_capability(
+        reports, include=("trend_d1",)
+    )
+    categories = {entry.get("category") for entry in filtered_include}
+    assert categories == {"keep-direct", "keep-dataset", "keep-strategy"}
+
+    filtered_exclude = filter_audit_reports_by_capability(
+        reports, exclude=("legacy",)
+    )
+    categories = {entry.get("category") for entry in filtered_exclude}
+    assert "drop-context" not in categories
+    assert "drop-metadata" not in categories
+    assert "keep-direct" in categories
+
+    filtered_both = filter_audit_reports_by_capability(
+        reports, include=("trend_d1",), exclude=("trend_d1",)
+    )
+    assert filtered_both == ()
+
+
+def test_filter_audit_reports_by_environment() -> None:
+    reports = (
+        {"context": {"environment": "Prod"}, "category": "keep-context"},
+        {"dataset": {"metadata": {"environment": "paper"}}, "category": "keep-dataset"},
+        {"environment": "LEGACY", "category": "drop"},
+        {"category": "missing"},
+    )
+
+    filtered_include = filter_audit_reports_by_environment(reports, include=("prod",))
+    categories = {entry.get("category") for entry in filtered_include}
+    assert categories == {"keep-context"}
+
+    filtered_exclude = filter_audit_reports_by_environment(reports, exclude=("legacy",))
+    categories = {entry.get("category") for entry in filtered_exclude}
+    assert "drop" not in categories
+    assert "keep-context" in categories
+    assert "keep-dataset" in categories
+
+    filtered_both = filter_audit_reports_by_environment(
+        reports, include=("prod", "paper"), exclude=("legacy",)
+    )
+    categories = {entry.get("category") for entry in filtered_both}
+    assert categories == {"keep-context", "keep-dataset"}
+
+
+def test_filter_audit_reports_by_portfolio() -> None:
+    reports = (
+        {"context": {"portfolio": "Core"}, "category": "keep-context"},
+        {"dataset": {"metadata": {"portfolio": "hf"}}, "category": "keep-dataset"},
+        {"portfolio": "LEGACY", "category": "drop"},
+        {"category": "missing"},
+    )
+
+    filtered_include = filter_audit_reports_by_portfolio(reports, include=("core",))
+    categories = {entry.get("category") for entry in filtered_include}
+    assert categories == {"keep-context"}
+
+    filtered_exclude = filter_audit_reports_by_portfolio(reports, exclude=("legacy",))
+    categories = {entry.get("category") for entry in filtered_exclude}
+    assert "drop" not in categories
+    assert "keep-context" in categories
+    assert "keep-dataset" in categories
+
+    filtered_both = filter_audit_reports_by_portfolio(
+        reports, include=("core", "hf"), exclude=("legacy",)
+    )
+    categories = {entry.get("category") for entry in filtered_both}
+    assert categories == {"keep-context", "keep-dataset"}
+
+
+def test_filter_audit_reports_by_run() -> None:
+    reports = (
+        {"context": {"run": "Alert"}, "category": "keep-context"},
+        {"dataset": {"metadata": {"run": "Baseline"}}, "category": "keep-dataset"},
+        {"run": "LEGACY", "category": "drop"},
+        {"category": "missing"},
+    )
+
+    filtered_include = filter_audit_reports_by_run(reports, include=("alert",))
+    categories = {entry.get("category") for entry in filtered_include}
+    assert categories == {"keep-context"}
+
+    filtered_exclude = filter_audit_reports_by_run(reports, exclude=("legacy",))
+    categories = {entry.get("category") for entry in filtered_exclude}
+    assert "drop" not in categories
+    assert "keep-context" in categories
+    assert "keep-dataset" in categories
+
+    filtered_both = filter_audit_reports_by_run(
+        reports, include=("alert", "baseline"), exclude=("legacy",)
+    )
+    categories = {entry.get("category") for entry in filtered_both}
+    assert categories == {"keep-context", "keep-dataset"}
+
+
+def test_filter_audit_reports_by_job_name_filters_values() -> None:
+    reports = (
+        {"job_name": "Pipeline:BTCUSDT", "category": "keep-include"},
+        {"job_name": "LEGACY", "category": "drop-exclude"},
+        {"job": "Pipeline:ETHUSDT", "category": "keep-fallback"},
+        {"category": "missing"},
+    )
+
+    filtered_include = filter_audit_reports_by_job_name(
+        reports, include=("pipeline:btcusdt", "pipeline:ethusdt")
+    )
+    categories = {entry.get("category") for entry in filtered_include}
+    assert categories == {"keep-include", "keep-fallback"}
+
+    filtered_exclude = filter_audit_reports_by_job_name(
+        reports, exclude=("legacy", "pipeline:ethusdt")
+    )
+    categories = {entry.get("category") for entry in filtered_exclude}
+    assert "drop-exclude" not in categories
+    assert "keep-fallback" not in categories
+    assert "keep-include" in categories
+    assert "missing" in categories
+
+    filtered_both = filter_audit_reports_by_job_name(
+        reports, include=("pipeline:btcusdt",), exclude=("pipeline:btcusdt",)
+    )
+    assert filtered_both == ()
+
+
+def test_filter_audit_reports_by_sign_off_status_supports_include_and_roles() -> None:
+    reports = (
+        {
+            "category": "keep",
+            "sign_off": {
+                "risk": {"status": "Pending"},
+                "compliance": {"status": "approved"},
+            },
+        },
+        {
+            "category": "drop-include",
+            "sign_off": {
+                "risk": {"status": "waived"},
+                "compliance": {"status": "approved"},
+            },
+        },
+        {
+            "category": "keep-role",
+            "sign_off": {
+                "risk": {"status": "approved"},
+                "compliance": {"status": "Investigating"},
+            },
+        },
+    )
+
+    filtered_include = filter_audit_reports_by_sign_off_status(
+        reports, include=("pending",)
+    )
+    assert len(filtered_include) == 1
+    assert filtered_include[0]["category"] == "keep"
+
+    filtered_exclude = filter_audit_reports_by_sign_off_status(
+        reports, exclude=("waived",)
+    )
+    categories = {entry["category"] for entry in filtered_exclude}
+    assert "drop-include" not in categories
+    assert categories == {"keep", "keep-role"}
+
+    filtered_roles = filter_audit_reports_by_sign_off_status(
+        reports, include=("investigating",), roles=("compliance",)
+    )
+    assert len(filtered_roles) == 1
+    assert filtered_roles[0]["category"] == "keep-role"
+
+
+def test_filter_audit_reports_by_source() -> None:
+    reports = (
+        {"source": "pipeline", "category": "keep"},
+        {"source": "Legacy", "category": "drop"},
+        {"category": "missing"},
+    )
+
+    filtered_include = filter_audit_reports_by_source(reports, include=("pipeline",))
+    assert len(filtered_include) == 1
+    assert filtered_include[0]["category"] == "keep"
+
+    filtered_exclude = filter_audit_reports_by_source(reports, exclude=("legacy",))
+    categories = {entry.get("category") for entry in filtered_exclude}
+    assert "drop" not in categories
+    assert "keep" in categories
+    assert "missing" in categories
+
+    filtered_both = filter_audit_reports_by_source(
+        reports, include=("pipeline",), exclude=("pipeline",)
+    )
+    assert filtered_both == ()
+
+
+def test_filter_audit_reports_by_schedule() -> None:
+    reports = (
+        {"schedule": "Nightly", "category": "keep"},
+        {"schedule": "legacy", "category": "drop"},
+        {"category": "missing"},
+    )
+
+    filtered_include = filter_audit_reports_by_schedule(reports, include=("nightly",))
+    assert len(filtered_include) == 1
+    assert filtered_include[0]["category"] == "keep"
+
+    filtered_exclude = filter_audit_reports_by_schedule(reports, exclude=("legacy",))
+    categories = {entry.get("category") for entry in filtered_exclude}
+    assert "drop" not in categories
+    assert "keep" in categories
+    assert "missing" in categories
+
+    filtered_both = filter_audit_reports_by_schedule(
+        reports, include=("nightly",), exclude=("nightly",)
+    )
+    assert filtered_both == ()
+
+
+def test_filter_audit_reports_by_policy_enforcement() -> None:
+    reports = (
+        {"policy": {"enforce": True}, "category": "keep-enforced"},
+        {"policy": {"enforce": False}, "category": "drop-exclude"},
+        {"category": "missing"},
+    )
+
+    filtered_include = filter_audit_reports_by_policy_enforcement(
+        reports, include=(True,)
+    )
+    assert len(filtered_include) == 1
+    assert filtered_include[0]["category"] == "keep-enforced"
+
+    filtered_exclude = filter_audit_reports_by_policy_enforcement(
+        reports, exclude=(False,)
+    )
+    categories = {entry.get("category") for entry in filtered_exclude}
+    assert "drop-exclude" not in categories
+    assert "keep-enforced" in categories
+    assert "missing" in categories
+
+    filtered_both = filter_audit_reports_by_policy_enforcement(
+        reports, include=(True,), exclude=(True,)
+    )
+    assert filtered_both == ()
+
+
 def test_ensure_compliance_sign_offs_detects_pending(caplog: pytest.LogCaptureFixture) -> None:
     caplog.set_level(logging.WARNING, logger="bot_core.ai.data_monitoring")
     reports = (
@@ -646,6 +1170,7 @@ def test_ai_manager_passes_configured_sign_off_roles(monkeypatch: pytest.MonkeyP
     manager = AIManager(model_dir=tmp_path / "cache")
     manager.set_compliance_sign_off_requirement(True)
     manager.set_compliance_sign_off_roles(("risk",))
+    assert captured_roles == []
     manager._ensure_compliance_activation_gate()
     assert captured_roles[-1] == ("risk",)
 
@@ -670,14 +1195,14 @@ def test_ai_manager_skips_sign_off_gate_when_not_required(
     manager = AIManager(model_dir=tmp_path / "cache")
     manager.set_compliance_sign_off_roles(("risk",))
 
-    assert calls == [("risk",)]
+    assert calls == []
 
-    # Domyślnie bramka jest wyłączona, więc helper nie powinien zostać wywołany ponownie.
+    # Domyślnie bramka jest wyłączona, więc helper nie powinien zostać wywołany.
     manager._ensure_compliance_activation_gate()
-    assert calls == [("risk",)]
+    assert calls == []
 
     manager.set_compliance_sign_off_requirement(True)
     manager._ensure_compliance_activation_gate()
 
     assert calls[-1] == ("risk",)
-    assert len(calls) == 2
+    assert len(calls) == 1

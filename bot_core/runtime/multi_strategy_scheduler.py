@@ -5,9 +5,17 @@ import asyncio
 import logging
 import math
 from collections import defaultdict
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from typing import TYPE_CHECKING, Callable, Mapping, MutableMapping, Protocol, Sequence
+from typing import (
+    TYPE_CHECKING,
+    Callable,
+    Mapping,
+    MutableMapping,
+    Protocol,
+    Sequence,
+)
 
 from threading import RLock
 
@@ -111,6 +119,10 @@ class _ScheduleContext:
     governor_signal_factor: float = 1.0
     tags: tuple[str, ...] = ()
     primary_tag: str | None = None
+    license_tier: str | None = None
+    risk_classes: tuple[str, ...] = ()
+    required_data: tuple[str, ...] = ()
+    capability: str | None = None
     last_run: datetime | None = None
     warmed_up: bool = False
     metrics: MutableMapping[str, float] = field(default_factory=dict)
@@ -147,7 +159,70 @@ def _extract_tags(metadata: Mapping[str, object] | None) -> tuple[tuple[str, ...
     return tuple(dict.fromkeys(tags)), primary_tag
 
 
+def _coerce_non_empty_str(value: object | None) -> str | None:
+    if not isinstance(value, str):
+        if value is None:
+            return None
+        try:
+            candidate = str(value)
+        except Exception:  # pragma: no cover - defensywne logowanie
+            return None
+    else:
+        candidate = value
+    candidate = candidate.strip()
+    return candidate or None
 
+
+def _normalize_metadata_sequence(value: object | None) -> tuple[str, ...]:
+    if value in (None, ""):
+        return ()
+    if isinstance(value, str):
+        candidates: Iterable[object] = (value,)
+    elif isinstance(value, Mapping):
+        return ()
+    elif isinstance(value, Iterable):
+        candidates = value
+    else:
+        return ()
+    normalized: list[str] = []
+    for item in candidates:
+        if item in (None, ""):
+            continue
+        try:
+            candidate = str(item).strip()
+        except Exception:  # pragma: no cover - diagnostyka danych
+            continue
+        if candidate and candidate not in normalized:
+            normalized.append(candidate)
+    return tuple(normalized)
+
+
+def _extract_schedule_metadata(
+    strategy: StrategyEngine,
+) -> tuple[tuple[str, ...], str | None, str | None, tuple[str, ...], tuple[str, ...], str | None]:
+    raw_metadata = getattr(strategy, "metadata", None)
+    metadata = raw_metadata if isinstance(raw_metadata, Mapping) else None
+
+    tags, primary_tag = _extract_tags(metadata)
+    license_tier = _coerce_non_empty_str(metadata.get("license_tier")) if metadata else None
+    capability = _coerce_non_empty_str(metadata.get("capability")) if metadata else None
+    risk_classes = (
+        _normalize_metadata_sequence(metadata.get("risk_classes")) if metadata else ()
+    )
+    required_data = (
+        _normalize_metadata_sequence(metadata.get("required_data")) if metadata else ()
+    )
+
+    license_tier = license_tier or _coerce_non_empty_str(getattr(strategy, "license_tier", None))
+    capability = capability or _coerce_non_empty_str(getattr(strategy, "capability", None))
+    risk_classes = risk_classes or _normalize_metadata_sequence(
+        getattr(strategy, "risk_classes", None)
+    )
+    required_data = required_data or _normalize_metadata_sequence(
+        getattr(strategy, "required_data", None)
+    )
+
+    return tags, primary_tag, license_tier, risk_classes, required_data, capability
 
 
 class MultiStrategyScheduler:
@@ -319,6 +394,14 @@ class MultiStrategyScheduler:
                 "tags": list(schedule.tags),
                 "primary_tag": schedule.primary_tag,
             }
+            if schedule.license_tier:
+                descriptor["license_tier"] = schedule.license_tier
+            if schedule.capability:
+                descriptor["capability"] = schedule.capability
+            if schedule.risk_classes:
+                descriptor["risk_classes"] = list(schedule.risk_classes)
+            if schedule.required_data:
+                descriptor["required_data"] = list(schedule.required_data)
             if schedule.last_run is not None:
                 descriptor["last_run"] = schedule.last_run.isoformat()
             limit_override = active_overrides.get(
@@ -482,7 +565,14 @@ class MultiStrategyScheduler:
         risk_profile: str,
         max_signals: int,
     ) -> None:
-        tags, primary_tag = _extract_tags(getattr(strategy, "metadata", None))
+        (
+            tags,
+            primary_tag,
+            license_tier,
+            risk_classes,
+            required_data,
+            capability,
+        ) = _extract_schedule_metadata(strategy)
 
         context = _ScheduleContext(
             name=name,
@@ -498,6 +588,10 @@ class MultiStrategyScheduler:
             active_max_signals=max(1, max_signals),
             tags=tags,
             primary_tag=primary_tag,
+            license_tier=license_tier,
+            risk_classes=risk_classes,
+            required_data=required_data,
+            capability=capability,
         )
         self._schedules.append(context)
         _LOGGER.debug("Zarejestrowano harmonogram %s dla strategii %s", name, strategy_name)

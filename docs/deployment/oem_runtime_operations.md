@@ -54,8 +54,16 @@ troubleshootingu fingerprintu i logów bezpieczeństwa.
   `python -m bot_core.security.ui_bridge --license-status`, które korzysta z
   tych samych ścieżek (`var/security/license_status.json`).
 * **Konflikty presetów** – nowy kreator `StrategyPresetWizard` eksportuje
-  podpisane presety (`preset.json` + sekcja `signature`). Przed wdrożeniem
-  sprawdź, czy podpis HMAC (`key_id`) odpowiada oczekiwanemu kluczowi.
+  podpisane presety (`preset.json` + sekcja `signature`) i automatycznie
+  dokleja do każdej pozycji licencję, klasy ryzyka oraz wymagane dane na bazie
+  katalogu strategii. Przed wdrożeniem sprawdź, czy podpis HMAC (`key_id`)
+  odpowiada oczekiwanemu kluczowi.
+
+* **Weryfikacja środowiska** – polecenie `python scripts/local_orchestrator.py \
+  status` wypisuje teraz dla każdego środowiska scalone metadane strategii
+  (licencje, capability, klasy ryzyka, wymagane dane) oraz plan schedulera.
+  Dzięki temu przed wdrożeniem można upewnić się, że konfiguracja jest zgodna z
+  posiadaną licencją, a UI otrzyma kompletny kontekst katalogu strategii.
 
 ### Szybka lista kontrolna operatora
 

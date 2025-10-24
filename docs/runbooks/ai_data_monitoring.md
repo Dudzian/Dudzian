@@ -142,7 +142,34 @@ Ustawienie `None` przywraca domyślny zestaw (`risk`, `compliance`), a `False` w
 Jeśli musisz wymusić blokadę w samych podsumowaniach, helpery `summarize_data_quality_reports(..., require_sign_off=True)` oraz
 `summarize_drift_reports(..., require_sign_off=True)` zgłoszą ten sam wyjątek, gdy dla wskazanych ról pozostaną otwarte zadania.
 
-### 2.5 Monitoring inference
+### 2.5 CLI: audyt podpisów compliance
+
+Do szybkiej kontroli podpisów możesz użyć CLI:
+
+```bash
+python -m bot_core.cli ai-compliance --audit-root audit/ai_decision --limit 5
+```
+
+Komenda ładuje ostatnie raporty `data_quality` i `drift`, wypisuje brakujące podpisy dla skonfigurowanych ról (`risk`, `compliance` domyślnie) oraz zwraca kod wyjścia `3`, jeśli dodasz `--enforce` i pozostaną otwarte zadania. Parametr `--role` pozwala zawęzić wymagany zestaw podpisów, `--output-format json-pretty` ułatwia eksport do narzędzi automatyzujących, a `--audit-root` wskazuje alternatywny katalog audytu. Dodatkowo:
+
+- `--data-quality-category completeness` ogranicza ładowanie raportów `data_quality` do wskazanej kategorii (np. kompletności, zakresów, driftu cech).
+- `--since 48h` filtruje raporty starsze niż określony okres (akceptowane są skróty `Xs`, `Xm`, `Xh`, `Xd` oraz znaczniki ISO 8601, np. `2024-05-01T00:00Z`).
+- `--include-tag pipeline` wymaga obecności przynajmniej jednego z podanych tagów (możesz podawać opcję wielokrotnie lub rozdzielać tagi przecinkami), natomiast `--exclude-tag legacy` usuwa raporty z niedozwolonymi tagami.
+- `--include-report-status alert` filtruje tylko raporty o wskazanym statusie (np. `alert`, `warning`), a `--exclude-report-status ok` usuwa wpisy z niepożądanymi statusami.
+- `--include-status pending` filtruje tylko raporty, w których występuje wskazany status podpisu (np. pending, investigating), a `--exclude-status approved` usuwa wpisy z niepożądanymi statusami. Parametry współdziałają z `--role`, dzięki czemu możesz analizować statusy konkretnych zespołów.
+- `--policy-enforce enforced` pozwala ograniczyć analizę do raportów z aktywnym egzekwowaniem polityki (`policy.enforce == true`), natomiast `--exclude-policy-enforce not-enforced` usuwa alerty, które nie blokują pipeline'u. Argumenty można łączyć i przekazywać wielokrotnie.
+- `--include-source pipeline` zachowuje jedynie raporty z wybranych źródeł (np. `pipeline`, `ohlcv-monitor`), a `--exclude-source legacy` usuwa wpisy oznaczone wskazanym źródłem. Nazwy są nieczułe na wielkość liter i można je przekazywać wielokrotnie lub rozdzielać przecinkami.
+- `--include-schedule nightly` filtruje raporty do wskazanych harmonogramów audytu (np. `nightly`, `eu-open`), natomiast `--exclude-schedule legacy` usuwa wpisy powiązane z nieaktywnymi planami. Argumenty akceptują wiele wartości (także rozdzielanych przecinkami) i są nieczułe na wielkość liter.
+- `--include-category completeness` pozwala ograniczyć raporty do wybranych kategorii (np. `completeness`, `drift`), a `--exclude-category legacy` usuwa wpisy z niepożądanych kategorii. Parametry akceptują wiele wartości i nie rozróżniają wielkości liter.
+- `--include-symbol BTCUSDT` zachowuje raporty związane z określonymi symbolami (np. `BTCUSDT`, `ETHUSDT`), a `--exclude-symbol XRPUSDT` usuwa wpisy dotyczące wybranych rynków. Argumenty można przekazywać wielokrotnie lub rozdzielać przecinkami; porównanie jest nieczułe na wielkość liter.
+- `--include-pipeline nightly` ogranicza raporty do wybranych pipeline'ów (np. `nightly`, `retrain`), natomiast `--exclude-pipeline legacy` usuwa wpisy z nieaktualnych procesów audytowych. Argumenty można przekazywać wielokrotnie lub rozdzielać przecinkami; wartości są normalizowane do małych liter.
+- `--include-capability trend_d1` pozwala zawęzić raporty do strategii o wskazanym capability (np. `trend_d1`, `mean_reversion`), a `--exclude-capability legacy` usuwa wpisy związane z niedozwolonymi capability. Argumenty można przekazywać wielokrotnie lub rozdzielać przecinkami; porównanie jest nieczułe na wielkość liter.
+- `--include-environment prod` ogranicza raporty do wybranych środowisk (np. `prod`, `paper`), a `--exclude-environment legacy` usuwa wpisy związane z nieaktywnymi środowiskami. Argumenty można przekazywać wielokrotnie lub rozdzielać przecinkami; wartości są normalizowane do małych liter.
+- `--include-portfolio core` pozwala skupić się na raportach dotyczących konkretnych portfeli (np. `core`, `hf`), natomiast `--exclude-portfolio legacy` usuwa wpisy dla wykluczonych portfeli. Parametry można podawać wielokrotnie lub rozdzielać przecinkami; porównanie jest nieczułe na wielkość liter.
+- `--include-run alert` filtruje raporty do wskazanych runów (np. `baseline`, `alert`), natomiast `--exclude-run legacy` usuwa wpisy z nieaktualnych kontekstów `context.run`. Argumenty można przekazywać wielokrotnie lub rozdzielać przecinkami; wartości są normalizowane do małych liter.
+- `--include-job pipeline:btcusdt` zawęża raporty do wskazanych zadań audytu (`job_name`), natomiast `--exclude-job legacy` pomija wpisy z nieaktualnych jobów. Argumenty można przekazywać wielokrotnie lub rozdzielać przecinkami; porównanie jest nieczułe na wielkość liter.
+
+### 2.6 Monitoring inference
 
 Helpery inference działają na słownikach cech i raportach JSON z `audit/ai_decision`. Korzystają z aliasów eksportowanych przez `bot_core.ai`.
 

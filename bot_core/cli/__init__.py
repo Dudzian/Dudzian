@@ -8,8 +8,49 @@ import json
 import os
 import re
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterable, Mapping, Sequence
+
+from bot_core.ai.data_monitoring import (
+    ComplianceSignOffError,
+    collect_pending_compliance_sign_offs,
+    ensure_compliance_sign_offs,
+    filter_audit_reports_since,
+    filter_audit_reports_by_tags,
+    filter_audit_reports_by_sign_off_status,
+    filter_audit_reports_by_status,
+    filter_audit_reports_by_source,
+    filter_audit_reports_by_schedule,
+    filter_audit_reports_by_category,
+    filter_audit_reports_by_job_name,
+    filter_audit_reports_by_run,
+    filter_audit_reports_by_symbol,
+    filter_audit_reports_by_pipeline,
+    filter_audit_reports_by_environment,
+    filter_audit_reports_by_portfolio,
+    filter_audit_reports_by_capability,
+    filter_audit_reports_by_policy_enforcement,
+    load_recent_data_quality_reports,
+    load_recent_drift_reports,
+    normalize_compliance_sign_off_roles,
+    normalize_sign_off_status,
+    normalize_report_status,
+    normalize_report_source,
+    normalize_report_schedule,
+    normalize_report_category,
+    normalize_report_job_name,
+    normalize_report_run,
+    normalize_report_symbol,
+    normalize_report_pipeline,
+    normalize_report_environment,
+    normalize_report_portfolio,
+    normalize_report_capability,
+    normalize_policy_enforcement,
+    get_supported_sign_off_statuses,
+    summarize_data_quality_reports,
+    summarize_drift_reports,
+)
 
 try:
     import tomllib
@@ -43,6 +84,7 @@ _CREDENTIAL_ALIASES = {
 }
 
 _SUPPORTED_HEALTH_CHECKS = ("public_api", "private_api")
+_SINCE_DURATION_RE = re.compile(r"^(?P<value>\d+)(?P<unit>[smhd])$", re.IGNORECASE)
 
 
 class CLIUsageError(RuntimeError):
@@ -390,6 +432,302 @@ def create_parser() -> argparse.ArgumentParser:
     )
     plan.set_defaults(include_definitions=True)
 
+    compliance = subparsers.add_parser(
+        "ai-compliance",
+        help="Analizuje raporty audytu AI i brakujące podpisy compliance.",
+    )
+    compliance.add_argument(
+        "--audit-root",
+        help="Ścieżka do katalogu audytu AI (domyślnie audit/ai_decision).",
+    )
+    compliance.add_argument(
+        "--limit",
+        type=int,
+        help="Liczba raportów do wczytania dla każdej kategorii (domyślnie 20).",
+    )
+    compliance.add_argument(
+        "--since",
+        help=(
+            "Minimalny znacznik czasu raportów (np. '2024-05-01T00:00Z' lub "
+            "'48h' dla ostatnich 48 godzin)."
+        ),
+    )
+    compliance.add_argument(
+        "--data-quality-category",
+        help=(
+            "Ogranicza raporty data_quality do wskazanej kategorii (np. completeness)."
+        ),
+    )
+    compliance.add_argument(
+        "--include-tag",
+        dest="include_tags",
+        action="append",
+        help=(
+            "Wymusza obecność co najmniej jednego z podanych tagów w raporcie ("
+            "podaj wielokrotnie lub rozdziel przecinkami)."
+        ),
+    )
+    compliance.add_argument(
+        "--exclude-tag",
+        dest="exclude_tags",
+        action="append",
+        help=(
+            "Pomija raporty zawierające którykolwiek z podanych tagów ("
+            "można powtarzać lub rozdzielać przecinkami)."
+        ),
+    )
+    compliance.add_argument(
+        "--include-status",
+        dest="include_statuses",
+        action="append",
+        help=(
+            "Zachowuje raporty z podpisami w co najmniej jednym ze wskazanych "
+            "statusów (np. pending, investigating)."
+        ),
+    )
+    compliance.add_argument(
+        "--exclude-status",
+        dest="exclude_statuses",
+        action="append",
+        help=(
+            "Odrzuca raporty zawierające podpisy w niedozwolonych statusach ("
+            "można podawać wielokrotnie lub rozdzielać przecinkami)."
+        ),
+    )
+    compliance.add_argument(
+        "--include-report-status",
+        dest="include_report_statuses",
+        action="append",
+        help=(
+            "Zachowuje raporty o wskazanym statusie (np. alert, warning). "
+            "Argument można podawać wielokrotnie lub rozdzielać przecinkami."
+        ),
+    )
+    compliance.add_argument(
+        "--exclude-report-status",
+        dest="exclude_report_statuses",
+        action="append",
+        help=(
+            "Pomija raporty o niedozwolonym statusie (np. ok). "
+            "Argument można podawać wielokrotnie lub rozdzielać przecinkami."
+        ),
+    )
+    compliance.add_argument(
+        "--include-source",
+        dest="include_sources",
+        action="append",
+        help=(
+            "Zachowuje raporty pochodzące z określonych źródeł (np. pipeline, ohlcv-monitor). "
+            "Argument można podawać wielokrotnie lub rozdzielać przecinkami."
+        ),
+    )
+    compliance.add_argument(
+        "--exclude-source",
+        dest="exclude_sources",
+        action="append",
+        help=(
+            "Odrzuca raporty pochodzące z wskazanych źródeł. "
+            "Argument można podawać wielokrotnie lub rozdzielać przecinkami."
+        ),
+    )
+    compliance.add_argument(
+        "--include-schedule",
+        dest="include_schedules",
+        action="append",
+        help=(
+            "Zachowuje raporty powiązane z wybranymi harmonogramami (np. nightly, eu-open). "
+            "Argument można podawać wielokrotnie lub rozdzielać przecinkami."
+        ),
+    )
+    compliance.add_argument(
+        "--exclude-schedule",
+        dest="exclude_schedules",
+        action="append",
+        help=(
+            "Pomija raporty z określonych harmonogramów audytu. "
+            "Argument można podawać wielokrotnie lub rozdzielać przecinkami."
+        ),
+    )
+    compliance.add_argument(
+        "--include-category",
+        dest="include_categories",
+        action="append",
+        help=(
+            "Zachowuje raporty o wskazanych kategoriach (np. completeness, drift). "
+            "Argument można podawać wielokrotnie lub rozdzielać przecinkami."
+        ),
+    )
+    compliance.add_argument(
+        "--exclude-category",
+        dest="exclude_categories",
+        action="append",
+        help=(
+            "Pomija raporty z niedozwolonych kategorii. "
+            "Argument można podawać wielokrotnie lub rozdzielać przecinkami."
+        ),
+    )
+    compliance.add_argument(
+        "--include-symbol",
+        dest="include_symbols",
+        action="append",
+        help=(
+            "Zachowuje raporty powiązane z wybranymi symbolami (np. BTCUSDT). "
+            "Argument można podawać wielokrotnie lub rozdzielać przecinkami."
+        ),
+    )
+    compliance.add_argument(
+        "--exclude-symbol",
+        dest="exclude_symbols",
+        action="append",
+        help=(
+            "Pomija raporty powiązane z określonymi symbolami. "
+            "Argument można podawać wielokrotnie lub rozdzielać przecinkami."
+        ),
+    )
+    compliance.add_argument(
+        "--include-pipeline",
+        dest="include_pipelines",
+        action="append",
+        help=(
+            "Zachowuje raporty powiązane z wybranymi pipeline'ami (np. nightly, retrain). "
+            "Argument można podawać wielokrotnie lub rozdzielać przecinkami."
+        ),
+    )
+    compliance.add_argument(
+        "--exclude-pipeline",
+        dest="exclude_pipelines",
+        action="append",
+        help=(
+            "Pomija raporty powiązane ze wskazanymi pipeline'ami. "
+            "Argument można podawać wielokrotnie lub rozdzielać przecinkami."
+        ),
+    )
+    compliance.add_argument(
+        "--include-capability",
+        dest="include_capabilities",
+        action="append",
+        help=(
+            "Zachowuje raporty dotyczące wskazanych capability strategii (np. trend_d1). "
+            "Argument można podawać wielokrotnie lub rozdzielać przecinkami."
+        ),
+    )
+    compliance.add_argument(
+        "--exclude-capability",
+        dest="exclude_capabilities",
+        action="append",
+        help=(
+            "Pomija raporty dotyczące niepożądanych capability strategii. "
+            "Argument można podawać wielokrotnie lub rozdzielać przecinkami."
+        ),
+    )
+    compliance.add_argument(
+        "--include-environment",
+        dest="include_environments",
+        action="append",
+        help=(
+            "Zachowuje raporty powiązane z określonymi środowiskami (np. prod, paper). "
+            "Argument można podawać wielokrotnie lub rozdzielać przecinkami."
+        ),
+    )
+    compliance.add_argument(
+        "--exclude-environment",
+        dest="exclude_environments",
+        action="append",
+        help=(
+            "Pomija raporty powiązane ze wskazanymi środowiskami. "
+            "Argument można podawać wielokrotnie lub rozdzielać przecinkami."
+        ),
+    )
+    compliance.add_argument(
+        "--include-portfolio",
+        dest="include_portfolios",
+        action="append",
+        help=(
+            "Zachowuje raporty dotyczące wybranych portfeli (np. core, hf). "
+            "Argument można podawać wielokrotnie lub rozdzielać przecinkami."
+        ),
+    )
+    compliance.add_argument(
+        "--exclude-portfolio",
+        dest="exclude_portfolios",
+        action="append",
+        help=(
+            "Pomija raporty dotyczące określonych portfeli. "
+            "Argument można podawać wielokrotnie lub rozdzielać przecinkami."
+        ),
+    )
+    compliance.add_argument(
+        "--include-run",
+        dest="include_runs",
+        action="append",
+        help=(
+            "Zachowuje raporty powiązane z określonymi runami (np. baseline, alert). "
+            "Argument można podawać wielokrotnie lub rozdzielać przecinkami."
+        ),
+    )
+    compliance.add_argument(
+        "--exclude-run",
+        dest="exclude_runs",
+        action="append",
+        help=(
+            "Pomija raporty powiązane ze wskazanymi runami inference. "
+            "Argument można podawać wielokrotnie lub rozdzielać przecinkami."
+        ),
+    )
+    compliance.add_argument(
+        "--include-job",
+        dest="include_jobs",
+        action="append",
+        help=(
+            "Zachowuje raporty powiązane z określonym zadaniem (job_name). "
+            "Argument można podawać wielokrotnie lub rozdzielać przecinkami."
+        ),
+    )
+    compliance.add_argument(
+        "--exclude-job",
+        dest="exclude_jobs",
+        action="append",
+        help=(
+            "Pomija raporty dla wskazanych zadań audytu (job_name). "
+            "Argument można podawać wielokrotnie lub rozdzielać przecinkami."
+        ),
+    )
+    compliance.add_argument(
+        "--policy-enforce",
+        dest="policy_enforce",
+        action="append",
+        help=(
+            "Filtruje raporty po wartości policy.enforce (np. enforced, not-enforced). "
+            "Argument można podawać wielokrotnie lub rozdzielać przecinkami."
+        ),
+    )
+    compliance.add_argument(
+        "--exclude-policy-enforce",
+        dest="exclude_policy_enforce",
+        action="append",
+        help=(
+            "Pomija raporty z określoną wartością policy.enforce (np. enforced). "
+            "Argument można podawać wielokrotnie lub rozdzielać przecinkami."
+        ),
+    )
+    compliance.add_argument(
+        "--role",
+        dest="roles",
+        action="append",
+        help="Wymusza zestaw ról podpisów (można podać wielokrotnie lub rozdzielać przecinkami).",
+    )
+    compliance.add_argument(
+        "--output-format",
+        choices=("text", "json", "json-pretty"),
+        default="text",
+        help="Format wyjścia (text/json/json-pretty).",
+    )
+    compliance.add_argument(
+        "--enforce",
+        action="store_true",
+        help="Zwraca błąd, jeśli brakuje wymaganych podpisów dla wskazanych ról.",
+    )
+
     return parser
 
 
@@ -534,6 +872,391 @@ def _parse_paper_simulator_setting_argument(argument: str) -> tuple[str, float]:
     raise CLIUsageError(
         "Wartość opcji --paper-simulator-setting musi być liczbą zmiennoprzecinkową."
     )
+
+
+def _parse_compliance_roles(arguments: Sequence[str] | None) -> tuple[str, ...] | None:
+    if not arguments:
+        return None
+
+    collected: list[str] = []
+    for argument in arguments:
+        if not argument:
+            continue
+        for part in re.split(r"[,\s]+", argument):
+            normalized = part.strip()
+            if normalized:
+                collected.append(normalized)
+
+    if not collected:
+        return None
+
+    try:
+        return normalize_compliance_sign_off_roles(collected)
+    except ValueError as exc:
+        raise CLIUsageError(str(exc)) from exc
+
+
+def _parse_cli_tags(arguments: Sequence[str] | None) -> tuple[str, ...]:
+    if not arguments:
+        return ()
+
+    collected: list[str] = []
+    for argument in arguments:
+        if not argument:
+            continue
+        for part in re.split(r"[,\s]+", argument):
+            normalized = part.strip()
+            if normalized:
+                collected.append(normalized)
+    return tuple(collected)
+
+
+def _parse_cli_sign_off_statuses(arguments: Sequence[str] | None) -> tuple[str, ...]:
+    if not arguments:
+        return ()
+
+    supported = get_supported_sign_off_statuses()
+    collected: list[str] = []
+    for argument in arguments:
+        if not argument:
+            continue
+        for part in re.split(r"[,\s]+", argument):
+            normalized = normalize_sign_off_status(part)
+            if not normalized:
+                raise CLIUsageError(
+                    "Nieznany status podpisu compliance: {value}. Dozwolone wartości: {choices}".format(
+                        value=part or "",
+                        choices=", ".join(supported),
+                    )
+                )
+            collected.append(normalized)
+
+    # zachowujemy kolejność pierwszego wystąpienia
+    return tuple(dict.fromkeys(collected))
+
+
+def _parse_cli_report_statuses(arguments: Sequence[str] | None) -> tuple[str, ...]:
+    if not arguments:
+        return ()
+
+    collected: list[str] = []
+    for argument in arguments:
+        if not argument:
+            continue
+        for part in re.split(r"[,\s]+", argument):
+            normalized = normalize_report_status(part)
+            if normalized:
+                collected.append(normalized)
+
+    if not collected:
+        return ()
+
+    return tuple(dict.fromkeys(collected))
+
+
+def _parse_cli_policy_enforcement(arguments: Sequence[str] | None) -> tuple[bool, ...]:
+    if not arguments:
+        return ()
+
+    collected: list[bool] = []
+    for argument in arguments:
+        if not argument:
+            continue
+        for part in re.split(r"[,\s]+", argument):
+            normalized = normalize_policy_enforcement(part)
+            if normalized is None:
+                raise CLIUsageError(
+                    "Nieznana wartość policy.enforce: {value}. Użyj 'enforced' lub 'not-enforced'.".format(
+                        value=part or ""
+                    )
+                )
+            collected.append(normalized)
+
+    if not collected:
+        return ()
+
+    return tuple(dict.fromkeys(collected))
+
+
+def _parse_cli_schedules(arguments: Sequence[str] | None) -> tuple[str, ...]:
+    if not arguments:
+        return ()
+
+    collected: list[str] = []
+    for argument in arguments:
+        if not argument:
+            continue
+        for part in re.split(r"[,\s]+", argument):
+            normalized = normalize_report_schedule(part)
+            if not normalized:
+                raise CLIUsageError(
+                    "Niepoprawny harmonogram audytu: {value}. Podaj niepusty ciąg znaków.".format(
+                        value=part or ""
+                    )
+                )
+            collected.append(normalized)
+
+    if not collected:
+        return ()
+
+    return tuple(dict.fromkeys(collected))
+
+
+def _parse_cli_categories(arguments: Sequence[str] | None) -> tuple[str, ...]:
+    if not arguments:
+        return ()
+
+    collected: list[str] = []
+    for argument in arguments:
+        if not argument:
+            continue
+        for part in re.split(r"[,\s]+", argument):
+            normalized = normalize_report_category(part)
+            if not normalized:
+                raise CLIUsageError(
+                    "Niepoprawna kategoria raportu: {value}. Podaj niepusty ciąg znaków.".format(
+                        value=part or ""
+                    )
+                )
+            collected.append(normalized)
+
+    if not collected:
+        return ()
+
+    return tuple(dict.fromkeys(collected))
+
+
+def _parse_cli_symbols(arguments: Sequence[str] | None) -> tuple[str, ...]:
+    if not arguments:
+        return ()
+
+    collected: list[str] = []
+    for argument in arguments:
+        if not argument:
+            continue
+        for part in re.split(r"[,\s]+", argument):
+            normalized = normalize_report_symbol(part)
+            if not normalized:
+                raise CLIUsageError(
+                    "Niepoprawny symbol raportu: {value}. Podaj niepusty identyfikator rynku.".format(
+                        value=part or ""
+                    )
+                )
+            collected.append(normalized)
+
+    if not collected:
+        return ()
+
+    return tuple(dict.fromkeys(collected))
+
+
+def _parse_cli_job_names(arguments: Sequence[str] | None) -> tuple[str, ...]:
+    if not arguments:
+        return ()
+
+    collected: list[str] = []
+    for argument in arguments:
+        if not argument:
+            continue
+        for part in re.split(r"[,\s]+", argument):
+            normalized = normalize_report_job_name(part)
+            if not normalized:
+                raise CLIUsageError(
+                    "Niepoprawna nazwa zadania audytu: {value}. Podaj niepusty ciąg znaków.".format(
+                        value=part or ""
+                    )
+                )
+            collected.append(normalized)
+
+    if not collected:
+        return ()
+
+    return tuple(dict.fromkeys(collected))
+
+
+def _parse_cli_pipelines(arguments: Sequence[str] | None) -> tuple[str, ...]:
+    if not arguments:
+        return ()
+
+    collected: list[str] = []
+    for argument in arguments:
+        if not argument:
+            continue
+        for part in re.split(r"[,\s]+", argument):
+            normalized = normalize_report_pipeline(part)
+            if not normalized:
+                raise CLIUsageError(
+                    "Niepoprawny pipeline raportu: {value}. Podaj niepusty ciąg znaków.".format(
+                        value=part or ""
+                    )
+                )
+            collected.append(normalized)
+
+    if not collected:
+        return ()
+
+    return tuple(dict.fromkeys(collected))
+
+
+def _parse_cli_capabilities(arguments: Sequence[str] | None) -> tuple[str, ...]:
+    if not arguments:
+        return ()
+
+    collected: list[str] = []
+    for argument in arguments:
+        if not argument:
+            continue
+        for part in re.split(r"[,\s]+", argument):
+            normalized = normalize_report_capability(part)
+            if not normalized:
+                raise CLIUsageError(
+                    "Niepoprawne capability strategii: {value}. Podaj niepusty identyfikator.".format(
+                        value=part or ""
+                    )
+                )
+            collected.append(normalized)
+
+    if not collected:
+        return ()
+
+    return tuple(dict.fromkeys(collected))
+
+
+def _parse_cli_environments(arguments: Sequence[str] | None) -> tuple[str, ...]:
+    if not arguments:
+        return ()
+
+    collected: list[str] = []
+    for argument in arguments:
+        if not argument:
+            continue
+        for part in re.split(r"[,\s]+", argument):
+            normalized = normalize_report_environment(part)
+            if not normalized:
+                raise CLIUsageError(
+                    "Niepoprawne środowisko raportu: {value}. Podaj niepusty ciąg znaków.".format(
+                        value=part or ""
+                    )
+                )
+            collected.append(normalized)
+
+    if not collected:
+        return ()
+
+    return tuple(dict.fromkeys(collected))
+
+
+def _parse_cli_portfolios(arguments: Sequence[str] | None) -> tuple[str, ...]:
+    if not arguments:
+        return ()
+
+    collected: list[str] = []
+    for argument in arguments:
+        if not argument:
+            continue
+        for part in re.split(r"[,\s]+", argument):
+            normalized = normalize_report_portfolio(part)
+            if not normalized:
+                raise CLIUsageError(
+                    "Niepoprawny portfel raportu: {value}. Podaj niepusty ciąg znaków.".format(
+                        value=part or ""
+                    )
+                )
+            collected.append(normalized)
+
+    if not collected:
+        return ()
+
+    return tuple(dict.fromkeys(collected))
+
+
+def _parse_cli_runs(arguments: Sequence[str] | None) -> tuple[str, ...]:
+    if not arguments:
+        return ()
+
+    collected: list[str] = []
+    for argument in arguments:
+        if not argument:
+            continue
+        for part in re.split(r"[,\s]+", argument):
+            normalized = normalize_report_run(part)
+            if not normalized:
+                raise CLIUsageError(
+                    "Niepoprawny run raportu: {value}. Podaj niepusty ciąg znaków.".format(
+                        value=part or ""
+                    )
+                )
+            collected.append(normalized)
+
+    if not collected:
+        return ()
+
+    return tuple(dict.fromkeys(collected))
+
+
+def _parse_cli_sources(arguments: Sequence[str] | None) -> tuple[str, ...]:
+    if not arguments:
+        return ()
+
+    collected: list[str] = []
+    for argument in arguments:
+        if not argument:
+            continue
+        for part in re.split(r"[,\s]+", argument):
+            normalized = normalize_report_source(part)
+            if not normalized:
+                raise CLIUsageError(
+                    "Niepoprawne źródło raportu: {value}. Podaj niepusty ciąg znaków.".format(
+                        value=part or ""
+                    )
+                )
+            collected.append(normalized)
+
+    if not collected:
+        return ()
+
+    return tuple(dict.fromkeys(collected))
+
+
+def _resolve_since_cutoff(value: str, *, now: datetime | None = None) -> datetime:
+    if not isinstance(value, str) or not value.strip():
+        raise CLIUsageError("Opcja --since wymaga niepustej wartości.")
+
+    reference = now or datetime.now(timezone.utc)
+    candidate = value.strip()
+    match = _SINCE_DURATION_RE.fullmatch(candidate)
+    if match:
+        amount = int(match.group("value"))
+        unit = match.group("unit").lower()
+        delta_map = {
+            "s": timedelta(seconds=amount),
+            "m": timedelta(minutes=amount),
+            "h": timedelta(hours=amount),
+            "d": timedelta(days=amount),
+        }
+        cutoff = reference - delta_map[unit]
+        return cutoff.astimezone(timezone.utc)
+
+    normalized = candidate
+    if candidate.endswith("Z") or candidate.endswith("z"):
+        normalized = candidate[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError as exc:
+        raise CLIUsageError(
+            "Opcja --since wymaga formatu ISO 8601 lub skrótu (np. 24h, 7d)."
+        ) from exc
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _jsonify_payload(value):
+    if isinstance(value, Mapping):
+        return {str(key): _jsonify_payload(val) for key, val in value.items()}
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return [_jsonify_payload(item) for item in value]
+    return value
 
 
 def _extract_jitter_pair(value: object) -> tuple[float, float] | None:
@@ -1563,6 +2286,459 @@ def show_environment(args: argparse.Namespace) -> int:
     return 0
 
 
+def show_ai_compliance(args: argparse.Namespace) -> int:
+    output_format = getattr(args, "output_format", "text") or "text"
+    enforce = bool(getattr(args, "enforce", False))
+
+    limit_option = getattr(args, "limit", None)
+    if limit_option is None:
+        limit = 20
+    else:
+        if limit_option <= 0:
+            raise CLIUsageError("Opcja --limit wymaga dodatniej liczby całkowitej.")
+        limit = int(limit_option)
+
+    audit_root_value = getattr(args, "audit_root", None)
+    audit_root: Path | None = None
+    if audit_root_value:
+        audit_root = Path(audit_root_value).expanduser()
+
+    since_option = getattr(args, "since", None)
+    since_cutoff: datetime | None = None
+    if since_option:
+        since_cutoff = _resolve_since_cutoff(since_option)
+
+    include_tags = _parse_cli_tags(getattr(args, "include_tags", None))
+    exclude_tags = _parse_cli_tags(getattr(args, "exclude_tags", None))
+    include_statuses = _parse_cli_sign_off_statuses(
+        getattr(args, "include_statuses", None)
+    )
+    exclude_statuses = _parse_cli_sign_off_statuses(
+        getattr(args, "exclude_statuses", None)
+    )
+    include_report_statuses = _parse_cli_report_statuses(
+        getattr(args, "include_report_statuses", None)
+    )
+    exclude_report_statuses = _parse_cli_report_statuses(
+        getattr(args, "exclude_report_statuses", None)
+    )
+    include_sources = _parse_cli_sources(getattr(args, "include_sources", None))
+    exclude_sources = _parse_cli_sources(getattr(args, "exclude_sources", None))
+    include_schedules = _parse_cli_schedules(getattr(args, "include_schedules", None))
+    exclude_schedules = _parse_cli_schedules(getattr(args, "exclude_schedules", None))
+    include_categories = _parse_cli_categories(getattr(args, "include_categories", None))
+    exclude_categories = _parse_cli_categories(getattr(args, "exclude_categories", None))
+    include_symbols = _parse_cli_symbols(getattr(args, "include_symbols", None))
+    exclude_symbols = _parse_cli_symbols(getattr(args, "exclude_symbols", None))
+    include_pipelines = _parse_cli_pipelines(getattr(args, "include_pipelines", None))
+    exclude_pipelines = _parse_cli_pipelines(getattr(args, "exclude_pipelines", None))
+    include_capabilities = _parse_cli_capabilities(
+        getattr(args, "include_capabilities", None)
+    )
+    exclude_capabilities = _parse_cli_capabilities(
+        getattr(args, "exclude_capabilities", None)
+    )
+    include_environments = _parse_cli_environments(
+        getattr(args, "include_environments", None)
+    )
+    exclude_environments = _parse_cli_environments(
+        getattr(args, "exclude_environments", None)
+    )
+    include_portfolios = _parse_cli_portfolios(getattr(args, "include_portfolios", None))
+    exclude_portfolios = _parse_cli_portfolios(getattr(args, "exclude_portfolios", None))
+    include_runs = _parse_cli_runs(getattr(args, "include_runs", None))
+    exclude_runs = _parse_cli_runs(getattr(args, "exclude_runs", None))
+    include_jobs = _parse_cli_job_names(getattr(args, "include_jobs", None))
+    exclude_jobs = _parse_cli_job_names(getattr(args, "exclude_jobs", None))
+    include_policy_enforce = _parse_cli_policy_enforcement(
+        getattr(args, "policy_enforce", None)
+    )
+    exclude_policy_enforce = _parse_cli_policy_enforcement(
+        getattr(args, "exclude_policy_enforce", None)
+    )
+
+    roles_param = _parse_compliance_roles(getattr(args, "roles", None))
+    effective_roles = (
+        roles_param
+        if roles_param is not None
+        else normalize_compliance_sign_off_roles(None)
+    )
+
+    load_kwargs: dict[str, object] = {"limit": limit}
+    if audit_root is not None:
+        load_kwargs["audit_root"] = audit_root
+    dq_category = getattr(args, "data_quality_category", None)
+
+    try:
+        dq_kwargs = dict(load_kwargs)
+        if dq_category:
+            dq_kwargs["category"] = dq_category
+        dq_reports = load_recent_data_quality_reports(**dq_kwargs)
+        drift_reports = load_recent_drift_reports(**load_kwargs)
+    except Exception as exc:  # pragma: no cover - przekładamy błąd na CLIUsageError
+        raise CLIUsageError(f"Nie udało się wczytać raportów audytu: {exc}") from exc
+
+    if include_tags or exclude_tags:
+        dq_reports = filter_audit_reports_by_tags(
+            dq_reports, include=include_tags, exclude=exclude_tags
+        )
+        drift_reports = filter_audit_reports_by_tags(
+            drift_reports, include=include_tags, exclude=exclude_tags
+        )
+
+    if include_report_statuses or exclude_report_statuses:
+        dq_reports = filter_audit_reports_by_status(
+            dq_reports, include=include_report_statuses, exclude=exclude_report_statuses
+        )
+        drift_reports = filter_audit_reports_by_status(
+            drift_reports,
+            include=include_report_statuses,
+            exclude=exclude_report_statuses,
+        )
+
+    if include_sources or exclude_sources:
+        dq_reports = filter_audit_reports_by_source(
+            dq_reports, include=include_sources, exclude=exclude_sources
+        )
+        drift_reports = filter_audit_reports_by_source(
+            drift_reports, include=include_sources, exclude=exclude_sources
+        )
+
+    if include_schedules or exclude_schedules:
+        dq_reports = filter_audit_reports_by_schedule(
+            dq_reports, include=include_schedules, exclude=exclude_schedules
+        )
+        drift_reports = filter_audit_reports_by_schedule(
+            drift_reports, include=include_schedules, exclude=exclude_schedules
+        )
+
+    if include_categories or exclude_categories:
+        dq_reports = filter_audit_reports_by_category(
+            dq_reports, include=include_categories, exclude=exclude_categories
+        )
+        drift_reports = filter_audit_reports_by_category(
+            drift_reports, include=include_categories, exclude=exclude_categories
+        )
+
+    if include_symbols or exclude_symbols:
+        dq_reports = filter_audit_reports_by_symbol(
+            dq_reports, include=include_symbols, exclude=exclude_symbols
+        )
+        drift_reports = filter_audit_reports_by_symbol(
+            drift_reports, include=include_symbols, exclude=exclude_symbols
+        )
+
+    if include_pipelines or exclude_pipelines:
+        dq_reports = filter_audit_reports_by_pipeline(
+            dq_reports, include=include_pipelines, exclude=exclude_pipelines
+        )
+        drift_reports = filter_audit_reports_by_pipeline(
+            drift_reports, include=include_pipelines, exclude=exclude_pipelines
+        )
+
+    if include_capabilities or exclude_capabilities:
+        dq_reports = filter_audit_reports_by_capability(
+            dq_reports, include=include_capabilities, exclude=exclude_capabilities
+        )
+        drift_reports = filter_audit_reports_by_capability(
+            drift_reports,
+            include=include_capabilities,
+            exclude=exclude_capabilities,
+        )
+
+    if include_environments or exclude_environments:
+        dq_reports = filter_audit_reports_by_environment(
+            dq_reports, include=include_environments, exclude=exclude_environments
+        )
+        drift_reports = filter_audit_reports_by_environment(
+            drift_reports, include=include_environments, exclude=exclude_environments
+        )
+
+    if include_portfolios or exclude_portfolios:
+        dq_reports = filter_audit_reports_by_portfolio(
+            dq_reports, include=include_portfolios, exclude=exclude_portfolios
+        )
+        drift_reports = filter_audit_reports_by_portfolio(
+            drift_reports, include=include_portfolios, exclude=exclude_portfolios
+        )
+
+    if include_runs or exclude_runs:
+        dq_reports = filter_audit_reports_by_run(
+            dq_reports, include=include_runs, exclude=exclude_runs
+        )
+        drift_reports = filter_audit_reports_by_run(
+            drift_reports, include=include_runs, exclude=exclude_runs
+        )
+
+    if include_jobs or exclude_jobs:
+        dq_reports = filter_audit_reports_by_job_name(
+            dq_reports, include=include_jobs, exclude=exclude_jobs
+        )
+        drift_reports = filter_audit_reports_by_job_name(
+            drift_reports, include=include_jobs, exclude=exclude_jobs
+        )
+
+    if include_policy_enforce or exclude_policy_enforce:
+        dq_reports = filter_audit_reports_by_policy_enforcement(
+            dq_reports, include=include_policy_enforce, exclude=exclude_policy_enforce
+        )
+        drift_reports = filter_audit_reports_by_policy_enforcement(
+            drift_reports, include=include_policy_enforce, exclude=exclude_policy_enforce
+        )
+
+    if include_statuses or exclude_statuses:
+        dq_reports = filter_audit_reports_by_sign_off_status(
+            dq_reports,
+            include=include_statuses,
+            exclude=exclude_statuses,
+            roles=roles_param,
+        )
+        drift_reports = filter_audit_reports_by_sign_off_status(
+            drift_reports,
+            include=include_statuses,
+            exclude=exclude_statuses,
+            roles=roles_param,
+        )
+
+    if since_cutoff is not None:
+        dq_reports = filter_audit_reports_since(dq_reports, since=since_cutoff)
+        drift_reports = filter_audit_reports_since(drift_reports, since=since_cutoff)
+
+    dq_summary = summarize_data_quality_reports(dq_reports, roles=roles_param)
+    drift_summary = summarize_drift_reports(drift_reports, roles=roles_param)
+
+    exit_code = 0
+    try:
+        if enforce:
+            pending_map = ensure_compliance_sign_offs(
+                data_quality_reports=dq_reports,
+                drift_reports=drift_reports,
+                roles=roles_param,
+            )
+        else:
+            pending_map = collect_pending_compliance_sign_offs(
+                data_quality_reports=dq_reports,
+                drift_reports=drift_reports,
+                roles=roles_param,
+            )
+    except ComplianceSignOffError as exc:
+        pending_map = exc.pending
+        exit_code = 3
+
+    missing_entries = {
+        role: tuple(entries)
+        for role, entries in pending_map.items()
+        if entries
+    }
+
+    if output_format in {"json", "json-pretty"}:
+        payload: dict[str, object] = {
+            "roles": list(effective_roles),
+            "enforced": enforce,
+            "limit": limit,
+            "data_quality": _jsonify_payload(dq_summary),
+            "drift": _jsonify_payload(drift_summary),
+            "pending_sign_off": _jsonify_payload(pending_map),
+            "missing_sign_off": {
+                role: len(entries) for role, entries in missing_entries.items()
+            },
+        }
+        if audit_root is not None:
+            payload["audit_root"] = str(audit_root)
+        if since_cutoff is not None:
+            payload["since"] = since_cutoff.replace(microsecond=0).isoformat().replace(
+                "+00:00", "Z"
+            )
+        if include_tags:
+            payload["include_tags"] = list(include_tags)
+        if exclude_tags:
+            payload["exclude_tags"] = list(exclude_tags)
+        if include_report_statuses:
+            payload["include_report_statuses"] = list(include_report_statuses)
+        if exclude_report_statuses:
+            payload["exclude_report_statuses"] = list(exclude_report_statuses)
+        if include_policy_enforce:
+            payload["policy_enforce"] = [
+                "enforced" if flag else "not-enforced" for flag in include_policy_enforce
+            ]
+        if exclude_policy_enforce:
+            payload["exclude_policy_enforce"] = [
+                "enforced" if flag else "not-enforced" for flag in exclude_policy_enforce
+            ]
+        if include_statuses:
+            payload["include_statuses"] = list(include_statuses)
+        if exclude_statuses:
+            payload["exclude_statuses"] = list(exclude_statuses)
+        if include_sources:
+            payload["include_sources"] = list(include_sources)
+        if exclude_sources:
+            payload["exclude_sources"] = list(exclude_sources)
+        if include_schedules:
+            payload["include_schedules"] = list(include_schedules)
+        if exclude_schedules:
+            payload["exclude_schedules"] = list(exclude_schedules)
+        if include_categories:
+            payload["include_categories"] = list(include_categories)
+        if exclude_categories:
+            payload["exclude_categories"] = list(exclude_categories)
+        if include_symbols:
+            payload["include_symbols"] = list(include_symbols)
+        if exclude_symbols:
+            payload["exclude_symbols"] = list(exclude_symbols)
+        if include_pipelines:
+            payload["include_pipelines"] = list(include_pipelines)
+        if exclude_pipelines:
+            payload["exclude_pipelines"] = list(exclude_pipelines)
+        if include_capabilities:
+            payload["include_capabilities"] = list(include_capabilities)
+        if exclude_capabilities:
+            payload["exclude_capabilities"] = list(exclude_capabilities)
+        if include_environments:
+            payload["include_environments"] = list(include_environments)
+        if exclude_environments:
+            payload["exclude_environments"] = list(exclude_environments)
+        if include_portfolios:
+            payload["include_portfolios"] = list(include_portfolios)
+        if exclude_portfolios:
+            payload["exclude_portfolios"] = list(exclude_portfolios)
+        if include_runs:
+            payload["include_runs"] = list(include_runs)
+        if exclude_runs:
+            payload["exclude_runs"] = list(exclude_runs)
+        if include_jobs:
+            payload["include_jobs"] = list(include_jobs)
+        if exclude_jobs:
+            payload["exclude_jobs"] = list(exclude_jobs)
+        json_kwargs: dict[str, object] = {"ensure_ascii": False}
+        if output_format == "json-pretty":
+            json_kwargs["indent"] = 2
+            json_kwargs["sort_keys"] = True
+        print(json.dumps(payload, **json_kwargs))  # type: ignore[arg-type]
+        return exit_code
+
+    if audit_root is not None:
+        print(f"Katalog audytu: {audit_root}")
+    if since_cutoff is not None:
+        print(
+            "Minimalny znacznik czasu: "
+            + since_cutoff.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        )
+    if include_tags:
+        print("Wymagane tagi: " + ", ".join(include_tags))
+    if exclude_tags:
+        print("Wykluczone tagi: " + ", ".join(exclude_tags))
+    if include_report_statuses:
+        print("Wymagane statusy raportów: " + ", ".join(include_report_statuses))
+    if exclude_report_statuses:
+        print("Wykluczone statusy raportów: " + ", ".join(exclude_report_statuses))
+    if include_policy_enforce:
+        human = ", ".join("enforced" if flag else "not-enforced" for flag in include_policy_enforce)
+        print("Wymagane policy.enforce: " + human)
+    if exclude_policy_enforce:
+        human = ", ".join(
+            "enforced" if flag else "not-enforced" for flag in exclude_policy_enforce
+        )
+        print("Wykluczone policy.enforce: " + human)
+    if include_statuses:
+        print("Wymagane statusy podpisów: " + ", ".join(include_statuses))
+    if exclude_statuses:
+        print("Wykluczone statusy podpisów: " + ", ".join(exclude_statuses))
+    if include_sources:
+        print("Wymagane źródła: " + ", ".join(include_sources))
+    if exclude_sources:
+        print("Wykluczone źródła: " + ", ".join(exclude_sources))
+    if include_schedules:
+        print("Wymagane harmonogramy: " + ", ".join(include_schedules))
+    if exclude_schedules:
+        print("Wykluczone harmonogramy: " + ", ".join(exclude_schedules))
+    if include_categories:
+        print("Wymagane kategorie: " + ", ".join(include_categories))
+    if exclude_categories:
+        print("Wykluczone kategorie: " + ", ".join(exclude_categories))
+    if include_symbols:
+        print("Wymagane symbole: " + ", ".join(include_symbols))
+    if exclude_symbols:
+        print("Wykluczone symbole: " + ", ".join(exclude_symbols))
+    if include_pipelines:
+        print("Wymagane pipeline'y: " + ", ".join(include_pipelines))
+    if exclude_pipelines:
+        print("Wykluczone pipeline'y: " + ", ".join(exclude_pipelines))
+    if include_capabilities:
+        print("Wymagane capability: " + ", ".join(include_capabilities))
+    if exclude_capabilities:
+        print("Wykluczone capability: " + ", ".join(exclude_capabilities))
+    if include_environments:
+        print("Wymagane środowiska: " + ", ".join(include_environments))
+    if exclude_environments:
+        print("Wykluczone środowiska: " + ", ".join(exclude_environments))
+    if include_portfolios:
+        print("Wymagane portfele: " + ", ".join(include_portfolios))
+    if exclude_portfolios:
+        print("Wykluczone portfele: " + ", ".join(exclude_portfolios))
+    if include_runs:
+        print("Wymagane runy: " + ", ".join(include_runs))
+    if exclude_runs:
+        print("Wykluczone runy: " + ", ".join(exclude_runs))
+    if include_jobs:
+        print("Wymagane zadania: " + ", ".join(include_jobs))
+    if exclude_jobs:
+        print("Wykluczone zadania: " + ", ".join(exclude_jobs))
+    print("Wymagane role: " + ", ".join(effective_roles))
+    print(f"Limit raportów: {limit}")
+
+    print(
+        "Raporty jakości danych: total={total} alerts={alerts} enforced={enforced}".format(
+            total=dq_summary.get("total", 0),
+            alerts=dq_summary.get("alerts", 0),
+            enforced=dq_summary.get("enforced_alerts", 0),
+        )
+    )
+    by_category = dq_summary.get("by_category", {})
+    if by_category:
+        print("  Kategorie alertów:")
+        for category, stats in sorted(by_category.items()):
+            print(
+                "    - {category}: total={total} alerts={alerts} enforced={enforced} status={status}".format(
+                    category=category,
+                    total=stats.get("total", 0),
+                    alerts=stats.get("alerts", 0),
+                    enforced=stats.get("enforced_alerts", 0),
+                    status=stats.get("latest_status") or "-",
+                )
+            )
+            latest_path = stats.get("latest_report_path")
+            if latest_path:
+                print(f"      ostatni_raport={latest_path}")
+    else:
+        print("  Kategorie alertów: (brak danych)")
+
+    print(
+        "Raporty dryfu: total={total} przekroczone={exceeds} ostatni={latest} ostatni_alert={latest_exceed}".format(
+            total=drift_summary.get("total", 0),
+            exceeds=drift_summary.get("exceeds_threshold", 0),
+            latest=drift_summary.get("latest_report_path") or "-",
+            latest_exceed=drift_summary.get("latest_exceeding_report_path") or "-",
+        )
+    )
+
+    if missing_entries:
+        print("Brakujące podpisy compliance:")
+        for role, entries in missing_entries.items():
+            print(f"  - {role}: {len(entries)} raport(y)")
+            for entry in entries:
+                category = entry.get("category") or "unknown"
+                status = entry.get("status") or "pending"
+                path = entry.get("report_path") or "-"
+                print(f"      • {category}: status={status} raport={path}")
+    else:
+        print("Brak braków podpisów compliance.")
+
+    if enforce and missing_entries:
+        return 3
+
+    return exit_code
+
+
 def show_strategy_catalog(args: argparse.Namespace) -> int:
     output_format = getattr(args, "output_format", "text") or "text"
     engine_filter = {value.strip().lower() for value in getattr(args, "engines", []) if value}
@@ -1651,7 +2827,19 @@ def show_strategy_catalog(args: argparse.Namespace) -> int:
             engine = entry.get("engine", "(nieznany)")
             capability = entry.get("capability") or "-"
             tags = ", ".join(entry.get("default_tags", [])) or "-"
-            print(f"  * {engine} (capability={capability}, tags={tags})")
+            license_tier = entry.get("license_tier") or "-"
+            risk_classes = ", ".join(str(item) for item in entry.get("risk_classes", [])) or "-"
+            required_data = ", ".join(str(item) for item in entry.get("required_data", [])) or "-"
+            print(
+                "  * {engine} (capability={capability}, license={license}, risk_classes=[{risk}], required_data=[{data}], tags={tags})".format(
+                    engine=engine,
+                    capability=capability,
+                    license=license_tier,
+                    risk=risk_classes,
+                    data=required_data,
+                    tags=tags,
+                )
+            )
 
     if config_path:
         print()
@@ -1665,12 +2853,18 @@ def show_strategy_catalog(args: argparse.Namespace) -> int:
                 risk_profile = entry.get("risk_profile") or "-"
                 tags = ", ".join(entry.get("tags", [])) or "-"
                 capability = entry.get("capability") or "-"
+                license_tier = entry.get("license_tier") or "-"
+                risk_classes = ", ".join(str(item) for item in entry.get("risk_classes", [])) or "-"
+                required_data = ", ".join(str(item) for item in entry.get("required_data", [])) or "-"
                 print(
-                    "  * {name} -> {engine} (risk_profile={risk_profile}, capability={capability}, tags={tags})".format(
+                    "  * {name} -> {engine} (risk_profile={risk_profile}, capability={capability}, license={license}, risk_classes=[{risk}], required_data=[{data}], tags={tags})".format(
                         name=name,
                         engine=engine,
                         risk_profile=risk_profile,
                         capability=capability,
+                        license=license_tier,
+                        risk=risk_classes,
+                        data=required_data,
                         tags=tags,
                     )
                 )
@@ -1748,7 +2942,7 @@ def show_scheduler_plan(args: argparse.Namespace) -> int:
         tags = ", ".join(entry.get("tags", [])) or "-"
         interval = entry.get("interval") or "-"
         print(
-            "  * {name}: {strategy} [profile={profile}] cadence={cadence}s drift={drift}s max_signals={max_signals} interval={interval} tags={tags}".format(
+            "  * {name}: {strategy} [profile={profile}] cadence={cadence}s drift={drift}s max_signals={max_signals} interval={interval} license={license} risk_classes=[{risk}] required_data=[{data}] tags={tags}".format(
                 name=entry.get("name", "(bez nazwy)"),
                 strategy=entry.get("strategy", "(nieznana)"),
                 profile=entry.get("risk_profile", "-"),
@@ -1756,6 +2950,9 @@ def show_scheduler_plan(args: argparse.Namespace) -> int:
                 drift=entry.get("max_drift_seconds", "-"),
                 max_signals=entry.get("max_signals", "-"),
                 interval=interval,
+                license=entry.get("license_tier", "-"),
+                risk=", ".join(str(item) for item in entry.get("risk_classes", [])) or "-",
+                data=", ".join(str(item) for item in entry.get("required_data", [])) or "-",
                 tags=tags,
             )
         )
@@ -1804,6 +3001,8 @@ def main(
             return list_environments(args)
         if args.command == "show-environment":
             return show_environment(args)
+        if args.command == "ai-compliance":
+            return show_ai_compliance(args)
         if args.command == "strategy-catalog":
             return show_strategy_catalog(args)
         if args.command == "scheduler-plan":
@@ -1821,6 +3020,7 @@ __all__ = [
     "CLIUsageError",
     "list_environments",
     "show_environment",
+    "show_ai_compliance",
     "show_strategy_catalog",
     "show_scheduler_plan",
 ]

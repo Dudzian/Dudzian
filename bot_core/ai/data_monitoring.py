@@ -20,6 +20,35 @@ __all__ = [
     "ComplianceSignOffError",
     "collect_pending_compliance_sign_offs",
     "normalize_compliance_sign_off_roles",
+    "normalize_sign_off_status",
+    "normalize_report_status",
+    "normalize_report_source",
+    "normalize_report_schedule",
+    "normalize_report_category",
+    "normalize_report_job_name",
+    "normalize_report_run",
+    "normalize_report_symbol",
+    "normalize_report_environment",
+    "normalize_report_portfolio",
+    "normalize_report_capability",
+    "normalize_report_pipeline",
+    "normalize_policy_enforcement",
+    "get_supported_sign_off_statuses",
+    "filter_audit_reports_since",
+    "filter_audit_reports_by_tags",
+    "filter_audit_reports_by_sign_off_status",
+    "filter_audit_reports_by_status",
+    "filter_audit_reports_by_source",
+    "filter_audit_reports_by_schedule",
+    "filter_audit_reports_by_category",
+    "filter_audit_reports_by_job_name",
+    "filter_audit_reports_by_run",
+    "filter_audit_reports_by_symbol",
+    "filter_audit_reports_by_pipeline",
+    "filter_audit_reports_by_environment",
+    "filter_audit_reports_by_portfolio",
+    "filter_audit_reports_by_capability",
+    "filter_audit_reports_by_policy_enforcement",
     "DataCompletenessWatcher",
     "FeatureBoundsValidator",
     "export_data_quality_report",
@@ -50,6 +79,112 @@ _SIGN_OFF_DEFAULT_NOTES = {
     "risk": "Awaiting Risk review",
     "compliance": "Awaiting Compliance sign-off",
 }
+_POLICY_ENFORCE_TRUE_VALUES = frozenset(
+    {"1", "true", "yes", "on", "enforce", "enforced"}
+)
+_POLICY_ENFORCE_FALSE_VALUES = frozenset(
+    {"0", "false", "no", "off", "skip", "not_enforced", "not-enforced"}
+)
+
+
+def normalize_report_source(value: object) -> str | None:
+    """Normalizuje źródło raportu do małych liter bez otaczających spacji."""
+
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized:
+            return normalized
+    return None
+
+
+def normalize_report_schedule(value: object) -> str | None:
+    """Normalizuje nazwę harmonogramu raportu (np. ``nightly``)."""
+
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized:
+            return normalized
+    return None
+
+
+def normalize_report_category(value: object) -> str | None:
+    """Normalizuje kategorię raportu audytu (np. ``completeness``)."""
+
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized:
+            return normalized
+    return None
+
+
+def normalize_report_job_name(value: object) -> str | None:
+    """Normalizuje nazwę zadania (``job_name``) raportu audytu."""
+
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized:
+            return normalized
+    return None
+
+
+def normalize_report_run(value: object) -> str | None:
+    """Normalizuje nazwę ``run`` raportu audytu do małych liter."""
+
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized:
+            return normalized
+    return None
+
+
+def normalize_report_symbol(value: object) -> str | None:
+    """Normalizuje symbol rynku/modelu do wielkich liter bez spacji."""
+
+    if isinstance(value, str):
+        normalized = value.strip().upper()
+        if normalized:
+            return normalized
+    return None
+
+
+def normalize_report_environment(value: object) -> str | None:
+    """Normalizuje nazwę środowiska raportu do małych liter."""
+
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized:
+            return normalized
+    return None
+
+
+def normalize_report_portfolio(value: object) -> str | None:
+    """Normalizuje nazwę portfela raportu do małych liter."""
+
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized:
+            return normalized
+    return None
+
+
+def normalize_report_capability(value: object) -> str | None:
+    """Normalizuje identyfikator capability raportu do małych liter."""
+
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized:
+            return normalized
+    return None
+
+
+def normalize_report_pipeline(value: object) -> str | None:
+    """Normalizuje identyfikator pipeline'u raportu do małych liter."""
+
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized:
+            return normalized
+    return None
 
 
 def _normalize_role(role: object) -> str | None:
@@ -58,6 +193,54 @@ def _normalize_role(role: object) -> str | None:
         if normalized:
             return normalized
     return None
+
+
+def normalize_sign_off_status(value: object) -> str | None:
+    """Zwraca znormalizowany status podpisu compliance lub ``None``."""
+
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized and normalized in _SIGN_OFF_STATUSES:
+            return normalized
+    return None
+
+
+def normalize_report_status(value: object) -> str | None:
+    """Zwraca znormalizowany status raportu (niezależnie od słownika wartości)."""
+
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized:
+            return normalized
+    return None
+
+
+def normalize_policy_enforcement(value: object) -> bool | None:
+    """Normalizuje flagę ``policy.enforce`` do wartości logicznej."""
+
+    if isinstance(value, bool):
+        return value
+
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        if math.isnan(value):  # type: ignore[unreachable]
+            return None
+        return bool(value)
+
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if not normalized:
+            return None
+        if normalized in _POLICY_ENFORCE_TRUE_VALUES:
+            return True
+        if normalized in _POLICY_ENFORCE_FALSE_VALUES:
+            return False
+    return None
+
+
+def get_supported_sign_off_statuses() -> tuple[str, ...]:
+    """Zwraca krotkę obsługiwanych statusów podpisów compliance."""
+
+    return tuple(sorted(_SIGN_OFF_STATUSES))
 
 
 def _audit_root() -> Path:
@@ -75,6 +258,33 @@ def _ensure_directory(path: Path) -> Path:
 def _normalize_slug(prefix: str) -> str:
     normalized = _SAFE_FILENAME.sub("_", prefix or "report").strip("_") or "report"
     return normalized.lower()
+
+
+def _parse_report_timestamp(value: object) -> datetime | None:
+    """Konwertuje wartość na znacznik czasu w strefie UTC."""
+
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
+
+    if isinstance(value, str):
+        candidate = value.strip()
+        if not candidate:
+            return None
+        normalized = candidate
+        if candidate.endswith("Z") or candidate.endswith("z"):
+            normalized = candidate[:-1] + "+00:00"
+        try:
+            parsed = datetime.fromisoformat(normalized)
+        except ValueError:
+            logger.debug("Nie udało się sparsować znacznika czasu: %s", value)
+            return None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+
+    return None
 
 
 def _timestamp_slug(prefix: str) -> str:
@@ -154,6 +364,35 @@ def _apply_sign_off_to_payload(
         sign_off = _default_sign_off()
     sign_off[role] = dict(entry)
     payload["sign_off"] = sign_off
+
+
+def _extract_sign_off_statuses(
+    report: Mapping[str, Any],
+    *,
+    roles: Sequence[str] | None = None,
+) -> dict[str, str]:
+    """Ekstrahuje statusy podpisów z raportu z opcjonalnym filtrem ról."""
+
+    allowed_roles = {
+        normalized
+        for normalized in (_normalize_role(role) for role in (roles or ()))
+        if normalized
+    }
+    sign_off_statuses: dict[str, str] = {}
+    raw_sign_off = report.get("sign_off")
+    if not isinstance(raw_sign_off, Mapping):
+        return sign_off_statuses
+
+    for raw_role, raw_entry in raw_sign_off.items():
+        normalized_role = _normalize_role(raw_role)
+        if allowed_roles and (not normalized_role or normalized_role not in allowed_roles):
+            continue
+        if not isinstance(raw_entry, Mapping):
+            continue
+        status = normalize_sign_off_status(raw_entry.get("status"))
+        if normalized_role and status:
+            sign_off_statuses[normalized_role] = status
+    return sign_off_statuses
 
 
 def export_data_quality_report(
@@ -322,6 +561,744 @@ def load_recent_drift_reports(
     """Ładuje najnowsze raporty dryfu modelu z audytu."""
 
     return _load_recent_reports(subdir="drift", limit=limit, audit_root=audit_root)
+
+
+def _normalize_tags(values: Sequence[object] | None) -> set[str]:
+    normalized: set[str] = set()
+    for entry in values or ():
+        if isinstance(entry, str):
+            candidate = entry.strip().lower()
+            if candidate:
+                normalized.add(candidate)
+    return normalized
+
+
+def _extract_report_tags(report: Mapping[str, Any]) -> set[str]:
+    raw_tags = report.get("tags")
+    if isinstance(raw_tags, str):
+        values: Sequence[object] = (raw_tags,)
+    elif isinstance(raw_tags, Sequence) and not isinstance(raw_tags, (bytes, bytearray)):
+        values = raw_tags
+    else:
+        values = ()
+    return _normalize_tags(values)
+
+
+def filter_audit_reports_since(
+    reports: Sequence[Mapping[str, Any]] | None,
+    *,
+    since: datetime,
+) -> tuple[Mapping[str, Any], ...]:
+    """Filtruje raporty, pozostawiając wpisy nie starsze niż wskazany czas."""
+
+    if since.tzinfo is None:
+        raise ValueError("argument 'since' musi zawierać informację o strefie czasowej")
+
+    cutoff = since.astimezone(timezone.utc)
+    filtered: list[Mapping[str, Any]] = []
+    for report in reports or ():
+        if not isinstance(report, Mapping):
+            continue
+        timestamp = _parse_report_timestamp(report.get("timestamp"))
+        if timestamp is None or timestamp >= cutoff:
+            filtered.append(report)
+    return tuple(filtered)
+
+
+def filter_audit_reports_by_tags(
+    reports: Sequence[Mapping[str, Any]] | None,
+    *,
+    include: Sequence[str] | None = None,
+    exclude: Sequence[str] | None = None,
+) -> tuple[Mapping[str, Any], ...]:
+    """Filtruje raporty na podstawie zestawu tagów.
+
+    Argument ``include`` wymusza obecność przynajmniej jednego z podanych
+    tagów, natomiast ``exclude`` odrzuca raporty zawierające jakikolwiek z
+    wymienionych tagów.  Porównania są nieczułe na wielkość liter.
+    """
+
+    include_set = _normalize_tags(include)
+    exclude_set = _normalize_tags(exclude)
+
+    filtered: list[Mapping[str, Any]] = []
+    for report in reports or ():
+        if not isinstance(report, Mapping):
+            continue
+        tags = _extract_report_tags(report)
+        if include_set and not (tags & include_set):
+            continue
+        if exclude_set and (tags & exclude_set):
+            continue
+        filtered.append(report)
+    return tuple(filtered)
+
+
+def filter_audit_reports_by_sign_off_status(
+    reports: Sequence[Mapping[str, Any]] | None,
+    *,
+    include: Sequence[str] | None = None,
+    exclude: Sequence[str] | None = None,
+    roles: Sequence[str] | None = None,
+) -> tuple[Mapping[str, Any], ...]:
+    """Filtruje raporty na podstawie statusów podpisów compliance.
+
+    Argument ``include`` wymusza obecność przynajmniej jednego z podanych
+    statusów (po znormalizowaniu), natomiast ``exclude`` odrzuca raporty,
+    w których występuje dowolny z niedozwolonych statusów. Opcjonalny
+    parametr ``roles`` pozwala ograniczyć analizę statusów do wskazanych
+    ról podpisów.
+    """
+
+    include_set = {
+        status
+        for status in (normalize_sign_off_status(item) for item in (include or ()))
+        if status
+    }
+    exclude_set = {
+        status
+        for status in (normalize_sign_off_status(item) for item in (exclude or ()))
+        if status
+    }
+
+    filtered: list[Mapping[str, Any]] = []
+    for report in reports or ():
+        if not isinstance(report, Mapping):
+            continue
+        statuses = set(_extract_sign_off_statuses(report, roles=roles).values())
+        if include_set and not (statuses & include_set):
+            continue
+        if exclude_set and (statuses & exclude_set):
+            continue
+        filtered.append(report)
+    return tuple(filtered)
+
+
+def filter_audit_reports_by_status(
+    reports: Sequence[Mapping[str, Any]] | None,
+    *,
+    include: Sequence[str] | None = None,
+    exclude: Sequence[str] | None = None,
+) -> tuple[Mapping[str, Any], ...]:
+    """Filtruje raporty na podstawie ich głównego statusu (np. ``alert``)."""
+
+    include_set = {
+        status
+        for status in (normalize_report_status(item) for item in (include or ()))
+        if status
+    }
+    exclude_set = {
+        status
+        for status in (normalize_report_status(item) for item in (exclude or ()))
+        if status
+    }
+
+    filtered: list[Mapping[str, Any]] = []
+    for report in reports or ():
+        if not isinstance(report, Mapping):
+            continue
+        status = normalize_report_status(report.get("status"))
+        if include_set and (status is None or status not in include_set):
+            continue
+        if exclude_set and status in exclude_set:
+            continue
+        filtered.append(report)
+    return tuple(filtered)
+
+
+def filter_audit_reports_by_source(
+    reports: Sequence[Mapping[str, Any]] | None,
+    *,
+    include: Sequence[str] | None = None,
+    exclude: Sequence[str] | None = None,
+) -> tuple[Mapping[str, Any], ...]:
+    """Filtruje raporty na podstawie pola ``source`` (niezależnie od wielkości liter)."""
+
+    include_set = {
+        source
+        for source in (normalize_report_source(item) for item in (include or ()))
+        if source
+    }
+    exclude_set = {
+        source
+        for source in (normalize_report_source(item) for item in (exclude or ()))
+        if source
+    }
+
+    filtered: list[Mapping[str, Any]] = []
+    for report in reports or ():
+        if not isinstance(report, Mapping):
+            continue
+        source = normalize_report_source(report.get("source"))
+        if include_set and (source is None or source not in include_set):
+            continue
+        if exclude_set and source in exclude_set:
+            continue
+        filtered.append(report)
+    return tuple(filtered)
+
+
+def filter_audit_reports_by_schedule(
+    reports: Sequence[Mapping[str, Any]] | None,
+    *,
+    include: Sequence[str] | None = None,
+    exclude: Sequence[str] | None = None,
+) -> tuple[Mapping[str, Any], ...]:
+    """Filtruje raporty na podstawie pola ``schedule`` (niezależnie od wielkości liter)."""
+
+    include_set = {
+        schedule
+        for schedule in (normalize_report_schedule(item) for item in (include or ()))
+        if schedule
+    }
+    exclude_set = {
+        schedule
+        for schedule in (normalize_report_schedule(item) for item in (exclude or ()))
+        if schedule
+    }
+
+    filtered: list[Mapping[str, Any]] = []
+    for report in reports or ():
+        if not isinstance(report, Mapping):
+            continue
+        schedule = normalize_report_schedule(report.get("schedule"))
+        if include_set and (schedule is None or schedule not in include_set):
+            continue
+        if exclude_set and schedule in exclude_set:
+            continue
+        filtered.append(report)
+    return tuple(filtered)
+
+
+def filter_audit_reports_by_category(
+    reports: Sequence[Mapping[str, Any]] | None,
+    *,
+    include: Sequence[object] | None = None,
+    exclude: Sequence[object] | None = None,
+) -> tuple[Mapping[str, Any], ...]:
+    """Filtruje raporty na podstawie pola ``category`` (niezależnie od wielkości liter)."""
+
+    include_set = {
+        category
+        for category in (normalize_report_category(item) for item in (include or ()))
+        if category
+    }
+    exclude_set = {
+        category
+        for category in (normalize_report_category(item) for item in (exclude or ()))
+        if category
+    }
+
+    filtered: list[Mapping[str, Any]] = []
+    for report in reports or ():
+        if not isinstance(report, Mapping):
+            continue
+        category = normalize_report_category(report.get("category"))
+        if include_set and (category is None or category not in include_set):
+            continue
+        if exclude_set and category in exclude_set:
+            continue
+        filtered.append(report)
+    return tuple(filtered)
+
+
+def filter_audit_reports_by_job_name(
+    reports: Sequence[Mapping[str, Any]] | None,
+    *,
+    include: Sequence[object] | None = None,
+    exclude: Sequence[object] | None = None,
+) -> tuple[Mapping[str, Any], ...]:
+    """Filtruje raporty na podstawie pola ``job_name`` (niezależnie od wielkości liter)."""
+
+    include_set = {
+        job
+        for job in (normalize_report_job_name(item) for item in (include or ()))
+        if job
+    }
+    exclude_set = {
+        job
+        for job in (normalize_report_job_name(item) for item in (exclude or ()))
+        if job
+    }
+
+    filtered: list[Mapping[str, Any]] = []
+    for report in reports or ():
+        if not isinstance(report, Mapping):
+            continue
+        job_name = normalize_report_job_name(report.get("job_name"))
+        if job_name is None:
+            job_name = normalize_report_job_name(report.get("job"))
+        if include_set and (job_name is None or job_name not in include_set):
+            continue
+        if exclude_set and job_name in exclude_set:
+            continue
+        filtered.append(report)
+    return tuple(filtered)
+
+
+def _collect_report_runs(report: Mapping[str, Any]) -> set[str]:
+    runs: set[str] = set()
+
+    def _add(value: object) -> None:
+        if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+            for item in value:
+                _add(item)
+            return
+        normalized = normalize_report_run(value)
+        if normalized:
+            runs.add(normalized)
+
+    _add(report.get("run"))
+
+    context = report.get("context")
+    if isinstance(context, Mapping):
+        _add(context.get("run"))
+
+    dataset = report.get("dataset")
+    if isinstance(dataset, Mapping):
+        metadata = dataset.get("metadata")
+        if isinstance(metadata, Mapping):
+            _add(metadata.get("run"))
+
+    return runs
+
+
+def filter_audit_reports_by_run(
+    reports: Sequence[Mapping[str, Any]] | None,
+    *,
+    include: Sequence[object] | None = None,
+    exclude: Sequence[object] | None = None,
+) -> tuple[Mapping[str, Any], ...]:
+    """Filtruje raporty na podstawie nazwy ``run``."""
+
+    include_set = {
+        run
+        for run in (normalize_report_run(item) for item in (include or ()))
+        if run
+    }
+    exclude_set = {
+        run
+        for run in (normalize_report_run(item) for item in (exclude or ()))
+        if run
+    }
+
+    filtered: list[Mapping[str, Any]] = []
+    for report in reports or ():
+        if not isinstance(report, Mapping):
+            continue
+
+        runs = _collect_report_runs(report)
+
+        if include_set and not (runs & include_set):
+            continue
+        if exclude_set and (runs & exclude_set):
+            continue
+
+        filtered.append(report)
+
+    return tuple(filtered)
+
+
+def _collect_report_symbols(report: Mapping[str, Any]) -> set[str]:
+    symbols: set[str] = set()
+
+    def _add(value: object) -> None:
+        normalized = normalize_report_symbol(value)
+        if normalized:
+            symbols.add(normalized)
+
+    symbol_value = report.get("symbol")
+    if isinstance(symbol_value, (str, int, float)):
+        _add(str(symbol_value))
+    elif isinstance(symbol_value, Sequence) and not isinstance(symbol_value, (str, bytes)):
+        for item in symbol_value:
+            _add(str(item))
+
+    symbols_value = report.get("symbols")
+    if isinstance(symbols_value, Sequence) and not isinstance(symbols_value, (str, bytes)):
+        for item in symbols_value:
+            _add(item)
+    elif symbols_value is not None:
+        _add(symbols_value)
+
+    dataset = report.get("dataset")
+    if isinstance(dataset, Mapping):
+        metadata = dataset.get("metadata")
+        if isinstance(metadata, Mapping):
+            dataset_symbol = metadata.get("symbol")
+            if dataset_symbol is not None:
+                _add(dataset_symbol)
+            dataset_symbols = metadata.get("symbols")
+            if isinstance(dataset_symbols, Sequence) and not isinstance(dataset_symbols, (str, bytes)):
+                for item in dataset_symbols:
+                    _add(item)
+            elif dataset_symbols is not None:
+                _add(dataset_symbols)
+
+    context = report.get("context")
+    if isinstance(context, Mapping):
+        context_symbol = context.get("symbol")
+        if context_symbol is not None:
+            _add(context_symbol)
+        context_symbols = context.get("symbols")
+        if isinstance(context_symbols, Sequence) and not isinstance(context_symbols, (str, bytes)):
+            for item in context_symbols:
+                _add(item)
+        elif context_symbols is not None:
+            _add(context_symbols)
+
+    return symbols
+
+
+def _collect_report_environments(report: Mapping[str, Any]) -> set[str]:
+    environments: set[str] = set()
+
+    def _add(value: object) -> None:
+        if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+            for item in value:
+                _add(item)
+            return
+        normalized = normalize_report_environment(value)
+        if normalized:
+            environments.add(normalized)
+
+    _add(report.get("environment"))
+
+    context = report.get("context")
+    if isinstance(context, Mapping):
+        _add(context.get("environment"))
+
+    dataset = report.get("dataset")
+    if isinstance(dataset, Mapping):
+        metadata = dataset.get("metadata")
+        if isinstance(metadata, Mapping):
+            _add(metadata.get("environment"))
+
+    return environments
+
+
+def _collect_report_pipelines(report: Mapping[str, Any]) -> set[str]:
+    pipelines: set[str] = set()
+
+    def _add(value: object) -> None:
+        if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+            for item in value:
+                _add(item)
+            return
+        normalized = normalize_report_pipeline(value)
+        if normalized:
+            pipelines.add(normalized)
+
+    _add(report.get("pipeline"))
+
+    context = report.get("context")
+    if isinstance(context, Mapping):
+        _add(context.get("pipeline"))
+
+    dataset = report.get("dataset")
+    if isinstance(dataset, Mapping):
+        metadata = dataset.get("metadata")
+        if isinstance(metadata, Mapping):
+            _add(metadata.get("pipeline"))
+
+    return pipelines
+
+
+def _collect_report_portfolios(report: Mapping[str, Any]) -> set[str]:
+    portfolios: set[str] = set()
+
+    def _add(value: object) -> None:
+        if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+            for item in value:
+                _add(item)
+            return
+        normalized = normalize_report_portfolio(value)
+        if normalized:
+            portfolios.add(normalized)
+
+    _add(report.get("portfolio"))
+
+    context = report.get("context")
+    if isinstance(context, Mapping):
+        _add(context.get("portfolio"))
+
+    dataset = report.get("dataset")
+    if isinstance(dataset, Mapping):
+        metadata = dataset.get("metadata")
+        if isinstance(metadata, Mapping):
+            _add(metadata.get("portfolio"))
+
+    return portfolios
+
+
+def _collect_report_capabilities(report: Mapping[str, Any]) -> set[str]:
+    capabilities: set[str] = set()
+
+    def _add(value: object) -> None:
+        if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+            for item in value:
+                _add(item)
+            return
+        normalized = normalize_report_capability(value)
+        if normalized:
+            capabilities.add(normalized)
+
+    _add(report.get("capability"))
+
+    context = report.get("context")
+    if isinstance(context, Mapping):
+        _add(context.get("capability"))
+
+    dataset = report.get("dataset")
+    if isinstance(dataset, Mapping):
+        metadata = dataset.get("metadata")
+        if isinstance(metadata, Mapping):
+            _add(metadata.get("capability"))
+
+    strategy = report.get("strategy")
+    if isinstance(strategy, Mapping):
+        _add(strategy.get("capability"))
+
+    metadata = report.get("metadata")
+    if isinstance(metadata, Mapping):
+        _add(metadata.get("capability"))
+
+    return capabilities
+
+
+def filter_audit_reports_by_symbol(
+    reports: Sequence[Mapping[str, Any]] | None,
+    *,
+    include: Sequence[object] | None = None,
+    exclude: Sequence[object] | None = None,
+) -> tuple[Mapping[str, Any], ...]:
+    """Filtruje raporty na podstawie symboli (np. par giełdowych)."""
+
+    include_set = {
+        normalize_report_symbol(item)
+        for item in (include or ())
+        if normalize_report_symbol(item)
+    }
+    exclude_set = {
+        normalize_report_symbol(item)
+        for item in (exclude or ())
+        if normalize_report_symbol(item)
+    }
+
+    filtered: list[Mapping[str, Any]] = []
+    for report in reports or ():
+        if not isinstance(report, Mapping):
+            continue
+        symbols = _collect_report_symbols(report)
+
+        if include_set and not (symbols & include_set):
+            continue
+        if exclude_set and (symbols & exclude_set):
+            continue
+        filtered.append(report)
+
+    return tuple(filtered)
+
+
+def filter_audit_reports_by_pipeline(
+    reports: Sequence[Mapping[str, Any]] | None,
+    *,
+    include: Sequence[object] | None = None,
+    exclude: Sequence[object] | None = None,
+) -> tuple[Mapping[str, Any], ...]:
+    """Filtruje raporty na podstawie identyfikatora pipeline'u."""
+
+    include_set = {
+        pipeline
+        for pipeline in (
+            normalize_report_pipeline(item) for item in (include or ())
+        )
+        if pipeline
+    }
+    exclude_set = {
+        pipeline
+        for pipeline in (
+            normalize_report_pipeline(item) for item in (exclude or ())
+        )
+        if pipeline
+    }
+
+    filtered: list[Mapping[str, Any]] = []
+    for report in reports or ():
+        if not isinstance(report, Mapping):
+            continue
+        pipelines = _collect_report_pipelines(report)
+
+        if include_set and not (pipelines & include_set):
+            continue
+        if exclude_set and (pipelines & exclude_set):
+            continue
+        filtered.append(report)
+
+    return tuple(filtered)
+
+
+def filter_audit_reports_by_environment(
+    reports: Sequence[Mapping[str, Any]] | None,
+    *,
+    include: Sequence[object] | None = None,
+    exclude: Sequence[object] | None = None,
+) -> tuple[Mapping[str, Any], ...]:
+    """Filtruje raporty na podstawie środowiska (np. ``prod``, ``paper``)."""
+
+    include_set = {
+        environment
+        for environment in (
+            normalize_report_environment(item) for item in (include or ())
+        )
+        if environment
+    }
+    exclude_set = {
+        environment
+        for environment in (
+            normalize_report_environment(item) for item in (exclude or ())
+        )
+        if environment
+    }
+
+    filtered: list[Mapping[str, Any]] = []
+    for report in reports or ():
+        if not isinstance(report, Mapping):
+            continue
+
+        environments = _collect_report_environments(report)
+
+        if include_set and not (environments & include_set):
+            continue
+        if exclude_set and (environments & exclude_set):
+            continue
+
+        filtered.append(report)
+
+    return tuple(filtered)
+
+
+def filter_audit_reports_by_portfolio(
+    reports: Sequence[Mapping[str, Any]] | None,
+    *,
+    include: Sequence[object] | None = None,
+    exclude: Sequence[object] | None = None,
+) -> tuple[Mapping[str, Any], ...]:
+    """Filtruje raporty na podstawie portfela (np. ``core``, ``hf``)."""
+
+    include_set = {
+        portfolio
+        for portfolio in (
+            normalize_report_portfolio(item) for item in (include or ())
+        )
+        if portfolio
+    }
+    exclude_set = {
+        portfolio
+        for portfolio in (
+            normalize_report_portfolio(item) for item in (exclude or ())
+        )
+        if portfolio
+    }
+
+    filtered: list[Mapping[str, Any]] = []
+    for report in reports or ():
+        if not isinstance(report, Mapping):
+            continue
+
+        portfolios = _collect_report_portfolios(report)
+
+        if include_set and not (portfolios & include_set):
+            continue
+        if exclude_set and (portfolios & exclude_set):
+            continue
+
+        filtered.append(report)
+
+    return tuple(filtered)
+
+
+def filter_audit_reports_by_capability(
+    reports: Sequence[Mapping[str, Any]] | None,
+    *,
+    include: Sequence[object] | None = None,
+    exclude: Sequence[object] | None = None,
+) -> tuple[Mapping[str, Any], ...]:
+    """Filtruje raporty na podstawie capability strategii lub datasetu."""
+
+    include_set = {
+        capability
+        for capability in (
+            normalize_report_capability(item) for item in (include or ())
+        )
+        if capability
+    }
+    exclude_set = {
+        capability
+        for capability in (
+            normalize_report_capability(item) for item in (exclude or ())
+        )
+        if capability
+    }
+
+    filtered: list[Mapping[str, Any]] = []
+    for report in reports or ():
+        if not isinstance(report, Mapping):
+            continue
+
+        capabilities = _collect_report_capabilities(report)
+
+        if include_set and not (capabilities & include_set):
+            continue
+        if exclude_set and (capabilities & exclude_set):
+            continue
+
+        filtered.append(report)
+
+    return tuple(filtered)
+
+
+def filter_audit_reports_by_policy_enforcement(
+    reports: Sequence[Mapping[str, Any]] | None,
+    *,
+    include: Sequence[object] | None = None,
+    exclude: Sequence[object] | None = None,
+) -> tuple[Mapping[str, Any], ...]:
+    """Filtruje raporty na podstawie flagi ``policy.enforce``.
+
+    Wartości ``include`` oraz ``exclude`` mogą być mieszanką booli, liczb i
+    napisów (np. ``"enforced"``, ``"not-enforced"``). Zestawy są przetwarzane
+    po znormalizowaniu.  Raporty bez sekcji ``policy`` lub z nieznaną flagą
+    traktowane są jako ``None`` i zostaną odrzucone przy użyciu ``include``.
+    """
+
+    include_set = {
+        flag
+        for flag in (normalize_policy_enforcement(value) for value in (include or ()))
+        if flag is not None
+    }
+    exclude_set = {
+        flag
+        for flag in (normalize_policy_enforcement(value) for value in (exclude or ()))
+        if flag is not None
+    }
+
+    filtered: list[Mapping[str, Any]] = []
+    for report in reports or ():
+        if not isinstance(report, Mapping):
+            continue
+        policy = report.get("policy")
+        enforce_flag: bool | None = None
+        if isinstance(policy, Mapping):
+            enforce_flag = normalize_policy_enforcement(policy.get("enforce"))
+
+        if include_set:
+            if enforce_flag is None or enforce_flag not in include_set:
+                continue
+        if exclude_set and enforce_flag in exclude_set:
+            continue
+        filtered.append(report)
+    return tuple(filtered)
 
 
 def summarize_data_quality_reports(
@@ -611,40 +1588,6 @@ def _normalize_required_roles(roles: Sequence[str] | None) -> tuple[str, ...]:
     return tuple(normalized)
 
 
-def _normalize_required_roles(roles: Sequence[str] | None) -> tuple[str, ...]:
-    if roles is None:
-        return _DEFAULT_SIGN_OFF_ROLES
-
-    seen: set[str] = set()
-    normalized: list[str] = []
-    for role in roles:
-        if not isinstance(role, str):
-            continue
-        normalized_role = role.strip().lower()
-        if not normalized_role:
-            continue
-        if normalized_role not in _SUPPORTED_SIGN_OFF_ROLES:
-            logger.warning(
-                "Unsupported compliance sign-off role provided: %s", role
-            )
-            raise ValueError(
-                f"unsupported sign-off role: {role!r}"
-            )
-        if normalized_role in seen:
-            continue
-        seen.add(normalized_role)
-        normalized.append(normalized_role)
-
-    if not normalized:
-        logger.warning(
-            "No supported compliance sign-off roles configured; expected one of: %s",
-            ", ".join(sorted(_SUPPORTED_SIGN_OFF_ROLES)),
-        )
-        raise ValueError("roles must include at least one supported sign-off role")
-
-    return tuple(normalized)
-
-
 def normalize_compliance_sign_off_roles(
     roles: Sequence[str] | None,
 ) -> tuple[str, ...]:
@@ -658,6 +1601,7 @@ def _collect_pending_sign_off_map(
     data_quality_reports: Sequence[Mapping[str, Any]] | None,
     drift_reports: Sequence[Mapping[str, Any]] | None,
     roles: Sequence[str] | None,
+    raise_on_missing: bool,
 ) -> Mapping[str, tuple[Mapping[str, Any], ...]]:
     """Weryfikuje, czy wymagane role zatwierdziły alerty data-quality oraz dryfu."""
 
@@ -672,8 +1616,8 @@ def _collect_pending_sign_off_map(
     drift_summary = summarize_drift_reports(drift_reports, roles=required_roles)
 
     for role in required_roles:
-        dq_entries = dq_summary.get("pending_sign_off", {}).get(role, ())
-        drift_entries = drift_summary.get("pending_sign_off", {}).get(role, ())
+        dq_entries = dq_summary.get("pending_sign_off", ()).get(role, ())
+        drift_entries = drift_summary.get("pending_sign_off", ()).get(role, ())
         pending[role].extend(dict(entry) for entry in dq_entries)
         pending[role].extend(dict(entry) for entry in drift_entries)
 
@@ -688,8 +1632,41 @@ def _collect_pending_sign_off_map(
                 len(entries),
                 ", ".join(categories) or "unknown",
             )
-        raise ComplianceSignOffError(normalized)
+        if raise_on_missing:
+            raise ComplianceSignOffError(normalized)
     return MappingProxyType(normalized)
+
+
+def collect_pending_compliance_sign_offs(
+    *,
+    data_quality_reports: Sequence[Mapping[str, Any]] | None = None,
+    drift_reports: Sequence[Mapping[str, Any]] | None = None,
+    roles: Sequence[str] | None = None,
+) -> Mapping[str, tuple[Mapping[str, Any], ...]]:
+    """Zwraca oczekujące podpisy Risk/Compliance dla wskazanych raportów audytu."""
+
+    return _collect_pending_sign_off_map(
+        data_quality_reports=data_quality_reports,
+        drift_reports=drift_reports,
+        roles=roles,
+        raise_on_missing=False,
+    )
+
+
+def ensure_compliance_sign_offs(
+    *,
+    data_quality_reports: Sequence[Mapping[str, Any]] | None = None,
+    drift_reports: Sequence[Mapping[str, Any]] | None = None,
+    roles: Sequence[str] | None = None,
+) -> Mapping[str, tuple[Mapping[str, Any], ...]]:
+    """Gwarantuje, że wymagane role zatwierdziły alerty jakości danych i dryfu."""
+
+    return _collect_pending_sign_off_map(
+        data_quality_reports=data_quality_reports,
+        drift_reports=drift_reports,
+        roles=roles,
+        raise_on_missing=True,
+    )
 def _is_missing(value: object) -> bool:
     if value is None:
         return True

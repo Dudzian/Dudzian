@@ -58,6 +58,7 @@ from bot_core.config.models import (
 )
 from bot_core.exchanges.base import Environment
 from bot_core.exchanges.core import Mode
+from bot_core.strategies.catalog import DEFAULT_STRATEGY_CATALOG
 
 
 try:  # Stage6 asset-level konfiguracja governora
@@ -595,6 +596,19 @@ def _load_strategy_definitions(raw: Mapping[str, Any]):
             return {}
         return {str(key): value for key, value in values.items()}
 
+    def _normalize_sequence_field(values: Any) -> tuple[str, ...]:
+        if not values:
+            return ()
+        if isinstance(values, str):
+            iterable = (values,)
+        elif isinstance(values, (list, tuple, set)):
+            iterable = values
+        else:
+            raise TypeError("Strategy definition field must be a sequence of strings")
+        return tuple(
+            dict.fromkeys(str(item).strip() for item in iterable if str(item).strip())
+        )
+
     definitions: dict[str, StrategyDefinitionConfig] = {}
 
     for name, entry in (raw.get("strategies", {}) or {}).items():
@@ -609,10 +623,27 @@ def _load_strategy_definitions(raw: Mapping[str, Any]):
             tags = tuple(str(tag) for tag in tags_source)
         else:
             tags = (str(tags_source),) if tags_source else ()
+        try:
+            spec = DEFAULT_STRATEGY_CATALOG.get(engine)
+        except KeyError:
+            spec = None
+        license_tier = str(entry.get("license_tier", "")).strip()
+        risk_classes = _normalize_sequence_field(entry.get("risk_classes"))
+        required_data = _normalize_sequence_field(entry.get("required_data"))
+        capability = str(entry.get("capability", "")).strip() or None
+        if capability is None and spec and spec.capability:
+            capability = spec.capability
+        if capability and "capability" not in metadata:
+            metadata = dict(metadata)
+            metadata["capability"] = capability
         definitions[name] = StrategyDefinitionConfig(
             name=name,
             engine=engine,
             parameters=parameters,
+            license_tier=license_tier or (spec.license_tier if spec else None),
+            risk_classes=risk_classes or (spec.risk_classes if spec else ()),
+            required_data=required_data or (spec.required_data if spec else ()),
+            capability=capability,
             risk_profile=str(entry.get("risk_profile")) if entry.get("risk_profile") else None,
             tags=tags,
             metadata=metadata,
@@ -621,10 +652,29 @@ def _load_strategy_definitions(raw: Mapping[str, Any]):
     def _ensure(name: str, engine: str, params: Mapping[str, Any]) -> None:
         if name in definitions:
             return
+        try:
+            spec = DEFAULT_STRATEGY_CATALOG.get(engine)
+            license_tier = spec.license_tier
+            risk_classes = spec.risk_classes
+            required_data = spec.required_data
+            capability = spec.capability
+        except KeyError:
+            license_tier = None
+            risk_classes = ()
+            required_data = ()
+            capability = None
+        metadata: dict[str, Any] = {}
+        if capability:
+            metadata["capability"] = capability
         definitions[name] = StrategyDefinitionConfig(
             name=name,
             engine=engine,
             parameters=_normalize_mapping(params),
+            license_tier=license_tier,
+            risk_classes=risk_classes,
+            required_data=required_data,
+            capability=capability,
+            metadata=metadata,
         )
 
     for name, entry in (raw.get("mean_reversion_strategies", {}) or {}).items():

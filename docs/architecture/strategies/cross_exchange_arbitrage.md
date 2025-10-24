@@ -12,6 +12,12 @@
 - Logowanie decyzji z HMAC (współdzielone z `verify_decision_log.py`).
 - Wymóg RBAC: token `scheduler-local` z zakresem `runtime.schedule.write`.
 
+## Metadane katalogu strategii
+- `license_tier`: `enterprise` – wymaga najwyższego poziomu licencji ze względu na integracje międzygiełdowe.
+- `risk_classes`: `arbitrage`, `liquidity` – klasyfikacja używana do raportów schedulera i kontroli ekspozycji.
+- `required_data`: `order_book`, `latency_monitoring` – źródła danych wymagane przez silnik przy budowie presetów.
+- `capability`: `cross_exchange` – strażnik licencyjny wymaga aktywnej zdolności integracji międzygiełdowych.
+
 ## Ryzyka
 - Opóźnienia sekundowe między giełdami → telemetry `secondary_delay_ms`.
 - Brak par GBP/CHF: raportować w runbooku jako gap.
