@@ -59,6 +59,7 @@ from bot_core.execution import (
 from bot_core.exchanges.base import OrderRequest
 from bot_core.risk.engine import ThresholdRiskEngine
 from bot_core.observability import MetricsRegistry, get_global_metrics_registry
+from bot_core.trading.strategies import StrategyCatalog
 
 
 LOGGER = logging.getLogger(__name__)
@@ -278,6 +279,11 @@ class AutoTrader:
     method executed inside a worker thread when the user confirms auto-trading.
     """
 
+    _STRATEGY_SUFFIXES: tuple[str, ...] = ("_probing",)
+    _STRATEGY_ALIAS_MAP: Mapping[str, str] = {
+        "intraday_breakout": "day_trading",
+    }
+
     def __init__(
         self,
         emitter: EmitterLike,
@@ -314,6 +320,7 @@ class AutoTrader:
         work_schedule: TradingSchedule | None = None,
         decision_audit_log: DecisionAuditLog | None = None,
         portfolio_manager: Any | None = None,
+        strategy_catalog: StrategyCatalog | None = None,
     ) -> None:
         self.emitter = emitter
         self.gui = gui
@@ -364,6 +371,7 @@ class AutoTrader:
             getattr(bootstrap_context, "portfolio_id", "autotrader") or "autotrader"
         )
         self._environment_name = self._detect_environment_name(bootstrap_context)
+        self._strategy_catalog = strategy_catalog or StrategyCatalog.default()
         if core_risk_engine is not None:
             self.core_risk_engine = core_risk_engine
         else:
@@ -1248,6 +1256,111 @@ class AutoTrader:
         for key, value in extra.items():
             payload[str(key)] = str(value)
         return payload
+
+    @staticmethod
+    def _unique_list(values: Iterable[object]) -> list[str]:
+        seen: dict[str, None] = {}
+        result: list[str] = []
+        for raw in values:
+            text = str(raw).strip()
+            if not text or text in seen:
+                continue
+            seen[text] = None
+            result.append(text)
+        return result
+
+    @staticmethod
+    def _normalise_strategy_metadata_value(value: object) -> object:
+        if isinstance(value, Mapping):
+            return {
+                str(key): AutoTrader._normalise_strategy_metadata_value(val)
+                for key, val in value.items()
+            }
+        if isinstance(value, tuple):
+            return [str(item) for item in value]
+        if isinstance(value, list):
+            return [str(item) for item in value]
+        return copy.deepcopy(value)
+
+    def _strategy_metadata_candidates(self, name: str | None) -> tuple[str, ...]:
+        base = str(name or "").strip()
+        if not base:
+            return ()
+        candidates: list[str] = [base]
+        for suffix in self._STRATEGY_SUFFIXES:
+            if base.endswith(suffix):
+                trimmed = base[: -len(suffix)]
+                if trimmed:
+                    candidates.append(trimmed)
+        expanded = list(candidates)
+        for candidate in expanded:
+            alias = self._STRATEGY_ALIAS_MAP.get(candidate)
+            if alias:
+                candidates.append(alias)
+        ordered: list[str] = []
+        seen: dict[str, None] = {}
+        for candidate in candidates:
+            key = candidate.strip()
+            if not key or key in seen:
+                continue
+            seen[key] = None
+            ordered.append(key)
+        return tuple(ordered)
+
+    def _strategy_metadata_summary(
+        self, metadata: Mapping[str, object]
+    ) -> dict[str, list[str]]:
+        summary: dict[str, list[str]] = {}
+
+        def _extract(key: str) -> list[str]:
+            value = metadata.get(key)
+            if value is None:
+                return []
+            if isinstance(value, (list, tuple)):
+                return self._unique_list(value)
+            if isinstance(value, set):
+                return self._unique_list(sorted(value))
+            text = str(value).strip()
+            return [text] if text else []
+
+        mapping = {
+            "license_tier": "license_tiers",
+            "risk_classes": "risk_classes",
+            "required_data": "required_data",
+            "capability": "capabilities",
+            "tags": "tags",
+        }
+        for source, target in mapping.items():
+            values = _extract(source)
+            if values:
+                summary[target] = values
+        return summary
+
+    def _strategy_metadata_bundle(
+        self, name: str | None
+    ) -> tuple[dict[str, object], dict[str, list[str]]]:
+        metadata: dict[str, object] = {}
+        summary: dict[str, list[str]] = {}
+        matched_catalog: str | None = None
+        for candidate in self._strategy_metadata_candidates(name):
+            payload = self._strategy_catalog.metadata_for(candidate)
+            if payload:
+                matched_catalog = candidate
+                metadata = {
+                    str(key): self._normalise_strategy_metadata_value(value)
+                    for key, value in payload.items()
+                    if key != "name"
+                }
+                break
+        strategy_name = str(name or "").strip()
+        if metadata:
+            metadata["name"] = strategy_name or (matched_catalog or "")
+            if matched_catalog and matched_catalog != strategy_name:
+                metadata.setdefault("catalog_name", matched_catalog)
+            summary = self._strategy_metadata_summary(metadata)
+        elif strategy_name:
+            metadata["name"] = strategy_name
+        return metadata, summary
 
     def _update_strategy_metrics(self, strategy: str) -> None:
         strategy_label = str(strategy)
@@ -9742,6 +9855,11 @@ class AutoTrader:
             LOGGER.debug("Decision timeline summary failed", exc_info=True)
             decision_summary = self._fallback_decision_summary()
 
+        current_strategy = self.current_strategy
+        current_leverage = self.current_leverage
+        current_stop_loss = self.current_stop_loss_pct
+        current_take_profit = self.current_take_profit_pct
+
         with self._lock:
             last_guardrail_reasons = list(self._last_guardrail_reasons)
             last_guardrail_triggers = [trigger.to_dict() for trigger in self._last_guardrail_triggers]
@@ -9779,6 +9897,10 @@ class AutoTrader:
                 "started": bool(self._started),
             }
             schedule_last_alert = self._schedule_last_alert_state
+            current_strategy = self.current_strategy
+            current_leverage = self.current_leverage
+            current_stop_loss = self.current_stop_loss_pct
+            current_take_profit = self.current_take_profit_pct
 
         now_ts = time.time()
         if cooldown_until and cooldown_until > now_ts:
@@ -9845,6 +9967,20 @@ class AutoTrader:
                     level=logging.DEBUG,
                 )
 
+        strategy_metadata, strategy_summary = self._strategy_metadata_bundle(current_strategy)
+        strategy_section: dict[str, Any] = {
+            "current": current_strategy,
+            "leverage": current_leverage,
+            "stop_loss_pct": current_stop_loss,
+            "take_profit_pct": current_take_profit,
+            "last_signal": last_signal,
+            "last_regime": last_regime,
+        }
+        if strategy_metadata:
+            strategy_section["metadata"] = strategy_metadata
+        if strategy_summary:
+            strategy_section["metadata_summary"] = strategy_summary
+
         snapshot = {
             "timestamp": now_dt.isoformat(),
             "symbol": symbol,
@@ -9852,14 +9988,7 @@ class AutoTrader:
             "portfolio": self._portfolio_id,
             "risk_profile": self._risk_profile_name,
             "schedule": schedule_payload,
-            "strategy": {
-                "current": self.current_strategy,
-                "leverage": self.current_leverage,
-                "stop_loss_pct": self.current_stop_loss_pct,
-                "take_profit_pct": self.current_take_profit_pct,
-                "last_signal": last_signal,
-                "last_regime": last_regime,
-            },
+            "strategy": strategy_section,
             "guardrails": {
                 "summary": guardrail_summary,
                 "last_reasons": last_guardrail_reasons,
