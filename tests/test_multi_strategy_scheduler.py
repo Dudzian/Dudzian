@@ -346,7 +346,14 @@ def test_scheduler_updates_allocation_interval() -> None:
 
 def test_describe_schedules_returns_metadata() -> None:
     strategy = DummyStrategy()
-    strategy.metadata = {"tags": ["trend"], "primary_tag": "trend"}
+    strategy.metadata = {
+        "tags": ["trend", "trend"],
+        "primary_tag": "trend",
+        "license_tier": "enterprise",
+        "risk_classes": ["directional", "momentum", "directional"],
+        "required_data": ["ohlcv", "order_book", "ohlcv"],
+        "capability": "trend_pro",
+    }
     feed = DummyFeed([_snapshot(200.0, 3000)])
     sink = DummySink()
     now = datetime(2024, 1, 2, tzinfo=timezone.utc)
@@ -402,6 +409,50 @@ def test_describe_schedules_returns_metadata() -> None:
     assert entry["active_suspension"]["reason"] == "cooldown"
     assert "metrics" in entry and entry["metrics"]["signals"] == pytest.approx(2.0)
     assert entry["last_run"] == now.isoformat()
+    assert entry["license_tier"] == "enterprise"
+    assert entry["capability"] == "trend_pro"
+    assert entry["risk_classes"] == ["directional", "momentum"]
+    assert entry["required_data"] == ["ohlcv", "order_book"]
+
+
+def test_register_schedule_uses_strategy_attributes_for_metadata() -> None:
+    class MetaStrategy(DummyStrategy):
+        def __init__(self) -> None:
+            super().__init__()
+            self.license_tier = "professional"
+            self.capability = "attr_capability"
+            self.risk_classes = ("hedge", "tail", "hedge")
+            self.required_data = ["ohlcv", "stress", "ohlcv"]
+
+    strategy = MetaStrategy()
+    feed = DummyFeed([_snapshot(200.0, 3000)])
+    sink = DummySink()
+    now = datetime(2024, 1, 3, tzinfo=timezone.utc)
+
+    scheduler = MultiStrategyScheduler(
+        environment="demo",
+        portfolio="paper",
+        clock=lambda: now,
+    )
+
+    scheduler.register_schedule(
+        name="attr_schedule",
+        strategy_name="attr_engine",
+        strategy=strategy,
+        feed=feed,
+        sink=sink,
+        cadence_seconds=30,
+        max_drift_seconds=5,
+        warmup_bars=1,
+        risk_profile="balanced",
+        max_signals=1,
+    )
+
+    entry = scheduler.describe_schedules()["attr_schedule"]
+    assert entry["license_tier"] == "professional"
+    assert entry["capability"] == "attr_capability"
+    assert entry["risk_classes"] == ["hedge", "tail"]
+    assert entry["required_data"] == ["ohlcv", "stress"]
 
 
 def test_signal_limit_snapshot_returns_nested_mapping() -> None:

@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
+from types import MappingProxyType
+from collections.abc import Iterable
 from typing import Dict, Mapping, MutableMapping
 
 import pandas as pd
@@ -28,6 +30,26 @@ class RegimeSwitchDecision:
     weights: Dict[str, float]
     parameters: TradingParameters
     timestamp: pd.Timestamp
+    strategy_metadata: Mapping[str, Mapping[str, object]] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
+    license_tiers: tuple[str, ...] = ()
+    risk_classes: tuple[str, ...] = ()
+    required_data: tuple[str, ...] = ()
+    capabilities: tuple[str, ...] = ()
+    tags: tuple[str, ...] = ()
+
+    @property
+    def metadata_summary(self) -> Mapping[str, tuple[str, ...]]:
+        return MappingProxyType(
+            {
+                "license_tiers": self.license_tiers,
+                "risk_classes": self.risk_classes,
+                "required_data": self.required_data,
+                "capabilities": self.capabilities,
+                "tags": self.tags,
+            }
+        )
 
 
 class RegimeSwitchWorkflow:
@@ -123,6 +145,7 @@ class RegimeSwitchWorkflow:
                 candidate_regime = previous_decision.regime
 
         weights = self._resolve_weights(candidate_regime, assessment)
+        metadata = self._collect_strategy_metadata(weights)
         overrides = self._prepare_overrides(candidate_regime, parameter_overrides)
         overrides["ensemble_weights"] = weights
         tuned_params = replace(base_parameters, **overrides)
@@ -134,6 +157,12 @@ class RegimeSwitchWorkflow:
             weights=weights,
             parameters=tuned_params,
             timestamp=timestamp,
+            strategy_metadata=metadata["strategies"],
+            license_tiers=metadata["license_tiers"],
+            risk_classes=metadata["risk_classes"],
+            required_data=metadata["required_data"],
+            capabilities=metadata["capabilities"],
+            tags=metadata["tags"],
         )
 
         if previous_decision is None or previous_decision.regime != decision.regime:
@@ -198,6 +227,57 @@ class RegimeSwitchWorkflow:
 
         total = sum(weights.values()) or 1.0
         return {name: float(value) / total for name, value in weights.items()}
+
+    def _collect_strategy_metadata(
+        self, weights: Mapping[str, float]
+    ) -> Mapping[str, tuple[str, ...] | Mapping[str, Mapping[str, object]]]:
+        strategies: Dict[str, Mapping[str, object]] = {}
+        license_tiers: list[str] = []
+        risk_classes: list[str] = []
+        required_data: list[str] = []
+        capabilities: list[str] = []
+        tags: list[str] = []
+
+        def _append_unique(bucket: list[str], values: Iterable[str]) -> None:
+            seen = set(bucket)
+            for value in values:
+                text = str(value).strip()
+                if not text or text in seen:
+                    continue
+                seen.add(text)
+                bucket.append(text)
+
+        for name in sorted(weights):
+            metadata = self._catalog.metadata_for(name)
+            if not metadata:
+                continue
+            strategies[name] = metadata
+            license_value = metadata.get("license_tier")
+            if isinstance(license_value, str):
+                _append_unique(license_tiers, (license_value,))
+            risk_value = metadata.get("risk_classes")
+            if isinstance(risk_value, Iterable):
+                _append_unique(risk_classes, risk_value)
+            required_value = metadata.get("required_data")
+            if isinstance(required_value, Iterable):
+                _append_unique(required_data, required_value)
+            capability_value = metadata.get("capability")
+            if isinstance(capability_value, str):
+                _append_unique(capabilities, (capability_value,))
+            tags_value = metadata.get("tags")
+            if isinstance(tags_value, Iterable):
+                _append_unique(tags, tags_value)
+
+        return {
+            "strategies": MappingProxyType(
+                {name: MappingProxyType(dict(payload)) for name, payload in strategies.items()}
+            ),
+            "license_tiers": tuple(license_tiers),
+            "risk_classes": tuple(risk_classes),
+            "required_data": tuple(required_data),
+            "capabilities": tuple(capabilities),
+            "tags": tuple(tags),
+        }
 
     def _prepare_overrides(
         self,
