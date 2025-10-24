@@ -8,6 +8,7 @@
 
 #include "utils/PathUtils.hpp"
 
+using bot::shell::utils::expandEnvironmentPlaceholders;
 using bot::shell::utils::expandPath;
 using bot::shell::utils::watchableDirectories;
 
@@ -34,6 +35,20 @@ private Q_SLOTS:
 
         const QString braced = expandPath(QStringLiteral("${BOT_PATH_UTILS_TEST}/cfg"));
         QCOMPARE(braced, QDir::cleanPath(value + QStringLiteral("/cfg")));
+    }
+
+    void expandEnvironmentPlaceholders_onlyExpandsVariables()
+    {
+        const QByteArray varName = QByteArrayLiteral("BOT_PATH_UTILS_ENV_ONLY");
+        const QString value = QStringLiteral("/opt/bridge");
+        QVERIFY(qputenv(varName.constData(), value.toUtf8()));
+
+        const QString expanded =
+            expandEnvironmentPlaceholders(QStringLiteral("$BOT_PATH_UTILS_ENV_ONLY/ui"));
+        QCOMPARE(expanded, value + QStringLiteral("/ui"));
+
+        const QString unchanged = expandEnvironmentPlaceholders(QStringLiteral("python3"));
+        QCOMPARE(unchanged, QStringLiteral("python3"));
     }
 
     void expandPath_resolvesWindowsStyle()
