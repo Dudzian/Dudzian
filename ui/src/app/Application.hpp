@@ -12,6 +12,7 @@
 #include <QDir>
 #include <QFileSystemWatcher>
 #include <QHash>
+#include <QStringList>
 
 #include <memory>
 #include <optional>
@@ -180,6 +181,7 @@ public slots:
     Q_INVOKABLE void stopOfflineAutomation();
     Q_INVOKABLE bool setDecisionLogPath(const QUrl& url);
     Q_INVOKABLE bool reloadDecisionLog();
+    Q_INVOKABLE bool reloadUiModules();
 
     // Test helpers (persistent UI state)
     void saveUiSettingsImmediatelyForTesting();
@@ -215,6 +217,8 @@ signals:
     void riskHistoryAutoExportIntervalMinutesChanged();
     void riskHistoryAutoExportBasenameChanged();
     void riskHistoryAutoExportUseLocalTimeChanged();
+    void uiModuleDirectoriesChanged(const QStringList& directories);
+    void uiModulesReloaded(bool success, const QVariantMap& report);
     void riskHistoryLastAutoExportAtChanged();
     void riskHistoryLastAutoExportPathChanged();
     void regimeTimelineMaximumSnapshotsChanged();
