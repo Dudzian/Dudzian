@@ -3,7 +3,7 @@
 Migracja środowiska z paper/testnet do produkcyjnego trybu LIVE wymaga potwierdzenia
 spójności profili ryzyka, licencji oraz konfiguracji alertingu. Niniejszy dokument
 prowadzi operatora przez procedurę "promotion to live" oraz opisuje narzędzie
-`scripts/promotion_to_live.py`, które automatyzuje weryfikację podpisanych
+`python scripts/promotion_to_live.py`, które automatyzuje weryfikację podpisanych
 checklist, wymaganych dokumentów i statusów licencji.
 
 ## 1. Wymagane artefakty

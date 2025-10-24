@@ -1,7 +1,7 @@
 # Runbook: Weryfikacja decision logów
 
 ## Cel
-Zdefiniowanie kroków audytowych dla podpisanych decision logów (demo, paper, live, reinstalacja) z wykorzystaniem narzędzia `scripts/verify_decision_log.py` i rotacji kluczy HMAC.
+Zdefiniowanie kroków audytowych dla podpisanych decision logów (demo, paper, live, reinstalacja) z wykorzystaniem narzędzia `PYTHONPATH=. python scripts/verify_decision_log.py` i rotacji kluczy HMAC.
 
 ## Lista kontrolna
 | Krok | Odpowiedzialny | Artefakty | Akceptacja |

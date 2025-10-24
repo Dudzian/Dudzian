@@ -30,7 +30,7 @@ fazie OEM.
 | 1. Pobierz raport `var/audit/acceptance/<TS>/stage4_support/compliance.json` (jeżeli istnieje) i porównaj z bieżącym wynikiem `audit_stage4_compliance` | L2 | Raport audytu, log CLI | Brak statusu `fail`; wszystkie ostrzeżenia zdiagnozowane |
 | 2. Uruchom `python scripts/load_test_scheduler.py --iterations 30 --schedules 3 --output logs/load_tests/stage4_incident.json` | L2 | Raport load testu, wyniki SLA | Latencja i jitter w dopuszczalnych granicach lub decyzja o wyłączeniu scheduler-a |
 | 3. Wykonaj `python scripts/watch_metrics_stream.py --headers-report --duration 10m --output logs/metrics/stage4_headers.json` | L2 | Raport nagłówków, metryki scheduler-a | Nagłówki mTLS/RBAC poprawne, brak anomalii w `avg_abs_zscore` |
-| 4. Zweryfikuj rotacje TLS (`python scripts/audit_stage4_compliance.py --mtls-bundle-name core-oem --rotation-warn-days 7 --check-paths`) i klucze RBAC (`scripts/audit_security_baseline.py --print`) | L2 | Raporty audytowe, logi CLI | Rotacje w oknie bezpieczeństwa, brak błędów RBAC |
+| 4. Zweryfikuj rotacje TLS (`python scripts/audit_stage4_compliance.py --mtls-bundle-name core-oem --rotation-warn-days 7 --check-paths`) i klucze RBAC (`python scripts/audit_security_baseline.py --print`) | L2 | Raporty audytowe, logi CLI | Rotacje w oknie bezpieczeństwa, brak błędów RBAC |
 | 5. W razie potrzeby wykonaj rollback: `python scripts/disable_multi_strategy.py --reason <ID> --ticket <INC> [--component multi_strategy]` oraz zastosuj runbook `docs/runbooks/STAGE4_ROLLBACK_PLAYBOOK.md` | L2 | `var/runtime/overrides/multi_strategy_disable.json`, wpis decision logu | Scheduler w stanie oczekiwanym (enabled/disabled), rollback potwierdzony |
 | 6. Po incydencie zaktualizuj playbook (`docs/runbooks/STAGE4_SUPPORT_PLAYBOOK.md`) i przekaż lessons learned zespołowi strategii | L2 | Zaktualizowana dokumentacja, wpis w repozie change-log | Review dokonane przez właściciela produktu |
 
@@ -46,8 +46,8 @@ fazie OEM.
 ## Artefakty / Akceptacja
 - Raport `audit_stage4_compliance` zapisany w
   `var/audit/acceptance/<timestamp>/stage4_support/compliance.json`.
-- Logi z `load_test_scheduler.py`, `watch_metrics_stream.py` oraz
-  `audit_security_baseline.py` dołączone do wpisu incidentowego.
+- Logi z `python scripts/load_test_scheduler.py`, `python scripts/watch_metrics_stream.py` oraz
+  `python scripts/audit_security_baseline.py` dołączone do wpisu incidentowego.
 - Wpis decision logu (`audit/decision_logs/runtime.jsonl`) z kategorią
   `stage4_incident`, podpisany HMAC i zweryfikowany `verify_decision_log.py`.
 - Uaktualniona checklista L1/L2 (ten dokument) z podpisami operatora i

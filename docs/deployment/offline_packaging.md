@@ -4,8 +4,8 @@
 
 Pakiet offline łączy binarkę Qt, konfigurację, dane referencyjne i dokumentację
 operacyjną w pojedynczym archiwum, które można dostarczyć na stanowiska bez
-połączenia z siecią. Proces bazuje na skryptach `scripts/build_desktop_installer.py`
-(kompilacja i podpis updatera) oraz `scripts/deploy/offline_packager.py` (konsolidacja
+połączenia z siecią. Proces bazuje na skryptach `python scripts/build_desktop_installer.py`
+(kompilacja i podpis updatera) oraz `python scripts/deploy/offline_packager.py` (konsolidacja
 artefaktów).
 
 ## Wymagania

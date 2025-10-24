@@ -7,7 +7,7 @@ aktualne, podpisane HMAC oraz gotowe do użycia w scenariuszu przełączenia.
 ## Prerekwizyty
 - Aktualne klucze HMAC w `secrets/hmac/` zarejestrowane w hypercare.
 - Paczki i manifesty w `var/resilience/` przygotowane przez
-  `scripts/export_resilience_bundle.py`.
+  `python scripts/export_resilience_bundle.py`.
 - Zdefiniowany plan w `data/stage6/resilience/failover_plan.json`.
 
 ## Procedura
@@ -35,7 +35,7 @@ aktualne, podpisane HMAC oraz gotowe do użycia w scenariuszu przełączenia.
    alerty krytyczne.
 5. Zaktualizuj decision log Stage6 wpisem referencyjnym do wygenerowanych
    artefaktów.
-6. (Opcjonalnie) Użyj `scripts/run_stage6_hypercare_cycle.py`, aby połączyć
+6. (Opcjonalnie) Użyj `python scripts/run_stage6_hypercare_cycle.py`, aby połączyć
    wyniki Resilience z Observability i Portfolio w jednym raporcie zbiorczym –
    szczegóły w checklistcie Stage6 Hypercare.
 

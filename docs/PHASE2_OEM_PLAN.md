@@ -19,11 +19,11 @@
   - macOS: `codesign` + plan notarization (placeholder w jobie macOS, integracja z narzędziem Apple Notary w następnym kroku),
   - Linux: GPG + manifest SHA-384 (manifest generowany automatycznie, publikacja podpisu w `manifest.sig`).
 - [x] Udokumentować procedurę "Installer Acceptance" (lista kontrolna artefakty/akceptacja) w `docs/runbooks/OEM_INSTALLER_ACCEPTANCE.md`.
-- [x] Zautomatyzować dry-run akceptacyjny (`scripts/run_oem_acceptance.py`) generujący raport JSON z wynikami bundla/licencji/Paper Labs/mTLS.
+- [x] Zautomatyzować dry-run akceptacyjny (`python scripts/run_oem_acceptance.py`) generujący raport JSON z wynikami bundla/licencji/Paper Labs/mTLS.
 
 ### 2. Fingerprint i licencjonowanie offline
 - [x] Zaimplementować moduł `bot_core/security/fingerprint.py` generujący fingerprint (CPU, TPM, MAC, opcjonalny dongle) z podpisem HMAC.
-- [x] Zaprojektować rejestr licencji (`var/licenses/registry.jsonl`) z podpisami oraz narzędziem `scripts/oem_provision_license.py`.
+- [x] Zaprojektować rejestr licencji (`var/licenses/registry.jsonl`) z podpisami oraz narzędziem `python scripts/oem_provision_license.py`.
 - [x] Stworzyć runbook provisioning (checklista + artefakty: request, approval, signed license).
 - [x] Uzupełnić UI o ekran aktywacji licencji z obsługą QR/USB.
 
@@ -36,13 +36,13 @@
 ### 4. Live execution + UI + Alerting
 - [x] Uzupełnić `bot_core/execution/live_router.py` o realne routowanie i fallbacki giełdowe.
 - [x] Dodać monitoring latencji/fill rate (metryki Prometheus, alerty w `config/core.yaml`).
-- [x] Rozszerzyć gRPC o mTLS + RBAC tokeny, generatory certyfikatów (`scripts/generate_mtls_bundle.py`).
+- [x] Rozszerzyć gRPC o mTLS + RBAC tokeny, generatory certyfikatów (`python scripts/generate_mtls_bundle.py`).
 - [x] Zaktualizować UI (gRPC client) o obsługę TLS, telemetry overlay, checklistę przed startem live.
 
 ### 5. Dokumentacja i runbooki
 - [x] Checklisty demo→paper→live w formacie: Krok, Odpowiedzialny, Artefakty, Akceptacja.
 - [x] Plan reinstalacji w środowisku offline (backup licencji, recovery bundli, walidacja hashy).
-- [x] Decision log JSONL z podpisami (narzędzie `scripts/verify_decision_log.py`).
+- [x] Decision log JSONL z podpisami (narzędzie `python scripts/verify_decision_log.py`).
 
 ## Wymagania bezpieczeństwa
 - mTLS (TLS 1.3, certyfikaty rotowane co 90 dni, CRL offline).
@@ -56,7 +56,7 @@
 | Sprint | Zakres | Kluczowe zadania | Milestone / Artefakty gatingowe |
 | --- | --- | --- | --- |
 | 1 | Packaging OEM + podpisy + weryfikacja demo | Finalizacja bundla `Core OEM`, podpisy binariów, przygotowanie pipeline'u `deploy/ci/github_actions_oem_packaging.yml`, uruchomienie kroków Etapu 1 runbooka Demo→Paper (walidacja `config/core.yaml`, smoke demo, wpis `status=demo_ready`). | Artefakty instalatora + checklisty instalacyjne podpisane w `docs/runbooks/OEM_INSTALLER_ACCEPTANCE.md`, hash `config/core.yaml` (SHA-256/384) zapisany w `audit/decision_logs/demo.jsonl`, `StrategyContext.require_demo_mode` utrzymany jako blokada. |
-| 2 | Fingerprint/licencje + provisioning | Ukończony moduł fingerprintu, rejestr licencji (`scripts/oem_provision_license.py`), zadania runbookowe Stage "Provision licencji" oraz Etapu 2 krok 3 (provision licencji paper). | Pierwszy klient OEM offline z licencją podpisaną HMAC-SHA384, wpis w `audit/decision_logs/demo.jsonl` zawierający hash `config/core.yaml` oraz potwierdzenie `runtime.compliance_confirmed=false` do czasu ukończenia Paper Labs. |
+| 2 | Fingerprint/licencje + provisioning | Ukończony moduł fingerprintu, rejestr licencji (`python scripts/oem_provision_license.py`), zadania runbookowe Stage "Provision licencji" oraz Etapu 2 krok 3 (provision licencji paper). | Pierwszy klient OEM offline z licencją podpisaną HMAC-SHA384, wpis w `audit/decision_logs/demo.jsonl` zawierający hash `config/core.yaml` oraz potwierdzenie `runtime.compliance_confirmed=false` do czasu ukończenia Paper Labs. |
 | 3 | Symulacje/stres testy + gating paper | Dedykowane zadania runbooku Demo→Paper: Paper Labs, walidacja bundla OEM (dry-run CI), provisioning licencji paper, smoke paper (`deploy/ci/github_actions_paper_smoke.yml`), podpis checklisty `docs/runbooks/paper_trading.md`. | Raporty "Paper Labs" + smoke paper przesłane do compliance, `status=paper_ready` w `audit/decision_logs/paper.jsonl`, `StrategyContext.require_demo_mode` zdejmuje blokadę paper dopiero po `verify_decision_log.py --strict`. |
 | 4 | Live execution + UI TLS | Checklisty live (UI telemetry, mTLS bundle, dry-run live) z `docs/runbooks/DEMO_PAPER_LIVE_CHECKLIST.md`, aktualizacja `config/core.yaml` (hash) i rotacja certyfikatów. | Tryb live pilotowy aktywowany po `status=live_ready` w `audit/decision_logs/live_execution.jsonl`, flagach `runtime.compliance_confirmed=true` oraz zatwierdzonych checklistach paper/live; `StrategyContext.require_demo_mode` i walidacja `config/core.yaml` w runtime blokują start do czasu spełnienia warunków z `docs/ARCHITECTURE.md`. |
 
@@ -69,7 +69,7 @@
 - [ ] Dodać wpis `status=demo_ready` w `audit/decision_logs/demo.jsonl` podpisany HMAC przy pomocy `python scripts/verify_decision_log.py --strict`.
 
 #### Sprint 2 – Przygotowanie provisioning offline
-- [ ] Wykonać krok "Provision licencji paper" z `docs/runbooks/DEMO_PAPER_LIVE_CHECKLIST.md` (skrypt `scripts/oem_provision_license.py`, rejestr `var/licenses/registry.jsonl`, podpis HMAC).<br>
+- [ ] Wykonać krok "Provision licencji paper" z `docs/runbooks/DEMO_PAPER_LIVE_CHECKLIST.md` (skrypt `python scripts/oem_provision_license.py`, rejestr `var/licenses/registry.jsonl`, podpis HMAC).<br>
   **Artefakty:** wpis decyzji `status=demo_ready` oraz załączony hash `config/core.yaml` (SHA-256 z `python scripts/validate_config.py`).
 - [ ] Zarejestrować w decision logu demowym `runtime_flags` (`require_demo_mode=true`, `compliance_confirmed=false`) poprzez `python scripts/verify_decision_log.py update --log audit/decision_logs/demo.jsonl`.
 
@@ -83,7 +83,7 @@
 - [ ] Zaktualizować `audit/decision_logs/paper.jsonl` wpisem `status=paper_ready`, hashami artefaktów (`reports/paper_labs/*.pdf`, `reports/paper_smoke/*.md`, `config/core.yaml`) oraz flagą `runtime.compliance_confirmed=false` (blokada przejścia live) potwierdzoną `python scripts/verify_decision_log.py --strict`.
 
 #### Sprint 4 – Blokady przed live
-- [ ] Wykonać kroki etapu live z `docs/runbooks/DEMO_PAPER_LIVE_CHECKLIST.md`: generowanie pakietu mTLS (`scripts/generate_mtls_bundle.py`), aktualizacja `config/core.yaml` (hash w decision logu), dry-run live (`scripts/live_execution_dry_run.py`).
+- [ ] Wykonać kroki etapu live z `docs/runbooks/DEMO_PAPER_LIVE_CHECKLIST.md`: generowanie pakietu mTLS (`python scripts/generate_mtls_bundle.py`), aktualizacja `config/core.yaml` (hash w decision logu), dry-run live (`python scripts/live_execution_dry_run.py`).
 - [ ] Podpisać checklistę `docs/runbooks/LIVE_EXECUTION_CHECKLIST.md` i dołączyć log telemetryczny UI (`logs/ui_telemetry_alerts.jsonl`).
 - [ ] Potwierdzić gotowość UI (telemetria guard) – referencja do `deploy/ci/ui_telemetry_checks.yml` lub manualny raport z `UiTelemetryAlertSink`.
 - [ ] Wpisać `status=live_ready` w `audit/decision_logs/live_execution.jsonl` po pozytywnym wyniku dry-run i podpisach compliance (wymóg `docs/ARCHITECTURE.md`).
@@ -93,9 +93,9 @@
 
 | Bramka | Minimalny zestaw artefaktów | Runbook / CI | Walidacje dodatkowe |
 | --- | --- | --- | --- |
-| **Demo exit** | \- Hash `config/core.yaml` (SHA-256/SHA-384) + podpis HMAC<br>\- Raport smoke demo (`var/audit/acceptance/*.jsonl`)<br>\- Checklisty Etapu 1 (`docs/runbooks/DEMO_PAPER_LIVE_CHECKLIST.md`) podpisane przez inżyniera + właściciela produktu | \- `scripts/smoke_demo_strategies.py`<br>\- `deploy/ci/github_actions_oem_packaging.yml` (art. bundla)<br>\- `docs/runbooks/OEM_INSTALLER_ACCEPTANCE.md` | \- `StrategyContext.require_demo_mode=true`<br>\- `verify_decision_log.py --strict --log audit/decision_logs/demo.jsonl` |
+| **Demo exit** | \- Hash `config/core.yaml` (SHA-256/SHA-384) + podpis HMAC<br>\- Raport smoke demo (`var/audit/acceptance/*.jsonl`)<br>\- Checklisty Etapu 1 (`docs/runbooks/DEMO_PAPER_LIVE_CHECKLIST.md`) podpisane przez inżyniera + właściciela produktu | \- `python scripts/smoke_demo_strategies.py`<br>\- `deploy/ci/github_actions_oem_packaging.yml` (art. bundla)<br>\- `docs/runbooks/OEM_INSTALLER_ACCEPTANCE.md` | \- `StrategyContext.require_demo_mode=true`<br>\- `verify_decision_log.py --strict --log audit/decision_logs/demo.jsonl` |
 | **Paper exit** | \- Raport Paper Labs (`reports/paper_labs/*.pdf` + `reports/paper_labs/*.json`)<br>\- Wynik smoke paper (`reports/paper_smoke/*.md`)<br>\- Wpisy `status=paper_ready` + `runtime.compliance_confirmed=false` | \- `docs/runbooks/DEMO_PAPER_LIVE_CHECKLIST.md` – Etap 2<br>\- `docs/runbooks/paper_trading.md`<br>\- `deploy/ci/github_actions_paper_smoke.yml` | \- Hash `config/core.yaml` i fingerprint bundla z `deploy/packaging/build_core_bundle.py`<br>\- Decyzja compliance (HMAC) w `audit/decision_logs/paper.jsonl` |
-| **Live go** | \- Podpisane checklisty live (`docs/runbooks/LIVE_EXECUTION_CHECKLIST.md`)<br>\- Raport dry-run (`logs/live_dry_run/*.jsonl`)<br>\- Pakiet mTLS (`var/certs/live_bundle.tar.gz` + fingerprint) | \- `scripts/live_execution_dry_run.py`<br>\- `scripts/generate_mtls_bundle.py`<br>\- `deploy/ci/ui_telemetry_checks.yml` | \- `StrategyContext.require_demo_mode=false` potwierdzone w `audit/decision_logs/live_execution.jsonl`<br>\- Walidacja hashy `config/core.yaml` (paper vs live) + kontrola `runtime.compliance_confirmed=true` |
+| **Live go** | \- Podpisane checklisty live (`docs/runbooks/LIVE_EXECUTION_CHECKLIST.md`)<br>\- Raport dry-run (`logs/live_dry_run/*.jsonl`)<br>\- Pakiet mTLS (`var/certs/live_bundle.tar.gz` + fingerprint) | \- `python scripts/live_execution_dry_run.py`<br>\- `python scripts/generate_mtls_bundle.py`<br>\- `deploy/ci/ui_telemetry_checks.yml` | \- `StrategyContext.require_demo_mode=false` potwierdzone w `audit/decision_logs/live_execution.jsonl`<br>\- Walidacja hashy `config/core.yaml` (paper vs live) + kontrola `runtime.compliance_confirmed=true` |
 
 **Notatka:** Każda bramka wymaga dołączenia referencji do numerów runów CI (job id + commit) oraz zarchiwizowania artefaktów w `audit/artefacts/<data>/<gate>/`. Sekcja "Wymagania bezpieczeństwa" w `docs/ARCHITECTURE.md` określa, że zmiana flag `StrategyContext` jest dozwolona wyłącznie po pozytywnej weryfikacji `verify_decision_log.py --strict` i potwierdzeniu podpisem HMAC właściciela systemu.
 
@@ -139,12 +139,12 @@ Schemat jest walidowany przez `python scripts/verify_decision_log.py --strict --
 - Instalatory OEM (MSI, pkg/dmg, AppImage/.deb) z podpisami, manifestem i raportami z pipeline'u `deploy/ci/github_actions_oem_packaging.yml`.
 - Repozytorium licencji offline + narzędzia provisioning wraz z podpisanymi wpisami `audit/decision_logs/*.jsonl` (`demo_ready`, `paper_ready`, `live_ready`).
 - Raporty Paper Labs (`reports/paper_labs/*.json`, `*.pdf`), smoke paper (`reports/paper_smoke/*.json`, `*.md`) oraz checklisty `docs/runbooks/paper_trading.md` i `docs/runbooks/LIVE_EXECUTION_CHECKLIST.md` podpisane przez odpowiedzialne role.
-- Hash i podpis HMAC konfiguracji `config/core.yaml` (SHA-256/SHA-384) zarejestrowany w decision logach oraz weryfikowany `python scripts/validate_config.py` i `scripts/verify_decision_log.py`.
+- Hash i podpis HMAC konfiguracji `config/core.yaml` (SHA-256/SHA-384) zarejestrowany w decision logach oraz weryfikowany `python scripts/validate_config.py` i `python scripts/verify_decision_log.py`.
 - Zaktualizowana dokumentacja runbooków (`docs/runbooks/DEMO_PAPER_LIVE_CHECKLIST.md`) oraz logi telemetryczne UI (`logs/ui_telemetry_alerts.jsonl`) potwierdzające guardy TLS/RBAC przed startem live.
 
 ## Referencje operacyjne
 - Runbook Demo → Paper → Live: `docs/runbooks/DEMO_PAPER_LIVE_CHECKLIST.md` – obowiązkowe kroki gatingowe dla sprintów 2–4.
 - Runbook Paper trading: `docs/runbooks/paper_trading.md` – potwierdza kompletność środowiska paper wraz z raportem smoke CI (`deploy/ci/github_actions_paper_smoke.yml`).
-- Runbook Live execution: `docs/runbooks/LIVE_EXECUTION_CHECKLIST.md` – wymagany podpis przed aktywacją live, w zestawie z raportem `scripts/live_execution_dry_run.py`.
-- Decision logi (`audit/decision_logs/*.jsonl`) weryfikowane przez `scripts/verify_decision_log.py --strict` – jedyny mechanizm dopuszczający przejście środowiska zgodnie z blokadami z `docs/ARCHITECTURE.md`.
+- Runbook Live execution: `docs/runbooks/LIVE_EXECUTION_CHECKLIST.md` – wymagany podpis przed aktywacją live, w zestawie z raportem `python scripts/live_execution_dry_run.py`.
+- Decision logi (`audit/decision_logs/*.jsonl`) weryfikowane przez `python scripts/verify_decision_log.py --strict` – jedyny mechanizm dopuszczający przejście środowiska zgodnie z blokadami z `docs/ARCHITECTURE.md`.
 
