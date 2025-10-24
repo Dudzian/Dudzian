@@ -132,6 +132,28 @@ class StrategyEngineSpec:
         return self.factory(name=name, parameters=parameters, metadata=metadata)
 
 
+def _ensure_capability_allowed(spec: StrategyEngineSpec, *, strategy_name: str | None = None) -> None:
+    guard = get_capability_guard()
+    if guard is None or not spec.capability:
+        return
+    message = (
+        f"Strategia '{strategy_name}' wymaga aktywnej licencji {spec.capability}."
+        if strategy_name
+        else f"Silnik '{spec.key}' wymaga aktywnej licencji {spec.capability}."
+    )
+    guard.require_strategy(spec.capability, message=message)
+
+
+def _is_capability_allowed(spec: StrategyEngineSpec) -> bool:
+    guard = get_capability_guard()
+    if guard is None or not spec.capability:
+        return True
+    try:
+        return guard.capabilities.is_strategy_enabled(spec.capability)
+    except AttributeError:
+        return True
+
+
 class StrategyCatalog:
     """Rejestr zarejestrowanych silników strategii."""
 
@@ -150,6 +172,7 @@ class StrategyCatalog:
 
     def create(self, definition: StrategyDefinition) -> StrategyEngine:
         spec = self.get(definition.engine)
+        _ensure_capability_allowed(spec, strategy_name=definition.name)
         if definition.license_tier != spec.license_tier:
             raise ValueError(
                 f"Strategy '{definition.name}' requires license tier '{definition.license_tier}' "
@@ -190,6 +213,8 @@ class StrategyCatalog:
         summary: list[Mapping[str, object]] = []
         for key in sorted(self._registry):
             spec = self._registry[key]
+            if not _is_capability_allowed(spec):
+                continue
             payload: dict[str, object] = {
                 "engine": spec.key,
                 "capability": spec.capability,
@@ -228,6 +253,8 @@ class StrategyCatalog:
                 payload["risk_profile"] = definition.risk_profile
             try:
                 spec = self.get(definition.engine)
+                if not _is_capability_allowed(spec):
+                    continue
                 if spec.capability:
                     payload["capability"] = spec.capability
                 payload["license_tier"] = spec.license_tier
@@ -496,6 +523,7 @@ class StrategyPresetWizard:
         spec = self._catalog.get(engine_name)
 
         name = str(entry.get("name") or spec.key)
+        _ensure_capability_allowed(spec, strategy_name=name)
         parameters = dict(entry.get("parameters") or {})
         risk_profile = entry.get("risk_profile")
         user_tags = tuple(entry.get("tags") or ())

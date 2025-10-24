@@ -126,6 +126,28 @@ def test_catalog_describe_engines_includes_metadata() -> None:
     assert "required_data" in first and first["required_data"]
 
 
+def test_catalog_describe_engines_filters_by_capability_guard() -> None:
+    try:
+        _activate_guard(
+            {
+                "trend_d1": True,
+                "day_trading": True,
+                "scalping": False,
+                "options_income": False,
+                "stat_arbitrage": False,
+            }
+        )
+        summary = DEFAULT_STRATEGY_CATALOG.describe_engines()
+        engines = {entry["engine"] for entry in summary}
+        assert "daily_trend_momentum" in engines
+        assert "day_trading" in engines
+        assert "scalping" not in engines
+        assert "options_income" not in engines
+        assert "statistical_arbitrage" not in engines
+    finally:
+        reset_capability_guard()
+
+
 def test_catalog_describe_definitions_merges_metadata() -> None:
     definition = StrategyDefinition(
         name="custom_trend",
@@ -150,6 +172,25 @@ def test_catalog_describe_definitions_merges_metadata() -> None:
     ]
     assert payload["capability"] == "trend_d1"
     assert payload["metadata"]["note"] == "extra"
+
+
+def test_catalog_describe_definitions_skips_blocked_capabilities() -> None:
+    definition = StrategyDefinition(
+        name="blocked_scalp",
+        engine="scalping",
+        license_tier="professional",
+        risk_classes=("intraday",),
+        required_data=("ohlcv",),
+        parameters={},
+    )
+    try:
+        _activate_guard({"trend_d1": True, "scalping": False})
+        summary = DEFAULT_STRATEGY_CATALOG.describe_definitions(
+            {definition.name: definition}
+        )
+        assert summary == []
+    finally:
+        reset_capability_guard()
 
 
 def test_loader_backfills_metadata_for_legacy_definitions() -> None:
