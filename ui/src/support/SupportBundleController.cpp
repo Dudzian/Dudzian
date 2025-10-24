@@ -189,8 +189,7 @@ void SupportBundleController::setExtraIncludeSpecs(const QStringList& specs)
 
 QString SupportBundleController::expandPath(const QString& path) const
 {
-    return bot::shell::utils::expandPath(path);
-    return normalizePath(path);
+    return bot::shell::utils::expandPath(normalizePath(path));
 }
 
 QString SupportBundleController::sanitizeFormat(const QString& requested) const

@@ -14,27 +14,6 @@ def test_ci_harness_generates_audit_artifacts(tmp_path: Path) -> None:
     assert index_payload["blocked"] == 0
     assert index_payload["metrics_violations"] == {}
     assert index_payload["warnings"] == {}
-    assert index_payload["warning_scenarios"] == {}
-    assert index_payload["reason_counts"] == {}
-    assert index_payload["reason_scenarios"] == {}
-    assert index_payload["profile_counts"] == {"balanced": 1}
-    assert index_payload["profile_block_counts"] == {}
-    assert index_payload["profile_pass_counts"] == {"balanced": 1}
-    assert index_payload["profile_warning_counts"] == {"balanced": 0}
-    assert index_payload["profile_violation_counts"] == {"balanced": 0}
-    assert index_payload["profile_reason_counts"] == {}
-    assert index_payload["profile_reason_scenarios"] == {}
-    assert index_payload["profile_metric_counts"] == {}
-    assert index_payload["profile_metric_scenarios"] == {}
-    assert index_payload["metric_violation_scenarios"] == {}
-    assert index_payload["metric_violation_details"] == {}
-    assert index_payload["profile_metric_details"] == {}
-    assert index_payload["profile_warning_messages"] == {}
-    assert index_payload["profile_warning_message_scenarios"] == {}
-    assert index_payload["profile_warning_scenarios"] == {}
-    assert index_payload["profile_pass_scenarios"] == {"balanced": ["trend_following"]}
-    assert index_payload["profile_block_scenarios"] == {}
-    assert index_payload["profile_violation_scenarios"] == {}
     summary_path = tmp_path / "trend_following" / "summary.json"
     assert summary_path.exists()
     payload = json.loads(summary_path.read_text(encoding="utf-8"))

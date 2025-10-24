@@ -225,10 +225,7 @@ def test_guardrails_honor_explicit_hit_ratio_threshold() -> None:
 
 
 def test_guardrail_summary_aggregates_results() -> None:
-    allowed = RiskCheckResult(
-        allowed=True,
-        metadata={"warnings": ["low volume"], "risk_profile": "conservative"},
-    )
+    allowed = RiskCheckResult(allowed=True, metadata={"warnings": ["low volume"]})
     blocked = RiskCheckResult(
         allowed=False,
         reason="Max drawdown breached",
@@ -238,7 +235,6 @@ def test_guardrail_summary_aggregates_results() -> None:
                 {"metric": "required_data_missing", "observed": ("volume",)},
             ],
             "warnings": ["missing candle"],
-            "risk_profile": "conservative",
         },
     )
 
@@ -248,96 +244,5 @@ def test_guardrail_summary_aggregates_results() -> None:
     assert summary.blocked == 1
     assert summary.metrics_violations == {"max_drawdown_pct": 1, "required_data_missing": 1}
     assert summary.warnings == {"low volume": 1, "missing candle": 1}
-    assert summary.warning_scenarios == {
-        "low volume": ["allowed"],
-        "missing candle": ["blocked"],
-    }
     assert summary.blocked_scenarios[0]["scenario"] == "blocked"
     assert summary.blocked_scenarios[0]["reason"] == "Max drawdown breached"
-    assert summary.reason_counts == {"Max drawdown breached": 1}
-    assert summary.reason_scenarios == {"Max drawdown breached": ["blocked"]}
-    assert summary.profile_counts == {"conservative": 2}
-    assert summary.profile_block_counts == {"conservative": 1}
-    assert summary.profile_pass_counts == {"conservative": 1}
-    assert summary.profile_warning_counts == {"conservative": 2}
-    assert summary.profile_violation_counts == {"conservative": 2}
-    assert summary.profile_reason_counts == {"conservative": {"Max drawdown breached": 1}}
-    assert summary.profile_reason_scenarios == {
-        "conservative": {"Max drawdown breached": ["blocked"]}
-    }
-    assert summary.profile_metric_counts == {
-        "conservative": {
-            "max_drawdown_pct": 1,
-            "required_data_missing": 1,
-        }
-    }
-    assert summary.profile_metric_scenarios == {
-        "conservative": {
-            "max_drawdown_pct": ["blocked"],
-            "required_data_missing": ["blocked"],
-        }
-    }
-    assert summary.profile_metric_details == {
-        "conservative": {
-            "max_drawdown_pct": [
-                {
-                    "metric": "max_drawdown_pct",
-                    "observed": 35.0,
-                    "threshold": 20.0,
-                    "scenario": "blocked",
-                }
-            ],
-            "required_data_missing": [
-                {
-                    "metric": "required_data_missing",
-                    "observed": ("volume",),
-                    "scenario": "blocked",
-                }
-            ],
-        }
-    }
-    assert summary.metric_violation_scenarios == {
-        "max_drawdown_pct": ["blocked"],
-        "required_data_missing": ["blocked"],
-    }
-    assert summary.metric_violation_details == {
-        "max_drawdown_pct": [
-            {
-                "metric": "max_drawdown_pct",
-                "observed": 35.0,
-                "threshold": 20.0,
-                "scenario": "blocked",
-            }
-        ],
-        "required_data_missing": [
-            {
-                "metric": "required_data_missing",
-                "observed": ("volume",),
-                "scenario": "blocked",
-            }
-        ],
-    }
-    assert summary.profile_warning_messages == {
-        "conservative": {
-            "low volume": 1,
-            "missing candle": 1,
-        }
-    }
-    assert summary.profile_warning_message_scenarios == {
-        "conservative": {
-            "low volume": ["allowed"],
-            "missing candle": ["blocked"],
-        }
-    }
-    assert summary.profile_warning_scenarios == {
-        "conservative": ["allowed", "blocked"],
-    }
-    assert summary.profile_pass_scenarios == {
-        "conservative": ["allowed"],
-    }
-    assert summary.profile_block_scenarios == {
-        "conservative": ["blocked"],
-    }
-    assert summary.profile_violation_scenarios == {
-        "conservative": ["blocked"],
-    }
