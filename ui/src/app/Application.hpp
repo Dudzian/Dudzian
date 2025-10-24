@@ -75,6 +75,8 @@ class Application : public QObject {
     Q_PROPERTY(QString          decisionLogPath READ decisionLogPath NOTIFY decisionLogPathChanged)
     Q_PROPERTY(int              telemetryPendingRetryCount READ telemetryPendingRetryCount NOTIFY telemetryPendingRetryCountChanged)
     Q_PROPERTY(QVariantMap      riskRefreshSchedule READ riskRefreshSchedule NOTIFY riskRefreshScheduleChanged)
+    Q_PROPERTY(QVariantMap      licenseRefreshSchedule READ licenseRefreshSchedule NOTIFY licenseRefreshScheduleChanged)
+    Q_PROPERTY(QVariantMap      securityCache READ securityCache NOTIFY securityCacheChanged)
     Q_PROPERTY(bool             riskHistoryExportLimitEnabled READ riskHistoryExportLimitEnabled WRITE setRiskHistoryExportLimitEnabled NOTIFY riskHistoryExportLimitEnabledChanged)
     Q_PROPERTY(int              riskHistoryExportLimitValue READ riskHistoryExportLimitValue WRITE setRiskHistoryExportLimitValue NOTIFY riskHistoryExportLimitValueChanged)
     Q_PROPERTY(QUrl             riskHistoryExportLastDirectory READ riskHistoryExportLastDirectory WRITE setRiskHistoryExportLastDirectory NOTIFY riskHistoryExportLastDirectoryChanged)
@@ -147,6 +149,8 @@ public slots:
     Q_INVOKABLE QVariantMap performanceGuardSnapshot() const;
     Q_INVOKABLE QVariantMap riskRefreshSnapshot() const;
     QVariantMap riskRefreshSchedule() const { return riskRefreshSnapshot(); }
+    QVariantMap licenseRefreshSchedule() const;
+    QVariantMap securityCache() const { return m_securityCache; }
     Q_INVOKABLE bool updateInstrument(const QString& exchange,
                                       const QString& symbol,
                                       const QString& venueSymbol,
@@ -218,6 +222,8 @@ signals:
     void offlineAutomationRunningChanged(bool running);
     void offlineStrategyPathChanged();
     void decisionLogPathChanged();
+    void licenseRefreshScheduleChanged();
+    void securityCacheChanged();
 
 private slots:
     void handleHistory(const QList<OhlcvPoint>& candles);
@@ -230,6 +236,10 @@ private slots:
     void handleHealthTokenPathChanged(const QString& path);
     void handleOfflineStatusChanged(const QString& status);
     void handleOfflineAutomationChanged(bool running);
+    void handleActivationErrorChanged();
+    void handleActivationFingerprintChanged();
+    void handleActivationLicensesChanged();
+    void handleActivationOemLicenseChanged();
 
 private:
     // Rejestracja obiektów w kontekście QML
@@ -442,6 +452,16 @@ private:
     QDateTime                          m_lastRiskHistoryAutoExportUtc;
     QUrl                               m_lastRiskHistoryAutoExportPath;
     bool                               m_riskHistoryAutoExportDirectoryWarned = false;
+    QTimer                             m_licenseRefreshTimer;
+    int                                m_licenseRefreshIntervalSeconds = 600;
+    QDateTime                          m_lastLicenseRefreshRequestUtc;
+    QDateTime                          m_lastLicenseRefreshUtc;
+    QDateTime                          m_nextLicenseRefreshUtc;
+    QString                            m_licenseCachePath;
+    QVariantMap                        m_securityCache;
+    bool                               m_loadingSecurityCache = false;
+    QString                            m_lastSecurityError;
+    bool                               m_licenseRefreshTimerConfigured = false;
 
     struct OverlayState {
         int  active = 0;
@@ -497,4 +517,5 @@ public: // test helpers
     quint64 tradingTlsReloadGenerationForTesting() const { return m_tradingTlsReloadGeneration; }
     quint64 metricsTlsReloadGenerationForTesting() const { return m_metricsTlsReloadGeneration; }
     quint64 healthTlsReloadGenerationForTesting() const { return m_healthTlsReloadGeneration; }
+    QVariantMap securityCacheForTesting() const { return m_securityCache; }
 };
