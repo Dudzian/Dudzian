@@ -43,7 +43,10 @@
 #include "utils/PathUtils.hpp"
 #include "license/LicenseActivationController.hpp"
 #include "app/ActivationController.hpp"
+#include "app/UiModuleManager.hpp"
+#include "app/UiModuleViewsModel.hpp"
 #include "app/StrategyConfigController.hpp"
+#include "app/StrategyWorkbenchController.hpp"
 #include "runtime/OfflineRuntimeBridge.hpp"
 #include "security/SecurityAdminController.hpp"
 #include "support/SupportBundleController.hpp"
@@ -207,9 +210,17 @@ Application::Application(QQmlApplicationEngine& engine, QObject* parent)
     m_strategyController->setConfigPath(QDir::current().absoluteFilePath(QStringLiteral("config/core.yaml")));
     m_strategyController->setScriptPath(QDir::current().absoluteFilePath(QStringLiteral("scripts/ui_config_bridge.py")));
 
+    m_workbenchController = std::make_unique<StrategyWorkbenchController>(this);
+    m_workbenchController->setConfigPath(QDir::current().absoluteFilePath(QStringLiteral("config/core.yaml")));
+    m_workbenchController->setScriptPath(QDir::current().absoluteFilePath(QStringLiteral("scripts/ui_config_bridge.py")));
+
     m_supportController = std::make_unique<SupportBundleController>(this);
 
     m_healthController = std::make_unique<HealthStatusController>(this);
+
+    m_moduleManager = std::make_unique<UiModuleManager>(this);
+    m_moduleViewsModel = std::make_unique<UiModuleViewsModel>(this);
+    m_moduleViewsModel->setModuleManager(m_moduleManager.get());
 
     m_decisionLogModel.setParent(this);
     m_decisionLogFilter.setSourceModel(&m_decisionLogModel);
@@ -512,6 +523,8 @@ void Application::configureParser(QCommandLineParser& parser) const {
                       tr("Ścieżka do decision logu (plik JSONL lub katalog)"), tr("path"), QString()});
     parser.addOption({"decision-log-limit",
                       tr("Limit liczby przechowywanych wpisów decision logu"), tr("count"), QString()});
+    parser.addOption({"ui-module-dir",
+                      tr("Katalog z pluginami UI (można powtórzyć)"), tr("path"), QString()});
     parser.addOption({"ui-settings-path", tr("Ścieżka pliku ustawień UI"), tr("path"), QString()});
     parser.addOption({"disable-ui-settings", tr("Wyłącza zapisywanie konfiguracji UI")});
     parser.addOption({"enable-ui-settings",
@@ -1101,6 +1114,7 @@ bool Application::applyParser(const QCommandLineParser& parser) {
     configureStrategyBridge(parser);
     configureSupportBundle(parser);
     configureDecisionLog(parser);
+    configureUiModules(parser);
 
     // TLS config (MetricsService)
     TelemetryTlsConfig mtls;
@@ -1472,7 +1486,7 @@ void Application::applyRiskHistoryCliOverrides(const QCommandLineParser& parser)
 
 void Application::configureStrategyBridge(const QCommandLineParser& parser)
 {
-    if (!m_strategyController)
+    if (!m_strategyController && !m_workbenchController)
         return;
 
     QString configPath = parser.value("core-config").trimmed();
@@ -1483,8 +1497,12 @@ void Application::configureStrategyBridge(const QCommandLineParser& parser)
     if (configPath.isEmpty())
         configPath = QStringLiteral("config/core.yaml");
     const QString normalizedConfigPath = expandPath(configPath);
-    if (!normalizedConfigPath.isEmpty())
-        m_strategyController->setConfigPath(normalizedConfigPath);
+    if (!normalizedConfigPath.isEmpty()) {
+        if (m_strategyController)
+            m_strategyController->setConfigPath(normalizedConfigPath);
+        if (m_workbenchController)
+            m_workbenchController->setConfigPath(normalizedConfigPath);
+    }
 
     QString pythonExec = parser.value("strategy-config-python").trimmed();
     if (pythonExec.isEmpty()) {
@@ -1493,8 +1511,12 @@ void Application::configureStrategyBridge(const QCommandLineParser& parser)
     }
     if (!pythonExec.isEmpty()) {
         const QString normalizedPython = expandPath(pythonExec);
-        if (!normalizedPython.isEmpty())
-            m_strategyController->setPythonExecutable(normalizedPython);
+        if (!normalizedPython.isEmpty()) {
+            if (m_strategyController)
+                m_strategyController->setPythonExecutable(normalizedPython);
+            if (m_workbenchController)
+                m_workbenchController->setPythonExecutable(normalizedPython);
+        }
     }
 
     QString bridgePath = parser.value("strategy-config-bridge").trimmed();
@@ -1509,13 +1531,23 @@ void Application::configureStrategyBridge(const QCommandLineParser& parser)
             bridgePath = QDir::current().absoluteFilePath(QStringLiteral("scripts/ui_config_bridge.py"));
     }
     const QString normalizedBridge = expandPath(bridgePath);
-    if (!normalizedBridge.isEmpty())
-        m_strategyController->setScriptPath(normalizedBridge);
+    if (!normalizedBridge.isEmpty()) {
+        if (m_strategyController)
+            m_strategyController->setScriptPath(normalizedBridge);
+        if (m_workbenchController)
+            m_workbenchController->setScriptPath(normalizedBridge);
+    }
 
-    if (!m_strategyController->refresh()) {
+    if (m_strategyController && !m_strategyController->refresh()) {
         const QString error = m_strategyController->lastError();
         if (!error.isEmpty())
             qCWarning(lcAppMetrics) << "Mostek konfiguracji strategii zwrócił błąd:" << error;
+    }
+
+    if (m_workbenchController && !m_workbenchController->refreshCatalog()) {
+        const QString error = m_workbenchController->lastError();
+        if (!error.isEmpty())
+            qCWarning(lcAppMetrics) << "Mostek katalogu strategii zwrócił błąd:" << error;
     }
 }
 
@@ -1730,23 +1762,67 @@ void Application::configureSupportBundle(const QCommandLineParser& parser)
     m_supportController->setMetadata(metadata);
 }
 
-void Application::configureRegimeThresholds(const QCommandLineParser& parser)
+void Application::configureUiModules(const QCommandLineParser& parser)
 {
-    const QString cliPath = parser.value(QStringLiteral("regime-thresholds")).trimmed();
-    if (!cliPath.isEmpty()) {
-        applyRegimeThresholdPath(cliPath, true);
+    if (!m_moduleManager)
         return;
+
+    m_moduleManager->unloadPlugins();
+
+    const auto normalize = [](const QString& raw) -> QString {
+        const QString trimmed = raw.trimmed();
+        if (trimmed.isEmpty())
+            return {};
+        const QString expanded = expandPath(trimmed);
+        if (!expanded.isEmpty())
+            return QFileInfo(expanded).absoluteFilePath();
+        return QFileInfo(trimmed).absoluteFilePath();
+    };
+
+    QSet<QString> unique;
+    QStringList directories;
+
+    const QStringList cliDirs = parser.values(QStringLiteral("ui-module-dir"));
+    for (const QString& value : cliDirs) {
+        const QString normalized = normalize(value);
+        if (normalized.isEmpty() || unique.contains(normalized))
+            continue;
+        unique.insert(normalized);
+        directories.append(normalized);
     }
 
-    if (const auto envPath = envValue(kRegimeThresholdsEnv); envPath.has_value()) {
-        applyRegimeThresholdPath(envPath->trimmed(), true);
-        return;
+    if (cliDirs.isEmpty()) {
+        if (const auto envDirs = envValue(QByteArrayLiteral("BOT_CORE_UI_MODULE_DIRS")); envDirs.has_value()) {
+            const auto pieces = envDirs->split(QDir::listSeparator(), Qt::SkipEmptyParts);
+            for (const QString& piece : pieces) {
+                const QString normalized = normalize(piece);
+                if (normalized.isEmpty() || unique.contains(normalized))
+                    continue;
+                unique.insert(normalized);
+                directories.append(normalized);
+            }
+        }
     }
 
-    const QString fallback = !m_repoRoot.isEmpty()
-        ? QDir(m_repoRoot).absoluteFilePath(QStringLiteral("config/regime_thresholds.yaml"))
-        : QDir::current().absoluteFilePath(QStringLiteral("config/regime_thresholds.yaml"));
-    applyRegimeThresholdPath(fallback, false);
+    if (directories.isEmpty()) {
+        const QString binaryModules = QDir(QCoreApplication::applicationDirPath()).absoluteFilePath(QStringLiteral("modules"));
+        const QString repoModules = QDir::current().absoluteFilePath(QStringLiteral("ui/modules"));
+        for (const QString& candidate : {binaryModules, repoModules}) {
+            const QString normalized = normalize(candidate);
+            if (normalized.isEmpty() || unique.contains(normalized))
+                continue;
+            unique.insert(normalized);
+            directories.append(normalized);
+        }
+    }
+
+    m_uiModuleDirectories = directories;
+    m_moduleManager->setPluginPaths(directories);
+    if (!directories.isEmpty()) {
+        if (!m_moduleManager->loadPlugins()) {
+            qCWarning(lcAppMetrics) << "Nie wszystkie pluginy UI zostały poprawnie załadowane";
+        }
+    }
 }
 
 void Application::configureDecisionLog(const QCommandLineParser& parser)
@@ -2577,10 +2653,12 @@ void Application::exposeToQml() {
     m_engine.rootContext()->setContextProperty(QStringLiteral("securityController"), m_securityController.get());
     m_engine.rootContext()->setContextProperty(QStringLiteral("reportController"), m_reportController.get());
     m_engine.rootContext()->setContextProperty(QStringLiteral("strategyController"), m_strategyController.get());
+    m_engine.rootContext()->setContextProperty(QStringLiteral("workbenchController"), m_workbenchController.get());
     m_engine.rootContext()->setContextProperty(QStringLiteral("supportController"), m_supportController.get());
     m_engine.rootContext()->setContextProperty(QStringLiteral("healthController"), m_healthController.get());
     m_engine.rootContext()->setContextProperty(QStringLiteral("decisionLogModel"), &m_decisionLogModel);
-    m_engine.rootContext()->setContextProperty(QStringLiteral("decisionLogFilterModel"), &m_decisionLogFilter);
+    m_engine.rootContext()->setContextProperty(QStringLiteral("moduleManager"), m_moduleManager.get());
+    m_engine.rootContext()->setContextProperty(QStringLiteral("moduleViewsModel"), m_moduleViewsModel.get());
 }
 
 QObject* Application::activationController() const
@@ -2598,6 +2676,11 @@ QObject* Application::strategyController() const
     return m_strategyController.get();
 }
 
+QObject* Application::workbenchController() const
+{
+    return m_workbenchController.get();
+}
+
 QObject* Application::supportController() const
 {
     return m_supportController.get();
@@ -2611,6 +2694,31 @@ QObject* Application::healthController() const
 QObject* Application::decisionLogModel() const
 {
     return const_cast<DecisionLogModel*>(&m_decisionLogModel);
+}
+
+QObject* Application::moduleManager() const
+{
+    return m_moduleManager.get();
+}
+
+QObject* Application::moduleViewsModel() const
+{
+    return m_moduleViewsModel.get();
+}
+
+void Application::setModuleManagerForTesting(std::unique_ptr<UiModuleManager> manager)
+{
+    if (manager)
+        manager->setParent(this);
+
+    m_moduleManager = std::move(manager);
+    if (m_moduleViewsModel)
+        m_moduleViewsModel->setModuleManager(m_moduleManager.get());
+
+    if (m_started)
+        m_engine.rootContext()->setContextProperty(QStringLiteral("moduleManager"), m_moduleManager.get());
+    if (m_started)
+        m_engine.rootContext()->setContextProperty(QStringLiteral("moduleViewsModel"), m_moduleViewsModel.get());
 }
 
 void Application::ensureFrameMonitor() {

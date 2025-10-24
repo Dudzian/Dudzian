@@ -42,9 +42,12 @@ class SecurityAdminController;         // forward decl (security/SecurityAdminCo
 class ReportCenterController;          // forward decl (reporting/ReportCenterController.hpp)
 class BotCoreLocalService;             // forward decl (grpc/BotCoreLocalService.hpp)
 class StrategyConfigController;        // forward decl (app/StrategyConfigController.hpp)
+class StrategyWorkbenchController;     // forward decl (app/StrategyWorkbenchController.hpp)
 class SupportBundleController;         // forward decl (support/SupportBundleController.hpp)
 class HealthStatusController;          // forward decl (health/HealthStatusController.hpp)
 class OfflineRuntimeBridge;            // forward decl (runtime/OfflineRuntimeBridge.hpp)
+class UiModuleManager;                 // forward decl (app/UiModuleManager.hpp)
+class UiModuleViewsModel;              // forward decl (app/UiModuleViewsModel.hpp)
 
 class Application : public QObject {
     Q_OBJECT
@@ -63,10 +66,12 @@ class Application : public QObject {
     Q_PROPERTY(QObject*         activationController READ activationController CONSTANT)
     Q_PROPERTY(QObject*         reportController READ reportController CONSTANT)
     Q_PROPERTY(QObject*         strategyController READ strategyController CONSTANT)
+    Q_PROPERTY(QObject*         workbenchController READ workbenchController CONSTANT)
     Q_PROPERTY(QObject*         supportController READ supportController CONSTANT)
     Q_PROPERTY(QObject*         healthController READ healthController CONSTANT)
     Q_PROPERTY(QObject*         decisionLogModel READ decisionLogModel CONSTANT)
-    Q_PROPERTY(QObject*         decisionLogFilterModel READ decisionLogFilterModel CONSTANT)
+    Q_PROPERTY(QObject*         moduleManager READ moduleManager CONSTANT)
+    Q_PROPERTY(QObject*         moduleViewsModel READ moduleViewsModel CONSTANT)
     Q_PROPERTY(QString          decisionLogPath READ decisionLogPath NOTIFY decisionLogPathChanged)
     Q_PROPERTY(int              telemetryPendingRetryCount READ telemetryPendingRetryCount NOTIFY telemetryPendingRetryCountChanged)
     Q_PROPERTY(QVariantMap      riskRefreshSchedule READ riskRefreshSchedule NOTIFY riskRefreshScheduleChanged)
@@ -106,14 +111,12 @@ public:
     QObject*         activationController() const;
     QObject*         reportController() const;
     QObject*         strategyController() const;
+    QObject*         workbenchController() const;
     QObject*         supportController() const;
     QObject*         healthController() const;
     QObject*         decisionLogModel() const;
-    QObject*         decisionLogFilterModel() const { return const_cast<DecisionLogFilterProxyModel*>(&m_decisionLogFilter); }
-    QObject*         indicatorSeriesModel() const { return const_cast<IndicatorSeriesModel*>(&m_indicatorModel); }
-    QObject*         signalListModel() const { return const_cast<SignalListModel*>(&m_signalModel); }
-    QObject*         marketRegimeTimelineModel() const { return const_cast<MarketRegimeTimelineModel*>(&m_regimeTimelineModel); }
-    int              regimeTimelineMaximumSnapshots() const { return m_regimeTimelineMaximumSnapshots; }
+    QObject*         moduleManager() const;
+    QObject*         moduleViewsModel() const;
     QObject*         alertsModel() const { return const_cast<AlertsModel*>(&m_alertsModel); }
     QObject*         alertsFilterModel() const { return const_cast<AlertsFilterProxyModel*>(&m_filteredAlertsModel); }
     QObject*         riskHistoryModel() const { return const_cast<RiskHistoryModel*>(&m_riskHistoryModel); }
@@ -184,6 +187,10 @@ public slots:
     DecisionLogModel* decisionLogModelForTesting() { return &m_decisionLogModel; }
     void setTradableInstrumentsForTesting(const QString& exchange,
                                           const QVector<TradingClient::TradableInstrument>& items);
+    void setModuleManagerForTesting(std::unique_ptr<UiModuleManager> manager);
+    UiModuleManager* moduleManagerForTesting() const { return m_moduleManager.get(); }
+    UiModuleViewsModel* moduleViewsModelForTesting() const { return m_moduleViewsModel.get(); }
+    QStringList uiModuleDirectoriesForTesting() const { return m_uiModuleDirectories; }
 
     // Test helpers
     void ingestFpsSampleForTesting(double fps);
@@ -287,6 +294,7 @@ private:
     void configureSupportBundle(const QCommandLineParser& parser);
     void configureRegimeThresholds(const QCommandLineParser& parser);
     void configureDecisionLog(const QCommandLineParser& parser);
+    void configureUiModules(const QCommandLineParser& parser);
     void setUiSettingsPersistenceEnabled(bool enabled);
     void setUiSettingsPath(const QString& path, bool reload = true);
     void loadUiSettings();
@@ -379,8 +387,11 @@ private:
     std::unique_ptr<SecurityAdminController>   m_securityController;
     std::unique_ptr<ReportCenterController>    m_reportController;
     std::unique_ptr<StrategyConfigController>  m_strategyController;
+    std::unique_ptr<StrategyWorkbenchController> m_workbenchController;
     std::unique_ptr<SupportBundleController>   m_supportController;
     std::unique_ptr<HealthStatusController>    m_healthController;
+    std::unique_ptr<UiModuleManager>           m_moduleManager;
+    std::unique_ptr<UiModuleViewsModel>        m_moduleViewsModel;
 
     // --- Telemetry state ---
     std::unique_ptr<PerformanceTelemetryController> m_performanceTelemetry;
@@ -469,9 +480,7 @@ private:
     QStringList                                        m_metricsTlsWatcherDirs;
     QStringList                                        m_healthTlsWatcherFiles;
     QStringList                                        m_healthTlsWatcherDirs;
-    QString                                            m_regimeThresholdWatcherFile;
-    QStringList                                        m_regimeThresholdWatcherDirs;
-    QString                                            m_regimeThresholdPath;
+    QStringList                                        m_uiModuleDirectories;
     quint64                                            m_tradingTlsReloadGeneration = 0;
     quint64                                            m_metricsTlsReloadGeneration = 0;
     quint64                                            m_healthTlsReloadGeneration = 0;
