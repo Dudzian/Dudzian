@@ -9,6 +9,8 @@ aktualne, podpisane HMAC oraz gotowe do użycia w scenariuszu przełączenia.
 - Paczki i manifesty w `var/resilience/` przygotowane przez
   `python scripts/export_resilience_bundle.py`.
 - Zdefiniowany plan w `data/stage6/resilience/failover_plan.json`.
+- Szablon reguł self-healing dostępny w `config/stage6/resilience_self_heal.json`
+  (możesz go dostosować do docelowej infrastruktury).
 
 > **Uwaga:** Wszystkie polecenia CLI zakładają uruchamianie skryptów Stage6 poprzez `python <ścieżka_do_skryptu>` (alias `python3` w aktywnym venv). Bezpośrednie wywołania `./scripts/...` pomijają konfigurację środowiska i nie są wspierane.
 
@@ -25,7 +27,7 @@ aktualne, podpisane HMAC oraz gotowe do użycia w scenariuszu przełączenia.
        --plan data/stage6/resilience/failover_plan.json \
        --bundle-output-dir var/resilience --audit-json var/audit/resilience/audit_summary.json \
        --failover-json var/audit/resilience/failover_summary.json \
-       --self-heal-config configs/resilience_self_heal.json \
+       --self-heal-config config/stage6/resilience_self_heal.json \
        --self-heal-output var/audit/resilience/self_healing_report.json \
        --signing-key-path secrets/hmac/resilience.key --signing-key-id stage6
    ```
