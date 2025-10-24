@@ -39,6 +39,11 @@ def test_regime_workflow_produces_parameters_with_weights() -> None:
     strategy_meta = decision.strategy_metadata["trend_following"]
     assert strategy_meta["license_tier"] == "standard"
     assert "trend_d1" in decision.capabilities
+    assert tuple(strategy_meta["risk_classes"]) == ("directional", "momentum")
+    assert set(strategy_meta["required_data"]) == {"ohlcv", "technical_indicators"}
+    assert set(strategy_meta["tags"]) >= {"trend", "momentum"}
+    assert "momentum" in decision.tags
+    assert "technical_indicators" in decision.required_data
 
 
 def test_regime_workflow_respects_cooldown() -> None:
