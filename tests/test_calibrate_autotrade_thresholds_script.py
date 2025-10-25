@@ -362,6 +362,51 @@ def test_script_accepts_thresholds_from_json_file(tmp_path: Path) -> None:
     assert metrics["signal_after_clamp"]["current_threshold"] == 0.77
 
 
+def test_script_normalizes_cli_threshold_keys(tmp_path: Path) -> None:
+    journal_path = tmp_path / "journal.jsonl"
+    _write_journal(journal_path)
+
+    export_path = tmp_path / "autotrade.json"
+    _write_autotrade_export(export_path)
+
+    output_json = tmp_path / "report.json"
+
+    subprocess.run(
+        [
+            sys.executable,
+            "scripts/calibrate_autotrade_thresholds.py",
+            "--journal",
+            str(journal_path),
+            "--autotrade-export",
+            str(export_path),
+            "--percentiles",
+            "0.5",
+            "--suggestion-percentile",
+            "0.5",
+            "--current-threshold",
+            "Signal_After_Adjustment=0.8",
+            "--current-threshold",
+            "signal-after-clamp=0.7",
+            "--output-json",
+            str(output_json),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    payload = json.loads(output_json.read_text(encoding="utf-8"))
+    trend_group = next(
+        entry
+        for entry in payload["groups"]
+        if entry["primary_exchange"] == "binance" and entry["strategy"] == "trend_following"
+    )
+    signal_stats = trend_group["metrics"]["signal_after_adjustment"]
+    assert signal_stats["current_threshold"] == pytest.approx(0.8)
+    clamp_stats = trend_group["metrics"]["signal_after_clamp"]
+    assert clamp_stats["current_threshold"] == pytest.approx(0.7)
+
+
 def test_load_current_thresholds_rejects_directory(tmp_path: Path) -> None:
     thresholds_dir = tmp_path / "thresholds"
     thresholds_dir.mkdir()

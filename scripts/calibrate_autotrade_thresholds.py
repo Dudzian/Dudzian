@@ -17,9 +17,16 @@ if str(REPO_ROOT) not in sys.path:
 from bot_core.ai.config_loader import load_risk_thresholds
 
 
+def _normalize_metric_key(key: str) -> str:
+    return key.strip().casefold().replace("-", "_")
+
+
 _FREEZE_STATUS_PREFIXES = ("risk_freeze", "auto_risk_freeze")
 _FREEZE_STATUS_EXTRAS = {"risk_unfreeze", "auto_risk_unfreeze"}
-_ABSOLUTE_THRESHOLD_METRICS = {"signal_after_adjustment", "signal_after_clamp"}
+_ABSOLUTE_THRESHOLD_METRICS = frozenset(
+    _normalize_metric_key(name)
+    for name in ("signal_after_adjustment", "signal_after_clamp")
+)
 _THRESHOLD_VALUE_KEYS = (
     "current_threshold",
     "threshold",
@@ -110,16 +117,16 @@ def _resolve_metric_threshold(mapping: Mapping[str, object], metric_name: str) -
     if direct is not None:
         return direct
 
-    normalized_metric = metric_name.strip().lower()
+    normalized_metric = _normalize_metric_key(metric_name)
     metric_candidate = _normalize_string(mapping.get("metric"))
-    if metric_candidate and metric_candidate.lower() == normalized_metric:
+    if metric_candidate and _normalize_metric_key(metric_candidate) == normalized_metric:
         for key in _THRESHOLD_VALUE_KEYS:
             numeric = _extract_threshold_value(mapping.get(key))
             if numeric is not None:
                 return numeric
 
     name_candidate = _normalize_string(mapping.get("name"))
-    if name_candidate and name_candidate.lower() == normalized_metric:
+    if name_candidate and _normalize_metric_key(name_candidate) == normalized_metric:
         for key in _THRESHOLD_VALUE_KEYS:
             numeric = _extract_threshold_value(mapping.get(key))
             if numeric is not None:
@@ -128,7 +135,7 @@ def _resolve_metric_threshold(mapping: Mapping[str, object], metric_name: str) -
     for key, value in mapping.items():
         if not isinstance(key, str):
             continue
-        normalized_key = key.strip().lower().replace("-", "_")
+        normalized_key = _normalize_metric_key(key)
         if normalized_metric not in normalized_key:
             continue
         if not any(token in normalized_key for token in ("threshold", "limit", "value", "current")):
@@ -278,7 +285,8 @@ def _parse_threshold_mapping(raw: str) -> dict[str, float]:
         numeric = _coerce_float(value)
         if numeric is None:
             raise SystemExit(f"Nie udało się zinterpretować progu '{value}' dla metryki {key}")
-        result[key] = float(numeric)
+        normalized_key = _normalize_metric_key(key)
+        result[normalized_key] = float(numeric)
     return result
 
 
@@ -329,8 +337,11 @@ def _load_current_signal_thresholds(sources: Iterable[str] | None) -> dict[str, 
             raise SystemExit(f"Ścieżka z progami nie istnieje: {path}")
         mapping = _parse_threshold_mapping(candidate)
         for metric_name, numeric in mapping.items():
-            if metric_name in _ABSOLUTE_THRESHOLD_METRICS:
-                thresholds[metric_name] = numeric
+            if not isinstance(metric_name, str):
+                continue
+            metric_name_normalized = _normalize_metric_key(metric_name)
+            if metric_name_normalized in _ABSOLUTE_THRESHOLD_METRICS:
+                thresholds[metric_name_normalized] = numeric
 
     return thresholds
 
