@@ -172,6 +172,8 @@ def test_auto_trade_engine_generates_orders_and_signals(monkeypatch) -> None:
         breakout_window=3,
         mean_reversion_window=4,
         mean_reversion_z=0.5,
+        primary_exchange="binance",
+        strategy="trend_following",
     )
     engine = AutoTradeEngine(adapter, lambda side, qty: orders.append((side, qty)), cfg)
     engine.apply_params({"fast": 2, "slow": 5})
@@ -198,6 +200,8 @@ def test_auto_trade_engine_generates_orders_and_signals(monkeypatch) -> None:
     assert core_strategies <= set(signal_detail)
     assert signal_detail["daily_breakout"] == signal_detail["day_trading"]
     metadata = signal_payloads[-1]["metadata"]
+    assert signal_payloads[-1]["primary_exchange"] == "binance"
+    assert signal_payloads[-1]["strategy"] == "trend_following"
     assert "standard" in metadata["license_tiers"]
     assert "trend_d1" in metadata["capabilities"]
     assert "regime_summary" in metadata
@@ -211,6 +215,58 @@ def test_auto_trade_engine_generates_orders_and_signals(monkeypatch) -> None:
     # serializacja JSON musi działać dla metadanych sygnału
     json.dumps(metadata["regime_summary"], sort_keys=True)
     json.dumps(metadata, sort_keys=True)
+
+
+def test_auto_trade_engine_normalizes_routing_context() -> None:
+    adapter = _make_sync_adapter()
+    cfg = AutoTradeConfig(
+        symbol="BTCUSDT",
+        qty=0.1,
+        regime_window=6,
+        primary_exchange="binance",
+        strategy="trend_following",
+    )
+    context = {
+        "primary_exchange": "   ",
+        "strategy": "  alt_scalp  ",
+    }
+    engine = AutoTradeEngine(adapter, lambda *args, **kwargs: None, cfg, decision_journal_context=context)
+
+    detail = engine._augment_status_detail({})
+
+    assert detail["primary_exchange"] == "binance"
+    assert detail["strategy"] == "alt_scalp"
+
+
+def test_auto_trade_engine_injects_unknown_routing_identifiers() -> None:
+    adapter = _make_sync_adapter()
+    statuses = _collect_status_payloads(adapter)
+    journal = InMemoryTradingDecisionJournal()
+
+    engine = AutoTradeEngine(
+        adapter,
+        lambda *_: None,
+        AutoTradeConfig(symbol="BTCUSDT", qty=0.1, regime_window=6),
+        decision_journal=journal,
+    )
+
+    detail = engine._augment_status_detail({})
+    assert detail["primary_exchange"] == "unknown"
+    assert detail["strategy"] == "unknown"
+
+    engine.freeze_risk(duration=15, reason="manual_override")
+
+    assert statuses, "expected at least one AUTOTRADE_STATUS payload"
+    latest_status = statuses[-1]
+    latest_detail = latest_status["detail"]
+    assert latest_detail["primary_exchange"] == "unknown"
+    assert latest_detail["strategy"] == "unknown"
+
+    exported = list(journal.export())
+    assert exported, "expected decision journal entries"
+    last_event = exported[-1]
+    assert last_event["primary_exchange"] == "unknown"
+    assert last_event["strategy"] == "unknown"
 
 
 class _ConstantTrendStrategy(StrategyPlugin):
@@ -761,6 +817,8 @@ def test_auto_risk_freeze_sync_state(monkeypatch) -> None:
             "environment": "paper",
             "portfolio": "autotrader",
             "risk_profile": "trend",
+            "primary_exchange": "binance",
+            "strategy": "trend_following",
         },
     )
 
@@ -789,6 +847,8 @@ def test_auto_risk_freeze_sync_state(monkeypatch) -> None:
     assert first_detail["released_at"] is None
     assert first_detail["frozen_for"] == pytest.approx(cfg.risk_freeze_seconds)
     assert first_detail["until"] == pytest.approx(engine._risk_frozen_until)
+    assert first_detail["primary_exchange"] == "binance"
+    assert first_detail["strategy"] == "trend_following"
 
     history._summary = _DummySummary(RiskLevel.CRITICAL, 0.95)
     current_time["value"] = base_time + 10
@@ -803,6 +863,8 @@ def test_auto_risk_freeze_sync_state(monkeypatch) -> None:
     assert extend_detail["until"] == pytest.approx(engine._risk_frozen_until)
     assert extend_detail["triggered_at"] == pytest.approx(first_detail["triggered_at"])
     assert extend_detail["last_extension_at"] == pytest.approx(current_time["value"])
+    assert extend_detail["primary_exchange"] == "binance"
+    assert extend_detail["strategy"] == "trend_following"
 
     history._summary = _DummySummary(RiskLevel.CALM, 0.1)
     current_time["value"] = engine._risk_frozen_until + 5
@@ -819,6 +881,8 @@ def test_auto_risk_freeze_sync_state(monkeypatch) -> None:
     assert release_detail["frozen_for"] == pytest.approx(
         release_detail["released_at"] - release_detail["triggered_at"]
     )
+    assert release_detail["primary_exchange"] == "binance"
+    assert release_detail["strategy"] == "trend_following"
 
     exported = list(journal.export())
     assert [event["event"] for event in exported][-3:] == [
@@ -829,14 +893,20 @@ def test_auto_risk_freeze_sync_state(monkeypatch) -> None:
     freeze_event = exported[-3]
     assert freeze_event["mode"] == "auto"
     assert freeze_event["risk_level"] == RiskLevel.CRITICAL.value
+    assert freeze_event["primary_exchange"] == "binance"
+    assert freeze_event["strategy"] == "trend_following"
     extend_event = exported[-2]
     assert extend_event["reason"] == "risk_score_increase"
     assert extend_event["mode"] == "auto"
+    assert extend_event["primary_exchange"] == "binance"
+    assert extend_event["strategy"] == "trend_following"
     unfreeze_event = exported[-1]
     assert unfreeze_event["mode"] == "auto"
     assert float(unfreeze_event["frozen_for"]) == pytest.approx(
         release_detail["frozen_for"]
     )
+    assert unfreeze_event["primary_exchange"] == "binance"
+    assert unfreeze_event["strategy"] == "trend_following"
 
 
 def test_manual_risk_freeze_telemetry(monkeypatch) -> None:
@@ -861,6 +931,8 @@ def test_manual_risk_freeze_telemetry(monkeypatch) -> None:
             "environment": "paper",
             "portfolio": "autotrader",
             "risk_profile": "trend",
+            "primary_exchange": "binance",
+            "strategy": "trend_following",
         },
     )
 
@@ -883,6 +955,8 @@ def test_manual_risk_freeze_telemetry(monkeypatch) -> None:
     assert freeze_detail["last_extension_at"] == pytest.approx(base_time)
     assert freeze_detail["released_at"] is None
     assert freeze_detail["frozen_for"] == pytest.approx(45.0)
+    assert freeze_detail["primary_exchange"] == "binance"
+    assert freeze_detail["strategy"] == "trend_following"
 
     current_time["value"] += 10
     engine.freeze_risk(duration=90, reason="manual_override")
@@ -895,6 +969,8 @@ def test_manual_risk_freeze_telemetry(monkeypatch) -> None:
     assert extend_detail["frozen_for"] == pytest.approx(
         extend_detail["until"] - extend_detail["triggered_at"]
     )
+    assert extend_detail["primary_exchange"] == "binance"
+    assert extend_detail["strategy"] == "trend_following"
 
     current_time["value"] += 20
     engine.unfreeze_risk(reason="operator_clear")
@@ -908,6 +984,8 @@ def test_manual_risk_freeze_telemetry(monkeypatch) -> None:
     assert unfreeze_detail["frozen_for"] == pytest.approx(
         unfreeze_detail["released_at"] - unfreeze_detail["triggered_at"]
     )
+    assert unfreeze_detail["primary_exchange"] == "binance"
+    assert unfreeze_detail["strategy"] == "trend_following"
 
     exported = list(journal.export())
     assert [event["event"] for event in exported][-3:] == [
@@ -919,11 +997,17 @@ def test_manual_risk_freeze_telemetry(monkeypatch) -> None:
     assert freeze_event["mode"] == "manual"
     assert freeze_event["risk_profile"] == "trend"
     assert float(freeze_event["frozen_for"]) == pytest.approx(45.0)
+    assert freeze_event["primary_exchange"] == "binance"
+    assert freeze_event["strategy"] == "trend_following"
     extend_event = exported[-2]
     assert extend_event["mode"] == "manual"
     assert extend_event["source_reason"] == "manual"
+    assert extend_event["primary_exchange"] == "binance"
+    assert extend_event["strategy"] == "trend_following"
     unfreeze_event = exported[-1]
     assert unfreeze_event["mode"] == "manual"
+    assert unfreeze_event["primary_exchange"] == "binance"
+    assert unfreeze_event["strategy"] == "trend_following"
     assert unfreeze_event["source_reason"] == "operator_clear"
     assert unfreeze_event["risk_profile"] == "trend"
 
@@ -1483,6 +1567,8 @@ def test_auto_trade_engine_uses_ai_inference(monkeypatch) -> None:
             "environment": "paper",
             "portfolio": "autotrader",
             "risk_profile": "trend",
+            "primary_exchange": "binance",
+            "strategy": "trend_following",
         },
     )
     engine.apply_params({"fast": 2, "slow": 5})
@@ -1576,6 +1662,8 @@ def test_auto_trade_engine_uses_ai_inference(monkeypatch) -> None:
     )
     assert positive_event["event"] == "ai_inference"
     assert positive_event["environment"] == "paper"
+    assert positive_event["primary_exchange"] == "binance"
+    assert positive_event["strategy"] == "trend_following"
     assert float(positive_event["expected_return_bps"]) == pytest.approx(120.0)
     assert float(positive_event["signal_before_adjustment"]) == pytest.approx(base_signal)
     assert float(positive_event["signal_after_adjustment"]) == pytest.approx(
@@ -1594,6 +1682,8 @@ def test_auto_trade_engine_uses_ai_inference(monkeypatch) -> None:
     )
     assert negative_event["event"] == "ai_inference"
     assert negative_event["environment"] == "paper"
+    assert negative_event["primary_exchange"] == "binance"
+    assert negative_event["strategy"] == "trend_following"
     assert float(negative_event["expected_return_bps"]) == pytest.approx(-150.0)
     assert float(negative_event["signal_before_adjustment"]) == pytest.approx(
         negative_base_signal

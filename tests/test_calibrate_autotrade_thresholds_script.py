@@ -4,72 +4,89 @@ import csv
 import json
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
+
+from bot_core.runtime.journal import TradingDecisionEvent
 
 
 def _write_journal(path: Path) -> None:
     events = [
-        {
-            "event": "ai_inference",
-            "timestamp": "2023-12-31T23:00:00Z",
-            "environment": "paper",
-            "portfolio": "core",
-            "risk_profile": "balanced",
-            "primary_exchange": "binance",
-            "strategy": "trend_following",
-            "symbol": "BTCUSDT",
-            "signal_after_adjustment": "0.90",
-            "signal_after_clamp": "0.88",
-        },
-        {
-            "event": "ai_inference",
-            "timestamp": "2024-01-01T00:00:00Z",
-            "environment": "paper",
-            "portfolio": "core",
-            "risk_profile": "balanced",
-            "primary_exchange": "binance",
-            "strategy": "trend_following",
-            "symbol": "BTCUSDT",
-            "signal_after_adjustment": "0.62",
-            "signal_after_clamp": "0.55",
-        },
-        {
-            "event": "ai_inference",
-            "timestamp": "2024-01-01T01:00:00Z",
-            "environment": "paper",
-            "portfolio": "core",
-            "risk_profile": "balanced",
-            "primary_exchange": "binance",
-            "strategy": "trend_following",
-            "symbol": "BTCUSDT",
-            "signal_after_adjustment": "0.48",
-            "signal_after_clamp": "0.52",
-        },
-        {
-            "event": "ai_inference",
-            "timestamp": "2024-01-01T02:00:00Z",
-            "environment": "paper",
-            "portfolio": "core",
-            "risk_profile": "balanced",
-            "primary_exchange": "kraken",
-            "strategy": "mean_reversion",
-            "symbol": "ETHUSDT",
-            "signal_after_adjustment": "-0.30",
-            "signal_after_clamp": "-0.28",
-        },
-        {
-            "event": "risk_freeze",
-            "timestamp": "2024-01-01T03:00:00Z",
-            "primary_exchange": "binance",
-            "strategy": "trend_following",
-            "symbol": "BTCUSDT",
-            "reason": "manual_override",
-            "frozen_for": 120,
-        },
+        TradingDecisionEvent(
+            event_type="ai_inference",
+            timestamp=datetime(2023, 12, 31, 23, 0, tzinfo=timezone.utc),
+            environment="paper",
+            portfolio="core",
+            risk_profile="balanced",
+            symbol="BTCUSDT",
+            primary_exchange="binance",
+            strategy="trend_following",
+            metadata={
+                "signal_after_adjustment": "0.90",
+                "signal_after_clamp": "0.88",
+            },
+        ),
+        TradingDecisionEvent(
+            event_type="ai_inference",
+            timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+            environment="paper",
+            portfolio="core",
+            risk_profile="balanced",
+            symbol="BTCUSDT",
+            primary_exchange="binance",
+            strategy="trend_following",
+            metadata={
+                "signal_after_adjustment": "0.62",
+                "signal_after_clamp": "0.55",
+            },
+        ),
+        TradingDecisionEvent(
+            event_type="ai_inference",
+            timestamp=datetime(2024, 1, 1, 1, 0, tzinfo=timezone.utc),
+            environment="paper",
+            portfolio="core",
+            risk_profile="balanced",
+            symbol="BTCUSDT",
+            primary_exchange="binance",
+            strategy="trend_following",
+            metadata={
+                "signal_after_adjustment": "0.48",
+                "signal_after_clamp": "0.52",
+            },
+        ),
+        TradingDecisionEvent(
+            event_type="ai_inference",
+            timestamp=datetime(2024, 1, 1, 2, 0, tzinfo=timezone.utc),
+            environment="paper",
+            portfolio="core",
+            risk_profile="balanced",
+            symbol="ETHUSDT",
+            primary_exchange="kraken",
+            strategy="mean_reversion",
+            metadata={
+                "signal_after_adjustment": "-0.30",
+                "signal_after_clamp": "-0.28",
+            },
+        ),
+        TradingDecisionEvent(
+            event_type="risk_freeze",
+            timestamp=datetime(2024, 1, 1, 3, 0, tzinfo=timezone.utc),
+            environment="paper",
+            portfolio="core",
+            risk_profile="balanced",
+            symbol="BTCUSDT",
+            status="risk_freeze",
+            primary_exchange="binance",
+            strategy="trend_following",
+            metadata={
+                "reason": "manual_override",
+                "frozen_for": "120",
+            },
+        ),
     ]
     with path.open("w", encoding="utf-8") as handle:
         for event in events:
-            handle.write(json.dumps(event))
+            handle.write(json.dumps(event.as_dict()))
             handle.write("\n")
 
 
@@ -82,6 +99,8 @@ def _write_autotrade_export(path: Path) -> None:
                 "decision": {
                     "details": {
                         "symbol": "BTCUSDT",
+                        "primary_exchange": "binance",
+                        "strategy": "trend_following",
                         "summary": {"risk_score": 0.72},
                     }
                 },
@@ -91,6 +110,8 @@ def _write_autotrade_export(path: Path) -> None:
                 "decision": {
                     "details": {
                         "symbol": "BTCUSDT",
+                        "primary_exchange": "binance",
+                        "strategy": "trend_following",
                         "summary": {"risk_score": 0.65},
                     }
                 },
@@ -99,6 +120,8 @@ def _write_autotrade_export(path: Path) -> None:
                 "timestamp": "2024-01-01T02:00:00Z",
                 "detail": {
                     "symbol": "ETHUSDT",
+                    "primary_exchange": "kraken",
+                    "strategy": "mean_reversion",
                     "summary": {"risk_score": 0.41},
                 },
             },
@@ -109,6 +132,8 @@ def _write_autotrade_export(path: Path) -> None:
                     "symbol": "BTCUSDT",
                     "reason": "risk_score_threshold",
                     "frozen_for": 180,
+                    "primary_exchange": "binance",
+                    "strategy": "trend_following",
                     "summary": {
                         "risk_score": 0.83,
                         "primary_exchange": "binance",

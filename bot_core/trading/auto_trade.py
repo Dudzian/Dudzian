@@ -75,165 +75,16 @@ class _ManualRiskFreezeState:
     last_extension_at: float | None = None
     source_reason: str | None = None
     released_at: float | None = None
-
-
-def _ensure_test_stub_helpers() -> None:
-    """Patch test workflow stubs to expose availability helpers if needed."""
-
-    try:
-        import sys
-        from datetime import timedelta
-
-        stub_module = sys.modules.get("tests.test_auto_trade_engine_native")
-        if stub_module is None:
-            return
-        workflow_stub = getattr(stub_module, "_WorkflowStub", None)
-        if workflow_stub is None:
-            return
-
-        if not hasattr(stub_module, "timedelta"):
-            stub_module.timedelta = timedelta  # type: ignore[attr-defined]
-
-        if not hasattr(workflow_stub, "set_availability"):
-            def _set_availability(self, availability: Iterable["PresetAvailability"]) -> None:
-                self._preset_availability = tuple(availability)
-
-            workflow_stub.set_availability = _set_availability  # type: ignore[attr-defined]
-
-        if not hasattr(workflow_stub, "get_availability"):
-            def _get_availability(self) -> tuple["PresetAvailability", ...]:
-                return getattr(self, "_preset_availability", ())
-
-            workflow_stub.get_availability = _get_availability  # type: ignore[attr-defined]
-    except Exception:  # pragma: no cover - test helper should never break runtime
-        pass
-
-
-def canonical_alias_map(
-    alias_map: Mapping[str, str] | None,
-) -> dict[str, str]:
-    """Return a normalised alias map suitable for runtime lookups."""
-
-    if not alias_map:
-        return {}
-    normalised = normalise_alias_map(alias_map)
-    return {str(key): str(value) for key, value in normalised.items()}
-
-
-def normalise_suffixes(suffixes: Iterable[str]) -> tuple[str, ...]:
-    """Normalise suffix overrides to a tuple of unique string values."""
-
-    ordered: list[str] = []
-    seen: set[str] = set()
-    for suffix in suffixes:
-        candidate = str(suffix or "").strip()
-        if not candidate:
-            continue
-        if candidate in seen:
-            continue
-        seen.add(candidate)
-        ordered.append(candidate)
-    return tuple(ordered)
-
-
-@dataclass(frozen=True)
-class PresetAvailability:
-    """Lightweight availability report used by tests and UI helpers."""
-
-    regime: MarketRegime | None
-    version: PresetVersionInfo
-    ready: bool
-    blocked_reason: str | None
-    missing_data: tuple[str, ...] = ()
-    license_issues: tuple[str, ...] = ()
-    schedule_blocked: bool = False
-
-    def __post_init__(self) -> None:  # pragma: no cover - simple normalization
-        object.__setattr__(self, "missing_data", tuple(self.missing_data))
-        object.__setattr__(self, "license_issues", tuple(self.license_issues))
-        _ensure_test_stub_helpers()
-
-
-try:  # pragma: no cover - provide compatibility for legacy imports
-    import builtins as _builtins
-    from datetime import timedelta as _timedelta
-
-    if not hasattr(_builtins, "PresetAvailability"):
-        _builtins.PresetAvailability = PresetAvailability  # type: ignore[attr-defined]
-    if not hasattr(_builtins, "timedelta"):
-        _builtins.timedelta = _timedelta  # type: ignore[attr-defined]
-except Exception:
-    pass
-
-_ensure_test_stub_helpers()
-
-
-def _ensure_test_stub_helpers() -> None:
-    """Patch test workflow stubs to expose availability helpers if needed."""
-
-    try:
-        import sys
-        from datetime import timedelta
-
-        stub_module = sys.modules.get("tests.test_auto_trade_engine_native")
-        if stub_module is None:
-            return
-        workflow_stub = getattr(stub_module, "_WorkflowStub", None)
-        if workflow_stub is None:
-            return
-
-        if not hasattr(stub_module, "timedelta"):
-            stub_module.timedelta = timedelta  # type: ignore[attr-defined]
-
-        if not hasattr(workflow_stub, "set_availability"):
-            def _set_availability(self, availability: Iterable["PresetAvailability"]) -> None:
-                self._preset_availability = tuple(availability)
-
-            workflow_stub.set_availability = _set_availability  # type: ignore[attr-defined]
-
-        if not hasattr(workflow_stub, "get_availability"):
-            def _get_availability(self) -> tuple["PresetAvailability", ...]:
-                return getattr(self, "_preset_availability", ())
-
-            workflow_stub.get_availability = _get_availability  # type: ignore[attr-defined]
-    except Exception:  # pragma: no cover - test helper should never break runtime
-        pass
-
-
-@dataclass(frozen=True)
-class PresetAvailability:
-    """Lightweight availability report used by tests and UI helpers."""
-
-    regime: MarketRegime | None
-    version: PresetVersionInfo
-    ready: bool
-    blocked_reason: str | None
-    missing_data: tuple[str, ...] = ()
-    license_issues: tuple[str, ...] = ()
-    schedule_blocked: bool = False
-
-    def __post_init__(self) -> None:  # pragma: no cover - simple normalization
-        object.__setattr__(self, "missing_data", tuple(self.missing_data))
-        object.__setattr__(self, "license_issues", tuple(self.license_issues))
-        _ensure_test_stub_helpers()
-
-
-try:  # pragma: no cover - provide compatibility for legacy imports
-    import builtins as _builtins
-    from datetime import timedelta as _timedelta
-
-    if not hasattr(_builtins, "PresetAvailability"):
-        _builtins.PresetAvailability = PresetAvailability  # type: ignore[attr-defined]
-    if not hasattr(_builtins, "timedelta"):
-        _builtins.timedelta = _timedelta  # type: ignore[attr-defined]
-except Exception:
-    pass
-
-_ensure_test_stub_helpers()
-
-
 @dataclass
 class AutoTradeConfig:
+    """Podstawowa konfiguracja silnika autotradingu.
+
+    Pola ``primary_exchange`` oraz ``strategy`` są propagowane do dziennika decyzji
+    oraz zdarzeń telemetrycznych. Należy je uzupełnić (lub zapewnić w
+    ``decision_journal_context``) jeśli downstream wymaga routingu po tych
+    identyfikatorach.
+    """
+
     symbol: str = "BTCUSDT"
     qty: float = 0.01
     emit_signals: bool = True
@@ -258,6 +109,8 @@ class AutoTradeConfig:
     regime_parameter_overrides: Mapping[str, Mapping[str, float | int]] | None = None
     strategy_alias_map: Mapping[str, str] | None = None
     strategy_alias_suffixes: Iterable[str] | None = None
+    primary_exchange: str | None = None
+    strategy: str | None = None
 
     def __post_init__(self) -> None:
         if self.default_params is None:
@@ -342,6 +195,10 @@ class AutoTradeConfig:
         else:
             normalised_suffixes = normalise_suffixes(self.strategy_alias_suffixes)
             self.strategy_alias_suffixes = normalised_suffixes or None
+        if self.primary_exchange is not None:
+            self.primary_exchange = str(self.primary_exchange).strip() or None
+        if self.strategy is not None:
+            self.strategy = str(self.strategy).strip() or None
 
 
 class AutoTradeEngine:
@@ -372,6 +229,26 @@ class AutoTradeEngine:
         "statistical_arbitrage": "statistical_arbitrage",
         "volatility_target": "volatility_target",
     }
+
+    _EVENT_CONTEXT_KEYS: tuple[str, ...] = (
+        "schedule",
+        "strategy",
+        "schedule_run_id",
+        "strategy_instance_id",
+        "status",
+        "primary_exchange",
+        "secondary_exchange",
+        "base_asset",
+        "quote_asset",
+        "instrument_type",
+        "data_feed",
+        "risk_budget_bucket",
+    )
+
+    _ROUTING_DETAIL_KEYS: tuple[str, ...] = (
+        "primary_exchange",
+        "strategy",
+    )
 
     @classmethod
     def _alias_resolver(cls) -> StrategyAliasResolver:
@@ -492,6 +369,23 @@ class AutoTradeEngine:
             self._decision_journal_context = {
                 str(key): value for key, value in decision_journal_context.items()
             }
+        for key in self._ROUTING_DETAIL_KEYS:
+            context_value = self._decision_journal_context.get(key)
+            normalised: str | None = None
+            if context_value is not None:
+                candidate = str(context_value).strip()
+                if candidate:
+                    normalised = candidate
+            if normalised is None:
+                cfg_value = getattr(self.cfg, key, None)
+                if cfg_value is not None:
+                    candidate = str(cfg_value).strip()
+                    if candidate:
+                        normalised = candidate
+            if normalised is not None:
+                self._decision_journal_context[key] = normalised
+            elif key in self._decision_journal_context:
+                del self._decision_journal_context[key]
         self._last_inference_score: ModelScore | None = None
         self._last_inference_metadata: Dict[str, object] | None = None
         self._last_inference_scored_at: dt.datetime | None = None
@@ -501,6 +395,33 @@ class AutoTradeEngine:
         self.bus.subscribe(EventType.WFO_STATUS, self._on_wfo_status_batch, rule=batch_rule)
         self.bus.subscribe(EventType.RISK_ALERT, self._on_risk_alert_batch, rule=batch_rule)
 
+    def _routing_snapshot(self) -> dict[str, str]:
+        snapshot: dict[str, str] = {}
+        for key in self._ROUTING_DETAIL_KEYS:
+            value = self._decision_journal_context.get(key)
+            candidate: str | None = None
+            if value is not None:
+                candidate = str(value).strip()
+            if not candidate:
+                cfg_value = getattr(self.cfg, key, None)
+                if cfg_value is not None:
+                    cfg_candidate = str(cfg_value).strip()
+                    if cfg_candidate:
+                        candidate = cfg_candidate
+            if not candidate:
+                candidate = "unknown"
+            snapshot[str(key)] = candidate
+        return snapshot
+
+    def _augment_status_detail(
+        self, detail: Mapping[str, Any] | None
+    ) -> Dict[str, Any]:
+        payload = {str(key): value for key, value in (detail or {}).items()}
+        routing_snapshot = self._routing_snapshot()
+        for key, value in routing_snapshot.items():
+            payload.setdefault(key, value)
+        return payload
+
     def enable(self) -> None:
         self._enabled = True
         self._manual_risk_frozen_until = 0.0
@@ -509,21 +430,28 @@ class AutoTradeEngine:
         self._auto_risk_state = _AutoRiskFreezeState()
         self._manual_risk_state = None
         self._recompute_risk_freeze_until()
-        self.adapter.push_autotrade_status("enabled", detail={"symbol": self.cfg.symbol})  # type: ignore[attr-defined]
+        detail = self._augment_status_detail({"symbol": self.cfg.symbol})
+        self.adapter.push_autotrade_status("enabled", detail=detail)  # type: ignore[attr-defined]
 
     def disable(self, reason: str = "") -> None:
         self._enabled = False
+        detail = self._augment_status_detail(
+            {"symbol": self.cfg.symbol, "reason": reason}
+        )
         self.adapter.push_autotrade_status(  # type: ignore[attr-defined]
             "disabled",
-            detail={"symbol": self.cfg.symbol, "reason": reason},
+            detail=detail,
             level="WARN",
         )
 
     def apply_params(self, params: Dict[str, int]) -> None:
         self._params = dict(params)
+        detail = self._augment_status_detail(
+            {"symbol": self.cfg.symbol, "params": self._params}
+        )
         self.adapter.push_autotrade_status(  # type: ignore[attr-defined]
             "params_applied",
-            detail={"symbol": self.cfg.symbol, "params": self._params},
+            detail=detail,
         )
 
     def freeze_risk(
@@ -590,6 +518,7 @@ class AutoTradeEngine:
                 event = "risk_freeze_extend"
             else:
                 detail["previous_until"] = previous_until
+        detail = self._augment_status_detail(detail)
         self.adapter.push_autotrade_status(  # type: ignore[attr-defined]
             event,
             detail=detail,
@@ -622,6 +551,7 @@ class AutoTradeEngine:
                 "released_at": released_at,
                 "frozen_for": frozen_for,
             }
+            detail = self._augment_status_detail(detail)
             self.adapter.push_autotrade_status(  # type: ignore[attr-defined]
                 "risk_unfreeze",
                 detail=detail,
@@ -719,6 +649,7 @@ class AutoTradeEngine:
         }
         if event == "auto_risk_freeze_extend" and previous_until:
             detail["extended_from"] = previous_until
+        detail = self._augment_status_detail(detail)
         self.adapter.push_autotrade_status(  # type: ignore[attr-defined]
             event,
             detail=detail,
@@ -755,6 +686,7 @@ class AutoTradeEngine:
             "released_at": released_at,
             "frozen_for": max(0.0, released_at - triggered_at),
         }
+        detail = self._augment_status_detail(detail)
         self.adapter.push_autotrade_status(  # type: ignore[attr-defined]
             "auto_risk_unfreeze",
             detail=detail,
@@ -1374,6 +1306,7 @@ class AutoTradeEngine:
                     key: value
                     for key, value in activation_payload.items()
                 }
+            detail = self._augment_status_detail(detail)
             self.adapter.push_autotrade_status(  # type: ignore[attr-defined]
                 "regime_update",
                 detail=detail,
@@ -2062,6 +1995,7 @@ class AutoTradeEngine:
             environment = str(context.get("environment", "auto-trade"))
             portfolio = str(context.get("portfolio", "autotrader"))
             risk_profile = str(context.get("risk_profile", assessment.regime.value))
+            routing_snapshot = self._routing_snapshot()
             metadata_payload: Dict[str, Any] = {
                 "symbol": self.cfg.symbol,
                 "regime": assessment.regime.value,
@@ -2076,6 +2010,8 @@ class AutoTradeEngine:
                 },
             }
             metadata_payload.update({str(k): v for k, v in adjustment_metadata.items()})
+            for key, value in routing_snapshot.items():
+                metadata_payload.setdefault(key, value)
             scored_at_iso = self._isoformat(scored_at or self._last_inference_scored_at)
             if scored_at_iso is not None:
                 metadata_payload["scored_at"] = scored_at_iso
@@ -2094,8 +2030,10 @@ class AutoTradeEngine:
                 "symbol": self.cfg.symbol,
                 "metadata": self._stringify_metadata(metadata_payload),
             }
-            for key in ("schedule", "strategy", "schedule_run_id", "strategy_instance_id", "status"):
+            for key in self._EVENT_CONTEXT_KEYS:
                 value = context.get(key)
+                if value is None:
+                    value = routing_snapshot.get(key)
                 if value is not None:
                     event_kwargs[key] = str(value)
             event = TradingDecisionEvent(**event_kwargs)
@@ -2138,12 +2076,15 @@ class AutoTradeEngine:
             else:
                 inferred_profile = "autotrade"
             risk_profile = str(context.get("risk_profile", inferred_profile))
+            routing_snapshot = self._routing_snapshot()
             metadata_payload: Dict[str, Any] = {
                 "symbol": self.cfg.symbol,
                 "mode": mode,
                 "event": event,
             }
             metadata_payload.update({str(k): v for k, v in detail.items()})
+            for key, value in routing_snapshot.items():
+                metadata_payload.setdefault(key, value)
             if summary is not None:
                 level = getattr(summary, "risk_level", None)
                 if isinstance(level, RiskLevel):
@@ -2163,13 +2104,10 @@ class AutoTradeEngine:
                 "status": event,
                 "metadata": self._stringify_metadata(metadata_payload),
             }
-            for key in (
-                "schedule",
-                "strategy",
-                "schedule_run_id",
-                "strategy_instance_id",
-            ):
+            for key in self._EVENT_CONTEXT_KEYS:
                 value = context.get(key)
+                if value is None:
+                    value = routing_snapshot.get(key)
                 if value is not None:
                     event_kwargs[key] = str(value)
             event_obj = TradingDecisionEvent(**event_kwargs)
@@ -2602,27 +2540,27 @@ class AutoTradeEngine:
             metadata_payload = metadata_container
 
         if self.cfg.emit_signals:
-            self.adapter.publish(
-                EventType.SIGNAL,
-                {
-                    "symbol": self.cfg.symbol,
-                    "direction": combined,
-                    "params": dict(self._params),
-                    "regime": assessment.regime.value,
-                    "weights": weights,
-                    "signals": signals,
-                    "strategy_parameters": {
-                        "ema_fast_period": parameters.ema_fast_period,
-                        "ema_slow_period": parameters.ema_slow_period,
-                        "ensemble_weights": parameters.ensemble_weights,
-                        "day_trading_momentum_window": parameters.day_trading_momentum_window,
-                        "day_trading_volatility_window": parameters.day_trading_volatility_window,
-                        "arbitrage_confirmation_window": parameters.arbitrage_confirmation_window,
-                        "arbitrage_spread_threshold": parameters.arbitrage_spread_threshold,
-                    },
-                    **({"metadata": metadata_payload} if metadata_payload else {}),
+            payload = {
+                "symbol": self.cfg.symbol,
+                "direction": combined,
+                "params": dict(self._params),
+                "regime": assessment.regime.value,
+                "weights": weights,
+                "signals": signals,
+                "strategy_parameters": {
+                    "ema_fast_period": parameters.ema_fast_period,
+                    "ema_slow_period": parameters.ema_slow_period,
+                    "ensemble_weights": parameters.ensemble_weights,
+                    "day_trading_momentum_window": parameters.day_trading_momentum_window,
+                    "day_trading_volatility_window": parameters.day_trading_volatility_window,
+                    "arbitrage_confirmation_window": parameters.arbitrage_confirmation_window,
+                    "arbitrage_spread_threshold": parameters.arbitrage_spread_threshold,
                 },
-            )
+            }
+            if metadata_payload:
+                payload["metadata"] = metadata_payload
+            payload.update(self._routing_snapshot())
+            self.adapter.publish(EventType.SIGNAL, payload)
         direction = 0
         if combined > self.cfg.activation_threshold:
             direction = +1
@@ -2645,6 +2583,7 @@ class AutoTradeEngine:
                 detail["activation"] = {
                     key: value for key, value in activation_payload.items()
                 }
+            detail = self._augment_status_detail(detail)
             self.adapter.push_autotrade_status(  # type: ignore[attr-defined]
                 "entry_long",
                 detail=detail,
@@ -2664,6 +2603,7 @@ class AutoTradeEngine:
                 detail["activation"] = {
                     key: value for key, value in activation_payload.items()
                 }
+            detail = self._augment_status_detail(detail)
             self.adapter.push_autotrade_status(  # type: ignore[attr-defined]
                 "entry_short",
                 detail=detail,
