@@ -5,10 +5,11 @@ import json
 import math
 import statistics
 import sys
+from array import array
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterable, Mapping
+from typing import Callable, Iterable, Iterator, Mapping
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
@@ -53,6 +54,9 @@ _UNKNOWN_IDENTIFIERS: frozenset[str] = frozenset(
         "unassigned",
     }
 )
+
+
+_METRIC_APPEND_OBSERVER: Callable[[tuple[str, str], str, int], None] | None = None
 
 
 def _parse_datetime(value: object) -> datetime | None:
@@ -440,31 +444,32 @@ def _load_journal_events(
     *,
     since: datetime | None = None,
     until: datetime | None = None,
-) -> list[dict[str, object]]:
-    events: list[dict[str, object]] = []
-    for path in paths:
-        try:
-            with path.open("r", encoding="utf-8") as handle:
-                for line in handle:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        payload = json.loads(line)
-                    except json.JSONDecodeError as exc:  # noqa: BLE001 - CLI feedback
-                        raise SystemExit(
-                            f"Nie udało się sparsować JSON w dzienniku {path}: {exc}"
-                        ) from exc
-                    if isinstance(payload, Mapping):
-                        timestamp = _parse_datetime(payload.get("timestamp"))
-                        if since and timestamp and timestamp < since:
+) -> Iterator[dict[str, object]]:
+    def _iter_events() -> Iterator[dict[str, object]]:
+        for path in paths:
+            try:
+                with path.open("r", encoding="utf-8") as handle:
+                    for line in handle:
+                        line = line.strip()
+                        if not line:
                             continue
-                        if until and timestamp and timestamp > until:
-                            continue
-                        events.append(dict(payload))
-        except OSError as exc:  # noqa: BLE001 - CLI feedback
-            raise SystemExit(f"Nie udało się odczytać dziennika {path}: {exc}") from exc
-    return events
+                        try:
+                            payload = json.loads(line)
+                        except json.JSONDecodeError as exc:  # noqa: BLE001 - CLI feedback
+                            raise SystemExit(
+                                f"Nie udało się sparsować JSON w dzienniku {path}: {exc}"
+                            ) from exc
+                        if isinstance(payload, Mapping):
+                            timestamp = _parse_datetime(payload.get("timestamp"))
+                            if since and timestamp and timestamp < since:
+                                continue
+                            if until and timestamp and timestamp > until:
+                                continue
+                            yield dict(payload)
+            except OSError as exc:  # noqa: BLE001 - CLI feedback
+                raise SystemExit(f"Nie udało się odczytać dziennika {path}: {exc}") from exc
+
+    return _iter_events()
 
 
 def _extract_entry_timestamp(entry: Mapping[str, object]) -> datetime | None:
@@ -489,37 +494,40 @@ def _load_autotrade_entries(
     *,
     since: datetime | None = None,
     until: datetime | None = None,
-) -> list[dict[str, object]]:
-    entries: list[dict[str, object]] = []
-    for raw in paths:
-        path = Path(raw).expanduser()
-        if not path.exists():
-            raise SystemExit(f"Eksport autotradera nie istnieje: {path}")
-        try:
-            payload = json.loads(path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError as exc:  # noqa: BLE001 - CLI feedback
-            raise SystemExit(f"Niepoprawny JSON w eksporcie autotradera {path}: {exc}") from exc
-        if isinstance(payload, Mapping):
-            raw_entries = payload.get("entries")
-            if isinstance(raw_entries, Iterable):
-                for item in raw_entries:
+) -> Iterator[dict[str, object]]:
+    def _iter_entries() -> Iterator[dict[str, object]]:
+        for raw in paths:
+            path = Path(raw).expanduser()
+            if not path.exists():
+                raise SystemExit(f"Eksport autotradera nie istnieje: {path}")
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+            except json.JSONDecodeError as exc:  # noqa: BLE001 - CLI feedback
+                raise SystemExit(
+                    f"Niepoprawny JSON w eksporcie autotradera {path}: {exc}"
+                ) from exc
+            if isinstance(payload, Mapping):
+                raw_entries = payload.get("entries")
+                if isinstance(raw_entries, Iterable):
+                    for item in raw_entries:
+                        if isinstance(item, Mapping):
+                            timestamp = _extract_entry_timestamp(item)
+                            if since and timestamp and timestamp < since:
+                                continue
+                            if until and timestamp and timestamp > until:
+                                continue
+                            yield dict(item)
+            elif isinstance(payload, list):
+                for item in payload:
                     if isinstance(item, Mapping):
                         timestamp = _extract_entry_timestamp(item)
                         if since and timestamp and timestamp < since:
                             continue
                         if until and timestamp and timestamp > until:
                             continue
-                        entries.append(dict(item))
-        elif isinstance(payload, list):
-            for item in payload:
-                if isinstance(item, Mapping):
-                    timestamp = _extract_entry_timestamp(item)
-                    if since and timestamp and timestamp < since:
-                        continue
-                    if until and timestamp and timestamp > until:
-                        continue
-                    entries.append(dict(item))
-    return entries
+                        yield dict(item)
+
+    return _iter_entries()
 
 
 def _resolve_key(exchange: str | None, strategy: str | None) -> tuple[str, str]:
@@ -554,40 +562,47 @@ def _has_conflict(existing: tuple[str, str], candidate: tuple[str, str]) -> bool
     return False
 
 
+def _update_symbol_map_entry(
+    symbol_map: dict[str, tuple[str, str]],
+    event: Mapping[str, object],
+) -> None:
+    symbol = _canonicalize_symbol_key(event.get("symbol"))
+    if not symbol:
+        return
+    exchange = _normalize_string(event.get("primary_exchange"))
+    strategy = _normalize_string(event.get("strategy"))
+    key = _resolve_key(exchange, strategy)
+    existing = symbol_map.get(symbol)
+    if existing is None:
+        symbol_map[symbol] = key
+        return
+    if existing == _AMBIGUOUS_SYMBOL_MAPPING:
+        return
+    if existing == key:
+        return
+    if _has_conflict(existing, key):
+        symbol_map[symbol] = _AMBIGUOUS_SYMBOL_MAPPING
+        return
+    merged_exchange = existing[0]
+    merged_strategy = existing[1]
+    candidate_exchange, candidate_strategy = key
+    if not _is_unknown_token(candidate_exchange):
+        merged_exchange = candidate_exchange
+    if not _is_unknown_token(candidate_strategy):
+        merged_strategy = candidate_strategy
+    merged = (merged_exchange, merged_strategy)
+    if merged == existing:
+        return
+    if _has_conflict(existing, merged):
+        symbol_map[symbol] = _AMBIGUOUS_SYMBOL_MAPPING
+        return
+    symbol_map[symbol] = merged
+
+
 def _build_symbol_map(events: Iterable[Mapping[str, object]]) -> dict[str, tuple[str, str]]:
     symbol_map: dict[str, tuple[str, str]] = {}
     for event in events:
-        symbol = _canonicalize_symbol_key(event.get("symbol"))
-        if not symbol:
-            continue
-        exchange = _normalize_string(event.get("primary_exchange"))
-        strategy = _normalize_string(event.get("strategy"))
-        key = _resolve_key(exchange, strategy)
-        existing = symbol_map.get(symbol)
-        if existing is None:
-            symbol_map[symbol] = key
-            continue
-        if existing == _AMBIGUOUS_SYMBOL_MAPPING:
-            continue
-        if existing == key:
-            continue
-        if _has_conflict(existing, key):
-            symbol_map[symbol] = _AMBIGUOUS_SYMBOL_MAPPING
-            continue
-        merged_exchange = existing[0]
-        merged_strategy = existing[1]
-        candidate_exchange, candidate_strategy = key
-        if not _is_unknown_token(candidate_exchange):
-            merged_exchange = candidate_exchange
-        if not _is_unknown_token(candidate_strategy):
-            merged_strategy = candidate_strategy
-        merged = (merged_exchange, merged_strategy)
-        if merged == existing:
-            continue
-        if _has_conflict(existing, merged):
-            symbol_map[symbol] = _AMBIGUOUS_SYMBOL_MAPPING
-            continue
-        symbol_map[symbol] = merged
+        _update_symbol_map_entry(symbol_map, event)
     return symbol_map
 
 
@@ -799,8 +814,12 @@ def _suggest_threshold(values: list[float], percentile: float, *, absolute: bool
     return _compute_percentile(target_values, percentile)
 
 
+def _numeric_buffer() -> array:
+    return array("d")
+
+
 def _build_metrics_section(
-    values_map: Mapping[str, list[float]],
+    values_map: Mapping[str, Iterable[float]],
     percentiles: Iterable[float],
     suggestion_percentile: float,
     *,
@@ -809,9 +828,20 @@ def _build_metrics_section(
 ) -> dict[str, dict[str, object]]:
     metrics_payload: dict[str, dict[str, object]] = {}
     for metric_name, values in values_map.items():
-        finite_values = _finite_values(values)
-        if isinstance(values, list) and len(finite_values) != len(values):
-            values[:] = finite_values
+        if isinstance(values, list):
+            try:
+                all_finite = all(math.isfinite(value) for value in values)
+            except TypeError:
+                all_finite = False
+            if all_finite:
+                finite_values = values
+            else:
+                finite_values = _finite_values(values)
+                values[:] = finite_values
+        elif isinstance(values, array):
+            finite_values = list(values)
+        else:
+            finite_values = _finite_values(values)
         stats_payload = _metric_statistics(finite_values, percentiles)
         absolute = metric_name in _ABSOLUTE_THRESHOLD_METRICS
         suggested = _suggest_threshold(finite_values, suggestion_percentile, absolute=absolute)
@@ -967,8 +997,8 @@ def _maybe_plot(
 
 def _generate_report(
     *,
-    journal_events: list[dict[str, object]],
-    autotrade_entries: list[dict[str, object]],
+    journal_events: Iterable[dict[str, object]],
+    autotrade_entries: Iterable[dict[str, object]],
     percentiles: list[float],
     suggestion_percentile: float,
     since: datetime | None = None,
@@ -977,13 +1007,11 @@ def _generate_report(
     current_threshold_sources: Mapping[str, object] | None = None,
     cli_risk_score_threshold: float | None = None,
     risk_threshold_sources: Iterable[str] | None = None,
+    cli_risk_score: float | None = None,
 ) -> dict[str, object]:
-    symbol_map = _build_symbol_map(journal_events)
-    grouped_values: dict[tuple[str, str], dict[str, list[float]]] = defaultdict(
-        lambda: defaultdict(list)
-    )
-    raw_value_snapshots: dict[tuple[str, str], dict[str, list[float]]] = defaultdict(
-        lambda: defaultdict(list)
+    symbol_map: dict[str, tuple[str, str]] = {}
+    grouped_values: dict[tuple[str, str], defaultdict[str, array]] = defaultdict(
+        lambda: defaultdict(_numeric_buffer)
     )
     freeze_summaries: dict[tuple[str, str], dict[str, object]] = defaultdict(
         lambda: {
@@ -995,6 +1023,15 @@ def _generate_report(
     )
     freeze_events: dict[tuple[str, str], list[dict[str, object]]] = defaultdict(list)
     display_names: dict[tuple[str, str], tuple[str, str]] = {}
+    aggregated_freeze_summary = {
+        "total": 0,
+        "type_counts": Counter(),
+        "status_counts": Counter(),
+        "reason_counts": Counter(),
+    }
+    aggregated_values: defaultdict[str, array] = defaultdict(_numeric_buffer)
+    journal_count = 0
+    autotrade_count = 0
 
     def _select_display(current: str, candidate: str, canonical: str) -> str:
         if not candidate:
@@ -1028,6 +1065,17 @@ def _generate_report(
         display_strategy = _select_display(current[1], candidate_strategy, key[1])
         display_names[key] = (display_exchange, display_strategy)
 
+    def _record_metric_value(
+        key: tuple[str, str],
+        metric_name: str,
+        numeric: float,
+    ) -> None:
+        values = grouped_values[key][metric_name]
+        values.append(float(numeric))
+        aggregated_values[metric_name].append(float(numeric))
+        if _METRIC_APPEND_OBSERVER is not None:
+            _METRIC_APPEND_OBSERVER(key, metric_name, len(values))
+
     def _record_freeze(
         key: tuple[str, str],
         payload: Mapping[str, object],
@@ -1044,14 +1092,21 @@ def _generate_report(
             summary["status_counts"][status] += 1
         if isinstance(summary["reason_counts"], Counter):
             summary["reason_counts"][reason] += 1
+        aggregated_freeze_summary["total"] = int(aggregated_freeze_summary["total"]) + 1
+        if isinstance(aggregated_freeze_summary["type_counts"], Counter):
+            aggregated_freeze_summary["type_counts"][freeze_type] += 1
+        if isinstance(aggregated_freeze_summary["status_counts"], Counter):
+            aggregated_freeze_summary["status_counts"][status] += 1
+        if isinstance(aggregated_freeze_summary["reason_counts"], Counter):
+            aggregated_freeze_summary["reason_counts"][reason] += 1
+        grouped_values[key]
         if duration is not None:
             try:
                 numeric_duration = float(duration)
             except (TypeError, ValueError):
                 numeric_duration = None
             if numeric_duration is not None and math.isfinite(numeric_duration):
-                grouped_values[key]["risk_freeze_duration"].append(numeric_duration)
-                raw_value_snapshots[key]["risk_freeze_duration"].append(numeric_duration)
+                _record_metric_value(key, "risk_freeze_duration", numeric_duration)
         freeze_events[key].append(
             {
                 "status": status,
@@ -1063,6 +1118,8 @@ def _generate_report(
         )
 
     for event in journal_events:
+        journal_count += 1
+        _update_symbol_map_entry(symbol_map, event)
         base_exchange = _normalize_string(event.get("primary_exchange"))
         base_strategy = _normalize_string(event.get("strategy"))
         key = _resolve_key(base_exchange, base_strategy)
@@ -1077,8 +1134,7 @@ def _generate_report(
                 continue
             if not math.isfinite(numeric):
                 continue
-            grouped_values[key][metric].append(numeric)
-            raw_value_snapshots[key][metric].append(numeric)
+            _record_metric_value(key, metric, numeric)
         for freeze_payload in _iter_freeze_events(event):
             symbol = _extract_symbol(event)
             exchange = base_exchange
@@ -1097,13 +1153,13 @@ def _generate_report(
             _record_freeze(freeze_key, freeze_payload)
 
     for entry in autotrade_entries:
+        autotrade_count += 1
         summary = _extract_summary(entry)
         symbol = _extract_symbol(entry)
         key, display = _resolve_group_from_symbol(entry, symbol, summary, symbol_map)
         _record_display(key, display[0], display[1])
 
-        freeze_payloads = list(_iter_freeze_events(entry))
-        for freeze_payload in freeze_payloads:
+        for freeze_payload in _iter_freeze_events(entry):
             _record_freeze(key, freeze_payload)
 
         if not summary:
@@ -1128,8 +1184,7 @@ def _generate_report(
             continue
         if not math.isfinite(score_value):
             continue
-        grouped_values[key]["risk_score"].append(score_value)
-        raw_value_snapshots[key]["risk_score"].append(score_value)
+        _record_metric_value(key, "risk_score", score_value)
 
     risk_threshold_paths = _normalize_risk_threshold_paths(risk_threshold_sources)
     current_risk_score = None
@@ -1145,16 +1200,16 @@ def _generate_report(
     if cli_risk_score_threshold is not None:
         current_risk_score = cli_risk_score_threshold
 
-    groups: list[dict[str, object]] = []
-    aggregated_values: defaultdict[str, list[float]] = defaultdict(list)
-    aggregated_freeze_summary = {
-        "total": 0,
-        "type_counts": Counter(),
-        "status_counts": Counter(),
-        "reason_counts": Counter(),
-    }
+    if cli_risk_score is not None:
+        current_risk_score = cli_risk_score
 
-    for (exchange, strategy), metrics in sorted(grouped_values.items()):
+    groups: list[dict[str, object]] = []
+    all_keys = set(grouped_values.keys()) | set(freeze_summaries.keys()) | set(display_names.keys())
+
+    for exchange, strategy in sorted(all_keys):
+        metrics = grouped_values.get(
+            (exchange, strategy), defaultdict(_numeric_buffer)
+        )
         metrics_payload = _build_metrics_section(
             metrics,
             percentiles,
@@ -1162,7 +1217,6 @@ def _generate_report(
             current_risk_score=current_risk_score,
             current_signal_thresholds=current_signal_thresholds,
         )
-        raw_snapshot = raw_value_snapshots.get((exchange, strategy), {})
         freeze_summary = freeze_summaries.get((exchange, strategy)) or {
             "total": 0,
             "type_counts": Counter(),
@@ -1170,31 +1224,32 @@ def _generate_report(
             "reason_counts": Counter(),
         }
         freeze_summary_payload = _format_freeze_summary(freeze_summary)
-        aggregated_freeze_summary["total"] = int(aggregated_freeze_summary["total"]) + int(
-            freeze_summary.get("total") or 0
-        )
-        if isinstance(freeze_summary.get("type_counts"), Counter):
-            aggregated_freeze_summary["type_counts"].update(freeze_summary["type_counts"])
-        if isinstance(freeze_summary.get("status_counts"), Counter):
-            aggregated_freeze_summary["status_counts"].update(freeze_summary["status_counts"])
-        if isinstance(freeze_summary.get("reason_counts"), Counter):
-            aggregated_freeze_summary["reason_counts"].update(freeze_summary["reason_counts"])
-        for metric_name, values in metrics.items():
-            aggregated_values[metric_name].extend(_finite_values(values))
+        has_metrics = any(values for values in metrics.values())
+        has_freeze = int(freeze_summary.get("total") or 0) > 0
+        has_freeze_events = bool(freeze_events.get((exchange, strategy)))
+        if not (has_metrics or has_freeze or has_freeze_events):
+            continue
         display_exchange, display_strategy = display_names.get(
             (exchange, strategy), (exchange, strategy)
         )
+        freeze_event_list = freeze_events.get((exchange, strategy))
         groups.append(
             {
                 "primary_exchange": display_exchange,
                 "strategy": display_strategy,
                 "metrics": metrics_payload,
                 "raw_values": {
-                    metric: _finite_values(values)
-                    for metric, values in raw_snapshot.items()
+                    metric: (
+                        values
+                        if isinstance(values, list)
+                        else list(values)
+                    )
+                    for metric, values in metrics.items()
                 },
                 "freeze_summary": freeze_summary_payload,
-                "raw_freeze_events": list(freeze_events.get((exchange, strategy), [])),
+                "raw_freeze_events": (
+                    freeze_event_list if freeze_event_list is not None else []
+                ),
             }
         )
 
@@ -1208,7 +1263,12 @@ def _generate_report(
     global_summary = {
         "metrics": global_metrics,
         "freeze_summary": _format_freeze_summary(aggregated_freeze_summary),
-        "raw_values": {metric: _finite_values(values) for metric, values in aggregated_values.items()},
+        "raw_values": {
+            metric: (
+                values if isinstance(values, list) else list(values)
+            )
+            for metric, values in aggregated_values.items()
+        },
     }
 
     current_threshold_files: list[str] = []
@@ -1291,7 +1351,10 @@ def _generate_report(
         },
         "groups": groups,
         "global_summary": global_summary,
-        "sources": sources_payload,
+        "sources": {
+            "journal_events": journal_count,
+            "autotrade_entries": autotrade_count,
+        },
     }
 
 
@@ -1399,6 +1462,7 @@ def main(argv: list[str] | None = None) -> int:
         current_threshold_sources=current_threshold_sources_payload,
         cli_risk_score_threshold=cli_risk_score,
         risk_threshold_sources=args.risk_thresholds,
+        cli_risk_score=cli_risk_score,
     )
 
     if args.output_json:
@@ -1419,9 +1483,12 @@ def main(argv: list[str] | None = None) -> int:
         _maybe_plot(report["groups"], Path(args.plot_dir))
 
     total_groups = len(report["groups"])
+    sources = report.get("sources", {})
+    journal_count = int(sources.get("journal_events", 0))
+    autotrade_count = int(sources.get("autotrade_entries", 0))
     print(
-        f"Przetworzono {len(journal_events)} zdarzeń dziennika i "
-        f"{len(autotrade_entries)} wpisów autotradera dla {total_groups} kombinacji giełda/strategia."
+        f"Przetworzono {journal_count} zdarzeń dziennika i "
+        f"{autotrade_count} wpisów autotradera dla {total_groups} kombinacji giełda/strategia."
     )
 
     return 0
@@ -1429,3 +1496,5 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+

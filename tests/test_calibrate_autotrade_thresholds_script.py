@@ -18,7 +18,9 @@ from scripts.calibrate_autotrade_thresholds import (
     _canonicalize_symbol_key,
     _build_symbol_map,
     _generate_report,
+    _load_autotrade_entries,
     _load_current_signal_thresholds,
+    _load_journal_events,
 )
 
 
@@ -1094,6 +1096,80 @@ def test_symbol_map_fallback_supplements_missing_metadata() -> None:
 
     assert ("binance", "unknown") in groups
     assert groups[("binance", "unknown")]["metrics"]["risk_score"]["count"] == 1
+
+
+def test_generate_report_handles_large_inputs_with_low_peak_memory(monkeypatch, tmp_path: Path) -> None:
+    event_count = 2000
+    journal_path = tmp_path / "large_journal.jsonl"
+    with journal_path.open("w", encoding="utf-8") as handle:
+        for index in range(event_count):
+            handle.write(
+                json.dumps(
+                    {
+                        "timestamp": f"2024-01-01T00:{index % 60:02d}:00Z",
+                        "symbol": "BTCUSDT",
+                        "primary_exchange": "binance",
+                        "strategy": "trend_following",
+                        "signal_after_adjustment": 0.5 + (index % 10) * 0.01,
+                        "signal_after_clamp": 0.45 + (index % 10) * 0.01,
+                    }
+                )
+            )
+            handle.write("\n")
+
+    autotrade_path = tmp_path / "large_autotrade.json"
+    entries = [
+        {
+            "timestamp": f"2024-01-01T01:{index % 60:02d}:00Z",
+            "decision": {
+                "details": {
+                    "symbol": "BTCUSDT",
+                    "primary_exchange": "binance",
+                    "strategy": "trend_following",
+                    "summary": {"risk_score": 0.6 + (index % 10) * 0.01},
+                }
+            },
+        }
+        for index in range(event_count)
+    ]
+    autotrade_path.write_text(json.dumps({"entries": entries}), encoding="utf-8")
+
+    journal_iter = _load_journal_events([journal_path])
+    autotrade_iter = _load_autotrade_entries([str(autotrade_path)])
+
+    assert not isinstance(journal_iter, list)
+    assert not isinstance(autotrade_iter, list)
+
+    append_calls = 0
+    peak_sizes: dict[tuple[tuple[str, str], str], int] = {}
+
+    def _observer(key: tuple[str, str], metric: str, size: int) -> None:
+        nonlocal append_calls
+        append_calls += 1
+        current_peak = peak_sizes.get((key, metric), 0)
+        if size > current_peak:
+            peak_sizes[(key, metric)] = size
+
+    monkeypatch.setattr(
+        "scripts.calibrate_autotrade_thresholds._METRIC_APPEND_OBSERVER", _observer
+    )
+
+    report = _generate_report(
+        journal_events=journal_iter,
+        autotrade_entries=autotrade_iter,
+        percentiles=[0.5],
+        suggestion_percentile=0.5,
+    )
+
+    assert report["sources"]["journal_events"] == event_count
+    assert report["sources"]["autotrade_entries"] == event_count
+
+    expected_metric_values = event_count * 2 + event_count
+    assert append_calls == expected_metric_values
+
+    assert peak_sizes[("binance", "trend_following"), "signal_after_adjustment"] == event_count
+    assert peak_sizes[("binance", "trend_following"), "signal_after_clamp"] == event_count
+    assert peak_sizes[("binance", "trend_following"), "risk_score"] == event_count
 
 
 def test_symbol_map_matches_symbols_case_insensitively() -> None:
