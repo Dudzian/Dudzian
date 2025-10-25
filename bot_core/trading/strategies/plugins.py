@@ -254,8 +254,7 @@ class StrategyCatalog:
                 OptionsIncomeStrategy,
                 StatisticalArbitrageStrategy,
             )
-
-        return cls(plugins=tuple(ordered_plugins))
+        )
 
 
 class TrendFollowingStrategy(StrategyPlugin):
