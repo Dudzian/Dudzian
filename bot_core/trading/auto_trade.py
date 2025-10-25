@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import json
 import logging
 import math
 import time
@@ -15,6 +16,7 @@ from typing import Any, Deque, Dict, Iterable as TypingIterable, List, Mapping, 
 import numpy as np
 import pandas as pd
 
+from bot_core.ai import DecisionModelInference, ModelScore
 from bot_core.ai.regime import (
     MarketRegime,
     MarketRegimeAssessment,
@@ -45,6 +47,7 @@ from bot_core.strategies.regime_workflow import (
     RegimePresetActivation,
     StrategyRegimeWorkflow,
 )
+from bot_core.runtime.journal import TradingDecisionEvent, TradingDecisionJournal
 
 @dataclass
 class _AutoRiskFreezeState:
@@ -52,6 +55,8 @@ class _AutoRiskFreezeState:
     risk_score: float | None = None
     triggered_at: float = 0.0
     last_extension_at: float = 0.0
+    reason: str | None = None
+    released_at: float = 0.0
 
 
 @dataclass
@@ -59,6 +64,8 @@ class _ManualRiskFreezeState:
     reason: str | None = None
     triggered_at: float | None = None
     last_extension_at: float | None = None
+    source_reason: str | None = None
+    released_at: float | None = None
 
 
 def _ensure_test_stub_helpers() -> None:
@@ -284,6 +291,9 @@ class AutoTradeEngine:
         regime_workflow: StrategyRegimeWorkflow | None = None,
         indicator_service: TechnicalIndicatorsService | None = None,
         indicator_config: EngineConfig | None = None,
+        decision_inference: DecisionModelInference | None = None,
+        decision_journal: TradingDecisionJournal | None = None,
+        decision_journal_context: Mapping[str, Any] | None = None,
     ) -> None:
         self.adapter = adapter
         self.bus: EventBus = adapter.bus
@@ -351,6 +361,20 @@ class AutoTradeEngine:
         self._last_regime_activation: RegimePresetActivation | None = None
         self._regime_activation_history: list[RegimePresetActivation] = []
         self._preset_availability: tuple[PresetAvailability, ...] = ()
+        self._decision_inference = decision_inference
+        self._decision_journal = decision_journal
+        if decision_journal_context is None:
+            self._decision_journal_context: Dict[str, Any] = {}
+        elif not isinstance(decision_journal_context, Mapping):
+            raise TypeError(
+                "decision_journal_context must be a mapping or None"
+            )
+        else:
+            self._decision_journal_context = {
+                str(key): value for key, value in decision_journal_context.items()
+            }
+        self._last_inference_score: ModelScore | None = None
+        self._last_inference_metadata: Dict[str, object] | None = None
 
         batch_rule = DebounceRule(window=0.1, max_batch=1)
         self.bus.subscribe(EventType.MARKET_TICK, self._on_ticks_batch, rule=batch_rule)
@@ -419,36 +443,211 @@ class AutoTradeEngine:
         now: float,
         source: str,
     ) -> None:
+        previous_until = self._manual_risk_frozen_until if self._manual_risk_state else 0.0
         state = self._manual_risk_state or _ManualRiskFreezeState()
         state.reason = reason
+        state.source_reason = source
         if not state.triggered_at:
             state.triggered_at = now
         state.last_extension_at = now
+        state.released_at = None
         self._manual_risk_state = state
         self._manual_risk_frozen_until = float(expiry)
+        detail: Dict[str, Any] = {
+            "symbol": self.cfg.symbol,
+            "reason": reason,
+            "source_reason": source,
+            "triggered_at": state.triggered_at,
+            "last_extension_at": state.last_extension_at,
+            "released_at": None,
+            "frozen_for": max(0.0, float(expiry) - float(state.triggered_at or now)),
+            "until": float(expiry),
+        }
+        event = "risk_freeze"
+        if previous_until and previous_until > now:
+            if float(expiry) > previous_until + 1e-6:
+                detail["extended_from"] = previous_until
+                event = "risk_freeze_extend"
+            else:
+                detail["previous_until"] = previous_until
         self.adapter.push_autotrade_status(  # type: ignore[attr-defined]
-            "manual_risk_freeze",
-            detail={
-                "symbol": self.cfg.symbol,
-                "reason": reason,
-                "source": source,
-                "until": float(expiry),
-            },
+            event,
+            detail=detail,
             level="WARN",
+        )
+        self._record_risk_decision_event(
+            event=event,
+            mode="manual",
+            detail=dict(detail),
         )
 
     def _clear_manual_risk_freeze(self, *, now: float, source: str) -> bool:
-        if not self._manual_risk_state:
+        state_before = self._manual_risk_state
+        if not state_before:
             return False
         active = bool(self._manual_risk_frozen_until and self._manual_risk_frozen_until > now)
         self._manual_risk_state = None
         self._manual_risk_frozen_until = 0.0
         if active:
+            state = state_before
+            released_at = now
+            state.released_at = released_at
+            frozen_for = max(0.0, released_at - float(state.triggered_at or released_at))
+            detail = {
+                "symbol": self.cfg.symbol,
+                "reason": state.reason,
+                "source_reason": source,
+                "triggered_at": state.triggered_at,
+                "last_extension_at": state.last_extension_at,
+                "released_at": released_at,
+                "frozen_for": frozen_for,
+            }
             self.adapter.push_autotrade_status(  # type: ignore[attr-defined]
-                "manual_risk_unfreeze",
-                detail={"symbol": self.cfg.symbol, "source": source},
+                "risk_unfreeze",
+                detail=detail,
+            )
+            self._record_risk_decision_event(
+                event="risk_unfreeze",
+                mode="manual",
+                detail=dict(detail),
             )
         return active
+
+    def _auto_risk_freeze_reason(
+        self,
+        *,
+        level_triggered: bool,
+        score_triggered: bool,
+        summary: RegimeSummary | None,
+    ) -> str:
+        if self._auto_risk_frozen:
+            previous = self._auto_risk_state
+            prev_level = previous.risk_level
+            prev_score = previous.risk_score if previous.risk_score is not None else 0.0
+            if summary is not None and prev_level is not None:
+                prev_rank = self._RISK_LEVEL_ORDER.get(prev_level, -1)
+                current_rank = self._RISK_LEVEL_ORDER.get(summary.risk_level, -1)
+                if current_rank > prev_rank >= 0:
+                    return "risk_level_escalated"
+            if summary is not None and previous.risk_score is not None:
+                if float(summary.risk_score) > float(prev_score) + 1e-6:
+                    return "risk_score_increase"
+            return "expiry_near"
+        if level_triggered and score_triggered:
+            return "risk_level_and_score_threshold"
+        if level_triggered:
+            return "risk_level_threshold"
+        return "risk_score_threshold"
+
+    def _auto_risk_recovery_reason(
+        self,
+        *,
+        summary: RegimeSummary | None,
+        target_rank: int,
+    ) -> str:
+        if summary is None:
+            return "risk_recovered"
+        level_rank = self._RISK_LEVEL_ORDER.get(summary.risk_level, -1)
+        score_below = summary.risk_score < self.cfg.auto_risk_freeze_score
+        level_below = level_rank < target_rank or target_rank < 0
+        if score_below and level_below:
+            return "risk_recovered"
+        if level_below:
+            return "risk_level_recovered"
+        if score_below:
+            return "risk_score_recovered"
+        return "risk_recovered"
+
+    def _emit_auto_risk_freeze(
+        self,
+        *,
+        now: float,
+        summary: RegimeSummary | None,
+        expiry: float,
+        reason: str,
+        level: RiskLevel | None,
+        score: float | None,
+        previous_until: float,
+        event: str,
+    ) -> None:
+        state = self._auto_risk_state
+        if event == "auto_risk_freeze":
+            state.triggered_at = now
+        elif not state.triggered_at:
+            state.triggered_at = now
+        state.last_extension_at = now
+        state.risk_level = level
+        state.risk_score = None if score is None else float(score)
+        state.reason = reason
+        state.released_at = 0.0
+        self._auto_risk_state = state
+        frozen_until = float(expiry)
+        if previous_until and previous_until > frozen_until:
+            frozen_until = previous_until
+        self._auto_risk_frozen = True
+        self._auto_risk_frozen_until = frozen_until
+        detail: Dict[str, Any] = {
+            "symbol": self.cfg.symbol,
+            "reason": reason,
+            "risk_level": level.value if isinstance(level, RiskLevel) else None,
+            "risk_score": None if score is None else float(score),
+            "triggered_at": state.triggered_at,
+            "last_extension_at": state.last_extension_at,
+            "released_at": None,
+            "frozen_for": max(0.0, frozen_until - float(state.triggered_at)),
+            "until": frozen_until,
+        }
+        if event == "auto_risk_freeze_extend" and previous_until:
+            detail["extended_from"] = previous_until
+        self.adapter.push_autotrade_status(  # type: ignore[attr-defined]
+            event,
+            detail=detail,
+            level="WARN",
+        )
+        self._record_risk_decision_event(
+            event=event,
+            mode="auto",
+            detail=dict(detail),
+            summary=summary,
+        )
+
+    def _emit_auto_risk_unfreeze(
+        self,
+        *,
+        now: float,
+        reason: str,
+        summary: RegimeSummary | None,
+    ) -> None:
+        state = self._auto_risk_state
+        level = summary.risk_level if summary is not None else state.risk_level
+        score = summary.risk_score if summary is not None else state.risk_score
+        triggered_at = state.triggered_at or now
+        last_extension_at = state.last_extension_at or triggered_at
+        released_at = now
+        state.released_at = released_at
+        detail = {
+            "symbol": self.cfg.symbol,
+            "reason": reason,
+            "risk_level": level.value if isinstance(level, RiskLevel) else None,
+            "risk_score": None if score is None else float(score),
+            "triggered_at": triggered_at,
+            "last_extension_at": last_extension_at,
+            "released_at": released_at,
+            "frozen_for": max(0.0, released_at - triggered_at),
+        }
+        self.adapter.push_autotrade_status(  # type: ignore[attr-defined]
+            "auto_risk_unfreeze",
+            detail=detail,
+        )
+        self._record_risk_decision_event(
+            event="auto_risk_unfreeze",
+            mode="auto",
+            detail=dict(detail),
+            summary=summary,
+        )
+        self._auto_risk_state = _AutoRiskFreezeState()
+        self._auto_risk_frozen = False
+        self._auto_risk_frozen_until = 0.0
 
     @staticmethod
     def _normalize_strategy_config(
@@ -1625,6 +1824,245 @@ class AutoTradeEngine:
             signals[name] = float(np.clip(value, -1.0, 1.0))
         return signals
 
+    @staticmethod
+    def _stringify_metadata(metadata: Mapping[str, Any]) -> Dict[str, str]:
+        payload: Dict[str, str] = {}
+        for key, value in metadata.items():
+            if value is None:
+                continue
+            key_str = str(key)
+            if isinstance(value, bool):
+                payload[key_str] = "true" if value else "false"
+            elif isinstance(value, (int, np.integer)):
+                payload[key_str] = str(int(value))
+            elif isinstance(value, (float, np.floating)):
+                formatted = f"{float(value):.10f}".rstrip("0").rstrip(".")
+                payload[key_str] = formatted if formatted else "0"
+            elif isinstance(value, (dt.datetime, pd.Timestamp)):
+                timestamp = value
+                if isinstance(timestamp, pd.Timestamp):
+                    timestamp = timestamp.to_pydatetime()
+                payload[key_str] = timestamp.astimezone(dt.timezone.utc).isoformat()
+            elif isinstance(value, Mapping):
+                try:
+                    payload[key_str] = json.dumps(value, ensure_ascii=False, sort_keys=True)
+                except TypeError:
+                    payload[key_str] = str(value)
+            elif isinstance(value, (list, tuple, set)):
+                try:
+                    payload[key_str] = json.dumps(list(value), ensure_ascii=False)
+                except TypeError:
+                    payload[key_str] = ",".join(str(item) for item in value)
+            else:
+                payload[key_str] = str(value)
+        return payload
+
+    def _build_inference_features(
+        self,
+        frame: pd.DataFrame | None,
+        indicators: TechnicalIndicators | None = None,
+    ) -> Dict[str, float]:
+        features: Dict[str, float] = {}
+        if frame is not None and not frame.empty:
+            last_row = frame.iloc[-1]
+            for column in ("open", "high", "low", "close", "volume"):
+                if column not in last_row.index:
+                    continue
+                try:
+                    value = float(last_row[column])
+                except (TypeError, ValueError):
+                    continue
+                if np.isfinite(value):
+                    features[f"price_{column}"] = value
+        if indicators is not None:
+            for name in (
+                "rsi",
+                "ema_fast",
+                "ema_slow",
+                "sma_trend",
+                "atr",
+                "bollinger_upper",
+                "bollinger_lower",
+                "bollinger_middle",
+                "macd",
+                "macd_signal",
+                "stochastic_k",
+                "stochastic_d",
+            ):
+                series = getattr(indicators, name, None)
+                if not isinstance(series, pd.Series) or series.empty:
+                    continue
+                try:
+                    value = float(series.iloc[-1])
+                except (TypeError, ValueError):
+                    continue
+                if np.isfinite(value):
+                    features[f"indicator_{name}"] = value
+        return features
+
+    def _apply_inference_adjustment(
+        self,
+        weights: Mapping[str, float],
+        score: ModelScore,
+    ) -> tuple[Dict[str, float], Dict[str, float]]:
+        base_weights = {str(name): float(value) for name, value in weights.items()}
+        normalized_signal = math.tanh(float(score.expected_return_bps) / 100.0)
+        influence = float(score.success_probability)
+        scaling = max(0.0, 1.0 + normalized_signal * influence)
+        adjusted = {
+            name: float(value) * scaling
+            for name, value in base_weights.items()
+        }
+        base_abs = sum(abs(value) for value in base_weights.values())
+        adjusted_abs = sum(abs(value) for value in adjusted.values())
+        metadata: Dict[str, float] = {
+            "normalized_signal": normalized_signal,
+            "scaling_factor": scaling,
+            "base_abs_weight": base_abs,
+            "adjusted_abs_weight": adjusted_abs,
+        }
+        return adjusted, metadata
+
+    def _record_ai_inference_event(
+        self,
+        score: ModelScore,
+        *,
+        features: Mapping[str, float],
+        weights_before: Mapping[str, float],
+        weights_after: Mapping[str, float],
+        assessment: MarketRegimeAssessment,
+        adjustment_metadata: Mapping[str, float],
+    ) -> None:
+        if self._decision_journal is None:
+            return
+        try:
+            event_ts = dt.datetime.now(dt.timezone.utc)
+            context = dict(self._decision_journal_context)
+            environment = str(context.get("environment", "auto-trade"))
+            portfolio = str(context.get("portfolio", "autotrader"))
+            risk_profile = str(context.get("risk_profile", assessment.regime.value))
+            metadata_payload: Dict[str, Any] = {
+                "symbol": self.cfg.symbol,
+                "regime": assessment.regime.value,
+                "expected_return_bps": float(score.expected_return_bps),
+                "success_probability": float(score.success_probability),
+                "feature_count": len(features),
+                "weights_before": {
+                    str(name): float(value) for name, value in weights_before.items()
+                },
+                "weights_after": {
+                    str(name): float(value) for name, value in weights_after.items()
+                },
+            }
+            metadata_payload.update({str(k): v for k, v in adjustment_metadata.items()})
+            sample = {
+                str(name): float(value)
+                for name, value in sorted(features.items())[:8]
+            }
+            if sample:
+                metadata_payload["feature_sample"] = sample
+            event_kwargs: Dict[str, Any] = {
+                "event_type": "ai_inference",
+                "timestamp": event_ts,
+                "environment": environment,
+                "portfolio": portfolio,
+                "risk_profile": risk_profile,
+                "symbol": self.cfg.symbol,
+                "metadata": self._stringify_metadata(metadata_payload),
+            }
+            for key in ("schedule", "strategy", "schedule_run_id", "strategy_instance_id", "status"):
+                value = context.get(key)
+                if value is not None:
+                    event_kwargs[key] = str(value)
+            event = TradingDecisionEvent(**event_kwargs)
+        except Exception:  # pragma: no cover - log defensively, do not break trading
+            self._logger.debug(
+                "Nie udało się zbudować zdarzenia decision journalu dla inference",
+                exc_info=True,
+            )
+            return
+        try:
+            self._decision_journal.record(event)
+        except Exception:  # pragma: no cover - avoid breaking execution on IO issues
+            self._logger.debug(
+                "Nie udało się zapisać zdarzenia decision journalu dla inference",
+                exc_info=True,
+            )
+
+    def _record_risk_decision_event(
+        self,
+        *,
+        event: str,
+        mode: str,
+        detail: Mapping[str, Any],
+        summary: RegimeSummary | None = None,
+    ) -> None:
+        if self._decision_journal is None:
+            return
+        try:
+            event_ts = dt.datetime.now(dt.timezone.utc)
+            context = dict(self._decision_journal_context)
+            environment = str(context.get("environment", "auto-trade"))
+            portfolio = str(context.get("portfolio", "autotrader"))
+            summary_regime = None
+            if summary is not None:
+                summary_regime = getattr(summary, "regime", None)
+            if isinstance(summary_regime, MarketRegime):
+                inferred_profile = summary_regime.value
+            elif isinstance(summary_regime, str):
+                inferred_profile = summary_regime
+            else:
+                inferred_profile = "autotrade"
+            risk_profile = str(context.get("risk_profile", inferred_profile))
+            metadata_payload: Dict[str, Any] = {
+                "symbol": self.cfg.symbol,
+                "mode": mode,
+                "event": event,
+            }
+            metadata_payload.update({str(k): v for k, v in detail.items()})
+            if summary is not None:
+                level = getattr(summary, "risk_level", None)
+                if isinstance(level, RiskLevel):
+                    metadata_payload.setdefault("risk_level", level.value)
+                elif level is not None:
+                    metadata_payload.setdefault("risk_level", level)
+                score = getattr(summary, "risk_score", None)
+                if score is not None:
+                    metadata_payload.setdefault("risk_score", score)
+            event_kwargs: Dict[str, Any] = {
+                "event_type": event,
+                "timestamp": event_ts,
+                "environment": environment,
+                "portfolio": portfolio,
+                "risk_profile": risk_profile,
+                "symbol": self.cfg.symbol,
+                "status": event,
+                "metadata": self._stringify_metadata(metadata_payload),
+            }
+            for key in (
+                "schedule",
+                "strategy",
+                "schedule_run_id",
+                "strategy_instance_id",
+            ):
+                value = context.get(key)
+                if value is not None:
+                    event_kwargs[key] = str(value)
+            event_obj = TradingDecisionEvent(**event_kwargs)
+        except Exception:  # pragma: no cover - log defensively, do not break trading
+            self._logger.debug(
+                "Nie udało się zbudować zdarzenia decision journalu dla risk control",
+                exc_info=True,
+            )
+            return
+        try:
+            self._decision_journal.record(event_obj)
+        except Exception:  # pragma: no cover - avoid breaking execution on IO issues
+            self._logger.debug(
+                "Nie udało się zapisać zdarzenia decision journalu dla risk control",
+                exc_info=True,
+            )
+
     def _legacy_signal_bundle(self, closes: List[float], frame: pd.DataFrame) -> Dict[str, float]:
         trend_signal = float(self._trend_following_signal(closes))
         day_signal = float(self._day_trading_signal(frame))
@@ -1880,7 +2318,9 @@ class AutoTradeEngine:
             activation_payload,
         ) = self._evaluate_regime_decision(data_for_regime, base_parameters)
         self._last_trading_parameters = parameters
+        inference_features = self._build_inference_features(indicator_frame)
         plugin_signals: Dict[str, float] = {}
+        indicators: TechnicalIndicators | None = None
         if not indicator_frame.empty:
             try:
                 indicators = self._indicator_service.calculate_indicators(indicator_frame, parameters)
@@ -1893,11 +2333,55 @@ class AutoTradeEngine:
                     indicator_frame,
                     weights,
                 )
+                inference_features = self._build_inference_features(indicator_frame, indicators)
         fallback_signals = self._legacy_signal_bundle(closes, frame)
         signals = dict(fallback_signals)
         if plugin_signals:
             signals.update(plugin_signals)
         signals["daily_breakout"] = signals.get("day_trading", fallback_signals["day_trading"])
+        base_weights = dict(weights)
+        ai_metadata: dict[str, object] | None = None
+        self._last_inference_score = None
+        self._last_inference_metadata = None
+        adjustment_metadata: Dict[str, float] | None = None
+        inference_service = self._decision_inference
+        if (
+            inference_service is not None
+            and getattr(inference_service, "is_ready", True)
+            and inference_features
+        ):
+            try:
+                ai_score = inference_service.score(
+                    inference_features,
+                    context={"symbol": self.cfg.symbol, "regime": assessment.regime.value},
+                )
+            except Exception as exc:  # pragma: no cover - inference should never break trading
+                self._logger.debug(
+                    "DecisionModelInference score failed: %s", exc, exc_info=True
+                )
+            else:
+                weights, adjustment_metadata = self._apply_inference_adjustment(weights, ai_score)
+                parameters = self._compose_trading_parameters(weights)
+                self._last_trading_parameters = parameters
+                ai_metadata = {
+                    "expected_return_bps": float(ai_score.expected_return_bps),
+                    "success_probability": float(ai_score.success_probability),
+                    "weight_scaling": adjustment_metadata.get("scaling_factor", 1.0),
+                    "normalized_signal": adjustment_metadata.get("normalized_signal", 0.0),
+                    "feature_count": len(inference_features),
+                    "base_abs_weight": adjustment_metadata.get("base_abs_weight"),
+                    "adjusted_abs_weight": adjustment_metadata.get("adjusted_abs_weight"),
+                }
+                self._record_ai_inference_event(
+                    ai_score,
+                    features=inference_features,
+                    weights_before=base_weights,
+                    weights_after=weights,
+                    assessment=assessment,
+                    adjustment_metadata=adjustment_metadata or {},
+                )
+                self._last_inference_score = ai_score
+                self._last_inference_metadata = dict(ai_metadata)
         numerator = 0.0
         denominator = 0.0
         for name, weight in weights.items():
@@ -1906,22 +2390,33 @@ class AutoTradeEngine:
             denominator += abs(weight)
         combined = numerator / denominator if denominator else 0.0
         metadata_payload: dict[str, object] | None = None
+        metadata_container: dict[str, object] = {}
         if strategy_metadata:
-            metadata_payload = {
-                "per_strategy": {
-                    name: dict(payload)
-                    for name, payload in strategy_metadata.items()
-                },
-                "license_tiers": list(metadata_summary.get("license_tiers", ())),
-                "risk_classes": list(metadata_summary.get("risk_classes", ())),
-                "required_data": list(metadata_summary.get("required_data", ())),
-                "capabilities": list(metadata_summary.get("capabilities", ())),
-                "tags": list(metadata_summary.get("tags", ())),
+            metadata_container["per_strategy"] = {
+                name: dict(payload)
+                for name, payload in strategy_metadata.items()
             }
-            if activation_payload:
-                metadata_payload["activation"] = {
-                    key: value for key, value in activation_payload.items()
-                }
+            metadata_container["license_tiers"] = list(
+                metadata_summary.get("license_tiers", ())
+            )
+            metadata_container["risk_classes"] = list(
+                metadata_summary.get("risk_classes", ())
+            )
+            metadata_container["required_data"] = list(
+                metadata_summary.get("required_data", ())
+            )
+            metadata_container["capabilities"] = list(
+                metadata_summary.get("capabilities", ())
+            )
+            metadata_container["tags"] = list(metadata_summary.get("tags", ()))
+        if activation_payload:
+            metadata_container["activation"] = {
+                key: value for key, value in activation_payload.items()
+            }
+        if ai_metadata is not None:
+            metadata_container["ai_inference"] = dict(ai_metadata)
+        if metadata_container:
+            metadata_payload = metadata_container
 
         if self.cfg.emit_signals:
             self.adapter.publish(
@@ -2124,58 +2619,51 @@ class AutoTradeEngine:
         if self._manual_risk_frozen_until and now >= self._manual_risk_frozen_until:
             self._clear_manual_risk_freeze(now=now, source="expiry")
 
+        summary = self._regime_history.summarise()
         auto_until = self._auto_risk_frozen_until if self._auto_risk_frozen else 0.0
-        if auto_until and now >= auto_until:
-            self._auto_risk_frozen = False
-            self._auto_risk_frozen_until = 0.0
-            self._auto_risk_state = _AutoRiskFreezeState()
-            self.adapter.push_autotrade_status(  # type: ignore[attr-defined]
-                "auto_risk_unfreeze",
-                detail={"symbol": self.cfg.symbol},
-            )
+        target_rank = self._RISK_LEVEL_ORDER.get(self.cfg.auto_risk_freeze_level, 99)
+        level_triggered = False
+        score_triggered = False
+        triggered = False
+        if summary is not None:
+            level_rank = self._RISK_LEVEL_ORDER.get(summary.risk_level, -1)
+            level_triggered = level_rank >= target_rank >= 0
+            score_triggered = summary.risk_score >= self.cfg.auto_risk_freeze_score
+            triggered = level_triggered or score_triggered
 
-        if self.cfg.auto_risk_freeze:
-            summary = self._regime_history.summarise()
-            triggered = False
-            if summary is not None:
-                level_rank = self._RISK_LEVEL_ORDER.get(summary.risk_level, -1)
-                target_rank = self._RISK_LEVEL_ORDER.get(self.cfg.auto_risk_freeze_level, 99)
-                level_triggered = level_rank >= target_rank >= 0
-                score_triggered = summary.risk_score >= self.cfg.auto_risk_freeze_score
-                triggered = level_triggered or score_triggered
-            if triggered:
-                new_expiry = now + float(self.cfg.risk_freeze_seconds)
-                previous_until = self._auto_risk_frozen_until if self._auto_risk_frozen else 0.0
-                detail = {
-                    "symbol": self.cfg.symbol,
-                    "risk_level": summary.risk_level.value if summary else None,
-                    "risk_score": summary.risk_score if summary else None,
-                    "until": new_expiry,
-                }
-                if not self._auto_risk_frozen:
-                    self.adapter.push_autotrade_status(  # type: ignore[attr-defined]
-                        "auto_risk_freeze",
-                        detail=detail,
-                        level="WARN",
-                    )
-                else:
-                    if new_expiry > previous_until + 1e-6:
-                        extend_detail = dict(detail)
-                        extend_detail["extended_from"] = previous_until
-                        extend_detail["until"] = new_expiry
-                        self.adapter.push_autotrade_status(  # type: ignore[attr-defined]
-                            "auto_risk_freeze_extend",
-                            detail=extend_detail,
-                            level="WARN",
-                        )
-                self._auto_risk_frozen = True
-                self._auto_risk_frozen_until = max(previous_until, new_expiry)
-                if summary is not None:
-                    if not self._auto_risk_state.triggered_at:
-                        self._auto_risk_state.triggered_at = now
-                    self._auto_risk_state.last_extension_at = now
-                    self._auto_risk_state.risk_level = summary.risk_level
-                    self._auto_risk_state.risk_score = float(summary.risk_score)
+        if self._auto_risk_frozen and self.cfg.auto_risk_freeze:
+            if not triggered:
+                reason = self._auto_risk_recovery_reason(summary=summary, target_rank=target_rank)
+                self._emit_auto_risk_unfreeze(now=now, reason=reason, summary=summary)
+                auto_until = 0.0
+            elif auto_until and now >= auto_until:
+                # Allow extension logic below to refresh the expiry without unfreezing first
+                pass
+
+        if self.cfg.auto_risk_freeze and triggered:
+            new_expiry = now + float(self.cfg.risk_freeze_seconds)
+            previous_until = self._auto_risk_frozen_until if self._auto_risk_frozen else 0.0
+            reason = self._auto_risk_freeze_reason(
+                level_triggered=level_triggered,
+                score_triggered=score_triggered,
+                summary=summary,
+            )
+            event = "auto_risk_freeze_extend" if self._auto_risk_frozen else "auto_risk_freeze"
+            if event == "auto_risk_freeze_extend" and previous_until and new_expiry <= previous_until + 1e-6:
+                new_expiry = previous_until
+            self._emit_auto_risk_freeze(
+                now=now,
+                summary=summary,
+                expiry=new_expiry,
+                reason=reason,
+                level=summary.risk_level if summary else self._auto_risk_state.risk_level,
+                score=summary.risk_score if summary is not None else self._auto_risk_state.risk_score,
+                previous_until=previous_until,
+                event=event,
+            )
+            auto_until = self._auto_risk_frozen_until
+        elif auto_until and now >= auto_until:
+            self._emit_auto_risk_unfreeze(now=now, reason="expired", summary=summary)
 
         self._recompute_risk_freeze_until()
 
@@ -2304,376 +2792,6 @@ class AutoTradeEngine:
         if regime is None:
             return "unknown"
         return str(regime)
-
-    def _workflow_activation_history(
-        self, limit: int | None = None
-    ) -> tuple[RegimePresetActivation, ...]:
-        workflow = getattr(self, "_regime_workflow", None)
-        if workflow is None:
-            return ()
-        history_fn = getattr(workflow, "activation_history", None)
-        entries: TypingIterable[RegimePresetActivation] | None = None
-        if callable(history_fn):
-            try:
-                entries = history_fn(limit=limit)
-            except TypeError:
-                entries = history_fn()
-        if entries is None:
-            stored = getattr(workflow, "_history_entries", None)
-            if stored is not None:
-                entries = tuple(stored)
-        if entries is None:
-            last = getattr(workflow, "last_activation", None)
-            if isinstance(last, RegimePresetActivation):
-                entries = (last,)
-        if entries is None:
-            return ()
-        sequence = tuple(entry for entry in entries if isinstance(entry, RegimePresetActivation))
-        if limit is None:
-            return sequence
-        try:
-            parsed = int(limit)
-        except (TypeError, ValueError):
-            return sequence
-        if parsed <= 0:
-            return sequence
-        return sequence[-parsed:]
-
-    def _build_activation_record(
-        self, activation: RegimePresetActivation
-    ) -> Mapping[str, object]:
-        version = activation.version
-        metadata = {}
-        signature: Mapping[str, object] = {}
-        issued_at: str | None = None
-        if version is not None:
-            metadata = dict(getattr(version, "metadata", {}) or {})
-            signature = dict(getattr(version, "signature", {}) or {})
-            issued_at = self._isoformat(getattr(version, "issued_at", None))
-        preset = activation.preset if isinstance(activation.preset, Mapping) else {}
-        name = preset.get("name") if isinstance(preset, Mapping) else None
-        return {
-            "activated_at": activation.activated_at,
-            "activated_at_iso": self._isoformat(activation.activated_at),
-            "regime": self._normalize_regime_value(activation.regime),
-            "preset_regime": self._normalize_regime_value(activation.preset_regime),
-            "preset_name": name,
-            "preset_hash": getattr(version, "hash", None),
-            "preset_signature": signature,
-            "preset_issued_at": issued_at,
-            "used_fallback": bool(activation.used_fallback),
-            "blocked_reason": activation.blocked_reason,
-            "missing_data": list(activation.missing_data),
-            "license_issues": list(activation.license_issues),
-            "recommendation": activation.recommendation,
-            "license_tiers": list(metadata.get("license_tiers", ())),
-            "risk_classes": list(metadata.get("risk_classes", ())),
-            "required_data": list(metadata.get("required_data", ())),
-            "capabilities": list(metadata.get("capabilities", ())),
-            "tags": list(metadata.get("tags", ())),
-        }
-
-    def inspect_regime_presets(
-        self, available_data: TypingIterable[str] | None = None
-    ) -> list[Mapping[str, object]]:
-        workflow = getattr(self, "_regime_workflow", None)
-        if workflow is None:
-            return []
-        inspector = getattr(workflow, "inspect_presets", None)
-        reports: TypingIterable[PresetAvailability] | None = None
-        if callable(inspector):
-            try:
-                reports = inspector(available_data=available_data or ())
-            except TypeError:
-                reports = inspector(available_data or ())
-        if reports is None:
-            reports = getattr(workflow, "_availability", ())
-        result: list[Mapping[str, object]] = []
-        for report in reports or ():
-            if not isinstance(report, PresetAvailability):
-                continue
-            version = report.version
-            metadata = {}
-            signature: Mapping[str, object] = {}
-            issued_at: str | None = None
-            if version is not None:
-                metadata = dict(getattr(version, "metadata", {}) or {})
-                signature = dict(getattr(version, "signature", {}) or {})
-                issued_at = self._isoformat(getattr(version, "issued_at", None))
-            payload: Dict[str, object] = {
-                "regime": self._normalize_regime_value(report.regime),
-                "ready": bool(report.ready),
-                "blocked_reason": report.blocked_reason,
-                "missing_data": list(report.missing_data),
-                "license_issues": list(report.license_issues),
-                "schedule_blocked": bool(report.schedule_blocked),
-                "preset_hash": getattr(version, "hash", None),
-                "preset_signature": signature,
-                "preset_name": metadata.get("name"),
-                "preset_issued_at": issued_at,
-                "license_tiers": list(metadata.get("license_tiers", ())),
-                "risk_classes": list(metadata.get("risk_classes", ())),
-                "required_data": list(metadata.get("required_data", ())),
-                "capabilities": list(metadata.get("capabilities", ())),
-                "tags": list(metadata.get("tags", ())),
-            }
-            result.append(payload)
-        return result
-
-    def summarize_regime_presets(
-        self, available_data: TypingIterable[str] | None = None
-    ) -> Mapping[str, object]:
-        reports = self.inspect_regime_presets(available_data)
-        total = len(reports)
-        ready_count = 0
-        blocked_count = 0
-        schedule_blocked_count = 0
-        missing_counter: Counter[str] = Counter()
-        license_counter: Counter[str] = Counter()
-        blocked_reasons: Counter[str] = Counter()
-        regime_buckets: dict[str, dict[str, object]] = {}
-
-        for report in reports:
-            regime_key = self._normalize_regime_value(report.get("regime"))  # type: ignore[arg-type]
-            bucket = regime_buckets.setdefault(
-                regime_key,
-                {
-                    "total_presets": 0,
-                    "ready_presets": 0,
-                    "blocked_presets": 0,
-                    "schedule_blocked_presets": 0,
-                    "missing_data_counts": Counter(),
-                    "license_issue_counts": Counter(),
-                    "blocked_reason_counts": Counter(),
-                    "_missing_data": set(),
-                },
-            )
-            bucket["total_presets"] = int(bucket["total_presets"]) + 1
-            if report.get("ready"):
-                ready_count += 1
-                bucket["ready_presets"] = int(bucket["ready_presets"]) + 1
-            else:
-                blocked_count += 1
-                bucket["blocked_presets"] = int(bucket["blocked_presets"]) + 1
-                reason = report.get("blocked_reason")
-                if isinstance(reason, str) and reason:
-                    blocked_reasons[reason] += 1
-                    bucket["blocked_reason_counts"][reason] += 1
-            if report.get("schedule_blocked"):
-                schedule_blocked_count += 1
-                bucket["schedule_blocked_presets"] = int(bucket["schedule_blocked_presets"]) + 1
-            for missing in report.get("missing_data", []):
-                if not isinstance(missing, str):
-                    continue
-                missing_counter[missing] += 1
-                bucket["missing_data_counts"][missing] += 1
-                bucket["_missing_data"].add(missing)
-            for issue in report.get("license_issues", []):
-                if not isinstance(issue, str):
-                    continue
-                license_counter[issue] += 1
-                bucket["license_issue_counts"][issue] += 1
-
-        regimes_payload: dict[str, Mapping[str, object]] = {}
-        for regime, bucket in regime_buckets.items():
-            payload = {
-                "total_presets": int(bucket["total_presets"]),
-                "ready_presets": int(bucket["ready_presets"]),
-                "blocked_presets": int(bucket["blocked_presets"]),
-                "schedule_blocked_presets": int(bucket["schedule_blocked_presets"]),
-                "missing_data": sorted(bucket["_missing_data"]),
-                "missing_data_counts": dict(bucket["missing_data_counts"]),
-                "license_issue_counts": dict(bucket["license_issue_counts"]),
-                "blocked_reason_counts": dict(bucket["blocked_reason_counts"]),
-            }
-            regimes_payload[regime] = MappingProxyType(payload)
-
-        return MappingProxyType(
-            {
-                "total_presets": total,
-                "ready_presets": ready_count,
-                "blocked_presets": blocked_count,
-                "schedule_blocked_presets": schedule_blocked_count,
-                "missing_data_counts": dict(missing_counter),
-                "license_issue_counts": dict(license_counter),
-                "blocked_reason_counts": dict(blocked_reasons),
-                "regimes": MappingProxyType(regimes_payload),
-            }
-        )
-
-    def regime_activation_history_records(
-        self, limit: int | None = None
-    ) -> list[Mapping[str, object]]:
-        entries = self._workflow_activation_history(limit)
-        return [self._build_activation_record(entry) for entry in entries]
-
-    def regime_activation_history_frame(
-        self, limit: int | None = None
-    ) -> pd.DataFrame:
-        workflow = getattr(self, "_regime_workflow", None)
-        if workflow is not None:
-            frame_fn = getattr(workflow, "activation_history_frame", None)
-            if callable(frame_fn):
-                try:
-                    frame = frame_fn(limit=limit)
-                except TypeError:
-                    frame = frame_fn()
-                    if limit is not None and isinstance(frame, pd.DataFrame):
-                        frame = frame.tail(int(limit))
-                else:
-                    if isinstance(frame, pd.DataFrame):
-                        return frame
-        entries = self._workflow_activation_history(limit)
-        if not entries:
-            return pd.DataFrame(
-                columns=[
-                    "activated_at",
-                    "regime",
-                    "preset_regime",
-                    "preset_name",
-                    "preset_hash",
-                    "used_fallback",
-                    "blocked_reason",
-                    "missing_data",
-                    "license_issues",
-                    "recommendation",
-                ]
-            )
-        records = []
-        for entry in entries:
-            record = self._build_activation_record(entry)
-            records.append(
-                {
-                    "activated_at": record["activated_at"],
-                    "regime": record["regime"],
-                    "preset_regime": record["preset_regime"],
-                    "preset_name": record["preset_name"],
-                    "preset_hash": record["preset_hash"],
-                    "used_fallback": record["used_fallback"],
-                    "blocked_reason": record["blocked_reason"],
-                    "missing_data": record["missing_data"],
-                    "license_issues": record["license_issues"],
-                    "recommendation": record["recommendation"],
-                }
-            )
-        frame = pd.DataFrame(records)
-        if not frame.empty:
-            frame["regime"] = frame["regime"].apply(self._normalize_regime_value)
-            frame["preset_regime"] = frame["preset_regime"].apply(self._normalize_regime_value)
-        return frame
-
-    def summarize_regime_activation_history(
-        self, limit: int | None = None
-    ) -> Mapping[str, object]:
-        entries = self._workflow_activation_history(limit)
-        if not entries:
-            return MappingProxyType(
-                {
-                    "total_activations": 0,
-                    "fallback_activations": 0,
-                    "license_issue_activations": 0,
-                    "missing_data_counts": {},
-                    "license_issue_counts": {},
-                    "blocked_reason_counts": {},
-                    "regimes": MappingProxyType({}),
-                    "first_activation_at": None,
-                    "last_activation": None,
-                }
-            )
-
-        missing_counter: Counter[str] = Counter()
-        license_counter: Counter[str] = Counter()
-        blocked_counter: Counter[str] = Counter()
-        regimes: dict[str, dict[str, object]] = {}
-        fallback_total = 0
-        license_issue_total = 0
-
-        for activation in entries:
-            record = self._build_activation_record(activation)
-            regime_key = record["regime"]
-            bucket = regimes.setdefault(
-                regime_key,
-                {
-                    "activations": 0,
-                    "fallback_activations": 0,
-                    "license_issue_activations": 0,
-                    "missing_data_counts": Counter(),
-                    "license_issue_counts": Counter(),
-                    "blocked_reason_counts": Counter(),
-                    "last_activation_at": None,
-                },
-            )
-            bucket["activations"] = int(bucket["activations"]) + 1
-            if record["used_fallback"]:
-                fallback_total += 1
-                bucket["fallback_activations"] = int(bucket["fallback_activations"]) + 1
-            issues = record.get("license_issues", [])
-            if issues:
-                license_issue_total += 1
-                bucket["license_issue_activations"] = int(
-                    bucket["license_issue_activations"]
-                ) + 1
-            for issue in issues:
-                if not isinstance(issue, str):
-                    continue
-                license_counter[issue] += 1
-                bucket["license_issue_counts"][issue] += 1
-            for missing in record.get("missing_data", []):
-                if not isinstance(missing, str):
-                    continue
-                missing_counter[missing] += 1
-                bucket["missing_data_counts"][missing] += 1
-            reason = record.get("blocked_reason")
-            if isinstance(reason, str) and reason:
-                blocked_counter[reason] += 1
-                bucket["blocked_reason_counts"][reason] += 1
-            bucket["last_activation_at"] = record["activated_at_iso"]
-
-        regimes_payload: dict[str, Mapping[str, object]] = {}
-        for regime, bucket in regimes.items():
-            payload = {
-                "activations": int(bucket["activations"]),
-                "fallback_activations": int(bucket["fallback_activations"]),
-                "license_issue_activations": int(bucket["license_issue_activations"]),
-                "missing_data_counts": dict(bucket["missing_data_counts"]),
-                "license_issue_counts": dict(bucket["license_issue_counts"]),
-                "blocked_reason_counts": dict(bucket["blocked_reason_counts"]),
-                "last_activation_at": bucket["last_activation_at"],
-            }
-            regimes_payload[regime] = MappingProxyType(payload)
-
-        summary = {
-            "total_activations": len(entries),
-            "fallback_activations": fallback_total,
-            "license_issue_activations": license_issue_total,
-            "missing_data_counts": dict(missing_counter),
-            "license_issue_counts": dict(license_counter),
-            "blocked_reason_counts": dict(blocked_counter),
-            "regimes": MappingProxyType(regimes_payload),
-            "first_activation_at": self._isoformat(entries[0].activated_at),
-            "last_activation": MappingProxyType(
-                {
-                    key: value
-                    for key, value in self._build_activation_record(entries[-1]).items()
-                    if key
-                    in {
-                        "regime",
-                        "preset_regime",
-                        "preset_name",
-                        "preset_hash",
-                        "preset_signature",
-                        "used_fallback",
-                        "blocked_reason",
-                        "missing_data",
-                        "license_issues",
-                        "recommendation",
-                        "activated_at_iso",
-                    }
-                }
-            ),
-        }
-        return MappingProxyType(summary)
-
 
 @dataclass(frozen=True)
 class RiskFreezeSnapshot:
