@@ -291,6 +291,7 @@ class AutoTradeEngine:
         )
         catalog = strategy_catalog or StrategyCatalog.default()
         self._strategy_catalog = catalog
+        self._engine_key_cache: Dict[str, str | None] = {}
         base_override = {
             "day_trading_momentum_window": int(max(1, self.cfg.breakout_window)),
             "day_trading_volatility_window": int(
