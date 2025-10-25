@@ -175,6 +175,11 @@ class AutoTradeEngine:
         "day_trading": "day_trading",
         "mean_reversion": "mean_reversion",
         "arbitrage": "cross_exchange_arbitrage",
+        "grid_trading": "grid_trading",
+        "options_income": "options_income",
+        "scalping": "scalping",
+        "statistical_arbitrage": "statistical_arbitrage",
+        "volatility_target": "volatility_target",
     }
 
     def __init__(
@@ -397,13 +402,11 @@ class AutoTradeEngine:
     def _register_strategy_presets(self, workflow: StrategyRegimeWorkflow) -> None:
         signing_key = getattr(self, "_workflow_signing_key", b"autotrade")
         for regime, weights in self._strategy_weights.weights.items():
-            entries = self._build_preset_entries(weights)
+            entries, normalized = self._build_preset_entries(weights)
             if not entries:
                 continue
             metadata = {
-                "ensemble_weights": {
-                    str(name): float(value) for name, value in weights.items()
-                },
+                "ensemble_weights": normalized,
                 "parameter_overrides": dict(
                     self._workflow_parameter_overrides.get(regime, {})
                 ),
@@ -423,14 +426,14 @@ class AutoTradeEngine:
                     exc,
                     exc_info=True,
                 )
-        fallback_entries = self._build_preset_entries({"day_trading": 1.0})
+        fallback_entries, fallback_weights = self._build_preset_entries({"day_trading": 1.0})
         if fallback_entries:
             try:
                 workflow.register_emergency_preset(
                     name="autotrade-emergency",
                     entries=fallback_entries,
                     signing_key=signing_key,
-                    metadata={"ensemble_weights": {"day_trading": 1.0}},
+                    metadata={"ensemble_weights": fallback_weights},
                 )
             except Exception as exc:  # pragma: no cover - defensywne logowanie
                 self._logger.debug(
@@ -439,11 +442,61 @@ class AutoTradeEngine:
 
     def _build_preset_entries(
         self, weights: Mapping[str, float]
-    ) -> List[Mapping[str, object]]:
+    ) -> tuple[List[Mapping[str, object]], Dict[str, float]]:
         entries: List[Mapping[str, object]] = []
-        for name, weight in sorted(weights.items()):
+        missing: list[str] = []
+        invalid: list[str] = []
+        zeroed: list[str] = []
+        prepared: list[tuple[str, float]] = []
+        for name, weight in weights.items():
+            key = str(name)
+            try:
+                value = float(weight)
+            except (TypeError, ValueError):
+                invalid.append(key)
+                continue
+            if not math.isfinite(value):
+                invalid.append(key)
+                continue
+            if value <= 0.0:
+                zeroed.append(key)
+                continue
+            prepared.append((key, value))
+
+        if not prepared:
+            if invalid:
+                self._logger.warning(
+                    "Pominięto strategie z nieprawidłowymi wagami: %s",
+                    ", ".join(sorted(set(invalid))),
+                )
+            if zeroed:
+                self._logger.info(
+                    "Pominięto strategie z zerowymi wagami: %s",
+                    ", ".join(sorted(set(zeroed))),
+                )
+            return entries, {}
+
+        total = sum(weight for _, weight in prepared)
+        if total <= 0.0:
+            self._logger.warning(
+                "Nie można zbudować presetu: suma wag (%s) jest niepoprawna",
+                total,
+            )
+            return entries, {}
+
+        normalized: Dict[str, float] = {}
+        for key, value in prepared:
+            normalized[key] = value / total
+
+        sorted_weights = sorted(
+            normalized.items(),
+            key=lambda item: (-item[1], item[0]),
+        )
+
+        for name, weight in sorted_weights:
             engine = self._PRESET_ENGINE_MAPPING.get(name)
             if engine is None:
+                missing.append(name)
                 continue
             entry: Dict[str, object] = {
                 "engine": engine,
@@ -451,12 +504,26 @@ class AutoTradeEngine:
                 "parameters": {},
                 "tags": ["auto_trade", name],
                 "metadata": {
-                    "ensemble_weight": float(weight),
+                    "ensemble_weight": weight,
                     "strategy": name,
                 },
             }
             entries.append(entry)
-        return entries
+        if invalid:
+            self._logger.warning(
+                "Pominięto strategie z nieprawidłowymi wagami: %s",
+                ", ".join(sorted(set(invalid))),
+            )
+        if zeroed:
+            self._logger.info(
+                "Pominięto strategie z zerowymi wagami: %s",
+                ", ".join(sorted(set(zeroed))),
+            )
+        if missing:
+            self._logger.warning(
+                "Pominięto strategie bez zmapowanego silnika: %s", ", ".join(sorted(set(missing)))
+            )
+        return entries, normalized
 
     def _refresh_workflow_presets(self) -> None:
         workflow = getattr(self, "_regime_workflow", None)
