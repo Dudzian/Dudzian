@@ -10,7 +10,7 @@ from collections.abc import Iterable
 from copy import deepcopy
 from dataclasses import asdict, dataclass, is_dataclass, replace
 from types import MappingProxyType
-from typing import Any, Deque, Dict, List, Mapping, Optional
+from typing import Any, Deque, Dict, Iterable as TypingIterable, List, Mapping, Optional
 
 import numpy as np
 import pandas as pd
@@ -36,7 +36,7 @@ from bot_core.trading.regime_workflow import RegimeSwitchDecision
 from bot_core.trading.strategies import StrategyCatalog
 from bot_core.strategies import StrategyPresetWizard
 from bot_core.strategies.regime_workflow import (
-    PresetVersionInfo,
+    PresetAvailability,
     RegimePresetActivation,
     StrategyRegimeWorkflow,
 )
@@ -239,6 +239,11 @@ class AutoTradeEngine:
         "day_trading": "day_trading",
         "mean_reversion": "mean_reversion",
         "arbitrage": "cross_exchange_arbitrage",
+        "grid_trading": "grid_trading",
+        "options_income": "options_income",
+        "scalping": "scalping",
+        "statistical_arbitrage": "statistical_arbitrage",
+        "volatility_target": "volatility_target",
     }
 
     def __init__(
@@ -463,13 +468,11 @@ class AutoTradeEngine:
     def _register_strategy_presets(self, workflow: StrategyRegimeWorkflow) -> None:
         signing_key = getattr(self, "_workflow_signing_key", b"autotrade")
         for regime, weights in self._strategy_weights.weights.items():
-            entries = self._build_preset_entries(weights)
+            entries, normalized = self._build_preset_entries(weights)
             if not entries:
                 continue
             metadata = {
-                "ensemble_weights": {
-                    str(name): float(value) for name, value in weights.items()
-                },
+                "ensemble_weights": normalized,
                 "parameter_overrides": dict(
                     self._workflow_parameter_overrides.get(regime, {})
                 ),
@@ -489,14 +492,14 @@ class AutoTradeEngine:
                     exc,
                     exc_info=True,
                 )
-        fallback_entries = self._build_preset_entries({"day_trading": 1.0})
+        fallback_entries, fallback_weights = self._build_preset_entries({"day_trading": 1.0})
         if fallback_entries:
             try:
                 workflow.register_emergency_preset(
                     name="autotrade-emergency",
                     entries=fallback_entries,
                     signing_key=signing_key,
-                    metadata={"ensemble_weights": {"day_trading": 1.0}},
+                    metadata={"ensemble_weights": fallback_weights},
                 )
             except Exception as exc:  # pragma: no cover - defensywne logowanie
                 self._logger.debug(
@@ -505,11 +508,61 @@ class AutoTradeEngine:
 
     def _build_preset_entries(
         self, weights: Mapping[str, float]
-    ) -> List[Mapping[str, object]]:
+    ) -> tuple[List[Mapping[str, object]], Dict[str, float]]:
         entries: List[Mapping[str, object]] = []
-        for name, weight in sorted(weights.items()):
+        missing: list[str] = []
+        invalid: list[str] = []
+        zeroed: list[str] = []
+        prepared: list[tuple[str, float]] = []
+        for name, weight in weights.items():
+            key = str(name)
+            try:
+                value = float(weight)
+            except (TypeError, ValueError):
+                invalid.append(key)
+                continue
+            if not math.isfinite(value):
+                invalid.append(key)
+                continue
+            if value <= 0.0:
+                zeroed.append(key)
+                continue
+            prepared.append((key, value))
+
+        if not prepared:
+            if invalid:
+                self._logger.warning(
+                    "Pominięto strategie z nieprawidłowymi wagami: %s",
+                    ", ".join(sorted(set(invalid))),
+                )
+            if zeroed:
+                self._logger.info(
+                    "Pominięto strategie z zerowymi wagami: %s",
+                    ", ".join(sorted(set(zeroed))),
+                )
+            return entries, {}
+
+        total = sum(weight for _, weight in prepared)
+        if total <= 0.0:
+            self._logger.warning(
+                "Nie można zbudować presetu: suma wag (%s) jest niepoprawna",
+                total,
+            )
+            return entries, {}
+
+        normalized: Dict[str, float] = {}
+        for key, value in prepared:
+            normalized[key] = value / total
+
+        sorted_weights = sorted(
+            normalized.items(),
+            key=lambda item: (-item[1], item[0]),
+        )
+
+        for name, weight in sorted_weights:
             engine = self._PRESET_ENGINE_MAPPING.get(name)
             if engine is None:
+                missing.append(name)
                 continue
             entry: Dict[str, object] = {
                 "engine": engine,
@@ -517,12 +570,26 @@ class AutoTradeEngine:
                 "parameters": {},
                 "tags": ["auto_trade", name],
                 "metadata": {
-                    "ensemble_weight": float(weight),
+                    "ensemble_weight": weight,
                     "strategy": name,
                 },
             }
             entries.append(entry)
-        return entries
+        if invalid:
+            self._logger.warning(
+                "Pominięto strategie z nieprawidłowymi wagami: %s",
+                ", ".join(sorted(set(invalid))),
+            )
+        if zeroed:
+            self._logger.info(
+                "Pominięto strategie z zerowymi wagami: %s",
+                ", ".join(sorted(set(zeroed))),
+            )
+        if missing:
+            self._logger.warning(
+                "Pominięto strategie bez zmapowanego silnika: %s", ", ".join(sorted(set(missing)))
+            )
+        return entries, normalized
 
     def _refresh_workflow_presets(self) -> None:
         workflow = getattr(self, "_regime_workflow", None)
@@ -2094,6 +2161,392 @@ class AutoTradeEngine:
             regime_activation=activation_payload,
             risk=self._build_risk_snapshot(),
         )
+
+    @staticmethod
+    def _isoformat(moment: dt.datetime | None) -> str | None:
+        if isinstance(moment, dt.datetime):
+            try:
+                return moment.astimezone(dt.timezone.utc).isoformat()
+            except ValueError:
+                return moment.isoformat()
+        return None
+
+    @staticmethod
+    def _normalize_regime_value(regime: MarketRegime | str | None) -> str:
+        if isinstance(regime, MarketRegime):
+            return regime.value
+        if regime is None:
+            return "unknown"
+        return str(regime)
+
+    def _workflow_activation_history(
+        self, limit: int | None = None
+    ) -> tuple[RegimePresetActivation, ...]:
+        workflow = getattr(self, "_regime_workflow", None)
+        if workflow is None:
+            return ()
+        history_fn = getattr(workflow, "activation_history", None)
+        entries: TypingIterable[RegimePresetActivation] | None = None
+        if callable(history_fn):
+            try:
+                entries = history_fn(limit=limit)
+            except TypeError:
+                entries = history_fn()
+        if entries is None:
+            stored = getattr(workflow, "_history_entries", None)
+            if stored is not None:
+                entries = tuple(stored)
+        if entries is None:
+            last = getattr(workflow, "last_activation", None)
+            if isinstance(last, RegimePresetActivation):
+                entries = (last,)
+        if entries is None:
+            return ()
+        sequence = tuple(entry for entry in entries if isinstance(entry, RegimePresetActivation))
+        if limit is None:
+            return sequence
+        try:
+            parsed = int(limit)
+        except (TypeError, ValueError):
+            return sequence
+        if parsed <= 0:
+            return sequence
+        return sequence[-parsed:]
+
+    def _build_activation_record(
+        self, activation: RegimePresetActivation
+    ) -> Mapping[str, object]:
+        version = activation.version
+        metadata = {}
+        signature: Mapping[str, object] = {}
+        issued_at: str | None = None
+        if version is not None:
+            metadata = dict(getattr(version, "metadata", {}) or {})
+            signature = dict(getattr(version, "signature", {}) or {})
+            issued_at = self._isoformat(getattr(version, "issued_at", None))
+        preset = activation.preset if isinstance(activation.preset, Mapping) else {}
+        name = preset.get("name") if isinstance(preset, Mapping) else None
+        return {
+            "activated_at": activation.activated_at,
+            "activated_at_iso": self._isoformat(activation.activated_at),
+            "regime": self._normalize_regime_value(activation.regime),
+            "preset_regime": self._normalize_regime_value(activation.preset_regime),
+            "preset_name": name,
+            "preset_hash": getattr(version, "hash", None),
+            "preset_signature": signature,
+            "preset_issued_at": issued_at,
+            "used_fallback": bool(activation.used_fallback),
+            "blocked_reason": activation.blocked_reason,
+            "missing_data": list(activation.missing_data),
+            "license_issues": list(activation.license_issues),
+            "recommendation": activation.recommendation,
+            "license_tiers": list(metadata.get("license_tiers", ())),
+            "risk_classes": list(metadata.get("risk_classes", ())),
+            "required_data": list(metadata.get("required_data", ())),
+            "capabilities": list(metadata.get("capabilities", ())),
+            "tags": list(metadata.get("tags", ())),
+        }
+
+    def inspect_regime_presets(
+        self, available_data: TypingIterable[str] | None = None
+    ) -> list[Mapping[str, object]]:
+        workflow = getattr(self, "_regime_workflow", None)
+        if workflow is None:
+            return []
+        inspector = getattr(workflow, "inspect_presets", None)
+        reports: TypingIterable[PresetAvailability] | None = None
+        if callable(inspector):
+            try:
+                reports = inspector(available_data=available_data or ())
+            except TypeError:
+                reports = inspector(available_data or ())
+        if reports is None:
+            reports = getattr(workflow, "_availability", ())
+        result: list[Mapping[str, object]] = []
+        for report in reports or ():
+            if not isinstance(report, PresetAvailability):
+                continue
+            version = report.version
+            metadata = {}
+            signature: Mapping[str, object] = {}
+            issued_at: str | None = None
+            if version is not None:
+                metadata = dict(getattr(version, "metadata", {}) or {})
+                signature = dict(getattr(version, "signature", {}) or {})
+                issued_at = self._isoformat(getattr(version, "issued_at", None))
+            payload: Dict[str, object] = {
+                "regime": self._normalize_regime_value(report.regime),
+                "ready": bool(report.ready),
+                "blocked_reason": report.blocked_reason,
+                "missing_data": list(report.missing_data),
+                "license_issues": list(report.license_issues),
+                "schedule_blocked": bool(report.schedule_blocked),
+                "preset_hash": getattr(version, "hash", None),
+                "preset_signature": signature,
+                "preset_name": metadata.get("name"),
+                "preset_issued_at": issued_at,
+                "license_tiers": list(metadata.get("license_tiers", ())),
+                "risk_classes": list(metadata.get("risk_classes", ())),
+                "required_data": list(metadata.get("required_data", ())),
+                "capabilities": list(metadata.get("capabilities", ())),
+                "tags": list(metadata.get("tags", ())),
+            }
+            result.append(payload)
+        return result
+
+    def summarize_regime_presets(
+        self, available_data: TypingIterable[str] | None = None
+    ) -> Mapping[str, object]:
+        reports = self.inspect_regime_presets(available_data)
+        total = len(reports)
+        ready_count = 0
+        blocked_count = 0
+        schedule_blocked_count = 0
+        missing_counter: Counter[str] = Counter()
+        license_counter: Counter[str] = Counter()
+        blocked_reasons: Counter[str] = Counter()
+        regime_buckets: dict[str, dict[str, object]] = {}
+
+        for report in reports:
+            regime_key = self._normalize_regime_value(report.get("regime"))  # type: ignore[arg-type]
+            bucket = regime_buckets.setdefault(
+                regime_key,
+                {
+                    "total_presets": 0,
+                    "ready_presets": 0,
+                    "blocked_presets": 0,
+                    "schedule_blocked_presets": 0,
+                    "missing_data_counts": Counter(),
+                    "license_issue_counts": Counter(),
+                    "blocked_reason_counts": Counter(),
+                    "_missing_data": set(),
+                },
+            )
+            bucket["total_presets"] = int(bucket["total_presets"]) + 1
+            if report.get("ready"):
+                ready_count += 1
+                bucket["ready_presets"] = int(bucket["ready_presets"]) + 1
+            else:
+                blocked_count += 1
+                bucket["blocked_presets"] = int(bucket["blocked_presets"]) + 1
+                reason = report.get("blocked_reason")
+                if isinstance(reason, str) and reason:
+                    blocked_reasons[reason] += 1
+                    bucket["blocked_reason_counts"][reason] += 1
+            if report.get("schedule_blocked"):
+                schedule_blocked_count += 1
+                bucket["schedule_blocked_presets"] = int(bucket["schedule_blocked_presets"]) + 1
+            for missing in report.get("missing_data", []):
+                if not isinstance(missing, str):
+                    continue
+                missing_counter[missing] += 1
+                bucket["missing_data_counts"][missing] += 1
+                bucket["_missing_data"].add(missing)
+            for issue in report.get("license_issues", []):
+                if not isinstance(issue, str):
+                    continue
+                license_counter[issue] += 1
+                bucket["license_issue_counts"][issue] += 1
+
+        regimes_payload: dict[str, Mapping[str, object]] = {}
+        for regime, bucket in regime_buckets.items():
+            payload = {
+                "total_presets": int(bucket["total_presets"]),
+                "ready_presets": int(bucket["ready_presets"]),
+                "blocked_presets": int(bucket["blocked_presets"]),
+                "schedule_blocked_presets": int(bucket["schedule_blocked_presets"]),
+                "missing_data": sorted(bucket["_missing_data"]),
+                "missing_data_counts": dict(bucket["missing_data_counts"]),
+                "license_issue_counts": dict(bucket["license_issue_counts"]),
+                "blocked_reason_counts": dict(bucket["blocked_reason_counts"]),
+            }
+            regimes_payload[regime] = MappingProxyType(payload)
+
+        return MappingProxyType(
+            {
+                "total_presets": total,
+                "ready_presets": ready_count,
+                "blocked_presets": blocked_count,
+                "schedule_blocked_presets": schedule_blocked_count,
+                "missing_data_counts": dict(missing_counter),
+                "license_issue_counts": dict(license_counter),
+                "blocked_reason_counts": dict(blocked_reasons),
+                "regimes": MappingProxyType(regimes_payload),
+            }
+        )
+
+    def regime_activation_history_records(
+        self, limit: int | None = None
+    ) -> list[Mapping[str, object]]:
+        entries = self._workflow_activation_history(limit)
+        return [self._build_activation_record(entry) for entry in entries]
+
+    def regime_activation_history_frame(
+        self, limit: int | None = None
+    ) -> pd.DataFrame:
+        workflow = getattr(self, "_regime_workflow", None)
+        if workflow is not None:
+            frame_fn = getattr(workflow, "activation_history_frame", None)
+            if callable(frame_fn):
+                try:
+                    frame = frame_fn(limit=limit)
+                except TypeError:
+                    frame = frame_fn()
+                    if limit is not None and isinstance(frame, pd.DataFrame):
+                        frame = frame.tail(int(limit))
+                else:
+                    if isinstance(frame, pd.DataFrame):
+                        return frame
+        entries = self._workflow_activation_history(limit)
+        if not entries:
+            return pd.DataFrame(
+                columns=[
+                    "activated_at",
+                    "regime",
+                    "preset_regime",
+                    "preset_name",
+                    "preset_hash",
+                    "used_fallback",
+                    "blocked_reason",
+                    "missing_data",
+                    "license_issues",
+                    "recommendation",
+                ]
+            )
+        records = []
+        for entry in entries:
+            record = self._build_activation_record(entry)
+            records.append(
+                {
+                    "activated_at": record["activated_at"],
+                    "regime": record["regime"],
+                    "preset_regime": record["preset_regime"],
+                    "preset_name": record["preset_name"],
+                    "preset_hash": record["preset_hash"],
+                    "used_fallback": record["used_fallback"],
+                    "blocked_reason": record["blocked_reason"],
+                    "missing_data": record["missing_data"],
+                    "license_issues": record["license_issues"],
+                    "recommendation": record["recommendation"],
+                }
+            )
+        frame = pd.DataFrame(records)
+        if not frame.empty:
+            frame["regime"] = frame["regime"].apply(self._normalize_regime_value)
+            frame["preset_regime"] = frame["preset_regime"].apply(self._normalize_regime_value)
+        return frame
+
+    def summarize_regime_activation_history(
+        self, limit: int | None = None
+    ) -> Mapping[str, object]:
+        entries = self._workflow_activation_history(limit)
+        if not entries:
+            return MappingProxyType(
+                {
+                    "total_activations": 0,
+                    "fallback_activations": 0,
+                    "license_issue_activations": 0,
+                    "missing_data_counts": {},
+                    "license_issue_counts": {},
+                    "blocked_reason_counts": {},
+                    "regimes": MappingProxyType({}),
+                    "first_activation_at": None,
+                    "last_activation": None,
+                }
+            )
+
+        missing_counter: Counter[str] = Counter()
+        license_counter: Counter[str] = Counter()
+        blocked_counter: Counter[str] = Counter()
+        regimes: dict[str, dict[str, object]] = {}
+        fallback_total = 0
+        license_issue_total = 0
+
+        for activation in entries:
+            record = self._build_activation_record(activation)
+            regime_key = record["regime"]
+            bucket = regimes.setdefault(
+                regime_key,
+                {
+                    "activations": 0,
+                    "fallback_activations": 0,
+                    "license_issue_activations": 0,
+                    "missing_data_counts": Counter(),
+                    "license_issue_counts": Counter(),
+                    "blocked_reason_counts": Counter(),
+                    "last_activation_at": None,
+                },
+            )
+            bucket["activations"] = int(bucket["activations"]) + 1
+            if record["used_fallback"]:
+                fallback_total += 1
+                bucket["fallback_activations"] = int(bucket["fallback_activations"]) + 1
+            issues = record.get("license_issues", [])
+            if issues:
+                license_issue_total += 1
+                bucket["license_issue_activations"] = int(
+                    bucket["license_issue_activations"]
+                ) + 1
+            for issue in issues:
+                if not isinstance(issue, str):
+                    continue
+                license_counter[issue] += 1
+                bucket["license_issue_counts"][issue] += 1
+            for missing in record.get("missing_data", []):
+                if not isinstance(missing, str):
+                    continue
+                missing_counter[missing] += 1
+                bucket["missing_data_counts"][missing] += 1
+            reason = record.get("blocked_reason")
+            if isinstance(reason, str) and reason:
+                blocked_counter[reason] += 1
+                bucket["blocked_reason_counts"][reason] += 1
+            bucket["last_activation_at"] = record["activated_at_iso"]
+
+        regimes_payload: dict[str, Mapping[str, object]] = {}
+        for regime, bucket in regimes.items():
+            payload = {
+                "activations": int(bucket["activations"]),
+                "fallback_activations": int(bucket["fallback_activations"]),
+                "license_issue_activations": int(bucket["license_issue_activations"]),
+                "missing_data_counts": dict(bucket["missing_data_counts"]),
+                "license_issue_counts": dict(bucket["license_issue_counts"]),
+                "blocked_reason_counts": dict(bucket["blocked_reason_counts"]),
+                "last_activation_at": bucket["last_activation_at"],
+            }
+            regimes_payload[regime] = MappingProxyType(payload)
+
+        summary = {
+            "total_activations": len(entries),
+            "fallback_activations": fallback_total,
+            "license_issue_activations": license_issue_total,
+            "missing_data_counts": dict(missing_counter),
+            "license_issue_counts": dict(license_counter),
+            "blocked_reason_counts": dict(blocked_counter),
+            "regimes": MappingProxyType(regimes_payload),
+            "first_activation_at": self._isoformat(entries[0].activated_at),
+            "last_activation": MappingProxyType(
+                {
+                    key: value
+                    for key, value in self._build_activation_record(entries[-1]).items()
+                    if key
+                    in {
+                        "regime",
+                        "preset_regime",
+                        "preset_name",
+                        "preset_hash",
+                        "preset_signature",
+                        "used_fallback",
+                        "blocked_reason",
+                        "missing_data",
+                        "license_issues",
+                        "recommendation",
+                        "activated_at_iso",
+                    }
+                }
+            ),
+        }
+        return MappingProxyType(summary)
 
 
 @dataclass(frozen=True)
