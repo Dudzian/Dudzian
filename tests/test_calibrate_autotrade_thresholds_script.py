@@ -5,6 +5,7 @@ import json
 import math
 import subprocess
 import sys
+from types import GeneratorType
 from datetime import datetime, timezone
 from unittest.mock import patch
 from pathlib import Path
@@ -280,8 +281,7 @@ def test_script_generates_report(tmp_path: Path) -> None:
     reasons = {item["reason"]: item["count"] for item in freeze_summary["reasons"]}
     assert reasons["manual_override"] == 1
     assert reasons["risk_score_threshold"] == 2
-    raw_freezes = trend_group["raw_freeze_events"]
-    assert {entry["status"] for entry in raw_freezes} >= {"risk_freeze", "auto_risk_freeze"}
+    assert "raw_freeze_events" not in trend_group
 
     mean_rev_group = groups[("kraken", "mean_reversion")]
     mean_rev_risk = mean_rev_group["metrics"]["risk_score"]
@@ -292,14 +292,7 @@ def test_script_generates_report(tmp_path: Path) -> None:
     global_signal = global_summary["metrics"]["signal_after_adjustment"]
     assert global_signal["count"] == 2
     assert global_signal["current_threshold"] == 0.82
-    assert 0.9 not in global_summary["raw_values"]["signal_after_adjustment"]
-
-    raw_values = trend_group["raw_values"]["signal_after_adjustment"]
-    assert 0.62 not in raw_values
-    assert all(math.isfinite(value) for value in raw_values)
-
-    for metric_values in trend_group["raw_values"].values():
-        assert all(math.isfinite(value) for value in metric_values)
+    assert "raw_values" not in trend_group
 
     with output_csv.open("r", encoding="utf-8") as handle:
         reader = csv.DictReader(handle)
@@ -319,8 +312,7 @@ def test_script_generates_report(tmp_path: Path) -> None:
             assert float(row["current_threshold"]) == 0.78
     assert any(row["primary_exchange"] == "__all__" for row in rows)
 
-    for metric_values in payload["global_summary"]["raw_values"].values():
-        assert all(math.isfinite(value) for value in metric_values)
+    assert "raw_values" not in payload["global_summary"]
 
 
 def test_script_accepts_cli_risk_score_threshold(tmp_path: Path) -> None:
@@ -1178,8 +1170,8 @@ def test_generate_report_handles_large_inputs_with_low_peak_memory(monkeypatch, 
     journal_iter = _load_journal_events([journal_path])
     autotrade_iter = _load_autotrade_entries([str(autotrade_path)])
 
-    assert not isinstance(journal_iter, list)
-    assert not isinstance(autotrade_iter, list)
+    assert isinstance(journal_iter, GeneratorType)
+    assert isinstance(autotrade_iter, GeneratorType)
 
     append_calls = 0
     peak_sizes: dict[tuple[tuple[str, str], str], int] = {}
@@ -1205,12 +1197,70 @@ def test_generate_report_handles_large_inputs_with_low_peak_memory(monkeypatch, 
     assert report["sources"]["journal_events"] == event_count
     assert report["sources"]["autotrade_entries"] == event_count
 
+    assert all("raw_values" not in group for group in report["groups"])
+    assert "raw_values" not in report["global_summary"]
+
     expected_metric_values = event_count * 2 + event_count
     assert append_calls == expected_metric_values
 
     assert peak_sizes[("binance", "trend_following"), "signal_after_adjustment"] == event_count
     assert peak_sizes[("binance", "trend_following"), "signal_after_clamp"] == event_count
     assert peak_sizes[("binance", "trend_following"), "risk_score"] == event_count
+
+
+def test_generate_report_can_collect_raw_values() -> None:
+    journal_events = [
+        {
+            "symbol": "BTCUSDT",
+            "primary_exchange": "binance",
+            "strategy": "trend_following",
+            "signal_after_adjustment": 0.51,
+            "signal_after_clamp": 0.49,
+        },
+        {
+            "symbol": "BTCUSDT",
+            "primary_exchange": "binance",
+            "strategy": "trend_following",
+            "signal_after_adjustment": 0.62,
+            "signal_after_clamp": 0.6,
+        },
+    ]
+
+    autotrade_entries = [
+        {
+            "decision": {
+                "details": {
+                    "symbol": "BTCUSDT",
+                    "primary_exchange": "binance",
+                    "strategy": "trend_following",
+                    "summary": {"risk_score": 0.73},
+                }
+            }
+        }
+    ]
+
+    with patch("scripts.calibrate_autotrade_thresholds.load_risk_thresholds", return_value={}):
+        report = _generate_report(
+            journal_events=journal_events,
+            autotrade_entries=autotrade_entries,
+            percentiles=[0.5],
+            suggestion_percentile=0.5,
+            include_raw_values=True,
+        )
+
+    assert report["groups"]
+    group = report["groups"][0]
+    assert "raw_values" in group
+    assert group["raw_values"]["signal_after_adjustment"] == [0.51, 0.62]
+    assert group["raw_values"]["risk_score"] == [0.73]
+
+    global_summary = report["global_summary"]
+    assert "raw_values" in global_summary
+    assert set(global_summary["raw_values"].keys()) >= {
+        "signal_after_adjustment",
+        "signal_after_clamp",
+        "risk_score",
+    }
 
 
 def test_symbol_map_matches_symbols_case_insensitively() -> None:
