@@ -1462,6 +1462,75 @@ def test_loaders_stream_without_materializing_large_lists(monkeypatch, tmp_path:
     assert not large_lists
 
 
+def test_autotrade_loader_accepts_directory(tmp_path: Path) -> None:
+    export_dir = tmp_path / "exports"
+    export_dir.mkdir()
+
+    first = export_dir / "first.json"
+    first.write_text(
+        json.dumps({"entries": [{"timestamp": "2024-01-01T00:00:00Z"}]}),
+        encoding="utf-8",
+    )
+    second = export_dir / "second.JSON"
+    second.write_text(
+        json.dumps({"entries": [{"timestamp": "2024-01-01T01:00:00Z"}]}),
+        encoding="utf-8",
+    )
+
+    entries = list(_load_autotrade_entries([str(export_dir)]))
+
+    assert {entry["timestamp"] for entry in entries} == {
+        "2024-01-01T00:00:00Z",
+        "2024-01-01T01:00:00Z",
+    }
+
+
+def test_autotrade_loader_rejects_empty_directory(tmp_path: Path) -> None:
+    export_dir = tmp_path / "exports"
+    export_dir.mkdir()
+
+    with pytest.raises(SystemExit) as excinfo:
+        _load_autotrade_entries([str(export_dir)])
+
+    message = str(excinfo.value)
+    assert "nie zawiera plików" in message or "Nie znaleziono" in message
+
+
+def test_autotrade_loader_handles_object_with_entries_key_only(tmp_path: Path) -> None:
+    path = tmp_path / "autotrade.json"
+    payload = {
+        "entries": [
+            {
+                "timestamp": "2024-01-01T00:00:00Z",
+                "decision": {
+                    "details": {
+                        "symbol": "BTCUSDT",
+                        "primary_exchange": "binance",
+                        "strategy": "trend_following",
+                        "summary": {"risk_score": 0.5},
+                    }
+                },
+            },
+            {
+                "timestamp": "2024-01-01T00:05:00Z",
+                "detail": {
+                    "symbol": "ETHUSDT",
+                    "primary_exchange": "kraken",
+                    "strategy": "mean_reversion",
+                    "summary": {"risk_score": 0.42},
+                },
+            },
+        ]
+    }
+    path.write_text(json.dumps(payload) + "\n\n", encoding="utf-8")
+
+    entries = list(_load_autotrade_entries([str(path)]))
+
+    assert len(entries) == 2
+    assert entries[0]["timestamp"] == "2024-01-01T00:00:00Z"
+    assert entries[1]["timestamp"] == "2024-01-01T00:05:00Z"
+
+
 def test_generate_report_can_collect_raw_values() -> None:
     journal_events = [
         {
@@ -1646,3 +1715,94 @@ def test_symbol_map_ambiguous_entry_keeps_unknown_routing() -> None:
 
     assert set(groups) == {("unknown", "unknown")}
     assert groups[("unknown", "unknown")]["metrics"]["risk_score"]["count"] == 1
+
+
+def test_streaming_generators(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    class Tracker:
+        __slots__ = ("_counter",)
+
+        def __init__(self, counter: dict[str, int]) -> None:
+            self._counter = counter
+            counter["active"] += 1
+            counter["peak"] = max(counter["peak"], counter["active"])
+
+        def __del__(self) -> None:  # pragma: no cover - gc driven
+            counter = self._counter
+            counter["active"] -= 1
+
+    counters = {"active": 0, "peak": 0}
+
+    count = 512
+    journal_path = tmp_path / "stream_journal.jsonl"
+    with journal_path.open("w", encoding="utf-8") as handle:
+        for index in range(count):
+            payload = {
+                "timestamp": f"2024-01-01T00:{index // 60:02d}:{index % 60:02d}Z",
+                "primary_exchange": "binance",
+                "strategy": "trend_following",
+                "signal_after_adjustment": 0.5 + (index % 10) * 0.01,
+                "signal_after_clamp": 0.4 + (index % 10) * 0.01,
+            }
+            print(json.dumps(payload), file=handle)
+
+    autotrade_path = tmp_path / "stream_autotrade.json"
+    entries: list[dict[str, object]] = []
+    for index in range(count):
+        entries.append(
+            {
+                "timestamp": f"2024-01-01T01:{index // 60:02d}:{index % 60:02d}Z",
+                "decision": {
+                    "details": {
+                        "symbol": f"SYM{index % 5}",
+                        "primary_exchange": "binance",
+                        "strategy": "trend_following",
+                        "summary": {"risk_score": 0.6 + (index % 5) * 0.01},
+                    }
+                },
+            }
+        )
+    autotrade_path.write_text(json.dumps({"entries": entries}), encoding="utf-8")
+
+    journal_probe = _load_journal_events([journal_path])
+    entries_probe = _load_autotrade_entries([str(autotrade_path)])
+
+    assert isinstance(journal_probe, GeneratorType)
+    assert isinstance(entries_probe, GeneratorType)
+
+    def _attach_tracker(stream: Iterable[Mapping[str, object]]) -> Iterable[Mapping[str, object]]:
+        for item in stream:
+            if isinstance(item, Mapping):
+                item["__tracker__"] = Tracker(counters)
+                yield item
+            else:
+                mapping = dict(item)
+                mapping["__tracker__"] = Tracker(counters)
+                yield mapping
+
+    monkeypatch.setattr(
+        "scripts.calibrate_autotrade_thresholds.load_risk_thresholds",
+        lambda config_path=None: {},
+    )
+
+    report = _generate_report(
+        journal_events=_attach_tracker(_load_journal_events([journal_path])),
+        autotrade_entries=_attach_tracker(_load_autotrade_entries([str(autotrade_path)])),
+        percentiles=[0.5],
+        suggestion_percentile=0.5,
+        since=None,
+        until=None,
+        current_signal_thresholds={},
+        current_threshold_sources={},
+        cli_risk_score_threshold=None,
+        risk_threshold_sources=[],
+        cli_risk_score=None,
+        include_raw_values=False,
+    )
+
+    assert report["sources"]["journal_events"] == count
+    assert report["sources"]["autotrade_entries"] == count
+    assert report["groups"]
+
+    gc.collect()
+    assert counters["active"] == 0
+    assert counters["peak"] < count // 4
