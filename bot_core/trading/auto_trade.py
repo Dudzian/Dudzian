@@ -38,7 +38,8 @@ from bot_core.trading.regime_workflow import RegimeSwitchDecision
 from bot_core.trading.strategies import StrategyCatalog
 from bot_core.trading.strategy_aliasing import (
     StrategyAliasResolver,
-    normalise_alias_map,
+    canonical_alias_map,
+    normalise_suffixes,
     strategy_key_aliases,
     strategy_name_candidates,
 )
@@ -493,6 +494,7 @@ class AutoTradeEngine:
             }
         self._last_inference_score: ModelScore | None = None
         self._last_inference_metadata: Dict[str, object] | None = None
+        self._last_inference_scored_at: dt.datetime | None = None
 
         batch_rule = DebounceRule(window=0.1, max_batch=1)
         self.bus.subscribe(EventType.MARKET_TICK, self._on_ticks_batch, rule=batch_rule)
@@ -2050,6 +2052,7 @@ class AutoTradeEngine:
         weights_after: Mapping[str, float],
         assessment: MarketRegimeAssessment,
         adjustment_metadata: Mapping[str, float],
+        scored_at: dt.datetime | None = None,
     ) -> None:
         if self._decision_journal is None:
             return
@@ -2073,6 +2076,9 @@ class AutoTradeEngine:
                 },
             }
             metadata_payload.update({str(k): v for k, v in adjustment_metadata.items()})
+            scored_at_iso = self._isoformat(scored_at or self._last_inference_scored_at)
+            if scored_at_iso is not None:
+                metadata_payload["scored_at"] = scored_at_iso
             sample = {
                 str(name): float(value)
                 for name, value in sorted(features.items())[:8]
@@ -2472,6 +2478,7 @@ class AutoTradeEngine:
         ai_metadata: dict[str, object] | None = None
         self._last_inference_score = None
         self._last_inference_metadata = None
+        self._last_inference_scored_at = None
         adjustment_metadata: Dict[str, float] | None = None
         denominator_override: float | None = None
         ai_score: ModelScore | None = None
@@ -2493,6 +2500,8 @@ class AutoTradeEngine:
                     "DecisionModelInference score failed: %s", exc, exc_info=True
                 )
             else:
+                self._last_inference_scored_at = dt.datetime.now(dt.timezone.utc)
+                scored_at_iso = self._isoformat(self._last_inference_scored_at)
                 weights_before_adjustment = dict(weights)
                 weights, adjustment_metadata = self._apply_inference_adjustment(weights, ai_score)
                 adjustment_metadata = dict(adjustment_metadata)
@@ -2524,6 +2533,8 @@ class AutoTradeEngine:
                     "signal_before_adjustment": base_signal_value,
                     "signal_after_adjustment": adjusted_signal_value,
                 }
+                if scored_at_iso is not None:
+                    ai_metadata["scored_at"] = scored_at_iso
                 self._last_inference_score = ai_score
         numerator = 0.0
         for name, weight in weights.items():
@@ -2556,6 +2567,7 @@ class AutoTradeEngine:
                     weights_after=weights,
                     assessment=assessment,
                     adjustment_metadata=adjustment_metadata,
+                    scored_at=self._last_inference_scored_at,
                 )
                 self._last_inference_metadata = dict(ai_metadata)
         metadata_payload: dict[str, object] | None = None

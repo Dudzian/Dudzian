@@ -1526,6 +1526,10 @@ def test_auto_trade_engine_uses_ai_inference(monkeypatch) -> None:
     ai_meta = latest_payload["metadata"]["ai_inference"]
     assert ai_meta["expected_return_bps"] == pytest.approx(120.0)
     assert ai_meta["weight_scaling"] > 1.0
+    scored_at_meta = ai_meta.get("scored_at")
+    assert isinstance(scored_at_meta, str)
+    parsed_meta_scored_at = datetime.fromisoformat(scored_at_meta)
+    assert parsed_meta_scored_at.tzinfo == timezone.utc
     regime_key = latest_payload["regime"]
     base_weights = cfg.strategy_weights[regime_key]
     expected_trend = base_weights["trend_following"] * ai_meta["weight_scaling"]
@@ -1538,6 +1542,13 @@ def test_auto_trade_engine_uses_ai_inference(monkeypatch) -> None:
     assert abs(ai_meta["signal_after_adjustment"]) > abs(base_signal)
     assert abs(latest_payload["direction"]) > abs(base_signal)
 
+    snapshot = engine.snapshot()
+    assert snapshot.ai_inference is not None
+    scored_at = snapshot.ai_inference.get("scored_at")
+    assert isinstance(scored_at, str)
+    parsed_scored_at = datetime.fromisoformat(scored_at)
+    assert parsed_scored_at.tzinfo == timezone.utc
+
     inference._score = ModelScore(expected_return_bps=-150.0, success_probability=0.8)
     for px in closes:
         adapter.push_market_tick("BTCUSDT", price=px)
@@ -1545,6 +1556,10 @@ def test_auto_trade_engine_uses_ai_inference(monkeypatch) -> None:
     negative_payload = signal_payloads[-1]
     negative_meta = negative_payload["metadata"]["ai_inference"]
     assert negative_meta["weight_scaling"] < 1.0
+    negative_scored_at = negative_meta.get("scored_at")
+    assert isinstance(negative_scored_at, str)
+    parsed_negative_scored_at = datetime.fromisoformat(negative_scored_at)
+    assert parsed_negative_scored_at.tzinfo == timezone.utc
     negative_base_signal = _compute_base_signal(negative_payload)
     assert negative_meta["signal_before_adjustment"] == pytest.approx(negative_base_signal)
     assert negative_meta["signal_after_clamp"] == pytest.approx(negative_payload["direction"])
@@ -1569,6 +1584,9 @@ def test_auto_trade_engine_uses_ai_inference(monkeypatch) -> None:
     assert float(positive_event["signal_after_clamp"]) == pytest.approx(
         ai_meta["signal_after_clamp"]
     )
+    assert "scored_at" in positive_event
+    positive_event_scored_at = datetime.fromisoformat(positive_event["scored_at"])
+    assert positive_event_scored_at.tzinfo == timezone.utc
     negative_event = next(
         event
         for event in reversed(exported)
@@ -1586,5 +1604,8 @@ def test_auto_trade_engine_uses_ai_inference(monkeypatch) -> None:
     assert float(negative_event["signal_after_clamp"]) == pytest.approx(
         negative_meta["signal_after_clamp"]
     )
+    assert "scored_at" in negative_event
+    negative_event_scored_at = datetime.fromisoformat(negative_event["scored_at"])
+    assert negative_event_scored_at.tzinfo == timezone.utc
     assert any(key.startswith("price_") for key in inference.calls[-1])
     assert inference.contexts[-1]["regime"] == regime_key
