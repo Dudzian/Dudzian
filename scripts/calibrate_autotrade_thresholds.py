@@ -445,31 +445,29 @@ def _load_journal_events(
     since: datetime | None = None,
     until: datetime | None = None,
 ) -> Iterator[dict[str, object]]:
-    def _iter_events() -> Iterator[dict[str, object]]:
-        for path in paths:
-            try:
-                with path.open("r", encoding="utf-8") as handle:
-                    for line in handle:
-                        line = line.strip()
-                        if not line:
-                            continue
-                        try:
-                            payload = json.loads(line)
-                        except json.JSONDecodeError as exc:  # noqa: BLE001 - CLI feedback
-                            raise SystemExit(
-                                f"Nie udało się sparsować JSON w dzienniku {path}: {exc}"
-                            ) from exc
-                        if isinstance(payload, Mapping):
-                            timestamp = _parse_datetime(payload.get("timestamp"))
-                            if since and timestamp and timestamp < since:
-                                continue
-                            if until and timestamp and timestamp > until:
-                                continue
-                            yield dict(payload)
-            except OSError as exc:  # noqa: BLE001 - CLI feedback
-                raise SystemExit(f"Nie udało się odczytać dziennika {path}: {exc}") from exc
-
-    return _iter_events()
+    for path in paths:
+        try:
+            with path.open("r", encoding="utf-8") as handle:
+                for line in handle:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        payload = json.loads(line)
+                    except json.JSONDecodeError as exc:  # noqa: BLE001 - CLI feedback
+                        raise SystemExit(
+                            f"Nie udało się sparsować JSON w dzienniku {path}: {exc}"
+                        ) from exc
+                    if not isinstance(payload, Mapping):
+                        continue
+                    timestamp = _parse_datetime(payload.get("timestamp"))
+                    if since and timestamp and timestamp < since:
+                        continue
+                    if until and timestamp and timestamp > until:
+                        continue
+                    yield dict(payload)
+        except OSError as exc:  # noqa: BLE001 - CLI feedback
+            raise SystemExit(f"Nie udało się odczytać dziennika {path}: {exc}") from exc
 
 
 def _extract_entry_timestamp(entry: Mapping[str, object]) -> datetime | None:
@@ -495,39 +493,41 @@ def _load_autotrade_entries(
     since: datetime | None = None,
     until: datetime | None = None,
 ) -> Iterator[dict[str, object]]:
-    def _iter_entries() -> Iterator[dict[str, object]]:
-        for raw in paths:
-            path = Path(raw).expanduser()
-            if not path.exists():
-                raise SystemExit(f"Eksport autotradera nie istnieje: {path}")
-            try:
-                payload = json.loads(path.read_text(encoding="utf-8"))
-            except json.JSONDecodeError as exc:  # noqa: BLE001 - CLI feedback
-                raise SystemExit(
-                    f"Niepoprawny JSON w eksporcie autotradera {path}: {exc}"
-                ) from exc
-            if isinstance(payload, Mapping):
-                raw_entries = payload.get("entries")
-                if isinstance(raw_entries, Iterable):
-                    for item in raw_entries:
-                        if isinstance(item, Mapping):
-                            timestamp = _extract_entry_timestamp(item)
-                            if since and timestamp and timestamp < since:
-                                continue
-                            if until and timestamp and timestamp > until:
-                                continue
-                            yield dict(item)
-            elif isinstance(payload, list):
-                for item in payload:
-                    if isinstance(item, Mapping):
-                        timestamp = _extract_entry_timestamp(item)
-                        if since and timestamp and timestamp < since:
-                            continue
-                        if until and timestamp and timestamp > until:
-                            continue
-                        yield dict(item)
-
-    return _iter_entries()
+    for raw in paths:
+        path = Path(raw).expanduser()
+        if not path.exists():
+            raise SystemExit(f"Eksport autotradera nie istnieje: {path}")
+        try:
+            with path.open("r", encoding="utf-8") as handle:
+                payload = json.load(handle)
+        except json.JSONDecodeError as exc:  # noqa: BLE001 - CLI feedback
+            raise SystemExit(
+                f"Niepoprawny JSON w eksporcie autotradera {path}: {exc}"
+            ) from exc
+        except OSError as exc:  # noqa: BLE001 - CLI feedback
+            raise SystemExit(f"Nie udało się odczytać eksportu autotradera {path}: {exc}") from exc
+        if isinstance(payload, Mapping):
+            raw_entries = payload.get("entries")
+            if isinstance(raw_entries, Iterable) and not isinstance(raw_entries, (str, bytes)):
+                for item in raw_entries:
+                    if not isinstance(item, Mapping):
+                        continue
+                    timestamp = _extract_entry_timestamp(item)
+                    if since and timestamp and timestamp < since:
+                        continue
+                    if until and timestamp and timestamp > until:
+                        continue
+                    yield dict(item)
+        elif isinstance(payload, list):
+            for item in payload:
+                if not isinstance(item, Mapping):
+                    continue
+                timestamp = _extract_entry_timestamp(item)
+                if since and timestamp and timestamp < since:
+                    continue
+                if until and timestamp and timestamp > until:
+                    continue
+                yield dict(item)
 
 
 def _resolve_key(exchange: str | None, strategy: str | None) -> tuple[str, str]:
@@ -976,7 +976,9 @@ def _maybe_plot(
         primary_exchange = group["primary_exchange"]
         strategy = group["strategy"]
         metrics = group["metrics"]
-        raw_values = group["raw_values"]
+        raw_values = group.get("raw_values")
+        if not isinstance(raw_values, Mapping):
+            continue
         for metric_name, values in raw_values.items():
             if not values:
                 continue
@@ -1008,6 +1010,7 @@ def _generate_report(
     cli_risk_score_threshold: float | None = None,
     risk_threshold_sources: Iterable[str] | None = None,
     cli_risk_score: float | None = None,
+    include_raw_values: bool = False,
 ) -> dict[str, object]:
     symbol_map: dict[str, tuple[str, str]] = {}
     grouped_values: dict[tuple[str, str], defaultdict[str, array]] = defaultdict(
@@ -1021,7 +1024,6 @@ def _generate_report(
             "reason_counts": Counter(),
         }
     )
-    freeze_events: dict[tuple[str, str], list[dict[str, object]]] = defaultdict(list)
     display_names: dict[tuple[str, str], tuple[str, str]] = {}
     aggregated_freeze_summary = {
         "total": 0,
@@ -1029,7 +1031,7 @@ def _generate_report(
         "status_counts": Counter(),
         "reason_counts": Counter(),
     }
-    aggregated_values: defaultdict[str, array] = defaultdict(_numeric_buffer)
+    global_metric_values: defaultdict[str, array] = defaultdict(_numeric_buffer)
     journal_count = 0
     autotrade_count = 0
 
@@ -1072,7 +1074,7 @@ def _generate_report(
     ) -> None:
         values = grouped_values[key][metric_name]
         values.append(float(numeric))
-        aggregated_values[metric_name].append(float(numeric))
+        global_metric_values[metric_name].append(float(numeric))
         if _METRIC_APPEND_OBSERVER is not None:
             _METRIC_APPEND_OBSERVER(key, metric_name, len(values))
 
@@ -1107,16 +1109,6 @@ def _generate_report(
                 numeric_duration = None
             if numeric_duration is not None and math.isfinite(numeric_duration):
                 _record_metric_value(key, "risk_freeze_duration", numeric_duration)
-        freeze_events[key].append(
-            {
-                "status": status,
-                "type": freeze_type,
-                "reason": reason,
-                "duration": duration,
-                "risk_score": payload.get("risk_score"),
-            }
-        )
-
     for event in journal_events:
         journal_count += 1
         _update_symbol_map_entry(symbol_map, event)
@@ -1226,50 +1218,42 @@ def _generate_report(
         freeze_summary_payload = _format_freeze_summary(freeze_summary)
         has_metrics = any(values for values in metrics.values())
         has_freeze = int(freeze_summary.get("total") or 0) > 0
-        has_freeze_events = bool(freeze_events.get((exchange, strategy)))
-        if not (has_metrics or has_freeze or has_freeze_events):
+        if not (has_metrics or has_freeze):
             continue
         display_exchange, display_strategy = display_names.get(
             (exchange, strategy), (exchange, strategy)
         )
-        freeze_event_list = freeze_events.get((exchange, strategy))
-        groups.append(
-            {
-                "primary_exchange": display_exchange,
-                "strategy": display_strategy,
-                "metrics": metrics_payload,
-                "raw_values": {
-                    metric: (
-                        values
-                        if isinstance(values, list)
-                        else list(values)
-                    )
-                    for metric, values in metrics.items()
-                },
-                "freeze_summary": freeze_summary_payload,
-                "raw_freeze_events": (
-                    freeze_event_list if freeze_event_list is not None else []
-                ),
+        group_payload: dict[str, object] = {
+            "primary_exchange": display_exchange,
+            "strategy": display_strategy,
+            "metrics": metrics_payload,
+            "freeze_summary": freeze_summary_payload,
+        }
+        if include_raw_values:
+            group_payload["raw_values"] = {
+                metric: (
+                    values if isinstance(values, list) else list(values)
+                )
+                for metric, values in metrics.items()
             }
-        )
+        groups.append(group_payload)
 
     global_metrics = _build_metrics_section(
-        aggregated_values,
+        global_metric_values,
         percentiles,
         suggestion_percentile,
         current_risk_score=current_risk_score,
         current_signal_thresholds=current_signal_thresholds,
     )
-    global_summary = {
+    global_summary: dict[str, object] = {
         "metrics": global_metrics,
         "freeze_summary": _format_freeze_summary(aggregated_freeze_summary),
-        "raw_values": {
-            metric: (
-                values if isinstance(values, list) else list(values)
-            )
-            for metric, values in aggregated_values.items()
-        },
     }
+    if include_raw_values:
+        global_summary["raw_values"] = {
+            metric: [float(value) for value in values]
+            for metric, values in global_metric_values.items()
+        }
 
     current_threshold_files: list[str] = []
     current_threshold_inline: dict[str, float] = {}
@@ -1328,8 +1312,8 @@ def _generate_report(
         combined_risk_files.append(path_str)
 
     sources_payload = {
-        "journal_events": len(journal_events),
-        "autotrade_entries": len(autotrade_entries),
+        "journal_events": journal_count,
+        "autotrade_entries": autotrade_count,
         "current_thresholds": {
             "files": current_threshold_files,
             "inline": current_threshold_inline,
@@ -1351,10 +1335,7 @@ def _generate_report(
         },
         "groups": groups,
         "global_summary": global_summary,
-        "sources": {
-            "journal_events": journal_count,
-            "autotrade_entries": autotrade_count,
-        },
+        "sources": sources_payload,
     }
 
 
@@ -1463,6 +1444,7 @@ def main(argv: list[str] | None = None) -> int:
         cli_risk_score_threshold=cli_risk_score,
         risk_threshold_sources=args.risk_thresholds,
         cli_risk_score=cli_risk_score,
+        include_raw_values=bool(args.plot_dir),
     )
 
     if args.output_json:
