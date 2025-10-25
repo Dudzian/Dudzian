@@ -175,6 +175,11 @@ class AutoTradeEngine:
         "day_trading": "day_trading",
         "mean_reversion": "mean_reversion",
         "arbitrage": "cross_exchange_arbitrage",
+        "grid_trading": "grid_trading",
+        "options_income": "options_income",
+        "scalping": "scalping",
+        "statistical_arbitrage": "statistical_arbitrage",
+        "volatility_target": "volatility_target",
     }
 
     def __init__(
@@ -222,6 +227,7 @@ class AutoTradeEngine:
         )
         catalog = strategy_catalog or StrategyCatalog.default()
         self._strategy_catalog = catalog
+        self._engine_key_cache: Dict[str, str | None] = {}
         base_override = {
             "day_trading_momentum_window": int(max(1, self.cfg.breakout_window)),
             "day_trading_volatility_window": int(
@@ -397,13 +403,11 @@ class AutoTradeEngine:
     def _register_strategy_presets(self, workflow: StrategyRegimeWorkflow) -> None:
         signing_key = getattr(self, "_workflow_signing_key", b"autotrade")
         for regime, weights in self._strategy_weights.weights.items():
-            entries = self._build_preset_entries(weights)
+            entries, normalized = self._build_preset_entries(weights)
             if not entries:
                 continue
             metadata = {
-                "ensemble_weights": {
-                    str(name): float(value) for name, value in weights.items()
-                },
+                "ensemble_weights": normalized,
                 "parameter_overrides": dict(
                     self._workflow_parameter_overrides.get(regime, {})
                 ),
@@ -423,14 +427,14 @@ class AutoTradeEngine:
                     exc,
                     exc_info=True,
                 )
-        fallback_entries = self._build_preset_entries({"day_trading": 1.0})
+        fallback_entries, fallback_weights = self._build_preset_entries({"day_trading": 1.0})
         if fallback_entries:
             try:
                 workflow.register_emergency_preset(
                     name="autotrade-emergency",
                     entries=fallback_entries,
                     signing_key=signing_key,
-                    metadata={"ensemble_weights": {"day_trading": 1.0}},
+                    metadata={"ensemble_weights": fallback_weights},
                 )
             except Exception as exc:  # pragma: no cover - defensywne logowanie
                 self._logger.debug(
@@ -439,11 +443,62 @@ class AutoTradeEngine:
 
     def _build_preset_entries(
         self, weights: Mapping[str, float]
-    ) -> List[Mapping[str, object]]:
+    ) -> tuple[List[Mapping[str, object]], Dict[str, float]]:
         entries: List[Mapping[str, object]] = []
-        for name, weight in sorted(weights.items()):
-            engine = self._PRESET_ENGINE_MAPPING.get(name)
+        missing: list[str] = []
+        invalid: list[str] = []
+        zeroed: list[str] = []
+        prepared: list[tuple[str, float]] = []
+        for name, weight in weights.items():
+            key = str(name)
+            try:
+                value = float(weight)
+            except (TypeError, ValueError):
+                invalid.append(key)
+                continue
+            if not math.isfinite(value):
+                invalid.append(key)
+                continue
+            if value <= 0.0:
+                zeroed.append(key)
+                continue
+            prepared.append((key, value))
+
+        if not prepared:
+            if invalid:
+                self._logger.warning(
+                    "Pominięto strategie z nieprawidłowymi wagami: %s",
+                    ", ".join(sorted(set(invalid))),
+                )
+            if zeroed:
+                self._logger.info(
+                    "Pominięto strategie z zerowymi wagami: %s",
+                    ", ".join(sorted(set(zeroed))),
+                )
+            return entries, {}
+
+        total = sum(weight for _, weight in prepared)
+        if total <= 0.0:
+            self._logger.warning(
+                "Nie można zbudować presetu: suma wag (%s) jest niepoprawna",
+                total,
+            )
+            return entries, {}
+
+        normalized_all: Dict[str, float] = {}
+        for key, value in prepared:
+            normalized_all[key] = value / total
+
+        sorted_weights = sorted(
+            normalized_all.items(),
+            key=lambda item: (-item[1], item[0]),
+        )
+
+        applied_weights: Dict[str, float] = {}
+        for name, weight in sorted_weights:
+            engine = self._resolve_engine_key(name)
             if engine is None:
+                missing.append(name)
                 continue
             entry: Dict[str, object] = {
                 "engine": engine,
@@ -451,12 +506,139 @@ class AutoTradeEngine:
                 "parameters": {},
                 "tags": ["auto_trade", name],
                 "metadata": {
-                    "ensemble_weight": float(weight),
+                    "ensemble_weight": weight,
                     "strategy": name,
                 },
             }
             entries.append(entry)
-        return entries
+            applied_weights[name] = weight
+        if applied_weights:
+            applied_total = sum(applied_weights.values())
+            if not math.isclose(applied_total, 1.0):
+                applied_weights = {
+                    name: weight / applied_total for name, weight in applied_weights.items()
+                }
+            for entry in entries:
+                name = str(entry.get("name"))
+                entry_weight = applied_weights.get(name, 0.0)
+                entry["metadata"]["ensemble_weight"] = entry_weight
+        normalized = applied_weights if applied_weights else {}
+        if invalid:
+            self._logger.warning(
+                "Pominięto strategie z nieprawidłowymi wagami: %s",
+                ", ".join(sorted(set(invalid))),
+            )
+        if zeroed:
+            self._logger.info(
+                "Pominięto strategie z zerowymi wagami: %s",
+                ", ".join(sorted(set(zeroed))),
+            )
+        if missing:
+            self._logger.warning(
+                "Pominięto strategie bez zmapowanego silnika: %s", ", ".join(sorted(set(missing)))
+            )
+        return entries, normalized
+
+    def _resolve_engine_key(self, strategy_name: str) -> str | None:
+        """Return engine key for ``strategy_name`` using mapping, catalog and cache."""
+
+        raw_name = str(strategy_name)
+        cache = getattr(self, "_engine_key_cache", None)
+        if cache is None:
+            cache = {}
+            self._engine_key_cache = cache
+
+        cached = cache.get(raw_name)
+        if cached is not None or raw_name in cache:
+            return cached
+
+        engine = self._PRESET_ENGINE_MAPPING.get(raw_name)
+        if engine:
+            cache[raw_name] = engine
+            return engine
+
+        catalog = getattr(self, "_strategy_catalog", None)
+        if catalog is None:
+            cache[raw_name] = None
+            return None
+
+        def _store(engine_key: str, *aliases: str) -> str:
+            cache[raw_name] = engine_key
+            for alias in aliases:
+                if alias:
+                    cache.setdefault(alias, engine_key)
+            return engine_key
+
+        normalized_candidates = []
+        for candidate in (
+            raw_name,
+            raw_name.lower(),
+            raw_name.replace(" ", "_").lower(),
+            raw_name.replace("-", "_").lower(),
+        ):
+            if candidate not in normalized_candidates:
+                normalized_candidates.append(candidate)
+
+        for candidate in normalized_candidates:
+            mapped = self._PRESET_ENGINE_MAPPING.get(candidate)
+            if mapped:
+                return _store(mapped, candidate)
+
+            try:
+                metadata = catalog.metadata_for(candidate)
+            except Exception as exc:  # pragma: no cover - defensywne logowanie
+                self._logger.debug(
+                    "Nie udało się pobrać metadanych strategii %s: %s",
+                    candidate,
+                    exc,
+                    exc_info=True,
+                )
+                metadata = MappingProxyType({})
+
+            if isinstance(metadata, Mapping):
+                engine_key = metadata.get("engine")
+            else:  # pragma: no cover - utrzymanie kompatybilności
+                engine_key = None
+
+            if engine_key:
+                return _store(str(engine_key), candidate)
+
+            create_plugin = getattr(catalog, "create", None)
+            if not callable(create_plugin):
+                continue
+            try:
+                plugin_instance = create_plugin(candidate)
+            except Exception as exc:  # pragma: no cover - defensywne logowanie
+                self._logger.debug(
+                    "Nie udało się utworzyć strategii %s: %s",
+                    candidate,
+                    exc,
+                    exc_info=True,
+                )
+                plugin_instance = None
+
+            if plugin_instance is None:
+                continue
+
+            engine_attr = getattr(plugin_instance, "engine_key", None)
+            if engine_attr:
+                plugin_name = getattr(plugin_instance, "name", None)
+                aliases = [candidate]
+                if plugin_name:
+                    aliases.append(str(plugin_name))
+                return _store(str(engine_attr), *aliases)
+
+            plugin_name = getattr(plugin_instance, "name", None)
+            if plugin_name:
+                plugin_key = str(plugin_name)
+                mapped_plugin = self._PRESET_ENGINE_MAPPING.get(plugin_key)
+                if mapped_plugin:
+                    return _store(mapped_plugin, candidate, plugin_key)
+                if plugin_key == candidate:
+                    return _store(plugin_key, candidate)
+
+        cache[raw_name] = None
+        return None
 
     def _refresh_workflow_presets(self) -> None:
         workflow = getattr(self, "_regime_workflow", None)
