@@ -8,12 +8,15 @@ from datetime import datetime, timezone
 from unittest.mock import patch
 from pathlib import Path
 
+import pytest
+
 from bot_core.runtime.journal import TradingDecisionEvent
 
 from scripts.calibrate_autotrade_thresholds import (
     _AMBIGUOUS_SYMBOL_MAPPING,
     _build_symbol_map,
     _generate_report,
+    _load_current_signal_thresholds,
 )
 
 
@@ -179,6 +182,8 @@ def test_script_generates_report(tmp_path: Path) -> None:
             "2024-01-01T00:30:00Z",
             "--until",
             "2024-01-01T04:00:00Z",
+            "--current-threshold",
+            "signal_after_adjustment=0.82,signal_after_clamp=0.78",
             "--output-json",
             str(output_json),
             "--output-csv",
@@ -203,6 +208,10 @@ def test_script_generates_report(tmp_path: Path) -> None:
     assert signal_stats["count"] == 1
     assert signal_stats["percentiles"]["p90"] >= 0.48
     assert signal_stats["suggested_threshold"] >= signal_stats["percentiles"]["p90"]
+    assert signal_stats["current_threshold"] == 0.82
+
+    signal_clamp_stats = trend_group["metrics"]["signal_after_clamp"]
+    assert signal_clamp_stats["current_threshold"] == 0.78
 
     risk_stats = trend_group["metrics"]["risk_score"]
     assert risk_stats["count"] == 1
@@ -230,6 +239,7 @@ def test_script_generates_report(tmp_path: Path) -> None:
     assert global_summary["freeze_summary"]["total"] == 2
     global_signal = global_summary["metrics"]["signal_after_adjustment"]
     assert global_signal["count"] == 2
+    assert global_signal["current_threshold"] == 0.82
     assert 0.9 not in global_summary["raw_values"]["signal_after_adjustment"]
 
     raw_values = trend_group["raw_values"]["signal_after_adjustment"]
@@ -247,7 +257,100 @@ def test_script_generates_report(tmp_path: Path) -> None:
     for row in rows:
         if row["metric"] == "risk_score" and row["primary_exchange"] == "binance":
             assert float(row["current_threshold"]) >= 0.7
+        if row["metric"] == "signal_after_adjustment" and row["primary_exchange"] == "binance":
+            assert float(row["current_threshold"]) == 0.82
+        if row["metric"] == "signal_after_clamp" and row["primary_exchange"] == "binance":
+            assert float(row["current_threshold"]) == 0.78
     assert any(row["primary_exchange"] == "__all__" for row in rows)
+
+
+def test_script_accepts_thresholds_from_json_file(tmp_path: Path) -> None:
+    journal_path = tmp_path / "journal.jsonl"
+    _write_journal(journal_path)
+
+    export_path = tmp_path / "autotrade.json"
+    _write_autotrade_export(export_path)
+
+    thresholds_path = tmp_path / "thresholds.json"
+    thresholds_payload = {
+        "overrides": {
+            "signal_after_adjustment": "0.81",
+        }
+    }
+    thresholds_path.write_text(json.dumps(thresholds_payload), encoding="utf-8")
+
+    output_json = tmp_path / "report.json"
+
+    subprocess.run(
+        [
+            sys.executable,
+            "scripts/calibrate_autotrade_thresholds.py",
+            "--journal",
+            str(journal_path),
+            "--autotrade-export",
+            str(export_path),
+            "--current-threshold",
+            str(thresholds_path),
+            "--current-threshold",
+            "signal_after_clamp=0.77",
+            "--output-json",
+            str(output_json),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    payload = json.loads(output_json.read_text(encoding="utf-8"))
+    trend_group = next(
+        entry
+        for entry in payload["groups"]
+        if entry["primary_exchange"] == "binance" and entry["strategy"] == "trend_following"
+    )
+    metrics = trend_group["metrics"]
+    assert metrics["signal_after_adjustment"]["current_threshold"] == 0.81
+    assert metrics["signal_after_clamp"]["current_threshold"] == 0.77
+
+
+def test_load_current_thresholds_rejects_directory(tmp_path: Path) -> None:
+    thresholds_dir = tmp_path / "thresholds"
+    thresholds_dir.mkdir()
+
+    with pytest.raises(SystemExit) as excinfo:
+        _load_current_signal_thresholds([str(thresholds_dir)])
+
+    assert "musi wskazywać plik" in str(excinfo.value)
+
+
+def test_load_current_thresholds_errors_on_missing_file(tmp_path: Path) -> None:
+    missing_path = tmp_path / "missing_thresholds.json"
+
+    with pytest.raises(SystemExit) as excinfo:
+        _load_current_signal_thresholds([str(missing_path)])
+
+    assert "Ścieżka z progami nie istnieje" in str(excinfo.value)
+
+
+def test_load_current_thresholds_supports_nested_structures(tmp_path: Path) -> None:
+    payload = {
+        "signals": {
+            "signal_after_adjustment": {"current_threshold": "0.84"},
+            "signal_after_clamp": {"threshold": 0.76},
+        },
+        "overrides": [
+            {"metric": "signal_after_adjustment", "value": 0.85},
+            {"name": "signal_after_clamp", "current": "0.74"},
+        ],
+        "legacy_signal_after_adjustment_threshold": 0.83,
+    }
+
+    thresholds_path = tmp_path / "nested_thresholds.json"
+    thresholds_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    thresholds = _load_current_signal_thresholds([str(thresholds_path)])
+
+    assert thresholds["signal_after_adjustment"] == pytest.approx(0.85)
+    assert thresholds["signal_after_clamp"] == pytest.approx(0.74)
 
 
 def test_group_resolution_prefers_entry_metadata_over_symbol_map() -> None:
