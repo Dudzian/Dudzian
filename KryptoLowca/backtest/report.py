@@ -8,6 +8,8 @@ try:
 except Exception:
     MATPLOT = False
 
+from bot_core.trading.exit_reasons import ExitReason
+
 def find_latest(parent: pathlib.Path, name: str):
     paths = list(parent.glob(f"*/{name}"))
     if not paths:
@@ -45,7 +47,9 @@ def load_trades(input_dir: pathlib.Path):
             for f in reversed(fills):
                 t = f.get("tag")
                 if t and t != "ENTRY":
-                    return t
+                    normalized = ExitReason.normalize(t, allow_unknown=True)
+                    if normalized:
+                        return normalized
         except Exception:
             pass
         return None
@@ -54,6 +58,9 @@ def load_trades(input_dir: pathlib.Path):
         df["exit_reason"] = df.apply(exit_reason, axis=1)
     else:
         df["exit_reason"] = None
+
+    if "exit_reason" in df:
+        df["exit_reason"] = df["exit_reason"].astype("string")
 
     return df, csv
 

@@ -657,6 +657,27 @@ def _load_callable_from_path(target: str) -> Callable[..., Any]:
 _LOGGER = logging.getLogger(__name__)
 
 
+def _resolve_ai_manager_class() -> type[Any] | None:
+    """Zwraca klasę AIManager, ponawiając import przy pierwszym użyciu."""
+
+    global AIManager
+    if AIManager is not None:
+        return AIManager
+    try:
+        module = importlib.import_module("bot_core.ai.manager")
+    except Exception:  # pragma: no cover - diagnostyka pomocnicza
+        _LOGGER.debug(
+            "Nie udało się leniwie załadować modułu bot_core.ai.manager.",
+            exc_info=True,
+        )
+        return None
+    manager_cls = getattr(module, "AIManager", None)
+    if manager_cls is None:
+        return None
+    AIManager = manager_cls  # type: ignore[assignment]
+    return manager_cls
+
+
 @dataclass(slots=True, frozen=True)
 class RuntimeEntrypoint:
     """Deklaracja punktu wejścia korzystającego z bootstrap_environment."""
@@ -1918,7 +1939,8 @@ def bootstrap_environment(
     if isinstance(environment_ai, EnvironmentAIConfig) and environment_ai.enabled:
         ai_model_bindings = environment_ai.models
         ai_threshold_bps = float(environment_ai.threshold_bps)
-        if AIManager is None:
+        manager_cls = _resolve_ai_manager_class()
+        if manager_cls is None:
             _LOGGER.warning(
                 "Sekcja environment.ai została zignorowana: moduł bot_core.ai.manager nie jest dostępny"
             )
@@ -1936,7 +1958,7 @@ def bootstrap_environment(
                     "Nie udało się utworzyć katalogu modeli AI %s", model_dir_path, exc_info=True
                 )
             try:
-                ai_manager_instance = AIManager(
+                ai_manager_instance = manager_cls(
                     ai_threshold_bps=ai_threshold_bps,
                     model_dir=model_dir_path,
                 )

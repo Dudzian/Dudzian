@@ -1,15 +1,16 @@
 """Ładowanie konfiguracji z plików YAML."""
 from __future__ import annotations
 
-from dataclasses import MISSING, fields
-from datetime import datetime, timezone
-from pathlib import Path
-from typing import Any, Mapping, Optional, Sequence
-
 import base64
 import binascii
 import os
 import re
+
+import logging
+from dataclasses import MISSING, fields
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Mapping, Optional, Sequence
 
 import yaml
 
@@ -3283,11 +3284,14 @@ def _load_observability_config(
         if normalized_path:
             slo_path = Path(normalized_path)
             try:
-                slo_payload = yaml.safe_load(slo_path.read_text(encoding="utf-8")) or {}
-            except FileNotFoundError as exc:  # pragma: no cover - propagujemy z kontekstem
-                raise FileNotFoundError(
-                    f"Nie znaleziono pliku definicji SLO: {slo_path}"
-                ) from exc
+                raw_text = slo_path.read_text(encoding="utf-8")
+            except FileNotFoundError:
+                logging.getLogger("config-loader").warning(
+                    "Pomijam brakujący plik definicji SLO: %s", slo_path
+                )
+                slo_payload = {}
+            else:
+                slo_payload = yaml.safe_load(raw_text) or {}
             if not isinstance(slo_payload, Mapping):
                 raise ValueError(
                     f"Plik definicji SLO {slo_path} musi zawierać mapę z wpisami"

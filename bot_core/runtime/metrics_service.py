@@ -87,6 +87,21 @@ except Exception:  # pragma: no cover - starsze gałęzie bez presetów
 _LOGGER = logging.getLogger(__name__)
 
 
+def _snapshot_has_field(snapshot: object, field: str) -> bool:
+    """Safely check proto field presence without propagating ValueError."""
+
+    has_method = getattr(snapshot, "HasField", None)
+    if callable(has_method):
+        try:
+            return bool(has_method(field))
+        except ValueError:
+            pass
+    value = getattr(snapshot, field, None)
+    if isinstance(value, (int, float)):
+        return value != 0
+    return value not in (None, "")
+
+
 # =============================================================================
 # Sinki metryk
 # =============================================================================
@@ -122,9 +137,9 @@ class JsonlSink:
     def handle_snapshot(self, snapshot) -> None:
         record = {
             "generated_at": _timestamp_to_iso(snapshot.generated_at)
-            if getattr(snapshot, "HasField", None) and snapshot.HasField("generated_at")
+            if _snapshot_has_field(snapshot, "generated_at")
             else None,
-            "fps": snapshot.fps if getattr(snapshot, "HasField", None) and snapshot.HasField("fps") else None,
+            "fps": snapshot.fps if _snapshot_has_field(snapshot, "fps") else None,
             "notes": snapshot.notes,
         }
         line = json.dumps(record, ensure_ascii=False)
@@ -191,7 +206,7 @@ class ReduceMotionAlertSink:
         ]
         if disable_secondary:
             body_lines.append(f"Próg wyłączania nakładek: {disable_secondary} FPS")
-        if getattr(snapshot, "HasField", None) and snapshot.HasField("fps"):
+        if _snapshot_has_field(snapshot, "fps"):
             body_lines.append(f"Ostatnia próbka FPS={snapshot.fps:.2f}")
         body = "\n".join(body_lines)
 
@@ -206,7 +221,7 @@ class ReduceMotionAlertSink:
             context["window_count"] = str(window_count)
         if disable_secondary is not None:
             context["disable_secondary_fps"] = str(disable_secondary)
-        if getattr(snapshot, "HasField", None) and snapshot.HasField("fps"):
+        if _snapshot_has_field(snapshot, "fps"):
             context["fps"] = f"{snapshot.fps:.4f}"
         if tag:
             context["tag"] = str(tag)
@@ -285,7 +300,7 @@ class OverlayBudgetAlertSink:
             body_lines.append(f"Próg wyłączania nakładek: {disable_secondary} FPS")
         if fps_target is not None:
             body_lines.append(f"Docelowe FPS: {fps_target}")
-        if getattr(snapshot, "HasField", None) and snapshot.HasField("fps"):
+        if _snapshot_has_field(snapshot, "fps"):
             body_lines.append(f"Ostatnia próbka FPS={snapshot.fps:.2f}")
         body = "\n".join(body_lines)
 
@@ -302,7 +317,7 @@ class OverlayBudgetAlertSink:
             context["fps_target"] = str(fps_target)
         if window_count is not None:
             context["window_count"] = str(window_count)
-        if getattr(snapshot, "HasField", None) and snapshot.HasField("fps"):
+        if _snapshot_has_field(snapshot, "fps"):
             context["fps"] = f"{snapshot.fps:.4f}"
 
         message = AlertMessage(
