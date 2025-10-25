@@ -8,6 +8,39 @@ from types import MappingProxyType
 from typing import Mapping
 
 
+def canonical_alias_map(alias_map: Mapping[str, str] | None) -> dict[str, str]:
+    """Return canonical alias mapping with normalised keys and values."""
+
+    if not alias_map:
+        return {}
+
+    canonical: dict[str, str] = {}
+    for raw_key, raw_target in alias_map.items():
+        key = str(raw_key or "").strip()
+        target = str(raw_target or "").strip()
+        if not key or not target:
+            continue
+        canonical[key] = target
+    return canonical
+
+
+def normalise_suffixes(suffixes: Iterable[str] | None) -> tuple[str, ...]:
+    """Return tuple of unique, normalised suffixes preserving order."""
+
+    if not suffixes:
+        return ()
+
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for raw_suffix in suffixes:
+        suffix = str(raw_suffix or "").strip()
+        if not suffix or suffix in seen:
+            continue
+        seen.add(suffix)
+        ordered.append(suffix)
+    return tuple(ordered)
+
+
 def normalise_alias_map(alias_map: Mapping[str, str] | None) -> dict[str, str]:
     """Return mapping expanded with normalised aliases for lookup."""
 
@@ -151,4 +184,33 @@ class StrategyAliasResolver:
         return type(self)(
             alias_map if alias_map is not None else self.base_alias_map,
             suffixes if suffixes is not None else self._suffixes,
+        )
+
+    def extend(
+        self,
+        *,
+        alias_map: Mapping[str, str] | None = None,
+        suffixes: Iterable[str] | None = None,
+    ) -> "StrategyAliasResolver":
+        """Return resolver with overrides merged into the current base."""
+
+        base_map = canonical_alias_map(self.base_alias_map)
+        override_map = canonical_alias_map(alias_map)
+        merged_map: dict[str, str] = {}
+        if base_map:
+            merged_map.update(base_map)
+        if override_map:
+            merged_map.update(override_map)
+
+        base_suffixes = tuple(self.base_suffixes or self._suffixes)
+        if suffixes is not None:
+            combined_suffixes = normalise_suffixes(
+                base_suffixes + tuple(suffixes)
+            )
+        else:
+            combined_suffixes = base_suffixes
+
+        return type(self)(
+            merged_map or None,
+            combined_suffixes if combined_suffixes else None,
         )
