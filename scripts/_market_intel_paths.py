@@ -84,6 +84,15 @@ def resolve_market_intel_path(
             )
             return candidate
 
+    fallback_file = Path("var/audit/stage6/market_intel.json").expanduser()
+    if fallback_file.exists():
+        print(
+            f"[{log_context}] Brak raportu Market Intel {raw_value or expanded} – "
+            f"używam awaryjnej kopii {fallback_file}.",
+            file=sys.stderr,
+        )
+        return fallback_file
+
     default_pattern_display = default_pattern.as_posix()
     suggestion_output = f"var/market_intel/market_intel_{governor}_$(date -u +%Y%m%dT%H%M%SZ).json"
     suggestion = (

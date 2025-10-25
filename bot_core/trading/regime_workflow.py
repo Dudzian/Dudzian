@@ -20,18 +20,9 @@ from bot_core.trading.engine import TradingParameters
 from bot_core.trading.strategies import StrategyCatalog
 from bot_core.trading.strategy_aliasing import (
     StrategyAliasResolver,
-    canonical_alias_map,
-    normalise_suffixes,
     strategy_key_aliases,
     strategy_name_candidates,
 )
-
-
-class _AliasConfigSentinel:
-    __slots__ = ()
-
-
-_ALIAS_UNSET = _AliasConfigSentinel()
 
 
 @dataclass(frozen=True)
@@ -66,6 +57,15 @@ class RegimeSwitchDecision:
         )
 
 
+@dataclass(frozen=True)
+class RegimeSwitchActivation(RegimeSwitchDecision):
+    """Decision enriched with metadata about fallback execution."""
+
+    used_fallback: bool = False
+    missing_data: tuple[str, ...] = ()
+    blocked_reason: str | None = None
+
+
 class RegimeSwitchWorkflow:
     """High-level controller combining classifier outputs with strategy plugins."""
 
@@ -91,60 +91,6 @@ class RegimeSwitchWorkflow:
             )
             cls._ALIAS_RESOLVER = resolver
         return resolver
-
-    def _alias_resolver_instance(self) -> StrategyAliasResolver:
-        override = getattr(self, "_alias_resolver_override", None)
-        if override is not None:
-            return override
-        return type(self)._alias_resolver()
-
-    def configure_strategy_aliases(
-        self,
-        alias_map: Mapping[str, str] | None | _AliasConfigSentinel = _ALIAS_UNSET,
-        *,
-        suffixes: Iterable[str] | None | _AliasConfigSentinel = _ALIAS_UNSET,
-    ) -> None:
-        """Update alias overrides used during metadata collection."""
-
-        current_map = canonical_alias_map(self._strategy_alias_map_override)
-        if alias_map is _ALIAS_UNSET:
-            target_map = current_map
-            alias_override: Mapping[str, str] | None = self._strategy_alias_map_override
-        else:
-            target_map = canonical_alias_map(alias_map)
-            alias_override = target_map or None
-
-        current_suffixes = (
-            tuple(self._strategy_alias_suffix_override)
-            if self._strategy_alias_suffix_override is not None
-            else ()
-        )
-        if suffixes is _ALIAS_UNSET:
-            target_suffixes = current_suffixes
-            suffix_override: Iterable[str] | None = self._strategy_alias_suffix_override
-        elif suffixes is None:
-            target_suffixes = ()
-            suffix_override = None
-        else:
-            target_suffixes = normalise_suffixes(suffixes)
-            suffix_override = target_suffixes
-
-        if target_map == current_map and target_suffixes == current_suffixes:
-            return
-
-        base_resolver = type(self)._alias_resolver()
-        override_resolver = base_resolver.extend(
-            alias_map=alias_override,
-            suffixes=suffix_override,
-        )
-        self._alias_resolver_override = (
-            None if override_resolver is base_resolver else override_resolver
-        )
-        self._strategy_alias_map_override = alias_override
-        self._strategy_alias_suffix_override = (
-            tuple(suffix_override) if suffix_override is not None else None
-        )
-        self._strategy_metadata_cache.clear()
 
     def __init__(
         self,
@@ -190,27 +136,6 @@ class RegimeSwitchWorkflow:
         self._strategy_metadata_cache: Dict[
             str, tuple[Mapping[str, object], str | None] | None
         ] = {}
-
-        base_resolver = type(self)._alias_resolver()
-        alias_override = canonical_alias_map(strategy_alias_map)
-        suffix_override = (
-            normalise_suffixes(strategy_alias_suffixes)
-            if strategy_alias_suffixes is not None
-            else None
-        )
-        override_resolver = base_resolver.extend(
-            alias_map=alias_override,
-            suffixes=suffix_override,
-        )
-        self._alias_resolver_override: StrategyAliasResolver | None = (
-            None if override_resolver is base_resolver else override_resolver
-        )
-        self._strategy_alias_map_override: Mapping[str, str] | None = (
-            alias_override or None
-        )
-        self._strategy_alias_suffix_override: tuple[str, ...] | None = (
-            tuple(suffix_override) if suffix_override is not None else None
-        )
 
         self._default_strategy_weights = self._build_default_weights(default_weights)
         self._parameter_overrides = self._build_parameter_overrides(
@@ -292,6 +217,49 @@ class RegimeSwitchWorkflow:
             assessment.risk_score,
         )
         return decision
+
+    def activate(
+        self,
+        market_data: pd.DataFrame,
+        *,
+        available_data: Iterable[str] = (),
+        symbol: str | None = None,
+        base_parameters: TradingParameters | None = None,
+        parameter_overrides: Mapping[MarketRegime, Mapping[str, float | int]] | None = None,
+    ) -> RegimeSwitchActivation:
+        """Evaluate the current regime and annotate the result with missing data info."""
+
+        parameters = base_parameters or TradingParameters()
+        decision = self.decide(
+            market_data,
+            parameters,
+            symbol=symbol,
+            parameter_overrides=parameter_overrides,
+        )
+        available = {
+            str(item).strip().lower()
+            for item in available_data
+            if str(item).strip()
+        }
+        missing = self._compute_missing_data(decision.required_data, available)
+        blocked_reason = "missing_data" if missing else None
+        return RegimeSwitchActivation(
+            regime=decision.regime,
+            assessment=decision.assessment,
+            summary=decision.summary,
+            weights=decision.weights,
+            parameters=decision.parameters,
+            timestamp=decision.timestamp,
+            strategy_metadata=decision.strategy_metadata,
+            license_tiers=decision.license_tiers,
+            risk_classes=decision.risk_classes,
+            required_data=decision.required_data,
+            capabilities=decision.capabilities,
+            tags=decision.tags,
+            used_fallback=bool(missing),
+            missing_data=missing,
+            blocked_reason=blocked_reason,
+        )
 
     def _select_regime(
         self,
@@ -388,18 +356,15 @@ class RegimeSwitchWorkflow:
                 seen.add(text)
                 bucket.append(text)
 
-        resolver = self._alias_resolver_instance()
+        resolver = type(self)._alias_resolver()
 
         for name in sorted(weights):
-            lookup_sequence = (
-                strategy_name_candidates(
-                    name,
-                    resolver.alias_map,
-                    resolver.suffixes,
-                    normalised=True,
-                )
-                or (name,)
-            )
+            lookup_sequence = strategy_name_candidates(
+                name,
+                resolver.alias_map,
+                resolver.suffixes,
+                normalised=True,
+            ) or (name,)
             metadata_proxy: Mapping[str, object] | None = None
             resolved_name: str | None = None
             for candidate in lookup_sequence:
@@ -491,6 +456,18 @@ class RegimeSwitchWorkflow:
         if parameter_overrides and regime in parameter_overrides:
             overrides.update({str(k): v for k, v in parameter_overrides[regime].items()})
         return overrides
+
+    def _compute_missing_data(
+        self, required_data: Iterable[str], available: set[str]
+    ) -> tuple[str, ...]:
+        missing = []
+        for item in required_data:
+            text = str(item).strip()
+            if not text:
+                continue
+            if text.lower() not in available:
+                missing.append(text)
+        return tuple(dict.fromkeys(missing))
 
     @property
     def last_decision(self) -> RegimeSwitchDecision | None:

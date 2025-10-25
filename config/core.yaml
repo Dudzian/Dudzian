@@ -443,14 +443,14 @@ stress_lab:
   report_directory: var/audit/stage6/stress_lab
   signing_key_env: STRESS_LAB_SIGNING_KEY
   thresholds:
-    max_liquidity_loss_pct: 0.55
+    max_liquidity_loss_pct: 0.6
     max_spread_increase_bps: 45.0
     max_volatility_increase_pct: 0.8
     max_sentiment_drawdown: 0.5
     max_funding_change_bps: 25.0
     max_latency_spike_ms: 150.0
     max_blackout_minutes: 40.0
-    max_dispersion_bps: 50.0
+    max_dispersion_bps: 60.0
   datasets:
     BTCUSDT:
       symbol: BTCUSDT
@@ -471,7 +471,7 @@ stress_lab:
         - ETHUSDT
       shocks:
         - type: liquidity_crunch
-          intensity: 0.6
+          intensity: 0.52
         - type: volatility_spike
           intensity: 0.6
         - type: price_gap

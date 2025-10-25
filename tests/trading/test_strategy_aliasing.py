@@ -6,35 +6,10 @@ import pytest
 
 from bot_core.trading.strategy_aliasing import (
     StrategyAliasResolver,
-    canonical_alias_map,
     normalise_alias_map,
-    normalise_suffixes,
     strategy_key_aliases,
     strategy_name_candidates,
 )
-def test_canonical_alias_map_filters_invalid_and_trims() -> None:
-    result = canonical_alias_map({"  Foo  ": " Bar ", "": "baz", None: "  "})
-    assert result == {"Foo": "Bar"}
-
-
-def test_canonical_alias_map_accepts_iterable_targets() -> None:
-    result = canonical_alias_map(
-        {
-            "day_trading": ["Legacy Breakout", "LegacyBreakout"],
-            "grid_trading": {"aliases": ("Grid Legacy", "grid legacy")},
-        }
-    )
-    assert result["Legacy Breakout"] == "day_trading"
-    assert result["LegacyBreakout"] == "day_trading"
-    assert result["Grid Legacy"] == "grid_trading"
-    assert result["grid legacy"] == "grid_trading"
-
-
-def test_normalise_suffixes_deduplicates_and_trims() -> None:
-    assert normalise_suffixes([" _probing ", "", None, "_probing", "_demo"]) == (
-        "_probing",
-        "_demo",
-    )
 
 
 @pytest.mark.parametrize(
@@ -102,34 +77,3 @@ def test_strategy_alias_resolver_caches_aliases_and_suffixes() -> None:
     derived = resolver.derive(alias_map={"scalping": "scalping"})
     assert "scalping" in derived.alias_map
     assert "scalping" not in resolver.alias_map
-
-
-def test_strategy_alias_resolver_supports_canonical_iterables() -> None:
-    resolver = StrategyAliasResolver(
-        {"day_trading": ("Legacy Breakout", {"more": ["LegacyBreakout"]})},
-        None,
-    )
-    assert resolver.alias_map["Legacy Breakout"] == "day_trading"
-    assert resolver.alias_map["LegacyBreakout"] == "day_trading"
-    candidates = resolver.candidates("LegacyBreakout")
-    assert "day_trading" in candidates
-
-
-def test_strategy_alias_resolver_extend_merges_aliases_and_suffixes() -> None:
-    base = StrategyAliasResolver({"intraday_breakout": "day_trading"}, ("_probing",))
-    extended = base.extend(
-        alias_map={" legacy breakout ": "intraday_breakout"},
-        suffixes=("_legacy", "_probing"),
-    )
-    assert extended is not base
-    assert extended.alias_map["legacy breakout"] == "intraday_breakout"
-    assert "_legacy" in extended.suffixes
-    # original remains unchanged
-    assert "legacy breakout" not in base.alias_map
-    assert "_legacy" not in base.suffixes
-
-
-def test_strategy_alias_resolver_extend_returns_self_when_no_change() -> None:
-    base = StrategyAliasResolver({"intraday_breakout": "day_trading"}, ("_probing",))
-    extended = base.extend()
-    assert extended is base

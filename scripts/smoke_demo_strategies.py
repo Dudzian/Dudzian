@@ -15,6 +15,7 @@ from bot_core.runtime.multi_strategy_scheduler import MultiStrategyScheduler, St
 from bot_core.runtime.pipeline import InMemoryStrategySignalSink, _collect_strategy_definitions
 from bot_core.security.guards import LicenseCapabilityError
 from bot_core.strategies.base import MarketSnapshot, StrategyEngine
+from bot_core.strategies.catalog import DEFAULT_STRATEGY_CATALOG
 from bot_core.strategies.cross_exchange_arbitrage import (
     CrossExchangeArbitrageSettings,
     CrossExchangeArbitrageStrategy,

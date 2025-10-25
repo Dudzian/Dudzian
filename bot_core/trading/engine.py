@@ -22,14 +22,17 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import re
 import warnings
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from itertools import product
 from enum import Enum
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Protocol, Tuple, Union
+from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Protocol, Tuple, Union
 
+from bot_core.trading.exit_reasons import ExitReason
 from bot_core.trading.strategies import StrategyCatalog
 
 import numpy as np
@@ -47,6 +50,50 @@ class SignalType(Enum):
     LONG = 1
     FLAT = 0
     SHORT = -1
+
+
+class ExitReason(str, Enum):
+    """Supported reasons for closing an open trade."""
+
+    SIGNAL = "signal"
+    STOP_LOSS = "stop_loss"
+    TAKE_PROFIT = "take_profit"
+
+    @classmethod
+    def canonical(cls, raw: Any) -> Optional[str]:
+        """Return the canonical representation for a raw exit reason value."""
+
+        if raw is None:
+            return None
+
+        # Gracefully handle pandas missing sentinels without raising warnings.
+        try:
+            if pd.isna(raw):  # type: ignore[arg-type]
+                return None
+        except TypeError:
+            # Some exotic objects (e.g., dicts) do not support ``pd.isna``.
+            pass
+
+        text = str(raw).strip()
+        if not text or text.upper() == "NA":
+            return None
+
+        normalized = re.sub(r"[\s-]+", "_", text, flags=re.UNICODE).lower()
+        if normalized == "stoploss":
+            normalized = cls.STOP_LOSS.value
+        elif normalized == "takeprofit":
+            normalized = cls.TAKE_PROFIT.value
+
+        if normalized in cls.values():
+            return normalized
+
+        return None
+
+    @classmethod
+    def values(cls) -> set[str]:
+        """Return the set of allowed canonical values."""
+
+        return {member.value for member in cls}
 
 class MarketRegime(Enum):
     """Market regime classifications."""
@@ -123,7 +170,7 @@ class Trade:
     pnl: float
     pnl_pct: float
     duration: pd.Timedelta
-    exit_reason: str  # 'signal', 'stop_loss', 'take_profit'
+    exit_reason: str  # canonical reason such as 'signal', 'stop_loss', 'take_profit', 'momentum_fade', 'time_exit'
     commission: float = 0.0
 
 @dataclass(frozen=True)
@@ -150,6 +197,18 @@ class BacktestResult:
     avg_trade_duration: pd.Timedelta
     largest_win: float
     largest_loss: float
+
+
+@dataclass(frozen=True)
+class OptimizationSummary:
+    """Snapshot of the most recent optimisation process."""
+
+    params: TradingParameters
+    score: float
+    iterations: int
+    objective: str
+    result: BacktestResult
+    fallback_used: bool = False
 
 
 @dataclass(frozen=True)
@@ -764,6 +823,7 @@ class RiskManagementService:
 
         managed_direction = pd.Series(0, index=signals.index, dtype=int)
         position_sizes = pd.Series(0.0, index=signals.index, dtype=float)
+        exit_reasons = pd.Series(pd.NA, index=signals.index, dtype='string')
 
         current_position = 0
         current_size = 0.0
@@ -785,6 +845,7 @@ class RiskManagementService:
                 if exit_signal:
                     managed_direction.iloc[i] = 0
                     position_sizes.iloc[i] = 0.0
+                    exit_reasons.iloc[i] = exit_signal
                     self._logger.debug(f"Risk management exit at {timestamp}: {exit_signal}")
                     current_position = 0
                     current_size = 0.0
@@ -818,6 +879,7 @@ class RiskManagementService:
                 entry_time = None
                 managed_direction.iloc[i] = 0
                 position_sizes.iloc[i] = 0.0
+                exit_reasons.iloc[i] = ExitReason.SIGNAL.value
 
             elif current_position != 0:
                 # Maintain current position and size
@@ -828,10 +890,15 @@ class RiskManagementService:
                 managed_direction.iloc[i] = 0
                 position_sizes.iloc[i] = 0.0
 
-        return pd.DataFrame({
+        managed_frame = pd.DataFrame({
             'direction': managed_direction.astype(int),
             'size': position_sizes.astype(float),
         })
+
+        if exit_reasons.notna().any():
+            managed_frame['exit_reason'] = exit_reasons
+
+        return managed_frame
     
     def _check_exit_conditions(self, position: int, entry_price: float, 
                              current_price: float, atr: float, params: TradingParameters) -> Optional[str]:
@@ -843,23 +910,23 @@ class RiskManagementService:
             # Stop loss
             stop_loss_price = entry_price - (atr * params.stop_loss_atr_mult)
             if current_price <= stop_loss_price:
-                return "stop_loss"
+                return ExitReason.STOP_LOSS.value
             
             # Take profit
             take_profit_price = entry_price + (atr * params.take_profit_atr_mult)
             if current_price >= take_profit_price:
-                return "take_profit"
+                return ExitReason.TAKE_PROFIT.value
                 
         elif position < 0:  # Short position
             # Stop loss
             stop_loss_price = entry_price + (atr * params.stop_loss_atr_mult)
             if current_price >= stop_loss_price:
-                return "stop_loss"
+                return ExitReason.STOP_LOSS.value
             
             # Take profit
             take_profit_price = entry_price - (atr * params.take_profit_atr_mult)
             if current_price <= take_profit_price:
-                return "take_profit"
+                return ExitReason.TAKE_PROFIT.value
         
         return None
     
@@ -989,6 +1056,8 @@ class VectorizedBacktestEngine:
         direction = positions.get('direction', pd.Series(index=positions.index, dtype=float)).astype(int)
         size = positions.get('size', pd.Series(index=positions.index, dtype=float)).astype(float)
 
+        exit_reasons = self._prepare_exit_reason_series(positions, direction.index)
+
         # Find signal changes
         signal_changes = direction.diff().fillna(direction)
         trade_points = signal_changes != 0
@@ -1024,21 +1093,15 @@ class VectorizedBacktestEngine:
                     duration = timestamp - entry_timestamp
 
                     # Determine exit reason
-                    recorded_reason = None
-                    if exit_reasons is not None and i < len(exit_reasons):
-                        recorded_reason = exit_reasons.iloc[i]
-                    if pd.isna(recorded_reason):
-                        recorded_reason = None
+                    recorded_reason = pd.NA
+                    if exit_reasons is not None:
+                        recorded_reason = exit_reasons.get(timestamp, pd.NA)
 
-                    if recorded_reason:
-                        exit_reason = str(recorded_reason)
-                    elif signal == 0:
-                        exit_reason = "signal"
+                    canonical_reason = ExitReason.canonical(recorded_reason)
+                    if canonical_reason is None:
+                        exit_reason = ExitReason.SIGNAL.value
                     else:
-                        # When risk metadata is unavailable fall back to a signal-driven
-                        # reversal reason so downstream consumers retain semantic parity with
-                        # the managed position output.
-                        exit_reason = "signal_reversal"
+                        exit_reason = canonical_reason
                     
                     trades.append({
                         'entry_time': entry_timestamp,
@@ -1069,8 +1132,48 @@ class VectorizedBacktestEngine:
                 position_size = max(signal_size, position_size)
 
         return pd.DataFrame(trades)
-    
-    def _calculate_comprehensive_metrics(self, equity_curve: pd.Series, trades_df: pd.DataFrame, 
+
+    def _prepare_exit_reason_series(
+        self,
+        positions: pd.DataFrame,
+        target_index: pd.Index,
+    ) -> Optional[pd.Series]:
+        """Sanitize optional exit reason metadata from managed positions."""
+
+        if 'exit_reason' not in positions:
+            return None
+
+        raw_exit_reasons = positions.get('exit_reason')
+        if raw_exit_reasons is None:
+            return None
+
+        if isinstance(raw_exit_reasons, pd.DataFrame):
+            if raw_exit_reasons.empty or raw_exit_reasons.shape[1] != 1:
+                return None
+            raw_exit_reasons = raw_exit_reasons.iloc[:, 0]
+
+        if not isinstance(raw_exit_reasons, pd.Series):
+            try:
+                raw_exit_reasons = pd.Series(raw_exit_reasons, index=positions.index)
+            except Exception:
+                return None
+
+        aligned_exit_reasons = raw_exit_reasons.reindex(target_index)
+        if aligned_exit_reasons.empty:
+            return None
+
+        canonical = aligned_exit_reasons.map(ExitReason.canonical)
+        canonical = canonical.where(canonical.notna(), pd.NA)
+
+        if canonical.isna().all():
+            return None
+
+        try:
+            return canonical.astype('string')
+        except (TypeError, ValueError):
+            return canonical.astype('object').astype('string')
+
+    def _calculate_comprehensive_metrics(self, equity_curve: pd.Series, trades_df: pd.DataFrame,
                                        returns: pd.Series, risk_free_rate: float) -> Dict[str, Any]:
         """Calculate comprehensive performance metrics."""
         if equity_curve.empty or len(equity_curve) < 2:
@@ -1192,7 +1295,7 @@ class VectorizedBacktestEngine:
 class TradingEngine:
     """Enhanced main trading engine with comprehensive dependency injection."""
     
-    def __init__(self, 
+    def __init__(self,
                  config: Optional[EngineConfig] = None,
                  validator: Optional[DataValidator] = None,
                  indicator_calculator: Optional[IndicatorCalculator] = None,
@@ -1201,18 +1304,19 @@ class TradingEngine:
                  backtest_engine: Optional[BacktestEngine] = None,
                  logger: Optional[logging.Logger] = None):
         """Initialize with comprehensive dependency injection."""
-        
+
         self._config = config or EngineConfig()
         self._logger = logger or self._setup_logger()
-        
+
         # Inject dependencies or use enhanced defaults
         self._validator = validator or DataValidationService(self._logger, self._config)
         self._indicator_calculator = indicator_calculator or TechnicalIndicatorsService(self._logger, self._config)
         self._signal_generator = signal_generator or TradingSignalService(self._logger)
         self._risk_manager = risk_manager or RiskManagementService(self._logger)
         self._backtest_engine = backtest_engine or VectorizedBacktestEngine(self._logger)
-        
+
         self._performance_monitor = PerformanceMonitor(self._logger)
+        self._last_optimization_summary: Optional[OptimizationSummary] = None
     
     def run_strategy(
         self,
@@ -1421,15 +1525,16 @@ class TradingEngine:
 
         return {symbol: value / total for symbol, value in normalized.items()}
     
-    def optimize_parameters(self, data: pd.DataFrame, param_ranges: Dict[str, List], 
-                           objective: str = 'sharpe_ratio', max_iterations: int = 1000) -> Tuple[TradingParameters, float]:
+    def optimize_parameters(self, data: pd.DataFrame, param_ranges: Dict[str, List],
+                           objective: Union[str, Callable[[BacktestResult], Any]] = 'sharpe_ratio',
+                           max_iterations: int = 1000) -> Tuple[TradingParameters, float]:
         """
         Enhanced parameter optimization with smart search.
         
         Args:
             data: OHLCV DataFrame
             param_ranges: Dictionary of parameter ranges
-            objective: Optimization objective
+            objective: Optimization objective as a BacktestResult attribute name or callable
             max_iterations: Maximum optimization iterations
             
         Returns:
@@ -1438,44 +1543,147 @@ class TradingEngine:
         best_params = None
         best_score = float('-inf')
         iterations = 0
+        self._last_optimization_summary = None
         
-        self._logger.info(f"Starting parameter optimization with objective: {objective}")
+        objective_label = (
+            objective if isinstance(objective, str) else getattr(objective, "__name__", repr(objective))
+        )
+
+        self._logger.info(
+            "Starting parameter optimization with objective: %s",
+            objective_label,
+        )
         
-        # Smart grid search with early stopping
-        for rsi_period in param_ranges.get('rsi_period', [14]):
-            for ema_fast in param_ranges.get('ema_fast_period', [12]):
-                for ema_slow in param_ranges.get('ema_slow_period', [26]):
-                    for signal_threshold in param_ranges.get('signal_threshold', [0.1]):
-                        
-                        if iterations >= max_iterations:
-                            break
-                        
-                        if ema_fast >= ema_slow:  # Skip invalid combinations
-                            continue
-                        
-                        try:
-                            params = TradingParameters(
-                                rsi_period=rsi_period,
-                                ema_fast_period=ema_fast,
-                                ema_slow_period=ema_slow,
-                                signal_threshold=signal_threshold
-                            )
-                            
-                            result = self.run_strategy(data, params)
-                            score = getattr(result, objective)
-                            
-                            if score > best_score:
-                                best_score = score
-                                best_params = params
-                                self._logger.info(f"New best {objective}: {score:.4f}")
-                            
-                            iterations += 1
-                            
-                        except Exception as e:
-                            self._logger.warning(f"Optimization failed for params {params}: {e}")
-        
+        base_params = TradingParameters()
+
+        keys_to_optimize = [
+            'rsi_period',
+            'ema_fast_period',
+            'ema_slow_period',
+            'signal_threshold',
+        ]
+
+        search_space: Dict[str, List[Any]] = {}
+
+        for key in keys_to_optimize:
+            default_value = getattr(base_params, key)
+            values = param_ranges.get(key, [default_value])
+            if not values:
+                values = [default_value]
+            search_space[key] = values
+
+        for key, values in param_ranges.items():
+            if key in search_space:
+                continue
+            if not hasattr(base_params, key):
+                continue
+            search_space[key] = values if values else [getattr(base_params, key)]
+
+        param_names = list(search_space.keys())
+
+        def parameter_combinations() -> Iterable[Dict[str, Any]]:
+            for combo_values in product(*(search_space[name] for name in param_names)):
+                combo = dict(zip(param_names, combo_values))
+                ema_fast_value = combo.get('ema_fast_period')
+                ema_slow_value = combo.get('ema_slow_period')
+                if (
+                    ema_fast_value is not None
+                    and ema_slow_value is not None
+                    and ema_fast_value >= ema_slow_value
+                ):
+                    continue
+                yield combo
+
+        for combination in parameter_combinations():
+            if max_iterations is not None and iterations >= max_iterations:
+                break
+            try:
+                params = replace(base_params, **combination)
+            except Exception as error:
+                self._logger.warning(
+                    "Optimization failed before strategy execution for params %s: %s",
+                    combination,
+                    error,
+                )
+                continue
+
+            try:
+                result = self.run_strategy(data, params)
+            except Exception as error:
+                iterations += 1
+                self._logger.warning(
+                    "Optimization failed during strategy execution for params %s: %s",
+                    combination,
+                    error,
+                )
+                continue
+
+            iterations += 1
+
+            try:
+                if callable(objective):
+                    score = objective(result)
+                else:
+                    score = getattr(result, objective)
+            except AttributeError:
+                self._logger.warning(
+                    "Optimization result missing objective '%s' for params %s",
+                    objective,
+                    combination,
+                )
+                continue
+            except Exception as error:
+                self._logger.warning(
+                    "Failed to evaluate objective '%s' for params %s: %s",
+                    objective_label,
+                    combination,
+                    error,
+                )
+                continue
+
+            if not isinstance(score, (int, float, np.floating)):
+                self._logger.warning(
+                    "Objective '%s' produced non-numeric score %s for params %s",
+                    objective_label,
+                    score,
+                    combination,
+                )
+                continue
+
+            score_value = float(score)
+
+            if np.isnan(score_value):
+                self._logger.warning(
+                    "Objective '%s' produced NaN score for params %s",
+                    objective_label,
+                    combination,
+                )
+                continue
+
+            if score_value > best_score:
+                best_score = score_value
+                best_params = params
+                self._logger.info(f"New best {objective_label}: {score_value:.4f}")
+
+        if best_params is None:
+            self._logger.warning(
+                "Optimization completed after %d iterations without a valid score; returning baseline parameters",
+                iterations,
+            )
+            best_params = base_params
+
         self._logger.info(f"Optimization completed after {iterations} iterations")
         return best_params, best_score
+
+    def get_last_optimization_result(self) -> Optional[BacktestResult]:
+        """Return the most recent optimization result if available."""
+        if self._last_optimization_summary is None:
+            return None
+        return self._last_optimization_summary.result
+
+    def get_last_optimization_summary(self) -> Optional[OptimizationSummary]:
+        """Return metadata about the most recent optimization run."""
+        return self._last_optimization_summary
     
     def get_performance_alerts(self) -> List[str]:
         """Get current performance alerts."""

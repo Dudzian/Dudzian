@@ -244,6 +244,7 @@ class EventEmitter:
         self._logger = logging.getLogger("event-emitter")
         self._tag_map: DefaultDict[Tuple[str, str], List[Callable[[Any], None]]] = defaultdict(list)
         self._lock = threading.Lock()
+        self._log_lock = threading.Lock()
 
     def on(
         self,
@@ -310,22 +311,23 @@ class EventEmitter:
         component: Optional[str] = None,
         **extra: Any,
     ) -> None:
-        lvl = level.upper()
-        comp = component or "EventEmitter"
-        record = {
-            "message": message,
-            "level": lvl,
-            "component": comp,
-            "ts": time.time(),
-        }
-        if extra:
-            record.update(extra)
-        try:
-            self.bus.publish(EventType.LOG, record)
-        except Exception:  # pragma: no cover - logowanie defensywne
-            self._logger.debug("Failed to emit log event", exc_info=True)
-        log_method = getattr(self._logger, lvl.lower(), self._logger.info)
-        log_method("[%s] %s", comp, message)
+        with self._log_lock:
+            lvl = level.upper()
+            comp = component or "EventEmitter"
+            record = {
+                "message": message,
+                "level": lvl,
+                "component": comp,
+                "ts": time.time(),
+            }
+            if extra:
+                record.update(extra)
+            try:
+                self.bus.publish(EventType.LOG, record)
+            except Exception:  # pragma: no cover - logowanie defensywne
+                self._logger.debug("Failed to emit log event", exc_info=True)
+            log_method = getattr(self._logger, lvl.lower(), self._logger.info)
+            log_method("[%s] %s", comp, message)
 
     def close(self) -> None:
         try:

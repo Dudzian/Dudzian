@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Mapping, Sequence
 
 from bot_core.strategies.base import MarketSnapshot, StrategyEngine, StrategySignal
+from bot_core.trading.exit_reasons import ExitReason
 
 
 def _ensure_ratio(value: float, *, field: str) -> float:
@@ -115,11 +116,11 @@ class ScalpingStrategy(StrategyEngine):
         state.bars_in_position += 1
         exit_reason = None
         if pnl_ratio >= self._settings.take_profit:
-            exit_reason = "take_profit"
+            exit_reason = ExitReason.TAKE_PROFIT
         elif pnl_ratio <= -self._settings.stop_loss:
-            exit_reason = "stop_loss"
+            exit_reason = ExitReason.STOP_LOSS
         elif state.bars_in_position >= self._settings.max_hold_bars:
-            exit_reason = "time_exit"
+            exit_reason = ExitReason.TIME_EXIT
 
         if exit_reason:
             side = "buy" if state.position == "short" else "sell"
