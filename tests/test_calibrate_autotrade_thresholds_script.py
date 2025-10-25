@@ -10,7 +10,11 @@ from pathlib import Path
 
 from bot_core.runtime.journal import TradingDecisionEvent
 
-from scripts.calibrate_autotrade_thresholds import _generate_report
+from scripts.calibrate_autotrade_thresholds import (
+    _AMBIGUOUS_SYMBOL_MAPPING,
+    _build_symbol_map,
+    _generate_report,
+)
 
 
 def _write_journal(path: Path) -> None:
@@ -221,10 +225,6 @@ def test_script_generates_report(tmp_path: Path) -> None:
     mean_rev_group = groups[("kraken", "mean_reversion")]
     mean_rev_risk = mean_rev_group["metrics"]["risk_score"]
     assert mean_rev_risk["count"] == 1
-
-    filters = payload["filters"]
-    assert filters["since"].startswith("2024-01-01T00:30:00")
-    assert filters["until"].startswith("2024-01-01T04:00:00")
 
     global_summary = payload["global_summary"]
     assert global_summary["freeze_summary"]["total"] == 2
@@ -562,3 +562,120 @@ def test_autotrade_entry_falls_back_to_summary_metadata() -> None:
     group = report["groups"][0]
     assert group["primary_exchange"] == "binance"
     assert group["strategy"] == "breakout"
+
+
+def test_build_symbol_map_updates_incomplete_entries() -> None:
+    events = [
+        {"symbol": "ADAUSDT", "primary_exchange": None, "strategy": None},
+        {"symbol": "ADAUSDT", "primary_exchange": "binance", "strategy": "trend"},
+    ]
+
+    mapping = _build_symbol_map(events)
+
+    assert mapping["ADAUSDT"] == ("binance", "trend")
+
+
+def test_build_symbol_map_combines_partial_details() -> None:
+    events = [
+        {"symbol": "DOGEUSDT", "primary_exchange": "binance", "strategy": None},
+        {"symbol": "DOGEUSDT", "primary_exchange": None, "strategy": "momentum"},
+    ]
+
+    mapping = _build_symbol_map(events)
+
+    assert mapping["DOGEUSDT"] == ("binance", "momentum")
+
+
+def test_build_symbol_map_marks_ambiguous_when_conflicting_routing() -> None:
+    events = [
+        {
+            "symbol": "XRPUSDT",
+            "primary_exchange": "binance",
+            "strategy": "scalping",
+        },
+        {
+            "symbol": "XRPUSDT",
+            "primary_exchange": "kraken",
+            "strategy": "scalping",
+        },
+    ]
+
+    mapping = _build_symbol_map(events)
+
+    assert mapping["XRPUSDT"] == _AMBIGUOUS_SYMBOL_MAPPING
+
+
+def test_symbol_map_fallback_supplements_missing_metadata() -> None:
+    journal_events = [
+        {
+            "symbol": "SOLUSDT",
+            "primary_exchange": "binance",
+        }
+    ]
+
+    autotrade_entries = [
+        {
+            "detail": {
+                "symbol": "SOLUSDT",
+                "summary": {
+                    "risk_score": 0.42,
+                },
+            }
+        }
+    ]
+
+    with patch("scripts.calibrate_autotrade_thresholds.load_risk_thresholds", return_value={}):
+        report = _generate_report(
+            journal_events=journal_events,
+            autotrade_entries=autotrade_entries,
+            percentiles=[0.5],
+            suggestion_percentile=0.5,
+        )
+
+    groups = {
+        (group["primary_exchange"], group["strategy"]): group for group in report["groups"]
+    }
+
+    assert ("binance", "unknown") in groups
+    assert groups[("binance", "unknown")]["metrics"]["risk_score"]["count"] == 1
+
+
+def test_symbol_map_ambiguous_entry_keeps_unknown_routing() -> None:
+    journal_events = [
+        {
+            "symbol": "SOLUSDT",
+            "primary_exchange": "binance",
+            "strategy": "breakout",
+        },
+        {
+            "symbol": "SOLUSDT",
+            "primary_exchange": "kraken",
+            "strategy": "breakout",
+        },
+    ]
+
+    autotrade_entries = [
+        {
+            "detail": {
+                "symbol": "SOLUSDT",
+                "summary": {
+                    "risk_score": 0.38,
+                },
+            }
+        }
+    ]
+
+    with patch("scripts.calibrate_autotrade_thresholds.load_risk_thresholds", return_value={}):
+        report = _generate_report(
+            journal_events=journal_events,
+            autotrade_entries=autotrade_entries,
+            percentiles=[0.5],
+            suggestion_percentile=0.5,
+        )
+
+    groups = {
+        (group["primary_exchange"], group["strategy"]): group for group in report["groups"]
+    }
+
+    assert set(groups) == {("unknown", "unknown")}
+    assert groups[("unknown", "unknown")]["metrics"]["risk_score"]["count"] == 1

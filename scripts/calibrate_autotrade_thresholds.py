@@ -21,6 +21,8 @@ _FREEZE_STATUS_PREFIXES = ("risk_freeze", "auto_risk_freeze")
 _FREEZE_STATUS_EXTRAS = {"risk_unfreeze", "auto_risk_unfreeze"}
 _ABSOLUTE_THRESHOLD_METRICS = {"signal_after_adjustment", "signal_after_clamp"}
 
+_AMBIGUOUS_SYMBOL_MAPPING: tuple[str, str] = ("__ambiguous__", "__ambiguous__")
+
 
 def _parse_datetime(value: object) -> datetime | None:
     if not isinstance(value, str):
@@ -275,6 +277,29 @@ def _resolve_key(exchange: str | None, strategy: str | None) -> tuple[str, str]:
     return normalized_exchange, normalized_strategy
 
 
+def _is_unknown_token(value: str) -> bool:
+    return value.strip().lower() == "unknown"
+
+
+def _key_completeness(key: tuple[str, str]) -> int:
+    exchange, strategy = key
+    score = 0
+    if not _is_unknown_token(exchange):
+        score += 1
+    if not _is_unknown_token(strategy):
+        score += 1
+    return score
+
+
+def _has_conflict(existing: tuple[str, str], candidate: tuple[str, str]) -> bool:
+    for current, new in zip(existing, candidate):
+        if _is_unknown_token(current) or _is_unknown_token(new):
+            continue
+        if current != new:
+            return True
+    return False
+
+
 def _build_symbol_map(events: Iterable[Mapping[str, object]]) -> dict[str, tuple[str, str]]:
     symbol_map: dict[str, tuple[str, str]] = {}
     for event in events:
@@ -284,7 +309,31 @@ def _build_symbol_map(events: Iterable[Mapping[str, object]]) -> dict[str, tuple
         exchange = _normalize_string(event.get("primary_exchange"))
         strategy = _normalize_string(event.get("strategy"))
         key = _resolve_key(exchange, strategy)
-        symbol_map.setdefault(symbol, key)
+        existing = symbol_map.get(symbol)
+        if existing is None:
+            symbol_map[symbol] = key
+            continue
+        if existing == _AMBIGUOUS_SYMBOL_MAPPING:
+            continue
+        if existing == key:
+            continue
+        if _has_conflict(existing, key):
+            symbol_map[symbol] = _AMBIGUOUS_SYMBOL_MAPPING
+            continue
+        merged_exchange = existing[0]
+        merged_strategy = existing[1]
+        candidate_exchange, candidate_strategy = key
+        if not _is_unknown_token(candidate_exchange):
+            merged_exchange = candidate_exchange
+        if not _is_unknown_token(candidate_strategy):
+            merged_strategy = candidate_strategy
+        merged = (merged_exchange, merged_strategy)
+        if merged == existing:
+            continue
+        if _has_conflict(existing, merged):
+            symbol_map[symbol] = _AMBIGUOUS_SYMBOL_MAPPING
+            continue
+        symbol_map[symbol] = merged
     return symbol_map
 
 
@@ -414,7 +463,7 @@ def _resolve_group_from_symbol(
 
     if symbol and (exchange is None or strategy is None):
         mapped = symbol_map.get(symbol)
-        if mapped:
+        if mapped and mapped != _AMBIGUOUS_SYMBOL_MAPPING:
             mapped_exchange, mapped_strategy = mapped
             if exchange is None:
                 candidate = _normalize_string(mapped_exchange)
