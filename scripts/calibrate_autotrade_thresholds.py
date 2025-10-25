@@ -319,11 +319,24 @@ def _load_threshold_payload(path: Path) -> object:
 
 def _load_current_signal_thresholds(
     sources: Iterable[str] | None,
-) -> tuple[dict[str, float], float | None]:
+) -> tuple[dict[str, float], float | None, dict[str, object]]:
     thresholds: dict[str, float] = {}
     current_risk_score: float | None = None
+    source_files: list[str] = []
+    risk_source_files: list[str] = []
+    inline_values: dict[str, float] = {}
+    inline_risk_thresholds: dict[str, float] = {}
     if not sources:
-        return thresholds, current_risk_score
+        return (
+            thresholds,
+            current_risk_score,
+            {
+                "files": source_files,
+                "inline": inline_values,
+                "risk_files": risk_source_files,
+                "risk_inline": inline_risk_thresholds,
+            },
+        )
 
     for source in sources:
         if not source:
@@ -333,19 +346,27 @@ def _load_current_signal_thresholds(
             continue
         path = Path(candidate).expanduser()
         if path.exists():
+            path_str = str(path)
+            if path_str not in source_files:
+                source_files.append(path_str)
             payload = _load_threshold_payload(path)
             if not isinstance(payload, (Mapping, list, tuple)):
                 raise SystemExit(
                     "Plik z progami musi zawierać strukturę słownikową lub listę słowników"
                 )
+            found_risk_in_file = False
             for mapping in _iter_mappings(payload):
                 for metric_name in _SUPPORTED_THRESHOLD_METRICS:
                     value = _resolve_metric_threshold(mapping, metric_name)
                     if value is not None:
+                        numeric_value = float(value)
                         if metric_name == "risk_score":
-                            current_risk_score = float(value)
+                            current_risk_score = numeric_value
+                            found_risk_in_file = True
                         else:
-                            thresholds[metric_name] = float(value)
+                            thresholds[metric_name] = numeric_value
+            if found_risk_in_file and path_str not in risk_source_files:
+                risk_source_files.append(path_str)
             continue
         if "=" not in candidate:
             raise SystemExit(f"Ścieżka z progami nie istnieje: {path}")
@@ -356,11 +377,24 @@ def _load_current_signal_thresholds(
             metric_name_normalized = _normalize_metric_key(metric_name)
             if metric_name_normalized in _SUPPORTED_THRESHOLD_METRICS:
                 if metric_name_normalized == "risk_score":
-                    current_risk_score = float(numeric)
+                    value = float(numeric)
+                    current_risk_score = value
+                    inline_risk_thresholds[metric_name_normalized] = value
                 else:
-                    thresholds[metric_name_normalized] = numeric
+                    value = float(numeric)
+                    thresholds[metric_name_normalized] = value
+                    inline_values[metric_name_normalized] = value
 
-    return thresholds, current_risk_score
+    return (
+        thresholds,
+        current_risk_score,
+        {
+            "files": source_files,
+            "inline": inline_values,
+            "risk_files": risk_source_files,
+            "risk_inline": inline_risk_thresholds,
+        },
+    )
 
 
 def _normalize_risk_threshold_paths(sources: Iterable[str] | None) -> list[Path]:
@@ -970,6 +1004,8 @@ def _generate_report(
     since: datetime | None = None,
     until: datetime | None = None,
     current_signal_thresholds: Mapping[str, float] | None = None,
+    current_threshold_sources: Mapping[str, object] | None = None,
+    cli_risk_score_threshold: float | None = None,
     risk_threshold_sources: Iterable[str] | None = None,
     cli_risk_score: float | None = None,
 ) -> dict[str, object]:
@@ -1161,6 +1197,8 @@ def _generate_report(
     else:
         thresholds = load_risk_thresholds()
         current_risk_score = _extract_risk_score_threshold(thresholds)
+    if cli_risk_score_threshold is not None:
+        current_risk_score = cli_risk_score_threshold
 
     if cli_risk_score is not None:
         current_risk_score = cli_risk_score
@@ -1230,6 +1268,75 @@ def _generate_report(
                 values if isinstance(values, list) else list(values)
             )
             for metric, values in aggregated_values.items()
+        },
+    }
+
+    current_threshold_files: list[str] = []
+    current_threshold_inline: dict[str, float] = {}
+    risk_threshold_inline: dict[str, float] = {}
+    risk_threshold_files_extra: list[str] = []
+    if isinstance(current_threshold_sources, Mapping):
+        raw_files = current_threshold_sources.get("files")
+        if isinstance(raw_files, Iterable) and not isinstance(raw_files, (str, bytes)):
+            seen_files: set[str] = set()
+            for item in raw_files:
+                item_str = str(item)
+                if item_str in seen_files:
+                    continue
+                seen_files.add(item_str)
+                current_threshold_files.append(item_str)
+        raw_inline = current_threshold_sources.get("inline")
+        if isinstance(raw_inline, Mapping):
+            for key, value in raw_inline.items():
+                if not isinstance(key, str):
+                    continue
+                numeric = _coerce_float(value)
+                if numeric is None:
+                    continue
+                current_threshold_inline[_normalize_metric_key(key)] = float(numeric)
+        raw_risk_inline = current_threshold_sources.get("risk_inline")
+        if isinstance(raw_risk_inline, Mapping):
+            for key, value in raw_risk_inline.items():
+                if not isinstance(key, str):
+                    continue
+                numeric = _coerce_float(value)
+                if numeric is None:
+                    continue
+                risk_threshold_inline[_normalize_metric_key(key)] = float(numeric)
+        raw_risk_files = current_threshold_sources.get("risk_files")
+        if isinstance(raw_risk_files, Iterable) and not isinstance(raw_risk_files, (str, bytes)):
+            seen_risk_files: set[str] = set()
+            for item in raw_risk_files:
+                item_str = str(item)
+                if item_str in seen_risk_files:
+                    continue
+                seen_risk_files.add(item_str)
+                risk_threshold_files_extra.append(item_str)
+
+    combined_risk_files: list[str] = []
+    seen_combined_risk_files: set[str] = set()
+    for path in risk_threshold_paths:
+        path_str = str(path)
+        if path_str in seen_combined_risk_files:
+            continue
+        seen_combined_risk_files.add(path_str)
+        combined_risk_files.append(path_str)
+    for path_str in risk_threshold_files_extra:
+        if path_str in seen_combined_risk_files:
+            continue
+        seen_combined_risk_files.add(path_str)
+        combined_risk_files.append(path_str)
+
+    sources_payload = {
+        "journal_events": len(journal_events),
+        "autotrade_entries": len(autotrade_entries),
+        "current_thresholds": {
+            "files": current_threshold_files,
+            "inline": current_threshold_inline,
+        },
+        "risk_thresholds": {
+            "files": combined_risk_files,
+            "inline": risk_threshold_inline,
         },
     }
 
@@ -1338,9 +1445,11 @@ def main(argv: list[str] | None = None) -> int:
 
     journal_events = _load_journal_events(journal_paths, since=since, until=until)
     autotrade_entries = _load_autotrade_entries(args.autotrade_export, since=since, until=until)
-    current_signal_thresholds, cli_risk_score = _load_current_signal_thresholds(
-        args.current_threshold
-    )
+    (
+        current_signal_thresholds,
+        cli_risk_score,
+        current_threshold_sources_payload,
+    ) = _load_current_signal_thresholds(args.current_threshold)
 
     report = _generate_report(
         journal_events=journal_events,
@@ -1350,6 +1459,8 @@ def main(argv: list[str] | None = None) -> int:
         since=since,
         until=until,
         current_signal_thresholds=current_signal_thresholds,
+        current_threshold_sources=current_threshold_sources_payload,
+        cli_risk_score_threshold=cli_risk_score,
         risk_threshold_sources=args.risk_thresholds,
         cli_risk_score=cli_risk_score,
     )

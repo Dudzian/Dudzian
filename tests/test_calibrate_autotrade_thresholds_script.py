@@ -241,6 +241,13 @@ def test_script_generates_report(tmp_path: Path) -> None:
 
     payload = json.loads(output_json.read_text(encoding="utf-8"))
     assert payload["schema"] == "stage6.autotrade.threshold_calibration"
+    sources_payload = payload["sources"]
+    assert sources_payload["current_thresholds"]["files"] == []
+    inline_sources = sources_payload["current_thresholds"]["inline"]
+    assert inline_sources["signal_after_adjustment"] == pytest.approx(0.82)
+    assert inline_sources["signal_after_clamp"] == pytest.approx(0.78)
+    assert sources_payload["risk_thresholds"]["files"] == []
+    assert sources_payload["risk_thresholds"]["inline"] == {}
     groups = {
         (entry["primary_exchange"], entry["strategy"]): entry for entry in payload["groups"]
     }
@@ -348,6 +355,12 @@ def test_script_accepts_cli_risk_score_threshold(tmp_path: Path) -> None:
     )
 
     payload = json.loads(output_json.read_text(encoding="utf-8"))
+    signal_sources = payload["sources"]["current_thresholds"]
+    assert signal_sources["files"] == []
+    assert "risk_score" not in signal_sources["inline"]
+    risk_sources = payload["sources"]["risk_thresholds"]
+    assert risk_sources["files"] == []
+    assert risk_sources["inline"]["risk_score"] == pytest.approx(0.72)
     trend_group = next(
         entry
         for entry in payload["groups"]
@@ -368,7 +381,8 @@ def test_script_accepts_thresholds_from_json_file(tmp_path: Path) -> None:
     thresholds_payload = {
         "overrides": {
             "signal_after_adjustment": "0.81",
-        }
+        },
+        "risk_score": "0.71",
     }
     thresholds_path.write_text(json.dumps(thresholds_payload), encoding="utf-8")
 
@@ -395,6 +409,12 @@ def test_script_accepts_thresholds_from_json_file(tmp_path: Path) -> None:
     )
 
     payload = json.loads(output_json.read_text(encoding="utf-8"))
+    sources_payload = payload["sources"]["current_thresholds"]
+    assert sources_payload["files"] == [str(thresholds_path)]
+    assert sources_payload["inline"]["signal_after_clamp"] == pytest.approx(0.77)
+    risk_sources = payload["sources"]["risk_thresholds"]
+    assert risk_sources["files"] == [str(thresholds_path)]
+    assert risk_sources["inline"] == {}
     trend_group = next(
         entry
         for entry in payload["groups"]
@@ -485,11 +505,43 @@ def test_load_current_thresholds_supports_nested_structures(tmp_path: Path) -> N
     thresholds_path = tmp_path / "nested_thresholds.json"
     thresholds_path.write_text(json.dumps(payload), encoding="utf-8")
 
-    thresholds, risk_score = _load_current_signal_thresholds([str(thresholds_path)])
+    thresholds, risk_score, sources_payload = _load_current_signal_thresholds(
+        [str(thresholds_path)]
+    )
 
     assert thresholds["signal_after_adjustment"] == pytest.approx(0.85)
     assert thresholds["signal_after_clamp"] == pytest.approx(0.74)
     assert risk_score is None
+    assert sources_payload == {
+        "files": [str(thresholds_path)],
+        "inline": {},
+        "risk_files": [],
+        "risk_inline": {},
+    }
+
+
+def test_load_current_thresholds_collects_risk_files(tmp_path: Path) -> None:
+    thresholds_path = tmp_path / "thresholds.json"
+    thresholds_path.write_text(
+        json.dumps(
+            {
+                "risk_score": 0.66,
+                "signal_after_clamp": 0.73,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    thresholds, risk_score, sources_payload = _load_current_signal_thresholds([str(thresholds_path)])
+
+    assert thresholds["signal_after_clamp"] == pytest.approx(0.73)
+    assert risk_score == pytest.approx(0.66)
+    assert sources_payload == {
+        "files": [str(thresholds_path)],
+        "inline": {},
+        "risk_files": [str(thresholds_path)],
+        "risk_inline": {},
+    }
 
 
 def test_group_resolution_prefers_entry_metadata_over_symbol_map() -> None:
@@ -780,6 +832,9 @@ def test_generate_report_uses_custom_risk_threshold_path(
     )
 
     assert calls == [config_path]
+    sources = report["sources"]["risk_thresholds"]
+    assert sources["files"] == [str(config_path)]
+    assert sources["inline"] == {}
     metrics = report["groups"][0]["metrics"]["risk_score"]
     assert metrics["current_threshold"] == pytest.approx(0.42)
 
@@ -826,6 +881,9 @@ def test_generate_report_merges_multiple_risk_threshold_paths(
     )
 
     assert calls == [first, second]
+    sources = report["sources"]["risk_thresholds"]
+    assert sources["files"] == [str(first), str(second)]
+    assert sources["inline"] == {}
     metrics = report["groups"][0]["metrics"]["risk_score"]
     assert metrics["current_threshold"] == pytest.approx(0.88)
 
