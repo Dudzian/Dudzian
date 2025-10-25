@@ -21,6 +21,11 @@ percentyle, które można wykorzystać do aktualizacji konfiguracji
    domyślnymi progami + szybka korekta w CLI), co pozwala porównać nowe
    propozycje z bieżącą konfiguracją `signal_after_adjustment` i
    `signal_after_clamp`.
+4. *(Opcjonalnie)* Konfiguracja progów ryzyka – plik YAML/JSON kompatybilny z
+   `load_risk_thresholds`. Przekaż go przez `--risk-thresholds`, aby w raporcie
+   pojawiła się aktualna wartość `risk_score`. Flagi można powtórzyć dla kilku
+   plików, a ostatnia ścieżka nadpisze poprzednie wartości (podobnie jak
+   warstwy `--current-threshold`).
 
 ## Przykładowe uruchomienie
 
@@ -33,6 +38,7 @@ python scripts/calibrate_autotrade_thresholds.py \
   --since 2024-01-01T00:00:00Z \
   --until 2024-01-31T23:59:59Z \
   --current-threshold signal_after_adjustment=0.8,signal_after_clamp=0.75 \
+  --risk-thresholds config/risk_thresholds.yaml \
   --output-json reports/autotrade_thresholds.json \
   --output-csv reports/autotrade_thresholds.csv \
   --plot-dir reports/autotrade_thresholds_plots
@@ -63,6 +69,12 @@ pliku CSV. Możesz też połączyć plik z dodatkowym nadpisaniem progu w CLI:
 --current-threshold config/current_thresholds.yaml \
 --current-threshold signal_after_clamp=0.78
 ```
+
+Analogicznie `--risk-thresholds` pozwala zaczytać alternatywny plik z
+konfiguracją progów ryzyka (`load_risk_thresholds(config_path=...)`). Wskazane
+ścieżki są przetwarzane w kolejności podania – jeżeli ostatni plik zawiera
+zmodyfikowany `map_regime_to_signal.risk_score`, to właśnie ta wartość pojawi
+się w kolumnie `current_threshold` dla metryki `risk_score`.
 
 Źródło musi wskazywać istniejący plik, który zawiera słownik lub listę
 słowników – w przeciwnym razie skrypt zakończy się z komunikatem o błędzie,
