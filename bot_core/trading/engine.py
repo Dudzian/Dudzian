@@ -24,11 +24,12 @@ import hashlib
 import logging
 import warnings
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from itertools import product
 from enum import Enum
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Protocol, Tuple, Union
+from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Protocol, Tuple, Union
 
 from bot_core.trading.strategies import StrategyCatalog
 
@@ -1421,15 +1422,16 @@ class TradingEngine:
 
         return {symbol: value / total for symbol, value in normalized.items()}
     
-    def optimize_parameters(self, data: pd.DataFrame, param_ranges: Dict[str, List], 
-                           objective: str = 'sharpe_ratio', max_iterations: int = 1000) -> Tuple[TradingParameters, float]:
+    def optimize_parameters(self, data: pd.DataFrame, param_ranges: Dict[str, List],
+                           objective: Union[str, Callable[[BacktestResult], Any]] = 'sharpe_ratio',
+                           max_iterations: int = 1000) -> Tuple[TradingParameters, float]:
         """
         Enhanced parameter optimization with smart search.
         
         Args:
             data: OHLCV DataFrame
             param_ranges: Dictionary of parameter ranges
-            objective: Optimization objective
+            objective: Optimization objective as a BacktestResult attribute name or callable
             max_iterations: Maximum optimization iterations
             
         Returns:
@@ -1439,41 +1441,133 @@ class TradingEngine:
         best_score = float('-inf')
         iterations = 0
         
-        self._logger.info(f"Starting parameter optimization with objective: {objective}")
+        objective_label = (
+            objective if isinstance(objective, str) else getattr(objective, "__name__", repr(objective))
+        )
+
+        self._logger.info(
+            "Starting parameter optimization with objective: %s",
+            objective_label,
+        )
         
-        # Smart grid search with early stopping
-        for rsi_period in param_ranges.get('rsi_period', [14]):
-            for ema_fast in param_ranges.get('ema_fast_period', [12]):
-                for ema_slow in param_ranges.get('ema_slow_period', [26]):
-                    for signal_threshold in param_ranges.get('signal_threshold', [0.1]):
-                        
-                        if iterations >= max_iterations:
-                            break
-                        
-                        if ema_fast >= ema_slow:  # Skip invalid combinations
-                            continue
-                        
-                        try:
-                            params = TradingParameters(
-                                rsi_period=rsi_period,
-                                ema_fast_period=ema_fast,
-                                ema_slow_period=ema_slow,
-                                signal_threshold=signal_threshold
-                            )
-                            
-                            result = self.run_strategy(data, params)
-                            score = getattr(result, objective)
-                            
-                            if score > best_score:
-                                best_score = score
-                                best_params = params
-                                self._logger.info(f"New best {objective}: {score:.4f}")
-                            
-                            iterations += 1
-                            
-                        except Exception as e:
-                            self._logger.warning(f"Optimization failed for params {params}: {e}")
-        
+        base_params = TradingParameters()
+
+        keys_to_optimize = [
+            'rsi_period',
+            'ema_fast_period',
+            'ema_slow_period',
+            'signal_threshold',
+        ]
+
+        search_space: Dict[str, List[Any]] = {}
+
+        for key in keys_to_optimize:
+            default_value = getattr(base_params, key)
+            values = param_ranges.get(key, [default_value])
+            if not values:
+                values = [default_value]
+            search_space[key] = values
+
+        for key, values in param_ranges.items():
+            if key in search_space:
+                continue
+            if not hasattr(base_params, key):
+                continue
+            search_space[key] = values if values else [getattr(base_params, key)]
+
+        param_names = list(search_space.keys())
+
+        def parameter_combinations() -> Iterable[Dict[str, Any]]:
+            for combo_values in product(*(search_space[name] for name in param_names)):
+                combo = dict(zip(param_names, combo_values))
+                ema_fast_value = combo.get('ema_fast_period')
+                ema_slow_value = combo.get('ema_slow_period')
+                if (
+                    ema_fast_value is not None
+                    and ema_slow_value is not None
+                    and ema_fast_value >= ema_slow_value
+                ):
+                    continue
+                yield combo
+
+        for combination in parameter_combinations():
+            if max_iterations is not None and iterations >= max_iterations:
+                break
+            try:
+                params = replace(base_params, **combination)
+            except Exception as error:
+                self._logger.warning(
+                    "Optimization failed before strategy execution for params %s: %s",
+                    combination,
+                    error,
+                )
+                continue
+
+            try:
+                result = self.run_strategy(data, params)
+            except Exception as error:
+                iterations += 1
+                self._logger.warning(
+                    "Optimization failed during strategy execution for params %s: %s",
+                    combination,
+                    error,
+                )
+                continue
+
+            iterations += 1
+
+            try:
+                if callable(objective):
+                    score = objective(result)
+                else:
+                    score = getattr(result, objective)
+            except AttributeError:
+                self._logger.warning(
+                    "Optimization result missing objective '%s' for params %s",
+                    objective,
+                    combination,
+                )
+                continue
+            except Exception as error:
+                self._logger.warning(
+                    "Failed to evaluate objective '%s' for params %s: %s",
+                    objective_label,
+                    combination,
+                    error,
+                )
+                continue
+
+            if not isinstance(score, (int, float, np.floating)):
+                self._logger.warning(
+                    "Objective '%s' produced non-numeric score %s for params %s",
+                    objective_label,
+                    score,
+                    combination,
+                )
+                continue
+
+            score_value = float(score)
+
+            if np.isnan(score_value):
+                self._logger.warning(
+                    "Objective '%s' produced NaN score for params %s",
+                    objective_label,
+                    combination,
+                )
+                continue
+
+            if score_value > best_score:
+                best_score = score_value
+                best_params = params
+                self._logger.info(f"New best {objective_label}: {score_value:.4f}")
+
+        if best_params is None:
+            self._logger.warning(
+                "Optimization completed after %d iterations without a valid score; returning baseline parameters",
+                iterations,
+            )
+            best_params = base_params
+
         self._logger.info(f"Optimization completed after {iterations} iterations")
         return best_params, best_score
     
