@@ -2,14 +2,18 @@ from __future__ import annotations
 
 import pytest
 
+import hashlib
+import json
+from copy import deepcopy
 from dataclasses import replace
 
 from datetime import datetime, timedelta, timezone
 from types import MappingProxyType
-from typing import Iterable
+from typing import Iterable, Mapping
 
 import pandas as pd
 
+from bot_core.ai.models import ModelScore
 from bot_core.ai.regime import (
     MarketRegime,
     MarketRegimeAssessment,
@@ -32,6 +36,7 @@ from bot_core.strategies.regime_workflow import (
     RegimePresetActivation,
 )
 from bot_core.trading.regime_workflow import RegimeSwitchDecision
+from bot_core.runtime.journal import InMemoryTradingDecisionJournal
 
 
 _ENGINE_MAPPING = {
@@ -257,6 +262,107 @@ class _WorkflowStub:
         self.last_activation = updated
         self._history_entries.append(updated)
         return updated
+
+    def set_availability(self, availability: Iterable[PresetAvailability]) -> None:
+        self._availability = tuple(availability)
+
+    def get_availability(self) -> tuple[PresetAvailability, ...]:
+        return self._availability
+
+    def inspect_presets(
+        self, available_data: Iterable[str] = (), *, now: datetime | None = None
+    ) -> tuple[PresetAvailability, ...]:
+        return self._availability
+
+    def activation_history(
+        self, *, limit: int | None = None
+    ) -> tuple[RegimePresetActivation, ...]:
+        entries: tuple[RegimePresetActivation, ...] = tuple(self._history_entries)
+        if limit is None:
+            return entries
+        try:
+            parsed = int(limit)
+        except (TypeError, ValueError):
+            return entries
+        if parsed <= 0:
+            return entries
+        return entries[-parsed:]
+
+    def activation_history_frame(
+        self, *, limit: int | None = None
+    ) -> pd.DataFrame:
+        entries = self.activation_history(limit=limit)
+        columns = [
+            "activated_at",
+            "regime",
+            "preset_regime",
+            "preset_name",
+            "preset_hash",
+            "used_fallback",
+            "blocked_reason",
+            "missing_data",
+            "license_issues",
+            "recommendation",
+        ]
+        if not entries:
+            return pd.DataFrame(columns=columns)
+        rows = []
+        for activation in entries:
+            rows.append(
+                {
+                    "activated_at": activation.activated_at,
+                    "regime": activation.regime,
+                    "preset_regime": activation.preset_regime,
+                    "preset_name": activation.preset.get("name"),
+                    "preset_hash": activation.version.hash,
+                    "used_fallback": activation.used_fallback,
+                    "blocked_reason": activation.blocked_reason,
+                    "missing_data": activation.missing_data,
+                    "license_issues": activation.license_issues,
+                    "recommendation": activation.recommendation,
+                }
+            )
+        frame = pd.DataFrame(rows, columns=columns)
+        if not frame.empty:
+            frame["regime"] = frame["regime"].apply(
+                lambda r: r.value if isinstance(r, MarketRegime) else r
+            )
+            frame["preset_regime"] = frame["preset_regime"].apply(
+                lambda r: r.value if isinstance(r, MarketRegime) else r
+            )
+        return frame
+
+
+class _InferenceStub:
+    def __init__(
+        self,
+        score: ModelScore,
+        *,
+        data_quality: Mapping[str, Mapping[str, object]] | None = None,
+        model_label: str = "stub-model",
+    ) -> None:
+        self._score = score
+        self.calls: list[dict[str, float]] = []
+        self.contexts: list[dict[str, object]] = []
+        self.is_ready = True
+        self._data_quality = data_quality or {}
+        self.monitor_calls: list[dict[str, float]] = []
+        self.monitor_contexts: list[dict[str, object]] = []
+        self.model_label = model_label
+
+    def score(self, features, *, context=None):  # type: ignore[override]
+        payload = {str(key): float(value) for key, value in features.items()}
+        self.calls.append(payload)
+        context_payload = {str(key): value for key, value in (context or {}).items()}
+        self.contexts.append(context_payload)
+        return self._score
+
+    def monitor_features(self, features, *, context=None):  # type: ignore[override]
+        payload = {str(key): float(value) for key, value in features.items()}
+        self.monitor_calls.append(payload)
+        context_payload = {str(key): value for key, value in (context or {}).items()}
+        self.monitor_contexts.append(context_payload)
+        return deepcopy(self._data_quality)
 
     def set_availability(self, availability: Iterable[PresetAvailability]) -> None:
         self._availability = tuple(availability)
@@ -622,6 +728,7 @@ class _DummyHistory:
 def test_auto_risk_freeze_sync_state(monkeypatch) -> None:
     adapter = _make_sync_adapter()
     statuses: list[dict] = []
+    journal = InMemoryTradingDecisionJournal()
 
     def _collect(evt_or_batch):
         batch = evt_or_batch if isinstance(evt_or_batch, list) else [evt_or_batch]
@@ -639,7 +746,17 @@ def test_auto_risk_freeze_sync_state(monkeypatch) -> None:
         auto_risk_freeze_score=0.3,
     )
 
-    engine = AutoTradeEngine(adapter, lambda *_: None, cfg)
+    engine = AutoTradeEngine(
+        adapter,
+        lambda *_: None,
+        cfg,
+        decision_journal=journal,
+        decision_journal_context={
+            "environment": "paper",
+            "portfolio": "autotrader",
+            "risk_profile": "trend",
+        },
+    )
 
     base_time = 1_700_000_000.0
     current_time = {"value": base_time}
@@ -658,6 +775,13 @@ def test_auto_risk_freeze_sync_state(monkeypatch) -> None:
     assert engine._risk_frozen_until == pytest.approx(base_time + cfg.risk_freeze_seconds)
     assert statuses and statuses[-1]["status"] == "auto_risk_freeze"
     first_detail = statuses[-1]["detail"]
+    assert first_detail["reason"] == "risk_level_and_score_threshold"
+    assert first_detail["risk_level"] == RiskLevel.CRITICAL.value
+    assert first_detail["risk_score"] == pytest.approx(0.9)
+    assert first_detail["triggered_at"] == pytest.approx(base_time)
+    assert first_detail["last_extension_at"] == pytest.approx(base_time)
+    assert first_detail["released_at"] is None
+    assert first_detail["frozen_for"] == pytest.approx(cfg.risk_freeze_seconds)
     assert first_detail["until"] == pytest.approx(engine._risk_frozen_until)
 
     history._summary = _DummySummary(RiskLevel.CRITICAL, 0.95)
@@ -668,8 +792,11 @@ def test_auto_risk_freeze_sync_state(monkeypatch) -> None:
     assert engine._auto_risk_frozen is True
     assert statuses[-1]["status"] == "auto_risk_freeze_extend"
     extend_detail = statuses[-1]["detail"]
+    assert extend_detail["reason"] == "risk_score_increase"
     assert extend_detail["extended_from"] == pytest.approx(first_detail["until"])
     assert extend_detail["until"] == pytest.approx(engine._risk_frozen_until)
+    assert extend_detail["triggered_at"] == pytest.approx(first_detail["triggered_at"])
+    assert extend_detail["last_extension_at"] == pytest.approx(current_time["value"])
 
     history._summary = _DummySummary(RiskLevel.CALM, 0.1)
     current_time["value"] = engine._risk_frozen_until + 5
@@ -679,6 +806,120 @@ def test_auto_risk_freeze_sync_state(monkeypatch) -> None:
     assert engine._auto_risk_frozen is False
     assert engine._risk_frozen_until == 0.0
     assert statuses[-1]["status"] == "auto_risk_unfreeze"
+    release_detail = statuses[-1]["detail"]
+    assert release_detail["reason"] == "risk_recovered"
+    assert release_detail["released_at"] == pytest.approx(current_time["value"])
+    assert release_detail["triggered_at"] == pytest.approx(first_detail["triggered_at"])
+    assert release_detail["frozen_for"] == pytest.approx(
+        release_detail["released_at"] - release_detail["triggered_at"]
+    )
+
+    exported = list(journal.export())
+    assert [event["event"] for event in exported][-3:] == [
+        "auto_risk_freeze",
+        "auto_risk_freeze_extend",
+        "auto_risk_unfreeze",
+    ]
+    freeze_event = exported[-3]
+    assert freeze_event["mode"] == "auto"
+    assert freeze_event["risk_level"] == RiskLevel.CRITICAL.value
+    extend_event = exported[-2]
+    assert extend_event["reason"] == "risk_score_increase"
+    assert extend_event["mode"] == "auto"
+    unfreeze_event = exported[-1]
+    assert unfreeze_event["mode"] == "auto"
+    assert float(unfreeze_event["frozen_for"]) == pytest.approx(
+        release_detail["frozen_for"]
+    )
+
+
+def test_manual_risk_freeze_telemetry(monkeypatch) -> None:
+    adapter = _make_sync_adapter()
+    statuses: list[dict] = []
+    journal = InMemoryTradingDecisionJournal()
+
+    def _collect(evt_or_batch):
+        batch = evt_or_batch if isinstance(evt_or_batch, list) else [evt_or_batch]
+        for evt in batch:
+            statuses.append(evt.payload)
+
+    adapter.subscribe(EventType.AUTOTRADE_STATUS, _collect)
+
+    cfg = AutoTradeConfig(symbol="BTCUSDT", risk_freeze_seconds=120)
+    engine = AutoTradeEngine(
+        adapter,
+        lambda *_: None,
+        cfg,
+        decision_journal=journal,
+        decision_journal_context={
+            "environment": "paper",
+            "portfolio": "autotrader",
+            "risk_profile": "trend",
+        },
+    )
+
+    base_time = 1_701_000_000.0
+    current_time = {"value": base_time}
+
+    def fake_time() -> float:
+        return current_time["value"]
+
+    monkeypatch.setattr("bot_core.trading.auto_trade.time.time", fake_time)
+    monkeypatch.setattr("bot_core.events.emitter.time.time", fake_time)
+
+    engine.freeze_risk(duration=45, reason="manual_override")
+
+    assert statuses and statuses[-1]["status"] == "risk_freeze"
+    freeze_detail = statuses[-1]["detail"]
+    assert freeze_detail["reason"] == "manual_override"
+    assert freeze_detail["source_reason"] == "manual"
+    assert freeze_detail["triggered_at"] == pytest.approx(base_time)
+    assert freeze_detail["last_extension_at"] == pytest.approx(base_time)
+    assert freeze_detail["released_at"] is None
+    assert freeze_detail["frozen_for"] == pytest.approx(45.0)
+
+    current_time["value"] += 10
+    engine.freeze_risk(duration=90, reason="manual_override")
+
+    assert statuses[-1]["status"] == "risk_freeze_extend"
+    extend_detail = statuses[-1]["detail"]
+    assert extend_detail["extended_from"] == pytest.approx(freeze_detail["until"])
+    assert extend_detail["triggered_at"] == pytest.approx(freeze_detail["triggered_at"])
+    assert extend_detail["last_extension_at"] == pytest.approx(current_time["value"])
+    assert extend_detail["frozen_for"] == pytest.approx(
+        extend_detail["until"] - extend_detail["triggered_at"]
+    )
+
+    current_time["value"] += 20
+    engine.unfreeze_risk(reason="operator_clear")
+
+    assert statuses[-1]["status"] == "risk_unfreeze"
+    unfreeze_detail = statuses[-1]["detail"]
+    assert unfreeze_detail["reason"] == "manual_override"
+    assert unfreeze_detail["source_reason"] == "operator_clear"
+    assert unfreeze_detail["released_at"] == pytest.approx(current_time["value"])
+    assert unfreeze_detail["triggered_at"] == pytest.approx(freeze_detail["triggered_at"])
+    assert unfreeze_detail["frozen_for"] == pytest.approx(
+        unfreeze_detail["released_at"] - unfreeze_detail["triggered_at"]
+    )
+
+    exported = list(journal.export())
+    assert [event["event"] for event in exported][-3:] == [
+        "risk_freeze",
+        "risk_freeze_extend",
+        "risk_unfreeze",
+    ]
+    freeze_event = exported[-3]
+    assert freeze_event["mode"] == "manual"
+    assert freeze_event["risk_profile"] == "trend"
+    assert float(freeze_event["frozen_for"]) == pytest.approx(45.0)
+    extend_event = exported[-2]
+    assert extend_event["mode"] == "manual"
+    assert extend_event["source_reason"] == "manual"
+    unfreeze_event = exported[-1]
+    assert unfreeze_event["mode"] == "manual"
+    assert unfreeze_event["source_reason"] == "operator_clear"
+    assert unfreeze_event["risk_profile"] == "trend"
 
 
 def test_auto_trade_snapshot_exposes_read_only_state(monkeypatch) -> None:
@@ -806,6 +1047,7 @@ def test_auto_trade_snapshot_exposes_read_only_state(monkeypatch) -> None:
     assert snapshot.risk.manual_reason == "stress"
     assert snapshot.risk.auto_active is True
     assert snapshot.risk.auto_risk_level is RiskLevel.CRITICAL
+    assert snapshot.ai_inference is None
     assert snapshot.regime_decision is not None
     assert snapshot.regime_decision.weights == decision.weights
     assert snapshot.regime_decision.parameters == expected_snapshot_params
@@ -824,6 +1066,7 @@ def test_auto_trade_snapshot_exposes_read_only_state(monkeypatch) -> None:
     refreshed = engine.snapshot()
     assert refreshed.strategy_weights == expected_snapshot_params.ensemble_weights
     assert refreshed.risk.combined_until >= snapshot.risk.combined_until
+    assert refreshed.ai_inference is None
 
 
 def test_auto_trade_engine_inspect_regime_presets_reports_availability() -> None:
@@ -1196,3 +1439,146 @@ def test_auto_trade_engine_summarizes_activation_history() -> None:
     daily_stats = summary["regimes"][MarketRegime.DAILY.value]
     assert daily_stats["license_issue_activations"] == 1
     assert daily_stats["last_activation_at"] == daily_activation.activated_at.isoformat()
+
+
+def test_auto_trade_engine_uses_ai_inference(monkeypatch) -> None:
+    adapter = _make_sync_adapter()
+    signals: list[float] = []
+    signal_payloads: list[dict] = []
+
+    def _collect_signals(evt_or_batch):
+        batch = evt_or_batch if isinstance(evt_or_batch, list) else [evt_or_batch]
+        for evt in batch:
+            signal_payloads.append(evt.payload)
+            signals.append(evt.payload["direction"])
+
+    adapter.subscribe(EventType.SIGNAL, _collect_signals)
+
+    journal = InMemoryTradingDecisionJournal()
+    cfg = AutoTradeConfig(
+        symbol="BTCUSDT",
+        qty=0.25,
+        regime_window=6,
+        activation_threshold=0.0,
+        breakout_window=3,
+        mean_reversion_window=4,
+        mean_reversion_z=0.5,
+    )
+    data_quality_report = {
+        "completeness": {
+            "status": "ok",
+            "timestamp": "2024-03-01T00:00:00+00:00",
+            "expected_features": ["price_close", "indicator_rsi"],
+            "missing_features": [],
+            "null_features": [],
+            "unexpected_features": [],
+            "report_path": "/var/audit/dq/completeness.json",
+        },
+        "bounds": {
+            "status": "alert",
+            "timestamp": "2024-03-01T00:00:01+00:00",
+            "violations": [
+                {
+                    "feature": "price_close",
+                    "value": 78000.0,
+                    "min": 100.0,
+                    "max": 60000.0,
+                    "reason": "out_of_bounds",
+                }
+            ],
+            "monitored_features": ["price_close"],
+            "report_path": "/var/audit/dq/bounds.json",
+        },
+    }
+    inference = _InferenceStub(
+        ModelScore(expected_return_bps=120.0, success_probability=0.8),
+        data_quality=data_quality_report,
+        model_label="stage6-regressor-v1",
+    )
+    engine = AutoTradeEngine(
+        adapter,
+        lambda *_: None,
+        cfg,
+        decision_inference=inference,
+        decision_journal=journal,
+        decision_journal_context={
+            "environment": "paper",
+            "portfolio": "autotrader",
+            "risk_profile": "trend",
+        },
+    )
+    engine.apply_params({"fast": 2, "slow": 5})
+
+    base_time = 1_700_400_000.0
+    current_time = {"value": base_time}
+
+    def fake_time() -> float:
+        return current_time["value"]
+
+    monkeypatch.setattr("bot_core.trading.auto_trade.time.time", fake_time)
+    monkeypatch.setattr("bot_core.events.emitter.time.time", fake_time)
+
+    closes = [10, 9, 8, 7, 6, 7, 8, 9, 10, 9, 8, 7, 6]
+    for px in closes:
+        adapter.push_market_tick("BTCUSDT", price=px)
+
+    assert inference.calls, "expected inference to be invoked"
+    assert inference.monitor_calls, "expected data quality monitoring"
+    assert signal_payloads, "expected at least one signal payload"
+    latest_payload = signal_payloads[-1]
+    ai_meta = latest_payload["metadata"]["ai_inference"]
+    assert ai_meta["expected_return_bps"] == pytest.approx(120.0)
+    assert ai_meta["weight_scaling"] > 1.0
+    regime_key = latest_payload["regime"]
+    base_weights = cfg.strategy_weights[regime_key]
+    expected_trend = base_weights["trend_following"] * ai_meta["weight_scaling"]
+    assert latest_payload["weights"]["trend_following"] == pytest.approx(expected_trend)
+    exported = list(journal.export())
+    assert exported, "expected inference journal event"
+    assert exported[-1]["event"] == "ai_inference"
+    assert exported[-1]["environment"] == "paper"
+    assert float(exported[-1]["expected_return_bps"]) == pytest.approx(120.0)
+    assert exported[-1]["model_label"] == "stage6-regressor-v1"
+    assert exported[-1]["feature_snapshot_version"] == "1"
+    feature_snapshot = json.loads(exported[-1]["feature_snapshot"])
+    expected_features = {
+        key: pytest.approx(value)
+        for key, value in inference.calls[-1].items()
+    }
+    assert set(feature_snapshot) == set(expected_features)
+    for key, expected in expected_features.items():
+        assert feature_snapshot[key] == expected
+    snapshot_bytes = int(exported[-1]["feature_snapshot_bytes"])
+    serialized_features = json.dumps(
+        {k: float(inference.calls[-1][k]) for k in sorted(inference.calls[-1])},
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    assert snapshot_bytes == len(serialized_features)
+    assert (
+        exported[-1]["feature_snapshot_checksum"]
+        == hashlib.sha256(serialized_features).hexdigest()
+    )
+    dq_payload = json.loads(exported[-1]["data_quality"])
+    assert dq_payload["bounds"]["status"] == "alert"
+    assert dq_payload["bounds"]["violations"][0]["feature"] == "price_close"
+    dq_status = json.loads(exported[-1]["data_quality_status"])
+    assert dq_status == {"bounds": "alert", "completeness": "ok"}
+    assert exported[-1]["data_quality_alerts"] == "1"
+    dq_reports = json.loads(exported[-1]["data_quality_reports"])
+    assert dq_reports == [
+        "/var/audit/dq/bounds.json",
+        "/var/audit/dq/completeness.json",
+    ]
+    assert any(key.startswith("price_") for key in inference.calls[-1])
+    assert inference.contexts[-1]["regime"] == regime_key
+    assert inference.monitor_contexts[-1]["symbol"] == cfg.symbol
+    snapshot = engine.snapshot()
+    assert snapshot.ai_inference is not None
+    assert snapshot.ai_inference["expected_return_bps"] == pytest.approx(120.0)
+    assert snapshot.ai_inference["success_probability"] == pytest.approx(0.8)
+    assert "scored_at" in snapshot.ai_inference
+    assert snapshot.ai_inference["model_label"] == "stage6-regressor-v1"
+    assert snapshot.ai_inference["data_quality_status"]["bounds"] == "alert"
+    assert snapshot.ai_inference["data_quality_alerts"] == 1
