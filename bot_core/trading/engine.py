@@ -200,6 +200,18 @@ class BacktestResult:
 
 
 @dataclass(frozen=True)
+class OptimizationSummary:
+    """Snapshot of the most recent optimisation process."""
+
+    params: TradingParameters
+    score: float
+    iterations: int
+    objective: str
+    result: BacktestResult
+    fallback_used: bool = False
+
+
+@dataclass(frozen=True)
 class MultiSessionBacktestResult:
     """Aggregated result for multi-symbol or multi-session backtests."""
 
@@ -1283,7 +1295,7 @@ class VectorizedBacktestEngine:
 class TradingEngine:
     """Enhanced main trading engine with comprehensive dependency injection."""
     
-    def __init__(self, 
+    def __init__(self,
                  config: Optional[EngineConfig] = None,
                  validator: Optional[DataValidator] = None,
                  indicator_calculator: Optional[IndicatorCalculator] = None,
@@ -1292,18 +1304,19 @@ class TradingEngine:
                  backtest_engine: Optional[BacktestEngine] = None,
                  logger: Optional[logging.Logger] = None):
         """Initialize with comprehensive dependency injection."""
-        
+
         self._config = config or EngineConfig()
         self._logger = logger or self._setup_logger()
-        
+
         # Inject dependencies or use enhanced defaults
         self._validator = validator or DataValidationService(self._logger, self._config)
         self._indicator_calculator = indicator_calculator or TechnicalIndicatorsService(self._logger, self._config)
         self._signal_generator = signal_generator or TradingSignalService(self._logger)
         self._risk_manager = risk_manager or RiskManagementService(self._logger)
         self._backtest_engine = backtest_engine or VectorizedBacktestEngine(self._logger)
-        
+
         self._performance_monitor = PerformanceMonitor(self._logger)
+        self._last_optimization_summary: Optional[OptimizationSummary] = None
     
     def run_strategy(
         self,
@@ -1530,6 +1543,7 @@ class TradingEngine:
         best_params = None
         best_score = float('-inf')
         iterations = 0
+        self._last_optimization_summary = None
         
         objective_label = (
             objective if isinstance(objective, str) else getattr(objective, "__name__", repr(objective))
@@ -1660,6 +1674,16 @@ class TradingEngine:
 
         self._logger.info(f"Optimization completed after {iterations} iterations")
         return best_params, best_score
+
+    def get_last_optimization_result(self) -> Optional[BacktestResult]:
+        """Return the most recent optimization result if available."""
+        if self._last_optimization_summary is None:
+            return None
+        return self._last_optimization_summary.result
+
+    def get_last_optimization_summary(self) -> Optional[OptimizationSummary]:
+        """Return metadata about the most recent optimization run."""
+        return self._last_optimization_summary
     
     def get_performance_alerts(self) -> List[str]:
         """Get current performance alerts."""
