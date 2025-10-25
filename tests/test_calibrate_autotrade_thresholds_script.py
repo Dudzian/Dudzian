@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import json
+import math
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -49,6 +50,20 @@ def _write_journal(path: Path) -> None:
             metadata={
                 "signal_after_adjustment": "0.62",
                 "signal_after_clamp": "0.55",
+            },
+        ),
+        TradingDecisionEvent(
+            event_type="ai_inference",
+            timestamp=datetime(2024, 1, 1, 1, 15, tzinfo=timezone.utc),
+            environment="paper",
+            portfolio="core",
+            risk_profile="balanced",
+            symbol="BTCUSDT",
+            primary_exchange="binance",
+            strategy="trend_following",
+            metadata={
+                "signal_after_adjustment": "NaN",
+                "signal_after_clamp": "Infinity",
             },
         ),
         TradingDecisionEvent(
@@ -128,6 +143,17 @@ def _write_autotrade_export(path: Path) -> None:
                 },
             },
             {
+                "timestamp": "2024-01-01T01:45:00Z",
+                "decision": {
+                    "details": {
+                        "symbol": "BTCUSDT",
+                        "primary_exchange": "binance",
+                        "strategy": "trend_following",
+                        "summary": {"risk_score": "NaN"},
+                    }
+                },
+            },
+            {
                 "timestamp": "2024-01-01T02:00:00Z",
                 "detail": {
                     "symbol": "ETHUSDT",
@@ -150,6 +176,18 @@ def _write_autotrade_export(path: Path) -> None:
                         "primary_exchange": "binance",
                         "strategy": "trend_following",
                     },
+                },
+            },
+            {
+                "timestamp": "2024-01-01T03:45:00Z",
+                "status": "auto_risk_freeze",
+                "detail": {
+                    "symbol": "BTCUSDT",
+                    "reason": "risk_score_threshold",
+                    "frozen_for": "NaN",
+                    "primary_exchange": "binance",
+                    "strategy": "trend_following",
+                    "summary": {"risk_score": 0.9},
                 },
             },
         ],
@@ -210,25 +248,29 @@ def test_script_generates_report(tmp_path: Path) -> None:
     assert signal_stats["percentiles"]["p90"] >= 0.48
     assert signal_stats["suggested_threshold"] >= signal_stats["percentiles"]["p90"]
     assert signal_stats["current_threshold"] == 0.82
+    assert all(math.isfinite(value) for value in signal_stats["percentiles"].values())
 
     signal_clamp_stats = trend_group["metrics"]["signal_after_clamp"]
     assert signal_clamp_stats["current_threshold"] == 0.78
+    assert all(math.isfinite(value) for value in signal_clamp_stats["percentiles"].values())
 
     risk_stats = trend_group["metrics"]["risk_score"]
     assert risk_stats["count"] == 1
     assert risk_stats["current_threshold"] >= 0.7
+    assert all(math.isfinite(value) for value in risk_stats["percentiles"].values())
 
     freeze_stats = trend_group["metrics"]["risk_freeze_duration"]
     assert freeze_stats["count"] == 2
     assert freeze_stats["max"] >= 180
+    assert all(math.isfinite(value) for value in freeze_stats["percentiles"].values())
 
     freeze_summary = trend_group["freeze_summary"]
-    assert freeze_summary["total"] == 2
-    assert freeze_summary["auto"] == 1
+    assert freeze_summary["total"] == 3
+    assert freeze_summary["auto"] == 2
     assert freeze_summary["manual"] == 1
     reasons = {item["reason"]: item["count"] for item in freeze_summary["reasons"]}
     assert reasons["manual_override"] == 1
-    assert reasons["risk_score_threshold"] == 1
+    assert reasons["risk_score_threshold"] == 2
     raw_freezes = trend_group["raw_freeze_events"]
     assert {entry["status"] for entry in raw_freezes} >= {"risk_freeze", "auto_risk_freeze"}
 
@@ -237,7 +279,7 @@ def test_script_generates_report(tmp_path: Path) -> None:
     assert mean_rev_risk["count"] == 1
 
     global_summary = payload["global_summary"]
-    assert global_summary["freeze_summary"]["total"] == 2
+    assert global_summary["freeze_summary"]["total"] == 3
     global_signal = global_summary["metrics"]["signal_after_adjustment"]
     assert global_signal["count"] == 2
     assert global_signal["current_threshold"] == 0.82
@@ -245,6 +287,10 @@ def test_script_generates_report(tmp_path: Path) -> None:
 
     raw_values = trend_group["raw_values"]["signal_after_adjustment"]
     assert 0.62 not in raw_values
+    assert all(math.isfinite(value) for value in raw_values)
+
+    for metric_values in trend_group["raw_values"].values():
+        assert all(math.isfinite(value) for value in metric_values)
 
     with output_csv.open("r", encoding="utf-8") as handle:
         reader = csv.DictReader(handle)
@@ -263,6 +309,9 @@ def test_script_generates_report(tmp_path: Path) -> None:
         if row["metric"] == "signal_after_clamp" and row["primary_exchange"] == "binance":
             assert float(row["current_threshold"]) == 0.78
     assert any(row["primary_exchange"] == "__all__" for row in rows)
+
+    for metric_values in payload["global_summary"]["raw_values"].values():
+        assert all(math.isfinite(value) for value in metric_values)
 
 
 def test_script_accepts_thresholds_from_json_file(tmp_path: Path) -> None:
