@@ -160,6 +160,16 @@ def _normalize_string(value: object) -> str | None:
     return candidate or None
 
 
+def _canonicalize_symbol_key(value: object) -> str | None:
+    symbol = _normalize_string(value)
+    if not symbol:
+        return None
+    canonical = symbol.casefold()
+    if not canonical:
+        canonical = symbol.upper()
+    return canonical or None
+
+
 def _canonicalize_identifier(value: str | None) -> str:
     normalized = _normalize_string(value)
     if not normalized:
@@ -458,7 +468,7 @@ def _has_conflict(existing: tuple[str, str], candidate: tuple[str, str]) -> bool
 def _build_symbol_map(events: Iterable[Mapping[str, object]]) -> dict[str, tuple[str, str]]:
     symbol_map: dict[str, tuple[str, str]] = {}
     for event in events:
-        symbol = _normalize_string(event.get("symbol"))
+        symbol = _canonicalize_symbol_key(event.get("symbol"))
         if not symbol:
             continue
         exchange = _normalize_string(event.get("primary_exchange"))
@@ -616,8 +626,9 @@ def _resolve_group_from_symbol(
         if exchange is not None and strategy is not None:
             break
 
-    if symbol and (exchange is None or strategy is None):
-        mapped = symbol_map.get(symbol)
+    canonical_symbol = _canonicalize_symbol_key(symbol) if symbol is not None else None
+    if canonical_symbol and (exchange is None or strategy is None):
+        mapped = symbol_map.get(canonical_symbol)
         if mapped and mapped != _AMBIGUOUS_SYMBOL_MAPPING:
             mapped_exchange, mapped_strategy = mapped
             if exchange is None:
@@ -964,7 +975,8 @@ def _generate_report(
             exchange = base_exchange
             strategy = base_strategy
             if symbol:
-                mapped = symbol_map.get(symbol)
+                canonical_symbol = _canonicalize_symbol_key(symbol)
+                mapped = symbol_map.get(canonical_symbol) if canonical_symbol else None
                 if mapped:
                     mapped_exchange, mapped_strategy = mapped
                     if exchange is None and mapped_exchange not in (None, "unknown"):

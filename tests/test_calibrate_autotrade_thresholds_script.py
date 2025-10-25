@@ -14,6 +14,7 @@ from bot_core.runtime.journal import TradingDecisionEvent
 
 from scripts.calibrate_autotrade_thresholds import (
     _AMBIGUOUS_SYMBOL_MAPPING,
+    _canonicalize_symbol_key,
     _build_symbol_map,
     _generate_report,
     _load_current_signal_thresholds,
@@ -724,7 +725,9 @@ def test_build_symbol_map_updates_incomplete_entries() -> None:
 
     mapping = _build_symbol_map(events)
 
-    assert mapping["ADAUSDT"] == ("binance", "trend")
+    canonical_symbol = _canonicalize_symbol_key("ADAUSDT")
+    assert canonical_symbol is not None
+    assert mapping[canonical_symbol] == ("binance", "trend")
 
 
 def test_build_symbol_map_combines_partial_details() -> None:
@@ -735,7 +738,9 @@ def test_build_symbol_map_combines_partial_details() -> None:
 
     mapping = _build_symbol_map(events)
 
-    assert mapping["DOGEUSDT"] == ("binance", "momentum")
+    canonical_symbol = _canonicalize_symbol_key("DOGEUSDT")
+    assert canonical_symbol is not None
+    assert mapping[canonical_symbol] == ("binance", "momentum")
 
 
 def test_build_symbol_map_marks_ambiguous_when_conflicting_routing() -> None:
@@ -754,7 +759,23 @@ def test_build_symbol_map_marks_ambiguous_when_conflicting_routing() -> None:
 
     mapping = _build_symbol_map(events)
 
-    assert mapping["XRPUSDT"] == _AMBIGUOUS_SYMBOL_MAPPING
+    canonical_symbol = _canonicalize_symbol_key("XRPUSDT")
+    assert canonical_symbol is not None
+    assert mapping[canonical_symbol] == _AMBIGUOUS_SYMBOL_MAPPING
+
+
+def test_build_symbol_map_coalesces_case_variants() -> None:
+    events = [
+        {"symbol": "BtcUsdt", "primary_exchange": "binance", "strategy": "trend"},
+        {"symbol": "BTCUSDT", "primary_exchange": None, "strategy": "TREND"},
+    ]
+
+    mapping = _build_symbol_map(events)
+
+    canonical_symbol = _canonicalize_symbol_key("BTCUSDT")
+    assert canonical_symbol is not None
+    assert set(mapping) == {canonical_symbol}
+    assert mapping[canonical_symbol] == ("binance", "trend")
 
 
 def test_symbol_map_fallback_supplements_missing_metadata() -> None:
@@ -790,6 +811,48 @@ def test_symbol_map_fallback_supplements_missing_metadata() -> None:
 
     assert ("binance", "unknown") in groups
     assert groups[("binance", "unknown")]["metrics"]["risk_score"]["count"] == 1
+
+
+def test_symbol_map_matches_symbols_case_insensitively() -> None:
+    journal_events = [
+        {
+            "symbol": "ethusdt",
+            "primary_exchange": "binance",
+            "strategy": "trend_following",
+        }
+    ]
+
+    mapping = _build_symbol_map(journal_events)
+    canonical_symbol = _canonicalize_symbol_key("ETHUSDT")
+    assert canonical_symbol is not None
+    assert mapping[canonical_symbol] == ("binance", "trend_following")
+
+    autotrade_entries = [
+        {
+            "decision": {
+                "details": {
+                    "symbol": "ETHUSDT",
+                    "summary": {"risk_score": 0.42},
+                }
+            }
+        }
+    ]
+
+    with patch("scripts.calibrate_autotrade_thresholds.load_risk_thresholds", return_value={}):
+        report = _generate_report(
+            journal_events=journal_events,
+            autotrade_entries=autotrade_entries,
+            percentiles=[0.5],
+            suggestion_percentile=0.5,
+        )
+
+    groups = {
+        (group["primary_exchange"], group["strategy"]): group for group in report["groups"]
+    }
+
+    assert ("binance", "trend_following") in groups
+    matched_group = groups[("binance", "trend_following")]
+    assert matched_group["metrics"]["risk_score"]["count"] == 1
 
 
 def test_unknown_routing_display_is_canonicalized() -> None:
