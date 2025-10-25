@@ -31,6 +31,17 @@ _THRESHOLD_VALUE_KEYS = (
 )
 
 _AMBIGUOUS_SYMBOL_MAPPING: tuple[str, str] = ("__ambiguous__", "__ambiguous__")
+_UNKNOWN_IDENTIFIERS: frozenset[str] = frozenset(
+    {
+        "unknown",
+        "__unknown__",
+        "n/a",
+        "na",
+        "none",
+        "null",
+        "unassigned",
+    }
+)
 
 
 def _parse_datetime(value: object) -> datetime | None:
@@ -147,6 +158,16 @@ def _normalize_string(value: object) -> str | None:
         return None
     candidate = str(value).strip()
     return candidate or None
+
+
+def _canonicalize_identifier(value: str | None) -> str:
+    normalized = _normalize_string(value)
+    if not normalized:
+        return "unknown"
+    canonical = normalized.casefold()
+    if canonical in _UNKNOWN_IDENTIFIERS:
+        return "unknown"
+    return canonical or "unknown"
 
 
 def _lookup_first_str(payload: Mapping[str, object], keys: Iterable[str]) -> str | None:
@@ -403,13 +424,16 @@ def _load_autotrade_entries(
 
 
 def _resolve_key(exchange: str | None, strategy: str | None) -> tuple[str, str]:
-    normalized_exchange = (exchange or "unknown").strip() or "unknown"
-    normalized_strategy = (strategy or "unknown").strip() or "unknown"
+    normalized_exchange = _canonicalize_identifier(exchange)
+    normalized_strategy = _canonicalize_identifier(strategy)
     return normalized_exchange, normalized_strategy
 
 
 def _is_unknown_token(value: str) -> bool:
-    return value.strip().lower() == "unknown"
+    normalized = _normalize_string(value)
+    if not normalized:
+        return True
+    return normalized.casefold() in _UNKNOWN_IDENTIFIERS
 
 
 def _key_completeness(key: tuple[str, str]) -> int:
@@ -517,7 +541,7 @@ def _resolve_group_from_symbol(
     symbol: str | None,
     summary: Mapping[str, object] | None,
     symbol_map: Mapping[str, tuple[str, str]],
-) -> tuple[str, str]:
+) -> tuple[tuple[str, str], tuple[str, str]]:
     def _update_from_value(
         value: object,
         current: tuple[str | None, str | None],
@@ -605,7 +629,12 @@ def _resolve_group_from_symbol(
                 if candidate is not None:
                     strategy = candidate
 
-    return _resolve_key(exchange, strategy)
+    key = _resolve_key(exchange, strategy)
+    display = (
+        exchange if exchange is not None else key[0],
+        strategy if strategy is not None else key[1],
+    )
+    return key, display
 
 
 def _compute_percentile(sorted_values: list[float], percentile: float) -> float:
@@ -847,6 +876,39 @@ def _generate_report(
         }
     )
     freeze_events: dict[tuple[str, str], list[dict[str, object]]] = defaultdict(list)
+    display_names: dict[tuple[str, str], tuple[str, str]] = {}
+
+    def _select_display(current: str, candidate: str, canonical: str) -> str:
+        if not candidate:
+            candidate = canonical
+        elif _is_unknown_token(candidate):
+            candidate = canonical
+        if not current:
+            return candidate
+        if _is_unknown_token(current) and not _is_unknown_token(candidate):
+            return candidate
+        if current == canonical and candidate != canonical:
+            return candidate
+        return current
+
+    def _record_display(
+        key: tuple[str, str],
+        exchange: str | None,
+        strategy: str | None,
+    ) -> None:
+        candidate_exchange = exchange if exchange is not None else key[0]
+        candidate_strategy = strategy if strategy is not None else key[1]
+        if _is_unknown_token(candidate_exchange):
+            candidate_exchange = key[0]
+        if _is_unknown_token(candidate_strategy):
+            candidate_strategy = key[1]
+        current = display_names.get(key)
+        if current is None:
+            display_names[key] = (candidate_exchange, candidate_strategy)
+            return
+        display_exchange = _select_display(current[0], candidate_exchange, key[0])
+        display_strategy = _select_display(current[1], candidate_strategy, key[1])
+        display_names[key] = (display_exchange, display_strategy)
 
     def _record_freeze(
         key: tuple[str, str],
@@ -886,6 +948,7 @@ def _generate_report(
         base_exchange = _normalize_string(event.get("primary_exchange"))
         base_strategy = _normalize_string(event.get("strategy"))
         key = _resolve_key(base_exchange, base_strategy)
+        _record_display(key, base_exchange, base_strategy)
         for metric in ("signal_after_adjustment", "signal_after_clamp"):
             value = event.get(metric)
             if value is None:
@@ -909,12 +972,14 @@ def _generate_report(
                     if strategy is None and mapped_strategy not in (None, "unknown"):
                         strategy = mapped_strategy
             freeze_key = _resolve_key(exchange, strategy)
+            _record_display(freeze_key, exchange, strategy)
             _record_freeze(freeze_key, freeze_payload)
 
     for entry in autotrade_entries:
         summary = _extract_summary(entry)
         symbol = _extract_symbol(entry)
-        key = _resolve_group_from_symbol(entry, symbol, summary, symbol_map)
+        key, display = _resolve_group_from_symbol(entry, symbol, summary, symbol_map)
+        _record_display(key, display[0], display[1])
 
         freeze_payloads = list(_iter_freeze_events(entry))
         for freeze_payload in freeze_payloads:
@@ -989,10 +1054,13 @@ def _generate_report(
             aggregated_freeze_summary["reason_counts"].update(freeze_summary["reason_counts"])
         for metric_name, values in metrics.items():
             aggregated_values[metric_name].extend(values)
+        display_exchange, display_strategy = display_names.get(
+            (exchange, strategy), (exchange, strategy)
+        )
         groups.append(
             {
-                "primary_exchange": exchange,
-                "strategy": strategy,
+                "primary_exchange": display_exchange,
+                "strategy": display_strategy,
                 "metrics": metrics_payload,
                 "raw_values": {metric: list(values) for metric, values in raw_snapshot.items()},
                 "freeze_summary": freeze_summary_payload,
