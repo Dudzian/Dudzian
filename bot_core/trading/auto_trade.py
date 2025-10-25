@@ -34,6 +34,11 @@ from bot_core.trading.engine import (
 )
 from bot_core.trading.regime_workflow import RegimeSwitchDecision
 from bot_core.trading.strategies import StrategyCatalog
+from bot_core.trading.strategy_aliasing import (
+    StrategyAliasResolver,
+    strategy_key_aliases,
+    strategy_name_candidates,
+)
 from bot_core.strategies import StrategyPresetWizard
 from bot_core.strategies.regime_workflow import (
     RegimePresetActivation,
@@ -170,12 +175,38 @@ class AutoTradeEngine:
         RiskLevel.CRITICAL: 4,
     }
 
+    _STRATEGY_SUFFIXES: tuple[str, ...] = ("_probing",)
+    _STRATEGY_ALIAS_MAP: Mapping[str, str] = MappingProxyType({
+        "intraday_breakout": "day_trading",
+    })
+    _ALIAS_RESOLVER: StrategyAliasResolver | None = None
+
     _PRESET_ENGINE_MAPPING = {
         "trend_following": "daily_trend_momentum",
         "day_trading": "day_trading",
         "mean_reversion": "mean_reversion",
         "arbitrage": "cross_exchange_arbitrage",
+        "grid_trading": "grid_trading",
+        "options_income": "options_income",
+        "scalping": "scalping",
+        "statistical_arbitrage": "statistical_arbitrage",
+        "volatility_target": "volatility_target",
     }
+
+    @classmethod
+    def _alias_resolver(cls) -> StrategyAliasResolver:
+        resolver = cls._ALIAS_RESOLVER
+        if (
+            resolver is None
+            or resolver.base_alias_map is not cls._STRATEGY_ALIAS_MAP
+            or resolver.base_suffixes != cls._STRATEGY_SUFFIXES
+        ):
+            resolver = StrategyAliasResolver(
+                cls._STRATEGY_ALIAS_MAP,
+                cls._STRATEGY_SUFFIXES,
+            )
+            cls._ALIAS_RESOLVER = resolver
+        return resolver
 
     def __init__(
         self,
@@ -221,7 +252,11 @@ class AutoTradeEngine:
             }
         )
         catalog = strategy_catalog or StrategyCatalog.default()
-        self._strategy_catalog = catalog
+        self._engine_key_cache: Dict[str, str | None] = {}
+        self._strategy_metadata_cache: Dict[
+            str, tuple[Mapping[str, object], str | None] | None
+        ] = {}
+        self._update_strategy_catalog(catalog)
         base_override = {
             "day_trading_momentum_window": int(max(1, self.cfg.breakout_window)),
             "day_trading_volatility_window": int(
@@ -397,13 +432,11 @@ class AutoTradeEngine:
     def _register_strategy_presets(self, workflow: StrategyRegimeWorkflow) -> None:
         signing_key = getattr(self, "_workflow_signing_key", b"autotrade")
         for regime, weights in self._strategy_weights.weights.items():
-            entries = self._build_preset_entries(weights)
+            entries, normalized = self._build_preset_entries(weights)
             if not entries:
                 continue
             metadata = {
-                "ensemble_weights": {
-                    str(name): float(value) for name, value in weights.items()
-                },
+                "ensemble_weights": normalized,
                 "parameter_overrides": dict(
                     self._workflow_parameter_overrides.get(regime, {})
                 ),
@@ -423,14 +456,14 @@ class AutoTradeEngine:
                     exc,
                     exc_info=True,
                 )
-        fallback_entries = self._build_preset_entries({"day_trading": 1.0})
+        fallback_entries, fallback_weights = self._build_preset_entries({"day_trading": 1.0})
         if fallback_entries:
             try:
                 workflow.register_emergency_preset(
                     name="autotrade-emergency",
                     entries=fallback_entries,
                     signing_key=signing_key,
-                    metadata={"ensemble_weights": {"day_trading": 1.0}},
+                    metadata={"ensemble_weights": fallback_weights},
                 )
             except Exception as exc:  # pragma: no cover - defensywne logowanie
                 self._logger.debug(
@@ -439,11 +472,62 @@ class AutoTradeEngine:
 
     def _build_preset_entries(
         self, weights: Mapping[str, float]
-    ) -> List[Mapping[str, object]]:
+    ) -> tuple[List[Mapping[str, object]], Dict[str, float]]:
         entries: List[Mapping[str, object]] = []
-        for name, weight in sorted(weights.items()):
-            engine = self._PRESET_ENGINE_MAPPING.get(name)
+        missing: list[str] = []
+        invalid: list[str] = []
+        zeroed: list[str] = []
+        prepared: list[tuple[str, float]] = []
+        for name, weight in weights.items():
+            key = str(name)
+            try:
+                value = float(weight)
+            except (TypeError, ValueError):
+                invalid.append(key)
+                continue
+            if not math.isfinite(value):
+                invalid.append(key)
+                continue
+            if value <= 0.0:
+                zeroed.append(key)
+                continue
+            prepared.append((key, value))
+
+        if not prepared:
+            if invalid:
+                self._logger.warning(
+                    "Pominięto strategie z nieprawidłowymi wagami: %s",
+                    ", ".join(sorted(set(invalid))),
+                )
+            if zeroed:
+                self._logger.info(
+                    "Pominięto strategie z zerowymi wagami: %s",
+                    ", ".join(sorted(set(zeroed))),
+                )
+            return entries, {}
+
+        total = sum(weight for _, weight in prepared)
+        if total <= 0.0:
+            self._logger.warning(
+                "Nie można zbudować presetu: suma wag (%s) jest niepoprawna",
+                total,
+            )
+            return entries, {}
+
+        normalized_all: Dict[str, float] = {}
+        for key, value in prepared:
+            normalized_all[key] = value / total
+
+        sorted_weights = sorted(
+            normalized_all.items(),
+            key=lambda item: (-item[1], item[0]),
+        )
+
+        applied_weights: Dict[str, float] = {}
+        for name, weight in sorted_weights:
+            engine = self._resolve_engine_key(name)
             if engine is None:
+                missing.append(name)
                 continue
             entry: Dict[str, object] = {
                 "engine": engine,
@@ -451,12 +535,194 @@ class AutoTradeEngine:
                 "parameters": {},
                 "tags": ["auto_trade", name],
                 "metadata": {
-                    "ensemble_weight": float(weight),
+                    "ensemble_weight": weight,
                     "strategy": name,
                 },
             }
             entries.append(entry)
-        return entries
+            applied_weights[name] = weight
+        if applied_weights:
+            applied_total = sum(applied_weights.values())
+            if not math.isclose(applied_total, 1.0):
+                applied_weights = {
+                    name: weight / applied_total for name, weight in applied_weights.items()
+                }
+            for entry in entries:
+                name = str(entry.get("name"))
+                entry_weight = applied_weights.get(name, 0.0)
+                entry["metadata"]["ensemble_weight"] = entry_weight
+        normalized = applied_weights if applied_weights else {}
+        if invalid:
+            self._logger.warning(
+                "Pominięto strategie z nieprawidłowymi wagami: %s",
+                ", ".join(sorted(set(invalid))),
+            )
+        if zeroed:
+            self._logger.info(
+                "Pominięto strategie z zerowymi wagami: %s",
+                ", ".join(sorted(set(zeroed))),
+            )
+        if missing:
+            self._logger.warning(
+                "Pominięto strategie bez zmapowanego silnika: %s", ", ".join(sorted(set(missing)))
+            )
+        return entries, normalized
+
+    @classmethod
+    def _build_engine_cache(cls) -> Dict[str, str | None]:
+        cache: Dict[str, str | None] = {}
+
+        resolver = cls._alias_resolver()
+        suffixes = resolver.suffixes
+
+        def _seed(name: str, engine_key: str) -> None:
+            for alias in strategy_key_aliases(name):
+                cache.setdefault(alias, engine_key)
+
+        for name, engine_key in cls._PRESET_ENGINE_MAPPING.items():
+            if not engine_key:
+                continue
+            canonical = str(engine_key)
+            _seed(name, canonical)
+            _seed(canonical, canonical)
+            for suffix in suffixes:
+                _seed(f"{name}{suffix}", canonical)
+                _seed(f"{canonical}{suffix}", canonical)
+
+        for alias_name, target in resolver.alias_map.items():
+            mapped_engine = cls._PRESET_ENGINE_MAPPING.get(target, target)
+            if not mapped_engine:
+                continue
+            canonical = str(mapped_engine)
+            _seed(alias_name, canonical)
+            for suffix in suffixes:
+                _seed(f"{alias_name}{suffix}", canonical)
+        return cache
+
+    def _update_strategy_catalog(self, catalog: StrategyCatalog) -> None:
+        """Replace strategy catalog and reset engine cache."""
+
+        self._strategy_catalog = catalog
+        self._engine_key_cache = self._build_engine_cache()
+        self._strategy_metadata_cache = {}
+
+    def _resolve_engine_key(self, strategy_name: str) -> str | None:
+        """Return engine key for ``strategy_name`` using mapping, catalog and cache."""
+
+        raw_name = str(strategy_name)
+        cache = getattr(self, "_engine_key_cache", None)
+        if cache is None:
+            cache = self._build_engine_cache()
+            self._engine_key_cache = cache
+
+        def _store(engine_key: str, *aliases: str) -> str:
+            canonical = str(engine_key)
+            for alias in (raw_name, canonical, *aliases):
+                if not alias:
+                    continue
+                for variant in strategy_key_aliases(alias):
+                    cache.setdefault(variant, canonical)
+            return canonical
+
+        if raw_name in cache:
+            cached_value = cache[raw_name]
+            if cached_value is not None:
+                return _store(cached_value)
+
+        candidates: list[str] = []
+        seen: set[str] = set()
+
+        def _append(value: str) -> None:
+            if not value:
+                return
+            if value in seen:
+                return
+            seen.add(value)
+            candidates.append(value)
+
+        resolver = type(self)._alias_resolver()
+        for candidate in strategy_name_candidates(
+            raw_name,
+            resolver.alias_map,
+            resolver.suffixes,
+            normalised=True,
+        ):
+            _append(candidate)
+        _append(raw_name)
+
+        for item in list(candidates):
+            for variant in strategy_key_aliases(item):
+                _append(variant)
+
+        for candidate in candidates:
+            cached_value = cache.get(candidate)
+            if cached_value is not None:
+                return _store(cached_value, candidate)
+            if candidate in cache:
+                continue
+            mapped = self._PRESET_ENGINE_MAPPING.get(candidate)
+            if mapped:
+                return _store(mapped, candidate)
+
+        catalog = getattr(self, "_strategy_catalog", None)
+        if catalog is None:
+            cache[raw_name] = None
+            return None
+
+        for candidate in candidates:
+            if candidate in cache and cache[candidate] is None:
+                continue
+            try:
+                metadata = catalog.metadata_for(candidate)
+            except Exception as exc:  # pragma: no cover - defensywne logowanie
+                self._logger.debug(
+                    "Nie udało się pobrać metadanych strategii %s: %s",
+                    candidate,
+                    exc,
+                    exc_info=True,
+                )
+                metadata = MappingProxyType({})
+
+            engine_key = metadata.get("engine") if isinstance(metadata, Mapping) else None
+            if engine_key:
+                return _store(str(engine_key), candidate)
+
+            create_plugin = getattr(catalog, "create", None)
+            if not callable(create_plugin):
+                continue
+            try:
+                plugin_instance = create_plugin(candidate)
+            except Exception as exc:  # pragma: no cover - defensywne logowanie
+                self._logger.debug(
+                    "Nie udało się utworzyć strategii %s: %s",
+                    candidate,
+                    exc,
+                    exc_info=True,
+                )
+                plugin_instance = None
+
+            if plugin_instance is None:
+                continue
+
+            engine_attr = getattr(plugin_instance, "engine_key", None)
+            if engine_attr:
+                plugin_name = getattr(plugin_instance, "name", None)
+                aliases = [candidate]
+                if plugin_name:
+                    aliases.append(str(plugin_name))
+                return _store(str(engine_attr), *aliases)
+
+            plugin_name = getattr(plugin_instance, "name", None)
+            if plugin_name:
+                plugin_key = str(plugin_name)
+                mapped_plugin = self._PRESET_ENGINE_MAPPING.get(plugin_key)
+                if mapped_plugin:
+                    return _store(mapped_plugin, candidate, plugin_key)
+                if plugin_key == candidate:
+                    return _store(plugin_key, candidate)
+
+        cache[raw_name] = None
+        return None
 
     def _refresh_workflow_presets(self) -> None:
         workflow = getattr(self, "_regime_workflow", None)
@@ -614,8 +880,8 @@ class AutoTradeEngine:
         if isinstance(history, RegimeHistory):
             self._regime_history = history
         catalog = getattr(workflow, "catalog", None)
-        if isinstance(catalog, StrategyCatalog):
-            self._strategy_catalog = catalog
+        if isinstance(catalog, StrategyCatalog) and catalog is not self._strategy_catalog:
+            self._update_strategy_catalog(catalog)
         last_activation = getattr(workflow, "last_activation", None)
         if isinstance(last_activation, RegimePresetActivation):
             self._last_regime_activation = last_activation
@@ -659,6 +925,34 @@ class AutoTradeEngine:
         capabilities: list[str] = []
         tags: list[str] = []
 
+        cache = getattr(self, "_strategy_metadata_cache", None)
+        if cache is None:
+            cache = {}
+            self._strategy_metadata_cache = cache
+
+        sentinel = object()
+
+        def _store_metadata_entry(
+            metadata: Mapping[str, object],
+            resolved: str | None,
+            *aliases: str,
+        ) -> Mapping[str, object]:
+            payload = MappingProxyType(dict(metadata))
+            entry = (payload, resolved)
+            for alias in aliases:
+                if not alias:
+                    continue
+                for variant in strategy_key_aliases(alias):
+                    cache[variant] = entry
+            return payload
+
+        def _store_missing_entry(*aliases: str) -> None:
+            for alias in aliases:
+                if not alias:
+                    continue
+                for variant in strategy_key_aliases(alias):
+                    cache[variant] = None
+
         def _append_unique(bucket: list[str], values: Iterable[str]) -> None:
             seen = set(bucket)
             for value in values:
@@ -668,24 +962,95 @@ class AutoTradeEngine:
                 seen.add(text)
                 bucket.append(text)
 
+        catalog = getattr(self, "_strategy_catalog", None)
+        if catalog is None:
+            return {
+                "strategies": MappingProxyType({}),
+                "summary": MappingProxyType(
+                    {
+                        "license_tiers": tuple(),
+                        "risk_classes": tuple(),
+                        "required_data": tuple(),
+                        "capabilities": tuple(),
+                        "tags": tuple(),
+                    }
+                ),
+            }
+
+        resolver = type(self)._alias_resolver()
+
         for name in sorted(weights):
-            metadata = self._strategy_catalog.metadata_for(name)
-            if not metadata:
+            lookup_sequence = strategy_name_candidates(
+                name,
+                resolver.alias_map,
+                resolver.suffixes,
+                normalised=True,
+            ) or (name,)
+            metadata_proxy: Mapping[str, object] | None = None
+            resolved_name: str | None = None
+            for candidate in lookup_sequence:
+                cached = cache.get(candidate, sentinel)
+                if cached is not sentinel:
+                    if cached is None:
+                        continue
+                    metadata_proxy, cached_resolved = cached
+                    resolved_name = cached_resolved or candidate
+                    metadata_proxy = _store_metadata_entry(
+                        metadata_proxy,
+                        resolved_name,
+                        candidate,
+                        name,
+                    )
+                    break
+                try:
+                    metadata = catalog.metadata_for(candidate)
+                except Exception as exc:  # pragma: no cover - defensywne logowanie
+                    self._logger.debug(
+                        "Nie udało się pobrać metadanych strategii %s: %s",
+                        candidate,
+                        exc,
+                        exc_info=True,
+                    )
+                    _store_missing_entry(candidate)
+                    continue
+                if metadata:
+                    resolved_name = candidate
+                    metadata_proxy = _store_metadata_entry(
+                        metadata,
+                        resolved_name,
+                        candidate,
+                        name,
+                    )
+                    break
+                _store_missing_entry(candidate)
+            if not metadata_proxy:
                 continue
-            strategies[name] = metadata
-            license_value = metadata.get("license_tier")
+            payload = dict(metadata_proxy)
+            payload.setdefault("name", name)
+            if resolved_name and resolved_name != name:
+                payload.setdefault("catalog_name", resolved_name)
+                aliases = [
+                    alias
+                    for alias in lookup_sequence
+                    if alias not in {resolved_name, name}
+                ]
+                if aliases:
+                    payload.setdefault("aliases", tuple(aliases))
+            metadata_payload = MappingProxyType(payload)
+            strategies[name] = metadata_payload
+            license_value = metadata_payload.get("license_tier")
             if isinstance(license_value, str):
                 _append_unique(license_tiers, (license_value,))
-            risk_value = metadata.get("risk_classes")
+            risk_value = metadata_payload.get("risk_classes")
             if isinstance(risk_value, Iterable):
                 _append_unique(risk_classes, risk_value)
-            required_value = metadata.get("required_data")
+            required_value = metadata_payload.get("required_data")
             if isinstance(required_value, Iterable):
                 _append_unique(required_data, required_value)
-            capability_value = metadata.get("capability")
+            capability_value = metadata_payload.get("capability")
             if isinstance(capability_value, str):
                 _append_unique(capabilities, (capability_value,))
-            tags_value = metadata.get("tags")
+            tags_value = metadata_payload.get("tags")
             if isinstance(tags_value, Iterable):
                 _append_unique(tags, tags_value)
 
