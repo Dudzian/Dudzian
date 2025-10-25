@@ -488,6 +488,24 @@ def test_load_current_thresholds_rejects_nan_inline() -> None:
     assert "musi być skończoną liczbą" in str(excinfo.value)
 
 
+def test_load_current_thresholds_rejects_infinite_inline() -> None:
+    with pytest.raises(SystemExit) as excinfo:
+        _load_current_signal_thresholds(["signal_after_adjustment=Infinity"])
+
+    message = str(excinfo.value)
+    assert "musi być skończoną liczbą" in message
+    assert "Infinity" in message
+
+
+def test_load_current_thresholds_rejects_negative_infinite_inline() -> None:
+    with pytest.raises(SystemExit) as excinfo:
+        _load_current_signal_thresholds(["signal_after_adjustment=-Infinity"])
+
+    message = str(excinfo.value)
+    assert "musi być skończoną liczbą" in message
+    assert "-inf" in message.lower()
+
+
 def test_load_current_thresholds_rejects_nan_inline_risk() -> None:
     with pytest.raises(SystemExit) as excinfo:
         _load_current_signal_thresholds(["risk_score=NaN"])
@@ -495,6 +513,25 @@ def test_load_current_thresholds_rejects_nan_inline_risk() -> None:
     message = str(excinfo.value)
     assert "musi być skończoną liczbą" in message
     assert "risk_score" in message
+
+
+def test_load_current_thresholds_rejects_infinite_inline_risk() -> None:
+    with pytest.raises(SystemExit) as excinfo:
+        _load_current_signal_thresholds(["risk_score=Infinity"])
+
+    message = str(excinfo.value)
+    assert "musi być skończoną liczbą" in message
+    assert "risk_score" in message
+
+
+def test_load_current_thresholds_rejects_negative_infinite_inline_risk() -> None:
+    with pytest.raises(SystemExit) as excinfo:
+        _load_current_signal_thresholds(["risk_score=-Infinity"])
+
+    message = str(excinfo.value)
+    assert "musi być skończoną liczbą" in message
+    assert "risk_score" in message
+    assert "-inf" in message.lower()
 
 
 def test_load_current_thresholds_rejects_nan_from_file(tmp_path: Path) -> None:
@@ -509,6 +546,34 @@ def test_load_current_thresholds_rejects_nan_from_file(tmp_path: Path) -> None:
     assert str(path) in message
 
 
+def test_load_current_thresholds_rejects_infinite_from_file(tmp_path: Path) -> None:
+    path = tmp_path / "thresholds.json"
+    path.write_text(json.dumps({"signal_after_clamp": "Infinity"}), encoding="utf-8")
+
+    with pytest.raises(SystemExit) as excinfo:
+        _load_current_signal_thresholds([str(path)])
+
+    message = str(excinfo.value)
+    assert "musi być skończoną liczbą" in message
+    assert "inf" in message.lower()
+    assert str(path) in message
+
+
+def test_load_current_thresholds_rejects_negative_infinite_from_file(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "thresholds.json"
+    path.write_text(json.dumps({"signal_after_clamp": "-Infinity"}), encoding="utf-8")
+
+    with pytest.raises(SystemExit) as excinfo:
+        _load_current_signal_thresholds([str(path)])
+
+    message = str(excinfo.value)
+    assert "musi być skończoną liczbą" in message
+    assert "-inf" in message.lower()
+    assert str(path) in message
+
+
 def test_load_current_thresholds_rejects_nan_risk_from_file(tmp_path: Path) -> None:
     path = tmp_path / "risk_thresholds.json"
     path.write_text(json.dumps({"risk_score": "NaN"}), encoding="utf-8")
@@ -519,6 +584,35 @@ def test_load_current_thresholds_rejects_nan_risk_from_file(tmp_path: Path) -> N
     message = str(excinfo.value)
     assert "musi być skończoną liczbą" in message
     assert "risk_score" in message
+    assert str(path) in message
+
+
+def test_load_current_thresholds_rejects_infinite_risk_from_file(tmp_path: Path) -> None:
+    path = tmp_path / "risk_thresholds.json"
+    path.write_text(json.dumps({"risk_score": "Infinity"}), encoding="utf-8")
+
+    with pytest.raises(SystemExit) as excinfo:
+        _load_current_signal_thresholds([str(path)])
+
+    message = str(excinfo.value)
+    assert "musi być skończoną liczbą" in message
+    assert "risk_score" in message
+    assert str(path) in message
+
+
+def test_load_current_thresholds_rejects_negative_infinite_risk_from_file(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "risk_thresholds.json"
+    path.write_text(json.dumps({"risk_score": "-Infinity"}), encoding="utf-8")
+
+    with pytest.raises(SystemExit) as excinfo:
+        _load_current_signal_thresholds([str(path)])
+
+    message = str(excinfo.value)
+    assert "musi być skończoną liczbą" in message
+    assert "risk_score" in message
+    assert "-inf" in message.lower()
     assert str(path) in message
 
 
