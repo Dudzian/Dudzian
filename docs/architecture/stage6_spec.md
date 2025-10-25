@@ -120,11 +120,8 @@ modułową (`bot_core`).
     równolegle zapisywane w `TradingDecisionJournal` (status, tryb `auto`/`manual`, powód, metadane czasu), aby compliance
     miało pełną ścieżkę audytową niezależną od strumienia statusów runtime.
   - AutoTradeEngine przed publikacją sygnału odpytuje `DecisionModelInference`, aby uzyskać oczekiwany zwrot i prawdopodobieństwo sukcesu (`ai_inference`).
-    Wynik skaluje aktywne wagi strategii oraz jest rejestrowany w `TradingDecisionJournal` razem ze zrzutem cech wejściowych,
-    metrykami (`feature_snapshot_version`, `feature_snapshot_bytes`, `feature_snapshot_checksum`) oraz kontekstem
-    `environment/portfolio`, co pozwala compliance prześledzić wpływ modeli AI na decyzje wykonawcze oraz zweryfikować spójność
-    wektora cech. Dziennik inference zawiera również statusy monitoringu jakości danych (completeness/bounds), liczbę alertów i
-    ścieżki raportów audytowych, aby oficerowie mogli natychmiast ocenić kondycję wektora wejściowego.
+    Wynik skaluje aktywne wagi strategii oraz jest rejestrowany w `TradingDecisionJournal` razem ze zrzutem cech wejściowych i
+    kontekstem `environment/portfolio`, co pozwala compliance prześledzić wpływ modeli AI na decyzje wykonawcze.
 - **Strumień Market Intelligence & Stress Labs:**
   - Rozszerzenie danych o depth-of-book, wolumen w czasie rzeczywistym, wskaźniki funding/sentiment (manifesty Parquet/SQLite).
   - Symulator stresowy nowej generacji (`bot_core/risk/stress_lab.py`) obsługujący scenariusze multi-market oraz blackout

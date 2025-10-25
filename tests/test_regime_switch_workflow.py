@@ -1,3 +1,5 @@
+from collections import Counter
+from types import MappingProxyType
 from datetime import datetime, timezone
 
 import pandas as pd
@@ -10,6 +12,8 @@ from bot_core.ai.regime import (
 )
 from bot_core.strategies import StrategyPresetWizard
 from bot_core.strategies.regime_workflow import RegimePresetActivation, StrategyRegimeWorkflow
+from bot_core.trading.engine import TradingParameters
+from bot_core.trading.regime_workflow import RegimeSwitchWorkflow
 
 
 def _sample_market_data(rows: int = 120) -> pd.DataFrame:
@@ -94,61 +98,71 @@ def test_strategy_regime_workflow_uses_fallback_when_data_missing() -> None:
     classifier = _StaticClassifier(MarketRegime.MEAN_REVERSION)
     history = RegimeHistory(thresholds_loader=classifier.thresholds_loader)
     history.reload_thresholds(thresholds=classifier.thresholds_snapshot())
-    workflow = StrategyRegimeWorkflow(
-        wizard=StrategyPresetWizard(),
+    workflow = RegimeSwitchWorkflow(
         classifier=classifier,  # type: ignore[arg-type]
         history=history,
-    )
-    signing_key = b"test-key"
-    workflow.register_preset(
-        MarketRegime.MEAN_REVERSION,
-        name="mean-core",
-        entries=[{"engine": "mean_reversion"}],
-        signing_key=signing_key,
-        metadata={"ensemble_weights": {"mean_reversion": 1.0}},
     )
     decision = workflow.decide(_sample_market_data(), TradingParameters())
 
     assert isinstance(decision.parameters, TradingParameters)
     assert decision.parameters.ensemble_weights == decision.weights
     assert abs(sum(decision.weights.values()) - 1.0) < 1e-9
-    assert {
-        "trend_following",
-        "day_trading",
+    expected = {
         "mean_reversion",
+        "statistical_arbitrage",
         "arbitrage",
-        "volatility_target",
         "grid_trading",
         "options_income",
-    }.issubset(decision.weights.keys())
+        "scalping",
+    }
+    assert set(decision.weights) == expected
     assert decision.timestamp.tzinfo is None
-    assert decision.license_tiers and "standard" in decision.license_tiers
-    assert "trend_following" in decision.strategy_metadata
-    strategy_meta = decision.strategy_metadata["trend_following"]
-    assert strategy_meta["license_tier"] == "standard"
-    assert "trend_d1" in decision.capabilities
-    assert tuple(strategy_meta["risk_classes"]) == ("directional", "momentum")
-    assert set(strategy_meta["required_data"]) == {"ohlcv", "technical_indicators"}
-    assert set(strategy_meta["tags"]) >= {"trend", "momentum"}
-    assert "momentum" in decision.tags
-    assert "technical_indicators" in decision.required_data
+    assert decision.license_tiers and "professional" in decision.license_tiers
+    assert "mean_reversion" in decision.strategy_metadata
+    strategy_meta = decision.strategy_metadata["mean_reversion"]
+    assert strategy_meta["license_tier"] == "professional"
+    assert "mean_reversion" in decision.capabilities
+    assert set(strategy_meta["risk_classes"]) == {"statistical", "mean_reversion"}
+    assert set(strategy_meta["required_data"]) >= {"ohlcv", "spread_history"}
+    assert set(strategy_meta["tags"]) >= {"mean_reversion", "stat_arbitrage"}
+    assert "stat_arbitrage" in decision.tags
+    assert "spread_history" in decision.required_data
 
 
 def test_regime_workflow_respects_cooldown() -> None:
-    workflow = RegimeSwitchWorkflow(
-        confidence_threshold=0.2,
-        persistence_threshold=0.05,
-        min_switch_cooldown=5,
+    strategy_workflow = _workflow()
+    strategy_workflow.register_preset(
+        MarketRegime.TREND,
+        name="trend-core",
+        entries=[
+            {
+                "engine": "daily_trend_momentum",
+                "required_data": ("ohlcv", "latency_monitoring"),
+            }
+        ],
+        signing_key=b"test-key",
+        metadata={"ensemble_weights": {"trend_following": 1.0}},
+    )
+    strategy_workflow.register_emergency_preset(
+        name="fallback",
+        entries=[
+            {
+                "engine": "mean_reversion",
+                "required_data": ("ohlcv",),
+            }
+        ],
+        signing_key=b"test-key",
+        metadata={"ensemble_weights": {"mean_reversion": 1.0}},
     )
 
-    activation = workflow.activate(
+    activation = strategy_workflow.activate(
         _sample_market_data(),
-        available_data={"ohlcv", "technical_indicators"},  # brak spread_history wymusi fallback
+        available_data={"ohlcv", "spread_history"},
     )
 
     assert activation.used_fallback is True
     assert activation.blocked_reason == "missing_data"
-    assert "spread_history" in activation.missing_data
+    assert "latency_monitoring" in activation.missing_data
 
 
 def test_strategy_regime_workflow_preserves_custom_metadata() -> None:
@@ -177,3 +191,90 @@ def test_strategy_regime_workflow_preserves_custom_metadata() -> None:
     assert preset_meta["notes"] == "demo"
     strategy_entry = activation.preset["strategies"][0]
     assert strategy_entry["metadata"]["custom_flag"] is True
+
+
+def test_regime_workflow_collect_metadata_uses_aliases() -> None:
+    class _AliasCatalog:
+        def __init__(self) -> None:
+            self.calls = Counter()
+
+        def available(self):  # noqa: D401 - test double
+            return ("day_trading",)
+
+        def metadata_for(self, name: str):  # noqa: D401 - test double
+            self.calls[name] += 1
+            if name == "day_trading":
+                return MappingProxyType(
+                    {
+                        "license_tier": "standard",
+                        "risk_classes": ("intraday", "momentum"),
+                        "required_data": ("ohlcv", "technical_indicators"),
+                        "capability": "day_trading",
+                        "tags": ("intraday", "momentum"),
+                    }
+                )
+            return MappingProxyType({})
+
+    workflow = RegimeSwitchWorkflow(catalog=_AliasCatalog())
+    workflow._strategy_metadata_cache.clear()
+
+    metadata = workflow._collect_strategy_metadata(
+        {"intraday_breakout_probing": 1.0}
+    )
+
+    strategies = metadata["strategies"]
+    probing = dict(strategies["intraday_breakout_probing"])
+    assert probing["catalog_name"] == "day_trading"
+    assert "intraday_breakout" in probing["aliases"]
+    assert probing["capability"] == "day_trading"
+    assert metadata["license_tiers"] == ("standard",)
+    assert metadata["risk_classes"] == ("intraday", "momentum")
+    assert metadata["required_data"] == ("ohlcv", "technical_indicators")
+    assert metadata["tags"] == ("intraday", "momentum")
+    assert workflow.catalog.calls["day_trading"] == 1  # type: ignore[attr-defined]
+
+
+def test_regime_workflow_collect_metadata_caches_results() -> None:
+    class _CountingCatalog:
+        def __init__(self) -> None:
+            self.calls = Counter()
+
+        def available(self):  # noqa: D401 - test double
+            return ("custom",)
+
+        def metadata_for(self, name: str):  # noqa: D401 - test double
+            self.calls[name] += 1
+            if name == "custom":
+                return MappingProxyType({"license_tier": "premium"})
+            return MappingProxyType({})
+
+    catalog = _CountingCatalog()
+    workflow = RegimeSwitchWorkflow(catalog=catalog)
+    workflow._strategy_metadata_cache.clear()
+
+    workflow._collect_strategy_metadata({"custom": 1.0})
+    workflow._collect_strategy_metadata({"custom": 1.0})
+
+    assert catalog.calls["custom"] == 1
+
+
+def test_regime_workflow_collect_metadata_caches_missing_entries() -> None:
+    class _MissingCatalog:
+        def __init__(self) -> None:
+            self.calls = Counter()
+
+        def available(self):  # noqa: D401 - test double
+            return ()
+
+        def metadata_for(self, name: str):  # noqa: D401 - test double
+            self.calls[name] += 1
+            return MappingProxyType({})
+
+    catalog = _MissingCatalog()
+    workflow = RegimeSwitchWorkflow(catalog=catalog)
+    workflow._strategy_metadata_cache.clear()
+
+    workflow._collect_strategy_metadata({"unknown": 1.0})
+    workflow._collect_strategy_metadata({"unknown": 1.0})
+
+    assert catalog.calls["unknown"] == 1

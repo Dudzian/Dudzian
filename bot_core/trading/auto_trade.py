@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import datetime as dt
-import hashlib
 import json
 import logging
 import math
@@ -37,6 +36,11 @@ from bot_core.trading.engine import (
 )
 from bot_core.trading.regime_workflow import RegimeSwitchDecision
 from bot_core.trading.strategies import StrategyCatalog
+from bot_core.trading.strategy_aliasing import (
+    StrategyAliasResolver,
+    strategy_key_aliases,
+    strategy_name_candidates,
+)
 from bot_core.strategies import StrategyPresetWizard
 from bot_core.strategies.regime_workflow import (
     PresetAvailability,
@@ -242,6 +246,12 @@ class AutoTradeEngine:
         RiskLevel.CRITICAL: 4,
     }
 
+    _STRATEGY_SUFFIXES: tuple[str, ...] = ("_probing",)
+    _STRATEGY_ALIAS_MAP: Mapping[str, str] = MappingProxyType({
+        "intraday_breakout": "day_trading",
+    })
+    _ALIAS_RESOLVER: StrategyAliasResolver | None = None
+
     _PRESET_ENGINE_MAPPING = {
         "trend_following": "daily_trend_momentum",
         "day_trading": "day_trading",
@@ -253,6 +263,21 @@ class AutoTradeEngine:
         "statistical_arbitrage": "statistical_arbitrage",
         "volatility_target": "volatility_target",
     }
+
+    @classmethod
+    def _alias_resolver(cls) -> StrategyAliasResolver:
+        resolver = cls._ALIAS_RESOLVER
+        if (
+            resolver is None
+            or resolver.base_alias_map is not cls._STRATEGY_ALIAS_MAP
+            or resolver.base_suffixes != cls._STRATEGY_SUFFIXES
+        ):
+            resolver = StrategyAliasResolver(
+                cls._STRATEGY_ALIAS_MAP,
+                cls._STRATEGY_SUFFIXES,
+            )
+            cls._ALIAS_RESOLVER = resolver
+        return resolver
 
     def __init__(
         self,
@@ -350,7 +375,6 @@ class AutoTradeEngine:
             }
         self._last_inference_score: ModelScore | None = None
         self._last_inference_metadata: Dict[str, object] | None = None
-        self._last_inference_scored_at: dt.datetime | None = None
 
         batch_rule = DebounceRule(window=0.1, max_batch=1)
         self.bus.subscribe(EventType.MARKET_TICK, self._on_ticks_batch, rule=batch_rule)
@@ -949,8 +973,8 @@ class AutoTradeEngine:
         if isinstance(history, RegimeHistory):
             self._regime_history = history
         catalog = getattr(workflow, "catalog", None)
-        if isinstance(catalog, StrategyCatalog):
-            self._strategy_catalog = catalog
+        if isinstance(catalog, StrategyCatalog) and catalog is not self._strategy_catalog:
+            self._update_strategy_catalog(catalog)
         last_activation = getattr(workflow, "last_activation", None)
         if isinstance(last_activation, RegimePresetActivation):
             self._last_regime_activation = last_activation
@@ -994,6 +1018,34 @@ class AutoTradeEngine:
         capabilities: list[str] = []
         tags: list[str] = []
 
+        cache = getattr(self, "_strategy_metadata_cache", None)
+        if cache is None:
+            cache = {}
+            self._strategy_metadata_cache = cache
+
+        sentinel = object()
+
+        def _store_metadata_entry(
+            metadata: Mapping[str, object],
+            resolved: str | None,
+            *aliases: str,
+        ) -> Mapping[str, object]:
+            payload = MappingProxyType(dict(metadata))
+            entry = (payload, resolved)
+            for alias in aliases:
+                if not alias:
+                    continue
+                for variant in strategy_key_aliases(alias):
+                    cache[variant] = entry
+            return payload
+
+        def _store_missing_entry(*aliases: str) -> None:
+            for alias in aliases:
+                if not alias:
+                    continue
+                for variant in strategy_key_aliases(alias):
+                    cache[variant] = None
+
         def _append_unique(bucket: list[str], values: Iterable[str]) -> None:
             seen = set(bucket)
             for value in values:
@@ -1003,24 +1055,95 @@ class AutoTradeEngine:
                 seen.add(text)
                 bucket.append(text)
 
+        catalog = getattr(self, "_strategy_catalog", None)
+        if catalog is None:
+            return {
+                "strategies": MappingProxyType({}),
+                "summary": MappingProxyType(
+                    {
+                        "license_tiers": tuple(),
+                        "risk_classes": tuple(),
+                        "required_data": tuple(),
+                        "capabilities": tuple(),
+                        "tags": tuple(),
+                    }
+                ),
+            }
+
+        resolver = type(self)._alias_resolver()
+
         for name in sorted(weights):
-            metadata = self._strategy_catalog.metadata_for(name)
-            if not metadata:
+            lookup_sequence = strategy_name_candidates(
+                name,
+                resolver.alias_map,
+                resolver.suffixes,
+                normalised=True,
+            ) or (name,)
+            metadata_proxy: Mapping[str, object] | None = None
+            resolved_name: str | None = None
+            for candidate in lookup_sequence:
+                cached = cache.get(candidate, sentinel)
+                if cached is not sentinel:
+                    if cached is None:
+                        continue
+                    metadata_proxy, cached_resolved = cached
+                    resolved_name = cached_resolved or candidate
+                    metadata_proxy = _store_metadata_entry(
+                        metadata_proxy,
+                        resolved_name,
+                        candidate,
+                        name,
+                    )
+                    break
+                try:
+                    metadata = catalog.metadata_for(candidate)
+                except Exception as exc:  # pragma: no cover - defensywne logowanie
+                    self._logger.debug(
+                        "Nie udało się pobrać metadanych strategii %s: %s",
+                        candidate,
+                        exc,
+                        exc_info=True,
+                    )
+                    _store_missing_entry(candidate)
+                    continue
+                if metadata:
+                    resolved_name = candidate
+                    metadata_proxy = _store_metadata_entry(
+                        metadata,
+                        resolved_name,
+                        candidate,
+                        name,
+                    )
+                    break
+                _store_missing_entry(candidate)
+            if not metadata_proxy:
                 continue
-            strategies[name] = metadata
-            license_value = metadata.get("license_tier")
+            payload = dict(metadata_proxy)
+            payload.setdefault("name", name)
+            if resolved_name and resolved_name != name:
+                payload.setdefault("catalog_name", resolved_name)
+                aliases = [
+                    alias
+                    for alias in lookup_sequence
+                    if alias not in {resolved_name, name}
+                ]
+                if aliases:
+                    payload.setdefault("aliases", tuple(aliases))
+            metadata_payload = MappingProxyType(payload)
+            strategies[name] = metadata_payload
+            license_value = metadata_payload.get("license_tier")
             if isinstance(license_value, str):
                 _append_unique(license_tiers, (license_value,))
-            risk_value = metadata.get("risk_classes")
+            risk_value = metadata_payload.get("risk_classes")
             if isinstance(risk_value, Iterable):
                 _append_unique(risk_classes, risk_value)
-            required_value = metadata.get("required_data")
+            required_value = metadata_payload.get("required_data")
             if isinstance(required_value, Iterable):
                 _append_unique(required_data, required_value)
-            capability_value = metadata.get("capability")
+            capability_value = metadata_payload.get("capability")
             if isinstance(capability_value, str):
                 _append_unique(capabilities, (capability_value,))
-            tags_value = metadata.get("tags")
+            tags_value = metadata_payload.get("tags")
             if isinstance(tags_value, Iterable):
                 _append_unique(tags, tags_value)
 
@@ -1702,43 +1825,6 @@ class AutoTradeEngine:
         return signals
 
     @staticmethod
-    def _json_safe_value(value: Any) -> Any:
-        if isinstance(value, Mapping):
-            return {
-                str(key): AutoTradeEngine._json_safe_value(val)
-                for key, val in value.items()
-                if val is not None
-            }
-        if isinstance(value, (list, tuple, set)):
-            return [AutoTradeEngine._json_safe_value(item) for item in value]
-        if isinstance(value, (dt.datetime, pd.Timestamp)):
-            timestamp = value
-            if isinstance(timestamp, pd.Timestamp):
-                timestamp = timestamp.to_pydatetime()
-            return timestamp.astimezone(dt.timezone.utc).isoformat()
-        if isinstance(value, (np.integer, int)):
-            return int(value)
-        if isinstance(value, (np.floating, float)):
-            return float(value)
-        if isinstance(value, (np.bool_, bool)):
-            return bool(value)
-        if isinstance(value, bytes):
-            try:
-                return value.decode("utf-8")
-            except Exception:
-                return value.decode("utf-8", errors="replace")
-        return value
-
-    @classmethod
-    def _normalize_data_quality_report(
-        cls, report: Mapping[str, Any]
-    ) -> Dict[str, Any]:
-        normalized: Dict[str, Any] = {}
-        for key, value in report.items():
-            normalized[str(key)] = cls._json_safe_value(value)
-        return normalized
-
-    @staticmethod
     def _stringify_metadata(metadata: Mapping[str, Any]) -> Dict[str, str]:
         payload: Dict[str, str] = {}
         for key, value in metadata.items():
@@ -1846,17 +1932,11 @@ class AutoTradeEngine:
         weights_after: Mapping[str, float],
         assessment: MarketRegimeAssessment,
         adjustment_metadata: Mapping[str, float],
-        data_quality: Mapping[str, Any] | None = None,
-        data_quality_status: Mapping[str, str] | None = None,
-        data_quality_reports: Sequence[str] | None = None,
-        data_quality_alerts: int | None = None,
-        model_label: str | None = None,
-        timestamp: dt.datetime | None = None,
     ) -> None:
         if self._decision_journal is None:
             return
         try:
-            event_ts = timestamp or dt.datetime.now(dt.timezone.utc)
+            event_ts = dt.datetime.now(dt.timezone.utc)
             context = dict(self._decision_journal_context)
             environment = str(context.get("environment", "auto-trade"))
             portfolio = str(context.get("portfolio", "autotrader"))
@@ -1875,46 +1955,12 @@ class AutoTradeEngine:
                 },
             }
             metadata_payload.update({str(k): v for k, v in adjustment_metadata.items()})
-            if model_label:
-                metadata_payload["model_label"] = str(model_label)
-            feature_snapshot = {
+            sample = {
                 str(name): float(value)
-                for name, value in sorted(features.items())
+                for name, value in sorted(features.items())[:8]
             }
-            if feature_snapshot:
-                metadata_payload["feature_snapshot_version"] = 1
-                metadata_payload["feature_snapshot"] = feature_snapshot
-                feature_json = json.dumps(
-                    feature_snapshot,
-                    ensure_ascii=False,
-                    sort_keys=True,
-                    separators=(",", ":"),
-                ).encode("utf-8")
-                metadata_payload["feature_snapshot_bytes"] = len(feature_json)
-                metadata_payload["feature_snapshot_checksum"] = hashlib.sha256(
-                    feature_json
-                ).hexdigest()
-                sample = {
-                    str(name): float(value)
-                    for name, value in list(feature_snapshot.items())[:8]
-                }
-                if sample:
-                    metadata_payload["feature_sample"] = sample
-            if data_quality:
-                normalized_dq = self._normalize_data_quality_report(data_quality)
-                if normalized_dq:
-                    metadata_payload["data_quality"] = normalized_dq
-            if data_quality_status:
-                metadata_payload["data_quality_status"] = {
-                    str(name): str(status)
-                    for name, status in data_quality_status.items()
-                }
-            if data_quality_alerts is not None:
-                metadata_payload["data_quality_alerts"] = int(data_quality_alerts)
-            if data_quality_reports:
-                metadata_payload["data_quality_reports"] = [
-                    str(path) for path in data_quality_reports if path
-                ]
+            if sample:
+                metadata_payload["feature_sample"] = sample
             event_kwargs: Dict[str, Any] = {
                 "event_type": "ai_inference",
                 "timestamp": event_ts,
@@ -2294,67 +2340,29 @@ class AutoTradeEngine:
             signals.update(plugin_signals)
         signals["daily_breakout"] = signals.get("day_trading", fallback_signals["day_trading"])
         base_weights = dict(weights)
+        base_abs_weight = sum(abs(value) for value in base_weights.values())
+        base_signal_numerator = sum(
+            base_weights.get(name, 0.0) * signals.get(name, 0.0)
+            for name in base_weights
+        )
+        base_signal_value = (
+            base_signal_numerator / base_abs_weight if base_abs_weight else 0.0
+        )
         ai_metadata: dict[str, object] | None = None
         self._last_inference_score = None
         self._last_inference_metadata = None
-        self._last_inference_scored_at = None
         adjustment_metadata: Dict[str, float] | None = None
+        denominator_override: float | None = None
+        ai_score: ModelScore | None = None
+        weights_before_adjustment: Dict[str, float] | None = None
+        adjusted_signal_value: float | None = None
         inference_service = self._decision_inference
-        data_quality_payload: Mapping[str, Any] | None = None
-        data_quality_status: Dict[str, str] | None = None
-        data_quality_reports: list[str] = []
-        data_quality_alerts: int | None = None
-        model_label: str | None = None
         if (
             inference_service is not None
             and getattr(inference_service, "is_ready", True)
             and inference_features
         ):
             try:
-                if hasattr(inference_service, "monitor_features"):
-                    try:
-                        dq_raw = inference_service.monitor_features(
-                            inference_features,
-                            context={
-                                "symbol": self.cfg.symbol,
-                                "regime": assessment.regime.value,
-                            },
-                        )
-                    except Exception as exc:  # pragma: no cover - monitoring nie może blokować tradingu
-                        self._logger.debug(
-                            "DecisionModelInference monitor_features failed: %s",
-                            exc,
-                            exc_info=True,
-                        )
-                    else:
-                        if isinstance(dq_raw, Mapping):
-                            data_quality_payload = self._normalize_data_quality_report(
-                                dq_raw
-                            )
-                            if data_quality_payload:
-                                data_quality_status = {
-                                    str(name): str(
-                                        (payload or {}).get("status", "unknown")
-                                    )
-                                    for name, payload in data_quality_payload.items()
-                                    if isinstance(payload, Mapping)
-                                }
-                                if data_quality_status:
-                                    alerts = sum(
-                                        1
-                                        for status in data_quality_status.values()
-                                        if str(status).lower() == "alert"
-                                    )
-                                    data_quality_alerts = alerts
-                                for payload in data_quality_payload.values():
-                                    if isinstance(payload, Mapping):
-                                        report_path = payload.get("report_path")
-                                        if report_path:
-                                            data_quality_reports.append(str(report_path))
-                                if data_quality_reports:
-                                    data_quality_reports = sorted(
-                                        dict.fromkeys(data_quality_reports)
-                                    )
                 ai_score = inference_service.score(
                     inference_features,
                     context={"symbol": self.cfg.symbol, "regime": assessment.regime.value},
@@ -2364,11 +2372,26 @@ class AutoTradeEngine:
                     "DecisionModelInference score failed: %s", exc, exc_info=True
                 )
             else:
-                scored_at = dt.datetime.now(dt.timezone.utc)
+                weights_before_adjustment = dict(weights)
                 weights, adjustment_metadata = self._apply_inference_adjustment(weights, ai_score)
+                adjustment_metadata = dict(adjustment_metadata)
                 parameters = self._compose_trading_parameters(weights)
                 self._last_trading_parameters = parameters
-                model_label = getattr(inference_service, "model_label", None)
+                denominator_override = base_abs_weight if base_abs_weight > 0 else None
+                adjusted_numerator = sum(
+                    weights.get(name, 0.0) * signals.get(name, 0.0)
+                    for name in weights
+                )
+                denominator_for_adjusted = denominator_override
+                if denominator_for_adjusted is None:
+                    denominator_for_adjusted = sum(abs(value) for value in weights.values())
+                adjusted_signal_value = (
+                    adjusted_numerator / denominator_for_adjusted
+                    if denominator_for_adjusted
+                    else 0.0
+                )
+                adjustment_metadata["signal_before_adjustment"] = base_signal_value
+                adjustment_metadata["signal_after_adjustment"] = adjusted_signal_value
                 ai_metadata = {
                     "expected_return_bps": float(ai_score.expected_return_bps),
                     "success_probability": float(ai_score.success_probability),
@@ -2377,41 +2400,43 @@ class AutoTradeEngine:
                     "feature_count": len(inference_features),
                     "base_abs_weight": adjustment_metadata.get("base_abs_weight"),
                     "adjusted_abs_weight": adjustment_metadata.get("adjusted_abs_weight"),
+                    "signal_before_adjustment": base_signal_value,
+                    "signal_after_adjustment": adjusted_signal_value,
                 }
-                if model_label:
-                    ai_metadata["model_label"] = str(model_label)
-                if data_quality_payload:
-                    ai_metadata["data_quality"] = data_quality_payload
-                if data_quality_status:
-                    ai_metadata["data_quality_status"] = data_quality_status
-                if data_quality_alerts is not None:
-                    ai_metadata["data_quality_alerts"] = data_quality_alerts
-                if data_quality_reports:
-                    ai_metadata["data_quality_reports"] = list(data_quality_reports)
-                self._record_ai_inference_event(
-                    ai_score,
-                    features=inference_features,
-                    weights_before=base_weights,
-                    weights_after=weights,
-                    assessment=assessment,
-                    adjustment_metadata=adjustment_metadata or {},
-                    data_quality=data_quality_payload,
-                    data_quality_status=data_quality_status,
-                    data_quality_reports=data_quality_reports,
-                    data_quality_alerts=data_quality_alerts,
-                    model_label=model_label,
-                    timestamp=scored_at,
-                )
                 self._last_inference_score = ai_score
-                self._last_inference_metadata = dict(ai_metadata)
-                self._last_inference_scored_at = scored_at
         numerator = 0.0
-        denominator = 0.0
         for name, weight in weights.items():
             signal_value = signals.get(name, 0.0)
             numerator += weight * signal_value
-            denominator += abs(weight)
-        combined = numerator / denominator if denominator else 0.0
+        if denominator_override is not None:
+            denominator = denominator_override
+        else:
+            denominator = sum(abs(weight) for weight in weights.values())
+        combined_unclamped = numerator / denominator if denominator else 0.0
+        combined = max(-1.0, min(1.0, combined_unclamped))
+        if ai_metadata is not None:
+            ai_metadata.setdefault("signal_before_adjustment", base_signal_value)
+            ai_metadata.setdefault(
+                "signal_after_adjustment",
+                adjusted_signal_value if adjusted_signal_value is not None else combined_unclamped,
+            )
+            ai_metadata["signal_after_clamp"] = combined
+            if adjustment_metadata is not None:
+                adjustment_metadata["signal_after_clamp"] = combined
+            if (
+                ai_score is not None
+                and adjustment_metadata is not None
+                and weights_before_adjustment is not None
+            ):
+                self._record_ai_inference_event(
+                    ai_score,
+                    features=inference_features,
+                    weights_before=weights_before_adjustment,
+                    weights_after=weights,
+                    assessment=assessment,
+                    adjustment_metadata=adjustment_metadata,
+                )
+                self._last_inference_metadata = dict(ai_metadata)
         metadata_payload: dict[str, object] | None = None
         metadata_container: dict[str, object] = {}
         if strategy_metadata:

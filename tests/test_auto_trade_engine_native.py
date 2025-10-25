@@ -334,21 +334,11 @@ class _WorkflowStub:
 
 
 class _InferenceStub:
-    def __init__(
-        self,
-        score: ModelScore,
-        *,
-        data_quality: Mapping[str, Mapping[str, object]] | None = None,
-        model_label: str = "stub-model",
-    ) -> None:
+    def __init__(self, score: ModelScore) -> None:
         self._score = score
         self.calls: list[dict[str, float]] = []
         self.contexts: list[dict[str, object]] = []
         self.is_ready = True
-        self._data_quality = data_quality or {}
-        self.monitor_calls: list[dict[str, float]] = []
-        self.monitor_contexts: list[dict[str, object]] = []
-        self.model_label = model_label
 
     def score(self, features, *, context=None):  # type: ignore[override]
         payload = {str(key): float(value) for key, value in features.items()}
@@ -356,13 +346,6 @@ class _InferenceStub:
         context_payload = {str(key): value for key, value in (context or {}).items()}
         self.contexts.append(context_payload)
         return self._score
-
-    def monitor_features(self, features, *, context=None):  # type: ignore[override]
-        payload = {str(key): float(value) for key, value in features.items()}
-        self.monitor_calls.append(payload)
-        context_payload = {str(key): value for key, value in (context or {}).items()}
-        self.monitor_contexts.append(context_payload)
-        return deepcopy(self._data_quality)
 
     def set_availability(self, availability: Iterable[PresetAvailability]) -> None:
         self._availability = tuple(availability)
@@ -1464,36 +1447,8 @@ def test_auto_trade_engine_uses_ai_inference(monkeypatch) -> None:
         mean_reversion_window=4,
         mean_reversion_z=0.5,
     )
-    data_quality_report = {
-        "completeness": {
-            "status": "ok",
-            "timestamp": "2024-03-01T00:00:00+00:00",
-            "expected_features": ["price_close", "indicator_rsi"],
-            "missing_features": [],
-            "null_features": [],
-            "unexpected_features": [],
-            "report_path": "/var/audit/dq/completeness.json",
-        },
-        "bounds": {
-            "status": "alert",
-            "timestamp": "2024-03-01T00:00:01+00:00",
-            "violations": [
-                {
-                    "feature": "price_close",
-                    "value": 78000.0,
-                    "min": 100.0,
-                    "max": 60000.0,
-                    "reason": "out_of_bounds",
-                }
-            ],
-            "monitored_features": ["price_close"],
-            "report_path": "/var/audit/dq/bounds.json",
-        },
-    }
     inference = _InferenceStub(
-        ModelScore(expected_return_bps=120.0, success_probability=0.8),
-        data_quality=data_quality_report,
-        model_label="stage6-regressor-v1",
+        ModelScore(expected_return_bps=120.0, success_probability=0.8)
     )
     engine = AutoTradeEngine(
         adapter,
@@ -1523,9 +1478,28 @@ def test_auto_trade_engine_uses_ai_inference(monkeypatch) -> None:
         adapter.push_market_tick("BTCUSDT", price=px)
 
     assert inference.calls, "expected inference to be invoked"
-    assert inference.monitor_calls, "expected data quality monitoring"
     assert signal_payloads, "expected at least one signal payload"
     latest_payload = signal_payloads[-1]
+
+    def _compute_base_signal(payload: dict) -> float:
+        ai_meta_payload = payload["metadata"]["ai_inference"]
+        scaling = float(ai_meta_payload["weight_scaling"])
+        if scaling == 0.0:
+            return 0.0
+        scaled_weights = payload["weights"]
+        base_weights_from_payload = {
+            name: value / scaling for name, value in scaled_weights.items()
+        }
+        base_abs = sum(abs(value) for value in base_weights_from_payload.values())
+        if base_abs == 0.0:
+            return 0.0
+        signals_payload = payload["signals"]
+        base_numerator = sum(
+            base_weights_from_payload.get(name, 0.0) * signals_payload.get(name, 0.0)
+            for name in base_weights_from_payload
+        )
+        return base_numerator / base_abs if base_abs else 0.0
+
     ai_meta = latest_payload["metadata"]["ai_inference"]
     assert ai_meta["expected_return_bps"] == pytest.approx(120.0)
     assert ai_meta["weight_scaling"] > 1.0
@@ -1533,52 +1507,61 @@ def test_auto_trade_engine_uses_ai_inference(monkeypatch) -> None:
     base_weights = cfg.strategy_weights[regime_key]
     expected_trend = base_weights["trend_following"] * ai_meta["weight_scaling"]
     assert latest_payload["weights"]["trend_following"] == pytest.approx(expected_trend)
+    base_signal = _compute_base_signal(latest_payload)
+    assert ai_meta["signal_before_adjustment"] == pytest.approx(base_signal)
+    assert ai_meta["signal_after_clamp"] == pytest.approx(latest_payload["direction"])
+    assert ai_meta["signal_after_adjustment"] * base_signal >= 0
+    assert latest_payload["direction"] * base_signal >= 0
+    assert abs(ai_meta["signal_after_adjustment"]) > abs(base_signal)
+    assert abs(latest_payload["direction"]) > abs(base_signal)
+
+    inference._score = ModelScore(expected_return_bps=-150.0, success_probability=0.8)
+    for px in closes:
+        adapter.push_market_tick("BTCUSDT", price=px)
+
+    negative_payload = signal_payloads[-1]
+    negative_meta = negative_payload["metadata"]["ai_inference"]
+    assert negative_meta["weight_scaling"] < 1.0
+    negative_base_signal = _compute_base_signal(negative_payload)
+    assert negative_meta["signal_before_adjustment"] == pytest.approx(negative_base_signal)
+    assert negative_meta["signal_after_clamp"] == pytest.approx(negative_payload["direction"])
+    assert negative_meta["signal_after_adjustment"] * negative_base_signal >= 0
+    assert negative_payload["direction"] * negative_base_signal >= 0
+    assert abs(negative_meta["signal_after_adjustment"]) < abs(negative_base_signal)
+    assert abs(negative_payload["direction"]) < abs(negative_base_signal)
     exported = list(journal.export())
-    assert exported, "expected inference journal event"
-    assert exported[-1]["event"] == "ai_inference"
-    assert exported[-1]["environment"] == "paper"
-    assert float(exported[-1]["expected_return_bps"]) == pytest.approx(120.0)
-    assert exported[-1]["model_label"] == "stage6-regressor-v1"
-    assert exported[-1]["feature_snapshot_version"] == "1"
-    feature_snapshot = json.loads(exported[-1]["feature_snapshot"])
-    expected_features = {
-        key: pytest.approx(value)
-        for key, value in inference.calls[-1].items()
-    }
-    assert set(feature_snapshot) == set(expected_features)
-    for key, expected in expected_features.items():
-        assert feature_snapshot[key] == expected
-    snapshot_bytes = int(exported[-1]["feature_snapshot_bytes"])
-    serialized_features = json.dumps(
-        {k: float(inference.calls[-1][k]) for k in sorted(inference.calls[-1])},
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode("utf-8")
-    assert snapshot_bytes == len(serialized_features)
-    assert (
-        exported[-1]["feature_snapshot_checksum"]
-        == hashlib.sha256(serialized_features).hexdigest()
+    assert len(exported) >= 2, "expected inference journal events"
+    positive_event = next(
+        event
+        for event in reversed(exported)
+        if float(event.get("expected_return_bps", 0.0)) > 0.0
     )
-    dq_payload = json.loads(exported[-1]["data_quality"])
-    assert dq_payload["bounds"]["status"] == "alert"
-    assert dq_payload["bounds"]["violations"][0]["feature"] == "price_close"
-    dq_status = json.loads(exported[-1]["data_quality_status"])
-    assert dq_status == {"bounds": "alert", "completeness": "ok"}
-    assert exported[-1]["data_quality_alerts"] == "1"
-    dq_reports = json.loads(exported[-1]["data_quality_reports"])
-    assert dq_reports == [
-        "/var/audit/dq/bounds.json",
-        "/var/audit/dq/completeness.json",
-    ]
+    assert positive_event["event"] == "ai_inference"
+    assert positive_event["environment"] == "paper"
+    assert float(positive_event["expected_return_bps"]) == pytest.approx(120.0)
+    assert float(positive_event["signal_before_adjustment"]) == pytest.approx(base_signal)
+    assert float(positive_event["signal_after_adjustment"]) == pytest.approx(
+        ai_meta["signal_after_adjustment"]
+    )
+    assert float(positive_event["signal_after_clamp"]) == pytest.approx(
+        ai_meta["signal_after_clamp"]
+    )
+    negative_event = next(
+        event
+        for event in reversed(exported)
+        if float(event.get("expected_return_bps", 0.0)) < 0.0
+    )
+    assert negative_event["event"] == "ai_inference"
+    assert negative_event["environment"] == "paper"
+    assert float(negative_event["expected_return_bps"]) == pytest.approx(-150.0)
+    assert float(negative_event["signal_before_adjustment"]) == pytest.approx(
+        negative_base_signal
+    )
+    assert float(negative_event["signal_after_adjustment"]) == pytest.approx(
+        negative_meta["signal_after_adjustment"]
+    )
+    assert float(negative_event["signal_after_clamp"]) == pytest.approx(
+        negative_meta["signal_after_clamp"]
+    )
     assert any(key.startswith("price_") for key in inference.calls[-1])
     assert inference.contexts[-1]["regime"] == regime_key
-    assert inference.monitor_contexts[-1]["symbol"] == cfg.symbol
-    snapshot = engine.snapshot()
-    assert snapshot.ai_inference is not None
-    assert snapshot.ai_inference["expected_return_bps"] == pytest.approx(120.0)
-    assert snapshot.ai_inference["success_probability"] == pytest.approx(0.8)
-    assert "scored_at" in snapshot.ai_inference
-    assert snapshot.ai_inference["model_label"] == "stage6-regressor-v1"
-    assert snapshot.ai_inference["data_quality_status"]["bounds"] == "alert"
-    assert snapshot.ai_inference["data_quality_alerts"] == 1
