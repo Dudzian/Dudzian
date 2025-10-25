@@ -662,6 +662,18 @@ def _compute_percentile(sorted_values: list[float], percentile: float) -> float:
     return lower_value + (upper_value - lower_value) * weight
 
 
+def _finite_values(values: Iterable[object]) -> list[float]:
+    finite: list[float] = []
+    for value in values:
+        try:
+            numeric = float(value)
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(numeric):
+            finite.append(numeric)
+    return finite
+
+
 def _metric_statistics(values: list[float], percentiles: Iterable[float]) -> dict[str, object]:
     if not values:
         return {
@@ -708,9 +720,12 @@ def _build_metrics_section(
 ) -> dict[str, dict[str, object]]:
     metrics_payload: dict[str, dict[str, object]] = {}
     for metric_name, values in values_map.items():
-        stats_payload = _metric_statistics(values, percentiles)
+        finite_values = _finite_values(values)
+        if isinstance(values, list) and len(finite_values) != len(values):
+            values[:] = finite_values
+        stats_payload = _metric_statistics(finite_values, percentiles)
         absolute = metric_name in _ABSOLUTE_THRESHOLD_METRICS
-        suggested = _suggest_threshold(values, suggestion_percentile, absolute=absolute)
+        suggested = _suggest_threshold(finite_values, suggestion_percentile, absolute=absolute)
         if metric_name == "risk_score":
             current = current_risk_score
         elif current_signal_thresholds:
@@ -942,7 +957,7 @@ def _generate_report(
                 numeric_duration = float(duration)
             except (TypeError, ValueError):
                 numeric_duration = None
-            if numeric_duration is not None:
+            if numeric_duration is not None and math.isfinite(numeric_duration):
                 grouped_values[key]["risk_freeze_duration"].append(numeric_duration)
                 raw_value_snapshots[key]["risk_freeze_duration"].append(numeric_duration)
         freeze_events[key].append(
@@ -967,6 +982,8 @@ def _generate_report(
             try:
                 numeric = float(value)
             except (TypeError, ValueError):
+                continue
+            if not math.isfinite(numeric):
                 continue
             grouped_values[key][metric].append(numeric)
             raw_value_snapshots[key][metric].append(numeric)
@@ -1017,6 +1034,8 @@ def _generate_report(
             score_value = float(risk_score)
         except (TypeError, ValueError):
             continue
+        if not math.isfinite(score_value):
+            continue
         grouped_values[key]["risk_score"].append(score_value)
         raw_value_snapshots[key]["risk_score"].append(score_value)
 
@@ -1065,7 +1084,7 @@ def _generate_report(
         if isinstance(freeze_summary.get("reason_counts"), Counter):
             aggregated_freeze_summary["reason_counts"].update(freeze_summary["reason_counts"])
         for metric_name, values in metrics.items():
-            aggregated_values[metric_name].extend(values)
+            aggregated_values[metric_name].extend(_finite_values(values))
         display_exchange, display_strategy = display_names.get(
             (exchange, strategy), (exchange, strategy)
         )
@@ -1074,7 +1093,10 @@ def _generate_report(
                 "primary_exchange": display_exchange,
                 "strategy": display_strategy,
                 "metrics": metrics_payload,
-                "raw_values": {metric: list(values) for metric, values in raw_snapshot.items()},
+                "raw_values": {
+                    metric: _finite_values(values)
+                    for metric, values in raw_snapshot.items()
+                },
                 "freeze_summary": freeze_summary_payload,
                 "raw_freeze_events": list(freeze_events.get((exchange, strategy), [])),
             }
@@ -1090,7 +1112,7 @@ def _generate_report(
     global_summary = {
         "metrics": global_metrics,
         "freeze_summary": _format_freeze_summary(aggregated_freeze_summary),
-        "raw_values": {metric: list(values) for metric, values in aggregated_values.items()},
+        "raw_values": {metric: _finite_values(values) for metric, values in aggregated_values.items()},
     }
 
     return {
