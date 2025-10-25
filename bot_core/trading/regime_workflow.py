@@ -107,6 +107,8 @@ class RegimeSwitchWorkflow:
         default_parameter_overrides: Mapping[
             MarketRegime | str, Mapping[str, float | int]
         ] | None = None,
+        strategy_alias_map: Mapping[str, str] | None = None,
+        strategy_alias_suffixes: Iterable[str] | None = None,
         logger: logging.Logger | None = None,
     ) -> None:
         if confidence_threshold <= 0 or confidence_threshold > 1:

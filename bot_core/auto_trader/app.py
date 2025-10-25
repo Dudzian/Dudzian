@@ -338,11 +338,34 @@ class AutoTrader:
         decision_audit_log: DecisionAuditLog | None = None,
         portfolio_manager: Any | None = None,
         strategy_catalog: StrategyCatalog | None = None,
+        strategy_alias_map: Mapping[str, str] | None = None,
+        strategy_alias_suffixes: Iterable[str] | None = None,
     ) -> None:
         self.emitter = emitter
         self.gui = gui
         self.symbol_getter = symbol_getter
         self.market_data_provider = market_data_provider
+
+        alias_override = canonical_alias_map(strategy_alias_map)
+        suffix_override = (
+            normalise_suffixes(strategy_alias_suffixes)
+            if strategy_alias_suffixes is not None
+            else None
+        )
+        base_resolver = type(self)._alias_resolver()
+        override_resolver = base_resolver.extend(
+            alias_map=alias_override,
+            suffixes=suffix_override,
+        )
+        self._alias_resolver_override: StrategyAliasResolver | None = (
+            None if override_resolver is base_resolver else override_resolver
+        )
+        self._strategy_alias_map_override: Mapping[str, str] | None = (
+            alias_override or None
+        )
+        self._strategy_alias_suffix_override: tuple[str, ...] | None = (
+            tuple(suffix_override) if suffix_override is not None else None
+        )
 
         self.enable_auto_trade = bool(enable_auto_trade)
         self.auto_trade_interval_s = float(auto_trade_interval_s)

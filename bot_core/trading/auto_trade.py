@@ -49,6 +49,13 @@ from bot_core.strategies.regime_workflow import (
 )
 from bot_core.runtime.journal import TradingDecisionEvent, TradingDecisionJournal
 
+class _AliasConfigSentinel:
+    __slots__ = ()
+
+
+_ALIAS_UNSET = _AliasConfigSentinel()
+
+
 @dataclass
 class _AutoRiskFreezeState:
     risk_level: RiskLevel | None = None
@@ -220,6 +227,8 @@ class AutoTradeConfig:
     auto_risk_freeze_level: RiskLevel | str = RiskLevel.CRITICAL
     auto_risk_freeze_score: float = 0.8
     regime_parameter_overrides: Mapping[str, Mapping[str, float | int]] | None = None
+    strategy_alias_map: Mapping[str, str] | None = None
+    strategy_alias_suffixes: Iterable[str] | None = None
 
     def __post_init__(self) -> None:
         if self.default_params is None:
@@ -297,6 +306,12 @@ class AutoTradeConfig:
                 if normalised:
                     cleaned[str(regime_key)] = normalised
             self.regime_parameter_overrides = cleaned
+        alias_map = canonical_alias_map(self.strategy_alias_map)
+        self.strategy_alias_map = alias_map or None
+        if self.strategy_alias_suffixes is None:
+            self.strategy_alias_suffixes = None
+        else:
+            self.strategy_alias_suffixes = normalise_suffixes(self.strategy_alias_suffixes)
 
 
 class AutoTradeEngine:
@@ -363,6 +378,14 @@ class AutoTradeEngine:
         self.bus: EventBus = adapter.bus
         self.cfg = cfg or AutoTradeConfig()
         self._logger = logging.getLogger(__name__)
+        base_resolver = type(self)._alias_resolver()
+        override_resolver = base_resolver.extend(
+            alias_map=self.cfg.strategy_alias_map,
+            suffixes=self.cfg.strategy_alias_suffixes,
+        )
+        self._alias_resolver_override: StrategyAliasResolver | None = (
+            None if override_resolver is base_resolver else override_resolver
+        )
         self._closes: List[float] = []
         self._bars: Deque[Mapping[str, float]] = deque(maxlen=max(self.cfg.regime_window * 3, 200))
         self._params = dict(self.cfg.default_params)

@@ -85,6 +85,80 @@ class _Provider:
         return self.df
 
 
+def test_auto_trader_strategy_alias_overrides_extend_candidates() -> None:
+    emitter = _Emitter()
+    gui = _GUI()
+
+    class _Catalog:
+        def metadata_for(self, name: str):  # noqa: D401 - test double
+            return {}
+
+    trader = AutoTrader(
+        emitter,
+        gui,
+        lambda: "BTCUSDT",
+        strategy_catalog=_Catalog(),
+        strategy_alias_map={"Legacy Breakout": "day_trading"},
+        strategy_alias_suffixes=("_legacy",),
+    )
+
+    candidates = trader._strategy_metadata_candidates("Legacy Breakout_Legacy")
+    assert "day_trading" in candidates
+    resolver = trader._alias_resolver_instance()
+    assert "_probing" in resolver.suffixes
+    assert "_legacy" in resolver.suffixes
+
+
+def test_auto_trader_strategy_alias_overrides_accept_canonical_collections() -> None:
+    emitter = _Emitter()
+    gui = _GUI()
+
+    class _Catalog:
+        def metadata_for(self, name: str):  # noqa: D401 - test double
+            return {}
+
+    trader = AutoTrader(
+        emitter,
+        gui,
+        lambda: "BTCUSDT",
+        strategy_catalog=_Catalog(),
+        strategy_alias_map={
+            "day_trading": ["Legacy Breakout", {"more": ["LegacyLegacy"]}]
+        },
+    )
+
+    candidates = trader._strategy_metadata_candidates("LegacyLegacy")
+    assert "day_trading" in candidates
+
+
+def test_auto_trader_configure_aliases_updates_candidates() -> None:
+    emitter = _Emitter()
+    gui = _GUI()
+
+    class _Catalog:
+        def metadata_for(self, name: str):  # noqa: D401 - test double
+            return {}
+
+    trader = AutoTrader(
+        emitter,
+        gui,
+        lambda: "BTCUSDT",
+        strategy_catalog=_Catalog(),
+    )
+
+    baseline = trader._strategy_metadata_candidates("Legacy Breakout")
+    assert "day_trading" not in baseline
+
+    trader.configure_strategy_aliases(
+        {"Legacy Breakout": "day_trading"}, suffixes=("_legacy",)
+    )
+
+    candidates = trader._strategy_metadata_candidates("Legacy Breakout_Legacy")
+    assert "day_trading" in candidates
+    suffixes = trader._alias_resolver_instance().suffixes
+    assert "_legacy" in suffixes
+
+
 class _RiskServiceStub:
     ...
 def _prepare_guardrail_history(monkeypatch: pytest.MonkeyPatch) -> AutoTrader:
