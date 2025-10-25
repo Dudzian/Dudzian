@@ -4,7 +4,7 @@ import pytest
 
 from dataclasses import replace
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from types import MappingProxyType
 from typing import Iterable
 
@@ -27,6 +27,7 @@ from bot_core.trading.auto_trade import (
 from bot_core.trading.engine import TradingParameters
 from bot_core.trading.strategies import StrategyCatalog, StrategyPlugin
 from bot_core.strategies.regime_workflow import (
+    PresetAvailability,
     PresetVersionInfo,
     RegimePresetActivation,
 )
@@ -236,6 +237,8 @@ class _WorkflowStub:
         self._activation = activation
         self.last_activation = activation
         self.calls: list[tuple[pd.DataFrame, tuple[str, ...], str | None]] = []
+        self._availability: tuple[PresetAvailability, ...] = ()
+        self._history_entries: list[RegimePresetActivation] = [activation]
 
     def activate(
         self,
@@ -252,7 +255,72 @@ class _WorkflowStub:
             activated_at=now or datetime.now(timezone.utc),
         )
         self.last_activation = updated
+        self._history_entries.append(updated)
         return updated
+
+    def set_availability(self, availability: Iterable[PresetAvailability]) -> None:
+        self._availability = tuple(availability)
+
+    def inspect_presets(
+        self, available_data: Iterable[str] = (), *, now: datetime | None = None
+    ) -> tuple[PresetAvailability, ...]:
+        return self._availability
+
+    def activation_history(
+        self, *, limit: int | None = None
+    ) -> tuple[RegimePresetActivation, ...]:
+        entries: tuple[RegimePresetActivation, ...] = tuple(self._history_entries)
+        if limit is None:
+            return entries
+        try:
+            parsed = int(limit)
+        except (TypeError, ValueError):
+            return entries
+        if parsed <= 0:
+            return entries
+        return entries[-parsed:]
+
+    def activation_history_frame(
+        self, *, limit: int | None = None
+    ) -> pd.DataFrame:
+        entries = self.activation_history(limit=limit)
+        columns = [
+            "activated_at",
+            "regime",
+            "preset_regime",
+            "preset_name",
+            "preset_hash",
+            "used_fallback",
+            "blocked_reason",
+            "missing_data",
+            "license_issues",
+            "recommendation",
+        ]
+        if not entries:
+            return pd.DataFrame(columns=columns)
+        rows = []
+        for activation in entries:
+            rows.append(
+                {
+                    "activated_at": activation.activated_at,
+                    "regime": activation.regime,
+                    "preset_regime": activation.preset_regime,
+                    "preset_name": activation.preset.get("name"),
+                    "preset_hash": activation.version.hash,
+                    "used_fallback": activation.used_fallback,
+                    "blocked_reason": activation.blocked_reason,
+                    "missing_data": activation.missing_data,
+                    "license_issues": activation.license_issues,
+                    "recommendation": activation.recommendation,
+                }
+            )
+        frame = pd.DataFrame(rows, columns=columns)
+        if not frame.empty:
+            frame["regime"] = frame["regime"].apply(lambda r: r.value if isinstance(r, MarketRegime) else r)
+            frame["preset_regime"] = frame["preset_regime"].apply(
+                lambda r: r.value if isinstance(r, MarketRegime) else r
+            )
+        return frame
 
 
 def test_auto_trade_engine_uses_strategy_catalog(monkeypatch) -> None:

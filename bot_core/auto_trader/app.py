@@ -2674,6 +2674,231 @@ class AutoTrader:
             until_ts,
         )
 
+    def _resolve_risk_evaluation_filters(
+        self,
+        *,
+        approved: bool | None | Iterable[bool | None] | object,
+        normalized: bool | None | Iterable[bool | None] | object,
+        service: str | None | Iterable[str | None] | object,
+        decision_state: str | Iterable[str | None] | object,
+        decision_reason: str | Iterable[str | None] | object,
+        decision_mode: str | Iterable[str | None] | object,
+        decision_id: str | Iterable[str | None] | object,
+        since: Any,
+        until: Any,
+        decision_fields: Iterable[Any] | Any | None,
+    ) -> tuple[
+        set[bool | None] | None,
+        set[bool | None] | None,
+        set[str] | None,
+        set[str] | None,
+        set[str] | None,
+        set[str] | None,
+        set[str] | None,
+        list[Any] | None,
+        float | None,
+        float | None,
+    ]:
+        approved_filter = self._prepare_bool_filter(approved)
+        normalized_filter = self._prepare_bool_filter(normalized)
+        service_filter = self._prepare_service_filter(service)
+        decision_state_filter = self._prepare_decision_filter(
+            decision_state,
+            missing_token=_MISSING_DECISION_STATE,
+        )
+        decision_reason_filter = self._prepare_decision_filter(
+            decision_reason,
+            missing_token=_MISSING_DECISION_REASON,
+        )
+        decision_mode_filter = self._prepare_decision_filter(
+            decision_mode,
+            missing_token=_MISSING_DECISION_MODE,
+        )
+        decision_id_filter = self._prepare_decision_filter(
+            decision_id,
+            missing_token=_MISSING_DECISION_ID,
+        )
+        since_ts = self._normalize_time_bound(since)
+        until_ts = self._normalize_time_bound(until)
+        normalized_decision_fields = self._normalize_decision_fields(decision_fields)
+        return (
+            approved_filter,
+            normalized_filter,
+            service_filter,
+            decision_state_filter,
+            decision_reason_filter,
+            decision_mode_filter,
+            decision_id_filter,
+            normalized_decision_fields,
+            since_ts,
+            until_ts,
+        )
+
+    def _collect_filtered_risk_evaluations(
+        self,
+        *,
+        include_errors: bool,
+        approved_filter: set[bool | None] | None,
+        normalized_filter: set[bool | None] | None,
+        service_filter: set[str] | None,
+        since_ts: float | None,
+        until_ts: float | None,
+        state_filter: set[str] | None,
+        reason_filter: set[str] | None,
+        mode_filter: set[str] | None,
+        decision_id_filter: set[str] | None,
+    ) -> tuple[list[dict[str, Any]], int, float | None, int]:
+        with self._lock:
+            trimmed_by_ttl = self._prune_risk_evaluations_locked()
+            records = list(self._risk_evaluations)
+            ttl_snapshot = self._risk_evaluations_ttl_s
+            history_size = len(records)
+
+        filtered: list[dict[str, Any]] = []
+        for entry in records:
+            if approved_filter is not None and entry.get("approved") not in approved_filter:
+                continue
+
+            normalized_value = entry.get("normalized")
+            if normalized_value is True:
+                normalized_token: bool | None = True
+            elif normalized_value is False:
+                normalized_token = False
+            elif normalized_value is None:
+                normalized_token = None
+            else:
+                normalized_token = None
+            if normalized_filter is not None and normalized_token not in normalized_filter:
+                continue
+
+            service_raw = entry.get("service")
+            service_key = service_raw if service_raw is not None else _UNKNOWN_SERVICE
+            if service_filter is not None and service_key not in service_filter:
+                continue
+
+            timestamp_raw = entry.get("timestamp")
+            timestamp_value = self._normalize_time_bound(timestamp_raw)
+            if timestamp_value is None:
+                try:
+                    timestamp_value = float(timestamp_raw)
+                except (TypeError, ValueError):
+                    timestamp_value = None
+            if since_ts is not None and (timestamp_value is None or timestamp_value < since_ts):
+                continue
+            if until_ts is not None and (timestamp_value is None or timestamp_value > until_ts):
+                continue
+
+            decision_payload = entry.get("decision") or {}
+            state_value = decision_payload.get("state")
+            state_key = str(state_value) if state_value is not None else _MISSING_DECISION_STATE
+            if state_filter is not None and state_key not in state_filter:
+                continue
+
+            reason_value = decision_payload.get("reason")
+            reason_key = str(reason_value) if reason_value is not None else _MISSING_DECISION_REASON
+            if reason_filter is not None and reason_key not in reason_filter:
+                continue
+
+            mode_value = decision_payload.get("mode")
+            mode_key = str(mode_value) if mode_value is not None else _MISSING_DECISION_MODE
+            if mode_filter is not None and mode_key not in mode_filter:
+                continue
+
+            decision_id_token = self._normalize_decision_id(entry.get("decision_id"))
+            decision_id_key = decision_id_token or _MISSING_DECISION_ID
+            if decision_id_filter is not None and decision_id_key not in decision_id_filter:
+                continue
+
+            if not include_errors and "error" in entry:
+                continue
+
+            filtered.append(copy.deepcopy(entry))
+
+        return filtered, trimmed_by_ttl, ttl_snapshot, history_size
+
+    def _build_risk_evaluation_records(
+        self,
+        entries: Iterable[Mapping[str, Any]],
+        *,
+        normalized_decision_fields: list[Any] | None,
+        flatten_decision: bool,
+        decision_prefix: str,
+        drop_decision_column: bool,
+        fill_value: Any,
+        coerce_timestamps: bool,
+        tz: tzinfo | None,
+    ) -> list[dict[str, Any]]:
+        prefix = str(decision_prefix)
+        records: list[dict[str, Any]] = []
+        for entry in entries:
+            record = copy.deepcopy(dict(entry))
+            record["timestamp"] = self._normalize_timestamp_for_export(
+                record.get("timestamp"),
+                coerce=False,
+                tz=tz,
+            )
+
+            decision_payload = record.get("decision")
+            if flatten_decision:
+                if normalized_decision_fields is not None:
+                    fields = list(normalized_decision_fields)
+                elif isinstance(decision_payload, Mapping):
+                    fields = list(decision_payload.keys())
+                else:
+                    fields = []
+                for field in fields:
+                    column_name = f"{prefix}{field}" if prefix else str(field)
+                    if isinstance(decision_payload, Mapping) and field in decision_payload:
+                        value = copy.deepcopy(decision_payload[field])
+                    else:
+                        value = copy.deepcopy(fill_value)
+                    if value is pd.NA:
+                        value = None
+                    record[column_name] = value
+                if drop_decision_column:
+                    record.pop("decision", None)
+            elif drop_decision_column:
+                record.pop("decision", None)
+
+            records.append(record)
+
+        if coerce_timestamps:
+            for record in records:
+                value = record.get("timestamp")
+                if isinstance(value, datetime):
+                    record["timestamp"] = value.isoformat()
+                elif isinstance(value, pd.Timestamp):
+                    record["timestamp"] = value.to_pydatetime().isoformat()
+                elif value is not None:
+                    record["timestamp"] = str(value)
+
+        return records
+
+    @staticmethod
+    def _jsonify_risk_evaluation_records(
+        records: Iterable[Mapping[str, Any]]
+    ) -> list[dict[str, Any]]:
+        def _convert(value: Any) -> Any:
+            if value is pd.NA:
+                return None
+            if isinstance(value, (str, int, bool)) or value is None:
+                return value
+            if isinstance(value, float):
+                if math.isnan(value) or math.isinf(value):
+                    return str(value)
+                return value
+            if isinstance(value, datetime):
+                return value.isoformat()
+            if isinstance(value, pd.Timestamp):
+                return value.to_pydatetime().isoformat()
+            if isinstance(value, Mapping):
+                return {str(key): _convert(val) for key, val in value.items()}
+            if isinstance(value, (list, tuple, set, frozenset)):
+                return [_convert(item) for item in value]
+            return str(value)
+
+        return [{str(key): _convert(val) for key, val in record.items()} for record in records]
+
     def _prepare_decision_filter(
         self,
         value: str | Iterable[str | None] | object,
@@ -5988,6 +6213,87 @@ class AutoTrader:
     def clear_risk_evaluations(self) -> None:
         with self._lock:
             self._risk_evaluations.clear()
+
+    def get_risk_evaluations(
+        self,
+        *,
+        approved: bool | None | Iterable[bool | None] | object = _NO_FILTER,
+        normalized: bool | None | Iterable[bool | None] | object = _NO_FILTER,
+        include_errors: bool = True,
+        service: str | None | Iterable[str | None] | object = _NO_FILTER,
+        decision_state: str | Iterable[str | None] | object = _NO_FILTER,
+        decision_reason: str | Iterable[str | None] | object = _NO_FILTER,
+        decision_mode: str | Iterable[str | None] | object = _NO_FILTER,
+        decision_id: str | Iterable[str | None] | object = _NO_FILTER,
+        since: Any = None,
+        until: Any = None,
+        limit: int | None = None,
+        reverse: bool = False,
+    ) -> list[dict[str, Any]]:
+        (
+            approved_filter,
+            normalized_filter,
+            service_filter,
+            decision_state_filter,
+            decision_reason_filter,
+            decision_mode_filter,
+            decision_id_filter,
+            _,
+            since_ts,
+            until_ts,
+        ) = self._resolve_risk_evaluation_filters(
+            approved=approved,
+            normalized=normalized,
+            service=service,
+            decision_state=decision_state,
+            decision_reason=decision_reason,
+            decision_mode=decision_mode,
+            decision_id=decision_id,
+            since=since,
+            until=until,
+            decision_fields=None,
+        )
+
+        (
+            filtered_records,
+            trimmed_by_ttl,
+            ttl_snapshot,
+            history_size,
+        ) = self._collect_filtered_risk_evaluations(
+            include_errors=include_errors,
+            approved_filter=approved_filter,
+            normalized_filter=normalized_filter,
+            service_filter=service_filter,
+            since_ts=since_ts,
+            until_ts=until_ts,
+            state_filter=decision_state_filter,
+            reason_filter=decision_reason_filter,
+            mode_filter=decision_mode_filter,
+            decision_id_filter=decision_id_filter,
+        )
+
+        self._log_risk_history_trimmed(
+            context="get",
+            trimmed=trimmed_by_ttl,
+            ttl=ttl_snapshot,
+            history=history_size,
+        )
+
+        ordered_records = list(reversed(filtered_records)) if reverse else list(filtered_records)
+
+        if limit is not None:
+            try:
+                normalized_limit = int(limit)
+            except (TypeError, ValueError):
+                normalized_limit = None
+            else:
+                if normalized_limit <= 0:
+                    ordered_records = []
+                else:
+                    ordered_records = ordered_records[:normalized_limit]
+
+        return [copy.deepcopy(record) for record in ordered_records]
+
 
     def get_decision_audit_entries(
         self,
