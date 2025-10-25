@@ -7,6 +7,8 @@ Item {
     id: root
     property var activationControllerRef: typeof activationController !== "undefined" ? activationController : null
     property var licenseControllerRef: typeof licenseController !== "undefined" ? licenseController : null
+    property var appControllerRef: typeof appController !== "undefined" ? appController : null
+    property bool scheduleAutoEnabled: false
 
     implicitWidth: parent ? parent.width : 640
 
@@ -14,6 +16,23 @@ Item {
         if (!activationControllerRef || !activationControllerRef.fingerprint)
             return "{}"
         return JSON.stringify(activationControllerRef.fingerprint, null, 2)
+    }
+
+    function fingerprintSchedule() {
+        if (appControllerRef && appControllerRef.fingerprintRefreshSchedule)
+            return appControllerRef.fingerprintRefreshSchedule
+        return ({})
+    }
+
+    function syncScheduleFromController() {
+        var schedule = fingerprintSchedule()
+        scheduleAutoEnabled = !!schedule.active
+        if (intervalSpin && !intervalSpin.activeFocus) {
+            var interval = schedule.intervalSeconds
+            if (!interval || interval <= 0)
+                interval = 86400
+            intervalSpin.value = interval
+        }
     }
 
     function resolvedFingerprint() {
@@ -25,6 +44,36 @@ Item {
         if (document.payload && document.payload.fingerprint)
             return document.payload.fingerprint
         return ""
+    }
+
+    function formatRemaining(seconds) {
+        if (seconds === undefined || seconds === null)
+            return qsTr("n/d")
+        if (seconds < 0)
+            return qsTr("n/d")
+        if (seconds < 60)
+            return qsTr("%1 s").arg(Math.round(seconds))
+        var minutes = Math.floor(seconds / 60)
+        if (minutes < 60)
+            return qsTr("%1 min").arg(minutes)
+        var hours = Math.floor(minutes / 60)
+        var remainingMinutes = minutes % 60
+        if (remainingMinutes === 0)
+            return qsTr("%1 h").arg(hours)
+        return qsTr("%1 h %2 min").arg(hours).arg(remainingMinutes)
+    }
+
+    Component.onCompleted: syncScheduleFromController()
+
+    Connections {
+        target: appControllerRef
+        ignoreUnknownSignals: true
+        function onFingerprintRefreshScheduleChanged() {
+            syncScheduleFromController()
+        }
+        function onSecurityCacheChanged() {
+            syncScheduleFromController()
+        }
     }
 
     ColumnLayout {
@@ -115,6 +164,125 @@ Item {
                         return
                     licenseControllerRef.overrideExpectedFingerprint(overrideField.text.trim())
                     overrideField.text = ""
+                }
+            }
+        }
+
+        GroupBox {
+            title: qsTr("Harmonogram odświeżania fingerprintu")
+            Layout.fillWidth: true
+
+            ColumnLayout {
+                anchors.fill: parent
+                spacing: 8
+
+                RowLayout {
+                    Layout.fillWidth: true
+
+                    CheckBox {
+                        id: autoToggle
+                        checked: scheduleAutoEnabled
+                        text: scheduleAutoEnabled ? qsTr("Automatyczne odświeżanie aktywne") : qsTr("Automatyczne odświeżanie wstrzymane")
+                        onToggled: {
+                            if (!appControllerRef)
+                                return
+                            scheduleAutoEnabled = checked
+                            appControllerRef.setFingerprintRefreshEnabled(checked)
+                        }
+                    }
+
+                    Item { Layout.fillWidth: true }
+
+                    Button {
+                        text: qsTr("Odśwież teraz")
+                        enabled: !!appControllerRef
+                        onClicked: {
+                            if (!appControllerRef)
+                                return
+                            appControllerRef.triggerFingerprintRefreshNow()
+                        }
+                    }
+                }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 8
+
+                    Label { text: qsTr("Interwał (sekundy)") }
+
+                    SpinBox {
+                        id: intervalSpin
+                        Layout.preferredWidth: 160
+                        from: 60
+                        to: 86400 * 7
+                        stepSize: 60
+                        editable: true
+                        value: 86400
+                        function commitInterval() {
+                            if (!appControllerRef)
+                                return
+                            var next = Math.max(60, Math.round(value))
+                            value = next
+                            appControllerRef.setFingerprintRefreshIntervalSeconds(next)
+                        }
+                        onValueModified: commitInterval()
+                    }
+
+                    Button {
+                        text: qsTr("Zapisz interwał")
+                        enabled: !!appControllerRef
+                        onClicked: intervalSpin.commitInterval()
+                    }
+
+                    Item { Layout.fillWidth: true }
+                }
+
+                GridLayout {
+                    columns: 2
+                    Layout.fillWidth: true
+                    columnSpacing: 12
+                    rowSpacing: 6
+
+                    Label { text: qsTr("Ostatnie zapytanie") }
+                    Label {
+                        text: {
+                            var schedule = fingerprintSchedule()
+                            return schedule.lastRequestAt || qsTr("n/d")
+                        }
+                    }
+
+                    Label { text: qsTr("Ostatnie ukończenie") }
+                    Label {
+                        text: {
+                            var schedule = fingerprintSchedule()
+                            return schedule.lastCompletedAt || qsTr("n/d")
+                        }
+                    }
+
+                    Label { text: qsTr("Następne odświeżenie") }
+                    Label {
+                        text: {
+                            var schedule = fingerprintSchedule()
+                            return schedule.nextRefreshDueAt || qsTr("n/d")
+                        }
+                    }
+
+                    Label { text: qsTr("Pozostały czas") }
+                    Label {
+                        text: {
+                            var schedule = fingerprintSchedule()
+                            return formatRemaining(schedule.nextRefreshInSeconds)
+                        }
+                    }
+
+                    Label { text: qsTr("Ostatni błąd") }
+                    Label {
+                        wrapMode: Text.WordWrap
+                        text: {
+                            var schedule = fingerprintSchedule()
+                            return schedule.lastError || qsTr("brak")
+                        }
+                    }
                 }
             }
         }
