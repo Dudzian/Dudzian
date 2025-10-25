@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import pytest
 
+import hashlib
+import json
+from copy import deepcopy
 from dataclasses import replace
 
 from datetime import datetime, timedelta, timezone
 from types import MappingProxyType
-from typing import Iterable
+from typing import Iterable, Mapping
 
 import pandas as pd
 
@@ -1027,6 +1030,7 @@ def test_auto_trade_snapshot_exposes_read_only_state(monkeypatch) -> None:
     assert snapshot.risk.manual_reason == "stress"
     assert snapshot.risk.auto_active is True
     assert snapshot.risk.auto_risk_level is RiskLevel.CRITICAL
+    assert snapshot.ai_inference is None
     assert snapshot.regime_decision is not None
     assert snapshot.regime_decision.weights == decision.weights
     assert snapshot.regime_decision.parameters == expected_snapshot_params
@@ -1045,6 +1049,7 @@ def test_auto_trade_snapshot_exposes_read_only_state(monkeypatch) -> None:
     refreshed = engine.snapshot()
     assert refreshed.strategy_weights == expected_snapshot_params.ensemble_weights
     assert refreshed.risk.combined_until >= snapshot.risk.combined_until
+    assert refreshed.ai_inference is None
 
 
 def test_auto_trade_engine_inspect_regime_presets_reports_availability() -> None:

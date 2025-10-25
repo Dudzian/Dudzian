@@ -11,7 +11,7 @@ from collections.abc import Iterable
 from copy import deepcopy
 from dataclasses import asdict, dataclass, is_dataclass, replace
 from types import MappingProxyType
-from typing import Any, Deque, Dict, Iterable as TypingIterable, List, Mapping, Optional
+from typing import Any, Deque, Dict, Iterable as TypingIterable, List, Mapping, Optional, Sequence
 
 import numpy as np
 import pandas as pd
@@ -2796,6 +2796,26 @@ class AutoTradeEngine:
             "capabilities": metadata["summary"]["capabilities"],
             "tags": metadata["summary"]["tags"],
         }
+        ai_payload: Mapping[str, object] | None = None
+        if self._last_inference_metadata or self._last_inference_score:
+            inference_payload: Dict[str, object] = {}
+            if self._last_inference_metadata:
+                inference_payload.update(
+                    {str(key): value for key, value in self._last_inference_metadata.items()}
+                )
+            if self._last_inference_score is not None:
+                inference_payload.setdefault(
+                    "expected_return_bps", float(self._last_inference_score.expected_return_bps)
+                )
+                inference_payload.setdefault(
+                    "success_probability", float(self._last_inference_score.success_probability)
+                )
+            if self._last_inference_scored_at is not None:
+                inference_payload["scored_at"] = self._isoformat(
+                    self._last_inference_scored_at
+                )
+            if inference_payload:
+                ai_payload = MappingProxyType(dict(inference_payload))
         workflow = getattr(self, "_regime_workflow", None)
         overrides_obj = None
         if workflow is not None:
@@ -2822,6 +2842,7 @@ class AutoTradeEngine:
             metadata=MappingProxyType(metadata_payload),
             regime_activation=activation_payload,
             risk=self._build_risk_snapshot(),
+            ai_inference=ai_payload,
         )
 
     @staticmethod
@@ -2866,6 +2887,7 @@ class AutoTradeSnapshot:
     metadata: Mapping[str, object]
     regime_activation: Mapping[str, object] | None
     risk: RiskFreezeSnapshot
+    ai_inference: Mapping[str, object] | None
 
 
 __all__ = [
