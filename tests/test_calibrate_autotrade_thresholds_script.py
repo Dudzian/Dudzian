@@ -526,6 +526,17 @@ def test_load_current_thresholds_rejects_infinite_inline_risk() -> None:
     assert "risk_score" in message
 
 
+def test_load_current_thresholds_rejects_mixed_inline_with_nan() -> None:
+    with pytest.raises(SystemExit) as excinfo:
+        _load_current_signal_thresholds([
+            "signal_after_adjustment=0.7,signal_after_clamp=NaN",
+        ])
+
+    message = str(excinfo.value)
+    assert "musi być skończoną liczbą" in message
+    assert "signal_after_clamp" in message
+
+
 def test_load_current_thresholds_rejects_negative_infinite_inline_risk() -> None:
     with pytest.raises(SystemExit) as excinfo:
         _load_current_signal_thresholds(["risk_score=-Infinity"])
@@ -599,6 +610,25 @@ def test_load_current_thresholds_rejects_infinite_risk_from_file(tmp_path: Path)
     message = str(excinfo.value)
     assert "musi być skończoną liczbą" in message
     assert "risk_score" in message
+    assert str(path) in message
+
+
+def test_load_current_thresholds_rejects_nested_non_finite_from_file(tmp_path: Path) -> None:
+    path = tmp_path / "thresholds_nested.json"
+    payload = [
+        {
+            "metric": "signal_after_adjustment",
+            "value": float("inf"),
+        }
+    ]
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(SystemExit) as excinfo:
+        _load_current_signal_thresholds([str(path)])
+
+    message = str(excinfo.value)
+    assert "musi być skończoną liczbą" in message
+    assert "signal_after_adjustment" in message
     assert str(path) in message
 
 
@@ -966,6 +996,42 @@ def test_generate_report_uses_custom_risk_threshold_path(
     assert sources["inline"] == {}
     metrics = report["groups"][0]["metrics"]["risk_score"]
     assert metrics["current_threshold"] == pytest.approx(0.42)
+
+
+def test_generate_report_rejects_non_finite_current_inline() -> None:
+    with pytest.raises(SystemExit) as excinfo:
+        _generate_report(
+            journal_events=[],
+            autotrade_entries=[],
+            percentiles=[0.5],
+            suggestion_percentile=0.5,
+            current_threshold_sources={
+                "inline": {"signal_after_adjustment": "NaN"},
+            },
+        )
+
+    message = str(excinfo.value)
+    assert "musi być skończoną liczbą" in message
+    assert "signal_after_adjustment" in message
+    assert "current_thresholds.inline" in message
+
+
+def test_generate_report_rejects_non_finite_risk_inline() -> None:
+    with pytest.raises(SystemExit) as excinfo:
+        _generate_report(
+            journal_events=[],
+            autotrade_entries=[],
+            percentiles=[0.5],
+            suggestion_percentile=0.5,
+            current_threshold_sources={
+                "risk_inline": {"risk_score": "Infinity"},
+            },
+        )
+
+    message = str(excinfo.value)
+    assert "musi być skończoną liczbą" in message
+    assert "risk_score" in message
+    assert "risk_thresholds.inline" in message
 
 
 def test_generate_report_merges_multiple_risk_threshold_paths(
