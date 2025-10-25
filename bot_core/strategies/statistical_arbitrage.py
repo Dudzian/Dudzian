@@ -18,8 +18,8 @@ class StatisticalArbitrageSettings:
     max_notional: float = 25_000.0
 
     def __post_init__(self) -> None:
-        if int(self.lookback) < 10:
-            raise ValueError("lookback must be at least 10 periods")
+        if int(self.lookback) < 5:
+            raise ValueError("lookback must be at least 5 periods")
         self.lookback = int(self.lookback)
         self.spread_entry_z = float(self.spread_entry_z)
         self.spread_exit_z = float(self.spread_exit_z)

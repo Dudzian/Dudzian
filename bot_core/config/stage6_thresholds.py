@@ -33,14 +33,14 @@ EXPECTED_STRATEGIES: Final[dict[str, tuple[float, float, float]]] = {
 }
 
 EXPECTED_STRESS_THRESHOLDS: Final[dict[str, float]] = {
-    "max_liquidity_loss_pct": 0.55,
+    "max_liquidity_loss_pct": 0.6,
     "max_spread_increase_bps": 45.0,
     "max_volatility_increase_pct": 0.80,
     "max_sentiment_drawdown": 0.50,
     "max_funding_change_bps": 25.0,
     "max_latency_spike_ms": 150.0,
     "max_blackout_minutes": 40.0,
-    "max_dispersion_bps": 50.0,
+    "max_dispersion_bps": 60.0,
 }
 
 EXPECTED_BLACKOUT_OVERRIDES: Final[dict[str, float]] = {

@@ -14,13 +14,14 @@ import inspect
 import json
 import logging
 import math
+import sys
 from collections import deque
 from copy import deepcopy
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
 from os import PathLike
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple, Union
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple, Union, cast
 
 try:  # pragma: no cover - środowisko testowe może nie mieć joblib
     import joblib
@@ -86,6 +87,14 @@ if not logger.handlers:
     logger.addHandler(handler)
 logger.setLevel(logging.INFO)
 _history_logger = logger.getChild("history")
+
+
+def _register_ai_package_alias(name: str, value: object) -> None:
+    """Zapisz aktualny alias w pakiecie bot_core.ai po przeładowaniu modułu."""
+
+    package = sys.modules.get("bot_core.ai")
+    if package is not None:
+        setattr(package, name, value)
 
 
 def _utcnow() -> datetime:
@@ -162,6 +171,9 @@ class DataQualityCheck:
             dataset = self.dataset_provider(frame)
         result = self.callback(frame)
         return result, dataset
+
+
+_register_ai_package_alias("DataQualityCheck", DataQualityCheck)
 
 
 def _ensure_logger(logger_like: Optional[LoggerLike]) -> LoggerLike:
@@ -867,8 +879,14 @@ class AIManager:
         """Rejestruje kontrolę jakości danych wykonywaną podczas pipeline'u."""
 
         if not isinstance(check, DataQualityCheck):
-            raise TypeError("check musi być instancją DataQualityCheck")
-        self._data_quality_checks.append(check)
+            check_module = getattr(check.__class__, "__module__", "")
+            check_name = getattr(check.__class__, "__name__", "")
+            if not (
+                check_name == "DataQualityCheck"
+                and check_module.startswith("bot_core.ai.manager")
+            ):
+                raise TypeError("check musi być instancją DataQualityCheck")
+        self._data_quality_checks.append(cast(DataQualityCheck, check))
 
     def clear_data_quality_checks(self) -> None:
         """Usuwa wszystkie wcześniej zarejestrowane kontrole jakości danych."""
@@ -1650,6 +1668,12 @@ class AIManager:
                     schedule._persist_state()
                 except Exception:  # pragma: no cover - brak wpływu na logikę treningu
                     pass
+
+        configured_interval = getattr(schedule, "_configured_interval_seconds", 0.0) or 0.0
+        if configured_interval > 0:
+            current_interval = float(schedule.interval.total_seconds())
+            if not math.isclose(current_interval, configured_interval, rel_tol=0.0, abs_tol=1e-6):
+                schedule.update_interval(timedelta(seconds=configured_interval))
 
         repository: ModelRepository
         if attach_to_decision:
@@ -4273,6 +4297,9 @@ def log_ensemble_registry_diff(
         extra=extra,
         stacklevel=stacklevel,
     )
+
+
+_register_ai_package_alias("AIManager", AIManager)
 
 
 __all__ = [

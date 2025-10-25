@@ -28,7 +28,7 @@ from collections import Counter, OrderedDict
 from pathlib import Path
 from collections.abc import Iterable
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field, is_dataclass
 from typing import Any, Callable, Dict, Mapping, Optional, Protocol, Sequence, cast
 
 import pandas as pd
@@ -405,11 +405,16 @@ class AutoTrader:
         self._thresholds: Mapping[str, Any] = {}
         self.reload_thresholds()
 
-        self._decision_audit_log = (
-            decision_audit_log
-            or getattr(bootstrap_context, "decision_audit_log", None)
-            or DecisionAuditLog()
-        )
+        if decision_audit_log is not None:
+            log_instance = decision_audit_log
+        else:
+            context_log = (
+                getattr(bootstrap_context, "decision_audit_log", None)
+                if bootstrap_context is not None
+                else None
+            )
+            log_instance = context_log if context_log is not None else DecisionAuditLog()
+        self._decision_audit_log = log_instance
         self._initial_mode = self._detect_initial_mode()
         self._work_schedule = work_schedule or self._build_default_work_schedule()
         self._schedule_state: ScheduleState | None = None
@@ -824,6 +829,23 @@ class AutoTrader:
         if metadata:
             metadata["feature_columns_source"] = self._ai_feature_column_source
         return metadata
+
+    def _augment_metadata_with_feature_columns(
+        self, metadata: Mapping[str, object] | None = None
+    ) -> Mapping[str, object] | None:
+        """Merge provided metadata with feature column descriptors."""
+
+        combined: dict[str, object] = {}
+        feature_metadata = self._feature_column_metadata()
+        if feature_metadata:
+            combined.update(feature_metadata)
+        if metadata:
+            if isinstance(metadata, Mapping):
+                for key, value in metadata.items():
+                    combined[str(key)] = value
+            else:  # pragma: no cover - defensive fallback for legacy payloads
+                combined["metadata"] = metadata
+        return combined or None
 
     def _normalise_cycle_history_limit(self, limit: int | None) -> int:
         if limit is None:
@@ -1459,13 +1481,17 @@ class AutoTrader:
 
     @staticmethod
     def _normalise_cycle_history_limit(limit: int | None) -> int:
+        """Normalise history limits provided by public setters."""
+
         if limit is None:
             return _CONTROLLER_HISTORY_DEFAULT_LIMIT
         try:
             value = int(limit)
         except (TypeError, ValueError):
             return _CONTROLLER_HISTORY_DEFAULT_LIMIT
-        return max(1, value)
+        if value <= 0:
+            return -1
+        return value
 
     @staticmethod
     def _normalise_cycle_history_ttl(ttl: float | None) -> float | None:
@@ -2585,94 +2611,42 @@ class AutoTrader:
         self,
         value: str | Iterable[str | None] | object,
         *,
-        approved: bool | None | Iterable[bool | None] | object,
-        normalized: bool | None | Iterable[bool | None] | object,
-        service: str | None | Iterable[str | None] | object,
-        decision_state: str | Iterable[str | None] | object,
-        decision_reason: str | Iterable[str | None] | object,
-        decision_mode: str | Iterable[str | None] | object,
-        decision_id: str | Iterable[str | None] | object,
-        since: Any,
-        until: Any,
-        decision_fields: Iterable[Any] | Any | None,
-    ) -> tuple[
-        set[bool | None] | None,
-        set[bool | None] | None,
-        set[str] | None,
-        set[str] | None,
-        set[str] | None,
-        set[str] | None,
-        set[str] | None,
-        list[Any] | None,
-        datetime | None,
-        datetime | None,
-    ]:
-        approved_filter = self._prepare_bool_filter(approved)
-        normalized_filter = self._prepare_bool_filter(normalized)
-        service_filter = self._prepare_service_filter(service)
-        decision_state_filter = self._prepare_decision_filter(
-            decision_state,
-            missing_token=_MISSING_DECISION_STATE,
-        )
-        decision_reason_filter = self._prepare_decision_filter(
-            decision_reason,
-            missing_token=_MISSING_DECISION_REASON,
-        )
-        decision_mode_filter = self._prepare_decision_filter(
-            decision_mode,
-            missing_token=_MISSING_DECISION_MODE,
-        )
-        decision_id_filter = self._prepare_decision_filter(
-            decision_id,
-            missing_token=_MISSING_DECISION_ID,
-        )
-        decision_id_filter = self._prepare_decision_filter(
-            decision_id,
-            missing_token=_MISSING_DECISION_ID,
-        )
-        decision_id_filter = self._prepare_decision_filter(
-            decision_id,
-            missing_token=_MISSING_DECISION_ID,
-        )
-        decision_id_filter = self._prepare_decision_filter(
-            decision_id,
-            missing_token=_MISSING_DECISION_ID,
-        )
-        decision_id_filter = self._prepare_decision_filter(
-            decision_id,
-            missing_token=_MISSING_DECISION_ID,
-        )
-        decision_id_filter = self._prepare_decision_filter(
-            decision_id,
-            missing_token=_MISSING_DECISION_ID,
-        )
-        decision_id_filter = self._prepare_decision_filter(
-            decision_id,
-            missing_token=_MISSING_DECISION_ID,
-        )
-        decision_id_filter = self._prepare_decision_filter(
-            decision_id,
-            missing_token=_MISSING_DECISION_ID,
-        )
-        decision_id_filter = self._prepare_decision_filter(
-            decision_id,
-            missing_token=_MISSING_DECISION_ID,
-        )
-        since_ts = self._normalize_time_bound(since)
-        until_ts = self._normalize_time_bound(until)
-        normalized_decision_fields = self._normalize_decision_fields(decision_fields)
-        return (
-            approved_filter,
-            normalized_filter,
-            service_filter,
-            decision_state_filter,
-            decision_reason_filter,
-            decision_mode_filter,
-            decision_id_filter,
-            normalized_decision_fields,
-            since_ts,
-            until_ts,
-        )
+        missing_token: str,
+    ) -> set[str] | None:
+        if value is _NO_FILTER:
+            return None
+        normalized: set[str] = set()
+        for candidate in self._iter_filter_values(value):
+            if candidate is _NO_FILTER:
+                continue
+            if candidate is None:
+                normalized.add(missing_token)
+                continue
+            token = str(candidate).strip()
+            normalized.add(token or missing_token)
+        return normalized or None
+
+    def _prepare_guardrail_numeric_filter(
+        self,
+        value: float | None | Iterable[float | None] | object,
+    ) -> tuple[set[float], bool] | None:
+        if value is _NO_FILTER:
+            return None
+        normalized: set[float] = set()
+        include_null = False
+        for candidate in self._iter_filter_values(value):
+            if candidate is _NO_FILTER:
+                continue
+            if candidate is None:
+                include_null = True
+                continue
+            number = self._coerce_float(candidate)
+            if number is None:
+                continue
+            normalized.add(number)
+        if not normalized and not include_null:
+            return None
+        return normalized, include_null
 
     def _prepare_decision_filter(
         self,
@@ -2695,60 +2669,15 @@ class AutoTrader:
 
     @staticmethod
     def _coerce_float(value: Any) -> float | None:
-        if value is None:
+        if value is None or value is _NO_FILTER:
             return None
-        if isinstance(value, (int, float)):
+        try:
             numeric = float(value)
-        else:
-            ordered_keys: list[Any] = []
-            for entry in filtered_records:
-                payload = entry.get("decision")
-                if isinstance(payload, Mapping):
-                    for key in payload.keys():
-                        if not any(existing == key for existing in ordered_keys):
-                            ordered_keys.append(key)
-
-        base_columns = [
-            "timestamp",
-            "approved",
-            "normalized",
-            "decision_id",
-            "decision",
-            "service",
-            "response",
-            "error",
-        ]
-
-        prefix = str(decision_prefix)
-        records: list[dict[str, Any]] = []
-        for entry in filtered_records:
-            record = copy.deepcopy(entry)
-            raw_timestamp = record.get("timestamp")
-            record["timestamp"] = self._normalize_timestamp_for_export(
-                raw_timestamp,
-                coerce=coerce_timestamps,
-                tz=tz,
-            )
-
-            for column in base_columns:
-                if column not in record:
-                    record[column] = None
-
-            if flatten_decision:
-                payload = record.get("decision")
-                for key in ordered_keys:
-                    column_name = f"{prefix}{key}"
-                    if isinstance(payload, Mapping) and key in payload:
-                        record[column_name] = copy.deepcopy(payload[key])
-                    else:
-                        record[column_name] = copy.deepcopy(fill_value)
-
-            if drop_decision_column:
-                record.pop("decision", None)
-
-            records.append(record)
-
-        return records
+        except (TypeError, ValueError):
+            return None
+        if math.isnan(numeric):  # pragma: no cover - defensive guard
+            return None
+        return numeric
 
     @staticmethod
     def _ensure_datetime(value: Any, tz: tzinfo | None) -> datetime | None:
@@ -2810,12 +2739,15 @@ class AutoTrader:
         coerce: bool,
         tz: tzinfo | None,
     ) -> Any:
-        dt = self._ensure_datetime(value, tz or timezone.utc)
+        target_tz = tz if tz is not None else timezone.utc
+        dt = self._ensure_datetime(value, target_tz)
         if dt is None:
             return None
         if coerce:
+            if tz is None:
+                return pd.Timestamp(dt.replace(tzinfo=None))
             return pd.Timestamp(dt)
-        return dt.isoformat()
+        return dt.timestamp()
 
     def _normalize_approval_flag(self, value: Any) -> str:
         token = self._coerce_optional_bool(value)
@@ -2867,8 +2799,10 @@ class AutoTrader:
     ) -> dict[str, Any]:
         if not stats:
             return {}
-        count = int(stats.get("count", 0))
-        missing = int(stats.get("missing", 0))
+        count = int(stats.get("count", 0) or 0)
+        missing = int(stats.get("missing", 0) or 0)
+        if count == 0 and missing == 0:
+            return {}
         total_sum = float(stats.get("sum", 0.0))
         result: dict[str, Any] = {
             "count": count,
@@ -2884,10 +2818,107 @@ class AutoTrader:
         return result
 
     @staticmethod
+    def _create_decision_bucket() -> dict[str, Any]:
+        return {
+            "total": 0,
+            "approved": 0,
+            "rejected": 0,
+            "unknown": 0,
+            "errors": 0,
+            "raw_true": 0,
+            "raw_false": 0,
+            "raw_none": 0,
+            "approval_rate": 0.0,
+            "error_rate": 0.0,
+            "services": Counter(),
+        }
+
+    @staticmethod
+    def _update_decision_bucket(
+        bucket: dict[str, Any],
+        *,
+        normalized_value: bool | None,
+        raw_value: bool | None,
+        has_error: bool,
+        service_key: str,
+    ) -> None:
+        bucket["total"] = bucket.get("total", 0) + 1
+
+        if normalized_value is True:
+            bucket["approved"] = bucket.get("approved", 0) + 1
+        elif normalized_value is False:
+            bucket["rejected"] = bucket.get("rejected", 0) + 1
+        else:
+            bucket["unknown"] = bucket.get("unknown", 0) + 1
+
+        if raw_value is True:
+            bucket["raw_true"] = bucket.get("raw_true", 0) + 1
+        elif raw_value is False:
+            bucket["raw_false"] = bucket.get("raw_false", 0) + 1
+        else:
+            bucket["raw_none"] = bucket.get("raw_none", 0) + 1
+
+        if has_error:
+            bucket["errors"] = bucket.get("errors", 0) + 1
+
+        services = bucket.setdefault("services", Counter())
+        if isinstance(services, Counter):
+            services[service_key] += 1
+        else:  # pragma: no cover - defensive guard for unexpected payloads
+            bucket["services"] = Counter({service_key: 1})
+
+    @staticmethod
+    def _finalize_decision_bucket(bucket: dict[str, Any]) -> None:
+        total = int(bucket.get("total", 0) or 0)
+        approved = int(bucket.get("approved", 0) or 0)
+        errors = int(bucket.get("errors", 0) or 0)
+
+        bucket["approval_rate"] = approved / total if total else 0.0
+        bucket["error_rate"] = errors / total if total else 0.0
+
+        services = bucket.get("services")
+        if isinstance(services, Counter):
+            bucket["services"] = {
+                name: int(count)
+                for name, count in sorted(
+                    services.items(), key=lambda item: (-item[1], item[0])
+                )
+            }
+        elif isinstance(services, Mapping):
+            bucket["services"] = dict(services)
+        else:
+            bucket["services"] = {}
+
+    @staticmethod
     def _finalize_dimension_counter(counter: Counter[str] | None) -> dict[str, int]:
         if not counter:
             return {}
-        return {key: int(counter[key]) for key in sorted(counter)}
+        return {
+            key: int(count)
+            for key, count in sorted(counter.items(), key=lambda item: (-item[1], item[0]))
+        }
+
+    @staticmethod
+    def _sort_decision_dimension(
+        payload: Mapping[str, dict[str, Any]]
+    ) -> dict[str, dict[str, Any]]:
+        sorted_payload: dict[str, dict[str, Any]] = {}
+        for key, bucket in sorted(
+            payload.items(), key=lambda item: (-item[1].get("total", 0), item[0])
+        ):
+            normalized_bucket = dict(bucket)
+            services = normalized_bucket.get("services")
+            if isinstance(services, Counter):
+                normalized_bucket["services"] = {
+                    name: int(count)
+                    for name, count in sorted(
+                        services.items(), key=lambda item: (-item[1], item[0])
+                    )
+                }
+            elif isinstance(services, Mapping):
+                normalized_bucket["services"] = dict(services)
+            sorted_payload[key] = normalized_bucket
+        return sorted_payload
 
     @staticmethod
     def _normalize_decision_dimension_value(
@@ -2917,6 +2948,174 @@ class AutoTrader:
             "values": [float(item) for item in sorted(values)],
             "include_missing": bool(include_missing),
         }
+
+    def _snapshot_decision_timeline_filters(
+        self,
+        *,
+        approved_filter: set[bool | None] | None,
+        normalized_filter: set[bool | None] | None,
+        include_errors: bool,
+        service_filter: set[str] | None,
+        decision_state_filter: set[str] | None,
+        decision_reason_filter: set[str] | None,
+        decision_mode_filter: set[str] | None,
+        decision_id_filter: set[str] | None,
+        since_ts: float | None,
+        until_ts: float | None,
+        include_services: bool,
+        include_decision_dimensions: bool,
+        fill_gaps: bool,
+        coerce_timestamps: bool,
+        tz_value: tzinfo | None,
+    ) -> dict[str, Any]:
+        snapshot: dict[str, Any] = {
+            "approved": self._serialize_filter_snapshot(approved_filter),
+            "normalized": self._serialize_filter_snapshot(normalized_filter),
+            "include_errors": include_errors,
+            "service": self._serialize_filter_snapshot(service_filter),
+            "decision_state": self._serialize_filter_snapshot(decision_state_filter),
+            "decision_reason": self._serialize_filter_snapshot(decision_reason_filter),
+            "decision_mode": self._serialize_filter_snapshot(decision_mode_filter),
+            "decision_id": self._serialize_filter_snapshot(decision_id_filter),
+            "since": since_ts,
+            "until": until_ts,
+            "include_services": include_services,
+            "include_decision_dimensions": include_decision_dimensions,
+            "fill_gaps": fill_gaps,
+            "coerce_timestamps": coerce_timestamps,
+            "tz": tz_value.tzname(None) if tz_value is not None else None,
+        }
+        return snapshot
+
+    def _snapshot_guardrail_timeline_filters(
+        self,
+        *,
+        approved_filter: set[bool | None] | None,
+        normalized_filter: set[bool | None] | None,
+        include_errors: bool,
+        service_filter: set[str] | None,
+        decision_state_filter: set[str] | None,
+        decision_reason_filter: set[str] | None,
+        decision_mode_filter: set[str] | None,
+        decision_id_filter: set[str] | None,
+        reason_filter: set[str] | None,
+        trigger_filter: set[str] | None,
+        trigger_label_filter: set[str] | None,
+        trigger_comparator_filter: set[str] | None,
+        trigger_unit_filter: set[str] | None,
+        trigger_threshold_filter: tuple[set[float], bool] | None,
+        trigger_threshold_min: float | None,
+        trigger_threshold_max: float | None,
+        trigger_value_filter: tuple[set[float], bool] | None,
+        trigger_value_min: float | None,
+        trigger_value_max: float | None,
+        since_ts: float | None,
+        until_ts: float | None,
+        include_services: bool,
+        include_guardrail_dimensions: bool,
+        include_decision_dimensions: bool,
+        fill_gaps: bool,
+        coerce_timestamps: bool,
+        tz_value: tzinfo | None,
+    ) -> dict[str, Any]:
+        snapshot: dict[str, Any] = {
+            "approved": self._serialize_filter_snapshot(approved_filter),
+            "normalized": self._serialize_filter_snapshot(normalized_filter),
+            "include_errors": include_errors,
+            "service": self._serialize_filter_snapshot(service_filter),
+            "decision_state": self._serialize_filter_snapshot(decision_state_filter),
+            "decision_reason": self._serialize_filter_snapshot(decision_reason_filter),
+            "decision_mode": self._serialize_filter_snapshot(decision_mode_filter),
+            "decision_id": self._serialize_filter_snapshot(decision_id_filter),
+            "reason": self._serialize_filter_snapshot(reason_filter),
+            "trigger": self._serialize_filter_snapshot(trigger_filter),
+            "trigger_label": self._serialize_filter_snapshot(trigger_label_filter),
+            "trigger_comparator": self._serialize_filter_snapshot(
+                trigger_comparator_filter
+            ),
+            "trigger_unit": self._serialize_filter_snapshot(trigger_unit_filter),
+            "trigger_threshold": self._serialize_numeric_filter_snapshot(
+                trigger_threshold_filter
+            ),
+            "trigger_threshold_min": trigger_threshold_min,
+            "trigger_threshold_max": trigger_threshold_max,
+            "trigger_value": self._serialize_numeric_filter_snapshot(trigger_value_filter),
+            "trigger_value_min": trigger_value_min,
+            "trigger_value_max": trigger_value_max,
+            "since": since_ts,
+            "until": until_ts,
+            "include_services": include_services,
+            "include_guardrail_dimensions": include_guardrail_dimensions,
+            "include_decision_dimensions": include_decision_dimensions,
+            "fill_gaps": fill_gaps,
+            "coerce_timestamps": coerce_timestamps,
+            "tz": tz_value.tzname(None) if tz_value is not None else None,
+        }
+        return snapshot
+
+    def _build_risk_evaluation_records(
+        self,
+        records: Sequence[Mapping[str, Any]],
+        *,
+        normalized_decision_fields: Sequence[Any] | None,
+        flatten_decision: bool,
+        decision_prefix: str,
+        drop_decision_column: bool,
+        fill_value: Any,
+        coerce_timestamps: bool,
+        tz: tzinfo | None,
+    ) -> list[dict[str, Any]]:
+        output: list[dict[str, Any]] = []
+        for entry in records:
+            record = copy.deepcopy(dict(entry))
+            record["timestamp"] = self._normalize_timestamp_for_export(
+                record.get("timestamp"),
+                coerce=coerce_timestamps,
+                tz=tz,
+            )
+
+            if "service" not in record and entry.get("service") is None:
+                record.pop("service", None)
+
+            record.setdefault("response", None)
+            record.setdefault("error", None)
+
+            decision_payload = record.get("decision")
+            if flatten_decision:
+                if not isinstance(decision_payload, Mapping):
+                    decision_mapping: Mapping[str, Any] = {}
+                else:
+                    decision_mapping = decision_payload
+
+                if normalized_decision_fields:
+                    fields = list(normalized_decision_fields)
+                else:
+                    fields = list(decision_mapping.keys())
+
+                for field in fields:
+                    column_name = f"{decision_prefix}{field}"
+                    if isinstance(decision_mapping, Mapping) and field in decision_mapping:
+                        value = copy.deepcopy(decision_mapping[field])
+                    else:
+                        value = fill_value
+                    record[column_name] = value
+
+                if drop_decision_column:
+                    record.pop("decision", None)
+            output.append(record)
+        return output
+
+    def _jsonify_risk_evaluation_records(
+        self, records: Sequence[Mapping[str, Any]]
+    ) -> list[dict[str, Any]]:
+        json_ready: list[dict[str, Any]] = []
+        for entry in records:
+            payload = copy.deepcopy(dict(entry))
+            timestamp_value = payload.get("timestamp")
+            dt = self._ensure_datetime(timestamp_value, timezone.utc)
+            payload["timestamp"] = dt.isoformat() if dt is not None else None
+            json_ready.append(payload)
+        return json_ready
 
         probability = self._ai_probability_from_prediction(value)
         evaluated_at_raw = predictions.index[-1]
@@ -5744,148 +5943,244 @@ class AutoTrader:
             state_filter=decision_state_filter,
             reason_filter=decision_reason_filter,
             mode_filter=decision_mode_filter,
+            decision_id_filter=decision_id_filter,
         )
 
-        effective_history: list[dict[str, Any]] = []
-        for entry in history_snapshot:
-            timestamp = entry.get("finished_at")
-            if timestamp is None:
-                timestamp = entry.get("started_at")
-            if since_ts is not None and (timestamp is None or timestamp < since_ts):
+        reason_filters_active = reason_filter is not None
+        trigger_filters_active = any(
+            filter_value is not None
+            for filter_value in (
+                trigger_filter,
+                trigger_label_filter,
+                trigger_comparator_filter,
+                trigger_unit_filter,
+                trigger_threshold_filter,
+                trigger_value_filter,
+            )
+        ) or any(
+            bound is not None
+            for bound in (
+                trigger_threshold_min,
+                trigger_threshold_max,
+                trigger_value_min,
+                trigger_value_max,
+            )
+        )
+
+        guardrail_records: list[
+            tuple[dict[str, Any], tuple[str, ...], tuple[dict[str, Any], ...]]
+        ] = []
+
+        for entry in filtered_records:
+            reasons, triggers, trigger_tokens = self._extract_guardrail_dimensions(entry)
+            if not reasons and not triggers:
                 continue
-            if until_ts is not None and (timestamp is None or timestamp > until_ts):
+
+            if reason_filters_active and not any(
+                reason in reason_filter  # type: ignore[arg-type]
+                for reason in reasons
+            ):
                 continue
-            effective_history.append(entry)
 
-        if normalized_limit == 0:
-            effective_history = []
-        elif normalized_limit is not None and len(effective_history) > normalized_limit:
-            effective_history = effective_history[-normalized_limit:]
+            if trigger_filters_active and not self._guardrail_trigger_matches(
+                trigger_tokens,
+                trigger_filter=trigger_filter,
+                trigger_label_filter=trigger_label_filter,
+                trigger_comparator_filter=trigger_comparator_filter,
+                trigger_unit_filter=trigger_unit_filter,
+                trigger_threshold_filter=trigger_threshold_filter,
+                trigger_threshold_min=trigger_threshold_min,
+                trigger_threshold_max=trigger_threshold_max,
+                trigger_value_filter=trigger_value_filter,
+                trigger_value_min=trigger_value_min,
+                trigger_value_max=trigger_value_max,
+            ):
+                continue
 
-        total = len(effective_history)
-        summary: dict[str, Any] = {
-            "total": total,
-            "filters": {
-                "since": since_ts,
-                "until": until_ts,
-                "limit": normalized_limit,
-            },
-            "config": {
-                "limit": None if limit_cfg <= 0 else limit_cfg,
-                "ttl": ttl_cfg,
-            },
-        }
+            guardrail_records.append((entry, reasons, triggers))
 
-        if total == 0:
-            summary.update(
+        return (
+            guardrail_records,
+            trimmed_by_ttl,
+            ttl_snapshot,
+            history_size,
+            filtered_records,
+        )
+
+    def _extract_guardrail_dimensions(
+        self, entry: Mapping[str, Any]
+    ) -> tuple[tuple[str, ...], tuple[dict[str, Any], ...], list[dict[str, Any]]]:
+        decision_payload = entry.get("decision") if isinstance(entry, Mapping) else None
+        details: Mapping[str, Any] | None = None
+        if isinstance(decision_payload, Mapping):
+            details = decision_payload.get("details")
+        if not isinstance(details, Mapping):
+            details = {}
+
+        raw_reasons = details.get("guardrail_reasons") or ()
+        reasons: list[str] = []
+        for reason in raw_reasons:
+            if reason is None:
+                continue
+            token = str(reason).strip()
+            if token:
+                reasons.append(token)
+
+        raw_triggers = details.get("guardrail_triggers") or ()
+        export_triggers: list[dict[str, Any]] = []
+        trigger_tokens: list[dict[str, Any]] = []
+
+        for raw_trigger in raw_triggers:
+            if hasattr(raw_trigger, "to_dict") and callable(raw_trigger.to_dict):
+                trigger_payload = raw_trigger.to_dict()
+            elif is_dataclass(raw_trigger):
+                trigger_payload = asdict(raw_trigger)
+            elif isinstance(raw_trigger, Mapping):
+                trigger_payload = dict(raw_trigger)
+            else:
+                trigger_payload = {"name": raw_trigger}
+
+            name_raw = trigger_payload.get("name")
+            label_raw = trigger_payload.get("label")
+            comparator_raw = trigger_payload.get("comparator")
+            unit_raw = trigger_payload.get("unit")
+            threshold_raw = trigger_payload.get("threshold")
+            value_raw = trigger_payload.get("value")
+
+            export_entry: dict[str, Any] = {}
+            if name_raw is not None:
+                export_entry["name"] = str(name_raw)
+            export_entry["label"] = label_raw
+            export_entry["comparator"] = comparator_raw
+            if threshold_raw is not None:
+                export_entry["threshold"] = threshold_raw
+            if unit_raw is not None:
+                export_entry["unit"] = unit_raw
+            if value_raw is not None:
+                export_entry["value"] = value_raw
+            export_triggers.append(export_entry)
+
+            normalized_threshold = self._coerce_float(threshold_raw)
+            normalized_value = self._coerce_float(value_raw)
+            trigger_tokens.append(
                 {
-                    "orders": {
-                        "total": 0,
-                        "average": 0.0,
-                        "min": 0,
-                        "max": 0,
-                    },
-                    "signals": {
-                        "total": 0,
-                        "average": 0.0,
-                        "min": 0,
-                        "max": 0,
-                        "by_side": {},
-                    },
-                    "results": {
-                        "total": 0,
-                        "average": 0.0,
-                        "min": 0,
-                        "max": 0,
-                        "status_counts": {},
-                    },
-                    "duration": {
-                        "total": 0.0,
-                        "average": 0.0,
-                        "min": None,
-                        "max": None,
-                    },
-                    "first_sequence": None,
-                    "last_sequence": None,
-                    "first_timestamp": None,
-                    "last_timestamp": None,
+                    "name": (
+                        str(name_raw).strip()
+                        if name_raw is not None and str(name_raw).strip()
+                        else _UNKNOWN_SERVICE
+                    ),
+                    "label": (
+                        str(label_raw).strip()
+                        if label_raw is not None and str(label_raw).strip()
+                        else _MISSING_GUARDRAIL_LABEL
+                    ),
+                    "comparator": (
+                        str(comparator_raw).strip()
+                        if comparator_raw is not None and str(comparator_raw).strip()
+                        else _MISSING_GUARDRAIL_COMPARATOR
+                    ),
+                    "unit": (
+                        str(unit_raw).strip()
+                        if unit_raw is not None and str(unit_raw).strip()
+                        else _MISSING_GUARDRAIL_UNIT
+                    ),
+                    "threshold": normalized_threshold,
+                    "value": normalized_value,
                 }
             )
-            return summary
 
-        orders_per_cycle: list[int] = []
-        signals_per_cycle: list[int] = []
-        results_per_cycle: list[int] = []
-        durations: list[float] = []
-        signal_sides: Counter[str] = Counter()
-        result_statuses: Counter[str] = Counter()
-        first_sequence: int | None = None
-        last_sequence: int | None = None
-        first_timestamp: float | None = None
-        last_timestamp: float | None = None
+        return tuple(reasons), tuple(export_triggers), trigger_tokens
 
-        for entry in effective_history:
-            sequence = entry.get("sequence")
-            if sequence is not None:
-                try:
-                    sequence_int = int(sequence)
-                except (TypeError, ValueError):  # pragma: no cover - defensive guard
-                    sequence_int = None
-                else:
-                    if first_sequence is None:
-                        first_sequence = sequence_int
-                    last_sequence = sequence_int
+    def _guardrail_trigger_matches(
+        self,
+        trigger_tokens: Sequence[Mapping[str, Any]],
+        *,
+        trigger_filter: set[str] | None,
+        trigger_label_filter: set[str] | None,
+        trigger_comparator_filter: set[str] | None,
+        trigger_unit_filter: set[str] | None,
+        trigger_threshold_filter: tuple[set[float], bool] | None,
+        trigger_threshold_min: float | None,
+        trigger_threshold_max: float | None,
+        trigger_value_filter: tuple[set[float], bool] | None,
+        trigger_value_min: float | None,
+        trigger_value_max: float | None,
+    ) -> bool:
+        if not trigger_tokens:
+            return False
 
-            timestamp = entry.get("finished_at")
-            if timestamp is None:
-                timestamp = entry.get("started_at")
-            if timestamp is not None:
-                try:
-                    timestamp_float = float(timestamp)
-                except (TypeError, ValueError):  # pragma: no cover - defensive guard
-                    timestamp_float = None
-                else:
-                    if first_timestamp is None:
-                        first_timestamp = timestamp_float
-                    last_timestamp = timestamp_float
+        for trigger in trigger_tokens:
+            name_token = str(trigger.get("name", _UNKNOWN_SERVICE))
+            label_token = str(trigger.get("label", _MISSING_GUARDRAIL_LABEL))
+            comparator_token = str(
+                trigger.get("comparator", _MISSING_GUARDRAIL_COMPARATOR)
+            )
+            unit_token = str(trigger.get("unit", _MISSING_GUARDRAIL_UNIT))
+            threshold_value = trigger.get("threshold")
+            value_value = trigger.get("value")
 
-            orders_value = entry.get("orders")
-            if isinstance(orders_value, (int, float)):
-                orders_count = max(0, int(orders_value))
-            else:
-                orders_count = len(entry.get("results", ()) or ())
-            orders_per_cycle.append(orders_count)
+            if trigger_filter is not None and name_token not in trigger_filter:
+                continue
+            if (
+                trigger_label_filter is not None
+                and label_token not in trigger_label_filter
+            ):
+                continue
+            if (
+                trigger_comparator_filter is not None
+                and comparator_token not in trigger_comparator_filter
+            ):
+                continue
+            if trigger_unit_filter is not None and unit_token not in trigger_unit_filter:
+                continue
 
-            signals_sequence = entry.get("signals") or ()
-            results_sequence = entry.get("results") or ()
-
-            signals_count = len(signals_sequence)
-            results_count = len(results_sequence)
-            signals_per_cycle.append(signals_count)
-            results_per_cycle.append(results_count)
-
-            duration_value = entry.get("duration_s")
-            if duration_value is not None:
-                try:
-                    durations.append(max(0.0, float(duration_value)))
-                except (TypeError, ValueError):  # pragma: no cover - defensive guard
-                    pass
-
-            for raw_signal in signals_sequence:
-                side = None
-                payload = getattr(raw_signal, "signal", raw_signal)
-                if isinstance(payload, Mapping):
-                    side = payload.get("side")
-                if side is None:
-                    side = getattr(payload, "side", None)
-                if side is None and isinstance(raw_signal, Mapping):
-                    side = raw_signal.get("side")
-                if side is None:
-                    side = getattr(raw_signal, "side", None)
-                if side is None:
+            if trigger_threshold_filter is not None:
+                value_set, include_missing = trigger_threshold_filter
+                if threshold_value is None:
+                    if not include_missing:
+                        continue
+                elif threshold_value not in value_set:
                     continue
-                side_str = str(side).lower()
-                signal_sides[side_str] += 1
+
+            if (
+                trigger_threshold_min is not None
+                and (
+                    threshold_value is None
+                    or threshold_value < trigger_threshold_min
+                )
+            ):
+                continue
+            if (
+                trigger_threshold_max is not None
+                and (
+                    threshold_value is None
+                    or threshold_value > trigger_threshold_max
+                )
+            ):
+                continue
+
+            if trigger_value_filter is not None:
+                value_set, include_missing = trigger_value_filter
+                if value_value is None:
+                    if not include_missing:
+                        continue
+                elif value_value not in value_set:
+                    continue
+
+            if (
+                trigger_value_min is not None
+                and (value_value is None or value_value < trigger_value_min)
+            ):
+                continue
+            if (
+                trigger_value_max is not None
+                and (value_value is None or value_value > trigger_value_max)
+            ):
+                continue
+
+            return True
+
+        return False
 
     def _apply_risk_evaluation_filters(
         self,
@@ -5901,7 +6196,7 @@ class AutoTrader:
         reason_filter: set[str] | None,
         mode_filter: set[str] | None,
         decision_id_filter: set[str] | None = None,
-    ) -> GuardrailTimelineRecords:
+    ) -> list[dict[str, Any]]:
         filtered: list[dict[str, Any]] = []
         for entry in records:
             if not include_errors and "error" in entry:
@@ -5913,10 +6208,11 @@ class AutoTrader:
             service_key = entry.get("service") or _UNKNOWN_SERVICE
             if service_filter is not None and service_key not in service_filter:
                 continue
-            timestamp = entry.get("timestamp")
-            if since_ts is not None and (timestamp is None or timestamp < since_ts):
+
+            timestamp_value = self._normalize_time_bound(entry.get("timestamp"))
+            if since_ts is not None and (timestamp_value is None or timestamp_value < since_ts):
                 continue
-            if until_ts is not None and (timestamp is None or timestamp > until_ts):
+            if until_ts is not None and (timestamp_value is None or timestamp_value > until_ts):
                 continue
 
             decision_id_value = entry.get("decision_id")
@@ -5925,10 +6221,7 @@ class AutoTrader:
                 if decision_id_value is not None
                 else _MISSING_DECISION_ID
             )
-            if (
-                decision_id_filter is not None
-                and decision_id_token not in decision_id_filter
-            ):
+            if decision_id_filter is not None and decision_id_token not in decision_id_filter:
                 continue
 
             decision_payload = entry.get("decision")
@@ -5946,44 +6239,342 @@ class AutoTrader:
                 if mode_value is not None:
                     decision_mode_token = str(mode_value)
 
-        duration_metrics: dict[str, Any]
-        if durations:
-            total_duration = sum(durations)
-            duration_metrics = {
-                "total": total_duration,
-                "average": total_duration / len(durations),
-                "min": min(durations),
-                "max": max(durations),
-            }
-        else:
-            duration_metrics = {
-                "total": 0.0,
-                "average": 0.0,
-                "min": None,
-                "max": None,
-            }
+            if state_filter is not None and decision_state_token not in state_filter:
+                continue
+            if reason_filter is not None and decision_reason_token not in reason_filter:
+                continue
+            if mode_filter is not None and decision_mode_token not in mode_filter:
+                continue
 
-        summary.update(
-            {
-                "orders": _aggregate_numbers(orders_per_cycle),
-                "signals": {
-                    **_aggregate_numbers(signals_per_cycle),
-                    "by_side": dict(signal_sides),
-                },
-                "results": {
-                    **_aggregate_numbers(results_per_cycle),
-                    "status_counts": dict(result_statuses),
-                },
-                "duration": duration_metrics,
-                "first_sequence": first_sequence,
-                "last_sequence": last_sequence,
-                "first_timestamp": first_timestamp,
-                "last_timestamp": last_timestamp,
-            }
+            filtered.append(copy.deepcopy(dict(entry)))
+
+        return filtered
+
+
+
+    def _resolve_risk_evaluation_filters(
+        self,
+        *,
+        approved: bool | None | Iterable[bool | None] | object,
+        normalized: bool | None | Iterable[bool | None] | object,
+        service: str | None | Iterable[str | None] | object,
+        decision_state: str | Iterable[str | None] | object,
+        decision_reason: str | Iterable[str | None] | object,
+        decision_mode: str | Iterable[str | None] | object,
+        decision_id: str | Iterable[str | None] | object,
+        since: Any,
+        until: Any,
+        decision_fields: Iterable[Any] | Any | None,
+    ) -> tuple[
+        set[bool | None] | None,
+        set[bool | None] | None,
+        set[str] | None,
+        set[str] | None,
+        set[str] | None,
+        set[str] | None,
+        set[str] | None,
+        list[Any] | None,
+        float | None,
+        float | None,
+    ]:
+        approved_filter = self._prepare_bool_filter(approved)
+        normalized_filter = self._prepare_bool_filter(normalized)
+        service_filter = self._prepare_service_filter(service)
+        decision_state_filter = self._prepare_decision_filter(
+            decision_state,
+            missing_token=_MISSING_DECISION_STATE,
         )
-        return summary
+        decision_reason_filter = self._prepare_decision_filter(
+            decision_reason,
+            missing_token=_MISSING_DECISION_REASON,
+        )
+        decision_mode_filter = self._prepare_decision_filter(
+            decision_mode,
+            missing_token=_MISSING_DECISION_MODE,
+        )
+        decision_id_filter = self._prepare_decision_filter(
+            decision_id,
+            missing_token=_MISSING_DECISION_ID,
+        )
+        normalized_decision_fields = self._normalize_decision_fields(decision_fields)
+        since_ts = self._normalize_time_bound(since)
+        until_ts = self._normalize_time_bound(until)
+        return (
+            approved_filter,
+            normalized_filter,
+            service_filter,
+            decision_state_filter,
+            decision_reason_filter,
+            decision_mode_filter,
+            decision_id_filter,
+            normalized_decision_fields,
+            since_ts,
+            until_ts,
+        )
 
+    def _collect_filtered_risk_evaluations(
+        self,
+        *,
+        include_errors: bool,
+        approved_filter: set[bool | None] | None,
+        normalized_filter: set[bool | None] | None,
+        service_filter: set[str] | None,
+        since_ts: float | None,
+        until_ts: float | None,
+        state_filter: set[str] | None,
+        reason_filter: set[str] | None,
+        mode_filter: set[str] | None,
+        decision_id_filter: set[str] | None = None,
+    ) -> tuple[list[dict[str, Any]], int, float | None, int]:
+        with self._lock:
+            trimmed_by_ttl = self._prune_risk_evaluations_locked()
+            history_snapshot = list(self._risk_evaluations)
+            ttl_snapshot = self._risk_evaluations_ttl_s
+            history_size = len(self._risk_evaluations)
 
+        filtered_records = self._apply_risk_evaluation_filters(
+            history_snapshot,
+            include_errors=include_errors,
+            approved_filter=approved_filter,
+            normalized_filter=normalized_filter,
+            service_filter=service_filter,
+            since_ts=since_ts,
+            until_ts=until_ts,
+            state_filter=state_filter,
+            reason_filter=reason_filter,
+            mode_filter=mode_filter,
+            decision_id_filter=decision_id_filter,
+        )
+        return filtered_records, trimmed_by_ttl, ttl_snapshot, history_size
+
+    def _normalize_history_export_limit(
+        self, limit: Any
+    ) -> int | None:
+        if limit is None or limit is _NO_FILTER:
+            return None
+        if isinstance(limit, bool):
+            raise TypeError("limit must be an integer or None")
+        try:
+            normalized = int(limit)
+        except (TypeError, ValueError) as exc:
+            raise TypeError("limit must be an integer or None") from exc
+        if normalized < 0:
+            return None
+        return normalized
+
+    def _resolve_guardrail_event_filters(
+        self,
+        *,
+        approved: bool | None | Iterable[bool | None] | object,
+        normalized: bool | None | Iterable[bool | None] | object,
+        service: str | None | Iterable[str | None] | object,
+        decision_state: str | Iterable[str | None] | object,
+        decision_reason: str | Iterable[str | None] | object,
+        decision_mode: str | Iterable[str | None] | object,
+        decision_id: str | Iterable[str | None] | object,
+        reason: str | Iterable[str] | object,
+        trigger: str | Iterable[str] | object,
+        trigger_label: str | Iterable[str | None] | object,
+        trigger_comparator: str | Iterable[str | None] | object,
+        trigger_unit: str | Iterable[str | None] | object,
+        trigger_threshold: float | None | Iterable[float | None] | object,
+        trigger_threshold_min: Any,
+        trigger_threshold_max: Any,
+        trigger_value: float | None | Iterable[float | None] | object,
+        trigger_value_min: Any,
+        trigger_value_max: Any,
+        since: Any,
+        until: Any,
+    ) -> tuple[
+        set[bool | None] | None,
+        set[bool | None] | None,
+        set[str] | None,
+        set[str] | None,
+        set[str] | None,
+        set[str] | None,
+        set[str] | None,
+        set[str] | None,
+        set[str] | None,
+        set[str] | None,
+        set[str] | None,
+        set[str] | None,
+        tuple[set[float], bool] | None,
+        float | None,
+        float | None,
+        tuple[set[float], bool] | None,
+        float | None,
+        float | None,
+        float | None,
+        float | None,
+    ]:
+        approved_filter = self._prepare_bool_filter(approved)
+        normalized_filter = self._prepare_bool_filter(normalized)
+        service_filter = self._prepare_service_filter(service)
+        decision_state_filter = self._prepare_decision_filter(
+            decision_state,
+            missing_token=_MISSING_DECISION_STATE,
+        )
+        decision_reason_filter = self._prepare_decision_filter(
+            decision_reason,
+            missing_token=_MISSING_DECISION_REASON,
+        )
+        decision_mode_filter = self._prepare_decision_filter(
+            decision_mode,
+            missing_token=_MISSING_DECISION_MODE,
+        )
+        decision_id_filter = self._prepare_decision_filter(
+            decision_id,
+            missing_token=_MISSING_DECISION_ID,
+        )
+        reason_filter = self._prepare_string_filter(reason)
+        trigger_filter = self._prepare_string_filter(trigger)
+        trigger_label_filter = self._prepare_guardrail_filter(
+            trigger_label,
+            missing_token=_MISSING_GUARDRAIL_LABEL,
+        )
+        trigger_comparator_filter = self._prepare_guardrail_filter(
+            trigger_comparator,
+            missing_token=_MISSING_GUARDRAIL_COMPARATOR,
+        )
+        trigger_unit_filter = self._prepare_guardrail_filter(
+            trigger_unit,
+            missing_token=_MISSING_GUARDRAIL_UNIT,
+        )
+        trigger_threshold_filter = self._prepare_guardrail_numeric_filter(
+            trigger_threshold
+        )
+        trigger_value_filter = self._prepare_guardrail_numeric_filter(trigger_value)
+        trigger_threshold_min_value = (
+            self._coerce_float(trigger_threshold_min)
+            if trigger_threshold_min is not None
+            else None
+        )
+        trigger_threshold_max_value = (
+            self._coerce_float(trigger_threshold_max)
+            if trigger_threshold_max is not None
+            else None
+        )
+        trigger_value_min_value = (
+            self._coerce_float(trigger_value_min)
+            if trigger_value_min is not None
+            else None
+        )
+        trigger_value_max_value = (
+            self._coerce_float(trigger_value_max)
+            if trigger_value_max is not None
+            else None
+        )
+        since_ts = self._normalize_time_bound(since)
+        until_ts = self._normalize_time_bound(until)
+        return (
+            approved_filter,
+            normalized_filter,
+            service_filter,
+            decision_state_filter,
+            decision_reason_filter,
+            decision_mode_filter,
+            decision_id_filter,
+            reason_filter,
+            trigger_filter,
+            trigger_label_filter,
+            trigger_comparator_filter,
+            trigger_unit_filter,
+            trigger_threshold_filter,
+            trigger_threshold_min_value,
+            trigger_threshold_max_value,
+            trigger_value_filter,
+            trigger_value_min_value,
+            trigger_value_max_value,
+            since_ts,
+            until_ts,
+        )
+
+    def get_risk_evaluations(
+        self,
+        *,
+        approved: bool | None | Iterable[bool | None] | object = _NO_FILTER,
+        normalized: bool | None | Iterable[bool | None] | object = _NO_FILTER,
+        include_errors: bool = True,
+        service: str | None | Iterable[str | None] | object = _NO_FILTER,
+        decision_state: str | Iterable[str | None] | object = _NO_FILTER,
+        decision_reason: str | Iterable[str | None] | object = _NO_FILTER,
+        decision_mode: str | Iterable[str | None] | object = _NO_FILTER,
+        decision_id: str | Iterable[str | None] | object = _NO_FILTER,
+        reason: str | Iterable[str] | object = _NO_FILTER,
+        trigger: str | Iterable[str] | object = _NO_FILTER,
+        trigger_label: str | Iterable[str | None] | object = _NO_FILTER,
+        trigger_comparator: str | Iterable[str | None] | object = _NO_FILTER,
+        trigger_unit: str | Iterable[str | None] | object = _NO_FILTER,
+        trigger_threshold: float | None | Iterable[float | None] | object = _NO_FILTER,
+        trigger_threshold_min: Any = None,
+        trigger_threshold_max: Any = None,
+        trigger_value: float | None | Iterable[float | None] | object = _NO_FILTER,
+        trigger_value_min: Any = None,
+        trigger_value_max: Any = None,
+        since: Any = None,
+        until: Any = None,
+        limit: Any = None,
+        reverse: bool = False,
+    ) -> list[dict[str, Any]]:
+        (
+            approved_filter,
+            normalized_filter,
+            service_filter,
+            decision_state_filter,
+            decision_reason_filter,
+            decision_mode_filter,
+            decision_id_filter,
+            _,
+            since_ts,
+            until_ts,
+        ) = self._resolve_risk_evaluation_filters(
+            approved=approved,
+            normalized=normalized,
+            service=service,
+            decision_state=decision_state,
+            decision_reason=decision_reason,
+            decision_mode=decision_mode,
+            decision_id=decision_id,
+            since=since,
+            until=until,
+            decision_fields=None,
+        )
+
+        (
+            filtered_records,
+            trimmed_by_ttl,
+            ttl_snapshot,
+            history_size,
+        ) = self._collect_filtered_risk_evaluations(
+            include_errors=include_errors,
+            approved_filter=approved_filter,
+            normalized_filter=normalized_filter,
+            service_filter=service_filter,
+            since_ts=since_ts,
+            until_ts=until_ts,
+            state_filter=decision_state_filter,
+            reason_filter=decision_reason_filter,
+            mode_filter=decision_mode_filter,
+            decision_id_filter=decision_id_filter,
+        )
+
+        self._log_risk_history_trimmed(
+            context="get",
+            trimmed=trimmed_by_ttl,
+            ttl=ttl_snapshot,
+            history=history_size,
+        )
+
+        records = list(reversed(filtered_records)) if reverse else list(filtered_records)
+        normalized_limit = self._normalize_history_export_limit(limit)
+        if normalized_limit is not None:
+            if normalized_limit == 0:
+                records = []
+            elif reverse:
+                records = records[:normalized_limit]
+            else:
+                records = records[-normalized_limit:]
+        return records
 
     def clear_risk_evaluations(self) -> None:
         with self._lock:
@@ -6646,41 +7237,29 @@ class AutoTrader:
 
         return summary
 
+
+
     def _build_risk_decision_timeline(
         self,
         *,
-        approved: bool | None | Iterable[bool | None] | object = _NO_FILTER,
-        normalized: bool | None | Iterable[bool | None] | object = _NO_FILTER,
-        include_errors: bool = True,
-        service: str | None | Iterable[str | None] | object = _NO_FILTER,
-        decision_state: str | Iterable[str | None] | object = _NO_FILTER,
-        decision_reason: str | Iterable[str | None] | object = _NO_FILTER,
-        decision_mode: str | Iterable[str | None] | object = _NO_FILTER,
-        decision_id: str | Iterable[str | None] | object = _NO_FILTER,
-        since: Any = None,
-        until: Any = None,
+        context: str,
+        bucket_value: float,
+        include_errors: bool,
+        include_services: bool,
+        include_decision_dimensions: bool,
+        fill_gaps: bool,
+        coerce_timestamps: bool,
+        tz: tzinfo | None,
+        approved_filter: set[bool | None] | None,
+        normalized_filter: set[bool | None] | None,
+        service_filter: set[str] | None,
+        decision_state_filter: set[str] | None,
+        decision_reason_filter: set[str] | None,
+        decision_mode_filter: set[str] | None,
+        decision_id_filter: set[str] | None,
+        since_ts: float | None,
+        until_ts: float | None,
     ) -> dict[str, Any]:
-        approved_filter = self._prepare_bool_filter(approved)
-        normalized_filter = self._prepare_bool_filter(normalized)
-        service_filter = self._prepare_service_filter(service)
-        decision_state_filter = self._prepare_decision_filter(
-            decision_state,
-            missing_token=_MISSING_DECISION_STATE,
-        )
-        decision_reason_filter = self._prepare_decision_filter(
-            decision_reason,
-            missing_token=_MISSING_DECISION_REASON,
-        )
-        decision_mode_filter = self._prepare_decision_filter(
-            decision_mode,
-            missing_token=_MISSING_DECISION_MODE,
-        )
-        decision_id_filter = self._prepare_decision_filter(
-            decision_id,
-            missing_token=_MISSING_DECISION_ID,
-        )
-        since_ts = self._normalize_time_bound(since)
-        until_ts = self._normalize_time_bound(until)
         (
             filtered_records,
             trimmed_by_ttl,
@@ -6763,9 +7342,10 @@ class AutoTrader:
 
         for entry in filtered_records:
             timestamp_value = self._normalize_time_bound(entry.get("timestamp"))
-            if timestamp_value is not None:
-                if not math.isfinite(timestamp_value) or math.isnan(timestamp_value):
-                    timestamp_value = None
+            if timestamp_value is not None and (
+                not math.isfinite(timestamp_value) or math.isnan(timestamp_value)
+            ):
+                timestamp_value = None
 
             if timestamp_value is None:
                 if missing_bucket is None:
@@ -6956,19 +7536,6 @@ class AutoTrader:
                     key=lambda item: (-item[1].get("evaluations", 0), item[0]),
                 )
             }
-            if include_services:
-                missing_summary["services"] = dict(missing_bucket.get("services", {}))
-            if include_decision_dimensions:
-                missing_summary["states"] = self._finalize_dimension_counter(
-                    missing_bucket.get("states")
-                )
-                missing_summary["reasons"] = self._finalize_dimension_counter(
-                    missing_bucket.get("reasons")
-                )
-                missing_summary["modes"] = self._finalize_dimension_counter(
-                    missing_bucket.get("modes")
-                )
-            summary["missing_timestamp"] = missing_summary
 
         if missing_bucket is not None and missing_bucket.get("total", 0):
             self._finalize_decision_bucket(missing_bucket)
@@ -7344,60 +7911,213 @@ class AutoTrader:
         decision_reason: str | Iterable[str | None] | object = _NO_FILTER,
         decision_mode: str | Iterable[str | None] | object = _NO_FILTER,
         decision_id: str | Iterable[str | None] | object = _NO_FILTER,
+        reason: str | Iterable[str] | object = _NO_FILTER,
+        trigger: str | Iterable[str] | object = _NO_FILTER,
+        trigger_label: str | Iterable[str | None] | object = _NO_FILTER,
+        trigger_comparator: str | Iterable[str | None] | object = _NO_FILTER,
+        trigger_unit: str | Iterable[str | None] | object = _NO_FILTER,
+        trigger_threshold: float | None | Iterable[float | None] | object = _NO_FILTER,
+        trigger_threshold_min: Any = None,
+        trigger_threshold_max: Any = None,
+        trigger_value: float | None | Iterable[float | None] | object = _NO_FILTER,
+        trigger_value_min: Any = None,
+        trigger_value_max: Any = None,
         since: Any = None,
         until: Any = None,
         limit: int | None = None,
         reverse: bool = False,
         include_decision: bool = True,
+        include_service: bool = True,
+        include_response: bool = True,
+        include_error: bool = True,
+        include_guardrail_dimensions: bool = True,
         coerce_timestamps: bool = False,
         tz: tzinfo | None = timezone.utc,
     ) -> list[dict[str, Any]]:
         """Eksportuje zdarzenia guardrail z historii ocen ryzyka."""
 
-        try:
-            bucket_value = float(bucket_s)
-        except (TypeError, ValueError) as exc:  # pragma: no cover - walidacja wejścia
-            raise ValueError("bucket_s must be a positive number") from exc
-        if not math.isfinite(bucket_value) or bucket_value <= 0.0:
-            raise ValueError("bucket_s must be a positive number")
+        normalized_limit = self._normalize_history_export_limit(limit)
 
-        approved_filter = self._prepare_bool_filter(approved)
-        normalized_filter = self._prepare_bool_filter(normalized)
-        service_filter = self._prepare_service_filter(service)
-        decision_state_filter = self._prepare_decision_filter(
-            decision_state,
-            missing_token=_MISSING_DECISION_STATE,
-        )
-        decision_reason_filter = self._prepare_decision_filter(
-            decision_reason,
-            missing_token=_MISSING_DECISION_REASON,
-        )
-        decision_mode_filter = self._prepare_decision_filter(
-            decision_mode,
-            missing_token=_MISSING_DECISION_MODE,
+        (
+            approved_filter,
+            normalized_filter,
+            service_filter,
+            decision_state_filter,
+            decision_reason_filter,
+            decision_mode_filter,
+            decision_id_filter,
+            reason_filter,
+            trigger_filter,
+            trigger_label_filter,
+            trigger_comparator_filter,
+            trigger_unit_filter,
+            trigger_threshold_filter,
+            trigger_threshold_min_value,
+            trigger_threshold_max_value,
+            trigger_value_filter,
+            trigger_value_min_value,
+            trigger_value_max_value,
+            since_ts,
+            until_ts,
+        ) = self._resolve_guardrail_event_filters(
+            approved=approved,
+            normalized=normalized,
+            service=service,
+            decision_state=decision_state,
+            decision_reason=decision_reason,
+            decision_mode=decision_mode,
+            decision_id=decision_id,
+            reason=reason,
+            trigger=trigger,
+            trigger_label=trigger_label,
+            trigger_comparator=trigger_comparator,
+            trigger_unit=trigger_unit,
+            trigger_threshold=trigger_threshold,
+            trigger_threshold_min=trigger_threshold_min,
+            trigger_threshold_max=trigger_threshold_max,
+            trigger_value=trigger_value,
+            trigger_value_min=trigger_value_min,
+            trigger_value_max=trigger_value_max,
+            since=since,
+            until=until,
         )
 
-        since_ts = self._normalize_time_bound(since)
-        until_ts = self._normalize_time_bound(until)
-
-        return self._build_risk_decision_timeline(
-            context="decision-timeline",
-            bucket_value=bucket_value,
+        (
+            guardrail_records,
+            trimmed_by_ttl,
+            ttl_snapshot,
+            history_size,
+            _filtered_records,
+        ) = self._collect_guardrail_events(
             include_errors=include_errors,
-            include_services=include_services,
-            include_decision_dimensions=include_decision_dimensions,
-            fill_gaps=fill_gaps,
-            coerce_timestamps=coerce_timestamps,
-            tz=tz,
             approved_filter=approved_filter,
             normalized_filter=normalized_filter,
             service_filter=service_filter,
             decision_state_filter=decision_state_filter,
             decision_reason_filter=decision_reason_filter,
             decision_mode_filter=decision_mode_filter,
+            decision_id_filter=decision_id_filter,
             since_ts=since_ts,
             until_ts=until_ts,
+            reason_filter=reason_filter,
+            trigger_filter=trigger_filter,
+            trigger_label_filter=trigger_label_filter,
+            trigger_comparator_filter=trigger_comparator_filter,
+            trigger_unit_filter=trigger_unit_filter,
+            trigger_threshold_filter=trigger_threshold_filter,
+            trigger_threshold_min=trigger_threshold_min_value,
+            trigger_threshold_max=trigger_threshold_max_value,
+            trigger_value_filter=trigger_value_filter,
+            trigger_value_min=trigger_value_min_value,
+            trigger_value_max=trigger_value_max_value,
         )
+
+        self._log_risk_history_trimmed(
+            context="guardrail-records",
+            trimmed=trimmed_by_ttl,
+            ttl=ttl_snapshot,
+            history=history_size,
+        )
+
+        records_sequence = list(guardrail_records)
+        if reverse:
+            records_sequence.reverse()
+
+        if normalized_limit is not None:
+            if normalized_limit == 0:
+                records_sequence = []
+            elif reverse:
+                records_sequence = records_sequence[:normalized_limit]
+            elif len(records_sequence) > normalized_limit:
+                records_sequence = records_sequence[-normalized_limit:]
+
+        output: list[dict[str, Any]] = []
+        for entry, reasons, triggers in records_sequence:
+            record = self._build_guardrail_event_record(
+                entry,
+                reasons,
+                triggers,
+                include_decision=include_decision,
+                include_service=include_service,
+                include_response=include_response,
+                include_error=include_error,
+                include_guardrail_dimensions=include_guardrail_dimensions,
+                coerce_timestamps=coerce_timestamps,
+                tz=tz,
+            )
+            output.append(record)
+
+        return output
+
+    def guardrail_events_to_dataframe(
+        self,
+        *,
+        approved: bool | None | Iterable[bool | None] | object = _NO_FILTER,
+        normalized: bool | None | Iterable[bool | None] | object = _NO_FILTER,
+        include_errors: bool = True,
+        service: str | None | Iterable[str | None] | object = _NO_FILTER,
+        decision_state: str | Iterable[str | None] | object = _NO_FILTER,
+        decision_reason: str | Iterable[str | None] | object = _NO_FILTER,
+        decision_mode: str | Iterable[str | None] | object = _NO_FILTER,
+        decision_id: str | Iterable[str | None] | object = _NO_FILTER,
+        reason: str | Iterable[str] | object = _NO_FILTER,
+        trigger: str | Iterable[str] | object = _NO_FILTER,
+        trigger_label: str | Iterable[str | None] | object = _NO_FILTER,
+        trigger_comparator: str | Iterable[str | None] | object = _NO_FILTER,
+        trigger_unit: str | Iterable[str | None] | object = _NO_FILTER,
+        trigger_threshold: float | None | Iterable[float | None] | object = _NO_FILTER,
+        trigger_threshold_min: Any = None,
+        trigger_threshold_max: Any = None,
+        trigger_value: float | None | Iterable[float | None] | object = _NO_FILTER,
+        trigger_value_min: Any = None,
+        trigger_value_max: Any = None,
+        since: Any = None,
+        until: Any = None,
+        limit: int | None = None,
+        reverse: bool = False,
+        include_decision: bool = False,
+        include_service: bool = True,
+        include_response: bool = True,
+        include_error: bool = True,
+        include_guardrail_dimensions: bool = True,
+        coerce_timestamps: bool = True,
+        tz: tzinfo | None = timezone.utc,
+    ) -> pd.DataFrame:
+        records = self.guardrail_events_to_records(
+            approved=approved,
+            normalized=normalized,
+            include_errors=include_errors,
+            service=service,
+            decision_state=decision_state,
+            decision_reason=decision_reason,
+            decision_mode=decision_mode,
+            decision_id=decision_id,
+            reason=reason,
+            trigger=trigger,
+            trigger_label=trigger_label,
+            trigger_comparator=trigger_comparator,
+            trigger_unit=trigger_unit,
+            trigger_threshold=trigger_threshold,
+            trigger_threshold_min=trigger_threshold_min,
+            trigger_threshold_max=trigger_threshold_max,
+            trigger_value=trigger_value,
+            trigger_value_min=trigger_value_min,
+            trigger_value_max=trigger_value_max,
+            since=since,
+            until=until,
+            limit=limit,
+            reverse=reverse,
+            include_decision=include_decision,
+            include_service=include_service,
+            include_response=include_response,
+            include_error=include_error,
+            include_guardrail_dimensions=include_guardrail_dimensions,
+            coerce_timestamps=coerce_timestamps,
+            tz=tz,
+        )
+        if not records:
+            return pd.DataFrame()
+        return pd.DataFrame.from_records(records)
 
 
     def export_guardrail_events(
@@ -7645,6 +8365,17 @@ class AutoTrader:
         decision_reason: str | Iterable[str | None] | object = _NO_FILTER,
         decision_mode: str | Iterable[str | None] | object = _NO_FILTER,
         decision_id: str | Iterable[str | None] | object = _NO_FILTER,
+        reason: str | Iterable[str] | object = _NO_FILTER,
+        trigger: str | Iterable[str] | object = _NO_FILTER,
+        trigger_label: str | Iterable[str | None] | object = _NO_FILTER,
+        trigger_comparator: str | Iterable[str | None] | object = _NO_FILTER,
+        trigger_unit: str | Iterable[str | None] | object = _NO_FILTER,
+        trigger_threshold: float | None | Iterable[float | None] | object = _NO_FILTER,
+        trigger_threshold_min: Any = None,
+        trigger_threshold_max: Any = None,
+        trigger_value: float | None | Iterable[float | None] | object = _NO_FILTER,
+        trigger_value_min: Any = None,
+        trigger_value_max: Any = None,
         since: Any = None,
         until: Any = None,
         limit: int | None = None,
@@ -7767,6 +8498,17 @@ class AutoTrader:
         decision_reason: str | Iterable[str | None] | object = _NO_FILTER,
         decision_mode: str | Iterable[str | None] | object = _NO_FILTER,
         decision_id_filter: str | Iterable[str | None] | object = _NO_FILTER,
+        reason: str | Iterable[str] | object = _NO_FILTER,
+        trigger: str | Iterable[str] | object = _NO_FILTER,
+        trigger_label: str | Iterable[str | None] | object = _NO_FILTER,
+        trigger_comparator: str | Iterable[str | None] | object = _NO_FILTER,
+        trigger_unit: str | Iterable[str | None] | object = _NO_FILTER,
+        trigger_threshold: float | None | Iterable[float | None] | object = _NO_FILTER,
+        trigger_threshold_min: Any = None,
+        trigger_threshold_max: Any = None,
+        trigger_value: float | None | Iterable[float | None] | object = _NO_FILTER,
+        trigger_value_min: Any = None,
+        trigger_value_max: Any = None,
         since: Any = None,
         until: Any = None,
         include_decision: bool = True,
@@ -7810,6 +8552,17 @@ class AutoTrader:
             decision_reason=decision_reason,
             decision_mode=decision_mode,
             decision_id=decision_id_filter,
+            reason=reason,
+            trigger=trigger,
+            trigger_label=trigger_label,
+            trigger_comparator=trigger_comparator,
+            trigger_unit=trigger_unit,
+            trigger_threshold=trigger_threshold,
+            trigger_threshold_min=trigger_threshold_min,
+            trigger_threshold_max=trigger_threshold_max,
+            trigger_value=trigger_value,
+            trigger_value_min=trigger_value_min,
+            trigger_value_max=trigger_value_max,
             since=since,
             until=until,
         )
@@ -7843,6 +8596,12 @@ class AutoTrader:
             trigger_value_min=trigger_value_min_value,
             trigger_value_max=trigger_value_max_value,
         )
+
+        guardrail_records = [
+            (entry, reasons, triggers)
+            for entry, reasons, triggers in guardrail_records
+            if self._normalize_decision_id(entry.get("decision_id")) == normalized_id
+        ]
 
         self._log_risk_history_trimmed(
             context="guardrail-trace",
@@ -7898,7 +8657,6 @@ class AutoTrader:
 
     def get_grouped_guardrail_events(
         self,
-        payload: Mapping[str, Any],
         *,
         approved: bool | None | Iterable[bool | None] | object = _NO_FILTER,
         normalized: bool | None | Iterable[bool | None] | object = _NO_FILTER,
@@ -9498,6 +10256,7 @@ class AutoTrader:
         decision_state: str | Iterable[str | None] | object = _NO_FILTER,
         decision_reason: str | Iterable[str | None] | object = _NO_FILTER,
         decision_mode: str | Iterable[str | None] | object = _NO_FILTER,
+        decision_id: str | Iterable[str | None] | object = _NO_FILTER,
         reason: str | Iterable[str] | object = _NO_FILTER,
         trigger: str | Iterable[str] | object = _NO_FILTER,
         trigger_label: str | Iterable[str | None] | object = _NO_FILTER,
@@ -9529,6 +10288,7 @@ class AutoTrader:
             decision_state=decision_state,
             decision_reason=decision_reason,
             decision_mode=decision_mode,
+            decision_id=decision_id,
             reason=reason,
             trigger=trigger,
             trigger_label=trigger_label,
@@ -9654,6 +10414,7 @@ class AutoTrader:
         decision_state: str | Iterable[str | None] | object = _NO_FILTER,
         decision_reason: str | Iterable[str | None] | object = _NO_FILTER,
         decision_mode: str | Iterable[str | None] | object = _NO_FILTER,
+        decision_id: str | Iterable[str | None] | object = _NO_FILTER,
         reason: str | Iterable[str] | object = _NO_FILTER,
         trigger: str | Iterable[str] | object = _NO_FILTER,
         trigger_label: str | Iterable[str | None] | object = _NO_FILTER,
@@ -9685,6 +10446,7 @@ class AutoTrader:
             decision_state=decision_state,
             decision_reason=decision_reason,
             decision_mode=decision_mode,
+            decision_id=decision_id,
             reason=reason,
             trigger=trigger,
             trigger_label=trigger_label,
@@ -9788,6 +10550,7 @@ class AutoTrader:
                 decision_state=decision_state,
                 decision_reason=decision_reason,
                 decision_mode=decision_mode,
+                decision_id=decision_id,
                 reason=reason,
                 trigger=trigger,
                 trigger_label=trigger_label,

@@ -24,15 +24,19 @@ def _resolve_builtin_proto_paths() -> list[str]:
     except ImportError:  # pragma: no cover - optional dependency
         pass
     else:
-        package_path = Path(google.protobuf.__file__).resolve().parent
-        google_paths.append(str(package_path.parent.parent))
+        module_file = getattr(google.protobuf, "__file__", None)
+        if module_file is not None:
+            package_path = Path(module_file).resolve().parent
+            google_paths.append(str(package_path.parent.parent))
 
     try:
         import grpc_tools  # type: ignore
     except ImportError:  # pragma: no cover - optional dependency
         pass
     else:
-        grpc_paths.append(str(Path(grpc_tools.__file__).resolve().parent / "_proto"))
+        module_file = getattr(grpc_tools, "__file__", None)
+        if module_file is not None:
+            grpc_paths.append(str(Path(module_file).resolve().parent / "_proto"))
 
     return [*google_paths, *grpc_paths]
 

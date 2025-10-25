@@ -850,8 +850,14 @@ def _extract_snapshot_fields(snapshot, notes_payload: Any) -> dict[str, Any]:
         timestamp = _timestamp_to_iso(snapshot.generated_at)
 
     fps = None
-    if has_field and snapshot.HasField("fps"):
-        fps = snapshot.fps
+    if has_field:
+        try:
+            if snapshot.HasField("fps"):
+                fps = snapshot.fps
+        except ValueError:
+            raw_fps = getattr(snapshot, "fps", None)
+            if isinstance(raw_fps, (int, float)):
+                fps = float(raw_fps)
 
     event = None
     severity = None

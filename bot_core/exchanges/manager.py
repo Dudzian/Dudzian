@@ -12,6 +12,7 @@ from importlib import import_module
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, MutableMapping, Optional, Sequence, Tuple
 
+import yaml
 from pydantic import BaseModel, Field
 
 from bot_core.database.manager import DatabaseManager
@@ -246,6 +247,71 @@ def _clear_dynamic_native_adapters() -> None:
     _DYNAMIC_ADAPTER_KEYS.clear()
 
 
+def _load_raw_exchange_adapters(candidate: Path) -> Mapping[str, Any] | None:
+    """Wczytuje sekcję ``exchange_adapters`` bez pełnego parsera konfiguracji."""
+
+    try:
+        payload = yaml.safe_load(candidate.read_text(encoding="utf-8")) or {}
+    except FileNotFoundError as exc:  # pragma: no cover - raport diagnostyczny
+        log.debug("Nie odnaleziono alternatywnej konfiguracji adapterów %s: %s", candidate, exc)
+        return None
+    except Exception as exc:  # pragma: no cover - diagnostyka formatu YAML
+        log.debug("Nie udało się sparsować %s: %s", candidate, exc)
+        return None
+
+    adapters = payload.get("exchange_adapters") or {}
+    if not isinstance(adapters, Mapping):
+        return {}
+    return adapters
+
+
+def _iter_exchange_adapter_entries(
+    adapters: Mapping[str, Any],
+) -> Iterator[tuple[Mode, str, str, Mapping[str, object], bool]]:
+    """Normalizuje wpisy adapterów niezależnie od użytego loadera."""
+
+    for exchange_id, modes in adapters.items():
+        if not isinstance(modes, Mapping):
+            continue
+        normalized_exchange = str(exchange_id or "").strip().lower()
+        if not normalized_exchange:
+            continue
+        for raw_mode, entry in modes.items():
+            mode: Mode
+            if isinstance(raw_mode, Mode):
+                mode = raw_mode
+            else:
+                try:
+                    mode = Mode(str(raw_mode).lower())
+                except Exception:
+                    continue
+
+            if hasattr(entry, "class_path"):
+                class_path = getattr(entry, "class_path", "")
+                default_settings = getattr(entry, "default_settings", {}) or {}
+                supports_testnet = getattr(entry, "supports_testnet", True)
+            elif isinstance(entry, Mapping):
+                class_path = entry.get("class_path") or ""
+                default_settings = entry.get("default_settings") or {}
+                supports_testnet = entry.get("supports_testnet", True)
+            else:
+                continue
+
+            class_path_text = str(class_path or "").strip()
+            if not class_path_text:
+                continue
+
+            if isinstance(default_settings, Mapping):
+                normalized_settings = dict(default_settings)
+            else:
+                try:
+                    normalized_settings = dict(default_settings)
+                except Exception:
+                    normalized_settings = {}
+
+            yield mode, normalized_exchange, class_path_text, normalized_settings, bool(supports_testnet)
+
+
 def _load_dynamic_native_adapters(
     config_path: str | os.PathLike[str] | Path | None = None,
 ) -> None:
@@ -268,56 +334,91 @@ def _load_dynamic_native_adapters(
         candidates = _discover_core_config_candidates()
 
     for candidate in candidates:
+        adapters_payload: Mapping[str, Any] | None = None
         try:
             config = load_core_config(candidate)
         except Exception as exc:  # pragma: no cover - diagnostyka konfiguracji
-            log.debug("Nie udało się wczytać %s: %s", candidate, exc)
-            continue
+            log.debug("Nie udało się wczytać %s przez loader: %s", candidate, exc)
+        else:
+            adapters_payload = getattr(config, "exchange_adapters", None) or {}
 
-        adapters = getattr(config, "exchange_adapters", None) or {}
-        if not adapters:
-            continue
-
-        for exchange_id, modes in adapters.items():
-            if not isinstance(modes, Mapping):
+        if adapters_payload is None:
+            adapters_payload = _load_raw_exchange_adapters(candidate)
+            if adapters_payload is None:
                 continue
-            for mode, entry in modes.items():
-                if not isinstance(mode, Mode):
-                    try:
-                        mode = Mode(str(mode).lower())
-                    except Exception:
-                        continue
-                class_path = getattr(entry, "class_path", "")
-                if not class_path:
-                    continue
-                normalized_exchange = str(exchange_id).strip().lower()
-                key = (mode, normalized_exchange)
-                if key in _NATIVE_ADAPTER_REGISTRY:
-                    continue
-                try:
-                    factory = _import_adapter_factory(class_path)
-                except Exception as exc:  # pragma: no cover - diagnostyka importu
-                    log.warning(
-                        "Pominięto adapter %s/%s z powodu błędu importu: %s",
-                        exchange_id,
-                        mode.value,
-                        exc,
-                    )
-                    continue
-                register_native_adapter(
-                    exchange_id=normalized_exchange,
-                    mode=mode,
-                    factory=factory,
-                    default_settings=dict(getattr(entry, "default_settings", {})),
-                    supports_testnet=bool(getattr(entry, "supports_testnet", True)),
-                    source=candidate,
-                    dynamic=True,
-                )
 
-        _DYNAMIC_ADAPTERS_SOURCE = candidate
-        break
+        seen_entries = False
+        registered_any = False
+        for mode, exchange, class_path, default_settings, supports_testnet in _iter_exchange_adapter_entries(adapters_payload):
+            seen_entries = True
+            key = (mode, exchange)
+            if key in _NATIVE_ADAPTER_REGISTRY:
+                continue
+            try:
+                factory = _import_adapter_factory(class_path)
+            except Exception as exc:  # pragma: no cover - diagnostyka importu
+                log.warning(
+                    "Pominięto adapter %s/%s z powodu błędu importu: %s",
+                    exchange,
+                    mode.value,
+                    exc,
+                )
+                continue
+            register_native_adapter(
+                exchange_id=exchange,
+                mode=mode,
+                factory=factory,
+                default_settings=default_settings,
+                supports_testnet=supports_testnet,
+                source=candidate,
+                dynamic=True,
+            )
+            registered_any = True
+
+        if seen_entries:
+            _DYNAMIC_ADAPTERS_SOURCE = candidate
+        if registered_any or seen_entries:
+            break
 
     _DYNAMIC_ADAPTERS_INITIALIZED = True
+
+
+def reload_native_adapters(
+    config_path: str | os.PathLike[str] | Path | None = None,
+) -> None:
+    """Czyści i ponownie ładuje adaptery konfiguracyjne."""
+
+    global _DYNAMIC_ADAPTERS_INITIALIZED, _DYNAMIC_ADAPTERS_SOURCE
+
+    _clear_dynamic_native_adapters()
+    _DYNAMIC_ADAPTERS_INITIALIZED = False
+    _DYNAMIC_ADAPTERS_SOURCE = None
+    _load_dynamic_native_adapters(config_path)
+
+
+def iter_registered_native_adapters(
+    mode: Mode | None = None,
+) -> Iterator[NativeAdapterInfo]:
+    """Udostępnia metadane wszystkich zarejestrowanych natywnych adapterów."""
+
+    if mode is not None and mode not in {Mode.MARGIN, Mode.FUTURES}:
+        raise ValueError("Filtrowanie obsługuje tylko tryby margin lub futures")
+
+    for (registered_mode, exchange_id), registration in sorted(
+        _NATIVE_ADAPTER_REGISTRY.items(),
+        key=lambda item: (item[0][0].value, item[0][1]),
+    ):
+        if mode is not None and registered_mode is not mode:
+            continue
+        yield NativeAdapterInfo(
+            exchange_id=exchange_id,
+            mode=registered_mode,
+            factory=registration.factory,
+            default_settings=dict(registration.default_settings),
+            supports_testnet=registration.supports_testnet,
+            source=registration.source,
+            dynamic=registration.dynamic,
+        )
 
 def get_native_adapter_info(*, exchange_id: str, mode: Mode) -> NativeAdapterInfo | None:
     """Zwraca metadane pojedynczego zarejestrowanego adaptera."""
@@ -430,155 +531,6 @@ def _clear_dynamic_native_adapters() -> None:
             continue
         _NATIVE_ADAPTER_REGISTRY.pop(key, None)
     _DYNAMIC_ADAPTER_KEYS.clear()
-
-
-def _load_dynamic_native_adapters(
-    config_path: str | os.PathLike[str] | Path | None = None,
-) -> None:
-    """Ładuje definicje adapterów z config/core.yaml, jeśli dostępne."""
-
-    global _DYNAMIC_ADAPTERS_INITIALIZED, _DYNAMIC_ADAPTERS_SOURCE
-    if _DYNAMIC_ADAPTERS_INITIALIZED and config_path is None:
-        return
-
-    try:
-        from bot_core.config.loader import load_core_config  # noqa: WPS433
-    except Exception as exc:  # pragma: no cover - opcjonalny loader
-        log.debug("Pominięto dynamiczne adaptery – loader niedostępny: %s", exc)
-        _DYNAMIC_ADAPTERS_INITIALIZED = True
-        return
-
-    if config_path is not None:
-        candidates = [Path(config_path).expanduser()]
-    else:
-        candidates = _discover_core_config_candidates()
-
-    for candidate in candidates:
-        try:
-            config = load_core_config(candidate)
-        except Exception as exc:  # pragma: no cover - diagnostyka konfiguracji
-            log.debug("Nie udało się wczytać %s: %s", candidate, exc)
-            continue
-
-        adapters = getattr(config, "exchange_adapters", None) or {}
-        if not adapters:
-            continue
-
-        for exchange_id, modes in adapters.items():
-            if not isinstance(modes, Mapping):
-                continue
-            for mode, entry in modes.items():
-                if not isinstance(mode, Mode):
-                    try:
-                        mode = Mode(str(mode).lower())
-                    except Exception:
-                        continue
-                class_path = getattr(entry, "class_path", "")
-                if not class_path:
-                    continue
-                normalized_exchange = str(exchange_id).strip().lower()
-                key = (mode, normalized_exchange)
-                if key in _NATIVE_ADAPTER_REGISTRY:
-                    continue
-                try:
-                    factory = _import_adapter_factory(class_path)
-                except Exception as exc:  # pragma: no cover - diagnostyka importu
-                    log.warning(
-                        "Pominięto adapter %s/%s z powodu błędu importu: %s",
-                        exchange_id,
-                        mode.value,
-                        exc,
-                    )
-                    continue
-                register_native_adapter(
-                    exchange_id=normalized_exchange,
-                    mode=mode,
-                    factory=factory,
-                    default_settings=dict(getattr(entry, "default_settings", {})),
-                    supports_testnet=bool(getattr(entry, "supports_testnet", True)),
-                    source=candidate,
-                    dynamic=True,
-                )
-
-        _DYNAMIC_ADAPTERS_SOURCE = candidate
-        break
-
-    _DYNAMIC_ADAPTERS_INITIALIZED = True
-
-
-def reload_native_adapters(
-    config_path: str | os.PathLike[str] | Path | None = None,
-) -> None:
-    """Czyści i ponownie ładuje adaptery konfiguracyjne."""
-
-    global _DYNAMIC_ADAPTERS_INITIALIZED, _DYNAMIC_ADAPTERS_SOURCE
-
-    _clear_dynamic_native_adapters()
-    _DYNAMIC_ADAPTERS_INITIALIZED = False
-    _DYNAMIC_ADAPTERS_SOURCE = None
-    _load_dynamic_native_adapters(config_path)
-
-
-def iter_registered_native_adapters(
-    mode: Mode | None = None,
-) -> Iterator[NativeAdapterInfo]:
-    """Udostępnia metadane wszystkich zarejestrowanych natywnych adapterów."""
-
-    if mode is not None and mode not in {Mode.MARGIN, Mode.FUTURES}:
-        raise ValueError("Filtrowanie obsługuje tylko tryby margin lub futures")
-
-    for (registered_mode, exchange_id), registration in sorted(
-        _NATIVE_ADAPTER_REGISTRY.items(),
-        key=lambda item: (item[0][0].value, item[0][1]),
-    ):
-        if mode is not None and registered_mode is not mode:
-            continue
-        yield NativeAdapterInfo(
-            exchange_id=exchange_id,
-            mode=registered_mode,
-            factory=registration.factory,
-            default_settings=dict(registration.default_settings),
-            supports_testnet=registration.supports_testnet,
-            source=registration.source,
-            dynamic=registration.dynamic,
-        )
-
-def reload_native_adapters(
-    config_path: str | os.PathLike[str] | Path | None = None,
-) -> None:
-    """Czyści i ponownie ładuje adaptery konfiguracyjne."""
-
-    global _DYNAMIC_ADAPTERS_INITIALIZED, _DYNAMIC_ADAPTERS_SOURCE
-
-    _clear_dynamic_native_adapters()
-    _DYNAMIC_ADAPTERS_INITIALIZED = False
-    _DYNAMIC_ADAPTERS_SOURCE = None
-    _load_dynamic_native_adapters(config_path)
-
-
-def iter_registered_native_adapters(
-    mode: Mode | None = None,
-) -> Iterator[NativeAdapterInfo]:
-    """Udostępnia metadane wszystkich zarejestrowanych natywnych adapterów."""
-
-    if mode is not None and mode not in {Mode.MARGIN, Mode.FUTURES}:
-        raise ValueError("Filtrowanie obsługuje tylko tryby margin lub futures")
-
-    for (registered_mode, exchange_id), registration in sorted(
-        _NATIVE_ADAPTER_REGISTRY.items(),
-        key=lambda item: (item[0][0].value, item[0][1]),
-    ):
-        if mode is not None and registered_mode is not mode:
-            continue
-        yield NativeAdapterInfo(
-            exchange_id=exchange_id,
-            mode=registered_mode,
-            factory=registration.factory,
-            default_settings=dict(registration.default_settings),
-            supports_testnet=registration.supports_testnet,
-            source=registration.source,
-            dynamic=registration.dynamic,
-        )
 
 
 _STATUS_MAPPING = {
