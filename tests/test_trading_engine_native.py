@@ -77,6 +77,282 @@ class TestNativeTradingEngine(unittest.TestCase):
         self.assertIn("size", managed.columns)
         self.assertTrue(set(managed["direction"].unique()).issubset({-1, 0, 1}))
         self.assertTrue((managed["size"] >= 0).all())
+        if "exit_reason" in managed.columns:
+            recorded = managed["exit_reason"].dropna()
+            self.assertTrue(recorded.empty or recorded.str.strip().ne("").all())
+
+    def test_risk_management_exit_reasons_propagate_to_trades(self) -> None:
+        dates = pd.date_range("2022-01-01", periods=6, freq="D")
+        close_prices = pd.Series([100.0, 99.0, 97.5, 96.0, 97.0, 98.0], index=dates)
+        data = pd.DataFrame(
+            {
+                "open": close_prices,
+                "high": close_prices + 0.5,
+                "low": close_prices - 0.5,
+                "close": close_prices,
+                "volume": np.full(len(close_prices), 1_000.0),
+            },
+            index=dates,
+        )
+
+        signals = pd.Series([1, 1, 1, 1, 0, 0], index=dates, dtype=int)
+        base = pd.Series(np.ones(len(dates)), index=dates)
+        atr = pd.Series(np.ones(len(dates)), index=dates)
+        indicators = TechnicalIndicators(
+            rsi=base,
+            ema_fast=base,
+            ema_slow=base,
+            sma_trend=base,
+            atr=atr,
+            bollinger_upper=base,
+            bollinger_lower=base,
+            bollinger_middle=base,
+            macd=base,
+            macd_signal=base,
+            stochastic_k=base,
+            stochastic_d=base,
+        )
+
+        params = TradingParameters(max_position_risk=0.05, position_size=1.0)
+        risk = RiskManagementService(MagicMock())
+        managed = risk.apply_risk_management(data, signals, indicators, params)
+
+        self.assertIn("exit_reason", managed.columns)
+        self.assertEqual(managed.loc[dates[2], "exit_reason"], "stop_loss")
+        self.assertEqual(managed.loc[dates[4], "exit_reason"], "signal")
+        non_na_reasons = managed["exit_reason"].dropna()
+        self.assertEqual(len(non_na_reasons), 2)
+        self.assertListEqual(list(non_na_reasons.index), [dates[2], dates[4]])
+
+        engine = VectorizedBacktestEngine(MagicMock())
+        trades = engine._generate_trades_dataframe_vectorized(data, managed, params)
+
+        self.assertEqual(len(trades), 2)
+        self.assertListEqual(trades["exit_reason"].tolist(), ["stop_loss", "signal"])
+
+    def test_trade_generation_handles_sparse_exit_metadata(self) -> None:
+        dates = pd.date_range("2022-02-01", periods=6, freq="D")
+        close_prices = pd.Series([100.0, 101.0, 102.0, 101.5, 100.5, 99.5], index=dates)
+        data = pd.DataFrame(
+            {
+                "open": close_prices,
+                "high": close_prices + 0.75,
+                "low": close_prices - 0.75,
+                "close": close_prices,
+                "volume": np.full(len(close_prices), 1_000.0),
+            },
+            index=dates,
+        )
+
+        positions = pd.DataFrame(
+            {
+                "direction": [0, 1, 1, 0, -1, 0],
+                "size": [0.0, 1.0, 1.0, 0.0, 1.0, 0.0],
+                "exit_reason": pd.Series(
+                    [pd.NA, pd.NA, pd.NA, "stop_loss", pd.NA, pd.NA],
+                    dtype="string",
+                    index=dates,
+                ),
+            },
+            index=dates,
+        )
+
+        engine = VectorizedBacktestEngine(MagicMock())
+        trades = engine._generate_trades_dataframe_vectorized(data, positions, self.params)
+
+        self.assertEqual(len(trades), 2)
+        self.assertEqual(trades.loc[0, "exit_reason"], "stop_loss")
+        self.assertEqual(trades.loc[1, "exit_reason"], "signal")
+
+    def test_trade_generation_without_exit_metadata_defaults_to_signal(self) -> None:
+        dates = pd.date_range("2022-03-01", periods=5, freq="D")
+        close_prices = pd.Series([50.0, 51.0, 52.0, 51.0, 50.5], index=dates)
+        data = pd.DataFrame(
+            {
+                "open": close_prices,
+                "high": close_prices + 0.25,
+                "low": close_prices - 0.25,
+                "close": close_prices,
+                "volume": np.full(len(close_prices), 500.0),
+            },
+            index=dates,
+        )
+
+        positions = pd.DataFrame(
+            {
+                "direction": [0, 1, 1, 0, 0],
+                "size": [0.0, 1.0, 1.0, 0.0, 0.0],
+            },
+            index=dates,
+        )
+
+        engine = VectorizedBacktestEngine(MagicMock())
+        trades = engine._generate_trades_dataframe_vectorized(data, positions, self.params)
+
+        self.assertEqual(len(trades), 1)
+        self.assertEqual(trades.loc[0, "exit_reason"], "signal")
+
+    def test_trade_generation_normalizes_exit_reason_values(self) -> None:
+        dates = pd.date_range("2022-04-01", periods=7, freq="D")
+        close_prices = pd.Series(
+            [200.0, 198.0, 197.5, 198.5, 199.0, 200.5, 201.0],
+            index=dates,
+        )
+        data = pd.DataFrame(
+            {
+                "open": close_prices,
+                "high": close_prices + 0.4,
+                "low": close_prices - 0.4,
+                "close": close_prices,
+                "volume": np.full(len(close_prices), 750.0),
+            },
+            index=dates,
+        )
+
+        positions = pd.DataFrame(
+            {
+                "direction": [0, 1, 0, 1, 0, 1, 0],
+                "size": [0.0, 1.5, 0.0, 2.0, 0.0, 1.0, 0.0],
+                "exit_reason": [
+                    None,
+                    None,
+                    "  Stop-Loss  ",
+                    None,
+                    "TAKE PROFIT",
+                    None,
+                    "Signal",
+                ],
+            },
+            index=dates,
+        )
+
+        engine = VectorizedBacktestEngine(MagicMock())
+        trades = engine._generate_trades_dataframe_vectorized(data, positions, self.params)
+
+        self.assertEqual(len(trades), 3)
+        self.assertListEqual(
+            trades["exit_reason"].tolist(),
+            ["stop_loss", "take_profit", "signal"],
+        )
+
+    def test_trade_generation_handles_categorical_exit_reason_column(self) -> None:
+        dates = pd.date_range("2022-06-01", periods=7, freq="D")
+        prices = pd.Series(
+            [75.0, 76.5, 77.0, 76.0, 75.5, 76.2, 76.8],
+            index=dates,
+        )
+        data = pd.DataFrame(
+            {
+                "open": prices,
+                "high": prices + 0.2,
+                "low": prices - 0.2,
+                "close": prices,
+                "volume": np.full(len(prices), 850.0),
+            },
+            index=dates,
+        )
+
+        exit_reason_data = pd.Categorical(
+            [
+                None,
+                None,
+                "StopLoss",
+                None,
+                "TAKEPROFIT",
+                None,
+                "Signal",
+            ],
+            categories=["StopLoss", "TAKEPROFIT", "Signal"],
+        )
+
+        positions = pd.DataFrame(
+            {
+                "direction": [0, 1, 0, 1, 0, 1, 0],
+                "size": [0.0, 2.0, 0.0, 1.5, 0.0, 1.0, 0.0],
+                "exit_reason": exit_reason_data,
+            },
+            index=dates,
+        )
+
+        engine = VectorizedBacktestEngine(MagicMock())
+        trades = engine._generate_trades_dataframe_vectorized(data, positions, self.params)
+
+        self.assertEqual(len(trades), 3)
+        self.assertListEqual(
+            trades["exit_reason"].tolist(),
+            ["stop_loss", "take_profit", "signal"],
+        )
+
+    def test_trade_generation_preserves_supported_strategy_reasons(self) -> None:
+        dates = pd.date_range("2022-07-01", periods=6, freq="D")
+        close_prices = pd.Series(
+            [120.0, 121.0, 122.5, 123.0, 122.0, 121.5],
+            index=dates,
+        )
+        data = pd.DataFrame(
+            {
+                "open": close_prices,
+                "high": close_prices + 0.3,
+                "low": close_prices - 0.3,
+                "close": close_prices,
+                "volume": np.full(len(close_prices), 700.0),
+            },
+            index=dates,
+        )
+
+        positions = pd.DataFrame(
+            {
+                "direction": [0, 1, 0, 1, 0, 0],
+                "size": [0.0, 1.0, 0.0, 1.0, 0.0, 0.0],
+                "exit_reason": [
+                    pd.NA,
+                    pd.NA,
+                    "Momentum Fade",
+                    pd.NA,
+                    "Time Exit",
+                    pd.NA,
+                ],
+            },
+            index=dates,
+        )
+
+        engine = VectorizedBacktestEngine(MagicMock())
+        trades = engine._generate_trades_dataframe_vectorized(data, positions, self.params)
+
+        self.assertEqual(len(trades), 2)
+        self.assertListEqual(
+            trades["exit_reason"].tolist(),
+            ["momentum_fade", "time_exit"],
+        )
+
+    def test_trade_generation_unknown_exit_reason_defaults_to_signal(self) -> None:
+        dates = pd.date_range("2022-05-01", periods=5, freq="D")
+        close_prices = pd.Series([150.0, 149.5, 149.0, 148.5, 148.0], index=dates)
+        data = pd.DataFrame(
+            {
+                "open": close_prices,
+                "high": close_prices + 0.3,
+                "low": close_prices - 0.3,
+                "close": close_prices,
+                "volume": np.full(len(close_prices), 600.0),
+            },
+            index=dates,
+        )
+
+        positions = pd.DataFrame(
+            {
+                "direction": [0, 1, 1, 0, 0],
+                "size": [0.0, 1.0, 1.0, 0.0, 0.0],
+                "exit_reason": [pd.NA, "manual_exit", pd.NA, "unknown", pd.NA],
+            },
+            index=dates,
+        )
+
+        engine = VectorizedBacktestEngine(MagicMock())
+        trades = engine._generate_trades_dataframe_vectorized(data, positions, self.params)
+
+        self.assertEqual(len(trades), 1)
+        self.assertEqual(trades.loc[0, "exit_reason"], "signal")
 
     def test_full_backtest(self) -> None:
         result = self.engine.run_strategy(self.data, self.params)
