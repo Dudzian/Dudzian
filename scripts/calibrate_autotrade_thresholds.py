@@ -23,6 +23,10 @@ def _normalize_metric_key(key: str) -> str:
 
 _FREEZE_STATUS_PREFIXES = ("risk_freeze", "auto_risk_freeze")
 _FREEZE_STATUS_EXTRAS = {"risk_unfreeze", "auto_risk_unfreeze"}
+_SUPPORTED_THRESHOLD_METRICS = frozenset(
+    _normalize_metric_key(name)
+    for name in ("signal_after_adjustment", "signal_after_clamp", "risk_score")
+)
 _ABSOLUTE_THRESHOLD_METRICS = frozenset(
     _normalize_metric_key(name)
     for name in ("signal_after_adjustment", "signal_after_clamp")
@@ -309,10 +313,13 @@ def _load_threshold_payload(path: Path) -> object:
         raise SystemExit(f"Nie udało się wczytać pliku z progami: {path}") from exc
 
 
-def _load_current_signal_thresholds(sources: Iterable[str] | None) -> dict[str, float]:
+def _load_current_signal_thresholds(
+    sources: Iterable[str] | None,
+) -> tuple[dict[str, float], float | None]:
     thresholds: dict[str, float] = {}
+    current_risk_score: float | None = None
     if not sources:
-        return thresholds
+        return thresholds, current_risk_score
 
     for source in sources:
         if not source:
@@ -328,10 +335,13 @@ def _load_current_signal_thresholds(sources: Iterable[str] | None) -> dict[str, 
                     "Plik z progami musi zawierać strukturę słownikową lub listę słowników"
                 )
             for mapping in _iter_mappings(payload):
-                for metric_name in _ABSOLUTE_THRESHOLD_METRICS:
+                for metric_name in _SUPPORTED_THRESHOLD_METRICS:
                     value = _resolve_metric_threshold(mapping, metric_name)
                     if value is not None:
-                        thresholds[metric_name] = float(value)
+                        if metric_name == "risk_score":
+                            current_risk_score = float(value)
+                        else:
+                            thresholds[metric_name] = float(value)
             continue
         if "=" not in candidate:
             raise SystemExit(f"Ścieżka z progami nie istnieje: {path}")
@@ -340,10 +350,13 @@ def _load_current_signal_thresholds(sources: Iterable[str] | None) -> dict[str, 
             if not isinstance(metric_name, str):
                 continue
             metric_name_normalized = _normalize_metric_key(metric_name)
-            if metric_name_normalized in _ABSOLUTE_THRESHOLD_METRICS:
-                thresholds[metric_name_normalized] = numeric
+            if metric_name_normalized in _SUPPORTED_THRESHOLD_METRICS:
+                if metric_name_normalized == "risk_score":
+                    current_risk_score = float(numeric)
+                else:
+                    thresholds[metric_name_normalized] = numeric
 
-    return thresholds
+    return thresholds, current_risk_score
 
 
 def _iter_paths(raw_paths: Iterable[str]) -> Iterable[Path]:
@@ -896,6 +909,7 @@ def _generate_report(
     since: datetime | None = None,
     until: datetime | None = None,
     current_signal_thresholds: Mapping[str, float] | None = None,
+    current_risk_score_override: float | None = None,
 ) -> dict[str, object]:
     symbol_map = _build_symbol_map(journal_events)
     grouped_values: dict[tuple[str, str], dict[str, list[float]]] = defaultdict(
@@ -1059,6 +1073,8 @@ def _generate_report(
             value = map_cfg.get("risk_score")
             if isinstance(value, (int, float)):
                 current_risk_score = float(value)
+    if current_risk_score_override is not None:
+        current_risk_score = current_risk_score_override
 
     groups: list[dict[str, object]] = []
     aggregated_values: defaultdict[str, list[float]] = defaultdict(list)
@@ -1223,7 +1239,9 @@ def main(argv: list[str] | None = None) -> int:
 
     journal_events = _load_journal_events(journal_paths, since=since, until=until)
     autotrade_entries = _load_autotrade_entries(args.autotrade_export, since=since, until=until)
-    current_signal_thresholds = _load_current_signal_thresholds(args.current_threshold)
+    current_signal_thresholds, cli_risk_score = _load_current_signal_thresholds(
+        args.current_threshold
+    )
 
     report = _generate_report(
         journal_events=journal_events,
@@ -1233,6 +1251,7 @@ def main(argv: list[str] | None = None) -> int:
         since=since,
         until=until,
         current_signal_thresholds=current_signal_thresholds,
+        current_risk_score_override=cli_risk_score,
     )
 
     if args.output_json:

@@ -19,8 +19,8 @@ percentyle, które można wykorzystać do aktualizacji konfiguracji
    JSON/YAML albo listę par `metric=value` w parametrze
    `--current-threshold`. Parametr można wskazać wielokrotnie (np. plik z
    domyślnymi progami + szybka korekta w CLI), co pozwala porównać nowe
-   propozycje z bieżącą konfiguracją `signal_after_adjustment` i
-   `signal_after_clamp`.
+   propozycje z bieżącą konfiguracją `signal_after_adjustment`,
+   `signal_after_clamp` oraz `risk_score`.
 
 ## Przykładowe uruchomienie
 
@@ -33,6 +33,7 @@ python scripts/calibrate_autotrade_thresholds.py \
   --since 2024-01-01T00:00:00Z \
   --until 2024-01-31T23:59:59Z \
   --current-threshold signal_after_adjustment=0.8,signal_after_clamp=0.75 \
+  --current-threshold risk_score=0.72 \
   --output-json reports/autotrade_thresholds.json \
   --output-csv reports/autotrade_thresholds.csv \
   --plot-dir reports/autotrade_thresholds_plots
@@ -55,13 +56,21 @@ Polecenie:
 
 Jeżeli przekażesz aktualne progi w pliku (np. `config/current_thresholds.yaml`),
 użyj `--current-threshold config/current_thresholds.yaml`. Skrypt automatycznie
-wyszuka wartości `signal_after_adjustment` i `signal_after_clamp` wewnątrz
-struktury JSON/YAML oraz umieści je w polu `current_threshold` w raporcie i
-pliku CSV. Możesz też połączyć plik z dodatkowym nadpisaniem progu w CLI:
+wyszuka wartości `signal_after_adjustment`, `signal_after_clamp` oraz
+`risk_score` wewnątrz struktury JSON/YAML oraz umieści je w polu
+`current_threshold` w raporcie i pliku CSV. Możesz też połączyć plik z
+dodatkowym nadpisaniem progu w CLI:
 
 ```bash
 --current-threshold config/current_thresholds.yaml \
 --current-threshold signal_after_clamp=0.78
+```
+
+Analogicznie można natychmiast przetestować nowy limit ryzyka bez edytowania
+pliku konfiguracyjnego:
+
+```bash
+--current-threshold risk_score=0.72
 ```
 
 Źródło musi wskazywać istniejący plik, który zawiera słownik lub listę
