@@ -10,6 +10,8 @@ from bot_core.ai.regime import (
 )
 from bot_core.strategies import StrategyPresetWizard
 from bot_core.strategies.regime_workflow import RegimePresetActivation, StrategyRegimeWorkflow
+from bot_core.trading.engine import TradingParameters
+from bot_core.trading.regime_workflow import RegimeSwitchWorkflow
 
 
 def _sample_market_data(rows: int = 120) -> pd.DataFrame:
