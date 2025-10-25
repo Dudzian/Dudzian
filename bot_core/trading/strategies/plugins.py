@@ -253,7 +253,7 @@ class StrategyCatalog:
                 ScalpingStrategy,
                 OptionsIncomeStrategy,
                 StatisticalArbitrageStrategy,
-            )
+            ),
         )
 
 
