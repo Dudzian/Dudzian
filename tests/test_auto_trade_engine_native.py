@@ -200,6 +200,17 @@ def test_auto_trade_engine_generates_orders_and_signals(monkeypatch) -> None:
     metadata = signal_payloads[-1]["metadata"]
     assert "standard" in metadata["license_tiers"]
     assert "trend_d1" in metadata["capabilities"]
+    assert "regime_summary" in metadata
+    assert "risk_score" in metadata["regime_summary"]
+    assert "risk_level" in metadata["regime_summary"]
+    history_block = metadata["regime_summary"].get("history", [])
+    assert isinstance(history_block, list)
+    if history_block:
+        assert isinstance(history_block[0], dict)
+        assert set(history_block[0]) >= {"regime", "risk_score"}
+    # serializacja JSON musi działać dla metadanych sygnału
+    json.dumps(metadata["regime_summary"], sort_keys=True)
+    json.dumps(metadata, sort_keys=True)
 
 
 class _ConstantTrendStrategy(StrategyPlugin):
@@ -473,6 +484,11 @@ def test_auto_trade_engine_uses_strategy_catalog(monkeypatch) -> None:
     assert last_signals["daily_breakout"] == last_signals["day_trading"]
     metadata = signal_payloads[-1]["metadata"]
     assert metadata["per_strategy"]["trend_following"]["license_tier"] == "standard"
+    assert "regime_summary" in metadata
+    assert "risk_score" in metadata["regime_summary"]
+    assert "risk_level" in metadata["regime_summary"]
+    json.dumps(metadata["regime_summary"], sort_keys=True)
+    json.dumps(metadata, sort_keys=True)
 
 
 def test_auto_trade_engine_emits_regime_update_with_metrics(monkeypatch) -> None:
@@ -667,6 +683,12 @@ def test_auto_trade_engine_uses_regime_workflow_decision(monkeypatch) -> None:
     activation_meta = metadata_block["activation"]
     assert activation_meta["preset_name"] == "autotrade-stub"
     assert activation_meta["used_fallback"] is False
+    if "regime_summary" in metadata_block:
+        history_block = metadata_block["regime_summary"].get("history", [])
+        assert isinstance(history_block, list)
+        if history_block:
+            assert isinstance(history_block[0], dict)
+            assert set(history_block[0]) >= {"regime", "risk_score"}
     assert engine.last_regime_decision is not None
     assert engine.last_regime_decision.weights == decision.weights
     expected_decision_params = replace(
@@ -681,6 +703,7 @@ def test_auto_trade_engine_uses_regime_workflow_decision(monkeypatch) -> None:
     last_entry = entry_statuses[-1]
     assert last_entry["detail"]["regime"]["regime"] == assessment.regime.value
     assert "summary" in last_entry["detail"]
+    json.dumps(last_entry["detail"]["summary"], sort_keys=True)
     assert last_entry["detail"]["metadata"]["capabilities"] == ["trend_d1", "mean_reversion"]
     assert last_entry["detail"]["activation"]["preset_name"] == "autotrade-stub"
 
