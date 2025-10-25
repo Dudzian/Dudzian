@@ -27,9 +27,12 @@ def store_engine(qt_app: QCoreApplication) -> Iterator[QJSEngine]:
     result = engine.evaluate(code, str(source_path))
     if result.isError():
         pytest.fail(result.toString())
-    # upewniamy się, że test zawsze startuje od pustego stanu
+    # wymuszamy tryb pamięciowy, aby uniknąć zależności od SQLite w testach
+    _eval(engine, "forceMemoryMode()")
     _eval(engine, "clearAudit()")
     yield engine
+    _eval(engine, "clearAudit()")
+    _eval(engine, "useDiskStorage()")
 
 
 def _eval(engine: QJSEngine, expression: str) -> QJSValue:
@@ -41,7 +44,7 @@ def _eval(engine: QJSEngine, expression: str) -> QJSValue:
 
 def test_memory_fallback_adds_and_fetches_entries(store_engine: QJSEngine) -> None:
     _eval(store_engine, "addLicenseSnapshot({fingerprint: 'mem-1', licenseId: 'L-1'})")
-    assert _eval(store_engine, "__memoryMode").toBool() is True
+    assert _eval(store_engine, "isMemoryMode()").toBool() is True
     assert _eval(store_engine, "totalAuditCount()").toInt() == 1
     assert _eval(store_engine, "fetchAudit().length").toInt() == 1
     assert _eval(store_engine, "fetchAudit()[0].fingerprint").toString() == "mem-1"
@@ -53,6 +56,7 @@ def test_memory_fallback_trims_to_max_rows(store_engine: QJSEngine) -> None:
         store_engine,
         "(function() { for (var i = 0; i < 250; ++i) addLicenseSnapshot({fingerprint: 'row-' + i}); })()",
     )
+    assert _eval(store_engine, "isMemoryMode()").toBool() is True
     assert _eval(store_engine, "totalAuditCount()").toInt() == 200
     assert _eval(store_engine, "fetchAudit()[0].fingerprint").toString() == "row-249"
     assert _eval(store_engine, "fetchAudit()[fetchAudit().length - 1].fingerprint").toString() == "row-50"
