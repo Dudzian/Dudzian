@@ -14,6 +14,7 @@ import base64
 import datetime as _dt
 import hashlib
 import json
+import logging
 import os
 import sys
 from datetime import datetime, timezone
@@ -23,6 +24,9 @@ from typing import Any, Collection, Iterable, Mapping, Optional, Sequence
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
+
+# --- konfiguracja logowania przed importami modułów repo ---
+logging.getLogger("KryptoLowca.ai_models").disabled = True
 
 # --- HEAD branch API (pojedynczy raport + podpis Base64) ---
 from bot_core.compliance.training import TrainingSession, write_training_log

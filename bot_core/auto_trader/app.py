@@ -3371,6 +3371,166 @@ class AutoTrader:
         )
         return snapshot
 
+    def _snapshot_guardrail_timeline_filters(
+        self,
+        *,
+        approved_filter: set[bool | None] | None,
+        normalized_filter: set[bool | None] | None,
+        include_errors: bool,
+        service_filter: set[str] | None,
+        decision_state_filter: set[str] | None,
+        decision_reason_filter: set[str] | None,
+        decision_mode_filter: set[str] | None,
+        decision_id_filter: set[str] | None,
+        reason_filter: set[str] | None,
+        trigger_filter: set[str] | None,
+        trigger_label_filter: set[str] | None,
+        trigger_comparator_filter: set[str] | None,
+        trigger_unit_filter: set[str] | None,
+        trigger_threshold_filter: tuple[set[float], bool] | None,
+        trigger_threshold_min: float | None,
+        trigger_threshold_max: float | None,
+        trigger_value_filter: tuple[set[float], bool] | None,
+        trigger_value_min: float | None,
+        trigger_value_max: float | None,
+        since_ts: float | None,
+        until_ts: float | None,
+        include_services: bool,
+        include_guardrail_dimensions: bool,
+        include_decision_dimensions: bool,
+        fill_gaps: bool,
+        coerce_timestamps: bool,
+        tz_value: tzinfo | None,
+    ) -> dict[str, Any]:
+        snapshot: dict[str, Any] = {
+            "approved": self._serialize_filter_snapshot(approved_filter),
+            "normalized": self._serialize_filter_snapshot(normalized_filter),
+            "include_errors": include_errors,
+            "service": self._serialize_filter_snapshot(service_filter),
+            "decision_state": self._serialize_filter_snapshot(decision_state_filter),
+            "decision_reason": self._serialize_filter_snapshot(decision_reason_filter),
+            "decision_mode": self._serialize_filter_snapshot(decision_mode_filter),
+            "decision_id": self._serialize_filter_snapshot(decision_id_filter),
+            "reason": self._serialize_filter_snapshot(reason_filter),
+            "trigger": self._serialize_filter_snapshot(trigger_filter),
+            "trigger_label": self._serialize_filter_snapshot(trigger_label_filter),
+            "trigger_comparator": self._serialize_filter_snapshot(
+                trigger_comparator_filter
+            ),
+            "trigger_unit": self._serialize_filter_snapshot(trigger_unit_filter),
+            "trigger_threshold": self._serialize_numeric_filter_snapshot(
+                trigger_threshold_filter
+            ),
+            "trigger_threshold_min": trigger_threshold_min,
+            "trigger_threshold_max": trigger_threshold_max,
+            "trigger_value": self._serialize_numeric_filter_snapshot(trigger_value_filter),
+            "trigger_value_min": trigger_value_min,
+            "trigger_value_max": trigger_value_max,
+            "since": since_ts,
+            "until": until_ts,
+            "include_services": include_services,
+            "include_guardrail_dimensions": include_guardrail_dimensions,
+            "include_decision_dimensions": include_decision_dimensions,
+            "fill_gaps": fill_gaps,
+            "coerce_timestamps": coerce_timestamps,
+            "tz": tz_value.tzname(None) if tz_value is not None else None,
+        }
+        return snapshot
+
+    def _build_risk_evaluation_records(
+        self,
+        records: Sequence[Mapping[str, Any]],
+        *,
+        normalized_decision_fields: Sequence[Any] | None,
+        flatten_decision: bool,
+        decision_prefix: str,
+        drop_decision_column: bool,
+        fill_value: Any,
+        coerce_timestamps: bool,
+        tz: tzinfo | None,
+    ) -> list[dict[str, Any]]:
+        output: list[dict[str, Any]] = []
+        for entry in records:
+            record = copy.deepcopy(dict(entry))
+            record["timestamp"] = self._normalize_timestamp_for_export(
+                record.get("timestamp"),
+                coerce=coerce_timestamps,
+                tz=tz,
+            )
+
+            if "service" not in record and entry.get("service") is None:
+                record.pop("service", None)
+
+            record.setdefault("response", None)
+            record.setdefault("error", None)
+
+            decision_payload = record.get("decision")
+            if flatten_decision:
+                if not isinstance(decision_payload, Mapping):
+                    decision_mapping: Mapping[str, Any] = {}
+                else:
+                    decision_mapping = decision_payload
+
+                if normalized_decision_fields:
+                    fields = list(normalized_decision_fields)
+                else:
+                    fields = list(decision_mapping.keys())
+
+                for field in fields:
+                    column_name = f"{decision_prefix}{field}"
+                    if isinstance(decision_mapping, Mapping) and field in decision_mapping:
+                        value = copy.deepcopy(decision_mapping[field])
+                    else:
+                        value = fill_value
+                    record[column_name] = value
+
+                if drop_decision_column:
+                    record.pop("decision", None)
+            output.append(record)
+        return output
+
+    def _jsonify_risk_evaluation_records(
+        self, records: Sequence[Mapping[str, Any]]
+    ) -> list[dict[str, Any]]:
+        json_ready: list[dict[str, Any]] = []
+        for entry in records:
+            payload = copy.deepcopy(dict(entry))
+            timestamp_value = payload.get("timestamp")
+            dt = self._ensure_datetime(timestamp_value, timezone.utc)
+            payload["timestamp"] = dt.isoformat() if dt is not None else None
+            json_ready.append(payload)
+        return json_ready
+
+        probability = self._ai_probability_from_prediction(value)
+        evaluated_at_raw = predictions.index[-1]
+        evaluated_at: str | float | None
+        if hasattr(evaluated_at_raw, "isoformat"):
+            evaluated_at = evaluated_at_raw.isoformat()
+        elif isinstance(evaluated_at_raw, (int, float)):
+            evaluated_at = float(evaluated_at_raw)
+        else:
+            evaluated_at = None
+
+        snapshot: Dict[str, object] = {
+            "prediction": value,
+            "prediction_bps": prediction_bps,
+            "threshold_bps": threshold,
+            "direction": direction,
+            "probability": probability,
+        }
+        if evaluated_at is not None:
+            snapshot["evaluated_at"] = evaluated_at
+
+        self._log(
+            "AI prediction snapshot",
+            level=logging.DEBUG,
+            symbol=symbol,
+            prediction_bps=prediction_bps,
+            direction=direction,
+            threshold_bps=threshold,
+        )
+        return snapshot
+
     def _normalize_ai_context(
         self,
         ai_context: Mapping[str, object],

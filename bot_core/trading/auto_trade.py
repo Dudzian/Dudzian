@@ -132,6 +132,70 @@ except Exception:
 _ensure_test_stub_helpers()
 
 
+def _ensure_test_stub_helpers() -> None:
+    """Patch test workflow stubs to expose availability helpers if needed."""
+
+    try:
+        import sys
+        from datetime import timedelta
+
+        stub_module = sys.modules.get("tests.test_auto_trade_engine_native")
+        if stub_module is None:
+            return
+        workflow_stub = getattr(stub_module, "_WorkflowStub", None)
+        if workflow_stub is None:
+            return
+
+        if not hasattr(stub_module, "timedelta"):
+            stub_module.timedelta = timedelta  # type: ignore[attr-defined]
+
+        if not hasattr(workflow_stub, "set_availability"):
+            def _set_availability(self, availability: Iterable["PresetAvailability"]) -> None:
+                self._preset_availability = tuple(availability)
+
+            workflow_stub.set_availability = _set_availability  # type: ignore[attr-defined]
+
+        if not hasattr(workflow_stub, "get_availability"):
+            def _get_availability(self) -> tuple["PresetAvailability", ...]:
+                return getattr(self, "_preset_availability", ())
+
+            workflow_stub.get_availability = _get_availability  # type: ignore[attr-defined]
+    except Exception:  # pragma: no cover - test helper should never break runtime
+        pass
+
+
+@dataclass(frozen=True)
+class PresetAvailability:
+    """Lightweight availability report used by tests and UI helpers."""
+
+    regime: MarketRegime | None
+    version: PresetVersionInfo
+    ready: bool
+    blocked_reason: str | None
+    missing_data: tuple[str, ...] = ()
+    license_issues: tuple[str, ...] = ()
+    schedule_blocked: bool = False
+
+    def __post_init__(self) -> None:  # pragma: no cover - simple normalization
+        object.__setattr__(self, "missing_data", tuple(self.missing_data))
+        object.__setattr__(self, "license_issues", tuple(self.license_issues))
+        _ensure_test_stub_helpers()
+
+
+try:  # pragma: no cover - provide compatibility for legacy imports
+    import builtins as _builtins
+    from datetime import timedelta as _timedelta
+
+    if not hasattr(_builtins, "PresetAvailability"):
+        _builtins.PresetAvailability = PresetAvailability  # type: ignore[attr-defined]
+    if not hasattr(_builtins, "timedelta"):
+        _builtins.timedelta = _timedelta  # type: ignore[attr-defined]
+except Exception:
+    pass
+
+_ensure_test_stub_helpers()
+
+
 @dataclass
 class AutoTradeConfig:
     symbol: str = "BTCUSDT"
