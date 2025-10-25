@@ -107,6 +107,22 @@ def _coerce_float(value: object) -> float | None:
         return None
 
 
+def _validate_finite_threshold(
+    metric_name: str,
+    value: float,
+    *,
+    source: str | None = None,
+) -> None:
+    if math.isfinite(value):
+        return
+
+    location = f" w źródle {source}" if source else ""
+    raise SystemExit(
+        f"Niepoprawna wartość progu dla metryki {metric_name}: {value}"
+        f" (musi być skończoną liczbą){location}"
+    )
+
+
 def _extract_threshold_value(candidate: object) -> float | None:
     numeric = _coerce_float(candidate)
     if numeric is not None:
@@ -360,6 +376,11 @@ def _load_current_signal_thresholds(
                     value = _resolve_metric_threshold(mapping, metric_name)
                     if value is not None:
                         numeric_value = float(value)
+                        _validate_finite_threshold(
+                            metric_name,
+                            numeric_value,
+                            source=path_str,
+                        )
                         if metric_name == "risk_score":
                             current_risk_score = numeric_value
                             found_risk_in_file = True
@@ -378,10 +399,20 @@ def _load_current_signal_thresholds(
             if metric_name_normalized in _SUPPORTED_THRESHOLD_METRICS:
                 if metric_name_normalized == "risk_score":
                     value = float(numeric)
+                    _validate_finite_threshold(
+                        metric_name_normalized,
+                        value,
+                        source=candidate,
+                    )
                     current_risk_score = value
                     inline_risk_thresholds[metric_name_normalized] = value
                 else:
                     value = float(numeric)
+                    _validate_finite_threshold(
+                        metric_name_normalized,
+                        value,
+                        source=candidate,
+                    )
                     thresholds[metric_name_normalized] = value
                     inline_values[metric_name_normalized] = value
 
