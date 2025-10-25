@@ -5,7 +5,7 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pandas as pd
@@ -83,6 +83,305 @@ class TestNativeTradingEngine(unittest.TestCase):
         self.assertIsInstance(result, BacktestResult)
         self.assertGreater(len(result.equity_curve), 0)
         self.assertIsInstance(result.sharpe_ratio, float)
+
+    def test_optimize_parameters_respects_max_iterations(self) -> None:
+        mock_result = MagicMock()
+        mock_result.configure_mock(sharpe_ratio=1.0)
+
+        self.engine.run_strategy = MagicMock(return_value=mock_result)
+        self.engine._logger = MagicMock()
+
+        param_ranges = {
+            "rsi_period": [10, 14, 20],
+            "ema_fast_period": [5, 10],
+            "ema_slow_period": [15, 25],
+            "signal_threshold": [0.05, 0.1],
+        }
+
+        max_iterations = 3
+
+        params, score = self.engine.optimize_parameters(
+            self.data, param_ranges, max_iterations=max_iterations
+        )
+
+        self.assertIsNotNone(params)
+        self.assertIsInstance(score, float)
+
+        actual_iterations = self.engine.run_strategy.call_count
+        self.assertLessEqual(actual_iterations, max_iterations)
+
+        summary = self.engine.get_last_optimization_summary()
+        self.assertIsNotNone(summary)
+        assert summary is not None  # type narrowing for mypy-like tools
+        self.assertEqual(summary.iterations, actual_iterations)
+        self.assertFalse(summary.fallback_used)
+        self.assertEqual(summary.objective, "sharpe_ratio")
+        self.assertIs(summary.result, mock_result)
+
+        info_messages = [call.args[0] for call in self.engine._logger.info.call_args_list]
+        self.assertTrue(
+            any(
+                f"Optimization completed after {actual_iterations} iterations" in message
+                for message in info_messages
+            ),
+            "Final log message should report the actual iteration count.",
+        )
+
+    def test_optimize_parameters_counts_failed_runs(self) -> None:
+        successful_result = MagicMock()
+        successful_result.configure_mock(sharpe_ratio=2.0)
+
+        self.engine.run_strategy = MagicMock(
+            side_effect=[RuntimeError("boom"), successful_result]
+        )
+        self.engine._logger = MagicMock()
+
+        param_ranges = {
+            "rsi_period": [10, 14, 20],
+            "ema_fast_period": [5, 10],
+            "ema_slow_period": [15, 25],
+            "signal_threshold": [0.05, 0.1],
+        }
+
+        max_iterations = 2
+
+        params, score = self.engine.optimize_parameters(
+            self.data, param_ranges, max_iterations=max_iterations
+        )
+
+        self.assertIsNotNone(params)
+        self.assertIsInstance(score, float)
+
+        self.assertEqual(self.engine.run_strategy.call_count, max_iterations)
+
+        summary = self.engine.get_last_optimization_summary()
+        self.assertIsNotNone(summary)
+        assert summary is not None
+        self.assertEqual(summary.iterations, max_iterations)
+        self.assertFalse(summary.fallback_used)
+
+        info_messages = [call.args[0] for call in self.engine._logger.info.call_args_list]
+        self.assertTrue(
+            any(
+                f"Optimization completed after {max_iterations} iterations" in message
+                for message in info_messages
+            ),
+            "Iteration log should include failed strategy attempts.",
+        )
+
+    def test_optimize_parameters_recovers_from_pre_execution_failures(self) -> None:
+        successful_result = MagicMock()
+        successful_result.configure_mock(sharpe_ratio=1.5)
+
+        self.engine.run_strategy = MagicMock(return_value=successful_result)
+        self.engine._logger = MagicMock()
+
+        param_ranges = {
+            "rsi_period": [10, 14, 20],
+            "ema_fast_period": [5, 10],
+            "ema_slow_period": [15, 25],
+            "signal_threshold": [0.05, 0.1],
+        }
+
+        max_iterations = 2
+
+        import bot_core.trading.engine as engine_module
+
+        original_replace = engine_module.replace
+
+        call_tracker = {"count": 0}
+
+        def flaky_replace(obj, **changes):
+            if call_tracker["count"] == 0:
+                call_tracker["count"] += 1
+                raise ValueError("synthetic failure")
+            return original_replace(obj, **changes)
+
+        with patch("bot_core.trading.engine.replace", side_effect=flaky_replace):
+            params, score = self.engine.optimize_parameters(
+                self.data, param_ranges, max_iterations=max_iterations
+            )
+
+        self.assertIsNotNone(params)
+        self.assertIsInstance(score, float)
+        self.assertEqual(self.engine.run_strategy.call_count, max_iterations)
+
+        summary = self.engine.get_last_optimization_summary()
+        self.assertIsNotNone(summary)
+        assert summary is not None
+        self.assertEqual(summary.iterations, max_iterations)
+        self.assertFalse(summary.fallback_used)
+
+        info_messages = [call.args[0] for call in self.engine._logger.info.call_args_list]
+        self.assertTrue(
+            any(
+                f"Optimization completed after {max_iterations} iterations" in message
+                for message in info_messages
+            ),
+            "Iteration log should still report the actual iteration count.",
+        )
+
+    def test_optimize_parameters_accepts_callable_objective(self) -> None:
+        mock_result = MagicMock()
+        mock_result.configure_mock(sharpe_ratio=0.0)
+
+        evaluations: list[float] = []
+
+        def objective_fn(result: MagicMock) -> float:
+            score = 2.0 - 0.1 * len(evaluations)
+            evaluations.append(score)
+            return score
+
+        self.engine.run_strategy = MagicMock(return_value=mock_result)
+        self.engine._logger = MagicMock()
+
+        param_ranges = {
+            "rsi_period": [10, 14, 20],
+            "ema_fast_period": [5, 10],
+            "ema_slow_period": [15, 25],
+            "signal_threshold": [0.05, 0.1],
+        }
+
+        max_iterations = 3
+
+        params, score = self.engine.optimize_parameters(
+            self.data,
+            param_ranges,
+            objective=objective_fn,
+            max_iterations=max_iterations,
+        )
+
+        self.assertIsNotNone(params)
+        self.assertAlmostEqual(score, evaluations[0])
+        self.assertEqual(len(evaluations), self.engine.run_strategy.call_count)
+        self.assertLessEqual(self.engine.run_strategy.call_count, max_iterations)
+
+        summary = self.engine.get_last_optimization_summary()
+        self.assertIsNotNone(summary)
+        assert summary is not None
+        self.assertFalse(summary.fallback_used)
+        self.assertEqual(summary.objective, "objective_fn")
+        self.assertEqual(summary.score, evaluations[0])
+
+    def test_optimize_parameters_skips_nan_scores(self) -> None:
+        successful_result = MagicMock()
+        successful_result.configure_mock(sharpe_ratio=1.25)
+
+        nan_result = MagicMock()
+        nan_result.configure_mock(sharpe_ratio=float("nan"))
+
+        self.engine.run_strategy = MagicMock(side_effect=[nan_result, successful_result])
+        self.engine._logger = MagicMock()
+
+        param_ranges = {
+            "rsi_period": [10, 14, 20],
+            "ema_fast_period": [5, 10],
+            "ema_slow_period": [15, 25],
+            "signal_threshold": [0.05, 0.1],
+        }
+
+        max_iterations = 2
+
+        params, score = self.engine.optimize_parameters(
+            self.data, param_ranges, max_iterations=max_iterations
+        )
+
+        self.assertIsNotNone(params)
+        self.assertAlmostEqual(score, successful_result.sharpe_ratio)
+        self.assertEqual(self.engine.run_strategy.call_count, max_iterations)
+
+        summary = self.engine.get_last_optimization_summary()
+        self.assertIsNotNone(summary)
+        assert summary is not None
+        self.assertFalse(summary.fallback_used)
+        self.assertEqual(summary.iterations, max_iterations)
+        self.assertIs(summary.result, successful_result)
+        self.assertEqual(summary.score, successful_result.sharpe_ratio)
+
+    def test_optimize_parameters_returns_baseline_when_no_valid_scores(self) -> None:
+        nan_result = MagicMock()
+        nan_result.configure_mock(sharpe_ratio=float("nan"))
+
+        baseline_result = MagicMock()
+        baseline_result.configure_mock(sharpe_ratio=0.75)
+
+        self.engine.run_strategy = MagicMock(
+            side_effect=[nan_result, nan_result, baseline_result]
+        )
+        self.engine._logger = MagicMock()
+
+        param_ranges = {
+            "rsi_period": [10, 14],
+            "ema_fast_period": [5],
+            "ema_slow_period": [15],
+            "signal_threshold": [0.05],
+        }
+
+        max_iterations = 2
+
+        params, score = self.engine.optimize_parameters(
+            self.data, param_ranges, max_iterations=max_iterations
+        )
+
+        self.assertEqual(params, TradingParameters())
+        self.assertEqual(score, baseline_result.sharpe_ratio)
+        self.assertEqual(
+            self.engine.run_strategy.call_count,
+            max_iterations + 1,
+        )
+
+        baseline_call = self.engine.run_strategy.call_args_list[-1]
+        self.assertEqual(baseline_call.args[1], TradingParameters())
+
+        summary = self.engine.get_last_optimization_summary()
+        self.assertIsNotNone(summary)
+        assert summary is not None
+        self.assertTrue(summary.fallback_used)
+        self.assertEqual(summary.iterations, max_iterations)
+        self.assertEqual(summary.params, TradingParameters())
+        self.assertIs(summary.result, baseline_result)
+        self.assertEqual(summary.score, baseline_result.sharpe_ratio)
+
+        warning_messages = [call.args[0] for call in self.engine._logger.warning.call_args_list]
+        self.assertTrue(
+            any("without a valid score" in message for message in warning_messages),
+            "Fallback warning should mention absence of valid optimization scores.",
+        )
+
+        info_messages = [call.args[0] for call in self.engine._logger.info.call_args_list]
+        self.assertTrue(
+            any("Baseline parameters produce" in message for message in info_messages),
+            "Baseline evaluation should be logged when falling back to defaults.",
+        )
+
+    def test_optimize_parameters_records_best_result(self) -> None:
+        successful_result = MagicMock()
+        successful_result.configure_mock(sharpe_ratio=3.0)
+
+        self.engine.run_strategy = MagicMock(return_value=successful_result)
+        self.engine._logger = MagicMock()
+
+        param_ranges = {
+            "rsi_period": [10, 14, 20],
+            "ema_fast_period": [5, 10],
+            "ema_slow_period": [15, 25],
+            "signal_threshold": [0.05, 0.1],
+        }
+
+        params, score = self.engine.optimize_parameters(
+            self.data, param_ranges, max_iterations=1
+        )
+
+        self.assertIsNotNone(params)
+        self.assertEqual(score, successful_result.sharpe_ratio)
+
+        summary = self.engine.get_last_optimization_summary()
+        self.assertIsNotNone(summary)
+        assert summary is not None
+        self.assertFalse(summary.fallback_used)
+        self.assertEqual(summary.iterations, 1)
+        self.assertIs(summary.result, successful_result)
+        self.assertEqual(summary.score, successful_result.sharpe_ratio)
 
     def test_multi_session_backtest_matches_reference(self) -> None:
         dates = pd.date_range("2022-01-01", periods=6, freq="D")
