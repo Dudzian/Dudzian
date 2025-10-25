@@ -2340,10 +2340,22 @@ class AutoTradeEngine:
             signals.update(plugin_signals)
         signals["daily_breakout"] = signals.get("day_trading", fallback_signals["day_trading"])
         base_weights = dict(weights)
+        base_abs_weight = sum(abs(value) for value in base_weights.values())
+        base_signal_numerator = sum(
+            base_weights.get(name, 0.0) * signals.get(name, 0.0)
+            for name in base_weights
+        )
+        base_signal_value = (
+            base_signal_numerator / base_abs_weight if base_abs_weight else 0.0
+        )
         ai_metadata: dict[str, object] | None = None
         self._last_inference_score = None
         self._last_inference_metadata = None
         adjustment_metadata: Dict[str, float] | None = None
+        denominator_override: float | None = None
+        ai_score: ModelScore | None = None
+        weights_before_adjustment: Dict[str, float] | None = None
+        adjusted_signal_value: float | None = None
         inference_service = self._decision_inference
         if (
             inference_service is not None
@@ -2360,9 +2372,26 @@ class AutoTradeEngine:
                     "DecisionModelInference score failed: %s", exc, exc_info=True
                 )
             else:
+                weights_before_adjustment = dict(weights)
                 weights, adjustment_metadata = self._apply_inference_adjustment(weights, ai_score)
+                adjustment_metadata = dict(adjustment_metadata)
                 parameters = self._compose_trading_parameters(weights)
                 self._last_trading_parameters = parameters
+                denominator_override = base_abs_weight if base_abs_weight > 0 else None
+                adjusted_numerator = sum(
+                    weights.get(name, 0.0) * signals.get(name, 0.0)
+                    for name in weights
+                )
+                denominator_for_adjusted = denominator_override
+                if denominator_for_adjusted is None:
+                    denominator_for_adjusted = sum(abs(value) for value in weights.values())
+                adjusted_signal_value = (
+                    adjusted_numerator / denominator_for_adjusted
+                    if denominator_for_adjusted
+                    else 0.0
+                )
+                adjustment_metadata["signal_before_adjustment"] = base_signal_value
+                adjustment_metadata["signal_after_adjustment"] = adjusted_signal_value
                 ai_metadata = {
                     "expected_return_bps": float(ai_score.expected_return_bps),
                     "success_probability": float(ai_score.success_probability),
@@ -2371,24 +2400,43 @@ class AutoTradeEngine:
                     "feature_count": len(inference_features),
                     "base_abs_weight": adjustment_metadata.get("base_abs_weight"),
                     "adjusted_abs_weight": adjustment_metadata.get("adjusted_abs_weight"),
+                    "signal_before_adjustment": base_signal_value,
+                    "signal_after_adjustment": adjusted_signal_value,
                 }
-                self._record_ai_inference_event(
-                    ai_score,
-                    features=inference_features,
-                    weights_before=base_weights,
-                    weights_after=weights,
-                    assessment=assessment,
-                    adjustment_metadata=adjustment_metadata or {},
-                )
                 self._last_inference_score = ai_score
-                self._last_inference_metadata = dict(ai_metadata)
         numerator = 0.0
-        denominator = 0.0
         for name, weight in weights.items():
             signal_value = signals.get(name, 0.0)
             numerator += weight * signal_value
-            denominator += abs(weight)
-        combined = numerator / denominator if denominator else 0.0
+        if denominator_override is not None:
+            denominator = denominator_override
+        else:
+            denominator = sum(abs(weight) for weight in weights.values())
+        combined_unclamped = numerator / denominator if denominator else 0.0
+        combined = max(-1.0, min(1.0, combined_unclamped))
+        if ai_metadata is not None:
+            ai_metadata.setdefault("signal_before_adjustment", base_signal_value)
+            ai_metadata.setdefault(
+                "signal_after_adjustment",
+                adjusted_signal_value if adjusted_signal_value is not None else combined_unclamped,
+            )
+            ai_metadata["signal_after_clamp"] = combined
+            if adjustment_metadata is not None:
+                adjustment_metadata["signal_after_clamp"] = combined
+            if (
+                ai_score is not None
+                and adjustment_metadata is not None
+                and weights_before_adjustment is not None
+            ):
+                self._record_ai_inference_event(
+                    ai_score,
+                    features=inference_features,
+                    weights_before=weights_before_adjustment,
+                    weights_after=weights,
+                    assessment=assessment,
+                    adjustment_metadata=adjustment_metadata,
+                )
+                self._last_inference_metadata = dict(ai_metadata)
         metadata_payload: dict[str, object] | None = None
         metadata_container: dict[str, object] = {}
         if strategy_metadata:

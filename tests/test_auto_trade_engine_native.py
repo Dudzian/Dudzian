@@ -1475,6 +1475,26 @@ def test_auto_trade_engine_uses_ai_inference(monkeypatch) -> None:
     assert inference.calls, "expected inference to be invoked"
     assert signal_payloads, "expected at least one signal payload"
     latest_payload = signal_payloads[-1]
+
+    def _compute_base_signal(payload: dict) -> float:
+        ai_meta_payload = payload["metadata"]["ai_inference"]
+        scaling = float(ai_meta_payload["weight_scaling"])
+        if scaling == 0.0:
+            return 0.0
+        scaled_weights = payload["weights"]
+        base_weights_from_payload = {
+            name: value / scaling for name, value in scaled_weights.items()
+        }
+        base_abs = sum(abs(value) for value in base_weights_from_payload.values())
+        if base_abs == 0.0:
+            return 0.0
+        signals_payload = payload["signals"]
+        base_numerator = sum(
+            base_weights_from_payload.get(name, 0.0) * signals_payload.get(name, 0.0)
+            for name in base_weights_from_payload
+        )
+        return base_numerator / base_abs if base_abs else 0.0
+
     ai_meta = latest_payload["metadata"]["ai_inference"]
     assert ai_meta["expected_return_bps"] == pytest.approx(120.0)
     assert ai_meta["weight_scaling"] > 1.0
@@ -1482,10 +1502,61 @@ def test_auto_trade_engine_uses_ai_inference(monkeypatch) -> None:
     base_weights = cfg.strategy_weights[regime_key]
     expected_trend = base_weights["trend_following"] * ai_meta["weight_scaling"]
     assert latest_payload["weights"]["trend_following"] == pytest.approx(expected_trend)
+    base_signal = _compute_base_signal(latest_payload)
+    assert ai_meta["signal_before_adjustment"] == pytest.approx(base_signal)
+    assert ai_meta["signal_after_clamp"] == pytest.approx(latest_payload["direction"])
+    assert ai_meta["signal_after_adjustment"] * base_signal >= 0
+    assert latest_payload["direction"] * base_signal >= 0
+    assert abs(ai_meta["signal_after_adjustment"]) > abs(base_signal)
+    assert abs(latest_payload["direction"]) > abs(base_signal)
+
+    inference._score = ModelScore(expected_return_bps=-150.0, success_probability=0.8)
+    for px in closes:
+        adapter.push_market_tick("BTCUSDT", price=px)
+
+    negative_payload = signal_payloads[-1]
+    negative_meta = negative_payload["metadata"]["ai_inference"]
+    assert negative_meta["weight_scaling"] < 1.0
+    negative_base_signal = _compute_base_signal(negative_payload)
+    assert negative_meta["signal_before_adjustment"] == pytest.approx(negative_base_signal)
+    assert negative_meta["signal_after_clamp"] == pytest.approx(negative_payload["direction"])
+    assert negative_meta["signal_after_adjustment"] * negative_base_signal >= 0
+    assert negative_payload["direction"] * negative_base_signal >= 0
+    assert abs(negative_meta["signal_after_adjustment"]) < abs(negative_base_signal)
+    assert abs(negative_payload["direction"]) < abs(negative_base_signal)
     exported = list(journal.export())
-    assert exported, "expected inference journal event"
-    assert exported[-1]["event"] == "ai_inference"
-    assert exported[-1]["environment"] == "paper"
-    assert float(exported[-1]["expected_return_bps"]) == pytest.approx(120.0)
+    assert len(exported) >= 2, "expected inference journal events"
+    positive_event = next(
+        event
+        for event in reversed(exported)
+        if float(event.get("expected_return_bps", 0.0)) > 0.0
+    )
+    assert positive_event["event"] == "ai_inference"
+    assert positive_event["environment"] == "paper"
+    assert float(positive_event["expected_return_bps"]) == pytest.approx(120.0)
+    assert float(positive_event["signal_before_adjustment"]) == pytest.approx(base_signal)
+    assert float(positive_event["signal_after_adjustment"]) == pytest.approx(
+        ai_meta["signal_after_adjustment"]
+    )
+    assert float(positive_event["signal_after_clamp"]) == pytest.approx(
+        ai_meta["signal_after_clamp"]
+    )
+    negative_event = next(
+        event
+        for event in reversed(exported)
+        if float(event.get("expected_return_bps", 0.0)) < 0.0
+    )
+    assert negative_event["event"] == "ai_inference"
+    assert negative_event["environment"] == "paper"
+    assert float(negative_event["expected_return_bps"]) == pytest.approx(-150.0)
+    assert float(negative_event["signal_before_adjustment"]) == pytest.approx(
+        negative_base_signal
+    )
+    assert float(negative_event["signal_after_adjustment"]) == pytest.approx(
+        negative_meta["signal_after_adjustment"]
+    )
+    assert float(negative_event["signal_after_clamp"]) == pytest.approx(
+        negative_meta["signal_after_clamp"]
+    )
     assert any(key.startswith("price_") for key in inference.calls[-1])
     assert inference.contexts[-1]["regime"] == regime_key
