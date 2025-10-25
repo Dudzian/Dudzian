@@ -482,35 +482,81 @@ def _iter_paths(raw_paths: Iterable[str]) -> Iterable[Path]:
             yield candidate
 
 
+def _iter_autotrade_paths(raw_paths: Iterable[Path | str]) -> list[Path]:
+    paths: list[Path] = []
+    seen: set[Path] = set()
+    directories_without_files: list[Path] = []
+
+    for raw in raw_paths:
+        candidate = Path(raw).expanduser()
+        if not candidate.exists():
+            raise SystemExit(f"Eksport autotradera nie istnieje: {candidate}")
+        if candidate.is_dir():
+            matched = False
+            for child in sorted(candidate.iterdir()):
+                if not child.is_file():
+                    continue
+                if child.suffix.lower() not in {".json", ".jsonl"}:
+                    continue
+                resolved = child.resolve()
+                if resolved in seen:
+                    continue
+                matched = True
+                seen.add(resolved)
+                paths.append(child)
+            if not matched:
+                directories_without_files.append(candidate)
+            continue
+
+        resolved = candidate.resolve()
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        paths.append(candidate)
+
+    if not paths:
+        if directories_without_files:
+            directory = directories_without_files[0]
+            raise SystemExit(
+                f"Katalog eksportów autotradera {directory} nie zawiera plików JSON/JSONL"
+            )
+        raise SystemExit("Nie znaleziono żadnych plików eksportu autotradera")
+
+    return paths
+
+
 def _load_journal_events(
     paths: Iterable[Path],
     *,
     since: datetime | None = None,
     until: datetime | None = None,
 ) -> Iterator[Mapping[str, object]]:
-    for path in paths:
-        try:
-            with path.open("r", encoding="utf-8") as handle:
-                for line in handle:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        payload = json.loads(line)
-                    except json.JSONDecodeError as exc:  # noqa: BLE001 - CLI feedback
-                        raise SystemExit(
-                            f"Nie udało się sparsować JSON w dzienniku {path}: {exc}"
-                        ) from exc
-                    if not isinstance(payload, Mapping):
-                        continue
-                    timestamp = _parse_datetime(payload.get("timestamp"))
-                    if since and timestamp and timestamp < since:
-                        continue
-                    if until and timestamp and timestamp > until:
-                        continue
-                    yield payload
-        except OSError as exc:  # noqa: BLE001 - CLI feedback
-            raise SystemExit(f"Nie udało się odczytać dziennika {path}: {exc}") from exc
+    def _iter() -> Iterator[Mapping[str, object]]:
+        for path in paths:
+            try:
+                with path.open("r", encoding="utf-8") as handle:
+                    for line in handle:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            payload = json.loads(line)
+                        except json.JSONDecodeError as exc:  # noqa: BLE001 - CLI feedback
+                            raise SystemExit(
+                                f"Nie udało się sparsować JSON w dzienniku {path}: {exc}"
+                            ) from exc
+                        if not isinstance(payload, Mapping):
+                            continue
+                        timestamp = _parse_datetime(payload.get("timestamp"))
+                        if since and timestamp and timestamp < since:
+                            continue
+                        if until and timestamp and timestamp > until:
+                            continue
+                        yield payload
+            except OSError as exc:  # noqa: BLE001 - CLI feedback
+                raise SystemExit(f"Nie udało się odczytać dziennika {path}: {exc}") from exc
+
+    return _iter()
 
 
 def _extract_entry_timestamp(entry: Mapping[str, object]) -> datetime | None:
@@ -531,11 +577,13 @@ def _extract_entry_timestamp(entry: Mapping[str, object]) -> datetime | None:
 
 
 def _load_autotrade_entries(
-    paths: Iterable[str],
+    paths: Iterable[Path | str],
     *,
     since: datetime | None = None,
     until: datetime | None = None,
 ) -> Iterator[Mapping[str, object]]:
+    normalized_paths = _iter_autotrade_paths(paths)
+
     def _normalize_entry(item: object) -> Mapping[str, object] | None:
         if not isinstance(item, Mapping):
             return None
@@ -546,80 +594,59 @@ def _load_autotrade_entries(
             return None
         return item
 
-    for raw in paths:
-        path = Path(raw).expanduser()
-        if not path.exists():
-            raise SystemExit(f"Eksport autotradera nie istnieje: {path}")
-        try:
-            with path.open("r", encoding="utf-8") as handle:
-                decoder = json.JSONDecoder()
-                buffer = ""
-                position = 0
-                chunk_size = 65536
+    def _iter() -> Iterator[Mapping[str, object]]:
+        for path in normalized_paths:
+            try:
+                with path.open('r', encoding='utf-8') as handle:
+                    decoder = json.JSONDecoder()
+                    buffer = ''
+                    position = 0
+                    chunk_size = 65536
 
-                def _append_chunk() -> bool:
-                    nonlocal buffer, position
-                    chunk = handle.read(chunk_size)
-                    if not chunk:
-                        return False
-                    if position:
-                        buffer = buffer[position:] + chunk
-                        position = 0
-                    else:
-                        buffer += chunk
-                    return True
-
-                def _skip_whitespace() -> bool:
-                    nonlocal position
-                    while True:
-                        while position < len(buffer) and buffer[position].isspace():
-                            position += 1
-                        if position < len(buffer):
-                            return True
-                        if not _append_chunk():
+                    def _append_chunk() -> bool:
+                        nonlocal buffer, position
+                        chunk = handle.read(chunk_size)
+                        if not chunk:
                             return False
-
-                def _decode_value() -> object:
-                    nonlocal buffer, position
-                    while True:
-                        try:
-                            value, next_position = decoder.raw_decode(buffer, position)
-                        except json.JSONDecodeError as exc:
-                            if not _append_chunk():
-                                raise SystemExit(
-                                    f"Niepoprawny JSON w eksporcie autotradera {path}: {exc}"
-                                ) from exc
-                            continue
-                        position = next_position
-                        if position > 65536:
-                            buffer = buffer[position:]
+                        if position:
+                            buffer = buffer[position:] + chunk
                             position = 0
-                        return value
+                        else:
+                            buffer += chunk
+                        return True
 
-                def _consume_array(yield_entries: bool) -> Iterator[Mapping[str, object]]:
-                    nonlocal position
-                    # assume current character is '['
-                    position += 1
-                    first_item = True
-                    while True:
-                        if not _skip_whitespace():
-                            raise SystemExit(
-                                f"Niepoprawny JSON w eksporcie autotradera {path}: niekompletna tablica"
-                            )
-                        if position >= len(buffer) and not _append_chunk():
-                            raise SystemExit(
-                                f"Niepoprawny JSON w eksporcie autotradera {path}: niekompletna tablica"
-                            )
-                        current = buffer[position]
-                        if current == "]":
-                            position += 1
-                            return
-                        if not first_item:
-                            if current != ",":
-                                raise SystemExit(
-                                    f"Niepoprawny JSON w eksporcie autotradera {path}: oczekiwano przecinka"
-                                )
-                            position += 1
+                    def _skip_whitespace() -> bool:
+                        nonlocal position
+                        while True:
+                            while position < len(buffer) and buffer[position].isspace():
+                                position += 1
+                            if position < len(buffer):
+                                return True
+                            if not _append_chunk():
+                                return False
+
+                    def _decode_value() -> object:
+                        nonlocal buffer, position
+                        while True:
+                            try:
+                                value, next_position = decoder.raw_decode(buffer, position)
+                            except json.JSONDecodeError as exc:
+                                if not _append_chunk():
+                                    raise SystemExit(
+                                        f"Niepoprawny JSON w eksporcie autotradera {path}: {exc}"
+                                    ) from exc
+                                continue
+                            position = next_position
+                            if position > 65536:
+                                buffer = buffer[position:]
+                                position = 0
+                            return value
+
+                    def _consume_array(yield_entries: bool) -> Iterator[Mapping[str, object]]:
+                        nonlocal position
+                        position += 1
+                        first_item = True
+                        while True:
                             if not _skip_whitespace():
                                 raise SystemExit(
                                     f"Niepoprawny JSON w eksporcie autotradera {path}: niekompletna tablica"
@@ -629,108 +656,131 @@ def _load_autotrade_entries(
                                     f"Niepoprawny JSON w eksporcie autotradera {path}: niekompletna tablica"
                                 )
                             current = buffer[position]
-                            if current == "]":
-                                raise SystemExit(
-                                    f"Niepoprawny JSON w eksporcie autotradera {path}: dodatkowy przecinek"
-                                )
-                        first_item = False
-                        item = _decode_value()
-                        if not yield_entries:
-                            continue
-                        normalized = _normalize_entry(item)
-                        if normalized is not None:
-                            yield normalized
-
-                def _consume_value(yield_entries: bool) -> Iterator[Mapping[str, object]]:
-                    nonlocal position
-                    if not _skip_whitespace():
-                        raise SystemExit(
-                            f"Niepoprawny JSON w eksporcie autotradera {path}: niekompletna wartość"
-                        )
-                    if position >= len(buffer) and not _append_chunk():
-                        raise SystemExit(
-                            f"Niepoprawny JSON w eksporcie autotradera {path}: niekompletna wartość"
-                        )
-                    current = buffer[position]
-                    if current == "[":
-                        yield from _consume_array(yield_entries)
-                        return
-                    if current in "\"{-0123456789tfn":
-                        value = _decode_value()
-                        if yield_entries:
-                            normalized = _normalize_entry(value)
+                            if current == ']':
+                                position += 1
+                                return
+                            if not first_item:
+                                if current != ',':
+                                    raise SystemExit(
+                                        f"Niepoprawny JSON w eksporcie autotradera {path}: oczekiwano przecinka"
+                                    )
+                                position += 1
+                                if not _skip_whitespace():
+                                    raise SystemExit(
+                                        f"Niepoprawny JSON w eksporcie autotradera {path}: niekompletna tablica"
+                                    )
+                                if position >= len(buffer) and not _append_chunk():
+                                    raise SystemExit(
+                                        f"Niepoprawny JSON w eksporcie autotradera {path}: niekompletna tablica"
+                                    )
+                                current = buffer[position]
+                                if current == ']':
+                                    raise SystemExit(
+                                        f"Niepoprawny JSON w eksporcie autotradera {path}: dodatkowy przecinek"
+                                    )
+                            first_item = False
+                            item = _decode_value()
+                            if not yield_entries:
+                                continue
+                            normalized = _normalize_entry(item)
                             if normalized is not None:
                                 yield normalized
-                        return
-                    raise SystemExit(
-                        f"Niepoprawny JSON w eksporcie autotradera {path}: nieznany typ wartości"
-                    )
 
-                if not _skip_whitespace():
-                    continue
-                if position >= len(buffer) and not _append_chunk():
-                    continue
-                first_char = buffer[position]
-                if first_char == "[":
-                    yield from _consume_array(True)
-                    continue
-                if first_char != "{":
-                    raise SystemExit(
-                        f"Niepoprawny JSON w eksporcie autotradera {path}: oczekiwano obiektu lub tablicy"
-                    )
-                position += 1
+                    def _consume_value(yield_entries: bool) -> Iterator[Mapping[str, object]]:
+                        nonlocal position
+                        if not _skip_whitespace():
+                            raise SystemExit(
+                                f"Niepoprawny JSON w eksporcie autotradera {path}: niekompletna wartość"
+                            )
+                        if position >= len(buffer) and not _append_chunk():
+                            raise SystemExit(
+                                f"Niepoprawny JSON w eksporcie autotradera {path}: niekompletna wartość"
+                            )
+                        current = buffer[position]
+                        if current == '[':
+                            yield from _consume_array(yield_entries)
+                            return
+                        if current in "\"{-0123456789tfn":
+                            value = _decode_value()
+                            if yield_entries:
+                                normalized = _normalize_entry(value)
+                                if normalized is not None:
+                                    yield normalized
+                            return
+                        raise SystemExit(
+                            f"Niepoprawny JSON w eksporcie autotradera {path}: nieznany typ wartości"
+                        )
 
-                while True:
                     if not _skip_whitespace():
-                        raise SystemExit(
-                            f"Niepoprawny JSON w eksporcie autotradera {path}: niekompletny obiekt"
-                        )
+                        continue
                     if position >= len(buffer) and not _append_chunk():
+                        continue
+                    first_char = buffer[position]
+                    if first_char == '[':
+                        yield from _consume_array(True)
+                        continue
+                    if first_char != '{':
                         raise SystemExit(
-                            f"Niepoprawny JSON w eksporcie autotradera {path}: niekompletny obiekt"
-                        )
-                    current = buffer[position]
-                    if current == "}":
-                        position += 1
-                        break
-                    key = _decode_value()
-                    if not isinstance(key, str):
-                        raise SystemExit(
-                            f"Niepoprawny JSON w eksporcie autotradera {path}: klucz musi być napisem"
-                        )
-                    if not _skip_whitespace():
-                        raise SystemExit(
-                            f"Niepoprawny JSON w eksporcie autotradera {path}: niekompletna para klucz-wartość"
-                        )
-                    if position >= len(buffer) and not _append_chunk():
-                        raise SystemExit(
-                            f"Niepoprawny JSON w eksporcie autotradera {path}: niekompletna para klucz-wartość"
-                        )
-                    if buffer[position] != ":":
-                        raise SystemExit(
-                            f"Niepoprawny JSON w eksporcie autotradera {path}: oczekiwano ':' po kluczu {key}"
+                            f"Niepoprawny JSON w eksporcie autotradera {path}: oczekiwano obiektu lub tablicy"
                         )
                     position += 1
-                    yield from _consume_value(key == "entries")
-                    if not _skip_whitespace():
-                        raise SystemExit(
-                            f"Niepoprawny JSON w eksporcie autotradera {path}: niekompletny obiekt"
-                        )
-                    if position >= len(buffer) and not _append_chunk():
-                        raise SystemExit(
-                            f"Niepoprawny JSON w eksporcie autotradera {path}: niekompletny obiekt"
-                        )
-                    current = buffer[position]
-                    if current == ",":
+
+                    while True:
+                        if not _skip_whitespace():
+                            raise SystemExit(
+                                f"Niepoprawny JSON w eksporcie autotradera {path}: niekompletny obiekt"
+                            )
+                        if position >= len(buffer) and not _append_chunk():
+                            raise SystemExit(
+                                f"Niepoprawny JSON w eksporcie autotradera {path}: niekompletny obiekt"
+                            )
+                        current = buffer[position]
+                        if current == '}':
+                            position += 1
+                            break
+                        key = _decode_value()
+                        if not isinstance(key, str):
+                            raise SystemExit(
+                                f"Niepoprawny JSON w eksporcie autotradera {path}: klucz musi być napisem"
+                            )
+                        if not _skip_whitespace():
+                            raise SystemExit(
+                                f"Niepoprawny JSON w eksporcie autotradera {path}: niekompletna para klucz-wartość"
+                            )
+                        if position >= len(buffer) and not _append_chunk():
+                            raise SystemExit(
+                                f"Niepoprawny JSON w eksporcie autotradera {path}: niekompletna para klucz-wartość"
+                            )
+                        if buffer[position] != ':':
+                            raise SystemExit(
+                                f"Niepoprawny JSON w eksporcie autotradera {path}: oczekiwano ':' po kluczu {key}"
+                            )
                         position += 1
-                        continue
-                    if current == "}":
-                        continue
-                    raise SystemExit(
-                        f"Niepoprawny JSON w eksporcie autotradera {path}: oczekiwano ',' lub '}}'"
-                    )
-        except OSError as exc:  # noqa: BLE001 - CLI feedback
-            raise SystemExit(f"Nie udało się odczytać eksportu autotradera {path}: {exc}") from exc
+                        yield from _consume_value(key == 'entries')
+                        if not _skip_whitespace():
+                            raise SystemExit(
+                                f"Niepoprawny JSON w eksporcie autotradera {path}: niekompletny obiekt"
+                            )
+                        if position >= len(buffer) and not _append_chunk():
+                            raise SystemExit(
+                                f"Niepoprawny JSON w eksporcie autotradera {path}: niekompletny obiekt"
+                            )
+                        current = buffer[position]
+                        if current == ',':
+                            position += 1
+                            continue
+                        if current == '}':
+                            position += 1
+                            break
+                        raise SystemExit(
+                            f"Niepoprawny JSON w eksporcie autotradera {path}: oczekiwano ',' lub '}}'"
+                        )
+            except OSError as exc:  # noqa: BLE001 - CLI feedback
+                raise SystemExit(
+                    f"Nie udało się odczytać eksportu autotradera {path}: {exc}"
+                ) from exc
+
+    return _iter()
 
 
 def _resolve_key(exchange: str | None, strategy: str | None) -> tuple[str, str]:
@@ -1312,7 +1362,8 @@ def _generate_report(
                 numeric_duration = None
             if numeric_duration is not None and math.isfinite(numeric_duration):
                 _record_metric_value(key, "risk_freeze_duration", numeric_duration)
-    for event in journal_events:
+    journal_iter = iter(journal_events)
+    for event in journal_iter:
         journal_count += 1
         _update_symbol_map_entry(symbol_map, event)
         base_exchange = _normalize_string(event.get("primary_exchange"))
@@ -1347,7 +1398,8 @@ def _generate_report(
             _record_display(freeze_key, exchange, strategy)
             _record_freeze(freeze_key, freeze_payload)
 
-    for entry in autotrade_entries:
+    autotrade_iter = iter(autotrade_entries)
+    for entry in autotrade_iter:
         autotrade_count += 1
         summary = _extract_summary(entry)
         symbol = _extract_symbol(entry)
