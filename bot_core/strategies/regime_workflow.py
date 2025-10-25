@@ -4,7 +4,8 @@ from __future__ import annotations
 from collections import Counter, deque
 import hashlib
 import logging
-from dataclasses import dataclass, field
+import math
+from dataclasses import dataclass, field, replace
 from datetime import datetime, time, timedelta, timezone
 from types import MappingProxyType
 from typing import Iterable, Mapping, MutableMapping, Sequence
@@ -24,9 +25,26 @@ from bot_core.decision.orchestrator import DecisionOrchestrator
 from bot_core.security.guards import LicenseCapabilityError, get_capability_guard
 from bot_core.security.signing import build_hmac_signature, canonical_json_bytes
 from bot_core.strategies.catalog import StrategyPresetWizard
+from bot_core.trading.engine import TradingParameters
+from bot_core.trading.strategies.plugins import (
+    StrategyCatalog as StrategyPluginCatalog,
+)
 
 
 _LOGGER = logging.getLogger(__name__)
+
+
+_DEFAULT_FALLBACK_WEIGHTS = MappingProxyType(
+    {
+        "trend_following": 0.35,
+        "day_trading": 0.15,
+        "mean_reversion": 0.10,
+        "arbitrage": 0.10,
+        "volatility_target": 0.20,
+        "grid_trading": 0.05,
+        "options_income": 0.05,
+    }
+)
 
 
 def _normalize_regime(value: MarketRegime | str | None) -> MarketRegime | None:
@@ -79,6 +97,29 @@ class RegimePresetActivation:
     blocked_reason: str | None = None
     recommendation: str | None = None
     license_issues: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class StrategyDecision:
+    """Opisuje wynik decyzji workflowu wraz z parametrami tradingowymi."""
+
+    activation: RegimePresetActivation
+    parameters: TradingParameters
+    weights: Mapping[str, float]
+    timestamp: datetime
+    license_tiers: tuple[str, ...] = ()
+    risk_classes: tuple[str, ...] = ()
+    required_data: tuple[str, ...] = ()
+    capabilities: tuple[str, ...] = ()
+    tags: tuple[str, ...] = ()
+    strategy_metadata: Mapping[str, Mapping[str, object]] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
+    recommendation: str | None = None
+
+    @property
+    def regime(self) -> MarketRegime:
+        return self.activation.regime
 
 
 @dataclass(frozen=True)
@@ -188,6 +229,15 @@ class StrategyRegimeWorkflow:
             )
         self._decision_engine = decision_engine
         self._logger = logger or _LOGGER
+        self._plugin_catalog = StrategyPluginCatalog.default()
+        self._plugin_engine_index: MutableMapping[str, str] = {}
+        self._plugin_name_to_engine: MutableMapping[str, str] = {}
+        for plugin_name in self._plugin_catalog.available():
+            metadata = self._plugin_catalog.metadata_for(plugin_name)
+            engine_key = str(metadata.get("engine") or "").strip()
+            if engine_key:
+                self._plugin_engine_index.setdefault(engine_key, plugin_name)
+                self._plugin_name_to_engine.setdefault(plugin_name, engine_key)
         self._presets: MutableMapping[MarketRegime, _RegisteredPreset] = {}
         self._fallback: _RegisteredPreset | None = None
         self._last_activation: RegimePresetActivation | None = None
@@ -323,6 +373,44 @@ class StrategyRegimeWorkflow:
         self._last_activation = activation
         self._activation_history.append(activation)
         return activation
+
+    def decide(
+        self,
+        market_data: pd.DataFrame,
+        parameters: TradingParameters,
+        *,
+        available_data: Iterable[str] = (),
+        symbol: str | None = None,
+        now: datetime | None = None,
+    ) -> StrategyDecision:
+        if market_data is None or market_data.empty:
+            raise ValueError("market_data must contain OHLCV history")
+
+        self._ensure_default_fallback()
+        activation = self.activate(
+            market_data,
+            available_data=available_data,
+            symbol=symbol,
+            now=now,
+        )
+        weights = self._derive_weights(activation, parameters)
+        metadata = self._collect_plugin_metadata(weights)
+        tuned_parameters = replace(parameters, ensemble_weights=dict(weights))
+        timestamp = self._resolve_decision_timestamp(market_data, now)
+
+        return StrategyDecision(
+            activation=activation,
+            parameters=tuned_parameters,
+            weights=MappingProxyType(dict(weights)),
+            timestamp=timestamp,
+            license_tiers=metadata["license_tiers"],
+            risk_classes=metadata["risk_classes"],
+            required_data=metadata["required_data"],
+            capabilities=metadata["capabilities"],
+            tags=metadata["tags"],
+            strategy_metadata=metadata["strategies"],
+            recommendation=activation.recommendation,
+        )
 
     def activation_history(self) -> tuple[RegimePresetActivation, ...]:
         """Zwraca historię ostatnich aktywacji w kolejności chronologicznej."""
@@ -653,6 +741,164 @@ class StrategyRegimeWorkflow:
             tags=details["tags"],
         )
 
+    def _ensure_default_fallback(self) -> None:
+        if self._fallback is not None:
+            return
+        entries: list[dict[str, object]] = []
+        for name in _DEFAULT_FALLBACK_WEIGHTS:
+            engine = self._plugin_name_to_engine.get(name)
+            if not engine:
+                continue
+            entries.append({"engine": engine, "name": name})
+        if not entries:
+            return
+        metadata = {"ensemble_weights": dict(_DEFAULT_FALLBACK_WEIGHTS)}
+        try:
+            self.register_emergency_preset(
+                name="workflow-default-fallback",
+                entries=entries,
+                signing_key=b"workflow-fallback-key",
+                metadata=metadata,
+            )
+        except Exception:  # pragma: no cover - fallback jest best effort
+            self._logger.debug("Failed to register default fallback preset", exc_info=True)
+
+    def _derive_weights(
+        self,
+        activation: RegimePresetActivation,
+        parameters: TradingParameters,
+    ) -> dict[str, float]:
+        weights: dict[str, float] = {}
+        preset_meta = activation.version.metadata.get("preset_metadata")
+        if isinstance(preset_meta, Mapping):
+            declared = preset_meta.get("ensemble_weights")
+            if isinstance(declared, Mapping):
+                for name, value in declared.items():
+                    key = str(name).strip()
+                    if not key:
+                        continue
+                    try:
+                        weight = float(value)
+                    except (TypeError, ValueError):
+                        continue
+                    if not math.isfinite(weight) or weight < 0:
+                        continue
+                    weights[key] = weight
+
+        if not weights:
+            for name, value in parameters.ensemble_weights.items():
+                key = str(name).strip()
+                if not key:
+                    continue
+                try:
+                    weight = float(value)
+                except (TypeError, ValueError):
+                    continue
+                if not math.isfinite(weight) or weight < 0:
+                    continue
+                weights[key] = weight
+
+        strategies = activation.preset.get("strategies", [])
+        if isinstance(strategies, Iterable):
+            for entry in strategies:
+                if not isinstance(entry, Mapping):
+                    continue
+                plugin_name = self._resolve_plugin_name(entry.get("engine"))
+                if plugin_name:
+                    weights.setdefault(plugin_name, 0.0)
+                strategy_name = str(entry.get("name") or "").strip()
+                if strategy_name:
+                    weights.setdefault(strategy_name, 0.0)
+
+        for plugin_name in self._plugin_catalog.available():
+            weights.setdefault(plugin_name, 0.0)
+
+        positive = {name: max(0.0, float(value)) for name, value in weights.items()}
+        total = sum(positive.values())
+        if total <= 0:
+            if positive:
+                share = 1.0 / len(positive)
+                normalised = {name: share for name in positive}
+            else:
+                normalised = {}
+        else:
+            normalised = {name: value / total for name, value in positive.items()}
+        return {name: normalised.get(name, 0.0) for name in sorted(normalised)}
+
+    def _collect_plugin_metadata(
+        self, weights: Mapping[str, float]
+    ) -> Mapping[str, tuple[str, ...] | Mapping[str, Mapping[str, object]]]:
+        strategies: dict[str, Mapping[str, object]] = {}
+        license_tiers: list[str] = []
+        risk_classes: list[str] = []
+        required_data: list[str] = []
+        capabilities: list[str] = []
+        tags: list[str] = []
+
+        def _append_unique(bucket: list[str], values: Iterable[str]) -> None:
+            seen = set(bucket)
+            for value in values:
+                text = str(value).strip()
+                if not text or text in seen:
+                    continue
+                seen.add(text)
+                bucket.append(text)
+
+        for name in sorted(weights):
+            metadata = self._plugin_catalog.metadata_for(name)
+            if not metadata:
+                continue
+            strategies[name] = metadata
+            license_value = metadata.get("license_tier")
+            if isinstance(license_value, str):
+                _append_unique(license_tiers, (license_value,))
+            risk_value = metadata.get("risk_classes")
+            if isinstance(risk_value, Iterable):
+                _append_unique(risk_classes, risk_value)
+            required_value = metadata.get("required_data")
+            if isinstance(required_value, Iterable):
+                _append_unique(required_data, required_value)
+            capability_value = metadata.get("capability")
+            if isinstance(capability_value, str):
+                _append_unique(capabilities, (capability_value,))
+            tags_value = metadata.get("tags")
+            if isinstance(tags_value, Iterable):
+                _append_unique(tags, tags_value)
+
+        return {
+            "strategies": MappingProxyType(
+                {name: MappingProxyType(dict(payload)) for name, payload in strategies.items()}
+            ),
+            "license_tiers": tuple(license_tiers),
+            "risk_classes": tuple(risk_classes),
+            "required_data": tuple(required_data),
+            "capabilities": tuple(capabilities),
+            "tags": tuple(tags),
+        }
+
+    def _resolve_plugin_name(self, engine: object) -> str | None:
+        key = str(engine or "").strip()
+        if not key:
+            return None
+        return self._plugin_engine_index.get(key)
+
+    def _resolve_decision_timestamp(
+        self, market_data: pd.DataFrame, candidate_now: datetime | None
+    ) -> datetime:
+        try:
+            index = getattr(market_data, "index", None)
+            if isinstance(index, pd.DatetimeIndex) and len(index):
+                ts = pd.Timestamp(index[-1])
+                if ts.tzinfo is not None:
+                    ts = ts.tz_convert(None)
+                return ts.to_pydatetime()
+        except Exception:  # pragma: no cover - defensywne
+            pass
+        moment = candidate_now or datetime.utcnow()
+        if moment.tzinfo is not None:
+            return moment.astimezone(timezone.utc).replace(tzinfo=None)
+        return moment
+
     def _extract_metadata(self, preset: Mapping[str, object]) -> MutableMapping[str, tuple[str, ...]]:
         strategies = tuple(preset.get("strategies", []))
         strategy_keys = _gather_strings([[entry.get("engine", "")] for entry in strategies])
@@ -784,13 +1030,11 @@ class StrategyRegimeWorkflow:
                 )
             raise RuntimeError("Decision schedule blocks activation and no fallback preset is registered")
         missing = self._missing_data(self._fallback.required_data, available)
+        combined_missing = current_missing
         if missing:
-            raise RuntimeError(
-                "Fallback preset cannot be activated due to missing market data: "
-                + ", ".join(missing)
-            )
+            combined_missing = tuple(dict.fromkeys((*current_missing, *missing)))
         self._enforce_license(self._fallback, raise_on_error=True)
-        return self._fallback, current_missing
+        return self._fallback, combined_missing
 
     def _enforce_license(
         self,
@@ -889,6 +1133,7 @@ __all__ = [
     "ActivationTransitionStats",
     "ActivationCadenceStats",
     "ActivationUptimeStats",
+    "StrategyDecision",
     "StrategyRegimeWorkflow",
 ]
 
