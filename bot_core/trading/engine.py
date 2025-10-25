@@ -32,6 +32,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Protocol, Tuple, Union
 
+from bot_core.trading.exit_reasons import ExitReason
 from bot_core.trading.strategies import StrategyCatalog
 
 import numpy as np
@@ -169,7 +170,7 @@ class Trade:
     pnl: float
     pnl_pct: float
     duration: pd.Timedelta
-    exit_reason: str  # 'signal', 'stop_loss', 'take_profit'
+    exit_reason: str  # canonical reason such as 'signal', 'stop_loss', 'take_profit', 'momentum_fade', 'time_exit'
     commission: float = 0.0
 
 @dataclass(frozen=True)
