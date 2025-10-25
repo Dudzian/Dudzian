@@ -60,7 +60,11 @@ from bot_core.exchanges.base import OrderRequest
 from bot_core.risk.engine import ThresholdRiskEngine
 from bot_core.observability import MetricsRegistry, get_global_metrics_registry
 from bot_core.trading.strategies import StrategyCatalog
-from bot_core.trading.strategy_aliasing import StrategyAliasResolver
+from bot_core.trading.strategy_aliasing import (
+    StrategyAliasResolver,
+    canonical_alias_map,
+    normalise_suffixes,
+)
 
 
 LOGGER = logging.getLogger(__name__)
