@@ -323,6 +323,7 @@ def _extract_symbol(entry: Mapping[str, object]) -> str | None:
 
 
 def _resolve_group_from_symbol(
+    entry: Mapping[str, object],
     symbol: str | None,
     summary: Mapping[str, object] | None,
     symbol_map: Mapping[str, tuple[str, str]],
@@ -331,14 +332,54 @@ def _resolve_group_from_symbol(
         mapped = symbol_map.get(symbol)
         if mapped:
             return mapped
-    exchange = None
-    strategy = None
-    if isinstance(summary, Mapping):
-        exchange_raw = summary.get("primary_exchange")
-        strategy_raw = summary.get("strategy")
-        exchange = str(exchange_raw).strip() if exchange_raw is not None else None
-        strategy = str(strategy_raw).strip() if strategy_raw is not None else None
-    return _resolve_key(exchange, strategy)
+
+    def _normalize_candidate(value: object) -> str | None:
+        if isinstance(value, str):
+            normalized = value.strip()
+            return normalized or None
+        if value is None or isinstance(value, Mapping):
+            return None
+        normalized = str(value).strip()
+        return normalized or None
+
+    def _maybe_from_mapping(mapping: object) -> tuple[str, str] | None:
+        if not isinstance(mapping, Mapping):
+            return None
+        exchange = _normalize_candidate(mapping.get("primary_exchange"))
+        strategy = _normalize_candidate(mapping.get("strategy"))
+        if exchange or strategy:
+            return _resolve_key(exchange, strategy)
+        return None
+
+    detail_payload: Mapping[str, object] | None = None
+    decision_payload: Mapping[str, object] | None = None
+    decision_details: Mapping[str, object] | None = None
+    if isinstance(entry, Mapping):
+        raw_detail = entry.get("detail")
+        if isinstance(raw_detail, Mapping):
+            detail_payload = raw_detail
+        raw_decision = entry.get("decision")
+        if isinstance(raw_decision, Mapping):
+            decision_payload = raw_decision
+            raw_details = raw_decision.get("details")
+            if isinstance(raw_details, Mapping):
+                decision_details = raw_details
+
+    for candidate in (
+        entry,
+        detail_payload,
+        decision_details,
+        decision_payload,
+    ):
+        resolved = _maybe_from_mapping(candidate)
+        if resolved:
+            return resolved
+
+    resolved = _maybe_from_mapping(summary)
+    if resolved:
+        return resolved
+
+    return _resolve_key(None, None)
 
 
 def _compute_percentile(sorted_values: list[float], percentile: float) -> float:
@@ -635,7 +676,7 @@ def _generate_report(
     for entry in autotrade_entries:
         summary = _extract_summary(entry)
         symbol = _extract_symbol(entry)
-        key = _resolve_group_from_symbol(symbol, summary, symbol_map)
+        key = _resolve_group_from_symbol(entry, symbol, summary, symbol_map)
 
         freeze_payloads = list(_iter_freeze_events(entry))
         for freeze_payload in freeze_payloads:

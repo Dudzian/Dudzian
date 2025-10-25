@@ -5,9 +5,12 @@ import json
 import subprocess
 import sys
 from datetime import datetime, timezone
+from unittest.mock import patch
 from pathlib import Path
 
 from bot_core.runtime.journal import TradingDecisionEvent
+
+from scripts.calibrate_autotrade_thresholds import _generate_report
 
 
 def _write_journal(path: Path) -> None:
@@ -245,3 +248,99 @@ def test_script_generates_report(tmp_path: Path) -> None:
         if row["metric"] == "risk_score" and row["primary_exchange"] == "binance":
             assert float(row["current_threshold"]) >= 0.7
     assert any(row["primary_exchange"] == "__all__" for row in rows)
+
+
+def test_autotrade_entry_keeps_detail_routing_when_symbol_missing() -> None:
+    journal_events = [
+        {
+            "primary_exchange": "kraken",
+            "strategy": "mean_reversion",
+        }
+    ]
+    autotrade_entries = [
+        {
+            "detail": {
+                "symbol": "LTCUSDT",
+                "primary_exchange": "kraken",
+                "strategy": "mean_reversion",
+                "summary": {
+                    "risk_score": 0.51,
+                },
+            }
+        }
+    ]
+
+    with patch("scripts.calibrate_autotrade_thresholds.load_risk_thresholds", return_value={}):
+        report = _generate_report(
+            journal_events=journal_events,
+            autotrade_entries=autotrade_entries,
+            percentiles=[0.5],
+            suggestion_percentile=0.5,
+        )
+
+    groups = {
+        (group["primary_exchange"], group["strategy"])
+        for group in report["groups"]
+    }
+    assert ("kraken", "mean_reversion") in groups
+    assert ("unknown", "unknown") not in groups
+
+
+def test_autotrade_entry_reads_decision_level_routing_metadata() -> None:
+    journal_events = []
+    autotrade_entries = [
+        {
+            "decision": {
+                "primary_exchange": "coinbase",
+                "strategy": "momentum",
+                "details": {
+                    "symbol": "ADAUSD",
+                    "summary": {
+                        "risk_score": 0.23,
+                    },
+                },
+            }
+        }
+    ]
+
+    with patch("scripts.calibrate_autotrade_thresholds.load_risk_thresholds", return_value={}):
+        report = _generate_report(
+            journal_events=journal_events,
+            autotrade_entries=autotrade_entries,
+            percentiles=[0.5],
+            suggestion_percentile=0.5,
+        )
+
+    assert report["groups"]
+    group = report["groups"][0]
+    assert group["primary_exchange"] == "coinbase"
+    assert group["strategy"] == "momentum"
+
+
+def test_autotrade_entry_falls_back_to_summary_metadata() -> None:
+    journal_events = []
+    autotrade_entries = [
+        {
+            "detail": {
+                "symbol": "SOLUSDT",
+                "summary": {
+                    "primary_exchange": "binance",
+                    "strategy": "breakout",
+                    "risk_score": 0.37,
+                },
+            }
+        }
+    ]
+
+    with patch("scripts.calibrate_autotrade_thresholds.load_risk_thresholds", return_value={}):
+        report = _generate_report(
+            journal_events=journal_events,
+            autotrade_entries=autotrade_entries,
+            percentiles=[0.5],
+            suggestion_percentile=0.5,
+        )
+
+    assert report["groups"]
+    group = report["groups"][0]
+    assert group["primary_exchange"] == "binance"
+    assert group["strategy"] == "breakout"
