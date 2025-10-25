@@ -38,6 +38,11 @@ _ENGINE_MAPPING = {
     "day_trading": "day_trading",
     "mean_reversion": "mean_reversion",
     "arbitrage": "cross_exchange_arbitrage",
+    "grid_trading": "grid_trading",
+    "options_income": "options_income",
+    "scalping": "scalping",
+    "statistical_arbitrage": "statistical_arbitrage",
+    "volatility_target": "volatility_target",
 }
 
 
@@ -183,7 +188,8 @@ def test_auto_trade_engine_generates_orders_and_signals(monkeypatch) -> None:
     assert "params_applied" in statuses
     assert signal_payloads, "Expected at least one signal payload"
     signal_detail = signal_payloads[-1]["signals"]
-    assert {"trend_following", "day_trading", "mean_reversion", "arbitrage"} <= set(signal_detail)
+    core_strategies = {"trend_following", "day_trading", "mean_reversion", "arbitrage"}
+    assert core_strategies <= set(signal_detail)
     assert signal_detail["daily_breakout"] == signal_detail["day_trading"]
     metadata = signal_payloads[-1]["metadata"]
     assert "standard" in metadata["license_tiers"]

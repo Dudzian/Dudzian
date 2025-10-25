@@ -60,6 +60,18 @@ from bot_core.exchanges.base import OrderRequest
 from bot_core.risk.engine import ThresholdRiskEngine
 from bot_core.observability import MetricsRegistry, get_global_metrics_registry
 from bot_core.trading.strategies import StrategyCatalog
+from bot_core.trading.strategy_aliasing import (
+    StrategyAliasResolver,
+    canonical_alias_map,
+    normalise_suffixes,
+)
+
+
+class _AliasConfigSentinel:
+    __slots__ = ()
+
+
+_ALIAS_UNSET = _AliasConfigSentinel()
 
 
 LOGGER = logging.getLogger(__name__)
@@ -283,6 +295,75 @@ class AutoTrader:
     _STRATEGY_ALIAS_MAP: Mapping[str, str] = {
         "intraday_breakout": "day_trading",
     }
+    _ALIAS_RESOLVER: StrategyAliasResolver | None = None
+
+    @classmethod
+    def _alias_resolver(cls) -> StrategyAliasResolver:
+        resolver = cls._ALIAS_RESOLVER
+        if (
+            resolver is None
+            or resolver.base_alias_map is not cls._STRATEGY_ALIAS_MAP
+            or resolver.base_suffixes != cls._STRATEGY_SUFFIXES
+        ):
+            resolver = StrategyAliasResolver(
+                cls._STRATEGY_ALIAS_MAP,
+                cls._STRATEGY_SUFFIXES,
+            )
+            cls._ALIAS_RESOLVER = resolver
+        return resolver
+
+    def _alias_resolver_instance(self) -> StrategyAliasResolver:
+        override = getattr(self, "_alias_resolver_override", None)
+        if override is not None:
+            return override
+        return type(self)._alias_resolver()
+
+    def configure_strategy_aliases(
+        self,
+        alias_map: Mapping[str, str] | None | _AliasConfigSentinel = _ALIAS_UNSET,
+        *,
+        suffixes: Iterable[str] | None | _AliasConfigSentinel = _ALIAS_UNSET,
+    ) -> None:
+        """Update alias overrides used for catalog lookups."""
+
+        current_map = canonical_alias_map(self._strategy_alias_map_override)
+        if alias_map is _ALIAS_UNSET:
+            target_map = current_map
+            alias_override: Mapping[str, str] | None = self._strategy_alias_map_override
+        else:
+            target_map = canonical_alias_map(alias_map)
+            alias_override = target_map or None
+
+        current_suffixes = (
+            tuple(self._strategy_alias_suffix_override)
+            if self._strategy_alias_suffix_override is not None
+            else ()
+        )
+        if suffixes is _ALIAS_UNSET:
+            target_suffixes = current_suffixes
+            suffix_override: Iterable[str] | None = self._strategy_alias_suffix_override
+        elif suffixes is None:
+            target_suffixes = ()
+            suffix_override = None
+        else:
+            target_suffixes = normalise_suffixes(suffixes)
+            suffix_override = target_suffixes
+
+        if target_map == current_map and target_suffixes == current_suffixes:
+            return
+
+        base_resolver = type(self)._alias_resolver()
+        override_resolver = base_resolver.extend(
+            alias_map=alias_override,
+            suffixes=suffix_override,
+        )
+        self._alias_resolver_override = (
+            None if override_resolver is base_resolver else override_resolver
+        )
+        self._strategy_alias_map_override = alias_override
+        self._strategy_alias_suffix_override = (
+            tuple(suffix_override) if suffix_override is not None else None
+        )
 
     def __init__(
         self,
@@ -321,11 +402,34 @@ class AutoTrader:
         decision_audit_log: DecisionAuditLog | None = None,
         portfolio_manager: Any | None = None,
         strategy_catalog: StrategyCatalog | None = None,
+        strategy_alias_map: Mapping[str, str] | None = None,
+        strategy_alias_suffixes: Iterable[str] | None = None,
     ) -> None:
         self.emitter = emitter
         self.gui = gui
         self.symbol_getter = symbol_getter
         self.market_data_provider = market_data_provider
+
+        alias_override = canonical_alias_map(strategy_alias_map)
+        suffix_override = (
+            normalise_suffixes(strategy_alias_suffixes)
+            if strategy_alias_suffixes is not None
+            else None
+        )
+        base_resolver = type(self)._alias_resolver()
+        override_resolver = base_resolver.extend(
+            alias_map=alias_override,
+            suffixes=suffix_override,
+        )
+        self._alias_resolver_override: StrategyAliasResolver | None = (
+            None if override_resolver is base_resolver else override_resolver
+        )
+        self._strategy_alias_map_override: Mapping[str, str] | None = (
+            alias_override or None
+        )
+        self._strategy_alias_suffix_override: tuple[str, ...] | None = (
+            tuple(suffix_override) if suffix_override is not None else None
+        )
 
         self.enable_auto_trade = bool(enable_auto_trade)
         self.auto_trade_interval_s = float(auto_trade_interval_s)
@@ -1286,26 +1390,8 @@ class AutoTrader:
         base = str(name or "").strip()
         if not base:
             return ()
-        candidates: list[str] = [base]
-        for suffix in self._STRATEGY_SUFFIXES:
-            if base.endswith(suffix):
-                trimmed = base[: -len(suffix)]
-                if trimmed:
-                    candidates.append(trimmed)
-        expanded = list(candidates)
-        for candidate in expanded:
-            alias = self._STRATEGY_ALIAS_MAP.get(candidate)
-            if alias:
-                candidates.append(alias)
-        ordered: list[str] = []
-        seen: dict[str, None] = {}
-        for candidate in candidates:
-            key = candidate.strip()
-            if not key or key in seen:
-                continue
-            seen[key] = None
-            ordered.append(key)
-        return tuple(ordered)
+        resolver = self._alias_resolver_instance()
+        return resolver.candidates(base)
 
     def _strategy_metadata_summary(
         self, metadata: Mapping[str, object]
