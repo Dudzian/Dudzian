@@ -516,8 +516,8 @@ class RegimeSummary:
     distribution_pressure: float
     history: Tuple[RegimeSnapshot, ...] = ()
 
-    def to_dict(self) -> Mapping[str, float | str | Tuple[Mapping[str, float | str], ...]]:
-        return {
+    def to_dict(self) -> dict[str, object]:
+        payload: dict[str, object] = {
             "regime": self.regime.value,
             "confidence": float(self.confidence),
             "risk_score": float(self.risk_score),
@@ -562,8 +562,9 @@ class RegimeSummary:
             "kurtosis_excess": float(self.kurtosis_excess),
             "volume_imbalance": float(self.volume_imbalance),
             "distribution_pressure": float(self.distribution_pressure),
-            "history": tuple(snapshot.to_dict() for snapshot in self.history),
         }
+        payload["history"] = [dict(snapshot.to_dict()) for snapshot in self.history]
+        return payload
 
 
 class RegimeHistory:

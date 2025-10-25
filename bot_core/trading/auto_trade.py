@@ -38,6 +38,7 @@ from bot_core.trading.regime_workflow import RegimeSwitchDecision
 from bot_core.trading.strategies import StrategyCatalog
 from bot_core.trading.strategy_aliasing import (
     StrategyAliasResolver,
+    normalise_alias_map,
     strategy_key_aliases,
     strategy_name_candidates,
 )
@@ -105,6 +106,33 @@ def _ensure_test_stub_helpers() -> None:
             workflow_stub.get_availability = _get_availability  # type: ignore[attr-defined]
     except Exception:  # pragma: no cover - test helper should never break runtime
         pass
+
+
+def canonical_alias_map(
+    alias_map: Mapping[str, str] | None,
+) -> dict[str, str]:
+    """Return a normalised alias map suitable for runtime lookups."""
+
+    if not alias_map:
+        return {}
+    normalised = normalise_alias_map(alias_map)
+    return {str(key): str(value) for key, value in normalised.items()}
+
+
+def normalise_suffixes(suffixes: Iterable[str]) -> tuple[str, ...]:
+    """Normalise suffix overrides to a tuple of unique string values."""
+
+    ordered: list[str] = []
+    seen: set[str] = set()
+    for suffix in suffixes:
+        candidate = str(suffix or "").strip()
+        if not candidate:
+            continue
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        ordered.append(candidate)
+    return tuple(ordered)
 
 
 @dataclass(frozen=True)
@@ -311,7 +339,8 @@ class AutoTradeConfig:
         if self.strategy_alias_suffixes is None:
             self.strategy_alias_suffixes = None
         else:
-            self.strategy_alias_suffixes = normalise_suffixes(self.strategy_alias_suffixes)
+            normalised_suffixes = normalise_suffixes(self.strategy_alias_suffixes)
+            self.strategy_alias_suffixes = normalised_suffixes or None
 
 
 class AutoTradeEngine:
@@ -379,10 +408,12 @@ class AutoTradeEngine:
         self.cfg = cfg or AutoTradeConfig()
         self._logger = logging.getLogger(__name__)
         base_resolver = type(self)._alias_resolver()
-        override_resolver = base_resolver.extend(
-            alias_map=self.cfg.strategy_alias_map,
-            suffixes=self.cfg.strategy_alias_suffixes,
-        )
+        override_resolver = base_resolver
+        if self.cfg.strategy_alias_map or self.cfg.strategy_alias_suffixes:
+            override_resolver = base_resolver.derive(
+                alias_map=self.cfg.strategy_alias_map,
+                suffixes=self.cfg.strategy_alias_suffixes,
+            )
         self._alias_resolver_override: StrategyAliasResolver | None = (
             None if override_resolver is base_resolver else override_resolver
         )
@@ -2405,6 +2436,9 @@ class AutoTradeEngine:
             activation_payload,
         ) = self._evaluate_regime_decision(data_for_regime, base_parameters)
         self._last_trading_parameters = parameters
+        summary_payload: dict[str, object] | None = None
+        if summary is not None:
+            summary_payload = summary.to_dict()
         inference_features = self._build_inference_features(indicator_frame)
         plugin_signals: Dict[str, float] = {}
         indicators: TechnicalIndicators | None = None
@@ -2550,6 +2584,8 @@ class AutoTradeEngine:
             }
         if ai_metadata is not None:
             metadata_container["ai_inference"] = dict(ai_metadata)
+        if summary_payload is not None:
+            metadata_container["regime_summary"] = summary_payload
         if metadata_container:
             metadata_payload = metadata_container
 
@@ -2589,7 +2625,7 @@ class AutoTradeEngine:
                 "symbol": self.cfg.symbol,
                 "qty": self.cfg.qty,
                 "regime": assessment.to_dict(),
-                "summary": summary.to_dict() if summary is not None else None,
+                "summary": summary_payload,
             }
             if metadata_payload:
                 detail["metadata"] = metadata_payload
@@ -2608,7 +2644,7 @@ class AutoTradeEngine:
                 "symbol": self.cfg.symbol,
                 "qty": self.cfg.qty,
                 "regime": assessment.to_dict(),
-                "summary": summary.to_dict() if summary is not None else None,
+                "summary": summary_payload,
             }
             if metadata_payload:
                 detail["metadata"] = metadata_payload

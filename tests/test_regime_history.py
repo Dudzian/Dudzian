@@ -3,6 +3,7 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Callable, Mapping
 
+import json
 import pytest
 
 import pandas as pd
@@ -282,6 +283,33 @@ def test_regime_history_risk_trend_reflects_direction() -> None:
     assert 0.0 <= summary.confidence_resilience <= 1.0
     assert 0.0 <= summary.stress_projection <= 1.0
     # Stability projection can remain high for persistent regimes even as risk climbs
+
+
+def test_regime_summary_to_dict_emits_json_primitives() -> None:
+    history = RegimeHistory(maxlen=5, decay=0.8)
+    history.update(_assessment("x", MarketRegime.TREND, risk=0.45, confidence=0.55))
+    history.update(_assessment("x", MarketRegime.TREND, risk=0.52, confidence=0.6))
+    history.update(_assessment("x", MarketRegime.MEAN_REVERSION, risk=0.58, confidence=0.62))
+    history.update(_assessment("x", MarketRegime.MEAN_REVERSION, risk=0.61, confidence=0.64))
+
+    summary = history.summarise()
+    assert summary is not None
+
+    payload = summary.to_dict()
+    json.dumps(payload, sort_keys=True)
+
+    assert isinstance(payload["risk_score"], float)
+    assert isinstance(payload["risk_level"], str)
+
+    history_block = payload["history"]
+    assert isinstance(history_block, list)
+    assert history_block, "Expected regime history to be preserved in payload"
+    for entry in history_block:
+        assert isinstance(entry, dict)
+        assert set(entry) >= {"regime", "risk_score"}
+        assert isinstance(entry["regime"], str)
+        for value in entry.values():
+            assert isinstance(value, (float, int, str))
 
 
 def test_regime_history_risk_level_extremes() -> None:

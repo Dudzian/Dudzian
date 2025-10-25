@@ -102,6 +102,19 @@ miejscu. AutoTrader konsumuje metadane ryzyka, reaguje na przeładowania (GUI,
 `SIGHUP`, watcher pliku) i orkiestruje pętlę auto-tradingu oraz telemetrię
 Prometheusa.
 
+Emitowane sygnały (`EventType.SIGNAL`) dołączają teraz blok
+`metadata.regime_summary` z wynikami wygładzonej oceny reżimu rynku. Analiza
+kalibracyjna może odczytać m.in.:
+
+- `metadata.regime_summary.risk_score` – znormalizowany wynik ryzyka (0-1)
+  będący podstawą blokad guardrail oraz progów kapitałowych,
+- `metadata.regime_summary.risk_level` – etykietę poziomu ryzyka, którą można
+  mapować na profile zarządzania kapitałem i polityki hedge.
+
+Dzięki temu analitycy kalibracji mogą bezpośrednio z logów sygnałów odczytać
+bieżący stan reżimu oraz porównać go z konfiguracją progów i wag strategii,
+bez dodatkowych zapytań do silnika historii reżimów.
+
 ## Risk Management Runtime
 
 - Risk profiles are expressed in `config/core.yaml` under `risk_profiles`.
