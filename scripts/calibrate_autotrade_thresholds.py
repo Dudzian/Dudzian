@@ -123,6 +123,17 @@ def _validate_finite_threshold(
     )
 
 
+def _normalize_threshold_value(
+    metric_name: str,
+    raw_value: float | int,
+    *,
+    source: str | None = None,
+) -> float:
+    numeric_value = float(raw_value)
+    _validate_finite_threshold(metric_name, numeric_value, source=source)
+    return numeric_value
+
+
 def _extract_threshold_value(candidate: object) -> float | None:
     numeric = _coerce_float(candidate)
     if numeric is not None:
@@ -310,7 +321,11 @@ def _parse_threshold_mapping(raw: str) -> dict[str, float]:
         if numeric is None:
             raise SystemExit(f"Nie udało się zinterpretować progu '{value}' dla metryki {key}")
         normalized_key = _normalize_metric_key(key)
-        result[normalized_key] = float(numeric)
+        result[normalized_key] = _normalize_threshold_value(
+            normalized_key,
+            numeric,
+            source=f"CLI '{key}={value}'",
+        )
     return result
 
 
@@ -375,10 +390,9 @@ def _load_current_signal_thresholds(
                 for metric_name in _SUPPORTED_THRESHOLD_METRICS:
                     value = _resolve_metric_threshold(mapping, metric_name)
                     if value is not None:
-                        numeric_value = float(value)
-                        _validate_finite_threshold(
+                        numeric_value = _normalize_threshold_value(
                             metric_name,
-                            numeric_value,
+                            value,
                             source=path_str,
                         )
                         if metric_name == "risk_score":
@@ -398,19 +412,17 @@ def _load_current_signal_thresholds(
             metric_name_normalized = _normalize_metric_key(metric_name)
             if metric_name_normalized in _SUPPORTED_THRESHOLD_METRICS:
                 if metric_name_normalized == "risk_score":
-                    value = float(numeric)
-                    _validate_finite_threshold(
+                    value = _normalize_threshold_value(
                         metric_name_normalized,
-                        value,
+                        numeric,
                         source=candidate,
                     )
                     current_risk_score = value
                     inline_risk_thresholds[metric_name_normalized] = value
                 else:
-                    value = float(numeric)
-                    _validate_finite_threshold(
+                    value = _normalize_threshold_value(
                         metric_name_normalized,
-                        value,
+                        numeric,
                         source=candidate,
                     )
                     thresholds[metric_name_normalized] = value
