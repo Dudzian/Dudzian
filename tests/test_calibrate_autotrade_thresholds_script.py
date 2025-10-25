@@ -314,6 +314,47 @@ def test_script_generates_report(tmp_path: Path) -> None:
         assert all(math.isfinite(value) for value in metric_values)
 
 
+def test_script_accepts_cli_risk_score_threshold(tmp_path: Path) -> None:
+    journal_path = tmp_path / "journal.jsonl"
+    _write_journal(journal_path)
+
+    export_path = tmp_path / "autotrade.json"
+    _write_autotrade_export(export_path)
+
+    output_json = tmp_path / "report.json"
+
+    subprocess.run(
+        [
+            sys.executable,
+            "scripts/calibrate_autotrade_thresholds.py",
+            "--journal",
+            str(journal_path),
+            "--autotrade-export",
+            str(export_path),
+            "--percentiles",
+            "0.5",
+            "--suggestion-percentile",
+            "0.5",
+            "--current-threshold",
+            "risk_score=0.72",
+            "--output-json",
+            str(output_json),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    payload = json.loads(output_json.read_text(encoding="utf-8"))
+    trend_group = next(
+        entry
+        for entry in payload["groups"]
+        if entry["primary_exchange"] == "binance" and entry["strategy"] == "trend_following"
+    )
+    risk_stats = trend_group["metrics"]["risk_score"]
+    assert risk_stats["current_threshold"] == pytest.approx(0.72)
+
+
 def test_script_accepts_thresholds_from_json_file(tmp_path: Path) -> None:
     journal_path = tmp_path / "journal.jsonl"
     _write_journal(journal_path)
@@ -442,10 +483,11 @@ def test_load_current_thresholds_supports_nested_structures(tmp_path: Path) -> N
     thresholds_path = tmp_path / "nested_thresholds.json"
     thresholds_path.write_text(json.dumps(payload), encoding="utf-8")
 
-    thresholds = _load_current_signal_thresholds([str(thresholds_path)])
+    thresholds, risk_score = _load_current_signal_thresholds([str(thresholds_path)])
 
     assert thresholds["signal_after_adjustment"] == pytest.approx(0.85)
     assert thresholds["signal_after_clamp"] == pytest.approx(0.74)
+    assert risk_score is None
 
 
 def test_group_resolution_prefers_entry_metadata_over_symbol_map() -> None:

@@ -61,9 +61,10 @@ Polecenie:
 
 Jeżeli przekażesz aktualne progi w pliku (np. `config/current_thresholds.yaml`),
 użyj `--current-threshold config/current_thresholds.yaml`. Skrypt automatycznie
-wyszuka wartości `signal_after_adjustment` i `signal_after_clamp` wewnątrz
-struktury JSON/YAML oraz umieści je w polu `current_threshold` w raporcie i
-pliku CSV. Możesz też połączyć plik z dodatkowym nadpisaniem progu w CLI:
+wyszuka wartości `signal_after_adjustment`, `signal_after_clamp` oraz
+`risk_score` wewnątrz struktury JSON/YAML oraz umieści je w polu
+`current_threshold` w raporcie i pliku CSV. Możesz też połączyć plik z
+dodatkowym nadpisaniem progu w CLI:
 
 ```bash
 --current-threshold config/current_thresholds.yaml \
