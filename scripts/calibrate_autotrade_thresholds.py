@@ -107,14 +107,16 @@ def _coerce_float(value: object) -> float | None:
         return None
 
 
-def _validate_finite_threshold(
+def _ensure_finite_value(
     metric_name: str,
     value: float,
     *,
     source: str | None = None,
-) -> None:
+) -> float:
+    """Zwraca wartość, jeśli jest skończona, w przeciwnym razie zgłasza błąd."""
+
     if math.isfinite(value):
-        return
+        return value
 
     location = f" w źródle {source}" if source else ""
     raise SystemExit(
@@ -129,9 +131,7 @@ def _normalize_threshold_value(
     *,
     source: str | None = None,
 ) -> float:
-    numeric_value = float(raw_value)
-    _validate_finite_threshold(metric_name, numeric_value, source=source)
-    return numeric_value
+    return float(raw_value)
 
 
 def _extract_threshold_value(candidate: object) -> float | None:
@@ -321,9 +321,14 @@ def _parse_threshold_mapping(raw: str) -> dict[str, float]:
         if numeric is None:
             raise SystemExit(f"Nie udało się zinterpretować progu '{value}' dla metryki {key}")
         normalized_key = _normalize_metric_key(key)
-        result[normalized_key] = _normalize_threshold_value(
+        normalized_value = _normalize_threshold_value(
             normalized_key,
             numeric,
+            source=f"CLI '{key}={value}'",
+        )
+        result[normalized_key] = _ensure_finite_value(
+            normalized_key,
+            normalized_value,
             source=f"CLI '{key}={value}'",
         )
     return result
@@ -396,10 +401,18 @@ def _load_current_signal_thresholds(
                             source=path_str,
                         )
                         if metric_name == "risk_score":
-                            current_risk_score = numeric_value
+                            current_risk_score = _ensure_finite_value(
+                                metric_name,
+                                numeric_value,
+                                source=path_str,
+                            )
                             found_risk_in_file = True
                         else:
-                            thresholds[metric_name] = numeric_value
+                            thresholds[metric_name] = _ensure_finite_value(
+                                metric_name,
+                                numeric_value,
+                                source=path_str,
+                            )
             if found_risk_in_file and path_str not in risk_source_files:
                 risk_source_files.append(path_str)
             continue
@@ -417,16 +430,26 @@ def _load_current_signal_thresholds(
                         numeric,
                         source=candidate,
                     )
-                    current_risk_score = value
-                    inline_risk_thresholds[metric_name_normalized] = value
+                    validated_value = _ensure_finite_value(
+                        metric_name_normalized,
+                        value,
+                        source=candidate,
+                    )
+                    current_risk_score = validated_value
+                    inline_risk_thresholds[metric_name_normalized] = validated_value
                 else:
                     value = _normalize_threshold_value(
                         metric_name_normalized,
                         numeric,
                         source=candidate,
                     )
-                    thresholds[metric_name_normalized] = value
-                    inline_values[metric_name_normalized] = value
+                    validated_value = _ensure_finite_value(
+                        metric_name_normalized,
+                        value,
+                        source=candidate,
+                    )
+                    thresholds[metric_name_normalized] = validated_value
+                    inline_values[metric_name_normalized] = validated_value
 
     return (
         thresholds,
@@ -1480,7 +1503,13 @@ def _generate_report(
                 numeric = _coerce_float(value)
                 if numeric is None:
                     continue
-                current_threshold_inline[_normalize_metric_key(key)] = float(numeric)
+                normalized_key = _normalize_metric_key(key)
+                validated_value = _ensure_finite_value(
+                    normalized_key,
+                    float(numeric),
+                    source="current_thresholds.inline",
+                )
+                current_threshold_inline[normalized_key] = validated_value
         raw_risk_inline = current_threshold_sources.get("risk_inline")
         if isinstance(raw_risk_inline, Mapping):
             for key, value in raw_risk_inline.items():
@@ -1489,7 +1518,13 @@ def _generate_report(
                 numeric = _coerce_float(value)
                 if numeric is None:
                     continue
-                risk_threshold_inline[_normalize_metric_key(key)] = float(numeric)
+                normalized_key = _normalize_metric_key(key)
+                validated_value = _ensure_finite_value(
+                    normalized_key,
+                    float(numeric),
+                    source="risk_thresholds.inline",
+                )
+                risk_threshold_inline[normalized_key] = validated_value
         raw_risk_files = current_threshold_sources.get("risk_files")
         if isinstance(raw_risk_files, Iterable) and not isinstance(raw_risk_files, (str, bytes)):
             seen_risk_files: set[str] = set()
