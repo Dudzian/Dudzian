@@ -39,17 +39,89 @@ from bot_core.runtime.file_metadata import (
 
 # --- runtime gRPC jest opcjonalny podczas dev/CI (brak stubów/grpcio) --------
 try:  # pragma: no cover - defensywne, gdy moduł runtime nie jest dostępny
-    from bot_core.runtime import JsonlSink as _RuntimeJsonlSink, create_metrics_server
+    from bot_core.runtime import (
+        JsonlSink as _RuntimeJsonlSink,
+        create_metrics_server as _runtime_create_metrics_server,
+    )
 except Exception as exc:  # pragma: no cover - import z runtime może się nie powieść
     _RuntimeJsonlSink = None  # type: ignore[assignment]
-    create_metrics_server = None  # type: ignore[assignment]
+    _runtime_create_metrics_server = None  # type: ignore[assignment]
     _METRICS_RUNTIME_IMPORT_ERROR = exc
 else:  # pragma: no cover - informacje diagnostyczne
     _METRICS_RUNTIME_IMPORT_ERROR = None
 
 JsonlSink = _RuntimeJsonlSink  # alias dla zachowania istniejącego API modułu
 
-METRICS_RUNTIME_AVAILABLE = JsonlSink is not None and create_metrics_server is not None
+
+def _strip_kwargs(payload: Mapping[str, Any], keys: Iterable[str]) -> dict[str, Any]:
+    """Zwraca kopię *payload* bez wskazanych kluczy."""
+
+    keys_set = set(keys)
+    return {k: v for k, v in payload.items() if k not in keys_set}
+
+
+if _runtime_create_metrics_server is not None:
+
+    def create_metrics_server(**kwargs):  # type: ignore[misc]
+        """Kompatybilny wrapper usuwający nieobsługiwane argumenty runtime."""
+
+        attempts: list[dict[str, Any]] = []
+        seen: set[tuple[tuple[str, object], ...]] = set()
+
+        def _register(option: Mapping[str, Any]) -> None:
+            key = tuple(sorted((k, repr(v)) for k, v in option.items()))
+            if key in seen:
+                return
+            seen.add(key)
+            attempts.append(dict(option))
+
+        base = dict(kwargs)
+        _register(base)
+
+        # Starsze wersje runtime mogą nie obsługiwać alertów UI ani TLS.
+        ui_keys = {
+            "enable_ui_alerts",
+            "ui_alerts_jsonl_path",
+            "ui_alerts_config",
+            "ui_alerts_audit_dir",
+            "ui_alerts_audit_backend",
+            "ui_alerts_audit_pattern",
+            "ui_alerts_audit_retention_days",
+            "ui_alerts_audit_fsync",
+        }
+        _register(_strip_kwargs(base, ui_keys))
+        _register(_strip_kwargs(base, ui_keys | {"tls_config"}))
+        _register(_strip_kwargs(base, ui_keys | {"auth_token"}))
+        _register(_strip_kwargs(base, ui_keys | {"tls_config", "auth_token"}))
+
+        minimal_keys = {
+            "host",
+            "port",
+            "history_size",
+            "enable_logging_sink",
+            "sinks",
+            "jsonl_path",
+            "jsonl_fsync",
+        }
+        _register({k: v for k, v in base.items() if k in minimal_keys})
+
+        last_exc: Exception | None = None
+        for option in attempts:
+            try:
+                return _runtime_create_metrics_server(**option)  # type: ignore[misc]
+            except TypeError as exc:
+                last_exc = exc
+                continue
+        raise RuntimeError(
+            "Nie udało się wywołać create_metrics_server z kompatybilnymi argumentami:"
+            f" {last_exc}"
+        )
+
+else:  # pragma: no cover - wrapper nieaktywowany bez runtime
+    create_metrics_server = None  # type: ignore[assignment]
+
+
+METRICS_RUNTIME_AVAILABLE = JsonlSink is not None and _runtime_create_metrics_server is not None
 METRICS_RUNTIME_UNAVAILABLE_MESSAGE = (
     "Brak wsparcia gRPC dla MetricsService (zainstaluj grpcio i wygeneruj stuby bot_core.generated.*)."
 )

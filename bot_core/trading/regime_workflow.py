@@ -52,6 +52,15 @@ class RegimeSwitchDecision:
         )
 
 
+@dataclass(frozen=True)
+class RegimeSwitchActivation(RegimeSwitchDecision):
+    """Decision enriched with metadata about fallback execution."""
+
+    used_fallback: bool = False
+    missing_data: tuple[str, ...] = ()
+    blocked_reason: str | None = None
+
+
 class RegimeSwitchWorkflow:
     """High-level controller combining classifier outputs with strategy plugins."""
 
@@ -176,6 +185,49 @@ class RegimeSwitchWorkflow:
         )
         return decision
 
+    def activate(
+        self,
+        market_data: pd.DataFrame,
+        *,
+        available_data: Iterable[str] = (),
+        symbol: str | None = None,
+        base_parameters: TradingParameters | None = None,
+        parameter_overrides: Mapping[MarketRegime, Mapping[str, float | int]] | None = None,
+    ) -> RegimeSwitchActivation:
+        """Evaluate the current regime and annotate the result with missing data info."""
+
+        parameters = base_parameters or TradingParameters()
+        decision = self.decide(
+            market_data,
+            parameters,
+            symbol=symbol,
+            parameter_overrides=parameter_overrides,
+        )
+        available = {
+            str(item).strip().lower()
+            for item in available_data
+            if str(item).strip()
+        }
+        missing = self._compute_missing_data(decision.required_data, available)
+        blocked_reason = "missing_data" if missing else None
+        return RegimeSwitchActivation(
+            regime=decision.regime,
+            assessment=decision.assessment,
+            summary=decision.summary,
+            weights=decision.weights,
+            parameters=decision.parameters,
+            timestamp=decision.timestamp,
+            strategy_metadata=decision.strategy_metadata,
+            license_tiers=decision.license_tiers,
+            risk_classes=decision.risk_classes,
+            required_data=decision.required_data,
+            capabilities=decision.capabilities,
+            tags=decision.tags,
+            used_fallback=bool(missing),
+            missing_data=missing,
+            blocked_reason=blocked_reason,
+        )
+
     def _select_regime(
         self,
         assessment: MarketRegimeAssessment,
@@ -291,6 +343,18 @@ class RegimeSwitchWorkflow:
         if parameter_overrides and regime in parameter_overrides:
             overrides.update({str(k): v for k, v in parameter_overrides[regime].items()})
         return overrides
+
+    def _compute_missing_data(
+        self, required_data: Iterable[str], available: set[str]
+    ) -> tuple[str, ...]:
+        missing = []
+        for item in required_data:
+            text = str(item).strip()
+            if not text:
+                continue
+            if text.lower() not in available:
+                missing.append(text)
+        return tuple(dict.fromkeys(missing))
 
     @property
     def last_decision(self) -> RegimeSwitchDecision | None:

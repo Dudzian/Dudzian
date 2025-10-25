@@ -136,22 +136,36 @@ def _parse_observability(config: Mapping[str, Any] | None) -> ObservabilityCycle
 
     if metrics and not metrics.exists():
         expected = metrics
-        sync_command = (
-            "python scripts/sync_stage6_metrics.py "
-            f"--source /ścieżka/do/stage6_measurements.json --output {expected}"
-        )
-        print(
-            "[stage6.hypercare] Oczekiwano metryk w "
-            f"{expected} (config: observability.metrics).\n"
-            "[stage6.hypercare] Zgodnie z docs/runbooks/STAGE6_OBSERVABILITY_CHECKLIST.md "
-            "skopiuj lub zsynkuj plik do tej ścieżki (np. poleceniem: "
-            f"{sync_command}) – narzędzie potwierdzi liczbę załadowanych pomiarów.",
-            file=sys.stderr,
-        )
-        raise FileNotFoundError(
-            "Brak pliku metryk Stage6. Skopiuj/wyeksportuj stage6_measurements.json "
-            f"do {expected} przed uruchomieniem hypercare."
-        )
+        fallback_candidates = [
+            Path("var/audit/observability/metrics.json"),
+            Path("var/audit/observability/metrics.json").resolve(),
+        ]
+        fallback = next((candidate for candidate in fallback_candidates if candidate.exists()), None)
+
+        if fallback is not None:
+            print(
+                "[stage6.hypercare] Brak pliku metryk Stage6 pod "
+                f"{expected} – używam awaryjnej kopii {fallback}.",
+                file=sys.stderr,
+            )
+            metrics = fallback
+        else:
+            sync_command = (
+                "python scripts/sync_stage6_metrics.py "
+                f"--source /ścieżka/do/stage6_measurements.json --output {expected}"
+            )
+            print(
+                "[stage6.hypercare] Oczekiwano metryk w "
+                f"{expected} (config: observability.metrics).\n"
+                "[stage6.hypercare] Zgodnie z docs/runbooks/STAGE6_OBSERVABILITY_CHECKLIST.md "
+                "skopiuj lub zsynkuj plik do tej ścieżki (np. poleceniem: "
+                f"{sync_command}) – narzędzie potwierdzi liczbę załadowanych pomiarów.",
+                file=sys.stderr,
+            )
+            raise FileNotFoundError(
+                "Brak pliku metryk Stage6. Skopiuj/wyeksportuj stage6_measurements.json "
+                f"do {expected} przed uruchomieniem hypercare."
+            )
 
     slo_cfg = config.get("slo") or {}
     slo_output = SLOOutputConfig(
