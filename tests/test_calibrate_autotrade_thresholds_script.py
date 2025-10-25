@@ -250,6 +250,98 @@ def test_script_generates_report(tmp_path: Path) -> None:
     assert any(row["primary_exchange"] == "__all__" for row in rows)
 
 
+def test_group_resolution_prefers_entry_metadata_over_symbol_map() -> None:
+    journal_events = [
+        {
+            "symbol": "BTCUSDT",
+            "primary_exchange": "binance",
+            "strategy": "trend_following",
+            "signal_after_adjustment": 0.5,
+            "signal_after_clamp": 0.4,
+        }
+    ]
+
+    entry_kraken = {
+        "decision": {
+            "details": {
+                "symbol": "BTCUSDT",
+                "primary_exchange": "kraken",
+                "strategy": "mean_reversion",
+                "summary": {"risk_score": 0.61},
+            }
+        }
+    }
+    entry_binance = {
+        "decision": {
+            "details": {
+                "symbol": "BTCUSDT",
+                "summary": {"risk_score": 0.73},
+            },
+            "primary_exchange": "binance",
+            "strategy": "trend_following",
+        }
+    }
+
+    for entries in ([entry_kraken, entry_binance], [entry_binance, entry_kraken]):
+        report = _generate_report(
+            journal_events=journal_events,
+            autotrade_entries=list(entries),
+            percentiles=[0.5],
+            suggestion_percentile=0.5,
+        )
+
+        groups = {
+            (group["primary_exchange"], group["strategy"]): group
+            for group in report["groups"]
+        }
+
+        kraken_group = groups[("kraken", "mean_reversion")]
+        binance_group = groups[("binance", "trend_following")]
+
+        assert (
+            kraken_group["metrics"]["risk_score"]["count"] == 1
+        ), "Entry-specific metadata should override symbol_map fallback"
+        assert (
+            binance_group["metrics"]["risk_score"]["count"] == 1
+        ), "Entries should remain grouped by their own metadata"
+
+
+def test_group_resolution_merges_entry_and_summary_metadata_before_symbol_map() -> None:
+    journal_events = [
+        {
+            "symbol": "BTCUSDT",
+            "primary_exchange": "binance",
+            "strategy": "trend_following",
+        }
+    ]
+
+    autotrade_entries = [
+        {
+            "detail": {
+                "symbol": "BTCUSDT",
+                "primary_exchange": "kraken",
+                "summary": {
+                    "risk_score": 0.45,
+                    "strategy": "mean_reversion",
+                },
+            }
+        }
+    ]
+
+    with patch("scripts.calibrate_autotrade_thresholds.load_risk_thresholds", return_value={}):
+        report = _generate_report(
+            journal_events=journal_events,
+            autotrade_entries=autotrade_entries,
+            percentiles=[0.5],
+            suggestion_percentile=0.5,
+        )
+
+    assert report["groups"]
+    group = report["groups"][0]
+    assert group["primary_exchange"] == "kraken"
+    assert group["strategy"] == "mean_reversion"
+
+
 def test_autotrade_entry_keeps_detail_routing_when_symbol_missing() -> None:
     journal_events = [
         {
@@ -315,6 +407,132 @@ def test_autotrade_entry_reads_decision_level_routing_metadata() -> None:
     group = report["groups"][0]
     assert group["primary_exchange"] == "coinbase"
     assert group["strategy"] == "momentum"
+
+
+def test_autotrade_entry_reads_nested_routing_metadata() -> None:
+    journal_events = [
+        {
+            "symbol": "ADAUSD",
+            "primary_exchange": "binance",
+            "strategy": "trend_following",
+        }
+    ]
+
+    autotrade_entries = [
+        {
+            "detail": {
+                "routing": {
+                    "primary_exchange": "ftx",
+                    "strategy": "grid_bot",
+                },
+                "symbol": "ADAUSD",
+                "summary": {
+                    "risk_score": 0.67,
+                },
+            }
+        }
+    ]
+
+    with patch("scripts.calibrate_autotrade_thresholds.load_risk_thresholds", return_value={}):
+        report = _generate_report(
+            journal_events=journal_events,
+            autotrade_entries=autotrade_entries,
+            percentiles=[0.5],
+            suggestion_percentile=0.5,
+        )
+
+    groups = {
+        (group["primary_exchange"], group["strategy"]): group for group in report["groups"]
+    }
+
+    assert ("ftx", "grid_bot") in groups
+    nested_group = groups[("ftx", "grid_bot")]
+    assert nested_group["metrics"]["risk_score"]["count"] == 1
+
+
+def test_autotrade_entry_reads_routing_sequences() -> None:
+    journal_events = [
+        {
+            "symbol": "ADAUSD",
+            "primary_exchange": "binance",
+            "strategy": "trend_following",
+        }
+    ]
+
+    autotrade_entries = [
+        {
+            "detail": {
+                "symbol": "ADAUSD",
+                "routing": {
+                    "legs": [
+                        {
+                            "route": {
+                                "primary_exchange": "kraken",
+                                "strategy": "mean_reversion",
+                            }
+                        }
+                    ]
+                },
+                "summary": {
+                    "risk_score": 0.51,
+                },
+            }
+        }
+    ]
+
+    with patch("scripts.calibrate_autotrade_thresholds.load_risk_thresholds", return_value={}):
+        report = _generate_report(
+            journal_events=journal_events,
+            autotrade_entries=autotrade_entries,
+            percentiles=[0.5],
+            suggestion_percentile=0.5,
+        )
+
+    groups = {
+        (group["primary_exchange"], group["strategy"]): group for group in report["groups"]
+    }
+
+    assert ("kraken", "mean_reversion") in groups
+    nested_group = groups[("kraken", "mean_reversion")]
+    assert nested_group["metrics"]["risk_score"]["count"] == 1
+
+
+def test_journal_freeze_event_preserves_event_metadata_over_symbol_map() -> None:
+    journal_events = [
+        {
+            "event_type": "ai_inference",
+            "symbol": "BTCUSDT",
+            "primary_exchange": "binance",
+            "strategy": "trend_following",
+            "signal_after_adjustment": 0.73,
+        },
+        {
+            "event_type": "risk_freeze",
+            "symbol": "BTCUSDT",
+            "primary_exchange": "kraken",
+            "strategy": "mean_reversion",
+            "status": "risk_freeze",
+            "freeze_duration": 300,
+        },
+    ]
+
+    with patch("scripts.calibrate_autotrade_thresholds.load_risk_thresholds", return_value={}):
+        report = _generate_report(
+            journal_events=journal_events,
+            autotrade_entries=[],
+            percentiles=[0.5],
+            suggestion_percentile=0.5,
+        )
+
+    groups = {
+        (group["primary_exchange"], group["strategy"]): group for group in report["groups"]
+    }
+
+    assert ("binance", "trend_following") in groups
+    assert ("kraken", "mean_reversion") in groups
+
+    assert groups[("kraken", "mean_reversion")]["freeze_summary"]["total"] == 1
+    assert groups[("binance", "trend_following")]["freeze_summary"]["total"] == 0
 
 
 def test_autotrade_entry_falls_back_to_summary_metadata() -> None:

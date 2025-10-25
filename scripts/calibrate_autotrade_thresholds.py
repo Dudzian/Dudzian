@@ -80,6 +80,16 @@ def _iter_mappings(payload: object) -> Iterable[Mapping[str, object]]:
             yield from _iter_mappings(item)
 
 
+def _normalize_string(value: object) -> str | None:
+    if isinstance(value, str):
+        candidate = value.strip()
+        return candidate or None
+    if value is None or isinstance(value, Mapping):
+        return None
+    candidate = str(value).strip()
+    return candidate or None
+
+
 def _lookup_first_str(payload: Mapping[str, object], keys: Iterable[str]) -> str | None:
     for mapping in _iter_mappings(payload):
         for key in keys:
@@ -268,11 +278,11 @@ def _resolve_key(exchange: str | None, strategy: str | None) -> tuple[str, str]:
 def _build_symbol_map(events: Iterable[Mapping[str, object]]) -> dict[str, tuple[str, str]]:
     symbol_map: dict[str, tuple[str, str]] = {}
     for event in events:
-        symbol = str(event.get("symbol") or "").strip()
+        symbol = _normalize_string(event.get("symbol"))
         if not symbol:
             continue
-        exchange = str(event.get("primary_exchange") or "").strip() or None
-        strategy = str(event.get("strategy") or "").strip() or None
+        exchange = _normalize_string(event.get("primary_exchange"))
+        strategy = _normalize_string(event.get("strategy"))
         key = _resolve_key(exchange, strategy)
         symbol_map.setdefault(symbol, key)
     return symbol_map
@@ -328,28 +338,51 @@ def _resolve_group_from_symbol(
     summary: Mapping[str, object] | None,
     symbol_map: Mapping[str, tuple[str, str]],
 ) -> tuple[str, str]:
-    if symbol:
-        mapped = symbol_map.get(symbol)
-        if mapped:
-            return mapped
+    def _update_from_value(
+        value: object,
+        current: tuple[str | None, str | None],
+        seen: set[int],
+    ) -> tuple[str | None, str | None]:
+        exchange, strategy = current
+        if exchange is not None and strategy is not None:
+            return exchange, strategy
+        if isinstance(value, Mapping):
+            return _update_from_mapping(value, (exchange, strategy), seen)
+        if isinstance(value, (list, tuple)):
+            for item in value:
+                exchange, strategy = _update_from_value(item, (exchange, strategy), seen)
+                if exchange is not None and strategy is not None:
+                    break
+        return exchange, strategy
 
-    def _normalize_candidate(value: object) -> str | None:
-        if isinstance(value, str):
-            normalized = value.strip()
-            return normalized or None
-        if value is None or isinstance(value, Mapping):
-            return None
-        normalized = str(value).strip()
-        return normalized or None
-
-    def _maybe_from_mapping(mapping: object) -> tuple[str, str] | None:
+    def _update_from_mapping(
+        mapping: object,
+        current: tuple[str | None, str | None],
+        seen: set[int],
+    ) -> tuple[str | None, str | None]:
+        exchange, strategy = current
         if not isinstance(mapping, Mapping):
-            return None
-        exchange = _normalize_candidate(mapping.get("primary_exchange"))
-        strategy = _normalize_candidate(mapping.get("strategy"))
-        if exchange or strategy:
-            return _resolve_key(exchange, strategy)
-        return None
+            return exchange, strategy
+        mapping_id = id(mapping)
+        if mapping_id in seen:
+            return exchange, strategy
+        seen.add(mapping_id)
+        if exchange is None:
+            exchange = _normalize_string(mapping.get("primary_exchange"))
+        if strategy is None:
+            strategy = _normalize_string(mapping.get("strategy"))
+        if exchange is not None and strategy is not None:
+            return exchange, strategy
+        for nested_key in ("routing", "route"):
+            nested = mapping.get(nested_key)
+            exchange, strategy = _update_from_value(nested, (exchange, strategy), seen)
+            if exchange is not None and strategy is not None:
+                return exchange, strategy
+        for candidate in mapping.values():
+            exchange, strategy = _update_from_value(candidate, (exchange, strategy), seen)
+            if exchange is not None and strategy is not None:
+                break
+        return exchange, strategy
 
     detail_payload: Mapping[str, object] | None = None
     decision_payload: Mapping[str, object] | None = None
@@ -365,21 +398,34 @@ def _resolve_group_from_symbol(
             if isinstance(raw_details, Mapping):
                 decision_details = raw_details
 
+    exchange: str | None = None
+    strategy: str | None = None
+    seen_mappings: set[int] = set()
     for candidate in (
         entry,
         detail_payload,
         decision_details,
         decision_payload,
+        summary,
     ):
-        resolved = _maybe_from_mapping(candidate)
-        if resolved:
-            return resolved
+        exchange, strategy = _update_from_mapping(candidate, (exchange, strategy), seen_mappings)
+        if exchange is not None and strategy is not None:
+            break
 
-    resolved = _maybe_from_mapping(summary)
-    if resolved:
-        return resolved
+    if symbol and (exchange is None or strategy is None):
+        mapped = symbol_map.get(symbol)
+        if mapped:
+            mapped_exchange, mapped_strategy = mapped
+            if exchange is None:
+                candidate = _normalize_string(mapped_exchange)
+                if candidate is not None:
+                    exchange = candidate
+            if strategy is None:
+                candidate = _normalize_string(mapped_strategy)
+                if candidate is not None:
+                    strategy = candidate
 
-    return _resolve_key(None, None)
+    return _resolve_key(exchange, strategy)
 
 
 def _compute_percentile(sorted_values: list[float], percentile: float) -> float:
@@ -650,11 +696,9 @@ def _generate_report(
         )
 
     for event in journal_events:
-        exchange, strategy = _resolve_key(
-            str(event.get("primary_exchange") or ""),
-            str(event.get("strategy") or ""),
-        )
-        key = (exchange, strategy)
+        base_exchange = _normalize_string(event.get("primary_exchange"))
+        base_strategy = _normalize_string(event.get("strategy"))
+        key = _resolve_key(base_exchange, base_strategy)
         for metric in ("signal_after_adjustment", "signal_after_clamp"):
             value = event.get(metric)
             if value is None:
@@ -667,11 +711,18 @@ def _generate_report(
             raw_value_snapshots[key][metric].append(numeric)
         for freeze_payload in _iter_freeze_events(event):
             symbol = _extract_symbol(event)
+            exchange = base_exchange
+            strategy = base_strategy
             if symbol:
                 mapped = symbol_map.get(symbol)
                 if mapped:
-                    key = mapped
-            _record_freeze(key, freeze_payload)
+                    mapped_exchange, mapped_strategy = mapped
+                    if exchange is None and mapped_exchange not in (None, "unknown"):
+                        exchange = mapped_exchange
+                    if strategy is None and mapped_strategy not in (None, "unknown"):
+                        strategy = mapped_strategy
+            freeze_key = _resolve_key(exchange, strategy)
+            _record_freeze(freeze_key, freeze_payload)
 
     for entry in autotrade_entries:
         summary = _extract_summary(entry)
