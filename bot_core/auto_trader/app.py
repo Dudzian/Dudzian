@@ -60,6 +60,7 @@ from bot_core.exchanges.base import OrderRequest
 from bot_core.risk.engine import ThresholdRiskEngine
 from bot_core.observability import MetricsRegistry, get_global_metrics_registry
 from bot_core.trading.strategies import StrategyCatalog
+from bot_core.trading.strategy_aliasing import StrategyAliasResolver
 
 
 LOGGER = logging.getLogger(__name__)
@@ -283,6 +284,22 @@ class AutoTrader:
     _STRATEGY_ALIAS_MAP: Mapping[str, str] = {
         "intraday_breakout": "day_trading",
     }
+    _ALIAS_RESOLVER: StrategyAliasResolver | None = None
+
+    @classmethod
+    def _alias_resolver(cls) -> StrategyAliasResolver:
+        resolver = cls._ALIAS_RESOLVER
+        if (
+            resolver is None
+            or resolver.base_alias_map is not cls._STRATEGY_ALIAS_MAP
+            or resolver.base_suffixes != cls._STRATEGY_SUFFIXES
+        ):
+            resolver = StrategyAliasResolver(
+                cls._STRATEGY_ALIAS_MAP,
+                cls._STRATEGY_SUFFIXES,
+            )
+            cls._ALIAS_RESOLVER = resolver
+        return resolver
 
     def __init__(
         self,
@@ -1308,26 +1325,8 @@ class AutoTrader:
         base = str(name or "").strip()
         if not base:
             return ()
-        candidates: list[str] = [base]
-        for suffix in self._STRATEGY_SUFFIXES:
-            if base.endswith(suffix):
-                trimmed = base[: -len(suffix)]
-                if trimmed:
-                    candidates.append(trimmed)
-        expanded = list(candidates)
-        for candidate in expanded:
-            alias = self._STRATEGY_ALIAS_MAP.get(candidate)
-            if alias:
-                candidates.append(alias)
-        ordered: list[str] = []
-        seen: dict[str, None] = {}
-        for candidate in candidates:
-            key = candidate.strip()
-            if not key or key in seen:
-                continue
-            seen[key] = None
-            ordered.append(key)
-        return tuple(ordered)
+        resolver = type(self)._alias_resolver()
+        return resolver.candidates(base)
 
     def _strategy_metadata_summary(
         self, metadata: Mapping[str, object]
