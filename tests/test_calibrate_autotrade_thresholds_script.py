@@ -342,6 +342,55 @@ def test_group_resolution_merges_entry_and_summary_metadata_before_symbol_map() 
     assert group["strategy"] == "mean_reversion"
 
 
+def test_report_groups_routing_identifiers_case_insensitively() -> None:
+    journal_events = [
+        {
+            "symbol": "BTCUSDT",
+            "primary_exchange": "Binance",
+            "strategy": "TREND_FOLLOWING",
+            "signal_after_adjustment": 0.61,
+            "signal_after_clamp": 0.6,
+        },
+        {
+            "symbol": "BTCUSDT",
+            "primary_exchange": "binance",
+            "strategy": "trend_following",
+            "signal_after_adjustment": 0.59,
+            "signal_after_clamp": 0.58,
+        },
+    ]
+
+    autotrade_entries = [
+        {
+            "decision": {
+                "details": {
+                    "symbol": "BTCUSDT",
+                    "primary_exchange": "BINANCE",
+                    "strategy": "Trend_Following",
+                    "summary": {"risk_score": 0.67},
+                }
+            }
+        }
+    ]
+
+    with patch("scripts.calibrate_autotrade_thresholds.load_risk_thresholds", return_value={}):
+        report = _generate_report(
+            journal_events=journal_events,
+            autotrade_entries=autotrade_entries,
+            percentiles=[0.5],
+            suggestion_percentile=0.5,
+        )
+
+    assert len(report["groups"]) == 1
+    group = report["groups"][0]
+    assert group["primary_exchange"] == "Binance"
+    assert group["strategy"] == "TREND_FOLLOWING"
+    assert group["primary_exchange"].casefold() == "binance"
+    assert group["strategy"].casefold() == "trend_following"
+    assert group["metrics"]["signal_after_adjustment"]["count"] == 2
+    assert group["metrics"]["risk_score"]["count"] == 1
+
+
 def test_autotrade_entry_keeps_detail_routing_when_symbol_missing() -> None:
     journal_events = [
         {
@@ -638,6 +687,54 @@ def test_symbol_map_fallback_supplements_missing_metadata() -> None:
 
     assert ("binance", "unknown") in groups
     assert groups[("binance", "unknown")]["metrics"]["risk_score"]["count"] == 1
+
+
+def test_unknown_routing_display_is_canonicalized() -> None:
+    journal_events = [
+        {
+            "symbol": "ADAUSDT",
+            "primary_exchange": "Unknown",
+            "strategy": "UNKNOWN",
+            "signal_after_adjustment": 0.51,
+        }
+    ]
+
+    with patch("scripts.calibrate_autotrade_thresholds.load_risk_thresholds", return_value={}):
+        report = _generate_report(
+            journal_events=journal_events,
+            autotrade_entries=[],
+            percentiles=[0.5],
+            suggestion_percentile=0.5,
+        )
+
+    assert report["groups"]
+    group = report["groups"][0]
+    assert group["primary_exchange"] == "unknown"
+    assert group["strategy"] == "unknown"
+
+
+def test_unknown_synonyms_are_normalized() -> None:
+    journal_events = [
+        {
+            "symbol": "ADAUSDT",
+            "primary_exchange": "N/A",
+            "strategy": "None",
+            "signal_after_adjustment": 0.48,
+        }
+    ]
+
+    with patch("scripts.calibrate_autotrade_thresholds.load_risk_thresholds", return_value={}):
+        report = _generate_report(
+            journal_events=journal_events,
+            autotrade_entries=[],
+            percentiles=[0.5],
+            suggestion_percentile=0.5,
+        )
+
+    assert report["groups"]
+    group = report["groups"][0]
+    assert group["primary_exchange"] == "unknown"
+    assert group["strategy"] == "unknown"
 
 
 def test_symbol_map_ambiguous_entry_keeps_unknown_routing() -> None:
