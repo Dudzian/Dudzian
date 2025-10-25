@@ -739,6 +739,95 @@ def test_autotrade_entry_reads_nested_routing_metadata() -> None:
     assert nested_group["metrics"]["risk_score"]["count"] == 1
 
 
+def test_generate_report_uses_custom_risk_threshold_path(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    autotrade_entries = [
+        {
+            "decision": {
+                "details": {
+                    "symbol": "BTCUSDT",
+                    "primary_exchange": "binance",
+                    "strategy": "trend_following",
+                    "summary": {"risk_score": 0.61},
+                }
+            }
+        }
+    ]
+
+    config_path = tmp_path / "risk_thresholds.yaml"
+    config_path.write_text("auto_trader: {}\n", encoding="utf-8")
+
+    calls: list[Path | None] = []
+
+    def _fake_loader(*, config_path: Path | None = None):
+        calls.append(config_path)
+        return {"auto_trader": {"map_regime_to_signal": {"risk_score": 0.42}}}
+
+    monkeypatch.setattr(
+        "scripts.calibrate_autotrade_thresholds.load_risk_thresholds",
+        _fake_loader,
+    )
+
+    report = _generate_report(
+        journal_events=[],
+        autotrade_entries=autotrade_entries,
+        percentiles=[0.5],
+        suggestion_percentile=0.5,
+        risk_threshold_sources=[str(config_path)],
+    )
+
+    assert calls == [config_path]
+    metrics = report["groups"][0]["metrics"]["risk_score"]
+    assert metrics["current_threshold"] == pytest.approx(0.42)
+
+
+def test_generate_report_merges_multiple_risk_threshold_paths(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    autotrade_entries = [
+        {
+            "decision": {
+                "details": {
+                    "symbol": "BTCUSDT",
+                    "primary_exchange": "binance",
+                    "strategy": "trend_following",
+                    "summary": {"risk_score": 0.7},
+                }
+            }
+        }
+    ]
+
+    first = tmp_path / "risk_a.yaml"
+    second = tmp_path / "risk_b.yaml"
+    first.write_text("{}", encoding="utf-8")
+    second.write_text("{}", encoding="utf-8")
+
+    responses = {first: 0.33, second: 0.88}
+    calls: list[Path | None] = []
+
+    def _fake_loader(*, config_path: Path | None = None):
+        calls.append(config_path)
+        return {"auto_trader": {"map_regime_to_signal": {"risk_score": responses[config_path]}}}
+
+    monkeypatch.setattr(
+        "scripts.calibrate_autotrade_thresholds.load_risk_thresholds",
+        _fake_loader,
+    )
+
+    report = _generate_report(
+        journal_events=[],
+        autotrade_entries=autotrade_entries,
+        percentiles=[0.5],
+        suggestion_percentile=0.5,
+        risk_threshold_sources=[str(first), str(second)],
+    )
+
+    assert calls == [first, second]
+    metrics = report["groups"][0]["metrics"]["risk_score"]
+    assert metrics["current_threshold"] == pytest.approx(0.88)
+
+
 def test_autotrade_entry_reads_routing_sequences() -> None:
     journal_events = [
         {

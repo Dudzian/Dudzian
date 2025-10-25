@@ -359,6 +359,37 @@ def _load_current_signal_thresholds(
     return thresholds, current_risk_score
 
 
+def _normalize_risk_threshold_paths(sources: Iterable[str] | None) -> list[Path]:
+    paths: list[Path] = []
+    if not sources:
+        return paths
+
+    for source in sources:
+        if not source:
+            continue
+        candidate = Path(source).expanduser()
+        if not candidate.exists():
+            raise SystemExit(f"Ścieżka z progami ryzyka nie istnieje: {candidate}")
+        if candidate.is_dir():
+            raise SystemExit(f"Ścieżka z progami ryzyka musi wskazywać plik: {candidate}")
+        paths.append(candidate)
+
+    return paths
+
+
+def _extract_risk_score_threshold(thresholds: Mapping[str, object]) -> float | None:
+    auto_trader_cfg = thresholds.get("auto_trader")
+    if not isinstance(auto_trader_cfg, Mapping):
+        return None
+    map_cfg = auto_trader_cfg.get("map_regime_to_signal")
+    if not isinstance(map_cfg, Mapping):
+        return None
+    value = map_cfg.get("risk_score")
+    if isinstance(value, (int, float)):
+        return float(value)
+    return None
+
+
 def _iter_paths(raw_paths: Iterable[str]) -> Iterable[Path]:
     for raw in raw_paths:
         candidate = Path(raw).expanduser()
@@ -909,7 +940,7 @@ def _generate_report(
     since: datetime | None = None,
     until: datetime | None = None,
     current_signal_thresholds: Mapping[str, float] | None = None,
-    current_risk_score_override: float | None = None,
+    risk_threshold_sources: Iterable[str] | None = None,
 ) -> dict[str, object]:
     symbol_map = _build_symbol_map(journal_events)
     grouped_values: dict[tuple[str, str], dict[str, list[float]]] = defaultdict(
@@ -1064,17 +1095,17 @@ def _generate_report(
         grouped_values[key]["risk_score"].append(score_value)
         raw_value_snapshots[key]["risk_score"].append(score_value)
 
-    thresholds = load_risk_thresholds()
+    risk_threshold_paths = _normalize_risk_threshold_paths(risk_threshold_sources)
     current_risk_score = None
-    auto_trader_cfg = thresholds.get("auto_trader")
-    if isinstance(auto_trader_cfg, Mapping):
-        map_cfg = auto_trader_cfg.get("map_regime_to_signal")
-        if isinstance(map_cfg, Mapping):
-            value = map_cfg.get("risk_score")
-            if isinstance(value, (int, float)):
-                current_risk_score = float(value)
-    if current_risk_score_override is not None:
-        current_risk_score = current_risk_score_override
+    if risk_threshold_paths:
+        for config_path in risk_threshold_paths:
+            thresholds = load_risk_thresholds(config_path=config_path)
+            value = _extract_risk_score_threshold(thresholds)
+            if value is not None:
+                current_risk_score = value
+    else:
+        thresholds = load_risk_thresholds()
+        current_risk_score = _extract_risk_score_threshold(thresholds)
 
     groups: list[dict[str, object]] = []
     aggregated_values: defaultdict[str, list[float]] = defaultdict(list)
@@ -1217,6 +1248,14 @@ def _build_parser() -> argparse.ArgumentParser:
             "plik JSON/YAML lub pary metric=value (np. signal_after_clamp=0.8)"
         ),
     )
+    parser.add_argument(
+        "--risk-thresholds",
+        action="append",
+        help=(
+            "Opcjonalne pliki z progami ryzyka używanymi przez load_risk_thresholds;"
+            " można wskazać wiele ścieżek, aby nadpisywać wartości (ostatnia wygrywa)."
+        ),
+    )
     return parser
 
 
@@ -1251,7 +1290,7 @@ def main(argv: list[str] | None = None) -> int:
         since=since,
         until=until,
         current_signal_thresholds=current_signal_thresholds,
-        current_risk_score_override=cli_risk_score,
+        risk_threshold_sources=args.risk_thresholds,
     )
 
     if args.output_json:
