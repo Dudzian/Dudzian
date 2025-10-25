@@ -15,6 +15,12 @@ percentyle, które można wykorzystać do aktualizacji konfiguracji
 2. Eksport autotradera wygenerowany przez `export_risk_evaluations()` lub
    zrzut statusów z `push_autotrade_status` (plik JSON zawierający listę
    wpisów z polami `symbol` i `summary.risk_score`).
+3. *(Opcjonalnie)* Aktualne progi sygnałów – można je przekazać jako plik
+   JSON/YAML albo listę par `metric=value` w parametrze
+   `--current-threshold`. Parametr można wskazać wielokrotnie (np. plik z
+   domyślnymi progami + szybka korekta w CLI), co pozwala porównać nowe
+   propozycje z bieżącą konfiguracją `signal_after_adjustment` i
+   `signal_after_clamp`.
 
 ## Przykładowe uruchomienie
 
@@ -26,6 +32,7 @@ python scripts/calibrate_autotrade_thresholds.py \
   --suggestion-percentile 0.95 \
   --since 2024-01-01T00:00:00Z \
   --until 2024-01-31T23:59:59Z \
+  --current-threshold signal_after_adjustment=0.8,signal_after_clamp=0.75 \
   --output-json reports/autotrade_thresholds.json \
   --output-csv reports/autotrade_thresholds.csv \
   --plot-dir reports/autotrade_thresholds_plots
@@ -45,6 +52,25 @@ Polecenie:
 - dodaje globalne podsumowanie obejmujące wszystkie kombinacje giełda/strategia
   (również w pliku CSV jako wiersze `__all__/__all__`),
 - opcjonalnie generuje histogramy (wymaga `matplotlib`).
+
+Jeżeli przekażesz aktualne progi w pliku (np. `config/current_thresholds.yaml`),
+użyj `--current-threshold config/current_thresholds.yaml`. Skrypt automatycznie
+wyszuka wartości `signal_after_adjustment` i `signal_after_clamp` wewnątrz
+struktury JSON/YAML oraz umieści je w polu `current_threshold` w raporcie i
+pliku CSV. Możesz też połączyć plik z dodatkowym nadpisaniem progu w CLI:
+
+```bash
+--current-threshold config/current_thresholds.yaml \
+--current-threshold signal_after_clamp=0.78
+```
+
+Źródło musi wskazywać istniejący plik, który zawiera słownik lub listę
+słowników – w przeciwnym razie skrypt zakończy się z komunikatem o błędzie,
+aby uniknąć cichego pominięcia progów. Parser potrafi wyłuskać wartości
+`signal_after_adjustment` i `signal_after_clamp` zarówno z prostych pól
+(`"signal_after_clamp": 0.78`), jak i zagnieżdżonych struktur (np.
+`{"metric": "signal_after_adjustment", "current_threshold": 0.8}` lub
+`{"signal_after_clamp": {"threshold": 0.75}}`).
 
 Wynik na stdout zawiera podsumowanie liczby przetworzonych zdarzeń. Raport
 JSON zawiera pole `suggested_threshold`, które można porównać z aktualną

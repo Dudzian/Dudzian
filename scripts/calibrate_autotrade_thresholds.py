@@ -20,6 +20,15 @@ from bot_core.ai.config_loader import load_risk_thresholds
 _FREEZE_STATUS_PREFIXES = ("risk_freeze", "auto_risk_freeze")
 _FREEZE_STATUS_EXTRAS = {"risk_unfreeze", "auto_risk_unfreeze"}
 _ABSOLUTE_THRESHOLD_METRICS = {"signal_after_adjustment", "signal_after_clamp"}
+_THRESHOLD_VALUE_KEYS = (
+    "current_threshold",
+    "threshold",
+    "value",
+    "current",
+    "limit",
+    "upper",
+    "max",
+)
 
 _AMBIGUOUS_SYMBOL_MAPPING: tuple[str, str] = ("__ambiguous__", "__ambiguous__")
 
@@ -70,6 +79,54 @@ def _coerce_float(value: object) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _extract_threshold_value(candidate: object) -> float | None:
+    numeric = _coerce_float(candidate)
+    if numeric is not None:
+        return numeric
+    if isinstance(candidate, Mapping):
+        for mapping in _iter_mappings(candidate):
+            for key in _THRESHOLD_VALUE_KEYS:
+                numeric = _coerce_float(mapping.get(key))
+                if numeric is not None:
+                    return numeric
+    return None
+
+
+def _resolve_metric_threshold(mapping: Mapping[str, object], metric_name: str) -> float | None:
+    direct = _extract_threshold_value(mapping.get(metric_name))
+    if direct is not None:
+        return direct
+
+    normalized_metric = metric_name.strip().lower()
+    metric_candidate = _normalize_string(mapping.get("metric"))
+    if metric_candidate and metric_candidate.lower() == normalized_metric:
+        for key in _THRESHOLD_VALUE_KEYS:
+            numeric = _extract_threshold_value(mapping.get(key))
+            if numeric is not None:
+                return numeric
+
+    name_candidate = _normalize_string(mapping.get("name"))
+    if name_candidate and name_candidate.lower() == normalized_metric:
+        for key in _THRESHOLD_VALUE_KEYS:
+            numeric = _extract_threshold_value(mapping.get(key))
+            if numeric is not None:
+                return numeric
+
+    for key, value in mapping.items():
+        if not isinstance(key, str):
+            continue
+        normalized_key = key.strip().lower().replace("-", "_")
+        if normalized_metric not in normalized_key:
+            continue
+        if not any(token in normalized_key for token in ("threshold", "limit", "value", "current")):
+            continue
+        numeric = _extract_threshold_value(value)
+        if numeric is not None:
+            return numeric
+
+    return None
 
 
 def _iter_mappings(payload: object) -> Iterable[Mapping[str, object]]:
@@ -171,6 +228,80 @@ def _parse_percentiles(raw: str | None) -> list[float]:
     if not percentiles:
         raise SystemExit("Lista percentyli nie może być pusta")
     return sorted(set(percentiles))
+
+
+def _parse_threshold_mapping(raw: str) -> dict[str, float]:
+    result: dict[str, float] = {}
+    for token in raw.split(","):
+        candidate = token.strip()
+        if not candidate:
+            continue
+        if "=" not in candidate:
+            raise SystemExit(
+                "Niepoprawny format progu – użyj klucza i wartości w formacie metric=value"
+            )
+        key, value = candidate.split("=", 1)
+        key = key.strip()
+        if not key:
+            raise SystemExit("Klucz progu nie może być pusty")
+        numeric = _coerce_float(value)
+        if numeric is None:
+            raise SystemExit(f"Nie udało się zinterpretować progu '{value}' dla metryki {key}")
+        result[key] = float(numeric)
+    return result
+
+
+def _load_threshold_payload(path: Path) -> object:
+    if path.is_dir():
+        raise SystemExit(f"Ścieżka z progami musi wskazywać plik: {path}")
+    text = path.read_text(encoding="utf-8")
+    suffix = path.suffix.lower()
+    if suffix in {".yaml", ".yml"}:
+        try:
+            import yaml  # type: ignore
+        except ModuleNotFoundError as exc:  # pragma: no cover - zależy od środowiska
+            raise SystemExit(
+                "Obsługa plików YAML wymaga zainstalowania biblioteki PyYAML"
+            ) from exc
+        return yaml.safe_load(text)
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise SystemExit(f"Nie udało się wczytać pliku z progami: {path}") from exc
+
+
+def _load_current_signal_thresholds(sources: Iterable[str] | None) -> dict[str, float]:
+    thresholds: dict[str, float] = {}
+    if not sources:
+        return thresholds
+
+    for source in sources:
+        if not source:
+            continue
+        candidate = source.strip()
+        if not candidate:
+            continue
+        path = Path(candidate).expanduser()
+        if path.exists():
+            payload = _load_threshold_payload(path)
+            if not isinstance(payload, (Mapping, list, tuple)):
+                raise SystemExit(
+                    "Plik z progami musi zawierać strukturę słownikową lub listę słowników"
+                )
+            for mapping in _iter_mappings(payload):
+                for metric_name in _ABSOLUTE_THRESHOLD_METRICS:
+                    value = _resolve_metric_threshold(mapping, metric_name)
+                    if value is not None:
+                        thresholds[metric_name] = float(value)
+            continue
+        if "=" not in candidate:
+            raise SystemExit(f"Ścieżka z progami nie istnieje: {path}")
+        mapping = _parse_threshold_mapping(candidate)
+        for metric_name, numeric in mapping.items():
+            if metric_name in _ABSOLUTE_THRESHOLD_METRICS:
+                thresholds[metric_name] = numeric
+
+    return thresholds
 
 
 def _iter_paths(raw_paths: Iterable[str]) -> Iterable[Path]:
@@ -533,13 +664,19 @@ def _build_metrics_section(
     suggestion_percentile: float,
     *,
     current_risk_score: float | None,
+    current_signal_thresholds: Mapping[str, float] | None = None,
 ) -> dict[str, dict[str, object]]:
     metrics_payload: dict[str, dict[str, object]] = {}
     for metric_name, values in values_map.items():
         stats_payload = _metric_statistics(values, percentiles)
         absolute = metric_name in _ABSOLUTE_THRESHOLD_METRICS
         suggested = _suggest_threshold(values, suggestion_percentile, absolute=absolute)
-        current = current_risk_score if metric_name == "risk_score" else None
+        if metric_name == "risk_score":
+            current = current_risk_score
+        elif current_signal_thresholds:
+            current = current_signal_thresholds.get(metric_name)
+        else:
+            current = None
         stats_payload["suggested_threshold"] = suggested
         stats_payload["current_threshold"] = current
         metrics_payload[metric_name] = stats_payload
@@ -692,6 +829,7 @@ def _generate_report(
     suggestion_percentile: float,
     since: datetime | None = None,
     until: datetime | None = None,
+    current_signal_thresholds: Mapping[str, float] | None = None,
 ) -> dict[str, object]:
     symbol_map = _build_symbol_map(journal_events)
     grouped_values: dict[tuple[str, str], dict[str, list[float]]] = defaultdict(
@@ -830,6 +968,7 @@ def _generate_report(
             percentiles,
             suggestion_percentile,
             current_risk_score=current_risk_score,
+            current_signal_thresholds=current_signal_thresholds,
         )
         raw_snapshot = raw_value_snapshots.get((exchange, strategy), {})
         freeze_summary = freeze_summaries.get((exchange, strategy)) or {
@@ -866,6 +1005,7 @@ def _generate_report(
         percentiles,
         suggestion_percentile,
         current_risk_score=current_risk_score,
+        current_signal_thresholds=current_signal_thresholds,
     )
     global_summary = {
         "metrics": global_metrics,
@@ -940,6 +1080,14 @@ def _build_parser() -> argparse.ArgumentParser:
         "--plot-dir",
         help="Opcjonalny katalog na histogramy z rozkładami metryk",
     )
+    parser.add_argument(
+        "--current-threshold",
+        action="append",
+        help=(
+            "Opcjonalne źródło aktualnych progów sygnału – można podać "
+            "plik JSON/YAML lub pary metric=value (np. signal_after_clamp=0.8)"
+        ),
+    )
     return parser
 
 
@@ -962,6 +1110,7 @@ def main(argv: list[str] | None = None) -> int:
 
     journal_events = _load_journal_events(journal_paths, since=since, until=until)
     autotrade_entries = _load_autotrade_entries(args.autotrade_export, since=since, until=until)
+    current_signal_thresholds = _load_current_signal_thresholds(args.current_threshold)
 
     report = _generate_report(
         journal_events=journal_events,
@@ -970,6 +1119,7 @@ def main(argv: list[str] | None = None) -> int:
         suggestion_percentile=args.suggestion_percentile,
         since=since,
         until=until,
+        current_signal_thresholds=current_signal_thresholds,
     )
 
     if args.output_json:
