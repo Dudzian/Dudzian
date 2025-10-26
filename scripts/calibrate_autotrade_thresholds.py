@@ -1994,6 +1994,9 @@ def _generate_report(
     if cli_risk_score is not None:
         current_risk_score = float(cli_risk_score)
 
+    if cli_risk_score is not None:
+        current_risk_score = float(cli_risk_score)
+
     groups: list[dict[str, object]] = []
     all_keys = set(grouped_values.keys()) | set(freeze_summaries.keys()) | set(display_names.keys())
 
