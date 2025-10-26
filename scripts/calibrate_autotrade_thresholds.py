@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import io
 import gzip
 import heapq
 import json
@@ -204,8 +205,11 @@ class _JSONStreamEntriesParser:
             f"Niepoprawny JSON w eksporcie autotradera {self._path}: nieznany typ wartości"
         )
 
-    def _consume_object(self) -> Iterator[Mapping[str, object]]:
+    def _consume_object(self, *, emit_self: bool = False) -> Iterator[Mapping[str, object]]:
         self._position += 1
+        collected: dict[str, object] | None = {} if emit_self else None
+        pending_entries: list[Mapping[str, object]] | None = [] if emit_self else None
+        saw_entries_field = False
         while True:
             if not self._skip_whitespace():
                 raise SystemExit(
@@ -219,7 +223,7 @@ class _JSONStreamEntriesParser:
             if current == "}":
                 self._position += 1
                 self._shrink_buffer()
-                return
+                break
             key = self._decode_value()
             if not isinstance(key, str):
                 raise SystemExit(
@@ -238,8 +242,22 @@ class _JSONStreamEntriesParser:
                     f"Niepoprawny JSON w eksporcie autotradera {self._path}: oczekiwano ':' po kluczu {key}"
                 )
             self._position += 1
+            if not self._skip_whitespace():
+                raise SystemExit(
+                    f"Niepoprawny JSON w eksporcie autotradera {self._path}: niekompletna para klucz-wartość"
+                )
+            if self._position >= len(self._buffer) and not self._read_more():
+                raise SystemExit(
+                    f"Niepoprawny JSON w eksporcie autotradera {self._path}: niekompletna para klucz-wartość"
+                )
             if key == "entries":
+                saw_entries_field = True
                 yield from self._consume_value("entries")
+            elif emit_self and collected is not None and pending_entries is not None:
+                value = self._decode_value()
+                collected[key] = value
+                for nested in self._iter_nested_entries(value):
+                    pending_entries.append(nested)
             else:
                 yield from self._consume_value("search")
             if not self._skip_whitespace():
@@ -269,10 +287,17 @@ class _JSONStreamEntriesParser:
             if current == "}":
                 self._position += 1
                 self._shrink_buffer()
-                return
+                break
             raise SystemExit(
                 f"Niepoprawny JSON w eksporcie autotradera {self._path}: oczekiwano ',' lub '}}'"
             )
+
+        if emit_self and collected is not None and not saw_entries_field:
+            normalized = self._normalize_entry(collected)
+            if normalized is not None:
+                yield normalized
+        if emit_self and pending_entries:
+            yield from pending_entries
 
     def iter_entries(self) -> Iterator[Mapping[str, object]]:
         if not self._skip_whitespace():
@@ -284,7 +309,7 @@ class _JSONStreamEntriesParser:
             yield from self._consume_array("entries")
             return
         if current == "{":
-            yield from self._consume_object()
+            yield from self._consume_object(emit_self=True)
             return
         raise SystemExit(
             f"Niepoprawny JSON w eksporcie autotradera {self._path}: oczekiwano obiektu lub tablicy"
@@ -925,16 +950,34 @@ def _extract_entry_timestamp(entry: Mapping[str, object]) -> datetime | None:
     direct = _parse_datetime(entry.get("timestamp"))
     if direct:
         return direct
-    decision = entry.get("decision")
-    if isinstance(decision, Mapping):
-        ts = _parse_datetime(decision.get("timestamp"))
-        if ts:
-            return ts
-    detail = entry.get("detail")
-    if isinstance(detail, Mapping):
-        ts = _parse_datetime(detail.get("timestamp"))
-        if ts:
-            return ts
+
+    stack: list[object] = [entry]
+    seen: set[int] = set()
+
+    while stack:
+        current = stack.pop()
+        if isinstance(current, Mapping):
+            marker = id(current)
+            if marker in seen:
+                continue
+            seen.add(marker)
+
+            candidate = _parse_datetime(current.get("timestamp"))
+            if candidate:
+                return candidate
+
+            for key, value in current.items():
+                if key == "entries":
+                    continue
+                if isinstance(value, (Mapping, list)):
+                    stack.append(value)
+        elif isinstance(current, list):
+            marker = id(current)
+            if marker in seen:
+                continue
+            seen.add(marker)
+            stack.extend(current)
+
     return None
 
 
