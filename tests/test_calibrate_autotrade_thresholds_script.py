@@ -4691,6 +4691,128 @@ def test_generate_report_limits_freeze_events_when_max_zero() -> None:
     }
 
 
+def test_generate_report_samples_raw_freeze_events_with_sample_limit() -> None:
+    journal_events = [
+        {
+            "symbol": "BTCUSDT",
+            "primary_exchange": "binance",
+            "strategy": "trend_following",
+            "status": "risk_freeze",
+            "reason": "manual_override",
+            "duration": 180,
+            "risk_score": 0.91,
+        },
+        {
+            "symbol": "BTCUSDT",
+            "primary_exchange": "binance",
+            "strategy": "trend_following",
+            "status": "auto_risk_freeze",
+            "reason": "risk_score_threshold",
+            "duration": 120,
+            "risk_score": 0.87,
+        },
+        {
+            "symbol": "BTCUSDT",
+            "primary_exchange": "binance",
+            "strategy": "trend_following",
+            "status": "auto_risk_freeze",
+            "reason": "risk_score_threshold",
+            "duration": 90,
+            "risk_score": 0.86,
+        },
+        {
+            "symbol": "BTCUSDT",
+            "primary_exchange": "binance",
+            "strategy": "trend_following",
+            "status": "risk_freeze",
+            "reason": "manual_override",
+            "duration": 60,
+            "risk_score": 0.84,
+        },
+    ]
+
+    with patch("scripts.calibrate_autotrade_thresholds.load_risk_thresholds", return_value={}):
+        report = _generate_report(
+            journal_events=journal_events,
+            autotrade_entries=[],
+            percentiles=[0.5],
+            suggestion_percentile=0.5,
+            raw_freeze_events_sample_limit=2,
+        )
+
+    assert report["groups"]
+    group = report["groups"][0]
+    freeze_summary = group["freeze_summary"]
+    assert freeze_summary["total"] == 4
+    assert {item["status"]: item["count"] for item in freeze_summary["statuses"]} == {
+        "auto_risk_freeze": 2,
+        "risk_freeze": 2,
+    }
+
+    raw_payload = group["raw_freeze_events"]
+    assert raw_payload["mode"] == "sample"
+    assert raw_payload["limit"] == 2
+    assert [event["status"] for event in raw_payload["events"]] == [
+        "risk_freeze",
+        "auto_risk_freeze",
+    ]
+    raw_overflow = raw_payload["overflow_summary"]
+    assert raw_overflow["total"] == 2
+    assert {item["status"]: item["count"] for item in raw_overflow["statuses"]} == {
+        "auto_risk_freeze": 1,
+        "risk_freeze": 1,
+    }
+
+    global_raw = report["global_summary"]["raw_freeze_events"]
+    assert global_raw["mode"] == "sample"
+    assert global_raw["limit"] == 2
+    assert [event["status"] for event in global_raw["events"]] == [
+        "risk_freeze",
+        "auto_risk_freeze",
+    ]
+    assert global_raw["overflow_summary"] == raw_overflow
+
+    raw_sources = report["sources"]["raw_freeze_events"]
+    assert raw_sources["mode"] == "sample"
+    assert raw_sources["limit"] == 2
+    assert raw_sources["requested_limit"] == 2
+
+
+def test_generate_report_omits_raw_freeze_events_when_sample_limit_zero() -> None:
+    journal_events = [
+        {
+            "symbol": "BTCUSDT",
+            "primary_exchange": "binance",
+            "strategy": "trend_following",
+            "status": "risk_freeze",
+            "reason": "manual_override",
+        }
+    ]
+
+    with patch("scripts.calibrate_autotrade_thresholds.load_risk_thresholds", return_value={}):
+        report = _generate_report(
+            journal_events=journal_events,
+            autotrade_entries=[],
+            percentiles=[0.5],
+            suggestion_percentile=0.5,
+            raw_freeze_events_sample_limit=0,
+        )
+
+    assert report["groups"]
+    group = report["groups"][0]
+    assert group["freeze_summary"]["total"] == 1
+    assert "raw_freeze_events" not in group
+
+    global_summary = report["global_summary"]
+    assert "raw_freeze_events" not in global_summary
+
+    sources = report["sources"]["raw_freeze_events"]
+    assert sources == {
+        "mode": "omit",
+        "requested_limit": 0,
+        "reason": "sample_limit_zero",
+    }
+
 def test_generate_report_can_omit_freeze_events() -> None:
     journal_events = [
         {
@@ -4901,6 +5023,7 @@ def test_main_respects_freeze_events_limit_flag(
     assert captured["raw_freeze_events_mode"] == "omit"
     assert captured["omit_raw_freeze_events"] is False
     assert captured["omit_freeze_events"] is False
+    assert captured["raw_freeze_events_sample_limit"] is None
 
     output = capsys.readouterr().out
     assert "Przetworzono" in output
@@ -4982,6 +5105,7 @@ def test_main_can_omit_raw_freeze_events_flag(
     assert captured["limit_freeze_events"] == 4
     assert captured["max_raw_freeze_events"] is None
     assert captured["omit_freeze_events"] is False
+    assert captured["raw_freeze_events_sample_limit"] is None
 
 
 @pytest.mark.parametrize(
@@ -5045,6 +5169,107 @@ def test_main_accepts_max_raw_freeze_events(
     assert captured["raw_freeze_events_sample_limit"] == sample_limit
     assert captured["raw_freeze_events_mode"] == expected_mode
     assert captured["omit_freeze_events"] is False
+    assert captured["raw_freeze_events_sample_limit"] is None
+
+
+def test_main_accepts_raw_freeze_events_sample_limit(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from scripts import calibrate_autotrade_thresholds as module
+
+    journal_path = tmp_path / "journal.jsonl"
+    journal_path.write_text("{}\n", encoding="utf-8")
+    export_path = tmp_path / "export.json"
+    export_path.write_text("{}", encoding="utf-8")
+
+    monkeypatch.setattr(module, "_load_journal_events", lambda *_, **__: [])
+    monkeypatch.setattr(module, "_load_autotrade_entries", lambda *_, **__: [])
+    monkeypatch.setattr(
+        module,
+        "_load_current_signal_thresholds",
+        lambda *_: ({}, None, {}),
+    )
+
+    captured: dict[str, object] = {}
+
+    def _fake_generate_report(**kwargs: object) -> dict[str, object]:
+        captured.update(kwargs)
+        return {
+            "groups": [],
+            "global_summary": {"metrics": {}, "freeze_summary": {}},
+            "sources": {"journal_events": 0, "autotrade_entries": 0},
+            "percentiles": [],
+        }
+
+    monkeypatch.setattr(module, "_generate_report", _fake_generate_report)
+
+    exit_code = module.main(
+        [
+            "--journal",
+            str(journal_path),
+            "--autotrade-export",
+            str(export_path),
+            "--raw-freeze-events-sample-limit",
+            "7",
+        ]
+    )
+
+    assert exit_code == 0
+    assert captured["raw_freeze_events_sample_limit"] == 7
+    assert captured["raw_freeze_events_mode"] == "sample"
+    assert captured["limit_freeze_events"] is None
+    assert captured["omit_raw_freeze_events"] is False
+    assert captured["max_raw_freeze_events"] is None
+
+
+def test_main_accepts_zero_raw_freeze_events_sample_limit(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from scripts import calibrate_autotrade_thresholds as module
+
+    journal_path = tmp_path / "journal.jsonl"
+    journal_path.write_text("{}\n", encoding="utf-8")
+    export_path = tmp_path / "export.json"
+    export_path.write_text("{}", encoding="utf-8")
+
+    monkeypatch.setattr(module, "_load_journal_events", lambda *_, **__: [])
+    monkeypatch.setattr(module, "_load_autotrade_entries", lambda *_, **__: [])
+    monkeypatch.setattr(
+        module,
+        "_load_current_signal_thresholds",
+        lambda *_: ({}, None, {}),
+    )
+
+    captured: dict[str, object] = {}
+
+    def _fake_generate_report(**kwargs: object) -> dict[str, object]:
+        captured.update(kwargs)
+        return {
+            "groups": [],
+            "global_summary": {"metrics": {}, "freeze_summary": {}},
+            "sources": {"journal_events": 0, "autotrade_entries": 0},
+            "percentiles": [],
+        }
+
+    monkeypatch.setattr(module, "_generate_report", _fake_generate_report)
+
+    exit_code = module.main(
+        [
+            "--journal",
+            str(journal_path),
+            "--autotrade-export",
+            str(export_path),
+            "--raw-freeze-events-sample-limit",
+            "0",
+        ]
+    )
+
+    assert exit_code == 0
+    assert captured["raw_freeze_events_sample_limit"] == 0
+    assert captured["raw_freeze_events_mode"] == "sample"
+    assert captured["limit_freeze_events"] is None
+    assert captured["omit_raw_freeze_events"] is False
+    assert captured["max_raw_freeze_events"] is None
 
 
 def test_main_accepts_omit_freeze_events(

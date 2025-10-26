@@ -1949,6 +1949,7 @@ def _generate_report(
     cli_risk_score: float | None = None,
     include_raw_values: bool = False,
     raw_freeze_events_mode: Literal["omit", "sample"] = "omit",
+    raw_freeze_events_sample_limit: int | None = None,
     limit_freeze_events: int | None = None,
     max_freeze_events: int | None | object = _UNSET_MAX_FREEZE_EVENTS,
     omit_raw_freeze_events: bool = False,
@@ -2015,6 +2016,7 @@ def _generate_report(
     raw_freeze_event_display_limit = _sanitize_optional_limit(max_raw_freeze_events)
     sample_limit_override = _sanitize_optional_limit(raw_freeze_events_sample_limit)
     group_freeze_display_limit = _sanitize_optional_limit(limit_freeze_events)
+    raw_freeze_sample_limit = _sanitize_optional_limit(raw_freeze_events_sample_limit)
     raw_freeze_requested_limit: int | None = None
     normalized_freeze_mode = str(raw_freeze_events_mode or "omit").strip().lower()
     if normalized_freeze_mode not in {"omit", "sample"}:
@@ -2061,6 +2063,7 @@ def _generate_report(
         not sampling_freeze_events
         and freeze_event_limit is not None
         and freeze_events_limit_reason != "default"
+        and raw_freeze_sample_limit is None
     ):
         raw_freeze_requested_limit = freeze_event_limit
     if raw_freeze_requested_limit is None and limit_freeze_events is not None:
@@ -3026,6 +3029,15 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--raw-freeze-events-sample-limit",
+        type=int,
+        help=(
+            "Wymuś niezależny limit próbkowania sekcji raw_freeze_events. "
+            "Pozwala skrócić raport bez zmiany agregatów freeze_summary; "
+            "wartość 0 zachowuje jedynie podsumowania."
+        ),
+    )
+    parser.add_argument(
         "--max-raw-freeze-events",
         type=int,
         help=(
@@ -3168,6 +3180,7 @@ def main(argv: list[str] | None = None) -> int:
         "omit_raw_freeze_events": bool(getattr(args, "omit_raw_freeze_events", False)),
         "max_raw_freeze_events": getattr(args, "max_raw_freeze_events", None),
         "omit_freeze_events": bool(getattr(args, "omit_freeze_events", False)),
+        "raw_freeze_events_sample_limit": raw_freeze_events_sample_limit,
     }
     report_kwargs["raw_freeze_events_sample_limit"] = raw_freeze_events_sample_limit
     freeze_events_limit_arg = getattr(args, "freeze_events_limit", None)

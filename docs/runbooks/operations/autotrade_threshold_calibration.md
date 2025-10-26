@@ -115,6 +115,15 @@ potrzebujesz czasowo wyłączyć próbkę bez zmiany domyślnych limitów, poł�
 `--raw-freeze-events-sample-limit 0` z `--limit-freeze-events N` albo użyj
 `--omit-raw-freeze-events`.
 
+Nowa flaga `--raw-freeze-events-sample-limit` pozwala wymusić niezależny limit
+próbki – nawet gdy `--limit-freeze-events` pozostaje nieustawione. Dzięki temu
+można skrócić sekcję `raw_freeze_events` bez ingerencji w liczbę zdarzeń w
+`freeze_events`. Wartość `0` zachowuje wyłącznie agregaty, co przydaje się przy
+generowaniu zwięzłych raportów do szybkiej inspekcji. Niezależnie od wybranego
+limitu, pole `freeze_summary` zachowuje kompletne zliczenia blokad oraz ich
+powodów – próbkowanie wpływa jedynie na listę przykładów i metadane w sekcji
+`sources.raw_freeze_events`.
+
 Jeżeli lista surowych blokad zaczyna dominować w raporcie, można skrócić ją bez
 zmiany agregatów, korzystając z `--max-raw-freeze-events`. Parametr ten
 przycina liczbę zdarzeń zapisywanych w sekcjach `raw_freeze_events`, a resztę
