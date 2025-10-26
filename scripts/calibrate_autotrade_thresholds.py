@@ -1009,6 +1009,7 @@ def _load_autotrade_entries(
         return item
 
     def _iter_json_lines(handle: TextIO, path: Path) -> Iterator[Mapping[str, object]]:
+        decoder = json.JSONDecoder()
         first_line = True
         for raw_line in handle:
             if first_line and raw_line.startswith("\ufeff"):
@@ -1020,7 +1021,11 @@ def _load_autotrade_entries(
             if not line:
                 continue
             try:
-                item = json.loads(line)
+                item, offset = decoder.raw_decode(line)
+                if line[offset:].strip():
+                    raise json.JSONDecodeError(
+                        "Extra data", line, offset
+                    )
             except json.JSONDecodeError as exc:  # noqa: BLE001 - CLI feedback
                 raise SystemExit(
                     f"Nie udało się sparsować JSON w eksporcie autotradera {path}: {exc}"

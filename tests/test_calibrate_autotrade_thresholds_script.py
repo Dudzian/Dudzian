@@ -393,6 +393,61 @@ def test_load_autotrade_entries_streaming_root_array(
     assert sum(handle.read_results) >= chunk_size * 2
 
 
+def test_load_autotrade_entries_does_not_buffer_entire_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    module = calibrate_autotrade_thresholds
+    chunk_size = 64
+    monkeypatch.setattr(module, "_JSON_STREAM_CHUNK_SIZE", chunk_size)
+
+    entries: list[Mapping[str, object]] = [
+        {
+            "id": 1,
+            "timestamp": "2024-01-01T00:00:00Z",
+            "decision": {"timestamp": "2024-01-01T00:00:00Z"},
+        }
+    ]
+    for index in range(2, 60):
+        entries.append(
+            {
+                "id": index,
+                "timestamp": "2024-01-01T00:{index:02d}:00Z".format(index=index),
+                "decision": {
+                    "details": {
+                        "symbol": "BTCUSDT",
+                        "strategy": "trend_following",
+                        "note": "x" * 2048,
+                    }
+                },
+            }
+        )
+
+    export_path = tmp_path / "streaming-buffer.json"
+    export_path.write_text(json.dumps({"entries": entries}), encoding="utf-8")
+
+    tracking_handles: list[_TrackingReadHandle] = []
+
+    def _fake_open_text_file(path: Path) -> _TrackingReadHandle:
+        handle = _TrackingReadHandle(path)
+        tracking_handles.append(handle)
+        return handle
+
+    monkeypatch.setattr(module, "_open_text_file", _fake_open_text_file)
+
+    generator = _load_autotrade_entries([export_path])
+    first_entry = next(generator)
+    assert first_entry["id"] == 1
+
+    assert len(tracking_handles) == 1
+    handle = tracking_handles[0]
+    assert handle.read_requests
+    total_read = sum(handle.read_results)
+    assert total_read < export_path.stat().st_size
+    assert all(size == chunk_size for size in handle.read_requests)
+
+    generator.close()
+
+
 def test_load_autotrade_entries_filters_nested_timestamps(tmp_path: Path) -> None:
     export_path = tmp_path / "nested-timestamps.json"
     entries = [
