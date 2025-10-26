@@ -1805,6 +1805,85 @@ def test_loaders_stream_without_materializing_large_lists(monkeypatch, tmp_path:
     assert not large_lists
 
 
+def test_loaders_yield_records_incrementally(monkeypatch, tmp_path: Path) -> None:
+    from scripts import calibrate_autotrade_thresholds as module
+
+    journal_path = tmp_path / "incremental_journal.jsonl"
+    autotrade_path = tmp_path / "incremental_autotrade.jsonl"
+    journal_path.touch()
+    autotrade_path.touch()
+
+    journal_lines = [
+        json.dumps({"timestamp": "2024-01-01T00:00:00Z", "value": 1}) + "\n",
+        json.dumps({"timestamp": "2024-01-01T00:01:00Z", "value": 2}) + "\n",
+        json.dumps({"timestamp": "2024-01-01T00:02:00Z", "value": 3}) + "\n",
+    ]
+    autotrade_lines = [
+        json.dumps({"timestamp": "2024-01-01T01:00:00Z", "decision": {"summary": {"risk_score": 1}}})
+        + "\n",
+        json.dumps({"timestamp": "2024-01-01T01:01:00Z", "decision": {"summary": {"risk_score": 2}}})
+        + "\n",
+        json.dumps({"timestamp": "2024-01-01T01:02:00Z", "decision": {"summary": {"risk_score": 3}}})
+        + "\n",
+    ]
+
+    opened: dict[Path, "_FakeFile"] = {}
+
+    class _FakeFile:
+        def __init__(self, path: Path, lines: list[str]):
+            self._path = path
+            self._lines = lines
+            self._index = 0
+            self.read_calls = 0
+            self.closed = False
+
+        def __iter__(self) -> "_FakeFile":
+            return self
+
+        def __next__(self) -> str:
+            if self._index >= len(self._lines):
+                raise StopIteration
+            value = self._lines[self._index]
+            self._index += 1
+            self.read_calls += 1
+            return value
+
+        def __enter__(self) -> "_FakeFile":
+            opened[self._path] = self
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> bool:
+            self.closed = True
+            return False
+
+    def _fake_open_text_file(path: Path) -> _FakeFile:
+        if path == journal_path:
+            return _FakeFile(path, journal_lines)
+        if path == autotrade_path:
+            return _FakeFile(path, autotrade_lines)
+        raise AssertionError(f"Unexpected path {path}")
+
+    monkeypatch.setattr(module, "_open_text_file", _fake_open_text_file)
+
+    journal_iter = module._load_journal_events([journal_path])
+    autotrade_iter = module._load_autotrade_entries([autotrade_path])
+
+    first_event = next(journal_iter)
+    first_entry = next(autotrade_iter)
+
+    assert first_event["value"] == 1
+    assert first_entry["decision"]["summary"]["risk_score"] == 1
+
+    assert opened[journal_path].read_calls == 1
+    assert opened[autotrade_path].read_calls == 1
+
+    journal_iter.close()
+    autotrade_iter.close()
+
+    assert opened[journal_path].closed
+    assert opened[autotrade_path].closed
+
+
 def test_generate_report_does_not_build_large_lists(monkeypatch) -> None:
     event_count = 2500
 
