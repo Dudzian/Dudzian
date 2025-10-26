@@ -352,6 +352,11 @@ def test_script_accepts_cli_risk_score_threshold(tmp_path: Path) -> None:
     signal_sources = payload["sources"]["current_thresholds"]
     assert signal_sources["files"] == []
     assert "risk_score" not in signal_sources["inline"]
+    assert signal_sources["risk_score"] == {
+        "kind": "inline",
+        "source": "risk_score=0.72",
+        "value": pytest.approx(0.72),
+    }
     risk_sources = payload["sources"]["risk_thresholds"]
     assert risk_sources["files"] == []
     assert risk_sources["inline"]["risk_score"] == pytest.approx(0.72)
@@ -362,6 +367,49 @@ def test_script_accepts_cli_risk_score_threshold(tmp_path: Path) -> None:
     )
     risk_stats = trend_group["metrics"]["risk_score"]
     assert risk_stats["current_threshold"] == pytest.approx(0.72)
+
+
+def test_cli_risk_score_source_tracks_specific_pair(tmp_path: Path) -> None:
+    journal_path = tmp_path / "journal.jsonl"
+    _write_journal(journal_path)
+
+    export_path = tmp_path / "autotrade.json"
+    _write_autotrade_export(export_path)
+
+    output_json = tmp_path / "report.json"
+
+    subprocess.run(
+        [
+            sys.executable,
+            "scripts/calibrate_autotrade_thresholds.py",
+            "--journal",
+            str(journal_path),
+            "--autotrade-export",
+            str(export_path),
+            "--percentiles",
+            "0.5",
+            "--suggestion-percentile",
+            "0.5",
+            "--current-threshold",
+            "signal_after_adjustment=0.82,risk_score=0.73",
+            "--output-json",
+            str(output_json),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    payload = json.loads(output_json.read_text(encoding="utf-8"))
+    signal_sources = payload["sources"]["current_thresholds"]
+    assert signal_sources["inline"]["signal_after_adjustment"] == pytest.approx(0.82)
+    assert signal_sources["risk_score"] == {
+        "kind": "inline",
+        "source": "risk_score=0.73",
+        "value": pytest.approx(0.73),
+    }
+    risk_sources = payload["sources"]["risk_thresholds"]
+    assert risk_sources["inline"]["risk_score"] == pytest.approx(0.73)
 
 
 def test_script_accepts_thresholds_from_json_file(tmp_path: Path) -> None:
@@ -406,6 +454,12 @@ def test_script_accepts_thresholds_from_json_file(tmp_path: Path) -> None:
     sources_payload = payload["sources"]["current_thresholds"]
     assert sources_payload["files"] == [str(thresholds_path)]
     assert sources_payload["inline"]["signal_after_clamp"] == pytest.approx(0.77)
+    assert "risk_score" not in sources_payload["inline"]
+    assert sources_payload["risk_score"] == {
+        "kind": "file",
+        "source": str(thresholds_path),
+        "value": pytest.approx(0.71),
+    }
     risk_sources = payload["sources"]["risk_thresholds"]
     assert risk_sources["files"] == [str(thresholds_path)]
     assert risk_sources["inline"] == {}
@@ -417,6 +471,59 @@ def test_script_accepts_thresholds_from_json_file(tmp_path: Path) -> None:
     metrics = trend_group["metrics"]
     assert metrics["signal_after_adjustment"]["current_threshold"] == 0.81
     assert metrics["signal_after_clamp"]["current_threshold"] == 0.77
+
+
+def test_cli_risk_score_overrides_file_threshold(tmp_path: Path) -> None:
+    journal_path = tmp_path / "journal.jsonl"
+    _write_journal(journal_path)
+
+    export_path = tmp_path / "autotrade.json"
+    _write_autotrade_export(export_path)
+
+    thresholds_path = tmp_path / "thresholds.json"
+    thresholds_path.write_text(json.dumps({"risk_score": 0.71}), encoding="utf-8")
+
+    output_json = tmp_path / "report.json"
+
+    subprocess.run(
+        [
+            sys.executable,
+            "scripts/calibrate_autotrade_thresholds.py",
+            "--journal",
+            str(journal_path),
+            "--autotrade-export",
+            str(export_path),
+            "--current-threshold",
+            "risk_score=0.72",
+            "--current-threshold",
+            str(thresholds_path),
+            "--output-json",
+            str(output_json),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    payload = json.loads(output_json.read_text(encoding="utf-8"))
+    sources_payload = payload["sources"]["current_thresholds"]
+    assert sources_payload["files"] == [str(thresholds_path)]
+    assert "risk_score" not in sources_payload["inline"]
+    assert sources_payload["risk_score"] == {
+        "kind": "inline",
+        "source": "risk_score=0.72",
+        "value": pytest.approx(0.72),
+    }
+    risk_sources = payload["sources"]["risk_thresholds"]
+    assert risk_sources["files"] == [str(thresholds_path)]
+    assert risk_sources["inline"]["risk_score"] == pytest.approx(0.72)
+    trend_group = next(
+        entry
+        for entry in payload["groups"]
+        if entry["primary_exchange"] == "binance" and entry["strategy"] == "trend_following"
+    )
+    risk_stats = trend_group["metrics"]["risk_score"]
+    assert risk_stats["current_threshold"] == pytest.approx(0.72)
 
 
 def test_script_normalizes_cli_threshold_keys(tmp_path: Path) -> None:
@@ -671,12 +778,11 @@ def test_load_current_thresholds_supports_nested_structures(tmp_path: Path) -> N
     assert thresholds["signal_after_adjustment"] == pytest.approx(0.85)
     assert thresholds["signal_after_clamp"] == pytest.approx(0.74)
     assert risk_score is None
-    assert sources_payload == {
-        "files": [str(thresholds_path)],
-        "inline": {},
-        "risk_files": [],
-        "risk_inline": {},
-    }
+    assert sources_payload["files"] == [str(thresholds_path)]
+    assert sources_payload["inline"] == {}
+    assert sources_payload["risk_files"] == []
+    assert sources_payload["risk_inline"] == {}
+    assert sources_payload["risk_score_source"] is None
 
 
 def test_load_current_thresholds_collects_risk_files(tmp_path: Path) -> None:
@@ -695,11 +801,34 @@ def test_load_current_thresholds_collects_risk_files(tmp_path: Path) -> None:
 
     assert thresholds["signal_after_clamp"] == pytest.approx(0.73)
     assert risk_score == pytest.approx(0.66)
-    assert sources_payload == {
-        "files": [str(thresholds_path)],
-        "inline": {},
-        "risk_files": [str(thresholds_path)],
-        "risk_inline": {},
+    assert sources_payload["files"] == [str(thresholds_path)]
+    assert sources_payload["inline"] == {}
+    assert sources_payload["risk_files"] == [str(thresholds_path)]
+    assert sources_payload["risk_inline"] == {}
+    assert sources_payload["risk_score_source"] == {
+        "kind": "file",
+        "source": str(thresholds_path),
+        "value": 0.66,
+    }
+
+
+def test_load_current_thresholds_prefers_inline_risk_score(tmp_path: Path) -> None:
+    thresholds_path = tmp_path / "thresholds.json"
+    thresholds_path.write_text(json.dumps({"risk_score": 0.61}), encoding="utf-8")
+
+    thresholds, risk_score, sources_payload = _load_current_signal_thresholds(
+        ["risk_score=0.72", str(thresholds_path)]
+    )
+
+    assert thresholds == {}
+    assert risk_score == pytest.approx(0.72)
+    assert sources_payload["files"] == [str(thresholds_path)]
+    assert sources_payload["risk_files"] == [str(thresholds_path)]
+    assert sources_payload["risk_inline"] == {"risk_score": pytest.approx(0.72)}
+    assert sources_payload["risk_score_source"] == {
+        "kind": "inline",
+        "source": "risk_score=0.72",
+        "value": pytest.approx(0.72),
     }
 
 
@@ -1793,9 +1922,9 @@ def test_streaming_generators(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -
         until=None,
         current_signal_thresholds={},
         current_threshold_sources={},
-        cli_risk_score_threshold=None,
+        risk_score_override=None,
+        risk_score_source=None,
         risk_threshold_sources=[],
-        cli_risk_score=None,
         include_raw_values=False,
     )
 

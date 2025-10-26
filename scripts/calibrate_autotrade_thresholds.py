@@ -303,8 +303,9 @@ def _parse_percentiles(raw: str | None) -> list[float]:
     return sorted(set(percentiles))
 
 
-def _parse_threshold_mapping(raw: str) -> dict[str, float]:
-    result: dict[str, float] = {}
+def _parse_threshold_mapping(raw: str) -> tuple[dict[str, float], dict[str, str]]:
+    values: dict[str, float] = {}
+    sources: dict[str, str] = {}
     for token in raw.split(","):
         candidate = token.strip()
         if not candidate:
@@ -317,21 +318,26 @@ def _parse_threshold_mapping(raw: str) -> dict[str, float]:
         key = key.strip()
         if not key:
             raise SystemExit("Klucz progu nie może być pusty")
-        numeric = _coerce_float(value)
+        value_str = value.strip()
+        numeric = _coerce_float(value_str)
         if numeric is None:
-            raise SystemExit(f"Nie udało się zinterpretować progu '{value}' dla metryki {key}")
+            raise SystemExit(
+                f"Nie udało się zinterpretować progu '{value}' dla metryki {key}"
+            )
         normalized_key = _normalize_metric_key(key)
+        pair_repr = f"{key}={value_str}"
         normalized_value = _normalize_threshold_value(
             normalized_key,
             numeric,
-            source=f"CLI '{key}={value}'",
+            source=f"CLI '{pair_repr}'",
         )
-        result[normalized_key] = _ensure_finite_value(
+        values[normalized_key] = _ensure_finite_value(
             normalized_key,
             normalized_value,
-            source=f"CLI '{key}={value}'",
+            source=f"CLI '{pair_repr}'",
         )
-    return result
+        sources[normalized_key] = pair_repr
+    return values, sources
 
 
 def _load_threshold_payload(path: Path) -> object:
@@ -362,6 +368,11 @@ def _load_current_signal_thresholds(
     risk_source_files: list[str] = []
     inline_values: dict[str, float] = {}
     inline_risk_thresholds: dict[str, float] = {}
+    risk_score_origin: dict[str, object] | None = None
+    inline_risk_source: str | None = None
+    inline_risk_value: float | None = None
+    file_risk_source: str | None = None
+    file_risk_value: float | None = None
     if not sources:
         return (
             thresholds,
@@ -371,6 +382,7 @@ def _load_current_signal_thresholds(
                 "inline": inline_values,
                 "risk_files": risk_source_files,
                 "risk_inline": inline_risk_thresholds,
+                "risk_score_source": risk_score_origin,
             },
         )
 
@@ -401,11 +413,13 @@ def _load_current_signal_thresholds(
                             source=path_str,
                         )
                         if metric_name == "risk_score":
-                            current_risk_score = _ensure_finite_value(
+                            validated_value = _ensure_finite_value(
                                 metric_name,
                                 numeric_value,
                                 source=path_str,
                             )
+                            file_risk_value = validated_value
+                            file_risk_source = path_str
                             found_risk_in_file = True
                         else:
                             thresholds[metric_name] = _ensure_finite_value(
@@ -413,43 +427,62 @@ def _load_current_signal_thresholds(
                                 numeric_value,
                                 source=path_str,
                             )
-            if found_risk_in_file and path_str not in risk_source_files:
-                risk_source_files.append(path_str)
+            if found_risk_in_file:
+                if path_str not in risk_source_files:
+                    risk_source_files.append(path_str)
             continue
         if "=" not in candidate:
             raise SystemExit(f"Ścieżka z progami nie istnieje: {path}")
-        mapping = _parse_threshold_mapping(candidate)
+        mapping, mapping_sources = _parse_threshold_mapping(candidate)
         for metric_name, numeric in mapping.items():
             if not isinstance(metric_name, str):
                 continue
             metric_name_normalized = _normalize_metric_key(metric_name)
             if metric_name_normalized in _SUPPORTED_THRESHOLD_METRICS:
+                pair_source = mapping_sources.get(metric_name_normalized, candidate)
+                cli_source = f"CLI '{pair_source}'"
                 if metric_name_normalized == "risk_score":
                     value = _normalize_threshold_value(
                         metric_name_normalized,
                         numeric,
-                        source=candidate,
+                        source=cli_source,
                     )
                     validated_value = _ensure_finite_value(
                         metric_name_normalized,
                         value,
-                        source=candidate,
+                        source=cli_source,
                     )
-                    current_risk_score = validated_value
                     inline_risk_thresholds[metric_name_normalized] = validated_value
+                    inline_risk_value = validated_value
+                    inline_risk_source = pair_source
                 else:
                     value = _normalize_threshold_value(
                         metric_name_normalized,
                         numeric,
-                        source=candidate,
+                        source=cli_source,
                     )
                     validated_value = _ensure_finite_value(
                         metric_name_normalized,
                         value,
-                        source=candidate,
+                        source=cli_source,
                     )
                     thresholds[metric_name_normalized] = validated_value
                     inline_values[metric_name_normalized] = validated_value
+
+    if inline_risk_value is not None:
+        current_risk_score = inline_risk_value
+        risk_score_origin = {
+            "kind": "inline",
+            "source": inline_risk_source,
+            "value": inline_risk_value,
+        }
+    elif file_risk_value is not None:
+        current_risk_score = file_risk_value
+        risk_score_origin = {
+            "kind": "file",
+            "source": file_risk_source,
+            "value": file_risk_value,
+        }
 
     return (
         thresholds,
@@ -459,6 +492,7 @@ def _load_current_signal_thresholds(
             "inline": inline_values,
             "risk_files": risk_source_files,
             "risk_inline": inline_risk_thresholds,
+            "risk_score_source": risk_score_origin,
         },
     )
 
@@ -1283,9 +1317,9 @@ def _generate_report(
     until: datetime | None = None,
     current_signal_thresholds: Mapping[str, float] | None = None,
     current_threshold_sources: Mapping[str, object] | None = None,
-    cli_risk_score_threshold: float | None = None,
+    risk_score_override: float | None = None,
+    risk_score_source: Mapping[str, object] | None = None,
     risk_threshold_sources: Iterable[str] | None = None,
-    cli_risk_score: float | None = None,
     include_raw_values: bool = False,
 ) -> dict[str, object]:
     symbol_map: dict[str, tuple[str, str]] = {}
@@ -1467,11 +1501,16 @@ def _generate_report(
     else:
         thresholds = load_risk_thresholds()
         current_risk_score = _extract_risk_score_threshold(thresholds)
-    if cli_risk_score_threshold is not None:
-        current_risk_score = cli_risk_score_threshold
+    metadata_risk_value: float | None = None
+    if isinstance(risk_score_source, Mapping):
+        candidate_value = _coerce_float(risk_score_source.get("value"))
+        if candidate_value is not None and math.isfinite(float(candidate_value)):
+            metadata_risk_value = float(candidate_value)
 
-    if cli_risk_score is not None:
-        current_risk_score = cli_risk_score
+    if risk_score_override is not None:
+        current_risk_score = risk_score_override
+    elif metadata_risk_value is not None:
+        current_risk_score = metadata_risk_value
 
     groups: list[dict[str, object]] = []
     all_keys = set(grouped_values.keys()) | set(freeze_summaries.keys()) | set(display_names.keys())
@@ -1537,6 +1576,7 @@ def _generate_report(
     current_threshold_inline: dict[str, float] = {}
     risk_threshold_inline: dict[str, float] = {}
     risk_threshold_files_extra: list[str] = []
+    risk_score_metadata_payload: dict[str, object] | None = None
     if isinstance(current_threshold_sources, Mapping):
         raw_files = current_threshold_sources.get("files")
         if isinstance(raw_files, Iterable) and not isinstance(raw_files, (str, bytes)):
@@ -1586,6 +1626,20 @@ def _generate_report(
                     continue
                 seen_risk_files.add(item_str)
                 risk_threshold_files_extra.append(item_str)
+        raw_risk_source = current_threshold_sources.get("risk_score_source")
+        if isinstance(raw_risk_source, Mapping):
+            metadata: dict[str, object] = {}
+            raw_kind = raw_risk_source.get("kind")
+            if isinstance(raw_kind, str):
+                metadata["kind"] = raw_kind
+            raw_source = raw_risk_source.get("source")
+            if raw_source is not None:
+                metadata["source"] = str(raw_source)
+            raw_value = _coerce_float(raw_risk_source.get("value"))
+            if raw_value is not None and math.isfinite(float(raw_value)):
+                metadata["value"] = float(raw_value)
+            if metadata:
+                risk_score_metadata_payload = metadata
 
     combined_risk_files: list[str] = []
     seen_combined_risk_files: set[str] = set()
@@ -1601,13 +1655,17 @@ def _generate_report(
         seen_combined_risk_files.add(path_str)
         combined_risk_files.append(path_str)
 
+    current_thresholds_payload: dict[str, object] = {
+        "files": current_threshold_files,
+        "inline": current_threshold_inline,
+    }
+    if risk_score_metadata_payload is not None:
+        current_thresholds_payload["risk_score"] = risk_score_metadata_payload
+
     sources_payload = {
         "journal_events": journal_count,
         "autotrade_entries": autotrade_count,
-        "current_thresholds": {
-            "files": current_threshold_files,
-            "inline": current_threshold_inline,
-        },
+        "current_thresholds": current_thresholds_payload,
         "risk_thresholds": {
             "files": combined_risk_files,
             "inline": risk_threshold_inline,
@@ -1718,9 +1776,24 @@ def main(argv: list[str] | None = None) -> int:
     autotrade_entries = _load_autotrade_entries(args.autotrade_export, since=since, until=until)
     (
         current_signal_thresholds,
-        cli_risk_score,
+        provided_risk_score,
         current_threshold_sources_payload,
     ) = _load_current_signal_thresholds(args.current_threshold)
+
+    risk_score_source_metadata: Mapping[str, object] | None = None
+    risk_score_override: float | None = None
+    signal_thresholds_payload: Mapping[str, float] | None = current_signal_thresholds
+    if isinstance(current_threshold_sources_payload, Mapping):
+        raw_risk_source = current_threshold_sources_payload.get("risk_score_source")
+        if isinstance(raw_risk_source, Mapping):
+            risk_score_source_metadata = raw_risk_source
+            raw_kind = raw_risk_source.get("kind")
+            if provided_risk_score is not None and raw_kind == "inline":
+                risk_score_override = provided_risk_score
+            elif provided_risk_score is not None and raw_kind == "file":
+                existing = dict(current_signal_thresholds or {})
+                existing["risk_score"] = provided_risk_score
+                signal_thresholds_payload = existing
 
     report = _generate_report(
         journal_events=journal_events,
@@ -1729,11 +1802,11 @@ def main(argv: list[str] | None = None) -> int:
         suggestion_percentile=args.suggestion_percentile,
         since=since,
         until=until,
-        current_signal_thresholds=current_signal_thresholds,
+        current_signal_thresholds=signal_thresholds_payload,
         current_threshold_sources=current_threshold_sources_payload,
-        cli_risk_score_threshold=cli_risk_score,
+        risk_score_override=risk_score_override,
+        risk_score_source=risk_score_source_metadata,
         risk_threshold_sources=args.risk_thresholds,
-        cli_risk_score=cli_risk_score,
         include_raw_values=bool(args.plot_dir),
     )
 
