@@ -19,6 +19,8 @@ from scripts.calibrate_autotrade_thresholds import (
     _build_symbol_map,
     _generate_report,
     _load_current_signal_thresholds,
+    _load_autotrade_entries,
+    _write_csv,
 )
 
 
@@ -268,11 +270,14 @@ def test_script_generates_report(tmp_path: Path) -> None:
     assert freeze_summary["total"] == 3
     assert freeze_summary["auto"] == 2
     assert freeze_summary["manual"] == 1
+    assert freeze_summary["omitted"] == 0
     reasons = {item["reason"]: item["count"] for item in freeze_summary["reasons"]}
     assert reasons["manual_override"] == 1
     assert reasons["risk_score_threshold"] == 2
     raw_freezes = trend_group["raw_freeze_events"]
     assert {entry["status"] for entry in raw_freezes} >= {"risk_freeze", "auto_risk_freeze"}
+    assert trend_group["raw_freeze_events_truncated"] is False
+    assert trend_group["raw_freeze_events_omitted"] == 0
 
     mean_rev_group = groups[("kraken", "mean_reversion")]
     mean_rev_risk = mean_rev_group["metrics"]["risk_score"]
@@ -280,10 +285,11 @@ def test_script_generates_report(tmp_path: Path) -> None:
 
     global_summary = payload["global_summary"]
     assert global_summary["freeze_summary"]["total"] == 3
+    assert global_summary["freeze_summary"]["omitted"] == 0
     global_signal = global_summary["metrics"]["signal_after_adjustment"]
     assert global_signal["count"] == 2
     assert global_signal["current_threshold"] == 0.82
-    assert 0.9 not in global_summary["raw_values"]["signal_after_adjustment"]
+    assert "raw_values" not in global_summary
 
     raw_values = trend_group["raw_values"]["signal_after_adjustment"]
     assert 0.62 not in raw_values
@@ -301,6 +307,27 @@ def test_script_generates_report(tmp_path: Path) -> None:
         "risk_score",
         "risk_freeze_duration",
     }
+    freeze_rows = [
+        row
+        for row in rows
+        if row["metric"] == "__freeze_summary__" and row["primary_exchange"] == "binance"
+    ]
+    assert freeze_rows, "Brak wiersza freeze_summary dla binance"
+    freeze_row = freeze_rows[0]
+    assert int(freeze_row["freeze_total"]) == 3
+    assert int(freeze_row["freeze_auto"]) == 2
+    assert int(freeze_row["freeze_manual"]) == 1
+    assert int(freeze_row["freeze_omitted"]) == 0
+    assert freeze_row["freeze_truncated"] in {"false", ""}
+    assert freeze_row["freeze_status_counts"], "Oczekiwano rozbicia statusów w CSV"
+    aggregated_freeze_rows = [
+        row
+        for row in rows
+        if row["metric"] == "__freeze_summary__" and row["primary_exchange"] == "__all__"
+    ]
+    assert aggregated_freeze_rows, "Brak globalnego wiersza freeze_summary"
+    assert int(aggregated_freeze_rows[0]["freeze_total"]) == 3
+
     for row in rows:
         if row["metric"] == "risk_score" and row["primary_exchange"] == "binance":
             assert float(row["current_threshold"]) >= 0.7
@@ -310,8 +337,7 @@ def test_script_generates_report(tmp_path: Path) -> None:
             assert float(row["current_threshold"]) == 0.78
     assert any(row["primary_exchange"] == "__all__" for row in rows)
 
-    for metric_values in payload["global_summary"]["raw_values"].values():
-        assert all(math.isfinite(value) for value in metric_values)
+    assert "raw_values" not in payload["global_summary"]
 
 
 def test_script_accepts_cli_risk_score_threshold(tmp_path: Path) -> None:
@@ -353,6 +379,50 @@ def test_script_accepts_cli_risk_score_threshold(tmp_path: Path) -> None:
     )
     risk_stats = trend_group["metrics"]["risk_score"]
     assert risk_stats["current_threshold"] == pytest.approx(0.72)
+
+
+def test_script_limits_raw_freeze_events_via_cli(tmp_path: Path) -> None:
+    journal_path = tmp_path / "journal.jsonl"
+    _write_journal(journal_path)
+
+    export_path = tmp_path / "autotrade.json"
+    _write_autotrade_export(export_path)
+
+    output_json = tmp_path / "report.json"
+
+    subprocess.run(
+        [
+            sys.executable,
+            "scripts/calibrate_autotrade_thresholds.py",
+            "--journal",
+            str(journal_path),
+            "--autotrade-export",
+            str(export_path),
+            "--max-freeze-events",
+            "1",
+            "--output-json",
+            str(output_json),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    payload = json.loads(output_json.read_text(encoding="utf-8"))
+    trend_group = next(
+        entry
+        for entry in payload["groups"]
+        if entry["primary_exchange"] == "binance" and entry["strategy"] == "trend_following"
+    )
+
+    assert len(trend_group["raw_freeze_events"]) == 1
+    assert trend_group["freeze_summary"]["total"] == 3
+    assert trend_group["freeze_summary"]["omitted"] == 2
+    assert trend_group["raw_freeze_events_truncated"] is True
+    assert trend_group["raw_freeze_events_omitted"] == 2
+    assert payload["sources"]["max_freeze_events"] == 1
+    assert payload["sources"]["raw_freeze_events_truncated_groups"] == 1
+    assert payload["global_summary"]["freeze_summary"]["omitted"] == 2
 
 
 def test_script_accepts_thresholds_from_json_file(tmp_path: Path) -> None:
@@ -446,6 +516,9 @@ def test_script_normalizes_cli_threshold_keys(tmp_path: Path) -> None:
     assert signal_stats["current_threshold"] == pytest.approx(0.8)
     clamp_stats = trend_group["metrics"]["signal_after_clamp"]
     assert clamp_stats["current_threshold"] == pytest.approx(0.7)
+    current_sources = payload["sources"]["current_signal_thresholds"]
+    assert current_sources["inline"]["signal_after_adjustment"] == pytest.approx(0.8)
+    assert current_sources["inline"]["signal_after_clamp"] == pytest.approx(0.7)
 
 
 def test_load_current_thresholds_rejects_directory(tmp_path: Path) -> None:
@@ -483,11 +556,61 @@ def test_load_current_thresholds_supports_nested_structures(tmp_path: Path) -> N
     thresholds_path = tmp_path / "nested_thresholds.json"
     thresholds_path.write_text(json.dumps(payload), encoding="utf-8")
 
-    thresholds, risk_score = _load_current_signal_thresholds([str(thresholds_path)])
+    thresholds, risk_score, metadata = _load_current_signal_thresholds([str(thresholds_path)])
 
     assert thresholds["signal_after_adjustment"] == pytest.approx(0.85)
     assert thresholds["signal_after_clamp"] == pytest.approx(0.74)
     assert risk_score is None
+    assert metadata["files"] == [str(thresholds_path)]
+    assert metadata.get("inline") is None
+
+
+def test_load_current_thresholds_tracks_inline_sources() -> None:
+    thresholds, risk_score, metadata = _load_current_signal_thresholds(
+        ["signal_after_adjustment=0.81", "risk_score=0.66"]
+    )
+
+    assert thresholds == {"signal_after_adjustment": 0.81}
+    assert risk_score == pytest.approx(0.66)
+    assert "files" not in metadata
+    assert metadata["inline"] == {
+        "signal_after_adjustment": pytest.approx(0.81),
+        "risk_score": pytest.approx(0.66),
+    }
+
+
+def test_load_current_thresholds_without_sources() -> None:
+    thresholds, risk_score, metadata = _load_current_signal_thresholds(None)
+
+    assert thresholds == {}
+    assert risk_score is None
+    assert metadata == {}
+
+
+def test_load_current_thresholds_rejects_non_finite_cli() -> None:
+    with pytest.raises(SystemExit) as excinfo:
+        _load_current_signal_thresholds(["signal_after_adjustment=NaN"])
+
+    assert "niefinityczną" in str(excinfo.value)
+
+
+def test_load_current_thresholds_rejects_non_finite_file(tmp_path: Path) -> None:
+    payload = {
+        "signal_after_adjustment": {
+            "current_threshold": "Infinity",
+        },
+        "risk_score": {
+            "value": "-Infinity",
+        },
+    }
+
+    thresholds_path = tmp_path / "bad_thresholds.json"
+    thresholds_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(SystemExit) as excinfo:
+        _load_current_signal_thresholds([str(thresholds_path)])
+
+    assert "niefinityczną" in str(excinfo.value)
 
 
 def test_group_resolution_prefers_entry_metadata_over_symbol_map() -> None:
@@ -828,6 +951,48 @@ def test_generate_report_merges_multiple_risk_threshold_paths(
     assert metrics["current_threshold"] == pytest.approx(0.88)
 
 
+def test_cli_risk_score_override_beats_config(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    autotrade_entries = [
+        {
+            "decision": {
+                "details": {
+                    "symbol": "BTCUSDT",
+                    "primary_exchange": "binance",
+                    "strategy": "trend_following",
+                    "summary": {"risk_score": 0.6},
+                }
+            }
+        }
+    ]
+
+    override_path = tmp_path / "risk_thresholds.yaml"
+    override_path.write_text("auto_trader: {}\n", encoding="utf-8")
+
+    def _fake_loader(*, config_path: Path | None = None):
+        assert config_path == override_path
+        return {"auto_trader": {"map_regime_to_signal": {"risk_score": 0.9}}}
+
+    monkeypatch.setattr(
+        "scripts.calibrate_autotrade_thresholds.load_risk_thresholds",
+        _fake_loader,
+    )
+
+    report = _generate_report(
+        journal_events=[],
+        autotrade_entries=autotrade_entries,
+        percentiles=[0.5],
+        suggestion_percentile=0.5,
+        risk_threshold_sources=[str(override_path)],
+        cli_risk_score=0.42,
+    )
+
+    metrics = report["groups"][0]["metrics"]["risk_score"]
+    assert metrics["current_threshold"] == pytest.approx(0.42)
+    assert report["sources"]["risk_score_override"] == pytest.approx(0.42)
+
+
 def test_autotrade_entry_reads_routing_sequences() -> None:
     journal_events = [
         {
@@ -987,6 +1152,226 @@ def test_build_symbol_map_marks_ambiguous_when_conflicting_routing() -> None:
     canonical_symbol = _canonicalize_symbol_key("XRPUSDT")
     assert canonical_symbol is not None
     assert mapping[canonical_symbol] == _AMBIGUOUS_SYMBOL_MAPPING
+
+
+def test_generate_report_accepts_generators() -> None:
+    journal_events = (
+        {
+            "primary_exchange": "Binance",
+            "strategy": "Trend",
+            "symbol": "BTCUSDT",
+            "signal_after_adjustment": 0.6,
+            "signal_after_clamp": 0.58,
+        },
+        {
+            "primary_exchange": "Binance",
+            "strategy": "Trend",
+            "symbol": "BTCUSDT",
+            "signal_after_adjustment": 0.4,
+            "signal_after_clamp": 0.38,
+        },
+    )
+    autotrade_entries = (
+        {
+            "timestamp": "2024-01-01T00:00:00Z",
+            "detail": {
+                "symbol": "btcusdt",
+                "primary_exchange": "binance",
+                "strategy": "trend",
+                "summary": {"risk_score": 0.42},
+            },
+        },
+    )
+
+    report = _generate_report(
+        journal_events=(dict(event) for event in journal_events),
+        autotrade_entries=(dict(entry) for entry in autotrade_entries),
+        percentiles=[0.5],
+        suggestion_percentile=0.5,
+    )
+
+    sources = report["sources"]
+    assert sources["journal_events"] == 2
+    assert sources["autotrade_entries"] == 1
+    assert "max_freeze_events" not in sources
+    assert report["groups"]
+    trend_group = next(iter(report["groups"]))
+    assert trend_group["metrics"]["signal_after_adjustment"]["count"] == 2
+
+
+def test_generate_report_limits_raw_freeze_events() -> None:
+    autotrade_entries = [
+        {
+            "timestamp": "2024-01-01T00:00:00Z",
+            "detail": {
+                "symbol": "BTCUSDT",
+                "primary_exchange": "binance",
+                "strategy": "trend_following",
+                "summary": {"risk_score": 0.51},
+            },
+        },
+        {
+            "status": "auto_risk_freeze",
+            "detail": {
+                "symbol": "BTCUSDT",
+                "primary_exchange": "binance",
+                "strategy": "trend_following",
+                "summary": {"risk_score": 0.71},
+            },
+        },
+        {
+            "status": "risk_freeze_manual",
+            "detail": {
+                "symbol": "BTCUSDT",
+                "primary_exchange": "binance",
+                "strategy": "trend_following",
+                "summary": {"risk_score": 0.68},
+            },
+        },
+        {
+            "status": "auto_risk_freeze",
+            "detail": {
+                "symbol": "BTCUSDT",
+                "primary_exchange": "binance",
+                "strategy": "trend_following",
+                "summary": {"risk_score": 0.92},
+            },
+        },
+    ]
+
+    with patch("scripts.calibrate_autotrade_thresholds.load_risk_thresholds", return_value={}):
+        report = _generate_report(
+            journal_events=[],
+            autotrade_entries=autotrade_entries,
+            percentiles=[0.5],
+            suggestion_percentile=0.5,
+            max_freeze_events=1,
+        )
+
+    assert report["groups"]
+    group = report["groups"][0]
+    assert group["freeze_summary"]["total"] == 3
+    assert len(group["raw_freeze_events"]) == 1
+    assert group["raw_freeze_events_truncated"] is True
+    assert group["raw_freeze_events_omitted"] == 2
+    assert report["sources"]["max_freeze_events"] == 1
+    assert report["sources"]["raw_freeze_events_truncated_groups"] == 1
+
+
+def test_generate_report_includes_freeze_only_groups() -> None:
+    autotrade_entries = [
+        {
+            "timestamp": "2024-02-01T00:00:00Z",
+            "status": "auto_risk_freeze",
+            "detail": {
+                "symbol": "ETHUSDT",
+                "primary_exchange": "binance",
+                "strategy": "trend_following",
+                "summary": {"risk_score": 0.71},
+            },
+        },
+        {
+            "timestamp": "2024-02-01T01:00:00Z",
+            "status": "risk_freeze_manual",
+            "detail": {
+                "symbol": "ETHUSDT",
+                "primary_exchange": "binance",
+                "strategy": "trend_following",
+                "summary": {"risk_score": 0.69},
+            },
+        },
+    ]
+
+    with patch("scripts.calibrate_autotrade_thresholds.load_risk_thresholds", return_value={}):
+        report = _generate_report(
+            journal_events=[],
+            autotrade_entries=autotrade_entries,
+            percentiles=[0.5],
+            suggestion_percentile=0.5,
+        )
+
+    groups = {
+        (group["primary_exchange"], group["strategy"]): group for group in report["groups"]
+    }
+
+    key = ("binance", "trend_following")
+    assert key in groups
+    freeze_only_group = groups[key]
+    assert freeze_only_group["metrics"] == {}
+    assert freeze_only_group["freeze_summary"]["total"] == 2
+    assert freeze_only_group["freeze_summary"]["omitted"] == 0
+    assert len(freeze_only_group["raw_freeze_events"]) == 2
+    assert freeze_only_group["raw_freeze_events_truncated"] is False
+    assert freeze_only_group["raw_freeze_events_omitted"] == 0
+
+    global_summary = report["global_summary"]["freeze_summary"]
+    assert global_summary["total"] == 2
+    assert global_summary["omitted"] == 0
+
+
+def test_write_csv_includes_freeze_only_groups(tmp_path: Path) -> None:
+    autotrade_entries = [
+        {
+            "timestamp": "2024-02-01T00:00:00Z",
+            "status": "auto_risk_freeze",
+            "detail": {
+                "symbol": "ETHUSDT",
+                "primary_exchange": "binance",
+                "strategy": "trend_following",
+                "summary": {"risk_score": 0.71},
+            },
+        },
+        {
+            "timestamp": "2024-02-01T01:00:00Z",
+            "status": "risk_freeze_manual",
+            "detail": {
+                "symbol": "ETHUSDT",
+                "primary_exchange": "binance",
+                "strategy": "trend_following",
+                "summary": {"risk_score": 0.69},
+            },
+        },
+    ]
+
+    with patch("scripts.calibrate_autotrade_thresholds.load_risk_thresholds", return_value={}):
+        report = _generate_report(
+            journal_events=[],
+            autotrade_entries=autotrade_entries,
+            percentiles=[0.5],
+            suggestion_percentile=0.5,
+        )
+
+    csv_path = tmp_path / "freeze_only.csv"
+    _write_csv(
+        report["groups"],
+        csv_path,
+        percentiles=report["percentiles"],
+        global_summary=report["global_summary"],
+    )
+
+    with csv_path.open("r", encoding="utf-8") as handle:
+        reader = csv.DictReader(handle)
+        rows = list(reader)
+
+    freeze_rows = [
+        row
+        for row in rows
+        if row["metric"] == "__freeze_summary__" and row["primary_exchange"] == "binance"
+    ]
+    assert freeze_rows, "CSV powinien zawierać wiersz dla blokad"
+    freeze_row = freeze_rows[0]
+    assert int(freeze_row["freeze_total"]) == 2
+    assert int(freeze_row["freeze_auto"]) == 1
+    assert int(freeze_row["freeze_manual"]) == 1
+    assert freeze_row["freeze_status_counts"], "Oczekiwano rozbicia statusów"
+
+    aggregated_freeze_rows = [
+        row
+        for row in rows
+        if row["metric"] == "__freeze_summary__" and row["primary_exchange"] == "__all__"
+    ]
+    assert aggregated_freeze_rows, "CSV powinien zawierać wiersz zbiorczy"
+    assert int(aggregated_freeze_rows[0]["freeze_total"]) == 2
 
 
 def test_build_symbol_map_coalesces_case_variants() -> None:
@@ -1167,3 +1552,71 @@ def test_symbol_map_ambiguous_entry_keeps_unknown_routing() -> None:
 
     assert set(groups) == {("unknown", "unknown")}
     assert groups[("unknown", "unknown")]["metrics"]["risk_score"]["count"] == 1
+
+
+def test_autotrade_export_is_parsed_streamingly(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    export_path = tmp_path / "export.json"
+    entries = [
+        {"timestamp": "2024-01-01T00:00:00Z", "detail": {"symbol": "BTCUSDT"}},
+        {"timestamp": "2024-01-01T00:05:00Z", "detail": {"symbol": "BTCUSDT"}},
+        {"timestamp": "2024-01-01T00:10:00Z", "detail": {"symbol": "BTCUSDT"}},
+        {"timestamp": "2024-01-01T00:15:00Z", "detail": {"symbol": "BTCUSDT"}},
+    ]
+    export_path.write_text(json.dumps({"entries": entries}), encoding="utf-8")
+
+    read_lengths: list[int] = []
+    original_open = Path.open
+
+    class CountingHandle:
+        def __init__(self, handle):  # type: ignore[no-untyped-def]
+            self._handle = handle
+
+        def read(self, size: int = -1) -> str:
+            data = self._handle.read(size)
+            read_lengths.append(len(data))
+            return data
+
+        def __getattr__(self, name: str):  # noqa: ANN204 - passthrough helper
+            return getattr(self._handle, name)
+
+        def __enter__(self):  # noqa: ANN204 - passthrough helper
+            self._handle.__enter__()
+            return self
+
+        def __exit__(self, *exc):  # noqa: ANN204 - passthrough helper
+            return self._handle.__exit__(*exc)
+
+    def counting_open(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+        return CountingHandle(original_open(self, *args, **kwargs))
+
+    monkeypatch.setattr("scripts.calibrate_autotrade_thresholds._STREAM_READ_SIZE", 16)
+    monkeypatch.setattr(Path, "open", counting_open)
+
+    loaded_entries = list(_load_autotrade_entries([str(export_path)]))
+    assert len(loaded_entries) == len(entries)
+
+    positive_reads = [length for length in read_lengths if length > 0]
+    assert len(positive_reads) >= 2
+    assert max(positive_reads) <= 16
+
+
+def test_autotrade_export_with_bom(tmp_path: Path) -> None:
+    export_path = tmp_path / "export_with_bom.json"
+    payload = {"entries": [{"timestamp": "2024-01-01T00:00:00Z"}]}
+    export_path.write_text("\ufeff" + json.dumps(payload), encoding="utf-8")
+
+    entries = list(_load_autotrade_entries([str(export_path)]))
+
+    assert len(entries) == 1
+    assert entries[0]["timestamp"] == "2024-01-01T00:00:00Z"
+
+
+def test_autotrade_export_rejects_extra_data_after_array(tmp_path: Path) -> None:
+    export_path = tmp_path / "export_extra.json"
+    payload = [{"timestamp": "2024-01-01T00:00:00Z"}]
+    export_path.write_text(json.dumps(payload) + " {}", encoding="utf-8")
+
+    with pytest.raises(SystemExit, match="dodatkowe dane po tablicy"):
+        list(_load_autotrade_entries([str(export_path)]))

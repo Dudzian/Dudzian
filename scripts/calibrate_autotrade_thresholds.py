@@ -9,6 +9,10 @@ from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable, Mapping
+from decimal import Decimal
+
+
+_STREAM_READ_SIZE = 65536
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
@@ -313,13 +317,23 @@ def _load_threshold_payload(path: Path) -> object:
         raise SystemExit(f"Nie udało się wczytać pliku z progami: {path}") from exc
 
 
+def _ensure_finite_threshold(value: float, *, metric: str, source: str) -> float:
+    if not math.isfinite(value):
+        raise SystemExit(
+            f"Metryka {metric} z {source} posiada niefinityczną wartość: {value}"
+        )
+    return value
+
+
 def _load_current_signal_thresholds(
     sources: Iterable[str] | None,
-) -> tuple[dict[str, float], float | None]:
+) -> tuple[dict[str, float], float | None, dict[str, object]]:
     thresholds: dict[str, float] = {}
     current_risk_score: float | None = None
+    metadata_files: list[str] = []
+    metadata_inline: dict[str, float] = {}
     if not sources:
-        return thresholds, current_risk_score
+        return thresholds, current_risk_score, {}
 
     for source in sources:
         if not source:
@@ -329,6 +343,7 @@ def _load_current_signal_thresholds(
             continue
         path = Path(candidate).expanduser()
         if path.exists():
+            metadata_files.append(str(path))
             payload = _load_threshold_payload(path)
             if not isinstance(payload, (Mapping, list, tuple)):
                 raise SystemExit(
@@ -338,10 +353,15 @@ def _load_current_signal_thresholds(
                 for metric_name in _SUPPORTED_THRESHOLD_METRICS:
                     value = _resolve_metric_threshold(mapping, metric_name)
                     if value is not None:
+                        numeric = _ensure_finite_threshold(
+                            float(value),
+                            metric=metric_name,
+                            source=str(path),
+                        )
                         if metric_name == "risk_score":
-                            current_risk_score = float(value)
+                            current_risk_score = numeric
                         else:
-                            thresholds[metric_name] = float(value)
+                            thresholds[metric_name] = numeric
             continue
         if "=" not in candidate:
             raise SystemExit(f"Ścieżka z progami nie istnieje: {path}")
@@ -351,12 +371,24 @@ def _load_current_signal_thresholds(
                 continue
             metric_name_normalized = _normalize_metric_key(metric_name)
             if metric_name_normalized in _SUPPORTED_THRESHOLD_METRICS:
+                finite_value = _ensure_finite_threshold(
+                    float(numeric),
+                    metric=metric_name_normalized,
+                    source="parametru CLI",
+                )
+                metadata_inline[metric_name_normalized] = finite_value
                 if metric_name_normalized == "risk_score":
-                    current_risk_score = float(numeric)
+                    current_risk_score = finite_value
                 else:
-                    thresholds[metric_name_normalized] = numeric
+                    thresholds[metric_name_normalized] = finite_value
 
-    return thresholds, current_risk_score
+    metadata: dict[str, object] = {}
+    if metadata_files:
+        metadata["files"] = metadata_files
+    if metadata_inline:
+        metadata["inline"] = metadata_inline
+
+    return thresholds, current_risk_score, metadata
 
 
 def _normalize_risk_threshold_paths(sources: Iterable[str] | None) -> list[Path]:
@@ -406,31 +438,32 @@ def _load_journal_events(
     *,
     since: datetime | None = None,
     until: datetime | None = None,
-) -> list[dict[str, object]]:
-    events: list[dict[str, object]] = []
-    for path in paths:
-        try:
-            with path.open("r", encoding="utf-8") as handle:
-                for line in handle:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        payload = json.loads(line)
-                    except json.JSONDecodeError as exc:  # noqa: BLE001 - CLI feedback
-                        raise SystemExit(
-                            f"Nie udało się sparsować JSON w dzienniku {path}: {exc}"
-                        ) from exc
-                    if isinstance(payload, Mapping):
-                        timestamp = _parse_datetime(payload.get("timestamp"))
-                        if since and timestamp and timestamp < since:
+) -> Iterable[dict[str, object]]:
+    def _iterator() -> Iterable[dict[str, object]]:
+        for path in paths:
+            try:
+                with path.open("r", encoding="utf-8") as handle:
+                    for line in handle:
+                        line = line.strip()
+                        if not line:
                             continue
-                        if until and timestamp and timestamp > until:
-                            continue
-                        events.append(dict(payload))
-        except OSError as exc:  # noqa: BLE001 - CLI feedback
-            raise SystemExit(f"Nie udało się odczytać dziennika {path}: {exc}") from exc
-    return events
+                        try:
+                            payload = json.loads(line)
+                        except json.JSONDecodeError as exc:  # noqa: BLE001 - CLI feedback
+                            raise SystemExit(
+                                f"Nie udało się sparsować JSON w dzienniku {path}: {exc}"
+                            ) from exc
+                        if isinstance(payload, Mapping):
+                            timestamp = _parse_datetime(payload.get("timestamp"))
+                            if since and timestamp and timestamp < since:
+                                continue
+                            if until and timestamp and timestamp > until:
+                                continue
+                            yield dict(payload)
+            except OSError as exc:  # noqa: BLE001 - CLI feedback
+                raise SystemExit(f"Nie udało się odczytać dziennika {path}: {exc}") from exc
+
+    return _iterator()
 
 
 def _extract_entry_timestamp(entry: Mapping[str, object]) -> datetime | None:
@@ -450,42 +483,210 @@ def _extract_entry_timestamp(entry: Mapping[str, object]) -> datetime | None:
     return None
 
 
+class _JSONStream:
+    __slots__ = ("_handle", "_buffer", "_pos", "_decoder")
+
+    def __init__(self, handle) -> None:  # type: ignore[no-untyped-def]
+        self._handle = handle
+        self._buffer = ""
+        self._pos = 0
+        self._decoder = json.JSONDecoder()
+
+    def _refill(self) -> bool:
+        chunk = self._handle.read(_STREAM_READ_SIZE)
+        if chunk == "":
+            return False
+        if self._pos > 0:
+            self._buffer = self._buffer[self._pos :] + chunk
+            self._pos = 0
+        else:
+            self._buffer += chunk
+        return True
+
+    def _ensure(self) -> bool:
+        if self._pos < len(self._buffer):
+            return True
+        return self._refill()
+
+    def compact(self) -> None:
+        if self._pos > 0:
+            self._buffer = self._buffer[self._pos :]
+            self._pos = 0
+
+    def skip_whitespace(self) -> None:
+        while True:
+            while self._pos < len(self._buffer) and self._buffer[self._pos].isspace():
+                self._pos += 1
+            if self._pos < len(self._buffer):
+                return
+            if not self._refill():
+                return
+
+    def peek_char(self) -> str | None:
+        while True:
+            if self._pos < len(self._buffer):
+                return self._buffer[self._pos]
+            if not self._refill():
+                return None
+
+    def consume_char(self, expected: str | None = None) -> str:
+        if not self._ensure():
+            raise SystemExit("Nieoczekiwany koniec danych podczas parsowania JSON")
+        char = self._buffer[self._pos]
+        if expected is not None and char != expected:
+            raise SystemExit(
+                f"Niepoprawny JSON: oczekiwano znaku '{expected}', otrzymano '{char}'"
+            )
+        self._pos += 1
+        return char
+
+    def decode_value(self) -> object:
+        while True:
+            try:
+                value, new_pos = self._decoder.raw_decode(self._buffer, self._pos)
+            except json.JSONDecodeError:
+                if not self._refill():
+                    raise SystemExit("Nieoczekiwany koniec danych podczas parsowania JSON")
+                continue
+            self._pos = new_pos
+            return value
+
 def _load_autotrade_entries(
     paths: Iterable[str],
     *,
     since: datetime | None = None,
     until: datetime | None = None,
-) -> list[dict[str, object]]:
-    entries: list[dict[str, object]] = []
-    for raw in paths:
-        path = Path(raw).expanduser()
-        if not path.exists():
-            raise SystemExit(f"Eksport autotradera nie istnieje: {path}")
-        try:
-            payload = json.loads(path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError as exc:  # noqa: BLE001 - CLI feedback
-            raise SystemExit(f"Niepoprawny JSON w eksporcie autotradera {path}: {exc}") from exc
-        if isinstance(payload, Mapping):
-            raw_entries = payload.get("entries")
-            if isinstance(raw_entries, Iterable):
-                for item in raw_entries:
-                    if isinstance(item, Mapping):
-                        timestamp = _extract_entry_timestamp(item)
-                        if since and timestamp and timestamp < since:
-                            continue
-                        if until and timestamp and timestamp > until:
-                            continue
-                        entries.append(dict(item))
-        elif isinstance(payload, list):
-            for item in payload:
-                if isinstance(item, Mapping):
-                    timestamp = _extract_entry_timestamp(item)
-                    if since and timestamp and timestamp < since:
+) -> Iterable[dict[str, object]]:
+    def _iterator() -> Iterable[dict[str, object]]:
+        for raw in paths:
+            path = Path(raw).expanduser()
+            if not path.exists():
+                raise SystemExit(f"Eksport autotradera nie istnieje: {path}")
+            try:
+                with path.open("r", encoding="utf-8") as handle:
+                    stream = _JSONStream(handle)
+                    stream.skip_whitespace()
+                    first = stream.peek_char()
+                    if first == "\ufeff":
+                        stream.consume_char()
+                        stream.compact()
+                        stream.skip_whitespace()
+                        first = stream.peek_char()
+                    if first is None:
                         continue
-                    if until and timestamp and timestamp > until:
-                        continue
-                    entries.append(dict(item))
-    return entries
+                    if first == "[":
+                        stream.consume_char("[")
+                        stream.compact()
+                        yield from _stream_autotrade_array(stream, since=since, until=until, enforce_eof=True)
+                    elif first == "{":
+                        stream.consume_char("{")
+                        stream.compact()
+                        yield from _stream_autotrade_object(stream, since=since, until=until)
+                    else:
+                        raise SystemExit(
+                            f"Nieobsługiwany format JSON w eksporcie autotradera {path}"
+                        )
+            except OSError as exc:
+                raise SystemExit(f"Nie udało się odczytać eksportu {path}: {exc}") from exc
+            except SystemExit:
+                raise
+            except Exception as exc:  # noqa: BLE001 - CLI feedback
+                raise SystemExit(
+                    f"Niepoprawny JSON w eksporcie autotradera {path}: {exc}"
+                ) from exc
+
+    return _iterator()
+
+
+def _stream_autotrade_array(
+    stream: _JSONStream,
+    *,
+    since: datetime | None,
+    until: datetime | None,
+    enforce_eof: bool = False,
+) -> Iterable[dict[str, object]]:
+    first_value = True
+    while True:
+        stream.skip_whitespace()
+        char = stream.peek_char()
+        if char is None:
+            raise SystemExit("Niepoprawny JSON: nieoczekiwane zakończenie tablicy")
+        if char == "]":
+            stream.consume_char("]")
+            stream.compact()
+            break
+        if not first_value:
+            if char != ",":
+                raise SystemExit("Niepoprawny JSON: oczekiwano ',' w tablicy")
+            stream.consume_char(",")
+            stream.compact()
+            stream.skip_whitespace()
+        entry = stream.decode_value()
+        stream.compact()
+        if isinstance(entry, Mapping):
+            timestamp = _extract_entry_timestamp(entry)
+            if since and timestamp and timestamp < since:
+                first_value = False
+                continue
+            if until and timestamp and timestamp > until:
+                first_value = False
+                continue
+            yield dict(entry)
+        first_value = False
+    if enforce_eof:
+        stream.skip_whitespace()
+        if stream.peek_char() is not None:
+            stream.skip_whitespace()
+            if stream.peek_char() is not None:
+                raise SystemExit("Niepoprawny JSON: dodatkowe dane po tablicy")
+
+
+def _stream_autotrade_object(
+    stream: _JSONStream,
+    *,
+    since: datetime | None,
+    until: datetime | None,
+) -> Iterable[dict[str, object]]:
+    first_pair = True
+    while True:
+        stream.skip_whitespace()
+        char = stream.peek_char()
+        if char is None:
+            raise SystemExit("Niepoprawny JSON: nieoczekiwane zakończenie obiektu")
+        if char == "}":
+            stream.consume_char("}")
+            stream.compact()
+            break
+        if not first_pair:
+            if char != ",":
+                raise SystemExit("Niepoprawny JSON: oczekiwano ',' w obiekcie")
+            stream.consume_char(",")
+            stream.compact()
+            stream.skip_whitespace()
+        key = stream.decode_value()
+        stream.compact()
+        if not isinstance(key, str):
+            raise SystemExit("Niepoprawny JSON: klucz obiektu musi być napisem")
+        stream.skip_whitespace()
+        stream.consume_char(":")
+        stream.compact()
+        stream.skip_whitespace()
+        if key == "entries":
+            char = stream.peek_char()
+            if char != "[":
+                raise SystemExit("Niepoprawny JSON: pole 'entries' musi być tablicą")
+            stream.consume_char("[")
+            stream.compact()
+            yield from _stream_autotrade_array(stream, since=since, until=until)
+        else:
+            _ = stream.decode_value()
+            stream.compact()
+        first_pair = False
+    stream.skip_whitespace()
+    if stream.peek_char() is not None:
+        stream.skip_whitespace()
+        if stream.peek_char() is not None:
+            raise SystemExit("Niepoprawny JSON: dodatkowe dane po obiekcie")
 
 
 def _resolve_key(exchange: str | None, strategy: str | None) -> tuple[str, str]:
@@ -520,40 +721,47 @@ def _has_conflict(existing: tuple[str, str], candidate: tuple[str, str]) -> bool
     return False
 
 
+def _update_symbol_map_entry(
+    symbol_map: dict[str, tuple[str, str]],
+    event: Mapping[str, object],
+) -> None:
+    symbol = _canonicalize_symbol_key(event.get("symbol"))
+    if not symbol:
+        return
+    exchange = _normalize_string(event.get("primary_exchange"))
+    strategy = _normalize_string(event.get("strategy"))
+    key = _resolve_key(exchange, strategy)
+    existing = symbol_map.get(symbol)
+    if existing is None:
+        symbol_map[symbol] = key
+        return
+    if existing == _AMBIGUOUS_SYMBOL_MAPPING:
+        return
+    if existing == key:
+        return
+    if _has_conflict(existing, key):
+        symbol_map[symbol] = _AMBIGUOUS_SYMBOL_MAPPING
+        return
+    merged_exchange = existing[0]
+    merged_strategy = existing[1]
+    candidate_exchange, candidate_strategy = key
+    if not _is_unknown_token(candidate_exchange):
+        merged_exchange = candidate_exchange
+    if not _is_unknown_token(candidate_strategy):
+        merged_strategy = candidate_strategy
+    merged = (merged_exchange, merged_strategy)
+    if merged == existing:
+        return
+    if _has_conflict(existing, merged):
+        symbol_map[symbol] = _AMBIGUOUS_SYMBOL_MAPPING
+        return
+    symbol_map[symbol] = merged
+
+
 def _build_symbol_map(events: Iterable[Mapping[str, object]]) -> dict[str, tuple[str, str]]:
     symbol_map: dict[str, tuple[str, str]] = {}
     for event in events:
-        symbol = _canonicalize_symbol_key(event.get("symbol"))
-        if not symbol:
-            continue
-        exchange = _normalize_string(event.get("primary_exchange"))
-        strategy = _normalize_string(event.get("strategy"))
-        key = _resolve_key(exchange, strategy)
-        existing = symbol_map.get(symbol)
-        if existing is None:
-            symbol_map[symbol] = key
-            continue
-        if existing == _AMBIGUOUS_SYMBOL_MAPPING:
-            continue
-        if existing == key:
-            continue
-        if _has_conflict(existing, key):
-            symbol_map[symbol] = _AMBIGUOUS_SYMBOL_MAPPING
-            continue
-        merged_exchange = existing[0]
-        merged_strategy = existing[1]
-        candidate_exchange, candidate_strategy = key
-        if not _is_unknown_token(candidate_exchange):
-            merged_exchange = candidate_exchange
-        if not _is_unknown_token(candidate_strategy):
-            merged_strategy = candidate_strategy
-        merged = (merged_exchange, merged_strategy)
-        if merged == existing:
-            continue
-        if _has_conflict(existing, merged):
-            symbol_map[symbol] = _AMBIGUOUS_SYMBOL_MAPPING
-            continue
-        symbol_map[symbol] = merged
+        _update_symbol_map_entry(symbol_map, event)
     return symbol_map
 
 
@@ -729,6 +937,19 @@ def _finite_values(values: Iterable[object]) -> list[float]:
     return finite
 
 
+def _format_percentile_label(percentile: float) -> str:
+    decimal_value = Decimal(str(percentile)) * Decimal(100)
+    normalized = decimal_value.normalize()
+    text = format(normalized, "f")
+    if "." in text:
+        integer, fractional = text.split(".", 1)
+        fractional = fractional.rstrip("0")
+        if fractional:
+            return f"p{integer.zfill(2)}_{fractional}"
+        return f"p{integer.zfill(2)}"
+    return f"p{text.zfill(2)}"
+
+
 def _metric_statistics(values: list[float], percentiles: Iterable[float]) -> dict[str, object]:
     if not values:
         return {
@@ -744,7 +965,7 @@ def _metric_statistics(values: list[float], percentiles: Iterable[float]) -> dic
     mean = statistics.fmean(sorted_values)
     stddev = statistics.pstdev(sorted_values) if count > 1 else 0.0
     percentiles_payload = {
-        f"p{int(p * 100):02d}": _compute_percentile(sorted_values, p)
+        _format_percentile_label(p): _compute_percentile(sorted_values, p)
         for p in percentiles
     }
     return {
@@ -798,12 +1019,14 @@ def _format_freeze_summary(summary: Mapping[str, object]) -> dict[str, object]:
     status_counts = summary.get("status_counts")
     reason_counts = summary.get("reason_counts")
     total = int(summary.get("total") or 0)
+    omitted_total = summary.get("omitted_total")
+    omitted = int(omitted_total) if omitted_total is not None else 0
     auto_count = 0
     manual_count = 0
     if isinstance(type_counts, Counter):
         auto_count = int(type_counts.get("auto", 0))
         manual_count = int(type_counts.get("manual", 0))
-    return {
+    payload = {
         "total": total,
         "auto": auto_count,
         "manual": manual_count,
@@ -822,6 +1045,8 @@ def _format_freeze_summary(summary: Mapping[str, object]) -> dict[str, object]:
             )
         ],
     }
+    payload["omitted"] = omitted
+    return payload
 
 
 def _write_json(report: Mapping[str, object], destination: Path) -> None:
@@ -839,6 +1064,15 @@ def _write_csv(
     import csv
 
     destination.parent.mkdir(parents=True, exist_ok=True)
+    freeze_columns = [
+        "freeze_total",
+        "freeze_auto",
+        "freeze_manual",
+        "freeze_omitted",
+        "freeze_status_counts",
+        "freeze_reason_counts",
+        "freeze_truncated",
+    ]
     fieldnames = [
         "primary_exchange",
         "strategy",
@@ -850,7 +1084,54 @@ def _write_csv(
         "stddev",
         "suggested_threshold",
         "current_threshold",
-    ] + list(percentiles)
+    ] + list(percentiles) + freeze_columns
+    freeze_defaults = {column: "" for column in freeze_columns}
+    def _freeze_row_payload(
+        *,
+        primary_exchange: str,
+        strategy: str,
+        summary: Mapping[str, object] | None,
+        truncated: bool | None,
+    ) -> dict[str, object] | None:
+        if summary is None:
+            return None
+        total = summary.get("total")
+        auto = summary.get("auto")
+        manual = summary.get("manual")
+        omitted = summary.get("omitted")
+        statuses = summary.get("statuses")
+        reasons = summary.get("reasons")
+        row: dict[str, object] = {
+            "primary_exchange": primary_exchange,
+            "strategy": strategy,
+            "metric": "__freeze_summary__",
+            "count": total,
+            "min": "",
+            "max": "",
+            "mean": "",
+            "stddev": "",
+            "suggested_threshold": "",
+            "current_threshold": "",
+        }
+        row.update(freeze_defaults)
+        if total is not None:
+            row["freeze_total"] = total
+        if auto is not None:
+            row["freeze_auto"] = auto
+        if manual is not None:
+            row["freeze_manual"] = manual
+        if omitted is not None:
+            row["freeze_omitted"] = omitted
+        if statuses:
+            row["freeze_status_counts"] = json.dumps(statuses, ensure_ascii=False)
+        if reasons:
+            row["freeze_reason_counts"] = json.dumps(reasons, ensure_ascii=False)
+        if truncated is not None:
+            row["freeze_truncated"] = str(bool(truncated)).lower()
+        else:
+            row["freeze_truncated"] = ""
+        return row
+
     with destination.open("w", encoding="utf-8", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
         writer.writeheader()
@@ -858,6 +1139,8 @@ def _write_csv(
             primary_exchange = group["primary_exchange"]
             strategy = group["strategy"]
             metrics = group["metrics"]
+            freeze_summary = group.get("freeze_summary") if isinstance(group.get("freeze_summary"), Mapping) else None
+            freeze_truncated = group.get("raw_freeze_events_truncated")
             for metric_name, metric_payload in metrics.items():
                 row = {
                     "primary_exchange": primary_exchange,
@@ -873,7 +1156,16 @@ def _write_csv(
                 }
                 for percentile_key, percentile_value in metric_payload.get("percentiles", {}).items():
                     row[percentile_key] = percentile_value
+                row.update(freeze_defaults)
                 writer.writerow(row)
+            freeze_row = _freeze_row_payload(
+                primary_exchange=primary_exchange,
+                strategy=strategy,
+                summary=freeze_summary,
+                truncated=bool(freeze_truncated) if freeze_truncated is not None else None,
+            )
+            if freeze_row is not None:
+                writer.writerow(freeze_row)
         if global_summary:
             metrics = global_summary.get("metrics")
             if isinstance(metrics, Mapping):
@@ -894,7 +1186,18 @@ def _write_csv(
                     if isinstance(percentiles_payload, Mapping):
                         for percentile_key, percentile_value in percentiles_payload.items():
                             row[percentile_key] = percentile_value
+                    row.update(freeze_defaults)
                     writer.writerow(row)
+            freeze_summary = global_summary.get("freeze_summary")
+            summary_mapping = freeze_summary if isinstance(freeze_summary, Mapping) else None
+            freeze_row = _freeze_row_payload(
+                primary_exchange="__all__",
+                strategy="__all__",
+                summary=summary_mapping,
+                truncated=None,
+            )
+            if freeze_row is not None:
+                writer.writerow(freeze_row)
 
 
 def _maybe_plot(
@@ -933,16 +1236,19 @@ def _maybe_plot(
 
 def _generate_report(
     *,
-    journal_events: list[dict[str, object]],
-    autotrade_entries: list[dict[str, object]],
+    journal_events: Iterable[Mapping[str, object]],
+    autotrade_entries: Iterable[Mapping[str, object]],
     percentiles: list[float],
     suggestion_percentile: float,
     since: datetime | None = None,
     until: datetime | None = None,
     current_signal_thresholds: Mapping[str, float] | None = None,
     risk_threshold_sources: Iterable[str] | None = None,
+    cli_risk_score: float | None = None,
+    current_signal_threshold_sources: Mapping[str, object] | None = None,
+    max_freeze_events: int | None = None,
 ) -> dict[str, object]:
-    symbol_map = _build_symbol_map(journal_events)
+    symbol_map: dict[str, tuple[str, str]] = {}
     grouped_values: dict[tuple[str, str], dict[str, list[float]]] = defaultdict(
         lambda: defaultdict(list)
     )
@@ -1016,17 +1322,27 @@ def _generate_report(
             if numeric_duration is not None and math.isfinite(numeric_duration):
                 grouped_values[key]["risk_freeze_duration"].append(numeric_duration)
                 raw_value_snapshots[key]["risk_freeze_duration"].append(numeric_duration)
-        freeze_events[key].append(
-            {
-                "status": status,
-                "type": freeze_type,
-                "reason": reason,
-                "duration": duration,
-                "risk_score": payload.get("risk_score"),
-            }
-        )
+        should_collect = True
+        if max_freeze_events is not None:
+            if max_freeze_events <= 0:
+                should_collect = False
+            else:
+                should_collect = len(freeze_events[key]) < max_freeze_events
+        if should_collect:
+            freeze_events[key].append(
+                {
+                    "status": status,
+                    "type": freeze_type,
+                    "reason": reason,
+                    "duration": duration,
+                    "risk_score": payload.get("risk_score"),
+                }
+            )
 
+    journal_count = 0
     for event in journal_events:
+        journal_count += 1
+        _update_symbol_map_entry(symbol_map, event)
         base_exchange = _normalize_string(event.get("primary_exchange"))
         base_strategy = _normalize_string(event.get("strategy"))
         key = _resolve_key(base_exchange, base_strategy)
@@ -1060,7 +1376,9 @@ def _generate_report(
             _record_display(freeze_key, exchange, strategy)
             _record_freeze(freeze_key, freeze_payload)
 
+    autotrade_count = 0
     for entry in autotrade_entries:
+        autotrade_count += 1
         summary = _extract_summary(entry)
         symbol = _extract_symbol(entry)
         key, display = _resolve_group_from_symbol(entry, symbol, summary, symbol_map)
@@ -1107,6 +1425,9 @@ def _generate_report(
         thresholds = load_risk_thresholds()
         current_risk_score = _extract_risk_score_threshold(thresholds)
 
+    if cli_risk_score is not None:
+        current_risk_score = float(cli_risk_score)
+
     groups: list[dict[str, object]] = []
     aggregated_values: defaultdict[str, list[float]] = defaultdict(list)
     aggregated_freeze_summary = {
@@ -1114,9 +1435,19 @@ def _generate_report(
         "type_counts": Counter(),
         "status_counts": Counter(),
         "reason_counts": Counter(),
+        "omitted_total": 0,
     }
 
-    for (exchange, strategy), metrics in sorted(grouped_values.items()):
+    truncated_group_count = 0
+
+    all_group_keys = set(grouped_values.keys())
+    all_group_keys.update(freeze_summaries.keys())
+    all_group_keys.update(display_names.keys())
+    all_group_keys.update(freeze_events.keys())
+
+    for exchange, strategy in sorted(all_group_keys):
+        key = (exchange, strategy)
+        metrics = grouped_values.get(key) or {}
         metrics_payload = _build_metrics_section(
             metrics,
             percentiles,
@@ -1124,17 +1455,31 @@ def _generate_report(
             current_risk_score=current_risk_score,
             current_signal_thresholds=current_signal_thresholds,
         )
-        raw_snapshot = raw_value_snapshots.get((exchange, strategy), {})
-        freeze_summary = freeze_summaries.get((exchange, strategy)) or {
+        raw_snapshot = raw_value_snapshots.get(key, {})
+        freeze_summary = freeze_summaries.get(key) or {
             "total": 0,
             "type_counts": Counter(),
             "status_counts": Counter(),
             "reason_counts": Counter(),
         }
-        freeze_summary_payload = _format_freeze_summary(freeze_summary)
-        aggregated_freeze_summary["total"] = int(aggregated_freeze_summary["total"]) + int(
-            freeze_summary.get("total") or 0
+        display_exchange, display_strategy = display_names.get(
+            key, (exchange, strategy)
         )
+        raw_freeze_entries = list(freeze_events.get(key, []))
+        total_freezes = int(freeze_summary.get("total") or 0)
+        raw_freeze_omitted = max(total_freezes - len(raw_freeze_entries), 0)
+        raw_freeze_truncated = False
+        if max_freeze_events is not None and max_freeze_events >= 0:
+            if raw_freeze_omitted > 0:
+                raw_freeze_truncated = True
+                truncated_group_count += 1
+        else:
+            raw_freeze_omitted = 0
+        freeze_summary["omitted_total"] = int(raw_freeze_omitted)
+
+        if not metrics and total_freezes == 0 and not raw_freeze_entries:
+            continue
+
         if isinstance(freeze_summary.get("type_counts"), Counter):
             aggregated_freeze_summary["type_counts"].update(freeze_summary["type_counts"])
         if isinstance(freeze_summary.get("status_counts"), Counter):
@@ -1143,9 +1488,11 @@ def _generate_report(
             aggregated_freeze_summary["reason_counts"].update(freeze_summary["reason_counts"])
         for metric_name, values in metrics.items():
             aggregated_values[metric_name].extend(_finite_values(values))
-        display_exchange, display_strategy = display_names.get(
-            (exchange, strategy), (exchange, strategy)
-        )
+        freeze_summary_payload = _format_freeze_summary(freeze_summary)
+        aggregated_freeze_summary["total"] = int(aggregated_freeze_summary["total"]) + total_freezes
+        aggregated_freeze_summary["omitted_total"] = int(
+            aggregated_freeze_summary.get("omitted_total", 0)
+        ) + int(raw_freeze_omitted)
         groups.append(
             {
                 "primary_exchange": display_exchange,
@@ -1156,7 +1503,9 @@ def _generate_report(
                     for metric, values in raw_snapshot.items()
                 },
                 "freeze_summary": freeze_summary_payload,
-                "raw_freeze_events": list(freeze_events.get((exchange, strategy), [])),
+                "raw_freeze_events": raw_freeze_entries,
+                "raw_freeze_events_truncated": raw_freeze_truncated,
+                "raw_freeze_events_omitted": raw_freeze_omitted,
             }
         )
 
@@ -1170,13 +1519,39 @@ def _generate_report(
     global_summary = {
         "metrics": global_metrics,
         "freeze_summary": _format_freeze_summary(aggregated_freeze_summary),
-        "raw_values": {metric: _finite_values(values) for metric, values in aggregated_values.items()},
     }
+
+    sources_payload: dict[str, object] = {
+        "journal_events": journal_count,
+        "autotrade_entries": autotrade_count,
+    }
+    if current_signal_threshold_sources:
+        signal_sources_payload: dict[str, object] = {}
+        files = current_signal_threshold_sources.get("files")
+        if files:
+            signal_sources_payload["files"] = list(files)
+        inline_values = current_signal_threshold_sources.get("inline")
+        if inline_values:
+            signal_sources_payload["inline"] = {
+                key: float(value)
+                for key, value in inline_values.items()
+                if isinstance(key, str)
+            }
+        if signal_sources_payload:
+            sources_payload["current_signal_thresholds"] = signal_sources_payload
+    if risk_threshold_paths:
+        sources_payload["risk_threshold_files"] = [str(path) for path in risk_threshold_paths]
+    if cli_risk_score is not None:
+        sources_payload["risk_score_override"] = float(cli_risk_score)
+    if max_freeze_events is not None:
+        sources_payload["max_freeze_events"] = int(max_freeze_events)
+        if truncated_group_count:
+            sources_payload["raw_freeze_events_truncated_groups"] = truncated_group_count
 
     return {
         "schema": "stage6.autotrade.threshold_calibration",
         "generated_at": datetime.now(timezone.utc).isoformat(),
-        "percentiles": [f"p{int(p * 100):02d}" for p in percentiles],
+        "percentiles": [_format_percentile_label(p) for p in percentiles],
         "suggestion_percentile": suggestion_percentile,
         "filters": {
             "since": since.isoformat() if since else None,
@@ -1184,10 +1559,7 @@ def _generate_report(
         },
         "groups": groups,
         "global_summary": global_summary,
-        "sources": {
-            "journal_events": len(journal_events),
-            "autotrade_entries": len(autotrade_entries),
-        },
+        "sources": sources_payload,
     }
 
 
@@ -1256,6 +1628,14 @@ def _build_parser() -> argparse.ArgumentParser:
             " można wskazać wiele ścieżek, aby nadpisywać wartości (ostatnia wygrywa)."
         ),
     )
+    parser.add_argument(
+        "--max-freeze-events",
+        type=int,
+        help=(
+            "Maksymalna liczba zdarzeń risk_freeze zapisywanych w raporcie dla każdej pary"
+            " giełda/strategia (0 oznacza pominięcie sekcji raw_freeze_events)."
+        ),
+    )
     return parser
 
 
@@ -1266,6 +1646,10 @@ def main(argv: list[str] | None = None) -> int:
     percentiles = _parse_percentiles(args.percentiles)
     if not (0.0 < args.suggestion_percentile < 1.0):
         raise SystemExit("Percentyl sugerowanego progu musi być w przedziale (0, 1)")
+
+    max_freeze_events = args.max_freeze_events
+    if max_freeze_events is not None and max_freeze_events < 0:
+        raise SystemExit("Parametr --max-freeze-events musi być nieujemny")
 
     since = _parse_cli_datetime(args.since)
     until = _parse_cli_datetime(args.until)
@@ -1278,9 +1662,11 @@ def main(argv: list[str] | None = None) -> int:
 
     journal_events = _load_journal_events(journal_paths, since=since, until=until)
     autotrade_entries = _load_autotrade_entries(args.autotrade_export, since=since, until=until)
-    current_signal_thresholds, cli_risk_score = _load_current_signal_thresholds(
-        args.current_threshold
-    )
+    (
+        current_signal_thresholds,
+        cli_risk_score,
+        current_signal_threshold_sources,
+    ) = _load_current_signal_thresholds(args.current_threshold)
 
     report = _generate_report(
         journal_events=journal_events,
@@ -1291,6 +1677,9 @@ def main(argv: list[str] | None = None) -> int:
         until=until,
         current_signal_thresholds=current_signal_thresholds,
         risk_threshold_sources=args.risk_thresholds,
+        cli_risk_score=cli_risk_score,
+        current_signal_threshold_sources=current_signal_threshold_sources,
+        max_freeze_events=max_freeze_events,
     )
 
     if args.output_json:
@@ -1311,9 +1700,12 @@ def main(argv: list[str] | None = None) -> int:
         _maybe_plot(report["groups"], Path(args.plot_dir))
 
     total_groups = len(report["groups"])
+    sources = report.get("sources", {})
+    journal_count = int(sources.get("journal_events", 0))
+    autotrade_count = int(sources.get("autotrade_entries", 0))
     print(
-        f"Przetworzono {len(journal_events)} zdarzeń dziennika i "
-        f"{len(autotrade_entries)} wpisów autotradera dla {total_groups} kombinacji giełda/strategia."
+        f"Przetworzono {journal_count} zdarzeń dziennika i "
+        f"{autotrade_count} wpisów autotradera dla {total_groups} kombinacji giełda/strategia."
     )
 
     return 0
