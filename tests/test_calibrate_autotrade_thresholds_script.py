@@ -2752,6 +2752,72 @@ def test_load_autotrade_entries_supports_gzipped_json(tmp_path: Path) -> None:
     assert loaded[1]["decision"]["details"]["summary"]["risk_score"] == 0.39
 
 
+def test_load_autotrade_entries_streams_in_chunks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    export_path = tmp_path / "autotrade.json"
+    entries = [
+        {"timestamp": "2024-02-01T00:00:00Z", "value": 1, "padding": "x" * 64},
+        {"timestamp": "2024-02-01T00:10:00Z", "value": 2, "padding": "x" * 64},
+        {"timestamp": "2024-02-01T00:20:00Z", "value": 3, "padding": "x" * 64},
+    ]
+    export_path.write_text(json.dumps({"entries": entries}), encoding="utf-8")
+    expected_length = len(export_path.read_text(encoding="utf-8"))
+
+    from scripts import calibrate_autotrade_thresholds as module
+
+    monkeypatch.setattr(module, "_JSON_STREAM_CHUNK_SIZE", 16)
+
+    class TrackingHandle:
+        def __init__(self, path: Path):
+            self._handle = path.open("r", encoding="utf-8")
+            self.read_requests: list[int] = []
+            self.read_results: list[int] = []
+
+        def read(self, size: int = -1) -> str:
+            self.read_requests.append(size)
+            chunk = self._handle.read(size)
+            if chunk:
+                self.read_results.append(len(chunk))
+            return chunk
+
+        def close(self) -> None:
+            self._handle.close()
+
+        def __enter__(self) -> "TrackingHandle":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            self._handle.close()
+
+        def __getattr__(self, item: str):  # pragma: no cover - passthrough helper
+            return getattr(self._handle, item)
+
+    holder: dict[str, TrackingHandle] = {}
+
+    def fake_open_text_file(path: Path) -> TrackingHandle:
+        handle = TrackingHandle(path)
+        holder["handle"] = handle
+        return handle
+
+    monkeypatch.setattr(module, "_open_text_file", fake_open_text_file)
+
+    since = datetime(2024, 2, 1, 0, 5, tzinfo=timezone.utc)
+    until = datetime(2024, 2, 1, 0, 15, tzinfo=timezone.utc)
+
+    loaded = list(module._load_autotrade_entries([export_path], since=since, until=until))
+
+    assert [entry["timestamp"] for entry in loaded] == ["2024-02-01T00:10:00Z"]
+
+    handle = holder["handle"]
+    assert len(handle.read_requests) > 1
+    assert all(size not in (-1, None) for size in handle.read_requests)
+    assert handle.read_results
+    assert max(handle.read_results) <= module._JSON_STREAM_CHUNK_SIZE
+    assert max(handle.read_results) < expected_length
+    assert sum(handle.read_results) == expected_length
+
+
 def test_load_journal_events_supports_gzipped_jsonl(tmp_path: Path) -> None:
     journal_path = tmp_path / "journal.jsonl.gz"
     events = [
