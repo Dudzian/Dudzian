@@ -1867,6 +1867,7 @@ def _generate_report(
     limit_freeze_events: int | None = None,
     max_freeze_events: int | None = None,
     omit_raw_freeze_events: bool = False,
+    max_raw_freeze_events: int | None = None,
 ) -> dict[str, object]:
     normalized_signal_thresholds: dict[str, float] | None = None
     if isinstance(current_signal_thresholds, Mapping):
@@ -1914,6 +1915,17 @@ def _generate_report(
     aggregated_freeze_overflow = _empty_freeze_summary()
     freeze_event_samplers: dict[tuple[str, str], _FreezeEventSampler] = {}
     aggregated_freeze_sampler: _FreezeEventSampler | None = None
+    raw_freeze_event_display_limit: int | None
+
+    def _sanitize_optional_limit(raw_limit: object) -> int | None:
+        if raw_limit is None:
+            return None
+        try:
+            return max(0, int(raw_limit))
+        except (TypeError, ValueError):
+            return 0
+
+    raw_freeze_event_display_limit = _sanitize_optional_limit(max_raw_freeze_events)
     normalized_freeze_mode = str(raw_freeze_events_mode or "omit").strip().lower()
     if normalized_freeze_mode not in {"omit", "sample"}:
         normalized_freeze_mode = "omit"
@@ -2046,6 +2058,125 @@ def _generate_report(
             status_counts[status] += 1
         if isinstance(reason_counts, Counter):
             reason_counts[reason] += 1
+
+    def _clone_formatted_freeze_summary(
+        summary_payload: Mapping[str, object] | None,
+    ) -> dict[str, object]:
+        summary = _empty_freeze_summary()
+        if not isinstance(summary_payload, Mapping):
+            return summary
+        summary["total"] = int(summary_payload.get("total") or 0)
+        type_counts = summary.get("type_counts")
+        if isinstance(type_counts, Counter):
+            auto_count = summary_payload.get("auto")
+            manual_count = summary_payload.get("manual")
+            if isinstance(auto_count, (int, float)):
+                type_counts["auto"] = int(auto_count)
+            if isinstance(manual_count, (int, float)):
+                type_counts["manual"] = int(manual_count)
+        statuses = summary_payload.get("statuses")
+        if isinstance(statuses, Iterable):
+            for item in statuses:
+                if not isinstance(item, Mapping):
+                    continue
+                status = item.get("status")
+                count = item.get("count")
+                if status is None or count is None:
+                    continue
+                try:
+                    numeric_count = int(count)
+                except (TypeError, ValueError):
+                    continue
+                summary_status_counts = summary.get("status_counts")
+                if isinstance(summary_status_counts, Counter) and isinstance(status, str):
+                    summary_status_counts[status] += numeric_count
+        reasons = summary_payload.get("reasons")
+        if isinstance(reasons, Iterable):
+            for item in reasons:
+                if not isinstance(item, Mapping):
+                    continue
+                reason = item.get("reason")
+                count = item.get("count")
+                if reason is None or count is None:
+                    continue
+                try:
+                    numeric_count = int(count)
+                except (TypeError, ValueError):
+                    continue
+                summary_reason_counts = summary.get("reason_counts")
+                if isinstance(summary_reason_counts, Counter) and isinstance(reason, str):
+                    summary_reason_counts[reason] += numeric_count
+        return summary
+
+    def _limit_raw_freeze_payload(
+        payload: Mapping[str, object] | None,
+    ) -> dict[str, object] | None:
+        if not isinstance(payload, Mapping):
+            return None
+
+        normalized_limit = raw_freeze_event_display_limit
+        if normalized_limit is not None:
+            try:
+                normalized_limit = max(0, int(normalized_limit))
+            except (TypeError, ValueError):
+                normalized_limit = 0
+            if normalized_limit == 0:
+                return None
+
+        events_payload = payload.get("events")
+        events: list[dict[str, object]] = []
+        if isinstance(events_payload, Iterable) and not isinstance(events_payload, (str, bytes)):
+            for item in events_payload:
+                if not isinstance(item, Mapping):
+                    continue
+                events.append(
+                    {
+                        "status": item.get("status"),
+                        "type": item.get("type"),
+                        "reason": item.get("reason"),
+                        "duration": item.get("duration"),
+                        "risk_score": item.get("risk_score"),
+                    }
+                )
+
+        original_limit = _sanitize_optional_limit(payload.get("limit"))
+        if normalized_limit is None:
+            overflow_summary_payload = payload.get("overflow_summary")
+            if isinstance(overflow_summary_payload, Mapping):
+                overflow_summary = dict(overflow_summary_payload)
+            else:
+                overflow_summary = _format_freeze_summary(_empty_freeze_summary())
+            if original_limit is None:
+                computed_limit = len(events)
+            else:
+                computed_limit = original_limit
+            return {
+                "limit": computed_limit,
+                "events": [dict(event) for event in events],
+                "overflow_summary": overflow_summary,
+            }
+
+        trimmed_events = events[:normalized_limit]
+        overflow_summary_source = payload.get("overflow_summary")
+        overflow_summary = _clone_formatted_freeze_summary(
+            overflow_summary_source if isinstance(overflow_summary_source, Mapping) else None
+        )
+        for event in events[normalized_limit:]:
+            status = str(event.get("status") or "unknown")
+            freeze_type = str(event.get("type") or "manual")
+            reason = str(event.get("reason") or "unknown")
+            _increment_freeze_summary(overflow_summary, status, freeze_type, reason)
+        formatted_overflow = _format_freeze_summary(overflow_summary)
+        if original_limit is None:
+            computed_limit = normalized_limit
+        else:
+            computed_limit = min(original_limit, normalized_limit)
+        computed_limit = max(computed_limit, len(trimmed_events))
+        return {
+            "limit": computed_limit,
+            "events": [dict(event) for event in trimmed_events],
+            "overflow_summary": formatted_overflow,
+        }
 
     def _record_freeze(
         key: tuple[str, str],
@@ -2319,7 +2450,9 @@ def _generate_report(
         if sampling_freeze_events:
             sampler = freeze_event_samplers.get((exchange, strategy))
             if sampler is not None:
-                group_payload["raw_freeze_events"] = sampler.to_payload()
+                payload = _limit_raw_freeze_payload(sampler.to_payload())
+                if payload is not None:
+                    group_payload["raw_freeze_events"] = payload
         if include_raw_values:
             group_payload["raw_values"] = {
                 metric: (
@@ -2371,8 +2504,11 @@ def _generate_report(
             "overflow_summary": _format_freeze_summary(aggregated_freeze_overflow),
         }
     if sampling_freeze_events and aggregated_freeze_sampler is not None:
-        aggregated_raw_freeze_payload = aggregated_freeze_sampler.to_payload()
-        global_summary["raw_freeze_events"] = aggregated_raw_freeze_payload
+        aggregated_raw_freeze_payload = _limit_raw_freeze_payload(
+            aggregated_freeze_sampler.to_payload()
+        )
+        if aggregated_raw_freeze_payload is not None:
+            global_summary["raw_freeze_events"] = aggregated_raw_freeze_payload
     if include_raw_values:
         global_summary["raw_values"] = {
             metric: list(series.values())
@@ -2494,20 +2630,32 @@ def _generate_report(
         sources_payload["risk_threshold_files"] = [str(path) for path in risk_threshold_paths]
     if cli_risk_score is not None:
         sources_payload["risk_score_override"] = float(cli_risk_score)
-    if sampling_freeze_events:
-        raw_freeze_sources_payload: dict[str, object] = {
-            "mode": "sample",
-            "limit": sampler_limit,
-        }
-        if aggregated_raw_freeze_payload is None and aggregated_freeze_sampler is not None:
-            aggregated_raw_freeze_payload = aggregated_freeze_sampler.to_payload()
-        if aggregated_raw_freeze_payload is not None:
-            overflow_summary = aggregated_raw_freeze_payload.get("overflow_summary")
-            if isinstance(overflow_summary, Mapping):
-                raw_freeze_sources_payload["overflow_summary"] = dict(overflow_summary)
+    if aggregated_raw_freeze_payload is not None:
+        raw_freeze_sources_payload: dict[str, object] = {"mode": "sample"}
+        limit_value = aggregated_raw_freeze_payload.get("limit")
+        if isinstance(limit_value, (int, float)):
+            raw_freeze_sources_payload["limit"] = int(limit_value)
+        requested_limit = raw_freeze_event_display_limit
+        if isinstance(requested_limit, int):
+            raw_freeze_sources_payload["requested_limit"] = requested_limit
+        overflow_summary = aggregated_raw_freeze_payload.get("overflow_summary")
+        if isinstance(overflow_summary, Mapping):
+            raw_freeze_sources_payload["overflow_summary"] = dict(overflow_summary)
         sources_payload["raw_freeze_events"] = raw_freeze_sources_payload
     else:
-        sources_payload["raw_freeze_events"] = {"mode": "omit"}
+        omit_payload: dict[str, object] = {"mode": "omit"}
+        if isinstance(raw_freeze_event_display_limit, int):
+            omit_payload["requested_limit"] = raw_freeze_event_display_limit
+            if raw_freeze_event_display_limit == 0:
+                omit_payload["reason"] = "limit_zero"
+        if omit_raw_freeze_events:
+            omit_payload["reason"] = "explicit_omit"
+        elif not sampling_freeze_events and "reason" not in omit_payload:
+            if limit_freeze_events is None:
+                omit_payload["reason"] = "sampling_disabled"
+            else:
+                omit_payload["reason"] = "no_samples"
+        sources_payload["raw_freeze_events"] = omit_payload
     if freeze_event_limit is None:
         sources_payload["freeze_events"] = {"mode": "all"}
     else:
@@ -2637,6 +2785,14 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--max-raw-freeze-events",
+        type=int,
+        help=(
+            "Ogranicz liczbę zdarzeń prezentowanych w sekcji raw_freeze_events. "
+            "Pozwala skrócić próbkę bez zmiany agregatów ani źródeł danych."
+        ),
+    )
+    parser.add_argument(
         "--omit-raw-freeze-events",
         action="store_true",
         help=(
@@ -2738,6 +2894,7 @@ def main(argv: list[str] | None = None) -> int:
         limit_freeze_events=limit_freeze_events,
         max_freeze_events=getattr(args, "freeze_events_limit", None),
         omit_raw_freeze_events=bool(getattr(args, "omit_raw_freeze_events", False)),
+        max_raw_freeze_events=getattr(args, "max_raw_freeze_events", None),
     )
 
     if args.output_json:
