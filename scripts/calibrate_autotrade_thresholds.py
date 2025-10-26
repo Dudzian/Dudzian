@@ -108,6 +108,9 @@ class _JSONStreamEntriesParser:
         while True:
             while self._position < len(self._buffer) and self._buffer[self._position].isspace():
                 self._position += 1
+            if self._position < len(self._buffer) and self._buffer[self._position] == "\ufeff":
+                self._position += 1
+                continue
             if self._position < len(self._buffer):
                 return True
             if not self._read_more():
@@ -932,7 +935,13 @@ def _load_autotrade_entries(
         return item
 
     def _iter_json_lines(handle: TextIO, path: Path) -> Iterator[Mapping[str, object]]:
+        first_line = True
         for raw_line in handle:
+            if first_line and raw_line.startswith("\ufeff"):
+                raw_line = raw_line.lstrip("\ufeff")
+                first_line = False
+            elif first_line:
+                first_line = False
             line = raw_line.strip()
             if not line:
                 continue

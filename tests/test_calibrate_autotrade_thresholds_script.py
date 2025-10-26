@@ -2755,6 +2755,47 @@ def test_load_autotrade_entries_supports_gzipped_json(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("root_format", ["object", "array"])
+def test_load_autotrade_entries_json_with_bom(tmp_path: Path, root_format: str) -> None:
+    autotrade_path = tmp_path / "autotrade.json"
+    entries = [
+        {
+            "timestamp": "2024-01-01T00:00:00Z",
+            "decision": {
+                "details": {
+                    "symbol": "BTCUSDT",
+                    "primary_exchange": "binance",
+                    "strategy": "trend_following",
+                    "summary": {"risk_score": 0.51},
+                }
+            },
+        },
+        {
+            "timestamp": "2024-01-01T00:30:00Z",
+            "decision": {
+                "details": {
+                    "symbol": "ETHUSDT",
+                    "primary_exchange": "kraken",
+                    "strategy": "mean_reversion",
+                    "summary": {"risk_score": 0.44},
+                }
+            },
+        },
+    ]
+    if root_format == "object":
+        payload: object = {"entries": entries, "version": 2}
+    else:
+        payload = entries
+
+    with autotrade_path.open("w", encoding="utf-8") as handle:
+        handle.write("\ufeff")
+        json.dump(payload, handle)
+
+    loaded = list(_load_autotrade_entries([str(autotrade_path)]))
+
+    assert loaded == entries
+
+
+@pytest.mark.parametrize("root_format", ["object", "array"])
 def test_load_autotrade_entries_streams_in_chunks(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, root_format: str
 ) -> None:
@@ -2818,10 +2859,28 @@ def test_load_autotrade_entries_streams_in_chunks(
     handle = holder["handle"]
     assert len(handle.read_requests) > 1
     assert all(size == module._JSON_STREAM_CHUNK_SIZE for size in handle.read_requests)
+    assert -1 not in handle.read_requests
     assert handle.read_results
     assert max(handle.read_results) <= module._JSON_STREAM_CHUNK_SIZE
     assert max(handle.read_results) < expected_length
     assert sum(handle.read_results) == expected_length
+
+
+def test_load_autotrade_entries_jsonl_with_bom(tmp_path: Path) -> None:
+    export_path = tmp_path / "autotrade.jsonl"
+    payloads = [
+        {"timestamp": "2024-01-01T00:00:00Z", "value": 1},
+        {"timestamp": "2024-01-01T01:00:00Z", "value": 2},
+    ]
+    with export_path.open("w", encoding="utf-8") as handle:
+        handle.write("\ufeff")
+        for item in payloads:
+            handle.write(json.dumps(item))
+            handle.write("\n")
+
+    loaded = list(_load_autotrade_entries([export_path]))
+
+    assert loaded == payloads
 
 
 def test_load_journal_events_supports_gzipped_jsonl(tmp_path: Path) -> None:
