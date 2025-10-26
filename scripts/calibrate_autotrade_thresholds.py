@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import argparse
 import gzip
+import heapq
 import json
 import math
-import statistics
 import sys
 from array import array
+from bisect import bisect_left
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -645,11 +646,11 @@ def _load_journal_events(
         except OSError as exc:  # noqa: BLE001 - CLI feedback
             raise SystemExit(f"Nie udało się odczytać dziennika {path}: {exc}") from exc
 
-    def _stream() -> Iterator[Mapping[str, object]]:
+    def _generator() -> Iterator[Mapping[str, object]]:
         for path in paths:
             yield from _iter_path(path)
 
-    return _stream()
+    return _generator()
 
 
 def _extract_entry_timestamp(entry: Mapping[str, object]) -> datetime | None:
@@ -894,11 +895,11 @@ def _load_autotrade_entries(
                 f"Nie udało się odczytać eksportu autotradera {path}: {exc}"
             ) from exc
 
-    def _stream() -> Iterator[Mapping[str, object]]:
+    def _generator() -> Iterator[Mapping[str, object]]:
         for path in normalized_paths:
             yield from _iter_path(path)
 
-    return _stream()
+    return _generator()
 
 
 def _resolve_key(exchange: str | None, strategy: str | None) -> tuple[str, str]:
@@ -1149,6 +1150,233 @@ def _finite_values(values: Iterable[object]) -> list[float]:
     return finite
 
 
+def _percentile_target(count: int, percentile: float) -> tuple[int, int, float]:
+    position = (count - 1) * percentile
+    lower = int(math.floor(position))
+    upper = int(math.ceil(position))
+    weight = position - lower
+    return lower, upper, weight
+
+
+def _select_indices_from_sequences(
+    sequences: Iterable[Iterable[float]],
+    indices: Iterable[int],
+) -> dict[int, float]:
+    ordered_indices = sorted(set(index for index in indices if index >= 0))
+    if not ordered_indices:
+        return {}
+    iterables = [iter(sequence) for sequence in sequences]
+    if not iterables:
+        return {}
+    merged = heapq.merge(*iterables)
+    results: dict[int, float] = {}
+    target_iter = iter(ordered_indices)
+    try:
+        target = next(target_iter)
+    except StopIteration:
+        return {}
+    for index, value in enumerate(merged):
+        while target == index:
+            results[target] = float(value)
+            try:
+                target = next(target_iter)
+            except StopIteration:
+                return results
+        if index > ordered_indices[-1]:
+            break
+    return results
+
+
+def _compute_percentiles_from_sequences(
+    sequences: Iterable[Iterable[float]],
+    percentiles: Iterable[float],
+    *,
+    count: int,
+) -> dict[str, float]:
+    unique_percentiles = sorted({p for p in percentiles if 0.0 <= p <= 1.0})
+    if not unique_percentiles or count <= 0:
+        return {}
+    targets = {p: _percentile_target(count, p) for p in unique_percentiles}
+    required_indices = [index for triple in targets.values() for index in triple[:2]]
+    index_values = _select_indices_from_sequences(sequences, required_indices)
+    results: dict[str, float] = {}
+    for percentile in unique_percentiles:
+        lower, upper, weight = targets[percentile]
+        lower_value = index_values.get(lower)
+        upper_value = index_values.get(upper)
+        if lower_value is None or upper_value is None:
+            continue
+        if lower == upper:
+            value = lower_value
+        else:
+            value = lower_value + (upper_value - lower_value) * weight
+        results[f"p{int(percentile * 100):02d}"] = value
+    return results
+
+
+class _MetricSeries:
+    __slots__ = ("_values", "_absolute_values", "_sum", "_sum_of_squares")
+
+    def __init__(self) -> None:
+        self._values = array("d")
+        self._absolute_values = array("d")
+        self._sum = 0.0
+        self._sum_of_squares = 0.0
+
+    def append(self, value: float) -> None:
+        position = bisect_left(self._values, value)
+        self._values.insert(position, value)
+        absolute_value = abs(value)
+        abs_position = bisect_left(self._absolute_values, absolute_value)
+        self._absolute_values.insert(abs_position, absolute_value)
+        self._sum += value
+        self._sum_of_squares += value * value
+
+    def extend(self, values: Iterable[float]) -> None:
+        for value in values:
+            self.append(value)
+
+    def __len__(self) -> int:
+        return len(self._values)
+
+    def __iter__(self) -> Iterator[float]:
+        return iter(self._values)
+
+    def values(self) -> array:
+        return self._values
+
+    def absolute_values(self) -> array:
+        return self._absolute_values
+
+    @property
+    def sum(self) -> float:
+        return self._sum
+
+    @property
+    def sum_of_squares(self) -> float:
+        return self._sum_of_squares
+
+    def min_value(self) -> float | None:
+        return float(self._values[0]) if self._values else None
+
+    def max_value(self) -> float | None:
+        return float(self._values[-1]) if self._values else None
+
+    def _statistics_payload(self, percentiles: Iterable[float]) -> dict[str, object]:
+        count = len(self)
+        if not count:
+            return {
+                "count": 0,
+                "min": None,
+                "max": None,
+                "mean": None,
+                "stddev": None,
+                "percentiles": {},
+            }
+        mean = self._sum / count
+        if count > 1:
+            variance = max(self._sum_of_squares / count - mean * mean, 0.0)
+            stddev = math.sqrt(variance)
+        else:
+            stddev = 0.0
+        percentiles_payload = _compute_percentiles_from_sequences(
+            [self._values], percentiles, count=count
+        )
+        return {
+            "count": count,
+            "min": float(self._values[0]),
+            "max": float(self._values[-1]),
+            "mean": mean,
+            "stddev": stddev,
+            "percentiles": percentiles_payload,
+        }
+
+    def statistics(self, percentiles: Iterable[float]) -> dict[str, object]:
+        return self._statistics_payload(percentiles)
+
+    def suggest(self, percentile: float, *, absolute: bool = False) -> float | None:
+        if not self._values:
+            return None
+        sequences: list[array]
+        if absolute:
+            sequences = [self._absolute_values]
+        else:
+            sequences = [self._values]
+        percentile_key = f"p{int(percentile * 100):02d}"
+        result = _compute_percentiles_from_sequences(
+            sequences, [percentile], count=len(self)
+        )
+        return result.get(percentile_key)
+
+
+def _aggregate_metric_series(
+    series_list: Iterable[_MetricSeries],
+    percentiles: Iterable[float],
+    suggestion_percentile: float,
+    *,
+    absolute: bool,
+    current_threshold: float | None,
+) -> dict[str, object]:
+    non_empty_series = [series for series in series_list if len(series)]
+    if not non_empty_series:
+        return {
+            "count": 0,
+            "min": None,
+            "max": None,
+            "mean": None,
+            "stddev": None,
+            "percentiles": {},
+            "suggested_threshold": None,
+            "current_threshold": current_threshold,
+        }
+
+    total_count = sum(len(series) for series in non_empty_series)
+    total_sum = sum(series.sum for series in non_empty_series)
+    total_sum_of_squares = sum(series.sum_of_squares for series in non_empty_series)
+    mean = total_sum / total_count
+    if total_count > 1:
+        variance = max(total_sum_of_squares / total_count - mean * mean, 0.0)
+        stddev = math.sqrt(variance)
+    else:
+        stddev = 0.0
+
+    min_value: float | None = None
+    max_value: float | None = None
+    for series in non_empty_series:
+        series_min = series.min_value()
+        if series_min is not None:
+            min_value = series_min if min_value is None else min(min_value, series_min)
+        series_max = series.max_value()
+        if series_max is not None:
+            max_value = series_max if max_value is None else max(max_value, series_max)
+
+    sequences = [series.values() for series in non_empty_series]
+    percentiles_payload = _compute_percentiles_from_sequences(
+        sequences, percentiles, count=total_count
+    )
+
+    suggestion_sequences = (
+        [series.absolute_values() for series in non_empty_series]
+        if absolute
+        else [series.values() for series in non_empty_series]
+    )
+    suggestion_key = f"p{int(suggestion_percentile * 100):02d}"
+    suggestion_result = _compute_percentiles_from_sequences(
+        suggestion_sequences, [suggestion_percentile], count=total_count
+    )
+
+    return {
+        "count": total_count,
+        "min": min_value,
+        "max": max_value,
+        "mean": mean,
+        "stddev": stddev,
+        "percentiles": percentiles_payload,
+        "suggested_threshold": suggestion_result.get(suggestion_key),
+        "current_threshold": current_threshold,
+    }
+
+
 def _metric_statistics(values: list[float], percentiles: Iterable[float]) -> dict[str, object]:
     if not values:
         return {
@@ -1161,8 +1389,13 @@ def _metric_statistics(values: list[float], percentiles: Iterable[float]) -> dic
         }
     sorted_values = sorted(values)
     count = len(sorted_values)
-    mean = statistics.fmean(sorted_values)
-    stddev = statistics.pstdev(sorted_values) if count > 1 else 0.0
+    mean = sum(sorted_values) / count
+    if count > 1:
+        sum_of_squares = sum(value * value for value in sorted_values)
+        variance = max(sum_of_squares / count - mean * mean, 0.0)
+        stddev = math.sqrt(variance)
+    else:
+        stddev = 0.0
     percentiles_payload = {
         f"p{int(p * 100):02d}": _compute_percentile(sorted_values, p)
         for p in percentiles
@@ -1180,13 +1413,15 @@ def _metric_statistics(values: list[float], percentiles: Iterable[float]) -> dic
 def _suggest_threshold(values: list[float], percentile: float, *, absolute: bool = False) -> float | None:
     if not values:
         return None
-    target_values = [abs(value) for value in values] if absolute else list(values)
-    target_values.sort()
+    if absolute:
+        target_values = sorted(abs(value) for value in values)
+    else:
+        target_values = sorted(values)
     return _compute_percentile(target_values, percentile)
 
 
-def _numeric_buffer() -> array:
-    return array("d")
+def _numeric_buffer() -> _MetricSeries:
+    return _MetricSeries()
 
 
 def _build_metrics_section(
@@ -1199,23 +1434,29 @@ def _build_metrics_section(
 ) -> dict[str, dict[str, object]]:
     metrics_payload: dict[str, dict[str, object]] = {}
     for metric_name, values in values_map.items():
-        if isinstance(values, list):
-            try:
-                all_finite = all(math.isfinite(value) for value in values)
-            except TypeError:
-                all_finite = False
-            if all_finite:
-                finite_values = values
+        absolute = metric_name in _ABSOLUTE_THRESHOLD_METRICS
+        if isinstance(values, _MetricSeries):
+            stats_payload = values.statistics(percentiles)
+            suggested = values.suggest(suggestion_percentile, absolute=absolute)
+        else:
+            if isinstance(values, list):
+                try:
+                    all_finite = all(math.isfinite(value) for value in values)
+                except TypeError:
+                    all_finite = False
+                if all_finite:
+                    finite_values = values
+                else:
+                    finite_values = _finite_values(values)
+                    values[:] = finite_values
+            elif isinstance(values, array):
+                finite_values = list(values)
             else:
                 finite_values = _finite_values(values)
-                values[:] = finite_values
-        elif isinstance(values, array):
-            finite_values = list(values)
-        else:
-            finite_values = _finite_values(values)
-        stats_payload = _metric_statistics(finite_values, percentiles)
-        absolute = metric_name in _ABSOLUTE_THRESHOLD_METRICS
-        suggested = _suggest_threshold(finite_values, suggestion_percentile, absolute=absolute)
+            stats_payload = _metric_statistics(finite_values, percentiles)
+            suggested = _suggest_threshold(
+                finite_values, suggestion_percentile, absolute=absolute
+            )
         if metric_name == "risk_score":
             current = current_risk_score
         elif current_signal_thresholds:
@@ -1408,9 +1649,8 @@ def _generate_report(
     current_signal_thresholds = normalized_signal_thresholds
 
     symbol_map: dict[str, tuple[str, str]] = {}
-    grouped_values: dict[tuple[str, str], defaultdict[str, array]] = defaultdict(
-        lambda: defaultdict(_numeric_buffer)
-    )
+    grouped_values: dict[tuple[str, str], dict[str, _MetricSeries]] = {}
+    global_metric_buffers: defaultdict[str, list[_MetricSeries]] = defaultdict(list)
     freeze_summaries: dict[tuple[str, str], dict[str, object]] = defaultdict(
         lambda: {
             "total": 0,
@@ -1426,7 +1666,6 @@ def _generate_report(
         "status_counts": Counter(),
         "reason_counts": Counter(),
     }
-    global_metric_values: defaultdict[str, array] = defaultdict(_numeric_buffer)
     journal_count = 0
     autotrade_count = 0
     journal_iter = iter(journal_events)
@@ -1464,14 +1703,29 @@ def _generate_report(
         display_strategy = _select_display(current[1], candidate_strategy, key[1])
         display_names[key] = (display_exchange, display_strategy)
 
+    def _ensure_metrics(key: tuple[str, str]) -> dict[str, _MetricSeries]:
+        metrics = grouped_values.get(key)
+        if metrics is None:
+            metrics = {}
+            grouped_values[key] = metrics
+        return metrics
+
+    def _metric_buffer(key: tuple[str, str], metric_name: str) -> _MetricSeries:
+        metrics = _ensure_metrics(key)
+        buffer = metrics.get(metric_name)
+        if buffer is None:
+            buffer = _numeric_buffer()
+            metrics[metric_name] = buffer
+            global_metric_buffers[metric_name].append(buffer)
+        return buffer
+
     def _record_metric_value(
         key: tuple[str, str],
         metric_name: str,
         numeric: float,
     ) -> None:
-        values = grouped_values[key][metric_name]
+        values = _metric_buffer(key, metric_name)
         values.append(float(numeric))
-        global_metric_values[metric_name].append(float(numeric))
         if _METRIC_APPEND_OBSERVER is not None:
             _METRIC_APPEND_OBSERVER(key, metric_name, len(values))
 
@@ -1498,7 +1752,7 @@ def _generate_report(
             aggregated_freeze_summary["status_counts"][status] += 1
         if isinstance(aggregated_freeze_summary["reason_counts"], Counter):
             aggregated_freeze_summary["reason_counts"][reason] += 1
-        grouped_values[key]
+        _ensure_metrics(key)
         if duration is not None:
             try:
                 numeric_duration = float(duration)
@@ -1628,9 +1882,9 @@ def _generate_report(
     all_keys = set(grouped_values.keys()) | set(freeze_summaries.keys()) | set(display_names.keys())
 
     for exchange, strategy in sorted(all_keys):
-        metrics = grouped_values.get(
-            (exchange, strategy), defaultdict(_numeric_buffer)
-        )
+        metrics = grouped_values.get((exchange, strategy))
+        if metrics is None:
+            metrics = {}
         metrics_payload = _build_metrics_section(
             metrics,
             percentiles,
@@ -1667,21 +1921,29 @@ def _generate_report(
             }
         groups.append(group_payload)
 
-    global_metrics = _build_metrics_section(
-        global_metric_values,
-        percentiles,
-        suggestion_percentile,
-        current_risk_score=current_risk_score,
-        current_signal_thresholds=current_signal_thresholds,
-    )
+    global_metrics: dict[str, dict[str, object]] = {}
+    for metric_name, buffers in global_metric_buffers.items():
+        if metric_name == "risk_score":
+            current_threshold = current_risk_score
+        elif current_signal_thresholds:
+            current_threshold = current_signal_thresholds.get(metric_name)
+        else:
+            current_threshold = None
+        global_metrics[metric_name] = _aggregate_metric_series(
+            buffers,
+            percentiles,
+            suggestion_percentile,
+            absolute=metric_name in _ABSOLUTE_THRESHOLD_METRICS,
+            current_threshold=current_threshold,
+        )
     global_summary: dict[str, object] = {
         "metrics": global_metrics,
         "freeze_summary": _format_freeze_summary(aggregated_freeze_summary),
     }
     if include_raw_values:
         global_summary["raw_values"] = {
-            metric: [float(value) for value in values]
-            for metric, values in global_metric_values.items()
+            metric: [float(value) for buffer in buffers for value in buffer]
+            for metric, buffers in global_metric_buffers.items()
         }
 
     current_threshold_files: list[str] = []
