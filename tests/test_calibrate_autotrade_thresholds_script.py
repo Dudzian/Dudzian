@@ -4897,6 +4897,7 @@ def test_main_respects_freeze_events_limit_flag(
     assert captured["max_freeze_events"] == 3
     assert captured["limit_freeze_events"] is None
     assert captured["max_raw_freeze_events"] is None
+    assert captured["raw_freeze_events_sample_limit"] is None
     assert captured["raw_freeze_events_mode"] == "omit"
     assert captured["omit_raw_freeze_events"] is False
     assert captured["omit_freeze_events"] is False
@@ -5040,6 +5041,7 @@ def test_main_accepts_max_raw_freeze_events(
     assert captured["limit_freeze_events"] == 5
     assert "max_freeze_events" not in captured
     assert captured["max_raw_freeze_events"] == 2
+    assert "raw_freeze_events_sample_limit" in captured
     assert captured["raw_freeze_events_sample_limit"] == sample_limit
     assert captured["raw_freeze_events_mode"] == expected_mode
     assert captured["omit_freeze_events"] is False
