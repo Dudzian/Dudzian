@@ -530,6 +530,32 @@ def test_cli_risk_score_overrides_file_threshold(tmp_path: Path) -> None:
     assert risk_stats["current_threshold"] == pytest.approx(0.72)
 
 
+def test_current_threshold_cli_rejects_non_finite_values() -> None:
+    with pytest.raises(SystemExit) as excinfo:
+        _load_current_signal_thresholds(["signal_after_adjustment=NaN"])
+
+    message = str(excinfo.value)
+    assert "signal_after_adjustment" in message
+    assert "CLI 'signal_after_adjustment=NaN'" in message
+
+
+def test_current_threshold_file_rejects_non_finite_values(tmp_path: Path) -> None:
+    payload = {
+        "signal_after_adjustment": {
+            "current_threshold": "Infinity",
+        }
+    }
+    source = tmp_path / "thresholds.json"
+    source.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(SystemExit) as excinfo:
+        _load_current_signal_thresholds([str(source)])
+
+    message = str(excinfo.value)
+    assert "signal_after_adjustment" in message
+    assert str(source) in message
+
+
 def test_script_normalizes_cli_threshold_keys(tmp_path: Path) -> None:
     journal_path = tmp_path / "journal.jsonl"
     _write_journal(journal_path)
@@ -1172,6 +1198,21 @@ def test_generate_report_rejects_non_finite_current_inline() -> None:
     assert "current_thresholds.inline" in message
 
 
+def test_generate_report_rejects_invalid_current_threshold_mapping_value() -> None:
+    with pytest.raises(SystemExit) as excinfo:
+        _generate_report(
+            journal_events=[],
+            autotrade_entries=[],
+            percentiles=[0.5],
+            suggestion_percentile=0.5,
+            current_signal_thresholds={"signal_after_adjustment": "abc"},
+        )
+
+    message = str(excinfo.value)
+    assert "Nie udało się zinterpretować" in message
+    assert "signal_after_adjustment" in message
+
+
 def test_generate_report_rejects_non_finite_risk_inline() -> None:
     with pytest.raises(SystemExit) as excinfo:
         _generate_report(
@@ -1188,6 +1229,24 @@ def test_generate_report_rejects_non_finite_risk_inline() -> None:
     assert "musi być skończoną liczbą" in message
     assert "risk_score" in message
     assert "risk_thresholds.inline" in message
+
+
+def test_generate_report_rejects_non_finite_current_threshold_mapping() -> None:
+    with pytest.raises(SystemExit) as excinfo:
+        _generate_report(
+            journal_events=[],
+            autotrade_entries=[],
+            percentiles=[0.5],
+            suggestion_percentile=0.5,
+            current_signal_thresholds={
+                "signal_after_adjustment": math.nan,
+                "signal_after_clamp": "-inf",
+            },
+        )
+
+    message = str(excinfo.value)
+    assert "musi być skończoną liczbą" in message
+    assert "signal_after_adjustment" in message or "signal_after_clamp" in message
 
 
 def test_generate_report_rejects_non_finite_risk_from_config(
@@ -1260,7 +1319,8 @@ def test_generate_report_rejects_non_finite_cli_risk_threshold() -> None:
             autotrade_entries=[],
             percentiles=[0.5],
             suggestion_percentile=0.5,
-            cli_risk_score_threshold=math.nan,
+            risk_score_override=math.nan,
+            risk_score_source={"kind": "inline", "source": "CLI risk_score_threshold"},
         )
 
     message = str(excinfo.value)
@@ -1276,7 +1336,8 @@ def test_generate_report_rejects_non_finite_cli_risk_score() -> None:
             autotrade_entries=[],
             percentiles=[0.5],
             suggestion_percentile=0.5,
-            cli_risk_score=math.inf,
+            risk_score_override=math.inf,
+            risk_score_source={"kind": "inline", "source": "CLI risk_score"},
         )
 
     message = str(excinfo.value)
@@ -1285,6 +1346,36 @@ def test_generate_report_rejects_non_finite_cli_risk_score() -> None:
     assert "CLI risk_score" in message
 
 
+def test_generate_report_uses_normalized_current_threshold_mapping() -> None:
+    journal_events = [
+        {
+            "event_type": "ai_inference",
+            "timestamp": "2024-01-01T00:00:00Z",
+            "symbol": "BTCUSDT",
+            "primary_exchange": "binance",
+            "strategy": "trend",
+            "signal_after_adjustment": 0.6,
+        }
+    ]
+
+    report = _generate_report(
+        journal_events=journal_events,
+        autotrade_entries=[],
+        percentiles=[0.5],
+        suggestion_percentile=0.5,
+        current_signal_thresholds={
+            "signal_after_adjustment": "0.51",
+            "SIGNAL-AFTER-CLAMP": 0.49,
+            "unknown_metric": 1.23,
+        },
+    )
+
+    groups = report["groups"]
+    assert len(groups) == 1
+    metrics = groups[0]["metrics"]
+    assert metrics["signal_after_adjustment"]["current_threshold"] == pytest.approx(0.51)
+    if "signal_after_clamp" in metrics:
+        assert metrics["signal_after_clamp"]["current_threshold"] is None
 def test_generate_report_merges_multiple_risk_threshold_paths(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
