@@ -15,6 +15,10 @@ percentyle, które można wykorzystać do aktualizacji konfiguracji
 2. Eksport autotradera wygenerowany przez `export_risk_evaluations()` lub
    zrzut statusów z `push_autotrade_status` (plik JSON zawierający listę
    wpisów z polami `symbol` i `summary.risk_score`).
+   Parser działa strumieniowo – akceptuje zarówno pliki JSONL, jak i duże pliki
+   JSON, w których dane znajdują się w tablicy lub wewnątrz obiektu z polem
+   `entries`. Inne struktury (np. zagnieżdżone tablice w wielu polach) nie są
+   obsługiwane.
 3. *(Opcjonalnie)* Aktualne progi sygnałów – można je przekazać jako plik
    JSON/YAML albo listę par `metric=value` w parametrze
    `--current-threshold`. Parametr można wskazać wielokrotnie (np. plik z

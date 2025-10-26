@@ -62,6 +62,9 @@ _SUPPORTED_JOURNAL_EXTENSIONS = (".jsonl", ".jsonl.gz")
 _SUPPORTED_AUTOTRADE_EXTENSIONS = (".json", ".json.gz", ".jsonl", ".jsonl.gz")
 
 
+_JSON_STREAM_CHUNK_SIZE = 65536
+
+
 _METRIC_APPEND_OBSERVER: Callable[[tuple[str, str], str, int], None] | None = None
 
 
@@ -720,7 +723,7 @@ def _load_autotrade_entries(
         decoder = json.JSONDecoder()
         buffer = ""
         position = 0
-        chunk_size = 65536
+        chunk_size = _JSON_STREAM_CHUNK_SIZE
 
         def _append_chunk() -> bool:
             nonlocal buffer, position
@@ -756,7 +759,7 @@ def _load_autotrade_entries(
                         ) from exc
                     continue
                 position = next_position
-                if position > 65536:
+                if position > _JSON_STREAM_CHUNK_SIZE:
                     buffer = buffer[position:]
                     position = 0
                 return value
