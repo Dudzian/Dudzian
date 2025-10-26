@@ -291,6 +291,158 @@ def test_autotrade_export_is_streamed(tmp_path: Path, monkeypatch: pytest.Monkey
     assert stream_holder["stream"].bytes_consumed == total_size
 
 
+def test_autotrade_array_is_streamed_incrementally(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    export_path = tmp_path / "array_autotrade.json"
+    entries = [
+        {"timestamp": "2024-02-01T00:00:00Z", "value": 1},
+        {"timestamp": "2024-02-01T00:01:00Z", "value": 2},
+        {"timestamp": "2024-02-01T00:02:00Z", "value": 3},
+    ]
+    export_path.write_text(json.dumps(entries), encoding="utf-8")
+    total_size = export_path.stat().st_size
+
+    from scripts import calibrate_autotrade_thresholds as module
+
+    monkeypatch.setattr(module, "_JSON_STREAM_CHUNK_SIZE", 8)
+
+    class CountingHandle:
+        def __init__(self, path: Path):
+            self._handle = path.open("r", encoding="utf-8")
+            self.read_calls = 0
+            self.bytes_read = 0
+
+        def read(self, size: int = -1) -> str:
+            chunk = self._handle.read(size)
+            if chunk:
+                self.read_calls += 1
+                self.bytes_read += len(chunk)
+            return chunk
+
+        def readline(self, size: int = -1) -> str:
+            return self._handle.readline(size)
+
+        def tell(self) -> int:
+            return self._handle.tell()
+
+        def close(self) -> None:
+            self._handle.close()
+
+        def __iter__(self):
+            return iter(self._handle)
+
+        def __enter__(self) -> "CountingHandle":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            self._handle.close()
+
+    holder: dict[str, CountingHandle] = {}
+
+    def fake_open_text_file(path: Path) -> CountingHandle:
+        handle = CountingHandle(path)
+        holder["handle"] = handle
+        return handle
+
+    monkeypatch.setattr(module, "_open_text_file", fake_open_text_file)
+
+    since = datetime(2024, 2, 1, 0, 1, tzinfo=timezone.utc)
+    until = datetime(2024, 2, 1, 0, 2, tzinfo=timezone.utc)
+
+    iterator = module._load_autotrade_entries([export_path], since=since, until=until)
+
+    first_entry = next(iterator)
+    handle = holder["handle"]
+    assert first_entry["timestamp"] == "2024-02-01T00:01:00Z"
+    assert handle.bytes_read < total_size
+    first_calls = handle.read_calls
+
+    second_entry = next(iterator)
+    assert second_entry["timestamp"] == "2024-02-01T00:02:00Z"
+    assert handle.read_calls >= first_calls
+
+    with pytest.raises(StopIteration):
+        next(iterator)
+
+    assert handle.bytes_read == total_size
+
+
+def test_autotrade_nested_entries_are_streamed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    export_path = tmp_path / "nested_autotrade.json"
+    nested_entries = [
+        {"timestamp": "2024-03-01T00:00:00Z", "value": 10},
+        {"timestamp": "2024-03-01T00:05:00Z", "value": 11},
+    ]
+    section_entries = [
+        {"timestamp": "2024-03-01T00:10:00Z", "value": 20},
+        {"timestamp": "2024-03-01T00:15:00Z", "value": 21},
+    ]
+    payload = {
+        "meta": {"note": "test"},
+        "data": {
+            "nested": {
+                "entries": nested_entries,
+                "aux": {"flags": [1, 2, 3]},
+            },
+            "sections": [
+                {"entries": section_entries},
+                {"info": "noop"},
+            ],
+            "summary": {"count": 4},
+        },
+    }
+    export_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    from scripts import calibrate_autotrade_thresholds as module
+
+    monkeypatch.setattr(module, "_JSON_STREAM_CHUNK_SIZE", 8)
+
+    class CountingHandle:
+        def __init__(self, path: Path):
+            self._handle = path.open("r", encoding="utf-8")
+            self.read_calls = 0
+            self.bytes_read = 0
+
+        def read(self, size: int = -1) -> str:
+            chunk = self._handle.read(size)
+            if chunk:
+                self.read_calls += 1
+                self.bytes_read += len(chunk)
+            return chunk
+
+        def readline(self, size: int = -1) -> str:
+            return self._handle.readline(size)
+
+        def __iter__(self):
+            return iter(self._handle)
+
+        def __enter__(self) -> "CountingHandle":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            self._handle.close()
+
+        def close(self) -> None:
+            self._handle.close()
+
+    holder: dict[str, CountingHandle] = {}
+
+    def fake_open_text_file(path: Path) -> CountingHandle:
+        handle = CountingHandle(path)
+        holder["handle"] = handle
+        return handle
+
+    monkeypatch.setattr(module, "_open_text_file", fake_open_text_file)
+
+    collected = list(module._load_autotrade_entries([export_path]))
+    assert len(collected) == len(nested_entries) + len(section_entries)
+    assert {entry["value"] for entry in collected} == {10, 11, 20, 21}
+    assert holder["handle"].read_calls > 1
+
+
 def test_script_generates_report(tmp_path: Path) -> None:
     journal_path = tmp_path / "journal.jsonl"
     _write_journal(journal_path)
