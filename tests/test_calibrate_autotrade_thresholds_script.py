@@ -3619,7 +3619,11 @@ def test_generate_report_samples_raw_freeze_events() -> None:
     assert freeze_summary["total"] == 3
 
     raw_freeze_payload = group["raw_freeze_events"]
+    assert raw_freeze_payload["mode"] == "sample"
     assert raw_freeze_payload["limit"] == 1
+    assert raw_freeze_payload["requested_limit"] == 1
+    assert "display_limit" not in raw_freeze_payload
+    assert "display_overflow_summary" not in raw_freeze_payload
     assert len(raw_freeze_payload["events"]) == 1
     sampled_event = raw_freeze_payload["events"][0]
     assert sampled_event["status"] == "risk_freeze"
@@ -3630,7 +3634,11 @@ def test_generate_report_samples_raw_freeze_events() -> None:
     assert overflow_reasons == {"risk_score_threshold": 2}
 
     global_raw = report["global_summary"]["raw_freeze_events"]
+    assert global_raw["mode"] == "sample"
     assert global_raw["limit"] == 1
+    assert global_raw["requested_limit"] == 1
+    assert "display_limit" not in global_raw
+    assert "display_overflow_summary" not in global_raw
     assert len(global_raw["events"]) == 1
     assert global_raw["events"][0]["reason"] == "manual_override"
     assert global_raw["overflow_summary"]["total"] == 2
@@ -3638,7 +3646,9 @@ def test_generate_report_samples_raw_freeze_events() -> None:
     sources = report["sources"]["raw_freeze_events"]
     assert sources["mode"] == "sample"
     assert sources["limit"] == 1
-    assert "requested_limit" not in sources
+    assert sources["requested_limit"] == 1
+    assert "display_limit" not in sources
+    assert "display_overflow_summary" not in sources
     source_overflow = sources["overflow_summary"]
     assert source_overflow["total"] == 2
     assert {item["reason"]: item["count"] for item in source_overflow["reasons"]} == {
@@ -3694,24 +3704,38 @@ def test_generate_report_limits_raw_freeze_events_with_display_limit() -> None:
     assert freeze_summary["total"] == 3
 
     raw_payload = group["raw_freeze_events"]
+    assert raw_payload["mode"] == "sample"
     assert raw_payload["limit"] == 1
+    assert raw_payload["requested_limit"] == 5
+    assert raw_payload["display_limit"] == 1
     assert len(raw_payload["events"]) == 1
     assert raw_payload["events"][0]["status"] == "risk_freeze"
     overflow_summary = raw_payload["overflow_summary"]
     assert overflow_summary["total"] == 2
     overflow_statuses = {item["status"]: item["count"] for item in overflow_summary["statuses"]}
     assert overflow_statuses == {"auto_risk_freeze": 2}
+    display_overflow_summary = raw_payload["display_overflow_summary"]
+    assert display_overflow_summary["total"] == 2
+    assert {
+        item["status"]: item["count"] for item in display_overflow_summary["statuses"]
+    } == {"auto_risk_freeze": 2}
 
     global_raw = report["global_summary"]["raw_freeze_events"]
+    assert global_raw["mode"] == "sample"
     assert global_raw["limit"] == 1
+    assert global_raw["requested_limit"] == 5
+    assert global_raw["display_limit"] == 1
     assert len(global_raw["events"]) == 1
     assert global_raw["overflow_summary"]["total"] == 2
+    assert global_raw["display_overflow_summary"]["total"] == 2
 
     sources = report["sources"]["raw_freeze_events"]
     assert sources["mode"] == "sample"
     assert sources["limit"] == 1
-    assert sources["requested_limit"] == 1
+    assert sources["requested_limit"] == 5
+    assert sources["display_limit"] == 1
     assert sources["overflow_summary"]["total"] == 2
+    assert sources["display_overflow_summary"]["total"] == 2
 
 
 def test_generate_report_omits_raw_freeze_events_when_max_raw_zero() -> None:
@@ -3753,7 +3777,12 @@ def test_generate_report_omits_raw_freeze_events_when_max_raw_zero() -> None:
     assert "raw_freeze_events" not in global_summary
 
     sources = report["sources"]["raw_freeze_events"]
-    assert sources == {"mode": "omit", "requested_limit": 0, "reason": "limit_zero"}
+    assert sources == {
+        "mode": "omit",
+        "requested_limit": 5,
+        "display_limit": 0,
+        "reason": "limit_zero",
+    }
 
 def test_generate_report_can_omit_raw_freeze_events_when_requested() -> None:
     journal_events = [
@@ -3794,7 +3823,7 @@ def test_generate_report_can_omit_raw_freeze_events_when_requested() -> None:
     assert "raw_freeze_events" not in global_summary
 
     sources = report["sources"]["raw_freeze_events"]
-    assert sources == {"mode": "omit", "reason": "explicit_omit"}
+    assert sources == {"mode": "omit", "requested_limit": 5, "reason": "explicit_omit"}
 
 
 def test_generate_report_records_no_samples_reason_when_sampling_disabled() -> None:
@@ -3824,7 +3853,7 @@ def test_generate_report_records_no_samples_reason_when_sampling_disabled() -> N
     assert "raw_freeze_events" not in group
 
     sources = report["sources"]["raw_freeze_events"]
-    assert sources == {"mode": "omit", "reason": "no_samples"}
+    assert sources == {"mode": "omit", "requested_limit": 3, "reason": "no_samples"}
 
 
 def test_generate_report_includes_full_freeze_events_without_limit() -> None:
@@ -3961,10 +3990,36 @@ def test_generate_report_limits_freeze_events_when_max_set() -> None:
         "auto_risk_freeze": 1
     }
 
+    raw_group = group["raw_freeze_events"]
+    assert raw_group["mode"] == "limit"
+    assert raw_group["limit"] == 2
+    assert raw_group["requested_limit"] == 2
+    assert "display_limit" not in raw_group
+    assert "display_overflow_summary" not in raw_group
+    assert raw_group["events"] == freeze_events["events"]
+    assert raw_group["overflow_summary"] == overflow
+
+    raw_global = report["global_summary"]["raw_freeze_events"]
+    assert raw_global["mode"] == "limit"
+    assert raw_global["limit"] == 2
+    assert raw_global["requested_limit"] == 2
+    assert "display_limit" not in raw_global
+    assert "display_overflow_summary" not in raw_global
+    assert raw_global["events"] == global_freeze["events"]
+    assert raw_global["overflow_summary"] == global_overflow
+
     sources = report["sources"]["freeze_events"]
     assert sources == {
         "mode": "limit",
         "limit": 2,
+        "overflow_summary": global_overflow,
+    }
+
+    raw_sources = report["sources"]["raw_freeze_events"]
+    assert raw_sources == {
+        "mode": "limit",
+        "limit": 2,
+        "requested_limit": 2,
         "overflow_summary": global_overflow,
     }
 
@@ -4026,12 +4081,154 @@ def test_generate_report_limits_freeze_events_when_max_zero() -> None:
         "risk_freeze": 1,
     }
 
+    raw_group = group["raw_freeze_events"]
+    assert raw_group["mode"] == "limit"
+    assert raw_group["limit"] == 0
+    assert raw_group["requested_limit"] == 0
+    assert raw_group["events"] == []
+    assert raw_group["overflow_summary"] == overflow
+    assert "display_overflow_summary" not in raw_group
+
+    raw_global = report["global_summary"]["raw_freeze_events"]
+    assert raw_global["mode"] == "limit"
+    assert raw_global["limit"] == 0
+    assert raw_global["requested_limit"] == 0
+    assert raw_global["events"] == []
+    assert raw_global["overflow_summary"] == global_overflow
+    assert "display_overflow_summary" not in raw_global
+
     sources = report["sources"]["freeze_events"]
     assert sources == {
         "mode": "limit",
         "limit": 0,
         "overflow_summary": global_overflow,
     }
+
+    raw_sources = report["sources"]["raw_freeze_events"]
+    assert raw_sources == {
+        "mode": "limit",
+        "limit": 0,
+        "requested_limit": 0,
+        "overflow_summary": global_overflow,
+    }
+
+
+def test_generate_report_can_omit_raw_freeze_events_with_max_limit() -> None:
+    journal_events = [
+        {
+            "symbol": "BTCUSDT",
+            "primary_exchange": "binance",
+            "strategy": "trend_following",
+            "status": "risk_freeze",
+            "reason": "manual_override",
+        },
+        {
+            "symbol": "BTCUSDT",
+            "primary_exchange": "binance",
+            "strategy": "trend_following",
+            "status": "auto_risk_freeze",
+            "reason": "risk_score_threshold",
+        },
+    ]
+
+    with patch("scripts.calibrate_autotrade_thresholds.load_risk_thresholds", return_value={}):
+        report = _generate_report(
+            journal_events=journal_events,
+            autotrade_entries=[],
+            percentiles=[0.5],
+            suggestion_percentile=0.5,
+            max_freeze_events=3,
+            omit_raw_freeze_events=True,
+        )
+
+    assert report["groups"]
+    group = report["groups"][0]
+    assert group["freeze_summary"]["total"] == 2
+    assert "raw_freeze_events" not in group
+
+    global_summary = report["global_summary"]
+    assert "raw_freeze_events" not in global_summary
+
+    sources = report["sources"]["raw_freeze_events"]
+    assert sources == {"mode": "omit", "requested_limit": 3, "reason": "explicit_omit"}
+
+
+def test_generate_report_limits_raw_freeze_events_with_max_limit_and_display_limit() -> None:
+    journal_events = [
+        {
+            "symbol": "BTCUSDT",
+            "primary_exchange": "binance",
+            "strategy": "trend_following",
+            "status": "risk_freeze",
+            "reason": "manual_override",
+            "duration": 180,
+            "risk_score": 0.91,
+        },
+        {
+            "symbol": "BTCUSDT",
+            "primary_exchange": "binance",
+            "strategy": "trend_following",
+            "status": "auto_risk_freeze",
+            "reason": "risk_score_threshold",
+            "duration": 120,
+            "risk_score": 0.87,
+        },
+        {
+            "symbol": "BTCUSDT",
+            "primary_exchange": "binance",
+            "strategy": "trend_following",
+            "status": "auto_risk_freeze",
+            "reason": "risk_score_threshold",
+            "duration": 75,
+            "risk_score": 0.86,
+        },
+    ]
+
+    with patch("scripts.calibrate_autotrade_thresholds.load_risk_thresholds", return_value={}):
+        report = _generate_report(
+            journal_events=journal_events,
+            autotrade_entries=[],
+            percentiles=[0.5],
+            suggestion_percentile=0.5,
+            max_freeze_events=5,
+            max_raw_freeze_events=1,
+        )
+
+    assert report["groups"]
+    group = report["groups"][0]
+    raw_payload = group["raw_freeze_events"]
+    assert raw_payload["mode"] == "limit"
+    assert raw_payload["limit"] == 1
+    assert raw_payload["requested_limit"] == 5
+    assert raw_payload["display_limit"] == 1
+    assert len(raw_payload["events"]) == 1
+    assert raw_payload["events"][0]["status"] == "risk_freeze"
+    overflow_summary = raw_payload["overflow_summary"]
+    assert overflow_summary["total"] == 2
+    overflow_statuses = {item["status"]: item["count"] for item in overflow_summary["statuses"]}
+    assert overflow_statuses == {"auto_risk_freeze": 2}
+    display_overflow_summary = raw_payload["display_overflow_summary"]
+    assert display_overflow_summary["total"] == 2
+    assert {
+        item["status"]: item["count"] for item in display_overflow_summary["statuses"]
+    } == {"auto_risk_freeze": 2}
+
+    global_raw = report["global_summary"]["raw_freeze_events"]
+    assert global_raw["mode"] == "limit"
+    assert global_raw["limit"] == 1
+    assert global_raw["requested_limit"] == 5
+    assert global_raw["display_limit"] == 1
+    assert len(global_raw["events"]) == 1
+    assert global_raw["overflow_summary"]["total"] == 2
+    assert global_raw["display_overflow_summary"]["total"] == 2
+
+    sources = report["sources"]["raw_freeze_events"]
+    assert sources["mode"] == "limit"
+    assert sources["limit"] == 1
+    assert sources["requested_limit"] == 5
+    assert sources["display_limit"] == 1
+    assert sources["overflow_summary"]["total"] == 2
+    assert sources["display_overflow_summary"]["total"] == 2
 
 
 def test_main_respects_freeze_events_limit_flag(
