@@ -208,6 +208,88 @@ def _write_autotrade_export(path: Path) -> None:
     path.write_text(json.dumps(payload), encoding="utf-8")
 
 
+def test_autotrade_export_is_streamed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    path = tmp_path / "huge_autotrade.json"
+    entries: list[dict[str, object]] = []
+    padding = "X" * 8192
+    for index in range(512):
+        entry = {
+            "timestamp": f"2024-02-01T00:{index:02d}:00Z",
+            "decision": {
+                "details": {
+                    "symbol": f"ASSET{index:03d}",
+                    "primary_exchange": "binance",
+                    "strategy": "trend_following",
+                    "summary": {"risk_score": float(index % 10) / 10.0},
+                    "note": padding,
+                }
+            },
+        }
+        entries.append(entry)
+    payload = {"entries": entries}
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    total_size = path.stat().st_size
+
+    read_sizes: list[int] = []
+    entry_positions: list[int] = []
+    stream_holder: dict[str, object] = {}
+
+    class InstrumentedHandle:
+        def __init__(self, real_path: Path):
+            self._handle = real_path.open("r", encoding="utf-8")
+            self.bytes_consumed = 0
+
+        def read(self, size: int = -1) -> str:
+            chunk = self._handle.read(size)
+            if chunk:
+                self.bytes_consumed += len(chunk)
+                read_sizes.append(len(chunk))
+            return chunk
+
+        def __enter__(self) -> "InstrumentedHandle":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            self._handle.close()
+
+        def close(self) -> None:
+            self._handle.close()
+
+    def fake_open_text_file(candidate: Path) -> InstrumentedHandle:
+        handle = InstrumentedHandle(candidate)
+        stream_holder["stream"] = handle
+        return handle
+
+    monkeypatch.setattr(
+        "scripts.calibrate_autotrade_thresholds._open_text_file",
+        fake_open_text_file,
+    )
+
+    from scripts import calibrate_autotrade_thresholds as module
+
+    original_extract = module._extract_entry_timestamp
+
+    def patched_extract_entry_timestamp(entry: Mapping[str, object]) -> datetime | None:
+        stream = stream_holder.get("stream")
+        if stream is not None:
+            entry_positions.append(stream.bytes_consumed)
+        return original_extract(entry)
+
+    monkeypatch.setattr(
+        "scripts.calibrate_autotrade_thresholds._extract_entry_timestamp",
+        patched_extract_entry_timestamp,
+    )
+
+    collected = list(module._load_autotrade_entries([path]))
+    assert len(collected) == len(entries)
+    assert entry_positions[0] < total_size
+    assert entry_positions == sorted(entry_positions)
+    non_empty_reads = [size for size in read_sizes if size]
+    assert non_empty_reads
+    assert non_empty_reads[0] < total_size
+    assert stream_holder["stream"].bytes_consumed == total_size
+
+
 def test_script_generates_report(tmp_path: Path) -> None:
     journal_path = tmp_path / "journal.jsonl"
     _write_journal(journal_path)
