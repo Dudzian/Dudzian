@@ -3036,6 +3036,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--raw-freeze-events-sample-limit",
         type=int,
+        default=None,
         help=(
             "Steruje liczbą zdarzeń zapisywanych w próbkach raw_freeze_events. "
             "Ustaw 0, aby całkowicie pominąć sekcję próbek niezależnie od limitu."
@@ -3166,9 +3167,9 @@ def main(argv: list[str] | None = None) -> int:
         "limit_freeze_events": limit_freeze_events,
         "omit_raw_freeze_events": bool(getattr(args, "omit_raw_freeze_events", False)),
         "max_raw_freeze_events": getattr(args, "max_raw_freeze_events", None),
-        "raw_freeze_events_sample_limit": raw_freeze_events_sample_limit,
         "omit_freeze_events": bool(getattr(args, "omit_freeze_events", False)),
     }
+    report_kwargs["raw_freeze_events_sample_limit"] = raw_freeze_events_sample_limit
     freeze_events_limit_arg = getattr(args, "freeze_events_limit", None)
     if freeze_events_limit_arg is not None:
         report_kwargs["max_freeze_events"] = freeze_events_limit_arg
