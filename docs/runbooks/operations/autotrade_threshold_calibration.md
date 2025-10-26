@@ -98,6 +98,13 @@ generowania raportu i zmniejsza jego rozmiar. Starsze flagi
 `--raw-freeze-events sample` oraz `--raw-freeze-events-limit` pozostają
 obsługiwane, ale zalecamy korzystanie z `--limit-freeze-events`.
 
+Jeżeli lista surowych blokad zaczyna dominować w raporcie, można skrócić ją bez
+zmiany agregatów, korzystając z `--max-raw-freeze-events`. Parametr ten
+przycina liczbę zdarzeń zapisywanych w sekcjach `raw_freeze_events`, a resztę
+zlicza do `overflow_summary`, które nadal odzwierciedla pełny rozkład typów i
+powodów blokad. W połączeniu z `--omit-raw-freeze-events` można całkowicie
+wyłączyć sekcję z próbkami, zachowując jedynie zagregowane podsumowania.
+
 Źródło musi wskazywać istniejący plik, który zawiera słownik lub listę
 słowników – w przeciwnym razie skrypt zakończy się z komunikatem o błędzie,
 aby uniknąć cichego pominięcia progów. Parser potrafi wyłuskać wartości
@@ -116,6 +123,74 @@ Pole `global_summary` w raporcie JSON zawiera zagregowane metryki i statystyki
 blokad dla całego zbioru danych. Dzięki temu można szybko ocenić, jak nowe
 progi wpłyną na wszystkie strategie łącznie, zanim rozpocznie się szczegółowa
 analiza poszczególnych par.
+
+## Interpretacja sekcji `sources`
+
+Sekcja `sources` na końcu raportu zbiera metadane o wejściowych plikach oraz
+zastosowanych limitach. Pozwala to odtworzyć konfigurację bez zaglądania w
+parametry CLI, co bywa pomocne podczas wymiany raportów między zespołami.
+
+- `current_signal_thresholds.files` / `inline` – źródła aktualnych progów
+  przekazanych przez `--current-threshold`. Wartości inline odpowiadają parom
+  `metric=value`, a ścieżki wskazują pliki JSON/YAML.
+- `risk_threshold_files` oraz `risk_thresholds.files` / `inline` – analogiczne
+  metadane dla `--risk-thresholds`, dzięki którym można zweryfikować, czy
+  wartości `risk_score` pochodzą z pliku konfiguracyjnego, czy z parametru CLI.
+- `raw_freeze_events.mode` – informuje, czy próbkowanie surowych blokad zostało
+  włączone (`sample`) czy pominięte (`omit`).
+  - Gdy raport zawiera próbkę, pole `limit` opisuje faktyczną liczbę zdarzeń
+    zapisanych w grupie/globalnie po zastosowaniu `--limit-freeze-events` lub
+    `--max-raw-freeze-events`. Jeśli przekazano limit w CLI, wartość wejściowa
+    pojawi się w `requested_limit`. Ewentualne odcięte rekordy są zliczane w
+    `overflow_summary`, która zachowuje pełny rozkład statusów, typów i powodów.
+  - Dla trybu `omit` dostępne są powody (`reason`): `explicit_omit` oznacza
+    użycie `--omit-raw-freeze-events`, `limit_zero` odpowiada `--max-raw-freeze-events 0`,
+    a `sampling_disabled`/`no_samples` sygnalizują brak aktywnej próbki mimo
+    ograniczenia `--limit-freeze-events`.
+- `freeze_events.mode` – wskazuje, czy sekcje `freeze_events` zawierają wszystkie
+  zdarzenia (`all`), czy zostały przycięte (`limit`). W drugim przypadku pole
+  `overflow_summary` prezentuje agregaty dla odrzuconych rekordów, co ułatwia
+  ocenę skali przycięcia.
+
+Przykładowy fragment metadanych dla raportu z aktywną próbką blokad może
+wyglądać następująco:
+
+```json
+"sources": {
+  "raw_freeze_events": {
+    "mode": "sample",
+    "requested_limit": 10,
+    "limit": 3,
+    "overflow_summary": {
+      "total": 7,
+      "reasons": [
+        {"reason": "risk_score_threshold", "count": 5},
+        {"reason": "manual_override", "count": 2}
+      ]
+    }
+  },
+  "freeze_events": {
+    "mode": "limit",
+    "limit": 50
+  }
+}
+```
+
+Interpretacja:
+
+- Operator poprosił o próbkę maksymalnie 10 zdarzeń (`requested_limit`), ale po
+  przycięciu sekcji `freeze_events` (np. `--limit-freeze-events 3`) w raporcie
+  znalazły się tylko trzy pierwsze wpisy (`limit`).
+- Pozostałe wpisy nie znikają – `overflow_summary.total` zlicza wszystkie 7
+  odrzuconych blokad, a ich powody można odczytać z listy `reasons`.
+- Sekcja `freeze_events` została ograniczona do 50 rekordów (często jest to
+  domyślna wartość narzucona przez `--max-freeze-events`), ale ponieważ liczba
+  blokad była mniejsza, w raporcie znajdziemy komplet wpisów.
+
+Jeżeli raport zostanie uruchomiony z `--omit-raw-freeze-events`, metadane
+zmienią się na `{"mode": "omit", "reason": "explicit_omit"}` – brak listy
+zdarzeń jest wtedy świadomą decyzją operatora, a pełne agregaty nadal znajdują
+się w `freeze_summary` i `global_summary`.
 
 ## Wskazówki operacyjne
 
