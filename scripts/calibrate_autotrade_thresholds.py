@@ -655,8 +655,11 @@ def _load_journal_events(
         except OSError as exc:  # noqa: BLE001 - CLI feedback
             raise SystemExit(f"Nie udało się odczytać dziennika {path}: {exc}") from exc
 
-    for path in paths:
-        yield from _iter_path(path)
+    def _generator() -> Iterator[Mapping[str, object]]:
+        for path in paths:
+            yield from _iter_path(path)
+
+    return _generator()
 
 
 def _extract_entry_timestamp(entry: Mapping[str, object]) -> datetime | None:
@@ -683,8 +686,6 @@ def _load_autotrade_entries(
     since: datetime | None = None,
     until: datetime | None = None,
 ) -> Iterator[Mapping[str, object]]:
-    normalized_paths = _iter_autotrade_paths(paths)
-
     def _normalize_entry(item: object) -> Mapping[str, object] | None:
         if not isinstance(item, Mapping):
             return None
@@ -901,8 +902,11 @@ def _load_autotrade_entries(
                 f"Nie udało się odczytać eksportu autotradera {path}: {exc}"
             ) from exc
 
-    for path in normalized_paths:
-        yield from _iter_path(path)
+    def _generator() -> Iterator[Mapping[str, object]]:
+        for path in _iter_autotrade_paths(paths):
+            yield from _iter_path(path)
+
+    return _generator()
 
 
 def _resolve_key(exchange: str | None, strategy: str | None) -> tuple[str, str]:
@@ -1749,7 +1753,7 @@ def _generate_report(
 
     symbol_map: dict[str, tuple[str, str]] = {}
     grouped_values: dict[tuple[str, str], dict[str, _MetricSeries]] = {}
-    global_metric_buffers: defaultdict[str, list[_MetricSeries]] = defaultdict(list)
+    global_metric_series: dict[str, _MetricSeries] = {}
     freeze_summaries: dict[tuple[str, str], dict[str, object]] = defaultdict(
         lambda: {
             "total": 0,
@@ -1807,13 +1811,19 @@ def _generate_report(
             grouped_values[key] = metrics
         return metrics
 
+    def _ensure_global_series(metric_name: str) -> _MetricSeries:
+        series = global_metric_series.get(metric_name)
+        if series is None:
+            series = _numeric_buffer()
+            global_metric_series[metric_name] = series
+        return series
+
     def _metric_buffer(key: tuple[str, str], metric_name: str) -> _MetricSeries:
         metrics = _ensure_metrics(key)
         buffer = metrics.get(metric_name)
         if buffer is None:
             buffer = _numeric_buffer()
             metrics[metric_name] = buffer
-            global_metric_buffers[metric_name].append(buffer)
         return buffer
 
     def _record_metric_value(
@@ -1821,8 +1831,11 @@ def _generate_report(
         metric_name: str,
         numeric: float,
     ) -> None:
+        numeric_value = float(numeric)
         values = _metric_buffer(key, metric_name)
-        values.append(float(numeric))
+        values.append(numeric_value)
+        global_series = _ensure_global_series(metric_name)
+        global_series.append(numeric_value)
         if _METRIC_APPEND_OBSERVER is not None:
             _METRIC_APPEND_OBSERVER(key, metric_name, len(values))
 
@@ -2019,7 +2032,7 @@ def _generate_report(
         groups.append(group_payload)
 
     global_metrics: dict[str, dict[str, object]] = {}
-    for metric_name, buffers in global_metric_buffers.items():
+    for metric_name, series in global_metric_series.items():
         if metric_name == "risk_score":
             current_threshold = current_risk_score
         elif current_signal_thresholds:
@@ -2027,7 +2040,7 @@ def _generate_report(
         else:
             current_threshold = None
         global_metrics[metric_name] = _aggregate_metric_series(
-            buffers,
+            [series],
             percentiles,
             suggestion_percentile,
             absolute=metric_name in _ABSOLUTE_THRESHOLD_METRICS,
@@ -2039,8 +2052,8 @@ def _generate_report(
     }
     if include_raw_values:
         global_summary["raw_values"] = {
-            metric: [float(value) for buffer in buffers for value in buffer]
-            for metric, buffers in global_metric_buffers.items()
+            metric: list(series.values())
+            for metric, series in global_metric_series.items()
         }
 
     current_threshold_files: list[str] = []
