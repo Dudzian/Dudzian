@@ -210,7 +210,7 @@ class _JSONStreamEntriesParser:
     def _consume_object(self, *, emit_self: bool = False) -> Iterator[Mapping[str, object]]:
         self._position += 1
         collected: dict[str, object] | None = {} if emit_self else None
-        pending_entries: list[Mapping[str, object]] | None = [] if emit_self else None
+        pending_entries: list[Iterator[Mapping[str, object]]] | None = [] if emit_self else None
         saw_entries_field = False
         while True:
             if not self._skip_whitespace():
@@ -258,8 +258,7 @@ class _JSONStreamEntriesParser:
             elif emit_self and collected is not None and pending_entries is not None:
                 value = self._decode_value()
                 collected[key] = value
-                for nested in self._iter_nested_entries(value):
-                    pending_entries.append(nested)
+                pending_entries.append(self._iter_nested_entries(value))
             else:
                 yield from self._consume_value("search")
             if not self._skip_whitespace():
@@ -299,7 +298,8 @@ class _JSONStreamEntriesParser:
             if normalized is not None:
                 yield normalized
         if emit_self and pending_entries:
-            yield from pending_entries
+            for nested_entries in pending_entries:
+                yield from nested_entries
 
     def iter_entries(self) -> Iterator[Mapping[str, object]]:
         if not self._skip_whitespace():
