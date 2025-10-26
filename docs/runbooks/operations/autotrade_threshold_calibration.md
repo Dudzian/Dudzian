@@ -43,6 +43,8 @@ python scripts/calibrate_autotrade_thresholds.py \
   --until 2024-01-31T23:59:59Z \
   --current-threshold signal_after_adjustment=0.8,signal_after_clamp=0.75 \
   --risk-thresholds config/risk_thresholds.yaml \
+  --limit-freeze-events 25 \
+  --raw-freeze-events-sample-limit 15 \
   --freeze-events-limit 50 \
   --output-json reports/autotrade_thresholds.json \
   --output-csv reports/autotrade_thresholds.csv \
@@ -62,9 +64,11 @@ Polecenie:
   niezależnie od próbkowania surowych zdarzeń dzięki `--freeze-events-limit`
   (np. `--freeze-events-limit 50`) oraz w razie potrzeby całkowicie je
   pominąć (`--omit-freeze-events`),
-- opcjonalnie dołącza próbkę surowych blokad (`--limit-freeze-events 20`)
-  ograniczoną wskazaną wartością (dla kompatybilności nadal działa
-  kombinacja `--raw-freeze-events sample --raw-freeze-events-limit 20`),
+- opcjonalnie dołącza próbkę surowych blokad (`--limit-freeze-events 25`) i
+  pozwala oddzielnie kontrolować jej rozmiar (`--raw-freeze-events-sample-limit 15`);
+  ustawienie limitu na 0 wyłącza próbkę bez ingerencji w agregaty, a tryb
+  zgodności z `--raw-freeze-events sample --raw-freeze-events-limit N`
+  pozostaje dostępny,
 - pozwala ograniczyć analizę do konkretnego zakresu czasowego dzięki `--since`
   i `--until`,
 - dodaje globalne podsumowanie obejmujące wszystkie kombinacje giełda/strategia
@@ -89,21 +93,26 @@ konfiguracją progów ryzyka (`load_risk_thresholds(config_path=...)`). Wskazane
 zmodyfikowany `map_regime_to_signal.risk_score`, to właśnie ta wartość pojawi
 się w kolumnie `current_threshold` dla metryki `risk_score`.
 
-Jeżeli potrzebujesz przeanalizować konkretne przykłady blokad ryzyka, możesz
-włączyć próbkę `raw_freeze_events`:
+Jeżeli potrzebujesz przeanalizować konkretne przykłady blokad ryzyka, włącz
+próbkę `raw_freeze_events`, łącząc limit z rozmiarem próbki:
 
 ```bash
---limit-freeze-events 20
+--limit-freeze-events 25 \
+--raw-freeze-events-sample-limit 15
 ```
 
-Raport dołączy maksymalnie 20 pierwszych blokad dla każdej kombinacji
-giełda/strategia (pozostałe zostaną zagregowane w podsumowaniu). Pozostawienie
-domyślnych wartości pomija sekcję `raw_freeze_events`, co skraca czas
-generowania raportu i zmniejsza jego rozmiar. Starsze flagi
+Raport dołączy maksymalnie 15 pierwszych blokad dla każdej kombinacji
+giełda/strategia (pozostałe zostaną zagregowane w podsumowaniu). Pole
+`--limit-freeze-events` aktywuje sekcję próbek, natomiast
+`--raw-freeze-events-sample-limit` pozwala zmienić jej długość niezależnie od
+pozostałych ograniczeń; ustawienie 0 wyłącza próbkę mimo zadanego limitu.
+Pozostawienie domyślnych wartości pomija sekcję `raw_freeze_events`, co skraca
+czas generowania raportu i zmniejsza jego rozmiar. Starsze flagi
 `--raw-freeze-events sample` oraz `--raw-freeze-events-limit` pozostają
 obsługiwane w trybie zgodności, jednak preferowanym sposobem sterowania próbką
-jest `--limit-freeze-events`. Jeśli potrzebujesz czasowo wyłączyć próbkę bez
-zmiany domyślnych limitów, połącz `--limit-freeze-events N` z
+jest duet `--limit-freeze-events` + `--raw-freeze-events-sample-limit`. Jeśli
+potrzebujesz czasowo wyłączyć próbkę bez zmiany domyślnych limitów, połącz
+`--raw-freeze-events-sample-limit 0` z `--limit-freeze-events N` albo użyj
 `--omit-raw-freeze-events`.
 
 Jeżeli lista surowych blokad zaczyna dominować w raporcie, można skrócić ją bez
@@ -113,13 +122,19 @@ zlicza do `overflow_summary`, które nadal odzwierciedla pełny rozkład typów 
 powodów blokad. W połączeniu z `--omit-raw-freeze-events` można całkowicie
 wyłączyć sekcję z próbkami, zachowując jedynie zagregowane podsumowania.
 
-Nowy przełącznik `--freeze-events-limit` działa równolegle – kontroluje długość
-list w sekcjach `freeze_events`, które prezentują znormalizowane blokady
-opracowane przez raport (nie surowe wpisy). Przykładowe `--freeze-events-limit 25`
-skraca każdą listę do 25 rekordów, ale nie wpływa na to, czy próbka surowych
-zdarzeń zostanie wygenerowana (`--limit-freeze-events`) ani na decyzję o jej
-pominięciu (`--omit-raw-freeze-events`). Chcąc całkowicie zrezygnować z list
-`freeze_events`, użyj `--omit-freeze-events` – agregaty pozostaną kompletne.
+Nowy przełącznik `--raw-freeze-events-sample-limit` uzupełnia istniejące opcje –
+steruje liczbą zdarzeń, które trafią do próbek `raw_freeze_events`, również w
+przypadku raportów generowanych z `--freeze-events-limit`. Wartość dodatnia
+przycina próbkę do wskazanego rozmiaru, `0` wyłącza sekcję próbek, a `None`
+(wartość domyślna) pozostawia limit wyznaczony przez `--limit-freeze-events` lub
+domyślne 25 zdarzeń. Przełącznik `--freeze-events-limit` działa równolegle –
+kontroluje długość list w sekcjach `freeze_events`, które prezentują
+znormalizowane blokady opracowane przez raport (nie surowe wpisy). Przykładowe
+`--freeze-events-limit 25` skraca każdą listę do 25 rekordów, ale nie wpływa na
+to, czy próbka surowych zdarzeń zostanie wygenerowana (`--limit-freeze-events`)
+ani na decyzję o jej pominięciu (`--omit-raw-freeze-events`). Chcąc całkowicie
+zrezygnować z list `freeze_events`, użyj `--omit-freeze-events` – agregaty
+pozostaną kompletne.
 
 Źródło musi wskazywać istniejący plik, który zawiera słownik lub listę
 słowników – w przeciwnym razie skrypt zakończy się z komunikatem o błędzie,
@@ -146,6 +161,17 @@ Sekcja `sources` na końcu raportu zbiera metadane o wejściowych plikach oraz
 zastosowanych limitach. Pozwala to odtworzyć konfigurację bez zaglądania w
 parametry CLI, co bywa pomocne podczas wymiany raportów między zespołami.
 
+Niezależnie od tego, jak ustawisz limity (`--limit-freeze-events`,
+`--raw-freeze-events-sample-limit`, `--max-raw-freeze-events`,
+`--freeze-events-limit`), sekcja `freeze_summary` w grupach i w
+`global_summary` zawsze bazuje na pełnym zbiorze zdarzeń. Metadane w
+`sources.raw_freeze_events` pomagają odtworzyć, jak raport dobrał próbkę –
+`mode` informuje, czy zapisano listę (i w jaki sposób), `limit` i
+`display_limit` pokazują rzeczywiste ograniczenia, `requested_limit`
+odzwierciedla wartości z CLI (w tym `--raw-freeze-events-sample-limit`), a
+`overflow_summary` zlicza odcięte wpisy. Dzięki temu można zweryfikować, że
+agregaty pozostały kompletne, nawet jeśli próbka została mocno przycięta.
+
 - `current_signal_thresholds.files` / `inline` – źródła aktualnych progów
   przekazanych przez `--current-threshold`. Wartości inline odpowiadają parom
   `metric=value`, a ścieżki wskazują pliki JSON/YAML.
@@ -160,7 +186,8 @@ parametry CLI, co bywa pomocne podczas wymiany raportów między zespołami.
   - Gdy raport zawiera próbkę (`sample` lub `limit`), pole `limit` opisuje
     faktyczną liczbę zdarzeń zapisanych w grupie/globalnie po zastosowaniu
     ograniczeń. `requested_limit` wskazuje żądanie operatora (np. z
-    `--limit-freeze-events` albo limitu przekazanego do `_generate_report`), a
+    `--limit-freeze-events`, `--raw-freeze-events-sample-limit` albo limitu
+    przekazanego do `_generate_report`), a
     `display_limit` pojawia się, gdy lista została dodatkowo przycięta przez
     `--max-raw-freeze-events`. Ewentualne odcięte rekordy są zliczane w
     `overflow_summary`, która zachowuje pełny rozkład statusów, typów i powodów.
@@ -219,24 +246,25 @@ się w `freeze_summary` i `global_summary`.
 
 ### Kompletność agregatów i interpretacja `sources.raw_freeze_events`
 
-Limity próbkowania (`--limit-freeze-events`, `--max-raw-freeze-events`,
-`--freeze-events-limit`) wpływają wyłącznie na to, ile rekordów trafi na listy w
-sekcjach `raw_freeze_events` i `freeze_events`. Wszystkie zdarzenia – także te
-ucięte na etapie prezentacji – nadal zasilają agregaty w `freeze_summary` oraz
-`global_summary`. Dzięki temu można bez obaw przycinać próbki w celu uproszczenia
-raportu, nie tracąc informacji o łącznej liczbie blokad, ich typach ani powodach.
+Limity próbkowania (`--limit-freeze-events`, `--raw-freeze-events-sample-limit`,
+`--max-raw-freeze-events`, `--freeze-events-limit`) wpływają wyłącznie na to, ile
+rekordów trafi na listy w sekcjach `raw_freeze_events` i `freeze_events`.
+Wszystkie zdarzenia – także te ucięte na etapie prezentacji – nadal zasilają
+agregaty w `freeze_summary` oraz `global_summary`. Dzięki temu można bez obaw
+przycinać próbki w celu uproszczenia raportu, nie tracąc informacji o łącznej
+liczbie blokad, ich typach ani powodach.
 
 Sekcja `sources.raw_freeze_events` opisuje zastosowane ograniczenia. Pole
 `mode` rozróżnia próbkę (`sample`), limit wymuszony przez `--limit-freeze-events`
 (`limit`) oraz świadome pominięcie (`omit`). `requested_limit` odzwierciedla
-wartość przekazaną z CLI (np. `--limit-freeze-events 20`), `limit` pokazuje
-faktyczną liczbę wpisów po uwzględnieniu wszystkich ograniczeń, a
-`display_limit` wskazuje dodatkowe przycięcie wynikające z
-`--max-raw-freeze-events`. Kiedy `mode` przyjmuje wartość `omit`, pole `reason`
-pozwala rozpoznać, czy lista została pominięta z inicjatywy operatora
-(`--omit-raw-freeze-events`), czy na przykład ustawiono limit 0. Analiza tych
-metadanych pomaga odtworzyć konfigurację raportu oraz potwierdzić, że agregaty
-pozostały kompletne mimo zmian w próbkach.
+wartość przekazaną z CLI (np. `--limit-freeze-events 25` lub
+`--raw-freeze-events-sample-limit 15`), `limit` pokazuje faktyczną liczbę wpisów
+po uwzględnieniu wszystkich ograniczeń, a `display_limit` wskazuje dodatkowe
+przycięcie wynikające z `--max-raw-freeze-events`. Kiedy `mode` przyjmuje
+wartość `omit`, pole `reason` pozwala rozpoznać, czy lista została pominięta z
+inicjatywy operatora (`--omit-raw-freeze-events`), czy na przykład ustawiono
+limit 0. Analiza tych metadanych pomaga odtworzyć konfigurację raportu oraz
+potwierdzić, że agregaty pozostały kompletne mimo zmian w próbkach.
 
 ## Wskazówki operacyjne
 
