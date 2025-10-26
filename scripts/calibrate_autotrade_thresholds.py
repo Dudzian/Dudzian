@@ -10,18 +10,30 @@ import sys
 from array import array
 from bisect import bisect_left
 from collections import Counter, defaultdict
+from dataclasses import dataclass
 from datetime import datetime, timezone
+from decimal import Decimal
 from pathlib import Path
 from typing import Callable, Iterable, Iterator, Literal, Mapping, TextIO
 
 
 _STREAM_READ_SIZE = 65536
 
+
+_STREAM_READ_SIZE = 65536
+_DEFAULT_GLOBAL_SAMPLE_LIMIT = 50000
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from bot_core.ai.config_loader import load_risk_thresholds
+
+
+@dataclass
+class RiskScoreSources:
+    from_files: float | None = None
+    from_inline: float | None = None
 
 
 def _normalize_metric_key(key: str) -> str:
@@ -2644,6 +2656,12 @@ def _generate_report(
 
     if cli_risk_score is not None:
         current_risk_score = float(cli_risk_score)
+
+    if cli_risk_score is not None:
+        current_risk_score = float(cli_risk_score)
+
+    if file_risk_score is not None:
+        current_risk_score = float(file_risk_score)
 
     if cli_risk_score is not None:
         current_risk_score = float(cli_risk_score)

@@ -77,6 +77,19 @@ Polecenie:
 - dodaje globalne podsumowanie obejmujące wszystkie kombinacje giełda/strategia
   (również w pliku CSV jako wiersze `__all__/__all__`),
 - opcjonalnie generuje histogramy (wymaga `matplotlib`).
+- umożliwia ograniczenie liczby przechowywanych surowych próbek metryk poprzez
+  `--max-raw-values` (0 = brak próbek w raporcie; dodatnie wartości =
+  deterministyczne próbkowanie rezerwuarowe o zadanym rozmiarze dla każdej pary
+  giełda/strategia, co zapewnia reprezentatywną próbkę do histogramów zamiast
+  sztywnego prefiksu).
+- ogranicza liczbę próbek wykorzystywanych do percentyli w sekcji
+  `global_summary` za pomocą `--max-global-samples` (domyślnie 50 000). Limit
+  dotyczy każdej metryki agregowanej globalnie; ustawienie wartości ujemnej
+  wyłącza limit, a `0` powoduje, że percentyle i sugerowane progi w podsumowaniu
+  bazują wyłącznie na statystykach agregowanych (mean, stddev) i nie posiadają
+  próbek do histogramów. Przy aktywnym limicie percentyle są szacowane na
+  podstawie deterministycznego próbkowania rezerwuarowego, co należy uwzględnić
+  przy interpretacji wyników.
 
 Jeżeli przekażesz aktualne progi w pliku (np. `config/current_thresholds.yaml`),
 użyj `--current-threshold config/current_thresholds.yaml`. Skrypt automatycznie
@@ -89,6 +102,15 @@ dodatkowym nadpisaniem progu w CLI:
 --current-threshold config/current_thresholds.yaml \
 --current-threshold signal_after_clamp=0.78
 ```
+
+Wartości `risk_score` wczytane z plików wskazanych przez `--current-threshold`
+trafiają do metadanych `sources.current_signal_thresholds.file_risk_score` i są
+traktowane jako aktualny próg w raporcie. Jeśli podasz `risk_score` bezpośrednio
+w CLI (np. `--current-threshold risk_score=0.72`), wartość pojawi się w
+`sources.risk_score_override` oraz w mapie
+`sources.current_signal_thresholds.inline`. Brak nadpisania w CLI oznacza, że
+raport traktuje `risk_score` z pliku wyłącznie jako dokumentację istniejącej
+konfiguracji.
 
 Analogicznie `--risk-thresholds` pozwala zaczytać alternatywny plik z
 konfiguracją progów ryzyka (`load_risk_thresholds(config_path=...)`). Wskazane

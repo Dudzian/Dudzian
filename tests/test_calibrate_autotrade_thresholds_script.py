@@ -1122,6 +1122,164 @@ def test_script_accepts_cli_risk_score_threshold(tmp_path: Path) -> None:
     )
     risk_stats = trend_group["metrics"]["risk_score"]
     assert risk_stats["current_threshold"] == pytest.approx(0.72)
+    sources = payload["sources"]
+    assert sources["risk_score_override"] == pytest.approx(0.72)
+    signal_sources = sources["current_signal_thresholds"]
+    assert signal_sources["inline"]["risk_score"] == pytest.approx(0.72)
+    assert "file_risk_score" not in signal_sources
+
+
+def test_script_tracks_file_risk_score_threshold(tmp_path: Path) -> None:
+    journal_path = tmp_path / "journal.jsonl"
+    _write_journal(journal_path)
+
+    export_path = tmp_path / "autotrade.json"
+    _write_autotrade_export(export_path)
+
+    thresholds_path = tmp_path / "current_thresholds.json"
+    thresholds_path.write_text(json.dumps({"risk_score": {"value": 0.58}}), encoding="utf-8")
+
+    output_json = tmp_path / "report.json"
+
+    subprocess.run(
+        [
+            sys.executable,
+            "scripts/calibrate_autotrade_thresholds.py",
+            "--journal",
+            str(journal_path),
+            "--autotrade-export",
+            str(export_path),
+            "--percentiles",
+            "0.5",
+            "--suggestion-percentile",
+            "0.5",
+            "--current-threshold",
+            str(thresholds_path),
+            "--output-json",
+            str(output_json),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    payload = json.loads(output_json.read_text(encoding="utf-8"))
+    trend_group = next(
+        entry
+        for entry in payload["groups"]
+        if entry["primary_exchange"] == "binance" and entry["strategy"] == "trend_following"
+    )
+    risk_stats = trend_group["metrics"]["risk_score"]
+    assert risk_stats["current_threshold"] == pytest.approx(0.58)
+    sources = payload["sources"]
+    signal_sources = sources["current_signal_thresholds"]
+    assert signal_sources["file_risk_score"] == pytest.approx(0.58)
+    assert "risk_score_override" not in sources
+    assert "inline" not in signal_sources or "risk_score" not in signal_sources.get("inline", {})
+
+
+def test_script_limits_raw_freeze_events_via_cli(tmp_path: Path) -> None:
+    journal_path = tmp_path / "journal.jsonl"
+    _write_journal(journal_path)
+
+    export_path = tmp_path / "autotrade.json"
+    _write_autotrade_export(export_path)
+
+    output_json = tmp_path / "report.json"
+
+    subprocess.run(
+        [
+            sys.executable,
+            "scripts/calibrate_autotrade_thresholds.py",
+            "--journal",
+            str(journal_path),
+            "--autotrade-export",
+            str(export_path),
+            "--max-freeze-events",
+            "1",
+            "--output-json",
+            str(output_json),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    payload = json.loads(output_json.read_text(encoding="utf-8"))
+    trend_group = next(
+        entry
+        for entry in payload["groups"]
+        if entry["primary_exchange"] == "binance" and entry["strategy"] == "trend_following"
+    )
+
+    assert len(trend_group["raw_freeze_events"]) == 1
+    assert trend_group["freeze_summary"]["total"] == 3
+    assert trend_group["freeze_summary"]["omitted"] == 2
+    assert trend_group["raw_freeze_events_truncated"] is True
+    assert trend_group["raw_freeze_events_omitted"] == 2
+    assert payload["sources"]["max_freeze_events"] == 1
+    assert payload["sources"]["raw_freeze_events_truncated_groups"] == 1
+    assert payload["global_summary"]["freeze_summary"]["omitted"] == 2
+
+
+def test_script_limits_raw_values_via_cli(tmp_path: Path) -> None:
+    journal_path = tmp_path / "journal.jsonl"
+    _write_journal(journal_path)
+
+    export_path = tmp_path / "autotrade.json"
+    _write_autotrade_export(export_path)
+
+    output_json = tmp_path / "report.json"
+
+    subprocess.run(
+        [
+            sys.executable,
+            "scripts/calibrate_autotrade_thresholds.py",
+            "--journal",
+            str(journal_path),
+            "--autotrade-export",
+            str(export_path),
+            "--max-raw-values",
+            "1",
+            "--output-json",
+            str(output_json),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    payload = json.loads(output_json.read_text(encoding="utf-8"))
+    trend_group = next(
+        entry
+        for entry in payload["groups"]
+        if entry["primary_exchange"] == "binance" and entry["strategy"] == "trend_following"
+    )
+
+    trend_raw_values = trend_group["raw_values"]
+    assert len(trend_raw_values["signal_after_adjustment"]) == 1
+    assert trend_raw_values["signal_after_adjustment"][0] == pytest.approx(0.48)
+    assert len(trend_raw_values["signal_after_clamp"]) == 1
+    assert trend_raw_values["signal_after_clamp"][0] == pytest.approx(0.52)
+    assert len(trend_raw_values["risk_freeze_duration"]) == 1
+    assert trend_raw_values["risk_freeze_duration"][0] == pytest.approx(180.0)
+    assert len(trend_raw_values["risk_score"]) == 1
+    assert trend_raw_values["risk_score"][0] == pytest.approx(0.72)
+
+    omitted_counts = trend_group["raw_values_omitted"]
+    assert omitted_counts["signal_after_adjustment"] == 2
+    assert omitted_counts["signal_after_clamp"] == 2
+    assert omitted_counts["risk_score"] == 1
+    assert omitted_counts["risk_freeze_duration"] == 1
+    assert trend_group["raw_values_truncated"] is True
+
+    sources = payload["sources"]
+    assert sources["max_raw_values"] == 1
+    assert sources["raw_values_truncated_groups"] == 1
+    assert sources["raw_values_omitted_total"] == 6
+    assert sources["max_global_samples"] == _DEFAULT_GLOBAL_SAMPLE_LIMIT
+    assert "global_samples_truncated_metrics" not in sources
+    assert "global_samples_omitted_total" not in sources
 
 
 def test_cli_risk_score_source_tracks_specific_pair(tmp_path: Path) -> None:
