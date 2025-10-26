@@ -631,6 +631,35 @@ def test_script_normalizes_cli_threshold_keys(tmp_path: Path) -> None:
     assert clamp_stats["current_threshold"] == pytest.approx(0.7)
 
 
+def test_script_rejects_non_finite_current_threshold(tmp_path: Path) -> None:
+    journal_path = tmp_path / "journal.jsonl"
+    _write_journal(journal_path)
+
+    export_path = tmp_path / "autotrade.json"
+    _write_autotrade_export(export_path)
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "scripts/calibrate_autotrade_thresholds.py",
+            "--journal",
+            str(journal_path),
+            "--autotrade-export",
+            str(export_path),
+            "--current-threshold",
+            "signal_after_adjustment=NaN",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    stderr = result.stderr
+    assert "musi być skończoną liczbą" in stderr
+    assert "signal_after_adjustment" in stderr
+
+
 def test_load_current_thresholds_rejects_directory(tmp_path: Path) -> None:
     thresholds_dir = tmp_path / "thresholds"
     thresholds_dir.mkdir()
