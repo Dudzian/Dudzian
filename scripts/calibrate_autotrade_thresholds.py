@@ -12,7 +12,6 @@ from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Iterable, Iterator, Mapping, TextIO
-from typing import Literal
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
@@ -1798,8 +1797,7 @@ def _generate_report(
     cli_risk_score_threshold: float | None = None,
     cli_risk_score: float | None = None,
     include_raw_values: bool = False,
-    raw_freeze_events_mode: Literal["omit", "sample"] = "omit",
-    raw_freeze_events_limit: int = 25,
+    limit_freeze_events: int | None = None,
 ) -> dict[str, object]:
     normalized_signal_thresholds: dict[str, float] | None = None
     if isinstance(current_signal_thresholds, Mapping):
@@ -1843,8 +1841,9 @@ def _generate_report(
     }
     freeze_event_samplers: dict[tuple[str, str], _FreezeEventSampler] = {}
     aggregated_freeze_sampler: _FreezeEventSampler | None = None
-    if raw_freeze_events_mode == "sample":
-        sampler_limit = max(0, int(raw_freeze_events_limit))
+    sampling_freeze_events = limit_freeze_events is not None
+    if sampling_freeze_events:
+        sampler_limit = max(0, int(limit_freeze_events))
         aggregated_freeze_sampler = _FreezeEventSampler(sampler_limit)
     else:
         sampler_limit = 0
@@ -1959,7 +1958,7 @@ def _generate_report(
                 numeric_risk_score = None
             if numeric_risk_score is not None and not math.isfinite(numeric_risk_score):
                 numeric_risk_score = None
-        if raw_freeze_events_mode == "sample":
+        if sampling_freeze_events:
             sampler = freeze_event_samplers.get(key)
             if sampler is None:
                 sampler = _FreezeEventSampler(sampler_limit)
@@ -2142,7 +2141,7 @@ def _generate_report(
             "metrics": metrics_payload,
             "freeze_summary": freeze_summary_payload,
         }
-        if raw_freeze_events_mode == "sample":
+        if sampling_freeze_events:
             sampler = freeze_event_samplers.get((exchange, strategy))
             if sampler is not None:
                 group_payload["raw_freeze_events"] = sampler.to_payload()
@@ -2174,7 +2173,7 @@ def _generate_report(
         "metrics": global_metrics,
         "freeze_summary": _format_freeze_summary(aggregated_freeze_summary),
     }
-    if raw_freeze_events_mode == "sample" and aggregated_freeze_sampler is not None:
+    if sampling_freeze_events and aggregated_freeze_sampler is not None:
         global_summary["raw_freeze_events"] = aggregated_freeze_sampler.to_payload()
     if include_raw_values:
         global_summary["raw_values"] = {
@@ -2297,7 +2296,7 @@ def _generate_report(
         sources_payload["risk_threshold_files"] = [str(path) for path in risk_threshold_paths]
     if cli_risk_score is not None:
         sources_payload["risk_score_override"] = float(cli_risk_score)
-    if raw_freeze_events_mode == "sample":
+    if sampling_freeze_events:
         sources_payload["raw_freeze_events"] = {
             "mode": "sample",
             "limit": sampler_limit,
@@ -2316,6 +2315,30 @@ def _generate_report(
         "global_summary": global_summary,
         "sources": sources_payload,
     }
+
+
+def _resolve_freeze_event_limit(
+    *,
+    limit_freeze_events: int | None,
+    raw_freeze_events_mode: str | None,
+    raw_freeze_events_limit: int | None,
+) -> int | None:
+    """Wybiera limit blokad na podstawie nowych i legacyjnych flag CLI."""
+
+    if limit_freeze_events is not None:
+        return int(limit_freeze_events)
+
+    if not raw_freeze_events_mode:
+        return None
+
+    normalized_mode = str(raw_freeze_events_mode).strip().lower()
+    if normalized_mode != "sample":
+        return None
+
+    if raw_freeze_events_limit is None:
+        return 25
+
+    return int(raw_freeze_events_limit)
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -2390,12 +2413,22 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--limit-freeze-events",
+        type=int,
+        help=(
+            "Opcjonalnie ogranicz liczbę zdarzeń blokad zapisywanych w sekcji "
+            "raw_freeze_events; gdy ustawione dodaje próbkę pierwszych N wpisów oraz "
+            "podsumowanie reszty. Bez parametru sekcja jest pomijana."
+        ),
+    )
+    parser.add_argument(
         "--raw-freeze-events",
         choices=("omit", "sample"),
         default="omit",
         help=(
-            "Steruje sekcją raw_freeze_events w raporcie: 'sample' dodaje próbkę "
-            "zdarzeń blokad wraz z podsumowaniem reszty, 'omit' pozostawia tylko statystyki."
+            "[Przestarzałe] Steruje sekcją raw_freeze_events w raporcie: 'sample' dodaje próbkę "
+            "zdarzeń wraz z podsumowaniem reszty, 'omit' pozostawia tylko statystyki. "
+            "Użyj --limit-freeze-events, aby włączyć próbkę."
         ),
     )
     parser.add_argument(
@@ -2403,8 +2436,8 @@ def _build_parser() -> argparse.ArgumentParser:
         type=int,
         default=25,
         help=(
-            "Maksymalna liczba zdarzeń blokad zapisywana w próbce dla każdej kombinacji "
-            "giełda/strategia (wartość ujemna traktowana jest jako 0)."
+            "[Przestarzałe] Maksymalna liczba zdarzeń blokad zapisywana w próbce dla każdej "
+            "kombinacji giełda/strategia. Zastąpione przez --limit-freeze-events."
         ),
     )
     return parser
@@ -2450,6 +2483,12 @@ def main(argv: list[str] | None = None) -> int:
                 existing["risk_score"] = provided_risk_score
                 signal_thresholds_payload = existing
 
+    limit_freeze_events = _resolve_freeze_event_limit(
+        limit_freeze_events=args.limit_freeze_events,
+        raw_freeze_events_mode=getattr(args, "raw_freeze_events", None),
+        raw_freeze_events_limit=getattr(args, "raw_freeze_events_limit", None),
+    )
+
     report = _generate_report(
         journal_events=journal_events,
         autotrade_entries=autotrade_entries,
@@ -2463,8 +2502,7 @@ def main(argv: list[str] | None = None) -> int:
         risk_score_source=risk_score_source_metadata,
         risk_threshold_sources=args.risk_thresholds,
         include_raw_values=bool(args.plot_dir),
-        raw_freeze_events_mode=str(args.raw_freeze_events),
-        raw_freeze_events_limit=int(args.raw_freeze_events_limit),
+        limit_freeze_events=limit_freeze_events,
     )
 
     if args.output_json:

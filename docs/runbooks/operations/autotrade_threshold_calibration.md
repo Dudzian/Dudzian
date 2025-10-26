@@ -57,8 +57,9 @@ Polecenie:
 - tworzy tabelę CSV gotową do importu w arkuszu kalkulacyjnym,
 - zbiera statystyki blokad ryzyka (`risk_freeze` / `auto_risk_freeze`) wraz z
   rozkładem długości blokad i powodów,
-- opcjonalnie dołącza próbkę surowych blokad (`--raw-freeze-events sample`)
-  ograniczoną limitem `--raw-freeze-events-limit`,
+- opcjonalnie dołącza próbkę surowych blokad (`--limit-freeze-events 20`)
+  ograniczoną wskazaną wartością (dla kompatybilności nadal działa
+  kombinacja `--raw-freeze-events sample --raw-freeze-events-limit 20`),
 - pozwala ograniczyć analizę do konkretnego zakresu czasowego dzięki `--since`
   i `--until`,
 - dodaje globalne podsumowanie obejmujące wszystkie kombinacje giełda/strategia
@@ -87,14 +88,15 @@ Jeżeli potrzebujesz przeanalizować konkretne przykłady blokad ryzyka, możesz
 włączyć próbkę `raw_freeze_events`:
 
 ```bash
---raw-freeze-events sample \
---raw-freeze-events-limit 20
+--limit-freeze-events 20
 ```
 
 Raport dołączy maksymalnie 20 pierwszych blokad dla każdej kombinacji
 giełda/strategia (pozostałe zostaną zagregowane w podsumowaniu). Pozostawienie
 domyślnych wartości pomija sekcję `raw_freeze_events`, co skraca czas
-generowania raportu i zmniejsza jego rozmiar.
+generowania raportu i zmniejsza jego rozmiar. Starsze flagi
+`--raw-freeze-events sample` oraz `--raw-freeze-events-limit` pozostają
+obsługiwane, ale zalecamy korzystanie z `--limit-freeze-events`.
 
 Źródło musi wskazywać istniejący plik, który zawiera słownik lub listę
 słowników – w przeciwnym razie skrypt zakończy się z komunikatem o błędzie,
