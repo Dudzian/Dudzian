@@ -24,6 +24,7 @@ from scripts.calibrate_autotrade_thresholds import (
     _load_autotrade_entries,
     _load_current_signal_thresholds,
     _load_journal_events,
+    _parse_percentiles,
 )
 
 
@@ -487,7 +488,9 @@ def test_load_current_thresholds_rejects_nan_inline() -> None:
     with pytest.raises(SystemExit) as excinfo:
         _load_current_signal_thresholds(["signal_after_adjustment=NaN"])
 
-    assert "musi być skończoną liczbą" in str(excinfo.value)
+    message = str(excinfo.value)
+    assert "musi być skończoną liczbą" in message
+    assert "CLI" in message
 
 
 def test_load_current_thresholds_rejects_infinite_inline() -> None:
@@ -497,6 +500,7 @@ def test_load_current_thresholds_rejects_infinite_inline() -> None:
     message = str(excinfo.value)
     assert "musi być skończoną liczbą" in message
     assert "Infinity" in message
+    assert "CLI" in message
 
 
 def test_load_current_thresholds_rejects_negative_infinite_inline() -> None:
@@ -701,6 +705,26 @@ def test_load_current_thresholds_collects_risk_files(tmp_path: Path) -> None:
         "risk_files": [str(thresholds_path)],
         "risk_inline": {},
     }
+
+
+def test_parse_percentiles_rejects_nan() -> None:
+    with pytest.raises(SystemExit) as excinfo:
+        _parse_percentiles("0.5,NaN")
+
+    message = str(excinfo.value)
+    assert "Percentyl" in message
+    assert "skończoną liczbą" in message
+    assert "NaN" in message
+
+
+def test_parse_percentiles_rejects_infinity() -> None:
+    with pytest.raises(SystemExit) as excinfo:
+        _parse_percentiles("Infinity")
+
+    message = str(excinfo.value)
+    assert "Percentyl" in message
+    assert "skończoną liczbą" in message
+    assert "Infinity" in message
 
 
 def test_group_resolution_prefers_entry_metadata_over_symbol_map() -> None:
@@ -1032,6 +1056,101 @@ def test_generate_report_rejects_non_finite_risk_inline() -> None:
     assert "musi być skończoną liczbą" in message
     assert "risk_score" in message
     assert "risk_thresholds.inline" in message
+
+
+def test_generate_report_rejects_non_finite_risk_from_config(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config_file = tmp_path / "risk_thresholds.json"
+    config_file.write_text("{}", encoding="utf-8")
+
+    calls: list[Path | None] = []
+
+    def _fake_loader(*, config_path: Path | None = None) -> Mapping[str, object]:
+        calls.append(config_path)
+        return {"auto_trader": {"map_regime_to_signal": {"risk_score": math.nan}}}
+
+    monkeypatch.setattr(
+        "scripts.calibrate_autotrade_thresholds.load_risk_thresholds",
+        _fake_loader,
+    )
+
+    with pytest.raises(SystemExit) as excinfo:
+        _generate_report(
+            journal_events=[],
+            autotrade_entries=[],
+            percentiles=[0.5],
+            suggestion_percentile=0.5,
+            risk_threshold_sources=[str(config_file)],
+        )
+
+    assert calls == [config_file]
+    message = str(excinfo.value)
+    assert "musi być skończoną liczbą" in message
+    assert "risk_score" in message
+    assert str(config_file) in message
+
+
+def test_generate_report_rejects_non_finite_risk_from_default_loader(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[Path | None] = []
+
+    def _fake_loader(*, config_path: Path | None = None) -> Mapping[str, object]:
+        calls.append(config_path)
+        assert config_path is None
+        return {"auto_trader": {"map_regime_to_signal": {"risk_score": math.inf}}}
+
+    monkeypatch.setattr(
+        "scripts.calibrate_autotrade_thresholds.load_risk_thresholds",
+        _fake_loader,
+    )
+
+    with pytest.raises(SystemExit) as excinfo:
+        _generate_report(
+            journal_events=[],
+            autotrade_entries=[],
+            percentiles=[0.5],
+            suggestion_percentile=0.5,
+        )
+
+    assert calls == [None]
+    message = str(excinfo.value)
+    assert "musi być skończoną liczbą" in message
+    assert "risk_score" in message
+    assert "load_risk_thresholds()" in message
+
+
+def test_generate_report_rejects_non_finite_cli_risk_threshold() -> None:
+    with pytest.raises(SystemExit) as excinfo:
+        _generate_report(
+            journal_events=[],
+            autotrade_entries=[],
+            percentiles=[0.5],
+            suggestion_percentile=0.5,
+            cli_risk_score_threshold=math.nan,
+        )
+
+    message = str(excinfo.value)
+    assert "musi być skończoną liczbą" in message
+    assert "risk_score" in message
+    assert "CLI risk_score_threshold" in message
+
+
+def test_generate_report_rejects_non_finite_cli_risk_score() -> None:
+    with pytest.raises(SystemExit) as excinfo:
+        _generate_report(
+            journal_events=[],
+            autotrade_entries=[],
+            percentiles=[0.5],
+            suggestion_percentile=0.5,
+            cli_risk_score=math.inf,
+        )
+
+    message = str(excinfo.value)
+    assert "musi być skończoną liczbą" in message
+    assert "risk_score" in message
+    assert "CLI risk_score" in message
 
 
 def test_generate_report_merges_multiple_risk_threshold_paths(
