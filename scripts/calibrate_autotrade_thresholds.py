@@ -12,6 +12,7 @@ from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Iterable, Iterator, Mapping, TextIO
+from typing import Literal
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
@@ -1608,6 +1609,70 @@ def _format_freeze_summary(summary: Mapping[str, object]) -> dict[str, object]:
     }
 
 
+class _FreezeEventSampler:
+    __slots__ = ("_limit", "_events", "_overflow_summary")
+
+    def __init__(self, limit: int) -> None:
+        self._limit = max(0, int(limit))
+        self._events: list[dict[str, object]] = []
+        self._overflow_summary: dict[str, object] = {
+            "total": 0,
+            "type_counts": Counter(),
+            "status_counts": Counter(),
+            "reason_counts": Counter(),
+        }
+
+    @property
+    def limit(self) -> int:
+        return self._limit
+
+    def record(self, event: Mapping[str, object]) -> None:
+        sanitized_event = {
+            "status": event.get("status"),
+            "type": event.get("type"),
+            "reason": event.get("reason"),
+            "duration": event.get("duration"),
+            "risk_score": event.get("risk_score"),
+        }
+        if len(self._events) < self._limit:
+            self._events.append(sanitized_event)
+            return
+
+        overflow = self._overflow_summary
+        overflow["total"] = int(overflow.get("total", 0)) + 1
+        type_counts = overflow.get("type_counts")
+        status_counts = overflow.get("status_counts")
+        reason_counts = overflow.get("reason_counts")
+        freeze_type = sanitized_event.get("type")
+        status = sanitized_event.get("status")
+        reason = sanitized_event.get("reason")
+        if isinstance(type_counts, Counter) and isinstance(freeze_type, str):
+            type_counts[freeze_type] += 1
+        if isinstance(status_counts, Counter) and isinstance(status, str):
+            status_counts[status] += 1
+        if isinstance(reason_counts, Counter) and isinstance(reason, str):
+            reason_counts[reason] += 1
+
+    def to_payload(self) -> dict[str, object]:
+        payload: dict[str, object] = {
+            "limit": self._limit,
+            "events": list(self._events),
+        }
+        overflow_summary = self._overflow_summary
+        if overflow_summary.get("total"):
+            payload["overflow_summary"] = _format_freeze_summary(overflow_summary)
+        else:
+            payload["overflow_summary"] = _format_freeze_summary(
+                {
+                    "total": 0,
+                    "type_counts": Counter(),
+                    "status_counts": Counter(),
+                    "reason_counts": Counter(),
+                }
+            )
+        return payload
+
+
 def _write_json(report: Mapping[str, object], destination: Path) -> None:
     destination.parent.mkdir(parents=True, exist_ok=True)
     destination.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -1733,6 +1798,8 @@ def _generate_report(
     cli_risk_score_threshold: float | None = None,
     cli_risk_score: float | None = None,
     include_raw_values: bool = False,
+    raw_freeze_events_mode: Literal["omit", "sample"] = "omit",
+    raw_freeze_events_limit: int = 25,
 ) -> dict[str, object]:
     normalized_signal_thresholds: dict[str, float] | None = None
     if isinstance(current_signal_thresholds, Mapping):
@@ -1774,6 +1841,13 @@ def _generate_report(
         "status_counts": Counter(),
         "reason_counts": Counter(),
     }
+    freeze_event_samplers: dict[tuple[str, str], _FreezeEventSampler] = {}
+    aggregated_freeze_sampler: _FreezeEventSampler | None = None
+    if raw_freeze_events_mode == "sample":
+        sampler_limit = max(0, int(raw_freeze_events_limit))
+        aggregated_freeze_sampler = _FreezeEventSampler(sampler_limit)
+    else:
+        sampler_limit = 0
     journal_count = 0
     autotrade_count = 0
 
@@ -1853,7 +1927,13 @@ def _generate_report(
         status = str(payload.get("status") or "unknown")
         freeze_type = str(payload.get("type") or "manual")
         reason = str(payload.get("reason") or "unknown")
-        duration = payload.get("duration")
+        duration_value = payload.get("duration")
+        numeric_duration: float | None = None
+        if duration_value is not None:
+            try:
+                numeric_duration = float(duration_value)
+            except (TypeError, ValueError):
+                numeric_duration = None
         if isinstance(summary["type_counts"], Counter):
             summary["type_counts"][freeze_type] += 1
         if isinstance(summary["status_counts"], Counter):
@@ -1868,13 +1948,41 @@ def _generate_report(
         if isinstance(aggregated_freeze_summary["reason_counts"], Counter):
             aggregated_freeze_summary["reason_counts"][reason] += 1
         _ensure_metrics(key)
-        if duration is not None:
+        if numeric_duration is not None and math.isfinite(numeric_duration):
+            _record_metric_value(key, "risk_freeze_duration", numeric_duration)
+        raw_risk_score = payload.get("risk_score")
+        numeric_risk_score: float | None = None
+        if raw_risk_score is not None:
             try:
-                numeric_duration = float(duration)
+                numeric_risk_score = float(raw_risk_score)
             except (TypeError, ValueError):
-                numeric_duration = None
-            if numeric_duration is not None and math.isfinite(numeric_duration):
-                _record_metric_value(key, "risk_freeze_duration", numeric_duration)
+                numeric_risk_score = None
+            if numeric_risk_score is not None and not math.isfinite(numeric_risk_score):
+                numeric_risk_score = None
+        if raw_freeze_events_mode == "sample":
+            sampler = freeze_event_samplers.get(key)
+            if sampler is None:
+                sampler = _FreezeEventSampler(sampler_limit)
+                freeze_event_samplers[key] = sampler
+            sampler.record(
+                {
+                    "status": status,
+                    "type": freeze_type,
+                    "reason": reason,
+                    "duration": numeric_duration,
+                    "risk_score": numeric_risk_score,
+                }
+            )
+            if aggregated_freeze_sampler is not None:
+                aggregated_freeze_sampler.record(
+                    {
+                        "status": status,
+                        "type": freeze_type,
+                        "reason": reason,
+                        "duration": numeric_duration,
+                        "risk_score": numeric_risk_score,
+                    }
+                )
     for event in journal_events:
         journal_count += 1
         _update_symbol_map_entry(symbol_map, event)
@@ -2034,6 +2142,10 @@ def _generate_report(
             "metrics": metrics_payload,
             "freeze_summary": freeze_summary_payload,
         }
+        if raw_freeze_events_mode == "sample":
+            sampler = freeze_event_samplers.get((exchange, strategy))
+            if sampler is not None:
+                group_payload["raw_freeze_events"] = sampler.to_payload()
         if include_raw_values:
             group_payload["raw_values"] = {
                 metric: (
@@ -2062,6 +2174,8 @@ def _generate_report(
         "metrics": global_metrics,
         "freeze_summary": _format_freeze_summary(aggregated_freeze_summary),
     }
+    if raw_freeze_events_mode == "sample" and aggregated_freeze_sampler is not None:
+        global_summary["raw_freeze_events"] = aggregated_freeze_sampler.to_payload()
     if include_raw_values:
         global_summary["raw_values"] = {
             metric: list(series.values())
@@ -2162,7 +2276,7 @@ def _generate_report(
     if risk_score_metadata_payload is not None:
         current_thresholds_payload["risk_score"] = risk_score_metadata_payload
 
-    sources_payload = {
+    sources_payload: dict[str, object] = {
         "journal_events": journal_count,
         "autotrade_entries": autotrade_count,
         "current_thresholds": current_thresholds_payload,
@@ -2172,28 +2286,22 @@ def _generate_report(
         },
     }
 
-    sources_payload: dict[str, object] = {
-        "journal_events": journal_count,
-        "autotrade_entries": autotrade_count,
-    }
-    if current_signal_threshold_sources:
-        signal_sources_payload: dict[str, object] = {}
-        files = current_signal_threshold_sources.get("files")
-        if files:
-            signal_sources_payload["files"] = list(files)
-        inline_values = current_signal_threshold_sources.get("inline")
-        if inline_values:
-            signal_sources_payload["inline"] = {
-                key: float(value)
-                for key, value in inline_values.items()
-                if isinstance(key, str)
-            }
-        if signal_sources_payload:
-            sources_payload["current_signal_thresholds"] = signal_sources_payload
+    signal_sources_payload: dict[str, object] = {}
+    if current_threshold_files:
+        signal_sources_payload["files"] = list(current_threshold_files)
+    if current_threshold_inline:
+        signal_sources_payload["inline"] = dict(current_threshold_inline)
+    if signal_sources_payload:
+        sources_payload["current_signal_thresholds"] = signal_sources_payload
     if risk_threshold_paths:
         sources_payload["risk_threshold_files"] = [str(path) for path in risk_threshold_paths]
     if cli_risk_score is not None:
         sources_payload["risk_score_override"] = float(cli_risk_score)
+    if raw_freeze_events_mode == "sample":
+        sources_payload["raw_freeze_events"] = {
+            "mode": "sample",
+            "limit": sampler_limit,
+        }
 
     return {
         "schema": "stage6.autotrade.threshold_calibration",
@@ -2281,6 +2389,24 @@ def _build_parser() -> argparse.ArgumentParser:
             " można wskazać wiele ścieżek, aby nadpisywać wartości (ostatnia wygrywa)."
         ),
     )
+    parser.add_argument(
+        "--raw-freeze-events",
+        choices=("omit", "sample"),
+        default="omit",
+        help=(
+            "Steruje sekcją raw_freeze_events w raporcie: 'sample' dodaje próbkę "
+            "zdarzeń blokad wraz z podsumowaniem reszty, 'omit' pozostawia tylko statystyki."
+        ),
+    )
+    parser.add_argument(
+        "--raw-freeze-events-limit",
+        type=int,
+        default=25,
+        help=(
+            "Maksymalna liczba zdarzeń blokad zapisywana w próbce dla każdej kombinacji "
+            "giełda/strategia (wartość ujemna traktowana jest jako 0)."
+        ),
+    )
     return parser
 
 
@@ -2337,6 +2463,8 @@ def main(argv: list[str] | None = None) -> int:
         risk_score_source=risk_score_source_metadata,
         risk_threshold_sources=args.risk_thresholds,
         include_raw_values=bool(args.plot_dir),
+        raw_freeze_events_mode=str(args.raw_freeze_events),
+        raw_freeze_events_limit=int(args.raw_freeze_events_limit),
     )
 
     if args.output_json:
