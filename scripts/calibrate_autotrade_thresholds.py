@@ -156,8 +156,6 @@ def _normalize_and_validate_threshold(
         normalized_value,
         source=source,
     )
-
-
 def _extract_threshold_value(candidate: object) -> float | None:
     numeric = _coerce_float(candidate)
     if numeric is not None:
@@ -429,18 +427,18 @@ def _load_current_signal_thresholds(
                 for metric_name in _SUPPORTED_THRESHOLD_METRICS:
                     value = _resolve_metric_threshold(mapping, metric_name)
                     if value is not None:
-                        finite_value = _normalize_and_validate_threshold(
+                        validated_value = _normalize_and_validate_threshold(
                             metric_name,
-                            value,
+                            raw_value=value,
                             source=path_str,
                         )
                         if metric_name == "risk_score":
-                            current_risk_score = finite_value
                             found_risk_in_file = True
+                            current_risk_score = validated_value
                             file_risk_source = path_str
-                            file_risk_value = finite_value
+                            file_risk_value = validated_value
                         else:
-                            thresholds[metric_name] = finite_value
+                            thresholds[metric_name] = validated_value
             if found_risk_in_file and path_str not in risk_source_files:
                 risk_source_files.append(path_str)
             continue
@@ -453,19 +451,19 @@ def _load_current_signal_thresholds(
             metric_name_normalized = _normalize_metric_key(metric_name)
             if metric_name_normalized in _SUPPORTED_THRESHOLD_METRICS:
                 source_repr = mapping_sources.get(metric_name_normalized, candidate)
-                finite_value = _normalize_and_validate_threshold(
+                validated_value = _normalize_and_validate_threshold(
                     metric_name_normalized,
-                    numeric,
+                    raw_value=numeric,
                     source=f"CLI '{source_repr}'",
                 )
                 if metric_name_normalized == "risk_score":
-                    current_risk_score = finite_value
-                    inline_risk_thresholds[metric_name_normalized] = finite_value
+                    current_risk_score = validated_value
+                    inline_risk_thresholds[metric_name_normalized] = validated_value
                     inline_risk_source = source_repr
-                    inline_risk_value = finite_value
+                    inline_risk_value = validated_value
                 else:
-                    thresholds[metric_name_normalized] = finite_value
-                    inline_values[metric_name_normalized] = finite_value
+                    thresholds[metric_name_normalized] = validated_value
+                    inline_values[metric_name_normalized] = validated_value
 
     if inline_risk_value is not None:
         current_risk_score = inline_risk_value

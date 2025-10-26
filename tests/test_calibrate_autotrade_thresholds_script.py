@@ -29,6 +29,7 @@ from scripts.calibrate_autotrade_thresholds import (
     _load_current_signal_thresholds,
     _load_journal_events,
     _parse_percentiles,
+    _parse_threshold_mapping,
 )
 
 
@@ -566,6 +567,23 @@ def test_current_threshold_file_rejects_non_finite_values(tmp_path: Path) -> Non
     assert str(source) in message
 
 
+def test_current_threshold_file_rejects_non_finite_risk_score(tmp_path: Path) -> None:
+    payload = {
+        "risk_score": {
+            "current_threshold": "NaN",
+        }
+    }
+    source = tmp_path / "thresholds.json"
+    source.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(SystemExit) as excinfo:
+        _load_current_signal_thresholds([str(source)])
+
+    message = str(excinfo.value)
+    assert "risk_score" in message
+    assert str(source) in message
+
+
 def test_script_normalizes_cli_threshold_keys(tmp_path: Path) -> None:
     journal_path = tmp_path / "journal.jsonl"
     _write_journal(journal_path)
@@ -695,6 +713,15 @@ def test_load_current_thresholds_rejects_negative_infinite_inline_risk() -> None
     assert "musi być skończoną liczbą" in message
     assert "risk_score" in message
     assert "-inf" in message.lower()
+
+
+def test_parse_threshold_mapping_rejects_non_finite_value() -> None:
+    with pytest.raises(SystemExit) as excinfo:
+        _parse_threshold_mapping("signal_after_adjustment=NaN")
+
+    message = str(excinfo.value)
+    assert "signal_after_adjustment" in message
+    assert "musi być skończoną liczbą" in message
 
 
 def test_load_current_thresholds_rejects_nan_from_file(tmp_path: Path) -> None:
