@@ -629,6 +629,9 @@ def test_script_normalizes_cli_threshold_keys(tmp_path: Path) -> None:
     assert signal_stats["current_threshold"] == pytest.approx(0.8)
     clamp_stats = trend_group["metrics"]["signal_after_clamp"]
     assert clamp_stats["current_threshold"] == pytest.approx(0.7)
+    current_sources = payload["sources"]["current_signal_thresholds"]
+    assert current_sources["inline"]["signal_after_adjustment"] == pytest.approx(0.8)
+    assert current_sources["inline"]["signal_after_clamp"] == pytest.approx(0.7)
 
 
 def test_script_rejects_non_finite_current_threshold(tmp_path: Path) -> None:
@@ -1547,6 +1550,48 @@ def test_generate_report_merges_multiple_risk_threshold_paths(
     assert metrics["current_threshold"] == pytest.approx(0.88)
 
 
+def test_cli_risk_score_override_beats_config(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    autotrade_entries = [
+        {
+            "decision": {
+                "details": {
+                    "symbol": "BTCUSDT",
+                    "primary_exchange": "binance",
+                    "strategy": "trend_following",
+                    "summary": {"risk_score": 0.6},
+                }
+            }
+        }
+    ]
+
+    override_path = tmp_path / "risk_thresholds.yaml"
+    override_path.write_text("auto_trader: {}\n", encoding="utf-8")
+
+    def _fake_loader(*, config_path: Path | None = None):
+        assert config_path == override_path
+        return {"auto_trader": {"map_regime_to_signal": {"risk_score": 0.9}}}
+
+    monkeypatch.setattr(
+        "scripts.calibrate_autotrade_thresholds.load_risk_thresholds",
+        _fake_loader,
+    )
+
+    report = _generate_report(
+        journal_events=[],
+        autotrade_entries=autotrade_entries,
+        percentiles=[0.5],
+        suggestion_percentile=0.5,
+        risk_threshold_sources=[str(override_path)],
+        cli_risk_score=0.42,
+    )
+
+    metrics = report["groups"][0]["metrics"]["risk_score"]
+    assert metrics["current_threshold"] == pytest.approx(0.42)
+    assert report["sources"]["risk_score_override"] == pytest.approx(0.42)
+
+
 def test_autotrade_entry_reads_routing_sequences() -> None:
     journal_events = [
         {
@@ -1708,6 +1753,48 @@ def test_build_symbol_map_marks_ambiguous_when_conflicting_routing() -> None:
     assert mapping[canonical_symbol] == _AMBIGUOUS_SYMBOL_MAPPING
 
 
+def test_generate_report_accepts_generators() -> None:
+    journal_events = (
+        {
+            "primary_exchange": "Binance",
+            "strategy": "Trend",
+            "symbol": "BTCUSDT",
+            "signal_after_adjustment": 0.6,
+            "signal_after_clamp": 0.58,
+        },
+        {
+            "primary_exchange": "Binance",
+            "strategy": "Trend",
+            "symbol": "BTCUSDT",
+            "signal_after_adjustment": 0.4,
+            "signal_after_clamp": 0.38,
+        },
+    )
+    autotrade_entries = (
+        {
+            "timestamp": "2024-01-01T00:00:00Z",
+            "detail": {
+                "symbol": "btcusdt",
+                "primary_exchange": "binance",
+                "strategy": "trend",
+                "summary": {"risk_score": 0.42},
+            },
+        },
+    )
+
+    report = _generate_report(
+        journal_events=(dict(event) for event in journal_events),
+        autotrade_entries=(dict(entry) for entry in autotrade_entries),
+        percentiles=[0.5],
+        suggestion_percentile=0.5,
+    )
+
+    sources = report["sources"]
+    assert sources["journal_events"] == 2
+    assert sources["autotrade_entries"] == 1
+    assert report["groups"]
+    trend_group = next(iter(report["groups"]))
+    assert trend_group["metrics"]["signal_after_adjustment"]["count"] == 2
 def test_build_symbol_map_coalesces_case_variants() -> None:
     events = [
         {"symbol": "BtcUsdt", "primary_exchange": "binance", "strategy": "trend"},

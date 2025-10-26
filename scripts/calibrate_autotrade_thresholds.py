@@ -379,6 +379,14 @@ def _load_threshold_payload(path: Path) -> object:
         raise SystemExit(f"Nie udało się wczytać pliku z progami: {path}") from exc
 
 
+def _ensure_finite_threshold(value: float, *, metric: str, source: str) -> float:
+    if not math.isfinite(value):
+        raise SystemExit(
+            f"Metryka {metric} z {source} posiada niefinityczną wartość: {value}"
+        )
+    return value
+
+
 def _load_current_signal_thresholds(
     sources: Iterable[str] | None,
 ) -> tuple[dict[str, float], float | None, dict[str, object]]:
@@ -1899,6 +1907,7 @@ def _generate_report(
             _record_display(freeze_key, exchange, strategy)
             _record_freeze(freeze_key, freeze_payload)
 
+    autotrade_count = 0
     for entry in autotrade_entries:
         autotrade_count += 1
         summary = _extract_summary(entry)
@@ -1981,6 +1990,9 @@ def _generate_report(
                 float(raw_value),
                 source=source_hint,
             )
+
+    if cli_risk_score is not None:
+        current_risk_score = float(cli_risk_score)
 
     groups: list[dict[str, object]] = []
     all_keys = set(grouped_values.keys()) | set(freeze_summaries.keys()) | set(display_names.keys())
@@ -2153,6 +2165,29 @@ def _generate_report(
             "inline": risk_threshold_inline,
         },
     }
+
+    sources_payload: dict[str, object] = {
+        "journal_events": journal_count,
+        "autotrade_entries": autotrade_count,
+    }
+    if current_signal_threshold_sources:
+        signal_sources_payload: dict[str, object] = {}
+        files = current_signal_threshold_sources.get("files")
+        if files:
+            signal_sources_payload["files"] = list(files)
+        inline_values = current_signal_threshold_sources.get("inline")
+        if inline_values:
+            signal_sources_payload["inline"] = {
+                key: float(value)
+                for key, value in inline_values.items()
+                if isinstance(key, str)
+            }
+        if signal_sources_payload:
+            sources_payload["current_signal_thresholds"] = signal_sources_payload
+    if risk_threshold_paths:
+        sources_payload["risk_threshold_files"] = [str(path) for path in risk_threshold_paths]
+    if cli_risk_score is not None:
+        sources_payload["risk_score_override"] = float(cli_risk_score)
 
     return {
         "schema": "stage6.autotrade.threshold_calibration",
