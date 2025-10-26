@@ -1003,10 +1003,14 @@ def _load_autotrade_entries(
             return None
         if not _is_entry_candidate(item):
             return None
+        if since is None and until is None:
+            return item
         timestamp = _extract_entry_timestamp(item)
-        if since and timestamp and timestamp < since:
+        if timestamp is None:
+            return item
+        if since is not None and timestamp < since:
             return None
-        if until and timestamp and timestamp > until:
+        if until is not None and timestamp > until:
             return None
         return item
 
