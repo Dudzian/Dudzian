@@ -449,6 +449,64 @@ def test_load_autotrade_entries_does_not_buffer_entire_file(
     generator.close()
 
 
+def test_autotrade_streaming_reads_multiple_chunks(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    module = calibrate_autotrade_thresholds
+
+    entries: list[dict[str, object]] = []
+    for index in range(40):
+        entries.append(
+            {
+                "timestamp": f"2024-01-01T00:{index:02d}:00Z",
+                "decision": {
+                    "details": {
+                        "symbol": "BTCUSDT",
+                        "strategy": "trend_following",
+                        "note": "x" * 1024,
+                    }
+                },
+            }
+        )
+
+    export_path = tmp_path / "streaming-multi-chunk.json"
+    export_path.write_text(json.dumps({"entries": entries}, indent=2), encoding="utf-8")
+
+    chunk_size = 64
+    monkeypatch.setattr(module, "_JSON_STREAM_CHUNK_SIZE", chunk_size)
+
+    tracking_handles: list[_TrackingReadHandle] = []
+
+    def fake_open_text_file(path: Path) -> _TrackingReadHandle:
+        handle = _TrackingReadHandle(path)
+        tracking_handles.append(handle)
+        return handle
+
+    monkeypatch.setattr(module, "_open_text_file", fake_open_text_file)
+
+    iterator = module._load_autotrade_entries([export_path])
+    first_entry = next(iterator)
+    assert first_entry["timestamp"] == entries[0]["timestamp"]
+
+    assert tracking_handles
+    handle = tracking_handles[0]
+    file_size = export_path.stat().st_size
+
+    initial_bytes = sum(handle.read_results)
+    assert 0 < initial_bytes < file_size
+    assert handle.read_requests
+    assert all(size == chunk_size for size in handle.read_requests)
+
+    remaining_entries = list(iterator)
+    iterator.close()
+
+    assert len(remaining_entries) == len(entries) - 1
+
+    total_bytes = sum(handle.read_results)
+    assert total_bytes == file_size
+    assert len(handle.read_requests) > 1
+
+
 def test_load_autotrade_entries_filters_nested_timestamps(tmp_path: Path) -> None:
     export_path = tmp_path / "nested-timestamps.json"
     entries = [
