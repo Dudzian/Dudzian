@@ -3148,6 +3148,226 @@ def test_generate_report_samples_raw_freeze_events() -> None:
     assert sources == {"mode": "sample", "limit": 1}
 
 
+def test_generate_report_includes_full_freeze_events_without_limit() -> None:
+    journal_events = [
+        {
+            "symbol": "BTCUSDT",
+            "primary_exchange": "binance",
+            "strategy": "trend_following",
+            "status": "risk_freeze",
+            "reason": "manual_override",
+            "duration": 180,
+            "risk_score": 0.91,
+        },
+        {
+            "symbol": "BTCUSDT",
+            "primary_exchange": "binance",
+            "strategy": "trend_following",
+            "status": "auto_risk_freeze",
+            "reason": "risk_score_threshold",
+            "duration": 120,
+            "risk_score": 0.87,
+        },
+        {
+            "symbol": "BTCUSDT",
+            "primary_exchange": "binance",
+            "strategy": "trend_following",
+            "status": "auto_risk_freeze",
+            "reason": "risk_score_threshold",
+            "duration": 75,
+        },
+    ]
+
+    with patch("scripts.calibrate_autotrade_thresholds.load_risk_thresholds", return_value={}):
+        report = _generate_report(
+            journal_events=journal_events,
+            autotrade_entries=[],
+            percentiles=[0.5],
+            suggestion_percentile=0.5,
+        )
+
+    assert report["groups"]
+    group = report["groups"][0]
+    freeze_events = group["freeze_events"]
+    assert freeze_events["mode"] == "all"
+    assert len(freeze_events["events"]) == 3
+    assert freeze_events["events"][0]["status"] == "risk_freeze"
+    assert freeze_events["events"][0]["type"] == "manual"
+    assert freeze_events["events"][0]["duration"] == pytest.approx(180)
+    assert freeze_events["total"] == 3
+    assert freeze_events["type_counts"] == {"auto": 2, "manual": 1}
+    assert freeze_events["status_counts"]["auto_risk_freeze"] == 2
+    assert freeze_events["reason_counts"]["risk_score_threshold"] == 2
+
+    global_freeze = report["global_summary"]["freeze_events"]
+    assert global_freeze["mode"] == "all"
+    assert len(global_freeze["events"]) == 3
+    assert global_freeze["total"] == 3
+
+    sources = report["sources"]["freeze_events"]
+    assert sources == {"mode": "all"}
+
+
+def test_generate_report_limits_freeze_events_when_max_set() -> None:
+    journal_events = [
+        {
+            "symbol": "BTCUSDT",
+            "primary_exchange": "binance",
+            "strategy": "trend_following",
+            "status": "risk_freeze",
+            "reason": "manual_override",
+            "duration": 180,
+            "risk_score": 0.91,
+        },
+        {
+            "symbol": "BTCUSDT",
+            "primary_exchange": "binance",
+            "strategy": "trend_following",
+            "status": "auto_risk_freeze",
+            "reason": "risk_score_threshold",
+            "duration": 120,
+            "risk_score": 0.87,
+        },
+        {
+            "symbol": "BTCUSDT",
+            "primary_exchange": "binance",
+            "strategy": "trend_following",
+            "status": "auto_risk_freeze",
+            "reason": "risk_score_threshold",
+            "duration": 75,
+        },
+    ]
+
+    with patch("scripts.calibrate_autotrade_thresholds.load_risk_thresholds", return_value={}):
+        report = _generate_report(
+            journal_events=journal_events,
+            autotrade_entries=[],
+            percentiles=[0.5],
+            suggestion_percentile=0.5,
+            max_freeze_events=2,
+        )
+
+    assert report["groups"]
+    group = report["groups"][0]
+    freeze_events = group["freeze_events"]
+    assert freeze_events["mode"] == "limit"
+    assert freeze_events["limit"] == 2
+    assert len(freeze_events["events"]) == 2
+    assert freeze_events["total"] == 3
+    assert freeze_events["events"][0]["status"] == "risk_freeze"
+    assert freeze_events["events"][1]["status"] == "auto_risk_freeze"
+    assert freeze_events["type_counts"] == {"auto": 2, "manual": 1}
+
+    global_freeze = report["global_summary"]["freeze_events"]
+    assert global_freeze["mode"] == "limit"
+    assert global_freeze["limit"] == 2
+    assert len(global_freeze["events"]) == 2
+    assert global_freeze["total"] == 3
+
+    sources = report["sources"]["freeze_events"]
+    assert sources == {"mode": "limit", "limit": 2}
+
+
+def test_generate_report_limits_freeze_events_when_max_zero() -> None:
+    journal_events = [
+        {
+            "symbol": "BTCUSDT",
+            "primary_exchange": "binance",
+            "strategy": "trend_following",
+            "status": "risk_freeze",
+            "reason": "manual_override",
+            "duration": 180,
+            "risk_score": 0.91,
+        },
+        {
+            "symbol": "BTCUSDT",
+            "primary_exchange": "binance",
+            "strategy": "trend_following",
+            "status": "auto_risk_freeze",
+            "reason": "risk_score_threshold",
+            "duration": 120,
+        },
+    ]
+
+    with patch("scripts.calibrate_autotrade_thresholds.load_risk_thresholds", return_value={}):
+        report = _generate_report(
+            journal_events=journal_events,
+            autotrade_entries=[],
+            percentiles=[0.5],
+            suggestion_percentile=0.5,
+            max_freeze_events=0,
+        )
+
+    assert report["groups"]
+    group = report["groups"][0]
+    freeze_events = group["freeze_events"]
+    assert freeze_events["mode"] == "limit"
+    assert freeze_events["limit"] == 0
+    assert freeze_events["events"] == []
+    assert freeze_events["total"] == 2
+    assert freeze_events["type_counts"] == {"auto": 1, "manual": 1}
+
+    global_freeze = report["global_summary"]["freeze_events"]
+    assert global_freeze["mode"] == "limit"
+    assert global_freeze["limit"] == 0
+    assert global_freeze["events"] == []
+    assert global_freeze["total"] == 2
+
+    sources = report["sources"]["freeze_events"]
+    assert sources == {"mode": "limit", "limit": 0}
+
+
+def test_main_respects_freeze_events_limit_flag(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from scripts import calibrate_autotrade_thresholds as module
+
+    journal_path = tmp_path / "journal.jsonl"
+    journal_path.write_text("{}\n", encoding="utf-8")
+    export_path = tmp_path / "export.json"
+    export_path.write_text("{}", encoding="utf-8")
+
+    monkeypatch.setattr(module, "_load_journal_events", lambda *_, **__: [])
+    monkeypatch.setattr(module, "_load_autotrade_entries", lambda *_, **__: [])
+    monkeypatch.setattr(
+        module,
+        "_load_current_signal_thresholds",
+        lambda *_: ({}, None, {}),
+    )
+
+    captured: dict[str, object] = {}
+
+    def _fake_generate_report(**kwargs: object) -> dict[str, object]:
+        captured.update(kwargs)
+        return {
+            "groups": [],
+            "global_summary": {"metrics": {}, "freeze_summary": {}},
+            "sources": {"journal_events": 0, "autotrade_entries": 0},
+            "percentiles": [],
+        }
+
+    monkeypatch.setattr(module, "_generate_report", _fake_generate_report)
+
+    exit_code = module.main(
+        [
+            "--journal",
+            str(journal_path),
+            "--autotrade-export",
+            str(export_path),
+            "--freeze-events-limit",
+            "3",
+        ]
+    )
+
+    assert exit_code == 0
+    assert captured["max_freeze_events"] == 3
+    assert captured["limit_freeze_events"] is None
+    assert captured["raw_freeze_events_mode"] == "omit"
+
+    output = capsys.readouterr().out
+    assert "Przetworzono" in output
+
+
 def test_resolve_freeze_event_limit_prefers_new_flag() -> None:
     result = _resolve_freeze_event_limit(
         limit_freeze_events=5,

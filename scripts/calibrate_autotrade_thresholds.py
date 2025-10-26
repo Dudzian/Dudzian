@@ -1858,6 +1858,7 @@ def _generate_report(
     include_raw_values: bool = False,
     raw_freeze_events_mode: Literal["omit", "sample"] = "omit",
     limit_freeze_events: int | None = None,
+    max_freeze_events: int | None = None,
 ) -> dict[str, object]:
     normalized_signal_thresholds: dict[str, float] | None = None
     if isinstance(current_signal_thresholds, Mapping):
@@ -1892,6 +1893,7 @@ def _generate_report(
             "reason_counts": Counter(),
         }
     )
+    freeze_event_collections: dict[tuple[str, str], list[dict[str, object]]] = defaultdict(list)
     display_names: dict[tuple[str, str], tuple[str, str]] = {}
     aggregated_freeze_summary = {
         "total": 0,
@@ -1899,6 +1901,7 @@ def _generate_report(
         "status_counts": Counter(),
         "reason_counts": Counter(),
     }
+    aggregated_freeze_events: list[dict[str, object]] = []
     freeze_event_samplers: dict[tuple[str, str], _FreezeEventSampler] = {}
     aggregated_freeze_sampler: _FreezeEventSampler | None = None
     normalized_freeze_mode = str(raw_freeze_events_mode or "omit").strip().lower()
@@ -1913,6 +1916,13 @@ def _generate_report(
         aggregated_freeze_sampler = _FreezeEventSampler(sampler_limit)
     else:
         sampler_limit = 0
+    if max_freeze_events is None:
+        freeze_event_limit: int | None = None
+    else:
+        try:
+            freeze_event_limit = max(0, int(max_freeze_events))
+        except (TypeError, ValueError):
+            freeze_event_limit = 0
     journal_count = 0
     autotrade_count = 0
 
@@ -1983,6 +1993,32 @@ def _generate_report(
         if _METRIC_APPEND_OBSERVER is not None:
             _METRIC_APPEND_OBSERVER(key, metric_name, len(values))
 
+    def _serialize_counter(counter: Counter | object) -> dict[str, int]:
+        if not isinstance(counter, Counter):
+            return {}
+        return {
+            str(key): int(count)
+            for key, count in sorted(counter.items(), key=lambda item: item[0])
+        }
+
+    def _freeze_event_record(
+        status: str,
+        freeze_type: str,
+        reason: str,
+        duration: float | None,
+        risk_score: float | None,
+    ) -> dict[str, object]:
+        record: dict[str, object] = {
+            "status": status,
+            "type": freeze_type,
+            "reason": reason,
+        }
+        if duration is not None:
+            record["duration"] = duration
+        if risk_score is not None:
+            record["risk_score"] = risk_score
+        return record
+
     def _record_freeze(
         key: tuple[str, str],
         payload: Mapping[str, object],
@@ -2048,6 +2084,22 @@ def _generate_report(
                         "risk_score": numeric_risk_score,
                     }
                 )
+        freeze_event_payload = _freeze_event_record(
+            status,
+            freeze_type,
+            reason,
+            numeric_duration if numeric_duration is not None and math.isfinite(numeric_duration) else None,
+            numeric_risk_score,
+        )
+        if freeze_event_limit is None:
+            freeze_event_collections[key].append(dict(freeze_event_payload))
+            aggregated_freeze_events.append(dict(freeze_event_payload))
+        elif freeze_event_limit > 0:
+            group_events = freeze_event_collections[key]
+            if len(group_events) < freeze_event_limit:
+                group_events.append(dict(freeze_event_payload))
+            if len(aggregated_freeze_events) < freeze_event_limit:
+                aggregated_freeze_events.append(dict(freeze_event_payload))
     for event in journal_events:
         journal_count += 1
         _update_symbol_map_entry(symbol_map, event)
@@ -2207,6 +2259,28 @@ def _generate_report(
             "metrics": metrics_payload,
             "freeze_summary": freeze_summary_payload,
         }
+        if freeze_event_limit is None:
+            events_sample = freeze_event_collections.get((exchange, strategy))
+            if events_sample:
+                group_payload["freeze_events"] = {
+                    "mode": "all",
+                    "events": [dict(item) for item in events_sample],
+                    "total": int(freeze_summary.get("total") or 0),
+                    "type_counts": _serialize_counter(freeze_summary.get("type_counts")),
+                    "status_counts": _serialize_counter(freeze_summary.get("status_counts")),
+                    "reason_counts": _serialize_counter(freeze_summary.get("reason_counts")),
+                }
+        else:
+            events_sample = freeze_event_collections.get((exchange, strategy), [])
+            group_payload["freeze_events"] = {
+                "mode": "limit",
+                "limit": freeze_event_limit,
+                "events": [dict(item) for item in events_sample],
+                "total": int(freeze_summary.get("total") or 0),
+                "type_counts": _serialize_counter(freeze_summary.get("type_counts")),
+                "status_counts": _serialize_counter(freeze_summary.get("status_counts")),
+                "reason_counts": _serialize_counter(freeze_summary.get("reason_counts")),
+            }
         if sampling_freeze_events:
             sampler = freeze_event_samplers.get((exchange, strategy))
             if sampler is not None:
@@ -2239,6 +2313,26 @@ def _generate_report(
         "metrics": global_metrics,
         "freeze_summary": _format_freeze_summary(aggregated_freeze_summary),
     }
+    if freeze_event_limit is None:
+        if aggregated_freeze_events:
+            global_summary["freeze_events"] = {
+                "mode": "all",
+                "events": [dict(item) for item in aggregated_freeze_events],
+                "total": int(aggregated_freeze_summary.get("total") or 0),
+                "type_counts": _serialize_counter(aggregated_freeze_summary.get("type_counts")),
+                "status_counts": _serialize_counter(aggregated_freeze_summary.get("status_counts")),
+                "reason_counts": _serialize_counter(aggregated_freeze_summary.get("reason_counts")),
+            }
+    else:
+        global_summary["freeze_events"] = {
+            "mode": "limit",
+            "limit": freeze_event_limit,
+            "events": [dict(item) for item in aggregated_freeze_events],
+            "total": int(aggregated_freeze_summary.get("total") or 0),
+            "type_counts": _serialize_counter(aggregated_freeze_summary.get("type_counts")),
+            "status_counts": _serialize_counter(aggregated_freeze_summary.get("status_counts")),
+            "reason_counts": _serialize_counter(aggregated_freeze_summary.get("reason_counts")),
+        }
     if sampling_freeze_events and aggregated_freeze_sampler is not None:
         global_summary["raw_freeze_events"] = aggregated_freeze_sampler.to_payload()
     if include_raw_values:
@@ -2369,6 +2463,10 @@ def _generate_report(
         }
     else:
         sources_payload["raw_freeze_events"] = {"mode": "omit"}
+    if freeze_event_limit is None:
+        sources_payload["freeze_events"] = {"mode": "all"}
+    else:
+        sources_payload["freeze_events"] = {"mode": "limit", "limit": freeze_event_limit}
 
     return {
         "schema": "stage6.autotrade.threshold_calibration",
@@ -2490,6 +2588,15 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--freeze-events-limit",
+        type=int,
+        help=(
+            "Ogranicz liczbę zdarzeń zapisywanych w sekcjach freeze_events; "
+            "zachowuje jedynie pierwsze N wpisów wraz z agregatami. "
+            "Wartość 0 pozostawia wyłącznie podsumowania bez listy zdarzeń."
+        ),
+    )
+    parser.add_argument(
         "--raw-freeze-events",
         choices=("omit", "sample"),
         default="omit",
@@ -2572,6 +2679,7 @@ def main(argv: list[str] | None = None) -> int:
         include_raw_values=bool(args.plot_dir),
         raw_freeze_events_mode="sample" if limit_freeze_events is not None else "omit",
         limit_freeze_events=limit_freeze_events,
+        max_freeze_events=getattr(args, "freeze_events_limit", None),
     )
 
     if args.output_json:
