@@ -958,12 +958,10 @@ def _load_autotrade_entries(
     def _iter_path(path: Path) -> Iterator[Mapping[str, object]]:
         try:
             with _open_text_file(path) as handle:
-                iterator: Iterator[Mapping[str, object]]
                 if _is_json_lines_path(path):
-                    iterator = _iter_json_lines(handle, path)
+                    yield from _iter_json_lines(handle, path)
                 else:
-                    iterator = _iter_json_stream(handle, path)
-                yield from iterator
+                    yield from _iter_json_stream(handle, path)
         except OSError as exc:  # noqa: BLE001 - CLI feedback
             raise SystemExit(
                 f"Nie udało się odczytać eksportu autotradera {path}: {exc}"
