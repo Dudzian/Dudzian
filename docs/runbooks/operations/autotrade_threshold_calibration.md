@@ -163,9 +163,20 @@ sekcję `freeze_summary` z rozbiciem na blokady automatyczne i manualne,
 powody blokad oraz histogramy długości (`risk_freeze_duration`).
 
 Pole `global_summary` w raporcie JSON zawiera zagregowane metryki i statystyki
-blokad dla całego zbioru danych. Dzięki temu można szybko ocenić, jak nowe
-progi wpłyną na wszystkie strategie łącznie, zanim rozpocznie się szczegółowa
-analiza poszczególnych par.
+blokad dla całego zbioru danych (bez duplikowania surowych wartości). Dzięki
+temu można szybko ocenić, jak nowe progi wpłyną na wszystkie strategie łącznie,
+z zachowaniem lekkiego rozmiaru raportu.
+
+Jeżeli raport generowany jest na potrzeby krótkiego podsumowania, ustaw
+`--max-freeze-events` na niewielką liczbę (np. 25), aby nie kopiować tysięcy
+zdarzeń `raw_freeze_events` do wyniku. Pole `raw_freeze_events_truncated`
+informuje, czy lista została ucięta względem łącznej liczby blokad widocznej w
+`freeze_summary`, a `raw_freeze_events_omitted` wskazuje dokładną liczbę
+pominiętych wpisów. Dodatkowo `freeze_summary.omitted` (zarówno w grupach, jak i
+w sekcji `global_summary`) prezentuje łączną liczbę blokad pominiętych w danym
+wierszu. Metadane raportu przechowują wykorzystany limit w polu
+`sources.max_freeze_events`, a liczba skróconych grup dostępna jest w
+`sources.raw_freeze_events_truncated_groups`.
 
 ## Interpretacja sekcji `sources`
 

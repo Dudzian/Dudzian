@@ -1845,6 +1845,15 @@ def _write_csv(
     import csv
 
     destination.parent.mkdir(parents=True, exist_ok=True)
+    freeze_columns = [
+        "freeze_total",
+        "freeze_auto",
+        "freeze_manual",
+        "freeze_omitted",
+        "freeze_status_counts",
+        "freeze_reason_counts",
+        "freeze_truncated",
+    ]
     fieldnames = [
         "primary_exchange",
         "strategy",
@@ -1856,7 +1865,54 @@ def _write_csv(
         "stddev",
         "suggested_threshold",
         "current_threshold",
-    ] + list(percentiles)
+    ] + list(percentiles) + freeze_columns
+    freeze_defaults = {column: "" for column in freeze_columns}
+    def _freeze_row_payload(
+        *,
+        primary_exchange: str,
+        strategy: str,
+        summary: Mapping[str, object] | None,
+        truncated: bool | None,
+    ) -> dict[str, object] | None:
+        if summary is None:
+            return None
+        total = summary.get("total")
+        auto = summary.get("auto")
+        manual = summary.get("manual")
+        omitted = summary.get("omitted")
+        statuses = summary.get("statuses")
+        reasons = summary.get("reasons")
+        row: dict[str, object] = {
+            "primary_exchange": primary_exchange,
+            "strategy": strategy,
+            "metric": "__freeze_summary__",
+            "count": total,
+            "min": "",
+            "max": "",
+            "mean": "",
+            "stddev": "",
+            "suggested_threshold": "",
+            "current_threshold": "",
+        }
+        row.update(freeze_defaults)
+        if total is not None:
+            row["freeze_total"] = total
+        if auto is not None:
+            row["freeze_auto"] = auto
+        if manual is not None:
+            row["freeze_manual"] = manual
+        if omitted is not None:
+            row["freeze_omitted"] = omitted
+        if statuses:
+            row["freeze_status_counts"] = json.dumps(statuses, ensure_ascii=False)
+        if reasons:
+            row["freeze_reason_counts"] = json.dumps(reasons, ensure_ascii=False)
+        if truncated is not None:
+            row["freeze_truncated"] = str(bool(truncated)).lower()
+        else:
+            row["freeze_truncated"] = ""
+        return row
+
     with destination.open("w", encoding="utf-8", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
         writer.writeheader()
@@ -1864,6 +1920,8 @@ def _write_csv(
             primary_exchange = group["primary_exchange"]
             strategy = group["strategy"]
             metrics = group["metrics"]
+            freeze_summary = group.get("freeze_summary") if isinstance(group.get("freeze_summary"), Mapping) else None
+            freeze_truncated = group.get("raw_freeze_events_truncated")
             for metric_name, metric_payload in metrics.items():
                 row = {
                     "primary_exchange": primary_exchange,
@@ -1879,7 +1937,16 @@ def _write_csv(
                 }
                 for percentile_key, percentile_value in metric_payload.get("percentiles", {}).items():
                     row[percentile_key] = percentile_value
+                row.update(freeze_defaults)
                 writer.writerow(row)
+            freeze_row = _freeze_row_payload(
+                primary_exchange=primary_exchange,
+                strategy=strategy,
+                summary=freeze_summary,
+                truncated=bool(freeze_truncated) if freeze_truncated is not None else None,
+            )
+            if freeze_row is not None:
+                writer.writerow(freeze_row)
         if global_summary:
             metrics = global_summary.get("metrics")
             if isinstance(metrics, Mapping):
@@ -1900,7 +1967,18 @@ def _write_csv(
                     if isinstance(percentiles_payload, Mapping):
                         for percentile_key, percentile_value in percentiles_payload.items():
                             row[percentile_key] = percentile_value
+                    row.update(freeze_defaults)
                     writer.writerow(row)
+            freeze_summary = global_summary.get("freeze_summary")
+            summary_mapping = freeze_summary if isinstance(freeze_summary, Mapping) else None
+            freeze_row = _freeze_row_payload(
+                primary_exchange="__all__",
+                strategy="__all__",
+                summary=summary_mapping,
+                truncated=None,
+            )
+            if freeze_row is not None:
+                writer.writerow(freeze_row)
 
 
 def _maybe_plot(
@@ -2557,6 +2635,9 @@ def _generate_report(
                 float(raw_value),
                 source=source_hint,
             )
+
+    if cli_risk_score is not None:
+        current_risk_score = float(cli_risk_score)
 
     if cli_risk_score is not None:
         current_risk_score = float(cli_risk_score)

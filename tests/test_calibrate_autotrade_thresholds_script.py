@@ -1039,6 +1039,27 @@ def test_script_generates_report(tmp_path: Path) -> None:
         "risk_score",
         "risk_freeze_duration",
     }
+    freeze_rows = [
+        row
+        for row in rows
+        if row["metric"] == "__freeze_summary__" and row["primary_exchange"] == "binance"
+    ]
+    assert freeze_rows, "Brak wiersza freeze_summary dla binance"
+    freeze_row = freeze_rows[0]
+    assert int(freeze_row["freeze_total"]) == 3
+    assert int(freeze_row["freeze_auto"]) == 2
+    assert int(freeze_row["freeze_manual"]) == 1
+    assert int(freeze_row["freeze_omitted"]) == 0
+    assert freeze_row["freeze_truncated"] in {"false", ""}
+    assert freeze_row["freeze_status_counts"], "Oczekiwano rozbicia statusów w CSV"
+    aggregated_freeze_rows = [
+        row
+        for row in rows
+        if row["metric"] == "__freeze_summary__" and row["primary_exchange"] == "__all__"
+    ]
+    assert aggregated_freeze_rows, "Brak globalnego wiersza freeze_summary"
+    assert int(aggregated_freeze_rows[0]["freeze_total"]) == 3
+
     for row in rows:
         if row["metric"] == "risk_score" and row["primary_exchange"] == "binance":
             assert float(row["current_threshold"]) >= 0.7
