@@ -136,8 +136,7 @@ def _normalize_threshold_value(
     *,
     source: str | None = None,
 ) -> float:
-    normalized = float(raw_value)
-    return _ensure_finite_value(metric_name, normalized, source=source)
+    return float(raw_value)
 
 
 def _extract_threshold_value(candidate: object) -> float | None:
@@ -339,7 +338,12 @@ def _parse_threshold_mapping(raw: str) -> tuple[dict[str, float], dict[str, str]
             numeric,
             source=f"CLI '{pair_repr}'",
         )
-        values[normalized_key] = normalized_value
+        finite_value = _ensure_finite_value(
+            normalized_key,
+            normalized_value,
+            source=f"CLI '{pair_repr}'",
+        )
+        values[normalized_key] = finite_value
         sources[normalized_key] = pair_repr
     return values, sources
 
@@ -416,6 +420,11 @@ def _load_current_signal_thresholds(
                             value,
                             source=path_str,
                         )
+                        numeric_value = _ensure_finite_value(
+                            metric_name,
+                            numeric_value,
+                            source=path_str,
+                        )
                         if metric_name == "risk_score":
                             current_risk_score = numeric_value
                             found_risk_in_file = True
@@ -433,23 +442,21 @@ def _load_current_signal_thresholds(
             if not isinstance(metric_name, str):
                 continue
             metric_name_normalized = _normalize_metric_key(metric_name)
-            if metric_name_normalized not in _SUPPORTED_THRESHOLD_METRICS:
-                continue
-            raw_source = mapping_sources.get(metric_name_normalized)
-            error_source = f"CLI '{raw_source}'" if raw_source else f"CLI '{candidate}'"
-            normalized_value = _ensure_finite_value(
-                metric_name_normalized,
-                float(numeric),
-                source=error_source,
-            )
-            if metric_name_normalized == "risk_score":
-                current_risk_score = normalized_value
-                inline_risk_thresholds[metric_name_normalized] = normalized_value
-                inline_risk_source = raw_source or candidate
-                inline_risk_value = normalized_value
-            else:
-                thresholds[metric_name_normalized] = normalized_value
-                inline_values[metric_name_normalized] = normalized_value
+            if metric_name_normalized in _SUPPORTED_THRESHOLD_METRICS:
+                source_repr = mapping_sources.get(metric_name_normalized, candidate)
+                finite_value = _ensure_finite_value(
+                    metric_name_normalized,
+                    numeric,
+                    source=f"CLI '{source_repr}'",
+                )
+                if metric_name_normalized == "risk_score":
+                    current_risk_score = finite_value
+                    inline_risk_thresholds[metric_name_normalized] = finite_value
+                    inline_risk_source = source_repr
+                    inline_risk_value = finite_value
+                else:
+                    thresholds[metric_name_normalized] = finite_value
+                    inline_values[metric_name_normalized] = finite_value
 
     if inline_risk_value is not None:
         current_risk_score = inline_risk_value
@@ -1370,6 +1377,28 @@ def _generate_report(
     cli_risk_score: float | None = None,
     include_raw_values: bool = False,
 ) -> dict[str, object]:
+    normalized_signal_thresholds: dict[str, float] | None = None
+    if isinstance(current_signal_thresholds, Mapping):
+        normalized_signal_thresholds = {}
+        for raw_key, raw_value in current_signal_thresholds.items():
+            if not isinstance(raw_key, str):
+                continue
+            normalized_key = _normalize_metric_key(raw_key)
+            if normalized_key not in _SUPPORTED_THRESHOLD_METRICS:
+                continue
+            numeric = _coerce_float(raw_value)
+            if numeric is None:
+                raise SystemExit(
+                    "Nie udało się zinterpretować bieżącego progu "
+                    f"'{raw_value}' dla metryki {raw_key}"
+                )
+            normalized_signal_thresholds[normalized_key] = _ensure_finite_value(
+                normalized_key,
+                float(numeric),
+                source=f"current_thresholds.{normalized_key}",
+            )
+    current_signal_thresholds = normalized_signal_thresholds
+
     symbol_map: dict[str, tuple[str, str]] = {}
     grouped_values: dict[tuple[str, str], defaultdict[str, array]] = defaultdict(
         lambda: defaultdict(_numeric_buffer)
@@ -1559,30 +1588,33 @@ def _generate_report(
                 float(value),
                 source="load_risk_thresholds()",
             )
+
+    override_source: str | None = None
+    if isinstance(risk_score_source, Mapping):
+        raw_source = risk_score_source.get("source")
+        if raw_source is not None:
+            override_source = str(raw_source)
+        else:
+            raw_kind = risk_score_source.get("kind")
+            if isinstance(raw_kind, str) and raw_kind:
+                override_source = f"current_thresholds.{raw_kind}"
+
     if risk_score_override is not None:
-        override_source = None
-        if isinstance(risk_score_source, Mapping):
-            raw_source = risk_score_source.get("source")
-            if raw_source is not None:
-                override_source = str(raw_source)
+        source_hint = override_source or "CLI risk_score_override"
         current_risk_score = _ensure_finite_value(
             "risk_score",
             float(risk_score_override),
-            source=override_source or "CLI risk_score",
+            source=source_hint,
         )
-    if cli_risk_score_threshold is not None:
-        current_risk_score = _ensure_finite_value(
-            "risk_score",
-            float(cli_risk_score_threshold),
-            source="CLI risk_score_threshold",
-        )
-
-    if cli_risk_score is not None:
-        current_risk_score = _ensure_finite_value(
-            "risk_score",
-            float(cli_risk_score),
-            source="CLI risk_score",
-        )
+    elif current_risk_score is None and isinstance(risk_score_source, Mapping):
+        raw_value = _coerce_float(risk_score_source.get("value"))
+        if raw_value is not None:
+            source_hint = override_source or "current_thresholds.value"
+            current_risk_score = _ensure_finite_value(
+                "risk_score",
+                float(raw_value),
+                source=source_hint,
+            )
 
     groups: list[dict[str, object]] = []
     all_keys = set(grouped_values.keys()) | set(freeze_summaries.keys()) | set(display_names.keys())
