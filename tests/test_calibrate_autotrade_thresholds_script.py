@@ -11,7 +11,8 @@ import sys
 import weakref
 from array import array
 from weakref import ReferenceType
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
+from typing import TextIO
 from types import GeneratorType
 from datetime import datetime, timezone
 from unittest.mock import patch
@@ -36,6 +37,57 @@ from scripts.calibrate_autotrade_thresholds import (
     _parse_threshold_mapping,
     _resolve_freeze_event_limit,
 )
+
+
+class _TrackingReadHandle:
+    def __init__(
+        self,
+        path: Path,
+        opener: Callable[[Path], TextIO] | None = None,
+    ) -> None:
+        if opener is None:
+            self._handle = path.open("r", encoding="utf-8")
+        else:
+            self._handle = opener(path)
+        self.read_requests: list[int] = []
+        self.read_results: list[int] = []
+        self.readline_requests: list[int] = []
+        self.readline_results: list[int] = []
+
+    def read(self, size: int = -1) -> str:
+        self.read_requests.append(size)
+        chunk = self._handle.read(size)
+        if chunk:
+            self.read_results.append(len(chunk))
+        return chunk
+
+    def readline(self, size: int = -1) -> str:
+        self.readline_requests.append(size)
+        chunk = self._handle.readline(size)
+        if chunk:
+            self.readline_results.append(len(chunk))
+        return chunk
+
+    def __iter__(self) -> "_TrackingReadHandle":
+        return self
+
+    def __next__(self) -> str:
+        line = self.readline()
+        if line == "":
+            raise StopIteration
+        return line
+
+    def close(self) -> None:
+        self._handle.close()
+
+    def __enter__(self) -> "_TrackingReadHandle":
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        self._handle.close()
+
+    def __getattr__(self, item: str):  # pragma: no cover - passthrough helper
+        return getattr(self._handle, item)
 
 
 def _write_journal(path: Path) -> None:
@@ -2815,35 +2867,10 @@ def test_load_autotrade_entries_streams_in_chunks(
 
     monkeypatch.setattr(module, "_JSON_STREAM_CHUNK_SIZE", 16)
 
-    class TrackingHandle:
-        def __init__(self, path: Path):
-            self._handle = path.open("r", encoding="utf-8")
-            self.read_requests: list[int] = []
-            self.read_results: list[int] = []
+    holder: dict[str, _TrackingReadHandle] = {}
 
-        def read(self, size: int = -1) -> str:
-            self.read_requests.append(size)
-            chunk = self._handle.read(size)
-            if chunk:
-                self.read_results.append(len(chunk))
-            return chunk
-
-        def close(self) -> None:
-            self._handle.close()
-
-        def __enter__(self) -> "TrackingHandle":
-            return self
-
-        def __exit__(self, exc_type, exc, tb) -> None:
-            self._handle.close()
-
-        def __getattr__(self, item: str):  # pragma: no cover - passthrough helper
-            return getattr(self._handle, item)
-
-    holder: dict[str, TrackingHandle] = {}
-
-    def fake_open_text_file(path: Path) -> TrackingHandle:
-        handle = TrackingHandle(path)
+    def fake_open_text_file(path: Path) -> _TrackingReadHandle:
+        handle = _TrackingReadHandle(path)
         holder["handle"] = handle
         return handle
 
@@ -2866,6 +2893,253 @@ def test_load_autotrade_entries_streams_in_chunks(
     assert sum(handle.read_results) == expected_length
 
 
+def test_load_autotrade_entries_streams_nested_entries_without_full_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    export_path = tmp_path / "autotrade.json"
+    entries = [
+        {
+            "timestamp": "2024-03-01T00:00:00Z",
+            "value": 1,
+            "padding": "x" * 64,
+        },
+        {
+            "timestamp": "2024-03-01T00:10:00Z",
+            "value": 2,
+            "padding": "y" * 64,
+        },
+        {
+            "timestamp": "2024-03-01T00:20:00Z",
+            "value": 3,
+            "padding": "z" * 64,
+        },
+    ]
+    payload = {
+        "metadata": {"info": "m" * 128},
+        "container": {
+            "details": {"notes": ["n" * 32, "o" * 32]},
+            "wrapper": {"entries": entries},
+        },
+        "footer": "p" * 64,
+    }
+    export_path.write_text(json.dumps(payload), encoding="utf-8")
+    expected_length = len(export_path.read_text(encoding="utf-8"))
+
+    module = calibrate_autotrade_thresholds
+
+    monkeypatch.setattr(module, "_JSON_STREAM_CHUNK_SIZE", 32)
+
+    holder: dict[str, _TrackingReadHandle] = {}
+
+    def fake_open_text_file(path: Path) -> _TrackingReadHandle:
+        handle = _TrackingReadHandle(path)
+        holder["handle"] = handle
+        return handle
+
+    monkeypatch.setattr(module, "_open_text_file", fake_open_text_file)
+
+    loaded = list(module._load_autotrade_entries([export_path]))
+
+    assert loaded == entries
+
+    handle = holder["handle"]
+    assert len(handle.read_requests) > 1
+    assert all(size == module._JSON_STREAM_CHUNK_SIZE for size in handle.read_requests)
+    assert handle.read_results
+    assert max(handle.read_results) <= module._JSON_STREAM_CHUNK_SIZE
+    assert max(handle.read_results) < expected_length
+    assert sum(handle.read_results) == expected_length
+
+
+def test_load_autotrade_entries_streams_entries_nested_in_arrays(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    export_path = tmp_path / "autotrade.json"
+    group_one = [
+        {"timestamp": "2024-04-01T00:00:00Z", "value": 1, "note": "alpha"},
+        {"timestamp": "2024-04-01T00:10:00Z", "value": 2, "note": "beta"},
+    ]
+    group_two = [
+        {"timestamp": "2024-04-01T00:20:00Z", "value": 3, "note": "gamma"},
+        {"timestamp": "2024-04-01T00:30:00Z", "value": 4, "note": "delta"},
+    ]
+    group_three = [
+        {"timestamp": "2024-04-01T00:40:00Z", "value": 5, "note": "epsilon"},
+        {"timestamp": "2024-04-01T00:50:00Z", "value": 6, "note": "zeta"},
+    ]
+    payload = {
+        "version": 3,
+        "groups": [
+            {"metadata": {"id": "g1", "padding": "x" * 64}, "entries": group_one},
+            {
+                "wrapper": {
+                    "details": {"padding": "y" * 64},
+                    "entries": group_two,
+                },
+                "metadata": {"id": "g2"},
+            },
+            {
+                "nodes": [
+                    {"info": "n" * 32},
+                    {"entries": group_three, "metadata": {"id": "g3"}},
+                ]
+            },
+        ],
+        "footer": {"summary": "done", "extra": "z" * 64},
+    }
+    export_path.write_text(json.dumps(payload), encoding="utf-8")
+    expected_length = len(export_path.read_text(encoding="utf-8"))
+
+    module = calibrate_autotrade_thresholds
+
+    monkeypatch.setattr(module, "_JSON_STREAM_CHUNK_SIZE", 28)
+
+    holder: dict[str, _TrackingReadHandle] = {}
+
+    def fake_open_text_file(path: Path) -> _TrackingReadHandle:
+        handle = _TrackingReadHandle(path)
+        holder["handle"] = handle
+        return handle
+
+    monkeypatch.setattr(module, "_open_text_file", fake_open_text_file)
+
+    loaded = list(module._load_autotrade_entries([export_path]))
+
+    assert loaded == group_one + group_two + group_three
+
+    handle = holder["handle"]
+    assert len(handle.read_requests) > 1
+    assert all(size == module._JSON_STREAM_CHUNK_SIZE for size in handle.read_requests)
+    assert handle.read_results
+    assert max(handle.read_results) <= module._JSON_STREAM_CHUNK_SIZE
+    assert max(handle.read_results) < expected_length
+    assert sum(handle.read_results) == expected_length
+
+
+def test_load_autotrade_entries_streams_entries_nested_in_objects(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    export_path = tmp_path / "autotrade.json"
+    batch_one = [
+        {"timestamp": "2024-04-02T00:00:00Z", "value": 1, "note": "alpha"},
+        {"timestamp": "2024-04-02T00:05:00Z", "value": 2, "note": "beta"},
+    ]
+    batch_two = [
+        {"timestamp": "2024-04-02T00:10:00Z", "value": 3, "note": "gamma"},
+        {"timestamp": "2024-04-02T00:15:00Z", "value": 4, "note": "delta"},
+    ]
+    batch_three = [
+        {"timestamp": "2024-04-02T00:20:00Z", "value": 5, "note": "epsilon"},
+    ]
+    payload = {
+        "header": {"generated_at": "2024-04-02T00:00:00Z", "padding": "x" * 64},
+        "entries": {
+            "primary": [
+                {
+                    "batch": {
+                        "entries": batch_one,
+                        "metadata": {"count": len(batch_one)},
+                    },
+                    "notes": ["ignored", "values"],
+                },
+                {
+                    "summary": {"info": "wrapped"},
+                    "container": {
+                        "items": [
+                            {"entries": [{"metadata": "skip"}]},
+                            {"entries": batch_two},
+                        ]
+                    },
+                },
+            ],
+            "secondary": {
+                "wrapper": {
+                    "payload": {"entries": batch_three},
+                    "metadata": {"count": len(batch_three)},
+                }
+            },
+        },
+        "footer": "done",
+    }
+    export_path.write_text(json.dumps(payload), encoding="utf-8")
+    expected_length = len(export_path.read_text(encoding="utf-8"))
+
+    module = calibrate_autotrade_thresholds
+
+    monkeypatch.setattr(module, "_JSON_STREAM_CHUNK_SIZE", 26)
+
+    holder: dict[str, _TrackingReadHandle] = {}
+
+    def fake_open_text_file(path: Path) -> _TrackingReadHandle:
+        handle = _TrackingReadHandle(path)
+        holder["handle"] = handle
+        return handle
+
+    monkeypatch.setattr(module, "_open_text_file", fake_open_text_file)
+
+    loaded = list(module._load_autotrade_entries([export_path]))
+
+    assert loaded == batch_one + batch_two + batch_three
+
+    handle = holder["handle"]
+    assert len(handle.read_requests) > 1
+    assert all(size == module._JSON_STREAM_CHUNK_SIZE for size in handle.read_requests)
+    assert handle.read_results
+    assert max(handle.read_results) <= module._JSON_STREAM_CHUNK_SIZE
+    assert max(handle.read_results) < expected_length
+    assert sum(handle.read_results) == expected_length
+
+
+def test_load_autotrade_entries_streams_entries_with_complex_strings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    export_path = tmp_path / "autotrade.json"
+    complex_text = (
+        "Line1 with brackets [] and braces {}"
+        "\nLine2 with quotes \"' and commas, plus unicode: ąćęłńóśźż"
+        " -- repeated -- " * 8
+    )
+    entries = [
+        {
+            "timestamp": "2024-05-01T00:00:00Z",
+            "value": 1,
+            "note": complex_text + " end",
+        },
+        {
+            "timestamp": "2024-05-01T00:10:00Z",
+            "value": 2,
+            "note": complex_text[::-1],
+        },
+    ]
+    export_path.write_text(json.dumps({"entries": entries}), encoding="utf-8")
+    expected_length = len(export_path.read_text(encoding="utf-8"))
+
+    module = calibrate_autotrade_thresholds
+
+    monkeypatch.setattr(module, "_JSON_STREAM_CHUNK_SIZE", 19)
+
+    holder: dict[str, _TrackingReadHandle] = {}
+
+    def fake_open_text_file(path: Path) -> _TrackingReadHandle:
+        handle = _TrackingReadHandle(path)
+        holder["handle"] = handle
+        return handle
+
+    monkeypatch.setattr(module, "_open_text_file", fake_open_text_file)
+
+    loaded = list(module._load_autotrade_entries([export_path]))
+
+    assert loaded == entries
+
+    handle = holder["handle"]
+    assert len(handle.read_requests) > 1
+    assert all(size == module._JSON_STREAM_CHUNK_SIZE for size in handle.read_requests)
+    assert handle.read_results
+    assert max(handle.read_results) <= module._JSON_STREAM_CHUNK_SIZE
+    assert max(handle.read_results) < expected_length
+    assert sum(handle.read_results) == expected_length
+
+
 def test_load_autotrade_entries_jsonl_with_bom(tmp_path: Path) -> None:
     export_path = tmp_path / "autotrade.jsonl"
     payloads = [
@@ -2881,6 +3155,158 @@ def test_load_autotrade_entries_jsonl_with_bom(tmp_path: Path) -> None:
     loaded = list(_load_autotrade_entries([export_path]))
 
     assert loaded == payloads
+
+
+@pytest.mark.parametrize(
+    ("extension", "with_bom"),
+    [
+        (".jsonl", False),
+        (".jsonl", True),
+        (".jsonl.gz", False),
+        (".jsonl.gz", True),
+    ],
+)
+def test_load_autotrade_entries_jsonl_exports_are_streamed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, extension: str, with_bom: bool
+) -> None:
+    export_path = tmp_path / f"autotrade{extension}"
+    entries = [
+        {"timestamp": "2024-02-03T00:00:00Z", "value": 1, "padding": "x" * 64},
+        {"timestamp": "2024-02-03T00:10:00Z", "value": 2, "padding": "y" * 64},
+        {"timestamp": "2024-02-03T00:20:00Z", "value": 3, "padding": "z" * 64},
+    ]
+
+    if extension.endswith(".gz"):
+        writer = lambda path: gzip.open(path, "wt", encoding="utf-8")
+        reader = lambda path: gzip.open(path, "rt", encoding="utf-8")
+    else:
+        writer = lambda path: path.open("w", encoding="utf-8")
+        reader = lambda path: path.open("r", encoding="utf-8")
+
+    with writer(export_path) as handle:
+        if with_bom:
+            handle.write("\ufeff")
+        for entry in entries:
+            handle.write(json.dumps(entry))
+            handle.write("\n")
+
+    with reader(export_path) as handle:
+        expected_length = sum(len(line) for line in handle)
+
+    module = calibrate_autotrade_thresholds
+
+    holder: dict[str, _TrackingReadHandle] = {}
+
+    def fake_open_text_file(path: Path) -> _TrackingReadHandle:
+        handle = _TrackingReadHandle(path, opener=reader)
+        holder["handle"] = handle
+        return handle
+
+    monkeypatch.setattr(module, "_open_text_file", fake_open_text_file)
+
+    loaded = list(module._load_autotrade_entries([export_path]))
+
+    assert loaded == entries
+
+    handle = holder["handle"]
+    assert not handle.read_requests
+    assert not handle.read_results
+    assert handle.readline_requests
+    assert len(handle.readline_results) == len(entries)
+    assert sum(handle.readline_results) == expected_length
+    assert max(handle.readline_results) < expected_length
+
+
+def test_load_autotrade_entries_json_with_bom_is_streamed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    export_path = tmp_path / "autotrade.json"
+    padding = "x" * 64
+    entries = [
+        {"timestamp": "2024-02-01T00:00:00Z", "value": 1, "padding": padding},
+        {"timestamp": "2024-02-01T00:10:00Z", "value": 2, "padding": padding},
+        {"timestamp": "2024-02-01T00:20:00Z", "value": 3, "padding": padding},
+    ]
+    with export_path.open("w", encoding="utf-8") as handle:
+        handle.write("\ufeff")
+        json.dump({"entries": entries}, handle)
+
+    expected_length = len(export_path.read_text(encoding="utf-8"))
+
+    module = calibrate_autotrade_thresholds
+
+    monkeypatch.setattr(module, "_JSON_STREAM_CHUNK_SIZE", 16)
+
+    holder: dict[str, _TrackingReadHandle] = {}
+
+    def fake_open_text_file(path: Path) -> _TrackingReadHandle:
+        handle = _TrackingReadHandle(path)
+        holder["handle"] = handle
+        return handle
+
+    monkeypatch.setattr(module, "_open_text_file", fake_open_text_file)
+
+    loaded = list(module._load_autotrade_entries([export_path]))
+
+    assert loaded == entries
+
+    handle = holder["handle"]
+    assert handle.read_requests
+    assert len(handle.read_requests) > 1
+    assert -1 not in handle.read_requests
+    assert all(size == module._JSON_STREAM_CHUNK_SIZE for size in handle.read_requests)
+    assert handle.read_results
+    assert max(handle.read_results) <= module._JSON_STREAM_CHUNK_SIZE
+    assert max(handle.read_results) < expected_length
+    assert sum(handle.read_results) == expected_length
+
+
+def test_load_autotrade_entries_gzipped_json_with_bom_is_streamed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    export_path = tmp_path / "autotrade.json.gz"
+    padding = "x" * 64
+    entries = [
+        {"timestamp": "2024-02-02T00:00:00Z", "value": 1, "padding": padding},
+        {"timestamp": "2024-02-02T00:10:00Z", "value": 2, "padding": padding},
+        {"timestamp": "2024-02-02T00:20:00Z", "value": 3, "padding": padding},
+    ]
+    with gzip.open(export_path, "wt", encoding="utf-8") as handle:
+        handle.write("\ufeff")
+        json.dump({"entries": entries}, handle)
+
+    with gzip.open(export_path, "rt", encoding="utf-8") as handle:
+        expected_length = len(handle.read())
+
+    module = calibrate_autotrade_thresholds
+
+    monkeypatch.setattr(module, "_JSON_STREAM_CHUNK_SIZE", 24)
+
+    holder: dict[str, _TrackingReadHandle] = {}
+
+    def fake_open_text_file(path: Path) -> _TrackingReadHandle:
+        handle = _TrackingReadHandle(
+            path,
+            opener=lambda current: gzip.open(current, "rt", encoding="utf-8"),
+        )
+        holder["handle"] = handle
+        return handle
+
+    monkeypatch.setattr(module, "_open_text_file", fake_open_text_file)
+
+    loaded = list(module._load_autotrade_entries([export_path]))
+
+    assert loaded == entries
+
+    handle = holder["handle"]
+    assert handle.read_requests
+    assert len(handle.read_requests) > 1
+    assert -1 not in handle.read_requests
+    assert all(size == module._JSON_STREAM_CHUNK_SIZE for size in handle.read_requests)
+    assert handle.read_results
+    assert max(handle.read_results) <= module._JSON_STREAM_CHUNK_SIZE
+    assert max(handle.read_results) < expected_length
+    assert sum(handle.read_results) == expected_length
 
 
 def test_load_journal_events_supports_gzipped_jsonl(tmp_path: Path) -> None:

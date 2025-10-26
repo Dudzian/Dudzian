@@ -169,9 +169,7 @@ class _JSONStreamEntriesParser:
             first_item = False
             if mode == "entries":
                 value = self._decode_value()
-                normalized = self._normalize_entry(value)
-                if normalized is not None:
-                    yield normalized
+                yield from self._iter_nested_entries(value)
                 continue
             yield from self._consume_value("search")
 
@@ -191,9 +189,7 @@ class _JSONStreamEntriesParser:
         if current == "{":
             if mode == "entries":
                 value = self._decode_value()
-                normalized = self._normalize_entry(value)
-                if normalized is not None:
-                    yield normalized
+                yield from self._iter_nested_entries(value)
                 return
             yield from self._consume_object()
             return
@@ -293,6 +289,31 @@ class _JSONStreamEntriesParser:
         raise SystemExit(
             f"Niepoprawny JSON w eksporcie autotradera {self._path}: oczekiwano obiektu lub tablicy"
         )
+
+    def _iter_nested_entries(self, value: object) -> Iterator[Mapping[str, object]]:
+        stack: list[object] = [value]
+        while stack:
+            current = stack.pop()
+            if isinstance(current, Mapping):
+                entries_field = current.get("entries")
+                if isinstance(entries_field, (Mapping, list)):
+                    other_values = [candidate for key, candidate in current.items() if key != "entries"]
+                    stack.extend(reversed(other_values))
+                    stack.append(entries_field)
+                    normalized = self._normalize_entry(current)
+                    if normalized is not None:
+                        yield normalized
+                    continue
+                stack.extend(reversed(list(current.values())))
+                normalized = self._normalize_entry(current)
+                if normalized is not None:
+                    yield normalized
+            elif isinstance(current, list):
+                stack.extend(reversed(current))
+            else:
+                normalized = self._normalize_entry(current)
+                if normalized is not None:
+                    yield normalized
 
 
 _METRIC_APPEND_OBSERVER: Callable[[tuple[str, str], str, int], None] | None = None
@@ -924,8 +945,18 @@ def _load_autotrade_entries(
     since: datetime | None = None,
     until: datetime | None = None,
 ) -> Iterator[Mapping[str, object]]:
+    def _is_entry_candidate(mapping: Mapping[str, object]) -> bool:
+        if "timestamp" in mapping:
+            return True
+        for key in ("decision", "detail", "regime_summary", "status"):
+            if key in mapping:
+                return True
+        return False
+
     def _normalize_entry(item: object) -> Mapping[str, object] | None:
         if not isinstance(item, Mapping):
+            return None
+        if not _is_entry_candidate(item):
             return None
         timestamp = _extract_entry_timestamp(item)
         if since and timestamp and timestamp < since:
