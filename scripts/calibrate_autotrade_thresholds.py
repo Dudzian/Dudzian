@@ -427,14 +427,9 @@ def _load_current_signal_thresholds(
                 for metric_name in _SUPPORTED_THRESHOLD_METRICS:
                     value = _resolve_metric_threshold(mapping, metric_name)
                     if value is not None:
-                        normalized_value = _normalize_threshold_value(
+                        finite_value = _normalize_and_validate_threshold(
                             metric_name,
                             raw_value=value,
-                            source=path_str,
-                        )
-                        finite_value = _ensure_finite_value(
-                            metric_name,
-                            normalized_value,
                             source=path_str,
                         )
                         if metric_name == "risk_score":
@@ -457,14 +452,9 @@ def _load_current_signal_thresholds(
             if metric_name_normalized in _SUPPORTED_THRESHOLD_METRICS:
                 source_repr = mapping_sources.get(metric_name_normalized, candidate)
                 validation_source = f"CLI '{source_repr}'"
-                normalized_value = _normalize_threshold_value(
-                    metric_name_normalized,
-                    raw_value=numeric,
-                    source=validation_source,
-                )
                 finite_value = _ensure_finite_value(
                     metric_name_normalized,
-                    normalized_value,
+                    numeric,
                     source=validation_source,
                 )
                 if metric_name_normalized == "risk_score":
@@ -477,6 +467,11 @@ def _load_current_signal_thresholds(
                     inline_values[metric_name_normalized] = finite_value
 
     if inline_risk_value is not None:
+        inline_risk_value = _ensure_finite_value(
+            "risk_score",
+            inline_risk_value,
+            source=inline_risk_source,
+        )
         current_risk_score = inline_risk_value
         risk_score_origin = {
             "kind": "inline",
@@ -484,6 +479,11 @@ def _load_current_signal_thresholds(
             "value": inline_risk_value,
         }
     elif file_risk_value is not None:
+        file_risk_value = _ensure_finite_value(
+            "risk_score",
+            file_risk_value,
+            source=file_risk_source,
+        )
         current_risk_score = file_risk_value
         risk_score_origin = {
             "kind": "file",
