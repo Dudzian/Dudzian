@@ -877,6 +877,39 @@ def test_load_current_thresholds_rejects_negative_infinite_risk_from_file(
     assert str(path) in message
 
 
+def test_load_current_thresholds_rejects_non_finite_inline_metadata_from_file(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "threshold_sources.json"
+    payload = {"inline": {"signal_after_adjustment": "NaN"}}
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(SystemExit) as excinfo:
+        _load_current_signal_thresholds([str(path)])
+
+    message = str(excinfo.value)
+    assert "musi być skończoną liczbą" in message
+    assert "signal_after_adjustment" in message
+    assert str(path) in message
+
+
+def test_load_current_thresholds_rejects_non_finite_inline_risk_metadata_from_file(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "risk_threshold_sources.json"
+    payload = {"risk_inline": {"risk_score": "Infinity"}}
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(SystemExit) as excinfo:
+        _load_current_signal_thresholds([str(path)])
+
+    message = str(excinfo.value)
+    assert "musi być skończoną liczbą" in message
+    assert "risk_score" in message
+    assert "inf" in message.lower()
+    assert str(path) in message
+
+
 def test_load_current_thresholds_supports_nested_structures(tmp_path: Path) -> None:
     payload = {
         "signals": {
