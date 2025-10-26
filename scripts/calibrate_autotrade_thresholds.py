@@ -1659,7 +1659,7 @@ def _metric_statistics(values: list[float], percentiles: Iterable[float]) -> dic
     else:
         stddev = 0.0
     percentiles_payload = {
-        f"p{int(p * 100):02d}": _compute_percentile(sorted_values, p)
+        _format_percentile_label(p): _compute_percentile(sorted_values, p)
         for p in percentiles
     }
     return {
@@ -2564,6 +2564,9 @@ def _generate_report(
     if cli_risk_score is not None:
         current_risk_score = float(cli_risk_score)
 
+    if cli_risk_score is not None:
+        current_risk_score = float(cli_risk_score)
+
     groups: list[dict[str, object]] = []
     all_keys = set(grouped_values.keys()) | set(freeze_summaries.keys()) | set(display_names.keys())
 
@@ -2923,7 +2926,7 @@ def _generate_report(
     return {
         "schema": "stage6.autotrade.threshold_calibration",
         "generated_at": datetime.now(timezone.utc).isoformat(),
-        "percentiles": [f"p{int(p * 100):02d}" for p in percentiles],
+        "percentiles": [_format_percentile_label(p) for p in percentiles],
         "suggestion_percentile": suggestion_percentile,
         "filters": {
             "since": since.isoformat() if since else None,

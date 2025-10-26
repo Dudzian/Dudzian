@@ -54,7 +54,10 @@ python scripts/calibrate_autotrade_thresholds.py \
 Polecenie:
 
 - zaczytuje wszystkie zdarzenia z dziennika oraz eksportu autotradera,
-- oblicza wskazane percentyle w rozbiciu na pary `giełda/strategia`,
+- oblicza wskazane percentyle w rozbiciu na pary `giełda/strategia`
+  (kolumny percentylowe w raporcie JSON/CSV są oznaczane jako `pXX` dla
+  wartości całkowitych lub `pXX_Y` dla ułamków, np. `p97_5` dla 97,5
+  percentyla),
 - zapisuje pełny raport JSON (z surowymi wartościami, statystykami i
   sugerowanymi progami),
 - tworzy tabelę CSV gotową do importu w arkuszu kalkulacyjnym,
