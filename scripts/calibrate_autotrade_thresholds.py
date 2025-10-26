@@ -2000,6 +2000,7 @@ def _generate_report(
             return 0
 
     raw_freeze_event_display_limit = _sanitize_optional_limit(max_raw_freeze_events)
+    raw_freeze_requested_limit: int | None = None
     normalized_freeze_mode = str(raw_freeze_events_mode or "omit").strip().lower()
     if normalized_freeze_mode not in {"omit", "sample"}:
         normalized_freeze_mode = "omit"
@@ -2011,6 +2012,7 @@ def _generate_report(
         else:
             sampler_limit = max(0, int(limit_freeze_events))
         aggregated_freeze_sampler = _FreezeEventSampler(sampler_limit)
+        raw_freeze_requested_limit = sampler_limit
     else:
         sampler_limit = 0
     if max_freeze_events is None:
@@ -2020,6 +2022,13 @@ def _generate_report(
             freeze_event_limit = max(0, int(max_freeze_events))
         except (TypeError, ValueError):
             freeze_event_limit = 0
+    if not sampling_freeze_events and freeze_event_limit is not None:
+        raw_freeze_requested_limit = freeze_event_limit
+    if raw_freeze_requested_limit is None and limit_freeze_events is not None:
+        try:
+            raw_freeze_requested_limit = max(0, int(limit_freeze_events))
+        except (TypeError, ValueError):
+            raw_freeze_requested_limit = 0
     journal_count = 0
     autotrade_count = 0
 
@@ -2214,6 +2223,7 @@ def _generate_report(
                 )
 
         original_limit = _sanitize_optional_limit(payload.get("limit"))
+        requested_limit = original_limit
         if normalized_limit is None:
             overflow_summary_payload = payload.get("overflow_summary")
             if isinstance(overflow_summary_payload, Mapping):
@@ -2224,33 +2234,45 @@ def _generate_report(
                 computed_limit = len(events)
             else:
                 computed_limit = original_limit
-            return {
+            payload_result: dict[str, object] = {
                 "limit": computed_limit,
                 "events": [dict(event) for event in events],
                 "overflow_summary": overflow_summary,
             }
+            if requested_limit is not None:
+                payload_result["requested_limit"] = requested_limit
+            return payload_result
 
         trimmed_events = events[:normalized_limit]
         overflow_summary_source = payload.get("overflow_summary")
         overflow_summary = _clone_formatted_freeze_summary(
             overflow_summary_source if isinstance(overflow_summary_source, Mapping) else None
         )
+        display_trim_summary = _empty_freeze_summary()
         for event in events[normalized_limit:]:
             status = str(event.get("status") or "unknown")
             freeze_type = str(event.get("type") or "manual")
             reason = str(event.get("reason") or "unknown")
             _increment_freeze_summary(overflow_summary, status, freeze_type, reason)
+            _increment_freeze_summary(display_trim_summary, status, freeze_type, reason)
         formatted_overflow = _format_freeze_summary(overflow_summary)
+        formatted_display_trim = _format_freeze_summary(display_trim_summary)
         if original_limit is None:
             computed_limit = normalized_limit
         else:
             computed_limit = min(original_limit, normalized_limit)
         computed_limit = max(computed_limit, len(trimmed_events))
-        return {
+        payload_result = {
             "limit": computed_limit,
             "events": [dict(event) for event in trimmed_events],
             "overflow_summary": formatted_overflow,
         }
+        if requested_limit is not None:
+            payload_result["requested_limit"] = requested_limit
+        payload_result["display_limit"] = normalized_limit
+        if formatted_display_trim.get("total"):
+            payload_result["display_overflow_summary"] = formatted_display_trim
+        return payload_result
 
     def _record_freeze(
         key: tuple[str, str],
@@ -2458,9 +2480,6 @@ def _generate_report(
     if cli_risk_score is not None:
         current_risk_score = float(cli_risk_score)
 
-    if cli_risk_score is not None:
-        current_risk_score = float(cli_risk_score)
-
     groups: list[dict[str, object]] = []
     all_keys = set(grouped_values.keys()) | set(freeze_summaries.keys()) | set(display_names.keys())
 
@@ -2511,6 +2530,7 @@ def _generate_report(
             overflow_summary = freeze_event_overflow_summaries.get((exchange, strategy))
             if overflow_summary is None:
                 overflow_summary = _empty_freeze_summary()
+            formatted_overflow = _format_freeze_summary(overflow_summary)
             group_payload["freeze_events"] = {
                 "mode": "limit",
                 "limit": freeze_event_limit,
@@ -2519,13 +2539,25 @@ def _generate_report(
                 "type_counts": _serialize_counter(freeze_summary.get("type_counts")),
                 "status_counts": _serialize_counter(freeze_summary.get("status_counts")),
                 "reason_counts": _serialize_counter(freeze_summary.get("reason_counts")),
-                "overflow_summary": _format_freeze_summary(overflow_summary),
+                "overflow_summary": formatted_overflow,
             }
+            if not sampling_freeze_events and not omit_raw_freeze_events:
+                raw_payload = _limit_raw_freeze_payload(
+                    {
+                        "limit": freeze_event_limit,
+                        "events": [dict(item) for item in events_sample],
+                        "overflow_summary": formatted_overflow,
+                    }
+                )
+                if raw_payload is not None:
+                    raw_payload["mode"] = "limit"
+                    group_payload["raw_freeze_events"] = raw_payload
         if sampling_freeze_events:
             sampler = freeze_event_samplers.get((exchange, strategy))
             if sampler is not None:
                 payload = _limit_raw_freeze_payload(sampler.to_payload())
                 if payload is not None:
+                    payload["mode"] = "sample"
                     group_payload["raw_freeze_events"] = payload
         if include_raw_values:
             group_payload["raw_values"] = {
@@ -2556,6 +2588,7 @@ def _generate_report(
         "freeze_summary": _format_freeze_summary(aggregated_freeze_summary),
     }
     aggregated_raw_freeze_payload: dict[str, object] | None = None
+    raw_freeze_events_source_mode: Literal["sample", "limit"] | None = None
     if freeze_event_limit is None:
         if aggregated_freeze_events:
             global_summary["freeze_events"] = {
@@ -2582,7 +2615,25 @@ def _generate_report(
             aggregated_freeze_sampler.to_payload()
         )
         if aggregated_raw_freeze_payload is not None:
+            aggregated_raw_freeze_payload["mode"] = "sample"
             global_summary["raw_freeze_events"] = aggregated_raw_freeze_payload
+            raw_freeze_events_source_mode = "sample"
+    elif (
+        not sampling_freeze_events
+        and freeze_event_limit is not None
+        and not omit_raw_freeze_events
+    ):
+        aggregated_raw_freeze_payload = _limit_raw_freeze_payload(
+            {
+                "limit": freeze_event_limit,
+                "events": [dict(item) for item in aggregated_freeze_events],
+                "overflow_summary": _format_freeze_summary(aggregated_freeze_overflow),
+            }
+        )
+        if aggregated_raw_freeze_payload is not None:
+            aggregated_raw_freeze_payload["mode"] = "limit"
+            global_summary["raw_freeze_events"] = aggregated_raw_freeze_payload
+            raw_freeze_events_source_mode = "limit"
     if include_raw_values:
         global_summary["raw_values"] = {
             metric: list(series.values())
@@ -2705,22 +2756,36 @@ def _generate_report(
     if cli_risk_score is not None:
         sources_payload["risk_score_override"] = float(cli_risk_score)
     if aggregated_raw_freeze_payload is not None:
-        raw_freeze_sources_payload: dict[str, object] = {"mode": "sample"}
+        raw_freeze_sources_payload: dict[str, object] = {
+            "mode": raw_freeze_events_source_mode or "sample"
+        }
         limit_value = aggregated_raw_freeze_payload.get("limit")
         if isinstance(limit_value, (int, float)):
             raw_freeze_sources_payload["limit"] = int(limit_value)
-        requested_limit = raw_freeze_event_display_limit
-        if isinstance(requested_limit, int):
-            raw_freeze_sources_payload["requested_limit"] = requested_limit
+        requested_limit_value = aggregated_raw_freeze_payload.get("requested_limit")
+        if isinstance(requested_limit_value, (int, float)):
+            raw_freeze_sources_payload["requested_limit"] = int(requested_limit_value)
+        elif isinstance(raw_freeze_requested_limit, int):
+            raw_freeze_sources_payload["requested_limit"] = raw_freeze_requested_limit
+        display_limit_value = aggregated_raw_freeze_payload.get("display_limit")
+        if isinstance(display_limit_value, (int, float)):
+            raw_freeze_sources_payload["display_limit"] = int(display_limit_value)
+        elif isinstance(raw_freeze_event_display_limit, int):
+            raw_freeze_sources_payload["display_limit"] = raw_freeze_event_display_limit
         overflow_summary = aggregated_raw_freeze_payload.get("overflow_summary")
         if isinstance(overflow_summary, Mapping):
             raw_freeze_sources_payload["overflow_summary"] = dict(overflow_summary)
+        display_overflow_summary = aggregated_raw_freeze_payload.get("display_overflow_summary")
+        if isinstance(display_overflow_summary, Mapping):
+            raw_freeze_sources_payload["display_overflow_summary"] = dict(display_overflow_summary)
         sources_payload["raw_freeze_events"] = raw_freeze_sources_payload
     else:
         omit_payload: dict[str, object] = {"mode": "omit"}
+        if isinstance(raw_freeze_requested_limit, int):
+            omit_payload["requested_limit"] = raw_freeze_requested_limit
         if isinstance(raw_freeze_event_display_limit, int):
-            omit_payload["requested_limit"] = raw_freeze_event_display_limit
-            if raw_freeze_event_display_limit == 0:
+            omit_payload["display_limit"] = raw_freeze_event_display_limit
+            if raw_freeze_event_display_limit == 0 and "reason" not in omit_payload:
                 omit_payload["reason"] = "limit_zero"
         if omit_raw_freeze_events:
             omit_payload["reason"] = "explicit_omit"

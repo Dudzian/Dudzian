@@ -136,13 +136,21 @@ parametry CLI, co bywa pomocne podczas wymiany raportów między zespołami.
 - `risk_threshold_files` oraz `risk_thresholds.files` / `inline` – analogiczne
   metadane dla `--risk-thresholds`, dzięki którym można zweryfikować, czy
   wartości `risk_score` pochodzą z pliku konfiguracyjnego, czy z parametru CLI.
-- `raw_freeze_events.mode` – informuje, czy próbkowanie surowych blokad zostało
-  włączone (`sample`) czy pominięte (`omit`).
-  - Gdy raport zawiera próbkę, pole `limit` opisuje faktyczną liczbę zdarzeń
-    zapisanych w grupie/globalnie po zastosowaniu `--limit-freeze-events` lub
-    `--max-raw-freeze-events`. Jeśli przekazano limit w CLI, wartość wejściowa
-    pojawi się w `requested_limit`. Ewentualne odcięte rekordy są zliczane w
+- `raw_freeze_events.mode` – informuje, czy surowe blokady są próbkowane
+  niezależnym samplerem (`sample`), wykorzystywane bezpośrednio z limitu
+  blokad (`limit`) czy pominięte (`omit`). To samo pole pojawia się w sekcjach
+  `raw_freeze_events` w grupach i podsumowaniu globalnym, dzięki czemu łatwo
+  powiązać listę zdarzeń z zastosowanym ograniczeniem.
+  - Gdy raport zawiera próbkę (`sample` lub `limit`), pole `limit` opisuje
+    faktyczną liczbę zdarzeń zapisanych w grupie/globalnie po zastosowaniu
+    ograniczeń. `requested_limit` wskazuje żądanie operatora (np. z
+    `--limit-freeze-events` albo limitu przekazanego do `_generate_report`), a
+    `display_limit` pojawia się, gdy lista została dodatkowo przycięta przez
+    `--max-raw-freeze-events`. Ewentualne odcięte rekordy są zliczane w
     `overflow_summary`, która zachowuje pełny rozkład statusów, typów i powodów.
+    Dodatkowe pole `display_overflow_summary` (jeżeli występuje) obejmuje wyłącznie
+    elementy ucięte przez ograniczenie wyświetlania, co pozwala rozróżnić je od
+    rekordów odrzuconych wcześniej przez limit próbkowania.
   - Dla trybu `omit` dostępne są powody (`reason`): `explicit_omit` oznacza
     użycie `--omit-raw-freeze-events`, `limit_zero` odpowiada `--max-raw-freeze-events 0`,
     a `sampling_disabled`/`no_samples` sygnalizują brak aktywnej próbki mimo
@@ -159,6 +167,7 @@ wyglądać następująco:
 "sources": {
   "raw_freeze_events": {
     "mode": "sample",
+    "display_limit": 3,
     "requested_limit": 10,
     "limit": 3,
     "overflow_summary": {
@@ -179,8 +188,8 @@ wyglądać następująco:
 Interpretacja:
 
 - Operator poprosił o próbkę maksymalnie 10 zdarzeń (`requested_limit`), ale po
-  przycięciu sekcji `freeze_events` (np. `--limit-freeze-events 3`) w raporcie
-  znalazły się tylko trzy pierwsze wpisy (`limit`).
+  przycięciu listy przez `--max-raw-freeze-events 3` w raporcie znalazły się
+  tylko trzy pierwsze wpisy (`limit`).
 - Pozostałe wpisy nie znikają – `overflow_summary.total` zlicza wszystkie 7
   odrzuconych blokad, a ich powody można odczytać z listy `reasons`.
 - Sekcja `freeze_events` została ograniczona do 50 rekordów (często jest to
