@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import builtins
 import gzip
 import gc
 import json
@@ -1804,6 +1805,69 @@ def test_loaders_stream_without_materializing_large_lists(monkeypatch, tmp_path:
     assert not large_lists
 
 
+def test_generate_report_does_not_build_large_lists(monkeypatch) -> None:
+    event_count = 2500
+
+    from scripts import calibrate_autotrade_thresholds as module
+
+    original_list_type = builtins.list
+
+    class _TrackingListMeta(type):
+        def __instancecheck__(cls, instance: object) -> bool:  # pragma: no cover - trivial
+            return isinstance(instance, original_list_type)
+
+    class TrackingList(original_list_type, metaclass=_TrackingListMeta):
+        created_lengths: list[int] = []
+
+        def __new__(cls, iterable=()):  # type: ignore[override]
+            instance = super().__new__(cls, iterable)
+            cls.created_lengths.append(len(instance))
+            return instance
+
+    TrackingList.created_lengths = []
+
+    monkeypatch.setattr(builtins, "list", TrackingList)
+    monkeypatch.setattr(module, "load_risk_thresholds", lambda **_: {})
+
+    def _journal_stream() -> Iterable[Mapping[str, object]]:
+        for index in range(event_count):
+            yield {
+                "timestamp": f"2024-01-01T00:{index % 60:02d}:00Z",
+                "symbol": "BTCUSDT",
+                "primary_exchange": "binance",
+                "strategy": "trend_following",
+                "signal_after_adjustment": 0.5 + (index % 7) * 0.01,
+                "signal_after_clamp": 0.45 + (index % 7) * 0.01,
+            }
+
+    def _autotrade_stream() -> Iterable[Mapping[str, object]]:
+        for index in range(event_count):
+            yield {
+                "timestamp": f"2024-01-01T01:{index % 60:02d}:00Z",
+                "decision": {
+                    "details": {
+                        "symbol": "BTCUSDT",
+                        "primary_exchange": "binance",
+                        "strategy": "trend_following",
+                        "summary": {"risk_score": 0.6 + (index % 7) * 0.01},
+                    }
+                },
+            }
+
+    report = module._generate_report(
+        journal_events=_journal_stream(),
+        autotrade_entries=_autotrade_stream(),
+        percentiles=[0.5],
+        suggestion_percentile=0.5,
+    )
+
+    assert report["sources"]["journal_events"] == event_count
+    assert report["sources"]["autotrade_entries"] == event_count
+
+    max_created = max(TrackingList.created_lengths or [0])
+    assert max_created < event_count
+
+
 def test_load_autotrade_entries_supports_jsonl(tmp_path: Path) -> None:
     autotrade_path = tmp_path / "autotrade.jsonl"
     entries = [
@@ -1840,6 +1904,44 @@ def test_load_autotrade_entries_supports_jsonl(tmp_path: Path) -> None:
     assert len(loaded) == len(entries)
     assert loaded[0]["decision"]["details"]["summary"]["risk_score"] == 0.55
     assert loaded[1]["decision"]["details"]["summary"]["risk_score"] == 0.42
+
+
+def test_load_autotrade_entries_supports_gzipped_jsonl(tmp_path: Path) -> None:
+    autotrade_path = tmp_path / "autotrade.jsonl.gz"
+    entries = [
+        {
+            "timestamp": "2024-01-01T00:00:00Z",
+            "decision": {
+                "details": {
+                    "symbol": "BTCUSDT",
+                    "primary_exchange": "binance",
+                    "strategy": "trend_following",
+                    "summary": {"risk_score": 0.73},
+                }
+            },
+        },
+        {
+            "timestamp": "2024-01-01T00:15:00Z",
+            "decision": {
+                "details": {
+                    "symbol": "ETHUSDT",
+                    "primary_exchange": "kraken",
+                    "strategy": "mean_reversion",
+                    "summary": {"risk_score": 0.39},
+                }
+            },
+        },
+    ]
+    with gzip.open(autotrade_path, "wt", encoding="utf-8") as handle:
+        for entry in entries:
+            handle.write(json.dumps(entry))
+            handle.write("\n")
+
+    loaded = list(_load_autotrade_entries([str(autotrade_path)]))
+
+    assert len(loaded) == len(entries)
+    assert loaded[0]["decision"]["details"]["summary"]["risk_score"] == 0.73
+    assert loaded[1]["decision"]["details"]["summary"]["risk_score"] == 0.39
 
 
 def test_load_autotrade_entries_supports_gzipped_json(tmp_path: Path) -> None:
