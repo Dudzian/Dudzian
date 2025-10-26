@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import csv
+import gc
 import json
 import math
 import subprocess
 import sys
+from collections.abc import Iterable, Mapping
 from types import GeneratorType
 from datetime import datetime, timezone
 from unittest.mock import patch
@@ -1206,6 +1208,164 @@ def test_generate_report_handles_large_inputs_with_low_peak_memory(monkeypatch, 
     assert peak_sizes[("binance", "trend_following"), "signal_after_adjustment"] == event_count
     assert peak_sizes[("binance", "trend_following"), "signal_after_clamp"] == event_count
     assert peak_sizes[("binance", "trend_following"), "risk_score"] == event_count
+
+
+def test_load_autotrade_entries_supports_metadata_wrappers(tmp_path: Path) -> None:
+    entries = [
+        {
+            "timestamp": "2024-01-01T00:00:00Z",
+            "detail": {
+                "symbol": "BTCUSDT",
+                "primary_exchange": "binance",
+                "strategy": "trend_following",
+                "summary": {"risk_score": 0.75},
+            },
+        },
+        {
+            "timestamp": "2024-01-01T01:00:00Z",
+            "decision": {
+                "details": {
+                    "symbol": "ETHUSDT",
+                    "primary_exchange": "kraken",
+                    "strategy": "mean_reversion",
+                    "summary": {"risk_score": 0.42},
+                }
+            },
+        },
+    ]
+    payload = {"meta": {"version": 3}, "entries": entries, "generated_at": "2024-01-02T00:00:00Z"}
+    path = tmp_path / "wrapped_autotrade.json"
+    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+    loaded = list(_load_autotrade_entries([str(path)]))
+
+    assert len(loaded) == 2
+    assert {entry.get("timestamp") for entry in loaded} == {
+        "2024-01-01T00:00:00Z",
+        "2024-01-01T01:00:00Z",
+    }
+
+
+
+def test_load_autotrade_entries_accepts_top_level_arrays(tmp_path: Path) -> None:
+    path = tmp_path / "array_autotrade.json"
+    path.write_text(
+        json.dumps(
+            [
+                {
+                    "timestamp": "2024-01-01T02:00:00Z",
+                    "detail": {
+                        "symbol": "BTCUSDT",
+                        "primary_exchange": "binance",
+                        "strategy": "trend_following",
+                        "summary": {"risk_score": 0.81},
+                    },
+                },
+                {
+                    "timestamp": "2024-01-01T03:30:00Z",
+                    "status": "auto_risk_freeze",
+                },
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    loaded = list(_load_autotrade_entries([str(path)]))
+
+    assert len(loaded) == 2
+    assert loaded[0]["detail"]["summary"]["risk_score"] == 0.81
+
+
+def test_loaders_stream_without_materializing_large_lists(monkeypatch, tmp_path: Path) -> None:
+    event_count = 1500
+
+    journal_path = tmp_path / "stream_journal.jsonl"
+    with journal_path.open("w", encoding="utf-8") as handle:
+        for index in range(event_count):
+            handle.write(
+                json.dumps(
+                    {
+                        "timestamp": f"2024-01-01T00:{index % 60:02d}:00Z",
+                        "symbol": "BTCUSDT",
+                        "primary_exchange": "binance",
+                        "strategy": "trend_following",
+                        "signal_after_adjustment": 0.55,
+                        "signal_after_clamp": 0.5,
+                    }
+                )
+            )
+            handle.write("\n")
+
+    autotrade_path = tmp_path / "stream_autotrade.json"
+    entries = [
+        {
+            "timestamp": f"2024-01-01T01:{index % 60:02d}:00Z",
+            "decision": {
+                "details": {
+                    "symbol": "BTCUSDT",
+                    "primary_exchange": "binance",
+                    "strategy": "trend_following",
+                    "summary": {"risk_score": 0.6},
+                }
+            },
+        }
+        for index in range(event_count)
+    ]
+    autotrade_path.write_text(json.dumps({"entries": entries}), encoding="utf-8")
+    del entries
+
+    from scripts import calibrate_autotrade_thresholds as module
+
+    original_journal_loader = module._load_journal_events
+    journal_loaded = 0
+
+    def _counting_journal_loader(paths: Iterable[Path], **kwargs):
+        nonlocal journal_loaded
+        for payload in original_journal_loader(paths, **kwargs):
+            journal_loaded += 1
+            yield payload
+
+    monkeypatch.setattr(module, "_load_journal_events", _counting_journal_loader)
+
+    original_autotrade_loader = module._load_autotrade_entries
+    autotrade_loaded = 0
+
+    def _counting_autotrade_loader(paths: Iterable[str], **kwargs):
+        nonlocal autotrade_loaded
+        for payload in original_autotrade_loader(paths, **kwargs):
+            autotrade_loaded += 1
+            yield payload
+
+    monkeypatch.setattr(module, "_load_autotrade_entries", _counting_autotrade_loader)
+
+    journal_iter = module._load_journal_events([journal_path])
+    autotrade_iter = module._load_autotrade_entries([str(autotrade_path)])
+
+    report = module._generate_report(
+        journal_events=journal_iter,
+        autotrade_entries=autotrade_iter,
+        percentiles=[0.5],
+        suggestion_percentile=0.5,
+    )
+
+    assert report["sources"]["journal_events"] == event_count
+    assert report["sources"]["autotrade_entries"] == event_count
+
+    assert journal_loaded == event_count
+    assert autotrade_loaded == event_count
+
+    import gc
+
+    gc.collect()
+    large_lists = [
+        obj
+        for obj in gc.get_objects()
+        if isinstance(obj, list)
+        and len(obj) >= event_count
+        and all(isinstance(item, Mapping) for item in obj)
+    ]
+
+    assert not large_lists
 
 
 def test_generate_report_can_collect_raw_values() -> None:

@@ -475,7 +475,7 @@ def _load_journal_events(
     *,
     since: datetime | None = None,
     until: datetime | None = None,
-) -> Iterator[dict[str, object]]:
+) -> Iterator[Mapping[str, object]]:
     for path in paths:
         try:
             with path.open("r", encoding="utf-8") as handle:
@@ -496,7 +496,7 @@ def _load_journal_events(
                         continue
                     if until and timestamp and timestamp > until:
                         continue
-                    yield dict(payload)
+                    yield payload
         except OSError as exc:  # noqa: BLE001 - CLI feedback
             raise SystemExit(f"Nie udało się odczytać dziennika {path}: {exc}") from exc
 
@@ -523,42 +523,227 @@ def _load_autotrade_entries(
     *,
     since: datetime | None = None,
     until: datetime | None = None,
-) -> Iterator[dict[str, object]]:
+) -> Iterator[Mapping[str, object]]:
+    def _normalize_entry(item: object) -> Mapping[str, object] | None:
+        if not isinstance(item, Mapping):
+            return None
+        timestamp = _extract_entry_timestamp(item)
+        if since and timestamp and timestamp < since:
+            return None
+        if until and timestamp and timestamp > until:
+            return None
+        return item
+
+    class _JsonStream:
+        __slots__ = ("_buffer", "_decoder", "_handle", "_path", "_position", "_chunk_size")
+
+        def __init__(self, handle, path: Path, chunk_size: int = 65536) -> None:
+            self._handle = handle
+            self._path = path
+            self._decoder = json.JSONDecoder()
+            self._buffer = ""
+            self._position = 0
+            self._chunk_size = chunk_size
+
+        def _compact(self) -> None:
+            if self._position > 32768:
+                self._buffer = self._buffer[self._position :]
+                self._position = 0
+
+        def _fill(self) -> bool:
+            chunk = self._handle.read(self._chunk_size)
+            if not chunk:
+                return False
+            if self._position:
+                self._buffer = self._buffer[self._position :] + chunk
+                self._position = 0
+            else:
+                self._buffer += chunk
+            return True
+
+        def _ensure(self) -> bool:
+            if self._position < len(self._buffer):
+                return True
+            if not self._fill():
+                return False
+            return self._position < len(self._buffer)
+
+        def _skip_whitespace(self) -> bool:
+            while True:
+                while self._position < len(self._buffer) and self._buffer[self._position].isspace():
+                    self._position += 1
+                if self._position < len(self._buffer):
+                    return True
+                if not self._fill():
+                    return False
+
+        def _decode_value(self) -> object:
+            while True:
+                try:
+                    value, next_position = self._decoder.raw_decode(self._buffer, self._position)
+                except json.JSONDecodeError as exc:
+                    if not self._fill():
+                        raise SystemExit(
+                            f"Niepoprawny JSON w eksporcie autotradera {self._path}: {exc}"
+                        ) from exc
+                    continue
+                self._position = next_position
+                self._compact()
+                return value
+
+        def _expect_char(self, char: str, context: str) -> None:
+            if not self._skip_whitespace():
+                raise SystemExit(
+                    f"Niepoprawny JSON w eksporcie autotradera {self._path}: niekompletny {context}"
+                )
+            if not self._ensure():
+                raise SystemExit(
+                    f"Niepoprawny JSON w eksporcie autotradera {self._path}: niekompletny {context}"
+                )
+            if self._buffer[self._position] != char:
+                raise SystemExit(
+                    f"Niepoprawny JSON w eksporcie autotradera {self._path}: oczekiwano '{char}'"
+                )
+            self._position += 1
+
+        def _consume_array(self, yield_entries: bool) -> Iterator[Mapping[str, object]]:
+            self._expect_char("[", "tablica")
+            first_item = True
+            while True:
+                if not self._skip_whitespace():
+                    raise SystemExit(
+                        f"Niepoprawny JSON w eksporcie autotradera {self._path}: niekompletna tablica"
+                    )
+                if not self._ensure():
+                    raise SystemExit(
+                        f"Niepoprawny JSON w eksporcie autotradera {self._path}: niekompletna tablica"
+                    )
+                current = self._buffer[self._position]
+                if current == "]":
+                    self._position += 1
+                    return
+                if not first_item:
+                    if current != ",":
+                        raise SystemExit(
+                            f"Niepoprawny JSON w eksporcie autotradera {self._path}: oczekiwano przecinka"
+                        )
+                    self._position += 1
+                    if not self._skip_whitespace():
+                        raise SystemExit(
+                            f"Niepoprawny JSON w eksporcie autotradera {self._path}: niekompletna tablica"
+                        )
+                    if not self._ensure():
+                        raise SystemExit(
+                            f"Niepoprawny JSON w eksporcie autotradera {self._path}: niekompletna tablica"
+                        )
+                    current = self._buffer[self._position]
+                    if current == "]":
+                        raise SystemExit(
+                            f"Niepoprawny JSON w eksporcie autotradera {self._path}: dodatkowy przecinek"
+                        )
+                first_item = False
+                value = self._decode_value()
+                if not yield_entries:
+                    continue
+                normalized = _normalize_entry(value)
+                if normalized is not None:
+                    yield normalized
+
+        def _consume_value(self, yield_entries: bool) -> Iterator[Mapping[str, object]]:
+            if not self._skip_whitespace():
+                raise SystemExit(
+                    f"Niepoprawny JSON w eksporcie autotradera {self._path}: niekompletna wartość"
+                )
+            if not self._ensure():
+                raise SystemExit(
+                    f"Niepoprawny JSON w eksporcie autotradera {self._path}: niekompletna wartość"
+                )
+            current = self._buffer[self._position]
+            if current == "[":
+                yield from self._consume_array(yield_entries)
+                return
+            if current in "\"{-0123456789tfn":
+                value = self._decode_value()
+                if yield_entries:
+                    normalized = _normalize_entry(value)
+                    if normalized is not None:
+                        yield normalized
+                return
+            raise SystemExit(
+                f"Niepoprawny JSON w eksporcie autotradera {self._path}: nieznany typ wartości"
+            )
+
+        def _consume_object(self) -> Iterator[Mapping[str, object]]:
+            self._expect_char("{", "obiekt")
+            first_pair = True
+            while True:
+                if not self._skip_whitespace():
+                    raise SystemExit(
+                        f"Niepoprawny JSON w eksporcie autotradera {self._path}: niekompletny obiekt"
+                    )
+                if not self._ensure():
+                    raise SystemExit(
+                        f"Niepoprawny JSON w eksporcie autotradera {self._path}: niekompletny obiekt"
+                    )
+                current = self._buffer[self._position]
+                if current == "}":
+                    self._position += 1
+                    return
+                if not first_pair:
+                    if current != ",":
+                        raise SystemExit(
+                            f"Niepoprawny JSON w eksporcie autotradera {self._path}: oczekiwano przecinka"
+                        )
+                    self._position += 1
+                    if not self._skip_whitespace():
+                        raise SystemExit(
+                            f"Niepoprawny JSON w eksporcie autotradera {self._path}: niekompletna para klucz-wartość"
+                        )
+                    if not self._ensure():
+                        raise SystemExit(
+                            f"Niepoprawny JSON w eksporcie autotradera {self._path}: niekompletna para klucz-wartość"
+                        )
+                first_pair = False
+                key = self._decode_value()
+                if not isinstance(key, str):
+                    raise SystemExit(
+                        f"Niepoprawny JSON w eksporcie autotradera {self._path}: klucz musi być napisem"
+                    )
+                if not self._skip_whitespace():
+                    raise SystemExit(
+                        f"Niepoprawny JSON w eksporcie autotradera {self._path}: niekompletna para klucz-wartość"
+                    )
+                if not self._ensure() or self._buffer[self._position] != ":":
+                    raise SystemExit(
+                        f"Niepoprawny JSON w eksporcie autotradera {self._path}: oczekiwano ':' po kluczu {key}"
+                    )
+                self._position += 1
+                yield from self._consume_value(key == "entries")
+
+        def consume(self) -> Iterator[Mapping[str, object]]:
+            if not self._skip_whitespace():
+                return iter(())
+            if not self._ensure():
+                return iter(())
+            first_char = self._buffer[self._position]
+            if first_char == "[":
+                return self._consume_array(True)
+            if first_char == "{":
+                return self._consume_object()
+            raise SystemExit(
+                f"Niepoprawny JSON w eksporcie autotradera {self._path}: oczekiwano obiektu lub tablicy"
+            )
+
     for raw in paths:
         path = Path(raw).expanduser()
         if not path.exists():
             raise SystemExit(f"Eksport autotradera nie istnieje: {path}")
         try:
             with path.open("r", encoding="utf-8") as handle:
-                payload = json.load(handle)
-        except json.JSONDecodeError as exc:  # noqa: BLE001 - CLI feedback
-            raise SystemExit(
-                f"Niepoprawny JSON w eksporcie autotradera {path}: {exc}"
-            ) from exc
+                stream = _JsonStream(handle, path)
+                yield from stream.consume()
         except OSError as exc:  # noqa: BLE001 - CLI feedback
             raise SystemExit(f"Nie udało się odczytać eksportu autotradera {path}: {exc}") from exc
-        if isinstance(payload, Mapping):
-            raw_entries = payload.get("entries")
-            if isinstance(raw_entries, Iterable) and not isinstance(raw_entries, (str, bytes)):
-                for item in raw_entries:
-                    if not isinstance(item, Mapping):
-                        continue
-                    timestamp = _extract_entry_timestamp(item)
-                    if since and timestamp and timestamp < since:
-                        continue
-                    if until and timestamp and timestamp > until:
-                        continue
-                    yield dict(item)
-        elif isinstance(payload, list):
-            for item in payload:
-                if not isinstance(item, Mapping):
-                    continue
-                timestamp = _extract_entry_timestamp(item)
-                if since and timestamp and timestamp < since:
-                    continue
-                if until and timestamp and timestamp > until:
-                    continue
-                yield dict(item)
 
 
 def _resolve_key(exchange: str | None, strategy: str | None) -> tuple[str, str]:
@@ -1030,8 +1215,8 @@ def _maybe_plot(
 
 def _generate_report(
     *,
-    journal_events: Iterable[dict[str, object]],
-    autotrade_entries: Iterable[dict[str, object]],
+    journal_events: Iterable[Mapping[str, object]],
+    autotrade_entries: Iterable[Mapping[str, object]],
     percentiles: list[float],
     suggestion_percentile: float,
     since: datetime | None = None,
