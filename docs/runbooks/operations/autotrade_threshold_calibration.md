@@ -39,6 +39,7 @@ python scripts/calibrate_autotrade_thresholds.py \
   --until 2024-01-31T23:59:59Z \
   --current-threshold signal_after_adjustment=0.8,signal_after_clamp=0.75 \
   --risk-thresholds config/risk_thresholds.yaml \
+  --max-freeze-events 100 \
   --output-json reports/autotrade_thresholds.json \
   --output-csv reports/autotrade_thresholds.csv \
   --plot-dir reports/autotrade_thresholds_plots
@@ -47,12 +48,18 @@ python scripts/calibrate_autotrade_thresholds.py \
 Polecenie:
 
 - zaczytuje wszystkie zdarzenia z dziennika oraz eksportu autotradera,
-- oblicza wskazane percentyle w rozbiciu na pary `giełda/strategia`,
+- oblicza wskazane percentyle w rozbiciu na pary `giełda/strategia`
+  (kolumny percentylowe w raporcie JSON/CSV są oznaczane jako `pXX` dla
+  wartości całkowitych lub `pXX_Y` dla ułamków, np. `p97_5` dla 97,5
+  percentyla),
 - zapisuje pełny raport JSON (z surowymi wartościami, statystykami i
   sugerowanymi progami),
 - tworzy tabelę CSV gotową do importu w arkuszu kalkulacyjnym,
 - zbiera statystyki blokad ryzyka (`risk_freeze` / `auto_risk_freeze`) wraz z
   rozkładem długości blokad i powodów,
+- pozwala ograniczyć liczbę szczegółowych wpisów blokad dzięki
+  `--max-freeze-events` (0 = pominięcie szczegółowej listy, dodatnia wartość =
+  prefiks o zadanej długości),
 - pozwala ograniczyć analizę do konkretnego zakresu czasowego dzięki `--since`
   i `--until`,
 - dodaje globalne podsumowanie obejmujące wszystkie kombinacje giełda/strategia
@@ -95,6 +102,17 @@ Pole `global_summary` w raporcie JSON zawiera zagregowane metryki i statystyki
 blokad dla całego zbioru danych. Dzięki temu można szybko ocenić, jak nowe
 progi wpłyną na wszystkie strategie łącznie, zanim rozpocznie się szczegółowa
 analiza poszczególnych par.
+
+Jeżeli raport generowany jest na potrzeby krótkiego podsumowania, ustaw
+`--max-freeze-events` na niewielką liczbę (np. 25), aby nie kopiować tysięcy
+zdarzeń `raw_freeze_events` do wyniku. Pole `raw_freeze_events_truncated`
+informuje, czy lista została ucięta względem łącznej liczby blokad widocznej w
+`freeze_summary`, a `raw_freeze_events_omitted` wskazuje dokładną liczbę
+pominiętych wpisów. Dodatkowo `freeze_summary.omitted` (zarówno w grupach, jak i
+w sekcji `global_summary`) prezentuje łączną liczbę blokad pominiętych w danym
+wierszu. Metadane raportu przechowują wykorzystany limit w polu
+`sources.max_freeze_events`, a liczba skróconych grup dostępna jest w
+`sources.raw_freeze_events_truncated_groups`.
 
 ## Wskazówki operacyjne
 
