@@ -14,6 +14,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Iterable, Iterator, Literal, Mapping, TextIO
 
+
+_STREAM_READ_SIZE = 65536
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
@@ -1733,12 +1736,14 @@ def _format_freeze_summary(summary: Mapping[str, object]) -> dict[str, object]:
     status_counts = summary.get("status_counts")
     reason_counts = summary.get("reason_counts")
     total = int(summary.get("total") or 0)
+    omitted_total = summary.get("omitted_total")
+    omitted = int(omitted_total) if omitted_total is not None else 0
     auto_count = 0
     manual_count = 0
     if isinstance(type_counts, Counter):
         auto_count = int(type_counts.get("auto", 0))
         manual_count = int(type_counts.get("manual", 0))
-    return {
+    payload = {
         "total": total,
         "auto": auto_count,
         "manual": manual_count,
@@ -1757,6 +1762,8 @@ def _format_freeze_summary(summary: Mapping[str, object]) -> dict[str, object]:
             )
         ],
     }
+    payload["omitted"] = omitted
+    return payload
 
 
 class _FreezeEventSampler:
@@ -2431,6 +2438,7 @@ def _generate_report(
         _increment_freeze_summary(overflow_summary, status, freeze_type, reason)
         _increment_freeze_summary(aggregated_freeze_overflow, status, freeze_type, reason)
 
+    journal_count = 0
     for event in journal_events:
         journal_count += 1
         _update_symbol_map_entry(symbol_map, event)
@@ -2549,6 +2557,9 @@ def _generate_report(
                 float(raw_value),
                 source=source_hint,
             )
+
+    if cli_risk_score is not None:
+        current_risk_score = float(cli_risk_score)
 
     if cli_risk_score is not None:
         current_risk_score = float(cli_risk_score)
@@ -3110,6 +3121,10 @@ def main(argv: list[str] | None = None) -> int:
     percentiles = _parse_percentiles(args.percentiles)
     if not (0.0 < args.suggestion_percentile < 1.0):
         raise SystemExit("Percentyl sugerowanego progu musi być w przedziale (0, 1)")
+
+    max_freeze_events = args.max_freeze_events
+    if max_freeze_events is not None and max_freeze_events < 0:
+        raise SystemExit("Parametr --max-freeze-events musi być nieujemny")
 
     since = _parse_cli_datetime(args.since)
     until = _parse_cli_datetime(args.until)

@@ -1012,6 +1012,7 @@ def test_script_generates_report(tmp_path: Path) -> None:
     assert freeze_summary["total"] == 3
     assert freeze_summary["auto"] == 2
     assert freeze_summary["manual"] == 1
+    assert freeze_summary["omitted"] == 0
     reasons = {item["reason"]: item["count"] for item in freeze_summary["reasons"]}
     assert reasons["manual_override"] == 1
     assert reasons["risk_score_threshold"] == 2
@@ -1023,6 +1024,7 @@ def test_script_generates_report(tmp_path: Path) -> None:
 
     global_summary = payload["global_summary"]
     assert global_summary["freeze_summary"]["total"] == 3
+    assert global_summary["freeze_summary"]["omitted"] == 0
     global_signal = global_summary["metrics"]["signal_after_adjustment"]
     assert global_signal["count"] == 2
     assert global_signal["current_threshold"] == 0.82
