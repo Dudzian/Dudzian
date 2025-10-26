@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 import argparse
+import gzip
+import heapq
 import json
 import math
-import statistics
 import sys
+from array import array
+from bisect import bisect_left
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterable, Mapping
+from typing import Callable, Iterable, Iterator, Mapping, TextIO
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
@@ -53,6 +56,13 @@ _UNKNOWN_IDENTIFIERS: frozenset[str] = frozenset(
         "unassigned",
     }
 )
+
+
+_SUPPORTED_JOURNAL_EXTENSIONS = (".jsonl", ".jsonl.gz")
+_SUPPORTED_AUTOTRADE_EXTENSIONS = (".json", ".json.gz", ".jsonl", ".jsonl.gz")
+
+
+_METRIC_APPEND_OBSERVER: Callable[[tuple[str, str], str, int], None] | None = None
 
 
 def _parse_datetime(value: object) -> datetime | None:
@@ -103,6 +113,49 @@ def _coerce_float(value: object) -> float | None:
         return None
 
 
+def _ensure_finite_value(
+    metric_name: str,
+    value: float,
+    *,
+    source: str | None = None,
+) -> float:
+    """Zwraca wartość, jeśli jest skończona, w przeciwnym razie zgłasza błąd."""
+
+    if math.isfinite(value):
+        return value
+
+    location = f" w źródle {source}" if source else ""
+    raise SystemExit(
+        f"Niepoprawna wartość progu dla metryki {metric_name}: {value}"
+        f" (musi być skończoną liczbą){location}"
+    )
+
+
+def _normalize_threshold_value(
+    metric_name: str,
+    raw_value: float | int,
+    *,
+    source: str | None = None,
+) -> float:
+    return float(raw_value)
+
+
+def _normalize_and_validate_threshold(
+    metric_name: str,
+    raw_value: float | int,
+    *,
+    source: str | None = None,
+) -> float:
+    normalized_value = _normalize_threshold_value(
+        metric_name,
+        raw_value,
+        source=source,
+    )
+    return _ensure_finite_value(
+        metric_name,
+        normalized_value,
+        source=source,
+    )
 def _extract_threshold_value(candidate: object) -> float | None:
     numeric = _coerce_float(candidate)
     if numeric is not None:
@@ -264,6 +317,8 @@ def _parse_percentiles(raw: str | None) -> list[float]:
             value = float(token)
         except ValueError as exc:  # noqa: BLE001 - CLI feedback
             raise SystemExit(f"Niepoprawna wartość percentyla: {token}") from exc
+        if not math.isfinite(value):
+            raise SystemExit(f"Percentyl '{token}' musi być skończoną liczbą")
         if value <= 0.0 or value >= 1.0:
             raise SystemExit("Percentyle muszą znajdować się w przedziale (0, 1)")
         percentiles.append(value)
@@ -272,8 +327,9 @@ def _parse_percentiles(raw: str | None) -> list[float]:
     return sorted(set(percentiles))
 
 
-def _parse_threshold_mapping(raw: str) -> dict[str, float]:
-    result: dict[str, float] = {}
+def _parse_threshold_mapping(raw: str) -> tuple[dict[str, float], dict[str, str]]:
+    values: dict[str, float] = {}
+    sources: dict[str, str] = {}
     for token in raw.split(","):
         candidate = token.strip()
         if not candidate:
@@ -286,12 +342,22 @@ def _parse_threshold_mapping(raw: str) -> dict[str, float]:
         key = key.strip()
         if not key:
             raise SystemExit("Klucz progu nie może być pusty")
-        numeric = _coerce_float(value)
+        value_str = value.strip()
+        numeric = _coerce_float(value_str)
         if numeric is None:
-            raise SystemExit(f"Nie udało się zinterpretować progu '{value}' dla metryki {key}")
+            raise SystemExit(
+                f"Nie udało się zinterpretować progu '{value}' dla metryki {key}"
+            )
         normalized_key = _normalize_metric_key(key)
-        result[normalized_key] = float(numeric)
-    return result
+        pair_repr = f"{key}={value_str}"
+        finite_value = _normalize_and_validate_threshold(
+            normalized_key,
+            numeric,
+            source=f"CLI '{pair_repr}'",
+        )
+        values[normalized_key] = finite_value
+        sources[normalized_key] = pair_repr
+    return values, sources
 
 
 def _load_threshold_payload(path: Path) -> object:
@@ -326,9 +392,27 @@ def _load_current_signal_thresholds(
 ) -> tuple[dict[str, float], float | None, dict[str, object]]:
     thresholds: dict[str, float] = {}
     current_risk_score: float | None = None
-    metadata: dict[str, object] = {"files": [], "inline": {}}
+    source_files: list[str] = []
+    risk_source_files: list[str] = []
+    inline_values: dict[str, float] = {}
+    inline_risk_thresholds: dict[str, float] = {}
+    risk_score_origin: dict[str, object] | None = None
+    inline_risk_source: str | None = None
+    inline_risk_value: float | None = None
+    file_risk_source: str | None = None
+    file_risk_value: float | None = None
     if not sources:
-        return thresholds, current_risk_score, metadata
+        return (
+            thresholds,
+            current_risk_score,
+            {
+                "files": source_files,
+                "inline": inline_values,
+                "risk_files": risk_source_files,
+                "risk_inline": inline_risk_thresholds,
+                "risk_score_source": risk_score_origin,
+            },
+        )
 
     for source in sources:
         if not source:
@@ -338,53 +422,112 @@ def _load_current_signal_thresholds(
             continue
         path = Path(candidate).expanduser()
         if path.exists():
-            metadata_files = metadata.setdefault("files", [])
-            metadata_files.append(str(path))
+            path_str = str(path)
+            if path_str not in source_files:
+                source_files.append(path_str)
             payload = _load_threshold_payload(path)
             if not isinstance(payload, (Mapping, list, tuple)):
                 raise SystemExit(
                     "Plik z progami musi zawierać strukturę słownikową lub listę słowników"
                 )
+            found_risk_in_file = False
             for mapping in _iter_mappings(payload):
                 for metric_name in _SUPPORTED_THRESHOLD_METRICS:
                     value = _resolve_metric_threshold(mapping, metric_name)
                     if value is not None:
-                        numeric = _ensure_finite_threshold(
-                            float(value),
-                            metric=metric_name,
-                            source=str(path),
+                        finite_value = _normalize_and_validate_threshold(
+                            metric_name,
+                            raw_value=value,
+                            source=path_str,
                         )
                         if metric_name == "risk_score":
-                            current_risk_score = numeric
+                            found_risk_in_file = True
+                            current_risk_score = finite_value
+                            file_risk_source = path_str
+                            file_risk_value = finite_value
                         else:
-                            thresholds[metric_name] = numeric
+                            thresholds[metric_name] = finite_value
+            if found_risk_in_file and path_str not in risk_source_files:
+                risk_source_files.append(path_str)
             continue
         if "=" not in candidate:
             raise SystemExit(f"Ścieżka z progami nie istnieje: {path}")
-        mapping = _parse_threshold_mapping(candidate)
-        metadata_inline = metadata.setdefault("inline", {})
+        mapping, mapping_sources = _parse_threshold_mapping(candidate)
         for metric_name, numeric in mapping.items():
             if not isinstance(metric_name, str):
                 continue
             metric_name_normalized = _normalize_metric_key(metric_name)
             if metric_name_normalized in _SUPPORTED_THRESHOLD_METRICS:
-                finite_value = _ensure_finite_threshold(
-                    float(numeric),
-                    metric=metric_name_normalized,
-                    source="parametru CLI",
+                source_repr = mapping_sources.get(metric_name_normalized, candidate)
+                validation_source = f"CLI '{source_repr}'"
+                finite_value = _ensure_finite_value(
+                    metric_name_normalized,
+                    numeric,
+                    source=validation_source,
                 )
-                metadata_inline[metric_name_normalized] = finite_value
                 if metric_name_normalized == "risk_score":
                     current_risk_score = finite_value
+                    inline_risk_thresholds[metric_name_normalized] = finite_value
+                    inline_risk_source = source_repr
+                    inline_risk_value = finite_value
                 else:
                     thresholds[metric_name_normalized] = finite_value
+                    inline_values[metric_name_normalized] = finite_value
 
-    if not metadata["files"]:
-        metadata.pop("files")
-    if not metadata["inline"]:
-        metadata.pop("inline")
+    if inline_risk_value is not None:
+        inline_risk_value = _ensure_finite_value(
+            "risk_score",
+            inline_risk_value,
+            source=inline_risk_source,
+        )
+        current_risk_score = inline_risk_value
+        risk_score_origin = {
+            "kind": "inline",
+            "source": inline_risk_source,
+            "value": inline_risk_value,
+        }
+    elif file_risk_value is not None:
+        file_risk_value = _ensure_finite_value(
+            "risk_score",
+            file_risk_value,
+            source=file_risk_source,
+        )
+        current_risk_score = file_risk_value
+        risk_score_origin = {
+            "kind": "file",
+            "source": file_risk_source,
+            "value": file_risk_value,
+        }
 
-    return thresholds, current_risk_score, metadata
+    return (
+        thresholds,
+        current_risk_score,
+        {
+            "files": source_files,
+            "inline": inline_values,
+            "risk_files": risk_source_files,
+            "risk_inline": inline_risk_thresholds,
+            "risk_score_source": risk_score_origin,
+        },
+    )
+
+
+def _has_extension(path: Path, allowed: tuple[str, ...]) -> bool:
+    if not path.name:
+        return False
+    lower = path.name.lower()
+    return any(lower.endswith(ext) for ext in allowed)
+
+
+def _is_json_lines_path(path: Path) -> bool:
+    lower_name = path.name.lower()
+    return lower_name.endswith(".jsonl") or lower_name.endswith(".jsonl.gz")
+
+
+def _open_text_file(path: Path) -> TextIO:
+    if path.suffix.lower() == ".gz":
+        return gzip.open(path, "rt", encoding="utf-8")
+    return path.open("r", encoding="utf-8")
 
 
 def _normalize_risk_threshold_paths(sources: Iterable[str] | None) -> list[Path]:
@@ -424,9 +567,70 @@ def _iter_paths(raw_paths: Iterable[str]) -> Iterable[Path]:
         if not candidate.exists():
             raise SystemExit(f"Ścieżka nie istnieje: {candidate}")
         if candidate.is_dir():
-            yield from sorted(path for path in candidate.glob("*.jsonl"))
-        else:
-            yield candidate
+            matched = False
+            for child in sorted(candidate.iterdir()):
+                if not child.is_file() or not _has_extension(child, _SUPPORTED_JOURNAL_EXTENSIONS):
+                    continue
+                matched = True
+                yield child
+            if not matched:
+                raise SystemExit(
+                    "Katalog dzienników nie zawiera plików JSONL ani skompresowanych JSONL (.gz)"
+                )
+            continue
+        if not _has_extension(candidate, _SUPPORTED_JOURNAL_EXTENSIONS):
+            raise SystemExit(
+                "Dziennik musi być plikiem JSONL (opcjonalnie skompresowanym .gz)"
+            )
+        yield candidate
+
+
+def _iter_autotrade_paths(raw_paths: Iterable[Path | str]) -> list[Path]:
+    paths: list[Path] = []
+    seen: set[Path] = set()
+    directories_without_files: list[Path] = []
+
+    for raw in raw_paths:
+        candidate = Path(raw).expanduser()
+        if not candidate.exists():
+            raise SystemExit(f"Eksport autotradera nie istnieje: {candidate}")
+        if candidate.is_dir():
+            matched = False
+            for child in sorted(candidate.iterdir()):
+                if not child.is_file() or not _has_extension(
+                    child, _SUPPORTED_AUTOTRADE_EXTENSIONS
+                ):
+                    continue
+                resolved = child.resolve()
+                if resolved in seen:
+                    continue
+                matched = True
+                seen.add(resolved)
+                paths.append(child)
+            if not matched:
+                directories_without_files.append(candidate)
+            continue
+
+        resolved = candidate.resolve()
+        if resolved in seen:
+            continue
+        if not _has_extension(candidate, _SUPPORTED_AUTOTRADE_EXTENSIONS):
+            raise SystemExit(
+                "Eksport autotradera musi być plikiem JSON/JSONL (opcjonalnie skompresowanym .gz)"
+            )
+        seen.add(resolved)
+        paths.append(candidate)
+
+    if not paths:
+        if directories_without_files:
+            directory = directories_without_files[0]
+            raise SystemExit(
+                f"Katalog eksportów autotradera {directory} nie zawiera plików JSON/JSONL"
+                " (również skompresowanych .gz)"
+            )
+        raise SystemExit("Nie znaleziono żadnych plików eksportu autotradera")
+
+    return paths
 
 
 def _load_journal_events(
@@ -434,32 +638,33 @@ def _load_journal_events(
     *,
     since: datetime | None = None,
     until: datetime | None = None,
-) -> Iterable[dict[str, object]]:
-    def _iterator() -> Iterable[dict[str, object]]:
-        for path in paths:
-            try:
-                with path.open("r", encoding="utf-8") as handle:
-                    for line in handle:
-                        line = line.strip()
-                        if not line:
-                            continue
-                        try:
-                            payload = json.loads(line)
-                        except json.JSONDecodeError as exc:  # noqa: BLE001 - CLI feedback
-                            raise SystemExit(
-                                f"Nie udało się sparsować JSON w dzienniku {path}: {exc}"
-                            ) from exc
-                        if isinstance(payload, Mapping):
-                            timestamp = _parse_datetime(payload.get("timestamp"))
-                            if since and timestamp and timestamp < since:
-                                continue
-                            if until and timestamp and timestamp > until:
-                                continue
-                            yield dict(payload)
-            except OSError as exc:  # noqa: BLE001 - CLI feedback
-                raise SystemExit(f"Nie udało się odczytać dziennika {path}: {exc}") from exc
+) -> Iterator[Mapping[str, object]]:
+    def _iter_path(path: Path) -> Iterator[Mapping[str, object]]:
+        try:
+            with _open_text_file(path) as handle:
+                for raw_line in handle:
+                    line = raw_line.strip()
+                    if not line:
+                        continue
+                    try:
+                        payload = json.loads(line)
+                    except json.JSONDecodeError as exc:  # noqa: BLE001 - CLI feedback
+                        raise SystemExit(
+                            f"Nie udało się sparsować JSON w dzienniku {path}: {exc}"
+                        ) from exc
+                    if not isinstance(payload, Mapping):
+                        continue
+                    timestamp = _parse_datetime(payload.get("timestamp"))
+                    if since and timestamp and timestamp < since:
+                        continue
+                    if until and timestamp and timestamp > until:
+                        continue
+                    yield payload
+        except OSError as exc:  # noqa: BLE001 - CLI feedback
+            raise SystemExit(f"Nie udało się odczytać dziennika {path}: {exc}") from exc
 
-    return _iterator()
+    for path in paths:
+        yield from _iter_path(path)
 
 
 def _extract_entry_timestamp(entry: Mapping[str, object]) -> datetime | None:
@@ -479,45 +684,231 @@ def _extract_entry_timestamp(entry: Mapping[str, object]) -> datetime | None:
     return None
 
 
+
 def _load_autotrade_entries(
-    paths: Iterable[str],
+    paths: Iterable[Path | str],
     *,
     since: datetime | None = None,
     until: datetime | None = None,
-) -> Iterable[dict[str, object]]:
-    def _iterator() -> Iterable[dict[str, object]]:
-        for raw in paths:
-            path = Path(raw).expanduser()
-            if not path.exists():
-                raise SystemExit(f"Eksport autotradera nie istnieje: {path}")
+) -> Iterator[Mapping[str, object]]:
+    def _normalize_entry(item: object) -> Mapping[str, object] | None:
+        if not isinstance(item, Mapping):
+            return None
+        timestamp = _extract_entry_timestamp(item)
+        if since and timestamp and timestamp < since:
+            return None
+        if until and timestamp and timestamp > until:
+            return None
+        return item
+
+    def _iter_json_lines(handle: TextIO, path: Path) -> Iterator[Mapping[str, object]]:
+        for raw_line in handle:
+            line = raw_line.strip()
+            if not line:
+                continue
             try:
-                payload = json.loads(path.read_text(encoding="utf-8"))
+                item = json.loads(line)
             except json.JSONDecodeError as exc:  # noqa: BLE001 - CLI feedback
                 raise SystemExit(
-                    f"Niepoprawny JSON w eksporcie autotradera {path}: {exc}"
+                    f"Nie udało się sparsować JSON w eksporcie autotradera {path}: {exc}"
                 ) from exc
-            if isinstance(payload, Mapping):
-                raw_entries = payload.get("entries")
-                if isinstance(raw_entries, Iterable):
-                    for item in raw_entries:
-                        if isinstance(item, Mapping):
-                            timestamp = _extract_entry_timestamp(item)
-                            if since and timestamp and timestamp < since:
-                                continue
-                            if until and timestamp and timestamp > until:
-                                continue
-                            yield dict(item)
-            elif isinstance(payload, list):
-                for item in payload:
-                    if isinstance(item, Mapping):
-                        timestamp = _extract_entry_timestamp(item)
-                        if since and timestamp and timestamp < since:
-                            continue
-                        if until and timestamp and timestamp > until:
-                            continue
-                        yield dict(item)
+            normalized = _normalize_entry(item)
+            if normalized is not None:
+                yield normalized
 
-    return _iterator()
+    def _iter_json_stream(handle: TextIO, path: Path) -> Iterator[Mapping[str, object]]:
+        decoder = json.JSONDecoder()
+        buffer = ""
+        position = 0
+        chunk_size = 65536
+
+        def _append_chunk() -> bool:
+            nonlocal buffer, position
+            chunk = handle.read(chunk_size)
+            if not chunk:
+                return False
+            if position:
+                buffer = buffer[position:] + chunk
+                position = 0
+            else:
+                buffer += chunk
+            return True
+
+        def _skip_whitespace() -> bool:
+            nonlocal position
+            while True:
+                while position < len(buffer) and buffer[position].isspace():
+                    position += 1
+                if position < len(buffer):
+                    return True
+                if not _append_chunk():
+                    return False
+
+        def _decode_value() -> object:
+            nonlocal buffer, position
+            while True:
+                try:
+                    value, next_position = decoder.raw_decode(buffer, position)
+                except json.JSONDecodeError as exc:
+                    if not _append_chunk():
+                        raise SystemExit(
+                            f"Niepoprawny JSON w eksporcie autotradera {path}: {exc}"
+                        ) from exc
+                    continue
+                position = next_position
+                if position > 65536:
+                    buffer = buffer[position:]
+                    position = 0
+                return value
+
+        def _consume_array(yield_entries: bool) -> Iterator[Mapping[str, object]]:
+            nonlocal position
+            position += 1
+            first_item = True
+            while True:
+                if not _skip_whitespace():
+                    raise SystemExit(
+                        f"Niepoprawny JSON w eksporcie autotradera {path}: niekompletna tablica"
+                    )
+                if position >= len(buffer) and not _append_chunk():
+                    raise SystemExit(
+                        f"Niepoprawny JSON w eksporcie autotradera {path}: niekompletna tablica"
+                    )
+                current = buffer[position]
+                if current == "]":
+                    position += 1
+                    return
+                if not first_item:
+                    if current != ",":
+                        raise SystemExit(
+                            f"Niepoprawny JSON w eksporcie autotradera {path}: oczekiwano przecinka"
+                        )
+                    position += 1
+                    if not _skip_whitespace():
+                        raise SystemExit(
+                            f"Niepoprawny JSON w eksporcie autotradera {path}: niekompletna tablica"
+                        )
+                    if position >= len(buffer) and not _append_chunk():
+                        raise SystemExit(
+                            f"Niepoprawny JSON w eksporcie autotradera {path}: niekompletna tablica"
+                        )
+                    current = buffer[position]
+                    if current == "]":
+                        raise SystemExit(
+                            f"Niepoprawny JSON w eksporcie autotradera {path}: dodatkowy przecinek"
+                        )
+                first_item = False
+                item = _decode_value()
+                if not yield_entries:
+                    continue
+                normalized = _normalize_entry(item)
+                if normalized is not None:
+                    yield normalized
+
+        def _consume_value(yield_entries: bool) -> Iterator[Mapping[str, object]]:
+            nonlocal position
+            if not _skip_whitespace():
+                raise SystemExit(
+                    f"Niepoprawny JSON w eksporcie autotradera {path}: niekompletna wartość"
+                )
+            if position >= len(buffer) and not _append_chunk():
+                raise SystemExit(
+                    f"Niepoprawny JSON w eksporcie autotradera {path}: niekompletna wartość"
+                )
+            current = buffer[position]
+            if current == "[":
+                yield from _consume_array(yield_entries)
+                return
+            if current in "\"{-0123456789tfn":
+                value = _decode_value()
+                if yield_entries:
+                    normalized = _normalize_entry(value)
+                    if normalized is not None:
+                        yield normalized
+                return
+            raise SystemExit(
+                f"Niepoprawny JSON w eksporcie autotradera {path}: nieznany typ wartości"
+            )
+
+        if not _skip_whitespace():
+            return
+        if position >= len(buffer) and not _append_chunk():
+            return
+        first_char = buffer[position]
+        if first_char == "[":
+            yield from _consume_array(True)
+            return
+        if first_char != "{":
+            raise SystemExit(
+                f"Niepoprawny JSON w eksporcie autotradera {path}: oczekiwano obiektu lub tablicy"
+            )
+        position += 1
+
+        while True:
+            if not _skip_whitespace():
+                raise SystemExit(
+                    f"Niepoprawny JSON w eksporcie autotradera {path}: niekompletny obiekt"
+                )
+            if position >= len(buffer) and not _append_chunk():
+                raise SystemExit(
+                    f"Niepoprawny JSON w eksporcie autotradera {path}: niekompletny obiekt"
+                )
+            current = buffer[position]
+            if current == "}":
+                position += 1
+                break
+            key = _decode_value()
+            if not isinstance(key, str):
+                raise SystemExit(
+                    f"Niepoprawny JSON w eksporcie autotradera {path}: klucz musi być napisem"
+                )
+            if not _skip_whitespace():
+                raise SystemExit(
+                    f"Niepoprawny JSON w eksporcie autotradera {path}: niekompletna para klucz-wartość"
+                )
+            if position >= len(buffer) and not _append_chunk():
+                raise SystemExit(
+                    f"Niepoprawny JSON w eksporcie autotradera {path}: niekompletna para klucz-wartość"
+                )
+            if buffer[position] != ":":
+                raise SystemExit(
+                    f"Niepoprawny JSON w eksporcie autotradera {path}: oczekiwano ':' po kluczu {key}"
+                )
+            position += 1
+            yield from _consume_value(key == "entries")
+            if not _skip_whitespace():
+                raise SystemExit(
+                    f"Niepoprawny JSON w eksporcie autotradera {path}: niekompletny obiekt"
+                )
+            if position >= len(buffer) and not _append_chunk():
+                raise SystemExit(
+                    f"Niepoprawny JSON w eksporcie autotradera {path}: niekompletny obiekt"
+                )
+            current = buffer[position]
+            if current == ",":
+                position += 1
+                continue
+            if current == "}":
+                position += 1
+                break
+            raise SystemExit(
+                f"Niepoprawny JSON w eksporcie autotradera {path}: oczekiwano ',' lub '}}'"
+            )
+
+    def _iter_path(path: Path) -> Iterator[Mapping[str, object]]:
+        try:
+            with _open_text_file(path) as handle:
+                if _is_json_lines_path(path):
+                    yield from _iter_json_lines(handle, path)
+                    return
+                yield from _iter_json_stream(handle, path)
+        except OSError as exc:  # noqa: BLE001 - CLI feedback
+            raise SystemExit(
+                f"Nie udało się odczytać eksportu autotradera {path}: {exc}"
+            ) from exc
+
+    for path in _iter_autotrade_paths(paths):
+        yield from _iter_path(path)
 
 
 def _resolve_key(exchange: str | None, strategy: str | None) -> tuple[str, str]:
@@ -768,6 +1159,329 @@ def _finite_values(values: Iterable[object]) -> list[float]:
     return finite
 
 
+def _percentile_target(count: int, percentile: float) -> tuple[int, int, float]:
+    position = (count - 1) * percentile
+    lower = int(math.floor(position))
+    upper = int(math.ceil(position))
+    weight = position - lower
+    return lower, upper, weight
+
+
+def _select_indices_from_sequences(
+    sequences: Iterable[Iterable[float]],
+    indices: Iterable[int],
+) -> dict[int, float]:
+    ordered_indices = sorted(set(index for index in indices if index >= 0))
+    if not ordered_indices:
+        return {}
+    iterables = [iter(sequence) for sequence in sequences]
+    if not iterables:
+        return {}
+    merged = heapq.merge(*iterables)
+    results: dict[int, float] = {}
+    target_iter = iter(ordered_indices)
+    try:
+        target = next(target_iter)
+    except StopIteration:
+        return {}
+    for index, value in enumerate(merged):
+        while target == index:
+            results[target] = float(value)
+            try:
+                target = next(target_iter)
+            except StopIteration:
+                return results
+        if index > ordered_indices[-1]:
+            break
+    return results
+
+
+def _compute_percentiles_from_sequences(
+    sequences: Iterable[Iterable[float]],
+    percentiles: Iterable[float],
+    *,
+    count: int,
+) -> dict[str, float]:
+    unique_percentiles = sorted({p for p in percentiles if 0.0 <= p <= 1.0})
+    if not unique_percentiles or count <= 0:
+        return {}
+    targets = {p: _percentile_target(count, p) for p in unique_percentiles}
+    required_indices = [index for triple in targets.values() for index in triple[:2]]
+    index_values = _select_indices_from_sequences(sequences, required_indices)
+    results: dict[str, float] = {}
+    for percentile in unique_percentiles:
+        lower, upper, weight = targets[percentile]
+        lower_value = index_values.get(lower)
+        upper_value = index_values.get(upper)
+        if lower_value is None or upper_value is None:
+            continue
+        if lower == upper:
+            value = lower_value
+        else:
+            value = lower_value + (upper_value - lower_value) * weight
+        results[f"p{int(percentile * 100):02d}"] = value
+    return results
+
+
+class _MetricSeries:
+    __slots__ = (
+        "_values",
+        "_sorted_values",
+        "_sorted_absolute_values",
+        "_sum",
+        "_sum_of_squares",
+        "_min",
+        "_max",
+    )
+
+    def __init__(self) -> None:
+        self._values = array("d")
+        self._sorted_values: array | None = None
+        self._sorted_absolute_values: array | None = None
+        self._sum = 0.0
+        self._sum_of_squares = 0.0
+        self._min: float | None = None
+        self._max: float | None = None
+
+    def _invalidate_cache(self) -> None:
+        self._sorted_values = None
+        self._sorted_absolute_values = None
+
+    def append(self, value: float) -> None:
+        numeric = float(value)
+        self._values.append(numeric)
+        self._sum += numeric
+        self._sum_of_squares += numeric * numeric
+        if self._min is None or numeric < self._min:
+            self._min = numeric
+        if self._max is None or numeric > self._max:
+            self._max = numeric
+        self._invalidate_cache()
+
+    def extend(self, values: Iterable[float]) -> None:
+        local_min = self._min
+        local_max = self._max
+        appended = False
+        for value in values:
+            numeric = float(value)
+            self._values.append(numeric)
+            self._sum += numeric
+            self._sum_of_squares += numeric * numeric
+            if local_min is None or numeric < local_min:
+                local_min = numeric
+            if local_max is None or numeric > local_max:
+                local_max = numeric
+            appended = True
+        if appended:
+            self._min = local_min
+            self._max = local_max
+            self._invalidate_cache()
+
+    def __len__(self) -> int:
+        return len(self._values)
+
+    def _ensure_sorted_values(self) -> array:
+        cached = self._sorted_values
+        if cached is None:
+            cached = array("d", sorted(self._values))
+            self._sorted_values = cached
+        return cached
+
+    def _ensure_sorted_absolute_values(self) -> array:
+        cached = self._sorted_absolute_values
+        if cached is not None:
+            return cached
+
+        sorted_values = self._ensure_sorted_values()
+        length = len(sorted_values)
+        if length == 0:
+            result = array("d")
+            self._sorted_absolute_values = result
+            return result
+
+        split = bisect_left(sorted_values, 0.0)
+
+        if split == 0:
+            self._sorted_absolute_values = sorted_values
+            return sorted_values
+
+        if split == length:
+            result = array("d", [0.0] * length)
+            write_index = 0
+            for index in range(length - 1, -1, -1):
+                result[write_index] = -sorted_values[index]
+                write_index += 1
+            self._sorted_absolute_values = result
+            return result
+
+        result = array("d", [0.0] * length)
+        write_index = 0
+        neg_index = split - 1
+        pos_index = split
+
+        while neg_index >= 0 and pos_index < length:
+            negative_abs = -sorted_values[neg_index]
+            positive_abs = sorted_values[pos_index]
+            if negative_abs <= positive_abs:
+                result[write_index] = negative_abs
+                neg_index -= 1
+            else:
+                result[write_index] = positive_abs
+                pos_index += 1
+            write_index += 1
+
+        while neg_index >= 0:
+            result[write_index] = -sorted_values[neg_index]
+            neg_index -= 1
+            write_index += 1
+
+        while pos_index < length:
+            result[write_index] = sorted_values[pos_index]
+            pos_index += 1
+            write_index += 1
+
+        self._sorted_absolute_values = result
+        return result
+
+    def __iter__(self) -> Iterator[float]:
+        return iter(self._ensure_sorted_values())
+
+    def values(self) -> array:
+        return self._ensure_sorted_values()
+
+    def absolute_values(self) -> array:
+        return self._ensure_sorted_absolute_values()
+
+    @property
+    def sum(self) -> float:
+        return self._sum
+
+    @property
+    def sum_of_squares(self) -> float:
+        return self._sum_of_squares
+
+    def min_value(self) -> float | None:
+        return self._min
+
+    def max_value(self) -> float | None:
+        return self._max
+
+    def _statistics_payload(self, percentiles: Iterable[float]) -> dict[str, object]:
+        count = len(self)
+        if not count:
+            return {
+                "count": 0,
+                "min": None,
+                "max": None,
+                "mean": None,
+                "stddev": None,
+                "percentiles": {},
+            }
+        mean = self._sum / count
+        if count > 1:
+            variance = max(self._sum_of_squares / count - mean * mean, 0.0)
+            stddev = math.sqrt(variance)
+        else:
+            stddev = 0.0
+        sorted_values = self._ensure_sorted_values()
+        percentiles_payload = _compute_percentiles_from_sequences(
+            [sorted_values], percentiles, count=count
+        )
+        return {
+            "count": count,
+            "min": float(sorted_values[0]),
+            "max": float(sorted_values[-1]),
+            "mean": mean,
+            "stddev": stddev,
+            "percentiles": percentiles_payload,
+        }
+
+    def statistics(self, percentiles: Iterable[float]) -> dict[str, object]:
+        return self._statistics_payload(percentiles)
+
+    def suggest(self, percentile: float, *, absolute: bool = False) -> float | None:
+        if not self._values:
+            return None
+        sequences: list[array]
+        if absolute:
+            sequences = [self._ensure_sorted_absolute_values()]
+        else:
+            sequences = [self._ensure_sorted_values()]
+        percentile_key = f"p{int(percentile * 100):02d}"
+        result = _compute_percentiles_from_sequences(
+            sequences, [percentile], count=len(self)
+        )
+        return result.get(percentile_key)
+
+
+def _aggregate_metric_series(
+    series_list: Iterable[_MetricSeries],
+    percentiles: Iterable[float],
+    suggestion_percentile: float,
+    *,
+    absolute: bool,
+    current_threshold: float | None,
+) -> dict[str, object]:
+    non_empty_series = [series for series in series_list if len(series)]
+    if not non_empty_series:
+        return {
+            "count": 0,
+            "min": None,
+            "max": None,
+            "mean": None,
+            "stddev": None,
+            "percentiles": {},
+            "suggested_threshold": None,
+            "current_threshold": current_threshold,
+        }
+
+    total_count = sum(len(series) for series in non_empty_series)
+    total_sum = sum(series.sum for series in non_empty_series)
+    total_sum_of_squares = sum(series.sum_of_squares for series in non_empty_series)
+    mean = total_sum / total_count
+    if total_count > 1:
+        variance = max(total_sum_of_squares / total_count - mean * mean, 0.0)
+        stddev = math.sqrt(variance)
+    else:
+        stddev = 0.0
+
+    min_value: float | None = None
+    max_value: float | None = None
+    for series in non_empty_series:
+        series_min = series.min_value()
+        if series_min is not None:
+            min_value = series_min if min_value is None else min(min_value, series_min)
+        series_max = series.max_value()
+        if series_max is not None:
+            max_value = series_max if max_value is None else max(max_value, series_max)
+
+    sequences = [series.values() for series in non_empty_series]
+    percentiles_payload = _compute_percentiles_from_sequences(
+        sequences, percentiles, count=total_count
+    )
+
+    suggestion_sequences = (
+        [series.absolute_values() for series in non_empty_series]
+        if absolute
+        else [series.values() for series in non_empty_series]
+    )
+    suggestion_key = f"p{int(suggestion_percentile * 100):02d}"
+    suggestion_result = _compute_percentiles_from_sequences(
+        suggestion_sequences, [suggestion_percentile], count=total_count
+    )
+
+    return {
+        "count": total_count,
+        "min": min_value,
+        "max": max_value,
+        "mean": mean,
+        "stddev": stddev,
+        "percentiles": percentiles_payload,
+        "suggested_threshold": suggestion_result.get(suggestion_key),
+        "current_threshold": current_threshold,
+    }
+
+
 def _metric_statistics(values: list[float], percentiles: Iterable[float]) -> dict[str, object]:
     if not values:
         return {
@@ -780,8 +1494,13 @@ def _metric_statistics(values: list[float], percentiles: Iterable[float]) -> dic
         }
     sorted_values = sorted(values)
     count = len(sorted_values)
-    mean = statistics.fmean(sorted_values)
-    stddev = statistics.pstdev(sorted_values) if count > 1 else 0.0
+    mean = sum(sorted_values) / count
+    if count > 1:
+        sum_of_squares = sum(value * value for value in sorted_values)
+        variance = max(sum_of_squares / count - mean * mean, 0.0)
+        stddev = math.sqrt(variance)
+    else:
+        stddev = 0.0
     percentiles_payload = {
         f"p{int(p * 100):02d}": _compute_percentile(sorted_values, p)
         for p in percentiles
@@ -799,13 +1518,19 @@ def _metric_statistics(values: list[float], percentiles: Iterable[float]) -> dic
 def _suggest_threshold(values: list[float], percentile: float, *, absolute: bool = False) -> float | None:
     if not values:
         return None
-    target_values = [abs(value) for value in values] if absolute else list(values)
-    target_values.sort()
+    if absolute:
+        target_values = sorted(abs(value) for value in values)
+    else:
+        target_values = sorted(values)
     return _compute_percentile(target_values, percentile)
 
 
+def _numeric_buffer() -> _MetricSeries:
+    return _MetricSeries()
+
+
 def _build_metrics_section(
-    values_map: Mapping[str, list[float]],
+    values_map: Mapping[str, Iterable[float]],
     percentiles: Iterable[float],
     suggestion_percentile: float,
     *,
@@ -814,12 +1539,29 @@ def _build_metrics_section(
 ) -> dict[str, dict[str, object]]:
     metrics_payload: dict[str, dict[str, object]] = {}
     for metric_name, values in values_map.items():
-        finite_values = _finite_values(values)
-        if isinstance(values, list) and len(finite_values) != len(values):
-            values[:] = finite_values
-        stats_payload = _metric_statistics(finite_values, percentiles)
         absolute = metric_name in _ABSOLUTE_THRESHOLD_METRICS
-        suggested = _suggest_threshold(finite_values, suggestion_percentile, absolute=absolute)
+        if isinstance(values, _MetricSeries):
+            stats_payload = values.statistics(percentiles)
+            suggested = values.suggest(suggestion_percentile, absolute=absolute)
+        else:
+            if isinstance(values, list):
+                try:
+                    all_finite = all(math.isfinite(value) for value in values)
+                except TypeError:
+                    all_finite = False
+                if all_finite:
+                    finite_values = values
+                else:
+                    finite_values = _finite_values(values)
+                    values[:] = finite_values
+            elif isinstance(values, array):
+                finite_values = list(values)
+            else:
+                finite_values = _finite_values(values)
+            stats_payload = _metric_statistics(finite_values, percentiles)
+            suggested = _suggest_threshold(
+                finite_values, suggestion_percentile, absolute=absolute
+            )
         if metric_name == "risk_score":
             current = current_risk_score
         elif current_signal_thresholds:
@@ -951,7 +1693,9 @@ def _maybe_plot(
         primary_exchange = group["primary_exchange"]
         strategy = group["strategy"]
         metrics = group["metrics"]
-        raw_values = group["raw_values"]
+        raw_values = group.get("raw_values")
+        if not isinstance(raw_values, Mapping):
+            continue
         for metric_name, values in raw_values.items():
             if not values:
                 continue
@@ -979,17 +1723,39 @@ def _generate_report(
     since: datetime | None = None,
     until: datetime | None = None,
     current_signal_thresholds: Mapping[str, float] | None = None,
+    current_threshold_sources: Mapping[str, object] | None = None,
+    risk_score_override: float | None = None,
+    risk_score_source: Mapping[str, object] | None = None,
     risk_threshold_sources: Iterable[str] | None = None,
+    cli_risk_score_threshold: float | None = None,
     cli_risk_score: float | None = None,
-    current_signal_threshold_sources: Mapping[str, object] | None = None,
+    include_raw_values: bool = False,
 ) -> dict[str, object]:
+    normalized_signal_thresholds: dict[str, float] | None = None
+    if isinstance(current_signal_thresholds, Mapping):
+        normalized_signal_thresholds = {}
+        for raw_key, raw_value in current_signal_thresholds.items():
+            if not isinstance(raw_key, str):
+                continue
+            normalized_key = _normalize_metric_key(raw_key)
+            if normalized_key not in _SUPPORTED_THRESHOLD_METRICS:
+                continue
+            numeric = _coerce_float(raw_value)
+            if numeric is None:
+                raise SystemExit(
+                    "Nie udało się zinterpretować bieżącego progu "
+                    f"'{raw_value}' dla metryki {raw_key}"
+                )
+            normalized_signal_thresholds[normalized_key] = _ensure_finite_value(
+                normalized_key,
+                float(numeric),
+                source=f"current_thresholds.{normalized_key}",
+            )
+    current_signal_thresholds = normalized_signal_thresholds
+
     symbol_map: dict[str, tuple[str, str]] = {}
-    grouped_values: dict[tuple[str, str], dict[str, list[float]]] = defaultdict(
-        lambda: defaultdict(list)
-    )
-    raw_value_snapshots: dict[tuple[str, str], dict[str, list[float]]] = defaultdict(
-        lambda: defaultdict(list)
-    )
+    grouped_values: dict[tuple[str, str], dict[str, _MetricSeries]] = {}
+    global_metric_series: dict[str, _MetricSeries] = {}
     freeze_summaries: dict[tuple[str, str], dict[str, object]] = defaultdict(
         lambda: {
             "total": 0,
@@ -998,8 +1764,15 @@ def _generate_report(
             "reason_counts": Counter(),
         }
     )
-    freeze_events: dict[tuple[str, str], list[dict[str, object]]] = defaultdict(list)
     display_names: dict[tuple[str, str], tuple[str, str]] = {}
+    aggregated_freeze_summary = {
+        "total": 0,
+        "type_counts": Counter(),
+        "status_counts": Counter(),
+        "reason_counts": Counter(),
+    }
+    journal_count = 0
+    autotrade_count = 0
 
     def _select_display(current: str, candidate: str, canonical: str) -> str:
         if not candidate:
@@ -1033,6 +1806,41 @@ def _generate_report(
         display_strategy = _select_display(current[1], candidate_strategy, key[1])
         display_names[key] = (display_exchange, display_strategy)
 
+    def _ensure_metrics(key: tuple[str, str]) -> dict[str, _MetricSeries]:
+        metrics = grouped_values.get(key)
+        if metrics is None:
+            metrics = {}
+            grouped_values[key] = metrics
+        return metrics
+
+    def _ensure_global_series(metric_name: str) -> _MetricSeries:
+        series = global_metric_series.get(metric_name)
+        if series is None:
+            series = _numeric_buffer()
+            global_metric_series[metric_name] = series
+        return series
+
+    def _metric_buffer(key: tuple[str, str], metric_name: str) -> _MetricSeries:
+        metrics = _ensure_metrics(key)
+        buffer = metrics.get(metric_name)
+        if buffer is None:
+            buffer = _numeric_buffer()
+            metrics[metric_name] = buffer
+        return buffer
+
+    def _record_metric_value(
+        key: tuple[str, str],
+        metric_name: str,
+        numeric: float,
+    ) -> None:
+        numeric_value = float(numeric)
+        values = _metric_buffer(key, metric_name)
+        values.append(numeric_value)
+        global_series = _ensure_global_series(metric_name)
+        global_series.append(numeric_value)
+        if _METRIC_APPEND_OBSERVER is not None:
+            _METRIC_APPEND_OBSERVER(key, metric_name, len(values))
+
     def _record_freeze(
         key: tuple[str, str],
         payload: Mapping[str, object],
@@ -1049,25 +1857,21 @@ def _generate_report(
             summary["status_counts"][status] += 1
         if isinstance(summary["reason_counts"], Counter):
             summary["reason_counts"][reason] += 1
+        aggregated_freeze_summary["total"] = int(aggregated_freeze_summary["total"]) + 1
+        if isinstance(aggregated_freeze_summary["type_counts"], Counter):
+            aggregated_freeze_summary["type_counts"][freeze_type] += 1
+        if isinstance(aggregated_freeze_summary["status_counts"], Counter):
+            aggregated_freeze_summary["status_counts"][status] += 1
+        if isinstance(aggregated_freeze_summary["reason_counts"], Counter):
+            aggregated_freeze_summary["reason_counts"][reason] += 1
+        _ensure_metrics(key)
         if duration is not None:
             try:
                 numeric_duration = float(duration)
             except (TypeError, ValueError):
                 numeric_duration = None
             if numeric_duration is not None and math.isfinite(numeric_duration):
-                grouped_values[key]["risk_freeze_duration"].append(numeric_duration)
-                raw_value_snapshots[key]["risk_freeze_duration"].append(numeric_duration)
-        freeze_events[key].append(
-            {
-                "status": status,
-                "type": freeze_type,
-                "reason": reason,
-                "duration": duration,
-                "risk_score": payload.get("risk_score"),
-            }
-        )
-
-    journal_count = 0
+                _record_metric_value(key, "risk_freeze_duration", numeric_duration)
     for event in journal_events:
         journal_count += 1
         _update_symbol_map_entry(symbol_map, event)
@@ -1085,8 +1889,7 @@ def _generate_report(
                 continue
             if not math.isfinite(numeric):
                 continue
-            grouped_values[key][metric].append(numeric)
-            raw_value_snapshots[key][metric].append(numeric)
+            _record_metric_value(key, metric, numeric)
         for freeze_payload in _iter_freeze_events(event):
             symbol = _extract_symbol(event)
             exchange = base_exchange
@@ -1112,8 +1915,7 @@ def _generate_report(
         key, display = _resolve_group_from_symbol(entry, symbol, summary, symbol_map)
         _record_display(key, display[0], display[1])
 
-        freeze_payloads = list(_iter_freeze_events(entry))
-        for freeze_payload in freeze_payloads:
+        for freeze_payload in _iter_freeze_events(entry):
             _record_freeze(key, freeze_payload)
 
         if not summary:
@@ -1138,8 +1940,7 @@ def _generate_report(
             continue
         if not math.isfinite(score_value):
             continue
-        grouped_values[key]["risk_score"].append(score_value)
-        raw_value_snapshots[key]["risk_score"].append(score_value)
+        _record_metric_value(key, "risk_score", score_value)
 
     risk_threshold_paths = _normalize_risk_threshold_paths(risk_threshold_sources)
     current_risk_score = None
@@ -1148,24 +1949,58 @@ def _generate_report(
             thresholds = load_risk_thresholds(config_path=config_path)
             value = _extract_risk_score_threshold(thresholds)
             if value is not None:
-                current_risk_score = value
+                current_risk_score = _ensure_finite_value(
+                    "risk_score",
+                    float(value),
+                    source=str(config_path),
+                )
     else:
         thresholds = load_risk_thresholds()
-        current_risk_score = _extract_risk_score_threshold(thresholds)
+        value = _extract_risk_score_threshold(thresholds)
+        if value is not None:
+            current_risk_score = _ensure_finite_value(
+                "risk_score",
+                float(value),
+                source="load_risk_thresholds()",
+            )
+
+    override_source: str | None = None
+    if isinstance(risk_score_source, Mapping):
+        raw_source = risk_score_source.get("source")
+        if raw_source is not None:
+            override_source = str(raw_source)
+        else:
+            raw_kind = risk_score_source.get("kind")
+            if isinstance(raw_kind, str) and raw_kind:
+                override_source = f"current_thresholds.{raw_kind}"
+
+    if risk_score_override is not None:
+        source_hint = override_source or "CLI risk_score_override"
+        current_risk_score = _ensure_finite_value(
+            "risk_score",
+            float(risk_score_override),
+            source=source_hint,
+        )
+    elif current_risk_score is None and isinstance(risk_score_source, Mapping):
+        raw_value = _coerce_float(risk_score_source.get("value"))
+        if raw_value is not None:
+            source_hint = override_source or "current_thresholds.value"
+            current_risk_score = _ensure_finite_value(
+                "risk_score",
+                float(raw_value),
+                source=source_hint,
+            )
 
     if cli_risk_score is not None:
         current_risk_score = float(cli_risk_score)
 
     groups: list[dict[str, object]] = []
-    aggregated_values: defaultdict[str, list[float]] = defaultdict(list)
-    aggregated_freeze_summary = {
-        "total": 0,
-        "type_counts": Counter(),
-        "status_counts": Counter(),
-        "reason_counts": Counter(),
-    }
+    all_keys = set(grouped_values.keys()) | set(freeze_summaries.keys()) | set(display_names.keys())
 
-    for (exchange, strategy), metrics in sorted(grouped_values.items()):
+    for exchange, strategy in sorted(all_keys):
+        metrics = grouped_values.get((exchange, strategy))
+        if metrics is None:
+            metrics = {}
         metrics_payload = _build_metrics_section(
             metrics,
             percentiles,
@@ -1173,7 +2008,6 @@ def _generate_report(
             current_risk_score=current_risk_score,
             current_signal_thresholds=current_signal_thresholds,
         )
-        raw_snapshot = raw_value_snapshots.get((exchange, strategy), {})
         freeze_summary = freeze_summaries.get((exchange, strategy)) or {
             "total": 0,
             "type_counts": Counter(),
@@ -1181,45 +2015,155 @@ def _generate_report(
             "reason_counts": Counter(),
         }
         freeze_summary_payload = _format_freeze_summary(freeze_summary)
-        aggregated_freeze_summary["total"] = int(aggregated_freeze_summary["total"]) + int(
-            freeze_summary.get("total") or 0
-        )
-        if isinstance(freeze_summary.get("type_counts"), Counter):
-            aggregated_freeze_summary["type_counts"].update(freeze_summary["type_counts"])
-        if isinstance(freeze_summary.get("status_counts"), Counter):
-            aggregated_freeze_summary["status_counts"].update(freeze_summary["status_counts"])
-        if isinstance(freeze_summary.get("reason_counts"), Counter):
-            aggregated_freeze_summary["reason_counts"].update(freeze_summary["reason_counts"])
-        for metric_name, values in metrics.items():
-            aggregated_values[metric_name].extend(_finite_values(values))
+        has_metrics = any(values for values in metrics.values())
+        has_freeze = int(freeze_summary.get("total") or 0) > 0
+        if not (has_metrics or has_freeze):
+            continue
         display_exchange, display_strategy = display_names.get(
             (exchange, strategy), (exchange, strategy)
         )
-        groups.append(
-            {
-                "primary_exchange": display_exchange,
-                "strategy": display_strategy,
-                "metrics": metrics_payload,
-                "raw_values": {
-                    metric: _finite_values(values)
-                    for metric, values in raw_snapshot.items()
-                },
-                "freeze_summary": freeze_summary_payload,
-                "raw_freeze_events": list(freeze_events.get((exchange, strategy), [])),
+        group_payload: dict[str, object] = {
+            "primary_exchange": display_exchange,
+            "strategy": display_strategy,
+            "metrics": metrics_payload,
+            "freeze_summary": freeze_summary_payload,
+        }
+        if include_raw_values:
+            group_payload["raw_values"] = {
+                metric: (
+                    values if isinstance(values, list) else list(values)
+                )
+                for metric, values in metrics.items()
             }
-        )
+        groups.append(group_payload)
 
-    global_metrics = _build_metrics_section(
-        aggregated_values,
-        percentiles,
-        suggestion_percentile,
-        current_risk_score=current_risk_score,
-        current_signal_thresholds=current_signal_thresholds,
-    )
-    global_summary = {
+    global_metrics: dict[str, dict[str, object]] = {}
+    for metric_name, series in global_metric_series.items():
+        if metric_name == "risk_score":
+            current_threshold = current_risk_score
+        elif current_signal_thresholds:
+            current_threshold = current_signal_thresholds.get(metric_name)
+        else:
+            current_threshold = None
+        global_metrics[metric_name] = _aggregate_metric_series(
+            [series],
+            percentiles,
+            suggestion_percentile,
+            absolute=metric_name in _ABSOLUTE_THRESHOLD_METRICS,
+            current_threshold=current_threshold,
+        )
+    global_summary: dict[str, object] = {
         "metrics": global_metrics,
         "freeze_summary": _format_freeze_summary(aggregated_freeze_summary),
-        "raw_values": {metric: _finite_values(values) for metric, values in aggregated_values.items()},
+    }
+    if include_raw_values:
+        global_summary["raw_values"] = {
+            metric: list(series.values())
+            for metric, series in global_metric_series.items()
+        }
+
+    current_threshold_files: list[str] = []
+    current_threshold_inline: dict[str, float] = {}
+    risk_threshold_inline: dict[str, float] = {}
+    risk_threshold_files_extra: list[str] = []
+    risk_score_metadata_payload: dict[str, object] | None = None
+    if isinstance(current_threshold_sources, Mapping):
+        raw_files = current_threshold_sources.get("files")
+        if isinstance(raw_files, Iterable) and not isinstance(raw_files, (str, bytes)):
+            seen_files: set[str] = set()
+            for item in raw_files:
+                item_str = str(item)
+                if item_str in seen_files:
+                    continue
+                seen_files.add(item_str)
+                current_threshold_files.append(item_str)
+        raw_inline = current_threshold_sources.get("inline")
+        if isinstance(raw_inline, Mapping):
+            for key, value in raw_inline.items():
+                if not isinstance(key, str):
+                    continue
+                numeric = _coerce_float(value)
+                if numeric is None:
+                    continue
+                normalized_key = _normalize_metric_key(key)
+                validated_value = _normalize_and_validate_threshold(
+                    normalized_key,
+                    float(numeric),
+                    source="current_thresholds.inline",
+                )
+                current_threshold_inline[normalized_key] = validated_value
+        raw_risk_inline = current_threshold_sources.get("risk_inline")
+        if isinstance(raw_risk_inline, Mapping):
+            for key, value in raw_risk_inline.items():
+                if not isinstance(key, str):
+                    continue
+                numeric = _coerce_float(value)
+                if numeric is None:
+                    continue
+                normalized_key = _normalize_metric_key(key)
+                validated_value = _normalize_and_validate_threshold(
+                    normalized_key,
+                    float(numeric),
+                    source="risk_thresholds.inline",
+                )
+                risk_threshold_inline[normalized_key] = validated_value
+        raw_risk_files = current_threshold_sources.get("risk_files")
+        if isinstance(raw_risk_files, Iterable) and not isinstance(raw_risk_files, (str, bytes)):
+            seen_risk_files: set[str] = set()
+            for item in raw_risk_files:
+                item_str = str(item)
+                if item_str in seen_risk_files:
+                    continue
+                seen_risk_files.add(item_str)
+                risk_threshold_files_extra.append(item_str)
+        raw_risk_source = current_threshold_sources.get("risk_score_source")
+        if isinstance(raw_risk_source, Mapping):
+            metadata: dict[str, object] = {}
+            raw_kind = raw_risk_source.get("kind")
+            if isinstance(raw_kind, str):
+                metadata["kind"] = raw_kind
+            raw_source = raw_risk_source.get("source")
+            if raw_source is not None:
+                metadata["source"] = str(raw_source)
+            raw_value = _coerce_float(raw_risk_source.get("value"))
+            if raw_value is not None:
+                metadata["value"] = _normalize_and_validate_threshold(
+                    "risk_score",
+                    float(raw_value),
+                    source="current_thresholds.risk_score_source",
+                )
+            if metadata:
+                risk_score_metadata_payload = metadata
+
+    combined_risk_files: list[str] = []
+    seen_combined_risk_files: set[str] = set()
+    for path in risk_threshold_paths:
+        path_str = str(path)
+        if path_str in seen_combined_risk_files:
+            continue
+        seen_combined_risk_files.add(path_str)
+        combined_risk_files.append(path_str)
+    for path_str in risk_threshold_files_extra:
+        if path_str in seen_combined_risk_files:
+            continue
+        seen_combined_risk_files.add(path_str)
+        combined_risk_files.append(path_str)
+
+    current_thresholds_payload: dict[str, object] = {
+        "files": current_threshold_files,
+        "inline": current_threshold_inline,
+    }
+    if risk_score_metadata_payload is not None:
+        current_thresholds_payload["risk_score"] = risk_score_metadata_payload
+
+    sources_payload = {
+        "journal_events": journal_count,
+        "autotrade_entries": autotrade_count,
+        "current_thresholds": current_thresholds_payload,
+        "risk_thresholds": {
+            "files": combined_risk_files,
+            "inline": risk_threshold_inline,
+        },
     }
 
     sources_payload: dict[str, object] = {
@@ -1271,13 +2215,19 @@ def _build_parser() -> argparse.ArgumentParser:
         "--journal",
         required=True,
         nargs="+",
-        help="Ścieżki do plików JSONL (lub katalogów) z TradingDecisionJournal",
+        help=(
+            "Ścieżki do plików JSONL (również skompresowanych .gz) lub katalogów "
+            "z TradingDecisionJournal"
+        ),
     )
     parser.add_argument(
         "--autotrade-export",
         required=True,
         nargs="+",
-        help="Pliki JSON wygenerowane przez export_risk_evaluations lub eksport statusów autotradera",
+        help=(
+            "Pliki JSON/JSONL (również skompresowane .gz) wygenerowane przez "
+            "export_risk_evaluations lub eksport statusów autotradera"
+        ),
     )
     parser.add_argument(
         "--percentiles",
@@ -1349,9 +2299,24 @@ def main(argv: list[str] | None = None) -> int:
     autotrade_entries = _load_autotrade_entries(args.autotrade_export, since=since, until=until)
     (
         current_signal_thresholds,
-        cli_risk_score,
-        current_signal_threshold_sources,
+        provided_risk_score,
+        current_threshold_sources_payload,
     ) = _load_current_signal_thresholds(args.current_threshold)
+
+    risk_score_source_metadata: Mapping[str, object] | None = None
+    risk_score_override: float | None = None
+    signal_thresholds_payload: Mapping[str, float] | None = current_signal_thresholds
+    if isinstance(current_threshold_sources_payload, Mapping):
+        raw_risk_source = current_threshold_sources_payload.get("risk_score_source")
+        if isinstance(raw_risk_source, Mapping):
+            risk_score_source_metadata = raw_risk_source
+            raw_kind = raw_risk_source.get("kind")
+            if provided_risk_score is not None and raw_kind == "inline":
+                risk_score_override = provided_risk_score
+            elif provided_risk_score is not None and raw_kind == "file":
+                existing = dict(current_signal_thresholds or {})
+                existing["risk_score"] = provided_risk_score
+                signal_thresholds_payload = existing
 
     report = _generate_report(
         journal_events=journal_events,
@@ -1360,10 +2325,12 @@ def main(argv: list[str] | None = None) -> int:
         suggestion_percentile=args.suggestion_percentile,
         since=since,
         until=until,
-        current_signal_thresholds=current_signal_thresholds,
+        current_signal_thresholds=signal_thresholds_payload,
+        current_threshold_sources=current_threshold_sources_payload,
+        risk_score_override=risk_score_override,
+        risk_score_source=risk_score_source_metadata,
         risk_threshold_sources=args.risk_thresholds,
-        cli_risk_score=cli_risk_score,
-        current_signal_threshold_sources=current_signal_threshold_sources,
+        include_raw_values=bool(args.plot_dir),
     )
 
     if args.output_json:
