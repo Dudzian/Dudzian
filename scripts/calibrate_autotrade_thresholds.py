@@ -646,11 +646,8 @@ def _load_journal_events(
         except OSError as exc:  # noqa: BLE001 - CLI feedback
             raise SystemExit(f"Nie udało się odczytać dziennika {path}: {exc}") from exc
 
-    def _generator() -> Iterator[Mapping[str, object]]:
-        for path in paths:
-            yield from _iter_path(path)
-
-    return _generator()
+    for path in paths:
+        yield from _iter_path(path)
 
 
 def _extract_entry_timestamp(entry: Mapping[str, object]) -> datetime | None:
@@ -895,11 +892,8 @@ def _load_autotrade_entries(
                 f"Nie udało się odczytać eksportu autotradera {path}: {exc}"
             ) from exc
 
-    def _generator() -> Iterator[Mapping[str, object]]:
-        for path in normalized_paths:
-            yield from _iter_path(path)
-
-    return _generator()
+    for path in normalized_paths:
+        yield from _iter_path(path)
 
 
 def _resolve_key(exchange: str | None, strategy: str | None) -> tuple[str, str]:
@@ -1215,38 +1209,133 @@ def _compute_percentiles_from_sequences(
 
 
 class _MetricSeries:
-    __slots__ = ("_values", "_absolute_values", "_sum", "_sum_of_squares")
+    __slots__ = (
+        "_values",
+        "_sorted_values",
+        "_sorted_absolute_values",
+        "_sum",
+        "_sum_of_squares",
+        "_min",
+        "_max",
+    )
 
     def __init__(self) -> None:
         self._values = array("d")
-        self._absolute_values = array("d")
+        self._sorted_values: array | None = None
+        self._sorted_absolute_values: array | None = None
         self._sum = 0.0
         self._sum_of_squares = 0.0
+        self._min: float | None = None
+        self._max: float | None = None
+
+    def _invalidate_cache(self) -> None:
+        self._sorted_values = None
+        self._sorted_absolute_values = None
 
     def append(self, value: float) -> None:
-        position = bisect_left(self._values, value)
-        self._values.insert(position, value)
-        absolute_value = abs(value)
-        abs_position = bisect_left(self._absolute_values, absolute_value)
-        self._absolute_values.insert(abs_position, absolute_value)
-        self._sum += value
-        self._sum_of_squares += value * value
+        numeric = float(value)
+        self._values.append(numeric)
+        self._sum += numeric
+        self._sum_of_squares += numeric * numeric
+        if self._min is None or numeric < self._min:
+            self._min = numeric
+        if self._max is None or numeric > self._max:
+            self._max = numeric
+        self._invalidate_cache()
 
     def extend(self, values: Iterable[float]) -> None:
+        local_min = self._min
+        local_max = self._max
+        appended = False
         for value in values:
-            self.append(value)
+            numeric = float(value)
+            self._values.append(numeric)
+            self._sum += numeric
+            self._sum_of_squares += numeric * numeric
+            if local_min is None or numeric < local_min:
+                local_min = numeric
+            if local_max is None or numeric > local_max:
+                local_max = numeric
+            appended = True
+        if appended:
+            self._min = local_min
+            self._max = local_max
+            self._invalidate_cache()
 
     def __len__(self) -> int:
         return len(self._values)
 
+    def _ensure_sorted_values(self) -> array:
+        cached = self._sorted_values
+        if cached is None:
+            cached = array("d", sorted(self._values))
+            self._sorted_values = cached
+        return cached
+
+    def _ensure_sorted_absolute_values(self) -> array:
+        cached = self._sorted_absolute_values
+        if cached is not None:
+            return cached
+
+        sorted_values = self._ensure_sorted_values()
+        length = len(sorted_values)
+        if length == 0:
+            result = array("d")
+            self._sorted_absolute_values = result
+            return result
+
+        split = bisect_left(sorted_values, 0.0)
+
+        if split == 0:
+            self._sorted_absolute_values = sorted_values
+            return sorted_values
+
+        if split == length:
+            result = array("d", [0.0] * length)
+            write_index = 0
+            for index in range(length - 1, -1, -1):
+                result[write_index] = -sorted_values[index]
+                write_index += 1
+            self._sorted_absolute_values = result
+            return result
+
+        result = array("d", [0.0] * length)
+        write_index = 0
+        neg_index = split - 1
+        pos_index = split
+
+        while neg_index >= 0 and pos_index < length:
+            negative_abs = -sorted_values[neg_index]
+            positive_abs = sorted_values[pos_index]
+            if negative_abs <= positive_abs:
+                result[write_index] = negative_abs
+                neg_index -= 1
+            else:
+                result[write_index] = positive_abs
+                pos_index += 1
+            write_index += 1
+
+        while neg_index >= 0:
+            result[write_index] = -sorted_values[neg_index]
+            neg_index -= 1
+            write_index += 1
+
+        while pos_index < length:
+            result[write_index] = sorted_values[pos_index]
+            pos_index += 1
+            write_index += 1
+
+        self._sorted_absolute_values = result
+        return result
+
     def __iter__(self) -> Iterator[float]:
-        return iter(self._values)
+        return iter(self._ensure_sorted_values())
 
     def values(self) -> array:
-        return self._values
+        return self._ensure_sorted_values()
 
     def absolute_values(self) -> array:
-        return self._absolute_values
+        return self._ensure_sorted_absolute_values()
 
     @property
     def sum(self) -> float:
@@ -1257,10 +1346,10 @@ class _MetricSeries:
         return self._sum_of_squares
 
     def min_value(self) -> float | None:
-        return float(self._values[0]) if self._values else None
+        return self._min
 
     def max_value(self) -> float | None:
-        return float(self._values[-1]) if self._values else None
+        return self._max
 
     def _statistics_payload(self, percentiles: Iterable[float]) -> dict[str, object]:
         count = len(self)
@@ -1279,13 +1368,14 @@ class _MetricSeries:
             stddev = math.sqrt(variance)
         else:
             stddev = 0.0
+        sorted_values = self._ensure_sorted_values()
         percentiles_payload = _compute_percentiles_from_sequences(
-            [self._values], percentiles, count=count
+            [sorted_values], percentiles, count=count
         )
         return {
             "count": count,
-            "min": float(self._values[0]),
-            "max": float(self._values[-1]),
+            "min": float(sorted_values[0]),
+            "max": float(sorted_values[-1]),
             "mean": mean,
             "stddev": stddev,
             "percentiles": percentiles_payload,
@@ -1299,9 +1389,9 @@ class _MetricSeries:
             return None
         sequences: list[array]
         if absolute:
-            sequences = [self._absolute_values]
+            sequences = [self._ensure_sorted_absolute_values()]
         else:
-            sequences = [self._values]
+            sequences = [self._ensure_sorted_values()]
         percentile_key = f"p{int(percentile * 100):02d}"
         result = _compute_percentiles_from_sequences(
             sequences, [percentile], count=len(self)
@@ -1668,8 +1758,6 @@ def _generate_report(
     }
     journal_count = 0
     autotrade_count = 0
-    journal_iter = iter(journal_events)
-    autotrade_iter = iter(autotrade_entries)
 
     def _select_display(current: str, candidate: str, canonical: str) -> str:
         if not candidate:
@@ -1760,7 +1848,7 @@ def _generate_report(
                 numeric_duration = None
             if numeric_duration is not None and math.isfinite(numeric_duration):
                 _record_metric_value(key, "risk_freeze_duration", numeric_duration)
-    for event in journal_iter:
+    for event in journal_events:
         journal_count += 1
         _update_symbol_map_entry(symbol_map, event)
         base_exchange = _normalize_string(event.get("primary_exchange"))
@@ -1795,7 +1883,7 @@ def _generate_report(
             _record_display(freeze_key, exchange, strategy)
             _record_freeze(freeze_key, freeze_payload)
 
-    for entry in autotrade_iter:
+    for entry in autotrade_entries:
         autotrade_count += 1
         summary = _extract_summary(entry)
         symbol = _extract_symbol(entry)

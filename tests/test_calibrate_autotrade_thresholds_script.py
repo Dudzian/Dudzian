@@ -9,6 +9,7 @@ import math
 import subprocess
 import sys
 import weakref
+from array import array
 from weakref import ReferenceType
 from collections.abc import Iterable, Mapping
 from types import GeneratorType
@@ -24,6 +25,7 @@ from scripts.calibrate_autotrade_thresholds import (
     _AMBIGUOUS_SYMBOL_MAPPING,
     _canonicalize_symbol_key,
     _build_symbol_map,
+    _MetricSeries,
     _generate_report,
     _load_autotrade_entries,
     _load_current_signal_thresholds,
@@ -1835,6 +1837,93 @@ def test_loaders_stream_without_materializing_large_lists(monkeypatch, tmp_path:
     assert not large_lists
 
 
+def test_generate_report_streams_inputs_and_aggregates(monkeypatch) -> None:
+    from scripts import calibrate_autotrade_thresholds as module
+
+    event_count = 120
+    freeze_count = 15
+    journal_processed = 0
+    autotrade_processed = 0
+
+    def _journal_stream() -> Iterable[Mapping[str, object]]:
+        nonlocal journal_processed
+        for index in range(event_count):
+            journal_processed += 1
+            yield {
+                "timestamp": f"2024-01-01T00:{index % 60:02d}:00Z",
+                "symbol": "BTCUSDT",
+                "primary_exchange": "binance",
+                "strategy": "trend_following",
+                "signal_after_adjustment": 0.5 + (index % 7) * 0.01,
+                "signal_after_clamp": 0.45 + (index % 7) * 0.01,
+            }
+
+    def _autotrade_stream() -> Iterable[Mapping[str, object]]:
+        nonlocal autotrade_processed
+        for index in range(event_count):
+            autotrade_processed += 1
+            payload: dict[str, object] = {
+                "timestamp": f"2024-01-01T01:{index % 60:02d}:00Z",
+                "detail": {
+                    "symbol": "BTCUSDT",
+                    "primary_exchange": "binance",
+                    "strategy": "trend_following",
+                    "summary": {"risk_score": 0.6 + (index % 5) * 0.01},
+                },
+            }
+            if index < freeze_count:
+                detail_payload = dict(payload["detail"])
+                detail_payload.setdefault("reason", "risk_score_threshold")
+                detail_payload.setdefault("frozen_for", 30 + index)
+                payload["detail"] = detail_payload
+                payload["status"] = "auto_risk_freeze"
+            yield payload
+
+    last_risk_size = 0
+
+    def _observer(key: tuple[str, str], metric: str, size: int) -> None:
+        nonlocal last_risk_size
+        if key == ("binance", "trend_following") and metric == "risk_score":
+            last_risk_size = size
+
+    monkeypatch.setattr(module, "load_risk_thresholds", lambda **_: {})
+    monkeypatch.setattr(module, "_METRIC_APPEND_OBSERVER", _observer, raising=False)
+
+    report = module._generate_report(
+        journal_events=_journal_stream(),
+        autotrade_entries=_autotrade_stream(),
+        percentiles=[0.5],
+        suggestion_percentile=0.5,
+    )
+
+    assert journal_processed == event_count
+    assert autotrade_processed == event_count
+
+    sources = report["sources"]
+    assert sources["journal_events"] == event_count
+    assert sources["autotrade_entries"] == event_count
+
+    group = report["groups"][0]
+    assert group["metrics"]["risk_score"]["count"] == event_count - freeze_count
+    assert group["freeze_summary"]["total"] == freeze_count
+    assert last_risk_size == event_count - freeze_count
+
+    global_freeze_summary = report["global_summary"]["freeze_summary"]
+    assert global_freeze_summary["total"] == freeze_count
+    assert global_freeze_summary["auto"] == freeze_count
+
+    gc.collect()
+    large_lists = [
+        obj
+        for obj in gc.get_objects()
+        if isinstance(obj, list)
+        and len(obj) >= event_count
+        and all(isinstance(item, Mapping) for item in obj)
+    ]
+
+    assert not large_lists
+
+
 def test_loaders_yield_records_incrementally(monkeypatch, tmp_path: Path) -> None:
     from scripts import calibrate_autotrade_thresholds as module
 
@@ -2225,8 +2314,10 @@ def test_autotrade_loader_rejects_empty_directory(tmp_path: Path) -> None:
     export_dir = tmp_path / "exports"
     export_dir.mkdir()
 
+    entries = _load_autotrade_entries([str(export_dir)])
+
     with pytest.raises(SystemExit) as excinfo:
-        _load_autotrade_entries([str(export_dir)])
+        next(entries)
 
     message = str(excinfo.value)
     assert "nie zawiera plików" in message or "Nie znaleziono" in message
@@ -2320,6 +2411,76 @@ def test_generate_report_can_collect_raw_values() -> None:
         "signal_after_clamp",
         "risk_score",
     }
+
+
+def test_metric_series_caches_sorted_sequences() -> None:
+    series = _MetricSeries()
+    series.append(2.0)
+    series.append(-3.0)
+
+    cached_absolute = series.absolute_values()
+    assert list(cached_absolute) == [2.0, 3.0]
+    assert series.absolute_values() is cached_absolute
+
+    series.extend([4.0, -5.0])
+
+    refreshed_absolute = series.absolute_values()
+    assert refreshed_absolute is not cached_absolute
+    assert list(refreshed_absolute) == [2.0, 3.0, 4.0, 5.0]
+    assert series.absolute_values() is refreshed_absolute
+
+    assert list(series.values()) == [-5.0, -3.0, 2.0, 4.0]
+    stats = series.statistics([0.5])
+    assert stats["count"] == 4
+    assert stats["min"] == -5.0
+    assert stats["max"] == 4.0
+    assert stats["percentiles"]["p50"] == pytest.approx(-0.5)
+    assert series.suggest(0.5, absolute=True) == pytest.approx(3.5)
+
+
+def test_metric_series_absolute_values_cover_negatives_and_zeros() -> None:
+    series = _MetricSeries()
+    series.extend([-4.0, -1.0, 0.0, 1.5, 3.5])
+
+    absolute = series.absolute_values()
+    assert isinstance(absolute, array)
+    assert list(absolute) == [0.0, 1.0, 1.5, 3.5, 4.0]
+
+    # ponowne wywołanie korzysta z cache
+    assert series.absolute_values() is absolute
+
+    series.append(-0.25)
+    refreshed = series.absolute_values()
+    assert list(refreshed) == [0.0, 0.25, 1.0, 1.5, 3.5, 4.0]
+
+
+def test_metric_series_absolute_values_keep_duplicate_magnitudes_sorted() -> None:
+    series = _MetricSeries()
+    series.extend([-3.0, -3.0, 2.0, 2.0, 0.0])
+
+    absolute = series.absolute_values()
+    assert list(absolute) == [0.0, 2.0, 2.0, 3.0, 3.0]
+
+    series.append(-2.0)
+    refreshed = series.absolute_values()
+    assert list(refreshed) == [0.0, 2.0, 2.0, 2.0, 3.0, 3.0]
+
+
+def test_metric_series_absolute_values_reuse_sorted_for_non_negative_values() -> None:
+    series = _MetricSeries()
+    series.extend([0.0, 1.0, 2.5, 3.25])
+
+    absolute_first = series.absolute_values()
+    values_after = series.values()
+    assert absolute_first is values_after
+
+    absolute_second = series.absolute_values()
+    assert absolute_second is values_after
+
+    series.append(-1.5)
+    refreshed_absolute = series.absolute_values()
+    assert refreshed_absolute is not values_after
+    assert list(refreshed_absolute) == [0.0, 1.0, 1.5, 2.5, 3.25]
 
 
 def test_symbol_map_matches_symbols_case_insensitively() -> None:
