@@ -6,6 +6,7 @@ import gzip
 import gc
 import json
 import math
+import io
 import subprocess
 import sys
 import weakref
@@ -263,6 +264,162 @@ def _write_autotrade_export(path: Path) -> None:
     path.write_text(json.dumps(payload), encoding="utf-8")
 
 
+def test_load_autotrade_entries_streaming(monkeypatch, tmp_path):
+    payload = {
+        "version": 3,
+        "meta": {"source": "unit-test"},
+        "entries": [
+            {
+                "id": 1,
+                "timestamp": "2023-12-31T23:50:00Z",
+                "decision": {"timestamp": "2023-12-31T23:50:00Z"},
+            },
+            {
+                "id": 2,
+                "timestamp": "2024-01-01T00:10:00Z",
+                "decision": {
+                    "details": {
+                        "symbol": "BTCUSDT",
+                        "strategy": "trend_following",
+                    }
+                },
+            },
+            {
+                "id": 3,
+                "decision": {"timestamp": "2024-01-01T00:20:00Z"},
+            },
+        ],
+    }
+    export_path = tmp_path / "streaming.json"
+    export_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+    chunk_size = 32
+    monkeypatch.setattr(calibrate_autotrade_thresholds, "_JSON_STREAM_CHUNK_SIZE", chunk_size)
+
+    tracking_handles: list[_TrackingReadHandle] = []
+
+    def _fake_open_text_file(path: Path) -> _TrackingReadHandle:
+        handle = _TrackingReadHandle(path)
+        tracking_handles.append(handle)
+        return handle
+
+    monkeypatch.setattr(calibrate_autotrade_thresholds, "_open_text_file", _fake_open_text_file)
+
+    since = datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)
+    until = datetime(2024, 1, 1, 0, 30, tzinfo=timezone.utc)
+
+    entries = list(
+        _load_autotrade_entries([export_path], since=since, until=until)
+    )
+
+    entry_ids = [entry["id"] for entry in entries if "id" in entry]
+    assert entry_ids == [2, 3]
+
+    extracted_timestamps = [
+        calibrate_autotrade_thresholds._extract_entry_timestamp(entry)
+        for entry in entries
+    ]
+    assert all(
+        ts is None or (since <= ts <= until)
+        for ts in extracted_timestamps
+    )
+
+    assert len(tracking_handles) == 1
+    handle = tracking_handles[0]
+
+    assert handle.readline_requests == []
+    assert handle.read_requests, "expected streaming reads"
+    assert all(size == chunk_size for size in handle.read_requests)
+    assert len(handle.read_results) >= 2
+    assert sum(handle.read_results) >= chunk_size * 2
+
+
+def test_load_autotrade_entries_streaming_root_array(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    entries = [
+        {
+            "id": 1,
+            "timestamp": "2023-12-31T23:50:00Z",
+            "decision": {"timestamp": "2023-12-31T23:50:00Z"},
+        },
+        {
+            "id": 2,
+            "timestamp": "2024-01-01T00:10:00Z",
+            "status": {"timestamp": "2024-01-01T00:10:00Z"},
+        },
+        {
+            "id": 3,
+            "decision": {"timestamp": "2024-01-01T00:20:00Z"},
+        },
+    ]
+    export_path = tmp_path / "streaming-array.json"
+    export_path.write_text(json.dumps(entries, indent=2), encoding="utf-8")
+
+    chunk_size = 40
+    module = calibrate_autotrade_thresholds
+    monkeypatch.setattr(module, "_JSON_STREAM_CHUNK_SIZE", chunk_size)
+
+    tracking_handles: list[_TrackingReadHandle] = []
+
+    def _fake_open_text_file(path: Path) -> _TrackingReadHandle:
+        handle = _TrackingReadHandle(path)
+        tracking_handles.append(handle)
+        return handle
+
+    monkeypatch.setattr(module, "_open_text_file", _fake_open_text_file)
+
+    since = datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)
+    until = datetime(2024, 1, 1, 0, 30, tzinfo=timezone.utc)
+
+    loaded = list(_load_autotrade_entries([export_path], since=since, until=until))
+
+    assert [entry["id"] for entry in loaded if "id" in entry] == [2, 3]
+
+    timestamps = [
+        calibrate_autotrade_thresholds._extract_entry_timestamp(entry)
+        for entry in loaded
+    ]
+    assert all(
+        ts is None or (since <= ts <= until)
+        for ts in timestamps
+    )
+
+    assert len(tracking_handles) == 1
+    handle = tracking_handles[0]
+    assert handle.readline_requests == []
+    assert handle.read_requests
+    assert all(size == chunk_size for size in handle.read_requests)
+    assert sum(handle.read_results) >= chunk_size * 2
+
+
+def test_load_autotrade_entries_filters_nested_timestamps(tmp_path: Path) -> None:
+    export_path = tmp_path / "nested-timestamps.json"
+    entries = [
+        {"id": 1, "status": {"timestamp": "2024-01-01T00:00:00Z"}},
+        {"id": 2, "regime_summary": {"timestamp": "2024-01-01T01:00:00Z"}},
+        {"id": 3, "decision": {"timestamp": "2024-01-01T02:00:00Z"}},
+        {"id": 4, "detail": {"timestamp": "2024-01-01T03:00:00Z"}},
+    ]
+    export_path.write_text(json.dumps({"entries": entries}), encoding="utf-8")
+
+    since = datetime(2024, 1, 1, 0, 30, tzinfo=timezone.utc)
+    until = datetime(2024, 1, 1, 2, 30, tzinfo=timezone.utc)
+
+    loaded = list(
+        calibrate_autotrade_thresholds._load_autotrade_entries(
+            [export_path], since=since, until=until
+        )
+    )
+
+    assert [entry["id"] for entry in loaded if "id" in entry] == [2, 3]
+    timestamps = [
+        calibrate_autotrade_thresholds._extract_entry_timestamp(entry)
+        for entry in loaded
+    ]
+    assert all(ts is not None and since <= ts <= until for ts in timestamps)
+
+
 def test_autotrade_export_is_streamed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     path = tmp_path / "huge_autotrade.json"
     entries: list[dict[str, object]] = []
@@ -495,6 +652,92 @@ def test_autotrade_nested_entries_are_streamed(
     assert len(collected) == len(nested_entries) + len(section_entries)
     assert {entry["value"] for entry in collected} == {10, 11, 20, 21}
     assert holder["handle"].read_calls > 1
+
+
+def test_autotrade_single_object_export_is_supported(tmp_path: Path) -> None:
+    export_path = tmp_path / "single_entry.json"
+    entry = {
+        "timestamp": "2024-04-01T12:00:00Z",
+        "decision": {
+            "details": {
+                "symbol": "BTCUSDT",
+                "primary_exchange": "binance",
+                "strategy": "trend_following",
+            }
+        },
+        "status": {
+            "timestamp": "2024-04-01T12:00:00Z",
+            "state": "executed",
+        },
+    }
+    export_path.write_text(json.dumps(entry), encoding="utf-8")
+
+    loaded = list(
+        calibrate_autotrade_thresholds._load_autotrade_entries([export_path])
+    )
+
+    assert len(loaded) == 2
+    assert loaded[0] == entry
+    assert loaded[1] == entry["status"]
+
+
+def test_autotrade_single_object_export_without_seek(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    export_path = tmp_path / "single_entry_no_seek.json"
+    entry = {
+        "timestamp": "2024-05-01T08:30:00Z",
+        "detail": {"timestamp": "2024-05-01T08:30:30Z", "note": "fallback"},
+    }
+    export_path.write_text(json.dumps(entry), encoding="utf-8")
+
+    handles: list["_NoSeekHandle"] = []
+    call_count = 0
+
+    class _NoSeekHandle:
+        def __init__(self, path: Path) -> None:
+            self._handle = path.open("r", encoding="utf-8")
+            self.closed = False
+
+        def read(self, size: int = -1) -> str:
+            return self._handle.read(size)
+
+        def seek(self, offset: int, whence: int = io.SEEK_SET) -> int:
+            raise OSError("seek not supported")
+
+        def close(self) -> None:
+            if not self.closed:
+                self.closed = True
+                self._handle.close()
+
+        def __enter__(self) -> "_NoSeekHandle":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            self.close()
+
+    def fake_open_text_file(path: Path) -> _NoSeekHandle:
+        nonlocal call_count
+        call_count += 1
+        handle = _NoSeekHandle(path)
+        handles.append(handle)
+        return handle
+
+    monkeypatch.setattr(
+        calibrate_autotrade_thresholds,
+        "_open_text_file",
+        fake_open_text_file,
+    )
+
+    loaded = list(
+        calibrate_autotrade_thresholds._load_autotrade_entries([export_path])
+    )
+
+    assert len(loaded) == 2
+    assert loaded[0] == entry
+    assert loaded[1] == entry["detail"]
+    assert call_count == 1
+    assert all(handle.closed for handle in handles)
 
 
 def test_script_generates_report(tmp_path: Path) -> None:
@@ -2891,6 +3134,28 @@ def test_load_autotrade_entries_streams_in_chunks(
     assert max(handle.read_results) <= module._JSON_STREAM_CHUNK_SIZE
     assert max(handle.read_results) < expected_length
     assert sum(handle.read_results) == expected_length
+
+
+def test_load_autotrade_entries_json_stream_does_not_use_json_loads(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    export_path = tmp_path / "autotrade.json"
+    entries = [
+        {"timestamp": "2024-02-10T00:00:00Z", "value": 1},
+        {"timestamp": "2024-02-10T00:05:00Z", "value": 2},
+    ]
+    export_path.write_text(json.dumps({"entries": entries}), encoding="utf-8")
+
+    module = calibrate_autotrade_thresholds
+
+    def _boom(*_args, **_kwargs):  # pragma: no cover - defensive check
+        raise AssertionError("json.loads should not be used for streaming JSON exports")
+
+    monkeypatch.setattr(module.json, "loads", _boom)
+
+    loaded = list(module._load_autotrade_entries([export_path]))
+
+    assert loaded == entries
 
 
 def test_load_autotrade_entries_streams_nested_entries_without_full_read(
