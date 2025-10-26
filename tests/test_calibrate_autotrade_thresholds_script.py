@@ -2093,6 +2093,82 @@ def test_generate_report_does_not_build_large_lists(monkeypatch) -> None:
     assert max_created < event_count
 
 
+def test_large_volume_inputs_do_not_allocate_large_lists(monkeypatch, tmp_path: Path) -> None:
+    from scripts import calibrate_autotrade_thresholds as module
+
+    event_count = 3200
+
+    journal_path = tmp_path / "bulk_journal.jsonl"
+    with journal_path.open("w", encoding="utf-8") as handle:
+        for index in range(event_count):
+            handle.write(
+                json.dumps(
+                    {
+                        "timestamp": f"2024-02-01T00:{index % 60:02d}:00Z",
+                        "symbol": "BTCUSDT",
+                        "primary_exchange": "binance",
+                        "strategy": "trend_following",
+                        "signal_after_adjustment": 0.5 + (index % 11) * 0.01,
+                        "signal_after_clamp": 0.45 + (index % 7) * 0.01,
+                    }
+                )
+            )
+            handle.write("\n")
+
+    autotrade_path = tmp_path / "bulk_autotrade.jsonl"
+    with autotrade_path.open("w", encoding="utf-8") as handle:
+        for index in range(event_count):
+            handle.write(
+                json.dumps(
+                    {
+                        "timestamp": f"2024-02-01T01:{index % 60:02d}:00Z",
+                        "decision": {
+                            "details": {
+                                "symbol": "BTCUSDT",
+                                "primary_exchange": "binance",
+                                "strategy": "trend_following",
+                                "summary": {"risk_score": 0.6 + (index % 9) * 0.01},
+                            }
+                        },
+                    }
+                )
+            )
+            handle.write("\n")
+
+    original_list_type = builtins.list
+
+    class _TrackingListMeta(type):
+        def __instancecheck__(cls, instance: object) -> bool:  # pragma: no cover - trivial
+            return isinstance(instance, original_list_type)
+
+    class TrackingList(original_list_type, metaclass=_TrackingListMeta):
+        created_lengths: list[int] = []
+
+        def __new__(cls, iterable=()):  # type: ignore[override]
+            instance = super().__new__(cls, iterable)
+            cls.created_lengths.append(len(instance))
+            return instance
+
+    TrackingList.created_lengths = []
+
+    monkeypatch.setattr(builtins, "list", TrackingList)
+    monkeypatch.setattr(module, "load_risk_thresholds", lambda **_: {})
+
+    report = module._generate_report(
+        journal_events=module._load_journal_events([journal_path]),
+        autotrade_entries=module._load_autotrade_entries([autotrade_path]),
+        percentiles=[0.5],
+        suggestion_percentile=0.5,
+    )
+
+    sources = report["sources"]
+    assert sources["journal_events"] == event_count
+    assert sources["autotrade_entries"] == event_count
+
+    max_created = max(TrackingList.created_lengths or [0])
+    assert max_created < event_count
+
+
 def test_load_autotrade_entries_supports_jsonl(tmp_path: Path) -> None:
     autotrade_path = tmp_path / "autotrade.jsonl"
     entries = [
