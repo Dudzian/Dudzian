@@ -131,7 +131,8 @@ def _normalize_threshold_value(
     *,
     source: str | None = None,
 ) -> float:
-    return float(raw_value)
+    normalized = float(raw_value)
+    return _ensure_finite_value(metric_name, normalized, source=source)
 
 
 def _extract_threshold_value(candidate: object) -> float | None:
@@ -295,6 +296,8 @@ def _parse_percentiles(raw: str | None) -> list[float]:
             value = float(token)
         except ValueError as exc:  # noqa: BLE001 - CLI feedback
             raise SystemExit(f"Niepoprawna wartość percentyla: {token}") from exc
+        if not math.isfinite(value):
+            raise SystemExit(f"Percentyl '{token}' musi być skończoną liczbą")
         if value <= 0.0 or value >= 1.0:
             raise SystemExit("Percentyle muszą znajdować się w przedziale (0, 1)")
         percentiles.append(value)
@@ -326,11 +329,7 @@ def _parse_threshold_mapping(raw: str) -> dict[str, float]:
             numeric,
             source=f"CLI '{key}={value}'",
         )
-        result[normalized_key] = _ensure_finite_value(
-            normalized_key,
-            normalized_value,
-            source=f"CLI '{key}={value}'",
-        )
+        result[normalized_key] = normalized_value
     return result
 
 
@@ -401,18 +400,10 @@ def _load_current_signal_thresholds(
                             source=path_str,
                         )
                         if metric_name == "risk_score":
-                            current_risk_score = _ensure_finite_value(
-                                metric_name,
-                                numeric_value,
-                                source=path_str,
-                            )
+                            current_risk_score = numeric_value
                             found_risk_in_file = True
                         else:
-                            thresholds[metric_name] = _ensure_finite_value(
-                                metric_name,
-                                numeric_value,
-                                source=path_str,
-                            )
+                            thresholds[metric_name] = numeric_value
             if found_risk_in_file and path_str not in risk_source_files:
                 risk_source_files.append(path_str)
             continue
@@ -424,32 +415,17 @@ def _load_current_signal_thresholds(
                 continue
             metric_name_normalized = _normalize_metric_key(metric_name)
             if metric_name_normalized in _SUPPORTED_THRESHOLD_METRICS:
+                normalized_value = _normalize_threshold_value(
+                    metric_name_normalized,
+                    numeric,
+                    source=f"CLI '{candidate}'",
+                )
                 if metric_name_normalized == "risk_score":
-                    value = _normalize_threshold_value(
-                        metric_name_normalized,
-                        numeric,
-                        source=candidate,
-                    )
-                    validated_value = _ensure_finite_value(
-                        metric_name_normalized,
-                        value,
-                        source=candidate,
-                    )
-                    current_risk_score = validated_value
-                    inline_risk_thresholds[metric_name_normalized] = validated_value
+                    current_risk_score = normalized_value
+                    inline_risk_thresholds[metric_name_normalized] = normalized_value
                 else:
-                    value = _normalize_threshold_value(
-                        metric_name_normalized,
-                        numeric,
-                        source=candidate,
-                    )
-                    validated_value = _ensure_finite_value(
-                        metric_name_normalized,
-                        value,
-                        source=candidate,
-                    )
-                    thresholds[metric_name_normalized] = validated_value
-                    inline_values[metric_name_normalized] = validated_value
+                    thresholds[metric_name_normalized] = normalized_value
+                    inline_values[metric_name_normalized] = normalized_value
 
     return (
         thresholds,
@@ -1463,15 +1439,33 @@ def _generate_report(
             thresholds = load_risk_thresholds(config_path=config_path)
             value = _extract_risk_score_threshold(thresholds)
             if value is not None:
-                current_risk_score = value
+                current_risk_score = _ensure_finite_value(
+                    "risk_score",
+                    float(value),
+                    source=str(config_path),
+                )
     else:
         thresholds = load_risk_thresholds()
-        current_risk_score = _extract_risk_score_threshold(thresholds)
+        value = _extract_risk_score_threshold(thresholds)
+        if value is not None:
+            current_risk_score = _ensure_finite_value(
+                "risk_score",
+                float(value),
+                source="load_risk_thresholds()",
+            )
     if cli_risk_score_threshold is not None:
-        current_risk_score = cli_risk_score_threshold
+        current_risk_score = _ensure_finite_value(
+            "risk_score",
+            float(cli_risk_score_threshold),
+            source="CLI risk_score_threshold",
+        )
 
     if cli_risk_score is not None:
-        current_risk_score = cli_risk_score
+        current_risk_score = _ensure_finite_value(
+            "risk_score",
+            float(cli_risk_score),
+            source="CLI risk_score",
+        )
 
     groups: list[dict[str, object]] = []
     all_keys = set(grouped_values.keys()) | set(freeze_summaries.keys()) | set(display_names.keys())
