@@ -540,6 +540,15 @@ def test_current_threshold_cli_rejects_non_finite_values() -> None:
     assert "CLI 'signal_after_adjustment=NaN'" in message
 
 
+def test_current_threshold_cli_rejects_non_finite_risk_score() -> None:
+    with pytest.raises(SystemExit) as excinfo:
+        _load_current_signal_thresholds(["risk_score=NaN"])
+
+    message = str(excinfo.value)
+    assert "risk_score" in message
+    assert "CLI 'risk_score=NaN'" in message
+
+
 def test_current_threshold_file_rejects_non_finite_values(tmp_path: Path) -> None:
     payload = {
         "signal_after_adjustment": {
@@ -770,6 +779,27 @@ def test_load_current_thresholds_rejects_nested_non_finite_from_file(tmp_path: P
     message = str(excinfo.value)
     assert "musi być skończoną liczbą" in message
     assert "signal_after_adjustment" in message
+    assert str(path) in message
+
+
+def test_load_current_thresholds_rejects_nested_non_finite_risk_from_file(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "risk_thresholds_nested.json"
+    payload = [
+        {
+            "metric": "risk_score",
+            "value": "NaN",
+        }
+    ]
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(SystemExit) as excinfo:
+        _load_current_signal_thresholds([str(path)])
+
+    message = str(excinfo.value)
+    assert "musi być skończoną liczbą" in message
+    assert "risk_score" in message
     assert str(path) in message
 
 
