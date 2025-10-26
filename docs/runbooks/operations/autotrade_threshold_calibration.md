@@ -57,7 +57,8 @@ Polecenie:
 - tworzy tabelę CSV gotową do importu w arkuszu kalkulacyjnym,
 - zbiera statystyki blokad ryzyka (`risk_freeze` / `auto_risk_freeze`) wraz z
   rozkładem długości blokad i powodów,
-- opcjonalnie dołącza próbkę surowych blokad (`--limit-freeze-events 20`)
+- opcjonalnie dołącza próbkę surowych blokad (np. `--limit-freeze-events 20`
+  lub `--raw-freeze-events-sample-limit 20`)
   ograniczoną wskazaną wartością (dla kompatybilności nadal działa
   kombinacja `--raw-freeze-events sample --raw-freeze-events-limit 20`),
 - pozwala ograniczyć analizę do konkretnego zakresu czasowego dzięki `--since`
@@ -97,6 +98,15 @@ domyślnych wartości pomija sekcję `raw_freeze_events`, co skraca czas
 generowania raportu i zmniejsza jego rozmiar. Starsze flagi
 `--raw-freeze-events sample` oraz `--raw-freeze-events-limit` pozostają
 obsługiwane, ale zalecamy korzystanie z `--limit-freeze-events`.
+
+Nowa flaga `--raw-freeze-events-sample-limit` pozwala wymusić niezależny limit
+próbki – nawet gdy `--limit-freeze-events` pozostaje nieustawione. Dzięki temu
+można skrócić sekcję `raw_freeze_events` bez ingerencji w liczbę zdarzeń w
+`freeze_events`. Wartość `0` zachowuje wyłącznie agregaty, co przydaje się przy
+generowaniu zwięzłych raportów do szybkiej inspekcji. Niezależnie od wybranego
+limitu, pole `freeze_summary` zachowuje kompletne zliczenia blokad oraz ich
+powodów – próbkowanie wpływa jedynie na listę przykładów i metadane w sekcji
+`sources.raw_freeze_events`.
 
 Jeżeli lista surowych blokad zaczyna dominować w raporcie, można skrócić ją bez
 zmiany agregatów, korzystając z `--max-raw-freeze-events`. Parametr ten
