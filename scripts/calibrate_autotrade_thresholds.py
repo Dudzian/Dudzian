@@ -11,7 +11,7 @@ from bisect import bisect_left
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable, Iterable, Iterator, Mapping, TextIO
+from typing import Callable, Iterable, Iterator, Mapping, TextIO, Literal
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
@@ -958,10 +958,12 @@ def _load_autotrade_entries(
     def _iter_path(path: Path) -> Iterator[Mapping[str, object]]:
         try:
             with _open_text_file(path) as handle:
+                iterator: Iterator[Mapping[str, object]]
                 if _is_json_lines_path(path):
-                    yield from _iter_json_lines(handle, path)
-                    return
-                yield from _iter_json_stream(handle, path)
+                    iterator = _iter_json_lines(handle, path)
+                else:
+                    iterator = _iter_json_stream(handle, path)
+                yield from iterator
         except OSError as exc:  # noqa: BLE001 - CLI feedback
             raise SystemExit(
                 f"Nie udało się odczytać eksportu autotradera {path}: {exc}"
