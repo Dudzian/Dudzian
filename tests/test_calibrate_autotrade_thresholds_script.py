@@ -19,6 +19,8 @@ from pathlib import Path
 
 import pytest
 
+import scripts.calibrate_autotrade_thresholds as calibrate_autotrade_thresholds
+
 from bot_core.runtime.journal import TradingDecisionEvent
 
 from scripts.calibrate_autotrade_thresholds import (
@@ -2752,8 +2754,9 @@ def test_load_autotrade_entries_supports_gzipped_json(tmp_path: Path) -> None:
     assert loaded[1]["decision"]["details"]["summary"]["risk_score"] == 0.39
 
 
+@pytest.mark.parametrize("root_format", ["object", "array"])
 def test_load_autotrade_entries_streams_in_chunks(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, root_format: str
 ) -> None:
     export_path = tmp_path / "autotrade.json"
     entries = [
@@ -2761,10 +2764,13 @@ def test_load_autotrade_entries_streams_in_chunks(
         {"timestamp": "2024-02-01T00:10:00Z", "value": 2, "padding": "x" * 64},
         {"timestamp": "2024-02-01T00:20:00Z", "value": 3, "padding": "x" * 64},
     ]
-    export_path.write_text(json.dumps({"entries": entries}), encoding="utf-8")
+    if root_format == "array":
+        export_path.write_text(json.dumps(entries), encoding="utf-8")
+    else:
+        export_path.write_text(json.dumps({"entries": entries}), encoding="utf-8")
     expected_length = len(export_path.read_text(encoding="utf-8"))
 
-    from scripts import calibrate_autotrade_thresholds as module
+    module = calibrate_autotrade_thresholds
 
     monkeypatch.setattr(module, "_JSON_STREAM_CHUNK_SIZE", 16)
 
@@ -2811,7 +2817,7 @@ def test_load_autotrade_entries_streams_in_chunks(
 
     handle = holder["handle"]
     assert len(handle.read_requests) > 1
-    assert all(size not in (-1, None) for size in handle.read_requests)
+    assert all(size == module._JSON_STREAM_CHUNK_SIZE for size in handle.read_requests)
     assert handle.read_results
     assert max(handle.read_results) <= module._JSON_STREAM_CHUNK_SIZE
     assert max(handle.read_results) < expected_length
