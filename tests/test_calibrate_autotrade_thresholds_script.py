@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import csv
+import gzip
 import gc
 import json
 import math
 import subprocess
 import sys
+import weakref
+from weakref import ReferenceType
 from collections.abc import Iterable, Mapping
 from types import GeneratorType
 from datetime import datetime, timezone
@@ -24,6 +27,7 @@ from scripts.calibrate_autotrade_thresholds import (
     _load_autotrade_entries,
     _load_current_signal_thresholds,
     _load_journal_events,
+    _parse_percentiles,
 )
 
 
@@ -594,7 +598,9 @@ def test_load_current_thresholds_rejects_nan_inline() -> None:
     with pytest.raises(SystemExit) as excinfo:
         _load_current_signal_thresholds(["signal_after_adjustment=NaN"])
 
-    assert "musi być skończoną liczbą" in str(excinfo.value)
+    message = str(excinfo.value)
+    assert "musi być skończoną liczbą" in message
+    assert "CLI" in message
 
 
 def test_load_current_thresholds_rejects_infinite_inline() -> None:
@@ -604,6 +610,7 @@ def test_load_current_thresholds_rejects_infinite_inline() -> None:
     message = str(excinfo.value)
     assert "musi być skończoną liczbą" in message
     assert "Infinity" in message
+    assert "CLI" in message
 
 
 def test_load_current_thresholds_rejects_negative_infinite_inline() -> None:
@@ -830,6 +837,26 @@ def test_load_current_thresholds_prefers_inline_risk_score(tmp_path: Path) -> No
         "source": "risk_score=0.72",
         "value": pytest.approx(0.72),
     }
+
+
+def test_parse_percentiles_rejects_nan() -> None:
+    with pytest.raises(SystemExit) as excinfo:
+        _parse_percentiles("0.5,NaN")
+
+    message = str(excinfo.value)
+    assert "Percentyl" in message
+    assert "skończoną liczbą" in message
+    assert "NaN" in message
+
+
+def test_parse_percentiles_rejects_infinity() -> None:
+    with pytest.raises(SystemExit) as excinfo:
+        _parse_percentiles("Infinity")
+
+    message = str(excinfo.value)
+    assert "Percentyl" in message
+    assert "skończoną liczbą" in message
+    assert "Infinity" in message
 
 
 def test_group_resolution_prefers_entry_metadata_over_symbol_map() -> None:
@@ -1161,6 +1188,101 @@ def test_generate_report_rejects_non_finite_risk_inline() -> None:
     assert "musi być skończoną liczbą" in message
     assert "risk_score" in message
     assert "risk_thresholds.inline" in message
+
+
+def test_generate_report_rejects_non_finite_risk_from_config(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config_file = tmp_path / "risk_thresholds.json"
+    config_file.write_text("{}", encoding="utf-8")
+
+    calls: list[Path | None] = []
+
+    def _fake_loader(*, config_path: Path | None = None) -> Mapping[str, object]:
+        calls.append(config_path)
+        return {"auto_trader": {"map_regime_to_signal": {"risk_score": math.nan}}}
+
+    monkeypatch.setattr(
+        "scripts.calibrate_autotrade_thresholds.load_risk_thresholds",
+        _fake_loader,
+    )
+
+    with pytest.raises(SystemExit) as excinfo:
+        _generate_report(
+            journal_events=[],
+            autotrade_entries=[],
+            percentiles=[0.5],
+            suggestion_percentile=0.5,
+            risk_threshold_sources=[str(config_file)],
+        )
+
+    assert calls == [config_file]
+    message = str(excinfo.value)
+    assert "musi być skończoną liczbą" in message
+    assert "risk_score" in message
+    assert str(config_file) in message
+
+
+def test_generate_report_rejects_non_finite_risk_from_default_loader(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[Path | None] = []
+
+    def _fake_loader(*, config_path: Path | None = None) -> Mapping[str, object]:
+        calls.append(config_path)
+        assert config_path is None
+        return {"auto_trader": {"map_regime_to_signal": {"risk_score": math.inf}}}
+
+    monkeypatch.setattr(
+        "scripts.calibrate_autotrade_thresholds.load_risk_thresholds",
+        _fake_loader,
+    )
+
+    with pytest.raises(SystemExit) as excinfo:
+        _generate_report(
+            journal_events=[],
+            autotrade_entries=[],
+            percentiles=[0.5],
+            suggestion_percentile=0.5,
+        )
+
+    assert calls == [None]
+    message = str(excinfo.value)
+    assert "musi być skończoną liczbą" in message
+    assert "risk_score" in message
+    assert "load_risk_thresholds()" in message
+
+
+def test_generate_report_rejects_non_finite_cli_risk_threshold() -> None:
+    with pytest.raises(SystemExit) as excinfo:
+        _generate_report(
+            journal_events=[],
+            autotrade_entries=[],
+            percentiles=[0.5],
+            suggestion_percentile=0.5,
+            cli_risk_score_threshold=math.nan,
+        )
+
+    message = str(excinfo.value)
+    assert "musi być skończoną liczbą" in message
+    assert "risk_score" in message
+    assert "CLI risk_score_threshold" in message
+
+
+def test_generate_report_rejects_non_finite_cli_risk_score() -> None:
+    with pytest.raises(SystemExit) as excinfo:
+        _generate_report(
+            journal_events=[],
+            autotrade_entries=[],
+            percentiles=[0.5],
+            suggestion_percentile=0.5,
+            cli_risk_score=math.inf,
+        )
+
+    message = str(excinfo.value)
+    assert "musi być skończoną liczbą" in message
+    assert "risk_score" in message
+    assert "CLI risk_score" in message
 
 
 def test_generate_report_merges_multiple_risk_threshold_paths(
@@ -1589,6 +1711,189 @@ def test_loaders_stream_without_materializing_large_lists(monkeypatch, tmp_path:
     ]
 
     assert not large_lists
+
+
+def test_load_autotrade_entries_supports_jsonl(tmp_path: Path) -> None:
+    autotrade_path = tmp_path / "autotrade.jsonl"
+    entries = [
+        {
+            "timestamp": "2024-01-01T00:00:00Z",
+            "decision": {
+                "details": {
+                    "symbol": "BTCUSDT",
+                    "primary_exchange": "binance",
+                    "strategy": "trend_following",
+                    "summary": {"risk_score": 0.55},
+                }
+            },
+        },
+        {
+            "timestamp": "2024-01-01T00:15:00Z",
+            "decision": {
+                "details": {
+                    "symbol": "ETHUSDT",
+                    "primary_exchange": "kraken",
+                    "strategy": "mean_reversion",
+                    "summary": {"risk_score": 0.42},
+                }
+            },
+        },
+    ]
+    with autotrade_path.open("w", encoding="utf-8") as handle:
+        for entry in entries:
+            handle.write(json.dumps(entry))
+            handle.write("\n")
+
+    loaded = list(_load_autotrade_entries([str(autotrade_path)]))
+
+    assert len(loaded) == len(entries)
+    assert loaded[0]["decision"]["details"]["summary"]["risk_score"] == 0.55
+    assert loaded[1]["decision"]["details"]["summary"]["risk_score"] == 0.42
+
+
+def test_load_autotrade_entries_supports_gzipped_json(tmp_path: Path) -> None:
+    autotrade_path = tmp_path / "autotrade.json.gz"
+    payload = {
+        "entries": [
+            {
+                "timestamp": "2024-01-01T00:00:00Z",
+                "decision": {
+                    "details": {
+                        "symbol": "BTCUSDT",
+                        "primary_exchange": "binance",
+                        "strategy": "trend_following",
+                        "summary": {"risk_score": 0.73},
+                    }
+                },
+            },
+            {
+                "timestamp": "2024-01-01T00:15:00Z",
+                "decision": {
+                    "details": {
+                        "symbol": "ETHUSDT",
+                        "primary_exchange": "kraken",
+                        "strategy": "mean_reversion",
+                        "summary": {"risk_score": 0.39},
+                    }
+                },
+            },
+        ]
+    }
+    with gzip.open(autotrade_path, "wt", encoding="utf-8") as handle:
+        json.dump(payload, handle)
+
+    loaded = list(_load_autotrade_entries([str(autotrade_path)]))
+
+    assert len(loaded) == 2
+    assert loaded[0]["decision"]["details"]["summary"]["risk_score"] == 0.73
+    assert loaded[1]["decision"]["details"]["summary"]["risk_score"] == 0.39
+
+
+def test_load_journal_events_supports_gzipped_jsonl(tmp_path: Path) -> None:
+    journal_path = tmp_path / "journal.jsonl.gz"
+    events = [
+        {
+            "timestamp": "2024-01-01T00:00:00Z",
+            "primary_exchange": "binance",
+            "strategy": "trend_following",
+            "signal_after_adjustment": 0.5,
+            "signal_after_clamp": 0.48,
+        },
+        {
+            "timestamp": "2024-01-01T00:15:00Z",
+            "primary_exchange": "kraken",
+            "strategy": "mean_reversion",
+            "signal_after_adjustment": 0.61,
+            "signal_after_clamp": 0.6,
+        },
+    ]
+    with gzip.open(journal_path, "wt", encoding="utf-8") as handle:
+        for event in events:
+            handle.write(json.dumps(event))
+            handle.write("\n")
+
+    loaded = list(_load_journal_events([journal_path]))
+
+    assert len(loaded) == len(events)
+    assert loaded[0]["signal_after_adjustment"] == 0.5
+    assert loaded[1]["signal_after_clamp"] == 0.6
+
+
+def test_generate_report_releases_streamed_events(monkeypatch) -> None:
+    event_count = 1600
+
+    class TrackingMapping(dict):
+        __slots__ = ("__weakref__",)
+
+    journal_refs: list[ReferenceType[TrackingMapping]] = []
+    autotrade_refs: list[ReferenceType[TrackingMapping]] = []
+
+    def _journal_stream() -> Iterable[Mapping[str, object]]:
+        for index in range(event_count):
+            payload = TrackingMapping(
+                {
+                    "timestamp": f"2024-01-01T00:{index % 60:02d}:00Z",
+                    "symbol": "BTCUSDT",
+                    "primary_exchange": "binance",
+                    "strategy": "trend_following",
+                    "signal_after_adjustment": 0.55 + 0.0001 * index,
+                    "signal_after_clamp": 0.5 + 0.0001 * index,
+                }
+            )
+            journal_refs.append(weakref.ref(payload))
+            yield payload
+
+    def _autotrade_stream() -> Iterable[Mapping[str, object]]:
+        for index in range(event_count):
+            payload = TrackingMapping(
+                {
+                    "timestamp": f"2024-01-01T01:{index % 60:02d}:00Z",
+                    "decision": {
+                        "details": {
+                            "symbol": "BTCUSDT",
+                            "primary_exchange": "binance",
+                            "strategy": "trend_following",
+                            "summary": {
+                                "risk_score": 0.61 + 0.0002 * index,
+                            },
+                        }
+                    },
+                }
+            )
+            autotrade_refs.append(weakref.ref(payload))
+            yield payload
+
+    from scripts import calibrate_autotrade_thresholds as module
+
+    append_calls = 0
+
+    def _observer(key: tuple[str, str], metric: str, size: int) -> None:
+        nonlocal append_calls
+        append_calls += 1
+
+    monkeypatch.setattr(module, "_METRIC_APPEND_OBSERVER", _observer)
+
+    journal_iter = _journal_stream()
+    autotrade_iter = _autotrade_stream()
+
+    report = module._generate_report(
+        journal_events=journal_iter,
+        autotrade_entries=autotrade_iter,
+        percentiles=[0.5],
+        suggestion_percentile=0.5,
+    )
+
+    assert report["sources"]["journal_events"] == event_count
+    assert report["sources"]["autotrade_entries"] == event_count
+
+    expected_metric_events = event_count * 3
+    assert append_calls == expected_metric_events
+
+    del report, journal_iter, autotrade_iter
+    gc.collect()
+
+    assert all(ref() is None for ref in journal_refs)
+    assert all(ref() is None for ref in autotrade_refs)
 
 
 def test_autotrade_loader_accepts_directory(tmp_path: Path) -> None:
