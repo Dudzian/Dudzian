@@ -507,6 +507,84 @@ def test_autotrade_streaming_reads_multiple_chunks(
     assert len(handle.read_requests) > 1
 
 
+def test_autotrade_streaming_does_not_buffer_json(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    module = calibrate_autotrade_thresholds
+
+    entries: list[dict[str, object]] = []
+    for index in range(20):
+        entries.append(
+            {
+                "timestamp": f"2024-01-01T00:{index:02d}:00Z",
+                "decision": {
+                    "details": {
+                        "symbol": "BTCUSDT",
+                        "strategy": "trend_following",
+                        "note": "x" * 1024,
+                    }
+                },
+            }
+        )
+
+    export_path = tmp_path / "streaming-no-buffer.json"
+    export_path.write_text(json.dumps({"entries": entries}), encoding="utf-8")
+
+    chunk_size = 64
+    monkeypatch.setattr(module, "_JSON_STREAM_CHUNK_SIZE", chunk_size)
+
+    class CountingHandle:
+        def __init__(self, path: Path):
+            self._handle = path.open("r", encoding="utf-8")
+            self.read_requests: list[int] = []
+            self.read_results: list[int] = []
+
+        def read(self, size: int = -1) -> str:
+            assert size != -1, "streaming parser must not read entire file at once"
+            self.read_requests.append(size)
+            chunk = self._handle.read(size)
+            if chunk:
+                self.read_results.append(len(chunk))
+            return chunk
+
+        def close(self) -> None:
+            self._handle.close()
+
+        def __enter__(self) -> "CountingHandle":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            self._handle.close()
+
+    handles: list[CountingHandle] = []
+
+    def fake_open_text_file(path: Path) -> CountingHandle:
+        handle = CountingHandle(path)
+        handles.append(handle)
+        return handle
+
+    monkeypatch.setattr(module, "_open_text_file", fake_open_text_file)
+
+    iterator = module._load_autotrade_entries([export_path])
+
+    first_entry = next(iterator)
+    assert first_entry["timestamp"] == entries[0]["timestamp"]
+
+    second_entry = next(iterator)
+    assert second_entry["timestamp"] == entries[1]["timestamp"]
+
+    iterator.close()
+
+    assert handles, "expected instrumented handle to be used"
+    handle = handles[0]
+
+    assert len(handle.read_requests) >= 2
+    assert all(size == chunk_size for size in handle.read_requests)
+    assert handle.read_results
+    bytes_consumed = sum(handle.read_results)
+    assert 0 < bytes_consumed < export_path.stat().st_size
+
+
 def test_load_autotrade_entries_filters_nested_timestamps(tmp_path: Path) -> None:
     export_path = tmp_path / "nested-timestamps.json"
     entries = [
