@@ -1857,6 +1857,7 @@ def _generate_report(
     raw_freeze_events_mode: Literal["omit", "sample"] = "omit",
     limit_freeze_events: int | None = None,
     max_freeze_events: int | None = None,
+    omit_raw_freeze_events: bool = False,
 ) -> dict[str, object]:
     normalized_signal_thresholds: dict[str, float] | None = None
     if isinstance(current_signal_thresholds, Mapping):
@@ -1883,29 +1884,32 @@ def _generate_report(
     symbol_map: dict[str, tuple[str, str]] = {}
     grouped_values: dict[tuple[str, str], dict[str, _MetricSeries]] = {}
     global_metric_series: dict[str, _MetricSeries] = {}
-    freeze_summaries: dict[tuple[str, str], dict[str, object]] = defaultdict(
-        lambda: {
+    def _empty_freeze_summary() -> dict[str, object]:
+        return {
             "total": 0,
             "type_counts": Counter(),
             "status_counts": Counter(),
             "reason_counts": Counter(),
         }
+
+    freeze_summaries: dict[tuple[str, str], dict[str, object]] = defaultdict(
+        _empty_freeze_summary
     )
     freeze_event_collections: dict[tuple[str, str], list[dict[str, object]]] = defaultdict(list)
     display_names: dict[tuple[str, str], tuple[str, str]] = {}
-    aggregated_freeze_summary = {
-        "total": 0,
-        "type_counts": Counter(),
-        "status_counts": Counter(),
-        "reason_counts": Counter(),
-    }
+    aggregated_freeze_summary = _empty_freeze_summary()
     aggregated_freeze_events: list[dict[str, object]] = []
+    freeze_event_overflow_summaries: dict[tuple[str, str], dict[str, object]] = defaultdict(
+        _empty_freeze_summary
+    )
+    aggregated_freeze_overflow = _empty_freeze_summary()
     freeze_event_samplers: dict[tuple[str, str], _FreezeEventSampler] = {}
     aggregated_freeze_sampler: _FreezeEventSampler | None = None
     normalized_freeze_mode = str(raw_freeze_events_mode or "omit").strip().lower()
     if normalized_freeze_mode not in {"omit", "sample"}:
         normalized_freeze_mode = "omit"
-    sampling_freeze_events = normalized_freeze_mode == "sample"
+    omit_raw_freeze_events = bool(omit_raw_freeze_events)
+    sampling_freeze_events = normalized_freeze_mode == "sample" and not omit_raw_freeze_events
     if sampling_freeze_events:
         if limit_freeze_events is None:
             sampler_limit = 25
@@ -2017,12 +2021,28 @@ def _generate_report(
             record["risk_score"] = risk_score
         return record
 
+    def _increment_freeze_summary(
+        summary: dict[str, object],
+        status: str,
+        freeze_type: str,
+        reason: str,
+    ) -> None:
+        summary["total"] = int(summary.get("total", 0)) + 1
+        type_counts = summary.get("type_counts")
+        status_counts = summary.get("status_counts")
+        reason_counts = summary.get("reason_counts")
+        if isinstance(type_counts, Counter):
+            type_counts[freeze_type] += 1
+        if isinstance(status_counts, Counter):
+            status_counts[status] += 1
+        if isinstance(reason_counts, Counter):
+            reason_counts[reason] += 1
+
     def _record_freeze(
         key: tuple[str, str],
         payload: Mapping[str, object],
     ) -> None:
         summary = freeze_summaries[key]
-        summary["total"] = int(summary["total"]) + 1
         status = str(payload.get("status") or "unknown")
         freeze_type = str(payload.get("type") or "manual")
         reason = str(payload.get("reason") or "unknown")
@@ -2033,19 +2053,8 @@ def _generate_report(
                 numeric_duration = float(duration_value)
             except (TypeError, ValueError):
                 numeric_duration = None
-        if isinstance(summary["type_counts"], Counter):
-            summary["type_counts"][freeze_type] += 1
-        if isinstance(summary["status_counts"], Counter):
-            summary["status_counts"][status] += 1
-        if isinstance(summary["reason_counts"], Counter):
-            summary["reason_counts"][reason] += 1
-        aggregated_freeze_summary["total"] = int(aggregated_freeze_summary["total"]) + 1
-        if isinstance(aggregated_freeze_summary["type_counts"], Counter):
-            aggregated_freeze_summary["type_counts"][freeze_type] += 1
-        if isinstance(aggregated_freeze_summary["status_counts"], Counter):
-            aggregated_freeze_summary["status_counts"][status] += 1
-        if isinstance(aggregated_freeze_summary["reason_counts"], Counter):
-            aggregated_freeze_summary["reason_counts"][reason] += 1
+        _increment_freeze_summary(summary, status, freeze_type, reason)
+        _increment_freeze_summary(aggregated_freeze_summary, status, freeze_type, reason)
         _ensure_metrics(key)
         if numeric_duration is not None and math.isfinite(numeric_duration):
             _record_metric_value(key, "risk_freeze_duration", numeric_duration)
@@ -2092,12 +2101,27 @@ def _generate_report(
         if freeze_event_limit is None:
             freeze_event_collections[key].append(dict(freeze_event_payload))
             aggregated_freeze_events.append(dict(freeze_event_payload))
-        elif freeze_event_limit > 0:
+            return
+
+        if freeze_event_limit > 0:
             group_events = freeze_event_collections[key]
             if len(group_events) < freeze_event_limit:
                 group_events.append(dict(freeze_event_payload))
+            else:
+                overflow_summary = freeze_event_overflow_summaries[key]
+                _increment_freeze_summary(overflow_summary, status, freeze_type, reason)
             if len(aggregated_freeze_events) < freeze_event_limit:
                 aggregated_freeze_events.append(dict(freeze_event_payload))
+            else:
+                _increment_freeze_summary(
+                    aggregated_freeze_overflow, status, freeze_type, reason
+                )
+            return
+
+        overflow_summary = freeze_event_overflow_summaries[key]
+        _increment_freeze_summary(overflow_summary, status, freeze_type, reason)
+        _increment_freeze_summary(aggregated_freeze_overflow, status, freeze_type, reason)
+
     for event in journal_events:
         journal_count += 1
         _update_symbol_map_entry(symbol_map, event)
@@ -2270,6 +2294,9 @@ def _generate_report(
                 }
         else:
             events_sample = freeze_event_collections.get((exchange, strategy), [])
+            overflow_summary = freeze_event_overflow_summaries.get((exchange, strategy))
+            if overflow_summary is None:
+                overflow_summary = _empty_freeze_summary()
             group_payload["freeze_events"] = {
                 "mode": "limit",
                 "limit": freeze_event_limit,
@@ -2278,6 +2305,7 @@ def _generate_report(
                 "type_counts": _serialize_counter(freeze_summary.get("type_counts")),
                 "status_counts": _serialize_counter(freeze_summary.get("status_counts")),
                 "reason_counts": _serialize_counter(freeze_summary.get("reason_counts")),
+                "overflow_summary": _format_freeze_summary(overflow_summary),
             }
         if sampling_freeze_events:
             sampler = freeze_event_samplers.get((exchange, strategy))
@@ -2311,6 +2339,7 @@ def _generate_report(
         "metrics": global_metrics,
         "freeze_summary": _format_freeze_summary(aggregated_freeze_summary),
     }
+    aggregated_raw_freeze_payload: dict[str, object] | None = None
     if freeze_event_limit is None:
         if aggregated_freeze_events:
             global_summary["freeze_events"] = {
@@ -2330,9 +2359,11 @@ def _generate_report(
             "type_counts": _serialize_counter(aggregated_freeze_summary.get("type_counts")),
             "status_counts": _serialize_counter(aggregated_freeze_summary.get("status_counts")),
             "reason_counts": _serialize_counter(aggregated_freeze_summary.get("reason_counts")),
+            "overflow_summary": _format_freeze_summary(aggregated_freeze_overflow),
         }
     if sampling_freeze_events and aggregated_freeze_sampler is not None:
-        global_summary["raw_freeze_events"] = aggregated_freeze_sampler.to_payload()
+        aggregated_raw_freeze_payload = aggregated_freeze_sampler.to_payload()
+        global_summary["raw_freeze_events"] = aggregated_raw_freeze_payload
     if include_raw_values:
         global_summary["raw_values"] = {
             metric: list(series.values())
@@ -2455,16 +2486,27 @@ def _generate_report(
     if cli_risk_score is not None:
         sources_payload["risk_score_override"] = float(cli_risk_score)
     if sampling_freeze_events:
-        sources_payload["raw_freeze_events"] = {
+        raw_freeze_sources_payload: dict[str, object] = {
             "mode": "sample",
             "limit": sampler_limit,
         }
+        if aggregated_raw_freeze_payload is None and aggregated_freeze_sampler is not None:
+            aggregated_raw_freeze_payload = aggregated_freeze_sampler.to_payload()
+        if aggregated_raw_freeze_payload is not None:
+            overflow_summary = aggregated_raw_freeze_payload.get("overflow_summary")
+            if isinstance(overflow_summary, Mapping):
+                raw_freeze_sources_payload["overflow_summary"] = dict(overflow_summary)
+        sources_payload["raw_freeze_events"] = raw_freeze_sources_payload
     else:
         sources_payload["raw_freeze_events"] = {"mode": "omit"}
     if freeze_event_limit is None:
         sources_payload["freeze_events"] = {"mode": "all"}
     else:
-        sources_payload["freeze_events"] = {"mode": "limit", "limit": freeze_event_limit}
+        sources_payload["freeze_events"] = {
+            "mode": "limit",
+            "limit": freeze_event_limit,
+            "overflow_summary": _format_freeze_summary(aggregated_freeze_overflow),
+        }
 
     return {
         "schema": "stage6.autotrade.threshold_calibration",
@@ -2586,6 +2628,14 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--omit-raw-freeze-events",
+        action="store_true",
+        help=(
+            "Pomija sekcję raw_freeze_events nawet, gdy dostępny jest limit próbki. "
+            "Zawsze pozostawia wyłącznie zagregowane statystyki."
+        ),
+    )
+    parser.add_argument(
         "--freeze-events-limit",
         type=int,
         help=(
@@ -2678,6 +2728,7 @@ def main(argv: list[str] | None = None) -> int:
         raw_freeze_events_mode="sample" if limit_freeze_events is not None else "omit",
         limit_freeze_events=limit_freeze_events,
         max_freeze_events=getattr(args, "freeze_events_limit", None),
+        omit_raw_freeze_events=bool(getattr(args, "omit_raw_freeze_events", False)),
     )
 
     if args.output_json:
