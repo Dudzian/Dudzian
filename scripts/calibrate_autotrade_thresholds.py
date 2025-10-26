@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import gzip
 import json
 import math
 import statistics
@@ -9,7 +10,7 @@ from array import array
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable, Iterable, Iterator, Mapping
+from typing import Callable, Iterable, Iterator, Mapping, TextIO
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
@@ -54,6 +55,10 @@ _UNKNOWN_IDENTIFIERS: frozenset[str] = frozenset(
         "unassigned",
     }
 )
+
+
+_SUPPORTED_JOURNAL_EXTENSIONS = (".jsonl", ".jsonl.gz")
+_SUPPORTED_AUTOTRADE_EXTENSIONS = (".json", ".json.gz", ".jsonl", ".jsonl.gz")
 
 
 _METRIC_APPEND_OBSERVER: Callable[[tuple[str, str], str, int], None] | None = None
@@ -107,20 +112,32 @@ def _coerce_float(value: object) -> float | None:
         return None
 
 
-def _validate_finite_threshold(
+def _ensure_finite_value(
     metric_name: str,
     value: float,
     *,
     source: str | None = None,
-) -> None:
+) -> float:
+    """Zwraca wartość, jeśli jest skończona, w przeciwnym razie zgłasza błąd."""
+
     if math.isfinite(value):
-        return
+        return value
 
     location = f" w źródle {source}" if source else ""
     raise SystemExit(
         f"Niepoprawna wartość progu dla metryki {metric_name}: {value}"
         f" (musi być skończoną liczbą){location}"
     )
+
+
+def _normalize_threshold_value(
+    metric_name: str,
+    raw_value: float | int,
+    *,
+    source: str | None = None,
+) -> float:
+    normalized = float(raw_value)
+    return _ensure_finite_value(metric_name, normalized, source=source)
 
 
 def _extract_threshold_value(candidate: object) -> float | None:
@@ -284,6 +301,8 @@ def _parse_percentiles(raw: str | None) -> list[float]:
             value = float(token)
         except ValueError as exc:  # noqa: BLE001 - CLI feedback
             raise SystemExit(f"Niepoprawna wartość percentyla: {token}") from exc
+        if not math.isfinite(value):
+            raise SystemExit(f"Percentyl '{token}' musi być skończoną liczbą")
         if value <= 0.0 or value >= 1.0:
             raise SystemExit("Percentyle muszą znajdować się w przedziale (0, 1)")
         percentiles.append(value)
@@ -292,8 +311,9 @@ def _parse_percentiles(raw: str | None) -> list[float]:
     return sorted(set(percentiles))
 
 
-def _parse_threshold_mapping(raw: str) -> dict[str, float]:
-    result: dict[str, float] = {}
+def _parse_threshold_mapping(raw: str) -> tuple[dict[str, float], dict[str, str]]:
+    values: dict[str, float] = {}
+    sources: dict[str, str] = {}
     for token in raw.split(","):
         candidate = token.strip()
         if not candidate:
@@ -306,11 +326,20 @@ def _parse_threshold_mapping(raw: str) -> dict[str, float]:
         key = key.strip()
         if not key:
             raise SystemExit("Klucz progu nie może być pusty")
-        numeric = _coerce_float(value)
+        value_str = value.strip()
+        numeric = _coerce_float(value_str)
         if numeric is None:
-            raise SystemExit(f"Nie udało się zinterpretować progu '{value}' dla metryki {key}")
+            raise SystemExit(
+                f"Nie udało się zinterpretować progu '{value}' dla metryki {key}"
+            )
         normalized_key = _normalize_metric_key(key)
-        result[normalized_key] = float(numeric)
+        pair_repr = f"{key}={value_str}"
+        normalized_value = _normalize_threshold_value(
+            normalized_key,
+            numeric,
+            source=f"CLI '{pair_repr}'",
+        )
+        result[normalized_key] = normalized_value
     return result
 
 
@@ -342,6 +371,11 @@ def _load_current_signal_thresholds(
     risk_source_files: list[str] = []
     inline_values: dict[str, float] = {}
     inline_risk_thresholds: dict[str, float] = {}
+    risk_score_origin: dict[str, object] | None = None
+    inline_risk_source: str | None = None
+    inline_risk_value: float | None = None
+    file_risk_source: str | None = None
+    file_risk_value: float | None = None
     if not sources:
         return (
             thresholds,
@@ -351,6 +385,7 @@ def _load_current_signal_thresholds(
                 "inline": inline_values,
                 "risk_files": risk_source_files,
                 "risk_inline": inline_risk_thresholds,
+                "risk_score_source": risk_score_origin,
             },
         )
 
@@ -375,10 +410,9 @@ def _load_current_signal_thresholds(
                 for metric_name in _SUPPORTED_THRESHOLD_METRICS:
                     value = _resolve_metric_threshold(mapping, metric_name)
                     if value is not None:
-                        numeric_value = float(value)
-                        _validate_finite_threshold(
+                        numeric_value = _normalize_threshold_value(
                             metric_name,
-                            numeric_value,
+                            value,
                             source=path_str,
                         )
                         if metric_name == "risk_score":
@@ -391,30 +425,38 @@ def _load_current_signal_thresholds(
             continue
         if "=" not in candidate:
             raise SystemExit(f"Ścieżka z progami nie istnieje: {path}")
-        mapping = _parse_threshold_mapping(candidate)
+        mapping, mapping_sources = _parse_threshold_mapping(candidate)
         for metric_name, numeric in mapping.items():
             if not isinstance(metric_name, str):
                 continue
             metric_name_normalized = _normalize_metric_key(metric_name)
             if metric_name_normalized in _SUPPORTED_THRESHOLD_METRICS:
+                normalized_value = _normalize_threshold_value(
+                    metric_name_normalized,
+                    numeric,
+                    source=f"CLI '{candidate}'",
+                )
                 if metric_name_normalized == "risk_score":
-                    value = float(numeric)
-                    _validate_finite_threshold(
-                        metric_name_normalized,
-                        value,
-                        source=candidate,
-                    )
-                    current_risk_score = value
-                    inline_risk_thresholds[metric_name_normalized] = value
+                    current_risk_score = normalized_value
+                    inline_risk_thresholds[metric_name_normalized] = normalized_value
                 else:
-                    value = float(numeric)
-                    _validate_finite_threshold(
-                        metric_name_normalized,
-                        value,
-                        source=candidate,
-                    )
-                    thresholds[metric_name_normalized] = value
-                    inline_values[metric_name_normalized] = value
+                    thresholds[metric_name_normalized] = normalized_value
+                    inline_values[metric_name_normalized] = normalized_value
+
+    if inline_risk_value is not None:
+        current_risk_score = inline_risk_value
+        risk_score_origin = {
+            "kind": "inline",
+            "source": inline_risk_source,
+            "value": inline_risk_value,
+        }
+    elif file_risk_value is not None:
+        current_risk_score = file_risk_value
+        risk_score_origin = {
+            "kind": "file",
+            "source": file_risk_source,
+            "value": file_risk_value,
+        }
 
     return (
         thresholds,
@@ -424,8 +466,22 @@ def _load_current_signal_thresholds(
             "inline": inline_values,
             "risk_files": risk_source_files,
             "risk_inline": inline_risk_thresholds,
+            "risk_score_source": risk_score_origin,
         },
     )
+
+
+def _has_extension(path: Path, allowed: tuple[str, ...]) -> bool:
+    if not path.name:
+        return False
+    lower = path.name.lower()
+    return any(lower.endswith(ext) for ext in allowed)
+
+
+def _open_text_file(path: Path) -> TextIO:
+    if path.suffix.lower() == ".gz":
+        return gzip.open(path, "rt", encoding="utf-8")
+    return path.open("r", encoding="utf-8")
 
 
 def _normalize_risk_threshold_paths(sources: Iterable[str] | None) -> list[Path]:
@@ -465,9 +521,70 @@ def _iter_paths(raw_paths: Iterable[str]) -> Iterable[Path]:
         if not candidate.exists():
             raise SystemExit(f"Ścieżka nie istnieje: {candidate}")
         if candidate.is_dir():
-            yield from sorted(path for path in candidate.glob("*.jsonl"))
-        else:
-            yield candidate
+            matched = False
+            for child in sorted(candidate.iterdir()):
+                if not child.is_file() or not _has_extension(child, _SUPPORTED_JOURNAL_EXTENSIONS):
+                    continue
+                matched = True
+                yield child
+            if not matched:
+                raise SystemExit(
+                    "Katalog dzienników nie zawiera plików JSONL ani skompresowanych JSONL (.gz)"
+                )
+            continue
+        if not _has_extension(candidate, _SUPPORTED_JOURNAL_EXTENSIONS):
+            raise SystemExit(
+                "Dziennik musi być plikiem JSONL (opcjonalnie skompresowanym .gz)"
+            )
+        yield candidate
+
+
+def _iter_autotrade_paths(raw_paths: Iterable[Path | str]) -> list[Path]:
+    paths: list[Path] = []
+    seen: set[Path] = set()
+    directories_without_files: list[Path] = []
+
+    for raw in raw_paths:
+        candidate = Path(raw).expanduser()
+        if not candidate.exists():
+            raise SystemExit(f"Eksport autotradera nie istnieje: {candidate}")
+        if candidate.is_dir():
+            matched = False
+            for child in sorted(candidate.iterdir()):
+                if not child.is_file() or not _has_extension(
+                    child, _SUPPORTED_AUTOTRADE_EXTENSIONS
+                ):
+                    continue
+                resolved = child.resolve()
+                if resolved in seen:
+                    continue
+                matched = True
+                seen.add(resolved)
+                paths.append(child)
+            if not matched:
+                directories_without_files.append(candidate)
+            continue
+
+        resolved = candidate.resolve()
+        if resolved in seen:
+            continue
+        if not _has_extension(candidate, _SUPPORTED_AUTOTRADE_EXTENSIONS):
+            raise SystemExit(
+                "Eksport autotradera musi być plikiem JSON/JSONL (opcjonalnie skompresowanym .gz)"
+            )
+        seen.add(resolved)
+        paths.append(candidate)
+
+    if not paths:
+        if directories_without_files:
+            directory = directories_without_files[0]
+            raise SystemExit(
+                f"Katalog eksportów autotradera {directory} nie zawiera plików JSON/JSONL"
+                " (również skompresowanych .gz)"
+            )
+        raise SystemExit("Nie znaleziono żadnych plików eksportu autotradera")
+
+    return paths
 
 
 def _load_journal_events(
@@ -478,7 +595,7 @@ def _load_journal_events(
 ) -> Iterator[Mapping[str, object]]:
     for path in paths:
         try:
-            with path.open("r", encoding="utf-8") as handle:
+            with _open_text_file(path) as handle:
                 for line in handle:
                     line = line.strip()
                     if not line:
@@ -519,11 +636,13 @@ def _extract_entry_timestamp(entry: Mapping[str, object]) -> datetime | None:
 
 
 def _load_autotrade_entries(
-    paths: Iterable[str],
+    paths: Iterable[Path | str],
     *,
     since: datetime | None = None,
     until: datetime | None = None,
 ) -> Iterator[Mapping[str, object]]:
+    normalized_paths = _iter_autotrade_paths(paths)
+
     def _normalize_entry(item: object) -> Mapping[str, object] | None:
         if not isinstance(item, Mapping):
             return None
@@ -534,217 +653,208 @@ def _load_autotrade_entries(
             return None
         return item
 
-    class _JsonStream:
-        __slots__ = ("_buffer", "_decoder", "_handle", "_path", "_position", "_chunk_size")
+    def _iter() -> Iterator[Mapping[str, object]]:
+        for path in normalized_paths:
+            try:
+                with _open_text_file(path) as handle:
+                    if path.suffix.lower() == ".jsonl":
+                        for line in handle:
+                            line = line.strip()
+                            if not line:
+                                continue
+                            try:
+                                item = json.loads(line)
+                            except json.JSONDecodeError as exc:  # noqa: BLE001 - CLI feedback
+                                raise SystemExit(
+                                    f"Nie udało się sparsować JSON w eksporcie autotradera {path}: {exc}"
+                                ) from exc
+                            normalized = _normalize_entry(item)
+                            if normalized is not None:
+                                yield normalized
+                        continue
+                    decoder = json.JSONDecoder()
+                    buffer = ""
+                    position = 0
+                    chunk_size = 65536
 
-        def __init__(self, handle, path: Path, chunk_size: int = 65536) -> None:
-            self._handle = handle
-            self._path = path
-            self._decoder = json.JSONDecoder()
-            self._buffer = ""
-            self._position = 0
-            self._chunk_size = chunk_size
+                    def _append_chunk() -> bool:
+                        nonlocal buffer, position
+                        chunk = handle.read(chunk_size)
+                        if not chunk:
+                            return False
+                        if position:
+                            buffer = buffer[position:] + chunk
+                            position = 0
+                        else:
+                            buffer += chunk
+                        return True
 
-        def _compact(self) -> None:
-            if self._position > 32768:
-                self._buffer = self._buffer[self._position :]
-                self._position = 0
+                    def _skip_whitespace() -> bool:
+                        nonlocal position
+                        while True:
+                            while position < len(buffer) and buffer[position].isspace():
+                                position += 1
+                            if position < len(buffer):
+                                return True
+                            if not _append_chunk():
+                                return False
 
-        def _fill(self) -> bool:
-            chunk = self._handle.read(self._chunk_size)
-            if not chunk:
-                return False
-            if self._position:
-                self._buffer = self._buffer[self._position :] + chunk
-                self._position = 0
-            else:
-                self._buffer += chunk
-            return True
+                    def _decode_value() -> object:
+                        nonlocal buffer, position
+                        while True:
+                            try:
+                                value, next_position = decoder.raw_decode(buffer, position)
+                            except json.JSONDecodeError as exc:
+                                if not _append_chunk():
+                                    raise SystemExit(
+                                        f"Niepoprawny JSON w eksporcie autotradera {path}: {exc}"
+                                    ) from exc
+                                continue
+                            position = next_position
+                            if position > 65536:
+                                buffer = buffer[position:]
+                                position = 0
+                            return value
 
-        def _ensure(self) -> bool:
-            if self._position < len(self._buffer):
-                return True
-            if not self._fill():
-                return False
-            return self._position < len(self._buffer)
+                    def _consume_array(yield_entries: bool) -> Iterator[Mapping[str, object]]:
+                        nonlocal position
+                        position += 1
+                        first_item = True
+                        while True:
+                            if not _skip_whitespace():
+                                raise SystemExit(
+                                    f"Niepoprawny JSON w eksporcie autotradera {path}: niekompletna tablica"
+                                )
+                            if position >= len(buffer) and not _append_chunk():
+                                raise SystemExit(
+                                    f"Niepoprawny JSON w eksporcie autotradera {path}: niekompletna tablica"
+                                )
+                            current = buffer[position]
+                            if current == "]":
+                                position += 1
+                                return
+                            if not first_item:
+                                if current != ",":
+                                    raise SystemExit(
+                                        f"Niepoprawny JSON w eksporcie autotradera {path}: oczekiwano przecinka"
+                                    )
+                                position += 1
+                                if not _skip_whitespace():
+                                    raise SystemExit(
+                                        f"Niepoprawny JSON w eksporcie autotradera {path}: niekompletna tablica"
+                                    )
+                                if position >= len(buffer) and not _append_chunk():
+                                    raise SystemExit(
+                                        f"Niepoprawny JSON w eksporcie autotradera {path}: niekompletna tablica"
+                                    )
+                                current = buffer[position]
+                                if current == "]":
+                                    raise SystemExit(
+                                        f"Niepoprawny JSON w eksporcie autotradera {path}: dodatkowy przecinek"
+                                    )
+                            first_item = False
+                            item = _decode_value()
+                            if not yield_entries:
+                                continue
+                            normalized = _normalize_entry(item)
+                            if normalized is not None:
+                                yield normalized
 
-        def _skip_whitespace(self) -> bool:
-            while True:
-                while self._position < len(self._buffer) and self._buffer[self._position].isspace():
-                    self._position += 1
-                if self._position < len(self._buffer):
-                    return True
-                if not self._fill():
-                    return False
-
-        def _decode_value(self) -> object:
-            while True:
-                try:
-                    value, next_position = self._decoder.raw_decode(self._buffer, self._position)
-                except json.JSONDecodeError as exc:
-                    if not self._fill():
+                    def _consume_value(yield_entries: bool) -> Iterator[Mapping[str, object]]:
+                        nonlocal position
+                        if not _skip_whitespace():
+                            raise SystemExit(
+                                f"Niepoprawny JSON w eksporcie autotradera {path}: niekompletna wartość"
+                            )
+                        if position >= len(buffer) and not _append_chunk():
+                            raise SystemExit(
+                                f"Niepoprawny JSON w eksporcie autotradera {path}: niekompletna wartość"
+                            )
+                        current = buffer[position]
+                        if current == "[":
+                            yield from _consume_array(yield_entries)
+                            return
+                        if current in "\"{-0123456789tfn":
+                            value = _decode_value()
+                            if yield_entries:
+                                normalized = _normalize_entry(value)
+                                if normalized is not None:
+                                    yield normalized
+                            return
                         raise SystemExit(
-                            f"Niepoprawny JSON w eksporcie autotradera {self._path}: {exc}"
-                        ) from exc
-                    continue
-                self._position = next_position
-                self._compact()
-                return value
+                            f"Niepoprawny JSON w eksporcie autotradera {path}: nieznany typ wartości"
+                        )
 
-        def _expect_char(self, char: str, context: str) -> None:
-            if not self._skip_whitespace():
+                    if not _skip_whitespace():
+                        continue
+                    if position >= len(buffer) and not _append_chunk():
+                        continue
+                    first_char = buffer[position]
+                    if first_char == "[":
+                        yield from _consume_array(True)
+                        continue
+                    if first_char != "{":
+                        raise SystemExit(
+                            f"Niepoprawny JSON w eksporcie autotradera {path}: oczekiwano obiektu lub tablicy"
+                        )
+                    position += 1
+
+                    while True:
+                        if not _skip_whitespace():
+                            raise SystemExit(
+                                f"Niepoprawny JSON w eksporcie autotradera {path}: niekompletny obiekt"
+                            )
+                        if position >= len(buffer) and not _append_chunk():
+                            raise SystemExit(
+                                f"Niepoprawny JSON w eksporcie autotradera {path}: niekompletny obiekt"
+                            )
+                        current = buffer[position]
+                        if current == "}":
+                            position += 1
+                            break
+                        key = _decode_value()
+                        if not isinstance(key, str):
+                            raise SystemExit(
+                                f"Niepoprawny JSON w eksporcie autotradera {path}: klucz musi być napisem"
+                            )
+                        if not _skip_whitespace():
+                            raise SystemExit(
+                                f"Niepoprawny JSON w eksporcie autotradera {path}: niekompletna para klucz-wartość"
+                            )
+                        if position >= len(buffer) and not _append_chunk():
+                            raise SystemExit(
+                                f"Niepoprawny JSON w eksporcie autotradera {path}: niekompletna para klucz-wartość"
+                            )
+                        if buffer[position] != ":":
+                            raise SystemExit(
+                                f"Niepoprawny JSON w eksporcie autotradera {path}: oczekiwano ':' po kluczu {key}"
+                            )
+                        position += 1
+                        yield from _consume_value(key == "entries")
+                        if not _skip_whitespace():
+                            raise SystemExit(
+                                f"Niepoprawny JSON w eksporcie autotradera {path}: niekompletny obiekt"
+                            )
+                        if position >= len(buffer) and not _append_chunk():
+                            raise SystemExit(
+                                f"Niepoprawny JSON w eksporcie autotradera {path}: niekompletny obiekt"
+                            )
+                        current = buffer[position]
+                        if current == ",":
+                            position += 1
+                            continue
+                        if current == "}":
+                            position += 1
+                            break
+                        raise SystemExit(
+                            f"Niepoprawny JSON w eksporcie autotradera {path}: oczekiwano ',' lub '}}'"
+                        )
+            except OSError as exc:  # noqa: BLE001 - CLI feedback
                 raise SystemExit(
-                    f"Niepoprawny JSON w eksporcie autotradera {self._path}: niekompletny {context}"
-                )
-            if not self._ensure():
-                raise SystemExit(
-                    f"Niepoprawny JSON w eksporcie autotradera {self._path}: niekompletny {context}"
-                )
-            if self._buffer[self._position] != char:
-                raise SystemExit(
-                    f"Niepoprawny JSON w eksporcie autotradera {self._path}: oczekiwano '{char}'"
-                )
-            self._position += 1
+                    f"Nie udało się odczytać eksportu autotradera {path}: {exc}"
+                ) from exc
 
-        def _consume_array(self, yield_entries: bool) -> Iterator[Mapping[str, object]]:
-            self._expect_char("[", "tablica")
-            first_item = True
-            while True:
-                if not self._skip_whitespace():
-                    raise SystemExit(
-                        f"Niepoprawny JSON w eksporcie autotradera {self._path}: niekompletna tablica"
-                    )
-                if not self._ensure():
-                    raise SystemExit(
-                        f"Niepoprawny JSON w eksporcie autotradera {self._path}: niekompletna tablica"
-                    )
-                current = self._buffer[self._position]
-                if current == "]":
-                    self._position += 1
-                    return
-                if not first_item:
-                    if current != ",":
-                        raise SystemExit(
-                            f"Niepoprawny JSON w eksporcie autotradera {self._path}: oczekiwano przecinka"
-                        )
-                    self._position += 1
-                    if not self._skip_whitespace():
-                        raise SystemExit(
-                            f"Niepoprawny JSON w eksporcie autotradera {self._path}: niekompletna tablica"
-                        )
-                    if not self._ensure():
-                        raise SystemExit(
-                            f"Niepoprawny JSON w eksporcie autotradera {self._path}: niekompletna tablica"
-                        )
-                    current = self._buffer[self._position]
-                    if current == "]":
-                        raise SystemExit(
-                            f"Niepoprawny JSON w eksporcie autotradera {self._path}: dodatkowy przecinek"
-                        )
-                first_item = False
-                value = self._decode_value()
-                if not yield_entries:
-                    continue
-                normalized = _normalize_entry(value)
-                if normalized is not None:
-                    yield normalized
-
-        def _consume_value(self, yield_entries: bool) -> Iterator[Mapping[str, object]]:
-            if not self._skip_whitespace():
-                raise SystemExit(
-                    f"Niepoprawny JSON w eksporcie autotradera {self._path}: niekompletna wartość"
-                )
-            if not self._ensure():
-                raise SystemExit(
-                    f"Niepoprawny JSON w eksporcie autotradera {self._path}: niekompletna wartość"
-                )
-            current = self._buffer[self._position]
-            if current == "[":
-                yield from self._consume_array(yield_entries)
-                return
-            if current in "\"{-0123456789tfn":
-                value = self._decode_value()
-                if yield_entries:
-                    normalized = _normalize_entry(value)
-                    if normalized is not None:
-                        yield normalized
-                return
-            raise SystemExit(
-                f"Niepoprawny JSON w eksporcie autotradera {self._path}: nieznany typ wartości"
-            )
-
-        def _consume_object(self) -> Iterator[Mapping[str, object]]:
-            self._expect_char("{", "obiekt")
-            first_pair = True
-            while True:
-                if not self._skip_whitespace():
-                    raise SystemExit(
-                        f"Niepoprawny JSON w eksporcie autotradera {self._path}: niekompletny obiekt"
-                    )
-                if not self._ensure():
-                    raise SystemExit(
-                        f"Niepoprawny JSON w eksporcie autotradera {self._path}: niekompletny obiekt"
-                    )
-                current = self._buffer[self._position]
-                if current == "}":
-                    self._position += 1
-                    return
-                if not first_pair:
-                    if current != ",":
-                        raise SystemExit(
-                            f"Niepoprawny JSON w eksporcie autotradera {self._path}: oczekiwano przecinka"
-                        )
-                    self._position += 1
-                    if not self._skip_whitespace():
-                        raise SystemExit(
-                            f"Niepoprawny JSON w eksporcie autotradera {self._path}: niekompletna para klucz-wartość"
-                        )
-                    if not self._ensure():
-                        raise SystemExit(
-                            f"Niepoprawny JSON w eksporcie autotradera {self._path}: niekompletna para klucz-wartość"
-                        )
-                first_pair = False
-                key = self._decode_value()
-                if not isinstance(key, str):
-                    raise SystemExit(
-                        f"Niepoprawny JSON w eksporcie autotradera {self._path}: klucz musi być napisem"
-                    )
-                if not self._skip_whitespace():
-                    raise SystemExit(
-                        f"Niepoprawny JSON w eksporcie autotradera {self._path}: niekompletna para klucz-wartość"
-                    )
-                if not self._ensure() or self._buffer[self._position] != ":":
-                    raise SystemExit(
-                        f"Niepoprawny JSON w eksporcie autotradera {self._path}: oczekiwano ':' po kluczu {key}"
-                    )
-                self._position += 1
-                yield from self._consume_value(key == "entries")
-
-        def consume(self) -> Iterator[Mapping[str, object]]:
-            if not self._skip_whitespace():
-                return iter(())
-            if not self._ensure():
-                return iter(())
-            first_char = self._buffer[self._position]
-            if first_char == "[":
-                return self._consume_array(True)
-            if first_char == "{":
-                return self._consume_object()
-            raise SystemExit(
-                f"Niepoprawny JSON w eksporcie autotradera {self._path}: oczekiwano obiektu lub tablicy"
-            )
-
-    for raw in paths:
-        path = Path(raw).expanduser()
-        if not path.exists():
-            raise SystemExit(f"Eksport autotradera nie istnieje: {path}")
-        try:
-            with path.open("r", encoding="utf-8") as handle:
-                stream = _JsonStream(handle, path)
-                yield from stream.consume()
-        except OSError as exc:  # noqa: BLE001 - CLI feedback
-            raise SystemExit(f"Nie udało się odczytać eksportu autotradera {path}: {exc}") from exc
-
+    return _iter()
 
 def _resolve_key(exchange: str | None, strategy: str | None) -> tuple[str, str]:
     normalized_exchange = _canonicalize_identifier(exchange)
@@ -1223,9 +1333,9 @@ def _generate_report(
     until: datetime | None = None,
     current_signal_thresholds: Mapping[str, float] | None = None,
     current_threshold_sources: Mapping[str, object] | None = None,
-    cli_risk_score_threshold: float | None = None,
+    risk_score_override: float | None = None,
+    risk_score_source: Mapping[str, object] | None = None,
     risk_threshold_sources: Iterable[str] | None = None,
-    cli_risk_score: float | None = None,
     include_raw_values: bool = False,
 ) -> dict[str, object]:
     symbol_map: dict[str, tuple[str, str]] = {}
@@ -1401,15 +1511,33 @@ def _generate_report(
             thresholds = load_risk_thresholds(config_path=config_path)
             value = _extract_risk_score_threshold(thresholds)
             if value is not None:
-                current_risk_score = value
+                current_risk_score = _ensure_finite_value(
+                    "risk_score",
+                    float(value),
+                    source=str(config_path),
+                )
     else:
         thresholds = load_risk_thresholds()
-        current_risk_score = _extract_risk_score_threshold(thresholds)
+        value = _extract_risk_score_threshold(thresholds)
+        if value is not None:
+            current_risk_score = _ensure_finite_value(
+                "risk_score",
+                float(value),
+                source="load_risk_thresholds()",
+            )
     if cli_risk_score_threshold is not None:
-        current_risk_score = cli_risk_score_threshold
+        current_risk_score = _ensure_finite_value(
+            "risk_score",
+            float(cli_risk_score_threshold),
+            source="CLI risk_score_threshold",
+        )
 
     if cli_risk_score is not None:
-        current_risk_score = cli_risk_score
+        current_risk_score = _ensure_finite_value(
+            "risk_score",
+            float(cli_risk_score),
+            source="CLI risk_score",
+        )
 
     groups: list[dict[str, object]] = []
     all_keys = set(grouped_values.keys()) | set(freeze_summaries.keys()) | set(display_names.keys())
@@ -1475,6 +1603,7 @@ def _generate_report(
     current_threshold_inline: dict[str, float] = {}
     risk_threshold_inline: dict[str, float] = {}
     risk_threshold_files_extra: list[str] = []
+    risk_score_metadata_payload: dict[str, object] | None = None
     if isinstance(current_threshold_sources, Mapping):
         raw_files = current_threshold_sources.get("files")
         if isinstance(raw_files, Iterable) and not isinstance(raw_files, (str, bytes)):
@@ -1493,7 +1622,13 @@ def _generate_report(
                 numeric = _coerce_float(value)
                 if numeric is None:
                     continue
-                current_threshold_inline[_normalize_metric_key(key)] = float(numeric)
+                normalized_key = _normalize_metric_key(key)
+                validated_value = _ensure_finite_value(
+                    normalized_key,
+                    float(numeric),
+                    source="current_thresholds.inline",
+                )
+                current_threshold_inline[normalized_key] = validated_value
         raw_risk_inline = current_threshold_sources.get("risk_inline")
         if isinstance(raw_risk_inline, Mapping):
             for key, value in raw_risk_inline.items():
@@ -1502,7 +1637,13 @@ def _generate_report(
                 numeric = _coerce_float(value)
                 if numeric is None:
                     continue
-                risk_threshold_inline[_normalize_metric_key(key)] = float(numeric)
+                normalized_key = _normalize_metric_key(key)
+                validated_value = _ensure_finite_value(
+                    normalized_key,
+                    float(numeric),
+                    source="risk_thresholds.inline",
+                )
+                risk_threshold_inline[normalized_key] = validated_value
         raw_risk_files = current_threshold_sources.get("risk_files")
         if isinstance(raw_risk_files, Iterable) and not isinstance(raw_risk_files, (str, bytes)):
             seen_risk_files: set[str] = set()
@@ -1512,6 +1653,20 @@ def _generate_report(
                     continue
                 seen_risk_files.add(item_str)
                 risk_threshold_files_extra.append(item_str)
+        raw_risk_source = current_threshold_sources.get("risk_score_source")
+        if isinstance(raw_risk_source, Mapping):
+            metadata: dict[str, object] = {}
+            raw_kind = raw_risk_source.get("kind")
+            if isinstance(raw_kind, str):
+                metadata["kind"] = raw_kind
+            raw_source = raw_risk_source.get("source")
+            if raw_source is not None:
+                metadata["source"] = str(raw_source)
+            raw_value = _coerce_float(raw_risk_source.get("value"))
+            if raw_value is not None and math.isfinite(float(raw_value)):
+                metadata["value"] = float(raw_value)
+            if metadata:
+                risk_score_metadata_payload = metadata
 
     combined_risk_files: list[str] = []
     seen_combined_risk_files: set[str] = set()
@@ -1527,13 +1682,17 @@ def _generate_report(
         seen_combined_risk_files.add(path_str)
         combined_risk_files.append(path_str)
 
+    current_thresholds_payload: dict[str, object] = {
+        "files": current_threshold_files,
+        "inline": current_threshold_inline,
+    }
+    if risk_score_metadata_payload is not None:
+        current_thresholds_payload["risk_score"] = risk_score_metadata_payload
+
     sources_payload = {
         "journal_events": journal_count,
         "autotrade_entries": autotrade_count,
-        "current_thresholds": {
-            "files": current_threshold_files,
-            "inline": current_threshold_inline,
-        },
+        "current_thresholds": current_thresholds_payload,
         "risk_thresholds": {
             "files": combined_risk_files,
             "inline": risk_threshold_inline,
@@ -1566,13 +1725,19 @@ def _build_parser() -> argparse.ArgumentParser:
         "--journal",
         required=True,
         nargs="+",
-        help="Ścieżki do plików JSONL (lub katalogów) z TradingDecisionJournal",
+        help=(
+            "Ścieżki do plików JSONL (również skompresowanych .gz) lub katalogów "
+            "z TradingDecisionJournal"
+        ),
     )
     parser.add_argument(
         "--autotrade-export",
         required=True,
         nargs="+",
-        help="Pliki JSON wygenerowane przez export_risk_evaluations lub eksport statusów autotradera",
+        help=(
+            "Pliki JSON/JSONL (również skompresowane .gz) wygenerowane przez "
+            "export_risk_evaluations lub eksport statusów autotradera"
+        ),
     )
     parser.add_argument(
         "--percentiles",
@@ -1644,9 +1809,24 @@ def main(argv: list[str] | None = None) -> int:
     autotrade_entries = _load_autotrade_entries(args.autotrade_export, since=since, until=until)
     (
         current_signal_thresholds,
-        cli_risk_score,
+        provided_risk_score,
         current_threshold_sources_payload,
     ) = _load_current_signal_thresholds(args.current_threshold)
+
+    risk_score_source_metadata: Mapping[str, object] | None = None
+    risk_score_override: float | None = None
+    signal_thresholds_payload: Mapping[str, float] | None = current_signal_thresholds
+    if isinstance(current_threshold_sources_payload, Mapping):
+        raw_risk_source = current_threshold_sources_payload.get("risk_score_source")
+        if isinstance(raw_risk_source, Mapping):
+            risk_score_source_metadata = raw_risk_source
+            raw_kind = raw_risk_source.get("kind")
+            if provided_risk_score is not None and raw_kind == "inline":
+                risk_score_override = provided_risk_score
+            elif provided_risk_score is not None and raw_kind == "file":
+                existing = dict(current_signal_thresholds or {})
+                existing["risk_score"] = provided_risk_score
+                signal_thresholds_payload = existing
 
     report = _generate_report(
         journal_events=journal_events,
@@ -1655,11 +1835,11 @@ def main(argv: list[str] | None = None) -> int:
         suggestion_percentile=args.suggestion_percentile,
         since=since,
         until=until,
-        current_signal_thresholds=current_signal_thresholds,
+        current_signal_thresholds=signal_thresholds_payload,
         current_threshold_sources=current_threshold_sources_payload,
-        cli_risk_score_threshold=cli_risk_score,
+        risk_score_override=risk_score_override,
+        risk_score_source=risk_score_source_metadata,
         risk_threshold_sources=args.risk_thresholds,
-        cli_risk_score=cli_risk_score,
         include_raw_values=bool(args.plot_dir),
     )
 
@@ -1694,5 +1874,3 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
-
