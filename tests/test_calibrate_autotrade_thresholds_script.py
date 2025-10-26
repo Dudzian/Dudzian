@@ -507,6 +507,84 @@ def test_autotrade_streaming_reads_multiple_chunks(
     assert len(handle.read_requests) > 1
 
 
+def test_autotrade_streaming_does_not_buffer_json(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    module = calibrate_autotrade_thresholds
+
+    entries: list[dict[str, object]] = []
+    for index in range(20):
+        entries.append(
+            {
+                "timestamp": f"2024-01-01T00:{index:02d}:00Z",
+                "decision": {
+                    "details": {
+                        "symbol": "BTCUSDT",
+                        "strategy": "trend_following",
+                        "note": "x" * 1024,
+                    }
+                },
+            }
+        )
+
+    export_path = tmp_path / "streaming-no-buffer.json"
+    export_path.write_text(json.dumps({"entries": entries}), encoding="utf-8")
+
+    chunk_size = 64
+    monkeypatch.setattr(module, "_JSON_STREAM_CHUNK_SIZE", chunk_size)
+
+    class CountingHandle:
+        def __init__(self, path: Path):
+            self._handle = path.open("r", encoding="utf-8")
+            self.read_requests: list[int] = []
+            self.read_results: list[int] = []
+
+        def read(self, size: int = -1) -> str:
+            assert size != -1, "streaming parser must not read entire file at once"
+            self.read_requests.append(size)
+            chunk = self._handle.read(size)
+            if chunk:
+                self.read_results.append(len(chunk))
+            return chunk
+
+        def close(self) -> None:
+            self._handle.close()
+
+        def __enter__(self) -> "CountingHandle":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            self._handle.close()
+
+    handles: list[CountingHandle] = []
+
+    def fake_open_text_file(path: Path) -> CountingHandle:
+        handle = CountingHandle(path)
+        handles.append(handle)
+        return handle
+
+    monkeypatch.setattr(module, "_open_text_file", fake_open_text_file)
+
+    iterator = module._load_autotrade_entries([export_path])
+
+    first_entry = next(iterator)
+    assert first_entry["timestamp"] == entries[0]["timestamp"]
+
+    second_entry = next(iterator)
+    assert second_entry["timestamp"] == entries[1]["timestamp"]
+
+    iterator.close()
+
+    assert handles, "expected instrumented handle to be used"
+    handle = handles[0]
+
+    assert len(handle.read_requests) >= 2
+    assert all(size == chunk_size for size in handle.read_requests)
+    assert handle.read_results
+    bytes_consumed = sum(handle.read_results)
+    assert 0 < bytes_consumed < export_path.stat().st_size
+
+
 def test_load_autotrade_entries_filters_nested_timestamps(tmp_path: Path) -> None:
     export_path = tmp_path / "nested-timestamps.json"
     entries = [
@@ -4941,6 +5019,7 @@ def test_main_respects_freeze_events_limit_flag(
     assert captured["max_freeze_events"] == 3
     assert captured["limit_freeze_events"] is None
     assert captured["max_raw_freeze_events"] is None
+    assert captured["raw_freeze_events_sample_limit"] is None
     assert captured["raw_freeze_events_mode"] == "omit"
     assert captured["omit_raw_freeze_events"] is False
     assert captured["omit_freeze_events"] is False
@@ -5029,8 +5108,15 @@ def test_main_can_omit_raw_freeze_events_flag(
     assert captured["raw_freeze_events_sample_limit"] is None
 
 
+@pytest.mark.parametrize(
+    "sample_limit, expected_mode",
+    [
+        (3, "sample"),
+        (0, "omit"),
+    ],
+)
 def test_main_accepts_max_raw_freeze_events(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, sample_limit: int, expected_mode: str
 ) -> None:
     from scripts import calibrate_autotrade_thresholds as module
 
@@ -5060,24 +5146,28 @@ def test_main_accepts_max_raw_freeze_events(
 
     monkeypatch.setattr(module, "_generate_report", _fake_generate_report)
 
-    exit_code = module.main(
-        [
-            "--journal",
-            str(journal_path),
-            "--autotrade-export",
-            str(export_path),
-            "--limit-freeze-events",
-            "5",
-            "--max-raw-freeze-events",
-            "2",
-        ]
-    )
+    cli_args = [
+        "--journal",
+        str(journal_path),
+        "--autotrade-export",
+        str(export_path),
+        "--limit-freeze-events",
+        "5",
+        "--max-raw-freeze-events",
+        "2",
+        "--raw-freeze-events-sample-limit",
+        str(sample_limit),
+    ]
+
+    exit_code = module.main(cli_args)
 
     assert exit_code == 0
     assert captured["limit_freeze_events"] == 5
     assert "max_freeze_events" not in captured
     assert captured["max_raw_freeze_events"] == 2
-    assert captured["raw_freeze_events_mode"] == "sample"
+    assert "raw_freeze_events_sample_limit" in captured
+    assert captured["raw_freeze_events_sample_limit"] == sample_limit
+    assert captured["raw_freeze_events_mode"] == expected_mode
     assert captured["omit_freeze_events"] is False
     assert captured["raw_freeze_events_sample_limit"] is None
 
