@@ -11,7 +11,7 @@ from bisect import bisect_left
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable, Iterable, Iterator, Mapping, TextIO, Literal
+from typing import Callable, Iterable, Iterator, Literal, Mapping, TextIO
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
@@ -1856,6 +1856,7 @@ def _generate_report(
     cli_risk_score_threshold: float | None = None,
     cli_risk_score: float | None = None,
     include_raw_values: bool = False,
+    raw_freeze_events_mode: Literal["omit", "sample"] = "omit",
     limit_freeze_events: int | None = None,
 ) -> dict[str, object]:
     normalized_signal_thresholds: dict[str, float] | None = None
@@ -1900,9 +1901,15 @@ def _generate_report(
     }
     freeze_event_samplers: dict[tuple[str, str], _FreezeEventSampler] = {}
     aggregated_freeze_sampler: _FreezeEventSampler | None = None
-    sampling_freeze_events = limit_freeze_events is not None
+    normalized_freeze_mode = str(raw_freeze_events_mode or "omit").strip().lower()
+    if normalized_freeze_mode not in {"omit", "sample"}:
+        normalized_freeze_mode = "omit"
+    sampling_freeze_events = normalized_freeze_mode == "sample"
     if sampling_freeze_events:
-        sampler_limit = max(0, int(limit_freeze_events))
+        if limit_freeze_events is None:
+            sampler_limit = 25
+        else:
+            sampler_limit = max(0, int(limit_freeze_events))
         aggregated_freeze_sampler = _FreezeEventSampler(sampler_limit)
     else:
         sampler_limit = 0
@@ -2360,6 +2367,8 @@ def _generate_report(
             "mode": "sample",
             "limit": sampler_limit,
         }
+    else:
+        sources_payload["raw_freeze_events"] = {"mode": "omit"}
 
     return {
         "schema": "stage6.autotrade.threshold_calibration",
@@ -2561,6 +2570,7 @@ def main(argv: list[str] | None = None) -> int:
         risk_score_source=risk_score_source_metadata,
         risk_threshold_sources=args.risk_thresholds,
         include_raw_values=bool(args.plot_dir),
+        raw_freeze_events_mode="sample" if limit_freeze_events is not None else "omit",
         limit_freeze_events=limit_freeze_events,
     )
 

@@ -3078,7 +3078,7 @@ def test_generate_report_omits_raw_freeze_events_by_default() -> None:
     assert "raw_freeze_events" not in global_summary
 
     sources = report["sources"]
-    assert "raw_freeze_events" not in sources
+    assert sources["raw_freeze_events"] == {"mode": "omit"}
 
 
 def test_generate_report_samples_raw_freeze_events() -> None:
@@ -3118,6 +3118,7 @@ def test_generate_report_samples_raw_freeze_events() -> None:
             autotrade_entries=[],
             percentiles=[0.5],
             suggestion_percentile=0.5,
+            raw_freeze_events_mode="sample",
             limit_freeze_events=1,
         )
 
