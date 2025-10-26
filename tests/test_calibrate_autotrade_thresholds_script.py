@@ -2198,6 +2198,91 @@ def test_large_volume_inputs_do_not_allocate_large_lists(monkeypatch, tmp_path: 
     assert max_created < event_count
 
 
+def test_high_volume_monkeypatched_counters_do_not_materialize_lists(monkeypatch) -> None:
+    from scripts import calibrate_autotrade_thresholds as module
+
+    event_count = 6000
+    journal_processed = 0
+    autotrade_processed = 0
+
+    def _journal_stream() -> Iterable[Mapping[str, object]]:
+        nonlocal journal_processed
+        for index in range(event_count):
+            journal_processed += 1
+            yield {
+                "timestamp": f"2024-03-01T00:{index % 60:02d}:00Z",
+                "symbol": "BTCUSDT",
+                "primary_exchange": "binance",
+                "strategy": "trend_following",
+                "signal_after_adjustment": 0.6 + (index % 5) * 0.01,
+                "signal_after_clamp": 0.55 + (index % 5) * 0.01,
+            }
+
+    def _autotrade_stream() -> Iterable[Mapping[str, object]]:
+        nonlocal autotrade_processed
+        for index in range(event_count):
+            autotrade_processed += 1
+            yield {
+                "timestamp": f"2024-03-01T01:{index % 60:02d}:00Z",
+                "detail": {
+                    "symbol": "BTCUSDT",
+                    "primary_exchange": "binance",
+                    "strategy": "trend_following",
+                    "summary": {"risk_score": 0.5 + (index % 5) * 0.01},
+                },
+            }
+
+    original_list_type = builtins.list
+
+    class _TrackingListMeta(type):
+        def __instancecheck__(cls, instance: object) -> bool:  # pragma: no cover - trivial
+            return isinstance(instance, original_list_type)
+
+    class TrackingList(original_list_type, metaclass=_TrackingListMeta):
+        created_lengths: list[int] = []
+
+        def __new__(cls, iterable=()):  # type: ignore[override]
+            instance = super().__new__(cls, iterable)
+            length = len(instance)
+            cls.created_lengths.append(length)
+            if length >= event_count:
+                raise AssertionError("unexpected materialization of the entire stream")
+            return instance
+
+    TrackingList.created_lengths = []
+
+    observed_sizes: dict[tuple[tuple[str, str], str], int] = {}
+
+    def _observer(key: tuple[str, str], metric: str, size: int) -> None:
+        observed_sizes[(key, metric)] = size
+
+    monkeypatch.setattr(builtins, "list", TrackingList)
+    monkeypatch.setattr(module, "load_risk_thresholds", lambda **_: {})
+    monkeypatch.setattr(module, "_METRIC_APPEND_OBSERVER", _observer, raising=False)
+
+    report = module._generate_report(
+        journal_events=_journal_stream(),
+        autotrade_entries=_autotrade_stream(),
+        percentiles=[0.5],
+        suggestion_percentile=0.5,
+    )
+
+    assert journal_processed == event_count
+    assert autotrade_processed == event_count
+
+    sources = report["sources"]
+    assert sources["journal_events"] == event_count
+    assert sources["autotrade_entries"] == event_count
+
+    max_created = max(TrackingList.created_lengths or [0])
+    assert max_created < event_count
+
+    key = ("binance", "trend_following")
+    assert observed_sizes[(key, "signal_after_adjustment")] == event_count
+    assert observed_sizes[(key, "signal_after_clamp")] == event_count
+    assert observed_sizes[(key, "risk_score")] == event_count
+
+
 def test_load_autotrade_entries_supports_jsonl(tmp_path: Path) -> None:
     autotrade_path = tmp_path / "autotrade.jsonl"
     entries = [
