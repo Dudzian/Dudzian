@@ -27,6 +27,7 @@ from bot_core.runtime.journal import TradingDecisionEvent
 
 from scripts.calibrate_autotrade_thresholds import (
     _AMBIGUOUS_SYMBOL_MAPPING,
+    _DEFAULT_FREEZE_EVENTS_LIMIT,
     _canonicalize_symbol_key,
     _build_symbol_map,
     _MetricSeries,
@@ -3883,12 +3884,21 @@ def test_generate_report_omits_raw_freeze_events_by_default() -> None:
 
     assert report["groups"]
     group = report["groups"][0]
+    freeze_events = group["freeze_events"]
+    assert freeze_events["mode"] == "limit"
+    assert freeze_events["limit"] == _DEFAULT_FREEZE_EVENTS_LIMIT
+    assert len(freeze_events["events"]) == 1
     assert "raw_freeze_events" not in group
 
     global_summary = report["global_summary"]
     assert "raw_freeze_events" not in global_summary
 
     sources = report["sources"]
+    assert sources["freeze_events"] == {
+        "mode": "limit",
+        "limit": _DEFAULT_FREEZE_EVENTS_LIMIT,
+        "reason": "default_limit",
+    }
     assert sources["raw_freeze_events"] == {"mode": "omit", "reason": "sampling_disabled"}
 
 
@@ -4176,7 +4186,7 @@ def test_generate_report_records_no_samples_reason_when_sampling_disabled() -> N
     assert sources == {"mode": "omit", "requested_limit": 3, "reason": "no_samples"}
 
 
-def test_generate_report_includes_full_freeze_events_without_limit() -> None:
+def test_generate_report_includes_full_freeze_events_when_unbounded() -> None:
     journal_events = [
         {
             "symbol": "BTCUSDT",
@@ -4212,30 +4222,42 @@ def test_generate_report_includes_full_freeze_events_without_limit() -> None:
             autotrade_entries=[],
             percentiles=[0.5],
             suggestion_percentile=0.5,
+            max_freeze_events=None,
         )
 
     assert report["groups"]
     group = report["groups"][0]
+    freeze_summary = group["freeze_summary"]
+    assert freeze_summary["total"] == 3
+    assert freeze_summary["auto"] == 2
+    assert freeze_summary["manual"] == 1
+    assert {item["status"]: item["count"] for item in freeze_summary["statuses"]} == {
+        "auto_risk_freeze": 2,
+        "risk_freeze": 1,
+    }
+    assert {item["reason"]: item["count"] for item in freeze_summary["reasons"]} == {
+        "manual_override": 1,
+        "risk_score_threshold": 2,
+    }
     freeze_events = group["freeze_events"]
     assert freeze_events["mode"] == "all"
     assert len(freeze_events["events"]) == 3
     assert freeze_events["events"][0]["status"] == "risk_freeze"
     assert freeze_events["events"][0]["type"] == "manual"
     assert freeze_events["events"][0]["duration"] == pytest.approx(180)
-    assert freeze_events["total"] == 3
-    assert freeze_events["type_counts"] == {"auto": 2, "manual": 1}
-    assert freeze_events["status_counts"]["auto_risk_freeze"] == 2
-    assert freeze_events["reason_counts"]["risk_score_threshold"] == 2
-    assert "overflow_summary" not in freeze_events
 
     global_freeze = report["global_summary"]["freeze_events"]
     assert global_freeze["mode"] == "all"
     assert len(global_freeze["events"]) == 3
-    assert global_freeze["total"] == 3
-    assert "overflow_summary" not in global_freeze
+    global_summary = report["global_summary"]["freeze_summary"]
+    assert global_summary["total"] == 3
+    assert {item["status"]: item["count"] for item in global_summary["statuses"]} == {
+        "auto_risk_freeze": 2,
+        "risk_freeze": 1,
+    }
 
     sources = report["sources"]["freeze_events"]
-    assert sources == {"mode": "all"}
+    assert sources == {"mode": "all", "reason": "explicit_unbounded"}
 
     raw_sources = report["sources"]["raw_freeze_events"]
     assert raw_sources == {"mode": "omit", "reason": "sampling_disabled"}
@@ -4282,32 +4304,30 @@ def test_generate_report_limits_freeze_events_when_max_set() -> None:
 
     assert report["groups"]
     group = report["groups"][0]
+    freeze_summary = group["freeze_summary"]
+    assert freeze_summary["total"] == 3
+    assert freeze_summary["auto"] == 2
+    assert freeze_summary["manual"] == 1
+    assert {item["status"]: item["count"] for item in freeze_summary["statuses"]} == {
+        "auto_risk_freeze": 2,
+        "risk_freeze": 1,
+    }
     freeze_events = group["freeze_events"]
     assert freeze_events["mode"] == "limit"
     assert freeze_events["limit"] == 2
     assert len(freeze_events["events"]) == 2
-    assert freeze_events["total"] == 3
     assert freeze_events["events"][0]["status"] == "risk_freeze"
     assert freeze_events["events"][1]["status"] == "auto_risk_freeze"
-    assert freeze_events["type_counts"] == {"auto": 2, "manual": 1}
-    overflow = freeze_events["overflow_summary"]
-    assert overflow["total"] == 1
-    assert {item["status"]: item["count"] for item in overflow["statuses"]} == {
-        "auto_risk_freeze": 1
-    }
-    assert {item["reason"]: item["count"] for item in overflow["reasons"]} == {
-        "risk_score_threshold": 1
-    }
 
     global_freeze = report["global_summary"]["freeze_events"]
     assert global_freeze["mode"] == "limit"
     assert global_freeze["limit"] == 2
     assert len(global_freeze["events"]) == 2
-    assert global_freeze["total"] == 3
-    global_overflow = global_freeze["overflow_summary"]
-    assert global_overflow["total"] == 1
-    assert {item["status"]: item["count"] for item in global_overflow["statuses"]} == {
-        "auto_risk_freeze": 1
+    global_freeze_summary = report["global_summary"]["freeze_summary"]
+    assert global_freeze_summary["total"] == 3
+    assert {item["status"]: item["count"] for item in global_freeze_summary["statuses"]} == {
+        "auto_risk_freeze": 2,
+        "risk_freeze": 1,
     }
 
     raw_group = group["raw_freeze_events"]
@@ -4317,7 +4337,14 @@ def test_generate_report_limits_freeze_events_when_max_set() -> None:
     assert "display_limit" not in raw_group
     assert "display_overflow_summary" not in raw_group
     assert raw_group["events"] == freeze_events["events"]
-    assert raw_group["overflow_summary"] == overflow
+    raw_overflow = raw_group["overflow_summary"]
+    assert raw_overflow["total"] == 1
+    assert {item["status"]: item["count"] for item in raw_overflow["statuses"]} == {
+        "auto_risk_freeze": 1
+    }
+    assert {item["reason"]: item["count"] for item in raw_overflow["reasons"]} == {
+        "risk_score_threshold": 1
+    }
 
     raw_global = report["global_summary"]["raw_freeze_events"]
     assert raw_global["mode"] == "limit"
@@ -4326,21 +4353,17 @@ def test_generate_report_limits_freeze_events_when_max_set() -> None:
     assert "display_limit" not in raw_global
     assert "display_overflow_summary" not in raw_global
     assert raw_global["events"] == global_freeze["events"]
-    assert raw_global["overflow_summary"] == global_overflow
+    assert raw_global["overflow_summary"] == raw_overflow
 
     sources = report["sources"]["freeze_events"]
-    assert sources == {
-        "mode": "limit",
-        "limit": 2,
-        "overflow_summary": global_overflow,
-    }
+    assert sources == {"mode": "limit", "limit": 2, "reason": "explicit_limit"}
 
     raw_sources = report["sources"]["raw_freeze_events"]
     assert raw_sources == {
         "mode": "limit",
         "limit": 2,
         "requested_limit": 2,
-        "overflow_summary": global_overflow,
+        "overflow_summary": raw_overflow,
     }
 
 
@@ -4376,27 +4399,26 @@ def test_generate_report_limits_freeze_events_when_max_zero() -> None:
 
     assert report["groups"]
     group = report["groups"][0]
+    freeze_summary = group["freeze_summary"]
+    assert freeze_summary["total"] == 2
+    assert freeze_summary["auto"] == 1
+    assert freeze_summary["manual"] == 1
+    assert {item["status"]: item["count"] for item in freeze_summary["statuses"]} == {
+        "auto_risk_freeze": 1,
+        "risk_freeze": 1,
+    }
     freeze_events = group["freeze_events"]
     assert freeze_events["mode"] == "limit"
     assert freeze_events["limit"] == 0
     assert freeze_events["events"] == []
-    assert freeze_events["total"] == 2
-    assert freeze_events["type_counts"] == {"auto": 1, "manual": 1}
-    overflow = freeze_events["overflow_summary"]
-    assert overflow["total"] == 2
-    assert {item["status"]: item["count"] for item in overflow["statuses"]} == {
-        "auto_risk_freeze": 1,
-        "risk_freeze": 1,
-    }
 
     global_freeze = report["global_summary"]["freeze_events"]
     assert global_freeze["mode"] == "limit"
     assert global_freeze["limit"] == 0
     assert global_freeze["events"] == []
-    assert global_freeze["total"] == 2
-    global_overflow = global_freeze["overflow_summary"]
-    assert global_overflow["total"] == 2
-    assert {item["status"]: item["count"] for item in global_overflow["statuses"]} == {
+    global_summary = report["global_summary"]["freeze_summary"]
+    assert global_summary["total"] == 2
+    assert {item["status"]: item["count"] for item in global_summary["statuses"]} == {
         "auto_risk_freeze": 1,
         "risk_freeze": 1,
     }
@@ -4406,7 +4428,12 @@ def test_generate_report_limits_freeze_events_when_max_zero() -> None:
     assert raw_group["limit"] == 0
     assert raw_group["requested_limit"] == 0
     assert raw_group["events"] == []
-    assert raw_group["overflow_summary"] == overflow
+    raw_overflow = raw_group["overflow_summary"]
+    assert raw_overflow["total"] == 2
+    assert {item["status"]: item["count"] for item in raw_overflow["statuses"]} == {
+        "auto_risk_freeze": 1,
+        "risk_freeze": 1,
+    }
     assert "display_overflow_summary" not in raw_group
 
     raw_global = report["global_summary"]["raw_freeze_events"]
@@ -4414,23 +4441,61 @@ def test_generate_report_limits_freeze_events_when_max_zero() -> None:
     assert raw_global["limit"] == 0
     assert raw_global["requested_limit"] == 0
     assert raw_global["events"] == []
-    assert raw_global["overflow_summary"] == global_overflow
+    assert raw_global["overflow_summary"] == raw_overflow
     assert "display_overflow_summary" not in raw_global
 
     sources = report["sources"]["freeze_events"]
-    assert sources == {
-        "mode": "limit",
-        "limit": 0,
-        "overflow_summary": global_overflow,
-    }
+    assert sources == {"mode": "limit", "limit": 0, "reason": "explicit_limit"}
 
     raw_sources = report["sources"]["raw_freeze_events"]
     assert raw_sources == {
         "mode": "limit",
         "limit": 0,
         "requested_limit": 0,
-        "overflow_summary": global_overflow,
+        "overflow_summary": raw_overflow,
     }
+
+
+def test_generate_report_can_omit_freeze_events() -> None:
+    journal_events = [
+        {
+            "symbol": "BTCUSDT",
+            "primary_exchange": "binance",
+            "strategy": "trend_following",
+            "status": "risk_freeze",
+            "reason": "manual_override",
+        },
+        {
+            "symbol": "BTCUSDT",
+            "primary_exchange": "binance",
+            "strategy": "trend_following",
+            "status": "auto_risk_freeze",
+            "reason": "risk_score_threshold",
+        },
+    ]
+
+    with patch("scripts.calibrate_autotrade_thresholds.load_risk_thresholds", return_value={}):
+        report = _generate_report(
+            journal_events=journal_events,
+            autotrade_entries=[],
+            percentiles=[0.5],
+            suggestion_percentile=0.5,
+            max_freeze_events=2,
+            omit_freeze_events=True,
+            omit_raw_freeze_events=True,
+        )
+
+    assert report["groups"]
+    group = report["groups"][0]
+    assert group["freeze_summary"]["total"] == 2
+    assert "freeze_events" not in group
+
+    global_summary = report["global_summary"]
+    assert global_summary["freeze_summary"]["total"] == 2
+    assert "freeze_events" not in global_summary
+
+    sources = report["sources"]["freeze_events"]
+    assert sources == {"mode": "omit"}
 
 
 def test_generate_report_can_omit_raw_freeze_events_with_max_limit() -> None:
@@ -4599,6 +4664,7 @@ def test_main_respects_freeze_events_limit_flag(
     assert captured["max_raw_freeze_events"] is None
     assert captured["raw_freeze_events_mode"] == "omit"
     assert captured["omit_raw_freeze_events"] is False
+    assert captured["omit_freeze_events"] is False
 
     output = capsys.readouterr().out
     assert "Przetworzono" in output
@@ -4679,6 +4745,7 @@ def test_main_can_omit_raw_freeze_events_flag(
     assert captured["raw_freeze_events_mode"] == "sample"
     assert captured["limit_freeze_events"] == 4
     assert captured["max_raw_freeze_events"] is None
+    assert captured["omit_freeze_events"] is False
 
 
 def test_main_accepts_max_raw_freeze_events(
@@ -4727,9 +4794,59 @@ def test_main_accepts_max_raw_freeze_events(
 
     assert exit_code == 0
     assert captured["limit_freeze_events"] == 5
-    assert captured["max_freeze_events"] is None
+    assert "max_freeze_events" not in captured
     assert captured["max_raw_freeze_events"] == 2
     assert captured["raw_freeze_events_mode"] == "sample"
+    assert captured["omit_freeze_events"] is False
+
+
+def test_main_accepts_omit_freeze_events(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from scripts import calibrate_autotrade_thresholds as module
+
+    journal_path = tmp_path / "journal.jsonl"
+    journal_path.write_text("{}\n", encoding="utf-8")
+    export_path = tmp_path / "export.json"
+    export_path.write_text("{}", encoding="utf-8")
+
+    monkeypatch.setattr(module, "_load_journal_events", lambda *_, **__: [])
+    monkeypatch.setattr(module, "_load_autotrade_entries", lambda *_, **__: [])
+    monkeypatch.setattr(
+        module,
+        "_load_current_signal_thresholds",
+        lambda *_: ({}, None, {}),
+    )
+
+    captured: dict[str, object] = {}
+
+    def _fake_generate_report(**kwargs: object) -> dict[str, object]:
+        captured.update(kwargs)
+        return {
+            "groups": [],
+            "global_summary": {"metrics": {}, "freeze_summary": {}},
+            "sources": {"journal_events": 0, "autotrade_entries": 0},
+            "percentiles": [],
+        }
+
+    monkeypatch.setattr(module, "_generate_report", _fake_generate_report)
+
+    exit_code = module.main(
+        [
+            "--journal",
+            str(journal_path),
+            "--autotrade-export",
+            str(export_path),
+            "--freeze-events-limit",
+            "2",
+            "--omit-freeze-events",
+        ]
+    )
+
+    assert exit_code == 0
+    assert captured["omit_freeze_events"] is True
+    assert captured["max_freeze_events"] == 2
+    assert captured["raw_freeze_events_mode"] == "omit"
 
 
 def test_metric_series_caches_sorted_sequences() -> None:
