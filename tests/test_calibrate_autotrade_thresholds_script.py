@@ -4983,8 +4983,15 @@ def test_main_can_omit_raw_freeze_events_flag(
     assert captured["omit_freeze_events"] is False
 
 
+@pytest.mark.parametrize(
+    "sample_limit, expected_mode",
+    [
+        (3, "sample"),
+        (0, "omit"),
+    ],
+)
 def test_main_accepts_max_raw_freeze_events(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, sample_limit: int, expected_mode: str
 ) -> None:
     from scripts import calibrate_autotrade_thresholds as module
 
@@ -5014,24 +5021,27 @@ def test_main_accepts_max_raw_freeze_events(
 
     monkeypatch.setattr(module, "_generate_report", _fake_generate_report)
 
-    exit_code = module.main(
-        [
-            "--journal",
-            str(journal_path),
-            "--autotrade-export",
-            str(export_path),
-            "--limit-freeze-events",
-            "5",
-            "--max-raw-freeze-events",
-            "2",
-        ]
-    )
+    cli_args = [
+        "--journal",
+        str(journal_path),
+        "--autotrade-export",
+        str(export_path),
+        "--limit-freeze-events",
+        "5",
+        "--max-raw-freeze-events",
+        "2",
+        "--raw-freeze-events-sample-limit",
+        str(sample_limit),
+    ]
+
+    exit_code = module.main(cli_args)
 
     assert exit_code == 0
     assert captured["limit_freeze_events"] == 5
     assert "max_freeze_events" not in captured
     assert captured["max_raw_freeze_events"] == 2
-    assert captured["raw_freeze_events_mode"] == "sample"
+    assert captured["raw_freeze_events_sample_limit"] == sample_limit
+    assert captured["raw_freeze_events_mode"] == expected_mode
     assert captured["omit_freeze_events"] is False
 
 

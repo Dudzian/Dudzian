@@ -1953,6 +1953,7 @@ def _generate_report(
     max_freeze_events: int | None | object = _UNSET_MAX_FREEZE_EVENTS,
     omit_raw_freeze_events: bool = False,
     max_raw_freeze_events: int | None = None,
+    raw_freeze_events_sample_limit: int | None = None,
     omit_freeze_events: bool = False,
 ) -> dict[str, object]:
     normalized_signal_thresholds: dict[str, float] | None = None
@@ -2012,6 +2013,7 @@ def _generate_report(
             return 0
 
     raw_freeze_event_display_limit = _sanitize_optional_limit(max_raw_freeze_events)
+    sample_limit_override = _sanitize_optional_limit(raw_freeze_events_sample_limit)
     group_freeze_display_limit = _sanitize_optional_limit(limit_freeze_events)
     raw_freeze_requested_limit: int | None = None
     normalized_freeze_mode = str(raw_freeze_events_mode or "omit").strip().lower()
@@ -2019,15 +2021,22 @@ def _generate_report(
         normalized_freeze_mode = "omit"
     omit_raw_freeze_events = bool(omit_raw_freeze_events)
     sampling_freeze_events = normalized_freeze_mode == "sample" and not omit_raw_freeze_events
+    sampler_limit = 0
     if sampling_freeze_events:
-        if limit_freeze_events is None:
+        if sample_limit_override is not None:
+            sampler_limit = sample_limit_override
+        elif limit_freeze_events is None:
             sampler_limit = 25
         else:
             sampler_limit = max(0, int(limit_freeze_events))
-        aggregated_freeze_sampler = _FreezeEventSampler(sampler_limit)
-        raw_freeze_requested_limit = sampler_limit
-    else:
-        sampler_limit = 0
+        if sampler_limit <= 0:
+            sampling_freeze_events = False
+            raw_freeze_requested_limit = sampler_limit
+        else:
+            aggregated_freeze_sampler = _FreezeEventSampler(sampler_limit)
+            raw_freeze_requested_limit = sampler_limit
+    elif sample_limit_override is not None:
+        raw_freeze_requested_limit = sample_limit_override
     if max_freeze_events is _UNSET_MAX_FREEZE_EVENTS:
         freeze_event_limit: int | None = _DEFAULT_FREEZE_EVENTS_LIMIT
         freeze_events_limit_reason = "default"
@@ -2862,6 +2871,8 @@ def _generate_report(
             omit_payload["display_limit"] = raw_freeze_event_display_limit
             if raw_freeze_event_display_limit == 0 and "reason" not in omit_payload:
                 omit_payload["reason"] = "limit_zero"
+        elif sample_limit_override == 0 and "reason" not in omit_payload:
+            omit_payload["reason"] = "limit_zero"
         if omit_raw_freeze_events:
             omit_payload["reason"] = "explicit_omit"
         elif not sampling_freeze_events and "reason" not in omit_payload:
@@ -3023,6 +3034,14 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--raw-freeze-events-sample-limit",
+        type=int,
+        help=(
+            "Steruje liczbą zdarzeń zapisywanych w próbkach raw_freeze_events. "
+            "Ustaw 0, aby całkowicie pominąć sekcję próbek niezależnie od limitu."
+        ),
+    )
+    parser.add_argument(
         "--omit-raw-freeze-events",
         action="store_true",
         help=(
@@ -3117,6 +3136,19 @@ def main(argv: list[str] | None = None) -> int:
         raw_freeze_events_limit=getattr(args, "raw_freeze_events_limit", None),
     )
 
+    raw_freeze_events_sample_limit = getattr(args, "raw_freeze_events_sample_limit", None)
+    raw_freeze_events_mode = (
+        "sample"
+        if (
+            limit_freeze_events is not None
+            and (
+                raw_freeze_events_sample_limit is None
+                or raw_freeze_events_sample_limit > 0
+            )
+        )
+        else "omit"
+    )
+
     report_kwargs: dict[str, object] = {
         "journal_events": journal_events,
         "autotrade_entries": autotrade_entries,
@@ -3130,10 +3162,11 @@ def main(argv: list[str] | None = None) -> int:
         "risk_score_source": risk_score_source_metadata,
         "risk_threshold_sources": args.risk_thresholds,
         "include_raw_values": bool(args.plot_dir),
-        "raw_freeze_events_mode": "sample" if limit_freeze_events is not None else "omit",
+        "raw_freeze_events_mode": raw_freeze_events_mode,
         "limit_freeze_events": limit_freeze_events,
         "omit_raw_freeze_events": bool(getattr(args, "omit_raw_freeze_events", False)),
         "max_raw_freeze_events": getattr(args, "max_raw_freeze_events", None),
+        "raw_freeze_events_sample_limit": raw_freeze_events_sample_limit,
         "omit_freeze_events": bool(getattr(args, "omit_freeze_events", False)),
     }
     freeze_events_limit_arg = getattr(args, "freeze_events_limit", None)
