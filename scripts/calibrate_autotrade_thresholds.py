@@ -655,11 +655,8 @@ def _load_journal_events(
         except OSError as exc:  # noqa: BLE001 - CLI feedback
             raise SystemExit(f"Nie udało się odczytać dziennika {path}: {exc}") from exc
 
-    def _generator() -> Iterator[Mapping[str, object]]:
-        for path in paths:
-            yield from _iter_path(path)
-
-    return _generator()
+    for path in paths:
+        yield from _iter_path(path)
 
 
 def _extract_entry_timestamp(entry: Mapping[str, object]) -> datetime | None:
@@ -902,11 +899,8 @@ def _load_autotrade_entries(
                 f"Nie udało się odczytać eksportu autotradera {path}: {exc}"
             ) from exc
 
-    def _generator() -> Iterator[Mapping[str, object]]:
-        for path in _iter_autotrade_paths(paths):
-            yield from _iter_path(path)
-
-    return _generator()
+    for path in _iter_autotrade_paths(paths):
+        yield from _iter_path(path)
 
 
 def _resolve_key(exchange: str | None, strategy: str | None) -> tuple[str, str]:
