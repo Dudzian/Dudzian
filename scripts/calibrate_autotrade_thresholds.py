@@ -3,18 +3,32 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import random
 import statistics
 import sys
 from collections import Counter, defaultdict
+from dataclasses import dataclass
 from datetime import datetime, timezone
+from decimal import Decimal
 from pathlib import Path
 from typing import Iterable, Mapping
+
+
+_STREAM_READ_SIZE = 65536
+_DEFAULT_GROUP_SAMPLE_LIMIT = 50000
+_DEFAULT_GLOBAL_SAMPLE_LIMIT = 50000
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from bot_core.ai.config_loader import load_risk_thresholds
+
+
+@dataclass
+class RiskScoreSources:
+    from_files: float | None = None
+    from_inline: float | None = None
 
 
 def _normalize_metric_key(key: str) -> str:
@@ -31,6 +45,13 @@ _ABSOLUTE_THRESHOLD_METRICS = frozenset(
     _normalize_metric_key(name)
     for name in ("signal_after_adjustment", "signal_after_clamp")
 )
+
+_METRIC_VALUE_DOMAINS: dict[str, tuple[float | None, float | None]] = {
+    "signal_after_adjustment": (-1.0, 1.0),
+    "signal_after_clamp": (-1.0, 1.0),
+    "risk_score": (0.0, 1.0),
+    "risk_freeze_duration": (0.0, None),
+}
 _THRESHOLD_VALUE_KEYS = (
     "current_threshold",
     "threshold",
@@ -313,13 +334,23 @@ def _load_threshold_payload(path: Path) -> object:
         raise SystemExit(f"Nie udało się wczytać pliku z progami: {path}") from exc
 
 
+def _ensure_finite_threshold(value: float, *, metric: str, source: str) -> float:
+    if not math.isfinite(value):
+        raise SystemExit(
+            f"Metryka {metric} z {source} posiada niefinityczną wartość: {value}"
+        )
+    return value
+
+
 def _load_current_signal_thresholds(
     sources: Iterable[str] | None,
-) -> tuple[dict[str, float], float | None]:
+) -> tuple[dict[str, float], RiskScoreSources, dict[str, object]]:
     thresholds: dict[str, float] = {}
-    current_risk_score: float | None = None
+    risk_score_sources = RiskScoreSources()
+    metadata_files: list[str] = []
+    metadata_inline: dict[str, float] = {}
     if not sources:
-        return thresholds, current_risk_score
+        return thresholds, risk_score_sources, {}
 
     for source in sources:
         if not source:
@@ -329,6 +360,7 @@ def _load_current_signal_thresholds(
             continue
         path = Path(candidate).expanduser()
         if path.exists():
+            metadata_files.append(str(path))
             payload = _load_threshold_payload(path)
             if not isinstance(payload, (Mapping, list, tuple)):
                 raise SystemExit(
@@ -338,10 +370,15 @@ def _load_current_signal_thresholds(
                 for metric_name in _SUPPORTED_THRESHOLD_METRICS:
                     value = _resolve_metric_threshold(mapping, metric_name)
                     if value is not None:
+                        numeric = _ensure_finite_threshold(
+                            float(value),
+                            metric=metric_name,
+                            source=str(path),
+                        )
                         if metric_name == "risk_score":
-                            current_risk_score = float(value)
+                            risk_score_sources.from_files = numeric
                         else:
-                            thresholds[metric_name] = float(value)
+                            thresholds[metric_name] = numeric
             continue
         if "=" not in candidate:
             raise SystemExit(f"Ścieżka z progami nie istnieje: {path}")
@@ -351,12 +388,24 @@ def _load_current_signal_thresholds(
                 continue
             metric_name_normalized = _normalize_metric_key(metric_name)
             if metric_name_normalized in _SUPPORTED_THRESHOLD_METRICS:
+                finite_value = _ensure_finite_threshold(
+                    float(numeric),
+                    metric=metric_name_normalized,
+                    source="parametru CLI",
+                )
+                metadata_inline[metric_name_normalized] = finite_value
                 if metric_name_normalized == "risk_score":
-                    current_risk_score = float(numeric)
+                    risk_score_sources.from_inline = finite_value
                 else:
-                    thresholds[metric_name_normalized] = numeric
+                    thresholds[metric_name_normalized] = finite_value
 
-    return thresholds, current_risk_score
+    metadata: dict[str, object] = {}
+    if metadata_files:
+        metadata["files"] = metadata_files
+    if metadata_inline:
+        metadata["inline"] = metadata_inline
+
+    return thresholds, risk_score_sources, metadata
 
 
 def _normalize_risk_threshold_paths(sources: Iterable[str] | None) -> list[Path]:
@@ -406,31 +455,32 @@ def _load_journal_events(
     *,
     since: datetime | None = None,
     until: datetime | None = None,
-) -> list[dict[str, object]]:
-    events: list[dict[str, object]] = []
-    for path in paths:
-        try:
-            with path.open("r", encoding="utf-8") as handle:
-                for line in handle:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        payload = json.loads(line)
-                    except json.JSONDecodeError as exc:  # noqa: BLE001 - CLI feedback
-                        raise SystemExit(
-                            f"Nie udało się sparsować JSON w dzienniku {path}: {exc}"
-                        ) from exc
-                    if isinstance(payload, Mapping):
-                        timestamp = _parse_datetime(payload.get("timestamp"))
-                        if since and timestamp and timestamp < since:
+) -> Iterable[dict[str, object]]:
+    def _iterator() -> Iterable[dict[str, object]]:
+        for path in paths:
+            try:
+                with path.open("r", encoding="utf-8") as handle:
+                    for line in handle:
+                        line = line.strip()
+                        if not line:
                             continue
-                        if until and timestamp and timestamp > until:
-                            continue
-                        events.append(dict(payload))
-        except OSError as exc:  # noqa: BLE001 - CLI feedback
-            raise SystemExit(f"Nie udało się odczytać dziennika {path}: {exc}") from exc
-    return events
+                        try:
+                            payload = json.loads(line)
+                        except json.JSONDecodeError as exc:  # noqa: BLE001 - CLI feedback
+                            raise SystemExit(
+                                f"Nie udało się sparsować JSON w dzienniku {path}: {exc}"
+                            ) from exc
+                        if isinstance(payload, Mapping):
+                            timestamp = _parse_datetime(payload.get("timestamp"))
+                            if since and timestamp and timestamp < since:
+                                continue
+                            if until and timestamp and timestamp > until:
+                                continue
+                            yield dict(payload)
+            except OSError as exc:  # noqa: BLE001 - CLI feedback
+                raise SystemExit(f"Nie udało się odczytać dziennika {path}: {exc}") from exc
+
+    return _iterator()
 
 
 def _extract_entry_timestamp(entry: Mapping[str, object]) -> datetime | None:
@@ -450,42 +500,210 @@ def _extract_entry_timestamp(entry: Mapping[str, object]) -> datetime | None:
     return None
 
 
+class _JSONStream:
+    __slots__ = ("_handle", "_buffer", "_pos", "_decoder")
+
+    def __init__(self, handle) -> None:  # type: ignore[no-untyped-def]
+        self._handle = handle
+        self._buffer = ""
+        self._pos = 0
+        self._decoder = json.JSONDecoder()
+
+    def _refill(self) -> bool:
+        chunk = self._handle.read(_STREAM_READ_SIZE)
+        if chunk == "":
+            return False
+        if self._pos > 0:
+            self._buffer = self._buffer[self._pos :] + chunk
+            self._pos = 0
+        else:
+            self._buffer += chunk
+        return True
+
+    def _ensure(self) -> bool:
+        if self._pos < len(self._buffer):
+            return True
+        return self._refill()
+
+    def compact(self) -> None:
+        if self._pos > 0:
+            self._buffer = self._buffer[self._pos :]
+            self._pos = 0
+
+    def skip_whitespace(self) -> None:
+        while True:
+            while self._pos < len(self._buffer) and self._buffer[self._pos].isspace():
+                self._pos += 1
+            if self._pos < len(self._buffer):
+                return
+            if not self._refill():
+                return
+
+    def peek_char(self) -> str | None:
+        while True:
+            if self._pos < len(self._buffer):
+                return self._buffer[self._pos]
+            if not self._refill():
+                return None
+
+    def consume_char(self, expected: str | None = None) -> str:
+        if not self._ensure():
+            raise SystemExit("Nieoczekiwany koniec danych podczas parsowania JSON")
+        char = self._buffer[self._pos]
+        if expected is not None and char != expected:
+            raise SystemExit(
+                f"Niepoprawny JSON: oczekiwano znaku '{expected}', otrzymano '{char}'"
+            )
+        self._pos += 1
+        return char
+
+    def decode_value(self) -> object:
+        while True:
+            try:
+                value, new_pos = self._decoder.raw_decode(self._buffer, self._pos)
+            except json.JSONDecodeError:
+                if not self._refill():
+                    raise SystemExit("Nieoczekiwany koniec danych podczas parsowania JSON")
+                continue
+            self._pos = new_pos
+            return value
+
 def _load_autotrade_entries(
     paths: Iterable[str],
     *,
     since: datetime | None = None,
     until: datetime | None = None,
-) -> list[dict[str, object]]:
-    entries: list[dict[str, object]] = []
-    for raw in paths:
-        path = Path(raw).expanduser()
-        if not path.exists():
-            raise SystemExit(f"Eksport autotradera nie istnieje: {path}")
-        try:
-            payload = json.loads(path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError as exc:  # noqa: BLE001 - CLI feedback
-            raise SystemExit(f"Niepoprawny JSON w eksporcie autotradera {path}: {exc}") from exc
-        if isinstance(payload, Mapping):
-            raw_entries = payload.get("entries")
-            if isinstance(raw_entries, Iterable):
-                for item in raw_entries:
-                    if isinstance(item, Mapping):
-                        timestamp = _extract_entry_timestamp(item)
-                        if since and timestamp and timestamp < since:
-                            continue
-                        if until and timestamp and timestamp > until:
-                            continue
-                        entries.append(dict(item))
-        elif isinstance(payload, list):
-            for item in payload:
-                if isinstance(item, Mapping):
-                    timestamp = _extract_entry_timestamp(item)
-                    if since and timestamp and timestamp < since:
+) -> Iterable[dict[str, object]]:
+    def _iterator() -> Iterable[dict[str, object]]:
+        for raw in paths:
+            path = Path(raw).expanduser()
+            if not path.exists():
+                raise SystemExit(f"Eksport autotradera nie istnieje: {path}")
+            try:
+                with path.open("r", encoding="utf-8") as handle:
+                    stream = _JSONStream(handle)
+                    stream.skip_whitespace()
+                    first = stream.peek_char()
+                    if first == "\ufeff":
+                        stream.consume_char()
+                        stream.compact()
+                        stream.skip_whitespace()
+                        first = stream.peek_char()
+                    if first is None:
                         continue
-                    if until and timestamp and timestamp > until:
-                        continue
-                    entries.append(dict(item))
-    return entries
+                    if first == "[":
+                        stream.consume_char("[")
+                        stream.compact()
+                        yield from _stream_autotrade_array(stream, since=since, until=until, enforce_eof=True)
+                    elif first == "{":
+                        stream.consume_char("{")
+                        stream.compact()
+                        yield from _stream_autotrade_object(stream, since=since, until=until)
+                    else:
+                        raise SystemExit(
+                            f"Nieobsługiwany format JSON w eksporcie autotradera {path}"
+                        )
+            except OSError as exc:
+                raise SystemExit(f"Nie udało się odczytać eksportu {path}: {exc}") from exc
+            except SystemExit:
+                raise
+            except Exception as exc:  # noqa: BLE001 - CLI feedback
+                raise SystemExit(
+                    f"Niepoprawny JSON w eksporcie autotradera {path}: {exc}"
+                ) from exc
+
+    return _iterator()
+
+
+def _stream_autotrade_array(
+    stream: _JSONStream,
+    *,
+    since: datetime | None,
+    until: datetime | None,
+    enforce_eof: bool = False,
+) -> Iterable[dict[str, object]]:
+    first_value = True
+    while True:
+        stream.skip_whitespace()
+        char = stream.peek_char()
+        if char is None:
+            raise SystemExit("Niepoprawny JSON: nieoczekiwane zakończenie tablicy")
+        if char == "]":
+            stream.consume_char("]")
+            stream.compact()
+            break
+        if not first_value:
+            if char != ",":
+                raise SystemExit("Niepoprawny JSON: oczekiwano ',' w tablicy")
+            stream.consume_char(",")
+            stream.compact()
+            stream.skip_whitespace()
+        entry = stream.decode_value()
+        stream.compact()
+        if isinstance(entry, Mapping):
+            timestamp = _extract_entry_timestamp(entry)
+            if since and timestamp and timestamp < since:
+                first_value = False
+                continue
+            if until and timestamp and timestamp > until:
+                first_value = False
+                continue
+            yield dict(entry)
+        first_value = False
+    if enforce_eof:
+        stream.skip_whitespace()
+        if stream.peek_char() is not None:
+            stream.skip_whitespace()
+            if stream.peek_char() is not None:
+                raise SystemExit("Niepoprawny JSON: dodatkowe dane po tablicy")
+
+
+def _stream_autotrade_object(
+    stream: _JSONStream,
+    *,
+    since: datetime | None,
+    until: datetime | None,
+) -> Iterable[dict[str, object]]:
+    first_pair = True
+    while True:
+        stream.skip_whitespace()
+        char = stream.peek_char()
+        if char is None:
+            raise SystemExit("Niepoprawny JSON: nieoczekiwane zakończenie obiektu")
+        if char == "}":
+            stream.consume_char("}")
+            stream.compact()
+            break
+        if not first_pair:
+            if char != ",":
+                raise SystemExit("Niepoprawny JSON: oczekiwano ',' w obiekcie")
+            stream.consume_char(",")
+            stream.compact()
+            stream.skip_whitespace()
+        key = stream.decode_value()
+        stream.compact()
+        if not isinstance(key, str):
+            raise SystemExit("Niepoprawny JSON: klucz obiektu musi być napisem")
+        stream.skip_whitespace()
+        stream.consume_char(":")
+        stream.compact()
+        stream.skip_whitespace()
+        if key == "entries":
+            char = stream.peek_char()
+            if char != "[":
+                raise SystemExit("Niepoprawny JSON: pole 'entries' musi być tablicą")
+            stream.consume_char("[")
+            stream.compact()
+            yield from _stream_autotrade_array(stream, since=since, until=until)
+        else:
+            _ = stream.decode_value()
+            stream.compact()
+        first_pair = False
+    stream.skip_whitespace()
+    if stream.peek_char() is not None:
+        stream.skip_whitespace()
+        if stream.peek_char() is not None:
+            raise SystemExit("Niepoprawny JSON: dodatkowe dane po obiekcie")
 
 
 def _resolve_key(exchange: str | None, strategy: str | None) -> tuple[str, str]:
@@ -520,40 +738,47 @@ def _has_conflict(existing: tuple[str, str], candidate: tuple[str, str]) -> bool
     return False
 
 
+def _update_symbol_map_entry(
+    symbol_map: dict[str, tuple[str, str]],
+    event: Mapping[str, object],
+) -> None:
+    symbol = _canonicalize_symbol_key(event.get("symbol"))
+    if not symbol:
+        return
+    exchange = _normalize_string(event.get("primary_exchange"))
+    strategy = _normalize_string(event.get("strategy"))
+    key = _resolve_key(exchange, strategy)
+    existing = symbol_map.get(symbol)
+    if existing is None:
+        symbol_map[symbol] = key
+        return
+    if existing == _AMBIGUOUS_SYMBOL_MAPPING:
+        return
+    if existing == key:
+        return
+    if _has_conflict(existing, key):
+        symbol_map[symbol] = _AMBIGUOUS_SYMBOL_MAPPING
+        return
+    merged_exchange = existing[0]
+    merged_strategy = existing[1]
+    candidate_exchange, candidate_strategy = key
+    if not _is_unknown_token(candidate_exchange):
+        merged_exchange = candidate_exchange
+    if not _is_unknown_token(candidate_strategy):
+        merged_strategy = candidate_strategy
+    merged = (merged_exchange, merged_strategy)
+    if merged == existing:
+        return
+    if _has_conflict(existing, merged):
+        symbol_map[symbol] = _AMBIGUOUS_SYMBOL_MAPPING
+        return
+    symbol_map[symbol] = merged
+
+
 def _build_symbol_map(events: Iterable[Mapping[str, object]]) -> dict[str, tuple[str, str]]:
     symbol_map: dict[str, tuple[str, str]] = {}
     for event in events:
-        symbol = _canonicalize_symbol_key(event.get("symbol"))
-        if not symbol:
-            continue
-        exchange = _normalize_string(event.get("primary_exchange"))
-        strategy = _normalize_string(event.get("strategy"))
-        key = _resolve_key(exchange, strategy)
-        existing = symbol_map.get(symbol)
-        if existing is None:
-            symbol_map[symbol] = key
-            continue
-        if existing == _AMBIGUOUS_SYMBOL_MAPPING:
-            continue
-        if existing == key:
-            continue
-        if _has_conflict(existing, key):
-            symbol_map[symbol] = _AMBIGUOUS_SYMBOL_MAPPING
-            continue
-        merged_exchange = existing[0]
-        merged_strategy = existing[1]
-        candidate_exchange, candidate_strategy = key
-        if not _is_unknown_token(candidate_exchange):
-            merged_exchange = candidate_exchange
-        if not _is_unknown_token(candidate_strategy):
-            merged_strategy = candidate_strategy
-        merged = (merged_exchange, merged_strategy)
-        if merged == existing:
-            continue
-        if _has_conflict(existing, merged):
-            symbol_map[symbol] = _AMBIGUOUS_SYMBOL_MAPPING
-            continue
-        symbol_map[symbol] = merged
+        _update_symbol_map_entry(symbol_map, event)
     return symbol_map
 
 
@@ -729,6 +954,412 @@ def _finite_values(values: Iterable[object]) -> list[float]:
     return finite
 
 
+@dataclass(slots=True)
+class MetricStatisticsResult:
+    payload: dict[str, object]
+    sorted_samples: list[float]
+    sorted_abs_samples: list[float] | None = None
+
+
+def _merge_sorted_sequences(left: list[float], right: list[float]) -> list[float]:
+    result: list[float] = []
+    i = 0
+    j = 0
+    left_len = len(left)
+    right_len = len(right)
+    while i < left_len and j < right_len:
+        if left[i] <= right[j]:
+            result.append(left[i])
+            i += 1
+        else:
+            result.append(right[j])
+            j += 1
+    if i < left_len:
+        result.extend(left[i:])
+    if j < right_len:
+        result.extend(right[j:])
+    return result
+
+
+def _sorted_absolute_values(sorted_values: list[float]) -> list[float]:
+    if not sorted_values:
+        return []
+    negatives = [abs(value) for value in sorted_values if value < 0]
+    negatives.reverse()
+    positives = [value for value in sorted_values if value >= 0]
+    return _merge_sorted_sequences(negatives, positives)
+
+
+class StreamingMetricAggregator:
+    __slots__ = (
+        "_count",
+        "_min",
+        "_max",
+        "_sum",
+        "_sum_sq",
+        "_samples",
+        "_sample_limit",
+        "_rng",
+        "_domain_min",
+        "_domain_max",
+        "_clamp_count",
+        "_clamp_absolute_count",
+    )
+
+    def __init__(
+        self,
+        *,
+        sample_limit: int | None = None,
+        rng: random.Random | None = None,
+        domain: tuple[float | None, float | None] | None = None,
+    ) -> None:
+        self._count = 0
+        self._min: float | None = None
+        self._max: float | None = None
+        self._sum = 0.0
+        self._sum_sq = 0.0
+        self._sample_limit = sample_limit if sample_limit is None or sample_limit >= 0 else None
+        self._samples: list[float] = []
+        self._rng = rng or random.Random(0)
+        if domain:
+            self._domain_min, self._domain_max = domain
+        else:
+            self._domain_min = None
+            self._domain_max = None
+        self._clamp_count = 0
+        self._clamp_absolute_count = 0
+
+    def add(self, value: float) -> None:
+        if not math.isfinite(value):
+            return
+        self._count += 1
+        self._sum += value
+        self._sum_sq += value * value
+        if self._min is None or value < self._min:
+            self._min = value
+        if self._max is None or value > self._max:
+            self._max = value
+        limit = self._sample_limit
+        if limit is None or limit < 0:
+            self._samples.append(value)
+            return
+        if limit == 0:
+            return
+        if len(self._samples) < limit:
+            self._samples.append(value)
+            return
+        index = self._rng.randrange(self._count)
+        if index < limit:
+            self._samples[index] = value
+
+    def extend(self, values: Iterable[float]) -> None:
+        for value in values:
+            self.add(value)
+
+    @property
+    def count(self) -> int:
+        return self._count
+
+    @property
+    def sample_size(self) -> int:
+        return len(self._samples)
+
+    @property
+    def sample_limit(self) -> int | None:
+        return self._sample_limit
+
+    @property
+    def sample_truncated(self) -> bool:
+        limit = self._sample_limit
+        if limit is None or limit < 0:
+            return False
+        if limit == 0:
+            return self._count > 0
+        return self._count > limit
+
+    @property
+    def omitted_samples(self) -> int:
+        limit = self._sample_limit
+        if limit is None or limit < 0:
+            return 0
+        retained = len(self._samples) if limit != 0 else 0
+        return max(self._count - retained, 0)
+
+    @property
+    def clamp_regular_count(self) -> int:
+        return self._clamp_count
+
+    @property
+    def clamp_absolute_count(self) -> int:
+        return self._clamp_absolute_count
+
+    def _sorted_samples(self) -> list[float]:
+        if not self._samples:
+            return []
+        return sorted(self._samples)
+
+    def _mean_stddev(self) -> tuple[float, float]:
+        if self._count == 0:
+            return (0.0, 0.0)
+        mean = self._sum / self._count
+        variance = (self._sum_sq / self._count) - (mean * mean)
+        if variance < 0:
+            variance = 0.0
+        stddev = math.sqrt(variance) if self._count > 1 else 0.0
+        return (mean, stddev)
+
+    def _value_bounds(self, *, absolute: bool = False) -> tuple[float | None, float | None]:
+        domain_min = self._domain_min
+        domain_max = self._domain_max
+        if not absolute:
+            lower = self._min
+            upper = self._max
+            if domain_min is not None:
+                lower = domain_min if lower is None else max(lower, domain_min)
+            if domain_max is not None:
+                upper = domain_max if upper is None else min(upper, domain_max)
+            return (lower, upper)
+
+        lower: float | None = None
+        upper: float | None = None
+        candidates: list[float] = []
+        if self._min is not None:
+            candidates.append(abs(self._min))
+        if self._max is not None:
+            candidates.append(abs(self._max))
+        if candidates:
+            lower = min(candidates)
+            upper = max(candidates)
+        else:
+            lower = 0.0
+            upper = None
+
+        lower = 0.0 if lower is None else max(lower, 0.0)
+
+        if domain_min is not None:
+            domain_min_abs = domain_min if domain_min >= 0 else 0.0
+            lower = max(lower, domain_min_abs)
+        if domain_max is not None:
+            domain_max_abs = abs(domain_max)
+            upper = domain_max_abs if upper is None else min(upper, domain_max_abs)
+
+        return (lower, upper)
+
+    def _clamp(
+        self,
+        value: float,
+        bounds: tuple[float | None, float | None],
+        *,
+        absolute: bool = False,
+    ) -> float:
+        lower, upper = bounds
+        clamped = value
+        clamped_flag = False
+        if lower is not None and clamped < lower:
+            clamped = lower
+            clamped_flag = True
+        if upper is not None and clamped > upper:
+            clamped = upper
+            clamped_flag = True
+        if clamped_flag:
+            if absolute:
+                self._clamp_absolute_count += 1
+            else:
+                self._clamp_count += 1
+        return clamped
+
+    def statistics(self, percentiles: Iterable[float]) -> MetricStatisticsResult:
+        if self._count == 0:
+            payload = {
+                "count": 0,
+                "min": None,
+                "max": None,
+                "mean": None,
+                "stddev": None,
+                "percentiles": {
+                    _format_percentile_label(p): None for p in percentiles
+                },
+                "sample_truncated": False,
+                "retained_samples": 0,
+                "omitted_samples": 0,
+            }
+            return MetricStatisticsResult(payload=payload, sorted_samples=[])
+        mean, stddev = self._mean_stddev()
+        samples = self._sorted_samples()
+        percentiles_payload = {}
+        if samples:
+            percentiles_payload = {
+                _format_percentile_label(p): _compute_percentile(samples, p)
+                for p in percentiles
+            }
+        elif self._sample_limit == 0:
+            percentiles_payload = _approximate_percentiles_from_moments(
+                mean, stddev, percentiles
+            )
+        else:
+            percentiles_payload = {
+                _format_percentile_label(p): None for p in percentiles
+            }
+        bounds = self._value_bounds()
+        for key, value in list(percentiles_payload.items()):
+            if value is None:
+                continue
+            percentiles_payload[key] = self._clamp(value, bounds, absolute=False)
+        payload = {
+            "count": self._count,
+            "min": self._min,
+            "max": self._max,
+            "mean": mean,
+            "stddev": stddev,
+            "percentiles": percentiles_payload,
+            "sample_truncated": self.sample_truncated,
+            "retained_samples": len(samples),
+            "omitted_samples": self.omitted_samples,
+        }
+        return MetricStatisticsResult(payload=payload, sorted_samples=samples)
+
+    def suggest_threshold(
+        self,
+        percentile: float,
+        *,
+        absolute: bool = False,
+        statistics_result: MetricStatisticsResult | None = None,
+    ) -> float | None:
+        samples: list[float]
+        percentiles_payload: Mapping[str, object] | None = None
+        if statistics_result is not None:
+            samples = statistics_result.sorted_samples
+            percentiles_payload = statistics_result.payload.get("percentiles")
+            working_abs = statistics_result.sorted_abs_samples
+        else:
+            samples = self._sorted_samples()
+            working_abs = None
+        if samples:
+            if absolute:
+                if working_abs is None:
+                    working_abs = _sorted_absolute_values(samples)
+                    if statistics_result is not None:
+                        statistics_result.sorted_abs_samples = working_abs
+                working = working_abs
+            else:
+                working = samples
+            value = _compute_percentile(working, percentile)
+            return self._clamp(
+                value,
+                self._value_bounds(absolute=absolute),
+                absolute=absolute,
+            )
+
+        if self._count == 0:
+            return None
+
+        if percentiles_payload is not None:
+            if (
+                absolute
+                and self._sample_limit == 0
+                and (
+                    statistics_result is None
+                    or statistics_result.payload.get("retained_samples", 0) == 0
+                )
+            ):
+                mean, stddev = self._mean_stddev()
+                value = _approximate_folded_normal_percentile(mean, stddev, percentile)
+                return self._clamp(
+                    value,
+                    self._value_bounds(absolute=True),
+                    absolute=True,
+                )
+
+            label = _format_percentile_label(percentile)
+            candidate = percentiles_payload.get(label)
+            if candidate is not None:
+                return self._clamp(
+                    candidate,
+                    self._value_bounds(absolute=absolute),
+                    absolute=absolute,
+                )
+
+        mean, stddev = self._mean_stddev()
+        if self._sample_limit == 0:
+            if absolute:
+                value = _approximate_folded_normal_percentile(mean, stddev, percentile)
+            else:
+                value = _approximate_normal_percentile(mean, stddev, percentile)
+            return self._clamp(
+                value,
+                self._value_bounds(absolute=absolute),
+                absolute=absolute,
+            )
+        return None
+
+
+def _format_percentile_label(percentile: float) -> str:
+    decimal_value = Decimal(str(percentile)) * Decimal(100)
+    normalized = decimal_value.normalize()
+    text = format(normalized, "f")
+    if "." in text:
+        integer, fractional = text.split(".", 1)
+        fractional = fractional.rstrip("0")
+        if fractional:
+            return f"p{integer.zfill(2)}_{fractional}"
+        return f"p{integer.zfill(2)}"
+    return f"p{text.zfill(2)}"
+
+
+def _approximate_normal_percentile(mean: float, stddev: float, percentile: float) -> float:
+    if stddev <= 0 or math.isclose(stddev, 0.0):
+        return mean
+    dist = statistics.NormalDist(mu=mean, sigma=stddev)
+    return dist.inv_cdf(percentile)
+
+
+def _approximate_folded_normal_percentile(
+    mean: float, stddev: float, percentile: float
+) -> float:
+    percentile = max(0.0, min(1.0, percentile))
+    if percentile <= 0.0:
+        return 0.0
+    if percentile >= 1.0:
+        return max(abs(mean), stddev * 10.0)
+    if stddev <= 0 or math.isclose(stddev, 0.0):
+        return abs(mean)
+    dist = statistics.NormalDist(mu=mean, sigma=stddev)
+
+    def _folded_cdf(x: float) -> float:
+        if x <= 0:
+            return 0.0
+        return dist.cdf(x) - dist.cdf(-x)
+
+    high = max(abs(mean), stddev)
+    if high <= 0.0:
+        high = 1.0
+    target = percentile
+    # Expand search window until coverage >= target
+    for _ in range(64):
+        if _folded_cdf(high) >= target:
+            break
+        high *= 2.0
+    low = 0.0
+    for _ in range(64):
+        mid = (low + high) / 2.0
+        if mid <= 0.0 and high <= 0.0:
+            break
+        if _folded_cdf(mid) < target:
+            low = mid
+        else:
+            high = mid
+    return high
+
+
+def _approximate_percentiles_from_moments(
+    mean: float, stddev: float, percentiles: Iterable[float]
+) -> dict[str, float]:
+    return {
+        _format_percentile_label(p): _approximate_normal_percentile(mean, stddev, p)
+        for p in percentiles
+    }
+
+
 def _metric_statistics(values: list[float], percentiles: Iterable[float]) -> dict[str, object]:
     if not values:
         return {
@@ -744,7 +1375,7 @@ def _metric_statistics(values: list[float], percentiles: Iterable[float]) -> dic
     mean = statistics.fmean(sorted_values)
     stddev = statistics.pstdev(sorted_values) if count > 1 else 0.0
     percentiles_payload = {
-        f"p{int(p * 100):02d}": _compute_percentile(sorted_values, p)
+        _format_percentile_label(p): _compute_percentile(sorted_values, p)
         for p in percentiles
     }
     return {
@@ -766,7 +1397,7 @@ def _suggest_threshold(values: list[float], percentile: float, *, absolute: bool
 
 
 def _build_metrics_section(
-    values_map: Mapping[str, list[float]],
+    values_map: Mapping[str, object],
     percentiles: Iterable[float],
     suggestion_percentile: float,
     *,
@@ -775,12 +1406,30 @@ def _build_metrics_section(
 ) -> dict[str, dict[str, object]]:
     metrics_payload: dict[str, dict[str, object]] = {}
     for metric_name, values in values_map.items():
-        finite_values = _finite_values(values)
-        if isinstance(values, list) and len(finite_values) != len(values):
-            values[:] = finite_values
-        stats_payload = _metric_statistics(finite_values, percentiles)
         absolute = metric_name in _ABSOLUTE_THRESHOLD_METRICS
-        suggested = _suggest_threshold(finite_values, suggestion_percentile, absolute=absolute)
+        if isinstance(values, StreamingMetricAggregator):
+            stats_result = values.statistics(percentiles)
+            stats_payload = stats_result.payload
+            suggested = values.suggest_threshold(
+                suggestion_percentile,
+                absolute=absolute,
+                statistics_result=stats_result,
+            )
+            stats_payload["clamped_values"] = {
+                "regular": int(values.clamp_regular_count),
+                "absolute": int(values.clamp_absolute_count),
+            }
+        else:
+            finite_values = _finite_values(values)
+            if isinstance(values, list) and len(finite_values) != len(values):
+                values[:] = finite_values
+            stats_payload = _metric_statistics(finite_values, percentiles)
+            suggested = _suggest_threshold(
+                finite_values,
+                suggestion_percentile,
+                absolute=absolute,
+            )
+            stats_payload["clamped_values"] = {"regular": 0, "absolute": 0}
         if metric_name == "risk_score":
             current = current_risk_score
         elif current_signal_thresholds:
@@ -798,12 +1447,14 @@ def _format_freeze_summary(summary: Mapping[str, object]) -> dict[str, object]:
     status_counts = summary.get("status_counts")
     reason_counts = summary.get("reason_counts")
     total = int(summary.get("total") or 0)
+    omitted_total = summary.get("omitted_total")
+    omitted = int(omitted_total) if omitted_total is not None else 0
     auto_count = 0
     manual_count = 0
     if isinstance(type_counts, Counter):
         auto_count = int(type_counts.get("auto", 0))
         manual_count = int(type_counts.get("manual", 0))
-    return {
+    payload = {
         "total": total,
         "auto": auto_count,
         "manual": manual_count,
@@ -822,6 +1473,8 @@ def _format_freeze_summary(summary: Mapping[str, object]) -> dict[str, object]:
             )
         ],
     }
+    payload["omitted"] = omitted
+    return payload
 
 
 def _write_json(report: Mapping[str, object], destination: Path) -> None:
@@ -839,6 +1492,20 @@ def _write_csv(
     import csv
 
     destination.parent.mkdir(parents=True, exist_ok=True)
+    freeze_columns = [
+        "freeze_total",
+        "freeze_auto",
+        "freeze_manual",
+        "freeze_omitted",
+        "freeze_status_counts",
+        "freeze_reason_counts",
+        "freeze_truncated",
+    ]
+    sample_columns = [
+        "sample_truncated",
+        "retained_samples",
+        "omitted_samples",
+    ]
     fieldnames = [
         "primary_exchange",
         "strategy",
@@ -850,7 +1517,56 @@ def _write_csv(
         "stddev",
         "suggested_threshold",
         "current_threshold",
-    ] + list(percentiles)
+    ] + sample_columns + list(percentiles) + freeze_columns
+    sample_defaults = {column: "" for column in sample_columns}
+    freeze_defaults = {column: "" for column in freeze_columns}
+    def _freeze_row_payload(
+        *,
+        primary_exchange: str,
+        strategy: str,
+        summary: Mapping[str, object] | None,
+        truncated: bool | None,
+    ) -> dict[str, object] | None:
+        if summary is None:
+            return None
+        total = summary.get("total")
+        auto = summary.get("auto")
+        manual = summary.get("manual")
+        omitted = summary.get("omitted")
+        statuses = summary.get("statuses")
+        reasons = summary.get("reasons")
+        row: dict[str, object] = {
+            "primary_exchange": primary_exchange,
+            "strategy": strategy,
+            "metric": "__freeze_summary__",
+            "count": total,
+            "min": "",
+            "max": "",
+            "mean": "",
+            "stddev": "",
+            "suggested_threshold": "",
+            "current_threshold": "",
+        }
+        row.update(sample_defaults)
+        row.update(freeze_defaults)
+        if total is not None:
+            row["freeze_total"] = total
+        if auto is not None:
+            row["freeze_auto"] = auto
+        if manual is not None:
+            row["freeze_manual"] = manual
+        if omitted is not None:
+            row["freeze_omitted"] = omitted
+        if statuses:
+            row["freeze_status_counts"] = json.dumps(statuses, ensure_ascii=False)
+        if reasons:
+            row["freeze_reason_counts"] = json.dumps(reasons, ensure_ascii=False)
+        if truncated is not None:
+            row["freeze_truncated"] = str(bool(truncated)).lower()
+        else:
+            row["freeze_truncated"] = ""
+        return row
+
     with destination.open("w", encoding="utf-8", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
         writer.writeheader()
@@ -858,6 +1574,8 @@ def _write_csv(
             primary_exchange = group["primary_exchange"]
             strategy = group["strategy"]
             metrics = group["metrics"]
+            freeze_summary = group.get("freeze_summary") if isinstance(group.get("freeze_summary"), Mapping) else None
+            freeze_truncated = group.get("raw_freeze_events_truncated")
             for metric_name, metric_payload in metrics.items():
                 row = {
                     "primary_exchange": primary_exchange,
@@ -871,9 +1589,28 @@ def _write_csv(
                     "suggested_threshold": metric_payload.get("suggested_threshold"),
                     "current_threshold": metric_payload.get("current_threshold"),
                 }
+                row.update(sample_defaults)
                 for percentile_key, percentile_value in metric_payload.get("percentiles", {}).items():
                     row[percentile_key] = percentile_value
+                sample_truncated = metric_payload.get("sample_truncated")
+                if sample_truncated is not None:
+                    row["sample_truncated"] = str(bool(sample_truncated)).lower()
+                retained = metric_payload.get("retained_samples")
+                if retained is not None:
+                    row["retained_samples"] = retained
+                omitted = metric_payload.get("omitted_samples")
+                if omitted is not None:
+                    row["omitted_samples"] = omitted
+                row.update(freeze_defaults)
                 writer.writerow(row)
+            freeze_row = _freeze_row_payload(
+                primary_exchange=primary_exchange,
+                strategy=strategy,
+                summary=freeze_summary,
+                truncated=bool(freeze_truncated) if freeze_truncated is not None else None,
+            )
+            if freeze_row is not None:
+                writer.writerow(freeze_row)
         if global_summary:
             metrics = global_summary.get("metrics")
             if isinstance(metrics, Mapping):
@@ -890,11 +1627,32 @@ def _write_csv(
                         "suggested_threshold": metric_payload.get("suggested_threshold"),
                         "current_threshold": metric_payload.get("current_threshold"),
                     }
+                    row.update(sample_defaults)
                     percentiles_payload = metric_payload.get("percentiles")
                     if isinstance(percentiles_payload, Mapping):
                         for percentile_key, percentile_value in percentiles_payload.items():
                             row[percentile_key] = percentile_value
+                    sample_truncated = metric_payload.get("sample_truncated")
+                    if sample_truncated is not None:
+                        row["sample_truncated"] = str(bool(sample_truncated)).lower()
+                    retained = metric_payload.get("retained_samples")
+                    if retained is not None:
+                        row["retained_samples"] = retained
+                    omitted = metric_payload.get("omitted_samples")
+                    if omitted is not None:
+                        row["omitted_samples"] = omitted
+                    row.update(freeze_defaults)
                     writer.writerow(row)
+            freeze_summary = global_summary.get("freeze_summary")
+            summary_mapping = freeze_summary if isinstance(freeze_summary, Mapping) else None
+            freeze_row = _freeze_row_payload(
+                primary_exchange="__all__",
+                strategy="__all__",
+                summary=summary_mapping,
+                truncated=None,
+            )
+            if freeze_row is not None:
+                writer.writerow(freeze_row)
 
 
 def _maybe_plot(
@@ -933,22 +1691,120 @@ def _maybe_plot(
 
 def _generate_report(
     *,
-    journal_events: list[dict[str, object]],
-    autotrade_entries: list[dict[str, object]],
+    journal_events: Iterable[Mapping[str, object]],
+    autotrade_entries: Iterable[Mapping[str, object]],
     percentiles: list[float],
     suggestion_percentile: float,
     since: datetime | None = None,
     until: datetime | None = None,
     current_signal_thresholds: Mapping[str, float] | None = None,
     risk_threshold_sources: Iterable[str] | None = None,
+    cli_risk_score: float | None = None,
+    file_risk_score: float | None = None,
+    current_signal_threshold_sources: Mapping[str, object] | None = None,
+    max_freeze_events: int | None = None,
+    max_raw_values: int | None = None,
+    max_group_samples: int | None = _DEFAULT_GROUP_SAMPLE_LIMIT,
+    max_global_samples: int | None = _DEFAULT_GLOBAL_SAMPLE_LIMIT,
 ) -> dict[str, object]:
-    symbol_map = _build_symbol_map(journal_events)
-    grouped_values: dict[tuple[str, str], dict[str, list[float]]] = defaultdict(
-        lambda: defaultdict(list)
-    )
+    symbol_map: dict[str, tuple[str, str]] = {}
+    grouped_values: dict[tuple[str, str], dict[str, StreamingMetricAggregator]] = defaultdict(dict)
+    grouped_metric_rngs: dict[tuple[str, str], dict[str, random.Random]] = defaultdict(dict)
     raw_value_snapshots: dict[tuple[str, str], dict[str, list[float]]] = defaultdict(
         lambda: defaultdict(list)
     )
+    raw_value_omitted: dict[tuple[str, str], dict[str, int]] = defaultdict(
+        lambda: defaultdict(int)
+    )
+    raw_value_counts: dict[tuple[str, str], dict[str, int]] = defaultdict(
+        lambda: defaultdict(int)
+    )
+    raw_value_rngs: dict[tuple[str, str], dict[str, random.Random]] = defaultdict(dict)
+    aggregated_metrics: dict[str, StreamingMetricAggregator] = {}
+    aggregated_metric_rngs: dict[str, random.Random] = {}
+
+    if max_group_samples is None:
+        group_sample_limit: int | None = _DEFAULT_GROUP_SAMPLE_LIMIT
+    elif max_group_samples <= 0:
+        group_sample_limit = None
+    else:
+        group_sample_limit = max_group_samples
+
+    def _group_metric_rng(key: tuple[str, str], metric: str) -> random.Random:
+        rng = grouped_metric_rngs[key].get(metric)
+        if rng is None:
+            seed = f"group::{key[0]}::{key[1]}::{metric}"
+            rng = random.Random(seed)
+            grouped_metric_rngs[key][metric] = rng
+        return rng
+
+    def _global_metric_rng(metric: str) -> random.Random:
+        rng = aggregated_metric_rngs.get(metric)
+        if rng is None:
+            rng = random.Random(f"global::{metric}")
+            aggregated_metric_rngs[metric] = rng
+        return rng
+
+    def _raw_sample_rng(key: tuple[str, str], metric: str) -> random.Random:
+        rng = raw_value_rngs[key].get(metric)
+        if rng is None:
+            seed = f"raw::{key[0]}::{key[1]}::{metric}"
+            rng = random.Random(seed)
+            raw_value_rngs[key][metric] = rng
+        return rng
+
+    def _ensure_group_metric(key: tuple[str, str], metric: str) -> StreamingMetricAggregator:
+        aggregator = grouped_values[key].get(metric)
+        if aggregator is None:
+            aggregator = StreamingMetricAggregator(
+                sample_limit=group_sample_limit,
+                rng=_group_metric_rng(key, metric),
+                domain=_METRIC_VALUE_DOMAINS.get(metric),
+            )
+            grouped_values[key][metric] = aggregator
+        return aggregator
+
+    def _ensure_global_metric(metric: str) -> StreamingMetricAggregator:
+        aggregator = aggregated_metrics.get(metric)
+        if aggregator is None:
+            limit = max_global_samples if (max_global_samples is None or max_global_samples >= 0) else None
+            aggregator = StreamingMetricAggregator(
+                sample_limit=limit,
+                rng=_global_metric_rng(metric),
+                domain=_METRIC_VALUE_DOMAINS.get(metric),
+            )
+            aggregated_metrics[metric] = aggregator
+        return aggregator
+
+    def _record_metric_value(key: tuple[str, str], metric: str, value: float) -> None:
+        _ensure_group_metric(key, metric).add(value)
+        _ensure_global_metric(metric).add(value)
+        _record_raw_sample(key, metric, value)
+
+    def _record_raw_sample(key: tuple[str, str], metric: str, value: float) -> None:
+        if max_raw_values is not None and max_raw_values >= 0:
+            limit = max_raw_values
+            samples = raw_value_snapshots[key][metric]
+            total_tracker = raw_value_counts[key]
+            total_tracker[metric] += 1
+            seen = total_tracker[metric]
+
+            if limit == 0:
+                if samples:
+                    samples.clear()
+                raw_value_omitted[key][metric] = seen
+                return
+
+            if len(samples) < limit:
+                samples.append(value)
+            else:
+                rng = _raw_sample_rng(key, metric)
+                index = rng.randrange(seen)
+                if index < limit:
+                    samples[index] = value
+            raw_value_omitted[key][metric] = max(seen - len(samples), 0)
+        else:
+            raw_value_snapshots[key][metric].append(value)
     freeze_summaries: dict[tuple[str, str], dict[str, object]] = defaultdict(
         lambda: {
             "total": 0,
@@ -1014,19 +1870,28 @@ def _generate_report(
             except (TypeError, ValueError):
                 numeric_duration = None
             if numeric_duration is not None and math.isfinite(numeric_duration):
-                grouped_values[key]["risk_freeze_duration"].append(numeric_duration)
-                raw_value_snapshots[key]["risk_freeze_duration"].append(numeric_duration)
-        freeze_events[key].append(
-            {
-                "status": status,
-                "type": freeze_type,
-                "reason": reason,
-                "duration": duration,
-                "risk_score": payload.get("risk_score"),
-            }
-        )
+                _record_metric_value(key, "risk_freeze_duration", numeric_duration)
+        should_collect = True
+        if max_freeze_events is not None:
+            if max_freeze_events <= 0:
+                should_collect = False
+            else:
+                should_collect = len(freeze_events[key]) < max_freeze_events
+        if should_collect:
+            freeze_events[key].append(
+                {
+                    "status": status,
+                    "type": freeze_type,
+                    "reason": reason,
+                    "duration": duration,
+                    "risk_score": payload.get("risk_score"),
+                }
+            )
 
+    journal_count = 0
     for event in journal_events:
+        journal_count += 1
+        _update_symbol_map_entry(symbol_map, event)
         base_exchange = _normalize_string(event.get("primary_exchange"))
         base_strategy = _normalize_string(event.get("strategy"))
         key = _resolve_key(base_exchange, base_strategy)
@@ -1041,8 +1906,7 @@ def _generate_report(
                 continue
             if not math.isfinite(numeric):
                 continue
-            grouped_values[key][metric].append(numeric)
-            raw_value_snapshots[key][metric].append(numeric)
+            _record_metric_value(key, metric, numeric)
         for freeze_payload in _iter_freeze_events(event):
             symbol = _extract_symbol(event)
             exchange = base_exchange
@@ -1060,7 +1924,9 @@ def _generate_report(
             _record_display(freeze_key, exchange, strategy)
             _record_freeze(freeze_key, freeze_payload)
 
+    autotrade_count = 0
     for entry in autotrade_entries:
+        autotrade_count += 1
         summary = _extract_summary(entry)
         symbol = _extract_symbol(entry)
         key, display = _resolve_group_from_symbol(entry, symbol, summary, symbol_map)
@@ -1092,8 +1958,7 @@ def _generate_report(
             continue
         if not math.isfinite(score_value):
             continue
-        grouped_values[key]["risk_score"].append(score_value)
-        raw_value_snapshots[key]["risk_score"].append(score_value)
+        _record_metric_value(key, "risk_score", score_value)
 
     risk_threshold_paths = _normalize_risk_threshold_paths(risk_threshold_sources)
     current_risk_score = None
@@ -1107,16 +1972,41 @@ def _generate_report(
         thresholds = load_risk_thresholds()
         current_risk_score = _extract_risk_score_threshold(thresholds)
 
+    if file_risk_score is not None:
+        current_risk_score = float(file_risk_score)
+
+    if cli_risk_score is not None:
+        current_risk_score = float(cli_risk_score)
+
     groups: list[dict[str, object]] = []
-    aggregated_values: defaultdict[str, list[float]] = defaultdict(list)
     aggregated_freeze_summary = {
         "total": 0,
         "type_counts": Counter(),
         "status_counts": Counter(),
         "reason_counts": Counter(),
+        "omitted_total": 0,
     }
 
-    for (exchange, strategy), metrics in sorted(grouped_values.items()):
+    freeze_truncated_group_count = 0
+    raw_truncated_group_count = 0
+    raw_values_omitted_total = 0
+    group_sample_truncated_count = 0
+    group_sample_omitted_total = 0
+    aggregated_sample_truncated_count = 0
+    aggregated_sample_omitted_total = 0
+    clamp_regular_total = 0
+    clamp_absolute_total = 0
+    clamp_regular_metric_count = 0
+    clamp_absolute_metric_count = 0
+
+    all_group_keys = set(grouped_values.keys())
+    all_group_keys.update(freeze_summaries.keys())
+    all_group_keys.update(display_names.keys())
+    all_group_keys.update(freeze_events.keys())
+
+    for exchange, strategy in sorted(all_group_keys):
+        key = (exchange, strategy)
+        metrics = grouped_values.get(key) or {}
         metrics_payload = _build_metrics_section(
             metrics,
             percentiles,
@@ -1124,44 +2014,97 @@ def _generate_report(
             current_risk_score=current_risk_score,
             current_signal_thresholds=current_signal_thresholds,
         )
-        raw_snapshot = raw_value_snapshots.get((exchange, strategy), {})
-        freeze_summary = freeze_summaries.get((exchange, strategy)) or {
+        for aggregator in metrics.values():
+            if isinstance(aggregator, StreamingMetricAggregator):
+                if aggregator.sample_truncated:
+                    group_sample_truncated_count += 1
+                    group_sample_omitted_total += aggregator.omitted_samples
+                if aggregator.clamp_regular_count:
+                    clamp_regular_total += aggregator.clamp_regular_count
+                    clamp_regular_metric_count += 1
+                if aggregator.clamp_absolute_count:
+                    clamp_absolute_total += aggregator.clamp_absolute_count
+                    clamp_absolute_metric_count += 1
+        freeze_summary = freeze_summaries.get(key) or {
             "total": 0,
             "type_counts": Counter(),
             "status_counts": Counter(),
             "reason_counts": Counter(),
         }
-        freeze_summary_payload = _format_freeze_summary(freeze_summary)
-        aggregated_freeze_summary["total"] = int(aggregated_freeze_summary["total"]) + int(
-            freeze_summary.get("total") or 0
+        display_exchange, display_strategy = display_names.get(
+            key, (exchange, strategy)
         )
+        raw_freeze_entries = list(freeze_events.get(key, []))
+        total_freezes = int(freeze_summary.get("total") or 0)
+        raw_freeze_omitted = max(total_freezes - len(raw_freeze_entries), 0)
+        raw_freeze_truncated = False
+        if max_freeze_events is not None and max_freeze_events >= 0:
+            if raw_freeze_omitted > 0:
+                raw_freeze_truncated = True
+                freeze_truncated_group_count += 1
+        else:
+            raw_freeze_omitted = 0
+        freeze_summary["omitted_total"] = int(raw_freeze_omitted)
+
+        raw_values_snapshot = raw_value_snapshots.get(key, {})
+        raw_values_omitted_map = raw_value_omitted.get(key, {})
+        metric_keys = set(raw_values_snapshot.keys()) | set(raw_values_omitted_map.keys())
+        raw_values_payload = {
+            metric: _finite_values(raw_values_snapshot.get(metric, []))
+            for metric in metric_keys
+        }
+        raw_values_omitted_payload = {
+            metric: int(raw_values_omitted_map.get(metric, 0))
+            for metric in metric_keys
+        }
+        raw_values_truncated = any(value > 0 for value in raw_values_omitted_payload.values())
+        raw_values_omitted_sum = sum(raw_values_omitted_payload.values())
+        raw_values_omitted_total += raw_values_omitted_sum
+        if raw_values_truncated:
+            raw_truncated_group_count += 1
+
+        if not metrics and total_freezes == 0 and not raw_freeze_entries:
+            continue
+
         if isinstance(freeze_summary.get("type_counts"), Counter):
             aggregated_freeze_summary["type_counts"].update(freeze_summary["type_counts"])
         if isinstance(freeze_summary.get("status_counts"), Counter):
             aggregated_freeze_summary["status_counts"].update(freeze_summary["status_counts"])
         if isinstance(freeze_summary.get("reason_counts"), Counter):
             aggregated_freeze_summary["reason_counts"].update(freeze_summary["reason_counts"])
-        for metric_name, values in metrics.items():
-            aggregated_values[metric_name].extend(_finite_values(values))
-        display_exchange, display_strategy = display_names.get(
-            (exchange, strategy), (exchange, strategy)
-        )
+        freeze_summary_payload = _format_freeze_summary(freeze_summary)
+        aggregated_freeze_summary["total"] = int(aggregated_freeze_summary["total"]) + total_freezes
+        aggregated_freeze_summary["omitted_total"] = int(
+            aggregated_freeze_summary.get("omitted_total", 0)
+        ) + int(raw_freeze_omitted)
         groups.append(
             {
                 "primary_exchange": display_exchange,
                 "strategy": display_strategy,
                 "metrics": metrics_payload,
-                "raw_values": {
-                    metric: _finite_values(values)
-                    for metric, values in raw_snapshot.items()
-                },
+                "raw_values": raw_values_payload,
+                "raw_values_omitted": raw_values_omitted_payload,
+                "raw_values_truncated": raw_values_truncated,
                 "freeze_summary": freeze_summary_payload,
-                "raw_freeze_events": list(freeze_events.get((exchange, strategy), [])),
+                "raw_freeze_events": raw_freeze_entries,
+                "raw_freeze_events_truncated": raw_freeze_truncated,
+                "raw_freeze_events_omitted": raw_freeze_omitted,
             }
         )
 
+    for aggregator in aggregated_metrics.values():
+        if aggregator.sample_truncated:
+            aggregated_sample_truncated_count += 1
+            aggregated_sample_omitted_total += aggregator.omitted_samples
+        if aggregator.clamp_regular_count:
+            clamp_regular_total += aggregator.clamp_regular_count
+            clamp_regular_metric_count += 1
+        if aggregator.clamp_absolute_count:
+            clamp_absolute_total += aggregator.clamp_absolute_count
+            clamp_absolute_metric_count += 1
+
     global_metrics = _build_metrics_section(
-        aggregated_values,
+        aggregated_metrics,
         percentiles,
         suggestion_percentile,
         current_risk_score=current_risk_score,
@@ -1170,13 +2113,69 @@ def _generate_report(
     global_summary = {
         "metrics": global_metrics,
         "freeze_summary": _format_freeze_summary(aggregated_freeze_summary),
-        "raw_values": {metric: _finite_values(values) for metric, values in aggregated_values.items()},
     }
+
+    sources_payload: dict[str, object] = {
+        "journal_events": journal_count,
+        "autotrade_entries": autotrade_count,
+    }
+    signal_sources_payload: dict[str, object] = {}
+    if current_signal_threshold_sources:
+        files = current_signal_threshold_sources.get("files")
+        if files:
+            signal_sources_payload["files"] = list(files)
+        inline_values = current_signal_threshold_sources.get("inline")
+        if inline_values:
+            signal_sources_payload["inline"] = {
+                key: float(value)
+                for key, value in inline_values.items()
+                if isinstance(key, str)
+            }
+    if file_risk_score is not None:
+        signal_sources_payload["file_risk_score"] = float(file_risk_score)
+    if signal_sources_payload:
+        sources_payload["current_signal_thresholds"] = signal_sources_payload
+    if risk_threshold_paths:
+        sources_payload["risk_threshold_files"] = [str(path) for path in risk_threshold_paths]
+    if cli_risk_score is not None:
+        sources_payload["risk_score_override"] = float(cli_risk_score)
+    if max_freeze_events is not None:
+        sources_payload["max_freeze_events"] = int(max_freeze_events)
+        if freeze_truncated_group_count:
+            sources_payload["raw_freeze_events_truncated_groups"] = freeze_truncated_group_count
+    if max_raw_values is not None:
+        sources_payload["max_raw_values"] = int(max_raw_values)
+        if raw_truncated_group_count:
+            sources_payload["raw_values_truncated_groups"] = raw_truncated_group_count
+        if raw_values_omitted_total:
+            sources_payload["raw_values_omitted_total"] = int(raw_values_omitted_total)
+    if max_group_samples is not None:
+        sources_payload["max_group_samples"] = int(max_group_samples)
+    if group_sample_truncated_count:
+        sources_payload["group_samples_truncated_metrics"] = group_sample_truncated_count
+    if group_sample_omitted_total:
+        sources_payload["group_samples_omitted_total"] = int(group_sample_omitted_total)
+    if max_global_samples is not None:
+        sources_payload["max_global_samples"] = int(max_global_samples)
+        if aggregated_sample_truncated_count:
+            sources_payload["global_samples_truncated_metrics"] = aggregated_sample_truncated_count
+        if aggregated_sample_omitted_total:
+            sources_payload["global_samples_omitted_total"] = int(aggregated_sample_omitted_total)
+    if clamp_regular_total or clamp_absolute_total:
+        clamp_payload: dict[str, object] = {
+            "regular": int(clamp_regular_total),
+            "absolute": int(clamp_absolute_total),
+        }
+        if clamp_regular_metric_count:
+            clamp_payload["metrics_with_regular_clamp"] = clamp_regular_metric_count
+        if clamp_absolute_metric_count:
+            clamp_payload["metrics_with_absolute_clamp"] = clamp_absolute_metric_count
+        sources_payload["clamped_values"] = clamp_payload
 
     return {
         "schema": "stage6.autotrade.threshold_calibration",
         "generated_at": datetime.now(timezone.utc).isoformat(),
-        "percentiles": [f"p{int(p * 100):02d}" for p in percentiles],
+        "percentiles": [_format_percentile_label(p) for p in percentiles],
         "suggestion_percentile": suggestion_percentile,
         "filters": {
             "since": since.isoformat() if since else None,
@@ -1184,10 +2183,7 @@ def _generate_report(
         },
         "groups": groups,
         "global_summary": global_summary,
-        "sources": {
-            "journal_events": len(journal_events),
-            "autotrade_entries": len(autotrade_entries),
-        },
+        "sources": sources_payload,
     }
 
 
@@ -1256,6 +2252,41 @@ def _build_parser() -> argparse.ArgumentParser:
             " można wskazać wiele ścieżek, aby nadpisywać wartości (ostatnia wygrywa)."
         ),
     )
+    parser.add_argument(
+        "--max-freeze-events",
+        type=int,
+        help=(
+            "Maksymalna liczba zdarzeń risk_freeze zapisywanych w raporcie dla każdej pary"
+            " giełda/strategia (0 oznacza pominięcie sekcji raw_freeze_events)."
+        ),
+    )
+    parser.add_argument(
+        "--max-raw-values",
+        type=int,
+        help=(
+            "Maksymalna liczba przechowywanych surowych próbek metryk dla każdej pary"
+            " giełda/strategia (0 oznacza brak próbek w raporcie i wyłącznie statystyki)."
+        ),
+    )
+    parser.add_argument(
+        "--max-group-samples",
+        type=int,
+        default=_DEFAULT_GROUP_SAMPLE_LIMIT,
+        help=(
+            "Limit próbek wykorzystywanych przez agregatory metryk na poziomie pary"
+            " giełda/strategia (0 lub wartość ujemna oznacza brak limitu)."
+        ),
+    )
+    parser.add_argument(
+        "--max-global-samples",
+        type=int,
+        default=_DEFAULT_GLOBAL_SAMPLE_LIMIT,
+        help=(
+            "Limit próbek używanych do percentyli w podsumowaniu globalnym (wartość ujemna "
+            "wyłącza limit, 0 powoduje zastosowanie przybliżeń na bazie rozkładu normalnego "
+            "wyliczonego z sum i wariancji)."
+        ),
+    )
     return parser
 
 
@@ -1266,6 +2297,22 @@ def main(argv: list[str] | None = None) -> int:
     percentiles = _parse_percentiles(args.percentiles)
     if not (0.0 < args.suggestion_percentile < 1.0):
         raise SystemExit("Percentyl sugerowanego progu musi być w przedziale (0, 1)")
+
+    max_freeze_events = args.max_freeze_events
+    if max_freeze_events is not None and max_freeze_events < 0:
+        raise SystemExit("Parametr --max-freeze-events musi być nieujemny")
+
+    max_raw_values = args.max_raw_values
+    if max_raw_values is not None and max_raw_values < 0:
+        raise SystemExit("Parametr --max-raw-values musi być nieujemny")
+
+    max_group_samples = args.max_group_samples
+    if max_group_samples is None:
+        max_group_samples = _DEFAULT_GROUP_SAMPLE_LIMIT
+
+    max_global_samples = args.max_global_samples
+    if max_global_samples is not None and max_global_samples < 0:
+        max_global_samples = None
 
     since = _parse_cli_datetime(args.since)
     until = _parse_cli_datetime(args.until)
@@ -1278,9 +2325,14 @@ def main(argv: list[str] | None = None) -> int:
 
     journal_events = _load_journal_events(journal_paths, since=since, until=until)
     autotrade_entries = _load_autotrade_entries(args.autotrade_export, since=since, until=until)
-    current_signal_thresholds, cli_risk_score = _load_current_signal_thresholds(
-        args.current_threshold
-    )
+    (
+        current_signal_thresholds,
+        risk_score_sources,
+        current_signal_threshold_sources,
+    ) = _load_current_signal_thresholds(args.current_threshold)
+
+    cli_risk_score = risk_score_sources.from_inline
+    file_risk_score = risk_score_sources.from_files
 
     report = _generate_report(
         journal_events=journal_events,
@@ -1291,6 +2343,13 @@ def main(argv: list[str] | None = None) -> int:
         until=until,
         current_signal_thresholds=current_signal_thresholds,
         risk_threshold_sources=args.risk_thresholds,
+        cli_risk_score=cli_risk_score,
+        file_risk_score=file_risk_score,
+        current_signal_threshold_sources=current_signal_threshold_sources,
+        max_freeze_events=max_freeze_events,
+        max_raw_values=max_raw_values,
+        max_group_samples=max_group_samples,
+        max_global_samples=max_global_samples,
     )
 
     if args.output_json:
@@ -1311,9 +2370,12 @@ def main(argv: list[str] | None = None) -> int:
         _maybe_plot(report["groups"], Path(args.plot_dir))
 
     total_groups = len(report["groups"])
+    sources = report.get("sources", {})
+    journal_count = int(sources.get("journal_events", 0))
+    autotrade_count = int(sources.get("autotrade_entries", 0))
     print(
-        f"Przetworzono {len(journal_events)} zdarzeń dziennika i "
-        f"{len(autotrade_entries)} wpisów autotradera dla {total_groups} kombinacji giełda/strategia."
+        f"Przetworzono {journal_count} zdarzeń dziennika i "
+        f"{autotrade_count} wpisów autotradera dla {total_groups} kombinacji giełda/strategia."
     )
 
     return 0
