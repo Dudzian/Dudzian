@@ -58,6 +58,19 @@ class _AliasConfigSentinel:
 _ALIAS_UNSET = _AliasConfigSentinel()
 
 
+def _canonical_identifier(value: str | None) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    return text.casefold()
+
+
+def _canonical_metric_name(name: str) -> str:
+    return str(name).strip().casefold()
+
+
 @dataclass
 class _AutoRiskFreezeState:
     risk_level: RiskLevel | None = None
@@ -111,6 +124,8 @@ class AutoTradeConfig:
     strategy_alias_suffixes: Iterable[str] | None = None
     primary_exchange: str | None = None
     strategy: str | None = None
+    signal_thresholds: Mapping[str, float] | None = None
+    strategy_signal_thresholds: Mapping[str, Mapping[str, float]] | None = None
 
     def __post_init__(self) -> None:
         if self.default_params is None:
@@ -199,6 +214,52 @@ class AutoTradeConfig:
             self.primary_exchange = str(self.primary_exchange).strip() or None
         if self.strategy is not None:
             self.strategy = str(self.strategy).strip() or None
+        if self.signal_thresholds:
+            cleaned_signal_thresholds: dict[str, float] = {}
+            for key, value in dict(self.signal_thresholds).items():
+                try:
+                    numeric = float(value)
+                except (TypeError, ValueError):
+                    continue
+                if not math.isfinite(numeric):
+                    continue
+                cleaned_signal_thresholds[_canonical_metric_name(str(key))] = numeric
+            self.signal_thresholds = (
+                MappingProxyType(cleaned_signal_thresholds)
+                if cleaned_signal_thresholds
+                else None
+            )
+        else:
+            self.signal_thresholds = None
+        if self.strategy_signal_thresholds:
+            cleaned_exchanges: dict[str, Mapping[str, float]] = {}
+            for exchange_key, strategies in dict(self.strategy_signal_thresholds).items():
+                exchange_norm = _canonical_identifier(str(exchange_key))
+                if not exchange_norm:
+                    continue
+                cleaned_strategies: dict[str, Mapping[str, float]] = {}
+                for strategy_key, metric_map in dict(strategies).items():
+                    strategy_norm = _canonical_identifier(str(strategy_key))
+                    if not strategy_norm:
+                        continue
+                    cleaned_metrics: dict[str, float] = {}
+                    for metric_name, value in dict(metric_map).items():
+                        try:
+                            numeric = float(value)
+                        except (TypeError, ValueError):
+                            continue
+                        if not math.isfinite(numeric):
+                            continue
+                        cleaned_metrics[_canonical_metric_name(str(metric_name))] = numeric
+                    if cleaned_metrics:
+                        cleaned_strategies[strategy_norm] = MappingProxyType(cleaned_metrics)
+                if cleaned_strategies:
+                    cleaned_exchanges[exchange_norm] = MappingProxyType(cleaned_strategies)
+            self.strategy_signal_thresholds = (
+                MappingProxyType(cleaned_exchanges) if cleaned_exchanges else None
+            )
+        else:
+            self.strategy_signal_thresholds = None
 
 
 class AutoTradeEngine:
@@ -313,6 +374,14 @@ class AutoTradeEngine:
         )
         self._regime_history.reload_thresholds(
             thresholds=self._regime_classifier.thresholds_snapshot()
+        )
+        self._global_signal_thresholds: Dict[str, float] = {}
+        self._strategy_signal_thresholds: Dict[str, Dict[str, Dict[str, float]]] = {}
+        self._signal_threshold_after_adjustment: float | None = None
+        self._activation_threshold = float(self.cfg.activation_threshold)
+        self._configure_signal_thresholds(
+            signal_thresholds=self.cfg.signal_thresholds,
+            strategy_signal_thresholds=self.cfg.strategy_signal_thresholds,
         )
         normalized_weights = self._normalize_strategy_config(self.cfg.strategy_weights)
         self._strategy_weights = RegimeStrategyWeights(
@@ -722,6 +791,122 @@ class AutoTradeEngine:
                     regime = MarketRegime.TREND
             normalized[regime] = {str(name): float(value) for name, value in weights.items()}
         return normalized
+
+    def _configure_signal_thresholds(
+        self,
+        *,
+        signal_thresholds: Mapping[str, float] | None,
+        strategy_signal_thresholds: Mapping[str, Mapping[str, float]] | None,
+    ) -> None:
+        global_thresholds: Dict[str, float] = {}
+        if signal_thresholds:
+            for metric_name, value in signal_thresholds.items():
+                try:
+                    numeric = float(value)
+                except (TypeError, ValueError):
+                    continue
+                if not math.isfinite(numeric):
+                    continue
+                global_thresholds[_canonical_metric_name(str(metric_name))] = numeric
+        strategy_thresholds: Dict[str, Dict[str, Dict[str, float]]] = {}
+        if strategy_signal_thresholds:
+            for exchange_key, strategy_map in strategy_signal_thresholds.items():
+                exchange_norm = _canonical_identifier(str(exchange_key))
+                if not exchange_norm:
+                    continue
+                strategy_payload: Dict[str, Dict[str, float]] = {}
+                for strategy_key, metric_map in strategy_map.items():
+                    strategy_norm = _canonical_identifier(str(strategy_key))
+                    if not strategy_norm:
+                        continue
+                    metrics_payload: Dict[str, float] = {}
+                    for metric_name, value in metric_map.items():
+                        try:
+                            numeric = float(value)
+                        except (TypeError, ValueError):
+                            continue
+                        if not math.isfinite(numeric):
+                            continue
+                        metrics_payload[_canonical_metric_name(str(metric_name))] = numeric
+                    if metrics_payload:
+                        strategy_payload[strategy_norm] = metrics_payload
+                if strategy_payload:
+                    strategy_thresholds[exchange_norm] = strategy_payload
+
+        self._global_signal_thresholds = global_thresholds
+        self._strategy_signal_thresholds = strategy_thresholds
+
+        if global_thresholds:
+            self.cfg.signal_thresholds = MappingProxyType(dict(global_thresholds))
+        else:
+            self.cfg.signal_thresholds = None
+
+        if strategy_thresholds:
+            nested_proxy = {
+                exchange: MappingProxyType(
+                    {
+                        strategy: MappingProxyType(dict(metrics))
+                        for strategy, metrics in strategy_map.items()
+                    }
+                )
+                for exchange, strategy_map in strategy_thresholds.items()
+            }
+            self.cfg.strategy_signal_thresholds = MappingProxyType(nested_proxy)
+        else:
+            self.cfg.strategy_signal_thresholds = None
+
+        self._signal_threshold_after_adjustment = self._resolve_signal_threshold(
+            "signal_after_adjustment"
+        )
+        activation_override = self._resolve_signal_threshold("signal_after_clamp")
+        if activation_override is not None:
+            self.cfg.activation_threshold = float(abs(activation_override))
+        self._activation_threshold = float(abs(self.cfg.activation_threshold))
+
+    def _resolve_signal_threshold(self, metric: str) -> float | None:
+        metric_key = _canonical_metric_name(metric)
+        exchange_key = _canonical_identifier(self.cfg.primary_exchange)
+        strategy_key = _canonical_identifier(self.cfg.strategy)
+        if exchange_key and strategy_key:
+            strategy_map = self._strategy_signal_thresholds.get(exchange_key)
+            if strategy_map:
+                metrics_map = strategy_map.get(strategy_key)
+                if metrics_map:
+                    value = metrics_map.get(metric_key)
+                    if value is not None:
+                        return float(value)
+        value = self._global_signal_thresholds.get(metric_key)
+        if value is not None:
+            return float(value)
+        return None
+
+    def apply_signal_threshold_overrides(
+        self,
+        *,
+        signal_thresholds: Mapping[str, float] | None = None,
+        strategy_signal_thresholds: Mapping[str, Mapping[str, float]] | None = None,
+    ) -> None:
+        self._configure_signal_thresholds(
+            signal_thresholds=signal_thresholds or self.cfg.signal_thresholds,
+            strategy_signal_thresholds=(
+                strategy_signal_thresholds or self.cfg.strategy_signal_thresholds
+            ),
+        )
+
+    def signal_threshold_snapshot(self) -> Mapping[str, object]:
+        strategy_snapshot: Dict[str, Dict[str, Dict[str, float]]] = {
+            exchange: {strategy: dict(metrics) for strategy, metrics in strategies.items()}
+            for exchange, strategies in self._strategy_signal_thresholds.items()
+        }
+        effective: Dict[str, float] = {"signal_after_clamp": self._activation_threshold}
+        if self._signal_threshold_after_adjustment is not None:
+            effective["signal_after_adjustment"] = self._signal_threshold_after_adjustment
+        payload: dict[str, object] = {
+            "global": dict(self._global_signal_thresholds),
+            "per_strategy": strategy_snapshot,
+            "effective": effective,
+        }
+        return MappingProxyType(payload)
 
     def _initialize_strategy_workflow(
         self, workflow: StrategyRegimeWorkflow | None
@@ -2483,6 +2668,21 @@ class AutoTradeEngine:
         else:
             denominator = sum(abs(weight) for weight in weights.values())
         combined_unclamped = numerator / denominator if denominator else 0.0
+        raw_combined_unclamped = combined_unclamped
+        adjustment_threshold_triggered = False
+        if self._signal_threshold_after_adjustment is not None:
+            reference_value = (
+                adjusted_signal_value
+                if adjusted_signal_value is not None
+                else combined_unclamped
+            )
+            if abs(reference_value) < self._signal_threshold_after_adjustment:
+                combined_unclamped = 0.0
+                adjustment_threshold_triggered = abs(reference_value) > 0.0
+                if adjusted_signal_value is not None:
+                    adjusted_signal_value = 0.0
+                    if adjustment_metadata is not None:
+                        adjustment_metadata["signal_after_adjustment"] = 0.0
         combined = max(-1.0, min(1.0, combined_unclamped))
         if ai_metadata is not None:
             ai_metadata.setdefault("signal_before_adjustment", base_signal_value)
@@ -2491,6 +2691,11 @@ class AutoTradeEngine:
                 adjusted_signal_value if adjusted_signal_value is not None else combined_unclamped,
             )
             ai_metadata["signal_after_clamp"] = combined
+            ai_metadata["signal_after_clamp_threshold"] = self._activation_threshold
+            if self._signal_threshold_after_adjustment is not None:
+                ai_metadata["signal_after_adjustment_threshold"] = (
+                    self._signal_threshold_after_adjustment
+                )
             if adjustment_metadata is not None:
                 adjustment_metadata["signal_after_clamp"] = combined
             if (
@@ -2508,6 +2713,9 @@ class AutoTradeEngine:
                     scored_at=self._last_inference_scored_at,
                 )
                 self._last_inference_metadata = dict(ai_metadata)
+        clamp_threshold_triggered = (
+            0.0 < abs(raw_combined_unclamped) < self._activation_threshold
+        )
         metadata_payload: dict[str, object] | None = None
         metadata_container: dict[str, object] = {}
         if strategy_metadata:
@@ -2536,6 +2744,19 @@ class AutoTradeEngine:
             metadata_container["ai_inference"] = dict(ai_metadata)
         if summary_payload is not None:
             metadata_container["regime_summary"] = summary_payload
+        signal_thresholds_metadata: dict[str, object] = {
+            "signal_after_clamp": self._activation_threshold
+        }
+        if self._signal_threshold_after_adjustment is not None:
+            signal_thresholds_metadata["signal_after_adjustment"] = (
+                self._signal_threshold_after_adjustment
+            )
+            if adjustment_threshold_triggered:
+                signal_thresholds_metadata["signal_after_adjustment_triggered"] = True
+        if clamp_threshold_triggered:
+            signal_thresholds_metadata["signal_after_clamp_triggered"] = True
+        if signal_thresholds_metadata:
+            metadata_container.setdefault("signal_thresholds", signal_thresholds_metadata)
         if metadata_container:
             metadata_payload = metadata_container
 
@@ -2562,9 +2783,10 @@ class AutoTradeEngine:
             payload.update(self._routing_snapshot())
             self.adapter.publish(EventType.SIGNAL, payload)
         direction = 0
-        if combined > self.cfg.activation_threshold:
+        activation_threshold = self._activation_threshold
+        if combined > activation_threshold:
             direction = +1
-        elif combined < -self.cfg.activation_threshold:
+        elif combined < -activation_threshold:
             direction = -1
         if self._last_signal is None:
             self._last_signal = 0

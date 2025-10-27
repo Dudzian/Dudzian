@@ -8,6 +8,12 @@ Ten runbook opisuje, jak uruchomić, monitorować i bezpiecznie zatrzymać tryb 
 
 > **Identyfikatory routingu**: aby eksporty sygnałów i decision log zawierały wymagane pola (`primary_exchange`, `strategy`), uzupełnij je w `AutoTradeConfig` lub przekaż w `decision_journal_context` podczas bootstrapu. Brak wartości powoduje, że downstream (raporty thresholdów, agregacje risk guardrail) nie zwiąże wpisów z konkretną giełdą/strategią – silnik wypełni wtedy pola wartością `"unknown"`, co sygnalizuje brak jawnej konfiguracji.
 
+> **Progi sygnałów eksportowane z kalibracji**: od kalibracji Etapu 4 narzędzie `scripts/calibrate_autotrade_thresholds.py` może generować pliki `auto_trader.signal_thresholds` oraz `auto_trader.strategy_signal_thresholds`. Loader `load_risk_thresholds` normalizuje te sekcje i wstrzykuje je do `AutoTradeConfig`, a sam AutoTrader:
+> * stosuje globalny próg `signal_thresholds.direction`/`amplitude` zanim porówna sygnał z `activation_threshold`,
+> * potrafi nadpisać próg per strategia (`strategy_signal_thresholds[primary_exchange][strategy]`),
+> * raportuje aktywne wartości w `AutoTradeEngine.snapshot()["signal_thresholds"]` oraz strumieniu telemetrii.
+> Dzięki temu operator może bezpośrednio importować progi z kalibracji do `config/risk_thresholds/*.yaml` i natychmiast wymusić ostrzejsze/bardziej liberalne wartości dla konkretnej giełdy lub strategii bez ręcznych korekt w kodzie.
+
   Jeśli potrzebujesz szybkich metryk operacyjnych (ile cykli w danym przedziale, średnia liczba zleceń, rozkład stron sygnałów, statusy egzekucji czy sumaryczny czas pracy runnera), skorzystaj z `AutoTrader.summarize_controller_cycle_history(...)`. Metoda respektuje ograniczenia czasowe (`since`/`until`) oraz limit liczby rekordów i zwraca zagregowane dane gotowe do prezentacji w dashboardzie lub raportach post-mortem.
 
   Jeżeli zamiast agregatów potrzebujesz szczegółowego widoku do dalszej analizy (np. w notebooku lub narzędziu BI), użyj `AutoTrader.controller_cycle_history_to_dataframe(...)`. Eksport buduje gotowy `DataFrame` Pandas z licznikami sygnałów/zleceń, opcjonalnymi sekwencjami surowych obiektów oraz automatyczną konwersją timestampów do `Timestamp` UTC.

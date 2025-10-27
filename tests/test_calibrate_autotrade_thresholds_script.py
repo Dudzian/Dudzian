@@ -30,6 +30,7 @@ from scripts.calibrate_autotrade_thresholds import (
     _AMBIGUOUS_SYMBOL_MAPPING,
     _DEFAULT_FREEZE_EVENTS_LIMIT,
     _canonicalize_symbol_key,
+    _build_threshold_config,
     _build_symbol_map,
     _MetricSeries,
     _generate_report,

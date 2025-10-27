@@ -36,6 +36,14 @@ _DEFAULT_GROUP_SAMPLE_LIMIT = 50000
 _DEFAULT_GLOBAL_SAMPLE_LIMIT = 50000
 _JSONL_SUFFIXES = frozenset({".jsonl", ".ndjson"})
 
+import yaml
+
+
+_STREAM_READ_SIZE = 65536
+_DEFAULT_GROUP_SAMPLE_LIMIT = 50000
+_DEFAULT_GLOBAL_SAMPLE_LIMIT = 50000
+_JSONL_SUFFIXES = frozenset({".jsonl", ".ndjson"})
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
@@ -2808,6 +2816,12 @@ def _generate_report(
     if cli_risk_score is not None:
         current_risk_score = float(cli_risk_score)
 
+    if file_risk_score is not None:
+        current_risk_score = float(file_risk_score)
+
+    if cli_risk_score is not None:
+        current_risk_score = float(cli_risk_score)
+
     groups: list[dict[str, object]] = []
     all_keys = set(grouped_values.keys()) | set(freeze_summaries.keys()) | set(display_names.keys())
 
@@ -3163,6 +3177,91 @@ def _generate_report(
         if aggregated_display_limit is not None:
             freeze_sources["display_limit"] = aggregated_display_limit
         sources_payload["freeze_events"] = freeze_sources
+
+    sources_payload: dict[str, object] = {
+        "journal_events": journal_count,
+        "autotrade_entries": autotrade_count,
+    }
+    signal_sources_payload: dict[str, object] = {}
+    if current_signal_threshold_sources:
+        files = current_signal_threshold_sources.get("files")
+        if files:
+            signal_sources_payload["files"] = list(files)
+        inline_values = current_signal_threshold_sources.get("inline")
+        if inline_values:
+            signal_sources_payload["inline"] = {
+                key: float(value)
+                for key, value in inline_values.items()
+                if isinstance(key, str)
+            }
+    if file_risk_score is not None:
+        signal_sources_payload["file_risk_score"] = float(file_risk_score)
+    if signal_sources_payload:
+        sources_payload["current_signal_thresholds"] = signal_sources_payload
+    if risk_threshold_paths:
+        sources_payload["risk_threshold_files"] = [str(path) for path in risk_threshold_paths]
+    if cli_risk_score is not None:
+        sources_payload["risk_score_override"] = float(cli_risk_score)
+    if max_freeze_events is not None:
+        sources_payload["max_freeze_events"] = int(max_freeze_events)
+        if freeze_truncated_group_count:
+            sources_payload["raw_freeze_events_truncated_groups"] = freeze_truncated_group_count
+    if max_raw_values is not None:
+        sources_payload["max_raw_values"] = int(max_raw_values)
+        if raw_truncated_group_count:
+            sources_payload["raw_values_truncated_groups"] = raw_truncated_group_count
+        if raw_values_omitted_total:
+            sources_payload["raw_values_omitted_total"] = int(raw_values_omitted_total)
+    if max_group_samples is not None:
+        sources_payload["max_group_samples"] = int(max_group_samples)
+    if group_sample_truncated_count:
+        sources_payload["group_samples_truncated_metrics"] = group_sample_truncated_count
+    if group_sample_omitted_total:
+        sources_payload["group_samples_omitted_total"] = int(group_sample_omitted_total)
+    if max_global_samples is not None:
+        sources_payload["max_global_samples"] = int(max_global_samples)
+        if aggregated_sample_truncated_count:
+            sources_payload["global_samples_truncated_metrics"] = aggregated_sample_truncated_count
+        if aggregated_sample_omitted_total:
+            sources_payload["global_samples_omitted_total"] = int(aggregated_sample_omitted_total)
+    if approximation_group_metrics:
+        sorted_group_metrics = sorted(approximation_group_metrics)
+        sources_payload["approximation_metrics"] = len(sorted_group_metrics)
+        sources_payload["approximation_metrics_list"] = [
+            {
+                "primary_exchange": exchange,
+                "strategy": strategy,
+                "metric": metric,
+            }
+            for exchange, strategy, metric in sorted_group_metrics
+        ]
+    if approximation_global_metrics:
+        sorted_global_metrics = sorted(approximation_global_metrics)
+        sources_payload["approximation_global_metrics"] = len(sorted_global_metrics)
+        sources_payload["approximation_global_metrics_list"] = sorted_global_metrics
+    clamp_payload: dict[str, object] = {}
+    if clamp_group_regular_total or clamp_group_absolute_total:
+        group_payload: dict[str, object] = {
+            "regular": int(clamp_group_regular_total),
+            "absolute": int(clamp_group_absolute_total),
+        }
+        if clamp_group_regular_metrics:
+            group_payload["metrics_with_regular_clamp"] = len(clamp_group_regular_metrics)
+        if clamp_group_absolute_metrics:
+            group_payload["metrics_with_absolute_clamp"] = len(clamp_group_absolute_metrics)
+        clamp_payload["group"] = group_payload
+    if clamp_global_regular_total or clamp_global_absolute_total:
+        global_payload: dict[str, object] = {
+            "regular": int(clamp_global_regular_total),
+            "absolute": int(clamp_global_absolute_total),
+        }
+        if clamp_global_regular_metrics:
+            global_payload["metrics_with_regular_clamp"] = len(clamp_global_regular_metrics)
+        if clamp_global_absolute_metrics:
+            global_payload["metrics_with_absolute_clamp"] = len(clamp_global_absolute_metrics)
+        clamp_payload["global"] = global_payload
+    if clamp_payload:
+        sources_payload["clamped_values"] = clamp_payload
 
     sources_payload: dict[str, object] = {
         "journal_events": journal_count,
