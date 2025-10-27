@@ -28,6 +28,14 @@ _STREAM_READ_SIZE = 65536
 _DEFAULT_GROUP_SAMPLE_LIMIT = 50000
 _DEFAULT_GLOBAL_SAMPLE_LIMIT = 50000
 
+import yaml
+
+
+_STREAM_READ_SIZE = 65536
+_DEFAULT_GROUP_SAMPLE_LIMIT = 50000
+_DEFAULT_GLOBAL_SAMPLE_LIMIT = 50000
+_JSONL_SUFFIXES = frozenset({".jsonl", ".ndjson"})
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
@@ -1751,6 +1759,9 @@ def _build_metrics_section(
             current = None
         stats_payload["suggested_threshold"] = suggested
         stats_payload["current_threshold"] = current
+        if isinstance(values, StreamingMetricAggregator) and not absolute:
+            if "absolute_percentiles" not in stats_payload:
+                stats_payload["absolute_percentiles"] = None
         metrics_payload[metric_name] = stats_payload
     return metrics_payload
 
@@ -1857,6 +1868,111 @@ class _FreezeEventSampler:
 def _write_json(report: Mapping[str, object], destination: Path) -> None:
     destination.parent.mkdir(parents=True, exist_ok=True)
     destination.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
+def _build_threshold_config(report: Mapping[str, object]) -> dict[str, object]:
+    auto_trader_config: dict[str, object] = {}
+
+    strategy_thresholds: dict[str, dict[str, dict[str, float]]] = {}
+    groups_payload = report.get("groups")
+    if isinstance(groups_payload, Iterable):
+        for entry in groups_payload:
+            if not isinstance(entry, Mapping):
+                continue
+            exchange = _normalize_string(entry.get("primary_exchange")) or "unknown"
+            strategy = _normalize_string(entry.get("strategy")) or "unknown"
+            metrics = entry.get("metrics")
+            if not isinstance(metrics, Mapping):
+                continue
+            suggestions: dict[str, float] = {}
+            for metric_name, payload in metrics.items():
+                if not isinstance(metric_name, str) or not isinstance(payload, Mapping):
+                    continue
+                normalized_metric = _normalize_metric_key(metric_name)
+                if normalized_metric not in _SUPPORTED_THRESHOLD_METRICS:
+                    continue
+                canonical_name = _SUPPORTED_THRESHOLD_CANONICAL.get(
+                    normalized_metric, normalized_metric
+                )
+                suggestion = payload.get("suggested_threshold")
+                if not isinstance(suggestion, (int, float)):
+                    continue
+                numeric = float(suggestion)
+                if not math.isfinite(numeric):
+                    continue
+                suggestions[canonical_name] = numeric
+            if not suggestions:
+                continue
+            exchange_map = strategy_thresholds.setdefault(exchange, {})
+            metrics_map = exchange_map.get(strategy, {})
+            metrics_map.update(suggestions)
+            exchange_map[strategy] = metrics_map
+
+    if strategy_thresholds:
+        ordered_strategy_thresholds: dict[str, dict[str, dict[str, float]]] = {}
+        for exchange in sorted(strategy_thresholds):
+            strategy_map = strategy_thresholds[exchange]
+            ordered_strategy_thresholds[exchange] = {
+                strategy: {
+                    metric: strategy_map[strategy][metric]
+                    for metric in sorted(strategy_map[strategy])
+                }
+                for strategy in sorted(strategy_map)
+            }
+        auto_trader_config["strategy_signal_thresholds"] = ordered_strategy_thresholds
+
+    global_signal_thresholds: dict[str, float] = {}
+    map_regime_thresholds: dict[str, float] = {}
+    global_summary = report.get("global_summary")
+    if isinstance(global_summary, Mapping):
+        metrics_payload = global_summary.get("metrics")
+        if isinstance(metrics_payload, Mapping):
+            for metric_name, payload in metrics_payload.items():
+                if not isinstance(metric_name, str) or not isinstance(payload, Mapping):
+                    continue
+                normalized_metric = _normalize_metric_key(metric_name)
+                if normalized_metric not in _SUPPORTED_THRESHOLD_METRICS:
+                    continue
+                canonical_name = _SUPPORTED_THRESHOLD_CANONICAL.get(
+                    normalized_metric, normalized_metric
+                )
+                suggestion = payload.get("suggested_threshold")
+                if not isinstance(suggestion, (int, float)):
+                    continue
+                numeric = float(suggestion)
+                if not math.isfinite(numeric):
+                    continue
+                if normalized_metric == _normalize_metric_key("risk_score"):
+                    map_regime_thresholds[canonical_name] = numeric
+                else:
+                    global_signal_thresholds[canonical_name] = numeric
+
+    if global_signal_thresholds:
+        auto_trader_config["signal_thresholds"] = {
+            key: global_signal_thresholds[key] for key in sorted(global_signal_thresholds)
+        }
+
+    if map_regime_thresholds:
+        auto_trader_config.setdefault("map_regime_to_signal", {}).update(
+            {key: map_regime_thresholds[key] for key in sorted(map_regime_thresholds)}
+        )
+
+    if not auto_trader_config:
+        return {}
+
+    return {"auto_trader": auto_trader_config}
+
+
+def _write_threshold_config(config: Mapping[str, object], destination: Path) -> None:
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    suffix = destination.suffix.lower()
+    if suffix in {".yaml", ".yml"}:
+        with destination.open("w", encoding="utf-8") as handle:
+            yaml.safe_dump(config, handle, sort_keys=False, allow_unicode=True)
+    else:
+        with destination.open("w", encoding="utf-8") as handle:
+            json.dump(config, handle, indent=2, ensure_ascii=False, sort_keys=True)
+            handle.write("\n")
 
 
 def _write_csv(
@@ -2686,6 +2802,12 @@ def _generate_report(
     if cli_risk_score is not None:
         current_risk_score = float(cli_risk_score)
 
+    if file_risk_score is not None:
+        current_risk_score = float(file_risk_score)
+
+    if cli_risk_score is not None:
+        current_risk_score = float(cli_risk_score)
+
     groups: list[dict[str, object]] = []
     all_keys = set(grouped_values.keys()) | set(freeze_summaries.keys()) | set(display_names.keys())
 
@@ -3042,6 +3164,91 @@ def _generate_report(
             freeze_sources["display_limit"] = aggregated_display_limit
         sources_payload["freeze_events"] = freeze_sources
 
+    sources_payload: dict[str, object] = {
+        "journal_events": journal_count,
+        "autotrade_entries": autotrade_count,
+    }
+    signal_sources_payload: dict[str, object] = {}
+    if current_signal_threshold_sources:
+        files = current_signal_threshold_sources.get("files")
+        if files:
+            signal_sources_payload["files"] = list(files)
+        inline_values = current_signal_threshold_sources.get("inline")
+        if inline_values:
+            signal_sources_payload["inline"] = {
+                key: float(value)
+                for key, value in inline_values.items()
+                if isinstance(key, str)
+            }
+    if file_risk_score is not None:
+        signal_sources_payload["file_risk_score"] = float(file_risk_score)
+    if signal_sources_payload:
+        sources_payload["current_signal_thresholds"] = signal_sources_payload
+    if risk_threshold_paths:
+        sources_payload["risk_threshold_files"] = [str(path) for path in risk_threshold_paths]
+    if cli_risk_score is not None:
+        sources_payload["risk_score_override"] = float(cli_risk_score)
+    if max_freeze_events is not None:
+        sources_payload["max_freeze_events"] = int(max_freeze_events)
+        if freeze_truncated_group_count:
+            sources_payload["raw_freeze_events_truncated_groups"] = freeze_truncated_group_count
+    if max_raw_values is not None:
+        sources_payload["max_raw_values"] = int(max_raw_values)
+        if raw_truncated_group_count:
+            sources_payload["raw_values_truncated_groups"] = raw_truncated_group_count
+        if raw_values_omitted_total:
+            sources_payload["raw_values_omitted_total"] = int(raw_values_omitted_total)
+    if max_group_samples is not None:
+        sources_payload["max_group_samples"] = int(max_group_samples)
+    if group_sample_truncated_count:
+        sources_payload["group_samples_truncated_metrics"] = group_sample_truncated_count
+    if group_sample_omitted_total:
+        sources_payload["group_samples_omitted_total"] = int(group_sample_omitted_total)
+    if max_global_samples is not None:
+        sources_payload["max_global_samples"] = int(max_global_samples)
+        if aggregated_sample_truncated_count:
+            sources_payload["global_samples_truncated_metrics"] = aggregated_sample_truncated_count
+        if aggregated_sample_omitted_total:
+            sources_payload["global_samples_omitted_total"] = int(aggregated_sample_omitted_total)
+    if approximation_group_metrics:
+        sorted_group_metrics = sorted(approximation_group_metrics)
+        sources_payload["approximation_metrics"] = len(sorted_group_metrics)
+        sources_payload["approximation_metrics_list"] = [
+            {
+                "primary_exchange": exchange,
+                "strategy": strategy,
+                "metric": metric,
+            }
+            for exchange, strategy, metric in sorted_group_metrics
+        ]
+    if approximation_global_metrics:
+        sorted_global_metrics = sorted(approximation_global_metrics)
+        sources_payload["approximation_global_metrics"] = len(sorted_global_metrics)
+        sources_payload["approximation_global_metrics_list"] = sorted_global_metrics
+    clamp_payload: dict[str, object] = {}
+    if clamp_group_regular_total or clamp_group_absolute_total:
+        group_payload: dict[str, object] = {
+            "regular": int(clamp_group_regular_total),
+            "absolute": int(clamp_group_absolute_total),
+        }
+        if clamp_group_regular_metrics:
+            group_payload["metrics_with_regular_clamp"] = len(clamp_group_regular_metrics)
+        if clamp_group_absolute_metrics:
+            group_payload["metrics_with_absolute_clamp"] = len(clamp_group_absolute_metrics)
+        clamp_payload["group"] = group_payload
+    if clamp_global_regular_total or clamp_global_absolute_total:
+        global_payload: dict[str, object] = {
+            "regular": int(clamp_global_regular_total),
+            "absolute": int(clamp_global_absolute_total),
+        }
+        if clamp_global_regular_metrics:
+            global_payload["metrics_with_regular_clamp"] = len(clamp_global_regular_metrics)
+        if clamp_global_absolute_metrics:
+            global_payload["metrics_with_absolute_clamp"] = len(clamp_global_absolute_metrics)
+        clamp_payload["global"] = global_payload
+    if clamp_payload:
+        sources_payload["clamped_values"] = clamp_payload
+
     return {
         "schema": "stage6.autotrade.threshold_calibration",
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -3131,6 +3338,13 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--output-csv",
         help="Opcjonalna ścieżka do zapisu raportu w formacie CSV",
+    )
+    parser.add_argument(
+        "--output-threshold-config",
+        help=(
+            "Opcjonalna ścieżka do pliku YAML/JSON z sugerowanymi progami – zgodna z "
+            "formatem load_risk_thresholds"
+        ),
     )
     parser.add_argument(
         "--plot-dir",
@@ -3339,6 +3553,21 @@ def main(argv: list[str] | None = None) -> int:
             global_summary=report.get("global_summary"),
         )
         print(f"Zapisano raport CSV: {args.output_csv}")
+
+    if args.output_threshold_config:
+        threshold_config = _build_threshold_config(report)
+        if not threshold_config:
+            print(
+                "Brak sugerowanych progów do eksportu – plik nie został utworzony",
+                file=sys.stderr,
+            )
+        else:
+            _write_threshold_config(
+                threshold_config, Path(args.output_threshold_config)
+            )
+            print(
+                f"Zapisano konfigurację progów: {args.output_threshold_config}"
+            )
 
     if args.plot_dir:
         _maybe_plot(report["groups"], Path(args.plot_dir))

@@ -48,6 +48,7 @@ python scripts/calibrate_autotrade_thresholds.py \
   --freeze-events-limit 50 \
   --output-json reports/autotrade_thresholds.json \
   --output-csv reports/autotrade_thresholds.csv \
+  --output-threshold-config reports/autotrade_thresholds.yaml \
   --plot-dir reports/autotrade_thresholds_plots
 ```
 
@@ -79,7 +80,10 @@ Polecenie:
 - pozwala ograniczyć analizę do konkretnego zakresu czasowego dzięki `--since`
   i `--until`,
 - dodaje globalne podsumowanie obejmujące wszystkie kombinacje giełda/strategia
-  (również w pliku CSV jako wiersze `__all__/__all__`),
+  (również w pliku CSV jako wiersze `__all__/__all__`). Wiersze te zawierają
+  również skumulowane liczniki `raw_values_omitted` oraz flagę
+  `raw_values_truncated`, dzięki czemu można szybko sprawdzić, czy na poziomie
+  całego zestawu wystąpiły ucięcia próbek,
 - opcjonalnie generuje histogramy (wymaga `matplotlib`).
 - umożliwia ograniczenie liczby przechowywanych surowych próbek metryk poprzez
   `--max-raw-values` (0 = brak próbek w raporcie; dodatnie wartości =

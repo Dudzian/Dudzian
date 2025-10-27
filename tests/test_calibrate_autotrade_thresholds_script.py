@@ -16,8 +16,9 @@ from collections.abc import Callable, Iterable, Mapping
 from typing import TextIO
 from types import GeneratorType
 from datetime import datetime, timezone
-from unittest.mock import patch
 from pathlib import Path
+from typing import Mapping
+from unittest.mock import patch
 
 import pytest
 
