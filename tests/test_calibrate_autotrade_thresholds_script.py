@@ -3,11 +3,13 @@ from __future__ import annotations
 import csv
 import json
 import math
+import os
 import subprocess
 import sys
 from datetime import datetime, timezone
-from unittest.mock import patch
 from pathlib import Path
+from typing import Mapping
+from unittest.mock import patch
 
 import pytest
 
@@ -15,10 +17,16 @@ from bot_core.runtime.journal import TradingDecisionEvent
 
 from scripts.calibrate_autotrade_thresholds import (
     _AMBIGUOUS_SYMBOL_MAPPING,
+    _DEFAULT_GROUP_SAMPLE_LIMIT,
+    _DEFAULT_GLOBAL_SAMPLE_LIMIT,
     _canonicalize_symbol_key,
     _build_symbol_map,
     _generate_report,
     _load_current_signal_thresholds,
+    _load_autotrade_entries,
+    _write_csv,
+    StreamingMetricAggregator,
+    _approximate_folded_normal_percentile,
 )
 
 
@@ -268,11 +276,17 @@ def test_script_generates_report(tmp_path: Path) -> None:
     assert freeze_summary["total"] == 3
     assert freeze_summary["auto"] == 2
     assert freeze_summary["manual"] == 1
+    assert freeze_summary["omitted"] == 0
     reasons = {item["reason"]: item["count"] for item in freeze_summary["reasons"]}
     assert reasons["manual_override"] == 1
     assert reasons["risk_score_threshold"] == 2
     raw_freezes = trend_group["raw_freeze_events"]
     assert {entry["status"] for entry in raw_freezes} >= {"risk_freeze", "auto_risk_freeze"}
+    assert trend_group["raw_freeze_events_truncated"] is False
+    assert trend_group["raw_freeze_events_omitted"] == 0
+
+    assert trend_group["raw_values_truncated"] is False
+    assert all(count == 0 for count in trend_group["raw_values_omitted"].values())
 
     mean_rev_group = groups[("kraken", "mean_reversion")]
     mean_rev_risk = mean_rev_group["metrics"]["risk_score"]
@@ -280,10 +294,14 @@ def test_script_generates_report(tmp_path: Path) -> None:
 
     global_summary = payload["global_summary"]
     assert global_summary["freeze_summary"]["total"] == 3
+    assert global_summary["freeze_summary"]["omitted"] == 0
     global_signal = global_summary["metrics"]["signal_after_adjustment"]
     assert global_signal["count"] == 2
     assert global_signal["current_threshold"] == 0.82
-    assert 0.9 not in global_summary["raw_values"]["signal_after_adjustment"]
+    assert global_signal["sample_truncated"] is False
+    assert global_signal["retained_samples"] == 2
+    assert global_signal["omitted_samples"] == 0
+    assert "raw_values" not in global_summary
 
     raw_values = trend_group["raw_values"]["signal_after_adjustment"]
     assert 0.62 not in raw_values
@@ -291,16 +309,91 @@ def test_script_generates_report(tmp_path: Path) -> None:
 
     for metric_values in trend_group["raw_values"].values():
         assert all(math.isfinite(value) for value in metric_values)
+    assert trend_group["raw_values_omitted"].get("signal_after_adjustment", 0) == 0
 
     with output_csv.open("r", encoding="utf-8") as handle:
         reader = csv.DictReader(handle)
         rows = list(reader)
+
+    assert reader.fieldnames is not None
+    for column in (
+        "approximation_mode",
+        "sample_truncated",
+        "retained_samples",
+        "omitted_samples",
+        "raw_values_truncated",
+        "raw_values_omitted",
+        "clamp_regular",
+        "clamp_absolute",
+    ):
+        assert column in reader.fieldnames, f"Brak kolumny {column} w eksporcie CSV"
 
     assert {row["metric"] for row in rows} >= {
         "signal_after_adjustment",
         "risk_score",
         "risk_freeze_duration",
     }
+    trend_signal_row = next(
+        row
+        for row in rows
+        if row["primary_exchange"] == "binance"
+        and row["strategy"] == "trend_following"
+        and row["metric"] == "signal_after_adjustment"
+    )
+    assert trend_signal_row["raw_values_truncated"] == "false"
+    assert int(trend_signal_row["raw_values_omitted"]) == 0
+    assert trend_signal_row["approximation_mode"] in {"", "approximate_from_moments"}
+    freeze_rows = [
+        row
+        for row in rows
+        if row["metric"] == "__freeze_summary__" and row["primary_exchange"] == "binance"
+    ]
+    assert freeze_rows, "Brak wiersza freeze_summary dla binance"
+    freeze_row = freeze_rows[0]
+    assert int(freeze_row["freeze_total"]) == 3
+    assert int(freeze_row["freeze_auto"]) == 2
+    assert int(freeze_row["freeze_manual"]) == 1
+    assert int(freeze_row["freeze_omitted"]) == 0
+    assert freeze_row["freeze_truncated"] in {"false", ""}
+    assert freeze_row["clamp_regular"] == ""
+    assert freeze_row["clamp_absolute"] == ""
+    assert freeze_row["freeze_status_counts"], "Oczekiwano rozbicia statusów w CSV"
+    aggregated_freeze_rows = [
+        row
+        for row in rows
+        if row["metric"] == "__freeze_summary__" and row["primary_exchange"] == "__all__"
+    ]
+    assert aggregated_freeze_rows, "Brak globalnego wiersza freeze_summary"
+    assert int(aggregated_freeze_rows[0]["freeze_total"]) == 3
+
+    global_metric_rows = [
+        row
+        for row in rows
+        if row["primary_exchange"] == "__all__"
+        and row["strategy"] == "__all__"
+        and row["metric"] == "signal_after_adjustment"
+    ]
+    assert global_metric_rows, "Brak wiersza globalnego dla signal_after_adjustment"
+    global_row = global_metric_rows[0]
+    assert global_row["sample_truncated"] in {"false", ""}
+    assert global_row["retained_samples"] == "2"
+    assert global_row["omitted_samples"] == "0"
+    assert global_row["clamp_regular"] in {"0", ""}
+    assert global_row["clamp_absolute"] in {"0", ""}
+    assert global_row["approximation_mode"] in {"", "approximate_from_moments"}
+
+    binance_signal_rows = [
+        row
+        for row in rows
+        if row["primary_exchange"] == "binance"
+        and row["strategy"] == "trend_following"
+        and row["metric"] == "signal_after_adjustment"
+    ]
+    assert binance_signal_rows, "Brak wiersza dla binance/signal_after_adjustment"
+    binance_signal_row = binance_signal_rows[0]
+    assert binance_signal_row["clamp_regular"] in {"0", ""}
+    assert binance_signal_row["clamp_absolute"] in {"0", ""}
+
     for row in rows:
         if row["metric"] == "risk_score" and row["primary_exchange"] == "binance":
             assert float(row["current_threshold"]) >= 0.7
@@ -310,8 +403,59 @@ def test_script_generates_report(tmp_path: Path) -> None:
             assert float(row["current_threshold"]) == 0.78
     assert any(row["primary_exchange"] == "__all__" for row in rows)
 
-    for metric_values in payload["global_summary"]["raw_values"].values():
-        assert all(math.isfinite(value) for value in metric_values)
+    assert "raw_values" not in payload["global_summary"]
+
+
+def test_script_writes_threshold_configuration(tmp_path: Path) -> None:
+    journal_path = tmp_path / "journal.jsonl"
+    _write_journal(journal_path)
+
+    export_path = tmp_path / "autotrade.json"
+    _write_autotrade_export(export_path)
+
+    output_config = tmp_path / "thresholds.json"
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "scripts/calibrate_autotrade_thresholds.py",
+            "--journal",
+            str(journal_path),
+            "--autotrade-export",
+            str(export_path),
+            "--output-threshold-config",
+            str(output_config),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert output_config.exists()
+    assert "Zapisano konfigurację progów" in result.stdout
+
+    payload = json.loads(output_config.read_text(encoding="utf-8"))
+    auto_cfg = payload.get("auto_trader")
+    assert isinstance(auto_cfg, Mapping)
+
+    signal_thresholds = auto_cfg.get("signal_thresholds")
+    assert isinstance(signal_thresholds, Mapping)
+    assert signal_thresholds.get("signal_after_adjustment") is not None
+    assert signal_thresholds.get("signal_after_clamp") is not None
+
+    map_cfg = auto_cfg.get("map_regime_to_signal")
+    assert isinstance(map_cfg, Mapping)
+    assert map_cfg.get("risk_score") is not None
+
+    strategy_thresholds = auto_cfg.get("strategy_signal_thresholds")
+    assert isinstance(strategy_thresholds, Mapping)
+    binance_thresholds = strategy_thresholds.get("binance")
+    assert isinstance(binance_thresholds, Mapping)
+    trend_thresholds = binance_thresholds.get("trend_following")
+    assert isinstance(trend_thresholds, Mapping)
+    assert trend_thresholds.get("signal_after_adjustment") is not None
+    assert trend_thresholds.get("signal_after_clamp") is not None
+    assert trend_thresholds.get("risk_score") is not None
 
 
 def test_script_accepts_cli_risk_score_threshold(tmp_path: Path) -> None:
@@ -353,6 +497,688 @@ def test_script_accepts_cli_risk_score_threshold(tmp_path: Path) -> None:
     )
     risk_stats = trend_group["metrics"]["risk_score"]
     assert risk_stats["current_threshold"] == pytest.approx(0.72)
+    sources = payload["sources"]
+    assert sources["risk_score_override"] == pytest.approx(0.72)
+    signal_sources = sources["current_signal_thresholds"]
+    assert signal_sources["inline"]["risk_score"] == pytest.approx(0.72)
+    assert "file_risk_score" not in signal_sources
+
+
+def test_script_tracks_file_risk_score_threshold(tmp_path: Path) -> None:
+    journal_path = tmp_path / "journal.jsonl"
+    _write_journal(journal_path)
+
+    export_path = tmp_path / "autotrade.json"
+    _write_autotrade_export(export_path)
+
+    thresholds_path = tmp_path / "current_thresholds.json"
+    thresholds_path.write_text(json.dumps({"risk_score": {"value": 0.58}}), encoding="utf-8")
+
+    output_json = tmp_path / "report.json"
+
+    subprocess.run(
+        [
+            sys.executable,
+            "scripts/calibrate_autotrade_thresholds.py",
+            "--journal",
+            str(journal_path),
+            "--autotrade-export",
+            str(export_path),
+            "--percentiles",
+            "0.5",
+            "--suggestion-percentile",
+            "0.5",
+            "--current-threshold",
+            str(thresholds_path),
+            "--output-json",
+            str(output_json),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    payload = json.loads(output_json.read_text(encoding="utf-8"))
+    trend_group = next(
+        entry
+        for entry in payload["groups"]
+        if entry["primary_exchange"] == "binance" and entry["strategy"] == "trend_following"
+    )
+    risk_stats = trend_group["metrics"]["risk_score"]
+    assert risk_stats["current_threshold"] == pytest.approx(0.58)
+    sources = payload["sources"]
+    signal_sources = sources["current_signal_thresholds"]
+    assert signal_sources["file_risk_score"] == pytest.approx(0.58)
+    assert "risk_score_override" not in sources
+    assert "inline" not in signal_sources or "risk_score" not in signal_sources.get("inline", {})
+
+
+def test_script_limits_raw_freeze_events_via_cli(tmp_path: Path) -> None:
+    journal_path = tmp_path / "journal.jsonl"
+    _write_journal(journal_path)
+
+    export_path = tmp_path / "autotrade.json"
+    _write_autotrade_export(export_path)
+
+    output_json = tmp_path / "report.json"
+
+    subprocess.run(
+        [
+            sys.executable,
+            "scripts/calibrate_autotrade_thresholds.py",
+            "--journal",
+            str(journal_path),
+            "--autotrade-export",
+            str(export_path),
+            "--max-freeze-events",
+            "1",
+            "--output-json",
+            str(output_json),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    payload = json.loads(output_json.read_text(encoding="utf-8"))
+    trend_group = next(
+        entry
+        for entry in payload["groups"]
+        if entry["primary_exchange"] == "binance" and entry["strategy"] == "trend_following"
+    )
+
+    assert len(trend_group["raw_freeze_events"]) == 1
+    assert trend_group["freeze_summary"]["total"] == 3
+    assert trend_group["freeze_summary"]["omitted"] == 2
+    assert trend_group["raw_freeze_events_truncated"] is True
+    assert trend_group["raw_freeze_events_omitted"] == 2
+    assert payload["sources"]["max_freeze_events"] == 1
+    assert payload["sources"]["raw_freeze_events_truncated_groups"] == 1
+    assert payload["global_summary"]["freeze_summary"]["omitted"] == 2
+
+
+def test_script_limits_raw_values_via_cli(tmp_path: Path) -> None:
+    journal_path = tmp_path / "journal.jsonl"
+    _write_journal(journal_path)
+
+    export_path = tmp_path / "autotrade.json"
+    _write_autotrade_export(export_path)
+
+    output_json = tmp_path / "report.json"
+
+    subprocess.run(
+        [
+            sys.executable,
+            "scripts/calibrate_autotrade_thresholds.py",
+            "--journal",
+            str(journal_path),
+            "--autotrade-export",
+            str(export_path),
+            "--max-raw-values",
+            "1",
+            "--output-json",
+            str(output_json),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    payload = json.loads(output_json.read_text(encoding="utf-8"))
+    trend_group = next(
+        entry
+        for entry in payload["groups"]
+        if entry["primary_exchange"] == "binance" and entry["strategy"] == "trend_following"
+    )
+
+    trend_raw_values = trend_group["raw_values"]
+    assert len(trend_raw_values["signal_after_adjustment"]) == 1
+    assert trend_raw_values["signal_after_adjustment"][0] == pytest.approx(0.62)
+    assert len(trend_raw_values["signal_after_clamp"]) == 1
+    assert trend_raw_values["signal_after_clamp"][0] == pytest.approx(0.55)
+    assert len(trend_raw_values["risk_freeze_duration"]) == 1
+    assert trend_raw_values["risk_freeze_duration"][0] == pytest.approx(180.0)
+    assert len(trend_raw_values["risk_score"]) == 1
+    assert trend_raw_values["risk_score"][0] == pytest.approx(0.72)
+
+    omitted_counts = trend_group["raw_values_omitted"]
+    assert omitted_counts["signal_after_adjustment"] == 2
+    assert omitted_counts["signal_after_clamp"] == 2
+    assert omitted_counts["risk_score"] == 1
+    assert omitted_counts["risk_freeze_duration"] == 1
+    assert trend_group["raw_values_truncated"] is True
+
+    sources = payload["sources"]
+    assert sources["max_raw_values"] == 1
+    assert sources["max_group_samples"] == _DEFAULT_GROUP_SAMPLE_LIMIT
+    assert sources["raw_values_truncated_groups"] == 1
+    assert sources["raw_values_omitted_total"] == 6
+    assert sources["max_global_samples"] == _DEFAULT_GLOBAL_SAMPLE_LIMIT
+    assert "global_samples_truncated_metrics" not in sources
+    assert "global_samples_omitted_total" not in sources
+
+
+def test_script_keeps_percentiles_when_raw_values_disabled(tmp_path: Path) -> None:
+    journal_path = tmp_path / "journal.jsonl"
+    _write_journal(journal_path)
+
+    export_path = tmp_path / "autotrade.json"
+    _write_autotrade_export(export_path)
+
+    output_json = tmp_path / "report.json"
+
+    subprocess.run(
+        [
+            sys.executable,
+            "scripts/calibrate_autotrade_thresholds.py",
+            "--journal",
+            str(journal_path),
+            "--autotrade-export",
+            str(export_path),
+            "--max-raw-values",
+            "0",
+            "--output-json",
+            str(output_json),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    payload = json.loads(output_json.read_text(encoding="utf-8"))
+    trend_group = next(
+        entry
+        for entry in payload["groups"]
+        if entry["primary_exchange"] == "binance" and entry["strategy"] == "trend_following"
+    )
+
+    metrics = trend_group["metrics"]["signal_after_adjustment"]
+    assert metrics["count"] == 3
+    assert metrics["sample_truncated"] is False
+    assert metrics["percentiles"]["p95"] is not None
+
+    sources = payload["sources"]
+    assert sources["max_raw_values"] == 0
+    assert sources["max_group_samples"] == _DEFAULT_GROUP_SAMPLE_LIMIT
+
+
+def test_script_sampling_deterministic_across_pythonhashseed(tmp_path: Path) -> None:
+    journal_path = tmp_path / "journal.jsonl"
+    _write_journal(journal_path)
+
+    export_path = tmp_path / "autotrade.json"
+    _write_autotrade_export(export_path)
+
+    def _run_with_seed(seed: str, output_name: str) -> dict[str, object]:
+        output_path = tmp_path / output_name
+        env = os.environ.copy()
+        env["PYTHONHASHSEED"] = seed
+        subprocess.run(
+            [
+                sys.executable,
+                "scripts/calibrate_autotrade_thresholds.py",
+                "--journal",
+                str(journal_path),
+                "--autotrade-export",
+                str(export_path),
+                "--max-raw-values",
+                "1",
+                "--output-json",
+                str(output_path),
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+
+        payload = json.loads(output_path.read_text(encoding="utf-8"))
+        payload["sources"].pop("generated_at", None)
+        payload.pop("generated_at", None)
+        return payload
+
+    payload_seed_0 = _run_with_seed("0", "seed0.json")
+    payload_seed_123 = _run_with_seed("123", "seed123.json")
+
+    def _extract_trend_group(payload: dict[str, object]) -> dict[str, object]:
+        trend_group = next(
+            entry
+            for entry in payload["groups"]
+            if entry["primary_exchange"] == "binance" and entry["strategy"] == "trend_following"
+        )
+        return trend_group
+
+    trend_group_seed_0 = _extract_trend_group(payload_seed_0)
+    trend_group_seed_123 = _extract_trend_group(payload_seed_123)
+
+    assert trend_group_seed_0["raw_values"] == trend_group_seed_123["raw_values"]
+
+    threshold_seed_0 = trend_group_seed_0["metrics"]["signal_after_adjustment"]["suggested_threshold"]
+    if isinstance(threshold_seed_0, dict):
+        threshold_seed_0 = threshold_seed_0["value"]
+
+    threshold_seed_123 = trend_group_seed_123["metrics"]["signal_after_adjustment"]["suggested_threshold"]
+    if isinstance(threshold_seed_123, dict):
+        threshold_seed_123 = threshold_seed_123["value"]
+
+    assert threshold_seed_0 == threshold_seed_123
+
+    assert payload_seed_0 == payload_seed_123
+
+def test_script_estimates_global_percentiles_without_samples(tmp_path: Path) -> None:
+    journal_path = tmp_path / "journal.jsonl"
+    _write_journal(journal_path)
+
+    export_path = tmp_path / "autotrade.json"
+    _write_autotrade_export(export_path)
+
+    output_json = tmp_path / "report.json"
+    output_csv = tmp_path / "report.csv"
+
+    subprocess.run(
+        [
+            sys.executable,
+            "scripts/calibrate_autotrade_thresholds.py",
+            "--journal",
+            str(journal_path),
+            "--autotrade-export",
+            str(export_path),
+            "--percentiles",
+            "0.5,0.9",
+            "--max-global-samples",
+            "0",
+            "--output-json",
+            str(output_json),
+            "--output-csv",
+            str(output_csv),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    payload = json.loads(output_json.read_text(encoding="utf-8"))
+    global_summary = payload["global_summary"]
+    global_signal = global_summary["metrics"]["signal_after_adjustment"]
+
+    assert global_signal["sample_truncated"] is True
+    assert global_signal["retained_samples"] == 0
+    assert global_signal["omitted_samples"] == global_signal["count"]
+    assert global_signal["approximation_mode"] == "approximate_from_moments"
+
+    expected_values = [0.90, 0.62, 0.48, -0.30]
+    aggregator = StreamingMetricAggregator(sample_limit=0)
+    aggregator.extend(expected_values)
+    percentile_values = [0.5, 0.9]
+    stats_result = aggregator.statistics(percentile_values)
+    expected_percentiles = stats_result.payload["percentiles"]
+    abs_stats_result = aggregator.statistics(percentile_values, absolute=True)
+    expected_abs_percentiles = abs_stats_result.payload["absolute_percentiles"]
+
+    percentiles_payload = global_signal["percentiles"]
+    for key, value in expected_percentiles.items():
+        assert key in percentiles_payload
+        assert percentiles_payload[key] == pytest.approx(value)
+        assert -1.0 <= percentiles_payload[key] <= 1.0
+
+    absolute_percentiles_payload = global_signal.get("absolute_percentiles")
+    assert isinstance(absolute_percentiles_payload, Mapping)
+    for key, value in expected_abs_percentiles.items():
+        assert key in absolute_percentiles_payload
+        assert absolute_percentiles_payload[key] == pytest.approx(value)
+        if absolute_percentiles_payload[key] is not None:
+            assert absolute_percentiles_payload[key] >= 0.0
+
+    suggestion_percentile = payload["suggestion_percentile"]
+    assert global_signal["suggested_threshold"] is not None
+    assert -1.0 <= global_signal["suggested_threshold"] <= 1.0
+
+    mean = global_signal["mean"]
+    stddev = global_signal["stddev"]
+    assert isinstance(mean, (int, float))
+    assert isinstance(stddev, (int, float))
+
+    folded_candidate = _approximate_folded_normal_percentile(
+        mean, stddev, suggestion_percentile
+    )
+    bounds = [abs(value) for value in expected_values if math.isfinite(value)]
+    lower_bound = min(bounds)
+    upper_bound = max(bounds)
+    folded_candidate = max(lower_bound, min(folded_candidate, upper_bound))
+    assert global_signal["suggested_threshold"] == pytest.approx(folded_candidate)
+
+    risk_summary = global_summary["metrics"]["risk_score"]
+    for value in risk_summary["percentiles"].values():
+        if value is not None:
+            assert 0.0 <= value <= 1.0
+    suggested_risk = risk_summary.get("suggested_threshold")
+    if suggested_risk is not None:
+        assert 0.0 <= suggested_risk <= 1.0
+
+    sources = payload["sources"]
+    assert sources["max_global_samples"] == 0
+    truncated_metrics = sources.get("global_samples_truncated_metrics")
+    assert truncated_metrics is not None and truncated_metrics >= 1
+    omitted_total = sources.get("global_samples_omitted_total")
+    assert omitted_total is not None and omitted_total >= global_signal["count"]
+    approx_global = sources.get("approximation_global_metrics")
+    assert approx_global is not None and approx_global >= 1
+    expected_group_keys = sorted(
+        (
+            group["primary_exchange"],
+            group["strategy"],
+            metric_name,
+        )
+        for group in payload["groups"]
+        for metric_name, metric_payload in group["metrics"].items()
+        if isinstance(metric_payload, Mapping)
+        and metric_payload.get("approximation_mode")
+    )
+    approx_metrics_count = sources.get("approximation_metrics")
+    group_approx_list = sources.get("approximation_metrics_list")
+    if expected_group_keys:
+        assert isinstance(group_approx_list, list)
+        parsed_group_keys = sorted(
+            (
+                entry.get("primary_exchange"),
+                entry.get("strategy"),
+                entry.get("metric"),
+            )
+            for entry in group_approx_list
+            if isinstance(entry, Mapping)
+        )
+        assert parsed_group_keys == expected_group_keys
+        assert approx_metrics_count == len(parsed_group_keys)
+    else:
+        assert group_approx_list in (None, [])
+        assert approx_metrics_count in (None, 0)
+    approx_global_list = sources.get("approximation_global_metrics_list")
+    assert isinstance(approx_global_list, list)
+    parsed_global = sorted(
+        metric for metric in approx_global_list if isinstance(metric, str)
+    )
+    expected_global = sorted(
+        metric_name
+        for metric_name, metric_payload in payload["global_summary"]["metrics"].items()
+        if isinstance(metric_payload, Mapping)
+        and metric_payload.get("approximation_mode")
+    )
+    assert parsed_global == expected_global
+    assert sources.get("approximation_global_metrics") == len(parsed_global)
+
+    with output_csv.open("r", encoding="utf-8") as handle:
+        reader = csv.DictReader(handle)
+        rows = list(reader)
+
+    percentile_labels = payload["percentiles"]
+    csv_row = next(
+        row
+        for row in rows
+        if row["primary_exchange"] == "__all__" and row["metric"] == "signal_after_adjustment"
+    )
+    assert csv_row["sample_truncated"] == "true"
+    assert int(csv_row["retained_samples"]) == 0
+    assert int(csv_row["omitted_samples"]) == global_signal["count"]
+    expected_global_raw_omitted = sum(
+        entry["raw_values_omitted"].get("signal_after_adjustment", 0)
+        for entry in payload["groups"]
+    )
+    assert csv_row["raw_values_truncated"] == (
+        "true" if expected_global_raw_omitted else "false"
+    )
+    assert int(csv_row["raw_values_omitted"]) == expected_global_raw_omitted
+    assert csv_row["approximation_mode"] == "approximate_from_moments"
+    for label in percentile_labels:
+        assert float(csv_row[label]) == pytest.approx(percentiles_payload[label])
+        abs_column = f"abs_{label}"
+        assert abs_column in csv_row
+        assert float(csv_row[abs_column]) == pytest.approx(
+            absolute_percentiles_payload[label]
+        )
+        assert float(csv_row[abs_column]) >= 0.0
+
+
+def test_script_respects_group_sample_limit(tmp_path: Path) -> None:
+    journal_path = tmp_path / "journal.jsonl"
+    _write_journal(journal_path)
+
+    export_path = tmp_path / "autotrade.json"
+    _write_autotrade_export(export_path)
+
+    output_json = tmp_path / "report.json"
+
+    subprocess.run(
+        [
+            sys.executable,
+            "scripts/calibrate_autotrade_thresholds.py",
+            "--journal",
+            str(journal_path),
+            "--autotrade-export",
+            str(export_path),
+            "--max-group-samples",
+            "1",
+            "--output-json",
+            str(output_json),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    payload = json.loads(output_json.read_text(encoding="utf-8"))
+    trend_group = next(
+        entry
+        for entry in payload["groups"]
+        if entry["primary_exchange"] == "binance" and entry["strategy"] == "trend_following"
+    )
+
+    metrics = trend_group["metrics"]["signal_after_adjustment"]
+    assert metrics["sample_truncated"] is True
+    assert metrics["retained_samples"] == 1
+    assert metrics["omitted_samples"] == metrics["count"] - 1
+
+    sources = payload["sources"]
+    assert sources["max_group_samples"] == 1
+    assert sources["group_samples_truncated_metrics"] >= 1
+
+
+def test_streaming_metric_aggregator_clamps_approximations() -> None:
+    aggregator = StreamingMetricAggregator(sample_limit=0, domain=(0.0, 1.0))
+    aggregator.extend([0.94, 0.96, 0.97, 0.98])
+    stats = aggregator.statistics([0.99])
+    percentile_value = stats.payload["percentiles"]["p99"]
+    assert percentile_value is not None
+    assert 0.0 <= percentile_value <= 1.0
+    assert percentile_value <= 0.98
+
+    suggested = aggregator.suggest_threshold(0.999, statistics_result=stats)
+    assert suggested is not None
+    assert 0.0 <= suggested <= 1.0
+
+    absolute_aggregator = StreamingMetricAggregator(sample_limit=0, domain=(-1.0, 1.0))
+    absolute_aggregator.extend([-0.8, -0.6, 0.7, 0.65])
+    absolute_stats = absolute_aggregator.statistics([0.999], absolute=True)
+    absolute_percentiles = absolute_stats.payload.get("absolute_percentiles")
+    assert absolute_percentiles is not None
+    for value in absolute_percentiles.values():
+        if value is not None:
+            assert value >= 0.0
+    absolute_threshold = absolute_aggregator.suggest_threshold(
+        0.999,
+        absolute=True,
+        statistics_result=absolute_stats,
+    )
+    assert absolute_threshold is not None
+    assert 0.0 <= absolute_threshold <= 1.0
+
+
+def test_streaming_metric_aggregator_clamp_counts_not_double_incremented() -> None:
+    aggregator = StreamingMetricAggregator(sample_limit=10, domain=(0.0, 0.75))
+    aggregator.extend([0.6, 0.65, 0.7, 0.8])
+
+    stats = aggregator.statistics([0.9])
+    before = aggregator.clamp_regular_count
+
+    suggested = aggregator.suggest_threshold(0.9, statistics_result=stats)
+
+    assert suggested == pytest.approx(0.75)
+    assert aggregator.clamp_regular_count == before
+
+
+def test_streaming_metric_aggregator_tracks_min_absolute_value() -> None:
+    aggregator = StreamingMetricAggregator(domain=(-1.0, 1.0))
+    aggregator.extend([-0.8, -0.02, 0.7, 0.05])
+
+    stats = aggregator.statistics([0.1], absolute=True)
+    absolute_threshold = aggregator.suggest_threshold(
+        0.1, absolute=True, statistics_result=stats
+    )
+
+    assert absolute_threshold is not None
+    # Wartość nie powinna być podbita do min(|min|, |max|) = 0.7,
+    # lecz wynikać z faktycznego minimalnego modułu (~0.02).
+    assert absolute_threshold < 0.1
+    assert absolute_threshold == pytest.approx(0.029, rel=1e-2)
+
+
+def test_generate_report_includes_clamp_counters() -> None:
+    report = _generate_report(
+        journal_events=[
+            {
+                "event_type": "ai_inference",
+                "primary_exchange": "binance",
+                "strategy": "trend_following",
+                "symbol": "BTCUSDT",
+                "signal_after_adjustment": "1.4",
+                "signal_after_clamp": "1.5",
+            }
+        ],
+        autotrade_entries=[
+            {
+                "timestamp": "2024-01-01T00:00:00Z",
+                "decision": {
+                    "details": {
+                        "symbol": "BTCUSDT",
+                        "primary_exchange": "binance",
+                        "strategy": "trend_following",
+                        "summary": {"risk_score": 1.4},
+                    }
+                },
+            }
+        ],
+        percentiles=[0.9],
+        suggestion_percentile=0.9,
+    )
+
+    assert report["groups"], "Raport powinien zawierać co najmniej jedną grupę"
+    group = report["groups"][0]
+
+    adjustment_clamps = group["metrics"]["signal_after_adjustment"]["clamped_values"]
+    clamp_clamps = group["metrics"]["signal_after_clamp"]["clamped_values"]
+
+    assert adjustment_clamps["regular"] > 0
+    assert adjustment_clamps["absolute"] > 0
+    assert clamp_clamps["regular"] > 0
+    assert clamp_clamps["absolute"] > 0
+
+    risk_clamps = group["metrics"]["risk_score"]["clamped_values"]
+    assert risk_clamps["regular"] > 0
+    assert risk_clamps["absolute"] == 0
+
+    sources = report["sources"].get("clamped_values")
+    assert sources is not None
+    assert "group" in sources
+    assert "global" in sources
+    group_payload = sources["group"]
+    global_payload = sources["global"]
+
+    assert group_payload["regular"] >= adjustment_clamps["regular"] + clamp_clamps["regular"]
+    assert group_payload["absolute"] >= clamp_clamps["absolute"]
+    assert group_payload.get("metrics_with_regular_clamp", 0) >= 1
+    assert group_payload.get("metrics_with_absolute_clamp", 0) >= 1
+
+    assert global_payload["regular"] >= adjustment_clamps["regular"] + clamp_clamps["regular"]
+    assert global_payload["absolute"] >= clamp_clamps["absolute"]
+    assert global_payload.get("metrics_with_regular_clamp", 0) >= 1
+    assert global_payload.get("metrics_with_absolute_clamp", 0) >= 1
+
+
+def test_clamp_counters_not_double_counted_between_group_and_global() -> None:
+    report = _generate_report(
+        journal_events=[
+            {
+                "event_type": "ai_inference",
+                "primary_exchange": "binance",
+                "strategy": "trend_following",
+                "symbol": "BTCUSDT",
+                "signal_after_adjustment": "2.0",
+                "signal_after_clamp": "-1.7",
+            }
+        ],
+        autotrade_entries=[
+            {
+                "timestamp": "2024-01-01T00:00:00Z",
+                "decision": {
+                    "details": {
+                        "symbol": "BTCUSDT",
+                        "primary_exchange": "binance",
+                        "strategy": "trend_following",
+                        "summary": {"risk_score": 2.0},
+                    }
+                },
+            }
+        ],
+        percentiles=[0.9],
+        suggestion_percentile=0.9,
+    )
+
+    sources = report["sources"].get("clamped_values")
+    assert sources is not None
+    assert set(sources.keys()) == {"group", "global"}
+
+    group_payload = sources["group"]
+    global_payload = sources["global"]
+
+    assert group_payload["regular"] > 0
+    assert global_payload["regular"] > 0
+    assert group_payload["regular"] == global_payload["regular"]
+    assert group_payload["absolute"] == global_payload["absolute"]
+
+    assert group_payload.get("metrics_with_regular_clamp") == len({"signal_after_adjustment", "signal_after_clamp", "risk_score"})
+    assert global_payload.get("metrics_with_regular_clamp") == len({"signal_after_adjustment", "signal_after_clamp", "risk_score"})
+
+
+def test_streaming_metric_aggregator_reuses_sorted_samples(monkeypatch: pytest.MonkeyPatch) -> None:
+    aggregator = StreamingMetricAggregator(sample_limit=1000)
+    for value in range(-500, 500):
+        aggregator.add(float(value))
+
+    call_counter = {"count": 0}
+    original_sorted_samples = StreamingMetricAggregator._sorted_samples
+
+    def counting_sorted_samples(self: StreamingMetricAggregator) -> list[float]:
+        call_counter["count"] += 1
+        return original_sorted_samples(self)
+
+    monkeypatch.setattr(StreamingMetricAggregator, "_sorted_samples", counting_sorted_samples)
+
+    stats_result = aggregator.statistics([0.9])
+    assert call_counter["count"] == 1
+
+    first_suggestion = aggregator.suggest_threshold(
+        0.9,
+        statistics_result=stats_result,
+    )
+    assert first_suggestion is not None
+    assert call_counter["count"] == 1
+
+    absolute_suggestion = aggregator.suggest_threshold(
+        0.9,
+        absolute=True,
+        statistics_result=stats_result,
+    )
+    assert absolute_suggestion is not None
+    assert call_counter["count"] == 1
 
 
 def test_script_accepts_thresholds_from_json_file(tmp_path: Path) -> None:
@@ -446,6 +1272,9 @@ def test_script_normalizes_cli_threshold_keys(tmp_path: Path) -> None:
     assert signal_stats["current_threshold"] == pytest.approx(0.8)
     clamp_stats = trend_group["metrics"]["signal_after_clamp"]
     assert clamp_stats["current_threshold"] == pytest.approx(0.7)
+    current_sources = payload["sources"]["current_signal_thresholds"]
+    assert current_sources["inline"]["signal_after_adjustment"] == pytest.approx(0.8)
+    assert current_sources["inline"]["signal_after_clamp"] == pytest.approx(0.7)
 
 
 def test_load_current_thresholds_rejects_directory(tmp_path: Path) -> None:
@@ -483,11 +1312,102 @@ def test_load_current_thresholds_supports_nested_structures(tmp_path: Path) -> N
     thresholds_path = tmp_path / "nested_thresholds.json"
     thresholds_path.write_text(json.dumps(payload), encoding="utf-8")
 
-    thresholds, risk_score = _load_current_signal_thresholds([str(thresholds_path)])
+    thresholds, risk_score_sources, metadata = _load_current_signal_thresholds(
+        [str(thresholds_path)]
+    )
 
     assert thresholds["signal_after_adjustment"] == pytest.approx(0.85)
     assert thresholds["signal_after_clamp"] == pytest.approx(0.74)
-    assert risk_score is None
+    assert risk_score_sources.from_files is None
+    assert risk_score_sources.from_inline is None
+    assert metadata["files"] == [str(thresholds_path)]
+    assert metadata.get("inline") is None
+
+
+def test_load_current_thresholds_tracks_inline_sources() -> None:
+    thresholds, risk_score_sources, metadata = _load_current_signal_thresholds(
+        ["signal_after_adjustment=0.81", "risk_score=0.66"]
+    )
+
+    assert thresholds == {"signal_after_adjustment": 0.81}
+    assert risk_score_sources.from_inline == pytest.approx(0.66)
+    assert risk_score_sources.from_files is None
+    assert "files" not in metadata
+    assert metadata["inline"] == {
+        "signal_after_adjustment": pytest.approx(0.81),
+        "risk_score": pytest.approx(0.66),
+    }
+
+
+def test_group_metrics_use_streaming_aggregators_for_large_inputs() -> None:
+    sample_count = _DEFAULT_GROUP_SAMPLE_LIMIT + 200
+    journal_events = [
+        {
+            "primary_exchange": "binance",
+            "strategy": "trend_following",
+            "signal_after_adjustment": 0.5,
+            "signal_after_clamp": 0.5,
+        }
+        for _ in range(sample_count)
+    ]
+
+    report = _generate_report(
+        journal_events=journal_events,
+        autotrade_entries=[],
+        percentiles=[0.5],
+        suggestion_percentile=0.5,
+        max_raw_values=0,
+    )
+
+    sources = report["sources"]
+    assert sources["max_raw_values"] == 0
+    assert sources["max_group_samples"] == _DEFAULT_GROUP_SAMPLE_LIMIT
+    assert sources["group_samples_truncated_metrics"] >= 1
+    assert sources["group_samples_omitted_total"] > 0
+    group_entry = report["groups"][0]
+    metrics = group_entry["metrics"]["signal_after_adjustment"]
+
+    assert metrics["count"] == sample_count
+    assert metrics["sample_truncated"] is True
+    assert metrics["retained_samples"] == _DEFAULT_GROUP_SAMPLE_LIMIT
+    assert metrics["omitted_samples"] == sample_count - _DEFAULT_GROUP_SAMPLE_LIMIT
+    percentile_label = report["percentiles"][0]
+    assert metrics["percentiles"][percentile_label] == pytest.approx(0.5)
+
+
+def test_load_current_thresholds_without_sources() -> None:
+    thresholds, risk_score_sources, metadata = _load_current_signal_thresholds(None)
+
+    assert thresholds == {}
+    assert risk_score_sources.from_inline is None
+    assert risk_score_sources.from_files is None
+    assert metadata == {}
+
+
+def test_load_current_thresholds_rejects_non_finite_cli() -> None:
+    with pytest.raises(SystemExit) as excinfo:
+        _load_current_signal_thresholds(["signal_after_adjustment=NaN"])
+
+    assert "niefinityczną" in str(excinfo.value)
+
+
+def test_load_current_thresholds_rejects_non_finite_file(tmp_path: Path) -> None:
+    payload = {
+        "signal_after_adjustment": {
+            "current_threshold": "Infinity",
+        },
+        "risk_score": {
+            "value": "-Infinity",
+        },
+    }
+
+    thresholds_path = tmp_path / "bad_thresholds.json"
+    thresholds_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(SystemExit) as excinfo:
+        _load_current_signal_thresholds([str(thresholds_path)])
+
+    assert "niefinityczną" in str(excinfo.value)
 
 
 def test_group_resolution_prefers_entry_metadata_over_symbol_map() -> None:
@@ -828,6 +1748,48 @@ def test_generate_report_merges_multiple_risk_threshold_paths(
     assert metrics["current_threshold"] == pytest.approx(0.88)
 
 
+def test_cli_risk_score_override_beats_config(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    autotrade_entries = [
+        {
+            "decision": {
+                "details": {
+                    "symbol": "BTCUSDT",
+                    "primary_exchange": "binance",
+                    "strategy": "trend_following",
+                    "summary": {"risk_score": 0.6},
+                }
+            }
+        }
+    ]
+
+    override_path = tmp_path / "risk_thresholds.yaml"
+    override_path.write_text("auto_trader: {}\n", encoding="utf-8")
+
+    def _fake_loader(*, config_path: Path | None = None):
+        assert config_path == override_path
+        return {"auto_trader": {"map_regime_to_signal": {"risk_score": 0.9}}}
+
+    monkeypatch.setattr(
+        "scripts.calibrate_autotrade_thresholds.load_risk_thresholds",
+        _fake_loader,
+    )
+
+    report = _generate_report(
+        journal_events=[],
+        autotrade_entries=autotrade_entries,
+        percentiles=[0.5],
+        suggestion_percentile=0.5,
+        risk_threshold_sources=[str(override_path)],
+        cli_risk_score=0.42,
+    )
+
+    metrics = report["groups"][0]["metrics"]["risk_score"]
+    assert metrics["current_threshold"] == pytest.approx(0.42)
+    assert report["sources"]["risk_score_override"] == pytest.approx(0.42)
+
+
 def test_autotrade_entry_reads_routing_sequences() -> None:
     journal_events = [
         {
@@ -987,6 +1949,296 @@ def test_build_symbol_map_marks_ambiguous_when_conflicting_routing() -> None:
     canonical_symbol = _canonicalize_symbol_key("XRPUSDT")
     assert canonical_symbol is not None
     assert mapping[canonical_symbol] == _AMBIGUOUS_SYMBOL_MAPPING
+
+
+def test_generate_report_accepts_generators() -> None:
+    journal_events = (
+        {
+            "primary_exchange": "Binance",
+            "strategy": "Trend",
+            "symbol": "BTCUSDT",
+            "signal_after_adjustment": 0.6,
+            "signal_after_clamp": 0.58,
+        },
+        {
+            "primary_exchange": "Binance",
+            "strategy": "Trend",
+            "symbol": "BTCUSDT",
+            "signal_after_adjustment": 0.4,
+            "signal_after_clamp": 0.38,
+        },
+    )
+    autotrade_entries = (
+        {
+            "timestamp": "2024-01-01T00:00:00Z",
+            "detail": {
+                "symbol": "btcusdt",
+                "primary_exchange": "binance",
+                "strategy": "trend",
+                "summary": {"risk_score": 0.42},
+            },
+        },
+    )
+
+    report = _generate_report(
+        journal_events=(dict(event) for event in journal_events),
+        autotrade_entries=(dict(entry) for entry in autotrade_entries),
+        percentiles=[0.5],
+        suggestion_percentile=0.5,
+    )
+
+    sources = report["sources"]
+    assert sources["journal_events"] == 2
+    assert sources["autotrade_entries"] == 1
+    assert "max_freeze_events" not in sources
+    assert "max_raw_values" not in sources
+    assert sources["max_global_samples"] == _DEFAULT_GLOBAL_SAMPLE_LIMIT
+    assert "global_samples_truncated_metrics" not in sources
+    assert report["groups"]
+    trend_group = next(iter(report["groups"]))
+    assert trend_group["metrics"]["signal_after_adjustment"]["count"] == 2
+
+
+def test_generate_report_limits_raw_freeze_events() -> None:
+    autotrade_entries = [
+        {
+            "timestamp": "2024-01-01T00:00:00Z",
+            "detail": {
+                "symbol": "BTCUSDT",
+                "primary_exchange": "binance",
+                "strategy": "trend_following",
+                "summary": {"risk_score": 0.51},
+            },
+        },
+        {
+            "status": "auto_risk_freeze",
+            "detail": {
+                "symbol": "BTCUSDT",
+                "primary_exchange": "binance",
+                "strategy": "trend_following",
+                "summary": {"risk_score": 0.71},
+            },
+        },
+        {
+            "status": "risk_freeze_manual",
+            "detail": {
+                "symbol": "BTCUSDT",
+                "primary_exchange": "binance",
+                "strategy": "trend_following",
+                "summary": {"risk_score": 0.68},
+            },
+        },
+        {
+            "status": "auto_risk_freeze",
+            "detail": {
+                "symbol": "BTCUSDT",
+                "primary_exchange": "binance",
+                "strategy": "trend_following",
+                "summary": {"risk_score": 0.92},
+            },
+        },
+    ]
+
+    with patch("scripts.calibrate_autotrade_thresholds.load_risk_thresholds", return_value={}):
+        report = _generate_report(
+            journal_events=[],
+            autotrade_entries=autotrade_entries,
+            percentiles=[0.5],
+            suggestion_percentile=0.5,
+            max_freeze_events=1,
+        )
+
+    assert report["groups"]
+    group = report["groups"][0]
+    assert group["freeze_summary"]["total"] == 3
+    assert len(group["raw_freeze_events"]) == 1
+    assert group["raw_freeze_events_truncated"] is True
+    assert group["raw_freeze_events_omitted"] == 2
+    assert report["sources"]["max_freeze_events"] == 1
+    assert report["sources"]["raw_freeze_events_truncated_groups"] == 1
+
+
+def test_generate_report_includes_freeze_only_groups() -> None:
+    autotrade_entries = [
+        {
+            "timestamp": "2024-02-01T00:00:00Z",
+            "status": "auto_risk_freeze",
+            "detail": {
+                "symbol": "ETHUSDT",
+                "primary_exchange": "binance",
+                "strategy": "trend_following",
+                "summary": {"risk_score": 0.71},
+            },
+        },
+        {
+            "timestamp": "2024-02-01T01:00:00Z",
+            "status": "risk_freeze_manual",
+            "detail": {
+                "symbol": "ETHUSDT",
+                "primary_exchange": "binance",
+                "strategy": "trend_following",
+                "summary": {"risk_score": 0.69},
+            },
+        },
+    ]
+
+    with patch("scripts.calibrate_autotrade_thresholds.load_risk_thresholds", return_value={}):
+        report = _generate_report(
+            journal_events=[],
+            autotrade_entries=autotrade_entries,
+            percentiles=[0.5],
+            suggestion_percentile=0.5,
+        )
+
+    groups = {
+        (group["primary_exchange"], group["strategy"]): group for group in report["groups"]
+    }
+
+    key = ("binance", "trend_following")
+    assert key in groups
+    freeze_only_group = groups[key]
+    assert freeze_only_group["metrics"] == {}
+    assert freeze_only_group["freeze_summary"]["total"] == 2
+    assert freeze_only_group["freeze_summary"]["omitted"] == 0
+    assert len(freeze_only_group["raw_freeze_events"]) == 2
+    assert freeze_only_group["raw_freeze_events_truncated"] is False
+    assert freeze_only_group["raw_freeze_events_omitted"] == 0
+
+    global_summary = report["global_summary"]["freeze_summary"]
+    assert global_summary["total"] == 2
+    assert global_summary["omitted"] == 0
+
+
+def test_generate_report_limits_global_samples() -> None:
+    journal_events = []
+    for index in range(200):
+        journal_events.append(
+            {
+                "primary_exchange": "binance",
+                "strategy": "trend_following",
+                "symbol": "BTCUSDT",
+                "signal_after_adjustment": index / 100.0,
+                "signal_after_clamp": index / 120.0,
+            }
+        )
+
+    autotrade_entries = []
+    for index in range(200):
+        autotrade_entries.append(
+            {
+                "timestamp": f"2024-01-01T00:{index:02d}:00Z",
+                "detail": {
+                    "symbol": "BTCUSDT",
+                    "primary_exchange": "binance",
+                    "strategy": "trend_following",
+                    "summary": {"risk_score": index / 200.0},
+                },
+            }
+        )
+
+    report = _generate_report(
+        journal_events=journal_events,
+        autotrade_entries=autotrade_entries,
+        percentiles=[0.5, 0.9],
+        suggestion_percentile=0.9,
+        max_global_samples=10,
+    )
+
+    global_metrics = report["global_summary"]["metrics"]
+    signal_stats = global_metrics["signal_after_adjustment"]
+    assert signal_stats["count"] == 200
+    assert signal_stats["sample_truncated"] is True
+    assert signal_stats["retained_samples"] == 10
+    assert signal_stats["omitted_samples"] == 190
+    assert signal_stats["percentiles"]
+
+    risk_stats = global_metrics["risk_score"]
+    assert risk_stats["count"] == 200
+    assert risk_stats["sample_truncated"] is True
+    assert risk_stats["retained_samples"] == 10
+    assert risk_stats["omitted_samples"] == 190
+
+    sources = report["sources"]
+    assert sources["max_global_samples"] == 10
+    assert sources["global_samples_truncated_metrics"] >= 1
+    assert sources["global_samples_omitted_total"] >= 190
+
+
+def test_write_csv_includes_freeze_only_groups(tmp_path: Path) -> None:
+    autotrade_entries = [
+        {
+            "timestamp": "2024-02-01T00:00:00Z",
+            "status": "auto_risk_freeze",
+            "detail": {
+                "symbol": "ETHUSDT",
+                "primary_exchange": "binance",
+                "strategy": "trend_following",
+                "summary": {"risk_score": 0.71},
+            },
+        },
+        {
+            "timestamp": "2024-02-01T01:00:00Z",
+            "status": "risk_freeze_manual",
+            "detail": {
+                "symbol": "ETHUSDT",
+                "primary_exchange": "binance",
+                "strategy": "trend_following",
+                "summary": {"risk_score": 0.69},
+            },
+        },
+    ]
+
+    with patch("scripts.calibrate_autotrade_thresholds.load_risk_thresholds", return_value={}):
+        report = _generate_report(
+            journal_events=[],
+            autotrade_entries=autotrade_entries,
+            percentiles=[0.5],
+            suggestion_percentile=0.5,
+        )
+
+    csv_path = tmp_path / "freeze_only.csv"
+    _write_csv(
+        report["groups"],
+        csv_path,
+        percentiles=report["percentiles"],
+        global_summary=report["global_summary"],
+    )
+
+    with csv_path.open("r", encoding="utf-8") as handle:
+        reader = csv.DictReader(handle)
+        rows = list(reader)
+
+    assert reader.fieldnames is not None
+    for column in (
+        "sample_truncated",
+        "retained_samples",
+        "omitted_samples",
+        "raw_values_truncated",
+        "raw_values_omitted",
+    ):
+        assert column in reader.fieldnames, f"Brak kolumny {column} w eksporcie CSV"
+
+    freeze_rows = [
+        row
+        for row in rows
+        if row["metric"] == "__freeze_summary__" and row["primary_exchange"] == "binance"
+    ]
+    assert freeze_rows, "CSV powinien zawierać wiersz dla blokad"
+    freeze_row = freeze_rows[0]
+    assert int(freeze_row["freeze_total"]) == 2
+    assert int(freeze_row["freeze_auto"]) == 1
+    assert int(freeze_row["freeze_manual"]) == 1
+    assert freeze_row["freeze_status_counts"], "Oczekiwano rozbicia statusów"
+    assert freeze_row["raw_values_truncated"] == ""
+    assert freeze_row["raw_values_omitted"] == ""
+
+    aggregated_freeze_rows = [
+        row
+        for row in rows
+        if row["metric"] == "__freeze_summary__" and row["primary_exchange"] == "__all__"
+    ]
+    assert aggregated_freeze_rows, "CSV powinien zawierać wiersz zbiorczy"
+    assert int(aggregated_freeze_rows[0]["freeze_total"]) == 2
 
 
 def test_build_symbol_map_coalesces_case_variants() -> None:
@@ -1167,3 +2419,96 @@ def test_symbol_map_ambiguous_entry_keeps_unknown_routing() -> None:
 
     assert set(groups) == {("unknown", "unknown")}
     assert groups[("unknown", "unknown")]["metrics"]["risk_score"]["count"] == 1
+
+
+def test_autotrade_export_is_parsed_streamingly(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    export_path = tmp_path / "export.json"
+    entries = [
+        {"timestamp": "2024-01-01T00:00:00Z", "detail": {"symbol": "BTCUSDT"}},
+        {"timestamp": "2024-01-01T00:05:00Z", "detail": {"symbol": "BTCUSDT"}},
+        {"timestamp": "2024-01-01T00:10:00Z", "detail": {"symbol": "BTCUSDT"}},
+        {"timestamp": "2024-01-01T00:15:00Z", "detail": {"symbol": "BTCUSDT"}},
+    ]
+    export_path.write_text(json.dumps({"entries": entries}), encoding="utf-8")
+
+    read_lengths: list[int] = []
+    original_open = Path.open
+
+    class CountingHandle:
+        def __init__(self, handle):  # type: ignore[no-untyped-def]
+            self._handle = handle
+
+        def read(self, size: int = -1) -> str:
+            data = self._handle.read(size)
+            read_lengths.append(len(data))
+            return data
+
+        def __getattr__(self, name: str):  # noqa: ANN204 - passthrough helper
+            return getattr(self._handle, name)
+
+        def __enter__(self):  # noqa: ANN204 - passthrough helper
+            self._handle.__enter__()
+            return self
+
+        def __exit__(self, *exc):  # noqa: ANN204 - passthrough helper
+            return self._handle.__exit__(*exc)
+
+    def counting_open(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+        return CountingHandle(original_open(self, *args, **kwargs))
+
+    monkeypatch.setattr("scripts.calibrate_autotrade_thresholds._STREAM_READ_SIZE", 16)
+    monkeypatch.setattr(Path, "open", counting_open)
+
+    loaded_entries = list(_load_autotrade_entries([str(export_path)]))
+    assert len(loaded_entries) == len(entries)
+
+    positive_reads = [length for length in read_lengths if length > 0]
+    assert len(positive_reads) >= 2
+    assert max(positive_reads) <= 16
+
+
+def test_autotrade_export_with_bom(tmp_path: Path) -> None:
+    export_path = tmp_path / "export_with_bom.json"
+    payload = {"entries": [{"timestamp": "2024-01-01T00:00:00Z"}]}
+    export_path.write_text("\ufeff" + json.dumps(payload), encoding="utf-8")
+
+    entries = list(_load_autotrade_entries([str(export_path)]))
+
+    assert len(entries) == 1
+    assert entries[0]["timestamp"] == "2024-01-01T00:00:00Z"
+
+
+def test_autotrade_export_jsonl(tmp_path: Path) -> None:
+    export_path = tmp_path / "export.ndjson"
+    entries = [
+        {"timestamp": "2024-01-01T00:00:00Z", "detail": {"symbol": "BTCUSDT"}},
+        {"timestamp": "2024-01-01T01:00:00Z", "detail": {"symbol": "BTCUSDT"}},
+        {"timestamp": "2024-01-01T02:00:00Z", "detail": {"symbol": "BTCUSDT"}},
+    ]
+    export_path.write_text("\n".join(json.dumps(entry) for entry in entries) + "\n", encoding="utf-8")
+
+    since = datetime(2024, 1, 1, 1, 0, tzinfo=timezone.utc)
+    until = datetime(2024, 1, 1, 2, 0, tzinfo=timezone.utc)
+
+    loaded = list(
+        _load_autotrade_entries(
+            [str(export_path)],
+            since=since,
+            until=until,
+        )
+    )
+
+    assert len(loaded) == 2
+    assert loaded[0]["timestamp"] == "2024-01-01T01:00:00Z"
+    assert loaded[1]["timestamp"] == "2024-01-01T02:00:00Z"
+
+
+def test_autotrade_export_rejects_extra_data_after_array(tmp_path: Path) -> None:
+    export_path = tmp_path / "export_extra.json"
+    payload = [{"timestamp": "2024-01-01T00:00:00Z"}]
+    export_path.write_text(json.dumps(payload) + " {}", encoding="utf-8")
+
+    with pytest.raises(SystemExit, match="dodatkowe dane po tablicy"):
+        list(_load_autotrade_entries([str(export_path)]))
