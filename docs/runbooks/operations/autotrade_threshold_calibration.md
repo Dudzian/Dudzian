@@ -61,6 +61,10 @@ Polecenie:
 - zapisuje pełny raport JSON (z surowymi wartościami, statystykami i
   sugerowanymi progami),
 - tworzy tabelę CSV gotową do importu w arkuszu kalkulacyjnym,
+- w pliku CSV dołącza kolumny `sample_truncated`, `retained_samples` oraz
+  `omitted_samples`, dzięki którym łatwo rozpoznać, czy percentyle bazują na
+  ograniczonej próbce (wartości puste oznaczają, że metryka nie korzysta z
+  próbkowania),
 - zbiera statystyki blokad ryzyka (`risk_freeze` / `auto_risk_freeze`) wraz z
   rozkładem długości blokad i powodów,
 - pozwala kontrolować długość list blokad w sekcjach `freeze_events`

@@ -23,6 +23,11 @@ _STREAM_READ_SIZE = 65536
 _STREAM_READ_SIZE = 65536
 _DEFAULT_GLOBAL_SAMPLE_LIMIT = 50000
 
+
+_STREAM_READ_SIZE = 65536
+_DEFAULT_GROUP_SAMPLE_LIMIT = 50000
+_DEFAULT_GLOBAL_SAMPLE_LIMIT = 50000
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
@@ -52,6 +57,13 @@ _ABSOLUTE_THRESHOLD_METRICS = frozenset(
     _normalize_metric_key(name)
     for name in ("signal_after_adjustment", "signal_after_clamp")
 )
+
+_METRIC_VALUE_DOMAINS: dict[str, tuple[float | None, float | None]] = {
+    "signal_after_adjustment": (-1.0, 1.0),
+    "signal_after_clamp": (-1.0, 1.0),
+    "risk_score": (0.0, 1.0),
+    "risk_freeze_duration": (0.0, None),
+}
 _THRESHOLD_VALUE_KEYS = (
     "current_threshold",
     "threshold",
@@ -1947,6 +1959,7 @@ def _write_csv(
                     "suggested_threshold": metric_payload.get("suggested_threshold"),
                     "current_threshold": metric_payload.get("current_threshold"),
                 }
+                row.update(sample_defaults)
                 for percentile_key, percentile_value in metric_payload.get("percentiles", {}).items():
                     row[percentile_key] = percentile_value
                 row.update(freeze_defaults)
@@ -1975,6 +1988,7 @@ def _write_csv(
                         "suggested_threshold": metric_payload.get("suggested_threshold"),
                         "current_threshold": metric_payload.get("current_threshold"),
                     }
+                    row.update(sample_defaults)
                     percentiles_payload = metric_payload.get("percentiles")
                     if isinstance(percentiles_payload, Mapping):
                         for percentile_key, percentile_value in percentiles_payload.items():
@@ -2656,6 +2670,12 @@ def _generate_report(
 
     if cli_risk_score is not None:
         current_risk_score = float(cli_risk_score)
+
+    if cli_risk_score is not None:
+        current_risk_score = float(cli_risk_score)
+
+    if file_risk_score is not None:
+        current_risk_score = float(file_risk_score)
 
     if cli_risk_score is not None:
         current_risk_score = float(cli_risk_score)

@@ -1034,6 +1034,10 @@ def test_script_generates_report(tmp_path: Path) -> None:
         reader = csv.DictReader(handle)
         rows = list(reader)
 
+    assert reader.fieldnames is not None
+    for column in ("sample_truncated", "retained_samples", "omitted_samples"):
+        assert column in reader.fieldnames, f"Brak kolumny {column} w eksporcie CSV"
+
     assert {row["metric"] for row in rows} >= {
         "signal_after_adjustment",
         "risk_score",
