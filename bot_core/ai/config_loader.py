@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import os
 from copy import deepcopy
 from functools import lru_cache
@@ -11,6 +12,11 @@ from typing import Any, Mapping, MutableMapping
 
 import yaml
 
+
+def _get_supported_signal_threshold_metrics() -> frozenset[str]:
+    from bot_core.trading.signal_thresholds import SUPPORTED_SIGNAL_THRESHOLD_METRICS
+
+    return frozenset(name.casefold() for name in SUPPORTED_SIGNAL_THRESHOLD_METRICS)
 
 _DEFAULTS_PACKAGE = "bot_core.ai._defaults"
 _DEFAULTS_RESOURCE = "risk_thresholds.yaml"
@@ -238,6 +244,93 @@ def _validate_thresholds(thresholds: Mapping[str, Any]) -> None:
         value = release.get(key)
         if not isinstance(value, (int, float)) or value < 0:
             raise ValueError(f"Invalid cooldown release threshold {key}: {value!r}")
+
+    supported_metrics = _get_supported_signal_threshold_metrics()
+
+    signal_thresholds = auto_trader.get("signal_thresholds")
+    if signal_thresholds is None:
+        normalised_signal_thresholds: dict[str, float] | None = None
+    elif isinstance(signal_thresholds, Mapping):
+        normalised_signal_thresholds = {}
+        for key, raw in signal_thresholds.items():
+            try:
+                numeric = float(raw)
+            except (TypeError, ValueError):
+                raise ValueError(
+                    f"auto_trader.signal_thresholds[{key!r}] must be numeric, got {raw!r}"
+                ) from None
+            if not math.isfinite(numeric):
+                raise ValueError(
+                    f"auto_trader.signal_thresholds[{key!r}] must be finite, got {numeric!r}"
+                )
+            key_norm = str(key).strip().casefold()
+            if not key_norm:
+                raise ValueError("auto_trader.signal_thresholds keys must be non-empty")
+            if key_norm not in supported_metrics:
+                raise ValueError(
+                    "auto_trader.signal_thresholds contains unsupported metric "
+                    f"{key!r}; supported metrics: {sorted(supported_metrics)!r}"
+                )
+            normalised_signal_thresholds[key_norm] = numeric
+    else:
+        raise ValueError("auto_trader.signal_thresholds section must be a mapping")
+
+    strategy_thresholds = auto_trader.get("strategy_signal_thresholds")
+    if strategy_thresholds is None:
+        normalised_strategy_thresholds: dict[str, dict[str, dict[str, float]]] | None = None
+    elif isinstance(strategy_thresholds, Mapping):
+        normalised_strategy_thresholds = {}
+        for exchange_key, strategy_map in strategy_thresholds.items():
+            if not isinstance(strategy_map, Mapping):
+                raise ValueError(
+                    "auto_trader.strategy_signal_thresholds values must be mappings"
+                )
+            exchange_norm = str(exchange_key).strip().casefold()
+            if not exchange_norm:
+                continue
+            strategies_normalised: dict[str, dict[str, float]] = {}
+            for strategy_key, metric_map in strategy_map.items():
+                if not isinstance(metric_map, Mapping):
+                    raise ValueError(
+                        "auto_trader.strategy_signal_thresholds entries must map to metric mappings"
+                    )
+                strategy_norm = str(strategy_key).strip().casefold()
+                if not strategy_norm:
+                    continue
+                metrics_normalised: dict[str, float] = {}
+                for metric_name, raw in metric_map.items():
+                    try:
+                        numeric = float(raw)
+                    except (TypeError, ValueError):
+                        raise ValueError(
+                            "auto_trader.strategy_signal_thresholds values must be numeric"
+                        ) from None
+                    if not math.isfinite(numeric):
+                        raise ValueError(
+                            "auto_trader.strategy_signal_thresholds values must be finite"
+                        )
+                    metric_norm = str(metric_name).strip().casefold()
+                    if not metric_norm:
+                        raise ValueError(
+                            "auto_trader.strategy_signal_thresholds metric names must be non-empty"
+                        )
+                    if metric_norm not in supported_metrics:
+                        raise ValueError(
+                            "auto_trader.strategy_signal_thresholds contains unsupported metric "
+                            f"{metric_name!r}; supported metrics: {sorted(supported_metrics)!r}"
+                        )
+                    metrics_normalised[metric_norm] = numeric
+                if metrics_normalised:
+                    strategies_normalised[strategy_norm] = metrics_normalised
+            if strategies_normalised:
+                normalised_strategy_thresholds[exchange_norm] = strategies_normalised
+    else:
+        raise ValueError("auto_trader.strategy_signal_thresholds section must be a mapping")
+
+    if normalised_signal_thresholds is not None:
+        auto_trader["signal_thresholds"] = normalised_signal_thresholds
+    if normalised_strategy_thresholds is not None:
+        auto_trader["strategy_signal_thresholds"] = normalised_strategy_thresholds
 
 
 @lru_cache(maxsize=None)

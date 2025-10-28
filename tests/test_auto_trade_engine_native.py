@@ -217,6 +217,387 @@ def test_auto_trade_engine_generates_orders_and_signals(monkeypatch) -> None:
     json.dumps(metadata, sort_keys=True)
 
 
+def test_auto_trade_engine_respects_global_signal_threshold(monkeypatch) -> None:
+    adapter = _make_sync_adapter()
+    orders: list[tuple[str, float]] = []
+
+    catalog = StrategyCatalog(plugins=(_ConstantTrendStrategy,))
+    cfg = AutoTradeConfig(
+        symbol="BTCUSDT",
+        qty=0.2,
+        regime_window=12,
+        strategy_weights={
+            MarketRegime.TREND.value: {"trend_following": 1.0},
+        },
+        breakout_window=3,
+        mean_reversion_window=3,
+        activation_threshold=0.2,
+        primary_exchange="binance",
+        strategy="trend_following",
+        signal_thresholds={"signal_after_clamp": 0.8},
+    )
+    engine = AutoTradeEngine(
+        adapter,
+        lambda side, qty: orders.append((side, qty)),
+        cfg,
+        strategy_catalog=catalog,
+    )
+    engine.apply_params({"fast": 2, "slow": 4})
+
+    base_time = 1_700_200_000.0
+    current_time = {"value": base_time}
+
+    def fake_time() -> float:
+        return current_time["value"]
+
+    monkeypatch.setattr("bot_core.trading.auto_trade.time.time", fake_time)
+    monkeypatch.setattr("bot_core.events.emitter.time.time", fake_time)
+
+    for idx in range(30):
+        price = 100.0 + idx * 0.2
+        bar = {
+            "open_time": float(idx),
+            "close": price,
+            "high": price * 1.001,
+            "low": price * 0.999,
+            "volume": 1500.0 + idx * 2,
+        }
+        current_time["value"] = base_time + idx * 1.0
+        adapter.publish(EventType.MARKET_TICK, {"symbol": "BTCUSDT", "bar": bar})
+
+    assert not orders, "global clamp threshold should prevent entries"
+    snapshot = engine.signal_threshold_snapshot()
+    assert snapshot["effective"]["signal_after_clamp"] == pytest.approx(0.8)
+    assert "signal_after_adjustment" not in snapshot["effective"]
+
+
+def test_auto_trade_engine_respects_strategy_signal_threshold(monkeypatch) -> None:
+    adapter = _make_sync_adapter()
+    orders: list[tuple[str, float]] = []
+
+    catalog = StrategyCatalog(plugins=(_ConstantTrendStrategy,))
+    cfg = AutoTradeConfig(
+        symbol="BTCUSDT",
+        qty=0.2,
+        regime_window=12,
+        strategy_weights={
+            MarketRegime.TREND.value: {"trend_following": 1.0},
+        },
+        breakout_window=3,
+        mean_reversion_window=3,
+        activation_threshold=0.2,
+        primary_exchange="ByBit",
+        strategy="Trend_Following",
+        signal_thresholds={"signal_after_clamp": 0.4},
+        strategy_signal_thresholds={
+            "bybit": {
+                "trend_following": {"signal_after_clamp": 0.82},
+            }
+        },
+    )
+    engine = AutoTradeEngine(
+        adapter,
+        lambda side, qty: orders.append((side, qty)),
+        cfg,
+        strategy_catalog=catalog,
+    )
+    engine.apply_params({"fast": 2, "slow": 4})
+
+    base_time = 1_700_210_000.0
+    current_time = {"value": base_time}
+
+    def fake_time() -> float:
+        return current_time["value"]
+
+    monkeypatch.setattr("bot_core.trading.auto_trade.time.time", fake_time)
+    monkeypatch.setattr("bot_core.events.emitter.time.time", fake_time)
+
+    for idx in range(30):
+        price = 200.0 + idx * 0.15
+        bar = {
+            "open_time": float(idx),
+            "close": price,
+            "high": price * 1.001,
+            "low": price * 0.999,
+            "volume": 1600.0 + idx * 3,
+        }
+        current_time["value"] = base_time + idx * 1.0
+        adapter.publish(EventType.MARKET_TICK, {"symbol": "BTCUSDT", "bar": bar})
+
+    assert not orders, "per-strategy clamp threshold should override global value"
+    snapshot = engine.signal_threshold_snapshot()
+    effective = snapshot["effective"]
+    assert effective["signal_after_clamp"] == pytest.approx(0.82)
+
+
+def test_auto_trade_engine_adjustment_threshold_blocks_signal(monkeypatch) -> None:
+    adapter = _make_sync_adapter()
+    orders: list[tuple[str, float]] = []
+    signal_payloads: list[dict] = []
+
+    def _collect(evt_or_batch):
+        batch = evt_or_batch if isinstance(evt_or_batch, list) else [evt_or_batch]
+        for evt in batch:
+            signal_payloads.append(evt.payload)
+
+    adapter.subscribe(EventType.SIGNAL, _collect)
+
+    catalog = StrategyCatalog(plugins=(_ConstantTrendStrategy,))
+    cfg = AutoTradeConfig(
+        symbol="BTCUSDT",
+        qty=0.2,
+        regime_window=12,
+        strategy_weights={
+            MarketRegime.TREND.value: {"trend_following": 1.0},
+        },
+        breakout_window=3,
+        mean_reversion_window=3,
+        activation_threshold=0.2,
+        primary_exchange="binance",
+        strategy="trend_following",
+        signal_thresholds={"signal_after_adjustment": 0.8},
+    )
+    engine = AutoTradeEngine(
+        adapter,
+        lambda side, qty: orders.append((side, qty)),
+        cfg,
+        strategy_catalog=catalog,
+    )
+    engine.apply_params({"fast": 2, "slow": 4})
+
+    base_time = 1_700_220_000.0
+    current_time = {"value": base_time}
+
+    def fake_time() -> float:
+        return current_time["value"]
+
+    monkeypatch.setattr("bot_core.trading.auto_trade.time.time", fake_time)
+    monkeypatch.setattr("bot_core.events.emitter.time.time", fake_time)
+
+    for idx in range(30):
+        price = 300.0 + idx * 0.1
+        bar = {
+            "open_time": float(idx),
+            "close": price,
+            "high": price * 1.001,
+            "low": price * 0.999,
+            "volume": 1800.0 + idx * 4,
+        }
+        current_time["value"] = base_time + idx * 1.0
+        adapter.publish(EventType.MARKET_TICK, {"symbol": "BTCUSDT", "bar": bar})
+
+    assert not orders, "adjustment threshold should zero out the signal"
+    assert signal_payloads, "expected signal metadata for inspection"
+    latest_metadata = signal_payloads[-1]["metadata"]
+    thresholds_meta = latest_metadata["signal_thresholds"]
+    assert thresholds_meta["signal_after_adjustment"] == pytest.approx(0.8)
+    assert thresholds_meta.get("signal_after_adjustment_triggered") is True
+    snapshot = engine.signal_threshold_snapshot()
+    effective = snapshot["effective"]
+    assert effective["signal_after_adjustment"] == pytest.approx(0.8)
+    assert effective["signal_after_clamp"] == pytest.approx(0.2)
+
+
+def test_auto_trade_engine_rejects_unknown_global_signal_metric() -> None:
+    adapter = _make_sync_adapter()
+    cfg = AutoTradeConfig(
+        symbol="BTCUSDT",
+        qty=0.1,
+        primary_exchange="binance",
+        strategy="trend_following",
+        signal_thresholds={"signal_after_magic": 0.5},
+    )
+
+    with pytest.raises(ValueError, match="Unsupported global signal threshold metric"):
+        AutoTradeEngine(
+            adapter,
+            lambda *args, **kwargs: None,
+            cfg,
+            strategy_catalog=StrategyCatalog(plugins=(_ConstantTrendStrategy,)),
+        )
+
+
+def test_auto_trade_engine_rejects_unknown_strategy_signal_metric() -> None:
+    adapter = _make_sync_adapter()
+    cfg = AutoTradeConfig(
+        symbol="BTCUSDT",
+        qty=0.1,
+        primary_exchange="binance",
+        strategy="trend_following",
+        strategy_signal_thresholds={
+            "binance": {"trend_following": {"signal_after_magic": 0.6}}
+        },
+    )
+
+    with pytest.raises(ValueError, match="Unsupported signal threshold metric for"):
+        AutoTradeEngine(
+            adapter,
+            lambda *args, **kwargs: None,
+            cfg,
+            strategy_catalog=StrategyCatalog(plugins=(_ConstantTrendStrategy,)),
+        )
+
+
+def test_auto_trade_engine_can_revert_signal_threshold_overrides() -> None:
+    adapter = _make_sync_adapter()
+    orders: list[tuple[str, float]] = []
+    cfg = AutoTradeConfig(
+        symbol="BTCUSDT",
+        qty=0.05,
+        regime_window=6,
+        activation_threshold=0.25,
+        primary_exchange="binance",
+        strategy="trend_following",
+    )
+    engine = AutoTradeEngine(
+        adapter,
+        lambda side, qty: orders.append((side, qty)),
+        cfg,
+        strategy_catalog=StrategyCatalog(plugins=(_ConstantTrendStrategy,)),
+    )
+
+    assert cfg.signal_thresholds is None
+    assert cfg.strategy_signal_thresholds is None
+
+    base_snapshot = engine.signal_threshold_snapshot()
+    assert base_snapshot["global"] == {}
+    assert base_snapshot["per_strategy"] == {}
+    assert base_snapshot["effective"]["signal_after_clamp"] == pytest.approx(0.25)
+
+    engine.apply_signal_threshold_overrides(
+        signal_thresholds={"signal_after_clamp": 0.9, "signal_after_adjustment": 0.8},
+        strategy_signal_thresholds={
+            "binance": {"trend_following": {"signal_after_adjustment": 0.85}}
+        },
+    )
+
+    override_snapshot = engine.signal_threshold_snapshot()
+    assert override_snapshot["global"]["signal_after_clamp"] == pytest.approx(0.9)
+    assert override_snapshot["effective"]["signal_after_clamp"] == pytest.approx(0.9)
+    assert override_snapshot["per_strategy"]["binance"]["trend_following"][
+        "signal_after_adjustment"
+    ] == pytest.approx(0.85)
+    assert engine._activation_threshold == pytest.approx(0.9)
+    assert engine.cfg.activation_threshold == pytest.approx(0.25)
+
+    engine.apply_signal_threshold_overrides(
+        signal_thresholds=None,
+        strategy_signal_thresholds=None,
+    )
+
+    reverted_snapshot = engine.signal_threshold_snapshot()
+    assert reverted_snapshot["global"] == {}
+    assert reverted_snapshot["per_strategy"] == {}
+    assert reverted_snapshot["effective"]["signal_after_clamp"] == pytest.approx(0.25)
+    assert engine._signal_threshold_after_adjustment is None
+    assert engine._activation_threshold == pytest.approx(0.25)
+    assert engine.cfg.activation_threshold == pytest.approx(0.25)
+    assert engine._base_activation_threshold == pytest.approx(0.25)
+    assert cfg.signal_thresholds is None
+    assert cfg.strategy_signal_thresholds is None
+
+
+def test_auto_trade_engine_merges_partial_signal_threshold_overrides() -> None:
+    adapter = _make_sync_adapter()
+    orders: list[tuple[str, float]] = []
+    cfg = AutoTradeConfig(
+        symbol="BTCUSDT",
+        qty=0.05,
+        regime_window=6,
+        activation_threshold=0.3,
+        primary_exchange="binance",
+        strategy="trend_following",
+        signal_thresholds={
+            "signal_after_adjustment": 0.55,
+            "signal_after_clamp": 0.4,
+        },
+        strategy_signal_thresholds={
+            "binance": {
+                "trend_following": {
+                    "signal_after_adjustment": 0.6,
+                    "signal_after_clamp": 0.32,
+                }
+            },
+            "coinbase": {"trend_following": {"signal_after_adjustment": 0.58}},
+        },
+    )
+    engine = AutoTradeEngine(
+        adapter,
+        lambda side, qty: orders.append((side, qty)),
+        cfg,
+        strategy_catalog=StrategyCatalog(plugins=(_ConstantTrendStrategy,)),
+    )
+
+    base_snapshot = engine.signal_threshold_snapshot()
+    assert base_snapshot["global"]["signal_after_adjustment"] == pytest.approx(0.55)
+    assert base_snapshot["global"]["signal_after_clamp"] == pytest.approx(0.4)
+    assert base_snapshot["per_strategy"]["binance"]["trend_following"][
+        "signal_after_clamp"
+    ] == pytest.approx(0.32)
+    assert base_snapshot["per_strategy"]["coinbase"]["trend_following"][
+        "signal_after_adjustment"
+    ] == pytest.approx(0.58)
+
+    engine.apply_signal_threshold_overrides(
+        signal_thresholds={"signal_after_adjustment": 0.8},
+    )
+
+    override_snapshot = engine.signal_threshold_snapshot()
+    assert override_snapshot["global"]["signal_after_adjustment"] == pytest.approx(0.8)
+    assert override_snapshot["global"]["signal_after_clamp"] == pytest.approx(0.4)
+    assert override_snapshot["per_strategy"]["binance"]["trend_following"][
+        "signal_after_clamp"
+    ] == pytest.approx(0.32)
+    assert override_snapshot["per_strategy"]["binance"]["trend_following"][
+        "signal_after_adjustment"
+    ] == pytest.approx(0.6)
+    assert override_snapshot["per_strategy"]["coinbase"]["trend_following"][
+        "signal_after_adjustment"
+    ] == pytest.approx(0.58)
+
+    engine.apply_signal_threshold_overrides(
+        strategy_signal_thresholds={
+            "binance": {
+                "trend_following": {"signal_after_adjustment": 0.72},
+                "scalping": None,
+            },
+            "coinbase": None,
+        },
+    )
+
+    merged_snapshot = engine.signal_threshold_snapshot()
+    assert merged_snapshot["global"]["signal_after_adjustment"] == pytest.approx(0.8)
+    assert merged_snapshot["global"]["signal_after_clamp"] == pytest.approx(0.4)
+    assert merged_snapshot["per_strategy"]["binance"]["trend_following"][
+        "signal_after_adjustment"
+    ] == pytest.approx(0.72)
+    assert merged_snapshot["per_strategy"]["binance"]["trend_following"].get(
+        "signal_after_clamp"
+    ) == pytest.approx(0.32)
+    assert "coinbase" not in merged_snapshot["per_strategy"]
+
+    engine.apply_signal_threshold_overrides(
+        strategy_signal_thresholds={
+            "binance": {"trend_following": {"signal_after_clamp": None}}
+        }
+    )
+
+    removal_snapshot = engine.signal_threshold_snapshot()
+    assert (
+        "signal_after_clamp"
+        not in removal_snapshot["per_strategy"]["binance"]["trend_following"]
+    )
+
+    engine.apply_signal_threshold_overrides(strategy_signal_thresholds=None)
+    reverted_snapshot = engine.signal_threshold_snapshot()
+    assert reverted_snapshot["global"]["signal_after_adjustment"] == pytest.approx(0.8)
+    assert reverted_snapshot["per_strategy"]["binance"]["trend_following"][
+        "signal_after_clamp"
+    ] == pytest.approx(0.32)
+    assert reverted_snapshot["per_strategy"]["coinbase"]["trend_following"][
+        "signal_after_adjustment"
+    ] == pytest.approx(0.58)
+
 def test_auto_trade_engine_normalizes_routing_context() -> None:
     adapter = _make_sync_adapter()
     cfg = AutoTradeConfig(
