@@ -29,6 +29,7 @@ from bot_core.runtime.journal import TradingDecisionEvent
 from scripts.calibrate_autotrade_thresholds import (
     _AMBIGUOUS_SYMBOL_MAPPING,
     _DEFAULT_FREEZE_EVENTS_LIMIT,
+    _DEFAULT_GLOBAL_SAMPLE_LIMIT,
     _canonicalize_symbol_key,
     _build_threshold_config,
     _build_symbol_map,
@@ -1133,6 +1134,7 @@ def test_script_accepts_cli_risk_score_threshold(tmp_path: Path) -> None:
     signal_sources = sources["current_signal_thresholds"]
     assert signal_sources["inline"]["risk_score"] == pytest.approx(0.72)
     assert "file_risk_score" not in signal_sources
+    assert "risk_threshold_files" not in sources
 
 
 def test_script_tracks_file_risk_score_threshold(tmp_path: Path) -> None:
@@ -1218,7 +1220,10 @@ def test_script_limits_raw_freeze_events_via_cli(tmp_path: Path) -> None:
         if entry["primary_exchange"] == "binance" and entry["strategy"] == "trend_following"
     )
 
-    assert len(trend_group["raw_freeze_events"]) == 1
+    raw_freeze_payload = trend_group["raw_freeze_events"]
+    assert raw_freeze_payload["mode"] == "limit"
+    assert raw_freeze_payload["limit"] == 1
+    assert len(raw_freeze_payload["events"]) == 1
     assert trend_group["freeze_summary"]["total"] == 3
     assert trend_group["freeze_summary"]["omitted"] == 2
     assert trend_group["raw_freeze_events_truncated"] is True
@@ -1284,6 +1289,7 @@ def test_script_limits_raw_values_via_cli(tmp_path: Path) -> None:
     assert sources["raw_values_truncated_groups"] == 1
     assert sources["raw_values_omitted_total"] == 6
     assert sources["max_global_samples"] == _DEFAULT_GLOBAL_SAMPLE_LIMIT
+    assert sources["max_global_samples_reason"] == "default"
     assert "global_samples_truncated_metrics" not in sources
     assert "global_samples_omitted_total" not in sources
 
@@ -2212,6 +2218,15 @@ def test_generate_report_uses_custom_risk_threshold_path(
     sources = report["sources"]["risk_thresholds"]
     assert sources["files"] == [str(config_path)]
     assert sources["inline"] == {}
+    assert sources["load_calls"] == [
+        {
+            "sequence": 1,
+            "config_path": str(config_path),
+            "source": f"load_risk_thresholds(config_path='{config_path}')",
+            "risk_score": pytest.approx(0.42),
+            "applied": True,
+        }
+    ]
     metrics = report["groups"][0]["metrics"]["risk_score"]
     assert metrics["current_threshold"] == pytest.approx(0.42)
 
@@ -2233,6 +2248,155 @@ def test_generate_report_rejects_non_finite_current_inline() -> None:
     assert "signal_after_adjustment" in message
     assert "current_thresholds.inline" in message
 
+
+def test_generate_report_records_default_risk_threshold_loader(monkeypatch: pytest.MonkeyPatch) -> None:
+    def _fake_loader(*, config_path: Path | None = None) -> Mapping[str, object]:
+        assert config_path is None
+        return {"auto_trader": {"map_regime_to_signal": {"risk_score": 0.55}}}
+
+    monkeypatch.setattr(
+        "scripts.calibrate_autotrade_thresholds.load_risk_thresholds",
+        _fake_loader,
+    )
+
+    report = _generate_report(
+        journal_events=[],
+        autotrade_entries=[],
+        percentiles=[0.5],
+        suggestion_percentile=0.5,
+    )
+
+    risk_sources = report["sources"]["risk_thresholds"]
+    load_calls = risk_sources["load_calls"]
+    assert load_calls == [
+        {
+            "sequence": 1,
+            "config_path": None,
+            "source": "load_risk_thresholds()",
+            "risk_score": pytest.approx(0.55),
+            "applied": True,
+        }
+    ]
+
+
+def test_generate_report_loader_metadata_marks_not_applied_after_override(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    threshold_path = tmp_path / "risk_thresholds.json"
+    threshold_path.write_text("auto_trader: {}\n", encoding="utf-8")
+
+    def _fake_loader(*, config_path: Path | None = None) -> Mapping[str, object]:
+        assert config_path == threshold_path
+        return {"auto_trader": {"map_regime_to_signal": {"risk_score": 0.48}}}
+
+    monkeypatch.setattr(
+        "scripts.calibrate_autotrade_thresholds.load_risk_thresholds",
+        _fake_loader,
+    )
+
+    report = _generate_report(
+        journal_events=[],
+        autotrade_entries=[],
+        percentiles=[0.5],
+        suggestion_percentile=0.5,
+        risk_threshold_sources=[str(threshold_path)],
+        risk_score_override=0.7,
+        risk_score_source={"source": "CLI risk_score_threshold"},
+    )
+
+    load_calls = report["sources"]["risk_thresholds"]["load_calls"]
+    assert load_calls == [
+        {
+            "sequence": 1,
+            "config_path": str(threshold_path),
+            "source": f"load_risk_thresholds(config_path='{threshold_path}')",
+            "risk_score": pytest.approx(0.48),
+            "applied": False,
+        }
+    ]
+
+
+def test_generate_report_loader_metadata_marks_superseded_calls(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    first = tmp_path / "risk_thresholds_a.yaml"
+    second = tmp_path / "risk_thresholds_b.yaml"
+    first.write_text("auto_trader: {}\n", encoding="utf-8")
+    second.write_text("auto_trader: {}\n", encoding="utf-8")
+
+    def _fake_loader(*, config_path: Path | None = None) -> Mapping[str, object]:
+        if config_path == first:
+            return {"auto_trader": {"map_regime_to_signal": {"risk_score": 0.37}}}
+        if config_path == second:
+            return {"auto_trader": {"map_regime_to_signal": {"risk_score": 0.52}}}
+        raise AssertionError(f"unexpected path: {config_path}")
+
+    monkeypatch.setattr(
+        "scripts.calibrate_autotrade_thresholds.load_risk_thresholds",
+        _fake_loader,
+    )
+
+    report = _generate_report(
+        journal_events=[],
+        autotrade_entries=[],
+        percentiles=[0.5],
+        suggestion_percentile=0.5,
+        risk_threshold_sources=[str(first), str(second)],
+    )
+
+    load_calls = report["sources"]["risk_thresholds"]["load_calls"]
+    assert load_calls == [
+        {
+            "sequence": 1,
+            "config_path": str(first),
+            "source": f"load_risk_thresholds(config_path='{first}')",
+            "risk_score": pytest.approx(0.37),
+            "applied": False,
+        },
+        {
+            "sequence": 2,
+            "config_path": str(second),
+            "source": f"load_risk_thresholds(config_path='{second}')",
+            "risk_score": pytest.approx(0.52),
+            "applied": True,
+        },
+    ]
+
+
+def test_generate_report_loader_metadata_marks_not_applied_after_inline_value(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    config_file = tmp_path / "risk_thresholds.yaml"
+    config_file.write_text("auto_trader: {}\n", encoding="utf-8")
+
+    def _fake_loader(*, config_path: Path | None = None) -> Mapping[str, object]:
+        assert config_path == config_file
+        return {"auto_trader": {"map_regime_to_signal": {"risk_score": 0.41}}}
+
+    monkeypatch.setattr(
+        "scripts.calibrate_autotrade_thresholds.load_risk_thresholds",
+        _fake_loader,
+    )
+
+    report = _generate_report(
+        journal_events=[],
+        autotrade_entries=[],
+        percentiles=[0.5],
+        suggestion_percentile=0.5,
+        risk_threshold_sources=[str(config_file)],
+        risk_score_source={"kind": "inline", "value": 0.64},
+    )
+
+    load_calls = report["sources"]["risk_thresholds"]["load_calls"]
+    assert load_calls == [
+        {
+            "sequence": 1,
+            "config_path": str(config_file),
+            "source": f"load_risk_thresholds(config_path='{config_file}')",
+            "risk_score": pytest.approx(0.41),
+            "applied": False,
+        }
+    ]
 
 def test_generate_report_rejects_invalid_current_threshold_mapping_value() -> None:
     with pytest.raises(SystemExit) as excinfo:
@@ -4186,6 +4350,114 @@ def test_generate_report_can_collect_raw_values() -> None:
     }
 
 
+def test_generate_report_limits_global_samples() -> None:
+    journal_events = [
+        {
+            "symbol": "BTCUSDT",
+            "primary_exchange": "binance",
+            "strategy": "trend_following",
+            "signal_after_adjustment": 0.64,
+            "signal_after_clamp": 0.6,
+        },
+        {
+            "symbol": "BTCUSDT",
+            "primary_exchange": "binance",
+            "strategy": "trend_following",
+            "signal_after_adjustment": 0.58,
+            "signal_after_clamp": 0.53,
+        },
+        {
+            "symbol": "ETHUSDT",
+            "primary_exchange": "kraken",
+            "strategy": "mean_reversion",
+            "signal_after_adjustment": 0.72,
+            "signal_after_clamp": 0.67,
+        },
+    ]
+
+    autotrade_entries = [
+        {
+            "decision": {
+                "details": {
+                    "symbol": "BTCUSDT",
+                    "primary_exchange": "binance",
+                    "strategy": "trend_following",
+                    "summary": {"risk_score": 0.73},
+                }
+            }
+        }
+    ]
+
+    with patch("scripts.calibrate_autotrade_thresholds.load_risk_thresholds", return_value={}):
+        report = _generate_report(
+            journal_events=journal_events,
+            autotrade_entries=autotrade_entries,
+            percentiles=[0.5],
+            suggestion_percentile=0.5,
+            include_raw_values=True,
+            max_global_samples=1,
+        )
+
+    global_summary = report["global_summary"]
+    global_raw_values = global_summary["raw_values"]
+    assert list(global_raw_values["signal_after_adjustment"]) == [0.58]
+    assert list(global_raw_values["signal_after_clamp"]) == [0.53]
+    omitted = global_summary["raw_values_omitted"]
+    assert omitted["signal_after_adjustment"] == 2
+    assert omitted["signal_after_clamp"] == 2
+    assert global_summary["raw_values_truncated"] is True
+
+    sources = report["sources"]
+    assert sources["max_global_samples"] == 1
+    assert sources["max_global_samples_reason"] == "explicit"
+    assert sources["global_samples_truncated_metrics"] == 2
+    assert sources["global_samples_omitted_total"] == 4
+
+
+def test_generate_report_marks_invalid_global_sample_limit() -> None:
+    journal_events = [
+        {
+            "symbol": "BTCUSDT",
+            "primary_exchange": "binance",
+            "strategy": "trend_following",
+            "signal_after_adjustment": 0.51,
+            "signal_after_clamp": 0.5,
+        },
+        {
+            "symbol": "BTCUSDT",
+            "primary_exchange": "binance",
+            "strategy": "trend_following",
+            "signal_after_adjustment": 0.53,
+            "signal_after_clamp": 0.52,
+        },
+    ]
+
+    with patch("scripts.calibrate_autotrade_thresholds.load_risk_thresholds", return_value={}):
+        report = _generate_report(
+            journal_events=journal_events,
+            autotrade_entries=[],
+            percentiles=[0.5],
+            suggestion_percentile=0.5,
+            include_raw_values=True,
+            max_global_samples="invalid",
+        )
+
+    global_summary = report["global_summary"]
+    global_raw_values = global_summary["raw_values"]
+    assert global_raw_values["signal_after_adjustment"] == []
+    assert global_raw_values["signal_after_clamp"] == []
+    omitted = global_summary["raw_values_omitted"]
+    assert omitted["signal_after_adjustment"] == 2
+    assert omitted["signal_after_clamp"] == 2
+    assert global_summary["raw_values_truncated"] is True
+
+    sources = report["sources"]
+    assert sources["max_global_samples"] == 0
+    assert sources["max_global_samples_reason"] == "invalid_value"
+    assert sources["global_samples_truncated_metrics"] == 2
+    assert sources["global_samples_omitted_total"] == 4
+
+
 def test_generate_report_omits_raw_freeze_events_by_default() -> None:
     journal_events = [
         {
@@ -5356,7 +5628,58 @@ def test_main_accepts_max_raw_freeze_events(
     assert captured["raw_freeze_events_sample_limit"] == sample_limit
     assert captured["raw_freeze_events_mode"] == expected_mode
     assert captured["omit_freeze_events"] is False
-    assert captured["raw_freeze_events_sample_limit"] is None
+
+
+def test_main_handles_raw_freeze_sampling(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from scripts import calibrate_autotrade_thresholds as module
+
+    journal_path = tmp_path / "journal.jsonl"
+    journal_path.write_text("{}\n", encoding="utf-8")
+    export_path = tmp_path / "export.json"
+    export_path.write_text("{}", encoding="utf-8")
+
+    monkeypatch.setattr(module, "_load_journal_events", lambda *_, **__: [])
+    monkeypatch.setattr(module, "_load_autotrade_entries", lambda *_, **__: [])
+    monkeypatch.setattr(
+        module,
+        "_load_current_signal_thresholds",
+        lambda *_: ({}, None, {}),
+    )
+
+    captured: dict[str, object] = {}
+
+    def _fake_generate_report(**kwargs: object) -> dict[str, object]:
+        captured.update(kwargs)
+        return {
+            "groups": [],
+            "global_summary": {"metrics": {}, "freeze_summary": {}},
+            "sources": {"journal_events": 0, "autotrade_entries": 0},
+            "percentiles": [],
+        }
+
+    monkeypatch.setattr(module, "_generate_report", _fake_generate_report)
+
+    exit_code = module.main(
+        [
+            "--journal",
+            str(journal_path),
+            "--autotrade-export",
+            str(export_path),
+            "--limit-freeze-events",
+            "6",
+            "--raw-freeze-events-sample-limit",
+            "4",
+        ]
+    )
+
+    assert exit_code == 0
+    assert captured["limit_freeze_events"] == 6
+    assert captured["raw_freeze_events_sample_limit"] == 4
+    assert captured["raw_freeze_events_mode"] == "sample"
+    assert captured["omit_raw_freeze_events"] is False
+    assert captured.get("max_raw_freeze_events") is None
 
 
 def test_main_accepts_raw_freeze_events_sample_limit(
@@ -5457,6 +5780,79 @@ def test_main_accepts_zero_raw_freeze_events_sample_limit(
     assert captured["limit_freeze_events"] is None
     assert captured["omit_raw_freeze_events"] is False
     assert captured["max_raw_freeze_events"] is None
+
+
+def test_main_accepts_max_global_samples(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from scripts import calibrate_autotrade_thresholds as module
+
+    journal_path = tmp_path / "journal.jsonl"
+    journal_path.write_text("{}\n", encoding="utf-8")
+    export_path = tmp_path / "export.json"
+    export_path.write_text("{}", encoding="utf-8")
+
+    monkeypatch.setattr(module, "_load_journal_events", lambda *_, **__: [])
+    monkeypatch.setattr(module, "_load_autotrade_entries", lambda *_, **__: [])
+    monkeypatch.setattr(
+        module,
+        "_load_current_signal_thresholds",
+        lambda *_: ({}, None, {}),
+    )
+
+    captured: dict[str, object] = {}
+
+    def _fake_generate_report(**kwargs: object) -> dict[str, object]:
+        captured.update(kwargs)
+        return {
+            "groups": [],
+            "global_summary": {"metrics": {}, "freeze_summary": {}},
+            "sources": {"journal_events": 0, "autotrade_entries": 0},
+            "percentiles": [],
+        }
+
+    monkeypatch.setattr(module, "_generate_report", _fake_generate_report)
+
+    exit_code = module.main(
+        [
+            "--journal",
+            str(journal_path),
+            "--autotrade-export",
+            str(export_path),
+            "--max-global-samples",
+            "3",
+        ]
+    )
+
+    assert exit_code == 0
+    assert captured["max_global_samples"] == 3
+    assert captured["include_raw_values"] is True
+    assert captured["max_raw_values"] is None
+
+
+def test_main_rejects_negative_max_global_samples(tmp_path: Path) -> None:
+    from scripts import calibrate_autotrade_thresholds as module
+
+    journal_path = tmp_path / "journal.jsonl"
+    journal_path.write_text("{}\n", encoding="utf-8")
+    export_path = tmp_path / "export.json"
+    export_path.write_text("{}", encoding="utf-8")
+
+    with pytest.raises(SystemExit) as excinfo:
+        module.main(
+            [
+                "--journal",
+                str(journal_path),
+                "--autotrade-export",
+                str(export_path),
+                "--max-global-samples",
+                "-1",
+            ]
+        )
+
+    message = str(excinfo.value)
+    assert "--max-global-samples" in message
+    assert "nieujemny" in message
 
 
 def test_main_accepts_omit_freeze_events(
