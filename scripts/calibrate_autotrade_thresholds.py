@@ -1399,7 +1399,8 @@ def _compute_percentiles_from_sequences(
             value = lower_value
         else:
             value = lower_value + (upper_value - lower_value) * weight
-        results[f"p{int(percentile * 100):02d}"] = value
+        label = _format_percentile_label(percentile)
+        results[label] = value
     return results
 
 
