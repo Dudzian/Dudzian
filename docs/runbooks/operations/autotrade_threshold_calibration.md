@@ -14,14 +14,11 @@ percentyle, które można wykorzystać do aktualizacji konfiguracji
    Można przekazać wiele plików/katalogów – zostaną scalone.
 2. Eksport autotradera wygenerowany przez `export_risk_evaluations()` lub
    zrzut statusów z `push_autotrade_status` (plik JSON zawierający listę
-   wpisów z polami `symbol` i `summary.risk_score`). Narzędzie obsługuje
-   zarówno pojedynczy dokument JSON (lista lub obiekt z polem `entries`), jak
-   i eksporty strumieniowe w formacie JSONL/NDJSON (po jednym obiekcie na
-   linię). Pojedyncze pliki NDJSON bez rozszerzenia, zawierające pojedynczy
-   wpis w pierwszej linii, są również rozpoznawane heurystycznie. Jeżeli
-   przekazujesz pojedynczy obiekt JSON, musi on zawierać pole `entries`
-   będące tablicą wpisów; plik opisujący pojedynczy rekord bez `entries`
-   zostanie odrzucony z komunikatem o błędnym formacie.
+   wpisów z polami `symbol` i `summary.risk_score`).
+   Parser działa strumieniowo – akceptuje zarówno pliki JSONL, jak i duże pliki
+   JSON, w których dane znajdują się w tablicy lub wewnątrz obiektu z polem
+   `entries`. Inne struktury (np. zagnieżdżone tablice w wielu polach) nie są
+   obsługiwane.
 3. *(Opcjonalnie)* Aktualne progi sygnałów – można je przekazać jako plik
    JSON/YAML albo listę par `metric=value` w parametrze
    `--current-threshold`. Parametr można wskazać wielokrotnie (np. plik z
@@ -46,10 +43,9 @@ python scripts/calibrate_autotrade_thresholds.py \
   --until 2024-01-31T23:59:59Z \
   --current-threshold signal_after_adjustment=0.8,signal_after_clamp=0.75 \
   --risk-thresholds config/risk_thresholds.yaml \
-  --max-freeze-events 100 \
-  --max-raw-values 500 \
-  --max-group-samples 50000 \
-  --max-global-samples 50000 \
+  --limit-freeze-events 25 \
+  --raw-freeze-events-sample-limit 15 \
+  --freeze-events-limit 50 \
   --output-json reports/autotrade_thresholds.json \
   --output-csv reports/autotrade_thresholds.csv \
   --output-threshold-config reports/autotrade_thresholds.yaml \
@@ -62,47 +58,25 @@ Polecenie:
 - oblicza wskazane percentyle w rozbiciu na pary `giełda/strategia`
   (kolumny percentylowe w raporcie JSON/CSV są oznaczane jako `pXX` dla
   wartości całkowitych lub `pXX_Y` dla ułamków, np. `p97_5` dla 97,5
-  percentyla). Metryki absolutne (`signal_after_adjustment`,
-  `signal_after_clamp`) otrzymują dodatkową sekcję `absolute_percentiles`
-  (oraz kolumny CSV `abs_pXX` / `abs_pXX_Y`), w której percentyle liczone są na
-  podstawie wartości bezwzględnych lub – przy wyłączonym próbkowaniu – ich
-  aproksymacji folded-normal,
-- zapisuje pełny raport JSON (z surowymi wartościami w `groups[*].raw_values`,
-  statystykami i sugerowanymi progami; sekcja `global_summary` przechowuje tylko
-  dane zagregowane),
+  percentyla),
+- zapisuje pełny raport JSON (z surowymi wartościami, statystykami i
+  sugerowanymi progami),
 - tworzy tabelę CSV gotową do importu w arkuszu kalkulacyjnym,
-- generuje opcjonalny plik konfiguracyjny (`--output-threshold-config`) w
-  formacie zgodnym z `load_risk_thresholds`, który zawiera sugerowane progi dla
-  sekcji `auto_trader` – zarówno globalne (`signal_thresholds`,
-  `map_regime_to_signal`), jak i w rozbiciu na pary `giełda/strategia`
-  (`strategy_signal_thresholds`),
-- w pliku CSV dołącza kolumny `sample_truncated`, `retained_samples`,
-  `omitted_samples`, `raw_values_truncated`, `raw_values_omitted`, a także
-  liczniki `clamp_regular` i `clamp_absolute`, dzięki którym łatwo rozpoznać,
-  czy percentyle bazują na ograniczonej próbce, czy lista surowych wartości
-  została ucięta oraz czy wartości były przycinane do domeny metryki (puste
-  pola oznaczają brak próbkowania/klamrowania). Kolumna `approximation_mode`
-  sygnalizuje, że metryka korzysta z przybliżenia (np. `approximate_from_moments`
-  przy ustawieniu `--max-*-samples 0`). Dodatkowe kolumny `abs_pXX`/`abs_pXX_Y`
-  odwzorowują percentyle amplitudy dla metryk absolutnych i są przydatne przy
-  analizie progów ustawianych w oparciu o moduł sygnału,
+- w pliku CSV dołącza kolumny `sample_truncated`, `retained_samples` oraz
+  `omitted_samples`, dzięki którym łatwo rozpoznać, czy percentyle bazują na
+  ograniczonej próbce (wartości puste oznaczają, że metryka nie korzysta z
+  próbkowania),
 - zbiera statystyki blokad ryzyka (`risk_freeze` / `auto_risk_freeze`) wraz z
   rozkładem długości blokad i powodów,
-- w pliku CSV dodaje dodatkowy wiersz `metric=__freeze_summary__` dla każdej
-  kombinacji giełda/strategia; kolumny `freeze_total`, `freeze_auto`,
-  `freeze_manual`, `freeze_omitted`, `freeze_status_counts`,
-  `freeze_reason_counts` oraz `freeze_truncated` przedstawiają odpowiednio
-  liczbę blokad, rozbicie auto/manual, liczbę pominiętych wpisów, a także
-  szczegóły statusów i powodów (format JSON). Wiersz `__all__/__all__`
-  zawiera analogiczne dane zagregowane,
-- pozwala ograniczyć liczbę szczegółowych wpisów blokad dzięki
-  `--max-freeze-events` (0 = pominięcie szczegółowej listy, dodatnia wartość =
-  prefiks o zadanej długości),
-- pozwala kontrolować liczbę próbek gromadzonych przez agregatory metryk w
-  każdej parze giełda/strategia dzięki `--max-group-samples` (wartość 0 lub
-  ujemna wyłącza limit). Parametr jest niezależny od `--max-raw-values`, więc
-  można np. ustawić `--max-raw-values 0`, aby wyłączyć próbki do histogramów,
-  zachowując pełne percentyle i sugestie progów,
+- pozwala kontrolować długość list blokad w sekcjach `freeze_events`
+  niezależnie od próbkowania surowych zdarzeń dzięki `--freeze-events-limit`
+  (np. `--freeze-events-limit 50`) oraz w razie potrzeby całkowicie je
+  pominąć (`--omit-freeze-events`),
+- opcjonalnie dołącza próbkę surowych blokad (`--limit-freeze-events 25`) i
+  pozwala oddzielnie kontrolować jej rozmiar (`--raw-freeze-events-sample-limit 15`);
+  ustawienie limitu na 0 wyłącza próbkę bez ingerencji w agregaty, a tryb
+  zgodności z `--raw-freeze-events sample --raw-freeze-events-limit N`
+  pozostaje dostępny,
 - pozwala ograniczyć analizę do konkretnego zakresu czasowego dzięki `--since`
   i `--until`,
 - dodaje globalne podsumowanie obejmujące wszystkie kombinacje giełda/strategia
@@ -119,25 +93,11 @@ Polecenie:
 - ogranicza liczbę próbek wykorzystywanych do percentyli w sekcji
   `global_summary` za pomocą `--max-global-samples` (domyślnie 50 000). Limit
   dotyczy każdej metryki agregowanej globalnie; ustawienie wartości ujemnej
-  wyłącza limit, natomiast `0` powoduje, że percentyle i sugerowane progi w
-  podsumowaniu są szacowane przy założeniu rozkładu normalnego na podstawie
-  sumy i wariancji (bez gromadzenia próbek do histogramów). Aproksymowane
-  wartości są automatycznie przycinane do zakresu zaobserwowanych danych oraz
-  znanych domen metryk (np. `risk_score` ∈ ⟨0,1⟩, `signal_after_*` ∈ ⟨−1,1⟩,
-  `risk_freeze_duration` ≥ 0), więc raport nie pokaże wyników spoza realnego
-  przedziału. Przy aktywnym limicie dodatnim percentyle są wyznaczane z
-  deterministycznego próbkowania rezerwuarowego, co należy uwzględnić przy
-  interpretacji wyników. Pole `approximation_mode` w raporcie JSON oraz
-  analogiczna kolumna w CSV sygnalizują, że metryka korzysta z takiej
-  aproksymacji; w metadanych `sources` znajdziesz liczbę metryk, których to
-  dotyczy (`approximation_metrics` dla grup oraz `approximation_global_metrics`
-  dla podsumowania globalnego) oraz szczegółowe listy z identyfikatorem giełdy,
-  strategii i nazwy metryki (`approximation_metrics_list`) albo nazwą metryki
-  globalnej (`approximation_global_metrics_list`). Dzięki temu podczas audytu
-  można szybko ustalić, które sekcje raportu bazują na przybliżeniach. Listy te
-  są automatycznie oczyszczane z duplikatów (również różniących się jedynie
-  wielkością liter), więc każda para `giełda/strategia` oraz każda nazwa metryki
-  globalnej pojawia się w pliku tylko raz.
+  wyłącza limit, a `0` powoduje, że percentyle i sugerowane progi w podsumowaniu
+  bazują wyłącznie na statystykach agregowanych (mean, stddev) i nie posiadają
+  próbek do histogramów. Przy aktywnym limicie percentyle są szacowane na
+  podstawie deterministycznego próbkowania rezerwuarowego, co należy uwzględnić
+  przy interpretacji wyników.
 
 Jeżeli przekażesz aktualne progi w pliku (np. `config/current_thresholds.yaml`),
 użyj `--current-threshold config/current_thresholds.yaml`. Skrypt automatycznie
@@ -166,92 +126,57 @@ konfiguracją progów ryzyka (`load_risk_thresholds(config_path=...)`). Wskazane
 zmodyfikowany `map_regime_to_signal.risk_score`, to właśnie ta wartość pojawi
 się w kolumnie `current_threshold` dla metryki `risk_score`.
 
-## Eksport sugerowanych progów do pliku konfiguracyjnego
+Jeżeli potrzebujesz przeanalizować konkretne przykłady blokad ryzyka, włącz
+próbkę `raw_freeze_events`, łącząc limit z rozmiarem próbki:
 
-Parametr `--output-threshold-config` zapisuje dodatkowy plik w formacie JSON lub
-YAML (w zależności od rozszerzenia), kompatybilny z `load_risk_thresholds`. W
-sekcji `auto_trader` umieszczane są:
+```bash
+--limit-freeze-events 25 \
+--raw-freeze-events-sample-limit 15
+```
 
-- `signal_thresholds` – sugerowane wartości globalne dla
-  `signal_after_adjustment` i `signal_after_clamp` (percentyl wskazany w
-  `--suggestion-percentile`),
-- `map_regime_to_signal.risk_score` – nowy próg ryzyka wynikający z
-  `global_summary`,
-- `strategy_signal_thresholds` – zagnieżdżona mapa `primary_exchange ->
-  strategy -> metryka`, która zawiera sugerowane wartości progów dla każdej
-  kombinacji giełda/strategia obecnej w raporcie. Progi `risk_score` są zawsze
-  zapisywane wyłącznie w `map_regime_to_signal`; sekcja per strategia obejmuje
-  jedynie metryki sygnału (`signal_after_adjustment`, `signal_after_clamp`).
+Raport dołączy maksymalnie 15 pierwszych blokad dla każdej kombinacji
+giełda/strategia (pozostałe zostaną zagregowane w podsumowaniu). Pole
+`--limit-freeze-events` aktywuje sekcję próbek, natomiast
+`--raw-freeze-events-sample-limit` pozwala zmienić jej długość niezależnie od
+pozostałych ograniczeń; ustawienie 0 wyłącza próbkę mimo zadanego limitu.
+Pozostawienie domyślnych wartości pomija sekcję `raw_freeze_events`, co skraca
+czas generowania raportu i zmniejsza jego rozmiar. Starsze flagi
+`--raw-freeze-events sample` oraz `--raw-freeze-events-limit` pozostają
+obsługiwane w trybie zgodności, jednak preferowanym sposobem sterowania próbką
+jest duet `--limit-freeze-events` + `--raw-freeze-events-sample-limit`. Jeśli
+potrzebujesz czasowo wyłączyć próbkę bez zmiany domyślnych limitów, połącz
+`--raw-freeze-events-sample-limit 0` z `--limit-freeze-events N` albo użyj
+`--omit-raw-freeze-events`.
 
-### Integracja z runtime
+Nowa flaga `--raw-freeze-events-sample-limit` pozwala wymusić niezależny limit
+próbki – nawet gdy `--limit-freeze-events` pozostaje nieustawione. Dzięki temu
+można skrócić sekcję `raw_freeze_events` bez ingerencji w liczbę zdarzeń w
+`freeze_events`. Wartość `0` zachowuje wyłącznie agregaty, co przydaje się przy
+generowaniu zwięzłych raportów do szybkiej inspekcji. Niezależnie od wybranego
+limitu, pole `freeze_summary` zachowuje kompletne zliczenia blokad oraz ich
+powodów – próbkowanie wpływa jedynie na listę przykładów i metadane w sekcji
+`sources.raw_freeze_events`.
 
-Eksportowane progi są konsumowane bezpośrednio przez runtime:
+Jeżeli lista surowych blokad zaczyna dominować w raporcie, można skrócić ją bez
+zmiany agregatów, korzystając z `--max-raw-freeze-events`. Parametr ten
+przycina liczbę zdarzeń zapisywanych w sekcjach `raw_freeze_events`, a resztę
+zlicza do `overflow_summary`, które nadal odzwierciedla pełny rozkład typów i
+powodów blokad. W połączeniu z `--omit-raw-freeze-events` można całkowicie
+wyłączyć sekcję z próbkami, zachowując jedynie zagregowane podsumowania.
 
-- `bot_core.ai.config_loader.load_risk_thresholds` waliduje i normalizuje
-  sekcje `signal_thresholds` oraz `strategy_signal_thresholds`, w tym weryfikuje
-  nazwy metryk względem wspieranej listy (`signal_after_adjustment`,
-  `signal_after_clamp`). Dzięki temu wartości z raportu trafiają do konfiguracji
-  `auto_trader` niezależnie od formatu (JSON/YAML) czy wariantów wielkości liter,
-  a literówki w nazwach progów są wychwytywane już na etapie ładowania pliku.
-- `AutoTradeEngine` korzysta z tych sekcji przy starcie (oraz po wywołaniu
-  `apply_signal_threshold_overrides`). Wartość `signal_after_clamp` zastępuje
-  klasyczny `activation_threshold`, a `signal_after_adjustment` wyzerowuje
-  sygnał jeszcze przed porównaniem z progiem clamp – pozwala to całkowicie
-  wyciszyć zbyt słabe sygnały bez modyfikowania wag strategii.
-- Obsługiwane metryki progów sygnału są jawnie whitelistingowane (wspólna lista
-  znajduje się w `bot_core/trading/signal_thresholds.py`). Silnik akceptuje
-  wyłącznie `signal_after_adjustment` oraz `signal_after_clamp` zarówno
-  w sekcji globalnej, jak i w mapach per strategia. Literówki lub nieznane
-  nazwy skutkują błędem podczas ładowania konfiguracji, dzięki czemu operator
-  natychmiast otrzymuje informację o wadliwym pliku kalibracyjnym zamiast
-  przypadkowo pominąć próg. Brak wpisu oznacza pozostawienie wartości bazowej –
-  aby usunąć istniejący próg, wpisz `null` lub jedno z markerowych słów
-  (`remove`, `delete`, itp.).
-- Aktywne progi są publikowane w telemetrii (`metadata.signal_thresholds` w
-  zdarzeniach `SIGNAL` i `AUTOTRADE_STATUS`) oraz w migawce
-  `AutoTradeEngine.signal_threshold_snapshot()`, co ułatwia audyt i korelację z
-  raportem kalibracyjnym.
-
-Kombinacje, dla których nie udało się ustalić giełdy lub strategii (np. wpisy
-oznaczone jako `unknown`), są pomijane – nie pojawią się więc w wygenerowanym
-pliku progów.
-
-Brak wpisu w wygenerowanej mapie nie usuwa istniejącego progu – silnik
-autotradera scala nowe wartości z bazową konfiguracją i zachowuje dotychczasowe
-limity dla metryk, które nie zostały nadpisane. Aby explicite usunąć pojedynczy
-próg (globalny lub per strategia), ustaw jego wartość na `null` (lub tekstową
-flagę `remove`/`delete`) w pliku konfiguracyjnym – wpis zostanie wymazany podczas
-nakładania override'u.
-
- Plik można wprost skopiować do `config/risk_thresholds.yaml` (lub wskazać jako
- warstwę override) – nie wymaga dodatkowej normalizacji kluczy. Jeżeli w danej
- grupie brakuje danych dla którejś metryki, nie zostanie ona uwzględniona w
- eksporcie. W przypadku gdy raport nie zawiera żadnych sugerowanych progów,
- narzędzie zgłosi ostrzeżenie i nie utworzy pliku. Obok sekcji `auto_trader`
- zapisywany jest blok `metadata` zawierający m.in. identyfikator raportu
- (`generated_from`), datę wygenerowania (`generated_at`), zakres filtrów
- (`since`/`until`) oraz liczbę przetworzonych wpisów
- (`sample_counts.journal_events`/`sample_counts.autotrade_entries`). Dzięki
- temu łatwo odtworzyć kontekst, w którym powstała konfiguracja progów –
- zwłaszcza podczas porównywania wielu plików kalibracyjnych. `metadata`
- kopiuje też listy metryk bazujących na aproksymacji (`approximation_metrics_list`
- z wpisami giełda/strategia/metryka oraz `approximation_global_metrics_list`
- dla wartości globalnych), więc na etapie wdrażania pliku od razu widać, które
- limity powstały bez realnych próbek i wymagają dodatkowej weryfikacji. W tej
- samej sekcji zapisujemy również zastosowane limity próbkowania wraz z
- licznikami przycięć: `max_freeze_events` (oraz
- `raw_freeze_events_truncated_groups`), `max_raw_values`
- (`raw_values_truncated_groups`, `raw_values_omitted_total`),
-`max_group_samples` (`group_samples_truncated_metrics`,
-`group_samples_omitted_total`) oraz `max_global_samples`
-(`global_samples_truncated_metrics`, `global_samples_omitted_total`). Od tej
-pory `metadata` zawiera także sumaryczne liczniki przycięć sygnałów w polu
-`clamped_values` (rozbite na część grupową i globalną) oraz informacje o
-pominiętych próbkach `raw_values_truncated_groups`,
-`raw_values_omitted_total` i `raw_freeze_events_truncated_groups`. Dzięki temu
-z samego pliku progów odczytasz, pod jakimi ograniczeniami powstały wartości,
-czy poszczególne metryki wymagały klamrowania oraz czy dana kalibracja
-wymaga dodatkowego zebrania danych.
+Nowy przełącznik `--raw-freeze-events-sample-limit` uzupełnia istniejące opcje –
+steruje liczbą zdarzeń, które trafią do próbek `raw_freeze_events`, również w
+przypadku raportów generowanych z `--freeze-events-limit`. Wartość dodatnia
+przycina próbkę do wskazanego rozmiaru, `0` wyłącza sekcję próbek, a `None`
+(wartość domyślna) pozostawia limit wyznaczony przez `--limit-freeze-events` lub
+domyślne 25 zdarzeń. Przełącznik `--freeze-events-limit` działa równolegle –
+kontroluje długość list w sekcjach `freeze_events`, które prezentują
+znormalizowane blokady opracowane przez raport (nie surowe wpisy). Przykładowe
+`--freeze-events-limit 25` skraca każdą listę do 25 rekordów, ale nie wpływa na
+to, czy próbka surowych zdarzeń zostanie wygenerowana (`--limit-freeze-events`)
+ani na decyzję o jej pominięciu (`--omit-raw-freeze-events`). Chcąc całkowicie
+zrezygnować z list `freeze_events`, użyj `--omit-freeze-events` – agregaty
+pozostaną kompletne.
 
 Źródło musi wskazywać istniejący plik, który zawiera słownik lub listę
 słowników – w przeciwnym razie skrypt zakończy się z komunikatem o błędzie,
@@ -270,43 +195,7 @@ powody blokad oraz histogramy długości (`risk_freeze_duration`).
 Pole `global_summary` w raporcie JSON zawiera zagregowane metryki i statystyki
 blokad dla całego zbioru danych (bez duplikowania surowych wartości). Dzięki
 temu można szybko ocenić, jak nowe progi wpłyną na wszystkie strategie łącznie,
-z zachowaniem lekkiego rozmiaru raportu. Metryki w `global_summary` zawierają
-teraz dodatkowe pola `sample_truncated`, `retained_samples` oraz
-`omitted_samples`, które sygnalizują, czy limit `--max-global-samples` został
-osiągnięty oraz ile obserwacji znalazło się poza próbką wykorzystywaną do
-percentyli/sugestii progów. Metryki w sekcjach `metrics` zawierają dodatkowe
-pole `approximation_mode`, które przyjmuje wartość `null`, gdy percentyle
-bazują na rzeczywistej próbce, albo nazwę metody aproksymacji (np.
-`approximate_from_moments`, gdy próbkowanie jest wyłączone). Metadane raportu
-(`sources`) przechowują użyte limity próbkowania – globalny
-(`max_global_samples`) oraz grupowy (`max_group_samples`) – a także liczbę
-metryk i próbek pominiętych przez oba mechanizmy
-(`global_samples_truncated_metrics`, `global_samples_omitted_total`,
-`group_samples_truncated_metrics`, `group_samples_omitted_total`). Dodatkowo
-liczniki `approximation_global_metrics` i `approximation_metrics` wskazują,
-ile metryk (odpowiednio w podsumowaniu globalnym oraz w grupach) korzystało z
-aproksymacji. Warto pamiętać, że dla `--max-global-samples 0` percentyle są
-przybliżane na bazie średniej i wariancji (założenie rozkładu normalnego),
-dlatego przy interpretacji wyników należy zweryfikować, czy rozkład nie
-odbiega znacząco od gaussowskiego. Metryki absolutne (`signal_after_*`)
-korzystają w takim trybie z rozkładu modułu (folded normal), a uzyskane
-percentyle i sugerowane progi są dodatkowo przycinane do obserwowanego
-zakresu oraz domeny metryki.
-
-Agregatory strumieniowe śledzą również najmniejszą napotkaną wartość
-bezwzględną danej metryki. Dzięki temu progi dla `signal_after_*` nie są
-sztucznie podbijane do `min(|min|, |max|)` – nawet przy dwukierunkowych
-rozkładach raport potrafi zasugerować wartości bliższe faktycznemu minimum
-modułu (np. 0.02), jeżeli takie obserwacje wystąpiły w danych wejściowych.
-
-Ponieważ agregatory pilnują domen metryk, każda sekcja `metrics` zawiera teraz
-pole `clamped_values` z licznikami przycięć w trakcie obliczeń. Wartość
-`regular` odnosi się do klasycznych ograniczeń (np. `risk_score`), a `absolute`
-do metryk przetwarzanych na wartości bezwzględne (`signal_after_*`). Dodatkowe
-pole `clamped_values` w metadanych `sources` gromadzi sumaryczne liczniki oraz
-liczbę metryk, których dotyczyło przycinanie. Jeśli którykolwiek z liczników
-jest dodatni, warto sprawdzić, czy wartości wejściowe nie wychodzą poza
-oczekiwany zakres albo czy zdefiniowana domena metryki nie jest zbyt wąska.
+z zachowaniem lekkiego rozmiaru raportu.
 
 Jeżeli raport generowany jest na potrzeby krótkiego podsumowania, ustaw
 `--max-freeze-events` na niewielką liczbę (np. 25), aby nie kopiować tysięcy
@@ -319,30 +208,116 @@ wierszu. Metadane raportu przechowują wykorzystany limit w polu
 `sources.max_freeze_events`, a liczba skróconych grup dostępna jest w
 `sources.raw_freeze_events_truncated_groups`.
 
-Analogicznie limit `--max-raw-values` kontroluje liczbę próbek
-przechowywanych w `groups[*].raw_values`. Po osiągnięciu limitu skrypt
-wykorzystuje deterministyczne próbkowanie rezerwuarowe – oznacza to, że
-przechowywana próbka jest losowo dobierana (z ustalonym ziarnem), a nie tylko
-pierwszymi N obserwacjami. Ziarnowanie pochodzi ze stabilnego skrótu BLAKE2s,
-dzięki czemu wynik nie zależy od `PYTHONHASHSEED` środowiska i pozostaje
-powtarzalny między uruchomieniami. Raport oznaczy takie grupy flagą
-`raw_values_truncated`, wskaże liczbę pominiętych próbek w mapie
-`raw_values_omitted` (w rozbiciu na metryki), a także zapisze wykorzystany
-limit i łączną liczbę pominiętych wartości w metadanych `sources`
-(`max_raw_values`, `raw_values_truncated_groups`, `raw_values_omitted_total`).
-Histogramy bazujące na `raw_values` należy więc interpretować jako wynik
-losowego, ale deterministycznie powtarzalnego próbkowania całej serii. Limit
-agregatorów (`sources.max_group_samples`) działa niezależnie, więc ustawienie
-`--max-raw-values 0` wyłącza jedynie próbki wykorzystywane do histogramów –
-percentyle i sugerowane progi pozostają dostępne, o ile limit grupowy jest
-dodatni lub wyłączony.
+## Interpretacja sekcji `sources`
 
-Wewnętrzne agregatory przetwarzają obecnie każdą metrykę tylko raz –
-posortowana próbka wykorzystywana jest równocześnie do raportowania
-percentyli oraz do wyliczania sugerowanego progu, co eliminuje wcześniejsze
-podwójne sortowania przy dużych zbiorach danych. Dzięki temu raportowanie
-dużych datasetów nie generuje zbędnych kosztów CPU, o ile limity próbkowania
-nie wymuszają odrzucania większości obserwacji.
+Sekcja `sources` na końcu raportu zbiera metadane o wejściowych plikach oraz
+zastosowanych limitach. Pozwala to odtworzyć konfigurację bez zaglądania w
+parametry CLI, co bywa pomocne podczas wymiany raportów między zespołami.
+
+Niezależnie od tego, jak ustawisz limity (`--limit-freeze-events`,
+`--raw-freeze-events-sample-limit`, `--max-raw-freeze-events`,
+`--freeze-events-limit`), sekcja `freeze_summary` w grupach i w
+`global_summary` zawsze bazuje na pełnym zbiorze zdarzeń. Metadane w
+`sources.raw_freeze_events` pomagają odtworzyć, jak raport dobrał próbkę –
+`mode` informuje, czy zapisano listę (i w jaki sposób), `limit` i
+`display_limit` pokazują rzeczywiste ograniczenia, `requested_limit`
+odzwierciedla wartości z CLI (w tym `--raw-freeze-events-sample-limit`), a
+`overflow_summary` zlicza odcięte wpisy. Dzięki temu można zweryfikować, że
+agregaty pozostały kompletne, nawet jeśli próbka została mocno przycięta.
+
+- `current_signal_thresholds.files` / `inline` – źródła aktualnych progów
+  przekazanych przez `--current-threshold`. Wartości inline odpowiadają parom
+  `metric=value`, a ścieżki wskazują pliki JSON/YAML.
+- `risk_threshold_files` oraz `risk_thresholds.files` / `inline` – analogiczne
+  metadane dla `--risk-thresholds`, dzięki którym można zweryfikować, czy
+  wartości `risk_score` pochodzą z pliku konfiguracyjnego, czy z parametru CLI.
+- `raw_freeze_events.mode` – informuje, czy surowe blokady są próbkowane
+  niezależnym samplerem (`sample`), wykorzystywane bezpośrednio z limitu
+  blokad (`limit`) czy pominięte (`omit`). To samo pole pojawia się w sekcjach
+  `raw_freeze_events` w grupach i podsumowaniu globalnym, dzięki czemu łatwo
+  powiązać listę zdarzeń z zastosowanym ograniczeniem.
+  - Gdy raport zawiera próbkę (`sample` lub `limit`), pole `limit` opisuje
+    faktyczną liczbę zdarzeń zapisanych w grupie/globalnie po zastosowaniu
+    ograniczeń. `requested_limit` wskazuje żądanie operatora (np. z
+    `--limit-freeze-events`, `--raw-freeze-events-sample-limit` albo limitu
+    przekazanego do `_generate_report`), a
+    `display_limit` pojawia się, gdy lista została dodatkowo przycięta przez
+    `--max-raw-freeze-events`. Ewentualne odcięte rekordy są zliczane w
+    `overflow_summary`, która zachowuje pełny rozkład statusów, typów i powodów.
+    Dodatkowe pole `display_overflow_summary` (jeżeli występuje) obejmuje wyłącznie
+    elementy ucięte przez ograniczenie wyświetlania, co pozwala rozróżnić je od
+    rekordów odrzuconych wcześniej przez limit próbkowania.
+  - Dla trybu `omit` dostępne są powody (`reason`): `explicit_omit` oznacza
+    użycie `--omit-raw-freeze-events`, `limit_zero` odpowiada `--max-raw-freeze-events 0`,
+    a `sampling_disabled`/`no_samples` sygnalizują brak aktywnej próbki mimo
+    ograniczenia `--limit-freeze-events`.
+- `freeze_events.mode` – wskazuje, czy sekcje `freeze_events` zawierają wszystkie
+  zdarzenia (`all`), czy zostały przycięte (`limit`). W drugim przypadku pole
+  `overflow_summary` prezentuje agregaty dla odrzuconych rekordów, co ułatwia
+  ocenę skali przycięcia.
+
+Przykładowy fragment metadanych dla raportu z aktywną próbką blokad może
+wyglądać następująco:
+
+```json
+"sources": {
+  "raw_freeze_events": {
+    "mode": "sample",
+    "display_limit": 3,
+    "requested_limit": 10,
+    "limit": 3,
+    "overflow_summary": {
+      "total": 7,
+      "reasons": [
+        {"reason": "risk_score_threshold", "count": 5},
+        {"reason": "manual_override", "count": 2}
+      ]
+    }
+  },
+  "freeze_events": {
+    "mode": "limit",
+    "limit": 50
+  }
+}
+```
+
+Interpretacja:
+
+- Operator poprosił o próbkę maksymalnie 10 zdarzeń (`requested_limit`), ale po
+  przycięciu listy przez `--max-raw-freeze-events 3` w raporcie znalazły się
+  tylko trzy pierwsze wpisy (`limit`).
+- Pozostałe wpisy nie znikają – `overflow_summary.total` zlicza wszystkie 7
+  odrzuconych blokad, a ich powody można odczytać z listy `reasons`.
+- Sekcja `freeze_events` została ograniczona do 50 rekordów (często jest to
+  domyślna wartość narzucona przez `--freeze-events-limit`), ale ponieważ
+  liczba blokad była mniejsza, w raporcie znajdziemy komplet wpisów.
+
+Jeżeli raport zostanie uruchomiony z `--omit-raw-freeze-events`, metadane
+zmienią się na `{"mode": "omit", "reason": "explicit_omit"}` – brak listy
+zdarzeń jest wtedy świadomą decyzją operatora, a pełne agregaty nadal znajdują
+się w `freeze_summary` i `global_summary`.
+
+### Kompletność agregatów i interpretacja `sources.raw_freeze_events`
+
+Limity próbkowania (`--limit-freeze-events`, `--raw-freeze-events-sample-limit`,
+`--max-raw-freeze-events`, `--freeze-events-limit`) wpływają wyłącznie na to, ile
+rekordów trafi na listy w sekcjach `raw_freeze_events` i `freeze_events`.
+Wszystkie zdarzenia – także te ucięte na etapie prezentacji – nadal zasilają
+agregaty w `freeze_summary` oraz `global_summary`. Dzięki temu można bez obaw
+przycinać próbki w celu uproszczenia raportu, nie tracąc informacji o łącznej
+liczbie blokad, ich typach ani powodach.
+
+Sekcja `sources.raw_freeze_events` opisuje zastosowane ograniczenia. Pole
+`mode` rozróżnia próbkę (`sample`), limit wymuszony przez `--limit-freeze-events`
+(`limit`) oraz świadome pominięcie (`omit`). `requested_limit` odzwierciedla
+wartość przekazaną z CLI (np. `--limit-freeze-events 25` lub
+`--raw-freeze-events-sample-limit 15`), `limit` pokazuje faktyczną liczbę wpisów
+po uwzględnieniu wszystkich ograniczeń, a `display_limit` wskazuje dodatkowe
+przycięcie wynikające z `--max-raw-freeze-events`. Kiedy `mode` przyjmuje
+wartość `omit`, pole `reason` pozwala rozpoznać, czy lista została pominięta z
+inicjatywy operatora (`--omit-raw-freeze-events`), czy na przykład ustawiono
+limit 0. Analiza tych metadanych pomaga odtworzyć konfigurację raportu oraz
+potwierdzić, że agregaty pozostały kompletne mimo zmian w próbkach.
 
 ## Wskazówki operacyjne
 

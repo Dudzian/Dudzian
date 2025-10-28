@@ -1389,30 +1389,6 @@ auto_trader:
         monkeypatch.delenv("BOT_CORE_RISK_THRESHOLDS_PATH", raising=False)
         config_loader.reset_threshold_cache()
 
-def test_load_risk_thresholds_rejects_unknown_strategy_signal_metric(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    config_loader.reset_threshold_cache()
-    override = tmp_path / "risk_thresholds.yaml"
-    override.write_text(
-        """
-auto_trader:
-  strategy_signal_thresholds:
-    binance:
-      trend_following:
-        made_up_metric: 0.1
-""".strip()
-    )
-
-    monkeypatch.setenv("BOT_CORE_RISK_THRESHOLDS_PATH", str(override))
-
-    try:
-        with pytest.raises(ValueError, match="unsupported metric"):
-            config_loader.load_risk_thresholds()
-    finally:
-        monkeypatch.delenv("BOT_CORE_RISK_THRESHOLDS_PATH", raising=False)
-        config_loader.reset_threshold_cache()
-
 
 def test_load_risk_thresholds_signal_thresholds(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     config_loader.reset_threshold_cache()
@@ -1462,29 +1438,6 @@ auto_trader:
 
     try:
         with pytest.raises(ValueError):
-            config_loader.load_risk_thresholds()
-    finally:
-        monkeypatch.delenv("BOT_CORE_RISK_THRESHOLDS_PATH", raising=False)
-        config_loader.reset_threshold_cache()
-
-
-def test_load_risk_thresholds_rejects_unknown_signal_metric(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    config_loader.reset_threshold_cache()
-    override = tmp_path / "risk_thresholds.yaml"
-    override.write_text(
-        """
-auto_trader:
-  signal_thresholds:
-    totally_new_metric: 0.1
-""".strip()
-    )
-
-    monkeypatch.setenv("BOT_CORE_RISK_THRESHOLDS_PATH", str(override))
-
-    try:
-        with pytest.raises(ValueError, match="unsupported metric"):
             config_loader.load_risk_thresholds()
     finally:
         monkeypatch.delenv("BOT_CORE_RISK_THRESHOLDS_PATH", raising=False)

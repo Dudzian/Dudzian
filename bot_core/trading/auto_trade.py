@@ -59,28 +59,6 @@ class _AliasConfigSentinel:
 _ALIAS_UNSET = _AliasConfigSentinel()
 
 
-class _ThresholdRemovalSentinel:
-    __slots__ = ()
-
-
-_THRESHOLD_REMOVE = _ThresholdRemovalSentinel()
- 
-
-class _ThresholdOverrideUnsetSentinel:
-    __slots__ = ()
-
-
-_THRESHOLD_OVERRIDE_UNSET = _ThresholdOverrideUnsetSentinel()
-
-_THRESHOLD_REMOVE_STRINGS = {
-    "",
-    "none",
-    "null",
-    "unset",
-    "delete",
-    "remove",
-}
-
 def _canonical_identifier(value: str | None) -> str | None:
     if value is None:
         return None
@@ -92,22 +70,6 @@ def _canonical_identifier(value: str | None) -> str | None:
 
 def _canonical_metric_name(name: str) -> str:
     return str(name).strip().casefold()
-
-
-_SUPPORTED_SIGNAL_THRESHOLD_METRICS = frozenset(
-    _canonical_metric_name(name) for name in SUPPORTED_SIGNAL_THRESHOLD_METRICS
-)
-
-
-def _is_threshold_removal_marker(value: object) -> bool:
-    if value is _THRESHOLD_REMOVE:
-        return True
-    if value is None:
-        return True
-    if isinstance(value, str):
-        marker = value.strip().casefold()
-        return marker in _THRESHOLD_REMOVE_STRINGS
-    return False
 
 
 @dataclass
@@ -417,21 +379,11 @@ class AutoTradeEngine:
         self._global_signal_thresholds: Dict[str, float] = {}
         self._strategy_signal_thresholds: Dict[str, Dict[str, Dict[str, float]]] = {}
         self._signal_threshold_after_adjustment: float | None = None
-        self._base_activation_threshold = float(abs(self.cfg.activation_threshold))
-        self.cfg.activation_threshold = self._base_activation_threshold
-        self._activation_threshold = self._base_activation_threshold
+        self._activation_threshold = float(self.cfg.activation_threshold)
         self._configure_signal_thresholds(
             signal_thresholds=self.cfg.signal_thresholds,
             strategy_signal_thresholds=self.cfg.strategy_signal_thresholds,
-            update_config=True,
         )
-        self._base_signal_thresholds: Dict[str, float] = dict(self._global_signal_thresholds)
-        self._base_strategy_signal_thresholds: Dict[
-            str, Dict[str, Dict[str, float]]
-        ] = {
-            exchange: {strategy: dict(metrics) for strategy, metrics in strategy_map.items()}
-            for exchange, strategy_map in self._strategy_signal_thresholds.items()
-        }
         normalized_weights = self._normalize_strategy_config(self.cfg.strategy_weights)
         self._strategy_weights = RegimeStrategyWeights(
             weights={
@@ -846,7 +798,6 @@ class AutoTradeEngine:
         *,
         signal_thresholds: Mapping[str, float] | None,
         strategy_signal_thresholds: Mapping[str, Mapping[str, float]] | None,
-        update_config: bool,
     ) -> None:
         global_thresholds: Dict[str, float] = {}
         if signal_thresholds:
@@ -857,13 +808,7 @@ class AutoTradeEngine:
                     continue
                 if not math.isfinite(numeric):
                     continue
-                metric_key = _canonical_metric_name(str(metric_name))
-                if metric_key not in _SUPPORTED_SIGNAL_THRESHOLD_METRICS:
-                    raise ValueError(
-                        "Unsupported global signal threshold metric: %s"
-                        % metric_name
-                    )
-                global_thresholds[metric_key] = numeric
+                global_thresholds[_canonical_metric_name(str(metric_name))] = numeric
         strategy_thresholds: Dict[str, Dict[str, Dict[str, float]]] = {}
         if strategy_signal_thresholds:
             for exchange_key, strategy_map in strategy_signal_thresholds.items():
@@ -883,13 +828,7 @@ class AutoTradeEngine:
                             continue
                         if not math.isfinite(numeric):
                             continue
-                        metric_key = _canonical_metric_name(str(metric_name))
-                        if metric_key not in _SUPPORTED_SIGNAL_THRESHOLD_METRICS:
-                            raise ValueError(
-                                "Unsupported signal threshold metric for %s/%s: %s"
-                                % (exchange_key, strategy_key, metric_name)
-                            )
-                        metrics_payload[metric_key] = numeric
+                        metrics_payload[_canonical_metric_name(str(metric_name))] = numeric
                     if metrics_payload:
                         strategy_payload[strategy_norm] = metrics_payload
                 if strategy_payload:
@@ -898,38 +837,32 @@ class AutoTradeEngine:
         self._global_signal_thresholds = global_thresholds
         self._strategy_signal_thresholds = strategy_thresholds
 
-        if update_config:
-            if global_thresholds:
-                self.cfg.signal_thresholds = MappingProxyType(dict(global_thresholds))
-            else:
-                self.cfg.signal_thresholds = None
+        if global_thresholds:
+            self.cfg.signal_thresholds = MappingProxyType(dict(global_thresholds))
+        else:
+            self.cfg.signal_thresholds = None
 
-            if strategy_thresholds:
-                nested_proxy = {
-                    exchange: MappingProxyType(
-                        {
-                            strategy: MappingProxyType(dict(metrics))
-                            for strategy, metrics in strategy_map.items()
-                        }
-                    )
-                    for exchange, strategy_map in strategy_thresholds.items()
-                }
-                self.cfg.strategy_signal_thresholds = MappingProxyType(nested_proxy)
-            else:
-                self.cfg.strategy_signal_thresholds = None
+        if strategy_thresholds:
+            nested_proxy = {
+                exchange: MappingProxyType(
+                    {
+                        strategy: MappingProxyType(dict(metrics))
+                        for strategy, metrics in strategy_map.items()
+                    }
+                )
+                for exchange, strategy_map in strategy_thresholds.items()
+            }
+            self.cfg.strategy_signal_thresholds = MappingProxyType(nested_proxy)
+        else:
+            self.cfg.strategy_signal_thresholds = None
 
         self._signal_threshold_after_adjustment = self._resolve_signal_threshold(
             "signal_after_adjustment"
         )
         activation_override = self._resolve_signal_threshold("signal_after_clamp")
         if activation_override is not None:
-            normalized_override = float(abs(activation_override))
-            if update_config:
-                self.cfg.activation_threshold = normalized_override
-            self._activation_threshold = normalized_override
-        else:
-            self._activation_threshold = self._base_activation_threshold
-            self.cfg.activation_threshold = self._base_activation_threshold
+            self.cfg.activation_threshold = float(abs(activation_override))
+        self._activation_threshold = float(abs(self.cfg.activation_threshold))
 
     def _resolve_signal_threshold(self, metric: str) -> float | None:
         metric_key = _canonical_metric_name(metric)
@@ -951,101 +884,14 @@ class AutoTradeEngine:
     def apply_signal_threshold_overrides(
         self,
         *,
-        signal_thresholds: Mapping[str, float] | None | _ThresholdOverrideUnsetSentinel = _THRESHOLD_OVERRIDE_UNSET,
-        strategy_signal_thresholds: Mapping[str, Mapping[str, float]]
-        | None
-        | _ThresholdOverrideUnsetSentinel = _THRESHOLD_OVERRIDE_UNSET,
+        signal_thresholds: Mapping[str, float] | None = None,
+        strategy_signal_thresholds: Mapping[str, Mapping[str, float]] | None = None,
     ) -> None:
-        if signal_thresholds is _THRESHOLD_OVERRIDE_UNSET:
-            merged_global = {
-                metric: float(value)
-                for metric, value in self._global_signal_thresholds.items()
-            }
-        elif signal_thresholds is None:
-            merged_global: Dict[str, float] = {
-                metric: float(value)
-                for metric, value in self._base_signal_thresholds.items()
-            }
-        else:
-            merged_global = {
-                metric: float(value)
-                for metric, value in self._global_signal_thresholds.items()
-            }
-            for metric_name, raw_value in signal_thresholds.items():
-                metric_key = _canonical_metric_name(str(metric_name))
-                if not metric_key:
-                    continue
-                if _is_threshold_removal_marker(raw_value):
-                    merged_global.pop(metric_key, None)
-                    continue
-                try:
-                    numeric = float(raw_value)
-                except (TypeError, ValueError):
-                    continue
-                if not math.isfinite(numeric):
-                    continue
-                merged_global[metric_key] = numeric
-
-        if strategy_signal_thresholds is _THRESHOLD_OVERRIDE_UNSET:
-            merged_strategy = {
-                exchange: {strategy: dict(metrics) for strategy, metrics in strategy_map.items()}
-                for exchange, strategy_map in self._strategy_signal_thresholds.items()
-            }
-        elif strategy_signal_thresholds is None:
-            merged_strategy: Dict[str, Dict[str, Dict[str, float]]] = {
-                exchange: {strategy: dict(metrics) for strategy, metrics in strategy_map.items()}
-                for exchange, strategy_map in self._base_strategy_signal_thresholds.items()
-            }
-        else:
-            merged_strategy = {
-                exchange: {strategy: dict(metrics) for strategy, metrics in strategy_map.items()}
-                for exchange, strategy_map in self._strategy_signal_thresholds.items()
-            }
-            for exchange_key, strategy_map in strategy_signal_thresholds.items():
-                exchange_norm = _canonical_identifier(str(exchange_key))
-                if not exchange_norm:
-                    continue
-                if _is_threshold_removal_marker(strategy_map):
-                    merged_strategy.pop(exchange_norm, None)
-                    continue
-                if not isinstance(strategy_map, Mapping):
-                    continue
-                current_strategies = merged_strategy.setdefault(exchange_norm, {})
-                for strategy_key, metric_map in strategy_map.items():
-                    strategy_norm = _canonical_identifier(str(strategy_key))
-                    if not strategy_norm:
-                        continue
-                    if _is_threshold_removal_marker(metric_map):
-                        current_strategies.pop(strategy_norm, None)
-                        continue
-                    if not isinstance(metric_map, Mapping):
-                        continue
-                    metrics_payload = dict(current_strategies.get(strategy_norm, {}))
-                    for metric_name, raw_value in metric_map.items():
-                        metric_key = _canonical_metric_name(str(metric_name))
-                        if not metric_key:
-                            continue
-                        if _is_threshold_removal_marker(raw_value):
-                            metrics_payload.pop(metric_key, None)
-                            continue
-                        try:
-                            numeric = float(raw_value)
-                        except (TypeError, ValueError):
-                            continue
-                        if not math.isfinite(numeric):
-                            continue
-                        metrics_payload[metric_key] = numeric
-                    if metrics_payload:
-                        current_strategies[strategy_norm] = metrics_payload
-                    else:
-                        current_strategies.pop(strategy_norm, None)
-                if not current_strategies:
-                    merged_strategy.pop(exchange_norm, None)
-
         self._configure_signal_thresholds(
-            signal_thresholds=merged_global,
-            strategy_signal_thresholds=merged_strategy,
-            update_config=False,
+            signal_thresholds=signal_thresholds or self.cfg.signal_thresholds,
+            strategy_signal_thresholds=(
+                strategy_signal_thresholds or self.cfg.strategy_signal_thresholds
+            ),
         )
 
     def signal_threshold_snapshot(self) -> Mapping[str, object]:

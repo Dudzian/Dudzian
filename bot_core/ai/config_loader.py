@@ -245,8 +245,6 @@ def _validate_thresholds(thresholds: Mapping[str, Any]) -> None:
         if not isinstance(value, (int, float)) or value < 0:
             raise ValueError(f"Invalid cooldown release threshold {key}: {value!r}")
 
-    supported_metrics = _get_supported_signal_threshold_metrics()
-
     signal_thresholds = auto_trader.get("signal_thresholds")
     if signal_thresholds is None:
         normalised_signal_thresholds: dict[str, float] | None = None
@@ -266,11 +264,6 @@ def _validate_thresholds(thresholds: Mapping[str, Any]) -> None:
             key_norm = str(key).strip().casefold()
             if not key_norm:
                 raise ValueError("auto_trader.signal_thresholds keys must be non-empty")
-            if key_norm not in supported_metrics:
-                raise ValueError(
-                    "auto_trader.signal_thresholds contains unsupported metric "
-                    f"{key!r}; supported metrics: {sorted(supported_metrics)!r}"
-                )
             normalised_signal_thresholds[key_norm] = numeric
     else:
         raise ValueError("auto_trader.signal_thresholds section must be a mapping")
@@ -313,11 +306,6 @@ def _validate_thresholds(thresholds: Mapping[str, Any]) -> None:
                     if not metric_norm:
                         raise ValueError(
                             "auto_trader.strategy_signal_thresholds metric names must be non-empty"
-                        )
-                    if metric_norm not in supported_metrics:
-                        raise ValueError(
-                            "auto_trader.strategy_signal_thresholds contains unsupported metric "
-                            f"{metric_name!r}; supported metrics: {sorted(supported_metrics)!r}"
                         )
                     metrics_normalised[metric_norm] = numeric
                 if metrics_normalised:
