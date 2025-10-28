@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import argparse
-import io
 import gzip
 import heapq
+import io
 import json
 import math
+import random
 import sys
 from array import array
 from bisect import bisect_left
@@ -16,36 +17,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Callable, Iterable, Iterator, Literal, Mapping, TextIO
 
-
-_STREAM_READ_SIZE = 65536
-
-
-_STREAM_READ_SIZE = 65536
-_DEFAULT_GLOBAL_SAMPLE_LIMIT = 50000
-
-
-_STREAM_READ_SIZE = 65536
-_DEFAULT_GROUP_SAMPLE_LIMIT = 50000
-_DEFAULT_GLOBAL_SAMPLE_LIMIT = 50000
-
 import yaml
-
-
-_STREAM_READ_SIZE = 65536
-_DEFAULT_GROUP_SAMPLE_LIMIT = 50000
-_DEFAULT_GLOBAL_SAMPLE_LIMIT = 50000
-_JSONL_SUFFIXES = frozenset({".jsonl", ".ndjson"})
-
-import yaml
-
-
-_STREAM_READ_SIZE = 65536
-_DEFAULT_GROUP_SAMPLE_LIMIT = 50000
-_DEFAULT_GLOBAL_SAMPLE_LIMIT = 50000
-_JSONL_SUFFIXES = frozenset({".jsonl", ".ndjson"})
-
-import yaml
-
 
 _STREAM_READ_SIZE = 65536
 _DEFAULT_GROUP_SAMPLE_LIMIT = 50000
@@ -66,12 +38,6 @@ class RiskScoreSources:
     from_inline: float | None = None
 
 
-@dataclass
-class RiskScoreSources:
-    from_files: float | None = None
-    from_inline: float | None = None
-
-
 def _normalize_metric_key(key: str) -> str:
     return key.strip().casefold().replace("-", "_")
 
@@ -82,11 +48,13 @@ _DEFAULT_FREEZE_EVENTS_LIMIT = 25
 _UNSET_MAX_FREEZE_EVENTS = object()
 _SUPPORTED_THRESHOLD_METRICS = frozenset(
     _normalize_metric_key(name)
-    for name in ("signal_after_adjustment", "signal_after_clamp", "risk_score")
+    for name in tuple(SUPPORTED_SIGNAL_THRESHOLD_METRICS) + ("risk_score",)
 )
-_SUPPORTED_THRESHOLD_METRICS = frozenset(
-    set(_SUPPORTED_SIGNAL_THRESHOLD_METRICS)
-    | {_normalize_metric_key("risk_score")}
+_ABSOLUTE_THRESHOLD_METRICS = frozenset(
+    {
+        _normalize_metric_key("signal_after_adjustment"),
+        _normalize_metric_key("signal_after_clamp"),
+    }
 )
 
 _METRIC_VALUE_DOMAINS: dict[str, tuple[float | None, float | None]] = {
@@ -1061,9 +1029,9 @@ def _load_autotrade_entries(
             return None
         if not _is_entry_candidate(item):
             return None
+        timestamp = _extract_entry_timestamp(item)
         if since is None and until is None:
             return item
-        timestamp = _extract_entry_timestamp(item)
         if timestamp is None:
             return item
         if since is not None and timestamp < since:
@@ -1435,6 +1403,19 @@ def _compute_percentiles_from_sequences(
     return results
 
 
+def _format_percentile_label(percentile: float) -> str:
+    decimal_value = Decimal(str(percentile)) * Decimal(100)
+    normalized = decimal_value.normalize()
+    text = format(normalized, "f")
+    if "." in text:
+        integer, fractional = text.split(".", 1)
+        fractional = fractional.rstrip("0")
+        if fractional:
+            return f"p{integer.zfill(2)}_{fractional}"
+        return f"p{integer.zfill(2)}"
+    return f"p{text.zfill(2)}"
+
+
 class _MetricSeries:
     __slots__ = (
         "_values",
@@ -1782,9 +1763,6 @@ def _build_metrics_section(
             current = None
         stats_payload["suggested_threshold"] = suggested
         stats_payload["current_threshold"] = current
-        if isinstance(values, StreamingMetricAggregator) and not absolute:
-            if "absolute_percentiles" not in stats_payload:
-                stats_payload["absolute_percentiles"] = None
         metrics_payload[metric_name] = stats_payload
     return metrics_payload
 
@@ -2017,6 +1995,11 @@ def _write_csv(
         "freeze_reason_counts",
         "freeze_truncated",
     ]
+    sample_columns = [
+        "sample_truncated",
+        "retained_samples",
+        "omitted_samples",
+    ]
     fieldnames = [
         "primary_exchange",
         "strategy",
@@ -2028,7 +2011,8 @@ def _write_csv(
         "stddev",
         "suggested_threshold",
         "current_threshold",
-    ] + list(percentiles) + freeze_columns
+    ] + sample_columns + list(percentiles) + freeze_columns
+    sample_defaults = {column: "" for column in sample_columns}
     freeze_defaults = {column: "" for column in freeze_columns}
     def _freeze_row_payload(
         *,
@@ -2204,7 +2188,8 @@ def _generate_report(
     max_freeze_events: int | None | object = _UNSET_MAX_FREEZE_EVENTS,
     omit_raw_freeze_events: bool = False,
     max_raw_freeze_events: int | None = None,
-    raw_freeze_events_sample_limit: int | None = None,
+    max_raw_values: int | None = None,
+    max_global_samples: int | None = None,
     omit_freeze_events: bool = False,
 ) -> dict[str, object]:
     normalized_signal_thresholds: dict[str, float] | None = None
@@ -2232,12 +2217,23 @@ def _generate_report(
     symbol_map: dict[str, tuple[str, str]] = {}
     grouped_values: dict[tuple[str, str], dict[str, _MetricSeries]] = {}
     global_metric_series: dict[str, _MetricSeries] = {}
+    raw_value_snapshots: dict[tuple[str, str], dict[str, list[float]]] = defaultdict(
+        lambda: defaultdict(list)
+    )
+    raw_value_omitted: dict[tuple[str, str], dict[str, int]] = defaultdict(
+        lambda: defaultdict(int)
+    )
+    raw_value_counts: dict[tuple[str, str], dict[str, int]] = defaultdict(
+        lambda: defaultdict(int)
+    )
+    raw_value_rngs: dict[tuple[str, str], dict[str, random.Random]] = defaultdict(dict)
     def _empty_freeze_summary() -> dict[str, object]:
         return {
             "total": 0,
             "type_counts": Counter(),
             "status_counts": Counter(),
             "reason_counts": Counter(),
+            "omitted_total": 0,
         }
 
     freeze_summaries: dict[tuple[str, str], dict[str, object]] = defaultdict(
@@ -2267,8 +2263,31 @@ def _generate_report(
     sample_limit_override = _sanitize_optional_limit(raw_freeze_events_sample_limit)
     group_freeze_display_limit = _sanitize_optional_limit(limit_freeze_events)
     raw_freeze_sample_limit = _sanitize_optional_limit(raw_freeze_events_sample_limit)
+    raw_values_limit = _sanitize_optional_limit(max_raw_values)
+    raw_values_truncated_groups = 0
+    raw_values_omitted_total = 0
+    if max_global_samples is None:
+        global_samples_limit = max(0, int(_DEFAULT_GLOBAL_SAMPLE_LIMIT))
+        global_samples_limit_reason = "default"
+    else:
+        try:
+            normalized_global_samples = int(max_global_samples)
+        except (TypeError, ValueError):
+            normalized_global_samples = -1
+        if normalized_global_samples < 0:
+            global_samples_limit = 0
+            global_samples_limit_reason = "invalid_value"
+        else:
+            global_samples_limit = normalized_global_samples
+            global_samples_limit_reason = "explicit"
+    global_samples_truncated_metrics = 0
+    global_samples_omitted_total = 0
+    raw_freeze_events_truncated_groups = 0
+    raw_freeze_events_omitted_total = 0
     raw_freeze_requested_limit: int | None = None
     normalized_freeze_mode = str(raw_freeze_events_mode or "omit").strip().lower()
+    if raw_freeze_sample_limit is not None:
+        normalized_freeze_mode = "sample"
     if normalized_freeze_mode not in {"omit", "sample"}:
         normalized_freeze_mode = "omit"
     omit_raw_freeze_events = bool(omit_raw_freeze_events)
@@ -2323,6 +2342,43 @@ def _generate_report(
             raw_freeze_requested_limit = 0
     journal_count = 0
     autotrade_count = 0
+
+    def _raw_sample_rng(key: tuple[str, str], metric: str) -> random.Random:
+        rng = raw_value_rngs[key].get(metric)
+        if rng is None:
+            seed = f"raw::{key[0]}::{key[1]}::{metric}"
+            rng = random.Random(seed)
+            raw_value_rngs[key][metric] = rng
+        return rng
+
+    def _record_raw_sample(key: tuple[str, str], metric: str, value: float) -> None:
+        if raw_values_limit is None:
+            samples = raw_value_snapshots[key][metric]
+            samples.append(float(value))
+            raw_value_omitted[key][metric] = 0
+            raw_value_counts[key][metric] += 1
+            return
+
+        limit = raw_values_limit
+        samples = raw_value_snapshots[key][metric]
+        counters = raw_value_counts[key]
+        counters[metric] += 1
+        seen = counters[metric]
+
+        if limit == 0:
+            if samples:
+                samples.clear()
+            raw_value_omitted[key][metric] = seen
+            return
+
+        if len(samples) < limit:
+            samples.append(float(value))
+        else:
+            rng = _raw_sample_rng(key, metric)
+            index = rng.randrange(seen)
+            if index < limit:
+                samples[index] = float(value)
+        raw_value_omitted[key][metric] = max(seen - len(samples), 0)
 
     def _select_display(current: str, candidate: str, canonical: str) -> str:
         if not candidate:
@@ -2390,6 +2446,8 @@ def _generate_report(
         global_series.append(numeric_value)
         if _METRIC_APPEND_OBSERVER is not None:
             _METRIC_APPEND_OBSERVER(key, metric_name, len(values))
+        if include_raw_values:
+            _record_raw_sample(key, metric_name, numeric_value)
 
     def _freeze_event_record(
         status: str,
@@ -2753,26 +2811,56 @@ def _generate_report(
         _record_metric_value(key, "risk_score", score_value)
 
     risk_threshold_paths = _normalize_risk_threshold_paths(risk_threshold_sources)
+    risk_threshold_loader_calls: list[dict[str, object]] = []
+
+    def _mark_loader_applied(index: int | None) -> None:
+        for idx, entry in enumerate(risk_threshold_loader_calls):
+            if "risk_score" not in entry:
+                entry.pop("applied", None)
+                continue
+            entry["applied"] = bool(index is not None and idx == index)
+
     current_risk_score = None
     if risk_threshold_paths:
         for config_path in risk_threshold_paths:
             thresholds = load_risk_thresholds(config_path=config_path)
             value = _extract_risk_score_threshold(thresholds)
+            path_str = str(config_path)
+            call_entry: dict[str, object] = {
+                "sequence": len(risk_threshold_loader_calls) + 1,
+                "config_path": path_str,
+                "source": f"load_risk_thresholds(config_path='{path_str}')",
+            }
             if value is not None:
-                current_risk_score = _ensure_finite_value(
+                finite_value = _ensure_finite_value(
                     "risk_score",
                     float(value),
                     source=str(config_path),
                 )
+                current_risk_score = finite_value
+                call_entry["risk_score"] = finite_value
+            risk_threshold_loader_calls.append(call_entry)
+            if "risk_score" in call_entry:
+                _mark_loader_applied(len(risk_threshold_loader_calls) - 1)
     else:
         thresholds = load_risk_thresholds()
         value = _extract_risk_score_threshold(thresholds)
+        call_entry: dict[str, object] = {
+            "sequence": len(risk_threshold_loader_calls) + 1,
+            "config_path": None,
+            "source": "load_risk_thresholds()",
+        }
         if value is not None:
-            current_risk_score = _ensure_finite_value(
+            finite_value = _ensure_finite_value(
                 "risk_score",
                 float(value),
                 source="load_risk_thresholds()",
             )
+            current_risk_score = finite_value
+            call_entry["risk_score"] = finite_value
+        risk_threshold_loader_calls.append(call_entry)
+        if "risk_score" in call_entry:
+            _mark_loader_applied(len(risk_threshold_loader_calls) - 1)
 
     override_source: str | None = None
     if isinstance(risk_score_source, Mapping):
@@ -2791,7 +2879,8 @@ def _generate_report(
             float(risk_score_override),
             source=source_hint,
         )
-    elif current_risk_score is None and isinstance(risk_score_source, Mapping):
+        _mark_loader_applied(None)
+    elif isinstance(risk_score_source, Mapping):
         raw_value = _coerce_float(risk_score_source.get("value"))
         if raw_value is not None:
             source_hint = override_source or "current_thresholds.value"
@@ -2800,45 +2889,7 @@ def _generate_report(
                 float(raw_value),
                 source=source_hint,
             )
-
-    if cli_risk_score is not None:
-        current_risk_score = float(cli_risk_score)
-
-    if cli_risk_score is not None:
-        current_risk_score = float(cli_risk_score)
-
-    if cli_risk_score is not None:
-        current_risk_score = float(cli_risk_score)
-
-    if cli_risk_score is not None:
-        current_risk_score = float(cli_risk_score)
-
-    if file_risk_score is not None:
-        current_risk_score = float(file_risk_score)
-
-    if cli_risk_score is not None:
-        current_risk_score = float(cli_risk_score)
-
-    if file_risk_score is not None:
-        current_risk_score = float(file_risk_score)
-
-    if cli_risk_score is not None:
-        current_risk_score = float(cli_risk_score)
-
-    if file_risk_score is not None:
-        current_risk_score = float(file_risk_score)
-
-    if cli_risk_score is not None:
-        current_risk_score = float(cli_risk_score)
-
-    if file_risk_score is not None:
-        current_risk_score = float(file_risk_score)
-
-    if cli_risk_score is not None:
-        current_risk_score = float(cli_risk_score)
-
-    if file_risk_score is not None:
-        current_risk_score = float(file_risk_score)
+            _mark_loader_applied(None)
 
     if cli_risk_score is not None:
         current_risk_score = float(cli_risk_score)
@@ -2857,15 +2908,10 @@ def _generate_report(
             current_risk_score=current_risk_score,
             current_signal_thresholds=current_signal_thresholds,
         )
-        freeze_summary = freeze_summaries.get((exchange, strategy)) or {
-            "total": 0,
-            "type_counts": Counter(),
-            "status_counts": Counter(),
-            "reason_counts": Counter(),
-        }
-        freeze_summary_payload = _format_freeze_summary(freeze_summary)
+        freeze_summary = freeze_summaries.get((exchange, strategy)) or _empty_freeze_summary()
+        total_freezes = int(freeze_summary.get("total") or 0)
         has_metrics = any(values for values in metrics.values())
-        has_freeze = int(freeze_summary.get("total") or 0) > 0
+        has_freeze = total_freezes > 0
         if not (has_metrics or has_freeze):
             continue
         display_exchange, display_strategy = display_names.get(
@@ -2875,8 +2921,10 @@ def _generate_report(
             "primary_exchange": display_exchange,
             "strategy": display_strategy,
             "metrics": metrics_payload,
-            "freeze_summary": freeze_summary_payload,
         }
+        raw_freeze_visible: list[dict[str, object]] = []
+        raw_freeze_payload: object | None = None
+        raw_freeze_omitted = 0
         if include_freeze_events:
             events_sample = freeze_event_collections.get((exchange, strategy), [])
             overflow_summary_payload = freeze_event_overflow_summaries.get(
@@ -2886,6 +2934,7 @@ def _generate_report(
                 events_sample,
                 overflow_summary_payload,
             )
+            raw_freeze_visible = list(visible_events)
             if freeze_event_limit is None:
                 if events_sample or display_limit_value is not None:
                     freeze_payload: dict[str, object] = {
@@ -2908,35 +2957,93 @@ def _generate_report(
                 if display_limit_value is not None:
                     freeze_payload["display_limit"] = display_limit_value
                 group_payload["freeze_events"] = freeze_payload
-                if (
-                    not sampling_freeze_events
-                    and not omit_raw_freeze_events
-                    and freeze_events_limit_reason != "default"
-                ):
-                    raw_payload = _limit_raw_freeze_payload(
-                        {
-                            "limit": freeze_event_limit,
-                            "events": visible_events,
-                            "overflow_summary": formatted_overflow,
-                        }
-                    )
-                    if raw_payload is not None:
-                        raw_payload["mode"] = "limit"
-                        group_payload["raw_freeze_events"] = raw_payload
-        if sampling_freeze_events:
-            sampler = freeze_event_samplers.get((exchange, strategy))
-            if sampler is not None:
-                payload = _limit_raw_freeze_payload(sampler.to_payload())
-                if payload is not None:
-                    payload["mode"] = "sample"
-                    group_payload["raw_freeze_events"] = payload
-        if include_raw_values:
-            group_payload["raw_values"] = {
-                metric: (
-                    values if isinstance(values, list) else list(values)
+
+            if sampling_freeze_events:
+                sampler = freeze_event_samplers.get((exchange, strategy))
+                if sampler is not None:
+                    payload = _limit_raw_freeze_payload(sampler.to_payload())
+                    if payload is not None:
+                        payload["mode"] = "sample"
+                        raw_freeze_payload = payload
+            elif (
+                not omit_raw_freeze_events
+                and freeze_event_limit is not None
+                and (
+                    freeze_events_limit_reason != "default"
+                    or max_raw_freeze_events is not None
                 )
-                for metric, values in metrics.items()
+            ):
+                payload = _limit_raw_freeze_payload(
+                    {
+                        "limit": freeze_event_limit,
+                        "events": visible_events,
+                        "overflow_summary": formatted_overflow,
+                    }
+                )
+                if payload is not None:
+                    payload["mode"] = "limit"
+                    raw_freeze_payload = payload
+            if (
+                raw_freeze_payload is None
+                and freeze_event_limit is not None
+                and not sampling_freeze_events
+                and not omit_raw_freeze_events
+                and freeze_events_limit_reason == "default"
+            ):
+                raw_freeze_payload = None
+
+            if raw_freeze_payload is not None and not omit_raw_freeze_events:
+                group_payload["raw_freeze_events"] = raw_freeze_payload
+
+            raw_freeze_count = len(raw_freeze_visible)
+            if isinstance(raw_freeze_payload, Mapping):
+                events_payload = raw_freeze_payload.get("events")
+                if isinstance(events_payload, list):
+                    raw_freeze_count = len(events_payload)
+                elif isinstance(events_payload, Iterable) and not isinstance(
+                    events_payload, (str, bytes)
+                ):
+                    events_list = list(events_payload)
+                    raw_freeze_payload["events"] = events_list
+                    raw_freeze_count = len(events_list)
+            elif isinstance(raw_freeze_payload, list):
+                raw_freeze_count = len(raw_freeze_payload)
+            raw_freeze_omitted = max(total_freezes - raw_freeze_count, 0)
+        if (
+            not omit_raw_freeze_events
+            and raw_freeze_payload is not None
+            and raw_freeze_omitted
+        ):
+            group_payload["raw_freeze_events_truncated"] = True
+            raw_freeze_events_truncated_groups += 1
+        if not omit_raw_freeze_events and raw_freeze_payload is not None:
+            group_payload["raw_freeze_events_omitted"] = raw_freeze_omitted
+            raw_freeze_events_omitted_total += raw_freeze_omitted
+        freeze_summary["omitted_total"] = int(raw_freeze_omitted)
+        aggregated_freeze_summary["omitted_total"] = int(
+            aggregated_freeze_summary.get("omitted_total", 0)
+        ) + int(raw_freeze_omitted)
+        group_payload["freeze_summary"] = _format_freeze_summary(freeze_summary)
+        if include_raw_values:
+            snapshot = raw_value_snapshots.get((exchange, strategy), {})
+            omitted_map = raw_value_omitted.get((exchange, strategy), {})
+            metric_keys = set(snapshot.keys()) | set(omitted_map.keys())
+            raw_values_payload = {
+                metric: _finite_values(snapshot.get(metric, []))
+                for metric in metric_keys
             }
+            omitted_payload = {
+                metric: int(omitted_map.get(metric, 0))
+                for metric in metric_keys
+            }
+            group_payload["raw_values"] = raw_values_payload
+            if omitted_payload:
+                group_payload["raw_values_omitted"] = omitted_payload
+                raw_values_omitted_sum = sum(omitted_payload.values())
+                raw_values_omitted_total += raw_values_omitted_sum
+                if any(count > 0 for count in omitted_payload.values()):
+                    group_payload["raw_values_truncated"] = True
+                    raw_values_truncated_groups += 1
         groups.append(group_payload)
 
     global_metrics: dict[str, dict[str, object]] = {}
@@ -3012,10 +3119,29 @@ def _generate_report(
             global_summary["raw_freeze_events"] = aggregated_raw_freeze_payload
             raw_freeze_events_source_mode = "limit"
     if include_raw_values:
-        global_summary["raw_values"] = {
-            metric: list(series.values())
-            for metric, series in global_metric_series.items()
-        }
+        global_raw_values: dict[str, list[float]] = {}
+        global_raw_omitted: dict[str, int] = {}
+        for metric_name, series in global_metric_series.items():
+            if not isinstance(series, _MetricSeries):
+                continue
+            total_values = len(series)
+            series_values = series.values()
+            if global_samples_limit <= 0:
+                selected_values = []
+            elif total_values > global_samples_limit:
+                selected_values = list(series_values[:global_samples_limit])
+            else:
+                selected_values = list(series_values)
+            omitted_count = max(0, total_values - len(selected_values))
+            if omitted_count:
+                global_raw_omitted[metric_name] = omitted_count
+                global_samples_truncated_metrics += 1
+                global_samples_omitted_total += omitted_count
+            global_raw_values[metric_name] = selected_values
+        global_summary["raw_values"] = global_raw_values
+        if global_raw_omitted:
+            global_summary["raw_values_omitted"] = global_raw_omitted
+            global_summary["raw_values_truncated"] = True
 
     current_threshold_files: list[str] = []
     current_threshold_inline: dict[str, float] = {}
@@ -3111,14 +3237,18 @@ def _generate_report(
     if risk_score_metadata_payload is not None:
         current_thresholds_payload["risk_score"] = risk_score_metadata_payload
 
+    risk_thresholds_payload: dict[str, object] = {
+        "files": combined_risk_files,
+        "inline": risk_threshold_inline,
+    }
+    if risk_threshold_loader_calls:
+        risk_thresholds_payload["load_calls"] = risk_threshold_loader_calls
+
     sources_payload: dict[str, object] = {
         "journal_events": journal_count,
         "autotrade_entries": autotrade_count,
         "current_thresholds": current_thresholds_payload,
-        "risk_thresholds": {
-            "files": combined_risk_files,
-            "inline": risk_threshold_inline,
-        },
+        "risk_thresholds": risk_thresholds_payload,
     }
 
     signal_sources_payload: dict[str, object] = {}
@@ -3126,12 +3256,23 @@ def _generate_report(
         signal_sources_payload["files"] = list(current_threshold_files)
     if current_threshold_inline:
         signal_sources_payload["inline"] = dict(current_threshold_inline)
+    if isinstance(risk_score_metadata_payload, Mapping):
+        metadata_kind = risk_score_metadata_payload.get("kind")
+        metadata_value = _coerce_float(risk_score_metadata_payload.get("value"))
+        if metadata_kind == "file" and metadata_value is not None:
+            signal_sources_payload["file_risk_score"] = float(metadata_value)
+        elif metadata_kind == "inline" and metadata_value is not None:
+            inline_payload = signal_sources_payload.setdefault("inline", {})
+            if isinstance(inline_payload, Mapping):
+                inline_payload = dict(inline_payload)
+            signal_sources_payload["inline"] = inline_payload
+            inline_payload.setdefault("risk_score", float(metadata_value))
     if signal_sources_payload:
         sources_payload["current_signal_thresholds"] = signal_sources_payload
-    if risk_threshold_paths:
-        sources_payload["risk_threshold_files"] = [str(path) for path in risk_threshold_paths]
     if cli_risk_score is not None:
         sources_payload["risk_score_override"] = float(cli_risk_score)
+    elif risk_score_override is not None:
+        sources_payload["risk_score_override"] = float(risk_score_override)
     if aggregated_raw_freeze_payload is not None:
         raw_freeze_sources_payload: dict[str, object] = {
             "mode": raw_freeze_events_source_mode or "sample"
@@ -3164,8 +3305,8 @@ def _generate_report(
             omit_payload["display_limit"] = raw_freeze_event_display_limit
             if raw_freeze_event_display_limit == 0 and "reason" not in omit_payload:
                 omit_payload["reason"] = "limit_zero"
-        elif sample_limit_override == 0 and "reason" not in omit_payload:
-            omit_payload["reason"] = "limit_zero"
+        if sample_limit_override == 0:
+            omit_payload.setdefault("reason", "sample_limit_zero")
         if omit_raw_freeze_events:
             omit_payload["reason"] = "explicit_omit"
         elif not sampling_freeze_events and "reason" not in omit_payload:
@@ -3199,175 +3340,33 @@ def _generate_report(
             freeze_sources["display_limit"] = aggregated_display_limit
         sources_payload["freeze_events"] = freeze_sources
 
-    sources_payload: dict[str, object] = {
-        "journal_events": journal_count,
-        "autotrade_entries": autotrade_count,
-    }
-    signal_sources_payload: dict[str, object] = {}
-    if current_signal_threshold_sources:
-        files = current_signal_threshold_sources.get("files")
-        if files:
-            signal_sources_payload["files"] = list(files)
-        inline_values = current_signal_threshold_sources.get("inline")
-        if inline_values:
-            signal_sources_payload["inline"] = {
-                key: float(value)
-                for key, value in inline_values.items()
-                if isinstance(key, str)
-            }
-    if file_risk_score is not None:
-        signal_sources_payload["file_risk_score"] = float(file_risk_score)
-    if signal_sources_payload:
-        sources_payload["current_signal_thresholds"] = signal_sources_payload
-    if risk_threshold_paths:
-        sources_payload["risk_threshold_files"] = [str(path) for path in risk_threshold_paths]
-    if cli_risk_score is not None:
-        sources_payload["risk_score_override"] = float(cli_risk_score)
-    if max_freeze_events is not None:
-        sources_payload["max_freeze_events"] = int(max_freeze_events)
-        if freeze_truncated_group_count:
-            sources_payload["raw_freeze_events_truncated_groups"] = freeze_truncated_group_count
-    if max_raw_values is not None:
-        sources_payload["max_raw_values"] = int(max_raw_values)
-        if raw_truncated_group_count:
-            sources_payload["raw_values_truncated_groups"] = raw_truncated_group_count
-        if raw_values_omitted_total:
-            sources_payload["raw_values_omitted_total"] = int(raw_values_omitted_total)
-    if max_group_samples is not None:
-        sources_payload["max_group_samples"] = int(max_group_samples)
-    if group_sample_truncated_count:
-        sources_payload["group_samples_truncated_metrics"] = group_sample_truncated_count
-    if group_sample_omitted_total:
-        sources_payload["group_samples_omitted_total"] = int(group_sample_omitted_total)
-    if max_global_samples is not None:
-        sources_payload["max_global_samples"] = int(max_global_samples)
-        if aggregated_sample_truncated_count:
-            sources_payload["global_samples_truncated_metrics"] = aggregated_sample_truncated_count
-        if aggregated_sample_omitted_total:
-            sources_payload["global_samples_omitted_total"] = int(aggregated_sample_omitted_total)
-    if approximation_group_metrics:
-        sorted_group_metrics = sorted(approximation_group_metrics)
-        sources_payload["approximation_metrics"] = len(sorted_group_metrics)
-        sources_payload["approximation_metrics_list"] = [
-            {
-                "primary_exchange": exchange,
-                "strategy": strategy,
-                "metric": metric,
-            }
-            for exchange, strategy, metric in sorted_group_metrics
-        ]
-    if approximation_global_metrics:
-        sorted_global_metrics = sorted(approximation_global_metrics)
-        sources_payload["approximation_global_metrics"] = len(sorted_global_metrics)
-        sources_payload["approximation_global_metrics_list"] = sorted_global_metrics
-    clamp_payload: dict[str, object] = {}
-    if clamp_group_regular_total or clamp_group_absolute_total:
-        group_payload: dict[str, object] = {
-            "regular": int(clamp_group_regular_total),
-            "absolute": int(clamp_group_absolute_total),
-        }
-        if clamp_group_regular_metrics:
-            group_payload["metrics_with_regular_clamp"] = len(clamp_group_regular_metrics)
-        if clamp_group_absolute_metrics:
-            group_payload["metrics_with_absolute_clamp"] = len(clamp_group_absolute_metrics)
-        clamp_payload["group"] = group_payload
-    if clamp_global_regular_total or clamp_global_absolute_total:
-        global_payload: dict[str, object] = {
-            "regular": int(clamp_global_regular_total),
-            "absolute": int(clamp_global_absolute_total),
-        }
-        if clamp_global_regular_metrics:
-            global_payload["metrics_with_regular_clamp"] = len(clamp_global_regular_metrics)
-        if clamp_global_absolute_metrics:
-            global_payload["metrics_with_absolute_clamp"] = len(clamp_global_absolute_metrics)
-        clamp_payload["global"] = global_payload
-    if clamp_payload:
-        sources_payload["clamped_values"] = clamp_payload
+    if raw_freeze_events_truncated_groups:
+        sources_payload["raw_freeze_events_truncated_groups"] = (
+            raw_freeze_events_truncated_groups
+        )
+    if raw_freeze_events_omitted_total:
+        sources_payload["raw_freeze_events_omitted_total"] = (
+            raw_freeze_events_omitted_total
+        )
 
-    sources_payload: dict[str, object] = {
-        "journal_events": journal_count,
-        "autotrade_entries": autotrade_count,
-    }
-    signal_sources_payload: dict[str, object] = {}
-    if current_signal_threshold_sources:
-        files = current_signal_threshold_sources.get("files")
-        if files:
-            signal_sources_payload["files"] = list(files)
-        inline_values = current_signal_threshold_sources.get("inline")
-        if inline_values:
-            signal_sources_payload["inline"] = {
-                key: float(value)
-                for key, value in inline_values.items()
-                if isinstance(key, str)
-            }
-    if file_risk_score is not None:
-        signal_sources_payload["file_risk_score"] = float(file_risk_score)
-    if signal_sources_payload:
-        sources_payload["current_signal_thresholds"] = signal_sources_payload
-    if risk_threshold_paths:
-        sources_payload["risk_threshold_files"] = [str(path) for path in risk_threshold_paths]
-    if cli_risk_score is not None:
-        sources_payload["risk_score_override"] = float(cli_risk_score)
-    if max_freeze_events is not None:
-        sources_payload["max_freeze_events"] = int(max_freeze_events)
-        if freeze_truncated_group_count:
-            sources_payload["raw_freeze_events_truncated_groups"] = freeze_truncated_group_count
-    if max_raw_values is not None:
-        sources_payload["max_raw_values"] = int(max_raw_values)
-        if raw_truncated_group_count:
-            sources_payload["raw_values_truncated_groups"] = raw_truncated_group_count
+    if max_freeze_events is not _UNSET_MAX_FREEZE_EVENTS:
+        sources_payload["max_freeze_events"] = (
+            None if max_freeze_events is None else int(max_freeze_events)
+        )
+
+    if include_raw_values:
+        sources_payload["max_global_samples"] = global_samples_limit
+        sources_payload["max_global_samples_reason"] = global_samples_limit_reason
+        if raw_values_limit is not None:
+            sources_payload["max_raw_values"] = raw_values_limit
+        if raw_values_truncated_groups:
+            sources_payload["raw_values_truncated_groups"] = raw_values_truncated_groups
         if raw_values_omitted_total:
-            sources_payload["raw_values_omitted_total"] = int(raw_values_omitted_total)
-    if max_group_samples is not None:
-        sources_payload["max_group_samples"] = int(max_group_samples)
-    if group_sample_truncated_count:
-        sources_payload["group_samples_truncated_metrics"] = group_sample_truncated_count
-    if group_sample_omitted_total:
-        sources_payload["group_samples_omitted_total"] = int(group_sample_omitted_total)
-    if max_global_samples is not None:
-        sources_payload["max_global_samples"] = int(max_global_samples)
-        if aggregated_sample_truncated_count:
-            sources_payload["global_samples_truncated_metrics"] = aggregated_sample_truncated_count
-        if aggregated_sample_omitted_total:
-            sources_payload["global_samples_omitted_total"] = int(aggregated_sample_omitted_total)
-    if approximation_group_metrics:
-        sorted_group_metrics = sorted(approximation_group_metrics)
-        sources_payload["approximation_metrics"] = len(sorted_group_metrics)
-        sources_payload["approximation_metrics_list"] = [
-            {
-                "primary_exchange": exchange,
-                "strategy": strategy,
-                "metric": metric,
-            }
-            for exchange, strategy, metric in sorted_group_metrics
-        ]
-    if approximation_global_metrics:
-        sorted_global_metrics = sorted(approximation_global_metrics)
-        sources_payload["approximation_global_metrics"] = len(sorted_global_metrics)
-        sources_payload["approximation_global_metrics_list"] = sorted_global_metrics
-    clamp_payload: dict[str, object] = {}
-    if clamp_group_regular_total or clamp_group_absolute_total:
-        group_payload: dict[str, object] = {
-            "regular": int(clamp_group_regular_total),
-            "absolute": int(clamp_group_absolute_total),
-        }
-        if clamp_group_regular_metrics:
-            group_payload["metrics_with_regular_clamp"] = len(clamp_group_regular_metrics)
-        if clamp_group_absolute_metrics:
-            group_payload["metrics_with_absolute_clamp"] = len(clamp_group_absolute_metrics)
-        clamp_payload["group"] = group_payload
-    if clamp_global_regular_total or clamp_global_absolute_total:
-        global_payload: dict[str, object] = {
-            "regular": int(clamp_global_regular_total),
-            "absolute": int(clamp_global_absolute_total),
-        }
-        if clamp_global_regular_metrics:
-            global_payload["metrics_with_regular_clamp"] = len(clamp_global_regular_metrics)
-        if clamp_global_absolute_metrics:
-            global_payload["metrics_with_absolute_clamp"] = len(clamp_global_absolute_metrics)
-        clamp_payload["global"] = global_payload
-    if clamp_payload:
-        sources_payload["clamped_values"] = clamp_payload
+            sources_payload["raw_values_omitted_total"] = raw_values_omitted_total
+        if global_samples_truncated_metrics:
+            sources_payload["global_samples_truncated_metrics"] = global_samples_truncated_metrics
+        if global_samples_omitted_total:
+            sources_payload["global_samples_omitted_total"] = global_samples_omitted_total
 
     return {
         "schema": "stage6.autotrade.threshold_calibration",
@@ -3496,12 +3495,38 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--max-freeze-events",
+        type=int,
+        help=(
+            "Ustaw maksymalną liczbę blokad wypisywanych w sekcji freeze_events. "
+            "Wartość 0 usuwa sekcję, a brak parametru korzysta z limitu domyślnego."
+        ),
+    )
+    parser.add_argument(
         "--raw-freeze-events-sample-limit",
         type=int,
         help=(
-            "Wymuś niezależny limit próbkowania sekcji raw_freeze_events. "
-            "Pozwala skrócić raport bez zmiany agregatów freeze_summary; "
-            "wartość 0 zachowuje jedynie podsumowania."
+            "Ustaw niezależny limit próbkowania sekcji raw_freeze_events. "
+            "Dodatnia wartość określa liczbę wpisów zachowanych w próbce przy "
+            "aktywnym --limit-freeze-events, 0 wymusza pozostawienie wyłącznie "
+            "podsumowań, a brak parametru przywraca domyślne próbkowanie."
+        ),
+    )
+    parser.add_argument(
+        "--max-raw-values",
+        type=int,
+        help=(
+            "Ogranicz liczbę surowych próbek metryk zapisywanych dla każdej pary "
+            "giełda/strategia w sekcji raw_values. Wartość 0 zachowuje wyłącznie "
+            "liczniki pominiętych próbek."
+        ),
+    )
+    parser.add_argument(
+        "--max-global-samples",
+        type=int,
+        help=(
+            "Ustal limit próbek metryk w sekcji global_summary.raw_values. "
+            "Wartość 0 wyłącza globalne próbki, pozostawiając jedynie liczniki pominięć."
         ),
     )
     parser.add_argument(
@@ -3510,15 +3535,6 @@ def _build_parser() -> argparse.ArgumentParser:
         help=(
             "Ogranicz liczbę zdarzeń prezentowanych w sekcji raw_freeze_events. "
             "Pozwala skrócić próbkę bez zmiany agregatów ani źródeł danych."
-        ),
-    )
-    parser.add_argument(
-        "--raw-freeze-events-sample-limit",
-        type=int,
-        default=None,
-        help=(
-            "Steruje liczbą zdarzeń zapisywanych w próbkach raw_freeze_events. "
-            "Ustaw 0, aby całkowicie pominąć sekcję próbek niezależnie od limitu."
         ),
     )
     parser.add_argument(
@@ -3578,9 +3594,17 @@ def main(argv: list[str] | None = None) -> int:
     if not (0.0 < args.suggestion_percentile < 1.0):
         raise SystemExit("Percentyl sugerowanego progu musi być w przedziale (0, 1)")
 
-    max_freeze_events = args.max_freeze_events
+    max_freeze_events = getattr(args, "max_freeze_events", None)
     if max_freeze_events is not None and max_freeze_events < 0:
         raise SystemExit("Parametr --max-freeze-events musi być nieujemny")
+
+    max_raw_values = getattr(args, "max_raw_values", None)
+    if max_raw_values is not None and max_raw_values < 0:
+        raise SystemExit("Parametr --max-raw-values musi być nieujemny")
+
+    max_global_samples = getattr(args, "max_global_samples", None)
+    if max_global_samples is not None and max_global_samples < 0:
+        raise SystemExit("Parametr --max-global-samples musi być nieujemny")
 
     since = _parse_cli_datetime(args.since)
     until = _parse_cli_datetime(args.until)
@@ -3621,17 +3645,22 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     raw_freeze_events_sample_limit = getattr(args, "raw_freeze_events_sample_limit", None)
-    raw_freeze_events_mode = (
-        "sample"
-        if (
-            limit_freeze_events is not None
-            and (
-                raw_freeze_events_sample_limit is None
-                or raw_freeze_events_sample_limit > 0
-            )
-        )
-        else "omit"
-    )
+    explicit_raw_freeze_mode = getattr(args, "raw_freeze_events", None)
+    max_raw_freeze_events_arg = getattr(args, "max_raw_freeze_events", None)
+    if raw_freeze_events_sample_limit is not None:
+        if raw_freeze_events_sample_limit == 0 and max_raw_freeze_events_arg is not None:
+            raw_freeze_events_mode = "omit"
+        else:
+            raw_freeze_events_mode = "sample"
+    elif limit_freeze_events is not None:
+        if explicit_raw_freeze_mode and explicit_raw_freeze_mode != "omit":
+            raw_freeze_events_mode = explicit_raw_freeze_mode
+        else:
+            raw_freeze_events_mode = "sample"
+    elif explicit_raw_freeze_mode:
+        raw_freeze_events_mode = explicit_raw_freeze_mode
+    else:
+        raw_freeze_events_mode = "omit"
 
     report_kwargs: dict[str, object] = {
         "journal_events": journal_events,
@@ -3645,17 +3674,22 @@ def main(argv: list[str] | None = None) -> int:
         "risk_score_override": risk_score_override,
         "risk_score_source": risk_score_source_metadata,
         "risk_threshold_sources": args.risk_thresholds,
-        "include_raw_values": bool(args.plot_dir),
+        "include_raw_values": bool(args.plot_dir)
+        or max_raw_values is not None
+        or max_global_samples is not None,
         "raw_freeze_events_mode": raw_freeze_events_mode,
         "limit_freeze_events": limit_freeze_events,
         "omit_raw_freeze_events": bool(getattr(args, "omit_raw_freeze_events", False)),
-        "max_raw_freeze_events": getattr(args, "max_raw_freeze_events", None),
+        "max_raw_freeze_events": max_raw_freeze_events_arg,
         "omit_freeze_events": bool(getattr(args, "omit_freeze_events", False)),
         "raw_freeze_events_sample_limit": raw_freeze_events_sample_limit,
+        "max_raw_values": max_raw_values,
+        "max_global_samples": max_global_samples,
     }
-    report_kwargs["raw_freeze_events_sample_limit"] = raw_freeze_events_sample_limit
     freeze_events_limit_arg = getattr(args, "freeze_events_limit", None)
-    if freeze_events_limit_arg is not None:
+    if max_freeze_events is not None:
+        report_kwargs["max_freeze_events"] = max_freeze_events
+    elif freeze_events_limit_arg is not None:
         report_kwargs["max_freeze_events"] = freeze_events_limit_arg
 
     report = _generate_report(**report_kwargs)
