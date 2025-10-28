@@ -1601,7 +1601,7 @@ class _MetricSeries:
             sequences = [self._ensure_sorted_absolute_values()]
         else:
             sequences = [self._ensure_sorted_values()]
-        percentile_key = f"p{int(percentile * 100):02d}"
+        percentile_key = _format_percentile_label(percentile)
         result = _compute_percentiles_from_sequences(
             sequences, [percentile], count=len(self)
         )
@@ -1659,7 +1659,7 @@ def _aggregate_metric_series(
         if absolute
         else [series.values() for series in non_empty_series]
     )
-    suggestion_key = f"p{int(suggestion_percentile * 100):02d}"
+    suggestion_key = _format_percentile_label(suggestion_percentile)
     suggestion_result = _compute_percentiles_from_sequences(
         suggestion_sequences, [suggestion_percentile], count=total_count
     )
