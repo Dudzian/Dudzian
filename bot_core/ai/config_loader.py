@@ -13,6 +13,11 @@ from typing import Any, Mapping, MutableMapping
 import yaml
 
 
+def _get_supported_signal_threshold_metrics() -> frozenset[str]:
+    from bot_core.trading.signal_thresholds import SUPPORTED_SIGNAL_THRESHOLD_METRICS
+
+    return frozenset(name.casefold() for name in SUPPORTED_SIGNAL_THRESHOLD_METRICS)
+
 _DEFAULTS_PACKAGE = "bot_core.ai._defaults"
 _DEFAULTS_RESOURCE = "risk_thresholds.yaml"
 _ROOT = Path(__file__).resolve().parents[2]

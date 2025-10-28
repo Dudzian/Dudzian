@@ -44,11 +44,26 @@ _DEFAULT_GROUP_SAMPLE_LIMIT = 50000
 _DEFAULT_GLOBAL_SAMPLE_LIMIT = 50000
 _JSONL_SUFFIXES = frozenset({".jsonl", ".ndjson"})
 
+import yaml
+
+
+_STREAM_READ_SIZE = 65536
+_DEFAULT_GROUP_SAMPLE_LIMIT = 50000
+_DEFAULT_GLOBAL_SAMPLE_LIMIT = 50000
+_JSONL_SUFFIXES = frozenset({".jsonl", ".ndjson"})
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from bot_core.ai.config_loader import load_risk_thresholds
+from bot_core.trading.signal_thresholds import SUPPORTED_SIGNAL_THRESHOLD_METRICS
+
+
+@dataclass
+class RiskScoreSources:
+    from_files: float | None = None
+    from_inline: float | None = None
 
 
 @dataclass
@@ -69,9 +84,9 @@ _SUPPORTED_THRESHOLD_METRICS = frozenset(
     _normalize_metric_key(name)
     for name in ("signal_after_adjustment", "signal_after_clamp", "risk_score")
 )
-_ABSOLUTE_THRESHOLD_METRICS = frozenset(
-    _normalize_metric_key(name)
-    for name in ("signal_after_adjustment", "signal_after_clamp")
+_SUPPORTED_THRESHOLD_METRICS = frozenset(
+    set(_SUPPORTED_SIGNAL_THRESHOLD_METRICS)
+    | {_normalize_metric_key("risk_score")}
 )
 
 _METRIC_VALUE_DOMAINS: dict[str, tuple[float | None, float | None]] = {
@@ -2794,6 +2809,12 @@ def _generate_report(
 
     if cli_risk_score is not None:
         current_risk_score = float(cli_risk_score)
+
+    if cli_risk_score is not None:
+        current_risk_score = float(cli_risk_score)
+
+    if file_risk_score is not None:
+        current_risk_score = float(file_risk_score)
 
     if cli_risk_score is not None:
         current_risk_score = float(cli_risk_score)

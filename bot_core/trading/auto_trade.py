@@ -34,6 +34,7 @@ from bot_core.trading.engine import (
     TechnicalIndicatorsService,
     TradingParameters,
 )
+from bot_core.trading.signal_thresholds import SUPPORTED_SIGNAL_THRESHOLD_METRICS
 from bot_core.trading.regime_workflow import RegimeSwitchDecision
 from bot_core.trading.strategies import StrategyCatalog
 from bot_core.trading.strategy_aliasing import (
