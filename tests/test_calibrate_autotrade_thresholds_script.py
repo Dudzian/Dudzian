@@ -509,6 +509,44 @@ def test_autotrade_streaming_reads_multiple_chunks(
     assert len(handle.read_requests) > 1
 
 
+def _prepare_minimal_cli_environment(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> tuple[object, list[str]]:
+    module = calibrate_autotrade_thresholds
+
+    journal_path = tmp_path / "journal.jsonl"
+    journal_path.write_text("{}\n", encoding="utf-8")
+
+    export_path = tmp_path / "export.json"
+    export_path.write_text("{}", encoding="utf-8")
+
+    monkeypatch.setattr(module, "_load_journal_events", lambda *_, **__: [])
+    monkeypatch.setattr(module, "_load_autotrade_entries", lambda *_, **__: [])
+    monkeypatch.setattr(
+        module,
+        "_load_current_signal_thresholds",
+        lambda *_: ({}, None, {}),
+    )
+    monkeypatch.setattr(
+        module,
+        "_generate_report",
+        lambda **_: {
+            "groups": [],
+            "global_summary": {},
+            "percentiles": [],
+            "sources": {},
+        },
+    )
+
+    base_args = [
+        "--journal",
+        str(journal_path),
+        "--autotrade-export",
+        str(export_path),
+    ]
+    return module, base_args
+
+
 def test_autotrade_streaming_does_not_buffer_json(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -5216,6 +5254,54 @@ def test_main_respects_freeze_events_limit_flag(
     assert "Przetworzono" in output
 
 
+def test_main_rejects_negative_limit_freeze_events(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    module, base_args = _prepare_minimal_cli_environment(monkeypatch, tmp_path)
+
+    with pytest.raises(SystemExit) as excinfo:
+        module.main(base_args + ["--limit-freeze-events", "-2"])
+
+    message = str(excinfo.value)
+    assert "--limit-freeze-events" in message
+
+
+def test_main_rejects_negative_freeze_sample_limit(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    module, base_args = _prepare_minimal_cli_environment(monkeypatch, tmp_path)
+
+    with pytest.raises(SystemExit) as excinfo:
+        module.main(base_args + ["--raw-freeze-events-sample-limit", "-1"])
+
+    message = str(excinfo.value)
+    assert "--raw-freeze-events-sample-limit" in message
+
+
+def test_main_rejects_negative_max_raw_freeze_events(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    module, base_args = _prepare_minimal_cli_environment(monkeypatch, tmp_path)
+
+    with pytest.raises(SystemExit) as excinfo:
+        module.main(base_args + ["--max-raw-freeze-events", "-5"])
+
+    message = str(excinfo.value)
+    assert "--max-raw-freeze-events" in message
+
+
+def test_main_rejects_negative_legacy_freeze_limit(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    module, base_args = _prepare_minimal_cli_environment(monkeypatch, tmp_path)
+
+    with pytest.raises(SystemExit) as excinfo:
+        module.main(base_args + ["--raw-freeze-events-limit", "-3"])
+
+    message = str(excinfo.value)
+    assert "--raw-freeze-events-limit" in message
+
+
 def test_resolve_freeze_event_limit_prefers_new_flag() -> None:
     result = _resolve_freeze_event_limit(
         limit_freeze_events=5,
@@ -5356,7 +5442,10 @@ def test_main_accepts_max_raw_freeze_events(
     assert captured["raw_freeze_events_sample_limit"] == sample_limit
     assert captured["raw_freeze_events_mode"] == expected_mode
     assert captured["omit_freeze_events"] is False
-    assert captured["raw_freeze_events_sample_limit"] is None
+    if expected_mode == "omit":
+        assert captured["raw_freeze_events_sample_limit"] in (None, sample_limit)
+    else:
+        assert captured["raw_freeze_events_sample_limit"] == sample_limit
 
 
 def test_main_accepts_raw_freeze_events_sample_limit(
