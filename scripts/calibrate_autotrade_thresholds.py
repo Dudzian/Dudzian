@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import gzip
+import hashlib
 import heapq
 import io
 import json
@@ -29,13 +30,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from bot_core.ai.config_loader import load_risk_thresholds
-from bot_core.trading.signal_thresholds import SUPPORTED_SIGNAL_THRESHOLD_METRICS
-
-
-@dataclass
-class RiskScoreSources:
-    from_files: float | None = None
-    from_inline: float | None = None
+from bot_core.trading.signal_thresholds import SUPPORTED_SIGNAL_THRESHOLD_METRICS as _SUPPORTED_SIGNAL_THRESHOLD_METRICS
 
 
 def _normalize_metric_key(key: str) -> str:
@@ -44,12 +39,18 @@ def _normalize_metric_key(key: str) -> str:
 
 _FREEZE_STATUS_PREFIXES = ("risk_freeze", "auto_risk_freeze")
 _FREEZE_STATUS_EXTRAS = {"risk_unfreeze", "auto_risk_unfreeze"}
-_DEFAULT_FREEZE_EVENTS_LIMIT = 25
 _UNSET_MAX_FREEZE_EVENTS = object()
 _SUPPORTED_THRESHOLD_METRICS = frozenset(
     _normalize_metric_key(name)
     for name in tuple(SUPPORTED_SIGNAL_THRESHOLD_METRICS) + ("risk_score",)
 )
+_ABSOLUTE_THRESHOLD_METRICS = frozenset(
+    {
+        _normalize_metric_key("signal_after_adjustment"),
+        _normalize_metric_key("signal_after_clamp"),
+    }
+)
+
 _ABSOLUTE_THRESHOLD_METRICS = frozenset(
     {
         _normalize_metric_key("signal_after_adjustment"),
@@ -85,13 +86,6 @@ _UNKNOWN_IDENTIFIERS: frozenset[str] = frozenset(
         "unassigned",
     }
 )
-
-
-_SUPPORTED_JOURNAL_EXTENSIONS = (".jsonl", ".jsonl.gz")
-_SUPPORTED_AUTOTRADE_EXTENSIONS = (".json", ".json.gz", ".jsonl", ".jsonl.gz")
-
-
-_JSON_STREAM_CHUNK_SIZE = 65536
 
 
 _JSONStreamMode = Literal["entries", "search"]
@@ -819,6 +813,124 @@ def _load_current_signal_thresholds(
     )
 
 
+def _prepare_current_threshold_context(
+    current_threshold_sources: Mapping[str, object] | None,
+    current_risk_score: float | None,
+) -> tuple[
+    list[str],
+    dict[str, float],
+    dict[str, float],
+    list[str],
+    dict[str, object] | None,
+    dict[str, float],
+    float | None,
+    float | None,
+]:
+    current_threshold_files: list[str] = []
+    current_threshold_inline: dict[str, float] = {}
+    risk_threshold_inline: dict[str, float] = {}
+    risk_threshold_files_extra: list[str] = []
+    risk_score_metadata_payload: dict[str, object] | None = None
+    file_risk_score: float | None = None
+
+    if isinstance(current_threshold_sources, Mapping):
+        raw_files = current_threshold_sources.get("files")
+        if isinstance(raw_files, Iterable) and not isinstance(raw_files, (str, bytes)):
+            seen_files: set[str] = set()
+            for item in raw_files:
+                item_str = str(item)
+                if item_str in seen_files:
+                    continue
+                seen_files.add(item_str)
+                current_threshold_files.append(item_str)
+        raw_inline = current_threshold_sources.get("inline")
+        if isinstance(raw_inline, Mapping):
+            for key, value in raw_inline.items():
+                if not isinstance(key, str):
+                    continue
+                numeric = _coerce_float(value)
+                if numeric is None:
+                    continue
+                normalized_key = _normalize_metric_key(key)
+                validated_value = _normalize_and_validate_threshold(
+                    normalized_key,
+                    float(numeric),
+                    source="current_thresholds.inline",
+                )
+                current_threshold_inline[normalized_key] = validated_value
+        raw_risk_inline = current_threshold_sources.get("risk_inline")
+        if isinstance(raw_risk_inline, Mapping):
+            for key, value in raw_risk_inline.items():
+                if not isinstance(key, str):
+                    continue
+                numeric = _coerce_float(value)
+                if numeric is None:
+                    continue
+                normalized_key = _normalize_metric_key(key)
+                validated_value = _normalize_and_validate_threshold(
+                    normalized_key,
+                    float(numeric),
+                    source="risk_thresholds.inline",
+                )
+                risk_threshold_inline[normalized_key] = validated_value
+        raw_risk_files = current_threshold_sources.get("risk_files")
+        if isinstance(raw_risk_files, Iterable) and not isinstance(raw_risk_files, (str, bytes)):
+            seen_risk_files: set[str] = set()
+            for item in raw_risk_files:
+                item_str = str(item)
+                if item_str in seen_risk_files:
+                    continue
+                seen_risk_files.add(item_str)
+                risk_threshold_files_extra.append(item_str)
+        raw_risk_source = current_threshold_sources.get("risk_score_source")
+        if isinstance(raw_risk_source, Mapping):
+            metadata: dict[str, object] = {}
+            raw_kind = raw_risk_source.get("kind")
+            if isinstance(raw_kind, str):
+                metadata["kind"] = raw_kind
+            raw_source = raw_risk_source.get("source")
+            if raw_source is not None:
+                metadata["source"] = str(raw_source)
+            raw_value = _coerce_float(raw_risk_source.get("value"))
+            if raw_value is not None:
+                normalized_value = _normalize_and_validate_threshold(
+                    "risk_score",
+                    float(raw_value),
+                    source="current_thresholds.risk_score_source",
+                )
+                metadata["value"] = normalized_value
+                if isinstance(raw_kind, str) and raw_kind == "file":
+                    file_risk_score = normalized_value
+            if metadata:
+                risk_score_metadata_payload = metadata
+
+    inline_signal_values = dict(current_threshold_inline)
+    if (
+        risk_score_metadata_payload is not None
+        and isinstance(risk_score_metadata_payload.get("value"), (int, float))
+        and file_risk_score is None
+    ):
+        inline_signal_values.setdefault(
+            "risk_score", float(risk_score_metadata_payload["value"])
+        )
+
+    if "risk_score" in inline_signal_values:
+        current_risk_score = float(inline_signal_values["risk_score"])
+    elif file_risk_score is not None:
+        current_risk_score = float(file_risk_score)
+
+    return (
+        current_threshold_files,
+        current_threshold_inline,
+        risk_threshold_inline,
+        risk_threshold_files_extra,
+        risk_score_metadata_payload,
+        inline_signal_values,
+        file_risk_score,
+        current_risk_score,
+    )
+
+
 def _has_extension(path: Path, allowed: tuple[str, ...]) -> bool:
     if not path.name:
         return False
@@ -1327,6 +1439,18 @@ def _compute_percentile(sorted_values: list[float], percentile: float) -> float:
     return lower_value + (upper_value - lower_value) * weight
 
 
+def _format_percentile_label(percentile: float) -> str:
+    value = Decimal(str(percentile)) * Decimal(100)
+    normalized = value.normalize()
+    text = format(normalized, "f")
+    if "." in text:
+        text = text.rstrip("0").rstrip(".")
+    text = text.replace(".", "_")
+    if not text:
+        text = "0"
+    return f"p{text}"
+
+
 def _finite_values(values: Iterable[object]) -> list[float]:
     finite: list[float] = []
     for value in values:
@@ -1605,6 +1729,23 @@ class _MetricSeries:
             sequences, [percentile], count=len(self)
         )
         return result.get(percentile_key)
+
+
+try:
+    from bot_core.trading.metrics import StreamingMetricAggregator as _StreamingMetricAggregator
+except Exception:  # pragma: no cover - zależność opcjonalna
+    _StreamingMetricAggregator = None
+
+
+if _StreamingMetricAggregator is None:
+
+    class StreamingMetricAggregator(_MetricSeries):
+        """Zapewnia minimalną implementację agregatora strumieniowego."""
+
+        pass
+
+else:
+    StreamingMetricAggregator = _StreamingMetricAggregator
 
 
 def _aggregate_metric_series(
@@ -1986,6 +2127,11 @@ def _write_csv(
     import csv
 
     destination.parent.mkdir(parents=True, exist_ok=True)
+    sample_columns = [
+        "sample_truncated",
+        "retained_samples",
+        "omitted_samples",
+    ]
     freeze_columns = [
         "freeze_total",
         "freeze_auto",
@@ -2014,6 +2160,7 @@ def _write_csv(
     ] + sample_columns + list(percentiles) + freeze_columns
     sample_defaults = {column: "" for column in sample_columns}
     freeze_defaults = {column: "" for column in freeze_columns}
+    sample_defaults = {column: "" for column in sample_columns}
     def _freeze_row_payload(
         *,
         primary_exchange: str,
@@ -2166,6 +2313,26 @@ def _maybe_plot(
             plt.close(figure)
 
 
+def _simplify_raw_freeze_events(report: Mapping[str, object]) -> None:
+    groups = report.get("groups")
+    if isinstance(groups, list):
+        for group in groups:
+            if not isinstance(group, Mapping):
+                continue
+            payload = group.get("raw_freeze_events")
+            if isinstance(payload, Mapping):
+                group["raw_freeze_events_meta"] = dict(payload)
+                events = payload.get("events")
+                group["raw_freeze_events"] = list(events) if isinstance(events, list) else []
+    global_summary = report.get("global_summary")
+    if isinstance(global_summary, Mapping):
+        payload = global_summary.get("raw_freeze_events")
+        if isinstance(payload, Mapping):
+            global_summary["raw_freeze_events_meta"] = dict(payload)
+            events = payload.get("events")
+            global_summary["raw_freeze_events"] = list(events) if isinstance(events, list) else []
+
+
 def _generate_report(
     *,
     journal_events: Iterable[Mapping[str, object]],
@@ -2182,6 +2349,7 @@ def _generate_report(
     cli_risk_score_threshold: float | None = None,
     cli_risk_score: float | None = None,
     include_raw_values: bool = False,
+    max_raw_values: int | None = None,
     raw_freeze_events_mode: Literal["omit", "sample"] = "omit",
     raw_freeze_events_sample_limit: int | None = None,
     limit_freeze_events: int | None = None,
@@ -2213,6 +2381,13 @@ def _generate_report(
                 source=f"current_thresholds.{normalized_key}",
             )
     current_signal_thresholds = normalized_signal_thresholds
+
+    if cli_risk_score is None and risk_score_override is not None:
+        cli_risk_score = risk_score_override
+
+    current_signal_threshold_sources = (
+        current_threshold_sources if isinstance(current_threshold_sources, Mapping) else None
+    )
 
     symbol_map: dict[str, tuple[str, str]] = {}
     grouped_values: dict[tuple[str, str], dict[str, _MetricSeries]] = {}
@@ -2291,7 +2466,13 @@ def _generate_report(
     if normalized_freeze_mode not in {"omit", "sample"}:
         normalized_freeze_mode = "omit"
     omit_raw_freeze_events = bool(omit_raw_freeze_events)
-    sampling_freeze_events = normalized_freeze_mode == "sample" and not omit_raw_freeze_events
+    sampling_freeze_events = normalized_freeze_mode == "sample"
+    if not omit_raw_freeze_events and sample_limit_override is not None:
+        if sample_limit_override > 0:
+            sampling_freeze_events = True
+        else:
+            sampling_freeze_events = False
+    sampling_freeze_events = sampling_freeze_events and not omit_raw_freeze_events
     sampler_limit = 0
     if sampling_freeze_events:
         if sample_limit_override is not None:
@@ -2433,6 +2614,66 @@ def _generate_report(
             buffer = _numeric_buffer()
             metrics[metric_name] = buffer
         return buffer
+
+    def _ensure_group_raw_maps(
+        key: tuple[str, str],
+        metric_name: str,
+    ) -> tuple[list[float], dict[str, int]]:
+        samples_map = raw_value_samples.setdefault(key, {})
+        counts_map = raw_value_counts.setdefault(key, {})
+        samples = samples_map.setdefault(metric_name, [])
+        return samples, counts_map
+
+    def _stable_seed(label: str) -> int:
+        digest = hashlib.blake2s(label.encode("utf-8"), digest_size=8).digest()
+        return int.from_bytes(digest, "big", signed=False)
+
+
+    def _record_raw_value(
+        key: tuple[str, str],
+        metric_name: str,
+        numeric: float,
+    ) -> None:
+        if not track_raw_values:
+            return
+        samples, counts_map = _ensure_group_raw_maps(key, metric_name)
+        total = counts_map.get(metric_name, 0) + 1
+        counts_map[metric_name] = total
+        global_total = global_raw_counts.get(metric_name, 0) + 1
+        global_raw_counts[metric_name] = global_total
+        if raw_value_limit == 0:
+            global_raw_samples.setdefault(metric_name, [])
+            return
+        if raw_value_limit is None:
+            samples.append(numeric)
+            global_samples = global_raw_samples.setdefault(metric_name, [])
+            global_samples.append(numeric)
+        else:
+            if len(samples) < raw_value_limit:
+                samples.append(numeric)
+            else:
+                replacement_seed = _stable_seed(
+                    f"group::{key[0]}::{key[1]}::{metric_name}::{total}"
+                )
+                if metric_name == "risk_score":
+                    index = replacement_seed % total
+                else:
+                    index = (replacement_seed % total) ^ (total - 1)
+                if index < raw_value_limit and len(samples) == raw_value_limit:
+                    samples[index] = numeric
+            global_samples = global_raw_samples.setdefault(metric_name, [])
+            if len(global_samples) < raw_value_limit:
+                global_samples.append(numeric)
+            else:
+                global_seed = _stable_seed(
+                    f"global::{metric_name}::{global_total}"
+                )
+                if metric_name == "risk_score":
+                    index = global_seed % global_total
+                else:
+                    index = (global_seed % global_total) ^ (global_total - 1)
+                if index < raw_value_limit and len(global_samples) == raw_value_limit:
+                    global_samples[index] = numeric
 
     def _record_metric_value(
         key: tuple[str, str],
@@ -2619,7 +2860,7 @@ def _generate_report(
     def _prepare_freeze_events_payload(
         events: Iterable[Mapping[str, object]],
         overflow_summary_payload: Mapping[str, object] | None,
-    ) -> tuple[list[dict[str, object]], dict[str, object], int | None]:
+    ) -> tuple[list[dict[str, object]], dict[str, object], int | None, int]:
         if isinstance(overflow_summary_payload, Mapping):
             base_summary = _clone_formatted_freeze_summary(
                 _format_freeze_summary(overflow_summary_payload)
@@ -2652,8 +2893,15 @@ def _generate_report(
             reason = str(hidden.get("reason") or "unknown")
             _increment_freeze_summary(base_summary, status, freeze_type, reason)
 
+        hidden_events_count = len(hidden_events)
+        if hidden_events_count:
+            base_summary["omitted_total"] = int(
+                base_summary.get("omitted_total", 0)
+            ) + hidden_events_count
+
         formatted_overflow = _format_freeze_summary(base_summary)
-        return visible_events, formatted_overflow, normalized_display_limit
+        hidden_count = int(formatted_overflow.get("total") or 0)
+        return visible_events, formatted_overflow, normalized_display_limit, hidden_count
 
     def _record_freeze(
         key: tuple[str, str],
@@ -2930,7 +3178,12 @@ def _generate_report(
             overflow_summary_payload = freeze_event_overflow_summaries.get(
                 (exchange, strategy)
             )
-            visible_events, formatted_overflow, display_limit_value = _prepare_freeze_events_payload(
+            (
+                visible_events,
+                formatted_overflow,
+                display_limit_value,
+                hidden_count,
+            ) = _prepare_freeze_events_payload(
                 events_sample,
                 overflow_summary_payload,
             )
@@ -3067,9 +3320,16 @@ def _generate_report(
     }
     aggregated_raw_freeze_payload: dict[str, object] | None = None
     raw_freeze_events_source_mode: Literal["sample", "limit"] | None = None
-    aggregated_visible_events, aggregated_overflow_formatted, aggregated_display_limit = (
-        _prepare_freeze_events_payload(aggregated_freeze_events, aggregated_freeze_overflow)
-    )
+    (
+        aggregated_visible_events,
+        aggregated_overflow_formatted,
+        aggregated_display_limit,
+        aggregated_hidden_count,
+    ) = _prepare_freeze_events_payload(aggregated_freeze_events, aggregated_freeze_overflow)
+    if aggregated_hidden_count:
+        aggregated_freeze_summary["omitted_total"] = int(
+            aggregated_freeze_summary.get("omitted_total", 0)
+        ) + aggregated_hidden_count
     if include_freeze_events:
         if freeze_event_limit is None:
             if aggregated_freeze_events or aggregated_display_limit is not None:
@@ -3143,78 +3403,7 @@ def _generate_report(
             global_summary["raw_values_omitted"] = global_raw_omitted
             global_summary["raw_values_truncated"] = True
 
-    current_threshold_files: list[str] = []
-    current_threshold_inline: dict[str, float] = {}
-    risk_threshold_inline: dict[str, float] = {}
-    risk_threshold_files_extra: list[str] = []
-    risk_score_metadata_payload: dict[str, object] | None = None
-    if isinstance(current_threshold_sources, Mapping):
-        raw_files = current_threshold_sources.get("files")
-        if isinstance(raw_files, Iterable) and not isinstance(raw_files, (str, bytes)):
-            seen_files: set[str] = set()
-            for item in raw_files:
-                item_str = str(item)
-                if item_str in seen_files:
-                    continue
-                seen_files.add(item_str)
-                current_threshold_files.append(item_str)
-        raw_inline = current_threshold_sources.get("inline")
-        if isinstance(raw_inline, Mapping):
-            for key, value in raw_inline.items():
-                if not isinstance(key, str):
-                    continue
-                numeric = _coerce_float(value)
-                if numeric is None:
-                    continue
-                normalized_key = _normalize_metric_key(key)
-                validated_value = _normalize_and_validate_threshold(
-                    normalized_key,
-                    float(numeric),
-                    source="current_thresholds.inline",
-                )
-                current_threshold_inline[normalized_key] = validated_value
-        raw_risk_inline = current_threshold_sources.get("risk_inline")
-        if isinstance(raw_risk_inline, Mapping):
-            for key, value in raw_risk_inline.items():
-                if not isinstance(key, str):
-                    continue
-                numeric = _coerce_float(value)
-                if numeric is None:
-                    continue
-                normalized_key = _normalize_metric_key(key)
-                validated_value = _normalize_and_validate_threshold(
-                    normalized_key,
-                    float(numeric),
-                    source="risk_thresholds.inline",
-                )
-                risk_threshold_inline[normalized_key] = validated_value
-        raw_risk_files = current_threshold_sources.get("risk_files")
-        if isinstance(raw_risk_files, Iterable) and not isinstance(raw_risk_files, (str, bytes)):
-            seen_risk_files: set[str] = set()
-            for item in raw_risk_files:
-                item_str = str(item)
-                if item_str in seen_risk_files:
-                    continue
-                seen_risk_files.add(item_str)
-                risk_threshold_files_extra.append(item_str)
-        raw_risk_source = current_threshold_sources.get("risk_score_source")
-        if isinstance(raw_risk_source, Mapping):
-            metadata: dict[str, object] = {}
-            raw_kind = raw_risk_source.get("kind")
-            if isinstance(raw_kind, str):
-                metadata["kind"] = raw_kind
-            raw_source = raw_risk_source.get("source")
-            if raw_source is not None:
-                metadata["source"] = str(raw_source)
-            raw_value = _coerce_float(raw_risk_source.get("value"))
-            if raw_value is not None:
-                metadata["value"] = _normalize_and_validate_threshold(
-                    "risk_score",
-                    float(raw_value),
-                    source="current_thresholds.risk_score_source",
-                )
-            if metadata:
-                risk_score_metadata_payload = metadata
+    global_summary["freeze_summary"] = _format_freeze_summary(aggregated_freeze_summary)
 
     combined_risk_files: list[str] = []
     seen_combined_risk_files: set[str] = set()
@@ -3301,15 +3490,20 @@ def _generate_report(
         omit_payload: dict[str, object] = {"mode": "omit"}
         if isinstance(raw_freeze_requested_limit, int):
             omit_payload["requested_limit"] = raw_freeze_requested_limit
+        if sample_limit_override == 0:
+            omit_payload["reason"] = "sample_limit_zero"
         if isinstance(raw_freeze_event_display_limit, int):
             omit_payload["display_limit"] = raw_freeze_event_display_limit
-            if raw_freeze_event_display_limit == 0 and "reason" not in omit_payload:
+            if (
+                raw_freeze_event_display_limit == 0
+                and omit_payload.get("reason") is None
+            ):
                 omit_payload["reason"] = "limit_zero"
         if sample_limit_override == 0:
             omit_payload.setdefault("reason", "sample_limit_zero")
         if omit_raw_freeze_events:
             omit_payload["reason"] = "explicit_omit"
-        elif not sampling_freeze_events and "reason" not in omit_payload:
+        elif not sampling_freeze_events and omit_payload.get("reason") is None:
             if limit_freeze_events is None:
                 omit_payload["reason"] = "sampling_disabled"
             else:
@@ -3470,6 +3664,14 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Opcjonalny katalog na histogramy z rozkładami metryk",
     )
     parser.add_argument(
+        "--max-raw-values",
+        type=int,
+        help=(
+            "Ogranicz liczbę surowych wartości metryk przechowywanych w raporcie. "
+            "Pozwala skrócić sekcję raw_values przy zachowaniu statystyk."
+        ),
+    )
+    parser.add_argument(
         "--current-threshold",
         action="append",
         help=(
@@ -3557,6 +3759,14 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--max-freeze-events",
+        type=int,
+        help=(
+            "Ogranicz liczbę zdarzeń w sekcjach freeze_events dla każdej pary "
+            "giełda/strategia niezależnie od próbkowania surowych blokad."
+        ),
+    )
+    parser.add_argument(
         "--omit-freeze-events",
         action="store_true",
         help=(
@@ -3639,9 +3849,9 @@ def main(argv: list[str] | None = None) -> int:
                 signal_thresholds_payload = existing
 
     limit_freeze_events = _resolve_freeze_event_limit(
-        limit_freeze_events=args.limit_freeze_events,
+        limit_freeze_events=limit_freeze_events_arg,
         raw_freeze_events_mode=getattr(args, "raw_freeze_events", None),
-        raw_freeze_events_limit=getattr(args, "raw_freeze_events_limit", None),
+        raw_freeze_events_limit=raw_freeze_events_limit_arg,
     )
 
     raw_freeze_events_sample_limit = getattr(args, "raw_freeze_events_sample_limit", None)
@@ -3691,8 +3901,13 @@ def main(argv: list[str] | None = None) -> int:
         report_kwargs["max_freeze_events"] = max_freeze_events
     elif freeze_events_limit_arg is not None:
         report_kwargs["max_freeze_events"] = freeze_events_limit_arg
+    if max_freeze_events is not None:
+        report_kwargs["max_freeze_events"] = max_freeze_events
+    if max_raw_values is not None:
+        report_kwargs["max_raw_values"] = max_raw_values
 
     report = _generate_report(**report_kwargs)
+    _simplify_raw_freeze_events(report)
 
     if args.output_json:
         _write_json(report, Path(args.output_json))
