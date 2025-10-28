@@ -52,49 +52,6 @@ class SignalType(Enum):
     SHORT = -1
 
 
-class ExitReason(str, Enum):
-    """Supported reasons for closing an open trade."""
-
-    SIGNAL = "signal"
-    STOP_LOSS = "stop_loss"
-    TAKE_PROFIT = "take_profit"
-
-    @classmethod
-    def canonical(cls, raw: Any) -> Optional[str]:
-        """Return the canonical representation for a raw exit reason value."""
-
-        if raw is None:
-            return None
-
-        # Gracefully handle pandas missing sentinels without raising warnings.
-        try:
-            if pd.isna(raw):  # type: ignore[arg-type]
-                return None
-        except TypeError:
-            # Some exotic objects (e.g., dicts) do not support ``pd.isna``.
-            pass
-
-        text = str(raw).strip()
-        if not text or text.upper() == "NA":
-            return None
-
-        normalized = re.sub(r"[\s-]+", "_", text, flags=re.UNICODE).lower()
-        if normalized == "stoploss":
-            normalized = cls.STOP_LOSS.value
-        elif normalized == "takeprofit":
-            normalized = cls.TAKE_PROFIT.value
-
-        if normalized in cls.values():
-            return normalized
-
-        return None
-
-    @classmethod
-    def values(cls) -> set[str]:
-        """Return the set of allowed canonical values."""
-
-        return {member.value for member in cls}
-
 class MarketRegime(Enum):
     """Market regime classifications."""
     BULL = "bull"
@@ -377,7 +334,7 @@ class RiskManager(Protocol):
 
 class BacktestEngine(Protocol):
     """Protocol for backtesting."""
-    
+
     def run_backtest(
         self,
         data: pd.DataFrame,
@@ -386,6 +343,16 @@ class BacktestEngine(Protocol):
         config: EngineConfig,
     ) -> BacktestResult:
         """Run backtest simulation."""
+        ...
+
+    def summarize_backtest(
+        self,
+        equity_curve: pd.Series,
+        trades: pd.DataFrame,
+        returns: pd.Series,
+        risk_free_rate: float,
+    ) -> Mapping[str, object]:
+        """Compute aggregate performance metrics for a backtest run."""
         ...
 
 # =================== Enhanced Mathematical Functions ===================
@@ -879,7 +846,7 @@ class RiskManagementService:
                 entry_time = None
                 managed_direction.iloc[i] = 0
                 position_sizes.iloc[i] = 0.0
-                exit_reasons.iloc[i] = ExitReason.SIGNAL.value
+                exit_reasons.iloc[i] = ExitReason.SIGNAL
 
             elif current_position != 0:
                 # Maintain current position and size
@@ -910,23 +877,23 @@ class RiskManagementService:
             # Stop loss
             stop_loss_price = entry_price - (atr * params.stop_loss_atr_mult)
             if current_price <= stop_loss_price:
-                return ExitReason.STOP_LOSS.value
+                return ExitReason.STOP_LOSS
             
             # Take profit
             take_profit_price = entry_price + (atr * params.take_profit_atr_mult)
             if current_price >= take_profit_price:
-                return ExitReason.TAKE_PROFIT.value
+                return ExitReason.TAKE_PROFIT
                 
         elif position < 0:  # Short position
             # Stop loss
             stop_loss_price = entry_price + (atr * params.stop_loss_atr_mult)
             if current_price >= stop_loss_price:
-                return ExitReason.STOP_LOSS.value
+                return ExitReason.STOP_LOSS
             
             # Take profit
             take_profit_price = entry_price - (atr * params.take_profit_atr_mult)
             if current_price <= take_profit_price:
-                return ExitReason.TAKE_PROFIT.value
+                return ExitReason.TAKE_PROFIT
         
         return None
     
@@ -1001,7 +968,9 @@ class VectorizedBacktestEngine:
             trades_df = self._generate_trades_dataframe_vectorized(aligned_data, positions, params)
             
             # Calculate all performance metrics
-            metrics = self._calculate_comprehensive_metrics(equity_curve, trades_df, returns, config.risk_free_rate)
+            metrics = self.summarize_backtest(
+                equity_curve, trades_df, returns, config.risk_free_rate
+            )
             
             return BacktestResult(
                 equity_curve=equity_curve,
@@ -1099,7 +1068,7 @@ class VectorizedBacktestEngine:
 
                     canonical_reason = ExitReason.canonical(recorded_reason)
                     if canonical_reason is None:
-                        exit_reason = ExitReason.SIGNAL.value
+                        exit_reason = ExitReason.SIGNAL
                     else:
                         exit_reason = canonical_reason
                     
@@ -1172,6 +1141,19 @@ class VectorizedBacktestEngine:
             return canonical.astype('string')
         except (TypeError, ValueError):
             return canonical.astype('object').astype('string')
+
+    def summarize_backtest(
+        self,
+        equity_curve: pd.Series,
+        trades_df: pd.DataFrame,
+        returns: pd.Series,
+        risk_free_rate: float,
+    ) -> Dict[str, Any]:
+        """Compute aggregate metrics for a completed backtest run."""
+
+        return self._calculate_comprehensive_metrics(
+            equity_curve, trades_df, returns, risk_free_rate
+        )
 
     def _calculate_comprehensive_metrics(self, equity_curve: pd.Series, trades_df: pd.DataFrame,
                                        returns: pd.Series, risk_free_rate: float) -> Dict[str, Any]:
@@ -1480,7 +1462,7 @@ class TradingEngine:
                 ]
             )
 
-        metrics = self._backtest_engine._calculate_comprehensive_metrics(
+        metrics = self._backtest_engine.summarize_backtest(
             combined_equity,
             combined_trades.drop(columns=['symbol'], errors='ignore'),
             weighted_returns,

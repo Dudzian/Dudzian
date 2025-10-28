@@ -58,6 +58,13 @@ _ABSOLUTE_THRESHOLD_METRICS = frozenset(
     }
 )
 
+_ABSOLUTE_THRESHOLD_METRICS = frozenset(
+    {
+        _normalize_metric_key("signal_after_adjustment"),
+        _normalize_metric_key("signal_after_clamp"),
+    }
+)
+
 _METRIC_VALUE_DOMAINS: dict[str, tuple[float | None, float | None]] = {
     "signal_after_adjustment": (-1.0, 1.0),
     "signal_after_clamp": (-1.0, 1.0),
@@ -1061,7 +1068,12 @@ def _load_journal_events(
     def _iter_path(path: Path) -> Iterator[Mapping[str, object]]:
         try:
             with _open_text_file(path) as handle:
+                first_line = True
                 for raw_line in handle:
+                    if first_line:
+                        first_line = False
+                        if raw_line.startswith("\ufeff"):
+                            raw_line = raw_line.lstrip("\ufeff")
                     line = raw_line.strip()
                     if not line:
                         continue

@@ -740,6 +740,118 @@ class TestNativeTradingEngine(unittest.TestCase):
             places=6,
         )
 
+    def test_multi_session_backtest_uses_backtest_engine_summary_contract(self) -> None:
+        index = pd.date_range("2024-01-01", periods=2, freq="D")
+
+        def _make_backtest_result(total_return: float) -> BacktestResult:
+            daily_returns = pd.Series([0.0, total_return], index=index)
+            equity_curve = (1 + daily_returns).cumprod() * 1000.0
+            trades = pd.DataFrame(
+                {
+                    "entry_time": [index[0]],
+                    "exit_time": [index[-1]],
+                    "entry_price": [100.0],
+                    "exit_price": [100.0 * (1 + total_return)],
+                    "position": [1],
+                    "quantity": [1.0],
+                    "pnl": [1000.0 * total_return],
+                    "pnl_pct": [total_return],
+                    "duration": [index[-1] - index[0]],
+                    "exit_reason": ["signal"],
+                    "commission": [0.0],
+                }
+            )
+
+            return BacktestResult(
+                equity_curve=equity_curve,
+                trades=trades,
+                daily_returns=daily_returns,
+                total_return=float(equity_curve.iloc[-1] / equity_curve.iloc[0] - 1.0),
+                annualized_return=0.0,
+                volatility=0.0,
+                sharpe_ratio=0.0,
+                sortino_ratio=0.0,
+                calmar_ratio=0.0,
+                omega_ratio=0.0,
+                max_drawdown=0.0,
+                max_drawdown_duration=pd.Timedelta(0),
+                win_rate=0.0,
+                profit_factor=0.0,
+                tail_ratio=0.0,
+                var_95=0.0,
+                expected_shortfall_95=0.0,
+                total_trades=int(trades.shape[0]),
+                avg_trade_duration=pd.Timedelta(0),
+                largest_win=0.0,
+                largest_loss=0.0,
+            )
+
+        class SummaryOnlyEngine:
+            def __init__(self) -> None:
+                self.calls: list[tuple[pd.Series, pd.DataFrame, pd.Series, float]] = []
+
+            def summarize_backtest(
+                self,
+                equity_curve: pd.Series,
+                trades: pd.DataFrame,
+                returns: pd.Series,
+                risk_free_rate: float,
+            ) -> dict[str, object]:
+                self.calls.append((equity_curve, trades, returns, risk_free_rate))
+                total_return = float(equity_curve.iloc[-1] / equity_curve.iloc[0] - 1.0)
+                return {
+                    "total_return": total_return,
+                    "annualized_return": total_return,
+                    "volatility": 0.0,
+                    "sharpe_ratio": 0.0,
+                    "sortino_ratio": 0.0,
+                    "calmar_ratio": 0.0,
+                    "omega_ratio": 0.0,
+                    "max_drawdown": 0.0,
+                    "max_drawdown_duration": pd.Timedelta(0),
+                    "win_rate": 0.0,
+                    "profit_factor": 0.0,
+                    "tail_ratio": 0.0,
+                    "var_95": 0.0,
+                    "expected_shortfall_95": 0.0,
+                    "total_trades": int(trades.shape[0]),
+                    "avg_trade_duration": pd.Timedelta(0),
+                    "largest_win": 0.0,
+                    "largest_loss": 0.0,
+                }
+
+        engine = TradingEngine(config=self.config)
+        summary_engine = SummaryOnlyEngine()
+        engine._backtest_engine = summary_engine  # type: ignore[assignment]
+
+        results = iter([
+            _make_backtest_result(0.02),
+            _make_backtest_result(0.01),
+        ])
+        engine._run_single_strategy = MagicMock(side_effect=lambda *_, **__: next(results))
+
+        sessions = {
+            "ASSET_A": self.data.iloc[: len(index)].copy(),
+            "ASSET_B": self.data.iloc[: len(index)].copy(),
+        }
+        params_map = {symbol: self.params for symbol in sessions}
+
+        portfolio = engine._run_multi_symbol_strategy(
+            sessions,
+            params_map,
+            initial_capital=10000.0,
+            fee_bps=5.0,
+        )
+
+        self.assertEqual(len(summary_engine.calls), 1)
+        equity_curve, trades, returns, risk_free_rate = summary_engine.calls[0]
+        self.assertTrue(equity_curve.equals(portfolio.aggregate.equity_curve))
+        self.assertEqual(trades.shape[0], 2)
+        self.assertEqual(risk_free_rate, self.config.risk_free_rate)
+        self.assertIsInstance(portfolio, MultiSessionBacktestResult)
+        self.assertEqual(portfolio.aggregate.total_trades, 2)
+        self.assertEqual(set(portfolio.sessions.keys()), {"ASSET_A", "ASSET_B"})
+
 
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()

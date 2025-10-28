@@ -28,6 +28,7 @@ from bot_core.runtime.journal import TradingDecisionEvent
 
 from scripts.calibrate_autotrade_thresholds import (
     _AMBIGUOUS_SYMBOL_MAPPING,
+    _DEFAULT_GLOBAL_SAMPLE_LIMIT,
     _DEFAULT_FREEZE_EVENTS_LIMIT,
     _DEFAULT_GLOBAL_SAMPLE_LIMIT,
     _canonicalize_symbol_key,
@@ -186,6 +187,22 @@ def _write_journal(path: Path) -> None:
     with path.open("w", encoding="utf-8") as handle:
         for event in events:
             handle.write(json.dumps(event.as_dict()))
+            handle.write("\n")
+
+
+def _write_bom_prefixed_jsonl(path: Path, payloads: Iterable[Mapping[str, object]]) -> None:
+    iterator = iter(payloads)
+    try:
+        first = next(iterator)
+    except StopIteration:
+        path.write_text("", encoding="utf-8")
+        return
+    with path.open("w", encoding="utf-8") as handle:
+        handle.write("\ufeff")
+        handle.write(json.dumps(first))
+        handle.write("\n")
+        for payload in iterator:
+            handle.write(json.dumps(payload))
             handle.write("\n")
 
 
@@ -4183,6 +4200,41 @@ def test_load_journal_events_supports_gzipped_jsonl(tmp_path: Path) -> None:
     assert len(loaded) == len(events)
     assert loaded[0]["signal_after_adjustment"] == 0.5
     assert loaded[1]["signal_after_clamp"] == 0.6
+
+
+def test_load_journal_events_supports_bom_prefixed_jsonl(tmp_path: Path) -> None:
+    journal_path = tmp_path / "journal.jsonl"
+    events = [
+        TradingDecisionEvent(
+            event_type="ai_inference",
+            timestamp=datetime(2024, 1, 1, 12, 0, tzinfo=timezone.utc),
+            environment="paper",
+            portfolio="alpha",
+            risk_profile="balanced",
+            symbol="BTCUSDT",
+            primary_exchange="binance",
+            strategy="trend_following",
+            metadata={"signal_after_adjustment": "0.75"},
+        ).as_dict(),
+        TradingDecisionEvent(
+            event_type="risk_freeze",
+            timestamp=datetime(2024, 1, 1, 13, 0, tzinfo=timezone.utc),
+            environment="paper",
+            portfolio="alpha",
+            risk_profile="balanced",
+            symbol="ETHUSDT",
+            primary_exchange="kraken",
+            strategy="mean_reversion",
+            metadata={"reason": "drawdown"},
+        ).as_dict(),
+    ]
+
+    _write_bom_prefixed_jsonl(journal_path, events)
+
+    loaded = list(_load_journal_events([journal_path]))
+
+    assert [item["event"] for item in loaded] == ["ai_inference", "risk_freeze"]
+    assert loaded[0]["signal_after_adjustment"] == "0.75"
 
 
 def test_generate_report_releases_streamed_events(monkeypatch) -> None:
