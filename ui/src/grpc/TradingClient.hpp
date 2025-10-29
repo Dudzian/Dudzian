@@ -27,11 +27,19 @@ class MarketDataService;
 class OhlcvCandle;
 class RiskService;
 class RiskState;
+class GetOhlcvHistoryRequest;
+class GetOhlcvHistoryResponse;
+class StreamOhlcvRequest;
+class StreamOhlcvUpdate;
+class RiskStateRequest;
+class ListTradableInstrumentsRequest;
+class ListTradableInstrumentsResponse;
 } // namespace botcore::trading::v1
 
 namespace grpc {
 class Channel;
 class ClientContext;
+class Status;
 } // namespace grpc
 
 class TradingClient : public QObject {
@@ -39,6 +47,11 @@ class TradingClient : public QObject {
     Q_PROPERTY(bool streaming READ isStreaming NOTIFY streamingChanged)
 
 public:
+    enum class TransportMode {
+        Grpc,
+        InProcess,
+    };
+
     struct InstrumentConfig {
         QString exchange;
         QString symbol;
@@ -71,6 +84,7 @@ public:
     ~TradingClient() override;
 
     void setEndpoint(const QString& endpoint);
+    void setTransportMode(TransportMode mode);
     void setInstrument(const InstrumentConfig& config);
     void setHistoryLimit(int limit);
     void setPerformanceGuard(const PerformanceGuard& guard);
@@ -80,10 +94,14 @@ public:
     void setRbacScopes(const QStringList& scopes);
     void setRegimeThresholdsPath(const QString& path);
     void reloadRegimeThresholds();
+    void setInProcessDatasetPath(const QString& path);
+    void setInProcessCandleIntervalMs(int intervalMs);
 
     QVector<TradableInstrument> listTradableInstruments(const QString& exchange);
 
     QVector<QPair<QByteArray, QByteArray>> authMetadataForTesting() const;
+    bool hasGrpcChannelForTesting() const;
+    TransportMode transportMode() const { return m_transportMode; }
 
     // Używane przez Application.cpp
     InstrumentConfig instrumentConfig() const { return m_instrumentConfig; }
@@ -112,7 +130,38 @@ signals:
     void riskStateReceived(const RiskSnapshotData& snapshot);
 
 private:
-    void ensureStub();
+    class MarketDataStreamReader;
+    class IMarketDataTransport {
+    public:
+        virtual ~IMarketDataTransport() = default;
+        virtual void setInstrument(const InstrumentConfig& config) = 0;
+        virtual void setEndpoint(const QString& endpoint) = 0;
+        virtual void setTlsConfig(const TlsConfig& config) = 0;
+        virtual void setDatasetPath(const QString& path) = 0;
+        virtual void setCandleIntervalMs(int intervalMs) = 0;
+        virtual bool ensureReady() = 0;
+        virtual grpc::Status getOhlcvHistory(grpc::ClientContext* context,
+                                             const botcore::trading::v1::GetOhlcvHistoryRequest& request,
+                                             botcore::trading::v1::GetOhlcvHistoryResponse* response) = 0;
+        virtual std::unique_ptr<class MarketDataStreamReader> streamOhlcv(
+            grpc::ClientContext* context,
+            const botcore::trading::v1::StreamOhlcvRequest& request) = 0;
+        virtual grpc::Status getRiskState(grpc::ClientContext* context,
+                                          const botcore::trading::v1::RiskStateRequest& request,
+                                          botcore::trading::v1::RiskState* response) = 0;
+        virtual grpc::Status listTradableInstruments(
+            grpc::ClientContext* context,
+            const botcore::trading::v1::ListTradableInstrumentsRequest& request,
+            botcore::trading::v1::ListTradableInstrumentsResponse* response) = 0;
+        virtual void shutdown() = 0;
+        virtual void requestRestart() = 0;
+        virtual bool hasConnectivity() const = 0;
+        virtual bool isGrpcTransport() const = 0;
+        virtual bool hasNativeChannel() const = 0;
+    };
+
+    void ensureTransport();
+    std::unique_ptr<IMarketDataTransport> makeTransport(TransportMode mode) const;
     QList<OhlcvPoint> convertHistory(
         const google::protobuf::RepeatedPtrField<botcore::trading::v1::OhlcvCandle>& candles) const;
     OhlcvPoint convertCandle(const botcore::trading::v1::OhlcvCandle& candle) const;
@@ -131,6 +180,7 @@ private:
 
     // --- Konfiguracja połączenia/rynku ---
     QString m_endpoint = QStringLiteral("127.0.0.1:50061");
+    TransportMode m_transportMode = TransportMode::Grpc;
     InstrumentConfig m_instrumentConfig{
         QStringLiteral("BINANCE"),
         QStringLiteral("BTC/USDT"),
@@ -143,11 +193,11 @@ private:
     int m_historyLimit = 500;
     TlsConfig m_tlsConfig{};
     QString   m_regimeThresholdPath;
+    QString   m_inProcessDatasetPath;
+    int       m_inProcessCandleIntervalMs = 150;
 
     // --- gRPC ---
-    std::shared_ptr<grpc::Channel> m_channel;
-    std::unique_ptr<botcore::trading::v1::MarketDataService::Stub> m_marketDataStub;
-    std::unique_ptr<botcore::trading::v1::RiskService::Stub> m_riskStub;
+    std::unique_ptr<IMarketDataTransport> m_transport;
 
     // --- Streaming ---
     std::atomic<bool> m_running{false};

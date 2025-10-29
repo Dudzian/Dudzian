@@ -79,7 +79,35 @@ Aby włączyć TLS/mTLS gRPC, dodaj dodatkowe opcje:
   --tls-pinned-sha256 0123deadbeef...
 ```
 
+> **Uwaga:** `Application::applyParser()` weryfikuje kompletność konfiguracji.
+> Brak pliku datasetu w trybie `in-process` lub brakujące materiały TLS
+> (root CA / certyfikat / klucz klienta) skutkują natychmiastowym błędem
+> logowanym w kategorii `bot.shell.app.metrics`, co ułatwia diagnostykę
+> niepoprawnych release'ów OEM.
+
 Domyślne parametry są zgodne z plikiem `ui/config/example.yaml`. Wartości `--max-samples` oraz `--history-limit` pozwalają kontrolować rozmiar buforów i wpływają na wymagania pamięciowe.
+
+## Tryb in-process (offline)
+
+Powłoka może działać bez lokalnego demona gRPC, korzystając z datasetu OHLCV
+wczytywanego z pliku CSV lub potoku named pipe. Aby aktywować ten tryb,
+ustaw `--transport-mode in-process` oraz wskaż dataset przez `--transport-dataset`.
+Opcjonalnie możesz dobrać tempo emisji świec poprzez flagę
+`--transport-candle-interval-ms` (domyślnie 150 ms pomiędzy incrementami).
+UI wymusza także przełączenie telemetrii i modułu Health na transport `in-process`,
+ignorując ręcznie ustawione endpointy:
+
+```bash
+ui/build/bot_trading_shell \
+  --transport-mode in-process \
+  --transport-dataset data/sample_ohlcv/trend.csv \
+  --transport-candle-interval-ms 100 \
+  --disable-metrics
+```
+
+W trybie offline TLS jest wyłączony, a `MetricsClient`/`HealthClient` korzystają
+z lokalnych stubów wstrzykiwanych przez `Application`. Dzięki temu można
+budować w pełni odcięte środowiska demonstracyjne bez zależności od gRPC.
 
 ## Integracja z backendem produkcyjnym
 

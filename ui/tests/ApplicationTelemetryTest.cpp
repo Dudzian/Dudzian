@@ -2,25 +2,102 @@
 #include <QQmlApplicationEngine>
 #include <QCommandLineParser>
 #include <QFile>
+#include <QDateTime>
+#include <QDir>
+#include <QFileInfo>
 #include <QIODevice>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QScopeGuard>
 #include <QGuiApplication>
 #include <QQuickWindow>
 #include <QScreen>
 #include <QSignalSpy>
 #include <QTemporaryDir>
+#include <QtMath>
 
 #include "app/Application.hpp"
 #include "telemetry/TelemetryReporter.hpp"
 #include "telemetry/TelemetryTlsConfig.hpp"
 #include "telemetry/UiTelemetryReporter.hpp"
 #include "grpc/MetricsClient.hpp"
+#include "health/HealthStatusController.hpp"
+#include "models/RiskStateModel.hpp"
 #include "trading.grpc.pb.h"
 
 #include <memory>
 #include <optional>
 #include <vector>
 #include <deque>
+
+namespace {
+
+QString companionPath(const QString& datasetPath, const QString& suffix)
+{
+    QFileInfo info(datasetPath);
+    if (info.exists() && info.isDir())
+        return QDir(info.absoluteFilePath()).filePath(suffix);
+
+    const QString directory = info.absolutePath();
+    const QString baseName = info.completeBaseName();
+    if (baseName.isEmpty())
+        return QDir(directory).filePath(suffix);
+    return QDir(directory).filePath(baseName + QLatin1Char('_') + suffix);
+}
+
+bool writeJsonFile(const QString& path, const QJsonObject& payload)
+{
+    QFileInfo info(path);
+    if (!info.dir().exists() && !info.dir().mkpath(QStringLiteral(".")))
+        return false;
+
+    QFile file(path);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text))
+        return false;
+
+    const QJsonDocument document(payload);
+    file.write(document.toJson(QJsonDocument::Indented));
+    file.close();
+    return true;
+}
+
+QJsonObject defaultRiskPayload(double portfolioValue = 25'000.0,
+                               double drawdown = 0.015,
+                               double maxDailyLoss = 0.05,
+                               double leverage = 1.5)
+{
+    QJsonObject payload;
+    payload.insert(QStringLiteral("profileEnum"), 1);
+    payload.insert(QStringLiteral("portfolioValue"), portfolioValue);
+    payload.insert(QStringLiteral("currentDrawdown"), drawdown);
+    payload.insert(QStringLiteral("maxDailyLoss"), maxDailyLoss);
+    payload.insert(QStringLiteral("usedLeverage"), leverage);
+    payload.insert(QStringLiteral("generatedAt"), QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs));
+    QJsonArray exposures;
+    exposures.append(QJsonObject{{QStringLiteral("code"), QStringLiteral("max_notional")},
+                                 {QStringLiteral("maxValue"), 5'000.0},
+                                 {QStringLiteral("currentValue"), 1'200.0},
+                                 {QStringLiteral("thresholdValue"), 4'500.0}});
+    exposures.append(QJsonObject{{QStringLiteral("code"), QStringLiteral("max_positions")},
+                                 {QStringLiteral("maxValue"), 10.0},
+                                 {QStringLiteral("currentValue"), 3.0},
+                                 {QStringLiteral("thresholdValue"), 8.0}});
+    payload.insert(QStringLiteral("exposures"), exposures);
+    return payload;
+}
+
+QJsonObject defaultHealthPayload()
+{
+    QJsonObject payload;
+    payload.insert(QStringLiteral("version"), QStringLiteral("in-process"));
+    payload.insert(QStringLiteral("gitCommit"), QStringLiteral("local"));
+    payload.insert(QStringLiteral("startedAt"),
+                   QDateTime::currentDateTimeUtc().addSecs(-3600).toString(Qt::ISODateWithMs));
+    return payload;
+}
+
+} // namespace
 
 class FakeTelemetryReporter final : public TelemetryReporter {
 public:
@@ -139,6 +216,8 @@ private slots:
     void testScreenMetadataForwarding();
     void testTelemetryPendingRetryExposure();
     void testTelemetryPendingRetryResetOnReporterSwap();
+    void testInProcessTransportMode();
+    void testInProcessTransportHonorsMetricsOverride();
 };
 
 class RejectingMetricsClient final : public MetricsClientInterface {
@@ -183,6 +262,32 @@ private:
     QString m_authToken;
     QString m_role;
     std::deque<Result> m_results;
+    std::vector<botcore::trading::v1::MetricsSnapshot> m_snapshots;
+};
+
+class RecordingMetricsClient final : public MetricsClientInterface {
+public:
+    void setEndpoint(const QString& endpoint) override { m_endpoint = endpoint; }
+    void setTlsConfig(const TelemetryTlsConfig& config) override { m_tlsConfig = config; }
+    void setAuthToken(const QString& token) override { m_authToken = token; }
+    void setRbacRole(const QString& role) override { m_role = role; }
+
+    bool pushSnapshot(const botcore::trading::v1::MetricsSnapshot& snapshot,
+                      QString* errorMessage = nullptr) override
+    {
+        if (errorMessage)
+            errorMessage->clear();
+        m_snapshots.push_back(snapshot);
+        return true;
+    }
+
+    const std::vector<botcore::trading::v1::MetricsSnapshot>& snapshots() const { return m_snapshots; }
+
+private:
+    QString m_endpoint;
+    TelemetryTlsConfig m_tlsConfig;
+    QString m_authToken;
+    QString m_role;
     std::vector<botcore::trading::v1::MetricsSnapshot> m_snapshots;
 };
 
@@ -421,6 +526,136 @@ void ApplicationTelemetryTest::testTelemetryPendingRetryResetOnReporterSwap() {
     // Nowy reporter otrzymuje konfigurację telemetrii.
     QCOMPARE(fallbackPtr->m_endpoint, QStringLiteral("dummy:5000"));
     QCOMPARE(fallbackPtr->m_windowCount, 1);
+}
+
+void ApplicationTelemetryTest::testInProcessTransportMode()
+{
+    QQmlApplicationEngine engine;
+    Application app(engine);
+
+    QTemporaryDir datasetDir;
+    QVERIFY(datasetDir.isValid());
+    const QString datasetPath = datasetDir.filePath(QStringLiteral("trend.csv"));
+    QVERIFY(QFile::copy(QStringLiteral("data/sample_ohlcv/trend.csv"), datasetPath));
+
+    QJsonObject riskPayload = defaultRiskPayload();
+    QVERIFY(writeJsonFile(companionPath(datasetPath, QStringLiteral("risk.json")), riskPayload));
+    QJsonObject healthPayload = defaultHealthPayload();
+    QVERIFY(writeJsonFile(companionPath(datasetPath, QStringLiteral("health.json")), healthPayload));
+
+    auto reporter = std::make_unique<UiTelemetryReporter>();
+    auto metrics = std::make_shared<RecordingMetricsClient>();
+    reporter->setMetricsClientForTesting(metrics);
+    app.setMetricsClientOverrideForTesting(metrics);
+    app.setTelemetryReporter(std::move(reporter));
+
+    QCommandLineParser parser;
+    app.configureParser(parser);
+    const QStringList args{
+        QStringLiteral("test"),
+        QStringLiteral("--transport-mode"), QStringLiteral("in-process"),
+        QStringLiteral("--transport-dataset"), datasetPath
+    };
+    parser.process(args);
+
+    QVERIFY(app.applyParser(parser));
+
+    TradingClient* client = app.tradingClientForTesting();
+    QVERIFY(client);
+    QCOMPARE(client->transportMode(), TradingClient::TransportMode::InProcess);
+    QVERIFY(!client->hasGrpcChannelForTesting());
+
+    auto* riskModel = qobject_cast<RiskStateModel*>(app.riskModel());
+    QVERIFY(riskModel);
+    QSignalSpy riskSpy(riskModel, &RiskStateModel::riskStateChanged);
+
+    auto* healthController = qobject_cast<HealthStatusController*>(app.healthController());
+    QVERIFY(healthController);
+    QSignalSpy healthSpy(healthController, &HealthStatusController::statusChanged);
+
+    QSignalSpy historySpy(client, &TradingClient::historyReceived);
+
+    app.start();
+
+    QVERIFY(historySpy.wait(2000));
+    QVERIFY(!historySpy.isEmpty());
+    QVERIFY(riskSpy.wait(2000));
+    QVERIFY(riskModel->hasData());
+    QVERIFY(qAbs(riskModel->portfolioValue() - 25000.0) < 1.0);
+    QVERIFY(healthSpy.wait(2000));
+    QVERIFY(healthController->healthy());
+    QCOMPARE(healthController->version(), QStringLiteral("in-process"));
+
+    riskSpy.clear();
+    riskPayload.insert(QStringLiteral("portfolioValue"), 31000.0);
+    riskPayload.insert(QStringLiteral("currentDrawdown"), 0.02);
+    riskPayload.insert(QStringLiteral("generatedAt"), QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs));
+    QVERIFY(writeJsonFile(companionPath(datasetPath, QStringLiteral("risk.json")), riskPayload));
+    client->refreshRiskState();
+    QVERIFY(riskSpy.wait(2000));
+    QVERIFY(qAbs(riskModel->portfolioValue() - 31000.0) < 1.0);
+    QVERIFY(qAbs(riskModel->currentDrawdown() - 0.02) < 1e-6);
+
+    healthSpy.clear();
+    healthPayload.insert(QStringLiteral("version"), QStringLiteral("in-process-2"));
+    healthPayload.insert(QStringLiteral("gitCommit"), QStringLiteral("abc1234"));
+    healthPayload.insert(QStringLiteral("startedAt"),
+                         QDateTime::currentDateTimeUtc().addSecs(-120).toString(Qt::ISODateWithMs));
+    QVERIFY(writeJsonFile(companionPath(datasetPath, QStringLiteral("health.json")), healthPayload));
+    healthController->refresh();
+    QVERIFY(healthSpy.wait(2000));
+    QCOMPARE(healthController->version(), QStringLiteral("in-process-2"));
+    QCOMPARE(healthController->gitCommit(), QStringLiteral("abc1234"));
+
+    app.simulateFrameIntervalForTesting(1.0 / 60.0);
+    QTRY_VERIFY_WITH_TIMEOUT(!metrics->snapshots().empty(), 2000);
+    const auto& snapshot = metrics->snapshots().back();
+    QVERIFY(snapshot.fps() > 0.0);
+    QVERIFY(snapshot.cpu_utilization() >= 0.0);
+
+    historySpy.clear();
+    app.setInProcessDatasetPathForTesting(datasetDir.filePath(QStringLiteral("trend_missing.csv")));
+    QVERIFY(historySpy.wait(3000));
+    QVERIFY(historySpy.count() > 0);
+
+    app.stop();
+}
+
+void ApplicationTelemetryTest::testInProcessTransportHonorsMetricsOverride()
+{
+    QQmlApplicationEngine engine;
+    Application app(engine);
+
+    QTemporaryDir datasetDir;
+    QVERIFY(datasetDir.isValid());
+    const QString datasetPath = datasetDir.filePath(QStringLiteral("trend.csv"));
+    QVERIFY(QFile::copy(QStringLiteral("data/sample_ohlcv/trend.csv"), datasetPath));
+    QVERIFY(writeJsonFile(companionPath(datasetPath, QStringLiteral("risk.json")), defaultRiskPayload()));
+    QVERIFY(writeJsonFile(companionPath(datasetPath, QStringLiteral("health.json")), defaultHealthPayload()));
+
+    auto reporter = std::make_unique<UiTelemetryReporter>();
+    auto metrics = std::make_shared<RecordingMetricsClient>();
+    reporter->setMetricsClientForTesting(metrics);
+    app.setMetricsClientOverrideForTesting(metrics);
+    app.setTelemetryReporter(std::move(reporter));
+
+    QCommandLineParser parser;
+    app.configureParser(parser);
+    const QStringList args{
+        QStringLiteral("test"),
+        QStringLiteral("--transport-mode"), QStringLiteral("in-process"),
+        QStringLiteral("--transport-dataset"), datasetPath
+    };
+    parser.process(args);
+    QVERIFY(app.applyParser(parser));
+
+    app.start();
+
+    QTRY_VERIFY_WITH_TIMEOUT(!metrics->snapshots().empty(), 2000);
+    QVERIFY(app.activeMetricsClientForTesting() == metrics);
+    QVERIFY(!app.usingInProcessMetricsClientForTesting());
+
+    app.stop();
 }
 
 void ApplicationTelemetryTest::testPreferredScreenSelectionCli()
