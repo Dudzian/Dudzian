@@ -551,6 +551,35 @@ def _resolve_passphrase(args: argparse.Namespace) -> str:
     )
 
 
+def _resolve_rotation_passphrase(args: argparse.Namespace, current: str) -> str:
+    provided = [
+        bool(args.secrets_rotate_passphrase),
+        bool(args.secrets_rotate_passphrase_env),
+        bool(args.secrets_rotate_passphrase_file),
+    ]
+    if sum(provided) > 1:
+        raise SystemExit(
+            "Nowe hasło magazynu sekretów może pochodzić tylko z jednego źródła (parametr, plik lub zmienna środowiskowa)."
+        )
+
+    if args.secrets_rotate_passphrase:
+        return args.secrets_rotate_passphrase
+    if args.secrets_rotate_passphrase_file:
+        path = Path(args.secrets_rotate_passphrase_file).expanduser()
+        try:
+            return path.read_text(encoding="utf-8").strip()
+        except OSError as exc:
+            raise SystemExit(f"Nie można odczytać pliku z nowym hasłem magazynu sekretów: {exc}") from exc
+    if args.secrets_rotate_passphrase_env:
+        value = os.environ.get(args.secrets_rotate_passphrase_env)
+        if value:
+            return value
+        raise SystemExit(
+            f"Zmienna środowiskowa {args.secrets_rotate_passphrase_env} nie została ustawiona lub jest pusta."
+        )
+    return current
+
+
 def _resolve_legacy_passphrase(args: argparse.Namespace) -> str:
     provided = [
         bool(args.legacy_security_passphrase),
@@ -708,6 +737,33 @@ def _configure_migration_parser() -> argparse.ArgumentParser:
         "--secret-passphrase-file",
         help="Plik zawierający hasło magazynu sekretów (tekst w UTF-8)",
     )
+    parser.add_argument("--secrets-backup", help="Ścieżka zapisu kopii zapasowej magazynu sekretów")
+    parser.add_argument(
+        "--secrets-backup-stdout",
+        action="store_true",
+        help="Wypisz kopię zapasową magazynu sekretów na stdout",
+    )
+    parser.add_argument(
+        "--secrets-recover-from",
+        help="Plik z kopią zapasową magazynu sekretów do odtworzenia",
+    )
+    parser.add_argument(
+        "--secrets-rotate-passphrase",
+        help="Nowe hasło magazynu sekretów po migracji",
+    )
+    parser.add_argument(
+        "--secrets-rotate-passphrase-file",
+        help="Plik zawierający nowe hasło magazynu sekretów",
+    )
+    parser.add_argument(
+        "--secrets-rotate-passphrase-env",
+        help="Zmienna środowiskowa z nowym hasłem magazynu sekretów",
+    )
+    parser.add_argument(
+        "--secrets-rotate-iterations",
+        type=int,
+        help="Nowa liczba iteracji PBKDF2 używana do zaszyfrowania magazynu sekretów",
+    )
     parser.add_argument(
         "--legacy-security-file",
         help="Zaszyfrowany plik SecurityManager (np. api_keys.enc) do migracji do Stage6",
@@ -844,11 +900,18 @@ def _run_stage6_migration(argv: Sequence[str]) -> int:
         secrets_output_path = desktop_paths.secret_vault_file
         used_default_vault = True
         if not args.dry_run:
-            print(
-                "Użyto domyślnego magazynu sekretów: {path}".format(
-                    path=secrets_output_path
-                )
-            )
+            print(f"Użyto domyślnego magazynu sekretów: {secrets_output_path}")
+
+    rotation_requested = any(
+        (
+            args.secrets_rotate_passphrase,
+            args.secrets_rotate_passphrase_file,
+            args.secrets_rotate_passphrase_env,
+            args.secrets_rotate_iterations is not None,
+        )
+    )
+    backup_requested = bool(args.secrets_backup or args.secrets_backup_stdout)
+    recover_requested = bool(args.secrets_recover_from)
 
     secrets_payload: Mapping[str, Any] | None = None
     secrets_source_label: str | None = None
@@ -873,6 +936,16 @@ def _run_stage6_migration(argv: Sequence[str]) -> int:
         )
         secrets_source_label = f"legacy SecurityManager ({legacy_security_path})"
         secrets_source_path = legacy_security_path
+
+    if (
+        secrets_output_path is None
+        and desktop_paths is not None
+        and (secrets_payload is not None or rotation_requested or backup_requested or recover_requested)
+    ):
+        secrets_output_path = desktop_paths.secret_vault_file
+        if not used_default_vault and not args.dry_run:
+            print(f"Użyto domyślnego magazynu sekretów: {secrets_output_path}")
+        used_default_vault = True
 
     secret_entries: dict[str, str] | None = None
     skipped_by_include: list[str] = []
@@ -912,6 +985,24 @@ def _run_stage6_migration(argv: Sequence[str]) -> int:
                 )
             )
 
+    if (
+        secret_entries is not None
+        and secrets_output_path is None
+        and not args.secrets_preview
+        and not args.dry_run
+    ):
+        parser.error(
+            (
+                "Do migracji sekretów wymagane są oba parametry: "
+                "źródło (--secrets-input lub --legacy-security-file) oraz --secrets-output"
+            )
+        )
+
+    if (rotation_requested or backup_requested or recover_requested) and secrets_output_path is None:
+        parser.error(
+            "Operacje rotacji/backup/odzyskiwania wymagają wskazania --secrets-output lub --desktop-root."
+        )
+
     if args.secrets_preview:
         if secret_entries is None:
             print("Podgląd sekretów: brak źródła sekretów do migracji.")
@@ -932,12 +1023,31 @@ def _run_stage6_migration(argv: Sequence[str]) -> int:
 
     entries_count = len(secret_entries) if secret_entries is not None else 0
 
+    storage: EncryptedFileSecretStorage | None = None
+    resolved_passphrase: str | None = None
+    recovered_from_backup = False
+    rotation_performed = False
+    backup_path_written: Path | None = None
+    backup_stdout_snapshot: str | None = None
+
+    def _current_passphrase() -> str:
+        nonlocal resolved_passphrase
+        if resolved_passphrase is None:
+            resolved_passphrase = _resolve_passphrase(args)
+        return resolved_passphrase
+
+    def _ensure_storage() -> EncryptedFileSecretStorage:
+        nonlocal storage
+        if secrets_output_path is None:
+            raise SystemExit("Docelowy magazyn sekretów nie został określony.")
+        if storage is None:
+            storage = EncryptedFileSecretStorage(secrets_output_path, _current_passphrase())
+        return storage
+
     if args.dry_run:
         if secret_entries is not None:
             if entries_count:
-                message = "Tryb dry-run: pominięto zapis {count} sekretów".format(
-                    count=entries_count
-                )
+                message = "Tryb dry-run: pominięto zapis {count} sekretów".format(count=entries_count)
                 if secrets_output_path is not None:
                     message += " do magazynu {path}".format(path=secrets_output_path)
                 else:
@@ -952,61 +1062,101 @@ def _run_stage6_migration(argv: Sequence[str]) -> int:
                     message += f" (źródło: {secrets_source_label})"
             print(message)
         elif secrets_output_path is not None:
-            print(
-                "Tryb dry-run: pominięto utworzenie magazynu sekretów {path}".format(
-                    path=secrets_output_path
-                )
-            )
+            print(f"Tryb dry-run: pominięto utworzenie magazynu sekretów {secrets_output_path}")
         elif used_default_vault and desktop_paths is not None:
             print(
                 "Tryb dry-run: pominięto utworzenie domyślnego magazynu sekretów {path}".format(
                     path=desktop_paths.secret_vault_file
                 )
             )
-    elif secret_entries is not None and secrets_output_path is not None:
-        if entries_count:
-            passphrase = _resolve_passphrase(args)
-            storage = EncryptedFileSecretStorage(secrets_output_path, passphrase)
-            for key, value in secret_entries.items():
-                storage.set_secret(key, value)
+        if recover_requested:
+            print("Tryb dry-run: pominięto odtworzenie magazynu sekretów z kopii zapasowej.")
+        if rotation_requested:
+            print("Tryb dry-run: pominięto rotację hasła magazynu sekretów.")
+        if backup_requested:
+            print("Tryb dry-run: pominięto zapis kopii zapasowej magazynu sekretów.")
+    else:
+        if recover_requested and secrets_output_path is not None:
+            backup_source_path = Path(args.secrets_recover_from).expanduser()
+            try:
+                backup_text = backup_source_path.read_text(encoding="utf-8")
+            except OSError as exc:
+                raise SystemExit(f"Nie udało się odczytać kopii zapasowej magazynu sekretów: {exc}") from exc
+            storage = EncryptedFileSecretStorage.recover_from_backup(
+                secrets_output_path,
+                _current_passphrase(),
+                backup_text,
+            )
+            resolved_passphrase = _current_passphrase()
+            recovered_from_backup = True
             print(
-                "Zapisano {count} sekretów do magazynu {path}".format(
-                    count=entries_count,
-                    path=secrets_output_path,
+                "Odtworzono magazyn sekretów z kopii zapasowej {src} → {dest}".format(
+                    src=backup_source_path,
+                    dest=secrets_output_path,
                 )
             )
-            if secrets_source_label:
-                print(f"Źródło sekretów: {secrets_source_label}")
-        else:
-            print("Pominięto zapis sekretów: brak dopasowanych wpisów (po filtrach).")
-            if secrets_source_label:
-                print(f"Źródło sekretów: {secrets_source_label}")
-    elif secret_entries is not None and secrets_output_path is None:
-        if entries_count == 0:
-            print("Pominięto zapis sekretów: brak dopasowanych wpisów (po filtrach).")
-            if secrets_source_label:
-                print(f"Źródło sekretów: {secrets_source_label}")
-        elif args.secrets_preview:
-            message = (
-                "Pominięto zapis {count} sekretów: nie wskazano --secrets-output (tryb podglądu)."
-            ).format(count=entries_count)
-            if secrets_source_label:
-                message += f" Źródło: {secrets_source_label}."
-            print(message)
-        else:
-            parser.error(
-                (
-                    "Do migracji sekretów wymagane są oba parametry: "
-                    "źródło (--secrets-input lub --legacy-security-file) oraz --secrets-output"
+
+        if secret_entries is not None and secrets_output_path is not None:
+            if entries_count:
+                storage = _ensure_storage()
+                for key, value in secret_entries.items():
+                    storage.set_secret(key, value)
+                print(
+                    "Zapisano {count} sekretów do magazynu {path}".format(
+                        count=entries_count,
+                        path=secrets_output_path,
+                    )
                 )
-            )
-    elif secret_entries is not None or secrets_output_path is not None:
-        parser.error(
-            (
-                "Do migracji sekretów wymagane są oba parametry: "
-                "źródło (--secrets-input lub --legacy-security-file) oraz --secrets-output"
-            )
-        )
+                if secrets_source_label:
+                    print(f"Źródło sekretów: {secrets_source_label}")
+            else:
+                print("Pominięto zapis sekretów: brak dopasowanych wpisów (po filtrach).")
+                if secrets_source_label:
+                    print(f"Źródło sekretów: {secrets_source_label}")
+        elif secret_entries is not None and secrets_output_path is None:
+            if entries_count == 0:
+                print("Pominięto zapis sekretów: brak dopasowanych wpisów (po filtrach).")
+                if secrets_source_label:
+                    print(f"Źródło sekretów: {secrets_source_label}")
+            elif args.secrets_preview:
+                message = (
+                    "Pominięto zapis {count} sekretów: nie wskazano --secrets-output (tryb podglądu)."
+                ).format(count=entries_count)
+                if secrets_source_label:
+                    message += f" Źródło: {secrets_source_label}."
+                print(message)
+            else:
+                parser.error(
+                    (
+                        "Do migracji sekretów wymagane są oba parametry: "
+                        "źródło (--secrets-input lub --legacy-security-file) oraz --secrets-output"
+                    )
+                )
+        elif secret_entries is None and secrets_output_path is not None and not recover_requested:
+            # Tworzenie pustego magazynu, jeśli wskazano tylko --secrets-output
+            storage = _ensure_storage()
+
+        if rotation_requested and secrets_output_path is not None:
+            storage = _ensure_storage()
+            current_pass = _current_passphrase()
+            new_pass = _resolve_rotation_passphrase(args, current=current_pass)
+            storage.rotate_passphrase(new_pass, iterations=args.secrets_rotate_iterations)
+            resolved_passphrase = new_pass
+            rotation_performed = True
+            print("Zrotowano hasło magazynu sekretów.")
+
+        if backup_requested and secrets_output_path is not None:
+            storage = _ensure_storage()
+            snapshot = storage.export_backup()
+            if args.secrets_backup:
+                backup_path = Path(args.secrets_backup).expanduser()
+                backup_path.parent.mkdir(parents=True, exist_ok=True)
+                backup_path.write_text(snapshot, encoding="utf-8")
+                backup_path_written = backup_path
+                print(f"Zapisano kopię zapasową magazynu sekretów do {backup_path}")
+            if args.secrets_backup_stdout:
+                print(snapshot)
+                backup_stdout_snapshot = snapshot
 
     secrets_written = 0
     if (
@@ -1028,13 +1178,21 @@ def _run_stage6_migration(argv: Sequence[str]) -> int:
     if (
         secrets_output_path is not None
         and not args.dry_run
-        and secret_entries is not None
-        and entries_count
         and secrets_output_path.exists()
     ):
         secrets_output_checksum, warning = _safe_file_checksum(secrets_output_path)
         if warning:
             warnings.append(warning)
+
+    secrets_backup_file_checksum: str | None = None
+    if backup_path_written is not None and backup_path_written.exists():
+        secrets_backup_file_checksum, warning = _safe_file_checksum(backup_path_written)
+        if warning:
+            warnings.append(warning)
+
+    secrets_backup_inline_checksum: str | None = None
+    if backup_stdout_snapshot is not None:
+        secrets_backup_inline_checksum = _compute_text_checksum(backup_stdout_snapshot)
 
     secrets_source_checksum: str | None = None
     if secrets_source_path is not None and secrets_source_path.exists():
@@ -1058,7 +1216,8 @@ def _run_stage6_migration(argv: Sequence[str]) -> int:
         file=getattr(args, "secret_passphrase_file", None),
         env=getattr(args, "secret_passphrase_env", None),
     )
-    output_passphrase_info["used"] = bool(secrets_written)
+    output_passphrase_info["used"] = bool(secrets_written or rotation_performed or recovered_from_backup)
+    output_passphrase_info["rotated"] = bool(rotation_performed)
 
     legacy_passphrase_info = _describe_passphrase_args(
         inline=getattr(args, "legacy_security_passphrase", None),
@@ -1094,6 +1253,8 @@ def _run_stage6_migration(argv: Sequence[str]) -> int:
                 "output_path": str(secrets_output_path) if secrets_output_path else None,
                 "planned": entries_count if secret_entries is not None else 0,
                 "written": secrets_written,
+                "rotation_performed": bool(rotation_performed),
+                "rotation_iterations": args.secrets_rotate_iterations,
                 "used_default_vault": bool(used_default_vault and secrets_output_path is not None),
                 "filters": {
                     "include": include_filters,
@@ -1107,6 +1268,9 @@ def _run_stage6_migration(argv: Sequence[str]) -> int:
                     args.dry_run and secret_entries is not None and entries_count > 0
                 ),
                 "output_checksum": secrets_output_checksum,
+                "backup_file_path": str(backup_path_written) if backup_path_written else None,
+                "backup_file_checksum": secrets_backup_file_checksum,
+                "backup_stdout_checksum": secrets_backup_inline_checksum,
                 "legacy_security_salt_path": (
                     str(legacy_security_salt_path)
                     if legacy_security_salt_path is not None
@@ -1115,6 +1279,7 @@ def _run_stage6_migration(argv: Sequence[str]) -> int:
                 "legacy_security_salt_checksum": legacy_security_salt_checksum,
                 "output_passphrase": output_passphrase_info,
                 "legacy_security_passphrase": legacy_passphrase_info,
+                "recovered_from_backup": bool(recovered_from_backup),
             },
         }
         try:

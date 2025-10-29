@@ -80,6 +80,12 @@ from bot_core.risk.events import RiskDecisionLog
 from bot_core.risk.factory import build_risk_profile_from_config
 from bot_core.risk.repository import FileRiskRepository
 from bot_core.security import SecretManager, SecretStorageError, build_service_token_validator
+from bot_core.security.fingerprint import DeviceFingerprintGenerator, FingerprintError
+from bot_core.security.fingerprint_lock import (
+    FingerprintLockError,
+    load_fingerprint_lock,
+    verify_local_hardware,
+)
 from bot_core.security.license import (
     LicenseValidationError,
     LicenseValidationResult,
@@ -655,6 +661,54 @@ def _load_callable_from_path(target: str) -> Callable[..., Any]:
 
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _enforce_installation_hardware() -> None:
+    """Blocks runtime when hardware fingerprint lock rejects current machine."""
+
+    try:
+        lock = load_fingerprint_lock()
+    except FingerprintLockError as exc:
+        emit_alert(
+            "Nie udało się wczytać blokady fingerprintu urządzenia.",
+            severity=AlertSeverity.CRITICAL,
+            source="security.hardware",
+            context={"error": str(exc)},
+        )
+        _LOGGER.critical("Błąd blokady fingerprintu: %s", exc)
+        raise RuntimeError(str(exc)) from exc
+
+    if lock is None:
+        return
+
+    try:
+        verify_local_hardware(lock, generator=DeviceFingerprintGenerator())
+    except FingerprintLockError as exc:
+        emit_alert(
+            "Fingerprint urządzenia nie zgadza się z blokadą instalacyjną – zatrzymuję runtime.",
+            severity=AlertSeverity.CRITICAL,
+            source="security.hardware",
+            context={"lock_path": str(lock.path)},
+            exception=exc,
+        )
+        _LOGGER.critical(
+            "Blokada fingerprintu odrzuciła uruchomienie na tym sprzęcie (%s)",
+            lock.path,
+        )
+        raise RuntimeError(str(exc)) from exc
+    except FingerprintError as exc:  # pragma: no cover - defensywne logowanie generatora
+        emit_alert(
+            "Nie udało się odczytać fingerprintu urządzenia.",
+            severity=AlertSeverity.CRITICAL,
+            source="security.hardware",
+            context={"lock_path": str(lock.path)},
+            exception=exc,
+        )
+        _LOGGER.critical(
+            "Generator fingerprintu zgłosił błąd podczas weryfikacji blokady",
+            exc_info=True,
+        )
+        raise RuntimeError(str(exc)) from exc
 
 
 def _resolve_ai_manager_class() -> type[Any] | None:
@@ -1682,6 +1736,8 @@ def bootstrap_environment(
 ) -> BootstrapContext:
     """Tworzy kompletny kontekst uruchomieniowy dla wskazanego środowiska."""
     from bot_core.config.validation import assert_core_config_valid
+
+    _enforce_installation_hardware()
 
     config_path_obj = Path(config_path)
     if core_config is None:

@@ -123,6 +123,7 @@ def test_stage6_cli_accepts_passphrase_file(tmp_path: Path) -> None:
         "source": "file",
         "identifier": str(pass_file),
         "used": True,
+        "rotated": False,
     }
     assert payload["secrets"]["legacy_security_passphrase"] == {
         "provided": False,
@@ -839,6 +840,7 @@ def test_stage6_cli_writes_summary_file(tmp_path: Path) -> None:
         "source": "inline",
         "identifier": None,
         "used": True,
+        "rotated": False,
     }
     assert payload["secrets"]["legacy_security_passphrase"] == {
         "provided": False,
@@ -897,6 +899,7 @@ def test_stage6_cli_summary_tracks_secret_passphrase_env(
         "source": "env",
         "identifier": "STAGE6_SECRET_PASS",
         "used": True,
+        "rotated": False,
     }
     assert payload["secrets"]["legacy_security_passphrase"] == {
         "provided": False,
@@ -993,6 +996,7 @@ def test_stage6_cli_summary_records_security_source_checksums(
         "source": "inline",
         "identifier": None,
         "used": True,
+        "rotated": False,
     }
     assert payload["secrets"]["legacy_security_passphrase"] == {
         "provided": True,

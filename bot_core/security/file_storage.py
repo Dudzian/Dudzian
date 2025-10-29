@@ -2,8 +2,11 @@
 from __future__ import annotations
 
 import base64
+import binascii
+import hashlib
 import json
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import Dict
@@ -22,8 +25,6 @@ else:
 
 def _derive_key(passphrase: str, salt: bytes, *, iterations: int = 390_000) -> bytes:
     """Wyprowadza klucz symetryczny z hasła użytkownika."""
-
-    import hashlib
 
     key = hashlib.pbkdf2_hmac("sha256", passphrase.encode("utf-8"), salt, iterations, dklen=32)
     return base64.urlsafe_b64encode(key)
@@ -73,6 +74,55 @@ class EncryptedFileSecretStorage(SecretStorage):
     # ------------------------------------------------------------------
     # Metody pomocnicze
     # ------------------------------------------------------------------
+    @property
+    def iterations(self) -> int:
+        return self._iterations
+
+    def export_backup(self) -> str:
+        payload = self._build_payload()
+        encoded = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+        return base64.b64encode(encoded.encode("utf-8")).decode("ascii")
+
+    @classmethod
+    def recover_from_backup(
+        cls,
+        path: str | os.PathLike[str],
+        passphrase: str,
+        backup: str,
+    ) -> "EncryptedFileSecretStorage":
+        raw = backup.strip()
+        try:
+            decoded = base64.b64decode(raw)
+        except (ValueError, binascii.Error):
+            decoded = raw.encode("utf-8")
+        try:
+            payload = json.loads(decoded.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise SecretStorageError("Nie udało się zdekodować zapasowego magazynu sekretów.") from exc
+        if not isinstance(payload, dict):
+            raise SecretStorageError("Backup magazynu sekretów musi być obiektem JSON.")
+
+        target = Path(path).expanduser().resolve()
+        target.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = target.with_suffix(target.suffix + ".tmp")
+        tmp_path.write_text(
+            json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+            encoding="utf-8",
+        )
+        os.replace(tmp_path, target)
+        return cls(target, passphrase)
+
+    def rotate_passphrase(self, new_passphrase: str, *, iterations: int | None = None) -> None:
+        if iterations is not None:
+            if iterations <= 0:
+                raise SecretStorageError("Liczba iteracji PBKDF2 musi być dodatnia.")
+            self._iterations = iterations
+        self._passphrase = new_passphrase
+        self._salt = os.urandom(16)
+        key = _derive_key(self._passphrase, self._salt, iterations=self._iterations)
+        self._fernet = Fernet(key)
+        self._persist()
+
     def _ensure_crypto(self) -> Fernet:
         if self._fernet is None or self._salt is None:
             raise SecretStorageError("Magazyn plikowy nie został poprawnie zainicjalizowany.")
@@ -111,6 +161,13 @@ class EncryptedFileSecretStorage(SecretStorage):
                 "Nie udało się odczytać danych z pliku magazynu sekretów."
             ) from exc
 
+        iterations_value = payload.get("iterations")
+        if iterations_value is not None:
+            try:
+                self._iterations = int(iterations_value)
+            except (TypeError, ValueError) as exc:
+                raise SecretStorageError("Pole 'iterations' w magazynie sekretów jest niepoprawne.") from exc
+
         key = _derive_key(self._passphrase, self._salt, iterations=self._iterations)
         self._fernet = Fernet(key)
 
@@ -133,19 +190,27 @@ class EncryptedFileSecretStorage(SecretStorage):
 
         self._data = {str(k): str(v) for k, v in raw_dict.items()}
 
-    def _persist(self) -> None:
-        fernet = self._ensure_crypto()
+    def _build_payload(self) -> dict[str, object]:
         salt = self._salt
         if salt is None:
             raise SecretStorageError("Brak soli kryptograficznej w magazynie sekretów.")
 
+        fernet = self._ensure_crypto()
         plaintext = json.dumps(self._data, separators=(",", ":"), sort_keys=True).encode("utf-8")
         ciphertext = fernet.encrypt(plaintext)
-
-        payload = {
+        checksum = base64.b64encode(hashlib.sha256(ciphertext).digest()).decode("ascii")
+        payload: dict[str, object] = {
+            "version": 1,
             "salt": base64.b64encode(salt).decode("ascii"),
             "ciphertext": base64.b64encode(ciphertext).decode("ascii"),
+            "iterations": self._iterations,
+            "checksum": checksum,
+            "updated_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
         }
+        return payload
+
+    def _persist(self) -> None:
+        payload = self._build_payload()
 
         with NamedTemporaryFile("w", dir=str(self._path.parent), delete=False, encoding="utf-8") as tmp:
             json.dump(payload, tmp, separators=(",", ":"))

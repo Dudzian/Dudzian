@@ -1,0 +1,261 @@
+name: Desktop packaging
+
+on:
+  workflow_dispatch:
+    inputs:
+      pyinstaller_entry:
+        description: "Ścieżka do entrypointu PyInstaller"
+        required: false
+        type: string
+      pyinstaller_dist:
+        description: "Opcjonalny katalog wyjściowy PyInstaller"
+        required: false
+        type: string
+      pyinstaller_work:
+        description: "Opcjonalny katalog roboczy PyInstaller"
+        required: false
+        type: string
+      briefcase_app:
+        description: "Nazwa aplikacji Briefcase"
+        required: false
+        type: string
+      briefcase_output:
+        description: "Opcjonalny katalog wynikowy Briefcase"
+        required: false
+        type: string
+      verbose:
+        description: "Włącz logowanie DEBUG"
+        required: false
+        default: false
+        type: boolean
+  workflow_call:
+    inputs:
+      pyinstaller_entry:
+        required: false
+        type: string
+      pyinstaller_dist:
+        required: false
+        type: string
+      pyinstaller_work:
+        required: false
+        type: string
+      briefcase_app:
+        required: false
+        type: string
+      briefcase_output:
+        required: false
+        type: string
+      verbose:
+        required: false
+        type: boolean
+  schedule:
+    - cron: '15 2 * * 2'
+
+jobs:
+  build:
+    name: Buduj bundel desktopowy (${{ matrix.platform }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux
+            runner:
+              - self-hosted
+              - linux-desktop
+            python: '3.11'
+            shell: bash
+          - platform: macos
+            runner:
+              - self-hosted
+              - macos-desktop
+            python: '3.11'
+            shell: bash
+          - platform: windows
+            runner:
+              - self-hosted
+              - windows-desktop
+            python: '3.11'
+            shell: pwsh
+    runs-on: ${{ matrix.runner }}
+    env:
+      PYINSTALLER_ENTRY_INPUT: ${{ inputs.pyinstaller_entry }}
+      PYINSTALLER_ENTRY_VAR: ${{ vars.DESKTOP_PYINSTALLER_ENTRY }}
+      PYINSTALLER_DIST_INPUT: ${{ inputs.pyinstaller_dist }}
+      PYINSTALLER_DIST_VAR: ${{ vars.DESKTOP_PYINSTALLER_DIST }}
+      PYINSTALLER_WORK_INPUT: ${{ inputs.pyinstaller_work }}
+      PYINSTALLER_WORK_VAR: ${{ vars.DESKTOP_PYINSTALLER_WORK }}
+      BRIEFCASE_APP_INPUT: ${{ inputs.briefcase_app }}
+      BRIEFCASE_APP_VAR: ${{ vars.DESKTOP_BRIEFCASE_APP }}
+      BRIEFCASE_OUTPUT_INPUT: ${{ inputs.briefcase_output }}
+      BRIEFCASE_OUTPUT_VAR: ${{ vars.DESKTOP_BRIEFCASE_OUTPUT }}
+      VERBOSE_INPUT: ${{ inputs.verbose }}
+      VERBOSE_VAR: ${{ vars.DESKTOP_PACKAGING_VERBOSE }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Install dependencies (POSIX)
+        if: matrix.platform != 'windows'
+        run: |
+          python -m pip install --upgrade pip
+          pip install '.[desktop]'
+        shell: bash
+
+      - name: Install dependencies (Windows)
+        if: matrix.platform == 'windows'
+        run: |
+          python -m pip install --upgrade pip
+          pip install '.[desktop]'
+        shell: pwsh
+
+      - name: Rozwiąż konfigurację bundlera
+        id: config
+        shell: python
+        run: |
+          import json
+          import os
+          from pathlib import Path
+
+          def pick(*names: str, default: str = "") -> str:
+              for name in names:
+                  value = os.environ.get(name)
+                  if value and value.strip():
+                      return value.strip()
+              return default
+
+          pyinstaller_entry = pick("PYINSTALLER_ENTRY_INPUT", "PYINSTALLER_ENTRY_VAR")
+          briefcase_app = pick("BRIEFCASE_APP_INPUT", "BRIEFCASE_APP_VAR")
+          pyinstaller_dist = pick("PYINSTALLER_DIST_INPUT", "PYINSTALLER_DIST_VAR", default="var/dist/pyinstaller")
+          pyinstaller_work = pick("PYINSTALLER_WORK_INPUT", "PYINSTALLER_WORK_VAR", default="var/build/pyinstaller")
+          briefcase_output = pick("BRIEFCASE_OUTPUT_INPUT", "BRIEFCASE_OUTPUT_VAR", default="var/dist/briefcase")
+          verbose_flag = pick("VERBOSE_INPUT", "VERBOSE_VAR")
+
+          if not pyinstaller_entry and not briefcase_app:
+              raise SystemExit("Brak konfiguracji bundlera: ustaw 'pyinstaller_entry' lub 'briefcase_app'.")
+
+          payload = {
+              "pyinstaller_entry": pyinstaller_entry,
+              "pyinstaller_dist": pyinstaller_dist,
+              "pyinstaller_work": pyinstaller_work,
+              "briefcase_app": briefcase_app,
+              "briefcase_output": briefcase_output,
+              "verbose": verbose_flag.lower() in {"1", "true", "yes", "on"},
+          }
+
+          Path("var/dist").mkdir(parents=True, exist_ok=True)
+          Path("var/build").mkdir(parents=True, exist_ok=True)
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
+              for key, value in payload.items():
+                  if isinstance(value, bool):
+                      fh.write(f"{key}={'true' if value else 'false'}\n")
+                  else:
+                      fh.write(f"{key}={value}\n")
+
+          print(json.dumps(payload, indent=2, ensure_ascii=False))
+
+      - name: Oczyść katalogi wyjściowe
+        shell: python
+        run: |
+          import shutil
+          from pathlib import Path
+
+          dist_path = Path("${{ steps.config.outputs.pyinstaller_dist }}")
+          work_path = Path("${{ steps.config.outputs.pyinstaller_work }}")
+          briefcase_path = Path("${{ steps.config.outputs.briefcase_output }}")
+
+          for path in (dist_path, work_path, briefcase_path):
+              if path.exists():
+                  if path.is_file():
+                      path.unlink()
+                  else:
+                      shutil.rmtree(path)
+              path.mkdir(parents=True, exist_ok=True)
+
+      - name: Uruchom bundler
+        shell: python
+        env:
+          PLATFORM_ID: ${{ matrix.platform }}
+          PYINSTALLER_ENTRY: ${{ steps.config.outputs.pyinstaller_entry }}
+          PYINSTALLER_DIST: ${{ steps.config.outputs.pyinstaller_dist }}
+          PYINSTALLER_WORK: ${{ steps.config.outputs.pyinstaller_work }}
+          BRIEFCASE_APP: ${{ steps.config.outputs.briefcase_app }}
+          BRIEFCASE_OUTPUT: ${{ steps.config.outputs.briefcase_output }}
+          VERBOSE: ${{ steps.config.outputs.verbose }}
+        run: |
+          import os
+          import shlex
+          import subprocess
+          import sys
+
+          args = [sys.executable, "-m", "scripts.packaging.build_app_bundles", "--platform", os.environ["PLATFORM_ID"]]
+
+          if os.environ.get("PYINSTALLER_ENTRY"):
+              args.extend(["--pyinstaller-entry", os.environ["PYINSTALLER_ENTRY"]])
+              args.extend(["--pyinstaller-dist", os.environ["PYINSTALLER_DIST"]])
+              args.extend(["--pyinstaller-work", os.environ["PYINSTALLER_WORK"]])
+
+          if os.environ.get("BRIEFCASE_APP"):
+              args.extend(["--briefcase-app", os.environ["BRIEFCASE_APP"]])
+              args.extend(["--briefcase-output", os.environ["BRIEFCASE_OUTPUT"]])
+
+          if os.environ.get("VERBOSE", "false").lower() == "true":
+              args.append("--verbose")
+
+          print("[desktop.packaging]", " ".join(shlex.quote(part) for part in args))
+          subprocess.run(args, check=True)
+
+      - name: Generuj manifest bundla
+        shell: python
+        env:
+          PYINSTALLER_DIST: ${{ steps.config.outputs.pyinstaller_dist }}
+          BRIEFCASE_OUTPUT: ${{ steps.config.outputs.briefcase_output }}
+          PLATFORM_ID: ${{ matrix.platform }}
+        run: |
+          import json
+          import os
+          from pathlib import Path
+          from datetime import datetime, timezone
+
+          def sha256(path: Path) -> str:
+              import hashlib
+              return hashlib.sha256(path.read_bytes()).hexdigest()
+
+          def list_files_with_hash(root: Path) -> list[dict]:
+              entries = []
+              if not root.exists():
+                  return entries
+              for path in sorted(root.rglob("*")):
+                  if path.is_file():
+                      entries.append({
+                          "name": str(path.relative_to(root)),
+                          "size_bytes": path.stat().st_size,
+                          "sha256": sha256(path),
+                      })
+              return entries
+
+          manifest = {
+              "generated_at": datetime.now(timezone.utc).isoformat(),
+              "platform": os.environ["PLATFORM_ID"],
+              "pyinstaller": list_files_with_hash(Path(os.environ["PYINSTALLER_DIST"])),
+              "briefcase": list_files_with_hash(Path(os.environ["BRIEFCASE_OUTPUT"])),
+          }
+
+          output = Path("var/dist") / f"desktop_packaging_{os.environ['PLATFORM_ID']}.json"
+          output.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+          print(f"Manifest zapisany w {output}")
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-packaging-${{ matrix.platform }}
+          if-no-files-found: warn
+          path: |
+            ${{ steps.config.outputs.pyinstaller_dist }}
+            ${{ steps.config.outputs.briefcase_output }}
+            var/dist/desktop_packaging_${{ matrix.platform }}.json
