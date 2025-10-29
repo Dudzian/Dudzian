@@ -37,6 +37,7 @@
 #include <cmath>
 #include <algorithm>
 #include <utility>
+#include <vector>
 
 #include "telemetry/TelemetryReporter.hpp"
 #include "telemetry/UiTelemetryReporter.hpp"
@@ -54,6 +55,8 @@
 #include "health/HealthStatusController.hpp"
 #include "reporting/ReportCenterController.hpp"
 #include "grpc/BotCoreLocalService.hpp"
+#include "grpc/HealthClient.hpp"
+#include "grpc/MetricsClient.hpp"
 
 Q_LOGGING_CATEGORY(lcAppMetrics, "bot.shell.app.metrics")
 
@@ -77,6 +80,63 @@ constexpr auto kDecisionLogPathEnv = QByteArrayLiteral("BOT_CORE_UI_DECISION_LOG
 constexpr auto kDecisionLogLimitEnv = QByteArrayLiteral("BOT_CORE_UI_DECISION_LOG_LIMIT");
 constexpr auto kRegimeThresholdsEnv = QByteArrayLiteral("BOT_CORE_UI_REGIME_THRESHOLDS");
 constexpr auto kRegimeTimelineLimitEnv = QByteArrayLiteral("BOT_CORE_UI_REGIME_TIMELINE_LIMIT");
+constexpr auto kTransportModeEnv = QByteArrayLiteral("BOT_CORE_UI_TRANSPORT_MODE");
+constexpr auto kTransportDatasetEnv = QByteArrayLiteral("BOT_CORE_UI_TRANSPORT_DATASET");
+
+class InProcessMetricsClient final : public MetricsClientInterface
+{
+public:
+    void setEndpoint(const QString& endpoint) override { m_endpoint = endpoint; }
+    void setTlsConfig(const TelemetryTlsConfig& config) override { m_tlsConfig = config; }
+    void setAuthToken(const QString& token) override { m_authToken = token; }
+    void setRbacRole(const QString& role) override { m_role = role; }
+
+    bool pushSnapshot(const botcore::trading::v1::MetricsSnapshot& snapshot,
+                      QString* errorMessage = nullptr) override
+    {
+        Q_UNUSED(errorMessage);
+        m_snapshots.push_back(snapshot);
+        return true;
+    }
+
+    const std::vector<botcore::trading::v1::MetricsSnapshot>& snapshots() const { return m_snapshots; }
+
+private:
+    QString m_endpoint;
+    TelemetryTlsConfig m_tlsConfig;
+    QString m_authToken;
+    QString m_role;
+    std::vector<botcore::trading::v1::MetricsSnapshot> m_snapshots;
+};
+
+class InProcessHealthClient final : public HealthClientInterface
+{
+public:
+    void setEndpoint(const QString& endpoint) override { m_endpoint = endpoint; }
+    void setTlsConfig(const GrpcTlsConfig& config) override { m_tlsConfig = config; }
+    void setAuthToken(const QString& token) override { m_authToken = token; }
+    void setRbacRole(const QString& role) override { m_role = role; }
+    void setRbacScopes(const QStringList& scopes) override { m_scopes = scopes; }
+
+    QVector<QPair<QByteArray, QByteArray>> authMetadataForTesting() const override { return {}; }
+
+    HealthCheckResult check() override
+    {
+        HealthCheckResult result;
+        result.ok = true;
+        result.version = QStringLiteral("in-process");
+        result.gitCommit = QStringLiteral("local");
+        result.startedAtUtc = QDateTime::currentDateTimeUtc().addSecs(-3600);
+        return result;
+    }
+
+private:
+    QString m_endpoint;
+    GrpcTlsConfig m_tlsConfig;
+    QString m_authToken;
+    QString m_role;
+    QStringList m_scopes;
+};
 
 using bot::shell::utils::expandPath;
 using bot::shell::utils::watchableDirectories;
@@ -477,6 +537,10 @@ void Application::configureParser(QCommandLineParser& parser) const {
     parser.addHelpOption();
     parser.addOption({{"e", "endpoint"}, tr("Adres gRPC host:port"), tr("endpoint"),
                       QStringLiteral("127.0.0.1:50061")});
+    parser.addOption({"transport-mode", tr("Tryb transportu danych (grpc lub in-process)"),
+                      tr("mode"), QStringLiteral("grpc")});
+    parser.addOption({"transport-dataset", tr("Dataset OHLCV dla trybu in-process"),
+                      tr("path"), QString()});
     parser.addOption({"exchange", tr("Nazwa giełdy"), tr("exchange"), QStringLiteral("BINANCE")});
     parser.addOption({"symbol", tr("Symbol logiczny"), tr("symbol"), QStringLiteral("BTC/USDT")});
     parser.addOption({"venue-symbol", tr("Symbol na giełdzie"), tr("venue"),
@@ -695,8 +759,55 @@ bool Application::applyParser(const QCommandLineParser& parser) {
 
     Q_EMIT offlineStrategyPathChanged();
 
+    auto parseTransportMode = [](const QString& raw) -> std::optional<TradingClient::TransportMode> {
+        const QString normalized = raw.trimmed().toLower();
+        if (normalized.isEmpty() || normalized == QStringLiteral("grpc"))
+            return TradingClient::TransportMode::Grpc;
+        if (normalized == QStringLiteral("in-process") || normalized == QStringLiteral("inprocess")
+            || normalized == QStringLiteral("local"))
+            return TradingClient::TransportMode::InProcess;
+        return std::nullopt;
+    };
+
+    QString transportModeRaw = parser.value("transport-mode").trimmed();
+    if (transportModeRaw.isEmpty()) {
+        if (const auto envMode = envValue(kTransportModeEnv); envMode.has_value())
+            transportModeRaw = envMode->trimmed();
+    }
+
+    if (const auto modeOpt = parseTransportMode(transportModeRaw); modeOpt.has_value()) {
+        m_transportMode = modeOpt.value();
+    } else if (!transportModeRaw.isEmpty()) {
+        qCWarning(lcAppMetrics) << "Nieznany tryb transportu" << transportModeRaw
+                                << "– używam domyślnego 'grpc'.";
+        m_transportMode = TradingClient::TransportMode::Grpc;
+    } else {
+        m_transportMode = TradingClient::TransportMode::Grpc;
+    }
+    m_client.setTransportMode(m_transportMode);
+
+    QString datasetPath = parser.value("transport-dataset").trimmed();
+    if (datasetPath.isEmpty()) {
+        const QString localDataset = parser.value("local-core-dataset").trimmed();
+        if (!localDataset.isEmpty())
+            datasetPath = localDataset;
+    }
+    if (datasetPath.isEmpty()) {
+        if (const auto envDataset = envValue(kTransportDatasetEnv); envDataset.has_value())
+            datasetPath = envDataset->trimmed();
+    }
+    if (!datasetPath.isEmpty())
+        datasetPath = expandPath(datasetPath);
+    m_inProcessDatasetPath = datasetPath;
+    m_client.setInProcessDatasetPath(m_inProcessDatasetPath);
+
     QString endpoint = parser.value("endpoint");
-    configureLocalBotCoreService(parser, endpoint);
+    if (m_transportMode == TradingClient::TransportMode::Grpc) {
+        configureLocalBotCoreService(parser, endpoint);
+    } else {
+        m_localServiceEnabled = false;
+        endpoint.clear();
+    }
     m_client.setEndpoint(endpoint);
     m_client.setInstrument(instrument);
     m_instrument = instrument;
@@ -706,13 +817,17 @@ bool Application::applyParser(const QCommandLineParser& parser) {
 
     // Ogólny TLS (może być nadpisany przez sekcję gRPC)
     TradingClient::TlsConfig tlsConfig;
-    tlsConfig.enabled = parser.isSet("use-tls");
-    tlsConfig.rootCertificatePath = parser.value("tls-root-cert");
-    tlsConfig.clientCertificatePath = parser.value("tls-client-cert");
-    tlsConfig.clientKeyPath = parser.value("tls-client-key");
-    tlsConfig.serverNameOverride = parser.value("tls-server-name");
-    tlsConfig.pinnedServerFingerprint = parser.value("tls-pinned-sha256");
-    tlsConfig.requireClientAuth = parser.isSet("tls-require-client-auth");
+    if (m_transportMode == TradingClient::TransportMode::Grpc) {
+        tlsConfig.enabled = parser.isSet("use-tls");
+        tlsConfig.rootCertificatePath = parser.value("tls-root-cert");
+        tlsConfig.clientCertificatePath = parser.value("tls-client-cert");
+        tlsConfig.clientKeyPath = parser.value("tls-client-key");
+        tlsConfig.serverNameOverride = parser.value("tls-server-name");
+        tlsConfig.pinnedServerFingerprint = parser.value("tls-pinned-sha256");
+        tlsConfig.requireClientAuth = parser.isSet("tls-require-client-auth");
+    } else {
+        tlsConfig.enabled = false;
+    }
     m_client.setTlsConfig(tlsConfig);
 
     const int historyLimit = parser.value("history-limit").toInt();
@@ -790,261 +905,206 @@ bool Application::applyParser(const QCommandLineParser& parser) {
     m_preferredScreenConfigured = m_forcePrimaryScreen || m_preferredScreenIndex >= 0
         || !m_preferredScreenName.isEmpty();
 
-    // gRPC TLS – nadpisuje ogólny TLS jeśli podany
-    TradingClient::TlsConfig tradingTls;
-    tradingTls.enabled = parser.isSet("grpc-use-mtls");
-    const QString cliRootCert = parser.value("grpc-root-cert").trimmed();
-    if (!cliRootCert.isEmpty())
-        tradingTls.rootCertificatePath = expandPath(cliRootCert);
-    const QString cliClientCert = parser.value("grpc-client-cert").trimmed();
-    if (!cliClientCert.isEmpty())
-        tradingTls.clientCertificatePath = expandPath(cliClientCert);
-    const QString cliClientKey = parser.value("grpc-client-key").trimmed();
-    if (!cliClientKey.isEmpty())
-        tradingTls.clientKeyPath = expandPath(cliClientKey);
-    tradingTls.targetNameOverride = parser.value("grpc-target-name");
-    if (m_localServiceEnabled) {
-        tradingTls.enabled = false;
-        tradingTls.rootCertificatePath.clear();
-        tradingTls.clientCertificatePath.clear();
-        tradingTls.clientKeyPath.clear();
-        tradingTls.targetNameOverride.clear();
-    }
-    m_tradingTlsConfig = tradingTls;
-    m_healthTlsConfig = m_tradingTlsConfig;
-
-    const bool cliHealthTlsEnable = parser.isSet("health-use-tls");
-    const bool cliHealthTlsDisable = parser.isSet("health-disable-tls");
-    if (cliHealthTlsEnable && cliHealthTlsDisable) {
-        qCWarning(lcAppMetrics)
-            << "Podano jednocześnie --health-use-tls oraz --health-disable-tls. Priorytet ma wyłączenie TLS.";
-    }
-    if (cliHealthTlsEnable) {
-        m_healthTlsConfig.enabled = true;
-    }
-    if (cliHealthTlsDisable) {
-        m_healthTlsConfig.enabled = false;
-    }
-
-    const bool cliHealthRequireClientCert = parser.isSet("health-tls-require-client-auth");
-    if (cliHealthRequireClientCert) {
-        m_healthTlsConfig.requireClientAuth = true;
-    }
-
-    const bool cliHealthRootProvided = parser.isSet("health-tls-root-cert");
-    if (cliHealthRootProvided) {
-        const QString value = parser.value("health-tls-root-cert").trimmed();
-        m_healthTlsConfig.rootCertificatePath = value.isEmpty() ? QString() : expandPath(value);
-    }
-
-    const bool cliHealthClientCertProvided = parser.isSet("health-tls-client-cert");
-    if (cliHealthClientCertProvided) {
-        const QString value = parser.value("health-tls-client-cert").trimmed();
-        m_healthTlsConfig.clientCertificatePath = value.isEmpty() ? QString() : expandPath(value);
-    }
-
-    const bool cliHealthClientKeyProvided = parser.isSet("health-tls-client-key");
-    if (cliHealthClientKeyProvided) {
-        const QString value = parser.value("health-tls-client-key").trimmed();
-        m_healthTlsConfig.clientKeyPath = value.isEmpty() ? QString() : expandPath(value);
-    }
-
-    const bool cliHealthServerNameProvided = parser.isSet("health-tls-server-name");
-    if (cliHealthServerNameProvided) {
-        m_healthTlsConfig.serverNameOverride = parser.value("health-tls-server-name").trimmed();
-    }
-
-    const bool cliHealthTargetNameProvided = parser.isSet("health-tls-target-name");
-    if (cliHealthTargetNameProvided) {
-        m_healthTlsConfig.targetNameOverride = parser.value("health-tls-target-name").trimmed();
-    }
-
-    const bool cliHealthPinnedProvided = parser.isSet("health-tls-pinned-sha256");
-    if (cliHealthPinnedProvided) {
-        m_healthTlsConfig.pinnedServerFingerprint = parser.value("health-tls-pinned-sha256").trimmed();
-    }
-
-    QString cliTradingToken = parser.value("grpc-auth-token").trimmed();
-    QString cliTradingTokenFile = parser.value("grpc-auth-token-file").trimmed();
-    const bool cliTradingTokenProvided = !cliTradingToken.isEmpty();
-    const bool cliTradingTokenFileProvided = !cliTradingTokenFile.isEmpty();
-    if (cliTradingTokenProvided && cliTradingTokenFileProvided) {
-        qCWarning(lcAppMetrics)
-            << "Podano jednocześnie --grpc-auth-token oraz --grpc-auth-token-file. Użyję tokenu przekazanego bezpośrednio.";
-    }
-
     QString tradingAuthToken;
     QString tradingAuthTokenFile;
-    if (cliTradingTokenProvided) {
-        tradingAuthToken = cliTradingToken;
-    } else if (cliTradingTokenFileProvided) {
-        tradingAuthTokenFile = expandPath(cliTradingTokenFile);
-        tradingAuthToken = readTokenFile(tradingAuthTokenFile, QStringLiteral("TradingService"));
-    }
-
-    QString cliTradingRole = parser.value("grpc-rbac-role").trimmed();
-    const bool cliTradingRoleProvided = !cliTradingRole.isEmpty();
-    if (cliTradingRoleProvided) {
-        m_tradingRbacRole = cliTradingRole;
-    } else {
-        m_tradingRbacRole.clear();
-    }
-
-    QString cliTradingScopesRaw = parser.value("grpc-rbac-scopes").trimmed();
-    const bool cliTradingScopesProvided = !cliTradingScopesRaw.isEmpty();
-    if (cliTradingScopesProvided) {
-        m_tradingRbacScopes = splitScopesList(cliTradingScopesRaw);
-    } else {
-        m_tradingRbacScopes.clear();
-    }
-
-    QString cliTradingToken = parser.value("grpc-auth-token").trimmed();
-    QString cliTradingTokenFile = parser.value("grpc-auth-token-file").trimmed();
-    const bool cliTradingTokenProvided = !cliTradingToken.isEmpty();
-    const bool cliTradingTokenFileProvided = !cliTradingTokenFile.isEmpty();
-    if (cliTradingTokenProvided && cliTradingTokenFileProvided) {
-        qCWarning(lcAppMetrics)
-            << "Podano jednocześnie --grpc-auth-token oraz --grpc-auth-token-file. Użyję tokenu przekazanego bezpośrednio.";
-    }
-
-    if (cliTradingTokenProvided) {
-        m_tradingAuthToken = cliTradingToken;
-    } else if (cliTradingTokenFileProvided) {
-        m_tradingAuthToken = readTokenFile(cliTradingTokenFile, QStringLiteral("TradingService"));
-    } else {
-        m_tradingAuthToken.clear();
-    }
-
-    QString cliTradingRole = parser.value("grpc-rbac-role").trimmed();
-    const bool cliTradingRoleProvided = !cliTradingRole.isEmpty();
-    if (cliTradingRoleProvided) {
-        m_tradingRbacRole = cliTradingRole;
-    } else {
-        m_tradingRbacRole.clear();
-    }
-
-    QString cliTradingScopesRaw = parser.value("grpc-rbac-scopes").trimmed();
-    const bool cliTradingScopesProvided = !cliTradingScopesRaw.isEmpty();
-    if (cliTradingScopesProvided) {
-        m_tradingRbacScopes = splitScopesList(cliTradingScopesRaw);
-    } else {
-        m_tradingRbacScopes.clear();
-    }
-
-    // --- Telemetria ---
-    m_metricsEndpoint = parser.value("metrics-endpoint");
-    if (m_metricsEndpoint.isEmpty()) {
-        // Fallback: użyj endpointu tradingowego, jeśli nie podano dedykowanego dla MetricsService
-        m_metricsEndpoint = endpoint;
-    }
-    m_metricsTag = parser.value("metrics-tag");
-    m_metricsEnabled = !(parser.isSet("disable-metrics") || parser.isSet("no-metrics"));
-
-    QString cliToken = parser.value("metrics-auth-token").trimmed();
-    QString cliTokenFile = parser.value("metrics-auth-token-file").trimmed();
-    const bool cliTokenProvided = !cliToken.isEmpty();
-    const bool cliTokenFileProvided = !cliTokenFile.isEmpty();
-    if (cliTokenProvided && cliTokenFileProvided) {
-        qCWarning(lcAppMetrics)
-            << "Podano jednocześnie --metrics-auth-token oraz --metrics-auth-token-file. Użyję tokenu przekazanego bezpośrednio.";
-    }
-
     QString metricsAuthToken;
     QString metricsAuthTokenFile;
-    if (cliTokenProvided) {
-        metricsAuthToken = cliToken;
-    } else if (cliTokenFileProvided) {
-        metricsAuthTokenFile = expandPath(cliTokenFile);
-        metricsAuthToken = readTokenFile(metricsAuthTokenFile);
-    }
-
-    m_metricsRbacRole = parser.value("metrics-rbac-role").trimmed();
-
-    // --- HealthService ---
-    QString cliHealthEndpoint = parser.value("health-endpoint").trimmed();
-    const bool cliHealthEndpointProvided = !cliHealthEndpoint.isEmpty();
-    if (cliHealthEndpointProvided) {
-        m_healthEndpoint = cliHealthEndpoint;
-    } else {
-        m_healthEndpoint.clear();
-    }
-
-    QString cliHealthToken = parser.value("health-auth-token").trimmed();
-    QString cliHealthTokenFile = parser.value("health-auth-token-file").trimmed();
-    const bool cliHealthTokenProvided = !cliHealthToken.isEmpty();
-    const bool cliHealthTokenFileProvided = !cliHealthTokenFile.isEmpty();
-    if (cliHealthTokenProvided && cliHealthTokenFileProvided) {
-        qCWarning(lcAppMetrics)
-            << "Podano jednocześnie --health-auth-token oraz --health-auth-token-file. Użyję tokenu przekazanego bezpośrednio.";
-    }
-
     QString healthAuthToken;
     QString healthAuthTokenFile;
-    if (cliHealthTokenProvided) {
-        healthAuthToken = cliHealthToken;
-    } else if (cliHealthTokenFileProvided) {
-        healthAuthTokenFile = expandPath(cliHealthTokenFile);
-        healthAuthToken = readTokenFile(healthAuthTokenFile, QStringLiteral("HealthService"));
-    }
 
-    QString cliHealthRole = parser.value("health-rbac-role").trimmed();
-    const bool cliHealthRoleProvided = !cliHealthRole.isEmpty();
-    if (cliHealthRoleProvided) {
-        m_healthRbacRole = cliHealthRole;
-    } else {
-        m_healthRbacRole.clear();
-    }
-
-    QString cliHealthScopesRaw = parser.value("health-rbac-scopes").trimmed();
-    const bool cliHealthScopesProvided = !cliHealthScopesRaw.isEmpty();
-    if (cliHealthScopesProvided) {
-        m_healthRbacScopes = splitScopesList(cliHealthScopesRaw);
-    } else {
-        m_healthRbacScopes.clear();
-    }
-
-    bool healthIntervalOk = false;
-    const QString cliHealthIntervalRaw = parser.value("health-refresh-interval");
-    int healthIntervalSeconds = cliHealthIntervalRaw.toInt(&healthIntervalOk);
-    if (!healthIntervalOk || healthIntervalSeconds <= 0) {
-        if (parser.isSet("health-refresh-interval")) {
-            qCWarning(lcAppMetrics)
-                << "Nieprawidłowy --health-refresh-interval:" << cliHealthIntervalRaw
-                << "– używam wartości domyślnej 60 s.";
+    if (m_transportMode == TradingClient::TransportMode::Grpc) {
+        TradingClient::TlsConfig tradingTls;
+        tradingTls.enabled = parser.isSet("grpc-use-mtls");
+        const QString cliRootCert = parser.value("grpc-root-cert").trimmed();
+        if (!cliRootCert.isEmpty())
+            tradingTls.rootCertificatePath = expandPath(cliRootCert);
+        const QString cliClientCert = parser.value("grpc-client-cert").trimmed();
+        if (!cliClientCert.isEmpty())
+            tradingTls.clientCertificatePath = expandPath(cliClientCert);
+        const QString cliClientKey = parser.value("grpc-client-key").trimmed();
+        if (!cliClientKey.isEmpty())
+            tradingTls.clientKeyPath = expandPath(cliClientKey);
+        tradingTls.targetNameOverride = parser.value("grpc-target-name");
+        if (m_localServiceEnabled) {
+            tradingTls.enabled = false;
+            tradingTls.rootCertificatePath.clear();
+            tradingTls.clientCertificatePath.clear();
+            tradingTls.clientKeyPath.clear();
+            tradingTls.targetNameOverride.clear();
         }
-        healthIntervalSeconds = 60;
-    }
-    m_healthRefreshIntervalSeconds = healthIntervalSeconds;
-    m_healthAutoRefreshEnabled = !parser.isSet("health-disable-auto-refresh");
+        m_tradingTlsConfig = tradingTls;
+        m_healthTlsConfig = m_tradingTlsConfig;
 
-    applyTradingTlsEnvironmentOverrides(parser);
-    configureTradingTlsWatchers();
-    applyTradingAuthEnvironmentOverrides(parser,
-                                         cliTradingTokenProvided,
-                                         cliTradingTokenFileProvided,
-                                         cliTradingRoleProvided,
-                                         cliTradingScopesProvided,
-                                         tradingAuthToken,
-                                         tradingAuthTokenFile);
-    applyHealthEnvironmentOverrides(parser,
-                                    cliHealthEndpointProvided,
-                                    cliHealthTokenProvided,
-                                    cliHealthTokenFileProvided,
-                                    cliHealthRoleProvided,
-                                    cliHealthScopesProvided,
-                                    parser.isSet("health-refresh-interval"),
-                                    cliHealthTlsEnable,
-                                    cliHealthTlsDisable,
-                                    cliHealthRequireClientCert,
-                                    cliHealthRootProvided,
-                                    cliHealthClientCertProvided,
-                                    cliHealthClientKeyProvided,
-                                    cliHealthServerNameProvided,
-                                    cliHealthTargetNameProvided,
-                                    cliHealthPinnedProvided,
-                                    healthAuthToken,
-                                    healthAuthTokenFile);
-    configureHealthTlsWatchers();
+        const bool cliHealthTlsEnable = parser.isSet("health-use-tls");
+        const bool cliHealthTlsDisable = parser.isSet("health-disable-tls");
+        if (cliHealthTlsEnable && cliHealthTlsDisable) {
+            qCWarning(lcAppMetrics)
+                << "Podano jednocześnie --health-use-tls oraz --health-disable-tls. Priorytet ma wyłączenie TLS.";
+        }
+        if (cliHealthTlsEnable)
+            m_healthTlsConfig.enabled = true;
+        if (cliHealthTlsDisable)
+            m_healthTlsConfig.enabled = false;
+
+        if (parser.isSet("health-tls-require-client-auth"))
+            m_healthTlsConfig.requireClientAuth = true;
+        if (parser.isSet("health-tls-root-cert")) {
+            const QString value = parser.value("health-tls-root-cert").trimmed();
+            m_healthTlsConfig.rootCertificatePath = value.isEmpty() ? QString() : expandPath(value);
+        }
+        if (parser.isSet("health-tls-client-cert")) {
+            const QString value = parser.value("health-tls-client-cert").trimmed();
+            m_healthTlsConfig.clientCertificatePath = value.isEmpty() ? QString() : expandPath(value);
+        }
+        if (parser.isSet("health-tls-client-key")) {
+            const QString value = parser.value("health-tls-client-key").trimmed();
+            m_healthTlsConfig.clientKeyPath = value.isEmpty() ? QString() : expandPath(value);
+        }
+        if (parser.isSet("health-tls-server-name"))
+            m_healthTlsConfig.serverNameOverride = parser.value("health-tls-server-name").trimmed();
+        if (parser.isSet("health-tls-target-name"))
+            m_healthTlsConfig.targetNameOverride = parser.value("health-tls-target-name").trimmed();
+        if (parser.isSet("health-tls-pinned-sha256"))
+            m_healthTlsConfig.pinnedServerFingerprint = parser.value("health-tls-pinned-sha256").trimmed();
+
+        const QString cliTradingToken = parser.value("grpc-auth-token").trimmed();
+        const QString cliTradingTokenFile = parser.value("grpc-auth-token-file").trimmed();
+        const bool cliTradingTokenProvided = !cliTradingToken.isEmpty();
+        const bool cliTradingTokenFileProvided = !cliTradingTokenFile.isEmpty();
+        if (cliTradingTokenProvided && cliTradingTokenFileProvided) {
+            qCWarning(lcAppMetrics)
+                << "Podano jednocześnie --grpc-auth-token oraz --grpc-auth-token-file. Użyję tokenu przekazanego bezpośrednio.";
+        }
+        if (cliTradingTokenProvided) {
+            tradingAuthToken = cliTradingToken;
+        } else if (cliTradingTokenFileProvided) {
+            tradingAuthTokenFile = expandPath(cliTradingTokenFile);
+            tradingAuthToken = readTokenFile(tradingAuthTokenFile, QStringLiteral("TradingService"));
+        }
+
+        const QString cliTradingRole = parser.value("grpc-rbac-role").trimmed();
+        if (!cliTradingRole.isEmpty())
+            m_tradingRbacRole = cliTradingRole;
+        else
+            m_tradingRbacRole.clear();
+
+        const QString cliTradingScopesRaw = parser.value("grpc-rbac-scopes").trimmed();
+        if (!cliTradingScopesRaw.isEmpty())
+            m_tradingRbacScopes = splitScopesList(cliTradingScopesRaw);
+        else
+            m_tradingRbacScopes.clear();
+
+        m_metricsEndpoint = parser.value("metrics-endpoint");
+        if (m_metricsEndpoint.isEmpty())
+            m_metricsEndpoint = endpoint;
+        m_metricsTag = parser.value("metrics-tag");
+        m_metricsEnabled = !(parser.isSet("disable-metrics") || parser.isSet("no-metrics"));
+
+        const QString cliMetricsToken = parser.value("metrics-auth-token").trimmed();
+        const QString cliMetricsTokenFile = parser.value("metrics-auth-token-file").trimmed();
+        const bool cliMetricsTokenProvided = !cliMetricsToken.isEmpty();
+        const bool cliMetricsTokenFileProvided = !cliMetricsTokenFile.isEmpty();
+        if (cliMetricsTokenProvided && cliMetricsTokenFileProvided) {
+            qCWarning(lcAppMetrics)
+                << "Podano jednocześnie --metrics-auth-token oraz --metrics-auth-token-file. Użyję tokenu przekazanego bezpośrednio.";
+        }
+        if (cliMetricsTokenProvided) {
+            metricsAuthToken = cliMetricsToken;
+        } else if (cliMetricsTokenFileProvided) {
+            metricsAuthTokenFile = expandPath(cliMetricsTokenFile);
+            metricsAuthToken = readTokenFile(metricsAuthTokenFile);
+        }
+        m_metricsRbacRole = parser.value("metrics-rbac-role").trimmed();
+
+        const QString cliHealthEndpoint = parser.value("health-endpoint").trimmed();
+        const bool cliHealthEndpointProvided = !cliHealthEndpoint.isEmpty();
+        if (cliHealthEndpointProvided)
+            m_healthEndpoint = cliHealthEndpoint;
+        else
+            m_healthEndpoint.clear();
+
+        const QString cliHealthToken = parser.value("health-auth-token").trimmed();
+        const QString cliHealthTokenFile = parser.value("health-auth-token-file").trimmed();
+        const bool cliHealthTokenProvided = !cliHealthToken.isEmpty();
+        const bool cliHealthTokenFileProvided = !cliHealthTokenFile.isEmpty();
+        if (cliHealthTokenProvided && cliHealthTokenFileProvided) {
+            qCWarning(lcAppMetrics)
+                << "Podano jednocześnie --health-auth-token oraz --health-auth-token-file. Użyję tokenu przekazanego bezpośrednio.";
+        }
+        if (cliHealthTokenProvided) {
+            healthAuthToken = cliHealthToken;
+        } else if (cliHealthTokenFileProvided) {
+            healthAuthTokenFile = expandPath(cliHealthTokenFile);
+            healthAuthToken = readTokenFile(healthAuthTokenFile, QStringLiteral("HealthService"));
+        }
+
+        const QString cliHealthRole = parser.value("health-rbac-role").trimmed();
+        if (!cliHealthRole.isEmpty())
+            m_healthRbacRole = cliHealthRole;
+        else
+            m_healthRbacRole.clear();
+
+        const QString cliHealthScopesRaw = parser.value("health-rbac-scopes").trimmed();
+        if (!cliHealthScopesRaw.isEmpty())
+            m_healthRbacScopes = splitScopesList(cliHealthScopesRaw);
+        else
+            m_healthRbacScopes.clear();
+
+        applyTradingTlsEnvironmentOverrides(parser);
+        configureTradingTlsWatchers();
+        applyTradingAuthEnvironmentOverrides(parser,
+                                             cliTradingTokenProvided,
+                                             cliTradingTokenFileProvided,
+                                             !m_tradingRbacRole.isEmpty(),
+                                             !m_tradingRbacScopes.isEmpty(),
+                                             tradingAuthToken,
+                                             tradingAuthTokenFile);
+        applyHealthEnvironmentOverrides(parser,
+                                        cliHealthEndpointProvided,
+                                        cliHealthTokenProvided,
+                                        cliHealthTokenFileProvided,
+                                        !m_healthRbacRole.isEmpty(),
+                                        !m_healthRbacScopes.isEmpty(),
+                                        parser.isSet("health-refresh-interval"),
+                                        cliHealthTlsEnable,
+                                        cliHealthTlsDisable,
+                                        parser.isSet("health-tls-require-client-auth"),
+                                        parser.isSet("health-tls-root-cert"),
+                                        parser.isSet("health-tls-client-cert"),
+                                        parser.isSet("health-tls-client-key"),
+                                        parser.isSet("health-tls-server-name"),
+                                        parser.isSet("health-tls-target-name"),
+                                        parser.isSet("health-tls-pinned-sha256"),
+                                        healthAuthToken,
+                                        healthAuthTokenFile);
+        configureHealthTlsWatchers();
+    } else {
+        m_tradingTlsConfig = TradingClient::TlsConfig{};
+        m_healthTlsConfig = GrpcTlsConfig{};
+        m_tradingRbacRole.clear();
+        m_tradingRbacScopes.clear();
+        if (parser.isSet("metrics-endpoint")
+            && parser.value("metrics-endpoint").trimmed().compare(QStringLiteral("in-process"), Qt::CaseInsensitive) != 0) {
+            qCWarning(lcAppMetrics)
+                << "Tryb in-process ignoruje --metrics-endpoint i wymusza lokalny transport 'in-process'.";
+        }
+        m_metricsEndpoint = QStringLiteral("in-process");
+        m_metricsTag = parser.value("metrics-tag");
+        m_metricsEnabled = !(parser.isSet("disable-metrics") || parser.isSet("no-metrics"));
+        m_metricsRbacRole.clear();
+        metricsAuthToken.clear();
+        metricsAuthTokenFile.clear();
+        if (parser.isSet("health-endpoint")
+            && parser.value("health-endpoint").trimmed().compare(QStringLiteral("in-process"), Qt::CaseInsensitive) != 0) {
+            qCWarning(lcAppMetrics)
+                << "Tryb in-process ignoruje --health-endpoint i korzysta z klienta 'in-process'.";
+        }
+        m_healthEndpoint = QStringLiteral("in-process");
+        m_healthRbacRole.clear();
+        m_healthRbacScopes.clear();
+        healthAuthToken.clear();
+        healthAuthTokenFile.clear();
+    }
 
     m_tradingAuthToken = tradingAuthToken.trimmed();
     setTradingAuthTokenFile(tradingAuthTokenFile);
@@ -1057,6 +1117,19 @@ bool Application::applyParser(const QCommandLineParser& parser) {
     setHealthAuthTokenFile(healthAuthTokenFile);
 
     if (m_healthController) {
+        if (m_transportMode == TradingClient::TransportMode::InProcess) {
+            if (!m_inProcessHealthClient)
+                m_inProcessHealthClient = std::make_shared<InProcessHealthClient>();
+            m_healthController->setHealthClientForTesting(m_inProcessHealthClient);
+            m_usingInProcessHealthClient = true;
+        } else {
+            if (!m_grpcHealthClient)
+                m_grpcHealthClient = std::make_shared<HealthClient>();
+            if (m_usingInProcessHealthClient) {
+                m_healthController->setHealthClientForTesting(m_grpcHealthClient);
+            }
+            m_usingInProcessHealthClient = false;
+        }
         const QString endpointForHealth = !m_healthEndpoint.isEmpty() ? m_healthEndpoint : endpoint;
         m_healthController->setEndpoint(endpointForHealth);
         applyHealthTlsConfig();
@@ -1084,7 +1157,6 @@ bool Application::applyParser(const QCommandLineParser& parser) {
         m_healthController->setRefreshIntervalSeconds(m_healthRefreshIntervalSeconds);
         m_healthController->setAutoRefreshEnabled(m_healthAutoRefreshEnabled);
     }
-                                         cliTradingScopesProvided);
     m_client.setTlsConfig(m_tradingTlsConfig);
     m_client.setAuthToken(m_tradingAuthToken);
     m_client.setRbacRole(m_tradingRbacRole);
@@ -1148,15 +1220,27 @@ bool Application::applyParser(const QCommandLineParser& parser) {
         m_licenseController->setFingerprintDocumentPath(expandPath(cliExpectedFingerprint));
     m_licenseController->initialize();
 
-    applyMetricsEnvironmentOverrides(parser,
-                                     cliTokenProvided,
-                                     cliTokenFileProvided,
-                                     metricsAuthToken,
-                                     metricsAuthTokenFile);
-    configureMetricsTlsWatchers();
+    if (m_transportMode == TradingClient::TransportMode::Grpc) {
+        applyMetricsEnvironmentOverrides(parser,
+                                         cliTokenProvided,
+                                         cliTokenFileProvided,
+                                         metricsAuthToken,
+                                         metricsAuthTokenFile);
+        configureMetricsTlsWatchers();
+    }
     applyMetricsTlsConfig();
     m_metricsAuthToken = metricsAuthToken.trimmed();
     setMetricsAuthTokenFile(metricsAuthTokenFile);
+
+    if (!validateTransportConfiguration(endpoint,
+                                        m_inProcessDatasetPath,
+                                        m_tradingTlsConfig,
+                                        m_tlsConfig,
+                                        m_healthTlsConfig,
+                                        m_metricsEndpoint,
+                                        m_healthEndpoint)) {
+        return false;
+    }
 
     if (m_securityController) {
         if (!parser.value("security-profiles-path").trimmed().isEmpty()) {
@@ -2708,6 +2792,190 @@ bool Application::setDecisionLogPathInternal(const QString& path, bool emitSigna
     m_decisionLogModel.setLogPath(m_decisionLogPath);
     if (emitSignal)
         Q_EMIT decisionLogPathChanged();
+    return true;
+}
+
+bool Application::validateTransportConfiguration(const QString& endpoint,
+                                                 const QString& datasetPath,
+                                                 const TradingClient::TlsConfig& tradingTls,
+                                                 const TelemetryTlsConfig& metricsTls,
+                                                 const GrpcTlsConfig& healthTls,
+                                                 const QString& metricsEndpoint,
+                                                 const QString& healthEndpoint) const
+{
+    QStringList errors;
+
+    auto requireExistingFile = [&](const QString& path, const QString& description) {
+        const QString trimmed = path.trimmed();
+        if (trimmed.isEmpty()) {
+            errors.append(description);
+            return;
+        }
+        const QFileInfo info(trimmed);
+        if (!info.exists() || !info.isFile()) {
+            errors.append(QStringLiteral("Plik '%1' wskazany dla %2 nie istnieje lub nie jest regularnym plikiem.")
+                              .arg(trimmed, description));
+        }
+    };
+
+    auto validateGrpcTls = [&](const TradingClient::TlsConfig& tls, const QString& contextLabel) {
+        if (!tls.enabled) {
+            if (tls.requireClientAuth) {
+                errors.append(QStringLiteral("Włączono mTLS (%1), ale TLS jest wyłączony.").arg(contextLabel));
+            }
+            if (!tls.clientCertificatePath.trimmed().isEmpty() || !tls.clientKeyPath.trimmed().isEmpty()) {
+                errors.append(QStringLiteral("Podano materiał klienta TLS (%1), lecz połączenie TLS jest wyłączone.")
+                                  .arg(contextLabel));
+            }
+            return;
+        }
+
+        if (tls.rootCertificatePath.trimmed().isEmpty()) {
+            errors.append(QStringLiteral("Brak ścieżki root CA dla %1 (pole --tls-root-cert lub grpc.tls.root_cert).").arg(contextLabel));
+        } else {
+            requireExistingFile(tls.rootCertificatePath, QStringLiteral("root CA (%1)").arg(contextLabel));
+        }
+
+        const bool certEmpty = tls.clientCertificatePath.trimmed().isEmpty();
+        const bool keyEmpty = tls.clientKeyPath.trimmed().isEmpty();
+        if (tls.requireClientAuth) {
+            if (certEmpty || keyEmpty) {
+                errors.append(QStringLiteral("Włączono mTLS dla %1, ale nie podano zarówno certyfikatu, jak i klucza klienta.")
+                                  .arg(contextLabel));
+            }
+        }
+        if (certEmpty != keyEmpty) {
+            errors.append(QStringLiteral("Podano tylko część materiału klienta (certyfikat/klucz) dla %1.").arg(contextLabel));
+        }
+        if (!certEmpty) {
+            requireExistingFile(tls.clientCertificatePath, QStringLiteral("certyfikat klienta (%1)").arg(contextLabel));
+        }
+        if (!keyEmpty) {
+            requireExistingFile(tls.clientKeyPath, QStringLiteral("klucz klienta (%1)").arg(contextLabel));
+        }
+    };
+
+    auto validateGrpcTlsHealth = [&](const GrpcTlsConfig& tls, const QString& contextLabel) {
+        if (!tls.enabled) {
+            if (tls.requireClientAuth) {
+                errors.append(QStringLiteral("Włączono mTLS (%1), ale TLS jest wyłączony.").arg(contextLabel));
+            }
+            if (!tls.clientCertificatePath.trimmed().isEmpty() || !tls.clientKeyPath.trimmed().isEmpty()) {
+                errors.append(QStringLiteral("Podano materiał klienta TLS (%1), lecz połączenie TLS jest wyłączone.")
+                                  .arg(contextLabel));
+            }
+            return;
+        }
+
+        if (tls.rootCertificatePath.trimmed().isEmpty()) {
+            errors.append(QStringLiteral("Brak ścieżki root CA dla %1 (parametr --health-tls-root-cert / grpc.tls.root_cert).").arg(contextLabel));
+        } else {
+            requireExistingFile(tls.rootCertificatePath, QStringLiteral("root CA (%1)").arg(contextLabel));
+        }
+
+        const bool certEmpty = tls.clientCertificatePath.trimmed().isEmpty();
+        const bool keyEmpty = tls.clientKeyPath.trimmed().isEmpty();
+        if (tls.requireClientAuth) {
+            if (certEmpty || keyEmpty) {
+                errors.append(QStringLiteral("Włączono mTLS dla %1, ale nie dostarczono pełnej pary certyfikat/klucz.").arg(contextLabel));
+            }
+        }
+        if (certEmpty != keyEmpty) {
+            errors.append(QStringLiteral("Podano tylko certyfikat lub tylko klucz klienta dla %1.").arg(contextLabel));
+        }
+        if (!certEmpty) {
+            requireExistingFile(tls.clientCertificatePath, QStringLiteral("certyfikat klienta (%1)").arg(contextLabel));
+        }
+        if (!keyEmpty) {
+            requireExistingFile(tls.clientKeyPath, QStringLiteral("klucz klienta (%1)").arg(contextLabel));
+        }
+    };
+
+    auto validateMetricsTls = [&](const TelemetryTlsConfig& tls) {
+        if (!tls.enabled) {
+            if (!tls.clientCertificatePath.trimmed().isEmpty() || !tls.clientKeyPath.trimmed().isEmpty()
+                || !tls.rootCertificatePath.trimmed().isEmpty() || !tls.pinnedServerSha256.trimmed().isEmpty()) {
+                errors.append(QStringLiteral("Podano konfigurację TLS telemetrii, ale TLS jest wyłączony (użyj --metrics-use-tls).");
+            }
+            return;
+        }
+
+        if (tls.rootCertificatePath.trimmed().isEmpty()) {
+            errors.append(QStringLiteral("Brak ścieżki root CA dla MetricsService (--metrics-root-cert / telemetry.root_cert)."));
+        } else {
+            requireExistingFile(tls.rootCertificatePath, QStringLiteral("root CA (MetricsService)"));
+        }
+
+        const bool certEmpty = tls.clientCertificatePath.trimmed().isEmpty();
+        const bool keyEmpty = tls.clientKeyPath.trimmed().isEmpty();
+        if (certEmpty != keyEmpty) {
+            errors.append(QStringLiteral("Podano tylko certyfikat lub tylko klucz klienta dla MetricsService."));
+        }
+        if (!certEmpty) {
+            requireExistingFile(tls.clientCertificatePath, QStringLiteral("certyfikat klienta (MetricsService)"));
+        }
+        if (!keyEmpty) {
+            requireExistingFile(tls.clientKeyPath, QStringLiteral("klucz klienta (MetricsService)"));
+        }
+    };
+
+    if (m_transportMode == TradingClient::TransportMode::Grpc) {
+        const QString trimmedEndpoint = endpoint.trimmed();
+        if (trimmedEndpoint.isEmpty()) {
+            errors.append(QStringLiteral("Tryb gRPC wymaga poprawnego endpointu --endpoint host:port."));
+        }
+
+        validateGrpcTls(tradingTls, QStringLiteral("TradingService"));
+
+        if (m_metricsEnabled) {
+            if (metricsEndpoint.trimmed().isEmpty()) {
+                errors.append(QStringLiteral("Telemetria jest włączona, ale nie podano --metrics-endpoint."));
+            }
+            validateMetricsTls(metricsTls);
+        }
+
+        const QString effectiveHealthEndpoint = healthEndpoint.trimmed().isEmpty() ? trimmedEndpoint : healthEndpoint.trimmed();
+        if (effectiveHealthEndpoint.isEmpty()) {
+            errors.append(QStringLiteral("Nie określono endpointu HealthService (--health-endpoint)."));
+        }
+        validateGrpcTlsHealth(healthTls, QStringLiteral("HealthService"));
+    } else {
+        if (datasetPath.trimmed().isEmpty()) {
+            errors.append(QStringLiteral("Tryb in-process wymaga wskazania datasetu (--transport-dataset lub transport.dataset w konfiguracji)."));
+        } else {
+            const QFileInfo datasetInfo(datasetPath);
+            if (!datasetInfo.exists() || !datasetInfo.isFile()) {
+                errors.append(QStringLiteral("Dataset in-process '%1' nie istnieje.").arg(datasetPath));
+            }
+        }
+
+        if (tradingTls.enabled) {
+            errors.append(QStringLiteral("TLS dla TradingService nie jest wspierany w trybie in-process."));
+        }
+        if (healthTls.enabled) {
+            errors.append(QStringLiteral("TLS dla HealthService nie jest wspierany w trybie in-process."));
+        }
+        if (metricsTls.enabled) {
+            errors.append(QStringLiteral("TLS telemetrii nie jest wspierany w trybie in-process."));
+        }
+
+        if (m_metricsEnabled && !metricsEndpoint.trimmed().startsWith(QStringLiteral("in-process"), Qt::CaseInsensitive)) {
+            errors.append(QStringLiteral("Tryb in-process wymaga ustawienia telemetrii na endpoint 'in-process'."));
+        }
+
+        if (!healthEndpoint.trimmed().isEmpty()
+            && !healthEndpoint.trimmed().startsWith(QStringLiteral("in-process"), Qt::CaseInsensitive)) {
+            errors.append(QStringLiteral("Tryb in-process wymaga ustawienia HealthService na endpoint 'in-process'."));
+        }
+    }
+
+    if (!errors.isEmpty()) {
+        for (const QString& error : std::as_const(errors)) {
+            qCWarning(lcAppMetrics) << error;
+        }
+        return false;
+    }
+
     return true;
 }
 
@@ -4677,6 +4945,12 @@ void Application::ensureTelemetry() {
             return;
         }
         auto reporter = std::make_unique<UiTelemetryReporter>(this);
+        if (m_transportMode == TradingClient::TransportMode::InProcess) {
+            if (!m_inProcessMetricsClient)
+                m_inProcessMetricsClient = std::make_shared<InProcessMetricsClient>();
+            reporter->setMetricsClientForTesting(m_inProcessMetricsClient);
+            m_usingInProcessMetricsClient = true;
+        }
         m_telemetry = std::move(reporter);
     }
     if (!m_telemetry)
@@ -4690,6 +4964,19 @@ void Application::ensureTelemetry() {
     }
 
     if (auto* uiReporter = dynamic_cast<UiTelemetryReporter*>(m_telemetry.get())) {
+        if (m_transportMode == TradingClient::TransportMode::InProcess) {
+            if (!m_inProcessMetricsClient)
+                m_inProcessMetricsClient = std::make_shared<InProcessMetricsClient>();
+            if (!m_usingInProcessMetricsClient) {
+                uiReporter->setMetricsClientForTesting(m_inProcessMetricsClient);
+                m_usingInProcessMetricsClient = true;
+            }
+        } else if (m_usingInProcessMetricsClient) {
+            if (!m_grpcMetricsClient)
+                m_grpcMetricsClient = std::make_shared<MetricsClient>();
+            uiReporter->setMetricsClientForTesting(m_grpcMetricsClient);
+            m_usingInProcessMetricsClient = false;
+        }
         connect(uiReporter, &UiTelemetryReporter::pendingRetryCountChanged,
                 this, &Application::handleTelemetryPendingRetryCountChanged,
                 Qt::UniqueConnection);

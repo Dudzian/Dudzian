@@ -1624,4 +1624,93 @@ class AIDecisionLoop:
         return evaluations
 
 
-__all__ = ["TradingController", "DailyTrendController", "ControllerSignal", "AIDecisionLoop"]
+@dataclass(slots=True)
+class RuntimeInProcessStub:
+    """Prosty stub danych runtime wykorzystywany w testach UI.
+
+    Umożliwia generowanie syntetycznych świec OHLCV oraz migawki ryzyka
+    odpowiadającej temu, co wbudowany transport in-process udostępnia
+    aplikacji desktopowej. Dzięki temu testy mogą deterministycznie
+    zasilać warstwę prezentacji danymi bez uruchamiania pełnego
+    backendu."""
+
+    base_price: float = 25_000.0
+    volatility_bps: float = 35.0
+    candle_count: int = 120
+    interval_seconds: int = 60
+
+    def build_candles(self) -> list[dict[str, float | int]]:
+        """Zwraca listę słowników reprezentujących świece OHLCV."""
+
+        candles: list[dict[str, float | int]] = []
+        timestamp = datetime.now(timezone.utc) - timedelta(seconds=self.interval_seconds * self.candle_count)
+        price = float(self.base_price)
+        for sequence in range(self.candle_count):
+            timestamp += timedelta(seconds=self.interval_seconds)
+            drift = math.sin(sequence / 8.0) * (self.volatility_bps / 10_000.0) * price
+            open_price = price
+            close_price = max(1.0, price + drift)
+            high = max(open_price, close_price) * 1.002
+            low = min(open_price, close_price) * 0.998
+            volume = 1.0 + (sequence % 5) * 0.25
+            candles.append(
+                {
+                    "timestamp": timestamp,
+                    "open": float(open_price),
+                    "high": float(high),
+                    "low": float(low),
+                    "close": float(close_price),
+                    "volume": float(volume),
+                    "sequence": sequence,
+                }
+            )
+            price = close_price
+        return candles
+
+    def build_risk_snapshot(self) -> Mapping[str, object]:
+        """Zwraca słownik z danymi ryzyka kompatybilny z RiskSnapshotData."""
+
+        generated_at = datetime.now(timezone.utc)
+        return {
+            "profileLabel": "BALANCED",
+            "profileEnum": 1,
+            "portfolioValue": self.base_price * 1.0,
+            "currentDrawdown": 0.015,
+            "maxDailyLoss": 0.05,
+            "usedLeverage": 1.5,
+            "generatedAt": generated_at,
+            "exposures": [
+                {
+                    "code": "max_notional",
+                    "maxValue": 5_000.0,
+                    "currentValue": 1_200.0,
+                    "thresholdValue": 4_500.0,
+                },
+                {
+                    "code": "max_positions",
+                    "maxValue": 10.0,
+                    "currentValue": 3.0,
+                    "thresholdValue": 8.0,
+                },
+            ],
+            "hasData": True,
+        }
+
+    def build_health_payload(self) -> Mapping[str, object]:
+        """Zwraca dane health-checka spójne z klientem in-process."""
+
+        started_at = datetime.now(timezone.utc) - timedelta(hours=1)
+        return {
+            "version": "in-process",
+            "gitCommit": "local",
+            "startedAt": started_at,
+        }
+
+
+__all__ = [
+    "TradingController",
+    "DailyTrendController",
+    "ControllerSignal",
+    "AIDecisionLoop",
+    "RuntimeInProcessStub",
+]

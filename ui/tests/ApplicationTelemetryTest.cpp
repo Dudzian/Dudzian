@@ -9,12 +9,15 @@
 #include <QScreen>
 #include <QSignalSpy>
 #include <QTemporaryDir>
+#include <QtMath>
 
 #include "app/Application.hpp"
 #include "telemetry/TelemetryReporter.hpp"
 #include "telemetry/TelemetryTlsConfig.hpp"
 #include "telemetry/UiTelemetryReporter.hpp"
 #include "grpc/MetricsClient.hpp"
+#include "health/HealthStatusController.hpp"
+#include "models/RiskStateModel.hpp"
 #include "trading.grpc.pb.h"
 
 #include <memory>
@@ -139,6 +142,7 @@ private slots:
     void testScreenMetadataForwarding();
     void testTelemetryPendingRetryExposure();
     void testTelemetryPendingRetryResetOnReporterSwap();
+    void testInProcessTransportMode();
 };
 
 class RejectingMetricsClient final : public MetricsClientInterface {
@@ -183,6 +187,32 @@ private:
     QString m_authToken;
     QString m_role;
     std::deque<Result> m_results;
+    std::vector<botcore::trading::v1::MetricsSnapshot> m_snapshots;
+};
+
+class RecordingMetricsClient final : public MetricsClientInterface {
+public:
+    void setEndpoint(const QString& endpoint) override { m_endpoint = endpoint; }
+    void setTlsConfig(const TelemetryTlsConfig& config) override { m_tlsConfig = config; }
+    void setAuthToken(const QString& token) override { m_authToken = token; }
+    void setRbacRole(const QString& role) override { m_role = role; }
+
+    bool pushSnapshot(const botcore::trading::v1::MetricsSnapshot& snapshot,
+                      QString* errorMessage = nullptr) override
+    {
+        if (errorMessage)
+            errorMessage->clear();
+        m_snapshots.push_back(snapshot);
+        return true;
+    }
+
+    const std::vector<botcore::trading::v1::MetricsSnapshot>& snapshots() const { return m_snapshots; }
+
+private:
+    QString m_endpoint;
+    TelemetryTlsConfig m_tlsConfig;
+    QString m_authToken;
+    QString m_role;
     std::vector<botcore::trading::v1::MetricsSnapshot> m_snapshots;
 };
 
@@ -421,6 +451,67 @@ void ApplicationTelemetryTest::testTelemetryPendingRetryResetOnReporterSwap() {
     // Nowy reporter otrzymuje konfigurację telemetrii.
     QCOMPARE(fallbackPtr->m_endpoint, QStringLiteral("dummy:5000"));
     QCOMPARE(fallbackPtr->m_windowCount, 1);
+}
+
+void ApplicationTelemetryTest::testInProcessTransportMode()
+{
+    QQmlApplicationEngine engine;
+    Application app(engine);
+
+    auto reporter = std::make_unique<UiTelemetryReporter>();
+    auto metrics = std::make_shared<RecordingMetricsClient>();
+    reporter->setMetricsClientForTesting(metrics);
+    app.setTelemetryReporter(std::move(reporter));
+
+    QCommandLineParser parser;
+    app.configureParser(parser);
+    const QStringList args{
+        QStringLiteral("test"),
+        QStringLiteral("--transport-mode"), QStringLiteral("in-process"),
+        QStringLiteral("--transport-dataset"), QStringLiteral("data/sample_ohlcv/trend.csv")
+    };
+    parser.process(args);
+
+    QVERIFY(app.applyParser(parser));
+
+    TradingClient* client = app.tradingClientForTesting();
+    QVERIFY(client);
+    QCOMPARE(client->transportMode(), TradingClient::TransportMode::InProcess);
+    QVERIFY(!client->hasGrpcChannelForTesting());
+
+    auto* riskModel = qobject_cast<RiskStateModel*>(app.riskModel());
+    QVERIFY(riskModel);
+    QSignalSpy riskSpy(riskModel, &RiskStateModel::riskStateChanged);
+
+    auto* healthController = qobject_cast<HealthStatusController*>(app.healthController());
+    QVERIFY(healthController);
+    QSignalSpy healthSpy(healthController, &HealthStatusController::statusChanged);
+
+    QSignalSpy historySpy(client, &TradingClient::historyReceived);
+
+    app.start();
+
+    QVERIFY(historySpy.wait(2000));
+    QVERIFY(!historySpy.isEmpty());
+    QVERIFY(riskSpy.wait(2000));
+    QVERIFY(riskModel->hasData());
+    QVERIFY(qAbs(riskModel->portfolioValue() - 25000.0) < 1.0);
+    QVERIFY(healthSpy.wait(2000));
+    QVERIFY(healthController->healthy());
+    QCOMPARE(healthController->version(), QStringLiteral("in-process"));
+
+    app.simulateFrameIntervalForTesting(1.0 / 60.0);
+    QTRY_VERIFY_WITH_TIMEOUT(!metrics->snapshots().empty(), 2000);
+    const auto& snapshot = metrics->snapshots().back();
+    QVERIFY(snapshot.fps() > 0.0);
+    QVERIFY(snapshot.cpu_utilization() >= 0.0);
+
+    historySpy.clear();
+    client->setInProcessDatasetPath(QStringLiteral("data/sample_ohlcv/trend_missing.csv"));
+    QVERIFY(historySpy.wait(3000));
+    QVERIFY(historySpy.count() > 0);
+
+    app.stop();
 }
 
 void ApplicationTelemetryTest::testPreferredScreenSelectionCli()

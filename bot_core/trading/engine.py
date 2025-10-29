@@ -1522,10 +1522,12 @@ class TradingEngine:
         Returns:
             Tuple of best parameters and best score
         """
-        best_params = None
+        best_params: Optional[TradingParameters] = None
+        best_result: Optional[BacktestResult] = None
         best_score = float('-inf')
         iterations = 0
         self._last_optimization_summary = None
+        fallback_used = False
         
         objective_label = (
             objective if isinstance(objective, str) else getattr(objective, "__name__", repr(objective))
@@ -1645,6 +1647,15 @@ class TradingEngine:
             if score_value > best_score:
                 best_score = score_value
                 best_params = params
+                best_result = result
+                self._last_optimization_summary = OptimizationSummary(
+                    params=best_params,
+                    score=best_score,
+                    iterations=iterations,
+                    objective=objective_label,
+                    result=result,
+                    fallback_used=False,
+                )
                 self._logger.info(f"New best {objective_label}: {score_value:.4f}")
 
         if best_params is None:
@@ -1652,7 +1663,33 @@ class TradingEngine:
                 "Optimization completed after %d iterations without a valid score; returning baseline parameters",
                 iterations,
             )
+            fallback_used = True
             best_params = base_params
+            try:
+                fallback_result = self.run_strategy(data, best_params)
+                if callable(objective):
+                    best_score = float(objective(fallback_result))
+                else:
+                    best_score = float(getattr(fallback_result, objective))
+                best_result = fallback_result
+            except AttributeError:
+                raise AttributeError(
+                    f"Fallback result missing objective '{objective_label}' for baseline parameters"
+                ) from None
+            except Exception as error:
+                raise RuntimeError(
+                    "Unable to evaluate baseline parameters during optimization fallback"
+                ) from error
+
+        if best_params is not None and best_result is not None:
+            self._last_optimization_summary = OptimizationSummary(
+                params=best_params,
+                score=best_score,
+                iterations=iterations,
+                objective=objective_label,
+                result=best_result,
+                fallback_used=fallback_used,
+            )
 
         self._logger.info(f"Optimization completed after {iterations} iterations")
         return best_params, best_score

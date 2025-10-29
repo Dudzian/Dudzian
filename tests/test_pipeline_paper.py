@@ -387,6 +387,7 @@ def test_select_execution_service_prefers_bootstrap_instance(tmp_path: Path) -> 
             "ledger_retention_days": 730,
             "ledger_fsync": False,
         },
+        price_resolver=None,
     )
 
     assert resolved is service
@@ -421,6 +422,7 @@ def test_select_execution_service_persists_created_instance(tmp_path: Path) -> N
             "ledger_retention_days": 730,
             "ledger_fsync": False,
         },
+        price_resolver=None,
     )
 
     assert isinstance(resolved, PaperTradingExecutionService)

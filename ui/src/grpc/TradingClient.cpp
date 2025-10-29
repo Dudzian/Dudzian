@@ -5,6 +5,7 @@
 #include <QDir>
 #include <QFile>
 #include <QIODevice>
+#include <QTextStream>
 #include <QMetaObject>
 #include <QLoggingCategory>
 #include <QSet>
@@ -21,6 +22,7 @@
 #include <chrono>
 #include <cmath>
 #include <optional>
+#include <random>
 #include <string>
 #include <thread>
 #include <utility>
@@ -32,22 +34,249 @@
 
 Q_LOGGING_CATEGORY(lcTradingClient, "bot.shell.trading.grpc")
 
+namespace {
+
 using botcore::trading::v1::GetOhlcvHistoryRequest;
 using botcore::trading::v1::GetOhlcvHistoryResponse;
 using botcore::trading::v1::Instrument;
 using botcore::trading::v1::ListTradableInstrumentsRequest;
 using botcore::trading::v1::ListTradableInstrumentsResponse;
-using botcore::trading::v1::MarketDataService;
 using botcore::trading::v1::OhlcvCandle;
-using botcore::trading::v1::StreamOhlcvRequest;
-using botcore::trading::v1::StreamOhlcvUpdate;
-using botcore::trading::v1::RiskService;
 using botcore::trading::v1::RiskState;
 using botcore::trading::v1::RiskStateRequest;
+using botcore::trading::v1::StreamOhlcvRequest;
+using botcore::trading::v1::StreamOhlcvUpdate;
 
-namespace {
+class MarketDataStreamReader {
+public:
+    virtual ~MarketDataStreamReader() = default;
+    virtual bool Read(StreamOhlcvUpdate* update) = 0;
+    virtual grpc::Status Finish() = 0;
+};
 
-qint64 timestampToMs(const google::protobuf::Timestamp& ts) {
+class GrpcMarketDataStreamReader final : public MarketDataStreamReader {
+public:
+    explicit GrpcMarketDataStreamReader(std::unique_ptr<grpc::ClientReader<StreamOhlcvUpdate>> reader)
+        : m_reader(std::move(reader))
+    {
+    }
+
+    bool Read(StreamOhlcvUpdate* update) override
+    {
+        if (!m_reader)
+            return false;
+        return m_reader->Read(update);
+    }
+
+    grpc::Status Finish() override
+    {
+        if (!m_reader)
+            return grpc::Status::OK;
+        return m_reader->Finish();
+    }
+
+private:
+    std::unique_ptr<grpc::ClientReader<StreamOhlcvUpdate>> m_reader;
+};
+
+class BaseMarketDataTransport : public TradingClient::IMarketDataTransport {
+public:
+    void setInstrument(const TradingClient::InstrumentConfig& config) override { m_instrument = config; }
+    void setEndpoint(const QString& endpoint) override { m_endpoint = endpoint; }
+    void setTlsConfig(const TradingClient::TlsConfig& config) override { m_tlsConfig = config; }
+    void setDatasetPath(const QString& path) override { m_datasetPath = path; }
+
+protected:
+    TradingClient::InstrumentConfig m_instrument{};
+    QString m_endpoint;
+    TradingClient::TlsConfig m_tlsConfig{};
+    QString m_datasetPath;
+};
+
+class GrpcMarketDataTransport final : public BaseMarketDataTransport {
+public:
+    void setEndpoint(const QString& endpoint) override
+    {
+        if (endpoint == m_endpoint)
+            return;
+        BaseMarketDataTransport::setEndpoint(endpoint);
+        shutdown();
+    }
+
+    void setTlsConfig(const TradingClient::TlsConfig& config) override
+    {
+        BaseMarketDataTransport::setTlsConfig(config);
+        shutdown();
+    }
+
+    bool ensureReady() override
+    {
+        if (m_endpoint.trimmed().isEmpty()) {
+            qCWarning(lcTradingClient) << "Endpoint gRPC nie został ustawiony – pomijam inicjalizację kanału.";
+            return false;
+        }
+
+        if (!m_channel) {
+            std::shared_ptr<grpc::ChannelCredentials> credentials;
+            grpc::ChannelArguments args;
+            QByteArray rootPem;
+            bool fingerprintValid = true;
+
+            if (m_tlsConfig.enabled) {
+                grpc::SslCredentialsOptions options;
+
+                if (!m_tlsConfig.rootCertificatePath.trimmed().isEmpty()) {
+                    if (const auto rootData = readFileUtf8(m_tlsConfig.rootCertificatePath)) {
+                        rootPem = *rootData;
+                        options.pem_root_certs = std::string(rootPem.constData(), static_cast<std::size_t>(rootPem.size()));
+                    } else {
+                        qCWarning(lcTradingClient) << "Nie udało się odczytać pliku root CA" << m_tlsConfig.rootCertificatePath;
+                    }
+                } else {
+                    qCWarning(lcTradingClient) << "TLS aktywny bez wskazanego pliku root CA.";
+                }
+
+                const auto clientCert = readFileUtf8(m_tlsConfig.clientCertificatePath);
+                const auto clientKey = readFileUtf8(m_tlsConfig.clientKeyPath);
+                if (clientCert && clientKey) {
+                    grpc::SslCredentialsOptions::PemKeyCertPair pair;
+                    pair.private_key = std::string(clientKey->constData(), static_cast<std::size_t>(clientKey->size()));
+                    pair.cert_chain = std::string(clientCert->constData(), static_cast<std::size_t>(clientCert->size()));
+                    options.pem_key_cert_pairs.push_back(std::move(pair));
+                } else if (m_tlsConfig.requireClientAuth) {
+                    qCWarning(lcTradingClient) << "mTLS wymaga zarówno certyfikatu, jak i klucza klienta.";
+                    fingerprintValid = false;
+                }
+
+                if (!m_tlsConfig.pinnedServerFingerprint.isEmpty()) {
+                    if (rootPem.isEmpty()) {
+                        qCWarning(lcTradingClient) << "Nie mogę zweryfikować fingerprintu TLS – brak danych root CA.";
+                        fingerprintValid = false;
+                    } else {
+                        const QString actual = sha256Fingerprint(rootPem);
+                        if (actual.isEmpty()) {
+                            qCWarning(lcTradingClient) << "Nie udało się obliczyć fingerprintu SHA-256 certyfikatu root.";
+                            fingerprintValid = false;
+                        } else if (actual != m_tlsConfig.pinnedServerFingerprint) {
+                            qCWarning(lcTradingClient)
+                                << "Fingerprint TLS nie pasuje do konfiguracji (oczekiwano"
+                                << m_tlsConfig.pinnedServerFingerprint << "otrzymano" << actual << ')';
+                            fingerprintValid = false;
+                        }
+                    }
+                }
+
+                if (!fingerprintValid) {
+                    return false;
+                }
+
+                credentials = grpc::SslCredentials(options);
+
+                if (!m_tlsConfig.targetNameOverride.trimmed().isEmpty()) {
+                    args.SetString(GRPC_SSL_TARGET_NAME_OVERRIDE_ARG, m_tlsConfig.targetNameOverride.toStdString());
+                }
+
+                m_channel = grpc::CreateCustomChannel(m_endpoint.toStdString(), credentials, args);
+            } else {
+                if (!m_tlsConfig.pinnedServerFingerprint.isEmpty()) {
+                    qCWarning(lcTradingClient)
+                        << "Podano fingerprint TLS, ale połączenie TLS jest wyłączone – pinning zostanie zignorowany.";
+                }
+                credentials = grpc::InsecureChannelCredentials();
+                m_channel = grpc::CreateCustomChannel(m_endpoint.toStdString(), credentials, args);
+            }
+        }
+
+        if (!m_channel) {
+            return false;
+        }
+
+        if (!m_marketDataStub) {
+            m_marketDataStub = botcore::trading::v1::MarketDataService::NewStub(m_channel);
+        }
+        if (!m_riskStub) {
+            m_riskStub = botcore::trading::v1::RiskService::NewStub(m_channel);
+        }
+        return m_marketDataStub != nullptr && m_riskStub != nullptr;
+    }
+
+    grpc::Status getOhlcvHistory(grpc::ClientContext* context,
+                                 const GetOhlcvHistoryRequest& request,
+                                 GetOhlcvHistoryResponse* response) override
+    {
+        if (!ensureReady() || !m_marketDataStub) {
+            return grpc::Status(grpc::StatusCode::FAILED_PRECONDITION, "transport not ready");
+        }
+        return m_marketDataStub->GetOhlcvHistory(context, request, response);
+    }
+
+    std::unique_ptr<MarketDataStreamReader> streamOhlcv(grpc::ClientContext* context,
+                                                        const StreamOhlcvRequest& request) override
+    {
+        if (!ensureReady() || !m_marketDataStub) {
+            return {};
+        }
+        auto reader = m_marketDataStub->StreamOhlcv(context, request);
+        if (!reader) {
+            return {};
+        }
+        return std::make_unique<GrpcMarketDataStreamReader>(std::move(reader));
+    }
+
+    grpc::Status getRiskState(grpc::ClientContext* context,
+                              const RiskStateRequest& request,
+                              RiskState* response) override
+    {
+        if (!ensureReady() || !m_riskStub) {
+            return grpc::Status(grpc::StatusCode::FAILED_PRECONDITION, "transport not ready");
+        }
+        return m_riskStub->GetRiskState(context, request, response);
+    }
+
+    grpc::Status listTradableInstruments(grpc::ClientContext* context,
+                                         const ListTradableInstrumentsRequest& request,
+                                         ListTradableInstrumentsResponse* response) override
+    {
+        if (!ensureReady() || !m_marketDataStub) {
+            return grpc::Status(grpc::StatusCode::FAILED_PRECONDITION, "transport not ready");
+        }
+        return m_marketDataStub->ListTradableInstruments(context, request, response);
+    }
+
+    void shutdown() override
+    {
+        m_marketDataStub.reset();
+        m_riskStub.reset();
+        m_channel.reset();
+    }
+
+    void requestRestart() override
+    {
+        // Brak szczególnej logiki – restart obsługuje TradingClient poprzez anulowanie kontekstu.
+    }
+
+    bool hasConnectivity() const override { return m_marketDataStub != nullptr; }
+
+    bool isGrpcTransport() const override { return true; }
+
+    bool hasNativeChannel() const override { return m_channel != nullptr; }
+
+private:
+    std::shared_ptr<grpc::Channel> m_channel;
+    std::unique_ptr<botcore::trading::v1::MarketDataService::Stub> m_marketDataStub;
+    std::unique_ptr<botcore::trading::v1::RiskService::Stub> m_riskStub;
+};
+
+google::protobuf::Timestamp toProtoTimestamp(qint64 timestampMs)
+{
+    google::protobuf::Timestamp ts;
+    ts.set_seconds(timestampMs / 1000);
+    ts.set_nanos(static_cast<int32_t>((timestampMs % 1000) * 1000000));
+    return ts;
+}
+
+qint64 timestampToMs(const google::protobuf::Timestamp& ts)
+{
     return static_cast<qint64>(ts.seconds()) * 1000 + ts.nanos() / 1000000;
 }
 
@@ -81,6 +310,281 @@ QString normalizeFingerprint(QString value) {
     return normalized;
 }
 
+class InProcessMarketDataStreamReader final : public MarketDataStreamReader {
+public:
+    InProcessMarketDataStreamReader(grpc::ClientContext* context,
+                                    std::shared_ptr<std::vector<OhlcvCandle>> candles,
+                                    bool loop)
+        : m_context(context)
+        , m_candles(std::move(candles))
+        , m_loop(loop)
+    {
+    }
+
+    bool Read(StreamOhlcvUpdate* update) override
+    {
+        if (!update)
+            return false;
+
+        if (m_context && m_context->IsCancelled())
+            return false;
+
+        if (!m_snapshotDelivered) {
+            m_snapshotDelivered = true;
+            auto* snapshot = update->mutable_snapshot();
+            auto* series = snapshot->mutable_candles();
+            series->Clear();
+            for (const auto& candle : *m_candles) {
+                auto* out = series->Add();
+                *out = candle;
+            }
+            return true;
+        }
+
+        if (m_candles->empty())
+            return false;
+
+        if (m_index >= static_cast<int>(m_candles->size())) {
+            if (!m_loop)
+                return false;
+            m_index = 0;
+        }
+
+        auto* increment = update->mutable_increment();
+        increment->mutable_candle()->CopyFrom((*m_candles)[m_index]);
+        ++m_index;
+        for (int i = 0; i < 15; ++i) {
+            if (m_context && m_context->IsCancelled())
+                return false;
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        return true;
+    }
+
+    grpc::Status Finish() override { return grpc::Status::OK; }
+
+private:
+    grpc::ClientContext* m_context = nullptr;
+    std::shared_ptr<std::vector<OhlcvCandle>> m_candles;
+    bool m_snapshotDelivered = false;
+    bool m_loop = false;
+    int m_index = 0;
+};
+
+class InProcessMarketDataTransport final : public BaseMarketDataTransport {
+public:
+    bool ensureReady() override
+    {
+        if (!m_candles) {
+            loadDataset(m_instrument, m_datasetPath);
+        }
+        return static_cast<bool>(m_candles);
+    }
+
+    grpc::Status getOhlcvHistory(grpc::ClientContext*,
+                                 const GetOhlcvHistoryRequest& request,
+                                 GetOhlcvHistoryResponse* response) override
+    {
+        if (!response)
+            return grpc::Status(grpc::StatusCode::FAILED_PRECONDITION, "response null");
+        if (!ensureReady())
+            return grpc::Status(grpc::StatusCode::UNAVAILABLE, "dataset missing");
+        response->clear_candles();
+        const int limit = request.limit() > 0 ? request.limit() : static_cast<int>(m_candles->size());
+        const int start = std::max(0, static_cast<int>(m_candles->size()) - limit);
+        for (int i = start; i < static_cast<int>(m_candles->size()); ++i) {
+            auto* out = response->add_candles();
+            *out = (*m_candles)[i];
+        }
+        return grpc::Status::OK;
+    }
+
+    std::unique_ptr<MarketDataStreamReader> streamOhlcv(grpc::ClientContext* context,
+                                                        const StreamOhlcvRequest&) override
+    {
+        if (!ensureReady())
+            return {};
+        return std::make_unique<InProcessMarketDataStreamReader>(context, m_candles, true);
+    }
+
+    grpc::Status listTradableInstruments(grpc::ClientContext*,
+                                         const ListTradableInstrumentsRequest& request,
+                                         ListTradableInstrumentsResponse* response) override
+    {
+        if (!response)
+            return grpc::Status(grpc::StatusCode::FAILED_PRECONDITION, "response null");
+        ensureReady();
+        response->clear_instruments();
+        auto* listing = response->add_instruments();
+        auto* instrument = listing->mutable_instrument();
+        instrument->set_exchange(request.exchange());
+        if (instrument->exchange().empty())
+            instrument->set_exchange(m_instrument.exchange.toStdString());
+        instrument->set_symbol(m_instrument.symbol.toStdString());
+        instrument->set_venue_symbol(m_instrument.venueSymbol.toStdString());
+        instrument->set_quote_currency(m_instrument.quoteCurrency.toStdString());
+        instrument->set_base_currency(m_instrument.baseCurrency.toStdString());
+        listing->set_price_step(0.01);
+        listing->set_amount_step(0.001);
+        listing->set_min_notional(5.0);
+        listing->set_min_amount(0.001);
+        listing->set_max_amount(25.0);
+        listing->set_min_price(1.0);
+        listing->set_max_price(100000.0);
+        return grpc::Status::OK;
+    }
+
+    grpc::Status getRiskState(grpc::ClientContext*,
+                              const RiskStateRequest&,
+                              RiskState* response) override
+    {
+        if (!response)
+            return grpc::Status(grpc::StatusCode::FAILED_PRECONDITION, "response null");
+        response->Clear();
+        response->set_profile(botcore::trading::v1::RiskProfile::RISK_PROFILE_BALANCED);
+        response->set_portfolio_value(25000.0);
+        response->set_current_drawdown(0.015);
+        response->set_max_daily_loss(0.05);
+        response->set_used_leverage(1.5);
+        auto* generated = response->mutable_generated_at();
+        *generated = toProtoTimestamp(QDateTime::currentDateTimeUtc().toMSecsSinceEpoch());
+        auto* limit = response->add_limits();
+        limit->set_code("max_notional");
+        limit->set_max_value(5000.0);
+        limit->set_current_value(1200.0);
+        limit->set_threshold_value(4500.0);
+        auto* limit2 = response->add_limits();
+        limit2->set_code("max_positions");
+        limit2->set_max_value(10.0);
+        limit2->set_current_value(3.0);
+        limit2->set_threshold_value(8.0);
+        return grpc::Status::OK;
+    }
+
+    void shutdown() override { m_candles.reset(); }
+
+    void requestRestart() override { loadDataset(m_instrument, m_datasetPath); }
+
+    bool hasConnectivity() const override { return static_cast<bool>(m_candles); }
+
+    bool isGrpcTransport() const override { return false; }
+
+    bool hasNativeChannel() const override { return false; }
+
+    void setInstrument(const TradingClient::InstrumentConfig& config) override
+    {
+        BaseMarketDataTransport::setInstrument(config);
+        if (m_candles) {
+            loadDataset(m_instrument, m_datasetPath);
+        }
+    }
+
+    void setDatasetPath(const QString& path) override
+    {
+        BaseMarketDataTransport::setDatasetPath(path);
+        m_candles.reset();
+    }
+
+private:
+    void loadDataset(const TradingClient::InstrumentConfig& config, const QString& datasetPath)
+    {
+        QString path = datasetPath;
+        if (path.trimmed().isEmpty())
+            path = QStringLiteral("data/sample_ohlcv/trend.csv");
+        path = bot::shell::utils::expandPath(path);
+
+        auto candles = std::make_shared<std::vector<OhlcvCandle>>();
+        QFile file(path);
+        if (!file.exists() || !file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+            buildSyntheticDataset(*candles);
+            m_candles = candles;
+            return;
+        }
+
+        QTextStream stream(&file);
+        if (!stream.atEnd())
+            stream.readLine();
+        int sequence = 0;
+        while (!stream.atEnd()) {
+            const QString line = stream.readLine();
+            const QStringList parts = line.split(QLatin1Char(','));
+            if (parts.size() < 6)
+                continue;
+            const QString timestampRaw = parts.at(0).trimmed();
+            QDateTime timestamp = QDateTime::fromString(timestampRaw, Qt::ISODate);
+            if (!timestamp.isValid())
+                timestamp = QDateTime::fromString(timestampRaw, QStringLiteral("yyyy-MM-dd HH:mm:ss"));
+            if (!timestamp.isValid())
+                continue;
+            timestamp.setTimeSpec(Qt::UTC);
+
+            bool ok = false;
+            const double open = parts.at(1).toDouble(&ok);
+            if (!ok)
+                continue;
+            const double high = parts.at(2).toDouble(&ok);
+            if (!ok)
+                continue;
+            const double low = parts.at(3).toDouble(&ok);
+            if (!ok)
+                continue;
+            const double close = parts.at(4).toDouble(&ok);
+            if (!ok)
+                continue;
+            const double volume = parts.at(5).toDouble(&ok);
+            if (!ok)
+                continue;
+
+            OhlcvCandle candle;
+            *candle.mutable_open_time() = toProtoTimestamp(timestamp.toMSecsSinceEpoch());
+            candle.set_open(open);
+            candle.set_high(high);
+            candle.set_low(low);
+            candle.set_close(close);
+            candle.set_volume(volume);
+            candle.set_closed(true);
+            candle.set_sequence(sequence++);
+            candles->push_back(candle);
+        }
+
+        if (candles->empty())
+            buildSyntheticDataset(*candles);
+        m_candles = candles;
+    }
+
+    static void buildSyntheticDataset(std::vector<OhlcvCandle>& candles)
+    {
+        candles.clear();
+        candles.reserve(64);
+        const qint64 baseMs = QDateTime(QDate(2023, 1, 1), QTime(0, 0), Qt::UTC).toMSecsSinceEpoch();
+        double price = 100.0;
+        std::mt19937_64 rng{123456789ULL};
+        std::normal_distribution<double> drift(0.05, 0.15);
+        for (int i = 0; i < 64; ++i) {
+            const double delta = drift(rng);
+            const double open = price;
+            const double close = std::max(1.0, open + delta);
+            const double high = std::max(open, close) + std::abs(drift(rng));
+            const double low = std::max(1.0, std::min(open, close) - std::abs(drift(rng)));
+            const double volume = 900.0 + std::abs(drift(rng)) * 150.0;
+            price = close;
+
+            OhlcvCandle candle;
+            *candle.mutable_open_time() = toProtoTimestamp(baseMs + static_cast<qint64>(i) * 60 * 1000);
+            candle.set_open(open);
+            candle.set_high(high);
+            candle.set_low(low);
+            candle.set_close(close);
+            candle.set_volume(volume);
+            candle.set_closed(true);
+            candle.set_sequence(i);
+            candles.push_back(candle);
+        }
+    }
+
+    std::shared_ptr<std::vector<OhlcvCandle>> m_candles;
+};
+
 Instrument makeInstrument(const TradingClient::InstrumentConfig& config) {
     Instrument instrument;
     instrument.set_exchange(config.exchange.toStdString());
@@ -92,6 +596,17 @@ Instrument makeInstrument(const TradingClient::InstrumentConfig& config) {
 }
 
 } // namespace
+
+std::unique_ptr<TradingClient::IMarketDataTransport> TradingClient::makeTransport(TransportMode mode) const
+{
+    switch (mode) {
+    case TransportMode::Grpc:
+        return std::make_unique<GrpcMarketDataTransport>();
+    case TransportMode::InProcess:
+        return std::make_unique<InProcessMarketDataTransport>();
+    }
+    return {};
+}
 
 TradingClient::TradingClient(QObject* parent)
     : QObject(parent) {
@@ -105,6 +620,14 @@ TradingClient::TradingClient(QObject* parent)
     qRegisterMetaType<MarketRegimeSnapshotEntry>("MarketRegimeSnapshotEntry");
 
     m_regimeClassifier = std::make_unique<MarketRegimeClassifierBridge>(this);
+
+    m_transport = makeTransport(m_transportMode);
+    if (m_transport) {
+        m_transport->setInstrument(m_instrumentConfig);
+        m_transport->setEndpoint(m_endpoint);
+        m_transport->setTlsConfig(m_tlsConfig);
+        m_transport->setDatasetPath(m_inProcessDatasetPath);
+    }
 }
 
 TradingClient::~TradingClient() {
@@ -116,13 +639,37 @@ void TradingClient::setEndpoint(const QString& endpoint) {
         return;
     }
     m_endpoint = endpoint;
-    m_channel.reset();
-    m_marketDataStub.reset();
-    m_riskStub.reset();
+    if (m_transport) {
+        m_transport->setEndpoint(m_endpoint);
+        m_transport->ensureReady();
+    }
+}
+
+void TradingClient::setTransportMode(TransportMode mode)
+{
+    if (mode == m_transportMode)
+        return;
+    const bool wasRunning = m_running.load();
+    if (wasRunning)
+        stop();
+    m_transportMode = mode;
+    m_transport = makeTransport(m_transportMode);
+    if (m_transport) {
+        m_transport->setInstrument(m_instrumentConfig);
+        m_transport->setEndpoint(m_endpoint);
+        m_transport->setTlsConfig(m_tlsConfig);
+        m_transport->setDatasetPath(m_inProcessDatasetPath);
+        m_transport->ensureReady();
+    }
+    if (wasRunning)
+        start();
 }
 
 void TradingClient::setInstrument(const InstrumentConfig& config) {
     m_instrumentConfig = config;
+    if (m_transport) {
+        m_transport->setInstrument(m_instrumentConfig);
+    }
 }
 
 void TradingClient::setHistoryLimit(int limit) {
@@ -140,10 +687,10 @@ void TradingClient::setTlsConfig(const TlsConfig& config) {
     TlsConfig sanitized = config;
     sanitized.pinnedServerFingerprint = normalizeFingerprint(sanitized.pinnedServerFingerprint);
     m_tlsConfig = sanitized;
-    // zmiana TLS wymaga odtworzenia kanału/stubów
-    m_channel.reset();
-    m_marketDataStub.reset();
-    m_riskStub.reset();
+    if (m_transport) {
+        m_transport->setTlsConfig(m_tlsConfig);
+        m_transport->ensureReady();
+    }
 }
 
 void TradingClient::setAuthToken(const QString& token)
@@ -193,6 +740,20 @@ void TradingClient::setRbacScopes(const QStringList& scopes)
     triggerStreamRestart();
 }
 
+void TradingClient::setInProcessDatasetPath(const QString& path)
+{
+    if (m_inProcessDatasetPath == path)
+        return;
+    m_inProcessDatasetPath = path;
+    if (m_transport) {
+        m_transport->setDatasetPath(m_inProcessDatasetPath);
+        if (m_transportMode == TransportMode::InProcess) {
+            m_transport->requestRestart();
+            triggerStreamRestart();
+        }
+    }
+}
+
 void TradingClient::setRegimeThresholdsPath(const QString& path)
 {
     const QString trimmed = path.trimmed();
@@ -229,6 +790,11 @@ QVector<QPair<QByteArray, QByteArray>> TradingClient::authMetadataForTesting() c
     return result;
 }
 
+bool TradingClient::hasGrpcChannelForTesting() const
+{
+    return m_transport && m_transport->isGrpcTransport() && m_transport->hasNativeChannel();
+}
+
 void TradingClient::start() {
     if (m_running.exchange(true)) {
         return;
@@ -237,10 +803,17 @@ void TradingClient::start() {
         m_streamThread.join();
     }
     m_restartRequested.store(false);
-    ensureStub();
+    ensureTransport();
 
-    if (!m_marketDataStub) {
-        qCWarning(lcTradingClient) << "Brak poprawnie zainicjalizowanego stubu MarketDataService dla endpointu" << m_endpoint;
+    if (!m_transport || !m_transport->hasConnectivity()) {
+        if (m_transportMode == TransportMode::InProcess) {
+            qCWarning(lcTradingClient)
+                << "Brak poprawnie zainicjalizowanego transportu in-process (dataset:" << m_inProcessDatasetPath
+                << ')';
+        } else {
+            qCWarning(lcTradingClient)
+                << "Brak poprawnie zainicjalizowanego transportu MarketData dla endpointu" << m_endpoint;
+        }
         m_running.store(false);
         Q_EMIT streamingChanged();
         Q_EMIT connectionStateChanged(tr("unavailable"));
@@ -257,7 +830,8 @@ void TradingClient::start() {
 
     GetOhlcvHistoryResponse historyResp;
     auto historyContext = createContext();
-    const grpc::Status historyStatus = m_marketDataStub->GetOhlcvHistory(historyContext.get(), historyReq, &historyResp);
+    const grpc::Status historyStatus =
+        m_transport->getOhlcvHistory(historyContext.get(), historyReq, &historyResp);
     if (historyStatus.ok()) {
         const QList<OhlcvPoint> history = convertHistory(historyResp.candles());
         QVector<IndicatorSample> emaFast;
@@ -321,97 +895,27 @@ void TradingClient::stop() {
     if (m_streamThread.joinable()) {
         m_streamThread.join();
     }
+    if (m_transport) {
+        m_transport->shutdown();
+    }
     if (wasRunning) {
         Q_EMIT streamingChanged();
         Q_EMIT connectionStateChanged(tr("stopped"));
     }
 }
 
-void TradingClient::ensureStub() {
-    if (m_endpoint.trimmed().isEmpty()) {
-        qCWarning(lcTradingClient) << "Endpoint gRPC nie został ustawiony – pomijam inicjalizację kanału.";
-        return;
+void TradingClient::ensureTransport()
+{
+    if (!m_transport) {
+        m_transport = makeTransport(m_transportMode);
+        if (!m_transport)
+            return;
+        m_transport->setInstrument(m_instrumentConfig);
+        m_transport->setEndpoint(m_endpoint);
+        m_transport->setTlsConfig(m_tlsConfig);
+        m_transport->setDatasetPath(m_inProcessDatasetPath);
     }
-
-    if (!m_channel) {
-        std::shared_ptr<grpc::ChannelCredentials> credentials;
-        grpc::ChannelArguments args;
-        QByteArray rootPem;
-        bool fingerprintValid = true;
-
-        if (m_tlsConfig.enabled) {
-            grpc::SslCredentialsOptions options;
-
-            if (!m_tlsConfig.rootCertificatePath.trimmed().isEmpty()) {
-                if (const auto rootData = readFileUtf8(m_tlsConfig.rootCertificatePath)) {
-                    rootPem = *rootData;
-                    options.pem_root_certs = std::string(rootPem.constData(),
-                                                         static_cast<std::size_t>(rootPem.size()));
-                } else {
-                    qCWarning(lcTradingClient) << "Nie udało się odczytać pliku root CA" << m_tlsConfig.rootCertificatePath;
-                }
-            } else {
-                qCWarning(lcTradingClient) << "TLS aktywny bez wskazanego pliku root CA.";
-            }
-
-            const auto clientCert = readFileUtf8(m_tlsConfig.clientCertificatePath);
-            const auto clientKey  = readFileUtf8(m_tlsConfig.clientKeyPath);
-            if (clientCert && clientKey) {
-                grpc::SslCredentialsOptions::PemKeyCertPair pair;
-                pair.private_key = std::string(clientKey->constData(), static_cast<std::size_t>(clientKey->size()));
-                pair.cert_chain  = std::string(clientCert->constData(), static_cast<std::size_t>(clientCert->size()));
-                options.pem_key_cert_pairs.push_back(std::move(pair));
-            } else if (m_tlsConfig.requireClientAuth) {
-                qCWarning(lcTradingClient) << "mTLS wymaga zarówno certyfikatu, jak i klucza klienta.";
-                fingerprintValid = false;
-            }
-
-            if (!m_tlsConfig.pinnedServerFingerprint.isEmpty()) {
-                if (rootPem.isEmpty()) {
-                    qCWarning(lcTradingClient) << "Nie mogę zweryfikować fingerprintu TLS – brak danych root CA.";
-                    fingerprintValid = false;
-                } else {
-                    const QString actual = sha256Fingerprint(rootPem);
-                    if (actual.isEmpty()) {
-                        qCWarning(lcTradingClient) << "Nie udało się obliczyć fingerprintu SHA-256 certyfikatu root.";
-                        fingerprintValid = false;
-                    } else if (actual != m_tlsConfig.pinnedServerFingerprint) {
-                        qCWarning(lcTradingClient)
-                            << "Fingerprint TLS nie pasuje do konfiguracji (oczekiwano"
-                            << m_tlsConfig.pinnedServerFingerprint << "otrzymano" << actual << ')';
-                        fingerprintValid = false;
-                    }
-                }
-            }
-
-            if (!fingerprintValid) {
-                return;
-            }
-
-            credentials = grpc::SslCredentials(options);
-
-            if (!m_tlsConfig.targetNameOverride.trimmed().isEmpty()) {
-                args.SetString(GRPC_SSL_TARGET_NAME_OVERRIDE_ARG,
-                               m_tlsConfig.targetNameOverride.toStdString());
-            }
-
-            m_channel = grpc::CreateCustomChannel(m_endpoint.toStdString(), credentials, args);
-        } else {
-            if (!m_tlsConfig.pinnedServerFingerprint.isEmpty()) {
-                qCWarning(lcTradingClient)
-                    << "Podano fingerprint TLS, ale połączenie TLS jest wyłączone – pinning zostanie zignorowany.";
-            }
-            credentials = grpc::InsecureChannelCredentials();
-            m_channel = grpc::CreateCustomChannel(m_endpoint.toStdString(), credentials, args);
-        }
-    }
-
-    if (m_channel && !m_marketDataStub) {
-        m_marketDataStub = MarketDataService::NewStub(m_channel);
-    }
-    if (m_channel && !m_riskStub) {
-        m_riskStub = RiskService::NewStub(m_channel);
-    }
+    m_transport->ensureReady();
 }
 
 QList<OhlcvPoint> TradingClient::convertHistory(const google::protobuf::RepeatedPtrField<OhlcvCandle>& candles) const {
@@ -441,8 +945,8 @@ void TradingClient::streamLoop()
     int attempt = 0;
 
     while (m_running.load()) {
-        ensureStub();
-        if (!m_marketDataStub) {
+        ensureTransport();
+        if (!m_transport || !m_transport->hasConnectivity()) {
             QMetaObject::invokeMethod(
                 this,
                 [this]() { Q_EMIT connectionStateChanged(tr("stream unavailable")); },
@@ -476,7 +980,16 @@ void TradingClient::streamLoop()
                 Qt::QueuedConnection);
         }
 
-        auto reader = m_marketDataStub->StreamOhlcv(context.get(), request);
+        auto reader = m_transport->streamOhlcv(context.get(), request);
+        if (!reader) {
+            QMetaObject::invokeMethod(
+                this,
+                [this]() { Q_EMIT connectionStateChanged(tr("stream unavailable")); },
+                Qt::QueuedConnection);
+            ++attempt;
+            std::this_thread::sleep_for(std::chrono::milliseconds(250));
+            continue;
+        }
         StreamOhlcvUpdate update;
         bool receivedAny = false;
 
@@ -645,15 +1158,19 @@ void TradingClient::streamLoop()
 }
 
 void TradingClient::refreshRiskState() {
-    ensureStub();
-    if (!m_riskStub) {
-        qCWarning(lcTradingClient) << "Brak stubu RiskService – pomijam odczyt stanu ryzyka.";
+    ensureTransport();
+    if (!m_transport || !m_transport->hasConnectivity()) {
+        if (m_transportMode == TransportMode::InProcess) {
+            qCWarning(lcTradingClient) << "Brak transportu in-process dla RiskService – pomijam odczyt stanu ryzyka.";
+        } else {
+            qCWarning(lcTradingClient) << "Brak połączenia z RiskService – pomijam odczyt stanu ryzyka.";
+        }
         return;
     }
     auto riskContext = createContext();
     RiskStateRequest request;
     RiskState response;
-    const grpc::Status status = m_riskStub->GetRiskState(riskContext.get(), request, &response);
+    const grpc::Status status = m_transport->getRiskState(riskContext.get(), request, &response);
     if (status.ok()) {
         const auto snapshot = convertRiskState(response);
         QMetaObject::invokeMethod(
@@ -669,10 +1186,16 @@ void TradingClient::refreshRiskState() {
 QVector<TradingClient::TradableInstrument> TradingClient::listTradableInstruments(const QString& exchange)
 {
     QVector<TradableInstrument> instruments;
-    ensureStub();
-    if (!m_marketDataStub) {
-        qCWarning(lcTradingClient)
-            << "ListTradableInstruments pominięte – brak połączenia z MarketDataService dla" << m_endpoint;
+    ensureTransport();
+    if (!m_transport || !m_transport->hasConnectivity()) {
+        if (m_transportMode == TransportMode::InProcess) {
+            qCWarning(lcTradingClient)
+                << "ListTradableInstruments pominięte – brak transportu in-process (dataset:" << m_inProcessDatasetPath
+                << ')';
+        } else {
+            qCWarning(lcTradingClient)
+                << "ListTradableInstruments pominięte – brak połączenia z MarketDataService dla" << m_endpoint;
+        }
         return instruments;
     }
 
@@ -687,7 +1210,7 @@ QVector<TradingClient::TradableInstrument> TradingClient::listTradableInstrument
     request.set_exchange(normalizedExchange.toStdString());
     ListTradableInstrumentsResponse response;
 
-    const grpc::Status status = m_marketDataStub->ListTradableInstruments(&context, request, &response);
+    const grpc::Status status = m_transport->listTradableInstruments(&context, request, &response);
     if (!status.ok()) {
         qCWarning(lcTradingClient)
             << "ListTradableInstruments nie powiodło się:" << QString::fromStdString(status.error_message());
@@ -807,6 +1330,9 @@ void TradingClient::triggerStreamRestart()
 {
     if (!m_running.load()) {
         return;
+    }
+    if (m_transport) {
+        m_transport->requestRestart();
     }
     m_restartRequested.store(true);
     std::lock_guard<std::mutex> lock(m_contextMutex);
@@ -955,6 +1481,17 @@ std::optional<MarketRegimeSnapshotEntry> TradingClient::evaluateRegimeSnapshotLo
 
 TradingClient::PreLiveChecklistResult TradingClient::runPreLiveChecklist() const {
     PreLiveChecklistResult result;
+
+    if (m_transportMode == TransportMode::InProcess) {
+        const QString datasetPath = bot::shell::utils::expandPath(m_inProcessDatasetPath);
+        if (m_inProcessDatasetPath.trimmed().isEmpty()) {
+            result.warnings.append(tr("Brak wskazanego pliku dataset – użyty zostanie syntetyczny feed."));
+        } else if (!QFile::exists(datasetPath)) {
+            result.warnings.append(tr("Dataset in-process nie istnieje: %1 – użyty zostanie syntetyczny feed.").arg(datasetPath));
+        }
+        result.ok = result.errors.isEmpty();
+        return result;
+    }
 
     if (m_endpoint.trimmed().isEmpty()) {
         result.errors.append(tr("Endpoint gRPC nie może być pusty."));
