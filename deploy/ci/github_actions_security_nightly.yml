@@ -1,0 +1,117 @@
+name: Nightly security validation
+
+on:
+  schedule:
+    - cron: '30 1 * * *'
+  workflow_dispatch:
+
+jobs:
+  dast-and-secrets:
+    name: DAST i skan tajemnic
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      SECURITY_SLACK_WEBHOOK: ${{ secrets.SECURITY_SLACK_WEBHOOK }}
+      SECURITY_EMAIL_TO: ${{ secrets.SECURITY_EMAIL_TO }}
+      SECURITY_EMAIL_SERVER: ${{ secrets.SECURITY_EMAIL_SERVER }}
+      SECURITY_EMAIL_PORT: ${{ secrets.SECURITY_EMAIL_PORT || '587' }}
+      SECURITY_EMAIL_USERNAME: ${{ secrets.SECURITY_EMAIL_USERNAME }}
+      SECURITY_EMAIL_PASSWORD: ${{ secrets.SECURITY_EMAIL_PASSWORD }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Przygotuj katalog logów
+        run: |
+          mkdir -p logs/security
+
+      - name: Uruchom lokalny serwer testowy
+        run: |
+          python -m http.server 8000 --bind 127.0.0.1 --directory ui >/tmp/http.log 2>&1 &
+          echo $! > http.pid
+
+      - name: OWASP ZAP baseline
+        uses: zaproxy/action-baseline@v0.10.0
+        with:
+          target: 'http://127.0.0.1:8000'
+          cmd_options: '-a -J zap_report.json -w zap_report.md'
+          allow_issue_writing: false
+
+      - name: Zatrzymaj serwer testowy
+        if: always()
+        run: |
+          if [ -f http.pid ]; then
+            kill $(cat http.pid) || true
+          fi
+
+      - name: Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        with:
+          args: detect --source=. --report-path=logs/security/gitleaks_report.json --report-format=json
+
+      - name: Zbierz raporty
+        if: always()
+        run: |
+          mkdir -p logs/security
+          if [ -f zap_report.json ]; then mv zap_report.json logs/security/zap_report.json; fi
+          if [ -f zap_report.md ]; then mv zap_report.md logs/security/zap_report.md; fi
+          if [ -f zap_results.json ]; then mv zap_results.json logs/security/zap_results.json; fi
+
+      - name: Podsumowanie wyników
+        if: always()
+        run: |
+          python - <<'PY'
+from pathlib import Path
+
+summary = Path('logs/security/summary.md')
+summary.parent.mkdir(parents=True, exist_ok=True)
+lines = ['# Nightly security scan']
+for filename in ['zap_report.json', 'zap_report.md', 'zap_results.json', 'gitleaks_report.json']:
+    path = summary.parent / filename
+    if path.exists():
+        lines.append(f"- Raport {filename}: {path}")
+    else:
+        lines.append(f"- Raport {filename}: brak danych")
+summary.write_text('\n'.join(lines), encoding='utf-8')
+PY
+          echo '### Nightly security scan' >> "$GITHUB_STEP_SUMMARY"
+          cat logs/security/summary.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Powiadomienie Slack
+        if: always() && env.SECURITY_SLACK_WEBHOOK != ''
+        uses: slackapi/slack-github-action@v1.27.0
+        with:
+          payload: |
+            {
+              "text": "Nightly security scan zakończony ze statusem ${{ job.status }}. Artefakty: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ env.SECURITY_SLACK_WEBHOOK }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
+
+      - name: Powiadomienie e-mail
+        if: always() && env.SECURITY_EMAIL_TO != '' && env.SECURITY_EMAIL_SERVER != '' && env.SECURITY_EMAIL_USERNAME != '' && env.SECURITY_EMAIL_PASSWORD != ''
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: ${{ env.SECURITY_EMAIL_SERVER }}
+          server_port: ${{ env.SECURITY_EMAIL_PORT }}
+          username: ${{ env.SECURITY_EMAIL_USERNAME }}
+          password: ${{ env.SECURITY_EMAIL_PASSWORD }}
+          subject: '[Security] Nightly scan - ${{ job.status }}'
+          to: ${{ env.SECURITY_EMAIL_TO }}
+          from: ${{ env.SECURITY_EMAIL_USERNAME }}
+          body: |
+            Nightly security scan zakończony ze statusem ${{ job.status }}.
+            Raporty dostępne są w artefakcie "nightly-security-${{ github.run_id }}".
+
+      - name: Upload logów bezpieczeństwa
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-security-${{ github.run_id }}
+          path: logs/security/

@@ -1,0 +1,168 @@
+name: Security static analysis
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  sast-and-dependency:
+    name: SAST i skanowanie zależności
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install skanery
+        run: |
+          python -m pip install --upgrade pip
+          pip install bandit semgrep pip-audit
+
+      - name: Przygotuj katalog na raporty
+        run: |
+          mkdir -p security-reports
+
+      - name: Bandit
+        run: |
+          set -o pipefail
+          bandit -r bot_core core scripts -x tests -f json -o security-reports/bandit.json || true
+
+      - name: Semgrep
+        run: |
+          set -o pipefail
+          semgrep --config auto --error --json --output security-reports/semgrep.json || true
+
+      - name: pip-audit
+        run: |
+          set -o pipefail
+          pip-audit --progress-spinner off --format json --output security-reports/pip_audit.json || true
+
+      - name: npm audit (UI)
+        run: |
+          set -o pipefail
+          if [ -f ui/package.json ]; then
+            pushd ui >/dev/null
+            if [ -f package-lock.json ]; then
+              npm ci --ignore-scripts
+            else
+              npm install --package-lock-only --ignore-scripts || npm install --ignore-scripts
+            fi
+            npm audit --json > ../security-reports/npm_audit.json || npm audit --json > ../security-reports/npm_audit.json
+            popd >/dev/null
+          else
+            echo "Brak package.json w katalogu ui - pomijam npm audit" | tee security-reports/npm_audit_skipped.txt
+          fi
+
+      - name: Upload raportów SAST
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-sast-${{ github.run_id }}
+          path: security-reports/
+
+  iac-policy:
+    name: Polityki IaC
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Checkov
+        run: |
+          python -m pip install --upgrade pip
+          pip install checkov
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.6.6
+
+      - name: Przygotuj katalog na raporty
+        run: |
+          mkdir -p security-reports/iac
+
+      - name: Checkov
+        run: |
+          set -o pipefail
+          checkov -d deploy --framework terraform,kubernetes,cloudformation --output json --output-file-path security-reports/iac/checkov.json --soft-fail
+
+      - name: Terraform validate
+        env:
+          TF_IN_AUTOMATION: 'true'
+        run: |
+          set -eo pipefail
+          mkdir -p security-reports/iac
+          if find deploy -name '*.tf' -print -quit | grep -q .; then
+            python - <<'PY'
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+root = Path('deploy')
+terraform_dirs = sorted({p.parent for p in root.rglob('*.tf')})
+results = []
+failed = False
+for directory in terraform_dirs:
+    proc_init = subprocess.run(
+        ['terraform', 'init', '-backend=false'],
+        cwd=directory,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        check=False,
+    )
+    proc_validate = subprocess.run(
+        ['terraform', 'validate'],
+        cwd=directory,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        check=False,
+    )
+    results.append({
+        'directory': str(directory),
+        'init_exit_code': proc_init.returncode,
+        'init_output': proc_init.stdout,
+        'validate_exit_code': proc_validate.returncode,
+        'validate_output': proc_validate.stdout,
+    })
+    if proc_init.returncode != 0 or proc_validate.returncode != 0:
+        failed = True
+report = Path('security-reports/iac/terraform_validate.json')
+report.write_text(json.dumps(results, indent=2), encoding='utf-8')
+if failed:
+    print('Terraform validate wykrył błędy')
+    sys.exit(1)
+PY
+          else
+            echo "Brak konfiguracji Terraform - pomijam validate" | tee security-reports/iac/terraform_validate.txt
+          fi
+
+      - name: Upload raportów IaC
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-iac-${{ github.run_id }}
+          path: security-reports/
