@@ -1,0 +1,15 @@
+{
+  "strategies": [
+    {
+      "id": "mean-reversion-lite",
+      "type": "mean_reversion",
+      "lookback": 32,
+      "entry_zscore": 1.5,
+      "exit_zscore": 0.5
+    }
+  ],
+  "risk": {
+    "max_notional": 50000,
+    "max_positions": 4
+  }
+}

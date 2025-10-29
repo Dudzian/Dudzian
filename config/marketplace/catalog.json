@@ -1,0 +1,109 @@
+{
+  "schema_version": "1.0",
+  "generated_at": "2025-10-29T15:04:33.972702Z",
+  "packages": [
+    {
+      "schema_version": "1.0",
+      "package_id": "mean_reversion.v1",
+      "display_name": "Mean Reversion Starter",
+      "summary": "Konfiguracja startowa strategii mean-reversion dla rynku spot.",
+      "description": "Pakiet zawiera przyk\u0142adow\u0105 strategi\u0119 mean-reversion z predefiniowanymi parametrami oraz profilami ryzyka do szybkiego wdro\u017cenia w \u015brodowisku demo.",
+      "version": "1.0.0",
+      "revision": "a1b2c3d",
+      "release_date": "2025-10-29T15:04:33.972716Z",
+      "maintainers": [
+        {
+          "name": "Marketplace Labs",
+          "email": "marketplace@example.com",
+          "organization": "Marketplace Guild",
+          "role": "maintainer"
+        }
+      ],
+      "license": {
+        "name": "Marketplace Evaluation License",
+        "spdx_id": "Proprietary",
+        "url": "https://configs.example.com/licenses/marketplace-eval",
+        "terms_summary": "Do u\u017cytku ewaluacyjnego w \u015brodowiskach testowych.",
+        "redistributable": false,
+        "commercial_use": false
+      },
+      "tags": [
+        "mean-reversion",
+        "demo",
+        "spot"
+      ],
+      "data_requirements": {
+        "inputs": [
+          {
+            "asset_type": "market",
+            "provider": "ccxt.binance",
+            "access_level": "restricted",
+            "retention_days": 30,
+            "min_history_days": 14,
+            "sampling": "1m"
+          },
+          {
+            "asset_type": "account",
+            "provider": "internal.portfolio-service",
+            "access_level": "confidential",
+            "retention_days": 7,
+            "min_history_days": null,
+            "sampling": "event"
+          }
+        ],
+        "requires_personal_data": false,
+        "requires_realtime_access": true,
+        "pii_handling_notes": "Pakiet nie gromadzi danych klient\u00f3w, ale wymaga po\u0142\u0105czenia z kontem API."
+      },
+      "distribution": [
+        {
+          "name": "config-bundle",
+          "uri": "packages/mean_reversion/bundle.json",
+          "kind": "config",
+          "description": "G\u0142\u00f3wna paczka konfiguracyjna.",
+          "size_bytes": 512,
+          "integrity": {
+            "algorithm": "sha256",
+            "digest": "d7e6768050cb265468d864359b11202800de4f6f9f8d07816cfd6fc6b558b78f"
+          },
+          "signature": {
+            "algorithm": "HMAC-SHA256",
+            "key_id": "dev-hmac",
+            "value": "svDXgp++ZiSh95Ku+vOancVWASTCB7/0Glhx1nH0ESU=",
+            "signed_fields": [
+              "package_id",
+              "version",
+              "artifact",
+              "uri",
+              "sha256"
+            ]
+          }
+        }
+      ],
+      "compatibility": [
+        {
+          "component": "bot_core",
+          "minimum": "5.2.0",
+          "recommended": "5.3.1"
+        },
+        {
+          "component": "ui",
+          "minimum": "2.4.0"
+        }
+      ],
+      "documentation_url": "https://configs.example.com/marketplace/mean-reversion",
+      "release_notes": [
+        "Pocz\u0105tkowa publikacja pakietu.",
+        "Dodano profil danych CCXT Binance."
+      ],
+      "security": {
+        "mode": "allowlist",
+        "allowed_fingerprints": [
+          "OEM-1234567890ABCDEF"
+        ],
+        "require_strict_match": false,
+        "audit_message": "Pakiet dost\u0119pny tylko dla urz\u0105dze\u0144 zatwierdzonych przez Marketplace Guild."
+      }
+    }
+  ]
+}

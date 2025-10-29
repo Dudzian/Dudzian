@@ -243,6 +243,17 @@ ApplicationWindow {
                         viewsModel: moduleViewsModel
                     }
                 }
+
+                Tab {
+                    title: qsTr("Marketplace")
+
+                    MarketplaceView {
+                        anchors.fill: parent
+                        onPackageActivated: function(packageId) {
+                            console.info("Marketplace package selected", packageId)
+                        }
+                    }
+                }
             }
         }
     }
