@@ -194,7 +194,11 @@ private:
     QString   m_inProcessDatasetPath;
 
     // --- gRPC ---
-    std::unique_ptr<IMarketDataTransport> m_transport;
+    std::shared_ptr<grpc::Channel> m_channel;
+    class MarketDataStubInterface;
+    class RiskServiceStubInterface;
+    std::unique_ptr<MarketDataStubInterface> m_marketDataStub;
+    std::unique_ptr<RiskServiceStubInterface> m_riskStub;
 
     // --- Streaming ---
     std::atomic<bool> m_running{false};

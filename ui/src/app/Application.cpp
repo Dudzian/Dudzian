@@ -1083,22 +1083,14 @@ bool Application::applyParser(const QCommandLineParser& parser) {
         m_healthTlsConfig = GrpcTlsConfig{};
         m_tradingRbacRole.clear();
         m_tradingRbacScopes.clear();
-        if (parser.isSet("metrics-endpoint")
-            && parser.value("metrics-endpoint").trimmed().compare(QStringLiteral("in-process"), Qt::CaseInsensitive) != 0) {
-            qCWarning(lcAppMetrics)
-                << "Tryb in-process ignoruje --metrics-endpoint i wymusza lokalny transport 'in-process'.";
-        }
-        m_metricsEndpoint = QStringLiteral("in-process");
+        m_metricsEndpoint = parser.value("metrics-endpoint");
+        if (m_metricsEndpoint.trimmed().isEmpty())
+            m_metricsEndpoint = QStringLiteral("in-process");
         m_metricsTag = parser.value("metrics-tag");
         m_metricsEnabled = !(parser.isSet("disable-metrics") || parser.isSet("no-metrics"));
         m_metricsRbacRole.clear();
         metricsAuthToken.clear();
         metricsAuthTokenFile.clear();
-        if (parser.isSet("health-endpoint")
-            && parser.value("health-endpoint").trimmed().compare(QStringLiteral("in-process"), Qt::CaseInsensitive) != 0) {
-            qCWarning(lcAppMetrics)
-                << "Tryb in-process ignoruje --health-endpoint i korzysta z klienta 'in-process'.";
-        }
         m_healthEndpoint = QStringLiteral("in-process");
         m_healthRbacRole.clear();
         m_healthRbacScopes.clear();
@@ -1121,14 +1113,6 @@ bool Application::applyParser(const QCommandLineParser& parser) {
             if (!m_inProcessHealthClient)
                 m_inProcessHealthClient = std::make_shared<InProcessHealthClient>();
             m_healthController->setHealthClientForTesting(m_inProcessHealthClient);
-            m_usingInProcessHealthClient = true;
-        } else {
-            if (!m_grpcHealthClient)
-                m_grpcHealthClient = std::make_shared<HealthClient>();
-            if (m_usingInProcessHealthClient) {
-                m_healthController->setHealthClientForTesting(m_grpcHealthClient);
-            }
-            m_usingInProcessHealthClient = false;
         }
         const QString endpointForHealth = !m_healthEndpoint.isEmpty() ? m_healthEndpoint : endpoint;
         m_healthController->setEndpoint(endpointForHealth);
@@ -4949,7 +4933,6 @@ void Application::ensureTelemetry() {
             if (!m_inProcessMetricsClient)
                 m_inProcessMetricsClient = std::make_shared<InProcessMetricsClient>();
             reporter->setMetricsClientForTesting(m_inProcessMetricsClient);
-            m_usingInProcessMetricsClient = true;
         }
         m_telemetry = std::move(reporter);
     }

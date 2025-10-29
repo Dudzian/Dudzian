@@ -439,11 +439,7 @@ private:
     QString                            m_healthRbacRole;
     QStringList                        m_healthRbacScopes;
     std::shared_ptr<MetricsClientInterface> m_inProcessMetricsClient;
-    std::shared_ptr<MetricsClientInterface> m_grpcMetricsClient;
     std::shared_ptr<HealthClientInterface>  m_inProcessHealthClient;
-    std::shared_ptr<HealthClientInterface>  m_grpcHealthClient;
-    bool                                    m_usingInProcessMetricsClient = false;
-    bool                                    m_usingInProcessHealthClient = false;
     int                                m_healthRefreshIntervalSeconds = 60;
     bool                               m_healthAutoRefreshEnabled = true;
     QString                            m_preferredScreenName;
