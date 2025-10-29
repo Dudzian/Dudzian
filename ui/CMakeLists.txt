@@ -59,6 +59,8 @@ target_link_libraries(trading_proto
 set(UI_SOURCES
     src/main.cpp
     src/app/Application.cpp
+    src/app/MarketplaceController.cpp
+    src/app/PortfolioManagerController.cpp
     src/app/UiModuleManager.cpp
     src/app/UiModuleViewsModel.cpp
     src/app/ActivationController.cpp
@@ -94,6 +96,8 @@ set(UI_SOURCES
 
 set(UI_HEADERS
     src/app/Application.hpp
+    src/app/MarketplaceController.hpp
+    src/app/PortfolioManagerController.hpp
     src/app/UiModuleManager.hpp
     src/app/UiModuleInterface.hpp
     src/app/UiModuleViewsModel.hpp

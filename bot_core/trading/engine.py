@@ -160,12 +160,13 @@ class BacktestResult:
 class OptimizationSummary:
     """Snapshot of the most recent optimisation process."""
 
-    params: TradingParameters
-    score: float
+    params: Optional[TradingParameters]
+    score: Optional[float]
     iterations: int
     objective: str
-    result: BacktestResult
+    result: Optional[BacktestResult] = None
     fallback_used: bool = False
+    error: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -1299,6 +1300,7 @@ class TradingEngine:
 
         self._performance_monitor = PerformanceMonitor(self._logger)
         self._last_optimization_summary: Optional[OptimizationSummary] = None
+        self._last_optimization_result: Optional[BacktestResult] = None
     
     def run_strategy(
         self,
@@ -1578,69 +1580,92 @@ class TradingEngine:
                     continue
                 yield combo
 
-        for combination in parameter_combinations():
-            if max_iterations is not None and iterations >= max_iterations:
-                break
-            try:
-                params = replace(base_params, **combination)
-            except Exception as error:
-                self._logger.warning(
-                    "Optimization failed before strategy execution for params %s: %s",
-                    combination,
-                    error,
-                )
-                continue
+        try:
+            for combination in parameter_combinations():
+                if max_iterations is not None and iterations >= max_iterations:
+                    break
+                try:
+                    params = replace(base_params, **combination)
+                except Exception as error:
+                    self._logger.warning(
+                        "Optimization failed before strategy execution for params %s: %s",
+                        combination,
+                        error,
+                    )
+                    continue
 
-            try:
-                result = self.run_strategy(data, params)
-            except Exception as error:
+                try:
+                    result = self.run_strategy(data, params)
+                except Exception as error:
+                    iterations += 1
+                    self._logger.warning(
+                        "Optimization failed during strategy execution for params %s: %s",
+                        combination,
+                        error,
+                    )
+                    continue
+
                 iterations += 1
-                self._logger.warning(
-                    "Optimization failed during strategy execution for params %s: %s",
-                    combination,
-                    error,
-                )
-                continue
 
-            iterations += 1
+                try:
+                    if callable(objective):
+                        score = objective(result)
+                    else:
+                        score = getattr(result, objective)
+                except AttributeError:
+                    self._logger.warning(
+                        "Optimization result missing objective '%s' for params %s",
+                        objective,
+                        combination,
+                    )
+                    continue
+                except Exception as error:
+                    self._logger.warning(
+                        "Failed to evaluate objective '%s' for params %s: %s",
+                        objective_label,
+                        combination,
+                        error,
+                    )
+                    continue
 
-            try:
-                if callable(objective):
-                    score = objective(result)
-                else:
-                    score = getattr(result, objective)
-            except AttributeError:
-                self._logger.warning(
-                    "Optimization result missing objective '%s' for params %s",
-                    objective,
-                    combination,
-                )
-                continue
-            except Exception as error:
-                self._logger.warning(
-                    "Failed to evaluate objective '%s' for params %s: %s",
-                    objective_label,
-                    combination,
-                    error,
-                )
-                continue
+                if not isinstance(score, (int, float, np.floating)):
+                    self._logger.warning(
+                        "Objective '%s' produced non-numeric score %s for params %s",
+                        objective_label,
+                        score,
+                        combination,
+                    )
+                    continue
 
-            if not isinstance(score, (int, float, np.floating)):
-                self._logger.warning(
-                    "Objective '%s' produced non-numeric score %s for params %s",
-                    objective_label,
-                    score,
-                    combination,
-                )
-                continue
+                score_value = float(score)
 
-            score_value = float(score)
+                if np.isnan(score_value):
+                    self._logger.warning(
+                        "Objective '%s' produced NaN score for params %s",
+                        objective_label,
+                        combination,
+                    )
+                    continue
 
-            if np.isnan(score_value):
+                if score_value > best_score:
+                    best_score = score_value
+                    best_params = params
+                    best_result = result
+                    self._last_optimization_result = best_result
+                    self._last_optimization_summary = OptimizationSummary(
+                        params=best_params,
+                        score=best_score,
+                        iterations=iterations,
+                        objective=objective_label,
+                        result=best_result,
+                        fallback_used=False,
+                    )
+                    self._logger.info(f"New best {objective_label}: {score_value:.4f}")
+
+            if best_params is None:
                 self._logger.warning(
-                    "Objective '%s' produced NaN score for params %s",
-                    objective_label,
-                    combination,
+                    "Optimization completed after %d iterations without a valid score; returning baseline parameters",
+                    iterations,
                 )
                 continue
 
@@ -1696,9 +1721,11 @@ class TradingEngine:
 
     def get_last_optimization_result(self) -> Optional[BacktestResult]:
         """Return the most recent optimization result if available."""
-        if self._last_optimization_summary is None:
-            return None
-        return self._last_optimization_summary.result
+        if self._last_optimization_result is not None:
+            return self._last_optimization_result
+        if self._last_optimization_summary is not None:
+            return self._last_optimization_summary.result
+        return None
 
     def get_last_optimization_summary(self) -> Optional[OptimizationSummary]:
         """Return metadata about the most recent optimization run."""

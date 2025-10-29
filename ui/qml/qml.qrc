@@ -21,6 +21,7 @@
         <file>components/AssetHeatmapDashboard.qml</file>
         <file>components/ModuleBrowser.qml</file>
         <file>components/MarketplaceView.qml</file>
+        <file>components/PortfolioManagerView.qml</file>
         <file>components/workbench/StrategyWorkbench.qml</file>
         <file>components/workbench/StrategyWorkbenchViewModel.qml</file>
     </qresource>

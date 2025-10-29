@@ -75,6 +75,8 @@ class Application : public QObject {
     Q_PROPERTY(QObject*         decisionLogModel READ decisionLogModel CONSTANT)
     Q_PROPERTY(QObject*         moduleManager READ moduleManager CONSTANT)
     Q_PROPERTY(QObject*         moduleViewsModel READ moduleViewsModel CONSTANT)
+    Q_PROPERTY(QObject*         marketplaceController READ marketplaceController CONSTANT)
+    Q_PROPERTY(QObject*         portfolioController READ portfolioController CONSTANT)
     Q_PROPERTY(QString          decisionLogPath READ decisionLogPath NOTIFY decisionLogPathChanged)
     Q_PROPERTY(int              telemetryPendingRetryCount READ telemetryPendingRetryCount NOTIFY telemetryPendingRetryCountChanged)
     Q_PROPERTY(QVariantMap      riskRefreshSchedule READ riskRefreshSchedule NOTIFY riskRefreshScheduleChanged)
@@ -126,6 +128,8 @@ public:
     QObject*         decisionLogModel() const;
     QObject*         moduleManager() const;
     QObject*         moduleViewsModel() const;
+    QObject*         marketplaceController() const;
+    QObject*         portfolioController() const;
     QObject*         alertsModel() const { return const_cast<AlertsModel*>(&m_alertsModel); }
     QObject*         alertsFilterModel() const { return const_cast<AlertsFilterProxyModel*>(&m_filteredAlertsModel); }
     QObject*         riskHistoryModel() const { return const_cast<RiskHistoryModel*>(&m_riskHistoryModel); }
@@ -203,6 +207,8 @@ public slots:
     UiModuleManager* moduleManagerForTesting() const { return m_moduleManager.get(); }
     UiModuleViewsModel* moduleViewsModelForTesting() const { return m_moduleViewsModel.get(); }
     QStringList uiModuleDirectoriesForTesting() const { return m_uiModuleDirectories; }
+    MarketplaceController* marketplaceControllerForTesting() const { return m_marketplaceController.get(); }
+    PortfolioManagerController* portfolioControllerForTesting() const { return m_portfolioController.get(); }
 
     // Test helpers
     void ingestFpsSampleForTesting(double fps);
@@ -352,6 +358,7 @@ private:
                               const char* label);
     void configureTradingTlsWatchers();
     void configureMetricsTlsWatchers();
+    void applyMarketplaceEnvironmentOverrides(const QCommandLineParser& parser);
     void configureHealthTlsWatchers();
     void applyHealthAuthTokenToController();
     void applyTradingTlsConfig();
@@ -421,6 +428,8 @@ private:
     std::unique_ptr<StrategyWorkbenchController> m_workbenchController;
     std::unique_ptr<SupportBundleController>   m_supportController;
     std::unique_ptr<HealthStatusController>    m_healthController;
+    std::unique_ptr<MarketplaceController>     m_marketplaceController;
+    std::unique_ptr<PortfolioManagerController> m_portfolioController;
     std::unique_ptr<UiModuleManager>           m_moduleManager;
     std::unique_ptr<UiModuleViewsModel>        m_moduleViewsModel;
 

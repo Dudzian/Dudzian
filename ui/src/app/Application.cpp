@@ -1,6 +1,7 @@
 #include "Application.hpp"
 
 #include <QByteArray>
+#include <QCommandLineOption>
 #include <QCommandLineParser>
 #include <QCoreApplication>
 #include <QDateTime>
@@ -49,6 +50,8 @@
 #include "app/UiModuleViewsModel.hpp"
 #include "app/StrategyConfigController.hpp"
 #include "app/StrategyWorkbenchController.hpp"
+#include "app/MarketplaceController.hpp"
+#include "app/PortfolioManagerController.hpp"
 #include "runtime/OfflineRuntimeBridge.hpp"
 #include "security/SecurityAdminController.hpp"
 #include "support/SupportBundleController.hpp"
@@ -286,6 +289,15 @@ Application::Application(QQmlApplicationEngine& engine, QObject* parent)
     m_supportController = std::make_unique<SupportBundleController>(this);
 
     m_healthController = std::make_unique<HealthStatusController>(this);
+
+    m_marketplaceController = std::make_unique<MarketplaceController>(this);
+    m_marketplaceController->setBridgeScriptPath(QDir::current().absoluteFilePath(QStringLiteral("scripts/ui_marketplace_bridge.py")));
+    m_marketplaceController->setPresetsDirectory(QDir::current().absoluteFilePath(QStringLiteral("data/strategies")));
+    m_marketplaceController->setLicensesPath(QDir::current().absoluteFilePath(QStringLiteral("var/marketplace_licenses.json")));
+
+    m_portfolioController = std::make_unique<PortfolioManagerController>(this);
+    m_portfolioController->setBridgeScriptPath(QDir::current().absoluteFilePath(QStringLiteral("scripts/ui_portfolio_bridge.py")));
+    m_portfolioController->setStorePath(QDir::current().absoluteFilePath(QStringLiteral("var/portfolio_links.json")));
 
     m_moduleManager = std::make_unique<UiModuleManager>(this);
     m_moduleViewsModel = std::make_unique<UiModuleViewsModel>(this);
@@ -606,6 +618,14 @@ void Application::configureParser(QCommandLineParser& parser) const {
     parser.addOption({"disable-ui-settings", tr("Wyłącza zapisywanie konfiguracji UI")});
     parser.addOption({"enable-ui-settings",
                       tr("Wymusza zapisywanie konfiguracji UI nawet przy dezaktywacji w zmiennych środowiskowych")});
+    parser.addOption({"marketplace-bridge", tr("Ścieżka mostka marketplace (ui_marketplace_bridge.py)"), tr("path"), QString()});
+    parser.addOption({"marketplace-presets-dir", tr("Katalog presetów marketplace"), tr("path"), QString()});
+    parser.addOption({"marketplace-licenses-path", tr("Plik stanu licencji marketplace"), tr("path"), QString()});
+    parser.addOption({"marketplace-signing-key", tr("Klucz podpisu presetów marketplace (KEY_ID=SECRET)"), tr("key"), QString()});
+    parser.addOption({"marketplace-signing-key-file", tr("Plik JSON z kluczami podpisów marketplace"), tr("path"), QString()});
+    parser.addOption({"marketplace-fingerprint", tr("Nadpisanie fingerprintu dla licencji marketplace"), tr("fingerprint"), QString()});
+    parser.addOption({"portfolio-bridge", tr("Ścieżka mostka portfelowego (ui_portfolio_bridge.py)"), tr("path"), QString()});
+    parser.addOption({"portfolio-store", tr("Plik konfiguracji portfeli multi-account"), tr("path"), QString()});
 
     parser.addOption({"screen-name", tr("Preferowany ekran (nazwa QScreen)"), tr("name")});
     parser.addOption({"screen-index", tr("Preferowany ekran (indeks)"), tr("index")});
@@ -1184,6 +1204,36 @@ bool Application::applyParser(const QCommandLineParser& parser) {
     configureSupportBundle(parser);
     configureDecisionLog(parser);
     configureUiModules(parser);
+    applyMarketplaceEnvironmentOverrides(parser);
+    if (m_marketplaceController) {
+        const QString bridgePath = parser.value(QStringLiteral("marketplace-bridge")).trimmed();
+        if (!bridgePath.isEmpty())
+            m_marketplaceController->setBridgeScriptPath(expandPath(bridgePath));
+        const QString presetsDir = parser.value(QStringLiteral("marketplace-presets-dir")).trimmed();
+        if (!presetsDir.isEmpty())
+            m_marketplaceController->setPresetsDirectory(expandPath(presetsDir));
+        const QString licensesPath = parser.value(QStringLiteral("marketplace-licenses-path")).trimmed();
+        if (!licensesPath.isEmpty())
+            m_marketplaceController->setLicensesPath(expandPath(licensesPath));
+        const QStringList cliSigningKeys = parser.values(QStringLiteral("marketplace-signing-key"));
+        if (!cliSigningKeys.isEmpty())
+            m_marketplaceController->setSigningKeys(cliSigningKeys);
+        const QStringList cliSigningKeyFiles = parser.values(QStringLiteral("marketplace-signing-key-file"));
+        if (!cliSigningKeyFiles.isEmpty())
+            m_marketplaceController->setSigningKeyFiles(cliSigningKeyFiles);
+        const QString fingerprintOverride = parser.value(QStringLiteral("marketplace-fingerprint")).trimmed();
+        if (!fingerprintOverride.isEmpty())
+            m_marketplaceController->setFingerprintOverride(fingerprintOverride);
+    }
+
+    if (m_portfolioController) {
+        const QString portfolioBridge = parser.value(QStringLiteral("portfolio-bridge")).trimmed();
+        if (!portfolioBridge.isEmpty())
+            m_portfolioController->setBridgeScriptPath(expandPath(portfolioBridge));
+        const QString portfolioStore = parser.value(QStringLiteral("portfolio-store")).trimmed();
+        if (!portfolioStore.isEmpty())
+            m_portfolioController->setStorePath(expandPath(portfolioStore));
+    }
 
     // TLS config (MetricsService)
     TelemetryTlsConfig mtls;
@@ -3108,6 +3158,8 @@ void Application::start() {
     } else {
         m_client.start();
     }
+    if (m_marketplaceController)
+        m_marketplaceController->refreshPresets();
     m_started = true;
     applyRiskRefreshTimerState();
 }
@@ -3322,6 +3374,8 @@ void Application::exposeToQml() {
     m_engine.rootContext()->setContextProperty(QStringLiteral("decisionLogModel"), &m_decisionLogModel);
     m_engine.rootContext()->setContextProperty(QStringLiteral("moduleManager"), m_moduleManager.get());
     m_engine.rootContext()->setContextProperty(QStringLiteral("moduleViewsModel"), m_moduleViewsModel.get());
+    m_engine.rootContext()->setContextProperty(QStringLiteral("marketplaceController"), m_marketplaceController.get());
+    m_engine.rootContext()->setContextProperty(QStringLiteral("portfolioController"), m_portfolioController.get());
 }
 
 QObject* Application::activationController() const
@@ -3367,6 +3421,16 @@ QObject* Application::moduleManager() const
 QObject* Application::moduleViewsModel() const
 {
     return m_moduleViewsModel.get();
+}
+
+QObject* Application::marketplaceController() const
+{
+    return m_marketplaceController.get();
+}
+
+QObject* Application::portfolioController() const
+{
+    return m_portfolioController.get();
 }
 
 void Application::setModuleManagerForTesting(std::unique_ptr<UiModuleManager> manager)
@@ -4511,6 +4575,62 @@ void Application::configureMetricsTlsWatchers()
                         m_metricsTlsWatcherDirs,
                         files,
                         "MetricsService TLS");
+}
+
+void Application::applyMarketplaceEnvironmentOverrides(const QCommandLineParser& parser)
+{
+    if (!m_marketplaceController)
+        return;
+
+    auto applyPathEnv = [&](const QByteArray& envKey, const char* cliOption, auto setter) {
+        if (parser.isSet(cliOption))
+            return;
+        const auto value = envValue(envKey);
+        if (!value.has_value())
+            return;
+        const QString trimmed = value->trimmed();
+        if (trimmed.isEmpty()) {
+            setter(QString());
+            return;
+        }
+        setter(expandPath(trimmed));
+    };
+
+    applyPathEnv(kMarketplaceBridgeEnv,
+                 "marketplace-bridge",
+                 [&](const QString& path) { m_marketplaceController->setBridgeScriptPath(path); });
+    applyPathEnv(kMarketplacePresetsDirEnv,
+                 "marketplace-presets-dir",
+                 [&](const QString& path) { m_marketplaceController->setPresetsDirectory(path); });
+    applyPathEnv(kMarketplaceLicensesPathEnv,
+                 "marketplace-licenses-path",
+                 [&](const QString& path) { m_marketplaceController->setLicensesPath(path); });
+
+    if (!parser.isSet("marketplace-signing-key")) {
+        const auto value = envValue(kMarketplaceSigningKeysEnv);
+        if (value.has_value()) {
+            const QStringList keys = parseMarketplaceList(*value);
+            m_marketplaceController->setSigningKeys(keys);
+        }
+    }
+
+    if (!parser.isSet("marketplace-signing-key-file")) {
+        const auto value = envValue(kMarketplaceSigningKeyFilesEnv);
+        if (value.has_value()) {
+            QStringList files;
+            for (const QString& entry : parseMarketplaceList(*value)) {
+                if (entry.isEmpty())
+                    continue;
+                files.append(expandPath(entry));
+            }
+            m_marketplaceController->setSigningKeyFiles(files);
+        }
+    }
+
+    if (!parser.isSet("marketplace-fingerprint")) {
+        if (const auto value = envValue(kMarketplaceFingerprintEnv); value.has_value())
+            m_marketplaceController->setFingerprintOverride(value->trimmed());
+    }
 }
 
 void Application::configureHealthTlsWatchers()

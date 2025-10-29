@@ -39,6 +39,37 @@ filtrować widoki po kategorii, podglądać deklarowane metadane i ładować pli
 źródłowe w ramach aplikacji. Model `UiModuleViewsModel` udostępnia API do
 wyszukiwania widoków i kategorii wykorzystywane przez interfejs.【F:ui/src/app/UiModuleViewsModel.cpp†L64-L147】【F:ui/qml/components/ModuleBrowser.qml†L1-L409】
 
+## Menedżer portfeli multi-account
+
+Zakładka **Portfele** (`PortfolioManagerView.qml`) umożliwia edycję konfiguracji
+harmonogramu multi-portfelowego (master/follower, copy trading). Widok korzysta z
+kontrolera `PortfolioManagerController`, który deleguje operacje na lokalny mostek
+`scripts/ui_portfolio_bridge.py`. Domyślna lokalizacja konfiguracji to
+`var/portfolio_links.json`, ale ścieżkę można nadpisać opcją CLI:
+
+```
+bot_trading_shell --portfolio-bridge /ścieżka/do/ui_portfolio_bridge.py \
+                  --portfolio-store /ścieżka/do/portfeli.json
+```
+
+Plik JSON przechowuje strukturę:
+
+```json
+{
+  "portfolios": {
+    "master-001": {
+      "portfolio_id": "master-001",
+      "primary_preset": "grid-pro",
+      "fallback_presets": ["ml-ai"],
+      "followers": [ { "portfolio_id": "follower-a", "scaling": 0.5 } ]
+    }
+  }
+}
+```
+
+Mostek wspiera komendy `list`, `apply` oraz `remove`, dzięki czemu konfigurację
+można zarządzać zarówno z UI jak i automatycznymi skryptami.【F:scripts/ui_portfolio_bridge.py†L1-L124】【F:ui/qml/components/PortfolioManagerView.qml†L1-L223】
+
 ## Uruchomienie ze stubem gRPC
 
 W pierwszym terminalu uruchom stub z wieloassetowym datasetem i pętlą strumieniową:

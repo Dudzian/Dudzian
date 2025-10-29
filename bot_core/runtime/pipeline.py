@@ -42,9 +42,13 @@ from bot_core.exchanges.base import (
 from bot_core.exchanges.streaming import LocalLongPollStream, StreamBatch
 from bot_core.market_intel import MarketIntelAggregator, MarketIntelQuery, MarketIntelSnapshot
 from bot_core.portfolio import (
+    CopyTradingFollowerConfig,
+    MultiPortfolioScheduler,
+    PortfolioBinding,
     PortfolioDecision,
     PortfolioDecisionLog,
     PortfolioGovernor,
+    StrategyHealthMonitor,
     StrategyPortfolioGovernor,
 )
 from bot_core.runtime.bootstrap import BootstrapContext, bootstrap_environment
@@ -294,6 +298,12 @@ def build_daily_trend_pipeline(
         )
 
     cached_source = _create_cached_source(bootstrap_ctx.adapter, environment)
+    _ensure_local_market_data_availability(
+        environment,
+        cached_source,
+        markets,
+        runtime_cfg.interval,
+    )
     storage = cached_source.storage
     backfill_service = OHLCVBackfillService(cached_source)
 
@@ -3814,6 +3824,134 @@ def build_live_multi_strategy_runtime(
     )
 
 
+def _iter_portfolio_entries(definition: object) -> Sequence[Mapping[str, object]]:
+    if definition is None:
+        return ()
+    if isinstance(definition, Mapping):
+        if "portfolios" in definition:
+            payload = definition["portfolios"]
+            if isinstance(payload, Mapping):
+                return [dict(value) for value in payload.values() if isinstance(value, Mapping)]
+            if isinstance(payload, Sequence):
+                return [dict(entry) for entry in payload if isinstance(entry, Mapping)]
+        return [dict(definition)]
+    if isinstance(definition, Sequence):
+        entries: list[Mapping[str, object]] = []
+        for item in definition:
+            if isinstance(item, Mapping):
+                entries.append(dict(item))
+        return entries
+    if hasattr(definition, "portfolios"):
+        payload = getattr(definition, "portfolios")
+        return _iter_portfolio_entries(payload)
+    raise TypeError("Unsupported portfolio definition structure")
+
+
+def _build_follower_configs(raw_followers: object) -> tuple[CopyTradingFollowerConfig, ...]:
+    if raw_followers in (None, ""):
+        return ()
+    if isinstance(raw_followers, Mapping):
+        raw_sequence = [raw_followers]
+    elif isinstance(raw_followers, Sequence) and not isinstance(raw_followers, (str, bytes)):
+        raw_sequence = list(raw_followers)
+    else:
+        raise TypeError("Followers must be a mapping or a sequence of mappings")
+
+    followers: list[CopyTradingFollowerConfig] = []
+    for entry in raw_sequence:
+        if not isinstance(entry, Mapping):
+            continue
+        portfolio_id = str(entry.get("portfolio_id") or entry.get("id") or "").strip()
+        if not portfolio_id:
+            continue
+        scaling = float(entry.get("scaling", 1.0))
+        risk_multiplier = float(entry.get("risk_multiplier", entry.get("risk", 1.0)))
+        enabled = bool(entry.get("enabled", True))
+        allow_partial = bool(entry.get("allow_partial", True))
+        max_position_value = entry.get("max_position_value")
+        follower = CopyTradingFollowerConfig(
+            portfolio_id=portfolio_id,
+            scaling=scaling,
+            risk_multiplier=risk_multiplier,
+            enabled=enabled,
+            max_position_value=float(max_position_value) if max_position_value not in (None, "") else None,
+            allow_partial=allow_partial,
+        )
+        followers.append(follower)
+    return tuple(followers)
+
+
+def _normalize_fallbacks(raw_fallbacks: object) -> tuple[str, ...]:
+    if raw_fallbacks in (None, ""):
+        return ()
+    if isinstance(raw_fallbacks, str):
+        entries = [raw_fallbacks]
+    elif isinstance(raw_fallbacks, Sequence):
+        entries = list(raw_fallbacks)
+    else:
+        raise TypeError("Fallback presets must be a string or sequence of strings")
+    normalized: list[str] = []
+    for item in entries:
+        text = str(item).strip()
+        if text and text not in normalized:
+            normalized.append(text)
+    return tuple(normalized)
+
+
+def _build_portfolio_binding(entry: Mapping[str, object]) -> PortfolioBinding:
+    portfolio_id = str(entry.get("portfolio_id") or entry.get("id") or "").strip()
+    if not portfolio_id:
+        raise ValueError("Portfolio binding must define 'portfolio_id'")
+    primary = str(entry.get("primary_preset") or entry.get("preset") or "").strip()
+    if not primary:
+        raise ValueError(f"Portfolio {portfolio_id} missing primary preset")
+    fallback = _normalize_fallbacks(entry.get("fallback_presets") or entry.get("fallback"))
+    followers = _build_follower_configs(entry.get("followers"))
+    cooldown_value = entry.get("rebalance_cooldown_seconds")
+    if cooldown_value in (None, ""):
+        cooldown = timedelta(minutes=5)
+    else:
+        cooldown = timedelta(seconds=float(cooldown_value))
+    return PortfolioBinding(
+        portfolio_id=portfolio_id,
+        primary_preset=primary,
+        fallback_presets=fallback,
+        followers=followers,
+        rebalance_cooldown=cooldown,
+    )
+
+
+def build_multi_portfolio_scheduler_from_config(
+    *,
+    core_config: CoreConfig,
+    catalog: StrategyCatalog | None = None,
+    audit_logger: Callable[[Mapping[str, object]], None] | None = None,
+    health_monitor: StrategyHealthMonitor | None = None,
+    clock: Callable[[], datetime] | None = None,
+) -> MultiPortfolioScheduler:
+    definitions = getattr(core_config, "multi_portfolio", None)
+    if definitions is None:
+        raise ValueError("Konfiguracja nie zawiera sekcji multi_portfolio")
+    catalog = catalog or DEFAULT_STRATEGY_CATALOG
+    scheduler = MultiPortfolioScheduler(
+        catalog,
+        audit_logger=audit_logger,
+        health_monitor=health_monitor,
+        clock=clock,
+    )
+    entries = _iter_portfolio_entries(definitions)
+    for entry in entries:
+        binding = _build_portfolio_binding(entry)
+        scheduler.register_portfolio(binding)
+    return scheduler
+
+
+def describe_multi_portfolio_state(
+    scheduler: MultiPortfolioScheduler,
+) -> Sequence[Mapping[str, object]]:
+    return [scheduler.portfolio_state(portfolio_id) for portfolio_id in scheduler.registered_portfolios()]
+
+
 __all__ = [
     "DailyTrendPipeline",
     "build_daily_trend_pipeline",
@@ -3823,6 +3961,8 @@ __all__ = [
     "build_demo_multi_strategy_runtime",
     "build_paper_multi_strategy_runtime",
     "build_live_multi_strategy_runtime",
+    "build_multi_portfolio_scheduler_from_config",
+    "describe_multi_portfolio_state",
     "consume_stream",
     "OHLCVStrategyFeed",
     "InMemoryStrategySignalSink",
