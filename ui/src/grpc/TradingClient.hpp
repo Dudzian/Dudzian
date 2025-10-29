@@ -95,7 +95,6 @@ public:
     void setRegimeThresholdsPath(const QString& path);
     void reloadRegimeThresholds();
     void setInProcessDatasetPath(const QString& path);
-    void setInProcessCandleIntervalMs(int intervalMs);
 
     QVector<TradableInstrument> listTradableInstruments(const QString& exchange);
 
@@ -138,7 +137,6 @@ private:
         virtual void setEndpoint(const QString& endpoint) = 0;
         virtual void setTlsConfig(const TlsConfig& config) = 0;
         virtual void setDatasetPath(const QString& path) = 0;
-        virtual void setCandleIntervalMs(int intervalMs) = 0;
         virtual bool ensureReady() = 0;
         virtual grpc::Status getOhlcvHistory(grpc::ClientContext* context,
                                              const botcore::trading::v1::GetOhlcvHistoryRequest& request,
@@ -194,10 +192,13 @@ private:
     TlsConfig m_tlsConfig{};
     QString   m_regimeThresholdPath;
     QString   m_inProcessDatasetPath;
-    int       m_inProcessCandleIntervalMs = 150;
 
     // --- gRPC ---
-    std::unique_ptr<IMarketDataTransport> m_transport;
+    std::shared_ptr<grpc::Channel> m_channel;
+    class MarketDataStubInterface;
+    class RiskServiceStubInterface;
+    std::unique_ptr<MarketDataStubInterface> m_marketDataStub;
+    std::unique_ptr<RiskServiceStubInterface> m_riskStub;
 
     // --- Streaming ---
     std::atomic<bool> m_running{false};
