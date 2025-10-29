@@ -13,6 +13,10 @@ except ImportError:
     from bot_core.execution.live_router import LiveExecutionRouter, RouteDefinition  # type: ignore  # noqa: F401
     RoutingPlan = RouteDefinition  # alias ujednolicający API
 
+from bot_core.execution.bridge import (  # noqa: F401 - eksport publiczny
+    ExchangeAdapterExecutionService,
+    decision_to_order_request,
+)
 from bot_core.execution.paper import (  # noqa: F401 - eksport publiczny
     InsufficientBalanceError,
     LedgerEntry,
@@ -33,4 +37,6 @@ __all__ = [
     "LedgerEntry",
     "InsufficientBalanceError",
     "ShortPosition",
+    "ExchangeAdapterExecutionService",
+    "decision_to_order_request",
 ]

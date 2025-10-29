@@ -4,10 +4,13 @@ from __future__ import annotations
 import json
 import os
 import threading
+import math
+from collections import Counter
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Iterable, Mapping, MutableMapping, Optional, Protocol
+from typing import Mapping, MutableMapping, Optional, Protocol
 
 
 def _ensure_utc(timestamp: datetime) -> datetime:
@@ -207,10 +210,174 @@ class JsonlTradingDecisionJournal(TradingDecisionJournal):
                     continue
 
 
+def log_decision_event(
+    journal: TradingDecisionJournal | None,
+    *,
+    event: str,
+    environment: str,
+    portfolio: str,
+    risk_profile: str,
+    timestamp: datetime | None = None,
+    symbol: str | None = None,
+    side: str | None = None,
+    quantity: float | None = None,
+    price: float | None = None,
+    status: str | None = None,
+    schedule: str | None = None,
+    strategy: str | None = None,
+    metadata: Mapping[str, object] | None = None,
+    latency_ms: float | None = None,
+    confidence: float | None = None,
+) -> None:
+    """Zapisuje standardowe zdarzenie decyzji do dziennika."""
+
+    if journal is None:
+        return
+
+    meta: MutableMapping[str, str] = {}
+    if metadata:
+        meta.update({str(key): str(value) for key, value in metadata.items()})
+
+    event_obj = TradingDecisionEvent(
+        event_type=event,
+        timestamp=_ensure_utc(timestamp or datetime.now(timezone.utc)),
+        environment=environment,
+        portfolio=portfolio,
+        risk_profile=risk_profile,
+        symbol=symbol,
+        side=side,
+        quantity=quantity,
+        price=price,
+        status=status,
+        schedule=schedule,
+        strategy=strategy,
+        latency_ms=latency_ms,
+        confidence=confidence,
+        metadata=meta,
+    )
+    journal.record(event_obj)
+
+
+def _parse_timestamp(value: object) -> datetime | None:
+    if isinstance(value, datetime):
+        return _ensure_utc(value)
+    if isinstance(value, (int, float)):
+        try:
+            return datetime.fromtimestamp(float(value), timezone.utc)
+        except (OverflowError, OSError, ValueError):
+            return None
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return None
+        if text.endswith("Z"):
+            text = text[:-1] + "+00:00"
+        try:
+            parsed = datetime.fromisoformat(text)
+        except ValueError:
+            return None
+        return _ensure_utc(parsed)
+    return None
+
+
+def _percentile(values: Iterable[float], fraction: float) -> float:
+    sequence = sorted(values)
+    if not sequence:
+        return 0.0
+    if fraction <= 0:
+        return sequence[0]
+    if fraction >= 1:
+        return sequence[-1]
+    index = fraction * (len(sequence) - 1)
+    lower = math.floor(index)
+    upper = math.ceil(index)
+    if lower == upper:
+        return sequence[lower]
+    weight = index - lower
+    return sequence[lower] + (sequence[upper] - sequence[lower]) * weight
+
+
+def aggregate_decision_statistics(
+    journal_or_records: TradingDecisionJournal | Iterable[Mapping[str, object]],
+    *,
+    start: datetime | None = None,
+    end: datetime | None = None,
+) -> Mapping[str, object]:
+    """Agreguje podstawowe statystyki decyzji w zadanym oknie czasowym."""
+
+    if hasattr(journal_or_records, "export"):
+        records = journal_or_records.export()
+    else:
+        records = journal_or_records
+
+    start_bound = _ensure_utc(start) if start is not None else None
+    end_bound = _ensure_utc(end) if end is not None else None
+
+    total = 0
+    by_status: Counter[str] = Counter()
+    by_symbol: Counter[str] = Counter()
+    latencies: list[float] = []
+    confidences: list[float] = []
+
+    for record in records:
+        if not isinstance(record, Mapping):
+            continue
+        timestamp = _parse_timestamp(record.get("timestamp"))
+        if start_bound is not None:
+            if timestamp is None or timestamp < start_bound:
+                continue
+        if end_bound is not None:
+            if timestamp is None or timestamp >= end_bound:
+                continue
+
+        total += 1
+
+        status = str(record.get("status") or "").strip()
+        if status:
+            by_status[status.lower()] += 1
+
+        symbol = record.get("symbol")
+        if symbol:
+            by_symbol[str(symbol)] += 1
+
+        latency_raw = record.get("latency_ms")
+        try:
+            latency_value = float(latency_raw)
+        except (TypeError, ValueError):
+            latency_value = None
+        if latency_value is not None and math.isfinite(latency_value):
+            latencies.append(latency_value)
+
+        confidence_raw = record.get("confidence")
+        try:
+            confidence_value = float(confidence_raw)
+        except (TypeError, ValueError):
+            confidence_value = None
+        if confidence_value is not None and math.isfinite(confidence_value):
+            confidences.append(confidence_value)
+
+    summary: dict[str, object] = {
+        "total": total,
+        "by_status": dict(by_status),
+        "by_symbol": dict(by_symbol),
+    }
+
+    if latencies:
+        summary["avg_latency_ms"] = sum(latencies) / len(latencies)
+        summary["p95_latency_ms"] = _percentile(latencies, 0.95)
+
+    if confidences:
+        summary["avg_confidence"] = sum(confidences) / len(confidences)
+
+    return summary
+
+
 __all__ = [
     "TradingDecisionEvent",
     "TradingDecisionJournal",
     "InMemoryTradingDecisionJournal",
     "JsonlTradingDecisionJournal",
+    "log_decision_event",
+    "aggregate_decision_statistics",
 ]
 
