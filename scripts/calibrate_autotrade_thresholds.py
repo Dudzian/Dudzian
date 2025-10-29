@@ -21,9 +21,27 @@ from typing import Callable, Iterable, Iterator, Literal, Mapping, TextIO
 import yaml
 
 _STREAM_READ_SIZE = 65536
+_JSON_STREAM_CHUNK_SIZE = 32768
 _DEFAULT_GROUP_SAMPLE_LIMIT = 50000
 _DEFAULT_GLOBAL_SAMPLE_LIMIT = 50000
+_DEFAULT_FREEZE_EVENTS_LIMIT = 100
 _JSONL_SUFFIXES = frozenset({".jsonl", ".ndjson"})
+_SUPPORTED_JOURNAL_EXTENSIONS: tuple[str, ...] = (
+    ".json",
+    ".json.gz",
+    ".jsonl",
+    ".jsonl.gz",
+    ".ndjson",
+    ".ndjson.gz",
+)
+_SUPPORTED_AUTOTRADE_EXTENSIONS: tuple[str, ...] = (
+    ".json",
+    ".json.gz",
+    ".jsonl",
+    ".jsonl.gz",
+    ".ndjson",
+    ".ndjson.gz",
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
@@ -42,22 +60,8 @@ _FREEZE_STATUS_EXTRAS = {"risk_unfreeze", "auto_risk_unfreeze"}
 _UNSET_MAX_FREEZE_EVENTS = object()
 _SUPPORTED_THRESHOLD_METRICS = frozenset(
     _normalize_metric_key(name)
-    for name in tuple(SUPPORTED_SIGNAL_THRESHOLD_METRICS) + ("risk_score",)
+    for name in tuple(_SUPPORTED_SIGNAL_THRESHOLD_METRICS) + ("risk_score",)
 )
-_ABSOLUTE_THRESHOLD_METRICS = frozenset(
-    {
-        _normalize_metric_key("signal_after_adjustment"),
-        _normalize_metric_key("signal_after_clamp"),
-    }
-)
-
-_ABSOLUTE_THRESHOLD_METRICS = frozenset(
-    {
-        _normalize_metric_key("signal_after_adjustment"),
-        _normalize_metric_key("signal_after_clamp"),
-    }
-)
-
 _ABSOLUTE_THRESHOLD_METRICS = frozenset(
     {
         _normalize_metric_key("signal_after_adjustment"),
@@ -2333,16 +2337,16 @@ def _simplify_raw_freeze_events(report: Mapping[str, object]) -> None:
                 continue
             payload = group.get("raw_freeze_events")
             if isinstance(payload, Mapping):
-                group["raw_freeze_events_meta"] = dict(payload)
                 events = payload.get("events")
-                group["raw_freeze_events"] = list(events) if isinstance(events, list) else []
+                if isinstance(events, Iterable) and not isinstance(events, list):
+                    payload["events"] = list(events)
     global_summary = report.get("global_summary")
     if isinstance(global_summary, Mapping):
         payload = global_summary.get("raw_freeze_events")
         if isinstance(payload, Mapping):
-            global_summary["raw_freeze_events_meta"] = dict(payload)
             events = payload.get("events")
-            global_summary["raw_freeze_events"] = list(events) if isinstance(events, list) else []
+            if isinstance(events, Iterable) and not isinstance(events, list):
+                payload["events"] = list(events)
 
 
 def _generate_report(
@@ -2368,7 +2372,6 @@ def _generate_report(
     max_freeze_events: int | None | object = _UNSET_MAX_FREEZE_EVENTS,
     omit_raw_freeze_events: bool = False,
     max_raw_freeze_events: int | None = None,
-    max_raw_values: int | None = None,
     max_global_samples: int | None = None,
     omit_freeze_events: bool = False,
 ) -> dict[str, object]:
@@ -2400,6 +2403,39 @@ def _generate_report(
     current_signal_threshold_sources = (
         current_threshold_sources if isinstance(current_threshold_sources, Mapping) else None
     )
+
+    (
+        current_threshold_files,
+        current_threshold_inline,
+        risk_threshold_inline,
+        risk_threshold_files_extra,
+        risk_score_metadata_payload,
+        inline_signal_values,
+        file_risk_score,
+        prepared_risk_score,
+    ) = _prepare_current_threshold_context(
+        current_signal_threshold_sources,
+        cli_risk_score,
+    )
+
+    inline_risk_override = None
+    if isinstance(current_signal_thresholds, dict) and "risk_score" in current_signal_thresholds:
+        inline_risk_override = current_signal_thresholds.pop("risk_score")
+        source_kind = None
+        if isinstance(risk_score_metadata_payload, Mapping):
+            source_kind = risk_score_metadata_payload.get("kind")
+        if inline_risk_override is not None and source_kind == "inline":
+            risk_threshold_inline = dict(risk_threshold_inline)
+            risk_threshold_inline["risk_score"] = inline_risk_override
+
+    if isinstance(current_signal_thresholds, Mapping):
+        merged_inline_thresholds = dict(current_threshold_inline)
+        merged_inline_thresholds.update(current_signal_thresholds)
+        current_threshold_inline = merged_inline_thresholds
+    else:
+        current_signal_thresholds = dict(current_threshold_inline) or None
+
+    current_risk_score = prepared_risk_score
 
     symbol_map: dict[str, tuple[str, str]] = {}
     grouped_values: dict[tuple[str, str], dict[str, _MetricSeries]] = {}
@@ -3339,9 +3375,10 @@ def _generate_report(
         aggregated_hidden_count,
     ) = _prepare_freeze_events_payload(aggregated_freeze_events, aggregated_freeze_overflow)
     if aggregated_hidden_count:
-        aggregated_freeze_summary["omitted_total"] = int(
-            aggregated_freeze_summary.get("omitted_total", 0)
-        ) + aggregated_hidden_count
+        aggregated_freeze_summary["omitted_total"] = max(
+            int(aggregated_freeze_summary.get("omitted_total", 0)),
+            aggregated_hidden_count,
+        )
     if include_freeze_events:
         if freeze_event_limit is None:
             if aggregated_freeze_events or aggregated_display_limit is not None:
@@ -3676,14 +3713,6 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Opcjonalny katalog na histogramy z rozkładami metryk",
     )
     parser.add_argument(
-        "--max-raw-values",
-        type=int,
-        help=(
-            "Ogranicz liczbę surowych wartości metryk przechowywanych w raporcie. "
-            "Pozwala skrócić sekcję raw_values przy zachowaniu statystyk."
-        ),
-    )
-    parser.add_argument(
         "--current-threshold",
         action="append",
         help=(
@@ -3771,14 +3800,6 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
-        "--max-freeze-events",
-        type=int,
-        help=(
-            "Ogranicz liczbę zdarzeń w sekcjach freeze_events dla każdej pary "
-            "giełda/strategia niezależnie od próbkowania surowych blokad."
-        ),
-    )
-    parser.add_argument(
         "--omit-freeze-events",
         action="store_true",
         help=(
@@ -3828,6 +3849,24 @@ def main(argv: list[str] | None = None) -> int:
     if max_global_samples is not None and max_global_samples < 0:
         raise SystemExit("Parametr --max-global-samples musi być nieujemny")
 
+    limit_freeze_events_arg = getattr(args, "limit_freeze_events", None)
+    if limit_freeze_events_arg is not None and limit_freeze_events_arg < 0:
+        raise SystemExit("Parametr --limit-freeze-events musi być nieujemny")
+
+    raw_freeze_events_sample_limit = getattr(
+        args, "raw_freeze_events_sample_limit", None
+    )
+    if raw_freeze_events_sample_limit is not None and raw_freeze_events_sample_limit < 0:
+        raise SystemExit("Parametr --raw-freeze-events-sample-limit musi być nieujemny")
+
+    max_raw_freeze_events_arg = getattr(args, "max_raw_freeze_events", None)
+    if max_raw_freeze_events_arg is not None and max_raw_freeze_events_arg < 0:
+        raise SystemExit("Parametr --max-raw-freeze-events musi być nieujemny")
+
+    raw_freeze_events_limit_arg = getattr(args, "raw_freeze_events_limit", None)
+    if raw_freeze_events_limit_arg is not None and raw_freeze_events_limit_arg < 0:
+        raise SystemExit("Parametr --raw-freeze-events-limit musi być nieujemny")
+
     since = _parse_cli_datetime(args.since)
     until = _parse_cli_datetime(args.until)
     if since and until and since > until:
@@ -3866,9 +3905,7 @@ def main(argv: list[str] | None = None) -> int:
         raw_freeze_events_limit=raw_freeze_events_limit_arg,
     )
 
-    raw_freeze_events_sample_limit = getattr(args, "raw_freeze_events_sample_limit", None)
     explicit_raw_freeze_mode = getattr(args, "raw_freeze_events", None)
-    max_raw_freeze_events_arg = getattr(args, "max_raw_freeze_events", None)
     if raw_freeze_events_sample_limit is not None:
         if raw_freeze_events_sample_limit == 0 and max_raw_freeze_events_arg is not None:
             raw_freeze_events_mode = "omit"

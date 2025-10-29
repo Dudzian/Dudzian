@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Callable, Optional
+from datetime import datetime
+from typing import Any, Callable, Mapping, Optional
 
 from bot_core.security.guards import (
     CapabilityGuard,
@@ -183,3 +184,17 @@ class TradingSessionController:
             handler(title, message)
         except Exception:  # pragma: no cover - defensywne logowanie
             logger.debug("Wyjątek podczas wywołania notyfikatora UI", exc_info=True)
+
+    # ------------------------------------------------------------------
+    def summarize_decisions(
+        self,
+        journal: "TradingDecisionJournal",
+        *,
+        since: datetime | None = None,
+        until: datetime | None = None,
+    ) -> Mapping[str, object]:
+        """Agreguje zdarzenia decyzji na potrzeby UI."""
+
+        from bot_core.runtime.journal import aggregate_decision_statistics
+
+        return aggregate_decision_statistics(journal, start=since, end=until)
