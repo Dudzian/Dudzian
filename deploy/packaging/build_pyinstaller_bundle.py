@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import argparse
+import base64
+import binascii
 import configparser
 import hashlib
 import json
@@ -14,8 +16,9 @@ import ssl
 import string
 import tempfile
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterable, Mapping
+from typing import Any, Iterable, Mapping
 from urllib import error as urlerror
 from urllib import parse as urlparse
 from urllib import request as urlrequest
@@ -63,6 +66,7 @@ def _apply_metadata_entry(metadata: dict[str, object], key: str, value: object) 
         cursor[part] = nested_mapping
         cursor = nested_mapping
 
+from bot_core.security.license_store import LicenseStore, LicenseStoreError
 from bot_core.security.signing import build_hmac_signature
 
 
@@ -115,6 +119,110 @@ def _collect_artifact_metadata(artifacts: Iterable[ArtifactSpec]) -> list[Mappin
             }
         )
     return entries
+
+
+def _decode_secret(value: str) -> bytes:
+    try:
+        return base64.b64decode(value, validate=True)
+    except binascii.Error:
+        pass
+    hexdigits = set(string.hexdigits)
+    if len(value) % 2 == 0 and all(ch in hexdigits for ch in value):
+        try:
+            return bytes.fromhex(value)
+        except ValueError:
+            pass
+    return value.encode("utf-8")
+
+
+def _parse_license_hmac_key(option: str | None) -> tuple[str | None, bytes] | None:
+    if option is None:
+        return None
+    key_id: str | None = None
+    secret = option
+    if "=" in option:
+        key_id, secret = option.split("=", 1)
+        key_id = key_id.strip() or None
+    secret_bytes = _decode_secret(secret.strip())
+    return key_id, secret_bytes
+
+
+def _embed_encrypted_license(
+    layout: BundleLayout,
+    *,
+    license_json: str | None,
+    fingerprint: str | None,
+    output_name: str,
+    hmac_key: tuple[str | None, bytes] | None,
+) -> list[ArtifactSpec]:
+    if not license_json:
+        return []
+    license_path = Path(license_json).expanduser().resolve()
+    if not license_path.exists():
+        raise SystemExit(f"Plik licencji {license_path} nie istnieje")
+    try:
+        payload = json.loads(license_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise SystemExit(f"Licencja {license_path} zawiera niepoprawny JSON: {exc}") from exc
+    if not isinstance(payload, Mapping):
+        raise SystemExit("Payload licencji musi być obiektem JSON")
+    if not fingerprint:
+        raise SystemExit("--license-json wymaga wskazania --license-fingerprint")
+    license_id = str(payload.get("license_id") or payload.get("licenseId") or "").strip()
+    if not license_id:
+        raise SystemExit("Licencja musi zawierać pole license_id")
+
+    license_dir = layout.extras_dir / "license"
+    license_dir.mkdir(parents=True, exist_ok=True)
+    store_path = license_dir / output_name
+    store = LicenseStore(path=store_path, fingerprint_override=fingerprint)
+    store_payload: dict[str, Any] = {
+        "licenses": {
+            license_id: {
+                "payload": payload,
+                "status": "provisioned",
+                "issues": [],
+                "hardware": {},
+                "provisioned_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            }
+        }
+    }
+    try:
+        store.save(store_payload)
+    except LicenseStoreError as exc:
+        raise SystemExit(f"Nie udało się zaszyfrować magazynu licencji: {exc}") from exc
+
+    bundle_path = store_path.relative_to(layout.root)
+    digest_entry = {
+        "path": bundle_path.as_posix(),
+        "sha384": _hash_file(store_path),
+        "license_id": license_id,
+    }
+    report_payload = {
+        "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "license_store": digest_entry,
+    }
+    if hmac_key is not None:
+        key_id, secret = hmac_key
+        signature = build_hmac_signature(
+            {"generated_at": report_payload["generated_at"], "license_store": digest_entry},
+            key=secret,
+            key_id=key_id,
+        )
+        report_payload["signature"] = signature
+
+    integrity_path = license_dir / "license_integrity.json"
+    with integrity_path.open("w", encoding="utf-8") as handle:
+        json.dump(report_payload, handle, ensure_ascii=False, indent=2, sort_keys=True)
+        handle.write("\n")
+
+    return [
+        ArtifactSpec(bundle_path=bundle_path, source_path=store_path),
+        ArtifactSpec(
+            bundle_path=integrity_path.relative_to(layout.root),
+            source_path=integrity_path,
+        ),
+    ]
 
 
 def _parse_key_value_pairs(values: Iterable[str] | None, *, option: str) -> dict[str, object]:
@@ -1201,6 +1309,15 @@ def build_bundle(args: argparse.Namespace) -> Path:
         else:
             artifacts.append(_copy_file(source, destination))
 
+    license_artifacts = _embed_encrypted_license(
+        layout,
+        license_json=getattr(args, "license_json", None),
+        fingerprint=getattr(args, "license_fingerprint", None),
+        output_name=getattr(args, "license_output_name", "license_store.json"),
+        hmac_key=_parse_license_hmac_key(getattr(args, "license_hmac_key", None)),
+    )
+    artifacts.extend(license_artifacts)
+
     metadata = _load_metadata_files(getattr(args, "metadata_file", None))
     url_headers = _parse_http_headers(
         getattr(args, "metadata_url_header", None), option="--metadata-url-header"
@@ -1431,6 +1548,23 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--hidden-import", action="append", help="Additional hidden imports for PyInstaller")
     parser.add_argument("--runtime-name", help="Override runtime binary name")
     parser.add_argument("--include", action="append", help="Additional resources to include <name>=<path>")
+    parser.add_argument(
+        "--license-json",
+        help="Offline license JSON that should be encrypted and bundled",
+    )
+    parser.add_argument(
+        "--license-fingerprint",
+        help="Target machine fingerprint used to encrypt the license store",
+    )
+    parser.add_argument(
+        "--license-output-name",
+        default="license_store.json",
+        help="Output filename of the encrypted license store inside the bundle",
+    )
+    parser.add_argument(
+        "--license-hmac-key",
+        help="Optional HMAC key (KEY_ID=SECRET) for signing license integrity metadata",
+    )
     parser.add_argument("--signing-key", help="Secret value or path used to sign manifest.json")
     parser.add_argument("--signing-key-id", help="Identifier added to manifest signature")
     parser.add_argument("--metadata", action="append", help="Add metadata entry <key>=<value> (value may be JSON)")

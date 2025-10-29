@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import os
+import base64
+import binascii
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Sequence
@@ -97,6 +99,37 @@ def create_secret_manager(
     return SecretManager(storage, namespace=namespace)
 
 
+def decode_cli_secret(value: str) -> bytes:
+    """Dekoduje sekret z formatu HEX/Base64 lub zwykłego UTF-8."""
+
+    stripped = value.strip()
+    if not stripped:
+        return b""
+    try:
+        return base64.b64decode(stripped, validate=True)
+    except (binascii.Error, ValueError):
+        pass
+    if len(stripped) % 2 == 0 and all(ch in "0123456789abcdefABCDEF" for ch in stripped):
+        try:
+            return bytes.fromhex(stripped)
+        except ValueError:
+            pass
+    return stripped.encode("utf-8")
+
+
+def parse_signing_key(option: str | None) -> tuple[str | None, bytes | None]:
+    """Zwraca identyfikator i wartość klucza HMAC z parametru CLI KEY_ID=SECRET."""
+
+    if option is None:
+        return None, None
+    key_id: str | None = None
+    secret = option
+    if "=" in option:
+        key_id, secret = option.split("=", 1)
+        key_id = key_id.strip() or None
+    return key_id, decode_cli_secret(secret)
+
+
 __all__ = [
     "env_flag",
     "env_value",
@@ -107,4 +140,6 @@ __all__ = [
     "now_iso",
     "default_decision_log_path",
     "create_secret_manager",
+    "decode_cli_secret",
+    "parse_signing_key",
 ]
