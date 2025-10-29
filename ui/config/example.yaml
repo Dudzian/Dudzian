@@ -1,6 +1,10 @@
 # Konfiguracja przykładowa dla powłoki Qt/QML korzystającej z trading stub server
 endpoint: 127.0.0.1:50061
 
+transport:
+  mode: grpc               # możliwe wartości: grpc, in-process
+  dataset: data/sample_ohlcv/trend.csv
+
 grpc:
   tls:
     enabled: true

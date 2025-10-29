@@ -139,6 +139,7 @@ private slots:
     void testScreenMetadataForwarding();
     void testTelemetryPendingRetryExposure();
     void testTelemetryPendingRetryResetOnReporterSwap();
+    void testInProcessTransportMode();
 };
 
 class RejectingMetricsClient final : public MetricsClientInterface {
@@ -421,6 +422,34 @@ void ApplicationTelemetryTest::testTelemetryPendingRetryResetOnReporterSwap() {
     // Nowy reporter otrzymuje konfigurację telemetrii.
     QCOMPARE(fallbackPtr->m_endpoint, QStringLiteral("dummy:5000"));
     QCOMPARE(fallbackPtr->m_windowCount, 1);
+}
+
+void ApplicationTelemetryTest::testInProcessTransportMode()
+{
+    QQmlApplicationEngine engine;
+    Application app(engine);
+
+    QCommandLineParser parser;
+    app.configureParser(parser);
+    const QStringList args{
+        QStringLiteral("test"),
+        QStringLiteral("--transport-mode"), QStringLiteral("in-process"),
+        QStringLiteral("--transport-dataset"), QStringLiteral("data/sample_ohlcv/trend.csv"),
+        QStringLiteral("--disable-metrics")
+    };
+    parser.parse(args);
+
+    QVERIFY(app.applyParser(parser));
+    TradingClient* client = app.tradingClientForTesting();
+    QVERIFY(client);
+    QCOMPARE(client->transportMode(), TradingClient::TransportMode::InProcess);
+    QVERIFY(!client->hasGrpcChannelForTesting());
+
+    QSignalSpy historySpy(client, &TradingClient::historyReceived);
+    app.start();
+    QVERIFY(historySpy.wait(2000));
+    QVERIFY(historySpy.count() > 0);
+    app.stop();
 }
 
 void ApplicationTelemetryTest::testPreferredScreenSelectionCli()

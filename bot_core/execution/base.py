@@ -3,9 +3,12 @@ from __future__ import annotations
 
 import abc
 from dataclasses import dataclass
-from typing import Mapping, Protocol
+from typing import Callable, Mapping, Optional, Protocol
 
 from bot_core.exchanges.base import OrderRequest, OrderResult
+
+
+PriceResolver = Callable[[str], Optional[float]]
 
 
 @dataclass(slots=True)
@@ -16,6 +19,7 @@ class ExecutionContext:
     risk_profile: str
     environment: str
     metadata: Mapping[str, str]
+    price_resolver: PriceResolver | None = None
 
 
 class ExecutionService(abc.ABC):
@@ -41,4 +45,4 @@ class RetryPolicy(Protocol):
         ...
 
 
-__all__ = ["ExecutionContext", "ExecutionService", "RetryPolicy"]
+__all__ = ["ExecutionContext", "ExecutionService", "RetryPolicy", "PriceResolver"]
