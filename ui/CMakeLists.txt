@@ -59,6 +59,8 @@ target_link_libraries(trading_proto
 set(UI_SOURCES
     src/main.cpp
     src/app/Application.cpp
+    src/app/MarketplaceController.cpp
+    src/app/PortfolioManagerController.cpp
     src/app/UiModuleManager.cpp
     src/app/UiModuleViewsModel.cpp
     src/app/ActivationController.cpp
@@ -94,6 +96,8 @@ set(UI_SOURCES
 
 set(UI_HEADERS
     src/app/Application.hpp
+    src/app/MarketplaceController.hpp
+    src/app/PortfolioManagerController.hpp
     src/app/UiModuleManager.hpp
     src/app/UiModuleInterface.hpp
     src/app/UiModuleViewsModel.hpp
@@ -173,6 +177,7 @@ if(BUILD_TESTING)
         tests/ApplicationTelemetryTest.cpp
         tests/ApplicationHealthConfigTest.cpp
         tests/ApplicationAuthTokenWatcherTest.cpp
+        tests/ApplicationTransportValidationTest.cpp
         src/app/Application.cpp
         src/app/UiModuleViewsModel.cpp
         src/models/DecisionLogModel.cpp
@@ -726,6 +731,24 @@ if(BUILD_TESTING)
             gRPC::grpc++
     )
     add_test(NAME trading_client_auth_metadata_tests COMMAND trading_client_auth_metadata_tests)
+
+    add_executable(trading_client_transport_tests
+        tests/TradingClientTransportTest.cpp
+        src/grpc/TradingClient.cpp
+        src/models/MarketRegimeClassifierBridge.cpp
+        src/utils/PathUtils.cpp
+    )
+    target_include_directories(trading_client_transport_tests PRIVATE src ${GENERATED_DIR})
+    target_link_libraries(trading_client_transport_tests
+        PRIVATE
+            Qt6::Core
+            Qt6::Test
+            Qt6::Network
+            trading_proto
+            protobuf::libprotobuf
+            gRPC::grpc++
+    )
+    add_test(NAME trading_client_transport_tests COMMAND trading_client_transport_tests)
 
     add_executable(report_center_controller_tests
         tests/ReportCenterControllerTest.cpp

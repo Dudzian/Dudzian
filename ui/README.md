@@ -39,6 +39,37 @@ filtrować widoki po kategorii, podglądać deklarowane metadane i ładować pli
 źródłowe w ramach aplikacji. Model `UiModuleViewsModel` udostępnia API do
 wyszukiwania widoków i kategorii wykorzystywane przez interfejs.【F:ui/src/app/UiModuleViewsModel.cpp†L64-L147】【F:ui/qml/components/ModuleBrowser.qml†L1-L409】
 
+## Menedżer portfeli multi-account
+
+Zakładka **Portfele** (`PortfolioManagerView.qml`) umożliwia edycję konfiguracji
+harmonogramu multi-portfelowego (master/follower, copy trading). Widok korzysta z
+kontrolera `PortfolioManagerController`, który deleguje operacje na lokalny mostek
+`scripts/ui_portfolio_bridge.py`. Domyślna lokalizacja konfiguracji to
+`var/portfolio_links.json`, ale ścieżkę można nadpisać opcją CLI:
+
+```
+bot_trading_shell --portfolio-bridge /ścieżka/do/ui_portfolio_bridge.py \
+                  --portfolio-store /ścieżka/do/portfeli.json
+```
+
+Plik JSON przechowuje strukturę:
+
+```json
+{
+  "portfolios": {
+    "master-001": {
+      "portfolio_id": "master-001",
+      "primary_preset": "grid-pro",
+      "fallback_presets": ["ml-ai"],
+      "followers": [ { "portfolio_id": "follower-a", "scaling": 0.5 } ]
+    }
+  }
+}
+```
+
+Mostek wspiera komendy `list`, `apply` oraz `remove`, dzięki czemu konfigurację
+można zarządzać zarówno z UI jak i automatycznymi skryptami.【F:scripts/ui_portfolio_bridge.py†L1-L124】【F:ui/qml/components/PortfolioManagerView.qml†L1-L223】
+
 ## Uruchomienie ze stubem gRPC
 
 W pierwszym terminalu uruchom stub z wieloassetowym datasetem i pętlą strumieniową:
@@ -79,7 +110,35 @@ Aby włączyć TLS/mTLS gRPC, dodaj dodatkowe opcje:
   --tls-pinned-sha256 0123deadbeef...
 ```
 
+> **Uwaga:** `Application::applyParser()` weryfikuje kompletność konfiguracji.
+> Brak pliku datasetu w trybie `in-process` lub brakujące materiały TLS
+> (root CA / certyfikat / klucz klienta) skutkują natychmiastowym błędem
+> logowanym w kategorii `bot.shell.app.metrics`, co ułatwia diagnostykę
+> niepoprawnych release'ów OEM.
+
 Domyślne parametry są zgodne z plikiem `ui/config/example.yaml`. Wartości `--max-samples` oraz `--history-limit` pozwalają kontrolować rozmiar buforów i wpływają na wymagania pamięciowe.
+
+## Tryb in-process (offline)
+
+Powłoka może działać bez lokalnego demona gRPC, korzystając z datasetu OHLCV
+wczytywanego z pliku CSV lub potoku named pipe. Aby aktywować ten tryb,
+ustaw `--transport-mode in-process` oraz wskaż dataset przez `--transport-dataset`.
+Opcjonalnie możesz dobrać tempo emisji świec poprzez flagę
+`--transport-candle-interval-ms` (domyślnie 150 ms pomiędzy incrementami).
+UI wymusza także przełączenie telemetrii i modułu Health na transport `in-process`,
+ignorując ręcznie ustawione endpointy:
+
+```bash
+ui/build/bot_trading_shell \
+  --transport-mode in-process \
+  --transport-dataset data/sample_ohlcv/trend.csv \
+  --transport-candle-interval-ms 100 \
+  --disable-metrics
+```
+
+W trybie offline TLS jest wyłączony, a `MetricsClient`/`HealthClient` korzystają
+z lokalnych stubów wstrzykiwanych przez `Application`. Dzięki temu można
+budować w pełni odcięte środowiska demonstracyjne bez zależności od gRPC.
 
 ## Integracja z backendem produkcyjnym
 

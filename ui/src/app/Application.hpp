@@ -49,6 +49,10 @@ class HealthStatusController;          // forward decl (health/HealthStatusContr
 class OfflineRuntimeBridge;            // forward decl (runtime/OfflineRuntimeBridge.hpp)
 class UiModuleManager;                 // forward decl (app/UiModuleManager.hpp)
 class UiModuleViewsModel;              // forward decl (app/UiModuleViewsModel.hpp)
+class MetricsClientInterface;          // forward decl (grpc/MetricsClient.hpp)
+class HealthClientInterface;           // forward decl (grpc/HealthClient.hpp)
+class MarketplaceController;           // forward decl (app/MarketplaceController.hpp)
+class PortfolioManagerController;      // forward decl (app/PortfolioManagerController.hpp)
 
 class Application : public QObject {
     Q_OBJECT
@@ -73,6 +77,8 @@ class Application : public QObject {
     Q_PROPERTY(QObject*         decisionLogModel READ decisionLogModel CONSTANT)
     Q_PROPERTY(QObject*         moduleManager READ moduleManager CONSTANT)
     Q_PROPERTY(QObject*         moduleViewsModel READ moduleViewsModel CONSTANT)
+    Q_PROPERTY(QObject*         marketplaceController READ marketplaceController CONSTANT)
+    Q_PROPERTY(QObject*         portfolioController READ portfolioController CONSTANT)
     Q_PROPERTY(QString          decisionLogPath READ decisionLogPath NOTIFY decisionLogPathChanged)
     Q_PROPERTY(int              telemetryPendingRetryCount READ telemetryPendingRetryCount NOTIFY telemetryPendingRetryCountChanged)
     Q_PROPERTY(QVariantMap      riskRefreshSchedule READ riskRefreshSchedule NOTIFY riskRefreshScheduleChanged)
@@ -102,6 +108,10 @@ public:
 
     // Umożliwia wstrzyknięcie mocka w testach
     void setTelemetryReporter(std::unique_ptr<TelemetryReporter> reporter);
+    void setMetricsClientOverrideForTesting(std::shared_ptr<MetricsClientInterface> client);
+    std::shared_ptr<MetricsClientInterface> activeMetricsClientForTesting() const;
+    bool usingInProcessMetricsClientForTesting() const { return m_usingInProcessMetricsClient; }
+    void setInProcessDatasetPathForTesting(const QString& path);
     void applyPreferredScreenForTesting(QQuickWindow* window);
     QScreen* pickPreferredScreenForTesting() const;
 
@@ -120,6 +130,8 @@ public:
     QObject*         decisionLogModel() const;
     QObject*         moduleManager() const;
     QObject*         moduleViewsModel() const;
+    QObject*         marketplaceController() const;
+    QObject*         portfolioController() const;
     QObject*         alertsModel() const { return const_cast<AlertsModel*>(&m_alertsModel); }
     QObject*         alertsFilterModel() const { return const_cast<AlertsFilterProxyModel*>(&m_filteredAlertsModel); }
     QObject*         riskHistoryModel() const { return const_cast<RiskHistoryModel*>(&m_riskHistoryModel); }
@@ -197,6 +209,8 @@ public slots:
     UiModuleManager* moduleManagerForTesting() const { return m_moduleManager.get(); }
     UiModuleViewsModel* moduleViewsModelForTesting() const { return m_moduleViewsModel.get(); }
     QStringList uiModuleDirectoriesForTesting() const { return m_uiModuleDirectories; }
+    MarketplaceController* marketplaceControllerForTesting() const { return m_marketplaceController.get(); }
+    PortfolioManagerController* portfolioControllerForTesting() const { return m_portfolioController.get(); }
 
     // Test helpers
     void ingestFpsSampleForTesting(double fps);
@@ -297,6 +311,13 @@ private:
     QScreen* resolvePreferredScreen() const;
     void updateScreenInfo(QScreen* screen);
     void updateTelemetryPendingRetryCount(int pending);
+    bool validateTransportConfiguration(const QString& endpoint,
+                                        const QString& datasetPath,
+                                        const TradingClient::TlsConfig& tradingTls,
+                                        const TelemetryTlsConfig& metricsTls,
+                                        const GrpcTlsConfig& healthTls,
+                                        const QString& metricsEndpoint,
+                                        const QString& healthEndpoint) const;
     void configureLocalBotCoreService(const QCommandLineParser& parser, QString& endpoint);
     QString locateRepoRoot() const;
     void configureRiskRefresh(bool enabled, double intervalSeconds);
@@ -339,6 +360,7 @@ private:
                               const char* label);
     void configureTradingTlsWatchers();
     void configureMetricsTlsWatchers();
+    void applyMarketplaceEnvironmentOverrides(const QCommandLineParser& parser);
     void configureHealthTlsWatchers();
     void applyHealthAuthTokenToController();
     void applyTradingTlsConfig();
@@ -375,6 +397,9 @@ private:
     QString                m_tradingAuthTokenFile;
     QString                m_tradingRbacRole;
     QStringList            m_tradingRbacScopes;
+    TradingClient::TransportMode m_transportMode = TradingClient::TransportMode::Grpc;
+    QString                m_inProcessDatasetPath;
+    int                    m_inProcessCandleIntervalMs = 150;
     QHash<QString, QVector<TradingClient::TradableInstrument>> m_tradableInstrumentCache;
 
     TradingClient::InstrumentConfig m_instrument{
@@ -406,6 +431,8 @@ private:
     std::unique_ptr<StrategyWorkbenchController> m_workbenchController;
     std::unique_ptr<SupportBundleController>   m_supportController;
     std::unique_ptr<HealthStatusController>    m_healthController;
+    std::unique_ptr<MarketplaceController>     m_marketplaceController;
+    std::unique_ptr<PortfolioManagerController> m_portfolioController;
     std::unique_ptr<UiModuleManager>           m_moduleManager;
     std::unique_ptr<UiModuleViewsModel>        m_moduleViewsModel;
 
@@ -427,6 +454,14 @@ private:
     QString                            m_healthAuthTokenFile;
     QString                            m_healthRbacRole;
     QStringList                        m_healthRbacScopes;
+    std::shared_ptr<MetricsClientInterface> m_inProcessMetricsClient;
+    std::shared_ptr<MetricsClientInterface> m_grpcMetricsClient;
+    std::shared_ptr<MetricsClientInterface> m_metricsClientOverride;
+    std::shared_ptr<HealthClientInterface>  m_inProcessHealthClient;
+    std::shared_ptr<HealthClientInterface>  m_grpcHealthClient;
+    bool                                    m_usingInProcessMetricsClient = false;
+    std::weak_ptr<MetricsClientInterface>   m_activeMetricsClient;
+    bool                                    m_usingInProcessHealthClient = false;
     int                                m_healthRefreshIntervalSeconds = 60;
     bool                               m_healthAutoRefreshEnabled = true;
     QString                            m_preferredScreenName;

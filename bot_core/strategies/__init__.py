@@ -13,8 +13,12 @@ from bot_core.strategies.daily_trend import (
 )
 from bot_core.strategies.catalog import (
     DEFAULT_STRATEGY_CATALOG,
+    PresetLicenseState,
+    PresetLicenseStatus,
     StrategyCatalog,
     StrategyDefinition,
+    StrategyPresetDescriptor,
+    StrategyPresetProfile,
     StrategyPresetWizard,
 )
 from bot_core.strategies.regime_workflow import (
@@ -55,6 +59,10 @@ __all__ = [
     "StrategyCatalog",
     "StrategyDefinition",
     "StrategyPresetWizard",
+    "StrategyPresetDescriptor",
+    "StrategyPresetProfile",
+    "PresetLicenseStatus",
+    "PresetLicenseState",
     "StrategyRegimeWorkflow",
     "ActivationHistoryStats",
     "ActivationTransitionStats",

@@ -19,6 +19,7 @@ from bot_core.portfolio.governor import (
     PortfolioGovernor,
     PortfolioRiskBudgetConfig,
     PortfolioSloOverrideConfig,
+    StrategyPortfolioGovernor,
     StrategyPortfolioGovernorConfig,
 )
 from bot_core.portfolio.hypercare import (
@@ -36,6 +37,16 @@ from bot_core.portfolio.io import (
     parse_slo_status_payload,
     parse_stress_overrides_payload,
     resolve_decision_log_config,
+)
+from bot_core.portfolio.scheduler import (
+    CopyTradeInstruction,
+    CopyTradingFollowerConfig,
+    MultiPortfolioScheduler,
+    PortfolioBinding,
+    PortfolioScheduleResult,
+    RebalanceInstruction,
+    SchedulerEvent,
+    StrategyHealthMonitor,
 )
 
 PortfolioGovernorConfig = AssetPortfolioGovernorConfig
@@ -74,6 +85,15 @@ __all__ = [
     "PortfolioHypercareCycle",
     "PortfolioRiskBudgetConfig",
     "PortfolioSloOverrideConfig",
+    "StrategyPortfolioGovernor",
+    "CopyTradeInstruction",
+    "CopyTradingFollowerConfig",
+    "MultiPortfolioScheduler",
+    "PortfolioBinding",
+    "PortfolioScheduleResult",
+    "RebalanceInstruction",
+    "SchedulerEvent",
+    "StrategyHealthMonitor",
     "load_allocations_file",
     "load_json_or_yaml",
     "load_market_intel_report",

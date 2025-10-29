@@ -245,6 +245,14 @@ ApplicationWindow {
                 }
 
                 Tab {
+                    title: qsTr("Portfele")
+
+                    PortfolioManagerView {
+                        anchors.fill: parent
+                    }
+                }
+
+                Tab {
                     title: qsTr("Marketplace")
 
                     MarketplaceView {
