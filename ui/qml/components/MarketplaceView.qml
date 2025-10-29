@@ -1,67 +1,26 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import QtQuick.Dialogs
 
 Item {
     id: root
-    property url catalogSource: Qt.resolvedUrl("../../../config/marketplace/catalog.json")
-    property bool autoReload: true
-    property int reloadInterval: 60000
-    signal packageActivated(string packageId)
+    width: parent ? parent.width : 800
+    height: parent ? parent.height : 600
+    property var selectedPreset: null
+    property string activationError: ""
 
-    ListModel { id: packageModel }
-
-    function loadCatalog() {
-        if (!catalogSource)
-            return
-        var request = new XMLHttpRequest()
-        request.open("GET", catalogSource)
-        request.onreadystatechange = function() {
-            if (request.readyState !== XMLHttpRequest.DONE)
-                return
-            if (request.status !== 0 && request.status !== 200) {
-                statusLabel.text = qsTr("Nie udało się pobrać katalogu (%1)").arg(request.status)
-                return
-            }
-            try {
-                var doc = JSON.parse(request.responseText)
-                packageModel.clear()
-                if (doc && doc.packages) {
-                    for (var i = 0; i < doc.packages.length; ++i) {
-                        var item = doc.packages[i]
-                        var artifact = item.distribution && item.distribution.length ? item.distribution[0] : null
-                        packageModel.append({
-                            packageId: item.package_id,
-                            name: item.display_name || item.package_id,
-                            summary: item.summary || "",
-                            version: item.version || "",
-                            tagList: item.tags || [],
-                            licenseName: item.license ? item.license.name : "",
-                            artifactUri: artifact ? artifact.uri : "",
-                            documentationUrl: item.documentation_url || "",
-                            notes: item.release_notes || []
-                        })
-                    }
-                    statusLabel.text = qsTr("Załadowano %1 paczek").arg(packageModel.count)
-                } else {
-                    statusLabel.text = qsTr("Katalog nie zawiera paczek")
-                }
-            } catch (error) {
-                statusLabel.text = qsTr("Błąd podczas parsowania katalogu: %1").arg(error)
-            }
-        }
-        request.send()
+    function openActivationDialog(preset) {
+        selectedPreset = preset
+        activationInput.text = "{\n  \"fingerprint\": \"\",\n  \"expires_at\": \"\"\n}"
+        activationError = ""
+        activationDialog.open()
     }
 
-    Timer {
-        id: reloadTimer
-        interval: root.reloadInterval
-        repeat: true
-        running: root.autoReload
-        onTriggered: loadCatalog()
+    Component.onCompleted: {
+        if (marketplaceController)
+            marketplaceController.refreshPresets()
     }
-
-    Component.onCompleted: loadCatalog()
 
     ColumnLayout {
         anchors.fill: parent
@@ -72,7 +31,7 @@ Item {
             spacing: 12
 
             Label {
-                text: qsTr("Marketplace konfiguracji")
+                text: qsTr("Marketplace presetów strategii")
                 font.pixelSize: 22
                 font.bold: true
             }
@@ -83,7 +42,7 @@ Item {
                 icon.name: "view-refresh"
                 text: qsTr("Odśwież")
                 display: AbstractButton.TextBesideIcon
-                onClicked: loadCatalog()
+                onClicked: marketplaceController.refreshPresets()
             }
         }
 
@@ -91,7 +50,15 @@ Item {
             id: statusLabel
             Layout.fillWidth: true
             wrapMode: Text.Wrap
-            text: qsTr("Trwa ładowanie katalogu...")
+            text: marketplaceController.lastError.length > 0 ? marketplaceController.lastError
+                                                           : qsTr("Załadowano %1 presetów").arg(marketplaceController.presets.length)
+            color: marketplaceController.lastError.length > 0 ? "firebrick" : palette.windowText
+        }
+
+        BusyIndicator {
+            Layout.alignment: Qt.AlignLeft
+            visible: marketplaceController.busy
+            running: marketplaceController.busy
         }
 
         ScrollView {
@@ -99,14 +66,15 @@ Item {
             Layout.fillHeight: true
 
             Flow {
-                id: cardFlow
                 width: parent.width
                 spacing: 16
+
                 Repeater {
-                    model: packageModel
+                    model: marketplaceController.presets
                     delegate: Frame {
                         id: card
-                        width: Math.min(cardFlow.width, 420)
+                        property var preset: modelData
+                        width: Math.min(parent.width, 420)
                         Layout.preferredWidth: 360
                         padding: 16
 
@@ -115,27 +83,42 @@ Item {
                             spacing: 8
 
                             Label {
-                                text: model.name
+                                text: preset.name
                                 font.pixelSize: 18
                                 font.bold: true
                                 wrapMode: Text.WordWrap
                             }
 
                             Label {
-                                text: qsTr("Wersja: %1").arg(model.version)
+                                text: qsTr("Profil: %1").arg(preset.profile)
                                 color: card.palette.mid
                             }
 
                             Label {
-                                text: model.summary
+                                text: preset.summary || preset.metadata?.summary || ""
                                 wrapMode: Text.WordWrap
+                                visible: text.length > 0
+                            }
+
+                            Label {
+                                text: qsTr("Status licencji: %1").arg(preset.license.status)
+                                color: preset.license.status === "active" ? "#0a8f08"
+                                       : preset.license.status === "expired" ? "#c8500a"
+                                       : card.palette.windowText
+                                font.bold: preset.license.status === "active"
+                            }
+
+                            Label {
+                                visible: preset.license.expires_at !== null
+                                text: qsTr("Wygasa: %1").arg(preset.license.expires_at || qsTr("brak"))
+                                color: card.palette.mid
                             }
 
                             Flow {
                                 width: parent.width
                                 spacing: 6
                                 Repeater {
-                                    model: model.tagList
+                                    model: preset.tags || []
                                     delegate: Rectangle {
                                         radius: 4
                                         color: Qt.darker(card.palette.base, 1.1)
@@ -152,40 +135,82 @@ Item {
                                 }
                             }
 
-                            Label {
-                                visible: model.licenseName.length > 0
-                                text: qsTr("Licencja: %1").arg(model.licenseName)
-                                color: card.palette.mid
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                spacing: 2
+                                visible: preset.required_parameters !== undefined
+
+                                Repeater {
+                                    model: Object.keys(preset.required_parameters || {})
+                                    delegate: Label {
+                                        Layout.fillWidth: true
+                                        text: qsTr("Parametry %1: %2").arg(modelData).arg((preset.required_parameters[modelData] || []).join(", "))
+                                        wrapMode: Text.WordWrap
+                                        font.pixelSize: 12
+                                        color: card.palette.mid
+                                    }
+                                }
                             }
 
                             RowLayout {
-                                Layout.topMargin: 8
+                                Layout.topMargin: 12
                                 spacing: 8
 
                                 Button {
-                                    text: qsTr("Pobierz")
-                                    icon.name: "download"
-                                    enabled: model.artifactUri.length > 0
-                                    onClicked: root.packageActivated(model.packageId)
+                                    text: qsTr("Aktywuj")
+                                    onClicked: root.openActivationDialog(preset)
                                 }
 
                                 Button {
-                                    text: qsTr("Dokumentacja")
-                                    visible: model.documentationUrl.length > 0
-                                    onClicked: Qt.openUrlExternally(model.documentationUrl)
+                                    text: qsTr("Dezaktywuj")
+                                    enabled: preset.license.status !== "unlicensed"
+                                    onClicked: marketplaceController.deactivatePreset(preset.preset_id)
                                 }
-                            }
-
-                            Label {
-                                visible: model.notes.length > 0
-                                text: qsTr("Zmiany: %1").arg(model.notes.join(", "))
-                                wrapMode: Text.WordWrap
-                                font.pixelSize: 12
-                                color: card.palette.mid
                             }
                         }
                     }
                 }
+            }
+        }
+    }
+
+    Dialog {
+        id: activationDialog
+        title: selectedPreset ? qsTr("Aktywacja: %1").arg(selectedPreset.name) : qsTr("Aktywacja presetu")
+        modal: true
+        standardButtons: Dialog.Ok | Dialog.Cancel
+        onAccepted: {
+            try {
+                const payload = JSON.parse(activationInput.text)
+                marketplaceController.activatePreset(selectedPreset.preset_id, payload)
+                activationError = ""
+            } catch (error) {
+                activationError = qsTr("Niepoprawny JSON: %1").arg(error)
+                activationDialog.open()
+            }
+        }
+
+        ColumnLayout {
+            width: 420
+            spacing: 8
+
+            Label {
+                text: qsTr("Podaj payload licencji w formacie JSON")
+                wrapMode: Text.WordWrap
+            }
+
+            TextArea {
+                id: activationInput
+                Layout.preferredWidth: 400
+                Layout.preferredHeight: 180
+                textFormat: TextEdit.PlainText
+            }
+
+            Label {
+                visible: activationError.length > 0
+                text: activationError
+                color: "firebrick"
+                wrapMode: Text.WordWrap
             }
         }
     }

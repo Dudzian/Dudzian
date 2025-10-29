@@ -3,13 +3,16 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
+from enum import Enum
+import logging
 from pathlib import Path
 from typing import Any, Mapping, MutableMapping, Protocol, Sequence
 
+from bot_core.security.hwid import HwIdProvider, HwIdProviderError
 from bot_core.security.guards import get_capability_guard
-from bot_core.security.signing import build_hmac_signature
+from bot_core.security.signing import build_hmac_signature, verify_hmac_signature
 
 from .base import StrategyEngine
 from .cross_exchange_arbitrage import (
@@ -66,6 +69,148 @@ def _normalize_optional_str_sequence(values: Any) -> tuple[str, ...]:
     else:
         raise TypeError("Expected iterable of strings or string")
     return tuple(dict.fromkeys(str(item).strip() for item in candidates if str(item).strip()))
+
+
+def _parse_iso_datetime(value: Any) -> datetime | None:
+    if value in (None, ""):
+        return None
+    if isinstance(value, datetime):
+        timestamp = value
+    elif isinstance(value, str):
+        candidate = value.strip()
+        if not candidate:
+            return None
+        if candidate.endswith("Z"):
+            candidate = candidate[:-1] + "+00:00"
+        try:
+            timestamp = datetime.fromisoformat(candidate)
+        except ValueError as exc:  # pragma: no cover - defensywne
+            raise ValueError(f"Invalid ISO timestamp: {value!r}") from exc
+    else:
+        raise TypeError("Expected ISO8601 string or datetime instance")
+    if timestamp.tzinfo is None:
+        timestamp = timestamp.replace(tzinfo=timezone.utc)
+    else:
+        timestamp = timestamp.astimezone(timezone.utc)
+    return timestamp
+
+
+def _format_iso(timestamp: datetime | None) -> str | None:
+    if timestamp is None:
+        return None
+    return timestamp.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _match_fingerprint(candidate: str, pattern: str) -> bool:
+    normalized_candidate = candidate.strip().lower()
+    normalized_pattern = pattern.strip().lower()
+    if not normalized_pattern:
+        return False
+    if normalized_pattern.endswith("*"):
+        prefix = normalized_pattern[:-1]
+        return normalized_candidate.startswith(prefix)
+    return normalized_candidate == normalized_pattern
+
+
+class StrategyPresetProfile(str, Enum):
+    GRID = "grid"
+    DCA = "dca"
+    AI = "ai"
+    HYBRID = "hybrid"
+
+    @classmethod
+    def from_value(cls, value: Any) -> "StrategyPresetProfile":
+        if isinstance(value, StrategyPresetProfile):
+            return value
+        if value in (None, ""):
+            return cls.HYBRID
+        normalized = str(value).strip().lower()
+        for member in cls:
+            if member.value == normalized:
+                return member
+        aliases: dict[str, StrategyPresetProfile] = {
+            "grid_trading": cls.GRID,
+            "dollar_cost_average": cls.DCA,
+            "dollar-cost-averaging": cls.DCA,
+            "ai-ml": cls.AI,
+            "machine_learning": cls.AI,
+        }
+        return aliases.get(normalized, cls.HYBRID)
+
+
+class PresetLicenseState(str, Enum):
+    UNLICENSED = "unlicensed"
+    PENDING = "pending"
+    ACTIVE = "active"
+    EXPIRED = "expired"
+    FINGERPRINT_MISMATCH = "fingerprint_mismatch"
+    SIGNATURE_INVALID = "signature_invalid"
+    DEACTIVATED = "deactivated"
+
+
+@dataclass(slots=True)
+class PresetLicenseStatus:
+    preset_id: str
+    module_id: str | None
+    status: PresetLicenseState
+    fingerprint: str | None
+    fingerprint_candidates: tuple[str, ...]
+    fingerprint_verified: bool
+    activated_at: datetime | None
+    expires_at: datetime | None
+    edition: str | None
+    capability: str | None
+    signature_verified: bool
+    issues: tuple[str, ...] = field(default_factory=tuple)
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+    def as_dict(self) -> Mapping[str, object]:
+        payload: dict[str, object] = {
+            "preset_id": self.preset_id,
+            "module_id": self.module_id,
+            "status": self.status.value,
+            "fingerprint": self.fingerprint,
+            "fingerprint_candidates": list(self.fingerprint_candidates),
+            "fingerprint_verified": self.fingerprint_verified,
+            "activated_at": _format_iso(self.activated_at),
+            "expires_at": _format_iso(self.expires_at),
+            "edition": self.edition,
+            "capability": self.capability,
+            "signature_verified": self.signature_verified,
+            "issues": list(self.issues),
+        }
+        if self.metadata:
+            payload["metadata"] = dict(self.metadata)
+        return payload
+
+
+@dataclass(slots=True)
+class StrategyPresetDescriptor:
+    preset_id: str
+    name: str
+    profile: StrategyPresetProfile
+    strategies: tuple[Mapping[str, Any], ...]
+    required_parameters: Mapping[str, tuple[str, ...]]
+    license_status: PresetLicenseStatus
+    signature_verified: bool
+    source_path: Path | None = None
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+    def as_dict(self, *, include_strategies: bool = True) -> Mapping[str, object]:
+        payload: dict[str, object] = {
+            "preset_id": self.preset_id,
+            "name": self.name,
+            "profile": self.profile.value,
+            "required_parameters": {key: list(values) for key, values in self.required_parameters.items()},
+            "license": self.license_status.as_dict(),
+            "signature_verified": self.signature_verified,
+            "metadata": dict(self.metadata),
+        }
+        if include_strategies:
+            payload["strategies"] = [dict(entry) for entry in self.strategies]
+        if self.source_path is not None:
+            payload["source_path"] = str(self.source_path)
+        return payload
 
 
 @dataclass(slots=True)
@@ -155,10 +300,466 @@ def _is_capability_allowed(spec: StrategyEngineSpec) -> bool:
 
 
 class StrategyCatalog:
-    """Rejestr zarejestrowanych silników strategii."""
+    """Rejestr zarejestrowanych silników strategii i presetów marketplace."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, hwid_provider: HwIdProvider | None = None) -> None:
         self._registry: MutableMapping[str, StrategyEngineSpec] = {}
+        self._presets: MutableMapping[str, StrategyPresetDescriptor] = {}
+        self._license_overrides: MutableMapping[str, Mapping[str, Any]] = {}
+        self._hwid_provider = hwid_provider
+
+    def set_hwid_provider(self, provider: HwIdProvider | None) -> None:
+        """Aktualizuje provider fingerprintu wykorzystywany przy walidacji licencji."""
+
+        self._hwid_provider = provider
+
+    # ------------------------------------------------------------------
+    # Wewnętrzne helpery presetów
+    # ------------------------------------------------------------------
+
+    def _resolve_hwid_provider(self, provider: HwIdProvider | None) -> HwIdProvider | None:
+        return provider or self._hwid_provider
+
+    @staticmethod
+    def _collect_fingerprint_candidates(license_payload: Mapping[str, Any]) -> tuple[str, ...]:
+        candidates: list[str] = []
+        fingerprint_value = license_payload.get("fingerprint")
+        if isinstance(fingerprint_value, str) and fingerprint_value.strip():
+            candidates.append(fingerprint_value.strip())
+        alternate = license_payload.get("fingerprints") or license_payload.get("allowed_fingerprints")
+        if isinstance(alternate, Iterable) and not isinstance(alternate, (str, bytes)):
+            for item in alternate:
+                text = str(item).strip()
+                if text:
+                    candidates.append(text)
+        return tuple(dict.fromkeys(candidates))
+
+    def _compute_license_status(
+        self,
+        preset_id: str,
+        *,
+        metadata: Mapping[str, Any],
+        license_payload: Mapping[str, Any] | None,
+        signature_verified: bool,
+        hwid_provider: HwIdProvider | None,
+        additional_issues: Sequence[str] = (),
+    ) -> PresetLicenseStatus:
+        issues = list(additional_issues)
+        module_id: str | None = None
+        edition: str | None = None
+        capability: str | None = None
+        activated_at: datetime | None = None
+        expires_at: datetime | None = None
+        fingerprint_candidates: tuple[str, ...] = ()
+        fingerprint_verified = False
+        status = PresetLicenseState.UNLICENSED
+        payload: Mapping[str, Any] = license_payload or {}
+
+        if payload:
+            module_id_value = payload.get("module_id") or metadata.get("module_id") or preset_id
+            module_id = str(module_id_value).strip() or preset_id
+
+            edition_value = payload.get("edition") or metadata.get("license_tier")
+            if isinstance(edition_value, str) and edition_value.strip():
+                edition = edition_value.strip()
+
+            capability_value = payload.get("capability") or metadata.get("capability")
+            if isinstance(capability_value, str) and capability_value.strip():
+                capability = capability_value.strip()
+
+            activated_at = _parse_iso_datetime(payload.get("activated_at"))
+            expires_at = _parse_iso_datetime(payload.get("expires_at"))
+
+            fingerprint_candidates = self._collect_fingerprint_candidates(payload)
+            provider = self._resolve_hwid_provider(hwid_provider)
+            hwid_value: str | None = None
+            if fingerprint_candidates:
+                if provider is None:
+                    issues.append("fingerprint-provider-missing")
+                else:
+                    try:
+                        hwid_value = provider.read()
+                    except HwIdProviderError as exc:  # pragma: no cover - zależne od środowiska
+                        issues.append(f"hwid-error:{exc}")
+            else:
+                provider = self._resolve_hwid_provider(hwid_provider)
+                if provider is not None:
+                    try:
+                        hwid_value = provider.read()
+                    except HwIdProviderError as exc:  # pragma: no cover
+                        issues.append(f"hwid-error:{exc}")
+
+            if fingerprint_candidates:
+                if hwid_value is None:
+                    issues.append("fingerprint-unavailable")
+                    status = PresetLicenseState.PENDING
+                else:
+                    fingerprint_verified = any(
+                        _match_fingerprint(hwid_value, candidate) for candidate in fingerprint_candidates
+                    )
+                    status = (
+                        PresetLicenseState.ACTIVE
+                        if fingerprint_verified
+                        else PresetLicenseState.FINGERPRINT_MISMATCH
+                    )
+            else:
+                status = PresetLicenseState.PENDING
+                fingerprint_verified = hwid_value is None or bool(hwid_value)
+
+            if payload.get("disabled") or payload.get("revoked"):
+                status = PresetLicenseState.DEACTIVATED
+
+            if expires_at is not None and expires_at <= datetime.now(timezone.utc):
+                status = PresetLicenseState.EXPIRED
+        else:
+            status = PresetLicenseState.UNLICENSED
+
+        if not signature_verified:
+            issues.append("preset-signature-unverified")
+            if payload and payload.get("signature_required"):
+                status = PresetLicenseState.SIGNATURE_INVALID
+            elif status == PresetLicenseState.ACTIVE:
+                status = PresetLicenseState.PENDING
+
+        fingerprint_primary = fingerprint_candidates[0] if fingerprint_candidates else None
+
+        normalized_metadata = dict(payload) if isinstance(payload, Mapping) and payload else {}
+
+        return PresetLicenseStatus(
+            preset_id=preset_id,
+            module_id=module_id,
+            status=status,
+            fingerprint=fingerprint_primary,
+            fingerprint_candidates=fingerprint_candidates,
+            fingerprint_verified=fingerprint_verified,
+            activated_at=activated_at,
+            expires_at=expires_at,
+            edition=edition,
+            capability=capability,
+            signature_verified=signature_verified,
+            issues=tuple(dict.fromkeys(issues)),
+            metadata=normalized_metadata,
+        )
+
+    def _descriptor_with_overrides(
+        self,
+        descriptor: StrategyPresetDescriptor,
+        *,
+        hwid_provider: HwIdProvider | None,
+        additional_issues: Sequence[str] | None = None,
+    ) -> StrategyPresetDescriptor:
+        metadata = dict(descriptor.metadata)
+        license_payload: Mapping[str, Any] | None = None
+        raw_license = metadata.get("license")
+        if isinstance(raw_license, Mapping):
+            license_payload = dict(raw_license)
+
+        override = self._license_overrides.get(descriptor.preset_id)
+        if override:
+            combined = dict(license_payload or {})
+            combined.update(dict(override))
+            license_payload = combined
+            metadata["license"] = combined
+        elif license_payload is None:
+            metadata.pop("license", None)
+
+        status = self._compute_license_status(
+            descriptor.preset_id,
+            metadata=metadata,
+            license_payload=license_payload,
+            signature_verified=descriptor.signature_verified,
+            hwid_provider=hwid_provider,
+            additional_issues=additional_issues or descriptor.license_status.issues,
+        )
+        return replace(descriptor, metadata=metadata, license_status=status)
+
+    def _parse_preset_strategies(
+        self, payload: Mapping[str, Any]
+    ) -> tuple[tuple[Mapping[str, Any], ...], Mapping[str, tuple[str, ...]], list[str]]:
+        entries = payload.get("strategies")
+        if not isinstance(entries, Sequence) or isinstance(entries, (str, bytes)):
+            raise ValueError("Preset must define strategies as an array of mappings")
+
+        strategies: list[Mapping[str, Any]] = []
+        required_parameters: dict[str, tuple[str, ...]] = {}
+        issues: list[str] = []
+
+        for index, raw_entry in enumerate(entries):
+            if not isinstance(raw_entry, Mapping):
+                issues.append(f"strategy-entry-{index}-invalid")
+                continue
+
+            engine = str(raw_entry.get("engine") or "").strip()
+            if not engine:
+                issues.append(f"strategy-entry-{index}-missing-engine")
+                continue
+
+            name = str(raw_entry.get("name") or engine).strip() or engine
+            parameters_raw = raw_entry.get("parameters") or {}
+            if isinstance(parameters_raw, Mapping):
+                parameters = {str(key): parameters_raw[key] for key in parameters_raw.keys()}
+                parameter_keys = tuple(sorted(parameters.keys()))
+            else:
+                parameters = {}
+                parameter_keys = ()
+
+            required_parameters[name] = parameter_keys
+
+            entry_payload: dict[str, Any] = {
+                "name": name,
+                "engine": engine,
+                "license_tier": str(raw_entry.get("license_tier") or "").strip(),
+                "risk_classes": list(_normalize_optional_str_sequence(raw_entry.get("risk_classes"))),
+                "required_data": list(_normalize_optional_str_sequence(raw_entry.get("required_data"))),
+                "parameters": parameters,
+                "tags": list(_normalize_optional_str_sequence(raw_entry.get("tags"))),
+            }
+
+            risk_profile = raw_entry.get("risk_profile")
+            if risk_profile not in (None, ""):
+                entry_payload["risk_profile"] = str(risk_profile)
+
+            metadata_payload = raw_entry.get("metadata")
+            if isinstance(metadata_payload, Mapping):
+                entry_payload["metadata"] = dict(metadata_payload)
+
+            strategies.append(entry_payload)
+
+        if not strategies:
+            issues.append("no-strategies-defined")
+
+        return tuple(strategies), required_parameters, issues
+
+    def _build_preset_descriptor(
+        self,
+        preset_payload: Mapping[str, Any],
+        *,
+        signature_verified: bool,
+        source_path: Path | None,
+        hwid_provider: HwIdProvider | None,
+        additional_issues: Sequence[str] = (),
+    ) -> StrategyPresetDescriptor:
+        if not isinstance(preset_payload, Mapping):
+            raise TypeError("Preset payload must be a mapping")
+
+        metadata_payload = preset_payload.get("metadata") or {}
+        metadata = dict(metadata_payload) if isinstance(metadata_payload, Mapping) else {}
+
+        raw_name = preset_payload.get("name") or metadata.get("name") or metadata.get("id")
+        if raw_name is None:
+            raise ValueError("Preset must define a name")
+        name = _normalize_non_empty_str(str(raw_name), field_name="preset.name")
+
+        raw_preset_id = metadata.get("id") or metadata.get("preset_id") or name
+        preset_id = _normalize_non_empty_str(str(raw_preset_id), field_name="preset_id")
+
+        profile = StrategyPresetProfile.from_value(metadata.get("profile") or metadata.get("preset_profile"))
+
+        strategies, required_parameters, strategy_issues = self._parse_preset_strategies(preset_payload)
+
+        issues = list(additional_issues)
+        issues.extend(strategy_issues)
+
+        license_payload = metadata.get("license") if isinstance(metadata.get("license"), Mapping) else None
+
+        status = self._compute_license_status(
+            preset_id,
+            metadata=metadata,
+            license_payload=license_payload,
+            signature_verified=signature_verified,
+            hwid_provider=hwid_provider,
+            additional_issues=issues,
+        )
+
+        if license_payload is not None:
+            metadata["license"] = dict(license_payload)
+        elif "license" in metadata:
+            metadata.pop("license")
+
+        return StrategyPresetDescriptor(
+            preset_id=preset_id,
+            name=name,
+            profile=profile,
+            strategies=strategies,
+            required_parameters=required_parameters,
+            license_status=status,
+            signature_verified=signature_verified,
+            source_path=source_path,
+            metadata=metadata,
+        )
+
+    def _load_preset_file(
+        self,
+        path: Path,
+        *,
+        signing_keys: Mapping[str, bytes] | None,
+        hwid_provider: HwIdProvider | None,
+    ) -> StrategyPresetDescriptor:
+        try:
+            raw_text = path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            raise
+
+        try:
+            document = json.loads(raw_text)
+        except json.JSONDecodeError as exc:  # pragma: no cover - walidowane w testach integracyjnych
+            raise ValueError(f"Preset file {path} contains invalid JSON: {exc}") from exc
+
+        signature_doc: Mapping[str, Any] | None = None
+        if isinstance(document, Mapping) and "preset" in document:
+            preset_payload = document.get("preset")  # type: ignore[assignment]
+            signature_candidate = document.get("signature")
+            if isinstance(signature_candidate, Mapping):
+                signature_doc = signature_candidate
+        elif isinstance(document, Mapping):
+            preset_payload = document
+        else:
+            raise ValueError(f"Preset file {path} must contain JSON object")
+
+        if not isinstance(preset_payload, Mapping):
+            raise ValueError(f"Preset file {path} must define mapping payload")
+
+        signature_verified = False
+        issues: list[str] = []
+        if signature_doc is not None:
+            key_id = str(signature_doc.get("key_id") or "").strip()
+            algorithm = str(signature_doc.get("algorithm") or "HMAC-SHA256")
+            key_bytes = signing_keys.get(key_id) if signing_keys else None
+            if key_bytes is None:
+                issues.append("missing-signing-key")
+            else:
+                try:
+                    signature_verified = verify_hmac_signature(
+                        preset_payload,
+                        signature_doc,
+                        key=key_bytes,
+                        algorithm=algorithm,
+                    )
+                    if not signature_verified:
+                        issues.append("signature-mismatch")
+                except Exception as exc:  # pragma: no cover - defensywne logowanie
+                    LOGGER.debug("Signature verification error for preset %s", path, exc_info=True)
+                    issues.append(f"signature-error:{exc}")
+
+        descriptor = self._build_preset_descriptor(
+            preset_payload,
+            signature_verified=signature_verified,
+            source_path=path,
+            hwid_provider=hwid_provider,
+            additional_issues=issues,
+        )
+
+        self._presets[descriptor.preset_id] = replace(
+            descriptor,
+            metadata=dict(descriptor.metadata),
+        )
+
+        return self._descriptor_with_overrides(
+            descriptor,
+            hwid_provider=hwid_provider,
+            additional_issues=descriptor.license_status.issues,
+        )
+
+    # ------------------------------------------------------------------
+    # API publiczne presetów
+    # ------------------------------------------------------------------
+
+    def load_presets_from_directory(
+        self,
+        directory: str | Path,
+        *,
+        signing_keys: Mapping[str, bytes] | None = None,
+        hwid_provider: HwIdProvider | None = None,
+    ) -> tuple[StrategyPresetDescriptor, ...]:
+        base_path = Path(directory)
+        if not base_path.exists():
+            raise FileNotFoundError(f"Preset directory does not exist: {directory}")
+
+        descriptors: list[StrategyPresetDescriptor] = []
+        for candidate in sorted(base_path.glob("*.json")):
+            descriptor = self._load_preset_file(
+                candidate,
+                signing_keys=signing_keys,
+                hwid_provider=hwid_provider,
+            )
+            descriptors.append(descriptor)
+        return tuple(descriptors)
+
+    def preset(
+        self,
+        preset_id: str,
+        *,
+        hwid_provider: HwIdProvider | None = None,
+    ) -> StrategyPresetDescriptor:
+        if preset_id not in self._presets:
+            raise KeyError(f"Nie znaleziono presetu: {preset_id}")
+        base = self._presets[preset_id]
+        return self._descriptor_with_overrides(
+            base,
+            hwid_provider=hwid_provider,
+            additional_issues=base.license_status.issues,
+        )
+
+    def list_presets(
+        self,
+        *,
+        hwid_provider: HwIdProvider | None = None,
+    ) -> tuple[StrategyPresetDescriptor, ...]:
+        provider = self._resolve_hwid_provider(hwid_provider)
+        result: list[StrategyPresetDescriptor] = []
+        for preset_id in sorted(self._presets):
+            base = self._presets[preset_id]
+            result.append(
+                self._descriptor_with_overrides(
+                    base,
+                    hwid_provider=provider,
+                    additional_issues=base.license_status.issues,
+                )
+            )
+        return tuple(result)
+
+    def describe_presets(
+        self,
+        *,
+        profile: StrategyPresetProfile | str | None = None,
+        include_strategies: bool = True,
+        hwid_provider: HwIdProvider | None = None,
+    ) -> Sequence[Mapping[str, object]]:
+        resolved_profile: StrategyPresetProfile | None
+        if profile is None:
+            resolved_profile = None
+        else:
+            resolved_profile = StrategyPresetProfile.from_value(profile)
+
+        summaries: list[Mapping[str, object]] = []
+        for descriptor in self.list_presets(hwid_provider=hwid_provider):
+            if resolved_profile and descriptor.profile != resolved_profile:
+                continue
+            summaries.append(descriptor.as_dict(include_strategies=include_strategies))
+        return summaries
+
+    def install_license_override(
+        self,
+        preset_id: str,
+        override: Mapping[str, Any],
+        *,
+        hwid_provider: HwIdProvider | None = None,
+    ) -> StrategyPresetDescriptor:
+        if preset_id not in self._presets:
+            raise KeyError(f"Nie znaleziono presetu: {preset_id}")
+        self._license_overrides[preset_id] = dict(override)
+        return self.preset(preset_id, hwid_provider=hwid_provider)
+
+    def clear_license_override(
+        self,
+        preset_id: str,
+        *,
+        hwid_provider: HwIdProvider | None = None,
+    ) -> StrategyPresetDescriptor:
+        if preset_id not in self._presets:
+            raise KeyError(f"Nie znaleziono presetu: {preset_id}")
+        self._license_overrides.pop(preset_id, None)
+        return self.preset(preset_id, hwid_provider=hwid_provider)
 
     def register(self, spec: StrategyEngineSpec) -> None:
         key = spec.key.lower()
@@ -603,4 +1204,9 @@ __all__ = [
     "DEFAULT_STRATEGY_CATALOG",
     "StrategyPresetWizard",
     "build_default_catalog",
+    "StrategyPresetDescriptor",
+    "StrategyPresetProfile",
+    "PresetLicenseStatus",
+    "PresetLicenseState",
 ]
+LOGGER = logging.getLogger(__name__)

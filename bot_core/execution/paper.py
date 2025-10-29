@@ -12,7 +12,7 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable, Dict, Iterable, List, Mapping, MutableMapping, Optional
 
-from bot_core.execution.base import ExecutionContext, ExecutionService
+from bot_core.execution.base import ExecutionContext, ExecutionService, PriceResolver
 from bot_core.exchanges.base import OrderRequest, OrderResult
 
 # --- Observability (optional, no-op fallback) --------------------------------
@@ -125,6 +125,7 @@ class PaperTradingExecutionService(ExecutionService):
         ledger_retention_days: int | None = 730,
         ledger_fsync: bool = False,
         ledger_encoding: str = "utf-8",
+        price_resolver: PriceResolver | None = None,
     ) -> None:
         if not markets:
             raise ValueError("Wymagana jest co najmniej jedna definicja rynku.")
@@ -175,6 +176,7 @@ class PaperTradingExecutionService(ExecutionService):
             "Czas realizacji zleceń w symulatorze paper tradingu (sekundy).",
             buckets=(0.001, 0.005, 0.01, 0.05, 0.1, 0.25, 0.5, 1.0),
         )
+        self._price_resolver: PriceResolver | None = price_resolver
 
     # --- API ExecutionService -------------------------------------------------
     def execute(self, request: OrderRequest, context: ExecutionContext) -> OrderResult:
@@ -221,7 +223,7 @@ class PaperTradingExecutionService(ExecutionService):
         side: str,
     ) -> OrderResult:
         symbol = request.symbol
-        reference_price = self._determine_reference_price(request)
+        reference_price = self._determine_reference_price(request, context)
         notional = reference_price * request.quantity
         if notional < market.min_notional:
             raise ValueError(
@@ -307,10 +309,102 @@ class PaperTradingExecutionService(ExecutionService):
         _LOGGER.debug("PaperTradingExecutionService.flush() – brak zaległych operacji.")
 
     # --- Funkcje pomocnicze ---------------------------------------------------
-    def _determine_reference_price(self, request: OrderRequest) -> float:
-        if request.price is None or request.price <= 0:
-            raise ValueError("Do symulacji wymagane jest podanie ceny referencyjnej w polu price.")
-        return request.price
+    def _determine_reference_price(self, request: OrderRequest, context: ExecutionContext) -> float:
+        price = request.price
+        if price is not None and price > 0:
+            return price
+
+        symbol = request.symbol
+        _LOGGER.debug(
+            "Brak ceny w żądaniu %s – próbuję odczytać z resolverów/market data provider.",
+            symbol,
+        )
+
+        for resolver in self._iter_price_resolvers(context):
+            try:
+                resolved = resolver(symbol)
+            except Exception:  # pragma: no cover - defensywnie ignorujemy błędne resolvery
+                _LOGGER.debug("Resolver ceny rynku %s zgłosił wyjątek.", symbol, exc_info=True)
+                continue
+            if resolved is not None and resolved > 0:
+                _LOGGER.debug("Używam ceny %s z resolvera kontekstowego.", resolved)
+                return resolved
+
+        provider_price = self._resolve_from_market_data_provider(symbol, context)
+        if provider_price is not None:
+            _LOGGER.debug("Używam ceny %s z market data provider.", provider_price)
+            return provider_price
+
+        metadata_price = self._extract_price_from_metadata(symbol, context.metadata)
+        if metadata_price is not None:
+            _LOGGER.debug("Używam ceny %s z metadanych ExecutionContext.", metadata_price)
+            return metadata_price
+
+        _LOGGER.warning(
+            "Nie udało się ustalić ceny referencyjnej dla %s – brak resolvera i market data provider.",
+            symbol,
+        )
+        raise ValueError(
+            "Brak ceny referencyjnej dla symulacji – podaj price lub dostarcz resolver danych rynkowych."
+        )
+
+    @staticmethod
+    def _resolve_from_market_data_provider(symbol: str, context: ExecutionContext) -> float | None:
+        provider = context.market_data_provider
+        if provider is None:
+            return None
+
+        candidates: Iterable[Callable[[str], float | None]] = ()
+        callables: list[Callable[[str], float | None]] = []
+        if callable(provider):
+            callables.append(provider)
+
+        for attr in ("get_last_price", "last_price", "price", "get_price"):
+            method = getattr(provider, attr, None)
+            if callable(method):
+                callables.append(method)
+
+        candidates = callables or ()
+        for candidate in candidates:
+            try:
+                resolved = candidate(symbol)
+            except Exception:  # pragma: no cover - defensywne logowanie
+                _LOGGER.debug(
+                    "MarketDataProvider zwrócił wyjątek przy resolve %s.", symbol, exc_info=True
+                )
+                continue
+            if resolved is not None and resolved > 0:
+                return float(resolved)
+        return None
+
+    def _iter_price_resolvers(self, context: ExecutionContext) -> Iterable[PriceResolver]:
+        if context.price_resolver is not None:
+            yield context.price_resolver
+        if self._price_resolver is not None and self._price_resolver is not context.price_resolver:
+            yield self._price_resolver
+
+    @staticmethod
+    def _extract_price_from_metadata(symbol: str, metadata: Mapping[str, str]) -> float | None:
+        candidate_keys = (
+            f"last_price:{symbol}",
+            f"reference_price:{symbol}",
+            f"close_price:{symbol}",
+            "last_price",
+            "reference_price",
+            "close_price",
+            "ohlcv_last_close",
+        )
+        for key in candidate_keys:
+            raw_value = metadata.get(key)
+            if raw_value is None:
+                continue
+            try:
+                price = float(raw_value)
+            except (TypeError, ValueError):
+                continue
+            if price > 0:
+                return price
+        return None
 
     def _apply_slippage(self, price: float, side: str) -> float:
         if self._slippage_bps <= 0:

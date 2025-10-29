@@ -31,7 +31,12 @@ from bot_core.config.loader import load_core_config
 from bot_core.data import CachedOHLCVSource, create_cached_ohlcv_source, resolve_cache_namespace
 from bot_core.data.base import OHLCVRequest
 from bot_core.data.ohlcv import OHLCVBackfillService
-from bot_core.execution.base import ExecutionContext, ExecutionService
+from bot_core.execution.base import (
+    ExecutionContext,
+    ExecutionService,
+    MarketPriceProvider,
+    PriceResolver,
+)
 from bot_core.execution.paper import MarketMetadata, PaperTradingExecutionService
 from bot_core.exchanges.base import (
     AccountSnapshot,
@@ -42,9 +47,13 @@ from bot_core.exchanges.base import (
 from bot_core.exchanges.streaming import LocalLongPollStream, StreamBatch
 from bot_core.market_intel import MarketIntelAggregator, MarketIntelQuery, MarketIntelSnapshot
 from bot_core.portfolio import (
+    CopyTradingFollowerConfig,
+    MultiPortfolioScheduler,
+    PortfolioBinding,
     PortfolioDecision,
     PortfolioDecisionLog,
     PortfolioGovernor,
+    StrategyHealthMonitor,
     StrategyPortfolioGovernor,
 )
 from bot_core.runtime.bootstrap import BootstrapContext, bootstrap_environment
@@ -294,13 +303,23 @@ def build_daily_trend_pipeline(
         )
 
     cached_source = _create_cached_source(bootstrap_ctx.adapter, environment)
+    _ensure_local_market_data_availability(
+        environment,
+        cached_source,
+        markets,
+        runtime_cfg.interval,
+    )
     storage = cached_source.storage
     backfill_service = OHLCVBackfillService(cached_source)
+
+    price_resolver = _build_price_resolver(cached_source, runtime_cfg.interval)
+    market_data_provider = _build_market_price_provider(cached_source, runtime_cfg.interval)
 
     execution_service = _select_execution_service(
         bootstrap_ctx,
         markets,
         paper_settings,
+        price_resolver=price_resolver,
     )
 
     if DailyTrendMomentumStrategy is None or DailyTrendMomentumSettings is None:
@@ -330,6 +349,8 @@ def build_daily_trend_pipeline(
         risk_profile=effective_risk_profile,
         environment=environment.environment.value,
         metadata=execution_metadata,
+        price_resolver=price_resolver,
+        market_data_provider=market_data_provider,
     )
 
     account_loader = _build_account_loader(
@@ -631,6 +652,8 @@ def _build_markets(
 def _build_execution_service(
     markets: Mapping[str, MarketMetadata],
     paper_settings: Mapping[str, object],
+    *,
+    price_resolver: PriceResolver | None = None,
 ) -> PaperTradingExecutionService:
     return PaperTradingExecutionService(
         markets,
@@ -642,6 +665,7 @@ def _build_execution_service(
         ledger_filename_pattern=str(paper_settings["ledger_filename_pattern"]),
         ledger_retention_days=paper_settings["ledger_retention_days"],  # type: ignore[arg-type]
         ledger_fsync=bool(paper_settings["ledger_fsync"]),
+        price_resolver=price_resolver,
     )
 
 
@@ -649,6 +673,8 @@ def _select_execution_service(
     bootstrap_ctx: BootstrapContext,
     markets: Mapping[str, MarketMetadata],
     paper_settings: Mapping[str, object],
+    *,
+    price_resolver: PriceResolver | None = None,
 ) -> PaperTradingExecutionService:
     """Zwraca usługę egzekucyjną preferując instancję z bootstrapu."""
 
@@ -656,12 +682,113 @@ def _select_execution_service(
     if isinstance(context_service, PaperTradingExecutionService):
         return context_service
 
-    service = _build_execution_service(markets, paper_settings)
+    service = _build_execution_service(
+        markets,
+        paper_settings,
+        price_resolver=price_resolver,
+    )
     try:
         bootstrap_ctx.execution_service = service
     except Exception:  # pragma: no cover - kontekst może być typu tylko-do-odczytu
         _LOGGER.debug("Nie udało się zapisać PaperTradingExecutionService w BootstrapContext", exc_info=True)
     return service
+
+
+def _ensure_local_market_data_availability(
+    environment: EnvironmentConfig,
+    data_source: CachedOHLCVSource,
+    markets: Mapping[str, MarketMetadata],
+    interval: str,
+) -> None:
+    offline_mode = bool(getattr(environment, "offline_mode", False))
+    if not offline_mode:
+        return
+
+    storage = getattr(data_source, "storage", None)
+    if storage is None:
+        raise RuntimeError(
+            "Środowisko offline wymaga dostępu do lokalnego cache OHLCV, ale storage nie jest dostępny."
+        )
+
+    missing: list[str] = []
+    for symbol in markets.keys():
+        cache_key = data_source._cache_key(symbol, interval)  # pylint: disable=protected-access
+        try:
+            payload = storage.read(cache_key)
+        except Exception:  # pragma: no cover - storage może rzucić różne błędy
+            missing.append(symbol)
+            continue
+        rows = []
+        if isinstance(payload, Mapping):
+            rows = payload.get("rows", [])  # type: ignore[assignment]
+        if not rows:
+            missing.append(symbol)
+
+    if missing:
+        raise RuntimeError(
+            "Środowisko offline wymaga wstępnie załadowanych danych OHLCV dla symboli: "
+            + ", ".join(sorted(missing))
+        )
+
+
+def _build_price_resolver(
+    data_source: CachedOHLCVSource, interval: str
+) -> PriceResolver:
+    storage = data_source.storage
+
+    def resolver(symbol: str) -> float | None:
+        cache_key = data_source._cache_key(symbol, interval)  # pylint: disable=protected-access
+        try:
+            payload = storage.read(cache_key)
+        except (AttributeError, KeyError):
+            return None
+        if not isinstance(payload, Mapping):
+            return None
+        rows = payload.get("rows", [])  # type: ignore[assignment]
+        if not rows:
+            return None
+        last_row = rows[-1]
+        if not last_row:
+            return None
+        try:
+            price = float(last_row[4])
+        except (IndexError, TypeError, ValueError):
+            return None
+        return price if price > 0 else None
+
+    return resolver
+
+
+def _build_market_price_provider(
+    data_source: CachedOHLCVSource, interval: str
+) -> MarketPriceProvider:
+    interval_ms = interval_to_milliseconds(interval)
+
+    def provider(symbol: str) -> float | None:
+        now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+        start = max(0, now_ms - max(interval_ms * 5, interval_ms))
+        request = OHLCVRequest(symbol=symbol, interval=interval, start=start, end=now_ms, limit=1)
+        try:
+            response = data_source.fetch_ohlcv(request)
+        except Exception:  # pragma: no cover - log diagnostyczny
+            _LOGGER.debug(
+                "Nie udało się pobrać OHLCV z market data provider dla %s.",
+                symbol,
+                exc_info=True,
+            )
+            return None
+        if not response.rows:
+            return None
+        last_row = response.rows[-1]
+        if not last_row:
+            return None
+        try:
+            price = float(last_row[4])
+        except (IndexError, TypeError, ValueError):
+            return None
+        return price if price > 0 else None
+
+    return provider
 
 
 def _optional_float(value: object) -> float | None:
@@ -3773,6 +3900,134 @@ def build_live_multi_strategy_runtime(
     )
 
 
+def _iter_portfolio_entries(definition: object) -> Sequence[Mapping[str, object]]:
+    if definition is None:
+        return ()
+    if isinstance(definition, Mapping):
+        if "portfolios" in definition:
+            payload = definition["portfolios"]
+            if isinstance(payload, Mapping):
+                return [dict(value) for value in payload.values() if isinstance(value, Mapping)]
+            if isinstance(payload, Sequence):
+                return [dict(entry) for entry in payload if isinstance(entry, Mapping)]
+        return [dict(definition)]
+    if isinstance(definition, Sequence):
+        entries: list[Mapping[str, object]] = []
+        for item in definition:
+            if isinstance(item, Mapping):
+                entries.append(dict(item))
+        return entries
+    if hasattr(definition, "portfolios"):
+        payload = getattr(definition, "portfolios")
+        return _iter_portfolio_entries(payload)
+    raise TypeError("Unsupported portfolio definition structure")
+
+
+def _build_follower_configs(raw_followers: object) -> tuple[CopyTradingFollowerConfig, ...]:
+    if raw_followers in (None, ""):
+        return ()
+    if isinstance(raw_followers, Mapping):
+        raw_sequence = [raw_followers]
+    elif isinstance(raw_followers, Sequence) and not isinstance(raw_followers, (str, bytes)):
+        raw_sequence = list(raw_followers)
+    else:
+        raise TypeError("Followers must be a mapping or a sequence of mappings")
+
+    followers: list[CopyTradingFollowerConfig] = []
+    for entry in raw_sequence:
+        if not isinstance(entry, Mapping):
+            continue
+        portfolio_id = str(entry.get("portfolio_id") or entry.get("id") or "").strip()
+        if not portfolio_id:
+            continue
+        scaling = float(entry.get("scaling", 1.0))
+        risk_multiplier = float(entry.get("risk_multiplier", entry.get("risk", 1.0)))
+        enabled = bool(entry.get("enabled", True))
+        allow_partial = bool(entry.get("allow_partial", True))
+        max_position_value = entry.get("max_position_value")
+        follower = CopyTradingFollowerConfig(
+            portfolio_id=portfolio_id,
+            scaling=scaling,
+            risk_multiplier=risk_multiplier,
+            enabled=enabled,
+            max_position_value=float(max_position_value) if max_position_value not in (None, "") else None,
+            allow_partial=allow_partial,
+        )
+        followers.append(follower)
+    return tuple(followers)
+
+
+def _normalize_fallbacks(raw_fallbacks: object) -> tuple[str, ...]:
+    if raw_fallbacks in (None, ""):
+        return ()
+    if isinstance(raw_fallbacks, str):
+        entries = [raw_fallbacks]
+    elif isinstance(raw_fallbacks, Sequence):
+        entries = list(raw_fallbacks)
+    else:
+        raise TypeError("Fallback presets must be a string or sequence of strings")
+    normalized: list[str] = []
+    for item in entries:
+        text = str(item).strip()
+        if text and text not in normalized:
+            normalized.append(text)
+    return tuple(normalized)
+
+
+def _build_portfolio_binding(entry: Mapping[str, object]) -> PortfolioBinding:
+    portfolio_id = str(entry.get("portfolio_id") or entry.get("id") or "").strip()
+    if not portfolio_id:
+        raise ValueError("Portfolio binding must define 'portfolio_id'")
+    primary = str(entry.get("primary_preset") or entry.get("preset") or "").strip()
+    if not primary:
+        raise ValueError(f"Portfolio {portfolio_id} missing primary preset")
+    fallback = _normalize_fallbacks(entry.get("fallback_presets") or entry.get("fallback"))
+    followers = _build_follower_configs(entry.get("followers"))
+    cooldown_value = entry.get("rebalance_cooldown_seconds")
+    if cooldown_value in (None, ""):
+        cooldown = timedelta(minutes=5)
+    else:
+        cooldown = timedelta(seconds=float(cooldown_value))
+    return PortfolioBinding(
+        portfolio_id=portfolio_id,
+        primary_preset=primary,
+        fallback_presets=fallback,
+        followers=followers,
+        rebalance_cooldown=cooldown,
+    )
+
+
+def build_multi_portfolio_scheduler_from_config(
+    *,
+    core_config: CoreConfig,
+    catalog: StrategyCatalog | None = None,
+    audit_logger: Callable[[Mapping[str, object]], None] | None = None,
+    health_monitor: StrategyHealthMonitor | None = None,
+    clock: Callable[[], datetime] | None = None,
+) -> MultiPortfolioScheduler:
+    definitions = getattr(core_config, "multi_portfolio", None)
+    if definitions is None:
+        raise ValueError("Konfiguracja nie zawiera sekcji multi_portfolio")
+    catalog = catalog or DEFAULT_STRATEGY_CATALOG
+    scheduler = MultiPortfolioScheduler(
+        catalog,
+        audit_logger=audit_logger,
+        health_monitor=health_monitor,
+        clock=clock,
+    )
+    entries = _iter_portfolio_entries(definitions)
+    for entry in entries:
+        binding = _build_portfolio_binding(entry)
+        scheduler.register_portfolio(binding)
+    return scheduler
+
+
+def describe_multi_portfolio_state(
+    scheduler: MultiPortfolioScheduler,
+) -> Sequence[Mapping[str, object]]:
+    return [scheduler.portfolio_state(portfolio_id) for portfolio_id in scheduler.registered_portfolios()]
+
+
 __all__ = [
     "DailyTrendPipeline",
     "build_daily_trend_pipeline",
@@ -3782,6 +4037,8 @@ __all__ = [
     "build_demo_multi_strategy_runtime",
     "build_paper_multi_strategy_runtime",
     "build_live_multi_strategy_runtime",
+    "build_multi_portfolio_scheduler_from_config",
+    "describe_multi_portfolio_state",
     "consume_stream",
     "OHLCVStrategyFeed",
     "InMemoryStrategySignalSink",

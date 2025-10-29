@@ -15,7 +15,7 @@ sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from bot_core.alerts import AlertMessage, DefaultAlertRouter, InMemoryAlertAuditLog
 from bot_core.alerts.base import AlertChannel
-from bot_core.data.base import OHLCVRequest
+from bot_core.data.base import OHLCVRequest, OHLCVResponse
 from bot_core.data.ohlcv.cache import CachedOHLCVSource, PublicAPIDataSource
 from bot_core.execution import ExecutionContext, MarketMetadata, PaperTradingExecutionService
 from bot_core.exchanges.base import (
@@ -107,6 +107,12 @@ class _RecordingChannel(AlertChannel):
 
     def health_check(self) -> dict[str, str]:
         return {"status": "ok", "delivered": str(len(self.messages))}
+
+
+class _DummyController:
+    def __init__(self, **kwargs):
+        self.execution_context = kwargs["execution_context"]
+        self.account_loader = kwargs["account_loader"]
 
 
 def _to_snapshot(row: Sequence[float]) -> MarketSnapshot:
@@ -387,6 +393,7 @@ def test_select_execution_service_prefers_bootstrap_instance(tmp_path: Path) -> 
             "ledger_retention_days": 730,
             "ledger_fsync": False,
         },
+        price_resolver=None,
     )
 
     assert resolved is service
@@ -421,6 +428,7 @@ def test_select_execution_service_persists_created_instance(tmp_path: Path) -> N
             "ledger_retention_days": 730,
             "ledger_fsync": False,
         },
+        price_resolver=None,
     )
 
     assert isinstance(resolved, PaperTradingExecutionService)
@@ -510,12 +518,19 @@ def test_build_daily_trend_pipeline_reuses_bootstrap_service(
         ),
     )
 
+    def _fetch_ohlcv_response(_request: OHLCVRequest) -> OHLCVResponse:
+        return OHLCVResponse(
+            columns=("open_time", "open", "high", "low", "close", "volume"),
+            rows=((1.0, 1.0, 1.0, 1.0, 1.0, 10.0),),
+        )
+
     cache_stub = SimpleNamespace(
         storage=SimpleNamespace(
-            latest_timestamp=lambda _key: None,
-            read=lambda _key: {"rows": []},
+            latest_timestamp=lambda _key: 1.0,
+            read=lambda _key: {"rows": [[1.0, 1.0, 1.0, 1.0, 1.0, 10.0]]},
         ),
         _cache_key=lambda symbol, interval: f"{symbol}:{interval}",
+        fetch_ohlcv=_fetch_ohlcv_response,
     )
     monkeypatch.setattr(
         pipeline_module,
@@ -532,11 +547,6 @@ def test_build_daily_trend_pipeline_reuses_bootstrap_service(
         "_build_account_loader",
         lambda **_kwargs: lambda: SimpleNamespace(),
     )
-
-    class _DummyController:
-        def __init__(self, **kwargs):
-            self.execution_context = kwargs["execution_context"]
-            self.account_loader = kwargs["account_loader"]
 
     monkeypatch.setattr(pipeline_module, "DailyTrendController", _DummyController)
 
@@ -558,3 +568,123 @@ def test_build_daily_trend_pipeline_reuses_bootstrap_service(
 
     assert pipeline.execution_service is service
     assert call_detected["flag"] is False
+    context = pipeline.controller.execution_context
+    assert context.market_data_provider is not None
+    assert context.market_data_provider("BTCUSDT") == pytest.approx(1.0)
+
+
+def test_offline_environment_requires_preloaded_dataset(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    ledger_dir = tmp_path / "ledger"
+    ledger_dir.mkdir(parents=True, exist_ok=True)
+
+    markets = {
+        "BTCUSDT": MarketMetadata(
+            base_asset="BTC",
+            quote_asset="USDT",
+            min_quantity=0.001,
+            min_notional=10.0,
+            step_size=0.001,
+        )
+    }
+    service = PaperTradingExecutionService(
+        markets,
+        initial_balances={"USDT": 50_000.0},
+        ledger_directory=ledger_dir,
+    )
+
+    environment = SimpleNamespace(
+        environment=Environment.PAPER,
+        exchange="binance_spot",
+        adapter_settings={
+            "paper_trading": {
+                "quote_assets": ["USDT"],
+                "initial_balances": {"USDT": 50_000.0},
+            }
+        },
+        data_cache_path=str(tmp_path / "cache"),
+        name="binance_paper",
+        default_strategy="daily_trend",
+        default_controller="daily_trend",
+        offline_mode=True,
+    )
+    bootstrap_ctx = SimpleNamespace(
+        core_config=object(),
+        environment=environment,
+        risk_profile_name="balanced",
+        risk_engine=object(),
+        adapter=object(),
+        execution_service=service,
+        tco_reporter=None,
+    )
+
+    monkeypatch.setattr(
+        pipeline_module,
+        "bootstrap_environment",
+        lambda *args, **kwargs: bootstrap_ctx,
+    )
+    monkeypatch.setattr(
+        pipeline_module,
+        "_resolve_strategy",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            fast_ma=3,
+            slow_ma=5,
+            breakout_lookback=4,
+            momentum_window=3,
+            atr_window=3,
+            atr_multiplier=1.5,
+            min_trend_strength=0.0,
+            min_momentum=0.0,
+        ),
+    )
+    monkeypatch.setattr(
+        pipeline_module,
+        "_resolve_runtime",
+        lambda *_args, **_kwargs: SimpleNamespace(interval="1d"),
+    )
+    monkeypatch.setattr(
+        pipeline_module,
+        "_resolve_universe",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            instruments=[
+                SimpleNamespace(
+                    exchange_symbols={"binance_spot": "BTCUSDT"},
+                    quote_asset="USDT",
+                    base_asset="BTC",
+                )
+            ]
+        ),
+    )
+
+    empty_cache_stub = SimpleNamespace(
+        storage=SimpleNamespace(
+            latest_timestamp=lambda _key: None,
+            read=lambda _key: {},
+        ),
+        _cache_key=lambda symbol, interval: f"{symbol}:{interval}",
+        fetch_ohlcv=lambda _request: OHLCVResponse(columns=(), rows=()),
+    )
+    monkeypatch.setattr(
+        pipeline_module,
+        "_create_cached_source",
+        lambda *_args, **_kwargs: empty_cache_stub,
+    )
+    monkeypatch.setattr(
+        pipeline_module,
+        "OHLCVBackfillService",
+        lambda _source: SimpleNamespace(),
+    )
+    monkeypatch.setattr(
+        pipeline_module,
+        "_build_account_loader",
+        lambda **_kwargs: lambda: SimpleNamespace(),
+    )
+    monkeypatch.setattr(pipeline_module, "DailyTrendController", _DummyController)
+
+    with pytest.raises(RuntimeError, match="wymaga wstępnie załadowanych danych OHLCV"):
+        pipeline_module.build_daily_trend_pipeline(
+            environment_name="binance_paper",
+            strategy_name=None,
+            controller_name=None,
+            config_path=tmp_path / "core.yaml",
+            secret_manager=object(),
+        )
