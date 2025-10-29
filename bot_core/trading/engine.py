@@ -1529,7 +1529,6 @@ class TradingEngine:
         best_score = float('-inf')
         iterations = 0
         self._last_optimization_summary = None
-        self._last_optimization_result = None
         fallback_used = False
         
         objective_label = (
@@ -1668,72 +1667,57 @@ class TradingEngine:
                     "Optimization completed after %d iterations without a valid score; returning baseline parameters",
                     iterations,
                 )
-                fallback_used = True
-                best_params = base_params
-                try:
-                    fallback_result = self.run_strategy(data, best_params)
-                    best_result = fallback_result
-                    self._last_optimization_result = fallback_result
-                    if callable(objective):
-                        best_score = float(objective(fallback_result))
-                    else:
-                        best_score = float(getattr(fallback_result, objective))
-                except AttributeError as error:
-                    error_message = (
-                        f"Fallback result missing objective '{objective_label}' for baseline parameters"
-                    )
-                    self._last_optimization_summary = OptimizationSummary(
-                        params=best_params,
-                        score=None,
-                        iterations=iterations,
-                        objective=objective_label,
-                        result=best_result,
-                        fallback_used=True,
-                        error=error_message,
-                    )
-                    self._last_optimization_result = best_result
-                    raise AttributeError(error_message) from None
-                except Exception as error:
-                    error_message = "Unable to evaluate baseline parameters during optimization fallback"
-                    self._last_optimization_summary = OptimizationSummary(
-                        params=best_params,
-                        score=None,
-                        iterations=iterations,
-                        objective=objective_label,
-                        result=best_result,
-                        fallback_used=True,
-                        error=str(error),
-                    )
-                    self._last_optimization_result = best_result
-                    raise RuntimeError(error_message) from error
+                continue
 
-            if best_params is not None:
+            if score_value > best_score:
+                best_score = score_value
+                best_params = params
+                best_result = result
                 self._last_optimization_summary = OptimizationSummary(
                     params=best_params,
-                    score=None if best_score == float('-inf') else best_score,
+                    score=best_score,
                     iterations=iterations,
                     objective=objective_label,
-                    result=best_result,
-                    fallback_used=fallback_used,
+                    result=result,
+                    fallback_used=False,
                 )
-                self._last_optimization_result = best_result
+                self._logger.info(f"New best {objective_label}: {score_value:.4f}")
 
-            self._logger.info(f"Optimization completed after {iterations} iterations")
-            return best_params, best_score
-        except Exception as error:
-            if self._last_optimization_summary is None:
-                self._last_optimization_summary = OptimizationSummary(
-                    params=best_params if best_params is not None else base_params,
-                    score=None if best_score == float('-inf') else best_score,
-                    iterations=iterations,
-                    objective=objective_label,
-                    result=best_result,
-                    fallback_used=fallback_used,
-                    error=str(error),
-                )
-            if self._last_optimization_result is None:
-                self._last_optimization_result = best_result
-            raise
+        if best_params is None:
+            self._logger.warning(
+                "Optimization completed after %d iterations without a valid score; returning baseline parameters",
+                iterations,
+            )
+            fallback_used = True
+            best_params = base_params
+            try:
+                fallback_result = self.run_strategy(data, best_params)
+                if callable(objective):
+                    best_score = float(objective(fallback_result))
+                else:
+                    best_score = float(getattr(fallback_result, objective))
+                best_result = fallback_result
+            except AttributeError:
+                raise AttributeError(
+                    f"Fallback result missing objective '{objective_label}' for baseline parameters"
+                ) from None
+            except Exception as error:
+                raise RuntimeError(
+                    "Unable to evaluate baseline parameters during optimization fallback"
+                ) from error
+
+        if best_params is not None and best_result is not None:
+            self._last_optimization_summary = OptimizationSummary(
+                params=best_params,
+                score=best_score,
+                iterations=iterations,
+                objective=objective_label,
+                result=best_result,
+                fallback_used=fallback_used,
+            )
+
+        self._logger.info(f"Optimization completed after {iterations} iterations")
+        return best_params, best_score
 
     def get_last_optimization_result(self) -> Optional[BacktestResult]:
         """Return the most recent optimization result if available."""

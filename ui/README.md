@@ -123,8 +123,6 @@ Domyślne parametry są zgodne z plikiem `ui/config/example.yaml`. Wartości `--
 Powłoka może działać bez lokalnego demona gRPC, korzystając z datasetu OHLCV
 wczytywanego z pliku CSV lub potoku named pipe. Aby aktywować ten tryb,
 ustaw `--transport-mode in-process` oraz wskaż dataset przez `--transport-dataset`.
-Opcjonalnie możesz dobrać tempo emisji świec poprzez flagę
-`--transport-candle-interval-ms` (domyślnie 150 ms pomiędzy incrementami).
 UI wymusza także przełączenie telemetrii i modułu Health na transport `in-process`,
 ignorując ręcznie ustawione endpointy:
 
@@ -132,7 +130,6 @@ ignorując ręcznie ustawione endpointy:
 ui/build/bot_trading_shell \
   --transport-mode in-process \
   --transport-dataset data/sample_ohlcv/trend.csv \
-  --transport-candle-interval-ms 100 \
   --disable-metrics
 ```
 

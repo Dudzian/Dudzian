@@ -2,10 +2,8 @@
 endpoint: 127.0.0.1:50061
 
 transport:
-  mode: grpc               # możliwe wartości: grpc, in-process (dla trybu lokalnego bez gRPC)
-  dataset: data/sample_ohlcv/trend.csv  # wymagane wyłącznie w trybie in-process – ścieżka do CSV/pipe musi istnieć
-  in_process:
-    candle_interval_ms: 150  # opcjonalnie: opóźnienie między świecami w trybie in-process
+  mode: grpc               # możliwe wartości: grpc, in-process
+  dataset: data/sample_ohlcv/trend.csv
 
 grpc:
   tls:

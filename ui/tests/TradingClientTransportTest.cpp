@@ -10,7 +10,6 @@ private slots:
     void testTransportSwitchingLifecycle();
     void testGrpcStartWithoutEndpoint();
     void testInProcessDatasetRestart();
-    void testInProcessCandleIntervalAffectsStreaming();
 };
 
 void TradingClientTransportTest::testTransportSwitchingLifecycle()
@@ -67,43 +66,6 @@ void TradingClientTransportTest::testInProcessDatasetRestart()
     QVERIFY(historySpy.count() > initialCount);
 
     client.stop();
-}
-
-void TradingClientTransportTest::testInProcessCandleIntervalAffectsStreaming()
-{
-    TradingClient fast;
-    fast.setTransportMode(TradingClient::TransportMode::InProcess);
-    fast.setInProcessDatasetPath(QStringLiteral("data/sample_ohlcv/trend.csv"));
-    fast.setInProcessCandleIntervalMs(25);
-
-    QSignalSpy fastHistory(&fast, &TradingClient::historyReceived);
-    QSignalSpy fastCandles(&fast, &TradingClient::candleReceived);
-    fast.start();
-    QVERIFY(fastHistory.wait(2000));
-    fastCandles.clear();
-    QTest::qWait(750);
-    const int fastCount = fastCandles.count();
-    fast.stop();
-
-    TradingClient slow;
-    slow.setTransportMode(TradingClient::TransportMode::InProcess);
-    slow.setInProcessDatasetPath(QStringLiteral("data/sample_ohlcv/trend.csv"));
-    slow.setInProcessCandleIntervalMs(220);
-
-    QSignalSpy slowHistory(&slow, &TradingClient::historyReceived);
-    QSignalSpy slowCandles(&slow, &TradingClient::candleReceived);
-    slow.start();
-    QVERIFY(slowHistory.wait(2000));
-    slowCandles.clear();
-    QTest::qWait(750);
-    const int slowCount = slowCandles.count();
-    slow.stop();
-
-    QVERIFY2(fastCount > slowCount,
-             qPrintable(QStringLiteral("Oczekiwano większej liczby świec dla krótszego interwału (fast=%1, slow=%2)")
-                            .arg(fastCount)
-                            .arg(slowCount)));
-    QVERIFY2(slowCount > 0, QStringLiteral("Transport z dłuższym interwałem powinien dostarczyć co najmniej jedną świecę"));
 }
 
 QTEST_MAIN(TradingClientTransportTest)

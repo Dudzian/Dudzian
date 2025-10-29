@@ -66,16 +66,14 @@ def _build_backtest_result(score: float) -> BacktestResult:
 
 
 class _DummyOptimizationEngine(TradingEngine):
-    def __init__(self, scores: Dict[int, float], *, fail_calls: int = 0, raise_on_base: bool = False) -> None:
+    def __init__(self, scores: Dict[int, float], *, fail_calls: int = 0) -> None:
         # Bypass heavy initialisation from the production engine.
         self._logger = logging.getLogger("dummy-optimization-engine")
         self._logger.addHandler(logging.NullHandler())
         self._last_optimization_summary = None
-        self._last_optimization_result = None
         self._scores = scores
         self._fail_calls = fail_calls
         self._call_count = 0
-        self._raise_on_base = raise_on_base
 
     def run_strategy(  # type: ignore[override]
         self,
@@ -87,8 +85,6 @@ class _DummyOptimizationEngine(TradingEngine):
     ) -> BacktestResult:
         del data, initial_capital, fee_bps, session_weights
         self._call_count += 1
-        if self._raise_on_base and params.rsi_period == TradingParameters().rsi_period:
-            raise RuntimeError("base parameters unavailable")
         if self._call_count <= self._fail_calls:
             score = float("nan")
         else:
@@ -111,7 +107,6 @@ def test_optimize_parameters_updates_summary_with_best_result():
     assert summary.iterations == 2
     assert summary.objective == "sharpe_ratio"
     assert summary.fallback_used is False
-    assert summary.error is None
     assert engine.get_last_optimization_result() is summary.result
 
 
@@ -129,44 +124,4 @@ def test_optimize_parameters_records_fallback_summary():
     assert summary.score == 0.5
     assert summary.iterations == 2
     assert summary.fallback_used is True
-    assert summary.error is None
     assert engine.get_last_optimization_result() is summary.result
-
-
-def test_optimize_parameters_records_summary_when_search_space_empty():
-    engine = _DummyOptimizationEngine({14: 1.0})
-    data = pd.DataFrame({"close": [1.0, 1.1, 1.2]})
-
-    best_params, best_score = engine.optimize_parameters(data, {"rsi_period": []}, max_iterations=0)
-
-    summary = engine.get_last_optimization_summary()
-    assert best_params.rsi_period == TradingParameters().rsi_period
-    assert best_score == 1.0
-    assert summary is not None
-    assert summary.params == best_params
-    assert summary.score == 1.0
-    assert summary.iterations == 0
-    assert summary.fallback_used is True
-    assert summary.error is None
-    assert engine.get_last_optimization_result() is summary.result
-
-
-def test_optimize_parameters_preserves_summary_on_fallback_error():
-    engine = _DummyOptimizationEngine({}, fail_calls=2, raise_on_base=True)
-    data = pd.DataFrame({"close": [1.0, 1.1, 1.2]})
-
-    try:
-        engine.optimize_parameters(data, {"rsi_period": [10, 14]})
-    except RuntimeError as error:
-        assert "Unable to evaluate baseline parameters" in str(error)
-    else:
-        raise AssertionError("Expected RuntimeError from fallback")
-
-    summary = engine.get_last_optimization_summary()
-    assert summary is not None
-    assert summary.params == TradingParameters()
-    assert summary.score is None
-    assert summary.fallback_used is True
-    assert summary.error is not None
-    assert "base parameters unavailable" in summary.error
-    assert engine.get_last_optimization_result() is None

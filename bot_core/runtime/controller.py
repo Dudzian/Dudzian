@@ -1672,7 +1672,6 @@ class RuntimeInProcessStub:
         """Zwraca słownik z danymi ryzyka kompatybilny z RiskSnapshotData."""
 
         generated_at = datetime.now(timezone.utc)
-        generated_at_iso = generated_at.isoformat()
         return {
             "profileLabel": "BALANCED",
             "profileEnum": 1,
@@ -1680,8 +1679,7 @@ class RuntimeInProcessStub:
             "currentDrawdown": 0.015,
             "maxDailyLoss": 0.05,
             "usedLeverage": 1.5,
-            "generatedAt": generated_at_iso,
-            "generatedAtEpochMs": int(generated_at.timestamp() * 1000),
+            "generatedAt": generated_at,
             "exposures": [
                 {
                     "code": "max_notional",
@@ -1703,68 +1701,11 @@ class RuntimeInProcessStub:
         """Zwraca dane health-checka spójne z klientem in-process."""
 
         started_at = datetime.now(timezone.utc) - timedelta(hours=1)
-        started_at_iso = started_at.isoformat()
         return {
             "version": "in-process",
             "gitCommit": "local",
-            "startedAt": started_at_iso,
-            "startedAtEpochMs": int(started_at.timestamp() * 1000),
+            "startedAt": started_at,
         }
-
-    def export_runtime_metadata(self, dataset_path: str | Path) -> Mapping[str, str]:
-        """Zapisuje migawki ryzyka i health obok datasetu OHLCV.
-
-        Funkcja ułatwia przygotowanie kompletu plików dla transportu
-        in-process. Zwraca słownik ze ścieżkami do zapisanych plików.
-        """
-
-        dataset_path = Path(dataset_path)
-        if dataset_path.suffix:
-            base_name = dataset_path.stem or "dataset"
-            directory = dataset_path.parent
-        else:
-            base_name = "dataset"
-            directory = dataset_path
-
-        directory.mkdir(parents=True, exist_ok=True)
-
-        risk_path = directory / f"{base_name}_risk.json"
-        health_path = directory / f"{base_name}_health.json"
-
-        with risk_path.open("w", encoding="utf-8") as handle:
-            json.dump(self.build_risk_snapshot(), handle, ensure_ascii=False, indent=2)
-
-        with health_path.open("w", encoding="utf-8") as handle:
-            json.dump(self.build_health_payload(), handle, ensure_ascii=False, indent=2)
-
-        return {"risk": str(risk_path), "health": str(health_path)}
-
-    def build_preset_catalog(self, presets_dir: str | Path | None = None) -> list[Mapping[str, object]]:
-        """Generuje katalog presetów strategii dostępnych lokalnie.
-
-        Funkcja ułatwia transportom in-process udostępnienie marketplace'u
-        w środowisku testowym, korzystając z lokalnych plików JSON.
-        """
-
-        from bot_core.strategies.catalog import StrategyCatalog
-        from bot_core.security.hwid import HwIdProvider
-
-        directory = Path(presets_dir) if presets_dir else Path("data/strategies")
-        if not directory.exists():
-            return []
-
-        provider = HwIdProvider(fingerprint_reader=lambda: "in-process-hwid")
-        catalog = StrategyCatalog(hwid_provider=provider)
-        try:
-            descriptors = catalog.load_presets_from_directory(
-                directory,
-                signing_keys={},
-                hwid_provider=provider,
-            )
-        except FileNotFoundError:
-            return []
-
-        return [descriptor.as_dict(include_strategies=False) for descriptor in descriptors]
 
 
 __all__ = [
