@@ -1,0 +1,46 @@
+# Konfiguracja strategii ML - modele klasyczne i sekwencyjne
+training:
+  data_pipeline:
+    class_path: bot_core.data.pipelines.ml_features.MLFeaturePipeline
+    params:
+      window: 32
+      forecast_horizon: 3
+      normalise: true
+  walk_forward:
+    lookback_bars: 512
+    step: 64
+    test_size: 96
+    metrics:
+      - mse
+      - directional_accuracy
+  models:
+    classical:
+      random_forest:
+        enabled: true
+        adapter: bot_core.strategies.ml.classical.RandomForestAdapter
+        hyperparameters:
+          n_estimators: 200
+          max_depth: 6
+          random_state: 42
+      xgboost:
+        enabled: false
+        adapter: bot_core.strategies.ml.classical.XGBoostAdapter
+        hyperparameters:
+          n_estimators: 300
+          learning_rate: 0.05
+          max_depth: 5
+    sequential:
+      lstm:
+        enabled: false
+        adapter: bot_core.strategies.ml.sequential.LSTMAdapter
+        hyperparameters:
+          epochs: 10
+      temporal_fusion_transformer:
+        enabled: false
+        adapter: bot_core.strategies.ml.sequential.TemporalFusionTransformerAdapter
+        hyperparameters:
+          hidden_size: 16
+          dropout: 0.1
+inference:
+  threshold: 0.52
+  risk_buffer: 0.05
