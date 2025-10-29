@@ -11,7 +11,10 @@ from typing import Iterable, Mapping, Sequence
 from zipfile import ZIP_DEFLATED, ZipFile
 
 from bot_core.execution.paper import PaperTradingExecutionService
-from bot_core.runtime.journal import TradingDecisionJournal
+from bot_core.runtime.journal import (
+    TradingDecisionJournal,
+    aggregate_decision_statistics,
+)
 from bot_core.security.guards import get_capability_guard
 
 
@@ -160,6 +163,7 @@ def _summary_payload(
     tz: tzinfo,
     ledger_rows: Sequence[tuple[Mapping[str, object], datetime]],
     decision_events: Sequence[Mapping[str, object]],
+    decision_summary: Mapping[str, object] | None = None,
 ) -> Mapping[str, object]:
     total_notional = 0.0
     total_fees = 0.0
@@ -181,7 +185,7 @@ def _summary_payload(
 
     timezone_name = tz.tzname(datetime.combine(report_date, dt_time.min, tzinfo=tz)) or str(tz)
 
-    return {
+    summary = {
         "report_date": report_date.isoformat(),
         "timezone": timezone_name,
         "ledger_rows": len(ledger_rows),
@@ -189,6 +193,9 @@ def _summary_payload(
         "traded_notional": round(total_notional, 8),
         "fees_paid": round(total_fees, 8),
     }
+    if decision_summary:
+        summary["decision_summary"] = decision_summary
+    return summary
 
 
 def generate_daily_paper_report(
@@ -217,6 +224,9 @@ def generate_daily_paper_report(
     decisions_filtered: list[Mapping[str, object]] = []
     if decision_journal is not None:
         decisions_filtered = _filter_decisions(decision_journal, start=window_start, end=window_end)
+    decision_summary: Mapping[str, object] | None = None
+    if decisions_filtered:
+        decision_summary = aggregate_decision_statistics(decisions_filtered)
 
     csv_payload = _writerows(ledger_filtered, tz=tzinfo_obj)
 
@@ -237,6 +247,7 @@ def generate_daily_paper_report(
                 tz=tzinfo_obj,
                 ledger_rows=ledger_filtered,
                 decision_events=decisions_filtered,
+                decision_summary=decision_summary,
             )
             archive.writestr(
                 "summary.json",

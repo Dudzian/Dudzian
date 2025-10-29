@@ -65,6 +65,7 @@ from bot_core.trading.strategy_aliasing import (
     canonical_alias_map,
     normalise_suffixes,
 )
+from bot_core.runtime.journal import TradingDecisionJournal, log_decision_event
 
 
 LOGGER = logging.getLogger(__name__)
@@ -340,6 +341,8 @@ class AutoTrader:
         trusted_auto_confirm: bool = False,
         work_schedule: TradingSchedule | None = None,
         decision_audit_log: DecisionAuditLog | None = None,
+        decision_journal: TradingDecisionJournal | None = None,
+        decision_journal_context: Mapping[str, object] | None = None,
         portfolio_manager: Any | None = None,
         strategy_catalog: StrategyCatalog | None = None,
         strategy_alias_map: Mapping[str, str] | None = None,
@@ -459,6 +462,39 @@ class AutoTrader:
             )
             log_instance = context_log if context_log is not None else DecisionAuditLog()
         self._decision_audit_log = log_instance
+        journal_instance: TradingDecisionJournal | None = decision_journal
+        if journal_instance is None and bootstrap_context is not None:
+            journal_instance = getattr(bootstrap_context, "decision_journal", None)
+        if journal_instance is None:
+            journal_instance = getattr(gui, "decision_journal", None)
+        if journal_instance is not None and not hasattr(journal_instance, "record"):
+            journal_instance = None
+        self._decision_journal: TradingDecisionJournal | None = journal_instance
+
+        context_source: Mapping[str, object] | None = decision_journal_context
+        if context_source is None and bootstrap_context is not None:
+            context_source = getattr(bootstrap_context, "decision_journal_context", None)
+        if context_source is None:
+            context_source = getattr(gui, "decision_journal_context", None)
+        context_map: dict[str, str] = {}
+        if isinstance(context_source, Mapping):
+            for key, value in context_source.items():
+                if value is None:
+                    continue
+                try:
+                    token = str(value).strip()
+                except Exception:
+                    continue
+                if token:
+                    context_map[str(key)] = token
+        for key, value in (
+            ("environment", self._environment_name),
+            ("portfolio", self._portfolio_id),
+            ("risk_profile", self._risk_profile_name),
+        ):
+            if key not in context_map and value is not None:
+                context_map[key] = str(value)
+        self._decision_journal_context: dict[str, str] = context_map
         self._initial_mode = self._detect_initial_mode()
         self._work_schedule = work_schedule or self._build_default_work_schedule()
         self._schedule_state: ScheduleState | None = None
@@ -1348,11 +1384,48 @@ class AutoTrader:
             return [str(item) for item in value]
         return copy.deepcopy(value)
 
+    def _alias_resolver_instance(self) -> StrategyAliasResolver:
+        """Zwraca resolver aliasów z uwzględnieniem nadpisanych map i sufiksów."""
+
+        override = self._alias_resolver_override
+        if override is not None:
+            return override
+        return type(self)._alias_resolver()
+
+    def configure_strategy_aliases(
+        self,
+        alias_map: Mapping[str, str | Sequence[str]] | None = None,
+        *,
+        suffixes: Iterable[str] | None = None,
+    ) -> None:
+        """Aktualizuje lokalne mapowanie aliasów i sufiksów strategii."""
+
+        normalized_map = canonical_alias_map(alias_map)
+        normalized_suffixes = (
+            normalise_suffixes(suffixes) if suffixes is not None else None
+        )
+
+        base_resolver = type(self)._alias_resolver()
+        new_resolver = base_resolver.extend(
+            alias_map=normalized_map,
+            suffixes=normalized_suffixes,
+        )
+
+        self._alias_resolver_override = (
+            None if new_resolver is base_resolver else new_resolver
+        )
+        self._strategy_alias_map_override = normalized_map or None
+        self._strategy_alias_suffix_override = (
+            tuple(normalized_suffixes)
+            if normalized_suffixes is not None
+            else None
+        )
+
     def _strategy_metadata_candidates(self, name: str | None) -> tuple[str, ...]:
         base = str(name or "").strip()
         if not base:
             return ()
-        resolver = type(self)._alias_resolver()
+        resolver = self._alias_resolver_instance()
         return resolver.candidates(base)
 
     def _strategy_metadata_summary(
@@ -1869,6 +1942,11 @@ class AutoTrader:
                 payload=payload,
                 decision_id=decision_id,
             )
+            self._log_decision_event(
+                "schedule_configured",
+                status=status,
+                metadata=payload,
+            )
             self._emit_schedule_state_event(state, reason=update_reason)
             return state
 
@@ -2058,6 +2136,11 @@ class AutoTrader:
                 payload=payload,
                 decision_id=decision_id,
             )
+            self._log_decision_event(
+                "schedule_override_applied",
+                status="open" if state.is_open else "closed",
+                metadata=payload,
+            )
             return state
 
     def list_schedule_overrides(self) -> tuple[ScheduleOverride, ...]:
@@ -2215,6 +2298,11 @@ class AutoTrader:
                 symbol=_SCHEDULE_SYMBOL,
                 payload=payload,
             )
+            self._log_decision_event(
+                "schedule_transition",
+                status="open" if state.is_open else "closed",
+                metadata=payload,
+            )
             self._emit_schedule_state_event(state, reason="transition")
             self._last_schedule_snapshot = snapshot
         if not state.is_open:
@@ -2225,6 +2313,11 @@ class AutoTrader:
                 "schedule_blocked",
                 symbol=_SCHEDULE_SYMBOL,
                 payload=payload,
+            )
+            self._log_decision_event(
+                "schedule_blocked",
+                status="closed",
+                metadata=payload,
             )
             self._auto_trade_stop.wait(delay)
             return False
@@ -2292,6 +2385,67 @@ class AutoTrader:
         except Exception:  # pragma: no cover - audit log failures should not break trading
             LOGGER.debug("Decision audit logging failed", exc_info=True)
 
+    def _log_decision_event(
+        self,
+        event: str,
+        *,
+        symbol: str | None = None,
+        status: str | None = None,
+        side: str | None = None,
+        quantity: float | None = None,
+        price: float | None = None,
+        metadata: Mapping[str, object] | None = None,
+        confidence: float | None = None,
+        latency_ms: float | None = None,
+    ) -> None:
+        journal = getattr(self, "_decision_journal", None)
+        if journal is None:
+            return
+        try:
+            context = getattr(self, "_decision_journal_context", None)
+            environment = self._environment_name
+            portfolio = self._portfolio_id
+            risk_profile = self._risk_profile_name
+            merged_meta: dict[str, object] = {}
+            if isinstance(context, Mapping):
+                env_value = context.get("environment")
+                if env_value is not None:
+                    environment = str(env_value)
+                portfolio_value = context.get("portfolio")
+                if portfolio_value is not None:
+                    portfolio = str(portfolio_value)
+                risk_value = context.get("risk_profile")
+                if risk_value is not None:
+                    risk_profile = str(risk_value)
+                for key, value in context.items():
+                    if key in {"environment", "portfolio", "risk_profile"}:
+                        continue
+                    merged_meta[str(key)] = value
+            for key, value in self._execution_metadata.items():
+                merged_meta.setdefault(str(key), value)
+            if metadata:
+                for key, value in metadata.items():
+                    merged_meta[str(key)] = value
+            log_decision_event(
+                journal,
+                event=event,
+                environment=str(environment),
+                portfolio=str(portfolio),
+                risk_profile=str(risk_profile),
+                symbol=symbol,
+                side=side,
+                quantity=quantity,
+                price=price,
+                status=status,
+                schedule=self._schedule_mode,
+                strategy=self.current_strategy if self.current_strategy else None,
+                metadata=merged_meta,
+                confidence=confidence,
+                latency_ms=latency_ms,
+            )
+        except Exception:  # pragma: no cover - journaling issues must not break trading
+            LOGGER.debug("Decision journal logging failed", exc_info=True)
+
     def _emit_decision_audit_event(self, record: DecisionAuditRecord) -> None:
         emitter_emit = getattr(self.emitter, "emit", None)
         if not callable(emitter_emit):
@@ -2313,6 +2467,35 @@ class AutoTrader:
             emitter_emit("auto_trader.schedule_state", **payload)
         except Exception:  # pragma: no cover - emission should not break trading
             LOGGER.debug("Schedule state emission failed", exc_info=True)
+
+    @staticmethod
+    def _safe_float(value: object) -> float | None:
+        if value is None:
+            return None
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _extract_decision_confidence(details: Mapping[str, Any] | None) -> float | None:
+        if not isinstance(details, Mapping):
+            return None
+        candidates: list[Mapping[str, Any]] = []
+        ai_block = details.get("ai")
+        if isinstance(ai_block, Mapping):
+            candidates.append(ai_block)
+        engine_block = details.get("decision_engine")
+        if isinstance(engine_block, Mapping):
+            nested_ai = engine_block.get("ai")
+            if isinstance(nested_ai, Mapping):
+                candidates.append(nested_ai)
+        for block in candidates:
+            for key in ("probability", "success_probability", "confidence"):
+                candidate = AutoTrader._safe_float(block.get(key))
+                if candidate is not None:
+                    return candidate
+        return None
 
     def _capture_risk_snapshot(self) -> Mapping[str, object] | None:
         service = self.risk_service or getattr(self, "core_risk_engine", None)
@@ -5040,6 +5223,11 @@ class AutoTrader:
             symbol = self.symbol_getter()
         except Exception as exc:  # pragma: no cover - defensive guard
             self._log(f"Failed to resolve trading symbol: {exc!r}", level=logging.ERROR)
+            self._log_decision_event(
+                "cycle_failed",
+                status="symbol_error",
+                metadata={"error": repr(exc)},
+            )
             self._auto_trade_stop.wait(self.auto_trade_interval_s)
             return
 
@@ -5053,6 +5241,13 @@ class AutoTrader:
             except Exception:
                 timeframe = "1h"
 
+        self._log_decision_event(
+            "cycle_started",
+            symbol=str(symbol) if symbol else None,
+            status="pending",
+            metadata={"timeframe": timeframe},
+        )
+
         ai_manager = self._resolve_ai_manager()
         self._ai_degraded = bool(getattr(ai_manager, "is_degraded", False)) if ai_manager else False
         if self._ai_degraded:
@@ -5062,6 +5257,15 @@ class AutoTrader:
             )
         if not symbol or ai_manager is None:
             self._log("Auto-trade prerequisites missing AI manager or symbol", level=logging.DEBUG)
+            self._log_decision_event(
+                "cycle_skipped",
+                symbol=str(symbol) if symbol else None,
+                status="missing_prerequisites",
+                metadata={
+                    "has_symbol": bool(symbol),
+                    "has_ai_manager": ai_manager is not None,
+                },
+            )
             self._auto_trade_stop.wait(self.auto_trade_interval_s)
             return
 
@@ -5070,6 +5274,12 @@ class AutoTrader:
             self._log(
                 f"No market data available for {symbol} on {timeframe}",
                 level=logging.WARNING,
+            )
+            self._log_decision_event(
+                "cycle_skipped",
+                symbol=str(symbol) if symbol else None,
+                status="no_market_data",
+                metadata={"timeframe": timeframe},
             )
             self._auto_trade_stop.wait(self.auto_trade_interval_s)
             return
@@ -5521,6 +5731,18 @@ class AutoTrader:
                     signal = "hold"
                     ai_force_hold = True
         if evaluation_payload is not None:
+            accepted = bool(evaluation_payload.get("accepted"))
+            evaluation_status = "accepted" if accepted else "rejected"
+            evaluation_confidence = self._safe_float(
+                evaluation_payload.get("model_success_probability")
+            )
+            self._log_decision_event(
+                "decision_evaluated",
+                symbol=str(symbol) if symbol else None,
+                status=evaluation_status,
+                metadata=evaluation_payload,
+                confidence=evaluation_confidence,
+            )
             self._record_decision_audit_stage(
                 "decision_evaluated",
                 symbol=symbol,
@@ -5536,6 +5758,15 @@ class AutoTrader:
                 level=logging.INFO,
                 reasons=guardrail_reasons,
                 triggers=guardrail_triggers,
+            )
+            self._log_decision_event(
+                "decision_guardrail",
+                symbol=str(symbol) if symbol else None,
+                status="blocked",
+                metadata={
+                    "reasons": list(guardrail_reasons),
+                    "triggers": guardrail_triggers,
+                },
             )
             self._handle_guardrail_trigger(symbol, guardrail_reasons, guardrail_objects)
         if cooldown_active:
@@ -5555,6 +5786,30 @@ class AutoTrader:
             ai_context=ai_context,
         )
 
+        decision_metadata: dict[str, object] = {
+            "state": decision.state,
+            "reason": decision.reason,
+            "mode": decision.mode,
+            "details": copy.deepcopy(decision.details),
+            "cooldown_active": decision.cooldown_active,
+            "cooldown_reason": decision.cooldown_reason,
+        }
+        decision_status = "trade" if decision.should_trade else "hold"
+        decision_side = None
+        if isinstance(decision.details, Mapping):
+            decision_side = decision.details.get("signal")
+        if decision_side is None and decision.should_trade:
+            decision_side = signal
+        confidence = self._extract_decision_confidence(decision.details)
+        self._log_decision_event(
+            "decision_composed",
+            symbol=str(symbol) if symbol else None,
+            status=decision_status,
+            side=str(decision_side) if decision_side is not None else None,
+            quantity=decision.fraction,
+            metadata=decision_metadata,
+            confidence=confidence,
+        )
         self._record_decision_audit_stage(
             "decision_composed",
             symbol=symbol,
@@ -5616,6 +5871,12 @@ class AutoTrader:
                 audit_payload["response"] = self._summarize_risk_response(risk_response)
             if risk_error is not None:
                 audit_payload["error"] = str(risk_error)
+            self._log_decision_event(
+                "risk_evaluated",
+                symbol=str(symbol) if symbol else None,
+                status="approved" if normalized_approval else "rejected",
+                metadata=audit_payload,
+            )
             self._record_decision_audit_stage(
                 "risk_evaluated",
                 symbol=symbol,
@@ -5627,6 +5888,12 @@ class AutoTrader:
                 "risk_skipped",
                 symbol=symbol,
                 payload={"reason": "no_service"},
+            )
+            self._log_decision_event(
+                "risk_skipped",
+                symbol=str(symbol) if symbol else None,
+                status="skipped",
+                metadata={"reason": "no_service"},
             )
 
         if normalized_approval:
@@ -5640,6 +5907,12 @@ class AutoTrader:
                     "Risk evaluation approved trade but cooldown is active; skipping execution",
                     level=logging.DEBUG,
                 )
+                self._log_decision_event(
+                    "execution_skipped",
+                    symbol=str(symbol) if symbol else None,
+                    status="cooldown",
+                    metadata={"reason": "cooldown"},
+                )
                 self._record_decision_audit_stage(
                     "execution_skipped",
                     symbol=symbol,
@@ -5650,6 +5923,12 @@ class AutoTrader:
                 self._log(
                     "Risk evaluation approved trade but decision is not actionable; skipping execution",
                     level=logging.DEBUG,
+                )
+                self._log_decision_event(
+                    "execution_skipped",
+                    symbol=str(symbol) if symbol else None,
+                    status="not_actionable",
+                    metadata={"reason": "not_actionable"},
                 )
                 self._record_decision_audit_stage(
                     "execution_skipped",
@@ -5670,12 +5949,36 @@ class AutoTrader:
                     "Risk evaluation approved trade but execution service is not configured",
                     level=logging.DEBUG,
                 )
+                self._log_decision_event(
+                    "execution_skipped",
+                    symbol=str(symbol) if symbol else None,
+                    status="no_service",
+                    metadata={"reason": "no_service"},
+                )
                 self._record_decision_audit_stage(
                     "execution_skipped",
                     symbol=symbol,
                     payload={"reason": "no_service"},
                     risk_snapshot=self._capture_risk_snapshot(),
                 )
+        elif decision.should_trade:
+            self._log_decision_event(
+                "execution_skipped",
+                symbol=str(symbol) if symbol else None,
+                status="risk_rejected",
+                metadata={"reason": "risk_rejected"},
+            )
+
+    def run_cycle_once(self) -> None:
+        """Execute a single auto-trading cycle synchronously.
+
+        The helper is primarily used by lightweight schedulers and tests.  It
+        reuses the same internal routine as the background worker, ensuring the
+        full pipeline – data fetch, AIManager evaluation and
+        DecisionOrchestrator integration – is exercised deterministically.
+        """
+
+        self._auto_trade_loop()
 
     def _resolve_risk_service(self) -> Any | None:
         risk_service = getattr(self, "risk_service", None)
@@ -6461,10 +6764,10 @@ class AutoTrader:
             export_entry: dict[str, Any] = {}
             if name_raw is not None:
                 export_entry["name"] = str(name_raw)
-            if label_raw is not None:
-                export_entry["label"] = label_raw
-            if comparator_raw is not None:
-                export_entry["comparator"] = comparator_raw
+            export_entry["label"] = label_raw if label_raw is not None else None
+            export_entry["comparator"] = (
+                comparator_raw if comparator_raw is not None else None
+            )
             if threshold_raw is not None:
                 export_entry["threshold"] = threshold_raw
             if unit_raw is not None:
@@ -12197,4 +12500,98 @@ class AutoTrader:
         return normalized
 
 
-__all__ = ["AutoTrader", "RiskDecision", "EmitterLike", "GuardrailTrigger"]
+@dataclass(slots=True)
+class AutoTraderDecisionScheduler:
+    """Asynchronous scheduler driving :class:`AutoTrader` decision cycles."""
+
+    trader: "AutoTrader"
+    interval_s: float = 30.0
+    loop: asyncio.AbstractEventLoop | None = None
+    _task: asyncio.Task[None] | None = field(init=False, default=None, repr=False)
+    _stop_event: asyncio.Event | None = field(init=False, default=None, repr=False)
+    _thread: threading.Thread | None = field(init=False, default=None, repr=False)
+    _thread_stop: threading.Event | None = field(init=False, default=None, repr=False)
+
+    async def start(self) -> None:
+        """Start the scheduler inside an asyncio event loop."""
+
+        if self._task is not None and not self._task.done():
+            return
+        loop = self.loop or asyncio.get_running_loop()
+        self._stop_event = asyncio.Event()
+        self._task = loop.create_task(self._run_async())
+
+    async def stop(self) -> None:
+        """Request shutdown of the asynchronous scheduler and await completion."""
+
+        task = self._task
+        stop_event = self._stop_event
+        if task is None or stop_event is None:
+            return
+        stop_event.set()
+        try:
+            await task
+        finally:
+            self._task = None
+            self._stop_event = None
+
+    def start_in_background(self) -> None:
+        """Spawn a lightweight background thread executing decision cycles."""
+
+        if self._thread is not None and self._thread.is_alive():
+            return
+
+        stop_event = threading.Event()
+        self._thread_stop = stop_event
+
+        def _worker() -> None:
+            while not stop_event.is_set():
+                try:
+                    self.trader.run_cycle_once()
+                except Exception:  # pragma: no cover - defensive guard
+                    LOGGER.exception("AutoTraderDecisionScheduler cycle failed")
+                if stop_event.wait(max(0.0, float(self.interval_s))):
+                    break
+
+        thread = threading.Thread(
+            target=_worker,
+            name="AutoTraderDecisionScheduler",
+            daemon=True,
+        )
+        self._thread = thread
+        thread.start()
+
+    def stop_background(self) -> None:
+        """Stop the background thread variant of the scheduler."""
+
+        stop_event = self._thread_stop
+        if stop_event is not None:
+            stop_event.set()
+        thread = self._thread
+        if thread is not None and thread.is_alive():
+            thread.join(timeout=max(1.0, float(self.interval_s)))
+        self._thread = None
+        self._thread_stop = None
+
+    async def _run_async(self) -> None:
+        assert self._stop_event is not None
+        stop_event = self._stop_event
+        interval = max(0.0, float(self.interval_s))
+        while not stop_event.is_set():
+            try:
+                await asyncio.to_thread(self.trader.run_cycle_once)
+            except Exception:  # pragma: no cover - defensive guard
+                LOGGER.exception("AutoTraderDecisionScheduler async cycle failed")
+            try:
+                await asyncio.wait_for(stop_event.wait(), timeout=interval)
+            except asyncio.TimeoutError:
+                continue
+
+
+__all__ = [
+    "AutoTrader",
+    "AutoTraderDecisionScheduler",
+    "RiskDecision",
+    "EmitterLike",
+    "GuardrailTrigger",
+]
