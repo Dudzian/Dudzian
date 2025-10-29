@@ -463,6 +463,17 @@ Instrument makeInstrument(const TradingClient::InstrumentConfig& config) {
 
 } // namespace
 
+std::unique_ptr<TradingClient::IMarketDataTransport> TradingClient::makeTransport(TransportMode mode) const
+{
+    switch (mode) {
+    case TransportMode::Grpc:
+        return std::make_unique<GrpcMarketDataTransport>();
+    case TransportMode::InProcess:
+        return std::make_unique<InProcessMarketDataTransport>();
+    }
+    return {};
+}
+
 TradingClient::TradingClient(QObject* parent)
     : QObject(parent) {
     qRegisterMetaType<QList<OhlcvPoint>>("QList<OhlcvPoint>");
@@ -475,6 +486,14 @@ TradingClient::TradingClient(QObject* parent)
     qRegisterMetaType<MarketRegimeSnapshotEntry>("MarketRegimeSnapshotEntry");
 
     m_regimeClassifier = std::make_unique<MarketRegimeClassifierBridge>(this);
+
+    m_transport = makeTransport(m_transportMode);
+    if (m_transport) {
+        m_transport->setInstrument(m_instrumentConfig);
+        m_transport->setEndpoint(m_endpoint);
+        m_transport->setTlsConfig(m_tlsConfig);
+        m_transport->setDatasetPath(m_inProcessDatasetPath);
+    }
 }
 
 TradingClient::~TradingClient() {
@@ -486,9 +505,30 @@ void TradingClient::setEndpoint(const QString& endpoint) {
         return;
     }
     m_endpoint = endpoint;
-    m_channel.reset();
-    m_marketDataStub.reset();
-    m_riskStub.reset();
+    if (m_transport) {
+        m_transport->setEndpoint(m_endpoint);
+        m_transport->ensureReady();
+    }
+}
+
+void TradingClient::setTransportMode(TransportMode mode)
+{
+    if (mode == m_transportMode)
+        return;
+    const bool wasRunning = m_running.load();
+    if (wasRunning)
+        stop();
+    m_transportMode = mode;
+    m_transport = makeTransport(m_transportMode);
+    if (m_transport) {
+        m_transport->setInstrument(m_instrumentConfig);
+        m_transport->setEndpoint(m_endpoint);
+        m_transport->setTlsConfig(m_tlsConfig);
+        m_transport->setDatasetPath(m_inProcessDatasetPath);
+        m_transport->ensureReady();
+    }
+    if (wasRunning)
+        start();
 }
 
 void TradingClient::setTransportMode(TransportMode mode)
@@ -530,10 +570,10 @@ void TradingClient::setTlsConfig(const TlsConfig& config) {
     TlsConfig sanitized = config;
     sanitized.pinnedServerFingerprint = normalizeFingerprint(sanitized.pinnedServerFingerprint);
     m_tlsConfig = sanitized;
-    // zmiana TLS wymaga odtworzenia kanału/stubów
-    m_channel.reset();
-    m_marketDataStub.reset();
-    m_riskStub.reset();
+    if (m_transport) {
+        m_transport->setTlsConfig(m_tlsConfig);
+        m_transport->ensureReady();
+    }
 }
 
 void TradingClient::setAuthToken(const QString& token)
@@ -643,7 +683,7 @@ void TradingClient::start() {
         m_streamThread.join();
     }
     m_restartRequested.store(false);
-    ensureStub();
+    ensureTransport();
 
     if (!m_marketDataStub) {
         if (m_transportMode == TransportMode::InProcess) {
@@ -670,7 +710,8 @@ void TradingClient::start() {
 
     GetOhlcvHistoryResponse historyResp;
     auto historyContext = createContext();
-    const grpc::Status historyStatus = m_marketDataStub->GetOhlcvHistory(historyContext.get(), historyReq, &historyResp);
+    const grpc::Status historyStatus =
+        m_transport->getOhlcvHistory(historyContext.get(), historyReq, &historyResp);
     if (historyStatus.ok()) {
         const QList<OhlcvPoint> history = convertHistory(historyResp.candles());
         QVector<IndicatorSample> emaFast;
@@ -733,6 +774,9 @@ void TradingClient::stop() {
     }
     if (m_streamThread.joinable()) {
         m_streamThread.join();
+    }
+    if (m_transport) {
+        m_transport->shutdown();
     }
     if (wasRunning) {
         Q_EMIT streamingChanged();
@@ -839,6 +883,7 @@ void TradingClient::ensureStub() {
     if (m_channel && !m_riskStub) {
         m_riskStub = std::make_unique<GrpcRiskServiceStub>(m_channel);
     }
+    m_transport->ensureReady();
 }
 
 QList<OhlcvPoint> TradingClient::convertHistory(const google::protobuf::RepeatedPtrField<OhlcvCandle>& candles) const {
@@ -868,8 +913,8 @@ void TradingClient::streamLoop()
     int attempt = 0;
 
     while (m_running.load()) {
-        ensureStub();
-        if (!m_marketDataStub) {
+        ensureTransport();
+        if (!m_transport || !m_transport->hasConnectivity()) {
             QMetaObject::invokeMethod(
                 this,
                 [this]() { Q_EMIT connectionStateChanged(tr("stream unavailable")); },
@@ -1093,7 +1138,7 @@ void TradingClient::refreshRiskState() {
     auto riskContext = createContext();
     RiskStateRequest request;
     RiskState response;
-    const grpc::Status status = m_riskStub->GetRiskState(riskContext.get(), request, &response);
+    const grpc::Status status = m_transport->getRiskState(riskContext.get(), request, &response);
     if (status.ok()) {
         const auto snapshot = convertRiskState(response);
         QMetaObject::invokeMethod(
@@ -1133,7 +1178,7 @@ QVector<TradingClient::TradableInstrument> TradingClient::listTradableInstrument
     request.set_exchange(normalizedExchange.toStdString());
     ListTradableInstrumentsResponse response;
 
-    const grpc::Status status = m_marketDataStub->ListTradableInstruments(&context, request, &response);
+    const grpc::Status status = m_transport->listTradableInstruments(&context, request, &response);
     if (!status.ok()) {
         qCWarning(lcTradingClient)
             << "ListTradableInstruments nie powiodło się:" << QString::fromStdString(status.error_message());
@@ -1253,6 +1298,9 @@ void TradingClient::triggerStreamRestart()
 {
     if (!m_running.load()) {
         return;
+    }
+    if (m_transport) {
+        m_transport->requestRestart();
     }
     m_restartRequested.store(true);
     std::lock_guard<std::mutex> lock(m_contextMutex);

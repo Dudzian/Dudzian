@@ -8,9 +8,9 @@ transport:
 grpc:
   tls:
     enabled: true
-    root_cert: secrets/mtls/core-oem-ca.pem
-    client_cert: secrets/mtls/core-oem-client.pem
-    client_key: secrets/mtls/core-oem-client-key.pem
+    root_cert: secrets/mtls/core-oem-ca.pem          # plik musi być dostępny lokalnie
+    client_cert: secrets/mtls/core-oem-client.pem    # wymagane przy mTLS – walidowane przy starcie UI
+    client_key: secrets/mtls/core-oem-client-key.pem # wymagane przy mTLS – walidowane przy starcie UI
     server_name: core-daemon.internal
     pinned_sha256: ""          # opcjonalne – pinning certyfikatu serwera (SHA-256 SPKI)
     require_client_auth: true  # mamy cert klienta, więc włączone
@@ -44,9 +44,18 @@ performance_guard:
   max_overlay_count: 4
 
 telemetry:
-  metrics_endpoint: 127.0.0.1:50061
+  metrics_endpoint: 127.0.0.1:50061  # w trybie in-process ustaw 'in-process'
   metrics_tag: desktop-shell-dev
   metrics_auth_token: dev-secret
+
+# Tryb w pełni lokalny bez gRPC (in-process):
+# transport:
+#   mode: in-process
+#   dataset: data/sample_ohlcv/trend.csv
+# telemetry:
+#   metrics_endpoint: in-process
+# health:
+#   endpoint: in-process
 
 history_limit: 800
 maximum_samples: 12000

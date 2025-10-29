@@ -9,12 +9,15 @@
 #include <QScreen>
 #include <QSignalSpy>
 #include <QTemporaryDir>
+#include <QtMath>
 
 #include "app/Application.hpp"
 #include "telemetry/TelemetryReporter.hpp"
 #include "telemetry/TelemetryTlsConfig.hpp"
 #include "telemetry/UiTelemetryReporter.hpp"
 #include "grpc/MetricsClient.hpp"
+#include "health/HealthStatusController.hpp"
+#include "models/RiskStateModel.hpp"
 #include "trading.grpc.pb.h"
 
 #include <memory>
@@ -184,6 +187,32 @@ private:
     QString m_authToken;
     QString m_role;
     std::deque<Result> m_results;
+    std::vector<botcore::trading::v1::MetricsSnapshot> m_snapshots;
+};
+
+class RecordingMetricsClient final : public MetricsClientInterface {
+public:
+    void setEndpoint(const QString& endpoint) override { m_endpoint = endpoint; }
+    void setTlsConfig(const TelemetryTlsConfig& config) override { m_tlsConfig = config; }
+    void setAuthToken(const QString& token) override { m_authToken = token; }
+    void setRbacRole(const QString& role) override { m_role = role; }
+
+    bool pushSnapshot(const botcore::trading::v1::MetricsSnapshot& snapshot,
+                      QString* errorMessage = nullptr) override
+    {
+        if (errorMessage)
+            errorMessage->clear();
+        m_snapshots.push_back(snapshot);
+        return true;
+    }
+
+    const std::vector<botcore::trading::v1::MetricsSnapshot>& snapshots() const { return m_snapshots; }
+
+private:
+    QString m_endpoint;
+    TelemetryTlsConfig m_tlsConfig;
+    QString m_authToken;
+    QString m_role;
     std::vector<botcore::trading::v1::MetricsSnapshot> m_snapshots;
 };
 

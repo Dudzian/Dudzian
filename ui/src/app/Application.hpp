@@ -299,6 +299,13 @@ private:
     QScreen* resolvePreferredScreen() const;
     void updateScreenInfo(QScreen* screen);
     void updateTelemetryPendingRetryCount(int pending);
+    bool validateTransportConfiguration(const QString& endpoint,
+                                        const QString& datasetPath,
+                                        const TradingClient::TlsConfig& tradingTls,
+                                        const TelemetryTlsConfig& metricsTls,
+                                        const GrpcTlsConfig& healthTls,
+                                        const QString& metricsEndpoint,
+                                        const QString& healthEndpoint) const;
     void configureLocalBotCoreService(const QCommandLineParser& parser, QString& endpoint);
     QString locateRepoRoot() const;
     void configureRiskRefresh(bool enabled, double intervalSeconds);

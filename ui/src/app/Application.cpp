@@ -1216,6 +1216,16 @@ bool Application::applyParser(const QCommandLineParser& parser) {
     m_metricsAuthToken = metricsAuthToken.trimmed();
     setMetricsAuthTokenFile(metricsAuthTokenFile);
 
+    if (!validateTransportConfiguration(endpoint,
+                                        m_inProcessDatasetPath,
+                                        m_tradingTlsConfig,
+                                        m_tlsConfig,
+                                        m_healthTlsConfig,
+                                        m_metricsEndpoint,
+                                        m_healthEndpoint)) {
+        return false;
+    }
+
     if (m_securityController) {
         if (!parser.value("security-profiles-path").trimmed().isEmpty()) {
             m_securityController->setProfilesPath(expandPath(parser.value("security-profiles-path")));
@@ -2766,6 +2776,190 @@ bool Application::setDecisionLogPathInternal(const QString& path, bool emitSigna
     m_decisionLogModel.setLogPath(m_decisionLogPath);
     if (emitSignal)
         Q_EMIT decisionLogPathChanged();
+    return true;
+}
+
+bool Application::validateTransportConfiguration(const QString& endpoint,
+                                                 const QString& datasetPath,
+                                                 const TradingClient::TlsConfig& tradingTls,
+                                                 const TelemetryTlsConfig& metricsTls,
+                                                 const GrpcTlsConfig& healthTls,
+                                                 const QString& metricsEndpoint,
+                                                 const QString& healthEndpoint) const
+{
+    QStringList errors;
+
+    auto requireExistingFile = [&](const QString& path, const QString& description) {
+        const QString trimmed = path.trimmed();
+        if (trimmed.isEmpty()) {
+            errors.append(description);
+            return;
+        }
+        const QFileInfo info(trimmed);
+        if (!info.exists() || !info.isFile()) {
+            errors.append(QStringLiteral("Plik '%1' wskazany dla %2 nie istnieje lub nie jest regularnym plikiem.")
+                              .arg(trimmed, description));
+        }
+    };
+
+    auto validateGrpcTls = [&](const TradingClient::TlsConfig& tls, const QString& contextLabel) {
+        if (!tls.enabled) {
+            if (tls.requireClientAuth) {
+                errors.append(QStringLiteral("Włączono mTLS (%1), ale TLS jest wyłączony.").arg(contextLabel));
+            }
+            if (!tls.clientCertificatePath.trimmed().isEmpty() || !tls.clientKeyPath.trimmed().isEmpty()) {
+                errors.append(QStringLiteral("Podano materiał klienta TLS (%1), lecz połączenie TLS jest wyłączone.")
+                                  .arg(contextLabel));
+            }
+            return;
+        }
+
+        if (tls.rootCertificatePath.trimmed().isEmpty()) {
+            errors.append(QStringLiteral("Brak ścieżki root CA dla %1 (pole --tls-root-cert lub grpc.tls.root_cert).").arg(contextLabel));
+        } else {
+            requireExistingFile(tls.rootCertificatePath, QStringLiteral("root CA (%1)").arg(contextLabel));
+        }
+
+        const bool certEmpty = tls.clientCertificatePath.trimmed().isEmpty();
+        const bool keyEmpty = tls.clientKeyPath.trimmed().isEmpty();
+        if (tls.requireClientAuth) {
+            if (certEmpty || keyEmpty) {
+                errors.append(QStringLiteral("Włączono mTLS dla %1, ale nie podano zarówno certyfikatu, jak i klucza klienta.")
+                                  .arg(contextLabel));
+            }
+        }
+        if (certEmpty != keyEmpty) {
+            errors.append(QStringLiteral("Podano tylko część materiału klienta (certyfikat/klucz) dla %1.").arg(contextLabel));
+        }
+        if (!certEmpty) {
+            requireExistingFile(tls.clientCertificatePath, QStringLiteral("certyfikat klienta (%1)").arg(contextLabel));
+        }
+        if (!keyEmpty) {
+            requireExistingFile(tls.clientKeyPath, QStringLiteral("klucz klienta (%1)").arg(contextLabel));
+        }
+    };
+
+    auto validateGrpcTlsHealth = [&](const GrpcTlsConfig& tls, const QString& contextLabel) {
+        if (!tls.enabled) {
+            if (tls.requireClientAuth) {
+                errors.append(QStringLiteral("Włączono mTLS (%1), ale TLS jest wyłączony.").arg(contextLabel));
+            }
+            if (!tls.clientCertificatePath.trimmed().isEmpty() || !tls.clientKeyPath.trimmed().isEmpty()) {
+                errors.append(QStringLiteral("Podano materiał klienta TLS (%1), lecz połączenie TLS jest wyłączone.")
+                                  .arg(contextLabel));
+            }
+            return;
+        }
+
+        if (tls.rootCertificatePath.trimmed().isEmpty()) {
+            errors.append(QStringLiteral("Brak ścieżki root CA dla %1 (parametr --health-tls-root-cert / grpc.tls.root_cert).").arg(contextLabel));
+        } else {
+            requireExistingFile(tls.rootCertificatePath, QStringLiteral("root CA (%1)").arg(contextLabel));
+        }
+
+        const bool certEmpty = tls.clientCertificatePath.trimmed().isEmpty();
+        const bool keyEmpty = tls.clientKeyPath.trimmed().isEmpty();
+        if (tls.requireClientAuth) {
+            if (certEmpty || keyEmpty) {
+                errors.append(QStringLiteral("Włączono mTLS dla %1, ale nie dostarczono pełnej pary certyfikat/klucz.").arg(contextLabel));
+            }
+        }
+        if (certEmpty != keyEmpty) {
+            errors.append(QStringLiteral("Podano tylko certyfikat lub tylko klucz klienta dla %1.").arg(contextLabel));
+        }
+        if (!certEmpty) {
+            requireExistingFile(tls.clientCertificatePath, QStringLiteral("certyfikat klienta (%1)").arg(contextLabel));
+        }
+        if (!keyEmpty) {
+            requireExistingFile(tls.clientKeyPath, QStringLiteral("klucz klienta (%1)").arg(contextLabel));
+        }
+    };
+
+    auto validateMetricsTls = [&](const TelemetryTlsConfig& tls) {
+        if (!tls.enabled) {
+            if (!tls.clientCertificatePath.trimmed().isEmpty() || !tls.clientKeyPath.trimmed().isEmpty()
+                || !tls.rootCertificatePath.trimmed().isEmpty() || !tls.pinnedServerSha256.trimmed().isEmpty()) {
+                errors.append(QStringLiteral("Podano konfigurację TLS telemetrii, ale TLS jest wyłączony (użyj --metrics-use-tls).");
+            }
+            return;
+        }
+
+        if (tls.rootCertificatePath.trimmed().isEmpty()) {
+            errors.append(QStringLiteral("Brak ścieżki root CA dla MetricsService (--metrics-root-cert / telemetry.root_cert)."));
+        } else {
+            requireExistingFile(tls.rootCertificatePath, QStringLiteral("root CA (MetricsService)"));
+        }
+
+        const bool certEmpty = tls.clientCertificatePath.trimmed().isEmpty();
+        const bool keyEmpty = tls.clientKeyPath.trimmed().isEmpty();
+        if (certEmpty != keyEmpty) {
+            errors.append(QStringLiteral("Podano tylko certyfikat lub tylko klucz klienta dla MetricsService."));
+        }
+        if (!certEmpty) {
+            requireExistingFile(tls.clientCertificatePath, QStringLiteral("certyfikat klienta (MetricsService)"));
+        }
+        if (!keyEmpty) {
+            requireExistingFile(tls.clientKeyPath, QStringLiteral("klucz klienta (MetricsService)"));
+        }
+    };
+
+    if (m_transportMode == TradingClient::TransportMode::Grpc) {
+        const QString trimmedEndpoint = endpoint.trimmed();
+        if (trimmedEndpoint.isEmpty()) {
+            errors.append(QStringLiteral("Tryb gRPC wymaga poprawnego endpointu --endpoint host:port."));
+        }
+
+        validateGrpcTls(tradingTls, QStringLiteral("TradingService"));
+
+        if (m_metricsEnabled) {
+            if (metricsEndpoint.trimmed().isEmpty()) {
+                errors.append(QStringLiteral("Telemetria jest włączona, ale nie podano --metrics-endpoint."));
+            }
+            validateMetricsTls(metricsTls);
+        }
+
+        const QString effectiveHealthEndpoint = healthEndpoint.trimmed().isEmpty() ? trimmedEndpoint : healthEndpoint.trimmed();
+        if (effectiveHealthEndpoint.isEmpty()) {
+            errors.append(QStringLiteral("Nie określono endpointu HealthService (--health-endpoint)."));
+        }
+        validateGrpcTlsHealth(healthTls, QStringLiteral("HealthService"));
+    } else {
+        if (datasetPath.trimmed().isEmpty()) {
+            errors.append(QStringLiteral("Tryb in-process wymaga wskazania datasetu (--transport-dataset lub transport.dataset w konfiguracji)."));
+        } else {
+            const QFileInfo datasetInfo(datasetPath);
+            if (!datasetInfo.exists() || !datasetInfo.isFile()) {
+                errors.append(QStringLiteral("Dataset in-process '%1' nie istnieje.").arg(datasetPath));
+            }
+        }
+
+        if (tradingTls.enabled) {
+            errors.append(QStringLiteral("TLS dla TradingService nie jest wspierany w trybie in-process."));
+        }
+        if (healthTls.enabled) {
+            errors.append(QStringLiteral("TLS dla HealthService nie jest wspierany w trybie in-process."));
+        }
+        if (metricsTls.enabled) {
+            errors.append(QStringLiteral("TLS telemetrii nie jest wspierany w trybie in-process."));
+        }
+
+        if (m_metricsEnabled && !metricsEndpoint.trimmed().startsWith(QStringLiteral("in-process"), Qt::CaseInsensitive)) {
+            errors.append(QStringLiteral("Tryb in-process wymaga ustawienia telemetrii na endpoint 'in-process'."));
+        }
+
+        if (!healthEndpoint.trimmed().isEmpty()
+            && !healthEndpoint.trimmed().startsWith(QStringLiteral("in-process"), Qt::CaseInsensitive)) {
+            errors.append(QStringLiteral("Tryb in-process wymaga ustawienia HealthService na endpoint 'in-process'."));
+        }
+    }
+
+    if (!errors.isEmpty()) {
+        for (const QString& error : std::as_const(errors)) {
+            qCWarning(lcAppMetrics) << error;
+        }
+        return false;
+    }
+
     return true;
 }
 
@@ -4753,6 +4947,19 @@ void Application::ensureTelemetry() {
     }
 
     if (auto* uiReporter = dynamic_cast<UiTelemetryReporter*>(m_telemetry.get())) {
+        if (m_transportMode == TradingClient::TransportMode::InProcess) {
+            if (!m_inProcessMetricsClient)
+                m_inProcessMetricsClient = std::make_shared<InProcessMetricsClient>();
+            if (!m_usingInProcessMetricsClient) {
+                uiReporter->setMetricsClientForTesting(m_inProcessMetricsClient);
+                m_usingInProcessMetricsClient = true;
+            }
+        } else if (m_usingInProcessMetricsClient) {
+            if (!m_grpcMetricsClient)
+                m_grpcMetricsClient = std::make_shared<MetricsClient>();
+            uiReporter->setMetricsClientForTesting(m_grpcMetricsClient);
+            m_usingInProcessMetricsClient = false;
+        }
         connect(uiReporter, &UiTelemetryReporter::pendingRetryCountChanged,
                 this, &Application::handleTelemetryPendingRetryCountChanged,
                 Qt::UniqueConnection);
