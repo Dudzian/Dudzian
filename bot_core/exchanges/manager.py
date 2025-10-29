@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import json
 import logging
 import os
 from dataclasses import dataclass
@@ -18,6 +19,7 @@ from pydantic import BaseModel, Field
 from bot_core.database.manager import DatabaseManager
 from bot_core.exchanges.core import (
     BaseBackend,
+    Event,
     EventBus,
     MarketRules,
     Mode,
@@ -51,6 +53,10 @@ except Exception:  # pragma: no cover
 
 
 log = logging.getLogger(__name__)
+
+
+ORDER_FILLED_EVENT = "ORDER_FILLED"
+ACCOUNT_MARK_EVENT = "ACCOUNT_MARK"
 
 
 def _enable_sandbox_mode(client: Any) -> bool:
@@ -1087,6 +1093,19 @@ class ExchangeManager:
         self._network_error_counts: Counter[str] = Counter()
         self._environment_profile: Dict[str, Any] | None = None
         self._environment_profile_name: str | None = None
+        self._last_mark_signature: str | None = None
+
+    @property
+    def event_bus(self) -> EventBus:
+        """Udostępnia magistralę zdarzeń giełdy dla modułów runtime."""
+
+        return self._event_bus
+
+    def publish_event(self, event_type: str, payload: Mapping[str, Any] | None = None) -> None:
+        """Publikuje zdarzenie w wewnętrznej magistrali ExchangeManagera."""
+
+        event_payload = dict(payload or {})
+        self._event_bus.publish(Event(type=event_type, payload=event_payload))
 
     def set_mode(
         self,
@@ -1569,6 +1588,71 @@ class ExchangeManager:
             self._paper._cash_balance = max(0.0, float(amount))  # type: ignore[attr-defined]
             if asset:
                 self._paper._cash_asset = self._paper_cash_asset  # type: ignore[attr-defined]
+
+    def fetch_account_snapshot(self) -> AccountSnapshot:
+        """Pobiera snapshot konta i publikuje zdarzenie mark-to-market."""
+
+        timestamp = dt.datetime.utcnow().replace(tzinfo=dt.timezone.utc)
+        if self.mode == Mode.PAPER:
+            backend = self._ensure_paper()
+        elif self.mode in {Mode.MARGIN, Mode.FUTURES}:
+            backend = self._ensure_native_adapter()
+        else:
+            backend = self._ensure_private()
+
+        if not hasattr(backend, "fetch_account_snapshot"):
+            raise RuntimeError("Wybrany backend nie udostępnia fetch_account_snapshot")
+
+        snapshot: AccountSnapshot = backend.fetch_account_snapshot()  # type: ignore[call-arg]
+
+        positions: Sequence[PositionDTO] = ()
+        fetch_positions = getattr(backend, "fetch_positions", None)
+        if callable(fetch_positions):
+            try:
+                positions = tuple(fetch_positions())  # type: ignore[assignment]
+            except Exception:  # pragma: no cover - diagnostyka adaptera
+                log.debug("fetch_positions failed", exc_info=True)
+
+        payload_positions: list[dict[str, object]] = []
+        for position in positions or ():
+            try:
+                avg_price = float(position.avg_price)
+            except Exception:
+                avg_price = 0.0
+            try:
+                quantity = float(position.quantity)
+            except Exception:
+                quantity = 0.0
+            notional = abs(quantity * avg_price)
+            payload_positions.append(
+                {
+                    "symbol": position.symbol,
+                    "side": str(getattr(position, "side", "LONG")).lower(),
+                    "quantity": quantity,
+                    "avg_price": avg_price,
+                    "notional": notional,
+                    "unrealized_pnl": float(getattr(position, "unrealized_pnl", 0.0) or 0.0),
+                }
+            )
+
+        payload = {
+            "snapshot": {
+                "total_equity": float(snapshot.total_equity),
+                "available_margin": float(snapshot.available_margin),
+                "maintenance_margin": float(snapshot.maintenance_margin),
+                "balances": dict(snapshot.balances),
+            },
+            "positions": payload_positions,
+            "mode": self.mode.value,
+            "timestamp": timestamp.isoformat(),
+        }
+
+        signature = json.dumps(payload, sort_keys=True, default=str)
+        if signature != self._last_mark_signature:
+            self._last_mark_signature = signature
+            self.publish_event(ACCOUNT_MARK_EVENT, payload)
+
+        return snapshot
 
     def get_paper_cash_asset(self) -> Optional[str]:
         """Zwraca aktualny symbol waluty gotówkowej w symulatorze paper."""

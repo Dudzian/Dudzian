@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Mapping
 
 import pytest
 
@@ -113,3 +113,16 @@ def test_json_export_contains_scheduler_summary(tmp_path: Path, fixed_clock) -> 
     json_payload = json.loads(artifacts["json"].read_text(encoding="utf-8"))
     assert json_payload["metadata"]["scheduler_count"] == 1
     assert "cron.daily" in json_payload["schedulers"]
+
+
+def test_build_report_returns_mapping(fixed_clock) -> None:
+    reporter = RuntimeTCOReporter(clock=fixed_clock)
+    _record_sample_fill(reporter)
+
+    mapping = reporter.build_report()
+    assert isinstance(mapping, Mapping)
+    assert mapping["metadata"]["events_count"] == 1
+    assert "strategies" in mapping
+
+    report_obj = reporter.build_report(as_dict=False)
+    assert hasattr(report_obj, "strategies")

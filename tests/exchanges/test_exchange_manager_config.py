@@ -92,6 +92,22 @@ def test_exchange_manager_builds_registered_adapter(monkeypatch):
     assert init.passphrase == "phrase"
 
 
+def test_fetch_account_snapshot_emits_mark_event(monkeypatch: pytest.MonkeyPatch) -> None:
+    manager = ExchangeManager()
+    monkeypatch.setattr(manager, "_ensure_public", lambda: _DummyFeed(100.0))
+    manager.set_mode(paper=True)
+    manager.set_paper_variant("margin")
+    captured: list[dict[str, object]] = []
+    manager.on("ACCOUNT_MARK", lambda event: captured.append(dict(event.payload)))
+
+    snapshot = manager.fetch_account_snapshot()
+
+    assert isinstance(snapshot, AccountSnapshot)
+    assert captured
+    payload = captured[-1]
+    assert payload["snapshot"]["total_equity"] == pytest.approx(snapshot.total_equity)
+
+
 def test_paper_variant_switches_to_margin_simulator(monkeypatch):
     manager = ExchangeManager("testex")
     fake_public = _DummyFeed(100.0)

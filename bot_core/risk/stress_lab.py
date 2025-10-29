@@ -54,6 +54,50 @@ _SIGNATURE_SCHEMA = "stage6.risk.stress_lab.report.signature"
 _SEVERITY_ORDER = {"critical": 3, "warning": 2, "notice": 1, "info": 0}
 
 
+_DEFAULT_RUNTIME_SCENARIOS: tuple[StressLabScenarioConfig, ...] = (
+    StressLabScenarioConfig(
+        name="flash_crash_core",
+        severity="high",
+        markets=("btc_usdt", "eth_usdt"),
+        shocks=(
+            StressLabShockConfig(type="liquidity_crunch", intensity=0.85),
+            StressLabShockConfig(type="volatility_spike", intensity=1.2),
+            StressLabShockConfig(type="price_gap", intensity=1.0),
+            StressLabShockConfig(type="latency_spike", intensity=0.6),
+        ),
+        description="Nagła przecena na głównych parach z jednoczesnym pogorszeniem płynności i infrastruktury giełdowej.",
+    ),
+    StressLabScenarioConfig(
+        name="liquidity_drain_altcoins",
+        severity="medium",
+        markets=("ada_usdt", "sol_usdt", "dot_usdt"),
+        shocks=(
+            StressLabShockConfig(type="liquidity", intensity=0.65),
+            StressLabShockConfig(type="volume_surge", intensity=0.5),
+            StressLabShockConfig(type="dispersion", intensity=0.7),
+        ),
+        description="Ucieczka płynności z alternatywnych rynków i zwiększenie zmienności względnej.",
+    ),
+    StressLabScenarioConfig(
+        name="infra_blackout_and_funding",
+        severity="critical",
+        markets=("btc_usdt",),
+        shocks=(
+            StressLabShockConfig(type="infrastructure_blackout", intensity=1.0, duration_minutes=90.0),
+            StressLabShockConfig(type="funding_shock", intensity=1.1),
+            StressLabShockConfig(type="sentiment_crash", intensity=0.8),
+        ),
+        description="Symulacja awarii infrastruktury połączonej z gwałtownymi zmianami stawek fundingowych.",
+    ),
+)
+
+
+def build_default_runtime_scenarios() -> tuple[StressLabScenarioConfig, ...]:
+    """Zwraca zestaw rekomendowanych scenariuszy Stress Lab dla runtime."""
+
+    return _DEFAULT_RUNTIME_SCENARIOS
+
+
 @dataclass(slots=True)
 class StressLabSeverityPolicy:
     """Polityka adaptacyjna dla określonego poziomu severity."""
@@ -1035,4 +1079,5 @@ __all__ = [
     "StressLabReportMain",
     "StressLabReportV2",
     "StressLab",
+    "build_default_runtime_scenarios",
 ]

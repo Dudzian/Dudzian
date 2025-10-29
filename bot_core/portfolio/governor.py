@@ -713,6 +713,8 @@ class StrategyPortfolioGovernor:
         self._last_rebalance: datetime | None = None
         self._last_decision: PortfolioRebalanceDecision | None = None
         self._cost_index = _CostIndex(lookup={}, default_cost=max(0.0, config.default_cost_bps))
+        self._dynamic_policy_source: str | None = None
+        self._dynamic_policy_applied_at: datetime | None = None
         self._initialize_states()
 
     # ------------------------------------------------------------------ helpers --
@@ -1039,6 +1041,98 @@ class StrategyPortfolioGovernor:
             max_signal_hint=state.config.baseline_max_signals,
             metadata=metadata,
         )
+
+    def current_weights(self) -> Mapping[str, float]:
+        """Zwraca aktualne wagi przypisane strategiom."""
+
+        return dict(self._current_weights)
+
+    def capital_allocation_breakdown(self) -> Sequence[Mapping[str, object]]:
+        """Buduje szczegółową listę alokacji strategii.
+
+        Zwracane wpisy zawierają aktualną wagę, docelową wagę bazową oraz
+        odchylenie, co pozwala na prezentację w dashboardzie UI oraz raportach
+        operacyjnych.
+        """
+
+        if not self._states:
+            return ()
+
+        total_weight = sum(max(0.0, float(weight)) for weight in self._current_weights.values())
+        if total_weight <= 0:
+            total_weight = 1.0
+
+        breakdown: list[Mapping[str, object]] = []
+        for name, state in self._states.items():
+            current_weight = float(self._current_weights.get(name, state.baseline_weight))
+            target_weight = float(state.baseline_weight)
+            entry = {
+                "strategy": name,
+                "weight": current_weight,
+                "normalized_weight": current_weight / total_weight if total_weight else 0.0,
+                "target_weight": target_weight,
+                "delta_weight": current_weight - target_weight,
+                "min_weight": float(state.min_weight),
+                "max_weight": float(state.max_weight),
+            }
+            breakdown.append(entry)
+
+        breakdown.sort(key=lambda item: item["weight"], reverse=True)
+        return tuple(breakdown)
+
+    def apply_dynamic_weights(
+        self,
+        weights: Mapping[str, float],
+        *,
+        source: str | None = None,
+        normalize: bool = True,
+    ) -> None:
+        """Ustawia bieżące wagi strategii na podstawie zewnętrznej polityki."""
+
+        if not weights:
+            return
+        normalized: dict[str, float] = {}
+        total = 0.0
+        for name, value in weights.items():
+            try:
+                weight = max(0.0, float(value))
+            except (TypeError, ValueError):
+                continue
+            if weight <= 0:
+                continue
+            normalized[str(name)] = weight
+            total += weight
+        if not normalized:
+            return
+        if normalize and total > 0:
+            normalized = {name: weight / total for name, weight in normalized.items()}
+
+        for name, weight in normalized.items():
+            state = self._ensure_state(name, None)
+            bounded = min(state.max_weight, max(state.min_weight, float(weight)))
+            self._current_weights[name] = bounded
+
+        applied_at = self._clock()
+        self._dynamic_policy_source = source
+        self._dynamic_policy_applied_at = applied_at
+        self._last_rebalance = applied_at
+
+    def dynamic_policy_source(self) -> str | None:
+        """Zwraca identyfikator ostatniej polityki dynamicznej (jeśli istnieje)."""
+
+        return self._dynamic_policy_source
+
+    def dynamic_policy_snapshot(self) -> Mapping[str, object]:
+        """Buduje migawkę bieżącej polityki kapitału wraz z metadanymi."""
+
+        snapshot: dict[str, object] = {
+            "weights": dict(self._current_weights),
+            "source": self._dynamic_policy_source,
+        }
+        if self._dynamic_policy_applied_at is not None:
+            snapshot["applied_at"] = self._dynamic_policy_applied_at.isoformat()
+        snapshot["type"] = "dynamic" if self._dynamic_policy_source else "baseline"
+        return snapshot
 
     # -------------------------------------------------------------- koszty --
     def set_strategy_cost(self, strategy: str, cost_bps: float, *, risk_profile: str | None = None) -> None:

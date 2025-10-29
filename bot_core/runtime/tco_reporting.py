@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Callable, Mapping, MutableMapping, Sequence
 
 from bot_core.tco import TCOAnalyzer, TCOReportWriter, TradeCostEvent
+from bot_core.tco.models import TCOReport
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -207,3 +208,36 @@ class RuntimeTCOReporter:
         """Usuwa wszystkie zapisane zdarzenia kosztowe (np. po eksporcie)."""
 
         self._events.clear()
+
+    def build_report(self, *, as_dict: bool = True) -> Mapping[str, object] | TCOReport:
+        """Buduje agregat TCO bez zapisu do plików."""
+
+        report = self._analyzer.analyze(self._events, metadata=self._metadata)
+        if not as_dict:
+            return report
+        to_dict = getattr(report, "to_dict", None)
+        if callable(to_dict):
+            return to_dict()
+        payload = {
+            "generated_at": getattr(report, "generated_at", self.clock()).isoformat()
+            if hasattr(report, "generated_at")
+            else self.clock().isoformat(),
+            "metadata": dict(getattr(report, "metadata", {})),
+            "alerts": list(getattr(report, "alerts", ())),
+        }
+        total = getattr(report, "total", None)
+        if total is not None and hasattr(total, "to_dict"):
+            payload["total"] = total.to_dict()
+        strategies = getattr(report, "strategies", {})
+        if strategies:
+            payload["strategies"] = {
+                name: summary.to_dict() if hasattr(summary, "to_dict") else dict(summary)
+                for name, summary in strategies.items()
+            }
+        schedulers = getattr(report, "schedulers", {})
+        if schedulers:
+            payload["schedulers"] = {
+                name: summary.to_dict() if hasattr(summary, "to_dict") else dict(summary)
+                for name, summary in schedulers.items()
+            }
+        return payload
