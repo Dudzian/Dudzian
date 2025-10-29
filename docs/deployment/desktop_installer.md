@@ -37,8 +37,8 @@ pip install -r deploy/packaging/requirements-desktop.txt
    ```
    Dostępne opcje:
    * `--reports` – katalog z raportami, które mają zostać dołączone do paczki (domyślnie `var/reports`).
-  * `--updater-script` – alternatywny entrypoint updatera (domyślnie `python scripts/desktop_updater.py`).
-   * `--output` – katalog wynikowy (domyślnie `var/dist/desktop`).
+ * `--updater-script` – alternatywny entrypoint updatera (domyślnie `python scripts/desktop_updater.py`).
+  * `--output` – katalog wynikowy (domyślnie `var/dist/desktop`).
 
 3. Skrypt tworzy strukturę `bot_trading_shell/` zawierającą:
    * binarkę Qt,
@@ -48,6 +48,32 @@ pip install -r deploy/packaging/requirements-desktop.txt
    * manifest `INSTALL_MANIFEST.json` z metadanymi pakietu.
 
 4. Finalny ZIP (`bot_trading_shell_bundle.zip`) można dystrybuować operatorom.
+
+## Integracja z CI
+
+Workflow GitHub Actions [`deploy/ci/github_actions_desktop_packaging.yml`](../operations/hardware_locking.md)
+wykonuje powyższe kroki na runnerach `linux`/`macos`/`windows`, korzystając z
+`scripts/packaging/build_app_bundles.py`. Domyślne ścieżki można nadpisać
+parametrami `workflow_dispatch` lub zmiennymi repozytorium (`DESKTOP_PYINSTALLER_ENTRY`,
+`DESKTOP_BRIEFCASE_APP`, `DESKTOP_PYINSTALLER_DIST`, `DESKTOP_BRIEFCASE_OUTPUT`).
+Każde uruchomienie czyści katalogi `var/dist/pyinstaller` i `var/dist/briefcase`,
+buduje artefakty, generuje manifest z sumami SHA-256 (`var/dist/desktop_packaging_<platforma>.json`)
+i publikuje kompletny pakiet do pobrania z poziomu Actions.【F:deploy/ci/github_actions_desktop_packaging.yml†L1-L261】
+
+### Walidacja manifestu bundlera
+
+Po pobraniu artefaktów z workflow zweryfikuj manifest przed dystrybucją:
+
+```bash
+python -m scripts.packaging.validate_desktop_manifest \
+    var/dist/desktop_packaging_linux.json \
+    --pyinstaller-root /ścieżka/do/artefaktów/pyinstaller \
+    --briefcase-root /ścieżka/do/artefaktów/briefcase
+```
+
+Skrypt porówna rozmiary i sumy SHA-256 wszystkich plików z manifestu z lokalnymi
+artefaktami. W przypadku braków lub rozbieżności zakończy się kodem wyjścia ≠ 0,
+co umożliwia wczesne wykrycie problemów z uploadem lub podpisami.
 
 ## Aktualizacje w terenie
 

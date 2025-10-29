@@ -27,6 +27,13 @@ from bot_core.security.fingerprint import (
     verify_document,
 )
 from bot_core.security.keyring_storage import KeyringSecretStorage
+from bot_core.security.fingerprint_lock import (
+    FingerprintLock,
+    FingerprintLockError,
+    load_fingerprint_lock,
+    verify_local_hardware,
+    write_fingerprint_lock,
+)
 from bot_core.security.rotation import RotationRegistry, RotationStatus
 from bot_core.security.rotation_report import (
     RotationRecord,
@@ -144,9 +151,14 @@ __all__ = [
     "DeviceFingerprintGenerator",
     "FingerprintDocument",
     "FingerprintError",
+    "FingerprintLock",
+    "FingerprintLockError",
     "build_fingerprint_document",
     "get_local_fingerprint",
     "verify_document",
+    "load_fingerprint_lock",
+    "verify_local_hardware",
+    "write_fingerprint_lock",
     "canonical_json_bytes",
     "build_hmac_signature",
     "UserProfile",

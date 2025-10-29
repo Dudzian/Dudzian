@@ -202,6 +202,24 @@ def test_encrypted_file_secret_storage_persists_between_instances(tmp_path: Path
     assert second.get_secret("binance") == "key123"
 
 
+def test_encrypted_file_secret_storage_rotation_and_backup(tmp_path: Path) -> None:
+    pytest.importorskip("cryptography.fernet")
+
+    storage_path = tmp_path / "vault.age"
+    storage = EncryptedFileSecretStorage(storage_path, passphrase="pierwsze")
+    storage.set_secret("alpha", "secret-alpha")
+
+    storage.rotate_passphrase("drugie", iterations=100_000)
+    assert storage.get_secret("alpha") == "secret-alpha"
+    rotated = EncryptedFileSecretStorage(storage_path, passphrase="drugie")
+    assert rotated.get_secret("alpha") == "secret-alpha"
+
+    snapshot = rotated.export_backup()
+    restored_path = tmp_path / "restored.age"
+    restored = EncryptedFileSecretStorage.recover_from_backup(restored_path, "drugie", snapshot)
+    assert restored.get_secret("alpha") == "secret-alpha"
+
+
 def test_create_default_secret_storage_linux_gui(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("DISPLAY", ":1")
     monkeypatch.setenv("WAYLAND_DISPLAY", "")

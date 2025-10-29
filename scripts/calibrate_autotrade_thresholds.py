@@ -48,7 +48,9 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from bot_core.ai.config_loader import load_risk_thresholds
-from bot_core.trading.signal_thresholds import SUPPORTED_SIGNAL_THRESHOLD_METRICS as _SUPPORTED_SIGNAL_THRESHOLD_METRICS
+from bot_core.trading.signal_thresholds import (
+    SUPPORTED_SIGNAL_THRESHOLD_METRICS as _SUPPORTED_SIGNAL_THRESHOLD_METRICS,
+)
 
 
 def _normalize_metric_key(key: str) -> str:
@@ -2403,6 +2405,27 @@ def _generate_report(
     current_signal_threshold_sources = (
         current_threshold_sources if isinstance(current_threshold_sources, Mapping) else None
     )
+    (
+        current_threshold_files,
+        current_threshold_inline,
+        risk_threshold_inline,
+        risk_threshold_files_extra,
+        risk_score_metadata_payload,
+        inline_signal_values,
+        file_risk_score,
+        prepared_risk_score,
+    ) = _prepare_current_threshold_context(
+        current_signal_threshold_sources,
+        cli_risk_score,
+    )
+
+    merged_thresholds: dict[str, float] = {}
+    if isinstance(current_signal_thresholds, Mapping):
+        merged_thresholds.update(current_signal_thresholds)
+    if inline_signal_values:
+        merged_thresholds.update(inline_signal_values)
+    current_signal_thresholds = merged_thresholds or None
+    current_risk_score = prepared_risk_score
 
     (
         current_threshold_files,
@@ -2948,7 +2971,7 @@ def _generate_report(
             ) + hidden_events_count
 
         formatted_overflow = _format_freeze_summary(base_summary)
-        hidden_count = int(formatted_overflow.get("total") or 0)
+        hidden_count = hidden_events_count
         return visible_events, formatted_overflow, normalized_display_limit, hidden_count
 
     def _record_freeze(
@@ -3116,7 +3139,7 @@ def _generate_report(
                 continue
             entry["applied"] = bool(index is not None and idx == index)
 
-    current_risk_score = None
+    current_risk_score = prepared_risk_score
     if risk_threshold_paths:
         for config_path in risk_threshold_paths:
             thresholds = load_risk_thresholds(config_path=config_path)
@@ -3645,7 +3668,7 @@ def _resolve_freeze_event_limit(
         return None
 
     if raw_freeze_events_limit is None:
-        return 25
+        return _DEFAULT_FREEZE_EVENTS_LIMIT
 
     return int(raw_freeze_events_limit)
 
@@ -3735,14 +3758,6 @@ def _build_parser() -> argparse.ArgumentParser:
             "Opcjonalnie ogranicz liczbę zdarzeń blokad zapisywanych w sekcji "
             "raw_freeze_events; gdy ustawione dodaje próbkę pierwszych N wpisów oraz "
             "podsumowanie reszty. Bez parametru sekcja jest pomijana."
-        ),
-    )
-    parser.add_argument(
-        "--max-freeze-events",
-        type=int,
-        help=(
-            "Ustaw maksymalną liczbę blokad wypisywanych w sekcji freeze_events. "
-            "Wartość 0 usuwa sekcję, a brak parametru korzysta z limitu domyślnego."
         ),
     )
     parser.add_argument(
@@ -3899,6 +3914,18 @@ def main(argv: list[str] | None = None) -> int:
                 existing["risk_score"] = provided_risk_score
                 signal_thresholds_payload = existing
 
+    limit_freeze_events_arg = getattr(args, "limit_freeze_events", None)
+    if limit_freeze_events_arg is not None and limit_freeze_events_arg < 0:
+        raise SystemExit("Parametr --limit-freeze-events musi być nieujemny")
+    raw_freeze_events_sample_limit = getattr(args, "raw_freeze_events_sample_limit", None)
+    if raw_freeze_events_sample_limit is not None and raw_freeze_events_sample_limit < 0:
+        raise SystemExit("Parametr --raw-freeze-events-sample-limit musi być nieujemny")
+    max_raw_freeze_events_arg = getattr(args, "max_raw_freeze_events", None)
+    if max_raw_freeze_events_arg is not None and max_raw_freeze_events_arg < 0:
+        raise SystemExit("Parametr --max-raw-freeze-events musi być nieujemny")
+    raw_freeze_events_limit_arg = getattr(args, "raw_freeze_events_limit", None)
+    if raw_freeze_events_limit_arg is not None and raw_freeze_events_limit_arg < 0:
+        raise SystemExit("Parametr --raw-freeze-events-limit musi być nieujemny")
     limit_freeze_events = _resolve_freeze_event_limit(
         limit_freeze_events=limit_freeze_events_arg,
         raw_freeze_events_mode=getattr(args, "raw_freeze_events", None),
