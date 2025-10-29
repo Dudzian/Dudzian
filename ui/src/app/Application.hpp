@@ -51,8 +51,6 @@ class UiModuleManager;                 // forward decl (app/UiModuleManager.hpp)
 class UiModuleViewsModel;              // forward decl (app/UiModuleViewsModel.hpp)
 class MetricsClientInterface;          // forward decl (grpc/MetricsClient.hpp)
 class HealthClientInterface;           // forward decl (grpc/HealthClient.hpp)
-class MarketplaceController;           // forward decl (app/MarketplaceController.hpp)
-class PortfolioManagerController;      // forward decl (app/PortfolioManagerController.hpp)
 
 class Application : public QObject {
     Q_OBJECT
@@ -399,7 +397,6 @@ private:
     QStringList            m_tradingRbacScopes;
     TradingClient::TransportMode m_transportMode = TradingClient::TransportMode::Grpc;
     QString                m_inProcessDatasetPath;
-    int                    m_inProcessCandleIntervalMs = 150;
     QHash<QString, QVector<TradingClient::TradableInstrument>> m_tradableInstrumentCache;
 
     TradingClient::InstrumentConfig m_instrument{
@@ -455,13 +452,7 @@ private:
     QString                            m_healthRbacRole;
     QStringList                        m_healthRbacScopes;
     std::shared_ptr<MetricsClientInterface> m_inProcessMetricsClient;
-    std::shared_ptr<MetricsClientInterface> m_grpcMetricsClient;
-    std::shared_ptr<MetricsClientInterface> m_metricsClientOverride;
     std::shared_ptr<HealthClientInterface>  m_inProcessHealthClient;
-    std::shared_ptr<HealthClientInterface>  m_grpcHealthClient;
-    bool                                    m_usingInProcessMetricsClient = false;
-    std::weak_ptr<MetricsClientInterface>   m_activeMetricsClient;
-    bool                                    m_usingInProcessHealthClient = false;
     int                                m_healthRefreshIntervalSeconds = 60;
     bool                               m_healthAutoRefreshEnabled = true;
     QString                            m_preferredScreenName;

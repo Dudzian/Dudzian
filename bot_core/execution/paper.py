@@ -315,10 +315,6 @@ class PaperTradingExecutionService(ExecutionService):
             return price
 
         symbol = request.symbol
-        _LOGGER.debug(
-            "Brak ceny w żądaniu %s – próbuję odczytać z resolverów/market data provider.",
-            symbol,
-        )
 
         for resolver in self._iter_price_resolvers(context):
             try:
@@ -327,55 +323,15 @@ class PaperTradingExecutionService(ExecutionService):
                 _LOGGER.debug("Resolver ceny rynku %s zgłosił wyjątek.", symbol, exc_info=True)
                 continue
             if resolved is not None and resolved > 0:
-                _LOGGER.debug("Używam ceny %s z resolvera kontekstowego.", resolved)
                 return resolved
-
-        provider_price = self._resolve_from_market_data_provider(symbol, context)
-        if provider_price is not None:
-            _LOGGER.debug("Używam ceny %s z market data provider.", provider_price)
-            return provider_price
 
         metadata_price = self._extract_price_from_metadata(symbol, context.metadata)
         if metadata_price is not None:
-            _LOGGER.debug("Używam ceny %s z metadanych ExecutionContext.", metadata_price)
             return metadata_price
 
-        _LOGGER.warning(
-            "Nie udało się ustalić ceny referencyjnej dla %s – brak resolvera i market data provider.",
-            symbol,
-        )
         raise ValueError(
             "Brak ceny referencyjnej dla symulacji – podaj price lub dostarcz resolver danych rynkowych."
         )
-
-    @staticmethod
-    def _resolve_from_market_data_provider(symbol: str, context: ExecutionContext) -> float | None:
-        provider = context.market_data_provider
-        if provider is None:
-            return None
-
-        candidates: Iterable[Callable[[str], float | None]] = ()
-        callables: list[Callable[[str], float | None]] = []
-        if callable(provider):
-            callables.append(provider)
-
-        for attr in ("get_last_price", "last_price", "price", "get_price"):
-            method = getattr(provider, attr, None)
-            if callable(method):
-                callables.append(method)
-
-        candidates = callables or ()
-        for candidate in candidates:
-            try:
-                resolved = candidate(symbol)
-            except Exception:  # pragma: no cover - defensywne logowanie
-                _LOGGER.debug(
-                    "MarketDataProvider zwrócił wyjątek przy resolve %s.", symbol, exc_info=True
-                )
-                continue
-            if resolved is not None and resolved > 0:
-                return float(resolved)
-        return None
 
     def _iter_price_resolvers(self, context: ExecutionContext) -> Iterable[PriceResolver]:
         if context.price_resolver is not None:

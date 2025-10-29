@@ -93,40 +93,6 @@ def test_executes_with_price_from_service_resolver_when_context_missing() -> Non
     assert result.avg_price == pytest.approx(last_price)
 
 
-def test_executes_with_price_from_market_data_provider() -> None:
-    service = _service_with_market()
-
-    class Provider:
-        def __init__(self, price: float) -> None:
-            self._price = price
-            self.calls: list[str] = []
-
-        def get_last_price(self, symbol: str) -> float:
-            self.calls.append(symbol)
-            return self._price
-
-    provider = Provider(21_500.0)
-    context = ExecutionContext(
-        portfolio_id="provider-test",
-        risk_profile="balanced",
-        environment="paper",
-        metadata={},
-        market_data_provider=provider,
-    )
-    request = OrderRequest(
-        symbol="BTCUSDT",
-        side="buy",
-        quantity=0.1,
-        order_type="market",
-        price=None,
-    )
-
-    result = service.execute(request, context)
-
-    assert provider.calls == ["BTCUSDT"]
-    assert result.avg_price == pytest.approx(provider._price)
-
-
 def test_raises_when_no_reference_price_available() -> None:
     service = _service_with_market()
     context = ExecutionContext(

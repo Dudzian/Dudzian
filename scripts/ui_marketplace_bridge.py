@@ -13,7 +13,6 @@ from bot_core.strategies.catalog import (
     StrategyPresetProfile,
 )
 from bot_core.security.hwid import HwIdProvider
-from bot_core.security.license_store import LicenseStore, LicenseStoreError
 
 
 def _load_json(path: Path | None, *, stdin_fallback: bool = False) -> Any:
@@ -61,18 +60,21 @@ def _load_signing_keys(values: list[str], files: list[str]) -> dict[str, bytes]:
     return keys
 
 
-def _open_license_store(path: Path, fingerprint_override: str | None) -> tuple[LicenseStore, dict[str, Any]]:
-    try:
-        store = LicenseStore(path=path, fingerprint_override=fingerprint_override)
-        document = store.load()
-    except LicenseStoreError as exc:
-        raise SystemExit(f"Nie można otworzyć magazynu licencji: {exc}") from exc
-    if document.migrated:
-        try:
-            store.save(document.data)
-        except LicenseStoreError as exc:
-            raise SystemExit(f"Nie można zmigrować magazynu licencji: {exc}") from exc
-    return store, document.data
+def _read_license_store(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {"licenses": {}}
+    payload = _load_json(path)
+    if isinstance(payload, Mapping):
+        licenses = payload.get("licenses")
+        if isinstance(licenses, Mapping):
+            return {"licenses": dict(licenses)}
+    return {"licenses": {}}
+
+
+def _write_license_store(path: Path, store: Mapping[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    serialized = json.dumps(store, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    path.write_text(serialized, encoding="utf-8")
 
 
 def _build_hwid_provider(override: str | None) -> HwIdProvider | None:
@@ -120,12 +122,12 @@ def _command_list(args: argparse.Namespace) -> None:
     presets_dir = Path(args.presets_dir)
     licenses_path = Path(args.licenses_path)
     signing_keys = _load_signing_keys(args.signing_key or [], args.signing_key_file or [])
-    store, store_data = _open_license_store(licenses_path, args.fingerprint)
+    store = _read_license_store(licenses_path)
     catalog, provider = _load_catalog(
         presets_dir,
         signing_keys=signing_keys,
         fingerprint_override=args.fingerprint,
-        license_store=store_data,
+        license_store=store,
     )
     profile = args.profile
     include_strategies = bool(args.include_strategies)
@@ -134,7 +136,7 @@ def _command_list(args: argparse.Namespace) -> None:
         include_strategies=include_strategies,
         hwid_provider=provider,
     )
-    document = {"presets": summaries, "licenses": store_data.get("licenses", {})}
+    document = {"presets": summaries, "licenses": store.get("licenses", {})}
     json.dump(document, sys.stdout, ensure_ascii=False, indent=2, sort_keys=True)
     sys.stdout.write("\n")
 
@@ -151,28 +153,21 @@ def _command_activate(args: argparse.Namespace) -> None:
     presets_dir = Path(args.presets_dir)
     licenses_path = Path(args.licenses_path)
     signing_keys = _load_signing_keys(args.signing_key or [], args.signing_key_file or [])
-    store, store_data = _open_license_store(licenses_path, args.fingerprint)
+    store = _read_license_store(licenses_path)
     payload = _read_license_payload(args)
     catalog, provider = _load_catalog(
         presets_dir,
         signing_keys=signing_keys,
         fingerprint_override=args.fingerprint,
-        license_store=store_data,
+        license_store=store,
     )
-    licenses = store_data.setdefault("licenses", {})
-    if not isinstance(licenses, dict):
-        licenses = {}
-        store_data["licenses"] = licenses
-    licenses[args.preset_id] = payload
+    store.setdefault("licenses", {})[args.preset_id] = payload
     descriptor = catalog.install_license_override(
         args.preset_id,
         payload,
         hwid_provider=provider,
     )
-    try:
-        store.save(store_data)
-    except LicenseStoreError as exc:
-        raise SystemExit(f"Nie udało się zapisać magazynu licencji: {exc}") from exc
+    _write_license_store(licenses_path, store)
     result = {"preset": _descriptor_payload(descriptor, include_strategies=True)}
     json.dump(result, sys.stdout, ensure_ascii=False, indent=2, sort_keys=True)
     sys.stdout.write("\n")
@@ -182,24 +177,19 @@ def _command_deactivate(args: argparse.Namespace) -> None:
     presets_dir = Path(args.presets_dir)
     licenses_path = Path(args.licenses_path)
     signing_keys = _load_signing_keys(args.signing_key or [], args.signing_key_file or [])
-    store, store_data = _open_license_store(licenses_path, args.fingerprint)
+    store = _read_license_store(licenses_path)
     catalog, provider = _load_catalog(
         presets_dir,
         signing_keys=signing_keys,
         fingerprint_override=args.fingerprint,
-        license_store=store_data,
+        license_store=store,
     )
-    licenses = store_data.get("licenses")
-    if isinstance(licenses, dict):
-        licenses.pop(args.preset_id, None)
+    store.get("licenses", {}).pop(args.preset_id, None)
     descriptor = catalog.clear_license_override(
         args.preset_id,
         hwid_provider=provider,
     )
-    try:
-        store.save(store_data)
-    except LicenseStoreError as exc:
-        raise SystemExit(f"Nie udało się zapisać magazynu licencji: {exc}") from exc
+    _write_license_store(licenses_path, store)
     result = {"preset": _descriptor_payload(descriptor, include_strategies=True)}
     json.dump(result, sys.stdout, ensure_ascii=False, indent=2, sort_keys=True)
     sys.stdout.write("\n")

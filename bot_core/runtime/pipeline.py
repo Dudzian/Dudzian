@@ -31,12 +31,7 @@ from bot_core.config.loader import load_core_config
 from bot_core.data import CachedOHLCVSource, create_cached_ohlcv_source, resolve_cache_namespace
 from bot_core.data.base import OHLCVRequest
 from bot_core.data.ohlcv import OHLCVBackfillService
-from bot_core.execution.base import (
-    ExecutionContext,
-    ExecutionService,
-    MarketPriceProvider,
-    PriceResolver,
-)
+from bot_core.execution.base import ExecutionContext, ExecutionService, PriceResolver
 from bot_core.execution.paper import MarketMetadata, PaperTradingExecutionService
 from bot_core.exchanges.base import (
     AccountSnapshot,
@@ -313,7 +308,6 @@ def build_daily_trend_pipeline(
     backfill_service = OHLCVBackfillService(cached_source)
 
     price_resolver = _build_price_resolver(cached_source, runtime_cfg.interval)
-    market_data_provider = _build_market_price_provider(cached_source, runtime_cfg.interval)
 
     execution_service = _select_execution_service(
         bootstrap_ctx,
@@ -350,7 +344,6 @@ def build_daily_trend_pipeline(
         environment=environment.environment.value,
         metadata=execution_metadata,
         price_resolver=price_resolver,
-        market_data_provider=market_data_provider,
     )
 
     account_loader = _build_account_loader(
@@ -694,43 +687,6 @@ def _select_execution_service(
     return service
 
 
-def _ensure_local_market_data_availability(
-    environment: EnvironmentConfig,
-    data_source: CachedOHLCVSource,
-    markets: Mapping[str, MarketMetadata],
-    interval: str,
-) -> None:
-    offline_mode = bool(getattr(environment, "offline_mode", False))
-    if not offline_mode:
-        return
-
-    storage = getattr(data_source, "storage", None)
-    if storage is None:
-        raise RuntimeError(
-            "Środowisko offline wymaga dostępu do lokalnego cache OHLCV, ale storage nie jest dostępny."
-        )
-
-    missing: list[str] = []
-    for symbol in markets.keys():
-        cache_key = data_source._cache_key(symbol, interval)  # pylint: disable=protected-access
-        try:
-            payload = storage.read(cache_key)
-        except Exception:  # pragma: no cover - storage może rzucić różne błędy
-            missing.append(symbol)
-            continue
-        rows = []
-        if isinstance(payload, Mapping):
-            rows = payload.get("rows", [])  # type: ignore[assignment]
-        if not rows:
-            missing.append(symbol)
-
-    if missing:
-        raise RuntimeError(
-            "Środowisko offline wymaga wstępnie załadowanych danych OHLCV dla symboli: "
-            + ", ".join(sorted(missing))
-        )
-
-
 def _build_price_resolver(
     data_source: CachedOHLCVSource, interval: str
 ) -> PriceResolver:
@@ -757,38 +713,6 @@ def _build_price_resolver(
         return price if price > 0 else None
 
     return resolver
-
-
-def _build_market_price_provider(
-    data_source: CachedOHLCVSource, interval: str
-) -> MarketPriceProvider:
-    interval_ms = interval_to_milliseconds(interval)
-
-    def provider(symbol: str) -> float | None:
-        now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
-        start = max(0, now_ms - max(interval_ms * 5, interval_ms))
-        request = OHLCVRequest(symbol=symbol, interval=interval, start=start, end=now_ms, limit=1)
-        try:
-            response = data_source.fetch_ohlcv(request)
-        except Exception:  # pragma: no cover - log diagnostyczny
-            _LOGGER.debug(
-                "Nie udało się pobrać OHLCV z market data provider dla %s.",
-                symbol,
-                exc_info=True,
-            )
-            return None
-        if not response.rows:
-            return None
-        last_row = response.rows[-1]
-        if not last_row:
-            return None
-        try:
-            price = float(last_row[4])
-        except (IndexError, TypeError, ValueError):
-            return None
-        return price if price > 0 else None
-
-    return provider
 
 
 def _optional_float(value: object) -> float | None:

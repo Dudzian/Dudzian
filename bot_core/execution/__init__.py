@@ -1,12 +1,6 @@
 """Moduł egzekucji zleceń."""
 
-from bot_core.execution.base import (
-    ExecutionContext,
-    ExecutionService,
-    MarketPriceProvider,
-    PriceResolver,
-    RetryPolicy,
-)
+from bot_core.execution.base import ExecutionContext, ExecutionService, PriceResolver, RetryPolicy
 
 # Zgodność wstecz/naprzód: obsłuż zarówno RoutingPlan (nowa nazwa),
 # jak i RouteDefinition (starsza nazwa) z live_router.
@@ -35,7 +29,6 @@ __all__ = [
     "ExecutionContext",
     "ExecutionService",
     "PriceResolver",
-    "MarketPriceProvider",
     "RetryPolicy",
     "LiveExecutionRouter",
     "RoutingPlan",

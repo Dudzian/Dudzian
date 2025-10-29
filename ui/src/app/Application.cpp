@@ -85,69 +85,6 @@ constexpr auto kRegimeThresholdsEnv = QByteArrayLiteral("BOT_CORE_UI_REGIME_THRE
 constexpr auto kRegimeTimelineLimitEnv = QByteArrayLiteral("BOT_CORE_UI_REGIME_TIMELINE_LIMIT");
 constexpr auto kTransportModeEnv = QByteArrayLiteral("BOT_CORE_UI_TRANSPORT_MODE");
 constexpr auto kTransportDatasetEnv = QByteArrayLiteral("BOT_CORE_UI_TRANSPORT_DATASET");
-constexpr auto kTransportCandleIntervalEnv = QByteArrayLiteral("BOT_CORE_UI_TRANSPORT_CANDLE_INTERVAL_MS");
-constexpr auto kMarketplaceBridgeEnv = QByteArrayLiteral("BOT_CORE_UI_MARKETPLACE_BRIDGE");
-constexpr auto kMarketplacePresetsDirEnv = QByteArrayLiteral("BOT_CORE_UI_MARKETPLACE_PRESETS_DIR");
-constexpr auto kMarketplaceLicensesPathEnv = QByteArrayLiteral("BOT_CORE_UI_MARKETPLACE_LICENSES_PATH");
-constexpr auto kMarketplaceSigningKeysEnv = QByteArrayLiteral("BOT_CORE_UI_MARKETPLACE_SIGNING_KEYS");
-constexpr auto kMarketplaceSigningKeyFilesEnv = QByteArrayLiteral("BOT_CORE_UI_MARKETPLACE_SIGNING_KEY_FILES");
-constexpr auto kMarketplaceFingerprintEnv = QByteArrayLiteral("BOT_CORE_UI_MARKETPLACE_FINGERPRINT");
-constexpr int kDefaultInProcessCandleIntervalMs = 150;
-
-QString datasetCompanionPath(const QString& datasetPath, const QString& suffix)
-{
-    const QString trimmed = datasetPath.trimmed();
-    if (trimmed.isEmpty())
-        return {};
-
-    QFileInfo info(trimmed);
-    if (info.exists() && info.isDir())
-        return QDir(info.absoluteFilePath()).filePath(suffix);
-
-    const QString directory = info.absolutePath();
-    const QString baseName = info.completeBaseName();
-    if (baseName.isEmpty())
-        return QDir(directory).filePath(suffix);
-    return QDir(directory).filePath(baseName + QLatin1Char('_') + suffix);
-}
-
-QStringList parseMarketplaceList(const QString& raw)
-{
-    const QString normalized = raw.trimmed();
-    if (normalized.isEmpty())
-        return {};
-
-    const QRegularExpression delimiter(QStringLiteral("[,;\n]+"));
-    QStringList parts = normalized.split(delimiter, Qt::SkipEmptyParts);
-    for (QString& entry : parts)
-        entry = entry.trimmed();
-
-    parts.removeAll(QString());
-    parts.removeDuplicates();
-    return parts;
-}
-
-std::optional<qint64> parseIsoTimestampMs(const QString& raw)
-{
-    const QString normalized = raw.trimmed();
-    if (normalized.isEmpty())
-        return std::nullopt;
-
-    QDateTime timestamp = QDateTime::fromString(normalized, Qt::ISODateWithMs);
-    if (!timestamp.isValid())
-        timestamp = QDateTime::fromString(normalized, Qt::ISODate);
-    if (!timestamp.isValid())
-        timestamp = QDateTime::fromString(normalized, QStringLiteral("yyyy-MM-dd HH:mm:ss"));
-    if (!timestamp.isValid())
-        return std::nullopt;
-
-    if (timestamp.timeSpec() == Qt::LocalTime)
-        timestamp = timestamp.toUTC();
-    else
-        timestamp.setTimeSpec(Qt::UTC);
-
-    return timestamp.toMSecsSinceEpoch();
-}
 
 class InProcessMetricsClient final : public MetricsClientInterface
 {
@@ -183,56 +120,12 @@ public:
     void setAuthToken(const QString& token) override { m_authToken = token; }
     void setRbacRole(const QString& role) override { m_role = role; }
     void setRbacScopes(const QStringList& scopes) override { m_scopes = scopes; }
-    void setDatasetPath(const QString& path) { m_datasetPath = bot::shell::utils::expandPath(path); }
 
     QVector<QPair<QByteArray, QByteArray>> authMetadataForTesting() const override { return {}; }
 
     HealthCheckResult check() override
     {
         HealthCheckResult result;
-
-        const QString healthPath = datasetCompanionPath(m_datasetPath, QStringLiteral("health.json"));
-        if (!healthPath.isEmpty()) {
-            QFile file(healthPath);
-            if (file.exists()) {
-                if (file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-                    QJsonParseError error;
-                    const QJsonDocument document = QJsonDocument::fromJson(file.readAll(), &error);
-                    if (error.error == QJsonParseError::NoError && document.isObject()) {
-                        const QJsonObject payload = document.object();
-                        result.ok = payload.value(QStringLiteral("ok")).toBool(true);
-                        const QString version = payload.value(QStringLiteral("version")).toString();
-                        result.version = version.isEmpty() ? QStringLiteral("in-process") : version;
-                        const QString commit = payload.value(QStringLiteral("gitCommit")).toString();
-                        result.gitCommit = commit.isEmpty() ? QStringLiteral("local") : commit;
-                        result.errorMessage = payload.value(QStringLiteral("error")).toString();
-
-                        const QJsonValue epochValue = payload.value(QStringLiteral("startedAtEpochMs"));
-                        if (epochValue.isDouble()) {
-                            const qint64 ms = static_cast<qint64>(epochValue.toDouble());
-                            result.startedAtUtc = QDateTime::fromMSecsSinceEpoch(ms, Qt::UTC);
-                        } else {
-                            const QString startedIso = payload.value(QStringLiteral("startedAt")).toString();
-                            if (const auto parsed = parseIsoTimestampMs(startedIso); parsed.has_value())
-                                result.startedAtUtc = QDateTime::fromMSecsSinceEpoch(*parsed, Qt::UTC);
-                        }
-
-                        if (!result.startedAtUtc.isValid())
-                            result.startedAtUtc = QDateTime::currentDateTimeUtc().addSecs(-3600);
-                        return result;
-                    }
-                    qCWarning(lcAppMetrics)
-                        << "Nie udało się sparsować pliku health snapshot" << healthPath << error.errorString();
-                } else {
-                    qCWarning(lcAppMetrics)
-                        << "Nie udało się otworzyć pliku health snapshot" << healthPath << file.errorString();
-                }
-            } else {
-                qCWarning(lcAppMetrics)
-                    << "Brak pliku health snapshot dla transportu in-process:" << healthPath;
-            }
-        }
-
         result.ok = true;
         result.version = QStringLiteral("in-process");
         result.gitCommit = QStringLiteral("local");
@@ -246,7 +139,6 @@ private:
     QString m_authToken;
     QString m_role;
     QStringList m_scopes;
-    QString m_datasetPath;
 };
 
 using bot::shell::utils::expandPath;
@@ -661,10 +553,6 @@ void Application::configureParser(QCommandLineParser& parser) const {
                       tr("mode"), QStringLiteral("grpc")});
     parser.addOption({"transport-dataset", tr("Dataset OHLCV dla trybu in-process"),
                       tr("path"), QString()});
-    parser.addOption({"transport-candle-interval-ms",
-                      tr("Interwał pomiędzy świecami w trybie in-process (ms)"),
-                      tr("milliseconds"),
-                      QString()});
     parser.addOption({"exchange", tr("Nazwa giełdy"), tr("exchange"), QStringLiteral("BINANCE")});
     parser.addOption({"symbol", tr("Symbol logiczny"), tr("symbol"), QStringLiteral("BTC/USDT")});
     parser.addOption({"venue-symbol", tr("Symbol na giełdzie"), tr("venue"),
@@ -932,40 +820,6 @@ bool Application::applyParser(const QCommandLineParser& parser) {
         datasetPath = expandPath(datasetPath);
     m_inProcessDatasetPath = datasetPath;
     m_client.setInProcessDatasetPath(m_inProcessDatasetPath);
-    if (m_inProcessHealthClient)
-        m_inProcessHealthClient->setDatasetPath(m_inProcessDatasetPath);
-
-    auto parseCandleInterval = [&](const QString& raw, const QString& sourceLabel) -> std::optional<int> {
-        const QString trimmed = raw.trimmed();
-        if (trimmed.isEmpty())
-            return std::nullopt;
-        bool ok = false;
-        const int value = trimmed.toInt(&ok);
-        if (!ok || value <= 0) {
-            qCWarning(lcAppMetrics)
-                << QStringLiteral("Nieprawidłowy interwał świec in-process (%1): %2 – używam wartości domyślnej %3 ms.")
-                       .arg(sourceLabel, trimmed)
-                       .arg(kDefaultInProcessCandleIntervalMs);
-            return std::nullopt;
-        }
-        return value;
-    };
-
-    int candleIntervalMs = kDefaultInProcessCandleIntervalMs;
-    const QString cliIntervalRaw = parser.value("transport-candle-interval-ms");
-    if (const auto parsedCli = parseCandleInterval(cliIntervalRaw, QStringLiteral("CLI")); parsedCli.has_value()) {
-        candleIntervalMs = parsedCli.value();
-    } else if (cliIntervalRaw.trimmed().isEmpty()) {
-        if (const auto envInterval = envValue(kTransportCandleIntervalEnv); envInterval.has_value()) {
-            const QString envTrimmed = envInterval->trimmed();
-            if (const auto parsedEnv = parseCandleInterval(envTrimmed, QStringLiteral("ENV")); parsedEnv.has_value()) {
-                candleIntervalMs = parsedEnv.value();
-            }
-        }
-    }
-
-    m_inProcessCandleIntervalMs = candleIntervalMs;
-    m_client.setInProcessCandleIntervalMs(m_inProcessCandleIntervalMs);
 
     QString endpoint = parser.value("endpoint");
     if (m_transportMode == TradingClient::TransportMode::Grpc) {
@@ -1249,22 +1103,14 @@ bool Application::applyParser(const QCommandLineParser& parser) {
         m_healthTlsConfig = GrpcTlsConfig{};
         m_tradingRbacRole.clear();
         m_tradingRbacScopes.clear();
-        if (parser.isSet("metrics-endpoint")
-            && parser.value("metrics-endpoint").trimmed().compare(QStringLiteral("in-process"), Qt::CaseInsensitive) != 0) {
-            qCWarning(lcAppMetrics)
-                << "Tryb in-process ignoruje --metrics-endpoint i wymusza lokalny transport 'in-process'.";
-        }
-        m_metricsEndpoint = QStringLiteral("in-process");
+        m_metricsEndpoint = parser.value("metrics-endpoint");
+        if (m_metricsEndpoint.trimmed().isEmpty())
+            m_metricsEndpoint = QStringLiteral("in-process");
         m_metricsTag = parser.value("metrics-tag");
         m_metricsEnabled = !(parser.isSet("disable-metrics") || parser.isSet("no-metrics"));
         m_metricsRbacRole.clear();
         metricsAuthToken.clear();
         metricsAuthTokenFile.clear();
-        if (parser.isSet("health-endpoint")
-            && parser.value("health-endpoint").trimmed().compare(QStringLiteral("in-process"), Qt::CaseInsensitive) != 0) {
-            qCWarning(lcAppMetrics)
-                << "Tryb in-process ignoruje --health-endpoint i korzysta z klienta 'in-process'.";
-        }
         m_healthEndpoint = QStringLiteral("in-process");
         m_healthRbacRole.clear();
         m_healthRbacScopes.clear();
@@ -1282,20 +1128,11 @@ bool Application::applyParser(const QCommandLineParser& parser) {
     m_healthAuthToken = healthAuthToken.trimmed();
     setHealthAuthTokenFile(healthAuthTokenFile);
 
-        if (m_healthController) {
-            if (m_transportMode == TradingClient::TransportMode::InProcess) {
-                if (!m_inProcessHealthClient)
-                    m_inProcessHealthClient = std::make_shared<InProcessHealthClient>();
-                m_inProcessHealthClient->setDatasetPath(m_inProcessDatasetPath);
-                m_healthController->setHealthClientForTesting(m_inProcessHealthClient);
-                m_usingInProcessHealthClient = true;
-            } else {
-            if (!m_grpcHealthClient)
-                m_grpcHealthClient = std::make_shared<HealthClient>();
-            if (m_usingInProcessHealthClient) {
-                m_healthController->setHealthClientForTesting(m_grpcHealthClient);
-            }
-            m_usingInProcessHealthClient = false;
+    if (m_healthController) {
+        if (m_transportMode == TradingClient::TransportMode::InProcess) {
+            if (!m_inProcessHealthClient)
+                m_inProcessHealthClient = std::make_shared<InProcessHealthClient>();
+            m_healthController->setHealthClientForTesting(m_inProcessHealthClient);
         }
         const QString endpointForHealth = !m_healthEndpoint.isEmpty() ? m_healthEndpoint : endpoint;
         m_healthController->setEndpoint(endpointForHealth);
@@ -5239,15 +5076,9 @@ void Application::ensureTelemetry() {
         }
         auto reporter = std::make_unique<UiTelemetryReporter>(this);
         if (m_transportMode == TradingClient::TransportMode::InProcess) {
-            if (!m_metricsClientOverride && !m_inProcessMetricsClient)
+            if (!m_inProcessMetricsClient)
                 m_inProcessMetricsClient = std::make_shared<InProcessMetricsClient>();
-            const auto desiredClient = m_metricsClientOverride ? m_metricsClientOverride
-                                                               : m_inProcessMetricsClient;
-            if (desiredClient) {
-                reporter->setMetricsClientForTesting(desiredClient);
-                m_activeMetricsClient = desiredClient;
-            }
-            m_usingInProcessMetricsClient = !m_metricsClientOverride;
+            reporter->setMetricsClientForTesting(m_inProcessMetricsClient);
         }
         m_telemetry = std::move(reporter);
     }
@@ -5262,33 +5093,19 @@ void Application::ensureTelemetry() {
     }
 
     if (auto* uiReporter = dynamic_cast<UiTelemetryReporter*>(m_telemetry.get())) {
-        std::shared_ptr<MetricsClientInterface> desiredClient;
-        bool desiredInProcessClient = false;
         if (m_transportMode == TradingClient::TransportMode::InProcess) {
-            if (m_metricsClientOverride) {
-                desiredClient = m_metricsClientOverride;
-            } else {
-                if (!m_inProcessMetricsClient)
-                    m_inProcessMetricsClient = std::make_shared<InProcessMetricsClient>();
-                desiredClient = m_inProcessMetricsClient;
-                desiredInProcessClient = true;
+            if (!m_inProcessMetricsClient)
+                m_inProcessMetricsClient = std::make_shared<InProcessMetricsClient>();
+            if (!m_usingInProcessMetricsClient) {
+                uiReporter->setMetricsClientForTesting(m_inProcessMetricsClient);
+                m_usingInProcessMetricsClient = true;
             }
-        } else {
-            if (m_metricsClientOverride) {
-                desiredClient = m_metricsClientOverride;
-            } else {
-                if (!m_grpcMetricsClient)
-                    m_grpcMetricsClient = std::make_shared<MetricsClient>();
-                desiredClient = m_grpcMetricsClient;
-            }
+        } else if (m_usingInProcessMetricsClient) {
+            if (!m_grpcMetricsClient)
+                m_grpcMetricsClient = std::make_shared<MetricsClient>();
+            uiReporter->setMetricsClientForTesting(m_grpcMetricsClient);
+            m_usingInProcessMetricsClient = false;
         }
-
-        const std::shared_ptr<MetricsClientInterface> currentClient = m_activeMetricsClient.lock();
-        if (desiredClient && desiredClient != currentClient) {
-            uiReporter->setMetricsClientForTesting(desiredClient);
-            m_activeMetricsClient = desiredClient;
-        }
-        m_usingInProcessMetricsClient = desiredInProcessClient && !m_metricsClientOverride;
         connect(uiReporter, &UiTelemetryReporter::pendingRetryCountChanged,
                 this, &Application::handleTelemetryPendingRetryCountChanged,
                 Qt::UniqueConnection);

@@ -217,7 +217,6 @@ private slots:
     void testTelemetryPendingRetryExposure();
     void testTelemetryPendingRetryResetOnReporterSwap();
     void testInProcessTransportMode();
-    void testInProcessTransportHonorsMetricsOverride();
 };
 
 class RejectingMetricsClient final : public MetricsClientInterface {
@@ -533,128 +532,26 @@ void ApplicationTelemetryTest::testInProcessTransportMode()
     QQmlApplicationEngine engine;
     Application app(engine);
 
-    QTemporaryDir datasetDir;
-    QVERIFY(datasetDir.isValid());
-    const QString datasetPath = datasetDir.filePath(QStringLiteral("trend.csv"));
-    QVERIFY(QFile::copy(QStringLiteral("data/sample_ohlcv/trend.csv"), datasetPath));
-
-    QJsonObject riskPayload = defaultRiskPayload();
-    QVERIFY(writeJsonFile(companionPath(datasetPath, QStringLiteral("risk.json")), riskPayload));
-    QJsonObject healthPayload = defaultHealthPayload();
-    QVERIFY(writeJsonFile(companionPath(datasetPath, QStringLiteral("health.json")), healthPayload));
-
-    auto reporter = std::make_unique<UiTelemetryReporter>();
-    auto metrics = std::make_shared<RecordingMetricsClient>();
-    reporter->setMetricsClientForTesting(metrics);
-    app.setMetricsClientOverrideForTesting(metrics);
-    app.setTelemetryReporter(std::move(reporter));
-
     QCommandLineParser parser;
     app.configureParser(parser);
     const QStringList args{
         QStringLiteral("test"),
         QStringLiteral("--transport-mode"), QStringLiteral("in-process"),
-        QStringLiteral("--transport-dataset"), datasetPath
+        QStringLiteral("--transport-dataset"), QStringLiteral("data/sample_ohlcv/trend.csv"),
+        QStringLiteral("--disable-metrics")
     };
-    parser.process(args);
+    parser.parse(args);
 
     QVERIFY(app.applyParser(parser));
-
     TradingClient* client = app.tradingClientForTesting();
     QVERIFY(client);
     QCOMPARE(client->transportMode(), TradingClient::TransportMode::InProcess);
     QVERIFY(!client->hasGrpcChannelForTesting());
 
-    auto* riskModel = qobject_cast<RiskStateModel*>(app.riskModel());
-    QVERIFY(riskModel);
-    QSignalSpy riskSpy(riskModel, &RiskStateModel::riskStateChanged);
-
-    auto* healthController = qobject_cast<HealthStatusController*>(app.healthController());
-    QVERIFY(healthController);
-    QSignalSpy healthSpy(healthController, &HealthStatusController::statusChanged);
-
     QSignalSpy historySpy(client, &TradingClient::historyReceived);
-
     app.start();
-
     QVERIFY(historySpy.wait(2000));
-    QVERIFY(!historySpy.isEmpty());
-    QVERIFY(riskSpy.wait(2000));
-    QVERIFY(riskModel->hasData());
-    QVERIFY(qAbs(riskModel->portfolioValue() - 25000.0) < 1.0);
-    QVERIFY(healthSpy.wait(2000));
-    QVERIFY(healthController->healthy());
-    QCOMPARE(healthController->version(), QStringLiteral("in-process"));
-
-    riskSpy.clear();
-    riskPayload.insert(QStringLiteral("portfolioValue"), 31000.0);
-    riskPayload.insert(QStringLiteral("currentDrawdown"), 0.02);
-    riskPayload.insert(QStringLiteral("generatedAt"), QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs));
-    QVERIFY(writeJsonFile(companionPath(datasetPath, QStringLiteral("risk.json")), riskPayload));
-    client->refreshRiskState();
-    QVERIFY(riskSpy.wait(2000));
-    QVERIFY(qAbs(riskModel->portfolioValue() - 31000.0) < 1.0);
-    QVERIFY(qAbs(riskModel->currentDrawdown() - 0.02) < 1e-6);
-
-    healthSpy.clear();
-    healthPayload.insert(QStringLiteral("version"), QStringLiteral("in-process-2"));
-    healthPayload.insert(QStringLiteral("gitCommit"), QStringLiteral("abc1234"));
-    healthPayload.insert(QStringLiteral("startedAt"),
-                         QDateTime::currentDateTimeUtc().addSecs(-120).toString(Qt::ISODateWithMs));
-    QVERIFY(writeJsonFile(companionPath(datasetPath, QStringLiteral("health.json")), healthPayload));
-    healthController->refresh();
-    QVERIFY(healthSpy.wait(2000));
-    QCOMPARE(healthController->version(), QStringLiteral("in-process-2"));
-    QCOMPARE(healthController->gitCommit(), QStringLiteral("abc1234"));
-
-    app.simulateFrameIntervalForTesting(1.0 / 60.0);
-    QTRY_VERIFY_WITH_TIMEOUT(!metrics->snapshots().empty(), 2000);
-    const auto& snapshot = metrics->snapshots().back();
-    QVERIFY(snapshot.fps() > 0.0);
-    QVERIFY(snapshot.cpu_utilization() >= 0.0);
-
-    historySpy.clear();
-    app.setInProcessDatasetPathForTesting(datasetDir.filePath(QStringLiteral("trend_missing.csv")));
-    QVERIFY(historySpy.wait(3000));
     QVERIFY(historySpy.count() > 0);
-
-    app.stop();
-}
-
-void ApplicationTelemetryTest::testInProcessTransportHonorsMetricsOverride()
-{
-    QQmlApplicationEngine engine;
-    Application app(engine);
-
-    QTemporaryDir datasetDir;
-    QVERIFY(datasetDir.isValid());
-    const QString datasetPath = datasetDir.filePath(QStringLiteral("trend.csv"));
-    QVERIFY(QFile::copy(QStringLiteral("data/sample_ohlcv/trend.csv"), datasetPath));
-    QVERIFY(writeJsonFile(companionPath(datasetPath, QStringLiteral("risk.json")), defaultRiskPayload()));
-    QVERIFY(writeJsonFile(companionPath(datasetPath, QStringLiteral("health.json")), defaultHealthPayload()));
-
-    auto reporter = std::make_unique<UiTelemetryReporter>();
-    auto metrics = std::make_shared<RecordingMetricsClient>();
-    reporter->setMetricsClientForTesting(metrics);
-    app.setMetricsClientOverrideForTesting(metrics);
-    app.setTelemetryReporter(std::move(reporter));
-
-    QCommandLineParser parser;
-    app.configureParser(parser);
-    const QStringList args{
-        QStringLiteral("test"),
-        QStringLiteral("--transport-mode"), QStringLiteral("in-process"),
-        QStringLiteral("--transport-dataset"), datasetPath
-    };
-    parser.process(args);
-    QVERIFY(app.applyParser(parser));
-
-    app.start();
-
-    QTRY_VERIFY_WITH_TIMEOUT(!metrics->snapshots().empty(), 2000);
-    QVERIFY(app.activeMetricsClientForTesting() == metrics);
-    QVERIFY(!app.usingInProcessMetricsClientForTesting());
-
     app.stop();
 }
 
