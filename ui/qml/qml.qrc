@@ -11,6 +11,7 @@
         <file>components/LicenseActivationOverlay.qml</file>
         <file>components/AdminDialog.qml</file>
         <file>components/AdminPanel.qml</file>
+        <file>components/LiveRiskDashboard.qml</file>
         <file>components/AlertCenterPanel.qml</file>
         <file>components/DecisionAlertLogPanel.qml</file>
         <file>components/ReportBrowser.qml</file>

@@ -41,7 +41,12 @@ from bot_core.exchanges.base import (
 )
 from bot_core.exchanges.streaming import LocalLongPollStream, StreamBatch
 from bot_core.market_intel import MarketIntelAggregator, MarketIntelQuery, MarketIntelSnapshot
-from bot_core.portfolio import PortfolioDecisionLog, PortfolioGovernor
+from bot_core.portfolio import (
+    PortfolioDecision,
+    PortfolioDecisionLog,
+    PortfolioGovernor,
+    StrategyPortfolioGovernor,
+)
 from bot_core.runtime.bootstrap import BootstrapContext, bootstrap_environment
 from bot_core.security.guards import (
     LicenseCapabilityError,
@@ -3044,6 +3049,42 @@ def build_multi_strategy_runtime(
             metadata_provider=_metadata_provider,
         )
         scheduler.attach_portfolio_coordinator(portfolio_coordinator)
+
+        dynamic_policy_cfg = getattr(scheduler_cfg, "dynamic_capital_policy", None)
+        if dynamic_policy_cfg and isinstance(governor, StrategyPortfolioGovernor):
+            label = None
+            if isinstance(dynamic_policy_cfg, Mapping):
+                label = dynamic_policy_cfg.get("label")
+            elif hasattr(dynamic_policy_cfg, "label"):
+                label = getattr(dynamic_policy_cfg, "label")
+            label_text = str(label or "governor_dynamic")
+
+            def _sync_capital_policy(_decision: PortfolioDecision) -> None:
+                weights = governor.current_weights()
+                if not weights:
+                    return
+                policy = FixedWeightAllocation(dict(weights), label=label_text)
+                snapshot_builder = getattr(governor, "dynamic_policy_snapshot", None)
+                if callable(snapshot_builder):
+                    try:
+                        policy.metadata = snapshot_builder()
+                    except Exception:  # pragma: no cover - diagnostyka metadanych
+                        _LOGGER.debug(
+                            "PortfolioGovernor: nie udało się zbudować migawki dynamicznej polityki",
+                            exc_info=True,
+                        )
+                scheduler.set_capital_policy(policy)
+
+            portfolio_coordinator.set_capital_policy_listener(_sync_capital_policy)
+
+        if portfolio_coordinator is not None and bootstrap_ctx.tco_reporter is not None:
+            reporter = bootstrap_ctx.tco_reporter
+            consumer = getattr(governor, "update_costs_from_report", None)
+            if callable(consumer):
+                portfolio_coordinator.set_tco_report_hooks(
+                    provider=lambda: reporter.build_report(),
+                    consumer=consumer,
+                )
 
     for schedule in scheduler_cfg.schedules:
         strategy = strategies.get(schedule.strategy)

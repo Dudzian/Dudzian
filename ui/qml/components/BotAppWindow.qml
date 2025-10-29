@@ -214,6 +214,28 @@ ApplicationWindow {
                 }
 
                 Tab {
+                    title: qsTr("Ryzyko live")
+
+                    Flickable {
+                        anchors.fill: parent
+                        contentWidth: Math.max(width, dashboard.implicitWidth)
+                        contentHeight: Math.max(height, dashboard.implicitHeight)
+                        clip: true
+                        boundsBehavior: Flickable.StopAtBounds
+                        ScrollBar.vertical: ScrollBar {}
+
+                        LiveRiskDashboard {
+                            id: dashboard
+                            width: Math.max(parent.width, implicitWidth)
+                            riskModel: riskModel
+                            riskHistoryModel: riskHistoryModel
+                            capitalAllocationModel: appController && appController.capitalAllocationModel ? appController.capitalAllocationModel : null
+                            capitalAllocation: appController && appController.capitalAllocationSnapshot ? appController.capitalAllocationSnapshot : []
+                        }
+                    }
+                }
+
+                Tab {
                     title: qsTr("Moduły")
 
                     ModuleBrowser {

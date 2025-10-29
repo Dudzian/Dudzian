@@ -2,10 +2,11 @@
 from __future__ import annotations
 
 import json
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Mapping, Sequence
-import sys
+from types import SimpleNamespace
+from typing import Callable, Mapping, Sequence
 
 import pytest
 
@@ -20,6 +21,7 @@ from bot_core.config.models import (
 from bot_core.decision import DecisionCandidate, DecisionEvaluation, DecisionOrchestrator
 from bot_core.decision.models import ModelSelectionDetail, ModelSelectionMetadata
 from bot_core.exchanges.base import AccountSnapshot, OrderRequest
+from bot_core.exchanges.manager import ExchangeManager
 from bot_core.risk.engine import InMemoryRiskRepository, ThresholdRiskEngine
 from bot_core.risk.events import RiskDecisionLog
 from bot_core.risk.repository import FileRiskRepository
@@ -1721,3 +1723,118 @@ def test_decision_model_outcomes_empty_without_orchestrator(
     engine.register_profile(manual_profile)
 
     assert engine.decision_model_outcomes() == {}
+
+
+def test_risk_engine_streaming_updates(manual_profile: ManualProfile) -> None:
+    clock_value = datetime(2024, 1, 2, 9, 0, 0, tzinfo=timezone.utc)
+    engine = ThresholdRiskEngine(clock=lambda: clock_value)
+    engine.register_profile(manual_profile)
+
+    manager = ExchangeManager()
+    engine.attach_exchange_manager(manager, default_profile=manual_profile.name)
+
+    manager.publish_event(
+        "ORDER_FILLED",
+        {
+            "symbol": "BTCUSDT",
+            "side": "buy",
+            "quantity": 0.5,
+            "price": 20_000.0,
+            "ts": clock_value.timestamp(),
+        },
+    )
+
+    snapshot = engine.snapshot_state(manual_profile.name)
+    assert snapshot is not None
+    assert snapshot["positions"]["BTCUSDT"]["notional"] == pytest.approx(10_000.0)
+
+    manager.publish_event(
+        "ACCOUNT_MARK",
+        {
+            "snapshot": {
+                "total_equity": 11_500.0,
+                "available_margin": 11_000.0,
+                "maintenance_margin": 500.0,
+            },
+            "positions": [
+                {
+                    "symbol": "BTCUSDT",
+                    "side": "long",
+                    "notional": 9_500.0,
+                }
+            ],
+            "timestamp": clock_value.isoformat(),
+        },
+    )
+
+    state = engine._states[manual_profile.name]
+    assert state.last_equity == pytest.approx(11_500.0)
+    assert state.positions["BTCUSDT"].notional == pytest.approx(9_500.0)
+
+    manager.publish_event(
+        "ACCOUNT_MARK",
+        {
+            "snapshot": {
+                "total_equity": 8_000.0,
+                "available_margin": 7_500.0,
+                "maintenance_margin": 400.0,
+            },
+            "positions": [],
+            "timestamp": clock_value.isoformat(),
+        },
+    )
+
+    assert engine._states[manual_profile.name].force_liquidation is True
+
+
+def test_risk_engine_attach_exchange_manager_requests_initial_mark(
+    manual_profile: ManualProfile,
+) -> None:
+    ts = datetime(2024, 4, 1, 12, 0, 0, tzinfo=timezone.utc)
+    engine = ThresholdRiskEngine(clock=lambda: ts)
+    engine.register_profile(manual_profile)
+
+    class _StubEventBus:
+        def __init__(self) -> None:
+            self._handlers: dict[str, list[Callable[[SimpleNamespace], None]]] = {}
+
+        def subscribe(self, event_type: str, handler: Callable[[SimpleNamespace], None]) -> None:
+            self._handlers.setdefault(event_type, []).append(handler)
+
+        def publish(self, event_type: str, payload: Mapping[str, object]) -> None:
+            for handler in self._handlers.get(event_type, []):
+                handler(SimpleNamespace(payload=payload))
+
+    class _StubManager:
+        def __init__(self) -> None:
+            self.event_bus = _StubEventBus()
+            self.fetch_account_snapshot_calls = 0
+
+        def fetch_account_snapshot(self) -> AccountSnapshot:
+            self.fetch_account_snapshot_calls += 1
+            payload = {
+                "snapshot": {
+                    "total_equity": 12_500.0,
+                    "available_margin": 12_000.0,
+                    "maintenance_margin": 500.0,
+                },
+                "positions": [],
+                "timestamp": ts.isoformat(),
+            }
+            self.event_bus.publish("ACCOUNT_MARK", payload)
+            return AccountSnapshot(
+                balances={"USDT": 12_500.0},
+                total_equity=12_500.0,
+                available_margin=12_000.0,
+                maintenance_margin=500.0,
+            )
+
+    stub_manager = _StubManager()
+    engine.attach_exchange_manager(
+        stub_manager,
+        default_profile=manual_profile.name,
+    )
+
+    assert stub_manager.fetch_account_snapshot_calls == 1
+    state = engine._states[manual_profile.name]
+    assert state.last_equity == pytest.approx(12_500.0)

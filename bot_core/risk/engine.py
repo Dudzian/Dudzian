@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from time import perf_counter
 from typing import Any, Callable, Dict, Iterable, Mapping, MutableMapping, Sequence
 
@@ -37,6 +37,9 @@ except Exception:  # pragma: no cover - decyzje mogą nie być dostępne
     RiskSnapshot = None  # type: ignore
 
 _LOGGER = logging.getLogger(__name__)
+
+ORDER_FILLED_EVENT = "ORDER_FILLED"
+ACCOUNT_MARK_EVENT = "ACCOUNT_MARK"
 
 
 def _normalize_position_side(side: str, *, default: str = "long") -> str:
@@ -207,6 +210,10 @@ class ThresholdRiskEngine(RiskEngine):
             str, float | int | None
         ] = self._init_decision_orchestrator_activity()
         self._decision_orchestrator_errors: MutableMapping[str, int] = {}
+        self._exchange_manager: Any | None = None
+        self._exchange_profile_hint: str | None = None
+        self._profile_resolver: Callable[[Mapping[str, Any]], str | None] | None = None
+        self._default_profile: str | None = None
 
     def register_profile(self, profile: RiskProfile) -> None:
         self._profiles[profile.name] = profile
@@ -218,6 +225,53 @@ class ThresholdRiskEngine(RiskEngine):
         else:
             self._states[profile.name] = RiskState.from_mapping(profile.name, state)
         _LOGGER.info("Zarejestrowano profil ryzyka %s", profile.name)
+        if self._default_profile is None:
+            self._default_profile = profile.name
+
+    def attach_exchange_manager(
+        self,
+        manager: Any,
+        *,
+        default_profile: str | None = None,
+        profile_resolver: Callable[[Mapping[str, Any]], str | None] | None = None,
+        initial_mark: bool = True,
+    ) -> None:
+        """Podłącza ExchangeManager do strumieniowych aktualizacji stanu."""
+
+        if manager is None:
+            raise ValueError("exchange manager nie może być None")
+        self._exchange_manager = manager
+        if default_profile:
+            self._exchange_profile_hint = default_profile
+        elif default_profile is None and self._default_profile:
+            self._exchange_profile_hint = self._default_profile
+        self._profile_resolver = profile_resolver
+
+        attach = getattr(manager, "on", None)
+        if callable(attach):
+            attach(ORDER_FILLED_EVENT, self._handle_exchange_fill)
+            attach(ACCOUNT_MARK_EVENT, self._handle_account_mark)
+            return
+
+        bus = getattr(manager, "event_bus", None)
+        subscribe = getattr(bus, "subscribe", None)
+        if callable(subscribe):
+            subscribe(ORDER_FILLED_EVENT, self._handle_exchange_fill)
+            subscribe(ACCOUNT_MARK_EVENT, self._handle_account_mark)
+        else:
+            raise TypeError("Przekazany ExchangeManager nie udostępnia magistrali zdarzeń")
+
+        if initial_mark:
+            fetch_snapshot = getattr(manager, "fetch_account_snapshot", None)
+            if callable(fetch_snapshot):
+                try:
+                    fetch_snapshot()
+                except Exception:  # pragma: no cover - diagnostyka adaptera
+                    _LOGGER.exception(
+                        "Nie udało się pobrać snapshotu konta podczas podłączania ExchangeManagera"
+                    )
+
+        return
 
     def _init_decision_orchestrator_activity(
         self,
@@ -619,6 +673,60 @@ class ThresholdRiskEngine(RiskEngine):
         state.update_position(symbol, side=normalized_side, notional=max(0.0, position_value))
         self._persist_state(profile_name)
 
+    def on_mark_to_market(
+        self,
+        *,
+        profile_name: str,
+        equity: float,
+        positions: Mapping[str, Mapping[str, object]] | Sequence[Mapping[str, object]] | None = None,
+        realized_pnl: float | None = None,
+        timestamp: datetime | None = None,
+        metadata: Mapping[str, object] | None = None,
+    ) -> None:
+        profile = self._profiles.get(profile_name)
+        if profile is None:
+            raise KeyError(f"Profil ryzyka {profile_name} nie został zarejestrowany")
+
+        state = self._states.get(profile_name)
+        if state is None:
+            raise KeyError(f"Brak stanu ryzyka dla profilu {profile_name}")
+
+        now = timestamp or self._clock()
+        current_day = now.date()
+        if state.current_day != current_day:
+            state.reset_for_new_day(equity=equity, day=current_day)
+
+        state.update_peak_equity(equity)
+        state.last_equity = equity
+
+        if realized_pnl is not None:
+            state.daily_realized_pnl = float(realized_pnl)
+
+        if positions is not None:
+            normalized_positions = self._normalize_positions_payload(positions)
+            known_symbols = set(state.positions.keys())
+            incoming_symbols = set(normalized_positions.keys())
+            for symbol, payload in normalized_positions.items():
+                state.update_position(
+                    symbol,
+                    side=payload.get("side", "long"),
+                    notional=max(0.0, float(payload.get("notional", 0.0))),
+                )
+            for symbol in known_symbols - incoming_symbols:
+                state.positions.pop(symbol, None)
+
+        drawdown = state.drawdown_pct(equity)
+        daily_loss = state.daily_loss_pct()
+        previous_liquidation = state.force_liquidation
+        if profile.drawdown_limit() > 0 and drawdown >= profile.drawdown_limit():
+            state.force_liquidation = True
+        elif profile.daily_loss_limit() > 0 and daily_loss >= profile.daily_loss_limit():
+            state.force_liquidation = True
+        elif not previous_liquidation:
+            state.force_liquidation = False
+
+        self._persist_state(profile_name)
+
     def snapshot_state(self, profile_name: str) -> Mapping[str, object] | None:
         state = self._states.get(profile_name)
         if state is None:
@@ -710,6 +818,128 @@ class ThresholdRiskEngine(RiskEngine):
             self._decision_orchestrator_errors = {}
 
         return snapshot
+
+    def _handle_exchange_fill(self, event: Any) -> None:
+        payload = getattr(event, "payload", None)
+        if not isinstance(payload, Mapping):
+            return
+        profile_name = self._resolve_profile_from_payload(payload)
+        if profile_name is None:
+            return
+        symbol = str(payload.get("symbol") or payload.get("instrument") or "")
+        if not symbol:
+            return
+        side = str(payload.get("side") or payload.get("direction") or "buy")
+        try:
+            quantity = abs(float(payload.get("quantity") or payload.get("filled_quantity") or 0.0))
+        except (TypeError, ValueError):
+            quantity = 0.0
+        try:
+            price = float(payload.get("price") or payload.get("avg_price") or payload.get("reference_price") or 0.0)
+        except (TypeError, ValueError):
+            price = 0.0
+        position_value = abs(quantity * price)
+        pnl_value = payload.get("pnl") or payload.get("realized_pnl") or payload.get("realizedPnl")
+        try:
+            pnl = float(pnl_value) if pnl_value is not None else 0.0
+        except (TypeError, ValueError):
+            pnl = 0.0
+        ts_value = payload.get("ts") or payload.get("timestamp")
+        timestamp: datetime | None = None
+        if isinstance(ts_value, (int, float)):
+            timestamp = datetime.fromtimestamp(float(ts_value), tz=timezone.utc)
+        elif isinstance(ts_value, str):
+            try:
+                timestamp = datetime.fromisoformat(ts_value)
+            except ValueError:
+                timestamp = None
+        try:
+            self.on_fill(
+                profile_name=profile_name,
+                symbol=symbol,
+                side=side,
+                position_value=position_value,
+                pnl=pnl,
+                timestamp=timestamp,
+            )
+        except Exception:  # pragma: no cover - log diagnostyczny
+            _LOGGER.exception("Nie udało się zaktualizować stanu ryzyka po fillu")
+
+    def _handle_account_mark(self, event: Any) -> None:
+        payload = getattr(event, "payload", None)
+        if not isinstance(payload, Mapping):
+            return
+        profile_name = self._resolve_profile_from_payload(payload)
+        if profile_name is None:
+            return
+        snapshot_payload = payload.get("snapshot") if isinstance(payload.get("snapshot"), Mapping) else payload
+        try:
+            equity = float(snapshot_payload.get("total_equity", 0.0))  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            equity = 0.0
+        if equity <= 0 and profile_name not in self._states:
+            return
+        positions_payload = payload.get("positions")
+        realized_pnl_value = snapshot_payload.get("realized_pnl") or snapshot_payload.get("daily_realized_pnl")
+        try:
+            realized_pnl = float(realized_pnl_value) if realized_pnl_value is not None else None
+        except (TypeError, ValueError):
+            realized_pnl = None
+        ts_value = payload.get("timestamp")
+        timestamp: datetime | None = None
+        if isinstance(ts_value, str):
+            try:
+                timestamp = datetime.fromisoformat(ts_value)
+            except ValueError:
+                timestamp = None
+        elif isinstance(ts_value, (int, float)):
+            timestamp = datetime.fromtimestamp(float(ts_value), tz=timezone.utc)
+        try:
+            self.on_mark_to_market(
+                profile_name=profile_name,
+                equity=equity,
+                positions=positions_payload if isinstance(positions_payload, (Mapping, Sequence)) else None,
+                realized_pnl=realized_pnl,
+                timestamp=timestamp,
+                metadata={"mode": payload.get("mode")} if payload.get("mode") else None,
+            )
+        except Exception:  # pragma: no cover - log diagnostyczny
+            _LOGGER.exception("Nie udało się zaktualizować stanu ryzyka po mark-to-market")
+
+    def _normalize_positions_payload(
+        self,
+        positions: Mapping[str, Mapping[str, object]] | Sequence[Mapping[str, object]],
+    ) -> Mapping[str, Mapping[str, object]]:
+        if isinstance(positions, Mapping):
+            normalized: dict[str, Mapping[str, object]] = {}
+            for symbol, payload in positions.items():
+                if isinstance(payload, Mapping):
+                    normalized[str(symbol)] = payload
+            return normalized
+        normalized = {}
+        for payload in positions:
+            if not isinstance(payload, Mapping):
+                continue
+            symbol = payload.get("symbol")
+            if not symbol:
+                continue
+            normalized[str(symbol)] = payload
+        return normalized
+
+    def _resolve_profile_from_payload(self, payload: Mapping[str, Any]) -> str | None:
+        if self._profile_resolver is not None:
+            try:
+                resolved = self._profile_resolver(payload)
+            except Exception:  # pragma: no cover - log diagnostyczny
+                _LOGGER.exception("Profile resolver zwrócił wyjątek")
+            else:
+                if resolved:
+                    return resolved
+        for key in ("risk_profile", "profile", "profile_name", "riskProfile"):
+            value = payload.get(key)
+            if isinstance(value, str) and value:
+                return value
+        return self._exchange_profile_hint or self._default_profile
 
     def decision_model_outcomes(self, *, reset: bool = False) -> Mapping[str, Mapping[str, int]]:
         """Zwraca agregację przyjęć i odrzuceń per model DecisionOrchestratora."""
