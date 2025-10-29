@@ -1,0 +1,34 @@
+# Konfiguracja ExchangeManager dla Bitstamp.
+
+paper:
+  description: Tryb paper dla rynku spot Bitstamp.
+  exchange_manager:
+    mode: paper
+    paper_variant: spot
+    paper_initial_cash: 25000
+    paper_cash_asset: USD
+  credentials:
+    api_key: null
+    secret: null
+
+testnet:
+  description: Demo Bitstamp (sandbox API).
+  exchange_manager:
+    mode: spot
+    testnet: true
+  credentials:
+    api_key: ${BITSTAMP_SANDBOX_KEY}
+    secret: ${BITSTAMP_SANDBOX_SECRET}
+
+live:
+  description: Produkcyjny handel spot Bitstamp.
+  exchange_manager:
+    mode: spot
+    testnet: false
+    watchdog:
+      retry_policy:
+        max_attempts: 3
+        base_delay: 1.0
+  credentials:
+    api_key: ${BITSTAMP_LIVE_KEY}
+    secret: ${BITSTAMP_LIVE_SECRET}

@@ -1,0 +1,41 @@
+# Konfiguracja ExchangeManager dla MEXC.
+
+paper:
+  description: Papierowy handel spot z symulatorem MEXC.
+  exchange_manager:
+    mode: paper
+    paper_variant: spot
+    paper_initial_cash: 15000
+    paper_cash_asset: USDT
+  credentials:
+    api_key: null
+    secret: null
+
+testnet:
+  description: Testnet MEXC z aktywnym sandbox mode CCXT.
+  exchange_manager:
+    mode: spot
+    testnet: true
+    watchdog:
+      retry_policy:
+        max_attempts: 5
+        base_delay: 0.5
+  credentials:
+    api_key: ${MEXC_TESTNET_KEY}
+    secret: ${MEXC_TESTNET_SECRET}
+
+live:
+  description: Produkcyjny handel spot na MEXC.
+  exchange_manager:
+    mode: spot
+    testnet: false
+    watchdog:
+      retry_policy:
+        max_attempts: 3
+        base_delay: 1.0
+      circuit_breaker:
+        failure_threshold: 5
+        recovery_time_seconds: 60
+  credentials:
+    api_key: ${MEXC_LIVE_KEY}
+    secret: ${MEXC_LIVE_SECRET}

@@ -1,0 +1,45 @@
+# Konfiguracja środowisk ExchangeManager dla giełdy Binance.
+
+paper:
+  description: Paper trading symulujący rynek spot Binance.
+  exchange_manager:
+    mode: paper
+    paper_variant: spot
+    paper_initial_cash: 10000
+    paper_cash_asset: USDT
+    paper_fee_rate: 0.001
+  credentials:
+    api_key: null
+    secret: null
+
+testnet:
+  description: Testnet CCXT z włączonym sandbox mode.
+  exchange_manager:
+    mode: margin
+    testnet: true
+    watchdog:
+      retry_policy:
+        max_attempts: 5
+        base_delay: 0.5
+  credentials:
+    api_key: ${BINANCE_TESTNET_KEY}
+    secret: ${BINANCE_TESTNET_SECRET}
+
+live:
+  description: Konfiguracja produkcyjna Binance margin.
+  exchange_manager:
+    mode: margin
+    testnet: false
+    watchdog:
+      retry_policy:
+        max_attempts: 3
+        base_delay: 1.0
+      circuit_breaker:
+        failure_threshold: 5
+        recovery_time_seconds: 60
+    native_adapter:
+      settings:
+        margin_type: cross
+  credentials:
+    api_key: ${BINANCE_LIVE_KEY}
+    secret: ${BINANCE_LIVE_SECRET}

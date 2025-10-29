@@ -1,0 +1,34 @@
+# Konfiguracja ExchangeManager dla Huobi.
+
+paper:
+  description: Symulator paper Huobi.
+  exchange_manager:
+    mode: paper
+    paper_variant: spot
+    paper_initial_cash: 20000
+    paper_cash_asset: USDT
+  credentials:
+    api_key: null
+    secret: null
+
+testnet:
+  description: Huobi testnet API.
+  exchange_manager:
+    mode: spot
+    testnet: true
+  credentials:
+    api_key: ${HUOBI_TESTNET_KEY}
+    secret: ${HUOBI_TESTNET_SECRET}
+
+live:
+  description: Handel spot Huobi.
+  exchange_manager:
+    mode: spot
+    testnet: false
+    watchdog:
+      retry_policy:
+        max_attempts: 4
+        base_delay: 1.0
+  credentials:
+    api_key: ${HUOBI_LIVE_KEY}
+    secret: ${HUOBI_LIVE_SECRET}

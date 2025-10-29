@@ -101,6 +101,10 @@ class _NativeAdapterRegistration:
 _NATIVE_ADAPTER_REGISTRY: Dict[Tuple[Mode, str], _NativeAdapterRegistration] = {}
 _DYNAMIC_ADAPTER_KEYS: set[Tuple[Mode, str]] = set()
 
+_EXCHANGE_PROFILE_CACHE: Dict[tuple[str, Path], Mapping[str, Any]] = {}
+_REQUIRED_PROFILE_NAMES: tuple[str, ...] = ("paper", "testnet", "live")
+_SUPPORTED_MANAGER_MODES: frozenset[str] = frozenset({"paper", "spot", "margin", "futures"})
+
 
 class _LegacyAdapterMapping(MutableMapping[str, Any]):
     """Compatybilna z wcześniejszym API mapa natywnych adapterów."""
@@ -245,6 +249,143 @@ def _clear_dynamic_native_adapters() -> None:
             continue
         _NATIVE_ADAPTER_REGISTRY.pop(key, None)
     _DYNAMIC_ADAPTER_KEYS.clear()
+
+
+def _resolve_exchange_config_path(
+    exchange_id: str,
+    *,
+    config_dir: str | os.PathLike[str] | None = None,
+) -> Path:
+    normalized = (exchange_id or "").strip().lower()
+    if not normalized:
+        raise ValueError("exchange_id nie może być pusty")
+    if config_dir is not None:
+        base_dir = Path(config_dir).expanduser().resolve()
+    else:
+        override = os.environ.get("BOT_CORE_EXCHANGE_CONFIG_DIR")
+        if override:
+            base_dir = Path(override).expanduser().resolve()
+        else:
+            base_dir = Path(__file__).resolve().parents[2] / "config" / "exchanges"
+    return base_dir / f"{normalized}.yaml"
+
+
+def _load_exchange_profiles(
+    exchange_id: str,
+    *,
+    config_dir: str | os.PathLike[str] | None = None,
+) -> Mapping[str, Any]:
+    path = _resolve_exchange_config_path(exchange_id, config_dir=config_dir)
+    cache_key = (exchange_id.strip().lower(), path)
+    cached = _EXCHANGE_PROFILE_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+    try:
+        text = path.read_text(encoding="utf-8")
+    except FileNotFoundError as exc:
+        raise FileNotFoundError(f"Nie znaleziono konfiguracji giełdy: {path}") from exc
+    data = yaml.safe_load(text) or {}
+    if not isinstance(data, Mapping):
+        raise ValueError(f"Plik konfiguracji {path} musi zawierać mapę profili")
+    normalized: dict[str, Any] = {}
+    for key, value in data.items():
+        if not isinstance(value, Mapping):
+            continue
+        normalized[str(key).strip().lower()] = value
+    _validate_exchange_profiles(exchange_id, path, normalized)
+    _EXCHANGE_PROFILE_CACHE[cache_key] = normalized
+    return normalized
+
+
+def _validate_exchange_profiles(
+    exchange_id: str,
+    path: Path,
+    profiles: Mapping[str, Mapping[str, Any]],
+) -> None:
+    missing = [name for name in _REQUIRED_PROFILE_NAMES if name not in profiles]
+    if missing:
+        raise ValueError(
+            "Konfiguracja %s dla giełdy %s nie posiada profili: %s (wymagane: %s)"
+            % (
+                path,
+                exchange_id,
+                ", ".join(sorted(missing)),
+                ", ".join(_REQUIRED_PROFILE_NAMES),
+            ),
+        )
+
+    for name in _REQUIRED_PROFILE_NAMES:
+        profile = profiles.get(name)
+        if not isinstance(profile, Mapping):
+            raise ValueError(
+                f"Profil '{name}' w konfiguracji {path} musi być słownikiem ustawień.",
+            )
+
+        manager_cfg = profile.get("exchange_manager")
+        if not isinstance(manager_cfg, Mapping):
+            raise ValueError(
+                f"Profil '{name}' w konfiguracji {path} wymaga sekcji 'exchange_manager'.",
+            )
+
+        raw_mode = manager_cfg.get("mode")
+        mode_value = str(raw_mode or "").strip().lower()
+        if mode_value not in _SUPPORTED_MANAGER_MODES:
+            raise ValueError(
+                "Profil '%s' w konfiguracji %s zawiera nieobsługiwany tryb '%s'. Dozwolone: %s"
+                % (name, path, raw_mode, ", ".join(sorted(_SUPPORTED_MANAGER_MODES))),
+            )
+
+        if name == "paper" and mode_value != "paper":
+            raise ValueError(
+                f"Profil 'paper' w konfiguracji {path} musi mieć mode ustawiony na 'paper'.",
+            )
+
+        if name != "paper":
+            if mode_value == "paper":
+                raise ValueError(
+                    f"Profil '{name}' w konfiguracji {path} nie może używać trybu 'paper'.",
+                )
+            testnet_flag = manager_cfg.get("testnet")
+            if not isinstance(testnet_flag, bool):
+                raise ValueError(
+                    f"Profil '{name}' w konfiguracji {path} wymaga boolowskiego pola 'testnet'.",
+                )
+
+        credentials_cfg = profile.get("credentials")
+        if not isinstance(credentials_cfg, Mapping):
+            raise ValueError(
+                f"Profil '{name}' w konfiguracji {path} wymaga sekcji 'credentials'.",
+            )
+        for required_key in ("api_key", "secret"):
+            if required_key not in credentials_cfg:
+                raise ValueError(
+                    "Profil '%s' w konfiguracji %s wymaga klucza credentials.%s"
+                    % (name, path, required_key),
+                )
+
+
+def _deep_merge(base: Mapping[str, Any], overrides: Mapping[str, Any]) -> dict[str, Any]:
+    merged: dict[str, Any] = {}
+    for key, value in base.items():
+        merged[key] = value
+    for key, value in overrides.items():
+        existing = merged.get(key)
+        if isinstance(existing, Mapping) and isinstance(value, Mapping):
+            merged[key] = _deep_merge(existing, value)
+        else:
+            merged[key] = value
+    return merged
+
+
+def _expand_env_values(payload: Any) -> Any:
+    if isinstance(payload, str):
+        return os.path.expandvars(payload)
+    if isinstance(payload, Mapping):
+        return {key: _expand_env_values(value) for key, value in payload.items()}
+    if isinstance(payload, (list, tuple, set)):
+        expanded = [_expand_env_values(item) for item in payload]
+        return type(payload)(expanded)  # type: ignore[call-arg]
+    return payload
 
 
 def _load_raw_exchange_adapters(candidate: Path) -> Mapping[str, Any] | None:
@@ -944,6 +1085,8 @@ class ExchangeManager:
 
         log.info("ExchangeManager initialized (bot_core)")
         self._network_error_counts: Counter[str] = Counter()
+        self._environment_profile: Dict[str, Any] | None = None
+        self._environment_profile_name: str | None = None
 
     def set_mode(
         self,
@@ -1094,6 +1237,126 @@ class ExchangeManager:
             kwargs["retry_exceptions"] = tuple(normalized)
         self._watchdog = Watchdog(**kwargs)
         self._native_adapter = None
+
+    # ------------------------------------------------------------------
+    # Environment profiles
+    # ------------------------------------------------------------------
+    def load_environment_profile(
+        self,
+        name: str,
+        *,
+        exchange: str | None = None,
+        config_dir: str | os.PathLike[str] | None = None,
+    ) -> Mapping[str, Any]:
+        profiles = _load_exchange_profiles(exchange or self.exchange_id, config_dir=config_dir)
+        key = (name or "").strip().lower()
+        if not key:
+            raise ValueError("Nazwa profilu środowiska nie może być pusta")
+        profile = profiles.get(key)
+        if profile is None:
+            raise KeyError(f"Nie znaleziono profilu '{key}' dla giełdy {self.exchange_id}")
+        return profile
+
+    def apply_environment_profile(
+        self,
+        name: str,
+        *,
+        exchange: str | None = None,
+        config_dir: str | os.PathLike[str] | None = None,
+        overrides: Mapping[str, Any] | None = None,
+    ) -> None:
+        profile = dict(self.load_environment_profile(name, exchange=exchange, config_dir=config_dir))
+        if overrides:
+            profile = _deep_merge(profile, overrides)
+        expanded = _expand_env_values(profile)
+        manager_cfg = expanded.get("exchange_manager")
+        if isinstance(manager_cfg, Mapping):
+            self._apply_manager_profile(manager_cfg)
+        credentials_cfg = expanded.get("credentials")
+        if isinstance(credentials_cfg, Mapping):
+            self.set_credentials(
+                credentials_cfg.get("api_key"),
+                credentials_cfg.get("secret"),
+                passphrase=credentials_cfg.get("passphrase"),
+            )
+        self._environment_profile = {key: value for key, value in expanded.items() if key != "credentials"}
+        self._environment_profile_name = (name or "").strip().lower()
+
+    def describe_environment_profile(self) -> Mapping[str, Any] | None:
+        if self._environment_profile is None:
+            return None
+        description = dict(self._environment_profile)
+        if self._environment_profile_name:
+            description.setdefault("name", self._environment_profile_name)
+        return description
+
+    def _apply_manager_profile(self, config: Mapping[str, Any]) -> None:
+        mode_value = str(config.get("mode") or "").strip().lower()
+        testnet = bool(config.get("testnet", False))
+        if mode_value == "paper":
+            self.set_mode(paper=True)
+        elif mode_value == "margin":
+            self.set_mode(margin=True, testnet=testnet)
+        elif mode_value == "futures":
+            self.set_mode(futures=True, testnet=testnet)
+        elif mode_value == "spot":
+            self.set_mode(spot=True, testnet=testnet)
+        elif mode_value:
+            raise ValueError(f"Nieobsługiwany tryb ExchangeManager: {mode_value}")
+
+        variant = config.get("paper_variant")
+        if variant:
+            self.set_paper_variant(str(variant))
+
+        initial_cash = config.get("paper_initial_cash")
+        cash_asset = config.get("paper_cash_asset")
+        if initial_cash is not None or cash_asset:
+            amount = float(initial_cash if initial_cash is not None else self.get_paper_initial_cash())
+            self.set_paper_balance(amount, asset=str(cash_asset) if cash_asset else None)
+
+        fee_rate = config.get("paper_fee_rate")
+        if fee_rate is not None:
+            self.set_paper_fee_rate(float(fee_rate))
+
+        simulator_cfg = config.get("simulator")
+        if isinstance(simulator_cfg, Mapping) and simulator_cfg:
+            self.configure_paper_simulator(**{key: value for key, value in simulator_cfg.items() if value is not None})
+
+        native_cfg = config.get("native_adapter")
+        if isinstance(native_cfg, Mapping):
+            settings = native_cfg.get("settings")
+            if isinstance(settings, Mapping):
+                target_mode = self.mode
+                raw_mode = native_cfg.get("mode")
+                if raw_mode is not None:
+                    if isinstance(raw_mode, Mode):
+                        target_mode = raw_mode
+                    else:
+                        try:
+                            target_mode = Mode(str(raw_mode).lower())
+                        except Exception as exc:
+                            raise ValueError(f"Niepoprawny tryb natywnego adaptera: {raw_mode}") from exc
+                self.configure_native_adapter(settings=settings, mode=target_mode)
+
+        watchdog_cfg = config.get("watchdog")
+        if isinstance(watchdog_cfg, Mapping) and watchdog_cfg:
+            kwargs: Dict[str, Any] = {}
+            retry_policy = watchdog_cfg.get("retry_policy")
+            if isinstance(retry_policy, Mapping):
+                kwargs["retry_policy"] = retry_policy
+            circuit_breaker = watchdog_cfg.get("circuit_breaker")
+            if isinstance(circuit_breaker, Mapping):
+                cb_kwargs = dict(circuit_breaker)
+                if "recovery_time_seconds" in cb_kwargs and "recovery_timeout" not in cb_kwargs:
+                    cb_kwargs["recovery_timeout"] = cb_kwargs.pop("recovery_time_seconds")
+                kwargs["circuit_breaker"] = cb_kwargs
+            retry_exceptions = watchdog_cfg.get("retry_exceptions")
+            if isinstance(retry_exceptions, Sequence):
+                kwargs["retry_exceptions"] = tuple(
+                    exc for exc in retry_exceptions if isinstance(exc, type) and issubclass(exc, Exception)
+                )
+            if kwargs:
+                self.configure_watchdog(**kwargs)
 
     def create_health_monitor(self, checks: Iterable[HealthCheck]) -> HealthMonitor:
         """Buduje `HealthMonitor` współdzielący strażnika z adapterami."""

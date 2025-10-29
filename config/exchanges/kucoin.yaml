@@ -1,0 +1,43 @@
+# Konfiguracja ExchangeManager dla KuCoin.
+
+paper:
+  description: Paper trading dla KuCoin spot.
+  exchange_manager:
+    mode: paper
+    paper_variant: spot
+    paper_initial_cash: 25000
+    paper_cash_asset: USDT
+  credentials:
+    api_key: null
+    secret: null
+
+testnet:
+  description: KuCoin sandbox (futures API wspiera margin/testnet).
+  exchange_manager:
+    mode: margin
+    testnet: true
+    watchdog:
+      retry_policy:
+        max_attempts: 5
+        base_delay: 0.5
+  credentials:
+    api_key: ${KUCOIN_TESTNET_KEY}
+    secret: ${KUCOIN_TESTNET_SECRET}
+    passphrase: ${KUCOIN_TESTNET_PASSPHRASE}
+
+live:
+  description: Produkcyjna konfiguracja KuCoin margin.
+  exchange_manager:
+    mode: margin
+    testnet: false
+    watchdog:
+      retry_policy:
+        max_attempts: 3
+        base_delay: 1.0
+    native_adapter:
+      settings:
+        margin_mode: cross
+  credentials:
+    api_key: ${KUCOIN_LIVE_KEY}
+    secret: ${KUCOIN_LIVE_SECRET}
+    passphrase: ${KUCOIN_LIVE_PASSPHRASE}
