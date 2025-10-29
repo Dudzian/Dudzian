@@ -9,8 +9,15 @@
 #include <QMetaObject>
 #include <QLoggingCategory>
 #include <QSet>
+#include <QVector>
 #include <QtGlobal>
 #include <QSslCertificate>
+#include <QFileInfo>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonParseError>
+#include <QJsonValue>
 
 #include <google/protobuf/timestamp.pb.h>
 #include <grpcpp/create_channel.h>

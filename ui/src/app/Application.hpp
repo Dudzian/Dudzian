@@ -104,6 +104,10 @@ public:
 
     // Umożliwia wstrzyknięcie mocka w testach
     void setTelemetryReporter(std::unique_ptr<TelemetryReporter> reporter);
+    void setMetricsClientOverrideForTesting(std::shared_ptr<MetricsClientInterface> client);
+    std::shared_ptr<MetricsClientInterface> activeMetricsClientForTesting() const;
+    bool usingInProcessMetricsClientForTesting() const { return m_usingInProcessMetricsClient; }
+    void setInProcessDatasetPathForTesting(const QString& path);
     void applyPreferredScreenForTesting(QQuickWindow* window);
     QScreen* pickPreferredScreenForTesting() const;
 

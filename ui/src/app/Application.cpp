@@ -3450,6 +3450,32 @@ void Application::setTelemetryReporter(std::unique_ptr<TelemetryReporter> report
     }
 }
 
+void Application::setMetricsClientOverrideForTesting(std::shared_ptr<MetricsClientInterface> client)
+{
+    m_metricsClientOverride = std::move(client);
+    ensureTelemetry();
+}
+
+void Application::setInProcessDatasetPathForTesting(const QString& path)
+{
+    QString normalized = path.trimmed();
+    if (!normalized.isEmpty())
+        normalized = expandPath(normalized);
+
+    if (m_inProcessDatasetPath == normalized)
+        return;
+
+    m_inProcessDatasetPath = normalized;
+    m_client.setInProcessDatasetPath(m_inProcessDatasetPath);
+    if (m_inProcessHealthClient)
+        m_inProcessHealthClient->setDatasetPath(m_inProcessDatasetPath);
+}
+
+std::shared_ptr<MetricsClientInterface> Application::activeMetricsClientForTesting() const
+{
+    return m_activeMetricsClient.lock();
+}
+
 void Application::notifyOverlayUsage(int activeCount, int allowedCount, bool reduceMotionActive) {
     OverlayState state;
     state.active = qMax(0, activeCount);

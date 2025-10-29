@@ -2,7 +2,13 @@
 #include <QQmlApplicationEngine>
 #include <QCommandLineParser>
 #include <QFile>
+#include <QDateTime>
+#include <QDir>
+#include <QFileInfo>
 #include <QIODevice>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QScopeGuard>
 #include <QGuiApplication>
 #include <QQuickWindow>
@@ -24,6 +30,74 @@
 #include <optional>
 #include <vector>
 #include <deque>
+
+namespace {
+
+QString companionPath(const QString& datasetPath, const QString& suffix)
+{
+    QFileInfo info(datasetPath);
+    if (info.exists() && info.isDir())
+        return QDir(info.absoluteFilePath()).filePath(suffix);
+
+    const QString directory = info.absolutePath();
+    const QString baseName = info.completeBaseName();
+    if (baseName.isEmpty())
+        return QDir(directory).filePath(suffix);
+    return QDir(directory).filePath(baseName + QLatin1Char('_') + suffix);
+}
+
+bool writeJsonFile(const QString& path, const QJsonObject& payload)
+{
+    QFileInfo info(path);
+    if (!info.dir().exists() && !info.dir().mkpath(QStringLiteral(".")))
+        return false;
+
+    QFile file(path);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text))
+        return false;
+
+    const QJsonDocument document(payload);
+    file.write(document.toJson(QJsonDocument::Indented));
+    file.close();
+    return true;
+}
+
+QJsonObject defaultRiskPayload(double portfolioValue = 25'000.0,
+                               double drawdown = 0.015,
+                               double maxDailyLoss = 0.05,
+                               double leverage = 1.5)
+{
+    QJsonObject payload;
+    payload.insert(QStringLiteral("profileEnum"), 1);
+    payload.insert(QStringLiteral("portfolioValue"), portfolioValue);
+    payload.insert(QStringLiteral("currentDrawdown"), drawdown);
+    payload.insert(QStringLiteral("maxDailyLoss"), maxDailyLoss);
+    payload.insert(QStringLiteral("usedLeverage"), leverage);
+    payload.insert(QStringLiteral("generatedAt"), QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs));
+    QJsonArray exposures;
+    exposures.append(QJsonObject{{QStringLiteral("code"), QStringLiteral("max_notional")},
+                                 {QStringLiteral("maxValue"), 5'000.0},
+                                 {QStringLiteral("currentValue"), 1'200.0},
+                                 {QStringLiteral("thresholdValue"), 4'500.0}});
+    exposures.append(QJsonObject{{QStringLiteral("code"), QStringLiteral("max_positions")},
+                                 {QStringLiteral("maxValue"), 10.0},
+                                 {QStringLiteral("currentValue"), 3.0},
+                                 {QStringLiteral("thresholdValue"), 8.0}});
+    payload.insert(QStringLiteral("exposures"), exposures);
+    return payload;
+}
+
+QJsonObject defaultHealthPayload()
+{
+    QJsonObject payload;
+    payload.insert(QStringLiteral("version"), QStringLiteral("in-process"));
+    payload.insert(QStringLiteral("gitCommit"), QStringLiteral("local"));
+    payload.insert(QStringLiteral("startedAt"),
+                   QDateTime::currentDateTimeUtc().addSecs(-3600).toString(Qt::ISODateWithMs));
+    return payload;
+}
+
+} // namespace
 
 class FakeTelemetryReporter final : public TelemetryReporter {
 public:
