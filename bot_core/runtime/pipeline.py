@@ -31,7 +31,7 @@ from bot_core.config.loader import load_core_config
 from bot_core.data import CachedOHLCVSource, create_cached_ohlcv_source, resolve_cache_namespace
 from bot_core.data.base import OHLCVRequest
 from bot_core.data.ohlcv import OHLCVBackfillService
-from bot_core.execution.base import ExecutionContext, ExecutionService
+from bot_core.execution.base import ExecutionContext, ExecutionService, PriceResolver
 from bot_core.execution.paper import MarketMetadata, PaperTradingExecutionService
 from bot_core.exchanges.base import (
     AccountSnapshot,
@@ -297,10 +297,13 @@ def build_daily_trend_pipeline(
     storage = cached_source.storage
     backfill_service = OHLCVBackfillService(cached_source)
 
+    price_resolver = _build_price_resolver(cached_source, runtime_cfg.interval)
+
     execution_service = _select_execution_service(
         bootstrap_ctx,
         markets,
         paper_settings,
+        price_resolver=price_resolver,
     )
 
     if DailyTrendMomentumStrategy is None or DailyTrendMomentumSettings is None:
@@ -330,6 +333,7 @@ def build_daily_trend_pipeline(
         risk_profile=effective_risk_profile,
         environment=environment.environment.value,
         metadata=execution_metadata,
+        price_resolver=price_resolver,
     )
 
     account_loader = _build_account_loader(
@@ -631,6 +635,8 @@ def _build_markets(
 def _build_execution_service(
     markets: Mapping[str, MarketMetadata],
     paper_settings: Mapping[str, object],
+    *,
+    price_resolver: PriceResolver | None = None,
 ) -> PaperTradingExecutionService:
     return PaperTradingExecutionService(
         markets,
@@ -642,6 +648,7 @@ def _build_execution_service(
         ledger_filename_pattern=str(paper_settings["ledger_filename_pattern"]),
         ledger_retention_days=paper_settings["ledger_retention_days"],  # type: ignore[arg-type]
         ledger_fsync=bool(paper_settings["ledger_fsync"]),
+        price_resolver=price_resolver,
     )
 
 
@@ -649,6 +656,8 @@ def _select_execution_service(
     bootstrap_ctx: BootstrapContext,
     markets: Mapping[str, MarketMetadata],
     paper_settings: Mapping[str, object],
+    *,
+    price_resolver: PriceResolver | None = None,
 ) -> PaperTradingExecutionService:
     """Zwraca usługę egzekucyjną preferując instancję z bootstrapu."""
 
@@ -656,12 +665,44 @@ def _select_execution_service(
     if isinstance(context_service, PaperTradingExecutionService):
         return context_service
 
-    service = _build_execution_service(markets, paper_settings)
+    service = _build_execution_service(
+        markets,
+        paper_settings,
+        price_resolver=price_resolver,
+    )
     try:
         bootstrap_ctx.execution_service = service
     except Exception:  # pragma: no cover - kontekst może być typu tylko-do-odczytu
         _LOGGER.debug("Nie udało się zapisać PaperTradingExecutionService w BootstrapContext", exc_info=True)
     return service
+
+
+def _build_price_resolver(
+    data_source: CachedOHLCVSource, interval: str
+) -> PriceResolver:
+    storage = data_source.storage
+
+    def resolver(symbol: str) -> float | None:
+        cache_key = data_source._cache_key(symbol, interval)  # pylint: disable=protected-access
+        try:
+            payload = storage.read(cache_key)
+        except (AttributeError, KeyError):
+            return None
+        if not isinstance(payload, Mapping):
+            return None
+        rows = payload.get("rows", [])  # type: ignore[assignment]
+        if not rows:
+            return None
+        last_row = rows[-1]
+        if not last_row:
+            return None
+        try:
+            price = float(last_row[4])
+        except (IndexError, TypeError, ValueError):
+            return None
+        return price if price > 0 else None
+
+    return resolver
 
 
 def _optional_float(value: object) -> float | None:

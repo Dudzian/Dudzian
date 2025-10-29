@@ -39,6 +39,11 @@ class TradingClient : public QObject {
     Q_PROPERTY(bool streaming READ isStreaming NOTIFY streamingChanged)
 
 public:
+    enum class TransportMode {
+        Grpc,
+        InProcess,
+    };
+
     struct InstrumentConfig {
         QString exchange;
         QString symbol;
@@ -71,6 +76,7 @@ public:
     ~TradingClient() override;
 
     void setEndpoint(const QString& endpoint);
+    void setTransportMode(TransportMode mode);
     void setInstrument(const InstrumentConfig& config);
     void setHistoryLimit(int limit);
     void setPerformanceGuard(const PerformanceGuard& guard);
@@ -80,10 +86,13 @@ public:
     void setRbacScopes(const QStringList& scopes);
     void setRegimeThresholdsPath(const QString& path);
     void reloadRegimeThresholds();
+    void setInProcessDatasetPath(const QString& path);
 
     QVector<TradableInstrument> listTradableInstruments(const QString& exchange);
 
     QVector<QPair<QByteArray, QByteArray>> authMetadataForTesting() const;
+    bool hasGrpcChannelForTesting() const;
+    TransportMode transportMode() const { return m_transportMode; }
 
     // Używane przez Application.cpp
     InstrumentConfig instrumentConfig() const { return m_instrumentConfig; }
@@ -131,6 +140,7 @@ private:
 
     // --- Konfiguracja połączenia/rynku ---
     QString m_endpoint = QStringLiteral("127.0.0.1:50061");
+    TransportMode m_transportMode = TransportMode::Grpc;
     InstrumentConfig m_instrumentConfig{
         QStringLiteral("BINANCE"),
         QStringLiteral("BTC/USDT"),
@@ -143,11 +153,14 @@ private:
     int m_historyLimit = 500;
     TlsConfig m_tlsConfig{};
     QString   m_regimeThresholdPath;
+    QString   m_inProcessDatasetPath;
 
     // --- gRPC ---
     std::shared_ptr<grpc::Channel> m_channel;
-    std::unique_ptr<botcore::trading::v1::MarketDataService::Stub> m_marketDataStub;
-    std::unique_ptr<botcore::trading::v1::RiskService::Stub> m_riskStub;
+    class MarketDataStubInterface;
+    class RiskServiceStubInterface;
+    std::unique_ptr<MarketDataStubInterface> m_marketDataStub;
+    std::unique_ptr<RiskServiceStubInterface> m_riskStub;
 
     // --- Streaming ---
     std::atomic<bool> m_running{false};

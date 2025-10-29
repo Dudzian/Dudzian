@@ -5,6 +5,7 @@
 #include <QDir>
 #include <QFile>
 #include <QIODevice>
+#include <QTextStream>
 #include <QMetaObject>
 #include <QLoggingCategory>
 #include <QSet>
@@ -21,6 +22,7 @@
 #include <chrono>
 #include <cmath>
 #include <optional>
+#include <random>
 #include <string>
 #include <thread>
 #include <utility>
@@ -32,22 +34,137 @@
 
 Q_LOGGING_CATEGORY(lcTradingClient, "bot.shell.trading.grpc")
 
+namespace {
+
 using botcore::trading::v1::GetOhlcvHistoryRequest;
 using botcore::trading::v1::GetOhlcvHistoryResponse;
 using botcore::trading::v1::Instrument;
 using botcore::trading::v1::ListTradableInstrumentsRequest;
 using botcore::trading::v1::ListTradableInstrumentsResponse;
-using botcore::trading::v1::MarketDataService;
 using botcore::trading::v1::OhlcvCandle;
-using botcore::trading::v1::StreamOhlcvRequest;
-using botcore::trading::v1::StreamOhlcvUpdate;
-using botcore::trading::v1::RiskService;
 using botcore::trading::v1::RiskState;
 using botcore::trading::v1::RiskStateRequest;
+using botcore::trading::v1::StreamOhlcvRequest;
+using botcore::trading::v1::StreamOhlcvUpdate;
 
-namespace {
+class MarketDataStreamReader {
+public:
+    virtual ~MarketDataStreamReader() = default;
+    virtual bool Read(StreamOhlcvUpdate* update) = 0;
+    virtual grpc::Status Finish() = 0;
+};
 
-qint64 timestampToMs(const google::protobuf::Timestamp& ts) {
+class TradingClient::MarketDataStubInterface {
+public:
+    virtual ~MarketDataStubInterface() = default;
+    virtual grpc::Status GetOhlcvHistory(grpc::ClientContext* context,
+                                         const GetOhlcvHistoryRequest& request,
+                                         GetOhlcvHistoryResponse* response) = 0;
+    virtual std::unique_ptr<MarketDataStreamReader> StreamOhlcv(
+        grpc::ClientContext* context,
+        const StreamOhlcvRequest& request) = 0;
+    virtual grpc::Status ListTradableInstruments(
+        grpc::ClientContext* context,
+        const ListTradableInstrumentsRequest& request,
+        ListTradableInstrumentsResponse* response) = 0;
+};
+
+class TradingClient::RiskServiceStubInterface {
+public:
+    virtual ~RiskServiceStubInterface() = default;
+    virtual grpc::Status GetRiskState(grpc::ClientContext* context,
+                                      const RiskStateRequest& request,
+                                      RiskState* response) = 0;
+};
+
+class GrpcMarketDataStreamReader final : public MarketDataStreamReader {
+public:
+    explicit GrpcMarketDataStreamReader(std::unique_ptr<grpc::ClientReader<StreamOhlcvUpdate>> reader)
+        : m_reader(std::move(reader))
+    {
+    }
+
+    bool Read(StreamOhlcvUpdate* update) override
+    {
+        if (!m_reader)
+            return false;
+        return m_reader->Read(update);
+    }
+
+    grpc::Status Finish() override
+    {
+        if (!m_reader)
+            return grpc::Status::OK;
+        return m_reader->Finish();
+    }
+
+private:
+    std::unique_ptr<grpc::ClientReader<StreamOhlcvUpdate>> m_reader;
+};
+
+class GrpcMarketDataStub final : public TradingClient::MarketDataStubInterface {
+public:
+    explicit GrpcMarketDataStub(std::shared_ptr<grpc::Channel> channel)
+        : m_stub(botcore::trading::v1::MarketDataService::NewStub(std::move(channel)))
+    {
+    }
+
+    grpc::Status GetOhlcvHistory(grpc::ClientContext* context,
+                                 const GetOhlcvHistoryRequest& request,
+                                 GetOhlcvHistoryResponse* response) override
+    {
+        return m_stub->GetOhlcvHistory(context, request, response);
+    }
+
+    std::unique_ptr<MarketDataStreamReader> StreamOhlcv(
+        grpc::ClientContext* context,
+        const StreamOhlcvRequest& request) override
+    {
+        auto reader = m_stub->StreamOhlcv(context, request);
+        if (!reader)
+            return {};
+        return std::make_unique<GrpcMarketDataStreamReader>(std::move(reader));
+    }
+
+    grpc::Status ListTradableInstruments(grpc::ClientContext* context,
+                                         const ListTradableInstrumentsRequest& request,
+                                         ListTradableInstrumentsResponse* response) override
+    {
+        return m_stub->ListTradableInstruments(context, request, response);
+    }
+
+private:
+    std::unique_ptr<botcore::trading::v1::MarketDataService::Stub> m_stub;
+};
+
+class GrpcRiskServiceStub final : public TradingClient::RiskServiceStubInterface {
+public:
+    explicit GrpcRiskServiceStub(std::shared_ptr<grpc::Channel> channel)
+        : m_stub(botcore::trading::v1::RiskService::NewStub(std::move(channel)))
+    {
+    }
+
+    grpc::Status GetRiskState(grpc::ClientContext* context,
+                              const RiskStateRequest& request,
+                              RiskState* response) override
+    {
+        return m_stub->GetRiskState(context, request, response);
+    }
+
+private:
+    std::unique_ptr<botcore::trading::v1::RiskService::Stub> m_stub;
+};
+
+google::protobuf::Timestamp toProtoTimestamp(qint64 timestampMs)
+{
+    google::protobuf::Timestamp ts;
+    ts.set_seconds(timestampMs / 1000);
+    ts.set_nanos(static_cast<int32_t>((timestampMs % 1000) * 1000000));
+    return ts;
+}
+
+qint64 timestampToMs(const google::protobuf::Timestamp& ts)
+{
     return static_cast<qint64>(ts.seconds()) * 1000 + ts.nanos() / 1000000;
 }
 
@@ -80,6 +197,259 @@ QString normalizeFingerprint(QString value) {
     normalized.remove(QLatin1Char(':'));
     return normalized;
 }
+
+class InProcessMarketDataStreamReader final : public MarketDataStreamReader {
+public:
+    InProcessMarketDataStreamReader(grpc::ClientContext* context,
+                                    std::shared_ptr<std::vector<OhlcvCandle>> candles,
+                                    bool loop)
+        : m_context(context)
+        , m_candles(std::move(candles))
+        , m_loop(loop)
+    {
+    }
+
+    bool Read(StreamOhlcvUpdate* update) override
+    {
+        if (!update)
+            return false;
+
+        if (m_context && m_context->IsCancelled())
+            return false;
+
+        if (!m_snapshotDelivered) {
+            m_snapshotDelivered = true;
+            auto* snapshot = update->mutable_snapshot();
+            auto* series = snapshot->mutable_candles();
+            series->Clear();
+            for (const auto& candle : *m_candles) {
+                auto* out = series->Add();
+                *out = candle;
+            }
+            return true;
+        }
+
+        if (m_candles->empty())
+            return false;
+
+        if (m_index >= static_cast<int>(m_candles->size())) {
+            if (!m_loop)
+                return false;
+            m_index = 0;
+        }
+
+        auto* increment = update->mutable_increment();
+        increment->mutable_candle()->CopyFrom((*m_candles)[m_index]);
+        ++m_index;
+        for (int i = 0; i < 15; ++i) {
+            if (m_context && m_context->IsCancelled())
+                return false;
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        return true;
+    }
+
+    grpc::Status Finish() override { return grpc::Status::OK; }
+
+private:
+    grpc::ClientContext* m_context = nullptr;
+    std::shared_ptr<std::vector<OhlcvCandle>> m_candles;
+    bool m_snapshotDelivered = false;
+    bool m_loop = false;
+    int m_index = 0;
+};
+
+class InProcessMarketDataStub final : public TradingClient::MarketDataStubInterface {
+public:
+    InProcessMarketDataStub(const TradingClient::InstrumentConfig& config, const QString& datasetPath)
+    {
+        loadDataset(config, datasetPath);
+    }
+
+    grpc::Status GetOhlcvHistory(grpc::ClientContext*,
+                                 const GetOhlcvHistoryRequest& request,
+                                 GetOhlcvHistoryResponse* response) override
+    {
+        if (!response)
+            return grpc::Status(grpc::StatusCode::FAILED_PRECONDITION, "response null");
+        response->clear_candles();
+        const int limit = request.limit() > 0 ? request.limit() : static_cast<int>(m_candles->size());
+        const int start = std::max(0, static_cast<int>(m_candles->size()) - limit);
+        for (int i = start; i < static_cast<int>(m_candles->size()); ++i) {
+            auto* out = response->add_candles();
+            *out = (*m_candles)[i];
+        }
+        return grpc::Status::OK;
+    }
+
+    std::unique_ptr<MarketDataStreamReader> StreamOhlcv(grpc::ClientContext* context,
+                                                        const StreamOhlcvRequest&) override
+    {
+        return std::make_unique<InProcessMarketDataStreamReader>(context, m_candles, true);
+    }
+
+    grpc::Status ListTradableInstruments(grpc::ClientContext*,
+                                         const ListTradableInstrumentsRequest& request,
+                                         ListTradableInstrumentsResponse* response) override
+    {
+        if (!response)
+            return grpc::Status(grpc::StatusCode::FAILED_PRECONDITION, "response null");
+        response->clear_instruments();
+        auto* listing = response->add_instruments();
+        auto* instrument = listing->mutable_instrument();
+        instrument->set_exchange(request.exchange());
+        if (instrument->exchange().empty())
+            instrument->set_exchange(m_config.exchange.toStdString());
+        instrument->set_symbol(m_config.symbol.toStdString());
+        instrument->set_venue_symbol(m_config.venueSymbol.toStdString());
+        instrument->set_quote_currency(m_config.quoteCurrency.toStdString());
+        instrument->set_base_currency(m_config.baseCurrency.toStdString());
+        listing->set_price_step(0.01);
+        listing->set_amount_step(0.001);
+        listing->set_min_notional(5.0);
+        listing->set_min_amount(0.001);
+        listing->set_max_amount(25.0);
+        listing->set_min_price(1.0);
+        listing->set_max_price(100000.0);
+        return grpc::Status::OK;
+    }
+
+    void updateInstrument(const TradingClient::InstrumentConfig& config)
+    {
+        m_config = config;
+    }
+
+private:
+    void loadDataset(const TradingClient::InstrumentConfig& config, const QString& datasetPath)
+    {
+        m_config = config;
+        QString path = datasetPath;
+        if (path.trimmed().isEmpty())
+            path = QStringLiteral("data/sample_ohlcv/trend.csv");
+        path = bot::shell::utils::expandPath(path);
+
+        auto candles = std::make_shared<std::vector<OhlcvCandle>>();
+        QFile file(path);
+        if (!file.exists() || !file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+            buildSyntheticDataset(*candles);
+            m_candles = candles;
+            return;
+        }
+
+        QTextStream stream(&file);
+        if (!stream.atEnd())
+            stream.readLine();
+        int sequence = 0;
+        while (!stream.atEnd()) {
+            const QString line = stream.readLine();
+            const QStringList parts = line.split(QLatin1Char(','));
+            if (parts.size() < 6)
+                continue;
+            const QString timestampRaw = parts.at(0).trimmed();
+            QDateTime timestamp = QDateTime::fromString(timestampRaw, Qt::ISODate);
+            if (!timestamp.isValid())
+                timestamp = QDateTime::fromString(timestampRaw, QStringLiteral("yyyy-MM-dd HH:mm:ss"));
+            if (!timestamp.isValid())
+                continue;
+            timestamp.setTimeSpec(Qt::UTC);
+
+            bool ok = false;
+            const double open = parts.at(1).toDouble(&ok);
+            if (!ok)
+                continue;
+            const double high = parts.at(2).toDouble(&ok);
+            if (!ok)
+                continue;
+            const double low = parts.at(3).toDouble(&ok);
+            if (!ok)
+                continue;
+            const double close = parts.at(4).toDouble(&ok);
+            if (!ok)
+                continue;
+            const double volume = parts.at(5).toDouble(&ok);
+            if (!ok)
+                continue;
+
+            OhlcvCandle candle;
+            *candle.mutable_open_time() = toProtoTimestamp(timestamp.toMSecsSinceEpoch());
+            candle.set_open(open);
+            candle.set_high(high);
+            candle.set_low(low);
+            candle.set_close(close);
+            candle.set_volume(volume);
+            candle.set_closed(true);
+            candle.set_sequence(sequence++);
+            candles->push_back(candle);
+        }
+
+        if (candles->empty())
+            buildSyntheticDataset(*candles);
+        m_candles = candles;
+    }
+
+    static void buildSyntheticDataset(std::vector<OhlcvCandle>& candles)
+    {
+        candles.clear();
+        candles.reserve(64);
+        const qint64 baseMs = QDateTime(QDate(2023, 1, 1), QTime(0, 0), Qt::UTC).toMSecsSinceEpoch();
+        double price = 100.0;
+        std::mt19937_64 rng{123456789ULL};
+        std::normal_distribution<double> drift(0.05, 0.15);
+        for (int i = 0; i < 64; ++i) {
+            const double delta = drift(rng);
+            const double open = price;
+            const double close = std::max(1.0, open + delta);
+            const double high = std::max(open, close) + std::abs(drift(rng));
+            const double low = std::max(1.0, std::min(open, close) - std::abs(drift(rng)));
+            const double volume = 900.0 + std::abs(drift(rng)) * 150.0;
+            price = close;
+
+            OhlcvCandle candle;
+            *candle.mutable_open_time() = toProtoTimestamp(baseMs + static_cast<qint64>(i) * 60 * 1000);
+            candle.set_open(open);
+            candle.set_high(high);
+            candle.set_low(low);
+            candle.set_close(close);
+            candle.set_volume(volume);
+            candle.set_closed(true);
+            candle.set_sequence(i);
+            candles.push_back(candle);
+        }
+    }
+
+    TradingClient::InstrumentConfig m_config;
+    std::shared_ptr<std::vector<OhlcvCandle>> m_candles;
+};
+
+class InProcessRiskServiceStub final : public TradingClient::RiskServiceStubInterface {
+public:
+    grpc::Status GetRiskState(grpc::ClientContext*,
+                              const RiskStateRequest&,
+                              RiskState* response) override
+    {
+        if (!response)
+            return grpc::Status(grpc::StatusCode::FAILED_PRECONDITION, "response null");
+        response->Clear();
+        response->set_profile(botcore::trading::v1::RiskProfile::RISK_PROFILE_BALANCED);
+        response->set_portfolio_value(25000.0);
+        response->set_current_drawdown(0.015);
+        response->set_max_daily_loss(0.05);
+        response->set_used_leverage(1.5);
+        auto* generated = response->mutable_generated_at();
+        *generated = toProtoTimestamp(QDateTime::currentDateTimeUtc().toMSecsSinceEpoch());
+        auto* limit = response->add_limits();
+        limit->set_code("max_notional");
+        limit->set_max_value(5000.0);
+        limit->set_current_value(1200.0);
+        limit->set_threshold_value(4500.0);
+        auto* limit2 = response->add_limits();
+        limit2->set_code("max_positions");
+        limit2->set_max_value(10.0);
+        limit2->set_current_value(3.0);
+        limit2->set_threshold_value(8.0);
+        return grpc::Status::OK;
+    }
+};
 
 Instrument makeInstrument(const TradingClient::InstrumentConfig& config) {
     Instrument instrument;
@@ -121,8 +491,28 @@ void TradingClient::setEndpoint(const QString& endpoint) {
     m_riskStub.reset();
 }
 
+void TradingClient::setTransportMode(TransportMode mode)
+{
+    if (mode == m_transportMode)
+        return;
+    const bool wasRunning = m_running.load();
+    if (wasRunning)
+        stop();
+    m_transportMode = mode;
+    m_channel.reset();
+    m_marketDataStub.reset();
+    m_riskStub.reset();
+    if (wasRunning)
+        start();
+}
+
 void TradingClient::setInstrument(const InstrumentConfig& config) {
     m_instrumentConfig = config;
+    if (m_transportMode == TransportMode::InProcess) {
+        if (auto* inProcess = dynamic_cast<InProcessMarketDataStub*>(m_marketDataStub.get())) {
+            inProcess->updateInstrument(m_instrumentConfig);
+        }
+    }
 }
 
 void TradingClient::setHistoryLimit(int limit) {
@@ -193,6 +583,17 @@ void TradingClient::setRbacScopes(const QStringList& scopes)
     triggerStreamRestart();
 }
 
+void TradingClient::setInProcessDatasetPath(const QString& path)
+{
+    if (m_inProcessDatasetPath == path)
+        return;
+    m_inProcessDatasetPath = path;
+    if (m_transportMode == TransportMode::InProcess) {
+        m_marketDataStub.reset();
+        triggerStreamRestart();
+    }
+}
+
 void TradingClient::setRegimeThresholdsPath(const QString& path)
 {
     const QString trimmed = path.trimmed();
@@ -229,6 +630,11 @@ QVector<QPair<QByteArray, QByteArray>> TradingClient::authMetadataForTesting() c
     return result;
 }
 
+bool TradingClient::hasGrpcChannelForTesting() const
+{
+    return static_cast<bool>(m_channel);
+}
+
 void TradingClient::start() {
     if (m_running.exchange(true)) {
         return;
@@ -240,7 +646,14 @@ void TradingClient::start() {
     ensureStub();
 
     if (!m_marketDataStub) {
-        qCWarning(lcTradingClient) << "Brak poprawnie zainicjalizowanego stubu MarketDataService dla endpointu" << m_endpoint;
+        if (m_transportMode == TransportMode::InProcess) {
+            qCWarning(lcTradingClient)
+                << "Brak poprawnie zainicjalizowanego transportu in-process (dataset:" << m_inProcessDatasetPath
+                << ')';
+        } else {
+            qCWarning(lcTradingClient)
+                << "Brak poprawnie zainicjalizowanego stubu MarketDataService dla endpointu" << m_endpoint;
+        }
         m_running.store(false);
         Q_EMIT streamingChanged();
         Q_EMIT connectionStateChanged(tr("unavailable"));
@@ -328,6 +741,20 @@ void TradingClient::stop() {
 }
 
 void TradingClient::ensureStub() {
+    if (m_transportMode == TransportMode::InProcess) {
+        if (!m_marketDataStub) {
+            m_marketDataStub = std::make_unique<InProcessMarketDataStub>(m_instrumentConfig,
+                                                                         m_inProcessDatasetPath);
+        } else if (auto* inProcess = dynamic_cast<InProcessMarketDataStub*>(m_marketDataStub.get())) {
+            inProcess->updateInstrument(m_instrumentConfig);
+        }
+        if (!m_riskStub) {
+            m_riskStub = std::make_unique<InProcessRiskServiceStub>();
+        }
+        m_channel.reset();
+        return;
+    }
+
     if (m_endpoint.trimmed().isEmpty()) {
         qCWarning(lcTradingClient) << "Endpoint gRPC nie został ustawiony – pomijam inicjalizację kanału.";
         return;
@@ -407,10 +834,10 @@ void TradingClient::ensureStub() {
     }
 
     if (m_channel && !m_marketDataStub) {
-        m_marketDataStub = MarketDataService::NewStub(m_channel);
+        m_marketDataStub = std::make_unique<GrpcMarketDataStub>(m_channel);
     }
     if (m_channel && !m_riskStub) {
-        m_riskStub = RiskService::NewStub(m_channel);
+        m_riskStub = std::make_unique<GrpcRiskServiceStub>(m_channel);
     }
 }
 
@@ -477,6 +904,15 @@ void TradingClient::streamLoop()
         }
 
         auto reader = m_marketDataStub->StreamOhlcv(context.get(), request);
+        if (!reader) {
+            QMetaObject::invokeMethod(
+                this,
+                [this]() { Q_EMIT connectionStateChanged(tr("stream unavailable")); },
+                Qt::QueuedConnection);
+            ++attempt;
+            std::this_thread::sleep_for(std::chrono::milliseconds(250));
+            continue;
+        }
         StreamOhlcvUpdate update;
         bool receivedAny = false;
 
@@ -647,7 +1083,11 @@ void TradingClient::streamLoop()
 void TradingClient::refreshRiskState() {
     ensureStub();
     if (!m_riskStub) {
-        qCWarning(lcTradingClient) << "Brak stubu RiskService – pomijam odczyt stanu ryzyka.";
+        if (m_transportMode == TransportMode::InProcess) {
+            qCWarning(lcTradingClient) << "Brak transportu in-process dla RiskService – pomijam odczyt stanu ryzyka.";
+        } else {
+            qCWarning(lcTradingClient) << "Brak stubu RiskService – pomijam odczyt stanu ryzyka.";
+        }
         return;
     }
     auto riskContext = createContext();
@@ -671,8 +1111,14 @@ QVector<TradingClient::TradableInstrument> TradingClient::listTradableInstrument
     QVector<TradableInstrument> instruments;
     ensureStub();
     if (!m_marketDataStub) {
-        qCWarning(lcTradingClient)
-            << "ListTradableInstruments pominięte – brak połączenia z MarketDataService dla" << m_endpoint;
+        if (m_transportMode == TransportMode::InProcess) {
+            qCWarning(lcTradingClient)
+                << "ListTradableInstruments pominięte – brak transportu in-process (dataset:" << m_inProcessDatasetPath
+                << ')';
+        } else {
+            qCWarning(lcTradingClient)
+                << "ListTradableInstruments pominięte – brak połączenia z MarketDataService dla" << m_endpoint;
+        }
         return instruments;
     }
 
@@ -955,6 +1401,17 @@ std::optional<MarketRegimeSnapshotEntry> TradingClient::evaluateRegimeSnapshotLo
 
 TradingClient::PreLiveChecklistResult TradingClient::runPreLiveChecklist() const {
     PreLiveChecklistResult result;
+
+    if (m_transportMode == TransportMode::InProcess) {
+        const QString datasetPath = bot::shell::utils::expandPath(m_inProcessDatasetPath);
+        if (m_inProcessDatasetPath.trimmed().isEmpty()) {
+            result.warnings.append(tr("Brak wskazanego pliku dataset – użyty zostanie syntetyczny feed."));
+        } else if (!QFile::exists(datasetPath)) {
+            result.warnings.append(tr("Dataset in-process nie istnieje: %1 – użyty zostanie syntetyczny feed.").arg(datasetPath));
+        }
+        result.ok = result.errors.isEmpty();
+        return result;
+    }
 
     if (m_endpoint.trimmed().isEmpty()) {
         result.errors.append(tr("Endpoint gRPC nie może być pusty."));
