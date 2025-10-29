@@ -258,6 +258,31 @@ def test_configure_paper_simulator_rejects_non_positive_interval() -> None:
         manager.configure_paper_simulator(funding_interval_seconds=0)
 
 
+def test_apply_environment_profile_uses_yaml_configuration() -> None:
+    manager = ExchangeManager("binance")
+
+    manager.apply_environment_profile("paper")
+
+    assert manager.mode is Mode.PAPER
+    assert manager.get_paper_cash_asset() == "USDT"
+
+    profile = manager.describe_environment_profile()
+    assert profile is not None
+    assert profile.get("name") == "paper"
+
+
+def test_apply_environment_profile_expands_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("BINANCE_LIVE_KEY", "abc")
+    monkeypatch.setenv("BINANCE_LIVE_SECRET", "xyz")
+    manager = ExchangeManager("binance")
+
+    manager.apply_environment_profile("live")
+
+    assert manager.mode is Mode.MARGIN
+    assert manager._api_key == "abc"
+    assert manager._secret == "xyz"
+
+
 def test_updating_credentials_rebuilds_private_backend(monkeypatch: pytest.MonkeyPatch) -> None:
     created: list[dict[str, object]] = []
 

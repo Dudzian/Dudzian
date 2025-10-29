@@ -1,0 +1,51 @@
+# Konfiguracja ExchangeManager dla OKX.
+
+paper:
+  description: Paper trading dla OKX futures.
+  exchange_manager:
+    mode: paper
+    paper_variant: futures
+    paper_initial_cash: 100000
+    paper_cash_asset: USDT
+    simulator:
+      leverage_limit: 5.0
+      maintenance_margin_ratio: 0.1
+      funding_rate: 0.0001
+      funding_interval_seconds: 28800
+  credentials:
+    api_key: null
+    secret: null
+
+testnet:
+  description: OKX testnet futures API.
+  exchange_manager:
+    mode: futures
+    testnet: true
+    watchdog:
+      retry_policy:
+        max_attempts: 5
+        base_delay: 0.75
+  credentials:
+    api_key: ${OKX_TESTNET_KEY}
+    secret: ${OKX_TESTNET_SECRET}
+    passphrase: ${OKX_TESTNET_PASSPHRASE}
+
+live:
+  description: Produkcyjny handel futures na OKX.
+  exchange_manager:
+    mode: futures
+    testnet: false
+    watchdog:
+      retry_policy:
+        max_attempts: 3
+        base_delay: 1.0
+      circuit_breaker:
+        failure_threshold: 4
+        recovery_time_seconds: 90
+    native_adapter:
+      settings:
+        account_mode: "futures"
+  credentials:
+    api_key: ${OKX_LIVE_KEY}
+    secret: ${OKX_LIVE_SECRET}
+    passphrase: ${OKX_LIVE_PASSPHRASE}

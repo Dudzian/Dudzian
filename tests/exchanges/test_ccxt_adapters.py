@@ -7,11 +7,17 @@ import pytest
 
 from bot_core.exchanges.base import Environment, ExchangeCredentials, OrderRequest
 from bot_core.exchanges.bitfinex.spot import BitfinexSpotAdapter
+from bot_core.exchanges.bitget.spot import BitgetSpotAdapter
+from bot_core.exchanges.bitstamp.spot import BitstampSpotAdapter
 from bot_core.exchanges.coinbase.spot import CoinbaseSpotAdapter
 from bot_core.exchanges.bybit.spot import BybitSpotAdapter
 from bot_core.exchanges.errors import ExchangeNetworkError
 from bot_core.exchanges.okx.spot import OKXSpotAdapter
 from bot_core.exchanges.kucoin.spot import KuCoinSpotAdapter
+from bot_core.exchanges.gateio.spot import GateIOSpotAdapter
+from bot_core.exchanges.gemini.spot import GeminiSpotAdapter
+from bot_core.exchanges.huobi.spot import HuobiSpotAdapter
+from bot_core.exchanges.mexc.spot import MexcSpotAdapter
 
 
 @dataclass
@@ -181,4 +187,90 @@ def test_bybit_adapter_provides_spot_defaults():
     assert adapter._settings["fetch_ohlcv_params"]["price"] == "mark"
     assert adapter._settings["cancel_order_params"]["category"] == "spot"
     assert adapter._settings["ccxt_config"]["options"]["defaultType"] == "spot"
+
+
+def test_bitstamp_adapter_uses_spot_defaults():
+    credentials = ExchangeCredentials(key_id="k")
+    client = _FakeClient()
+    adapter = BitstampSpotAdapter(
+        credentials,
+        environment=Environment.TESTNET,
+        client=client,
+    )
+
+    assert adapter._settings["ccxt_config"]["options"]["defaultType"] == "spot"
+    assert adapter._settings["ccxt_config"]["timeout"] == 20_000
+
+
+def test_gateio_adapter_configures_spot_behaviour():
+    credentials = ExchangeCredentials(key_id="k", secret="s")
+    client = _FakeClient()
+    adapter = GateIOSpotAdapter(
+        credentials,
+        environment=Environment.LIVE,
+        client=client,
+    )
+
+    assert adapter._settings["ccxt_config"]["options"]["defaultType"] == "spot"
+    assert adapter._settings["fetch_ohlcv_params"]["type"] == "spot"
+    assert adapter._settings["cancel_order_params"]["type"] == "spot"
+
+
+def test_bitget_adapter_configures_spot_category():
+    credentials = ExchangeCredentials(key_id="k")
+    client = _FakeClient()
+    adapter = BitgetSpotAdapter(
+        credentials,
+        environment=Environment.TESTNET,
+        client=client,
+    )
+
+    ccxt_config = adapter._settings["ccxt_config"]
+    assert ccxt_config["options"]["defaultType"] == "spot"
+    assert ccxt_config["timeout"] == 15_000
+    assert adapter._settings["fetch_ohlcv_params"]["type"] == "spot"
+    assert adapter._settings["cancel_order_params"]["type"] == "spot"
+
+
+def test_mexc_adapter_sets_spot_defaults():
+    credentials = ExchangeCredentials(key_id="k", secret="s")
+    client = _FakeClient()
+    adapter = MexcSpotAdapter(
+        credentials,
+        environment=Environment.PAPER,
+        client=client,
+    )
+
+    ccxt_config = adapter._settings["ccxt_config"]
+    assert ccxt_config["options"]["defaultType"] == "spot"
+    assert ccxt_config["timeout"] == 20_000
+    assert adapter._settings["fetch_ohlcv_params"]["type"] == "spot"
+    assert adapter._settings["cancel_order_params"]["type"] == "spot"
+
+
+def test_gemini_adapter_merges_settings():
+    credentials = ExchangeCredentials(key_id="k")
+    client = _FakeClient()
+    adapter = GeminiSpotAdapter(
+        credentials,
+        environment=Environment.LIVE,
+        client=client,
+        settings={"ccxt_config": {"timeout": 30_000}},
+    )
+
+    assert adapter._settings["ccxt_config"]["timeout"] == 30_000
+    assert adapter._settings["ccxt_config"]["options"]["defaultType"] == "spot"
+
+
+def test_huobi_adapter_keeps_default_exchange_id():
+    credentials = ExchangeCredentials(key_id="k")
+    client = _FakeClient()
+    adapter = HuobiSpotAdapter(
+        credentials,
+        environment=Environment.PAPER,
+        client=client,
+    )
+
+    assert adapter._settings["ccxt_config"]["options"]["defaultType"] == "spot"
+    assert adapter._exchange_id == "huobi"
 

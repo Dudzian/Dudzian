@@ -1,0 +1,35 @@
+# Konfiguracja ExchangeManager dla Bitfinex.
+
+paper:
+  description: Symulator paper dla rynku spot Bitfinex.
+  exchange_manager:
+    mode: paper
+    paper_variant: spot
+    paper_initial_cash: 50000
+    paper_cash_asset: USDT
+    paper_fee_rate: 0.0015
+  credentials:
+    api_key: null
+    secret: null
+
+testnet:
+  description: Tryb demo Bitfinex (CCXT sandbox URLs).
+  exchange_manager:
+    mode: spot
+    testnet: true
+  credentials:
+    api_key: ${BITFINEX_TESTNET_KEY}
+    secret: ${BITFINEX_TESTNET_SECRET}
+
+live:
+  description: Produkcyjny handel spot Bitfinex.
+  exchange_manager:
+    mode: spot
+    testnet: false
+    watchdog:
+      retry_policy:
+        max_attempts: 4
+        base_delay: 1.0
+  credentials:
+    api_key: ${BITFINEX_LIVE_KEY}
+    secret: ${BITFINEX_LIVE_SECRET}

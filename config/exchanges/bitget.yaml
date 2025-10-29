@@ -1,0 +1,44 @@
+# Konfiguracja ExchangeManager dla Bitget.
+
+paper:
+  description: Tryb paper symulujący handel spot na Bitget.
+  exchange_manager:
+    mode: paper
+    paper_variant: spot
+    paper_initial_cash: 20000
+    paper_cash_asset: USDT
+    paper_fee_rate: 0.0006
+  credentials:
+    api_key: null
+    secret: null
+
+testnet:
+  description: Sandbox Bitget REST.
+  exchange_manager:
+    mode: spot
+    testnet: true
+    watchdog:
+      retry_policy:
+        max_attempts: 4
+        base_delay: 0.5
+  credentials:
+    api_key: ${BITGET_TESTNET_KEY}
+    secret: ${BITGET_TESTNET_SECRET}
+    passphrase: ${BITGET_TESTNET_PASSPHRASE}
+
+live:
+  description: Produkcyjny handel spot Bitget.
+  exchange_manager:
+    mode: spot
+    testnet: false
+    watchdog:
+      retry_policy:
+        max_attempts: 3
+        base_delay: 1.0
+      circuit_breaker:
+        failure_threshold: 5
+        recovery_time_seconds: 45
+  credentials:
+    api_key: ${BITGET_LIVE_KEY}
+    secret: ${BITGET_LIVE_SECRET}
+    passphrase: ${BITGET_LIVE_PASSPHRASE}

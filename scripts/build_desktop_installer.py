@@ -9,6 +9,7 @@ import subprocess
 from pathlib import Path
 
 from bot_core.security.signing import build_hmac_signature
+from scripts import generate_trading_stubs
 
 
 DEFAULT_OUTPUT = Path("var/dist/desktop")
@@ -71,6 +72,11 @@ def build_bundle(args: argparse.Namespace) -> Path:
     if not binary_path.exists():
         raise SystemExit(f"Nie znaleziono skompilowanej aplikacji pod {binary_path}")
 
+    try:
+        generate_trading_stubs.main(["--skip-cpp"])
+    except SystemExit as exc:  # pragma: no cover - obsługa CLI
+        if exc.code not in (0, None):
+            raise RuntimeError("Generowanie stubów trading.proto nie powiodło się") from exc
     shutil.copy2(binary_path, bundle_dir / binary_name)
     _copy_tree(Path("ui/qml"), bundle_dir / "qml")
     _copy_tree(Path("config"), bundle_dir / "config")

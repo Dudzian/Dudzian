@@ -1,0 +1,47 @@
+# Konfiguracja ExchangeManager dla Coinbase.
+
+paper:
+  description: Symulator paper Coinbase.
+  exchange_manager:
+    mode: paper
+    paper_variant: spot
+    paper_initial_cash: 50000
+    paper_cash_asset: USDC
+    paper_fee_rate: 0.001
+  credentials:
+    api_key: null
+    secret: null
+
+testnet:
+  description: Sandbox Coinbase Advanced Trade.
+  exchange_manager:
+    mode: spot
+    testnet: true
+    watchdog:
+      retry_policy:
+        max_attempts: 4
+        base_delay: 0.75
+  credentials:
+    api_key: ${COINBASE_TESTNET_KEY}
+    secret: ${COINBASE_TESTNET_SECRET}
+    passphrase: ${COINBASE_TESTNET_PASSPHRASE}
+
+live:
+  description: Produkcyjna konfiguracja Coinbase Advanced.
+  exchange_manager:
+    mode: margin
+    testnet: false
+    watchdog:
+      retry_policy:
+        max_attempts: 3
+        base_delay: 1.0
+      circuit_breaker:
+        failure_threshold: 4
+        recovery_time_seconds: 45
+    native_adapter:
+      settings:
+        venue: "advanced"
+  credentials:
+    api_key: ${COINBASE_LIVE_KEY}
+    secret: ${COINBASE_LIVE_SECRET}
+    passphrase: ${COINBASE_LIVE_PASSPHRASE}

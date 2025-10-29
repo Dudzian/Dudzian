@@ -1,0 +1,44 @@
+# Konfiguracja ExchangeManager dla Bybit.
+
+paper:
+  description: Paper trading dla Bybit spot.
+  exchange_manager:
+    mode: paper
+    paper_variant: spot
+    paper_initial_cash: 30000
+    paper_cash_asset: USDT
+  credentials:
+    api_key: null
+    secret: null
+
+testnet:
+  description: Bybit testnet (USDT perpetual).
+  exchange_manager:
+    mode: futures
+    testnet: true
+    watchdog:
+      retry_policy:
+        max_attempts: 5
+        base_delay: 0.5
+  credentials:
+    api_key: ${BYBIT_TESTNET_KEY}
+    secret: ${BYBIT_TESTNET_SECRET}
+
+live:
+  description: Produkcyjny handel futures na Bybit.
+  exchange_manager:
+    mode: futures
+    testnet: false
+    watchdog:
+      retry_policy:
+        max_attempts: 3
+        base_delay: 0.75
+      circuit_breaker:
+        failure_threshold: 4
+        recovery_time_seconds: 60
+    native_adapter:
+      settings:
+        account_type: unified
+  credentials:
+    api_key: ${BYBIT_LIVE_KEY}
+    secret: ${BYBIT_LIVE_SECRET}

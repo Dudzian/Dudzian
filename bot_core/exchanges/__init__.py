@@ -43,12 +43,18 @@ from bot_core.exchanges.binance.futures import BinanceFuturesAdapter
 from bot_core.exchanges.binance.margin import BinanceMarginAdapter
 from bot_core.exchanges.binance.spot import BinanceSpotAdapter
 from bot_core.exchanges.bitfinex.spot import BitfinexSpotAdapter
+from bot_core.exchanges.bitget.spot import BitgetSpotAdapter
+from bot_core.exchanges.bitstamp.spot import BitstampSpotAdapter
 from bot_core.exchanges.bybit import BybitFuturesAdapter, BybitMarginAdapter, BybitSpotAdapter
 from bot_core.exchanges.coinbase import (
     CoinbaseFuturesAdapter,
     CoinbaseMarginAdapter,
     CoinbaseSpotAdapter,
 )
+from bot_core.exchanges.gateio.spot import GateIOSpotAdapter
+from bot_core.exchanges.gemini.spot import GeminiSpotAdapter
+from bot_core.exchanges.huobi.spot import HuobiSpotAdapter
+from bot_core.exchanges.mexc.spot import MexcSpotAdapter
 from bot_core.exchanges.errors import (
     ExchangeAPIError,
     ExchangeAuthError,
@@ -98,6 +104,12 @@ __all__ = [
     "CoinbaseMarginAdapter",
     "CoinbaseFuturesAdapter",
     "BitfinexSpotAdapter",
+    "BitgetSpotAdapter",
+    "BitstampSpotAdapter",
+    "GateIOSpotAdapter",
+    "GeminiSpotAdapter",
+    "HuobiSpotAdapter",
+    "MexcSpotAdapter",
     "KuCoinSpotAdapter",
     "OKXSpotAdapter",
     "OKXMarginAdapter",
@@ -149,9 +161,13 @@ if os.environ.get("BOT_CORE_MINIMAL_EXCHANGES") != "1":  # pragma: no cover - pe
     from bot_core.exchanges.binance.margin import BinanceMarginAdapter  # noqa: WPS433
     from bot_core.exchanges.binance.spot import BinanceSpotAdapter  # noqa: WPS433
     from bot_core.exchanges.bitfinex.spot import BitfinexSpotAdapter  # noqa: WPS433
+    from bot_core.exchanges.bitget.spot import BitgetSpotAdapter  # noqa: WPS433
+    from bot_core.exchanges.bitstamp.spot import BitstampSpotAdapter  # noqa: WPS433
     from bot_core.exchanges.bybit.spot import BybitSpotAdapter  # noqa: WPS433
     from bot_core.exchanges.coinbase.spot import CoinbaseSpotAdapter  # noqa: WPS433
     from bot_core.exchanges.kucoin.spot import KuCoinSpotAdapter  # noqa: WPS433
+    from bot_core.exchanges.gemini.spot import GeminiSpotAdapter  # noqa: WPS433
+    from bot_core.exchanges.huobi.spot import HuobiSpotAdapter  # noqa: WPS433
     from bot_core.exchanges.kraken.futures import KrakenFuturesAdapter  # noqa: WPS433
     from bot_core.exchanges.kraken.margin import KrakenMarginAdapter  # noqa: WPS433
     from bot_core.exchanges.kraken.spot import KrakenSpotAdapter  # noqa: WPS433
@@ -187,6 +203,7 @@ if os.environ.get("BOT_CORE_MINIMAL_EXCHANGES") != "1":  # pragma: no cover - pe
         "BinanceSpotAdapter",
         "BinanceMarginAdapter",
         "BitfinexSpotAdapter",
+        "BitgetSpotAdapter",
         "BybitSpotAdapter",
         "CoinbaseSpotAdapter",
         "KuCoinSpotAdapter",

@@ -1,0 +1,34 @@
+# Konfiguracja ExchangeManager dla Gemini.
+
+paper:
+  description: Paper trading dla Gemini w oparciu o symulator.
+  exchange_manager:
+    mode: paper
+    paper_variant: spot
+    paper_initial_cash: 15000
+    paper_cash_asset: USD
+  credentials:
+    api_key: null
+    secret: null
+
+testnet:
+  description: Gemini sandbox API.
+  exchange_manager:
+    mode: spot
+    testnet: true
+  credentials:
+    api_key: ${GEMINI_SANDBOX_KEY}
+    secret: ${GEMINI_SANDBOX_SECRET}
+
+live:
+  description: Produkcyjny handel na Gemini.
+  exchange_manager:
+    mode: spot
+    testnet: false
+    watchdog:
+      retry_policy:
+        max_attempts: 3
+        base_delay: 1.2
+  credentials:
+    api_key: ${GEMINI_LIVE_KEY}
+    secret: ${GEMINI_LIVE_SECRET}

@@ -1,0 +1,44 @@
+# Konfiguracja ExchangeManager dla Kraken.
+
+paper:
+  description: Paper trading margin Kraken.
+  exchange_manager:
+    mode: paper
+    paper_variant: margin
+    paper_initial_cash: 75000
+    paper_cash_asset: USDT
+    simulator:
+      leverage_limit: 3.0
+      maintenance_margin_ratio: 0.15
+  credentials:
+    api_key: null
+    secret: null
+
+testnet:
+  description: Kraken sandbox API.
+  exchange_manager:
+    mode: margin
+    testnet: true
+    watchdog:
+      retry_policy:
+        max_attempts: 5
+        base_delay: 0.75
+  credentials:
+    api_key: ${KRAKEN_TESTNET_KEY}
+    secret: ${KRAKEN_TESTNET_SECRET}
+
+live:
+  description: Produkcyjny handel margin na Kraken.
+  exchange_manager:
+    mode: margin
+    testnet: false
+    watchdog:
+      retry_policy:
+        max_attempts: 3
+        base_delay: 1.0
+    native_adapter:
+      settings:
+        margin_mode: cross
+  credentials:
+    api_key: ${KRAKEN_LIVE_KEY}
+    secret: ${KRAKEN_LIVE_SECRET}

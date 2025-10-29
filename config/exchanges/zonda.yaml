@@ -1,0 +1,34 @@
+# Konfiguracja ExchangeManager dla Zonda.
+
+paper:
+  description: Symulator paper dla Zonda.
+  exchange_manager:
+    mode: paper
+    paper_variant: spot
+    paper_initial_cash: 10000
+    paper_cash_asset: PLN
+  credentials:
+    api_key: null
+    secret: null
+
+testnet:
+  description: Tryb testowy Zonda (sandbox REST API).
+  exchange_manager:
+    mode: spot
+    testnet: true
+  credentials:
+    api_key: ${ZONDA_TESTNET_KEY}
+    secret: ${ZONDA_TESTNET_SECRET}
+
+live:
+  description: Produkcyjny handel Zonda.
+  exchange_manager:
+    mode: spot
+    testnet: false
+    watchdog:
+      retry_policy:
+        max_attempts: 3
+        base_delay: 1.0
+  credentials:
+    api_key: ${ZONDA_LIVE_KEY}
+    secret: ${ZONDA_LIVE_SECRET}
