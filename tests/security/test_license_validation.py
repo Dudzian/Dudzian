@@ -26,6 +26,10 @@ def _write_keys(path: Path, *, key_id: str, secret: bytes) -> None:
     path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
 
 
+def _messages(entries: Sequence[object]) -> list[str]:
+    return [getattr(entry, "message", str(entry)) for entry in entries]
+
+
 def _fingerprint_payload(value: str) -> dict[str, object]:
     collected = datetime(2024, 1, 1, 12, 0, 0).isoformat() + "Z"
     return {
@@ -211,7 +215,7 @@ def test_validate_license_checks_revocation_list(tmp_path: Path) -> None:
     )
 
     assert result.status == "invalid"
-    assert any("liście odwołań" in err for err in result.errors)
+    assert any("liście odwołań" in err for err in _messages(result.errors))
     assert result.revocation_status == "revoked"
     assert result.revocation_checked is True
     assert result.revocation_reason == "Fingerprint mismatch"
@@ -244,7 +248,7 @@ def test_validate_license_reports_invalid_revoked_timestamp(tmp_path: Path) -> N
     )
 
     assert result.status == "invalid"
-    assert any("revoked_at" in warn for warn in result.warnings)
+    assert any("revoked_at" in warn for warn in _messages(result.warnings))
     assert result.revocation_status == "revoked"
     assert result.revocation_reason == "Key compromised"
     assert result.revocation_revoked_at == "31-05-2024"
@@ -326,7 +330,7 @@ def test_validate_license_requires_revocation_when_flag_set(tmp_path: Path) -> N
     )
 
     assert result.status == "invalid"
-    assert any("wymaga listy odwołań" in err for err in result.errors)
+    assert any("wymaga listy odwołań" in err for err in _messages(result.errors))
     assert result.revocation_status == "missing"
     assert result.revocation_checked is False
     assert result.revocation_reason is None
@@ -357,7 +361,7 @@ def test_validate_license_requires_signed_revocation_when_flag_set(tmp_path: Pat
     )
 
     assert result.status == "invalid"
-    assert any("podpisanej listy odwołań" in err for err in result.errors)
+    assert any("podpisanej listy odwołań" in err for err in _messages(result.errors))
 
 
 def test_validate_license_requires_revocation_keys_for_signature(tmp_path: Path) -> None:
@@ -385,7 +389,7 @@ def test_validate_license_requires_revocation_keys_for_signature(tmp_path: Path)
     )
 
     assert result.status == "invalid"
-    assert any("brak dostępnych kluczy" in err.lower() for err in result.errors)
+    assert any("brak dostępnych kluczy" in err.lower() for err in _messages(result.errors))
 
 
 def test_validate_license_detects_stale_revocation_list(tmp_path: Path) -> None:
@@ -408,7 +412,7 @@ def test_validate_license_detects_stale_revocation_list(tmp_path: Path) -> None:
     )
 
     assert result.status == "invalid"
-    assert any("starsza" in err for err in result.errors)
+    assert any("starsza" in err for err in _messages(result.errors))
     assert result.revocation_status == "stale"
     assert result.revocation_reason is None
     assert result.revocation_revoked_at is None
@@ -429,7 +433,7 @@ def test_validate_license_warns_about_missing_revocation_timestamp(tmp_path: Pat
     )
 
     assert result.status == "ok"
-    assert any("generated_at" in warn for warn in result.warnings)
+    assert any("generated_at" in warn for warn in _messages(result.warnings))
     assert result.revocation_status in {"unknown", "clear"}
     assert result.revocation_reason is None
     assert result.revocation_revoked_at is None
@@ -447,7 +451,7 @@ def test_validate_license_detects_mismatched_fingerprint_file(tmp_path: Path) ->
     )
 
     assert result.status == "invalid"
-    assert any("nie zgadza" in msg.lower() for msg in result.errors)
+    assert any("nie zgadza" in msg.lower() for msg in _messages(result.errors))
     assert result.schema == "core.oem.license"
 
 
@@ -468,7 +472,7 @@ def test_validate_license_reports_expired_license(tmp_path: Path) -> None:
     )
 
     assert result.status == "invalid"
-    assert any("wygas" in msg.lower() for msg in result.errors)
+    assert any("wygas" in msg.lower() for msg in _messages(result.errors))
     assert result.schema == "core.oem.license"
 
 
@@ -489,7 +493,7 @@ def test_validate_license_warns_on_upcoming_expiry(tmp_path: Path) -> None:
     )
 
     assert result.is_valid
-    assert any("30 dni" in msg for msg in result.warnings)
+    assert any("30 dni" in msg for msg in _messages(result.warnings))
     assert result.schema == "core.oem.license"
 
 
@@ -511,7 +515,7 @@ def test_validate_license_warns_on_future_issue_date(tmp_path: Path) -> None:
     )
 
     assert result.is_valid
-    assert any("w przyszłości" in msg.lower() for msg in result.warnings)
+    assert any("w przyszłości" in msg.lower() for msg in _messages(result.warnings))
     assert result.schema == "core.oem.license"
 
 
@@ -530,7 +534,7 @@ def test_validate_license_rejects_disallowed_profile(tmp_path: Path) -> None:
     )
 
     assert result.status == "invalid"
-    assert any("Profil licencji" in msg for msg in result.errors)
+    assert any("Profil licencji" in msg for msg in _messages(result.errors))
 
 
 def test_validate_license_rejects_disallowed_issuer(tmp_path: Path) -> None:
@@ -548,7 +552,7 @@ def test_validate_license_rejects_disallowed_issuer(tmp_path: Path) -> None:
     )
 
     assert result.status == "invalid"
-    assert any("Wystawca licencji" in msg for msg in result.errors)
+    assert any("Wystawca licencji" in msg for msg in _messages(result.errors))
 
 
 def test_validate_license_rejects_unexpected_schema(tmp_path: Path) -> None:
@@ -565,7 +569,7 @@ def test_validate_license_rejects_unexpected_schema(tmp_path: Path) -> None:
     )
 
     assert result.status == "invalid"
-    assert any("nieoczekiwany" in msg for msg in result.errors)
+    assert any("nieoczekiwany" in msg for msg in _messages(result.errors))
 
 
 def test_validate_license_rejects_unknown_schema_version(tmp_path: Path) -> None:
@@ -582,7 +586,7 @@ def test_validate_license_rejects_unknown_schema_version(tmp_path: Path) -> None
     )
 
     assert result.status == "invalid"
-    assert any("nieobsługiwan" in msg for msg in result.errors)
+    assert any("nieobsługiwan" in msg for msg in _messages(result.errors))
 
 
 def test_validate_license_rejects_excessive_validity(tmp_path: Path) -> None:
@@ -601,7 +605,7 @@ def test_validate_license_rejects_excessive_validity(tmp_path: Path) -> None:
     )
 
     assert result.status == "invalid"
-    assert any("Okres ważności" in msg for msg in result.errors)
+    assert any("Okres ważności" in msg for msg in _messages(result.errors))
 
 
 def test_validate_license_from_config_raises_on_failure(tmp_path: Path) -> None:
@@ -647,7 +651,7 @@ def test_validate_license_from_config_rejects_disallowed_profile(tmp_path: Path)
         validate_license_from_config(config)
 
     assert excinfo.value.result is not None
-    assert any("Profil licencji" in msg for msg in excinfo.value.result.errors)
+    assert any("Profil licencji" in msg for msg in _messages(excinfo.value.result.errors))
 
 
 def test_validate_license_from_config_rejects_schema_version(tmp_path: Path) -> None:
@@ -664,7 +668,7 @@ def test_validate_license_from_config_rejects_schema_version(tmp_path: Path) -> 
         validate_license_from_config(config)
 
     assert excinfo.value.result is not None
-    assert any("nieobsługiwan" in msg for msg in excinfo.value.result.errors)
+    assert any("nieobsługiwan" in msg for msg in _messages(excinfo.value.result.errors))
 
 
 def test_validate_license_from_config_checks_revocation(tmp_path: Path) -> None:
@@ -693,7 +697,7 @@ def test_validate_license_from_config_checks_revocation(tmp_path: Path) -> None:
         validate_license_from_config(config)
 
     assert excinfo.value.result is not None
-    assert any("liście odwołań" in msg for msg in excinfo.value.result.errors)
+    assert any("liście odwołań" in msg for msg in _messages(excinfo.value.result.errors))
 
 
 def test_validate_license_from_config_requires_keys_for_signed_revocations(tmp_path: Path) -> None:

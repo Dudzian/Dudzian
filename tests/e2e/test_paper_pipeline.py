@@ -10,6 +10,9 @@ from bot_core.api.server import build_local_runtime_context, LocalRuntimeServer
 from bot_core.generated import trading_pb2, trading_pb2_grpc
 
 
+pytestmark = pytest.mark.requires_trading_stubs
+
+
 _INTERVAL_TO_ISO = {
     "1m": "PT1M",
     "3m": "PT3M",

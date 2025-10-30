@@ -38,6 +38,9 @@ from tests._metrics_service_helpers import (
 )
 
 
+pytestmark = pytest.mark.requires_trading_stubs
+
+
 def _make_dummy_server(
     *,
     address: str = "127.0.0.1:7777",

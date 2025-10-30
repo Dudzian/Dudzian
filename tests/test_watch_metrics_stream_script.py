@@ -35,6 +35,9 @@ from scripts.watch_metrics_stream import (
 )
 
 
+pytestmark = pytest.mark.requires_trading_stubs
+
+
 def _write_risk_profile_file(tmp_path: Path, name: str = "ops", severity: str = "warning") -> Path:
     profiles_path = tmp_path / "telemetry_profiles.json"
     payload = {"risk_profiles": {name: {"severity_min": severity}}}

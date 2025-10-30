@@ -20,6 +20,7 @@ endif()
 # --- Protobuf / gRPC ---
 find_package(Protobuf REQUIRED)
 find_package(gRPC REQUIRED)
+find_package(LibArchive)
 
 set(PROTO_SRC ${CMAKE_SOURCE_DIR}/proto/trading.proto)
 set(GENERATED_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated)
@@ -158,6 +159,10 @@ target_link_libraries(bot_trading_shell
         Qt6::Charts
         trading_proto
 )
+if(LibArchive_FOUND)
+    target_link_libraries(bot_trading_shell PRIVATE LibArchive::LibArchive)
+    target_compile_definitions(bot_trading_shell PRIVATE HAS_LIBARCHIVE_FALLBACK=1)
+endif()
 
 install(TARGETS bot_trading_shell RUNTIME DESTINATION bin)
 

@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any, Mapping, Sequence
 from bot_core.config.models import LicenseValidationConfig
 from bot_core.security.capabilities import LicenseCapabilities
 from bot_core.security.fingerprint import decode_secret
+from bot_core.security.messages import ValidationMessage, make_error, make_warning
 from bot_core.security.signing import build_hmac_signature
 
 if TYPE_CHECKING:
@@ -41,8 +42,8 @@ class LicenseValidationResult:
     revocation_generated_at: str | None
     revocation_checked: bool
     revocation_signature_key: str | None
-    errors: list[str]
-    warnings: list[str]
+    errors: list[ValidationMessage]
+    warnings: list[ValidationMessage]
     payload: Mapping[str, Any] | None
     license_signature_key: str | None
     fingerprint_signature_key: str | None
@@ -95,9 +96,11 @@ class LicenseValidationResult:
         if self.fingerprint_signature_key:
             context["fingerprint_key_id"] = self.fingerprint_signature_key
         if self.errors:
-            context["errors"] = list(self.errors)
+            context["errors"] = [entry.to_dict() for entry in self.errors]
+            context["error_messages"] = [entry.message for entry in self.errors]
         if self.warnings:
-            context["warnings"] = list(self.warnings)
+            context["warnings"] = [entry.to_dict() for entry in self.warnings]
+            context["warning_messages"] = [entry.message for entry in self.warnings]
         return context
 
 
@@ -107,6 +110,18 @@ class LicenseValidationError(RuntimeError):
     def __init__(self, message: str, *, result: LicenseValidationResult | None = None) -> None:
         super().__init__(message)
         self.result = result
+
+
+def _append_error(
+    bucket: list[ValidationMessage], code: str, message: str, *, hint: str | None = None
+) -> None:
+    bucket.append(make_error(code, message, hint=hint))
+
+
+def _append_warning(
+    bucket: list[ValidationMessage], code: str, message: str, *, hint: str | None = None
+) -> None:
+    bucket.append(make_warning(code, message, hint=hint))
 
 
 def _load_json(path: Path) -> Any:
@@ -280,11 +295,16 @@ def _extract_revocation_entries(container: Any) -> dict[str, tuple[str | None, s
 def _parse_revocation_document(
     document: Any,
     *,
-    errors: list[str],
-    warnings: list[str],
+    errors: list[ValidationMessage],
+    warnings: list[ValidationMessage],
 ) -> tuple[dict[str, tuple[str | None, str | None]], str | None]:
     if not isinstance(document, (Mapping, Sequence)) or isinstance(document, (str, bytes, bytearray)):
-        errors.append("Lista odwołań ma niepoprawny format JSON.")
+        _append_error(
+            errors,
+            "license.revocation.invalid_format",
+            "Lista odwołań ma niepoprawny format JSON.",
+            hint="Zweryfikuj plik revocations.json i upewnij się, że zawiera poprawny obiekt JSON.",
+        )
         return {}, None
 
     generated_at: str | None = None
@@ -300,14 +320,24 @@ def _parse_revocation_document(
         if raw_revoked is None:
             raw_revoked = document.get("licenses")
         if raw_revoked is None:
-            errors.append("Lista odwołań nie zawiera sekcji 'revoked'.")
+            _append_error(
+                errors,
+                "license.revocation.missing_section",
+                "Lista odwołań nie zawiera sekcji 'revoked'.",
+                hint="Dodaj sekcję 'revoked' z identyfikatorami licencji do listy odwołań.",
+            )
         else:
             revoked_entries = _extract_revocation_entries(raw_revoked)
     else:
         revoked_entries = _extract_revocation_entries(document)
 
     if not revoked_entries and not errors:
-        warnings.append("Lista odwołań nie zawiera żadnych identyfikatorów licencji.")
+        _append_warning(
+            warnings,
+            "license.revocation.empty",
+            "Lista odwołań nie zawiera żadnych identyfikatorów licencji.",
+            hint="Jeśli licencje są aktywne, pozostaw listę pustą; w przeciwnym razie dodaj odwołane identyfikatory.",
+        )
 
     return revoked_entries, generated_at
 
@@ -316,8 +346,8 @@ def _parse_timestamp(
     value: str | None,
     *,
     label: str,
-    errors: list[str],
-    warnings: list[str],
+    errors: list[ValidationMessage],
+    warnings: list[ValidationMessage],
 ) -> datetime | None:
     if not value:
         return None
@@ -326,11 +356,19 @@ def _parse_timestamp(
     try:
         parsed = datetime.fromisoformat(normalized)
     except ValueError:
-        errors.append(f"Pole {label} nie jest poprawnym znacznikiem czasu ISO 8601: {text}.")
+        _append_error(
+            errors,
+            "license.timestamp.invalid",
+            f"Pole {label} nie jest poprawnym znacznikiem czasu ISO 8601: {text}.",
+            hint="Użyj formatu ISO 8601, np. 2024-01-01T00:00:00Z.",
+        )
         return None
     if parsed.tzinfo is None:
-        warnings.append(
-            f"Pole {label} nie zawiera strefy czasowej – przyjmuję, że odnosi się do UTC."
+        _append_warning(
+            warnings,
+            "license.timestamp.no_timezone",
+            f"Pole {label} nie zawiera strefy czasowej – przyjmuję, że odnosi się do UTC.",
+            hint="Dodaj oznaczenie strefy czasowej, np. sufiks Z dla UTC.",
         )
         parsed = parsed.replace(tzinfo=timezone.utc)
     return parsed.astimezone(timezone.utc)
@@ -359,30 +397,50 @@ def _verify_signature(
     signature: Mapping[str, Any],
     *,
     keys: Mapping[str, bytes],
-    errors: list[str],
-    warnings: list[str],
+    errors: list[ValidationMessage],
+    warnings: list[ValidationMessage],
     label: str,
 ) -> str | None:
     if not keys:
-        warnings.append(f"Pominięto weryfikację podpisu {label} – brak dostępnych kluczy.")
+        _append_warning(
+            warnings,
+            "license.signature.keys_missing",
+            f"Pominięto weryfikację podpisu {label} – brak dostępnych kluczy.",
+            hint="Dodaj odpowiednie klucze HMAC do konfiguracji, aby zweryfikować podpis.",
+        )
         return None
 
     key_id_val = signature.get("key_id")
     if not isinstance(key_id_val, str) or not key_id_val.strip():
-        errors.append(f"Podpis {label} nie zawiera identyfikatora klucza.")
+        _append_error(
+            errors,
+            "license.signature.missing_key_id",
+            f"Podpis {label} nie zawiera identyfikatora klucza.",
+            hint="Uzupełnij pole key_id w podpisie, aby wskazać użyty klucz.",
+        )
         return None
     key_id = key_id_val.strip()
     try:
         key_bytes = keys[key_id]
     except KeyError:
-        errors.append(f"Brak klucza HMAC '{key_id}' do weryfikacji podpisu {label}.")
+        _append_error(
+            errors,
+            "license.signature.key_missing",
+            f"Brak klucza HMAC '{key_id}' do weryfikacji podpisu {label}.",
+            hint="Dołącz właściwy klucz do magazynu kluczy licencyjnych.",
+        )
         return None
 
     algorithm = str(signature.get("algorithm") or "HMAC-SHA256")
     expected = build_hmac_signature(payload, key=key_bytes, algorithm=algorithm, key_id=key_id)
     actual = signature.get("value")
     if not isinstance(actual, str) or actual != expected.get("value"):
-        errors.append(f"Sygnatura {label} niezgodna z oczekiwanym HMAC.")
+        _append_error(
+            errors,
+            "license.signature.mismatch",
+            f"Sygnatura {label} niezgodna z oczekiwanym HMAC.",
+            hint="Upewnij się, że plik licencji pochodzi od producenta i nie został zmodyfikowany.",
+        )
         return None
     return key_id
 
@@ -405,8 +463,8 @@ def validate_license(
     revocation_keys: Mapping[str, bytes] | None = None,
     revocation_signature_required: bool = False,
 ) -> LicenseValidationResult:
-    errors: list[str] = []
-    warnings: list[str] = []
+    errors: list[ValidationMessage] = []
+    warnings: list[ValidationMessage] = []
     license_file = Path(license_path).expanduser()
     revocation_file = Path(revocation_list_path).expanduser() if revocation_list_path else None
     revocation_status: str | None = None
@@ -433,7 +491,12 @@ def validate_license(
     }
 
     if not license_file.exists():
-        errors.append(f"Brak pliku licencji: {license_file}")
+        _append_error(
+            errors,
+            "license.file.missing",
+            f"Brak pliku licencji: {license_file}",
+            hint="Zweryfikuj konfigurację license_path i skopiuj aktualny pakiet licencyjny.",
+        )
         return LicenseValidationResult(
             status="missing",
             fingerprint=None,
@@ -463,7 +526,12 @@ def validate_license(
     try:
         document = _load_json(license_file)
     except ValueError as exc:
-        errors.append(str(exc))
+        _append_error(
+            errors,
+            "license.file.invalid_json",
+            str(exc),
+            hint="Upewnij się, że plik licencji nie został uszkodzony ani ręcznie zmodyfikowany.",
+        )
         return LicenseValidationResult(
             status="invalid",
             fingerprint=None,
@@ -493,7 +561,12 @@ def validate_license(
     payload = document.get("payload") if isinstance(document, Mapping) else None
     signature = document.get("signature") if isinstance(document, Mapping) else None
     if not isinstance(payload, Mapping) or not isinstance(signature, Mapping):
-        errors.append("Licencja nie zawiera struktur payload/signature.")
+        _append_error(
+            errors,
+            "license.structure.missing_sections",
+            "Licencja nie zawiera struktur payload/signature.",
+            hint="Sprawdź, czy pakiet licencyjny nie został przycięty lub niekompletnie skopiowany.",
+        )
         fingerprint_value = _extract_fingerprint(document.get("fingerprint")) if isinstance(document, Mapping) else None
         issued_at = _normalize_text(document.get("issued_at")) if isinstance(document, Mapping) else None
         expires_at = _normalize_text(document.get("expires_at")) if isinstance(document, Mapping) else None
@@ -541,44 +614,96 @@ def validate_license(
     fingerprint_source: str | None = None
 
     if profile is None:
-        errors.append("Licencja nie zawiera pola profile.")
+        _append_error(
+            errors,
+            "license.field.profile_missing",
+            "Licencja nie zawiera pola profile.",
+            hint="Upewnij się, że plik licencji zawiera sekcję 'profile'.",
+        )
     elif allowed_profile_set and profile.lower() not in allowed_profile_set:
-        errors.append(
-            f"Profil licencji '{profile}' nie znajduje się na liście dozwolonych: {sorted(allowed_profile_set)}."
+        _append_error(
+            errors,
+            "license.field.profile_not_allowed",
+            f"Profil licencji '{profile}' nie znajduje się na liście dozwolonych: {sorted(allowed_profile_set)}.",
+            hint="Wybierz licencję przeznaczoną dla konfiguracji docelowej.",
         )
 
     if issuer is None:
-        errors.append("Licencja nie zawiera pola issuer.")
+        _append_error(
+            errors,
+            "license.field.issuer_missing",
+            "Licencja nie zawiera pola issuer.",
+            hint="Kontaktuj się z dostawcą licencji w celu uzyskania poprawnego pliku.",
+        )
     elif allowed_issuer_set and issuer.lower() not in allowed_issuer_set:
-        errors.append(
-            f"Wystawca licencji '{issuer}' nie jest dozwolony: {sorted(allowed_issuer_set)}."
+        _append_error(
+            errors,
+            "license.field.issuer_not_allowed",
+            f"Wystawca licencji '{issuer}' nie jest dozwolony: {sorted(allowed_issuer_set)}.",
+            hint="Zaimportuj licencję wystawioną przez autoryzowanego partnera.",
         )
 
     if schema is None:
-        errors.append("Licencja nie zawiera pola schema.")
+        _append_error(
+            errors,
+            "license.field.schema_missing",
+            "Licencja nie zawiera pola schema.",
+            hint="Upewnij się, że używasz aktualnego formatu pakietu licencyjnego.",
+        )
     elif required_schema and schema.lower() != required_schema.strip().lower():
-        errors.append(
-            f"Licencja ma nieoczekiwany typ schematu '{schema}' – oczekiwano '{required_schema}'."
+        _append_error(
+            errors,
+            "license.field.schema_unexpected",
+            f"Licencja ma nieoczekiwany typ schematu '{schema}' – oczekiwano '{required_schema}'.",
+            hint="Zastosuj licencję zgodną z wymaganą gałęzią oprogramowania.",
         )
 
     if schema_version is None:
-        errors.append("Licencja nie zawiera pola schema_version.")
+        _append_error(
+            errors,
+            "license.field.schema_version_missing",
+            "Licencja nie zawiera pola schema_version.",
+            hint="Zaktualizuj licencję do wspieranego formatu.",
+        )
     elif allowed_schema_versions_set and schema_version not in allowed_schema_versions_set:
-        errors.append(
+        _append_error(
+            errors,
+            "license.field.schema_version_unsupported",
             "Licencja ma nieobsługiwaną wersję schematu '%s'. Dozwolone: %s."
-            % (schema_version, sorted(allowed_schema_versions_set))
+            % (schema_version, sorted(allowed_schema_versions_set)),
+            hint="Użyj licencji przygotowanej dla tej wersji oprogramowania.",
         )
 
     if license_id is None:
-        errors.append("Licencja nie zawiera pola license_id.")
+        _append_error(
+            errors,
+            "license.field.id_missing",
+            "Licencja nie zawiera pola license_id.",
+            hint="Skontaktuj się z wydawcą licencji po poprawny dokument.",
+        )
 
     if issued_at is None:
-        errors.append("Licencja nie zawiera pola issued_at.")
+        _append_error(
+            errors,
+            "license.field.issued_at_missing",
+            "Licencja nie zawiera pola issued_at.",
+            hint="Licencja musi zawierać datę wystawienia w formacie ISO 8601.",
+        )
     if expires_at is None:
-        errors.append("Licencja nie zawiera pola expires_at.")
+        _append_error(
+            errors,
+            "license.field.expires_at_missing",
+            "Licencja nie zawiera pola expires_at.",
+            hint="Skontaktuj się z wydawcą licencji po zaktualizowany dokument.",
+        )
 
     if license_keys is None:
-        warnings.append("Pominięto weryfikację podpisu licencji – brak konfiguracji kluczy.")
+        _append_warning(
+            warnings,
+            "license.signature.license_keys_missing",
+            "Pominięto weryfikację podpisu licencji – brak konfiguracji kluczy.",
+            hint="Ustaw ścieżkę do pliku kluczy licencyjnych w konfiguracji OEM.",
+        )
     else:
         key_id = _verify_signature(
             payload,
@@ -597,10 +722,20 @@ def validate_license(
         fingerprint_source = "license_payload"
         fp_value = _extract_fingerprint(fp_payload.get("fingerprint"))
         if fp_value and fingerprint_value and fp_value != fingerprint_value:
-            errors.append("Fingerprint w licencji nie jest zgodny z podpisanym payloadem.")
+            _append_error(
+                errors,
+                "license.fingerprint.payload_mismatch",
+                "Fingerprint w licencji nie jest zgodny z podpisanym payloadem.",
+                hint="Ponownie wygeneruj pakiet licencyjny wraz z fingerprintem urządzenia.",
+            )
         fingerprint_value = fingerprint_value or fp_value
         if fingerprint_keys is None:
-            warnings.append("Pominięto weryfikację podpisu fingerprintu – brak konfiguracji kluczy.")
+            _append_warning(
+                warnings,
+                "license.fingerprint.keys_missing",
+                "Pominięto weryfikację podpisu fingerprintu – brak konfiguracji kluczy.",
+                hint="Ustaw ścieżkę do pliku kluczy fingerprintu.",
+            )
         elif fp_signature is not None:
             key_id = _verify_signature(
                 fp_payload,
@@ -613,30 +748,55 @@ def validate_license(
             if key_id:
                 fingerprint_signature_key = key_id
         else:
-            errors.append("Licencja nie zawiera podpisu fingerprintu.")
+            _append_error(
+                errors,
+                "license.fingerprint.signature_missing",
+                "Licencja nie zawiera podpisu fingerprintu.",
+                hint="Dostarcz plik fingerprintu z podpisem HMAC producenta.",
+            )
 
     file_fingerprint_path = None
     if fingerprint_path:
         fingerprint_file = Path(fingerprint_path).expanduser()
         file_fingerprint_path = fingerprint_file
         if not fingerprint_file.exists():
-            errors.append(f"Brak pliku fingerprintu: {fingerprint_file}")
+            _append_error(
+                errors,
+                "license.fingerprint.file_missing",
+                f"Brak pliku fingerprintu: {fingerprint_file}",
+                hint="Wskaż poprawną ścieżkę fingerprint_path lub ponownie wyeksportuj fingerprint.",
+            )
         else:
             try:
                 fp_document = _load_json(fingerprint_file)
             except ValueError as exc:
-                errors.append(str(exc))
+                _append_error(
+                    errors,
+                    "license.fingerprint.invalid_json",
+                    str(exc),
+                    hint="Zweryfikuj integralność pliku fingerprintu.",
+                )
             else:
                 fp_payload_doc = fp_document.get("payload") if isinstance(fp_document, Mapping) else None
                 fp_signature_doc = fp_document.get("signature") if isinstance(fp_document, Mapping) else None
                 if isinstance(fp_payload_doc, Mapping):
                     fp_value = _extract_fingerprint(fp_payload_doc.get("fingerprint"))
                     if fp_value and fingerprint_value and fp_value != fingerprint_value:
-                        errors.append("Fingerprint w licencji nie zgadza się z plikiem fingerprintu.")
+                        _append_error(
+                            errors,
+                            "license.fingerprint.external_mismatch",
+                            "Fingerprint w licencji nie zgadza się z plikiem fingerprintu.",
+                            hint="Upewnij się, że używasz pary licencja + fingerprint z tego samego zestawu.",
+                        )
                     fingerprint_value = fingerprint_value or fp_value
                     fingerprint_source = str(fingerprint_file)
                     if fingerprint_keys is None:
-                        warnings.append("Pominięto weryfikację podpisu fingerprintu z pliku – brak konfiguracji kluczy.")
+                        _append_warning(
+                            warnings,
+                            "license.fingerprint.file_keys_missing",
+                            "Pominięto weryfikację podpisu fingerprintu z pliku – brak konfiguracji kluczy.",
+                            hint="Dodaj klucze fingerprintu do konfiguracji, aby zweryfikować plik.",
+                        )
                     elif isinstance(fp_signature_doc, Mapping):
                         key_id = _verify_signature(
                             fp_payload_doc,
@@ -649,16 +809,29 @@ def validate_license(
                         if key_id:
                             fingerprint_signature_key = key_id
                     else:
-                        errors.append("Plik fingerprintu nie zawiera sekcji signature.")
+                        _append_error(
+                            errors,
+                            "license.fingerprint.signature_section_missing",
+                            "Plik fingerprintu nie zawiera sekcji signature.",
+                            hint="Zweryfikuj, czy plik fingerprintu został wygenerowany poprawnym narzędziem.",
+                        )
                 else:
-                    errors.append("Plik fingerprintu ma nieoczekiwaną strukturę JSON.")
+                    _append_error(
+                        errors,
+                        "license.fingerprint.invalid_structure",
+                        "Plik fingerprintu ma nieoczekiwaną strukturę JSON.",
+                        hint="Otwórz plik fingerprintu i sprawdź, czy zawiera sekcje payload/signature.",
+                    )
 
     revocation_keys = revocation_keys or {}
 
     if revocation_file is None:
         if revocation_required:
-            errors.append(
-                "Konfiguracja wymaga listy odwołań licencji, ale nie podano ścieżki."
+            _append_error(
+                errors,
+                "license.revocation.required_missing",
+                "Konfiguracja wymaga listy odwołań licencji, ale nie podano ścieżki.",
+                hint="Ustaw parametr revocation_list_path lub wyłącz wymaganie listy odwołań.",
             )
             revocation_status = "missing"
         else:
@@ -667,19 +840,43 @@ def validate_license(
         revocation_checked = True
         if not revocation_file.exists():
             message = f"Brak pliku listy odwołań: {revocation_file}"
-            target = errors if revocation_required else warnings
-            target.append(message)
+            if revocation_required:
+                _append_error(
+                    errors,
+                    "license.revocation.file_missing",
+                    message,
+                    hint="Dostarcz aktualny plik listy odwołań lub wyłącz wymóg revocation_required.",
+                )
+            else:
+                _append_warning(
+                    warnings,
+                    "license.revocation.file_missing",
+                    message,
+                    hint="Jeżeli korzystasz z listy odwołań, wskaż poprawną ścieżkę.",
+                )
             revocation_status = "missing"
         else:
             try:
                 revocation_document = _load_json(revocation_file)
             except ValueError as exc:
-                target = errors if revocation_required else warnings
-                target.append(str(exc))
+                if revocation_required:
+                    _append_error(
+                        errors,
+                        "license.revocation.invalid_json",
+                        str(exc),
+                        hint="Zweryfikuj integralność pliku listy odwołań.",
+                    )
+                else:
+                    _append_warning(
+                        warnings,
+                        "license.revocation.invalid_json",
+                        str(exc),
+                        hint="Plik listy odwołań jest ignorowany do czasu poprawienia formatu.",
+                    )
                 revocation_status = "error"
             else:
-                local_errors: list[str] = []
-                local_warnings: list[str] = []
+                local_errors: list[ValidationMessage] = []
+                local_warnings: list[ValidationMessage] = []
                 payload_document = revocation_document
                 signature_document: Mapping[str, Any] | None = None
                 if isinstance(revocation_document, Mapping) and "payload" in revocation_document:
@@ -693,16 +890,25 @@ def validate_license(
                             if isinstance(signature_candidate, Mapping):
                                 signature_document = signature_candidate
                             else:
-                                local_errors.append(
-                                    "Podpis listy odwołań ma niepoprawny format."
+                                _append_error(
+                                    local_errors,
+                                    "license.revocation.signature_invalid_format",
+                                    "Podpis listy odwołań ma niepoprawny format.",
+                                    hint="Sekcja 'signature' powinna być obiektem JSON z polami key_id/value.",
                                 )
                     else:
-                        local_errors.append(
-                            "Sekcja payload listy odwołań ma nieoczekiwaną strukturę."
+                        _append_error(
+                            local_errors,
+                            "license.revocation.payload_structure_invalid",
+                            "Sekcja payload listy odwołań ma nieoczekiwaną strukturę.",
+                            hint="Payload listy odwołań powinien być tablicą lub obiektem JSON.",
                         )
                 elif revocation_signature_required:
-                    local_errors.append(
-                        "Konfiguracja wymaga podpisanej listy odwołań, ale dokument nie zawiera sekcji 'payload' i 'signature'."
+                    _append_error(
+                        local_errors,
+                        "license.revocation.signature_required_missing",
+                        "Konfiguracja wymaga podpisanej listy odwołań, ale dokument nie zawiera sekcji 'payload' i 'signature'.",
+                        hint="Upewnij się, że plik revocations.json zawiera pola payload/signature.",
                     )
 
                 payload_is_json = isinstance(payload_document, Mapping) or (
@@ -711,8 +917,11 @@ def validate_license(
                 )
 
                 if signature_document is not None and not payload_is_json:
-                    local_errors.append(
-                        "Sekcja payload listy odwołań ma nieobsługiwany format do weryfikacji podpisu."
+                    _append_error(
+                        local_errors,
+                        "license.revocation.payload_signature_incompatible",
+                        "Sekcja payload listy odwołań ma nieobsługiwany format do weryfikacji podpisu.",
+                        hint="Payload musi być obiektem JSON lub tablicą do poprawnej walidacji podpisu.",
                     )
                 elif signature_document is not None:
                     if not revocation_keys:
@@ -720,9 +929,19 @@ def validate_license(
                             "Pominięto weryfikację podpisu listy odwołań – brak dostępnych kluczy."
                         )
                         if revocation_signature_required:
-                            local_errors.append(message)
+                            _append_error(
+                                local_errors,
+                                "license.revocation.signature_keys_missing",
+                                message,
+                                hint="Dodaj klucze HMAC listy odwołań do konfiguracji.",
+                            )
                         else:
-                            local_warnings.append(message)
+                            _append_warning(
+                                local_warnings,
+                                "license.revocation.signature_keys_missing",
+                                message,
+                                hint="Podpis listy odwołań został pominięty z powodu braku kluczy.",
+                            )
                     else:
                         key_id = _verify_signature(
                             payload_document,
@@ -735,10 +954,18 @@ def validate_license(
                         if key_id:
                             revocation_signature_key = key_id
                         elif revocation_signature_required:
-                            local_errors.append("Podpis listy odwołań nie został zweryfikowany.")
+                            _append_error(
+                                local_errors,
+                                "license.revocation.signature_verification_failed",
+                                "Podpis listy odwołań nie został zweryfikowany.",
+                                hint="Zweryfikuj klucz podpisujący listę odwołań i integralność pliku.",
+                            )
                 elif revocation_signature_required:
-                    local_errors.append(
-                        "Konfiguracja wymaga podpisanej listy odwołań, ale dokument nie zawiera sekcji 'signature'."
+                    _append_error(
+                        local_errors,
+                        "license.revocation.signature_section_missing",
+                        "Konfiguracja wymaga podpisanej listy odwołań, ale dokument nie zawiera sekcji 'signature'.",
+                        hint="Dodaj podpis HMAC do listy odwołań lub wyłącz wymóg podpisu.",
                     )
 
                 revocation_payload = payload_document
@@ -760,8 +987,8 @@ def validate_license(
 
                 generated_dt = None
                 if generated_at:
-                    timestamp_errors: list[str] = []
-                    timestamp_warnings: list[str] = []
+                    timestamp_errors: list[ValidationMessage] = []
+                    timestamp_warnings: list[ValidationMessage] = []
                     generated_dt = _parse_timestamp(
                         generated_at,
                         label="generated_at",
@@ -784,28 +1011,56 @@ def validate_license(
                     try:
                         max_age = timedelta(hours=float(revocation_list_max_age_hours))
                     except (TypeError, ValueError):
-                        errors.append(
-                            "Konfiguracja revocation_list_max_age_hours musi być liczbą."
+                        _append_error(
+                            errors,
+                            "license.revocation.max_age_invalid",
+                            "Konfiguracja revocation_list_max_age_hours musi być liczbą.",
+                            hint="Podaj wartość numeryczną w godzinach, np. 24.",
                         )
                     else:
                         if max_age <= timedelta(0):
-                            errors.append(
-                                "Konfiguracja revocation_list_max_age_hours musi być dodatnia."
+                            _append_error(
+                                errors,
+                                "license.revocation.max_age_non_positive",
+                                "Konfiguracja revocation_list_max_age_hours musi być dodatnia.",
+                                hint="Ustaw dodatnią liczbę godzin, np. 24.",
                             )
                         elif generated_dt and now - generated_dt > max_age:
                             message = (
                                 "Lista odwołań licencji jest starsza niż dozwolone %.1f godzin."
                                 % (max_age.total_seconds() / 3600.0)
                             )
-                            target = errors if revocation_required else warnings
-                            target.append(message)
+                            if revocation_required:
+                                _append_error(
+                                    errors,
+                                    "license.revocation.list_stale",
+                                    message,
+                                    hint="Pobierz aktualną listę odwołań od producenta.",
+                                )
+                            else:
+                                _append_warning(
+                                    warnings,
+                                    "license.revocation.list_stale",
+                                    message,
+                                    hint="Rozważ odświeżenie listy odwołań, aby zachować aktualność.",
+                                )
                             if revocation_status != "revoked":
                                 revocation_status = "stale"
                 elif revocation_list_max_age_hours not in (None, float("inf")) and not generated_at:
-                    target = errors if revocation_required else warnings
-                    target.append(
-                        "Lista odwołań nie zawiera znacznika generated_at – nie można ocenić świeżości."
-                    )
+                    if revocation_required:
+                        _append_error(
+                            errors,
+                            "license.revocation.generated_at_missing",
+                            "Lista odwołań nie zawiera znacznika generated_at – nie można ocenić świeżości.",
+                            hint="Dodaj pole generated_at do listy odwołań.",
+                        )
+                    else:
+                        _append_warning(
+                            warnings,
+                            "license.revocation.generated_at_missing",
+                            "Lista odwołań nie zawiera znacznika generated_at – nie można ocenić świeżości.",
+                            hint="Dodaj pole generated_at, aby monitorować aktualność listy.",
+                        )
                     if revocation_status is None:
                         revocation_status = "unknown"
 
@@ -814,8 +1069,8 @@ def validate_license(
                         entry_reason, entry_revoked_at = revoked_entries[license_id]
                         revocation_reason = entry_reason
                         if entry_revoked_at:
-                            revoked_at_errors: list[str] = []
-                            revoked_at_warnings: list[str] = []
+                            revoked_at_errors: list[ValidationMessage] = []
+                            revoked_at_warnings: list[ValidationMessage] = []
                             revoked_dt = _parse_timestamp(
                                 entry_revoked_at,
                                 label="revoked_at",
@@ -829,8 +1084,11 @@ def validate_license(
                             revocation_revoked_at = (
                                 revoked_dt.isoformat() if revoked_dt else entry_revoked_at
                             )
-                        errors.append(
-                            f"Licencja {license_id} znajduje się na liście odwołań."
+                        _append_error(
+                            errors,
+                            "license.revocation.entry_match",
+                            f"Licencja {license_id} znajduje się na liście odwołań.",
+                            hint="Skontaktuj się z dostawcą licencji w celu odnowienia uprawnień.",
                         )
                         revocation_status = "revoked"
                     elif license_id:
@@ -845,43 +1103,70 @@ def validate_license(
     expires_dt = _parse_timestamp(expires_at, label="expires_at", errors=errors, warnings=warnings)
 
     if issued_dt and issued_dt - now > timedelta(minutes=5):
-        warnings.append(
-            f"Data wystawienia licencji ({issued_dt.isoformat()}) znajduje się w przyszłości."
+        _append_warning(
+            warnings,
+            "license.time.issued_in_future",
+            f"Data wystawienia licencji ({issued_dt.isoformat()}) znajduje się w przyszłości.",
+            hint="Sprawdź ustawienia zegara systemowego lub poprawność dokumentu licencyjnego.",
         )
 
     if issued_dt and expires_dt and expires_dt <= issued_dt:
-        errors.append(
-            "Data wygaśnięcia licencji jest wcześniejsza lub równa dacie wystawienia."
+        _append_error(
+            errors,
+            "license.time.invalid_window",
+            "Data wygaśnięcia licencji jest wcześniejsza lub równa dacie wystawienia.",
+            hint="Skontaktuj się z wydawcą licencji w celu korekty okresu ważności.",
         )
 
     if expires_dt:
         if expires_dt <= now:
-            errors.append(f"Licencja wygasła {expires_dt.isoformat()}.")
+            _append_error(
+                errors,
+                "license.time.expired",
+                f"Licencja wygasła {expires_dt.isoformat()}.",
+                hint="Odnów licencję, aby kontynuować pracę programu.",
+            )
         else:
             remaining = expires_dt - now
             if remaining <= timedelta(days=30):
-                warnings.append(
+                _append_warning(
+                    warnings,
+                    "license.time.expiring_soon",
                     "Licencja wygaśnie w ciągu 30 dni (data: "
-                    f"{expires_dt.isoformat()})."
+                    f"{expires_dt.isoformat()}).",
+                    hint="Zaplanowanie odnowienia licencji zapewni ciągłość działania.",
                 )
 
     if issued_dt and expires_dt and max_validity_days not in (None, float("inf")):
         try:
             max_validity = timedelta(days=float(max_validity_days))
         except (TypeError, ValueError):
-            errors.append("Konfiguracja max_validity_days musi być liczbą.")
+            _append_error(
+                errors,
+                "license.time.max_validity_invalid",
+                "Konfiguracja max_validity_days musi być liczbą.",
+                hint="Zdefiniuj limit ważności jako liczbę dni, np. 365.",
+            )
         else:
             if max_validity <= timedelta(0):
-                errors.append("Konfiguracja max_validity_days musi być dodatnia.")
+                _append_error(
+                    errors,
+                    "license.time.max_validity_non_positive",
+                    "Konfiguracja max_validity_days musi być dodatnia.",
+                    hint="Wprowadź dodatnią liczbę dni.",
+                )
             else:
                 validity_window = expires_dt - issued_dt
                 if validity_window > max_validity:
                     validity_days = validity_window.total_seconds() / 86400.0
-                    errors.append(
+                    _append_error(
+                        errors,
+                        "license.time.max_validity_exceeded",
                         "Okres ważności licencji (" "%.1f dni) przekracza dozwolone %.1f dni." % (
                             validity_days,
                             max_validity.total_seconds() / 86400.0,
-                        )
+                        ),
+                        hint="Zastosuj licencję z krótszym okresem ważności lub zaktualizuj konfigurację limitu.",
                     )
 
     status = "ok" if not errors else "invalid"

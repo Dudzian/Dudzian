@@ -19,6 +19,60 @@
 
 Q_LOGGING_CATEGORY(lcSecurityAdmin, "bot.shell.security.admin")
 
+namespace {
+
+QStringList collectIssueMessages(const QVariantMap& map,
+                                 const QString& detailKey,
+                                 const QString& fallbackKey)
+{
+    QStringList messages;
+    const QVariant detailVariant = map.value(detailKey);
+    if (detailVariant.canConvert<QVariantList>()) {
+        const QVariantList detailList = detailVariant.toList();
+        for (const QVariant& entry : detailList) {
+            const QVariantMap issue = entry.toMap();
+            if (issue.isEmpty())
+                continue;
+            QString text = issue.value(QStringLiteral("message")).toString();
+            const QString hint = issue.value(QStringLiteral("hint")).toString();
+            const QString code = issue.value(QStringLiteral("code")).toString();
+            if (!hint.isEmpty())
+                text += QStringLiteral(" — %1").arg(hint);
+            if (!code.isEmpty())
+                text += QStringLiteral(" [%1]").arg(code);
+            if (!text.isEmpty())
+                messages.append(text);
+        }
+    }
+    if (messages.isEmpty()) {
+        const QVariant fallbackVariant = map.value(fallbackKey);
+        if (fallbackVariant.canConvert<QStringList>()) {
+            messages = fallbackVariant.toStringList();
+        } else if (fallbackVariant.canConvert<QVariantList>()) {
+            const QVariantList fallbackList = fallbackVariant.toList();
+            for (const QVariant& entry : fallbackList) {
+                if (entry.canConvert<QString>()) {
+                    const QString text = entry.toString();
+                    if (!text.isEmpty())
+                        messages.append(text);
+                } else if (entry.canConvert<QVariantMap>()) {
+                    const QVariantMap issue = entry.toMap();
+                    const QString text = issue.value(QStringLiteral("message")).toString();
+                    if (!text.isEmpty())
+                        messages.append(text);
+                }
+            }
+        } else if (fallbackVariant.canConvert<QString>()) {
+            const QString text = fallbackVariant.toString();
+            if (!text.isEmpty())
+                messages.append(text);
+        }
+    }
+    return messages;
+}
+
+} // namespace
+
 SecurityAdminController::SecurityAdminController(QObject* parent)
     : QObject(parent)
 {
@@ -86,6 +140,10 @@ bool SecurityAdminController::refresh()
         if (!m_profilesPath.isEmpty()) {
             args << QStringLiteral("--profiles-path") << m_profilesPath;
         }
+        if (!m_logPath.isEmpty()) {
+            args << QStringLiteral("--audit-path") << m_logPath;
+        }
+        args << QStringLiteral("--audit-limit") << QString::number(200);
 
         QByteArray stdoutData;
         QByteArray stderrData;
@@ -306,6 +364,29 @@ bool SecurityAdminController::loadStateFromJson(const QByteArray& data)
     m_licenseInfo = license;
     Q_EMIT licenseInfoChanged();
 
+    const QVariantMap policy = license.value(QStringLiteral("policy")).toMap();
+    if (!policy.isEmpty()) {
+        const QString state = policy.value(QStringLiteral("state")).toString();
+        if (state.compare(QStringLiteral("expired"), Qt::CaseInsensitive) == 0) {
+            recordAuditEvent(QStringLiteral("license"),
+                             tr("Licencja utrzymaniowa wygasła."),
+                             policy);
+            Q_EMIT securityAlertRaised(QStringLiteral("security:license"),
+                                       2,
+                                       tr("Licencja OEM"),
+                                       tr("Licencja utrzymaniowa wygasła i wymaga odnowienia."));
+        } else if (state.compare(QStringLiteral("critical"), Qt::CaseInsensitive) == 0
+                   || state.compare(QStringLiteral("warning"), Qt::CaseInsensitive) == 0) {
+            recordAuditEvent(QStringLiteral("license"),
+                             tr("Licencja zbliża się do wygaśnięcia."),
+                             policy);
+            Q_EMIT securityAlertRaised(QStringLiteral("security:license"),
+                                       1,
+                                       tr("Licencja OEM"),
+                                       tr("Licencja wkrótce wygaśnie – zaplanuj odnowienie."));
+        }
+    }
+
     QVariantList profiles;
     const QJsonArray profilesArray = root.value(QStringLiteral("profiles")).toArray();
     profiles.reserve(profilesArray.size());
@@ -322,6 +403,20 @@ bool SecurityAdminController::loadStateFromJson(const QByteArray& data)
     }
     m_userProfiles = profiles;
     Q_EMIT userProfilesChanged();
+
+    QVariantList auditEntries;
+    const QJsonObject auditObject = root.value(QStringLiteral("audit")).toObject();
+    const QJsonArray auditArray = auditObject.value(QStringLiteral("entries")).toArray();
+    auditEntries.reserve(auditArray.size());
+    for (const QJsonValue& entryValue : auditArray) {
+        if (!entryValue.isObject())
+            continue;
+        auditEntries.prepend(entryValue.toObject().toVariantMap());
+    }
+    if (!auditEntries.isEmpty()) {
+        m_auditLog = auditEntries;
+        Q_EMIT auditLogChanged();
+    }
     return true;
 }
 

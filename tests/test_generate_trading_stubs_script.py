@@ -29,6 +29,15 @@ def test_generates_python_and_cpp(monkeypatch: pytest.MonkeyPatch, tmp_path: Pat
 
     def fake_run(cmd: list[str], check: bool) -> None:
         calls.append(cmd)
+        python_out: Path | None = None
+        for part in cmd:
+            if part.startswith("--python_out="):
+                python_out = Path(part.split("=", 1)[1])
+                break
+        if python_out is not None:
+            python_out.mkdir(parents=True, exist_ok=True)
+            (python_out / "trading_pb2.py").write_text("# stub\n", encoding="utf-8")
+            (python_out / "trading_pb2_grpc.py").write_text("# stub\n", encoding="utf-8")
 
     def fake_which(name: str) -> str | None:
         return str(tmp_path / name)

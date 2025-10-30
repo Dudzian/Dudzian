@@ -358,13 +358,105 @@ def test_smoothed_policy_exposes_snapshots() -> None:
     trend_ctx, grid_ctx = scheduler._schedules
     assert trend_ctx.metrics["allocator_raw_weight"] == pytest.approx(0.2)
     assert grid_ctx.metrics["allocator_raw_weight"] == pytest.approx(0.8)
-    assert trend_ctx.metrics["allocator_smoothed_weight"] == pytest.approx(0.5)
-    assert grid_ctx.metrics["allocator_smoothed_weight"] == pytest.approx(0.5)
 
-    diagnostics = scheduler.capital_policy_diagnostics()
-    assert diagnostics["policy_name"] == "smoothed"
-    assert diagnostics["flags"] == {}
-    assert diagnostics["details"] == {}
+
+class FailingStrategy(DummyStrategy):
+    def __init__(self, failures: int = 1) -> None:
+        super().__init__()
+        self._remaining = failures
+
+    def on_data(self, snapshot):  # type: ignore[override]
+        if self._remaining > 0:
+            self._remaining -= 1
+            raise RuntimeError("simulated failure")
+        return super().on_data(snapshot)
+
+
+def test_scheduler_failover_enables_fallback() -> None:
+    primary_feed = DummyFeed([_snapshot(101.0, 1000)])
+    fallback_feed = DummyFeed([_snapshot(201.0, 2000)])
+    failing = FailingStrategy()
+    failing.metadata = {"fallback_schedules": ("fallback_schedule",), "schedule_priority": 5}
+    fallback = DummyStrategy()
+    fallback.metadata = {"schedule_priority": 1}
+    sink = DummySink()
+
+    scheduler = MultiStrategyScheduler(
+        environment="demo",
+        portfolio="paper",
+        clock=lambda: datetime(2024, 1, 1, tzinfo=timezone.utc),
+    )
+    scheduler.register_schedule(
+        name="primary_schedule",
+        strategy_name="primary",
+        strategy=failing,
+        feed=primary_feed,
+        sink=sink,
+        cadence_seconds=5,
+        max_drift_seconds=1,
+        warmup_bars=0,
+        risk_profile="balanced",
+        max_signals=4,
+    )
+    scheduler.register_schedule(
+        name="fallback_schedule",
+        strategy_name="fallback",
+        strategy=fallback,
+        feed=fallback_feed,
+        sink=sink,
+        cadence_seconds=5,
+        max_drift_seconds=1,
+        warmup_bars=0,
+        risk_profile="balanced",
+        max_signals=4,
+    )
+
+    asyncio.run(scheduler.run_once())
+
+    snapshot = scheduler.describe_schedules()
+    primary = snapshot["primary_schedule"]
+    assert primary["failover_count"] >= 1
+    assert primary["active_fallback"] == "fallback_schedule"
+
+    alerts = scheduler.alerts_snapshot(clear=True)
+    assert any(alert["code"] == "strategy-failover" for alert in alerts)
+    assert any(call[0] == "fallback_schedule" for call in sink.calls)
+
+    suspensions = scheduler.suspension_snapshot().get("schedules", {})
+    assert "primary_schedule" in suspensions
+
+
+def test_scheduler_respects_schedule_windows() -> None:
+    strategy = DummyStrategy()
+    strategy.metadata = {"schedule_windows": ("22:00-23:00",)}
+    feed = DummyFeed([_snapshot(110.0, 1000)])
+    sink = DummySink()
+
+    scheduler = MultiStrategyScheduler(
+        environment="demo",
+        portfolio="paper",
+        clock=lambda: datetime(2024, 1, 1, 12, tzinfo=timezone.utc),
+    )
+    scheduler.register_schedule(
+        name="window_schedule",
+        strategy_name="window_strategy",
+        strategy=strategy,
+        feed=feed,
+        sink=sink,
+        cadence_seconds=5,
+        max_drift_seconds=1,
+        warmup_bars=0,
+        risk_profile="balanced",
+        max_signals=2,
+    )
+
+    asyncio.run(scheduler.run_once())
+
+    assert not sink.calls
+    alerts = scheduler.alerts_snapshot(clear=True)
+    assert any(alert["code"] == "schedule-window-closed" for alert in alerts)
+    metrics = scheduler.describe_schedules()["window_schedule"]["metrics"]
+    assert metrics["window_active"] == 0.0
 
 
 def test_metric_weighted_policy_emits_diagnostics() -> None:

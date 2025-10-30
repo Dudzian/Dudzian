@@ -41,6 +41,7 @@ from bot_core.security.rotation_report import (
     build_rotation_summary_entry,
     write_rotation_summary,
 )
+from bot_core.security.messages import ValidationMessage, make_error, make_warning
 from bot_core.security.signing import build_hmac_signature, canonical_json_bytes
 from bot_core.security.profiles import (
     UserProfile,
@@ -110,6 +111,7 @@ except Exception:  # pragma: no cover
 # --- Leniwe eksporty TLS (zgodne z obiema gałęziami) -------------------------
 if TYPE_CHECKING:  # pragma: no cover - tylko dla statycznych analizatorów
     from bot_core.security import tls_audit as _tls_audit  # noqa: F401
+    from bot_core.security import tpm as _tpm  # noqa: F401
 
 _TLS_EXPORTS = {
     "verify_certificate_key_pair",
@@ -118,14 +120,23 @@ _TLS_EXPORTS = {
     "audit_mtls_bundle",
 }
 
+_TPM_EXPORTS = {
+    "validate_attestation",
+    "TpmValidationError",
+    "TpmValidationResult",
+}
+
 
 def __getattr__(name: str):
     if name in _TLS_EXPORTS:
         module = import_module("bot_core.security.tls_audit")
-        value = getattr(module, name)
-        globals()[name] = value  # cache
-        return value
-    raise AttributeError(f"module 'bot_core.security' has no attribute '{name}'")
+    elif name in _TPM_EXPORTS:
+        module = import_module("bot_core.security.tpm")
+    else:
+        raise AttributeError(f"module 'bot_core.security' has no attribute '{name}'")
+    value = getattr(module, name)
+    globals()[name] = value  # cache
+    return value
 
 
 # --- Publiczne API -----------------------------------------------------------
@@ -167,6 +178,9 @@ __all__ = [
     "upsert_profile",
     "log_admin_event",
     "remove_profile",
+    "ValidationMessage",
+    "make_error",
+    "make_warning",
     # tokeny i audyty
     "ServiceToken",
     "ServiceTokenValidator",
@@ -189,4 +203,4 @@ __all__.extend(_fingerprint_v1_exports)
 __all__.extend(_fingerprint_v2_exports)
 
 # dołącz leniwe eksporty TLS
-__all__.extend(sorted(_TLS_EXPORTS))
+__all__.extend(sorted(_TLS_EXPORTS | _TPM_EXPORTS))

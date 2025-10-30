@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import QtQuick.Dialogs
+import QtCore
 import "./LocalSecurityStore.js" as SecurityStore
 
 Item {
@@ -150,6 +151,32 @@ Item {
             Label { text: qsTr("Utrzymanie do") }
             Label {
                 text: licenseControllerRef ? (licenseControllerRef.licenseMaintenanceUntil || qsTr("brak")) : qsTr("brak")
+            }
+
+            Label { text: qsTr("Polityka licencji") }
+            Label {
+                text: {
+                    if (!securityController || !securityController.licenseInfo)
+                        return qsTr("n/d")
+                    var policy = securityController.licenseInfo.policy || {}
+                    var state = policy.state || "n/d"
+                    var remaining = policy.days_remaining
+                    if (remaining === undefined || remaining === null)
+                        return state
+                    return qsTr("%1 (%2 dni)").arg(state).arg(remaining)
+                }
+                font.bold: true
+                color: {
+                    if (!securityController || !securityController.licenseInfo)
+                        return palette.text
+                    var policy = securityController.licenseInfo.policy || {}
+                    var state = (policy.state || "").toLowerCase()
+                    if (state === "critical" || state === "expired")
+                        return Qt.rgba(0.9, 0.35, 0.35, 1)
+                    if (state === "warning")
+                        return Qt.rgba(0.93, 0.74, 0.28, 1)
+                    return palette.text
+                }
             }
 
             Label { text: qsTr("Status harmonogramu") }
@@ -385,6 +412,88 @@ Item {
                     color: palette.mid
                 }
             }
+        }
+
+        GroupBox {
+            title: qsTr("Zdarzenia bezpieczeństwa i audyt")
+            Layout.fillWidth: true
+            Layout.preferredHeight: 240
+
+            ColumnLayout {
+                anchors.fill: parent
+                spacing: 6
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 6
+
+                    Button {
+                        text: qsTr("Odśwież")
+                        enabled: securityController && !securityController.busy
+                        onClicked: securityController && securityController.refresh()
+                    }
+
+                    Button {
+                        text: qsTr("Eksportuj podpisany log")
+                        enabled: securityController && !securityController.busy
+                        onClicked: auditExportDialog.open()
+                    }
+
+                    Item { Layout.fillWidth: true }
+                }
+
+                ListView {
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    clip: true
+                    model: securityController ? securityController.auditLog : []
+                    delegate: Frame {
+                        required property var modelData
+                        Layout.fillWidth: true
+                        padding: 8
+                        background: Rectangle {
+                            color: Qt.rgba(0.09, 0.12, 0.18, 0.65)
+                            radius: 6
+                        }
+
+                        ColumnLayout {
+                            anchors.fill: parent
+                            spacing: 2
+
+                            Label {
+                                text: (modelData.timestamp || "") + " · " + (modelData.category || "")
+                                font.pixelSize: 12
+                                color: Qt.rgba(0.7, 0.78, 0.88, 1)
+                            }
+
+                            Label {
+                                text: modelData.message || ""
+                                font.pixelSize: 13
+                                wrapMode: Text.WordWrap
+                                color: "white"
+                            }
+
+                            Label {
+                                visible: modelData.details && Object.keys(modelData.details).length > 0
+                                text: visible ? JSON.stringify(modelData.details) : ""
+                                font.pixelSize: 11
+                                wrapMode: Text.WordWrap
+                                color: Qt.rgba(0.6, 0.72, 0.84, 1)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    FolderDialog {
+        id: auditExportDialog
+        title: qsTr("Wybierz katalog eksportu logów bezpieczeństwa")
+        folder: QtCore.StandardPaths.writableLocation(QtCore.StandardPaths.DocumentsLocation)
+        onAccepted: {
+            if (securityController)
+                securityController.exportSignedAuditLog(auditExportDialog.selectedFolder)
         }
     }
 
