@@ -1,6 +1,8 @@
 #include "RiskStateModel.hpp"
 
 #include <QtGlobal>
+#include <QVariantList>
+#include <QVariantMap>
 
 RiskStateModel::RiskStateModel(QObject* parent)
     : QAbstractListModel(parent) {
@@ -62,4 +64,33 @@ void RiskStateModel::clear() {
     m_snapshot = RiskSnapshotData{};
     endResetModel();
     Q_EMIT riskStateChanged();
+}
+
+QVariantMap RiskStateModel::currentSnapshot() const
+{
+    QVariantMap map;
+    if (!m_snapshot.hasData)
+        return map;
+
+    map.insert(QStringLiteral("profileLabel"), m_snapshot.profileLabel);
+    map.insert(QStringLiteral("portfolioValue"), m_snapshot.portfolioValue);
+    map.insert(QStringLiteral("currentDrawdown"), m_snapshot.currentDrawdown);
+    map.insert(QStringLiteral("maxDailyLoss"), m_snapshot.maxDailyLoss);
+    map.insert(QStringLiteral("usedLeverage"), m_snapshot.usedLeverage);
+    map.insert(QStringLiteral("generatedAt"), m_snapshot.generatedAt.toString(Qt::ISODate));
+
+    QVariantList exposures;
+    exposures.reserve(m_snapshot.exposures.size());
+    for (const RiskExposureData& exposure : m_snapshot.exposures) {
+        QVariantMap exposureMap;
+        exposureMap.insert(QStringLiteral("code"), exposure.code);
+        exposureMap.insert(QStringLiteral("maxValue"), exposure.maxValue);
+        exposureMap.insert(QStringLiteral("currentValue"), exposure.currentValue);
+        exposureMap.insert(QStringLiteral("thresholdValue"), exposure.thresholdValue);
+        exposureMap.insert(QStringLiteral("breached"), exposure.isBreached());
+        exposures.append(exposureMap);
+    }
+    map.insert(QStringLiteral("exposures"), exposures);
+
+    return map;
 }

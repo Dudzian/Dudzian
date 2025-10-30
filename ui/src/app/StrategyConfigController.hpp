@@ -29,6 +29,8 @@ public:
     Q_INVOKABLE QVariantMap schedulerConfigSnapshot(const QString& name) const;
     Q_INVOKABLE bool saveDecisionConfig(const QVariantMap& config);
     Q_INVOKABLE bool saveSchedulerConfig(const QString& name, const QVariantMap& config);
+    Q_INVOKABLE bool removeSchedulerConfig(const QString& name);
+    Q_INVOKABLE bool runSchedulerNow(const QString& name);
 
 signals:
     void busyChanged();

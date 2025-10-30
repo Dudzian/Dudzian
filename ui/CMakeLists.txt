@@ -64,6 +64,7 @@ set(UI_SOURCES
     src/app/UiModuleManager.cpp
     src/app/UiModuleViewsModel.cpp
     src/app/ActivationController.cpp
+    src/app/ConfigurationWizardController.cpp
     src/app/StrategyConfigController.cpp
     src/app/StrategyWorkbenchController.cpp
     src/grpc/BotCoreLocalService.cpp
@@ -71,6 +72,7 @@ set(UI_SOURCES
     src/grpc/MetricsClient.cpp
     src/grpc/HealthClient.cpp
     src/runtime/OfflineRuntimeBridge.cpp
+    src/runtime/OfflineRuntimeService.cpp
     src/models/OhlcvListModel.cpp
     src/models/AlertsModel.cpp
     src/models/AlertsFilterProxyModel.cpp
@@ -82,6 +84,7 @@ set(UI_SOURCES
     src/models/MarketRegimeClassifierBridge.cpp
     src/models/MarketRegimeTimelineModel.cpp
     src/models/SignalListModel.cpp
+    src/models/ResultsDashboardModel.cpp
     src/utils/PerformanceGuard.cpp
     src/utils/FrameRateMonitor.cpp
     src/utils/PathUtils.cpp
@@ -92,6 +95,7 @@ set(UI_SOURCES
     src/reporting/ReportCenterController.cpp
     src/support/SupportBundleController.cpp
     src/health/HealthStatusController.cpp
+    src/update/OfflineUpdateManager.cpp
 )
 
 set(UI_HEADERS
@@ -102,6 +106,7 @@ set(UI_HEADERS
     src/app/UiModuleInterface.hpp
     src/app/UiModuleViewsModel.hpp
     src/app/ActivationController.hpp
+    src/app/ConfigurationWizardController.hpp
     src/app/StrategyConfigController.hpp
     src/app/StrategyWorkbenchController.hpp
     src/grpc/BotCoreLocalService.hpp
@@ -109,6 +114,7 @@ set(UI_HEADERS
     src/grpc/MetricsClient.hpp
     src/grpc/HealthClient.hpp
     src/runtime/OfflineRuntimeBridge.hpp
+    src/runtime/OfflineRuntimeService.hpp
     src/grpc/GrpcTlsConfig.hpp
     src/models/AlertsModel.hpp
     src/models/AlertsFilterProxyModel.hpp
@@ -122,6 +128,7 @@ set(UI_HEADERS
     src/models/MarketRegimeClassifierBridge.hpp
     src/models/MarketRegimeTimelineModel.hpp
     src/models/SignalListModel.hpp
+    src/models/ResultsDashboardModel.hpp
     src/models/RiskTypes.hpp
     src/utils/PerformanceGuard.hpp
     src/utils/FrameRateMonitor.hpp
@@ -134,6 +141,7 @@ set(UI_HEADERS
     src/reporting/ReportCenterController.hpp
     src/support/SupportBundleController.hpp
     src/health/HealthStatusController.hpp
+    src/update/OfflineUpdateManager.hpp
 )
 
 qt_add_executable(bot_trading_shell

@@ -15,6 +15,9 @@ Item {
     property var workbenchController: (typeof workbenchController !== "undefined" ? workbenchController : null)
     property var licenseController: (typeof licenseController !== "undefined" ? licenseController : null)
     property var riskModel: (typeof riskModel !== "undefined" ? riskModel : null)
+    property var wizardController: (typeof configurationWizard !== "undefined" ? configurationWizard : null)
+    property var schedulerItems: strategyController ? strategyController.schedulerList() : []
+    property var securityAlertsModel: (typeof alertsModel !== "undefined" ? alertsModel : null)
     property int currentStep: 0
     property var exchangeOptions: []
     property string selectedExchange: ""
@@ -68,6 +71,8 @@ Item {
     Component.onCompleted: {
         refreshExchangeOptions()
         refreshPersonalization()
+        if (wizardController)
+            wizardController.start("default")
     }
 
     Connections {
@@ -76,6 +81,12 @@ Item {
         function onUiThemeChanged() { refreshPersonalization() }
         function onUiLayoutModeChanged() { refreshPersonalization() }
         function onAlertToastsEnabledChanged() { refreshPersonalization() }
+    }
+
+    Connections {
+        target: strategyController
+        ignoreUnknownSignals: true
+        function onSchedulerListChanged() { schedulerItems = strategyController.schedulerList() }
     }
 
     ColumnLayout {
@@ -306,6 +317,71 @@ Item {
                             licenseController: root.licenseController
                         }
 
+                        GroupBox {
+                            Layout.fillWidth: true
+                            title: qsTr("Harmonogramy automatyzacji")
+                            background: Rectangle { radius: 10; color: Qt.rgba(1,1,1,0.04) }
+
+                            ColumnLayout {
+                                anchors.fill: parent
+                                spacing: 8
+
+                                Label {
+                                    Layout.fillWidth: true
+                                    wrapMode: Text.WordWrap
+                                    text: qsTr("Zarządzaj harmonogramami wykonania strategii – możesz je uruchamiać ręcznie oraz usuwać bezpośrednio z kreatora.")
+                                }
+
+                                Repeater {
+                                    model: schedulerItems || []
+                                    delegate: Frame {
+                                        Layout.fillWidth: true
+                                        background: Rectangle { radius: 8; color: Qt.rgba(1,1,1,0.06) }
+                                        ColumnLayout {
+                                            anchors.fill: parent
+                                            anchors.margins: 8
+                                            spacing: 4
+                                            Label {
+                                                text: (modelData.name || qsTr("harmonogram")) + (modelData.enabled === false ? qsTr(" (wyłączony)") : "")
+                                                font.bold: true
+                                            }
+                                            Label {
+                                                Layout.fillWidth: true
+                                                wrapMode: Text.WordWrap
+                                                color: palette.mid
+                                                text: modelData.cron || modelData.expression || qsTr("Brak zdefiniowanej reguły.")
+                                            }
+                                            RowLayout {
+                                                Layout.fillWidth: true
+                                                spacing: 8
+                                                Label {
+                                                    text: modelData.next_run || modelData.nextRun || ""
+                                                    color: palette.mid
+                                                }
+                                                Item { Layout.fillWidth: true }
+                                                Button {
+                                                    text: qsTr("Uruchom teraz")
+                                                    enabled: strategyController && !strategyController.busy
+                                                    onClicked: strategyController.runSchedulerNow(modelData.name || "")
+                                                }
+                                                Button {
+                                                    text: qsTr("Usuń")
+                                                    enabled: strategyController && !strategyController.busy
+                                                    onClicked: strategyController.removeSchedulerConfig(modelData.name || "")
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                Button {
+                                    text: qsTr("Odśwież harmonogramy")
+                                    enabled: strategyController && !strategyController.busy
+                                    onClicked: strategyController.refresh()
+                                }
+                            }
+                        }
+
                         Label {
                             Layout.fillWidth: true
                             wrapMode: Text.WordWrap
@@ -397,6 +473,43 @@ Item {
                                     if (appController && appController.setAlertToastsEnabled)
                                         appController.setAlertToastsEnabled(checked)
                                 }
+                            }
+                        }
+
+                        GroupBox {
+                            Layout.fillWidth: true
+                            title: qsTr("Alerty bezpieczeństwa")
+                            background: Rectangle { radius: 10; color: Qt.rgba(1,1,1,0.04) }
+
+                            ListView {
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: 160
+                                clip: true
+                                model: securityAlertsModel
+                                delegate: Frame {
+                                    width: ListView.view.width
+                                    background: Rectangle { radius: 6; color: Qt.rgba(1,1,1,0.05) }
+                                    ColumnLayout {
+                                        anchors.fill: parent
+                                        anchors.margins: 8
+                                        spacing: 4
+                                        Label {
+                                            text: model.title || qsTr("Alert")
+                                            font.bold: true
+                                            color: model.severity === 2 ? "#c0392b" : (model.severity === 1 ? "#d68910" : palette.text)
+                                        }
+                                        Label {
+                                            Layout.fillWidth: true
+                                            wrapMode: Text.WordWrap
+                                            text: model.description || ""
+                                        }
+                                        Label {
+                                            text: Qt.formatDateTime(model.timestamp, Qt.ISODate)
+                                            color: palette.mid
+                                        }
+                                    }
+                                }
+                                ScrollBar.vertical: ScrollBar {}
                             }
                         }
 
