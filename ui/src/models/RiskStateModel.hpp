@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QAbstractListModel>
+#include <QVariantMap>
 
 #include "RiskTypes.hpp"
 
@@ -36,6 +37,7 @@ public:
     double maxDailyLoss() const { return m_snapshot.maxDailyLoss; }
     double usedLeverage() const { return m_snapshot.usedLeverage; }
     QDateTime generatedAt() const { return m_snapshot.generatedAt; }
+    QVariantMap currentSnapshot() const;
 
 public slots:
     void updateFromSnapshot(const RiskSnapshotData& snapshot);

@@ -19,6 +19,9 @@ from bot_core.testing import (
 )
 
 
+pytestmark = pytest.mark.requires_trading_stubs
+
+
 @pytest.fixture(scope="module", autouse=True)
 def ensure_trading_stubs() -> None:
     subprocess.run(

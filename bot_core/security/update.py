@@ -20,8 +20,11 @@ class UpdateArtifact:
     """Single file declared in the update manifest."""
 
     path: str
-    sha384: str
+    sha384: str | None
     size: int
+    kind: str = "full"
+    sha256: str | None = None
+    base_id: str | None = None
 
 
 @dataclass(slots=True)
@@ -36,6 +39,8 @@ class UpdateManifest:
     metadata: Mapping[str, object] = field(default_factory=dict)
     allowed_profiles: Sequence[str] | None = None
     raw_payload: Mapping[str, object] | None = None
+    signature: Mapping[str, object] | None = None
+    integrity_manifest: Mapping[str, object] | None = None
 
     @classmethod
     def from_mapping(cls, payload: Mapping[str, object]) -> "UpdateManifest":
@@ -48,11 +53,31 @@ class UpdateManifest:
                 if not isinstance(entry, Mapping):
                     raise ValueError("Niepoprawny wpis artefaktu w manifeście")
                 path = entry.get("path")
-                sha384 = entry.get("sha384")
                 size = entry.get("size")
-                if not isinstance(path, str) or not isinstance(sha384, str) or not isinstance(size, int):
-                    raise ValueError("Artefakt musi zawierać 'path', 'sha384' i 'size'")
-                artifacts.append(UpdateArtifact(path=path, sha384=sha384, size=size))
+                sha384 = entry.get("sha384")
+                sha256 = entry.get("sha256")
+                if not isinstance(path, str) or not isinstance(size, int):
+                    raise ValueError("Artefakt musi zawierać pola 'path' oraz 'size'")
+                if sha384 is None and sha256 is None:
+                    raise ValueError("Artefakt musi posiadać hash 'sha384' lub 'sha256'")
+                if sha384 is not None and not isinstance(sha384, str):
+                    raise ValueError("Pole 'sha384' musi być napisem")
+                if sha256 is not None and not isinstance(sha256, str):
+                    raise ValueError("Pole 'sha256' musi być napisem")
+                kind = str(entry.get("type") or "full").lower()
+                base_id = entry.get("base_id") or entry.get("baseId")
+                if base_id is not None:
+                    base_id = str(base_id)
+                artifacts.append(
+                    UpdateArtifact(
+                        path=path,
+                        sha384=str(sha384) if sha384 is not None else None,
+                        sha256=str(sha256) if sha256 is not None else None,
+                        size=size,
+                        kind=kind,
+                        base_id=base_id,
+                    )
+                )
         except Exception as exc:
             raise ValueError(f"Nie udało się zinterpretować artefaktów: {exc}") from exc
 
@@ -82,13 +107,29 @@ class UpdateManifest:
             raise ValueError("Manifest aktualizacji musi zawierać pole 'runtime' typu string")
 
         raw_payload = dict(payload)
+        raw_payload.pop("signature", None)
         raw_payload["artifacts"] = [
-            {"path": art.path, "sha384": art.sha384, "size": art.size} for art in artifacts
+            {
+                "path": art.path,
+                "sha384": art.sha384,
+                "sha256": art.sha256,
+                "size": art.size,
+                "type": art.kind,
+                **({"base_id": art.base_id} if art.base_id else {}),
+            }
+            for art in artifacts
         ]
         if metadata_raw is not None:
             raw_payload["metadata"] = dict(metadata)
         if allowed_profiles is not None:
             raw_payload["allowed_profiles"] = list(allowed_profiles)
+
+        signature = payload.get("signature") if isinstance(payload.get("signature"), Mapping) else None
+        integrity_manifest = (
+            payload.get("integrity_manifest")
+            if isinstance(payload.get("integrity_manifest"), Mapping)
+            else None
+        )
 
         return cls(
             version=version,
@@ -99,6 +140,8 @@ class UpdateManifest:
             metadata=dict(metadata),
             allowed_profiles=list(allowed_profiles) if allowed_profiles is not None else None,
             raw_payload=raw_payload,
+            signature=dict(signature) if signature else None,
+            integrity_manifest=dict(integrity_manifest) if integrity_manifest else None,
         )
 
 
@@ -130,6 +173,14 @@ def _hash_file_sha384(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _hash_file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as fh:
+        for chunk in iter(lambda: fh.read(65536), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def _load_manifest(path: Path) -> UpdateManifest:
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
@@ -148,11 +199,17 @@ def _verify_artifacts(manifest: UpdateManifest, base_dir: Path) -> tuple[list[st
         if not candidate.exists():
             errors.append(f"Brak artefaktu {artifact.path} w katalogu aktualizacji")
             continue
-        actual_hash = _hash_file_sha384(candidate)
-        if actual_hash != artifact.sha384:
-            errors.append(f"Artefakt {artifact.path} posiada niepoprawny hash SHA-384")
-        else:
-            audit.append(f"{artifact.path}: OK")
+        if artifact.sha384 is not None:
+            actual_hash = _hash_file_sha384(candidate)
+            if actual_hash != artifact.sha384:
+                errors.append(f"Artefakt {artifact.path} posiada niepoprawny hash SHA-384")
+                continue
+        if artifact.sha256 is not None:
+            actual_hash256 = _hash_file_sha256(candidate)
+            if actual_hash256 != artifact.sha256:
+                errors.append(f"Artefakt {artifact.path} posiada niepoprawny hash SHA-256")
+                continue
+        audit.append(f"{artifact.path}: OK")
     return audit, errors
 
 
@@ -169,10 +226,15 @@ def verify_update_bundle(
     manifest = _load_manifest(manifest_path)
 
     signature_valid = False
+    signature_payload: Mapping[str, object] | None = None
     if signature_path is not None:
         signature_payload = json.loads(signature_path.read_text(encoding="utf-8"))
         if not isinstance(signature_payload, Mapping):
             raise UpdateVerificationError("Plik podpisu manifestu musi być obiektem JSON")
+    elif manifest.signature is not None:
+        signature_payload = manifest.signature
+
+    if signature_payload is not None:
         if manifest.raw_payload is None:
             raise UpdateVerificationError("Manifest aktualizacji nie zawiera surowych danych do weryfikacji")
         signature_valid = verify_hmac_signature(

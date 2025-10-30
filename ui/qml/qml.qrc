@@ -22,6 +22,8 @@
         <file>components/ModuleBrowser.qml</file>
         <file>components/PortfolioManagerView.qml</file>
         <file>components/AlertToastOverlay.qml</file>
+        <file>components/ResultsDashboard.qml</file>
+        <file>components/UpdateManagerPanel.qml</file>
         <file>components/workbench/StrategyWorkbench.qml</file>
         <file>components/workbench/StrategyWorkbenchViewModel.qml</file>
         <file>views/MonitoringDashboard.qml</file>

@@ -3,10 +3,14 @@ from __future__ import annotations
 
 import os
 import sys
+from pathlib import Path
 from types import ModuleType
 from typing import Iterable
 
 import pytest
+
+
+from scripts import generate_trading_stubs
 
 
 if "nacl" not in sys.modules:
@@ -52,6 +56,8 @@ import tests._pathbootstrap  # noqa: F401  # pylint: disable=unused-import
 
 _FAST_ENV_VAR = "PYTEST_FAST"
 _FAST_MODE_ENABLED = False
+_TRADING_STUBS: tuple[Path, ...] = generate_trading_stubs.python_stub_targets()
+_HAS_TRADING_STUBS = all(path.exists() for path in _TRADING_STUBS)
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
@@ -140,6 +146,13 @@ def pytest_configure(config: pytest.Config) -> None:
     fast_mode = fast_from_cli or fast_from_env
     config.fast_mode = fast_mode  # type: ignore[attr-defined]
 
+    config.addinivalue_line(
+        "markers",
+        "requires_trading_stubs: test wymaga wygenerowanych stubów trading_pb2*.py",
+    )
+
+    config.trading_stubs_available = _HAS_TRADING_STUBS  # type: ignore[attr-defined]
+
     if fast_mode:
         global _FAST_MODE_ENABLED
         if not _FAST_MODE_ENABLED:
@@ -149,10 +162,23 @@ def pytest_configure(config: pytest.Config) -> None:
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
-    if not getattr(config, "fast_mode", False):  # type: ignore[attr-defined]
+    if getattr(config, "fast_mode", False):  # type: ignore[attr-defined]
+        skip_marker = pytest.mark.skip(reason="pomijam test integracyjny w trybie fast")
+        for item in items:
+            if "integration" in item.keywords or "external" in item.keywords:
+                item.add_marker(skip_marker)
+
+    if _HAS_TRADING_STUBS:
         return
-    skip_marker = pytest.mark.skip(reason="pomijam test integracyjny w trybie fast")
+
+    missing = ", ".join(str(path) for path in _TRADING_STUBS if not path.exists())
+    reason = (
+        "Brak stubów trading_pb2*.py – uruchom 'python scripts/generate_trading_stubs.py --skip-cpp'"
+    )
+    if missing:
+        reason += f" ({missing})"
+    skip_trading = pytest.mark.skip(reason=reason)
     for item in items:
-        if "integration" in item.keywords or "external" in item.keywords:
-            item.add_marker(skip_marker)
+        if "requires_trading_stubs" in item.keywords:
+            item.add_marker(skip_trading)
 

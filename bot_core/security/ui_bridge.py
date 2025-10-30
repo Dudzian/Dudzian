@@ -13,10 +13,12 @@ import argparse
 import json
 import logging
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
 from bot_core.security.fingerprint import HardwareFingerprintService, build_key_provider, decode_secret
+from bot_core.security.logs import export_signed_audit_log, read_audit_entries
 from bot_core.security.license import validate_license
 from bot_core.security.license_service import (
     LicenseBundleError,
@@ -32,6 +34,7 @@ from bot_core.security.profiles import (
     save_profiles,
     upsert_profile,
 )
+from bot_core.security.tpm import TpmValidationError, validate_attestation
 
 LOGGER = logging.getLogger(__name__)
 
@@ -109,6 +112,43 @@ def _empty_license_summary(path: Path) -> dict[str, Any]:
     }
 
 
+def _build_license_policy(capabilities: Any) -> dict[str, Any]:
+    if isinstance(capabilities, LicenseSnapshot):  # pragma: no cover - kompatybilność
+        capabilities = capabilities.capabilities
+    today = datetime.now(timezone.utc).date()
+    maintenance_until = getattr(capabilities, "maintenance_until", None)
+    trial_info = getattr(capabilities, "trial", None)
+    trial_until = None
+    trial_active = False
+    if trial_info is not None:
+        trial_until = getattr(trial_info, "expires_at", None)
+        trial_active = bool(getattr(trial_info, "enabled", False)) and (
+            trial_until is None or today <= trial_until
+        )
+    expires_on = maintenance_until or trial_until
+    days_remaining: int | None = None
+    state = "active"
+    if expires_on is not None:
+        days_remaining = (expires_on - today).days
+        if days_remaining < 0:
+            state = "expired"
+        elif days_remaining <= 7:
+            state = "critical"
+        elif days_remaining <= 30:
+            state = "warning"
+    elif trial_active:
+        state = "trial"
+
+    return {
+        "state": state,
+        "checked_at": datetime.now(timezone.utc).isoformat(),
+        "maintenance_until": maintenance_until.isoformat() if maintenance_until else None,
+        "trial_expires_at": trial_until.isoformat() if trial_until else None,
+        "days_remaining": days_remaining,
+        "trial_active": trial_active,
+    }
+
+
 def _build_capability_summary(snapshot: LicenseSnapshot) -> dict[str, Any]:
     capabilities = snapshot.capabilities
     modules = sorted(name for name, enabled in capabilities.modules.items() if enabled)
@@ -162,6 +202,12 @@ def _build_capability_summary(snapshot: LicenseSnapshot) -> dict[str, Any]:
             "effective_date": capabilities.effective_date.isoformat(),
         }
     )
+    policy = _build_license_policy(capabilities)
+    summary["policy"] = policy
+    if policy["state"] == "expired":
+        summary["errors"].append("Licencja utrzymaniowa wygasła i wymaga odnowienia.")
+    elif policy["state"] in {"critical", "warning"}:
+        summary["warnings"].append("Licencja wkrótce wygaśnie – zaplanuj odnowienie.")
     return summary
 
 
@@ -248,6 +294,8 @@ def _read_license_summary(
     )
     status_map = {"ok": "active", "missing": "inactive"}
     status = status_map.get(result.status, "invalid" if result.errors else "unknown")
+    warning_details = [issue.to_dict() for issue in result.warnings]
+    error_details = [issue.to_dict() for issue in result.errors]
     summary = {
         "status": status,
         "fingerprint": result.fingerprint,
@@ -267,8 +315,10 @@ def _read_license_summary(
         "revocation_reason": result.revocation_reason,
         "revocation_revoked_at": result.revocation_revoked_at,
         "path": str(path),
-        "warnings": list(result.warnings),
-        "errors": list(result.errors),
+        "warnings": [issue.message for issue in result.warnings],
+        "errors": [issue.message for issue in result.errors],
+        "warning_details": warning_details,
+        "error_details": error_details,
         "edition": result.profile,
         "environments": [],
         "modules": [],
@@ -292,9 +342,9 @@ def _read_license_summary(
     if result.revocation_signature_key:
         summary["revocation_key_id"] = result.revocation_signature_key
     if warnings:
-        summary["warnings"].extend(warnings)
+        summary.setdefault("warnings", []).extend(warnings)
     if errors:
-        summary["errors"].extend(errors)
+        summary.setdefault("errors", []).extend(errors)
     return summary
 
 
@@ -308,6 +358,8 @@ def dump_state(
     revocation_path: str | None = None,
     revocation_keys_path: str | None = None,
     revocation_signature_required: bool = False,
+    audit_path: str | None = None,
+    audit_limit: int = 200,
 ) -> dict[str, Any]:
     license_file = _resolve_license_path(license_path)
     profiles_file = _resolve_profiles_path(profiles_path)
@@ -319,6 +371,13 @@ def dump_state(
     revocation_file = Path(revocation_path).expanduser() if revocation_path else None
     revocation_keys_file = Path(revocation_keys_path).expanduser() if revocation_keys_path else None
     profiles = [profile.to_dict() for profile in load_profiles(profiles_file)]
+    audit_entries = read_audit_entries(audit_path, limit=audit_limit)
+    audit_payload = {
+        "path": str(Path(audit_path).expanduser()) if audit_path else None,
+        "entries": audit_entries,
+        "count": len(audit_entries),
+    }
+
     return {
         "license": _read_license_summary(
             license_file,
@@ -330,6 +389,7 @@ def dump_state(
             revocation_signature_required=revocation_signature_required,
         ),
         "profiles": profiles,
+        "audit": audit_payload,
     }
 
 
@@ -390,6 +450,66 @@ def validate_oem_bundle(
         "effective_source": "fallback" if use_fallback else "primary",
         "effective": effective,
     }
+
+
+def verify_tpm_evidence(
+    *,
+    evidence_path: str,
+    expected_fingerprint: str | None = None,
+    license_path: str | None = None,
+    keyring_path: str | None = None,
+) -> dict[str, Any]:
+    fingerprint_hint = expected_fingerprint
+    if fingerprint_hint is None and license_path:
+        summary = _read_license_summary(Path(license_path).expanduser())
+        fingerprint_hint = summary.get("fingerprint") or summary.get("local_fingerprint")
+    try:
+        result = validate_attestation(
+            evidence_path=evidence_path,
+            expected_fingerprint=fingerprint_hint,
+            keyring=keyring_path,
+        )
+    except FileNotFoundError:
+        return {
+            "status": "missing",
+            "errors": [f"Brak pliku dowodu TPM: {evidence_path}"],
+            "warnings": [],
+            "expected_fingerprint": fingerprint_hint,
+        }
+    except TpmValidationError as exc:
+        return {
+            "status": "invalid",
+            "errors": [str(exc)],
+            "warnings": [],
+            "expected_fingerprint": fingerprint_hint,
+        }
+
+    payload = result.to_dict()
+    payload["expected_fingerprint"] = fingerprint_hint
+    payload["evidence_path"] = str(Path(evidence_path).expanduser())
+    return payload
+
+
+def export_audit_bundle(
+    *,
+    log_path: str | None,
+    output_dir: str | None,
+    limit: int | None,
+    key_source: str | None = None,
+    key_id: str | None = None,
+    metadata: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    result = export_signed_audit_log(
+        log_path=log_path,
+        destination_dir=output_dir,
+        limit=limit,
+        key_source=key_source,
+        key_id=key_id,
+        metadata=metadata or {},
+    )
+    payload = result.to_dict()
+    payload["status"] = "ok"
+    return payload
 
 
 def generate_fingerprint(
@@ -491,6 +611,8 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Wymaga podpisanej listy odwołań oraz dostarczonych kluczy HMAC.",
     )
+    dump_parser.add_argument("--audit-path", dest="audit_path", default=None)
+    dump_parser.add_argument("--audit-limit", dest="audit_limit", type=int, default=200)
 
     oem_parser = subparsers.add_parser(
         "oem-validate", help="Waliduje licencję OEM oraz fallback")
@@ -536,6 +658,20 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     remove_parser.add_argument("--log-path", dest="log_path", default=None)
     remove_parser.add_argument("--actor", dest="actor", default=None)
 
+    verify_tpm_parser = subparsers.add_parser("verify-tpm", help="Waliduje dowód TPM/secure enclave")
+    verify_tpm_parser.add_argument("--evidence-path", dest="evidence_path", required=True)
+    verify_tpm_parser.add_argument("--expected-fingerprint", dest="expected_fingerprint", default=None)
+    verify_tpm_parser.add_argument("--license-path", dest="license_path", default=None)
+    verify_tpm_parser.add_argument("--keyring", dest="keyring", default=None)
+
+    audit_parser = subparsers.add_parser("export-audit", help="Eksportuje podpisany pakiet logów bezpieczeństwa")
+    audit_parser.add_argument("--log-path", dest="log_path", default=None)
+    audit_parser.add_argument("--output-dir", dest="output_dir", default=None)
+    audit_parser.add_argument("--limit", dest="limit", type=int, default=None)
+    audit_parser.add_argument("--key", dest="key_source", default=None)
+    audit_parser.add_argument("--key-id", dest="key_id", default=None)
+    audit_parser.add_argument("--metadata", dest="metadata", default=None, help="Dodatkowe metadane w formacie JSON")
+
     return parser.parse_args(argv)
 
 
@@ -551,6 +687,8 @@ def main(argv: list[str] | None = None) -> int:
             revocation_path=args.revocation_path,
             revocation_keys_path=args.revocation_keys,
             revocation_signature_required=args.revocation_signed,
+            audit_path=args.audit_path,
+            audit_limit=args.audit_limit,
         )
         print(json.dumps(state, ensure_ascii=False))
         return 0
@@ -607,6 +745,37 @@ def main(argv: list[str] | None = None) -> int:
             log_path=args.log_path,
             actor=args.actor,
         )
+        print(json.dumps(result, ensure_ascii=False))
+        return 0
+    if args.command == "verify-tpm":
+        result = verify_tpm_evidence(
+            evidence_path=args.evidence_path,
+            expected_fingerprint=args.expected_fingerprint,
+            license_path=args.license_path,
+            keyring_path=args.keyring,
+        )
+        print(json.dumps(result, ensure_ascii=False))
+        return 0
+    if args.command == "export-audit":
+        metadata: Mapping[str, Any] | None = None
+        if args.metadata:
+            try:
+                metadata = json.loads(args.metadata)
+            except json.JSONDecodeError as exc:
+                print(f"Niepoprawne metadane JSON: {exc}", file=sys.stderr)
+                return 2
+        try:
+            result = export_audit_bundle(
+                log_path=args.log_path,
+                output_dir=args.output_dir,
+                limit=args.limit,
+                key_source=args.key_source,
+                key_id=args.key_id,
+                metadata=metadata,
+            )
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
         print(json.dumps(result, ensure_ascii=False))
         return 0
     raise ValueError(f"Nieobsługiwane polecenie: {args.command}")

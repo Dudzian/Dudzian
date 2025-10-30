@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from typing import Tuple
 
 
 def _resolve_builtin_proto_paths() -> list[str]:
@@ -74,6 +75,29 @@ def _ensure_python_package(output_dir: Path) -> None:
 DEFAULT_PROTO = "trading.proto"
 
 
+def python_stub_targets(
+    output_dir: Path | str = Path("bot_core/generated"),
+    proto_file: str = DEFAULT_PROTO,
+) -> Tuple[Path, ...]:
+    """Zwraca oczekiwane ścieżki stubów Pythona dla danego pliku .proto."""
+
+    directory = Path(output_dir)
+    base = Path(proto_file).stem + "_pb2"
+    return (
+        directory / f"{base}.py",
+        directory / f"{base}_grpc.py",
+    )
+
+
+def missing_python_stubs(
+    output_dir: Path | str = Path("bot_core/generated"),
+    proto_file: str = DEFAULT_PROTO,
+) -> list[Path]:
+    """Zwraca listę brakujących plików stubów Pythona."""
+
+    return [path for path in python_stub_targets(output_dir, proto_file) if not path.exists()]
+
+
 class StubGenerationError(RuntimeError):
     """Wyjątek zgłaszany, gdy nie możemy wygenerować stubów."""
 
@@ -135,6 +159,14 @@ def _generate_python_stubs(args: argparse.Namespace) -> None:
     if not args.dry_run:
         _patch_python_package_imports(output_dir, args.proto_file)
         _ensure_python_package(output_dir)
+
+
+def _validate_python_stubs(args: argparse.Namespace) -> None:
+    missing = missing_python_stubs(args.out_python, args.proto_file)
+    if missing:
+        raise StubGenerationError(
+            "Brak wygenerowanych plików stubów: " + ", ".join(str(path) for path in missing)
+        )
 
 
 def _generate_cpp_stubs(args: argparse.Namespace) -> None:
@@ -211,6 +243,8 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         _generate_python_stubs(args)
+        if not args.dry_run and not args.skip_python:
+            _validate_python_stubs(args)
         _generate_cpp_stubs(args)
     except StubGenerationError as exc:
         parser.error(str(exc))

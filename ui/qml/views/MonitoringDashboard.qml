@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import "../components" as Components
 
 Item {
     id: root
@@ -331,6 +332,18 @@ Item {
                         }
                     }
                 }
+            }
+        }
+
+        Frame {
+            Layout.fillWidth: true
+            padding: 16
+            background: Rectangle { radius: 8; color: cardColor }
+
+            Components.ResultsDashboard {
+                id: resultsBoard
+                Layout.fillWidth: true
+                Layout.fillHeight: true
             }
         }
 

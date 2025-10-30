@@ -6,12 +6,14 @@ import datetime as dt
 import json
 import logging
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from collections.abc import Iterable, Iterator, MutableMapping
 from collections import Counter
 from importlib import import_module
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, MutableMapping, Optional, Sequence, Tuple
+
+from datetime import datetime, timezone
 
 import yaml
 from pydantic import BaseModel, Field
@@ -45,6 +47,7 @@ from bot_core.exchanges.health import (
     Watchdog,
 )
 from bot_core.exchanges.paper_simulator import PaperFuturesSimulator, PaperMarginSimulator
+from bot_core.strategies.catalog import StrategyCatalog, StrategyPresetDescriptor
 
 try:  # pragma: no cover
     import ccxt  # type: ignore
@@ -110,6 +113,54 @@ _DYNAMIC_ADAPTER_KEYS: set[Tuple[Mode, str]] = set()
 _EXCHANGE_PROFILE_CACHE: Dict[tuple[str, Path], Mapping[str, Any]] = {}
 _REQUIRED_PROFILE_NAMES: tuple[str, ...] = ("paper", "testnet", "live")
 _SUPPORTED_MANAGER_MODES: frozenset[str] = frozenset({"paper", "spot", "margin", "futures"})
+
+
+@dataclass(slots=True)
+class _StrategyBinding:
+    """Aktualna konfiguracja strategii przypięta do danego kontekstu giełdowego."""
+
+    environment: str
+    preset_id: str
+    name: str
+    profile: str | None
+    strategies: Mapping[str, Mapping[str, Any]]
+    license_status: Mapping[str, Any]
+    metadata: Mapping[str, Any]
+    applied_at: datetime
+
+    def as_dict(self) -> Mapping[str, object]:
+        return {
+            "environment": self.environment,
+            "preset_id": self.preset_id,
+            "name": self.name,
+            "profile": self.profile,
+            "strategies": {key: dict(value) for key, value in self.strategies.items()},
+            "license_status": dict(self.license_status),
+            "metadata": dict(self.metadata),
+            "applied_at": self.applied_at.astimezone(timezone.utc).isoformat(),
+        }
+
+
+@dataclass(slots=True)
+class _StrategyContextSnapshot:
+    """Migawka katalogu strategii dostępnego dla określonego kontekstu."""
+
+    environment: str
+    mode: str
+    presets: tuple[Mapping[str, Any], ...]
+    engines: tuple[Mapping[str, Any], ...]
+    assignments: tuple[_StrategyBinding, ...] = field(default_factory=tuple)
+    generated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+
+    def as_dict(self) -> Mapping[str, object]:
+        return {
+            "environment": self.environment,
+            "mode": self.mode,
+            "generated_at": self.generated_at.astimezone(timezone.utc).isoformat(),
+            "presets": [dict(entry) for entry in self.presets],
+            "engines": [dict(entry) for entry in self.engines],
+            "assignments": [binding.as_dict() for binding in self.assignments],
+        }
 
 
 class _LegacyAdapterMapping(MutableMapping[str, Any]):
@@ -1094,6 +1145,9 @@ class ExchangeManager:
         self._environment_profile: Dict[str, Any] | None = None
         self._environment_profile_name: str | None = None
         self._last_mark_signature: str | None = None
+        self._strategy_catalog: StrategyCatalog | None = None
+        self._strategy_contexts: Dict[str, _StrategyContextSnapshot] = {}
+        self._strategy_assignments: Dict[str, _StrategyBinding] = {}
 
     @property
     def event_bus(self) -> EventBus:
@@ -1141,6 +1195,7 @@ class ExchangeManager:
         self._private = None
         self._paper = None
         self._native_adapter = None
+        self._rebuild_strategy_contexts()
 
     def set_paper_variant(self, variant: str) -> None:
         """Selects paper simulator flavour (``spot``/``margin``/``futures``)."""
@@ -1308,6 +1363,154 @@ class ExchangeManager:
         if self._environment_profile_name:
             description.setdefault("name", self._environment_profile_name)
         return description
+
+    # ------------------------------------------------------------------
+    # Synchronizacja katalogu strategii z kontekstami giełdowymi
+    # ------------------------------------------------------------------
+
+    def set_strategy_catalog(self, catalog: StrategyCatalog | None) -> None:
+        """Podpina katalog strategii wykorzystywany przez UI i runtime."""
+
+        if catalog is self._strategy_catalog:
+            return
+        self._strategy_catalog = catalog
+        self._rebuild_strategy_contexts()
+
+    def activate_strategy_preset(
+        self,
+        environment: str,
+        preset_id: str,
+        *,
+        parameter_overrides: Mapping[str, Mapping[str, Any]] | None = None,
+    ) -> Mapping[str, object]:
+        """Przypina preset strategii do wskazanego kontekstu giełdowego."""
+
+        normalized_env = self._normalize_strategy_environment(environment)
+        self._ensure_strategy_catalog()
+        descriptor = self._resolve_preset(descriptor_id=preset_id)
+
+        strategies: Dict[str, Dict[str, Any]] = {}
+        for entry in descriptor.strategies:
+            strategy_name = str(entry.get("name") or entry.get("engine") or descriptor.preset_id)
+            base_params = dict(entry.get("parameters") or {})
+            if parameter_overrides and strategy_name in parameter_overrides:
+                override = parameter_overrides[strategy_name]
+                base_params.update({str(key): value for key, value in override.items()})
+            strategies[strategy_name] = base_params
+
+        binding = _StrategyBinding(
+            environment=normalized_env,
+            preset_id=descriptor.preset_id,
+            name=descriptor.name,
+            profile=descriptor.profile.value if hasattr(descriptor.profile, "value") else str(descriptor.profile),
+            strategies=strategies,
+            license_status=descriptor.license_status.as_dict(),
+            metadata=dict(descriptor.metadata),
+            applied_at=datetime.now(timezone.utc),
+        )
+        self._strategy_assignments[normalized_env] = binding
+        self._rebuild_strategy_contexts()
+        return binding.as_dict()
+
+    def clear_strategy_assignment(self, environment: str) -> bool:
+        """Usuwa przypisanie presetu dla wybranego kontekstu."""
+
+        normalized_env = self._normalize_strategy_environment(environment)
+        removed = self._strategy_assignments.pop(normalized_env, None) is not None
+        if removed:
+            self._rebuild_strategy_contexts()
+        return removed
+
+    def describe_strategy_contexts(
+        self,
+        *,
+        include_engines: bool = True,
+    ) -> Mapping[str, object]:
+        """Buduje migawkę katalogu strategii dla UI (paper/live/testnet)."""
+
+        contexts: Dict[str, Mapping[str, object]] = {}
+        for key, snapshot in self._strategy_contexts.items():
+            payload = dict(snapshot.as_dict())
+            if not include_engines:
+                payload.pop("engines", None)
+            contexts[key] = payload
+        return {
+            "mode": self.mode.value,
+            "assignments": {
+                key: binding.as_dict() for key, binding in self._strategy_assignments.items()
+            },
+            "contexts": contexts,
+        }
+
+    def strategy_assignment(self, environment: str) -> Mapping[str, object] | None:
+        """Zwraca pojedyncze przypisanie presetu (jeśli istnieje)."""
+
+        normalized_env = self._normalize_strategy_environment(environment)
+        binding = self._strategy_assignments.get(normalized_env)
+        return binding.as_dict() if binding else None
+
+    def _ensure_strategy_catalog(self) -> StrategyCatalog:
+        if not isinstance(self._strategy_catalog, StrategyCatalog):
+            raise RuntimeError("StrategyCatalog is not configured for ExchangeManager")
+        return self._strategy_catalog
+
+    def _resolve_preset(self, descriptor_id: str) -> StrategyPresetDescriptor:
+        catalog = self._ensure_strategy_catalog()
+        try:
+            return catalog.preset(descriptor_id)
+        except KeyError as exc:  # pragma: no cover - diagnostyka błędów konfiguracji
+            raise KeyError(f"Nie znaleziono presetu strategii: {descriptor_id}") from exc
+
+    def _normalize_strategy_environment(self, environment: str) -> str:
+        normalized = (environment or "").strip().lower()
+        if normalized == "live":
+            normalized = "spot"
+        if normalized not in _SUPPORTED_MANAGER_MODES:
+            raise ValueError(
+                f"Nieobsługiwany kontekst strategii: {environment} (dozwolone: {sorted(_SUPPORTED_MANAGER_MODES)})"
+            )
+        return normalized
+
+    def _rebuild_strategy_contexts(self) -> None:
+        catalog = self._strategy_catalog
+        if not isinstance(catalog, StrategyCatalog):
+            self._strategy_contexts = {}
+            return
+
+        descriptors = [descriptor.as_dict(include_strategies=True) for descriptor in catalog.list_presets()]
+        engines = tuple(catalog.describe_engines())
+        environments = self._strategy_context_environments()
+
+        snapshots: Dict[str, _StrategyContextSnapshot] = {}
+        for environment in environments:
+            assignments = ()
+            binding = self._strategy_assignments.get(environment)
+            if binding:
+                assignments = (binding,)
+            snapshots[environment] = _StrategyContextSnapshot(
+                environment=environment,
+                mode=environment,
+                presets=tuple(dict(entry) for entry in descriptors),
+                engines=engines,
+                assignments=assignments,
+            )
+        if "spot" in snapshots and "live" not in snapshots:
+            binding = self._strategy_assignments.get("spot")
+            assignments = (binding,) if binding else ()
+            snapshots["live"] = _StrategyContextSnapshot(
+                environment="live",
+                mode="spot",
+                presets=tuple(dict(entry) for entry in descriptors),
+                engines=engines,
+                assignments=assignments,
+            )
+        self._strategy_contexts = snapshots
+
+    def _strategy_context_environments(self) -> tuple[str, ...]:
+        """Zwraca listę kontekstów giełdowych obsługujących katalog strategii."""
+
+        sequence = ["paper", "spot", "margin", "futures"]
+        return tuple(dict.fromkeys(sequence))
 
     def _apply_manager_profile(self, config: Mapping[str, Any]) -> None:
         mode_value = str(config.get("mode") or "").strip().lower()
