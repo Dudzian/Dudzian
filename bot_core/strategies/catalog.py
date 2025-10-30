@@ -8,12 +8,21 @@ from datetime import datetime, timezone
 from enum import Enum
 import logging
 from pathlib import Path
-from typing import Any, Mapping, MutableMapping, Protocol, Sequence
+from typing import TYPE_CHECKING, Any, Mapping, MutableMapping, Protocol, Sequence
 
-from bot_core.marketplace import PresetSignatureVerification, verify_preset_signature
+from bot_core.marketplace import (
+    PresetDocument,
+    PresetSignatureVerification,
+    verify_preset_signature,
+)
 from bot_core.security.hwid import HwIdProvider, HwIdProviderError
 from bot_core.security.guards import get_capability_guard
 from bot_core.security.signing import build_hmac_signature
+
+if TYPE_CHECKING:
+    from bot_core.backtest.walk_forward import TransactionCostModel
+    from bot_core.marketplace.signed import MarketplaceSyncResult
+    from .testing import StrategyParameterTester
 
 from .base import StrategyEngine
 from .cross_exchange_arbitrage import (
@@ -26,8 +35,10 @@ from .cross_exchange_hedge import (
 )
 from .day_trading import DayTradingSettings, DayTradingStrategy
 from .daily_trend import DailyTrendMomentumSettings, DailyTrendMomentumStrategy
+from .dca import DollarCostAveragingSettings, DollarCostAveragingStrategy
 from .futures_spread import FuturesSpreadSettings, FuturesSpreadStrategy
 from .grid import GridTradingSettings, GridTradingStrategy
+from .market_making import MarketMakingSettings, MarketMakingStrategy
 from .mean_reversion import MeanReversionSettings, MeanReversionStrategy
 from .options import OptionsIncomeSettings, OptionsIncomeStrategy
 from .scalping import ScalpingSettings, ScalpingStrategy
@@ -658,6 +669,36 @@ class StrategyCatalog:
             additional_issues=descriptor.license_status.issues,
         )
 
+    def register_signed_preset(
+        self,
+        document: PresetDocument,
+        *,
+        hwid_provider: HwIdProvider | None = None,
+    ) -> StrategyPresetDescriptor:
+        """Rejestruje pojedynczy preset podpisany kryptograficznie."""
+
+        if not isinstance(document, PresetDocument):
+            raise TypeError("document must be instancją PresetDocument")
+        if not document.verification.verified:
+            raise ValueError("Preset musi posiadać zweryfikowany podpis")
+
+        descriptor = self._build_preset_descriptor(
+            document.payload,
+            signature_verified=True,
+            source_path=document.path,
+            hwid_provider=hwid_provider,
+            additional_issues=document.issues,
+        )
+        self._presets[descriptor.preset_id] = replace(
+            descriptor,
+            metadata=dict(descriptor.metadata),
+        )
+        return self._descriptor_with_overrides(
+            descriptor,
+            hwid_provider=hwid_provider,
+            additional_issues=descriptor.license_status.issues,
+        )
+
     # ------------------------------------------------------------------
     # API publiczne presetów
     # ------------------------------------------------------------------
@@ -721,6 +762,31 @@ class StrategyCatalog:
                 )
             )
         return tuple(result)
+
+    def build_parameter_tester(
+        self,
+        *,
+        cost_model: "TransactionCostModel" | None = None,
+    ) -> "StrategyParameterTester":
+        """Buduje tester parametrów wykorzystujący walk-forward backtest."""
+
+        from .testing import StrategyParameterTester
+
+        return StrategyParameterTester(self, cost_model=cost_model)
+
+    def sync_signed_marketplace(
+        self,
+        root: str | Path,
+        *,
+        signing_keys: Mapping[str, bytes | str],
+        hwid_provider: HwIdProvider | None = None,
+    ) -> "MarketplaceSyncResult":
+        """Synchronizuje katalog z lokalnym marketplace'em podpisanych presetów."""
+
+        from bot_core.marketplace.signed import SignedPresetMarketplace
+
+        marketplace = SignedPresetMarketplace(root, signing_keys=signing_keys)
+        return marketplace.sync(self, hwid_provider=hwid_provider)
 
     def describe_presets(
         self,
@@ -923,6 +989,19 @@ def _build_grid_strategy(
     return GridTradingStrategy(settings)
 
 
+def _build_dca_strategy(
+    *, name: str, parameters: Mapping[str, Any], metadata: Mapping[str, Any] | None = None
+) -> StrategyEngine:
+    settings = DollarCostAveragingSettings(
+        cadence_days=int(parameters.get("cadence_days", 7)),
+        max_allocation=float(parameters.get("max_allocation", 1.0)),
+        drawdown_acceleration=float(parameters.get("drawdown_acceleration", 0.25)),
+        min_drawdown=float(parameters.get("min_drawdown", 0.02)),
+        max_drawdown=float(parameters.get("max_drawdown", 0.25)),
+    )
+    return DollarCostAveragingStrategy(settings)
+
+
 def _build_volatility_target_strategy(
     *, name: str, parameters: Mapping[str, Any], metadata: Mapping[str, Any] | None = None
 ) -> StrategyEngine:
@@ -956,6 +1035,18 @@ def _build_scalping_strategy(
 ) -> StrategyEngine:
     settings = ScalpingSettings.from_parameters(parameters)
     return ScalpingStrategy(settings)
+
+
+def _build_market_making_strategy(
+    *, name: str, parameters: Mapping[str, Any], metadata: Mapping[str, Any] | None = None
+) -> StrategyEngine:
+    settings = MarketMakingSettings(
+        spread_bps=float(parameters.get("spread_bps", 12.0)),
+        inventory_target=float(parameters.get("inventory_target", 0.0)),
+        max_inventory=float(parameters.get("max_inventory", 5.0)),
+        rebalance_threshold=float(parameters.get("rebalance_threshold", 0.6)),
+    )
+    return MarketMakingStrategy(settings)
 
 
 def _build_options_income_strategy(
@@ -1041,6 +1132,17 @@ def build_default_catalog() -> StrategyCatalog:
     )
     catalog.register(
         StrategyEngineSpec(
+            key="dollar_cost_averaging",
+            factory=_build_dca_strategy,
+            license_tier="standard",
+            risk_classes=("accumulation", "long_term"),
+            required_data=("ohlcv",),
+            capability="dca_auto",
+            default_tags=("dca", "passive"),
+        )
+    )
+    catalog.register(
+        StrategyEngineSpec(
             key="volatility_target",
             factory=_build_volatility_target_strategy,
             license_tier="enterprise",
@@ -1070,6 +1172,17 @@ def build_default_catalog() -> StrategyCatalog:
             required_data=("ohlcv", "order_book"),
             capability="scalping",
             default_tags=("intraday", "scalping"),
+        )
+    )
+    catalog.register(
+        StrategyEngineSpec(
+            key="market_making",
+            factory=_build_market_making_strategy,
+            license_tier="enterprise",
+            risk_classes=("market_making", "liquidity"),
+            required_data=("order_book", "ohlcv"),
+            capability="market_making_core",
+            default_tags=("market_making", "liquidity"),
         )
     )
     catalog.register(

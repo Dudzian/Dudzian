@@ -1,8 +1,11 @@
 #include "SecurityAdminController.hpp"
 
 #include <QByteArray>
+#include <QCryptographicHash>
+#include <QDateTime>
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QIODevice>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -42,6 +45,22 @@ void SecurityAdminController::setLicensePath(const QString& path)
 void SecurityAdminController::setLogPath(const QString& path)
 {
     m_logPath = bot::shell::utils::expandPath(path);
+}
+
+void SecurityAdminController::setTpmQuotePath(const QString& path)
+{
+    const QString normalized = bot::shell::utils::expandPath(path);
+    if (m_tpmQuotePath == normalized)
+        return;
+    m_tpmQuotePath = normalized;
+}
+
+void SecurityAdminController::setIntegrityManifestPath(const QString& path)
+{
+    const QString normalized = bot::shell::utils::expandPath(path);
+    if (m_integrityManifestPath == normalized)
+        return;
+    m_integrityManifestPath = normalized;
 }
 
 bool SecurityAdminController::refresh()
@@ -140,6 +159,13 @@ bool SecurityAdminController::assignProfile(const QString& userId,
             if (status.compare(QStringLiteral("ok"), Qt::CaseInsensitive) == 0) {
                 const QString message = QStringLiteral("Zaktualizowano profil %1").arg(trimmedId);
                 Q_EMIT adminEventLogged(message);
+                QVariantMap details;
+                details.insert(QStringLiteral("userId"), trimmedId);
+                QVariantList roleList;
+                for (const QString& role : roles)
+                    roleList.append(role);
+                details.insert(QStringLiteral("roles"), roleList);
+                recordAuditEvent(QStringLiteral("profiles"), message, details);
                 shouldRefresh = true;
             } else {
                 qCWarning(lcSecurityAdmin) << "Bridge zwrócił status" << status;
@@ -208,6 +234,9 @@ bool SecurityAdminController::removeProfile(const QString& userId)
             if (status.compare(QStringLiteral("ok"), Qt::CaseInsensitive) == 0) {
                 const QString message = QStringLiteral("Usunięto profil %1").arg(trimmedId);
                 Q_EMIT adminEventLogged(message);
+                QVariantMap details;
+                details.insert(QStringLiteral("userId"), trimmedId);
+                recordAuditEvent(QStringLiteral("profiles"), message, details);
                 shouldRefresh = true;
             } else {
                 qCWarning(lcSecurityAdmin) << "Bridge remove-profile zwrócił status" << status;
@@ -309,5 +338,217 @@ bool SecurityAdminController::loadStateFromFile(const QString& path)
     }
     const QByteArray data = file.readAll();
     return loadStateFromJson(data);
+}
+
+bool SecurityAdminController::verifyTpmBinding()
+{
+    QString evidencePath = m_tpmQuotePath;
+    if (evidencePath.isEmpty()) {
+        const QByteArray envPath = qgetenv("BOT_CORE_UI_TPM_QUOTE");
+        if (!envPath.isEmpty())
+            evidencePath = bot::shell::utils::expandPath(QString::fromUtf8(envPath));
+    }
+
+    QVariantMap status;
+    status.insert(QStringLiteral("checkedAt"), QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs));
+    if (evidencePath.isEmpty()) {
+        status.insert(QStringLiteral("error"), tr("Brak ścieżki do pliku z dowodem TPM."));
+        status.insert(QStringLiteral("valid"), false);
+        m_tpmStatus = status;
+        Q_EMIT tpmStatusChanged();
+        recordAuditEvent(QStringLiteral("tpm"), tr("Niepowodzenie walidacji TPM"), status);
+        Q_EMIT securityAlertRaised(QStringLiteral("security:tpm"), 2, tr("Weryfikacja TPM"),
+                                   tr("Nie znaleziono dowodu TPM."));
+        return false;
+    }
+
+    status.insert(QStringLiteral("evidencePath"), evidencePath);
+    const QVariantMap evidence = readTpmEvidence(evidencePath);
+    status.insert(QStringLiteral("evidence"), evidence);
+
+    const QVariantMap fingerprintInfo = m_licenseInfo.value(QStringLiteral("fingerprint")).toMap();
+    const QString expectedFingerprint = fingerprintInfo.value(QStringLiteral("hash")).toString();
+    status.insert(QStringLiteral("expectedFingerprint"), expectedFingerprint);
+    const QString sealedFingerprint = evidence.value(QStringLiteral("sealed_fingerprint")).toString();
+    status.insert(QStringLiteral("sealedFingerprint"), sealedFingerprint);
+
+    const bool valid = !expectedFingerprint.isEmpty() && !sealedFingerprint.isEmpty()
+        && sealedFingerprint.startsWith(expectedFingerprint.left(16));
+    status.insert(QStringLiteral("valid"), valid);
+
+    const bool changed = (status != m_tpmStatus);
+    m_tpmStatus = status;
+    if (changed)
+        Q_EMIT tpmStatusChanged();
+
+    recordAuditEvent(QStringLiteral("tpm"),
+                     valid ? tr("Weryfikacja TPM zakończona sukcesem")
+                           : tr("Weryfikacja TPM nie powiodła się"),
+                     status);
+
+    if (!valid) {
+        const QString detail = sealedFingerprint.isEmpty()
+            ? tr("Dowód TPM nie zawiera fingerprintu.")
+            : tr("Fingerprint z TPM nie zgadza się z licencją.");
+        Q_EMIT securityAlertRaised(QStringLiteral("security:tpm"),
+                                   2,
+                                   tr("Weryfikacja TPM"),
+                                   detail);
+    }
+
+    return valid;
+}
+
+bool SecurityAdminController::runIntegrityCheck()
+{
+    QVariantMap report;
+    const bool ok = evaluateIntegrityManifest(&report);
+    const bool changed = (report != m_lastIntegrityReport);
+    m_lastIntegrityReport = report;
+    if (changed)
+        Q_EMIT integrityReportChanged();
+
+    recordAuditEvent(QStringLiteral("integrity"),
+                     ok ? tr("Kontrola integralności zakończona sukcesem")
+                        : tr("Kontrola integralności wykryła odchylenia"),
+                     report);
+
+    const QVariantList mismatches = report.value(QStringLiteral("mismatches")).toList();
+    if (!ok || !mismatches.isEmpty()) {
+        const QString detail = mismatches.isEmpty()
+            ? tr("Sprawdź logi integralności po szczegóły.")
+            : tr("Wykryto %1 niespójności plików.").arg(mismatches.size());
+        Q_EMIT securityAlertRaised(QStringLiteral("security:integrity"), 1, tr("Kontrola integralności"), detail);
+    }
+
+    return ok;
+}
+
+QVariantMap SecurityAdminController::readTpmEvidence(const QString& path) const
+{
+    QVariantMap evidence;
+    QFile file(path);
+    if (!file.exists())
+        return evidence;
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text))
+        return evidence;
+
+    const QByteArray payload = file.readAll();
+    file.close();
+    QJsonParseError parseError{};
+    const QJsonDocument doc = QJsonDocument::fromJson(payload, &parseError);
+    if (parseError.error == QJsonParseError::NoError && doc.isObject())
+        evidence = doc.object().toVariantMap();
+    else
+        evidence.insert(QStringLiteral("raw"), QString::fromUtf8(payload).trimmed());
+    return evidence;
+}
+
+void SecurityAdminController::recordAuditEvent(const QString& category,
+                                               const QString& message,
+                                               const QVariantMap& details)
+{
+    QVariantMap entry;
+    entry.insert(QStringLiteral("timestamp"), QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs));
+    entry.insert(QStringLiteral("category"), category);
+    entry.insert(QStringLiteral("message"), message);
+    if (!details.isEmpty())
+        entry.insert(QStringLiteral("details"), details);
+
+    m_auditLog.prepend(entry);
+    constexpr int kMaxAuditEntries = 200;
+    while (m_auditLog.size() > kMaxAuditEntries)
+        m_auditLog.removeLast();
+
+    Q_EMIT auditLogChanged();
+}
+
+QString SecurityAdminController::computeFileDigest(const QString& path) const
+{
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly))
+        return {};
+    QCryptographicHash hash(QCryptographicHash::Sha256);
+    while (!file.atEnd())
+        hash.addData(file.read(8192));
+    return QString::fromLatin1(hash.result().toHex());
+}
+
+bool SecurityAdminController::evaluateIntegrityManifest(QVariantMap* report)
+{
+    QString manifestPath = m_integrityManifestPath;
+    if (manifestPath.isEmpty()) {
+        const QByteArray envPath = qgetenv("BOT_CORE_UI_INTEGRITY_MANIFEST");
+        if (!envPath.isEmpty())
+            manifestPath = bot::shell::utils::expandPath(QString::fromUtf8(envPath));
+    }
+    if (manifestPath.isEmpty())
+        manifestPath = bot::shell::utils::expandPath(QStringLiteral("config/integrity_manifest.json"));
+
+    QVariantMap localReport;
+    localReport.insert(QStringLiteral("manifestPath"), manifestPath);
+    localReport.insert(QStringLiteral("checkedAt"), QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs));
+    QVariantList mismatches;
+
+    if (manifestPath.isEmpty()) {
+        localReport.insert(QStringLiteral("valid"), false);
+        localReport.insert(QStringLiteral("error"), tr("Nie wskazano manifestu integralności."));
+        if (report)
+            *report = localReport;
+        return false;
+    }
+
+    QFile manifest(manifestPath);
+    if (!manifest.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        localReport.insert(QStringLiteral("valid"), false);
+        localReport.insert(QStringLiteral("error"), tr("Nie można otworzyć manifestu %1").arg(manifestPath));
+        if (report)
+            *report = localReport;
+        return false;
+    }
+
+    const QByteArray data = manifest.readAll();
+    manifest.close();
+    QJsonParseError parseError{};
+    const QJsonDocument doc = QJsonDocument::fromJson(data, &parseError);
+    if (parseError.error != QJsonParseError::NoError || !doc.isObject()) {
+        localReport.insert(QStringLiteral("valid"), false);
+        localReport.insert(QStringLiteral("error"), tr("Manifest ma niepoprawny format (%1)").arg(parseError.errorString()));
+        if (report)
+            *report = localReport;
+        return false;
+    }
+
+    const QJsonArray filesArray = doc.object().value(QStringLiteral("files")).toArray();
+    for (const QJsonValue& value : filesArray) {
+        if (!value.isObject())
+            continue;
+        const QJsonObject obj = value.toObject();
+        const QString relativePath = obj.value(QStringLiteral("path")).toString();
+        const QString expectedDigest = obj.value(QStringLiteral("sha256")).toString();
+        const QString absolutePath = bot::shell::utils::expandPath(relativePath);
+        QString actualDigest = computeFileDigest(absolutePath);
+        if (actualDigest.isEmpty()) {
+            QVariantMap mismatch;
+            mismatch.insert(QStringLiteral("path"), absolutePath);
+            mismatch.insert(QStringLiteral("reason"), tr("Nie można odczytać pliku."));
+            mismatches.append(mismatch);
+            continue;
+        }
+        if (!expectedDigest.isEmpty() && actualDigest.compare(expectedDigest, Qt::CaseInsensitive) != 0) {
+            QVariantMap mismatch;
+            mismatch.insert(QStringLiteral("path"), absolutePath);
+            mismatch.insert(QStringLiteral("expected"), expectedDigest);
+            mismatch.insert(QStringLiteral("actual"), actualDigest);
+            mismatches.append(mismatch);
+        }
+    }
+
+    const bool valid = mismatches.isEmpty();
+    localReport.insert(QStringLiteral("valid"), valid);
+    localReport.insert(QStringLiteral("mismatches"), mismatches);
+    if (report)
+        *report = localReport;
+    return valid;
 }
 

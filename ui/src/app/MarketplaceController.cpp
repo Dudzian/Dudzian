@@ -6,6 +6,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QProcess>
+#include <QSet>
 
 namespace {
 QString normalizePath(const QString& path)
@@ -203,6 +204,59 @@ QVariantList MarketplaceController::parsePresets(const QByteArray& payload) cons
     return items;
 }
 
+QVariantList MarketplaceController::presetsForCategory(const QString& category) const
+{
+    QVariantList filtered;
+    const QString normalized = category.trimmed().toLower();
+    for (const QVariant& presetVariant : m_presets) {
+        const QVariantMap preset = presetVariant.toMap();
+        const QStringList tags = preset.value(QStringLiteral("categories")).toStringList();
+        if (normalized.isEmpty() && tags.isEmpty()) {
+            filtered.append(presetVariant);
+            continue;
+        }
+        for (const QString& tag : tags) {
+            if (tag.trimmed().toLower() == normalized) {
+                filtered.append(presetVariant);
+                break;
+            }
+        }
+    }
+    return filtered;
+}
+
+QVariantMap MarketplaceController::presetDetails(const QString& presetId) const
+{
+    return presetById(presetId);
+}
+
+void MarketplaceController::rebuildCategories()
+{
+    QSet<QString> distinct;
+    for (const QVariant& presetVariant : m_presets) {
+        const QVariantMap preset = presetVariant.toMap();
+        const QStringList tags = preset.value(QStringLiteral("categories")).toStringList();
+        for (const QString& tag : tags)
+            distinct.insert(tag.trimmed());
+    }
+    const QStringList list = distinct.values();
+    if (list != m_categories) {
+        m_categories = list;
+        Q_EMIT categoriesChanged();
+    }
+}
+
+QVariantMap MarketplaceController::presetById(const QString& presetId) const
+{
+    const QString trimmed = presetId.trimmed();
+    for (const QVariant& presetVariant : m_presets) {
+        const QVariantMap preset = presetVariant.toMap();
+        if (preset.value(QStringLiteral("preset_id")).toString() == trimmed)
+            return preset;
+    }
+    return {};
+}
+
 QStringList MarketplaceController::buildCommonArguments() const
 {
     QStringList args;
@@ -234,12 +288,14 @@ bool MarketplaceController::applyPresetUpdate(const QVariantMap& presetPayload)
         if (current.value(QStringLiteral("preset_id")).toString() == presetId) {
             m_presets[i] = presetPayload;
             Q_EMIT presetsChanged();
+            rebuildCategories();
             return true;
         }
     }
 
     m_presets.append(presetPayload);
     Q_EMIT presetsChanged();
+    rebuildCategories();
     return true;
 }
 
@@ -271,6 +327,7 @@ bool MarketplaceController::refreshPresets()
     QVariantList parsed = parsePresets(result.stdoutData);
     m_presets = parsed;
     Q_EMIT presetsChanged();
+    rebuildCategories();
 
     if (!m_lastError.isEmpty()) {
         m_lastError.clear();

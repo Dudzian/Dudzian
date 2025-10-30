@@ -10,6 +10,7 @@ class MarketplaceController : public QObject {
     Q_OBJECT
     Q_PROPERTY(bool busy READ busy NOTIFY busyChanged)
     Q_PROPERTY(QVariantList presets READ presets NOTIFY presetsChanged)
+    Q_PROPERTY(QStringList categories READ categories NOTIFY categoriesChanged)
     Q_PROPERTY(QString lastError READ lastError NOTIFY lastErrorChanged)
 
 public:
@@ -18,6 +19,7 @@ public:
 
     bool busy() const { return m_busy; }
     QVariantList presets() const { return m_presets; }
+    QStringList categories() const { return m_categories; }
     QString lastError() const { return m_lastError; }
 
     void setPythonExecutable(const QString& executable);
@@ -39,10 +41,13 @@ public:
     Q_INVOKABLE bool refreshPresets();
     Q_INVOKABLE bool activatePreset(const QString& presetId, const QVariantMap& licensePayload);
     Q_INVOKABLE bool deactivatePreset(const QString& presetId);
+    Q_INVOKABLE QVariantList presetsForCategory(const QString& category) const;
+    Q_INVOKABLE QVariantMap presetDetails(const QString& presetId) const;
 
 signals:
     void busyChanged();
     void presetsChanged();
+    void categoriesChanged();
     void lastErrorChanged();
 
 private:
@@ -57,6 +62,8 @@ private:
     QVariantList parsePresets(const QByteArray& payload) const;
     QStringList buildCommonArguments() const;
     bool applyPresetUpdate(const QVariantMap& presetPayload);
+    void rebuildCategories();
+    QVariantMap presetById(const QString& presetId) const;
 
     QString m_pythonExecutable = QStringLiteral("python3");
     QString m_bridgeScriptPath;
@@ -68,5 +75,6 @@ private:
 
     bool m_busy = false;
     QVariantList m_presets;
+    QStringList m_categories;
     QString m_lastError;
 };

@@ -12,6 +12,7 @@ from .presets import (
     sign_preset_payload,
     verify_preset_signature,
 )
+from .signed import MarketplaceSyncResult, SignedPresetMarketplace
 
 __all__ = [
     "PresetDocument",
@@ -24,4 +25,6 @@ __all__ = [
     "serialize_preset_document",
     "sign_preset_payload",
     "verify_preset_signature",
+    "SignedPresetMarketplace",
+    "MarketplaceSyncResult",
 ]

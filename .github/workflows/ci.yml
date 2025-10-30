@@ -26,18 +26,10 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r KryptoLowca/requirements.txt
-          pip install pytest pytest-cov ruff mypy
+          pip install pytest pytest-cov pre-commit
 
-      - name: Ruff lint
-        run: >-
-          ruff check
-          KryptoLowca/core/services
-          KryptoLowca/strategies/base
-          KryptoLowca/config_manager.py
-          KryptoLowca/strategies/marketplace.py
-
-      - name: Mypy type check
-        run: mypy
+      - name: Pre-commit (ruff + mypy)
+        run: pre-commit run --all-files --show-diff-on-failure
 
       - name: Pytest with coverage
         run: >-
