@@ -4,7 +4,7 @@ import grpc
 import warnings
 
 from google.protobuf import empty_pb2 as google_dot_protobuf_dot_empty__pb2
-from . import trading_pb2 as trading__pb2
+import trading_pb2 as trading__pb2
 
 GRPC_GENERATED_VERSION = '1.76.0'
 GRPC_VERSION = grpc.__version__
@@ -590,6 +590,250 @@ class HealthService(object):
             '/botcore.trading.v1.HealthService/Check',
             google_dot_protobuf_dot_empty__pb2.Empty.SerializeToString,
             trading__pb2.HealthCheckResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+
+class MarketplaceServiceStub(object):
+    """Missing associated documentation comment in .proto file."""
+
+    def __init__(self, channel):
+        """Constructor.
+
+        Args:
+            channel: A grpc.Channel.
+        """
+        self.ListPresets = channel.unary_unary(
+                '/botcore.trading.v1.MarketplaceService/ListPresets',
+                request_serializer=trading__pb2.ListMarketplacePresetsRequest.SerializeToString,
+                response_deserializer=trading__pb2.ListMarketplacePresetsResponse.FromString,
+                _registered_method=True)
+        self.ImportPreset = channel.unary_unary(
+                '/botcore.trading.v1.MarketplaceService/ImportPreset',
+                request_serializer=trading__pb2.ImportMarketplacePresetRequest.SerializeToString,
+                response_deserializer=trading__pb2.ImportMarketplacePresetResponse.FromString,
+                _registered_method=True)
+        self.ExportPreset = channel.unary_unary(
+                '/botcore.trading.v1.MarketplaceService/ExportPreset',
+                request_serializer=trading__pb2.ExportMarketplacePresetRequest.SerializeToString,
+                response_deserializer=trading__pb2.ExportMarketplacePresetResponse.FromString,
+                _registered_method=True)
+        self.RemovePreset = channel.unary_unary(
+                '/botcore.trading.v1.MarketplaceService/RemovePreset',
+                request_serializer=trading__pb2.RemoveMarketplacePresetRequest.SerializeToString,
+                response_deserializer=trading__pb2.RemoveMarketplacePresetResponse.FromString,
+                _registered_method=True)
+        self.ActivatePreset = channel.unary_unary(
+                '/botcore.trading.v1.MarketplaceService/ActivatePreset',
+                request_serializer=trading__pb2.ActivateMarketplacePresetRequest.SerializeToString,
+                response_deserializer=trading__pb2.ActivateMarketplacePresetResponse.FromString,
+                _registered_method=True)
+
+
+class MarketplaceServiceServicer(object):
+    """Missing associated documentation comment in .proto file."""
+
+    def ListPresets(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def ImportPreset(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def ExportPreset(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def RemovePreset(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def ActivatePreset(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+
+def add_MarketplaceServiceServicer_to_server(servicer, server):
+    rpc_method_handlers = {
+            'ListPresets': grpc.unary_unary_rpc_method_handler(
+                    servicer.ListPresets,
+                    request_deserializer=trading__pb2.ListMarketplacePresetsRequest.FromString,
+                    response_serializer=trading__pb2.ListMarketplacePresetsResponse.SerializeToString,
+            ),
+            'ImportPreset': grpc.unary_unary_rpc_method_handler(
+                    servicer.ImportPreset,
+                    request_deserializer=trading__pb2.ImportMarketplacePresetRequest.FromString,
+                    response_serializer=trading__pb2.ImportMarketplacePresetResponse.SerializeToString,
+            ),
+            'ExportPreset': grpc.unary_unary_rpc_method_handler(
+                    servicer.ExportPreset,
+                    request_deserializer=trading__pb2.ExportMarketplacePresetRequest.FromString,
+                    response_serializer=trading__pb2.ExportMarketplacePresetResponse.SerializeToString,
+            ),
+            'RemovePreset': grpc.unary_unary_rpc_method_handler(
+                    servicer.RemovePreset,
+                    request_deserializer=trading__pb2.RemoveMarketplacePresetRequest.FromString,
+                    response_serializer=trading__pb2.RemoveMarketplacePresetResponse.SerializeToString,
+            ),
+            'ActivatePreset': grpc.unary_unary_rpc_method_handler(
+                    servicer.ActivatePreset,
+                    request_deserializer=trading__pb2.ActivateMarketplacePresetRequest.FromString,
+                    response_serializer=trading__pb2.ActivateMarketplacePresetResponse.SerializeToString,
+            ),
+    }
+    generic_handler = grpc.method_handlers_generic_handler(
+            'botcore.trading.v1.MarketplaceService', rpc_method_handlers)
+    server.add_generic_rpc_handlers((generic_handler,))
+    server.add_registered_method_handlers('botcore.trading.v1.MarketplaceService', rpc_method_handlers)
+
+
+ # This class is part of an EXPERIMENTAL API.
+class MarketplaceService(object):
+    """Missing associated documentation comment in .proto file."""
+
+    @staticmethod
+    def ListPresets(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/botcore.trading.v1.MarketplaceService/ListPresets',
+            trading__pb2.ListMarketplacePresetsRequest.SerializeToString,
+            trading__pb2.ListMarketplacePresetsResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ImportPreset(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/botcore.trading.v1.MarketplaceService/ImportPreset',
+            trading__pb2.ImportMarketplacePresetRequest.SerializeToString,
+            trading__pb2.ImportMarketplacePresetResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ExportPreset(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/botcore.trading.v1.MarketplaceService/ExportPreset',
+            trading__pb2.ExportMarketplacePresetRequest.SerializeToString,
+            trading__pb2.ExportMarketplacePresetResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def RemovePreset(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/botcore.trading.v1.MarketplaceService/RemovePreset',
+            trading__pb2.RemoveMarketplacePresetRequest.SerializeToString,
+            trading__pb2.RemoveMarketplacePresetResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ActivatePreset(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/botcore.trading.v1.MarketplaceService/ActivatePreset',
+            trading__pb2.ActivateMarketplacePresetRequest.SerializeToString,
+            trading__pb2.ActivateMarketplacePresetResponse.FromString,
             options,
             channel_credentials,
             insecure,

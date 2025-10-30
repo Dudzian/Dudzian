@@ -7,10 +7,12 @@ import json
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Mapping, Sequence
+from typing import Any, Mapping, Sequence
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
+
+import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
@@ -25,6 +27,13 @@ from bot_core.config_marketplace.schema import (  # noqa: E402
 from bot_core.security.marketplace_validator import (  # noqa: E402
     MarketplaceValidator,
     MarketplaceVerificationError,
+)
+from bot_core.marketplace import (  # noqa: E402
+    PresetDocument,
+    PresetSignatureVerification,
+    load_private_key,
+    serialize_preset_document,
+    sign_preset_payload,
 )
 
 _MARKETPLACE_DIR = REPO_ROOT / "config" / "marketplace"
@@ -124,6 +133,23 @@ def _load_signing_keys(paths: Sequence[str]) -> Mapping[str, bytes]:
     return keys
 
 
+def _load_preset_spec(path: Path) -> Mapping[str, Any]:
+    try:
+        text = path.read_text(encoding="utf-8")
+    except FileNotFoundError as exc:  # pragma: no cover - defensywne logowanie
+        raise MarketplaceVerificationError(f"Nie znaleziono pliku presetu: {path}") from exc
+    try:
+        document = json.loads(text)
+    except json.JSONDecodeError:
+        document = yaml.safe_load(text)
+    if not isinstance(document, Mapping):
+        raise MarketplaceVerificationError("Specyfikacja presetu musi być obiektem JSON/YAML.")
+    payload = document.get("preset") if isinstance(document.get("preset"), Mapping) else document
+    if not isinstance(payload, Mapping):
+        raise MarketplaceVerificationError("Preset musi być obiektem JSON/YAML.")
+    return dict(payload)
+
+
 def _cmd_list(repo: MarketplaceRepository, _: argparse.Namespace) -> int:
     catalog = repo.load_catalog()
     if not catalog.packages:
@@ -181,6 +207,44 @@ def _cmd_validate(repo: MarketplaceRepository, args: argparse.Namespace) -> int:
     return 0 if failures == 0 else 2
 
 
+def _cmd_package(repo: MarketplaceRepository, args: argparse.Namespace) -> int:
+    del repo
+    spec_path = Path(args.input).expanduser()
+    payload = _load_preset_spec(spec_path)
+    private_key = load_private_key(Path(args.private_key).expanduser())
+    signature = sign_preset_payload(
+        payload,
+        private_key=private_key,
+        key_id=args.key_id,
+        issuer=args.issuer,
+        include_public_key=not args.omit_public_key,
+    )
+    verification = PresetSignatureVerification(
+        verified=True,
+        issues=(),
+        algorithm=signature.algorithm,
+        key_id=signature.key_id,
+    )
+    document = PresetDocument(
+        payload=payload,
+        signature=signature,
+        verification=verification,
+        fmt=args.format,
+    )
+    serialized = serialize_preset_document(document, format=args.format)
+    ext = "yaml" if args.format == "yaml" else "json"
+    metadata = payload.get("metadata") if isinstance(payload.get("metadata"), Mapping) else {}
+    preset_id = str(metadata.get("id") or "").strip() or spec_path.stem
+    output_path = (
+        Path(args.output).expanduser()
+        if args.output
+        else spec_path.with_suffix(f".{ext}")
+    )
+    output_path.write_bytes(serialized)
+    print(f"Zapisano podpisany preset do {output_path}")
+    return 0
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -215,6 +279,36 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Traktuj błędy fingerprintu jako ostrzeżenia (do testów).",
     )
     cmd_validate.set_defaults(func=_cmd_validate)
+
+    cmd_package = sub.add_parser(
+        "package",
+        help="Generuje podpisany preset ze specyfikacji JSON/YAML.",
+    )
+    cmd_package.add_argument("input", help="Ścieżka do pliku z definicją presetu (JSON/YAML).")
+    cmd_package.add_argument(
+        "--output",
+        "-o",
+        help="Plik wynikowy (domyślnie metadata.id z odpowiednim rozszerzeniem).",
+    )
+    cmd_package.add_argument("--key-id", required=True, help="Identyfikator klucza podpisu.")
+    cmd_package.add_argument(
+        "--private-key",
+        required=True,
+        help="Ścieżka do klucza prywatnego Ed25519 (PEM/base64/hex).",
+    )
+    cmd_package.add_argument("--issuer", help="Opcjonalny identyfikator wystawcy podpisu.")
+    cmd_package.add_argument(
+        "--format",
+        choices=["json", "yaml"],
+        default="json",
+        help="Format wyjściowy pliku (domyślnie JSON).",
+    )
+    cmd_package.add_argument(
+        "--omit-public-key",
+        action="store_true",
+        help="Nie dołączaj klucza publicznego do podpisu.",
+    )
+    cmd_package.set_defaults(func=_cmd_package)
 
     return parser
 

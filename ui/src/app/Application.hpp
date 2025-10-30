@@ -95,6 +95,10 @@ class Application : public QObject {
     Q_PROPERTY(QString          offlineDaemonStatus  READ offlineDaemonStatus NOTIFY offlineDaemonStatusChanged)
     Q_PROPERTY(bool             offlineAutomationRunning READ offlineAutomationRunning NOTIFY offlineAutomationRunningChanged)
     Q_PROPERTY(QString          offlineStrategyPath  READ offlineStrategyPath NOTIFY offlineStrategyPathChanged)
+    Q_PROPERTY(QString          metricsEndpoint     READ metricsEndpoint     NOTIFY metricsEndpointChanged)
+    Q_PROPERTY(QString          uiTheme READ uiTheme WRITE setUiTheme NOTIFY uiThemeChanged)
+    Q_PROPERTY(QString          uiLayoutMode READ uiLayoutMode WRITE setUiLayoutMode NOTIFY uiLayoutModeChanged)
+    Q_PROPERTY(bool             alertToastsEnabled READ alertToastsEnabled WRITE setAlertToastsEnabled NOTIFY alertToastsEnabledChanged)
 
 public:
     explicit Application(QQmlApplicationEngine& engine, QObject* parent = nullptr);
@@ -147,7 +151,11 @@ public:
     QString          offlineDaemonStatus() const { return m_offlineStatus; }
     bool             offlineAutomationRunning() const { return m_offlineAutomationRunning; }
     QString          offlineStrategyPath() const { return m_offlineStrategyPath; }
+    QString          metricsEndpoint() const { return m_metricsEndpoint; }
     QString          decisionLogPath() const { return m_decisionLogPath; }
+    QString          uiTheme() const { return m_uiTheme; }
+    QString          uiLayoutMode() const { return m_uiLayoutMode; }
+    bool             alertToastsEnabled() const { return m_alertToastsEnabled; }
 
 public slots:
     void start();
@@ -187,6 +195,18 @@ public slots:
     Q_INVOKABLE bool setRiskHistoryAutoExportBasename(const QString& basename);
     Q_INVOKABLE bool setRiskHistoryAutoExportUseLocalTime(bool useLocalTime);
     Q_INVOKABLE bool setRegimeTimelineMaximumSnapshots(int maximumSnapshots);
+    Q_INVOKABLE bool setUiTheme(const QString& theme);
+    Q_INVOKABLE bool setUiLayoutMode(const QString& mode);
+    Q_INVOKABLE void setAlertToastsEnabled(bool enabled);
+    Q_INVOKABLE QVariantList marketplaceListPresets();
+    Q_INVOKABLE QVariantMap marketplaceImportPreset(const QUrl& sourceUrl);
+    Q_INVOKABLE QVariantMap marketplaceExportPreset(const QString& presetId,
+                                                    const QString& format,
+                                                    const QUrl& destinationUrl);
+    Q_INVOKABLE QVariantMap marketplaceRemovePreset(const QString& presetId);
+    Q_INVOKABLE QVariantMap marketplaceActivatePreset(const QString& presetId);
+    Q_INVOKABLE QStringList supportedExchanges() const;
+    Q_INVOKABLE QVariantMap personalizationSnapshot() const;
     Q_INVOKABLE void startOfflineAutomation();
     Q_INVOKABLE void stopOfflineAutomation();
     Q_INVOKABLE bool setDecisionLogPath(const QUrl& url);
@@ -238,9 +258,13 @@ signals:
     void offlineDaemonStatusChanged();
     void offlineAutomationRunningChanged(bool running);
     void offlineStrategyPathChanged();
+    void metricsEndpointChanged();
     void decisionLogPathChanged();
     void licenseRefreshScheduleChanged();
     void securityCacheChanged();
+    void uiThemeChanged();
+    void uiLayoutModeChanged();
+    void alertToastsEnabledChanged();
 
 private slots:
     void handleHistory(const QList<OhlcvPoint>& candles);
@@ -277,6 +301,7 @@ private:
                                           bool cliTokenFileProvided,
                                           QString& metricsToken,
                                           QString& metricsTokenFile);
+    void applyMetricsEndpoint(const QString& endpoint);
     void applyTradingTlsEnvironmentOverrides(const QCommandLineParser& parser);
     void applyTradingAuthEnvironmentOverrides(const QCommandLineParser& parser,
                                               bool cliTokenProvided,
@@ -335,6 +360,10 @@ private:
     void scheduleUiSettingsPersist();
     void persistUiSettings();
     QJsonObject buildUiSettingsPayload() const;
+    QVariantMap buildPersonalizationPayload() const;
+    void applyPersonalizationFromJson(const QJsonObject& object);
+    void applyUiThemePalette();
+    void initializeSupportedExchanges();
     void maybeAutoExportRiskHistory(const QDateTime& snapshotTimestamp);
     QString resolveAutoExportFilePath(const QDir& directory, const QString& basename, const QDateTime& timestamp) const;
     bool setDecisionLogPathInternal(const QString& path, bool emitSignal);
@@ -368,6 +397,12 @@ private:
     void handleMetricsTlsPathChanged(const QString& path);
     void handleHealthTlsPathChanged(const QString& path);
     void handleRegimeThresholdPathChanged(const QString& path);
+    QVariantMap buildMarketplacePresetVariant(const TradingClient::MarketplacePresetSummary& preset) const;
+    QVariantMap buildMarketplaceErrorResult(const QString& message) const;
+    bool writeMarketplacePayloadToFile(const QByteArray& payload,
+                                       const QString& suggestedName,
+                                       const QUrl& destinationUrl,
+                                       QString* writtenPath) const;
 
     // --- Stan i komponenty ---
     QQmlApplicationEngine& m_engine;
@@ -474,6 +509,10 @@ private:
     bool                               m_loadingUiSettings = false;
     bool                               m_uiSettingsPersistenceEnabled = true;
     bool                               m_uiSettingsTimerConfigured = false;
+    QString                            m_uiTheme = QStringLiteral("dark");
+    QString                            m_uiLayoutMode = QStringLiteral("classic");
+    bool                               m_alertToastsEnabled = true;
+    QStringList                        m_supportedExchanges;
     bool                               m_riskHistoryExportLimitEnabled = false;
     int                                m_riskHistoryExportLimitValue = 50;
     QUrl                               m_riskHistoryExportLastDirectory;

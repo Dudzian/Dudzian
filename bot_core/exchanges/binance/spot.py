@@ -40,6 +40,11 @@ from bot_core.exchanges.errors import (
 )
 from bot_core.exchanges.error_mapping import raise_for_binance_error
 from bot_core.exchanges.health import Watchdog
+from bot_core.exchanges.rate_limiter import (
+    RateLimitRule,
+    get_global_rate_limiter_registry,
+    normalize_rate_limit_rules,
+)
 from bot_core.exchanges.streaming import LocalLongPollStream
 from bot_core.observability.metrics import MetricsRegistry, get_global_metrics_registry
 
@@ -51,6 +56,11 @@ _MAX_RETRIES = 3
 _BASE_BACKOFF = 0.4
 _BACKOFF_CAP = 4.0
 _JITTER_RANGE = (0.05, 0.35)
+
+_RATE_LIMIT_DEFAULTS: tuple[RateLimitRule, ...] = (
+    RateLimitRule(rate=50, per=1.0),
+    RateLimitRule(rate=1200, per=60.0),
+)
 
 
 class _CooldownMeasurement(float):
@@ -310,6 +320,14 @@ class BinanceSpotAdapter(ExchangeAdapter):
         self._throttle_cooldown_reason: str | None = None
         self._reconnect_backoff_until = 0.0
         self._reconnect_reason: str | None = None
+        self._rate_limiter = get_global_rate_limiter_registry().configure(
+            f"{self.name}:{self._environment.value}",
+            normalize_rate_limit_rules(
+                self._settings.get("rate_limit_rules"),
+                _RATE_LIMIT_DEFAULTS,
+            ),
+            metric_labels={"exchange": self.name, "environment": self._environment.value},
+        )
 
     # ----------------------------------------------------------------------------------
     # Konfiguracja streamingu long-pollowego
@@ -694,6 +712,8 @@ class BinanceSpotAdapter(ExchangeAdapter):
         }
         self._enforce_failover_backoff()
         for attempt in range(1, _MAX_RETRIES + 1):
+            weight = 5.0 if signed else 1.0
+            self._rate_limiter.acquire(weight=weight)
             start = time.monotonic()
             if signed:
                 self._metric_signed_requests.inc(labels={**self._metric_base_labels, "method": method})

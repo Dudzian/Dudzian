@@ -8,6 +8,7 @@
 #include <QDebug>
 #include <QDir>
 #include <QColor>
+#include <QPalette>
 #include <QFile>
 #include <QFileInfo>
 #include <QFileSystemWatcher>
@@ -261,6 +262,7 @@ Application::Application(QQmlApplicationEngine& engine, QObject* parent)
 
     // Startowe ustawienia instrumentu z klienta (mogą być nadpisane przez CLI)
     m_instrument = m_client.instrumentConfig();
+    initializeSupportedExchanges();
 
     m_licenseController = std::make_unique<LicenseActivationController>();
     m_licenseController->setParent(this);
@@ -404,6 +406,7 @@ Application::Application(QQmlApplicationEngine& engine, QObject* parent)
     });
 
     initializeUiSettingsStorage();
+    applyUiThemePalette();
 
     m_repoRoot = locateRepoRoot();
 
@@ -1014,9 +1017,10 @@ bool Application::applyParser(const QCommandLineParser& parser) {
         else
             m_tradingRbacScopes.clear();
 
-        m_metricsEndpoint = parser.value("metrics-endpoint");
-        if (m_metricsEndpoint.isEmpty())
-            m_metricsEndpoint = endpoint;
+        QString metricsEndpointCli = parser.value("metrics-endpoint");
+        if (metricsEndpointCli.trimmed().isEmpty())
+            metricsEndpointCli = endpoint;
+        applyMetricsEndpoint(metricsEndpointCli);
         m_metricsTag = parser.value("metrics-tag");
         m_metricsEnabled = !(parser.isSet("disable-metrics") || parser.isSet("no-metrics"));
 
@@ -1103,9 +1107,10 @@ bool Application::applyParser(const QCommandLineParser& parser) {
         m_healthTlsConfig = GrpcTlsConfig{};
         m_tradingRbacRole.clear();
         m_tradingRbacScopes.clear();
-        m_metricsEndpoint = parser.value("metrics-endpoint");
-        if (m_metricsEndpoint.trimmed().isEmpty())
-            m_metricsEndpoint = QStringLiteral("in-process");
+        QString metricsEndpointCli = parser.value("metrics-endpoint");
+        if (metricsEndpointCli.trimmed().isEmpty())
+            metricsEndpointCli = QStringLiteral("in-process");
+        applyMetricsEndpoint(metricsEndpointCli);
         m_metricsTag = parser.value("metrics-tag");
         m_metricsEnabled = !(parser.isSet("disable-metrics") || parser.isSet("no-metrics"));
         m_metricsRbacRole.clear();
@@ -1407,7 +1412,7 @@ void Application::initializeUiSettingsStorage()
         }
 
         if (candidate.isEmpty())
-            candidate = QDir::current().absoluteFilePath(QStringLiteral("var/state/ui_settings.json"));
+            candidate = QDir::current().absoluteFilePath(QStringLiteral("config/ui_prefs.json"));
 
         QFileInfo info(candidate);
         if (!info.isAbsolute())
@@ -2054,9 +2059,18 @@ void Application::loadUiSettings()
     if (m_uiSettingsPath.trimmed().isEmpty())
         return;
 
-    QFile file(m_uiSettingsPath);
-    if (!file.exists())
-        return;
+    const QString desiredPath = m_uiSettingsPath;
+    QFile file(desiredPath);
+    bool loadedFromLegacy = false;
+    if (!file.exists()) {
+        const QString legacyPath = QDir::current().absoluteFilePath(QStringLiteral("var/state/ui_settings.json"));
+        if (!legacyPath.isEmpty() && legacyPath != desiredPath && QFile::exists(legacyPath)) {
+            file.setFileName(legacyPath);
+            loadedFromLegacy = true;
+        } else {
+            return;
+        }
+    }
 
     if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
         qCWarning(lcAppMetrics) << "Nie udało się odczytać pliku ustawień UI" << m_uiSettingsPath
@@ -2166,6 +2180,11 @@ void Application::loadUiSettings()
             }
             m_alertsModel.setAcknowledgedAlertIds(ids);
         }
+    }
+
+    if (root.contains(QStringLiteral("preferences")) && root.value(QStringLiteral("preferences")).isObject()) {
+        const QJsonObject prefs = root.value(QStringLiteral("preferences")).toObject();
+        applyPersonalizationFromJson(prefs);
     }
 
     if (root.contains(QStringLiteral("uiModules")) && root.value(QStringLiteral("uiModules")).isObject()) {
@@ -2319,6 +2338,11 @@ void Application::loadUiSettings()
     }
 
     m_loadingUiSettings = false;
+
+    if (loadedFromLegacy && desiredPath != file.fileName()) {
+        m_uiSettingsPath = desiredPath;
+        scheduleUiSettingsPersist();
+    }
 }
 
 void Application::scheduleUiSettingsPersist()
@@ -2687,7 +2711,92 @@ QJsonObject Application::buildUiSettingsPayload() const
     history.insert(QStringLiteral("export"), exportPrefs);
     root.insert(QStringLiteral("riskHistory"), history);
 
+    const QVariantMap personalization = buildPersonalizationPayload();
+    if (!personalization.isEmpty())
+        root.insert(QStringLiteral("preferences"), QJsonObject::fromVariantMap(personalization));
+
     return root;
+}
+
+QVariantMap Application::buildPersonalizationPayload() const
+{
+    QVariantMap map;
+    map.insert(QStringLiteral("theme"), m_uiTheme);
+    map.insert(QStringLiteral("layout"), m_uiLayoutMode);
+    map.insert(QStringLiteral("alert_toasts"), m_alertToastsEnabled);
+    return map;
+}
+
+void Application::applyPersonalizationFromJson(const QJsonObject& object)
+{
+    if (object.contains(QStringLiteral("theme")) && object.value(QStringLiteral("theme")).isString())
+        setUiTheme(object.value(QStringLiteral("theme")).toString());
+    if (object.contains(QStringLiteral("layout")) && object.value(QStringLiteral("layout")).isString())
+        setUiLayoutMode(object.value(QStringLiteral("layout")).toString());
+    if (object.contains(QStringLiteral("alert_toasts")))
+        setAlertToastsEnabled(object.value(QStringLiteral("alert_toasts")).toBool(m_alertToastsEnabled));
+}
+
+void Application::applyUiThemePalette()
+{
+    QPalette palette = QGuiApplication::palette();
+    const QString theme = m_uiTheme.toLower();
+    if (theme == QStringLiteral("light")) {
+        palette.setColor(QPalette::Window, QColor(QStringLiteral("#f5f7fb")));
+        palette.setColor(QPalette::WindowText, QColor(QStringLiteral("#1c1f2a")));
+        palette.setColor(QPalette::Base, QColor(QStringLiteral("#ffffff")));
+        palette.setColor(QPalette::AlternateBase, QColor(QStringLiteral("#e8ecf5")));
+        palette.setColor(QPalette::ToolTipBase, QColor(QStringLiteral("#ffffff")));
+        palette.setColor(QPalette::ToolTipText, QColor(QStringLiteral("#1c1f2a")));
+        palette.setColor(QPalette::Text, QColor(QStringLiteral("#1c1f2a")));
+        palette.setColor(QPalette::Button, QColor(QStringLiteral("#e3e7f2")));
+        palette.setColor(QPalette::ButtonText, QColor(QStringLiteral("#1c1f2a")));
+        palette.setColor(QPalette::Highlight, QColor(QStringLiteral("#1a73e8")));
+        palette.setColor(QPalette::HighlightedText, QColor(QStringLiteral("#ffffff")));
+    } else if (theme == QStringLiteral("midnight")) {
+        palette.setColor(QPalette::Window, QColor(QStringLiteral("#0d1117")));
+        palette.setColor(QPalette::WindowText, QColor(QStringLiteral("#e6edf3")));
+        palette.setColor(QPalette::Base, QColor(QStringLiteral("#161b22")));
+        palette.setColor(QPalette::AlternateBase, QColor(QStringLiteral("#0d1117")));
+        palette.setColor(QPalette::ToolTipBase, QColor(QStringLiteral("#161b22")));
+        palette.setColor(QPalette::ToolTipText, QColor(QStringLiteral("#e6edf3")));
+        palette.setColor(QPalette::Text, QColor(QStringLiteral("#e6edf3")));
+        palette.setColor(QPalette::Button, QColor(QStringLiteral("#21262d")));
+        palette.setColor(QPalette::ButtonText, QColor(QStringLiteral("#e6edf3")));
+        palette.setColor(QPalette::Highlight, QColor(QStringLiteral("#58a6ff")));
+        palette.setColor(QPalette::HighlightedText, QColor(QStringLiteral("#0d1117")));
+    } else {
+        palette.setColor(QPalette::Window, QColor(QStringLiteral("#111722")));
+        palette.setColor(QPalette::WindowText, QColor(QStringLiteral("#f0f4ff")));
+        palette.setColor(QPalette::Base, QColor(QStringLiteral("#0e141f")));
+        palette.setColor(QPalette::AlternateBase, QColor(QStringLiteral("#161d2b")));
+        palette.setColor(QPalette::ToolTipBase, QColor(QStringLiteral("#111722")));
+        palette.setColor(QPalette::ToolTipText, QColor(QStringLiteral("#f0f4ff")));
+        palette.setColor(QPalette::Text, QColor(QStringLiteral("#f0f4ff")));
+        palette.setColor(QPalette::Button, QColor(QStringLiteral("#182132")));
+        palette.setColor(QPalette::ButtonText, QColor(QStringLiteral("#f0f4ff")));
+        palette.setColor(QPalette::Highlight, QColor(QStringLiteral("#2196f3")));
+        palette.setColor(QPalette::HighlightedText, QColor(QStringLiteral("#ffffff")));
+    }
+    QGuiApplication::setPalette(palette);
+}
+
+void Application::initializeSupportedExchanges()
+{
+    if (!m_supportedExchanges.isEmpty())
+        return;
+    m_supportedExchanges = {
+        QStringLiteral("BINANCE"),
+        QStringLiteral("COINBASE"),
+        QStringLiteral("KRAKEN"),
+        QStringLiteral("OKX"),
+        QStringLiteral("BITGET"),
+        QStringLiteral("BYBIT"),
+    };
+    std::sort(m_supportedExchanges.begin(), m_supportedExchanges.end());
+    m_supportedExchanges.erase(
+        std::unique(m_supportedExchanges.begin(), m_supportedExchanges.end()),
+        m_supportedExchanges.end());
 }
 
 void Application::maybeAutoExportRiskHistory(const QDateTime& snapshotTimestamp)
@@ -3983,6 +4092,217 @@ bool Application::setRegimeTimelineMaximumSnapshots(int maximumSnapshots)
     return true;
 }
 
+bool Application::setUiTheme(const QString& theme)
+{
+    QString normalized = theme.trimmed();
+    if (normalized.isEmpty())
+        return false;
+    normalized = normalized.toLower();
+    if (normalized != QStringLiteral("dark") && normalized != QStringLiteral("light")
+        && normalized != QStringLiteral("midnight")) {
+        qCWarning(lcAppMetrics) << "Nieznany motyw UI" << theme;
+        normalized = QStringLiteral("dark");
+    }
+
+    if (normalized == m_uiTheme)
+        return true;
+
+    m_uiTheme = normalized;
+    applyUiThemePalette();
+    Q_EMIT uiThemeChanged();
+    if (!m_loadingUiSettings)
+        scheduleUiSettingsPersist();
+    return true;
+}
+
+bool Application::setUiLayoutMode(const QString& mode)
+{
+    QString normalized = mode.trimmed();
+    if (normalized.isEmpty())
+        return false;
+    normalized = normalized.toLower();
+    if (normalized != QStringLiteral("classic") && normalized != QStringLiteral("compact")
+        && normalized != QStringLiteral("advanced")) {
+        qCWarning(lcAppMetrics) << "Nieznany układ UI" << mode;
+        normalized = QStringLiteral("classic");
+    }
+
+    if (normalized == m_uiLayoutMode)
+        return true;
+
+    m_uiLayoutMode = normalized;
+    Q_EMIT uiLayoutModeChanged();
+    if (!m_loadingUiSettings)
+        scheduleUiSettingsPersist();
+    return true;
+}
+
+void Application::setAlertToastsEnabled(bool enabled)
+{
+    if (m_alertToastsEnabled == enabled)
+        return;
+    m_alertToastsEnabled = enabled;
+    Q_EMIT alertToastsEnabledChanged();
+    if (!m_loadingUiSettings)
+        scheduleUiSettingsPersist();
+}
+
+QVariantList Application::marketplaceListPresets()
+{
+    QVariantList items;
+    const QVector<TradingClient::MarketplacePresetSummary> presets = m_client.listMarketplacePresets();
+    items.reserve(presets.size());
+    for (const auto& preset : presets) {
+        items.append(buildMarketplacePresetVariant(preset));
+    }
+    return items;
+}
+
+QVariantMap Application::marketplaceImportPreset(const QUrl& sourceUrl)
+{
+    if (!sourceUrl.isValid()) {
+        return buildMarketplaceErrorResult(tr("Nieprawidłowa lokalizacja pliku presetu."));
+    }
+
+    const QString path = sourceUrl.isLocalFile() ? sourceUrl.toLocalFile() : sourceUrl.toString();
+    if (path.trimmed().isEmpty()) {
+        return buildMarketplaceErrorResult(tr("Ścieżka pliku presetu jest wymagana."));
+    }
+
+    QFile file(expandPath(path));
+    if (!file.exists()) {
+        return buildMarketplaceErrorResult(tr("Plik %1 nie istnieje.").arg(path));
+    }
+    if (!file.open(QIODevice::ReadOnly)) {
+        return buildMarketplaceErrorResult(tr("Nie udało się otworzyć pliku %1: %2").arg(path, file.errorString()));
+    }
+
+    const QByteArray payload = file.readAll();
+    file.close();
+    const QString filename = QFileInfo(path).fileName();
+    const auto summary = m_client.importMarketplacePreset(payload, filename);
+
+    if (summary.presetId.isEmpty()) {
+        const QString error = summary.issues.isEmpty()
+                                   ? tr("Backend marketplace odrzucił preset.")
+                                   : summary.issues.join(QStringLiteral("\n"));
+        QVariantMap result = buildMarketplaceErrorResult(error);
+        if (!summary.issues.isEmpty()) {
+            result.insert(QStringLiteral("issues"), summary.issues);
+        }
+        return result;
+    }
+
+    QVariantMap result;
+    result.insert(QStringLiteral("success"), true);
+    result.insert(QStringLiteral("preset"), buildMarketplacePresetVariant(summary));
+    result.insert(QStringLiteral("sourcePath"), QFileInfo(file.fileName()).absoluteFilePath());
+    if (!summary.issues.isEmpty()) {
+        result.insert(QStringLiteral("issues"), summary.issues);
+    }
+    return result;
+}
+
+QVariantMap Application::marketplaceExportPreset(const QString& presetId,
+                                                 const QString& format,
+                                                 const QUrl& destinationUrl)
+{
+    const QString trimmedId = presetId.trimmed();
+    if (trimmedId.isEmpty()) {
+        return buildMarketplaceErrorResult(tr("Identyfikator presetu jest wymagany."));
+    }
+
+    TradingClient::MarketplacePresetSummary summary;
+    QString exportedFilename;
+    const QByteArray payload = m_client.exportMarketplacePreset(trimmedId, format, &summary, &exportedFilename);
+    if (payload.isEmpty()) {
+        const QString error = summary.issues.isEmpty()
+                                   ? tr("Serwer nie zwrócił danych presetu.")
+                                   : summary.issues.join(QStringLiteral("\n"));
+        QVariantMap result = buildMarketplaceErrorResult(error);
+        if (!summary.issues.isEmpty()) {
+            result.insert(QStringLiteral("issues"), summary.issues);
+        }
+        return result;
+    }
+
+    QString writtenPath;
+    const QString suggested = !exportedFilename.trimmed().isEmpty() ? exportedFilename
+                              : !summary.sourcePath.trimmed().isEmpty() ? QFileInfo(summary.sourcePath).fileName()
+                                                                         : QStringLiteral("marketplace_preset.%1")
+                                                                               .arg(format.trimmed().isEmpty()
+                                                                                        ? QStringLiteral("yaml")
+                                                                                        : format.trimmed());
+    if (!writeMarketplacePayloadToFile(payload, suggested, destinationUrl, &writtenPath)) {
+        return buildMarketplaceErrorResult(tr("Nie udało się zapisać pliku presetu."));
+    }
+
+    QVariantMap result;
+    result.insert(QStringLiteral("success"), true);
+    result.insert(QStringLiteral("preset"), buildMarketplacePresetVariant(summary));
+    result.insert(QStringLiteral("path"), writtenPath);
+    if (!summary.issues.isEmpty()) {
+        result.insert(QStringLiteral("issues"), summary.issues);
+    }
+    return result;
+}
+
+QVariantMap Application::marketplaceRemovePreset(const QString& presetId)
+{
+    const QString trimmedId = presetId.trimmed();
+    if (trimmedId.isEmpty()) {
+        return buildMarketplaceErrorResult(tr("Identyfikator presetu jest wymagany."));
+    }
+
+    const bool removed = m_client.removeMarketplacePreset(trimmedId);
+    QVariantMap result;
+    result.insert(QStringLiteral("success"), removed);
+    result.insert(QStringLiteral("presetId"), trimmedId);
+    if (!removed) {
+        result.insert(QStringLiteral("error"),
+                      tr("Nie udało się usunąć presetu %1. Sprawdź logi backendu.").arg(trimmedId));
+    }
+    return result;
+}
+
+QVariantMap Application::marketplaceActivatePreset(const QString& presetId)
+{
+    const QString trimmedId = presetId.trimmed();
+    if (trimmedId.isEmpty()) {
+        return buildMarketplaceErrorResult(tr("Identyfikator presetu jest wymagany."));
+    }
+
+    const auto summary = m_client.activateMarketplacePreset(trimmedId);
+    if (summary.presetId.isEmpty()) {
+        const QString error = summary.issues.isEmpty()
+                                   ? tr("Aktywacja presetu nie powiodła się.")
+                                   : summary.issues.join(QStringLiteral("\n"));
+        QVariantMap result = buildMarketplaceErrorResult(error);
+        if (!summary.issues.isEmpty()) {
+            result.insert(QStringLiteral("issues"), summary.issues);
+        }
+        return result;
+    }
+
+    QVariantMap result;
+    result.insert(QStringLiteral("success"), true);
+    result.insert(QStringLiteral("preset"), buildMarketplacePresetVariant(summary));
+    if (!summary.issues.isEmpty()) {
+        result.insert(QStringLiteral("issues"), summary.issues);
+    }
+    return result;
+}
+
+QStringList Application::supportedExchanges() const
+{
+    return m_supportedExchanges;
+}
+
+QVariantMap Application::personalizationSnapshot() const
+{
+    return buildPersonalizationPayload();
+}
+
 void Application::saveUiSettingsImmediatelyForTesting()
 {
     if (m_uiSettingsSaveTimer.isActive())
@@ -4313,7 +4633,7 @@ void Application::applyMetricsEnvironmentOverrides(const QCommandLineParser& par
                                                     QString& metricsTokenFile) {
     if (const auto endpointEnv = envValue(QByteArrayLiteral("BOT_CORE_UI_METRICS_ENDPOINT"));
         endpointEnv.has_value()) {
-        m_metricsEndpoint = endpointEnv->trimmed();
+        applyMetricsEndpoint(endpointEnv->trimmed());
     }
 
     if (const auto tagEnv = envValue(QByteArrayLiteral("BOT_CORE_UI_METRICS_TAG")); tagEnv.has_value()) {
@@ -4412,6 +4732,16 @@ void Application::applyMetricsEnvironmentOverrides(const QCommandLineParser& par
             m_metricsRbacRole = roleEnv->trimmed();
         }
     }
+}
+
+void Application::applyMetricsEndpoint(const QString& endpoint) {
+    QString sanitized = endpoint.trimmed();
+    if (sanitized.isEmpty())
+        sanitized = QStringLiteral("in-process");
+    if (m_metricsEndpoint == sanitized)
+        return;
+    m_metricsEndpoint = sanitized;
+    Q_EMIT metricsEndpointChanged();
 }
 
 void Application::configureTokenWatcher(QFileSystemWatcher& watcher,
@@ -4879,6 +5209,86 @@ void Application::handleRegimeThresholdPathChanged(const QString&)
         return;
 
     applyRegimeThresholdPath(m_regimeThresholdPath, false);
+}
+
+QVariantMap Application::buildMarketplacePresetVariant(const TradingClient::MarketplacePresetSummary& preset) const
+{
+    QVariantMap map;
+    map.insert(QStringLiteral("presetId"), preset.presetId);
+    map.insert(QStringLiteral("name"), preset.name);
+    map.insert(QStringLiteral("version"), preset.version);
+    map.insert(QStringLiteral("profile"), preset.profile);
+    map.insert(QStringLiteral("tags"), preset.tags);
+    map.insert(QStringLiteral("signatureVerified"), preset.signatureVerified);
+    map.insert(QStringLiteral("issues"), preset.issues);
+    map.insert(QStringLiteral("sourcePath"), preset.sourcePath);
+    return map;
+}
+
+QVariantMap Application::buildMarketplaceErrorResult(const QString& message) const
+{
+    QVariantMap result;
+    result.insert(QStringLiteral("success"), false);
+    result.insert(QStringLiteral("error"), message);
+    return result;
+}
+
+bool Application::writeMarketplacePayloadToFile(const QByteArray& payload,
+                                                const QString& suggestedName,
+                                                const QUrl& destinationUrl,
+                                                QString* writtenPath) const
+{
+    if (writtenPath) {
+        writtenPath->clear();
+    }
+    if (payload.isEmpty()) {
+        return false;
+    }
+
+    QString targetPath;
+    if (destinationUrl.isValid() && !destinationUrl.isEmpty()) {
+        if (!destinationUrl.isLocalFile() && !destinationUrl.scheme().isEmpty()
+            && destinationUrl.scheme() != QStringLiteral("file")) {
+            return false;
+        }
+        targetPath = destinationUrl.isLocalFile() ? destinationUrl.toLocalFile() : destinationUrl.path();
+    }
+
+    targetPath = expandPath(targetPath.trimmed());
+    if (targetPath.isEmpty()) {
+        const QString fallbackName = suggestedName.trimmed().isEmpty() ? QStringLiteral("marketplace_preset.yaml")
+                                                                       : suggestedName.trimmed();
+        targetPath = QDir::current().absoluteFilePath(fallbackName);
+    } else if (QFileInfo(targetPath).isDir()) {
+        const QString fallbackName = suggestedName.trimmed().isEmpty() ? QStringLiteral("marketplace_preset.yaml")
+                                                                       : suggestedName.trimmed();
+        targetPath = QDir(targetPath).absoluteFilePath(fallbackName);
+    }
+
+    if (targetPath.trimmed().isEmpty()) {
+        return false;
+    }
+
+    QDir targetDir = QFileInfo(targetPath).absoluteDir();
+    if (!targetDir.exists() && !targetDir.mkpath(QStringLiteral("."))) {
+        return false;
+    }
+
+    QSaveFile outFile(targetPath);
+    if (!outFile.open(QIODevice::WriteOnly)) {
+        return false;
+    }
+    if (outFile.write(payload) != payload.size()) {
+        return false;
+    }
+    if (!outFile.commit()) {
+        return false;
+    }
+
+    if (writtenPath) {
+        *writtenPath = QFileInfo(targetPath).absoluteFilePath();
+    }
+    return true;
 }
 
 void Application::handleTradingTokenPathChanged(const QString&)

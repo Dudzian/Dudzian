@@ -34,6 +34,14 @@ from bot_core.strategies.cross_exchange_arbitrage import (
     CrossExchangeArbitrageSettings,
     CrossExchangeArbitrageStrategy,
 )
+from bot_core.strategies.cross_exchange_hedge import (
+    CrossExchangeHedgeSettings,
+    CrossExchangeHedgeStrategy,
+)
+from bot_core.strategies.futures_spread import (
+    FuturesSpreadSettings,
+    FuturesSpreadStrategy,
+)
 from bot_core.strategies.grid import GridTradingSettings, GridTradingStrategy
 from bot_core.strategies.mean_reversion import MeanReversionSettings, MeanReversionStrategy
 from bot_core.strategies.options import OptionsIncomeSettings, OptionsIncomeStrategy
@@ -85,4 +93,8 @@ __all__ = [
     "VolatilityTargetStrategy",
     "CrossExchangeArbitrageSettings",
     "CrossExchangeArbitrageStrategy",
+    "FuturesSpreadSettings",
+    "FuturesSpreadStrategy",
+    "CrossExchangeHedgeSettings",
+    "CrossExchangeHedgeStrategy",
 ]

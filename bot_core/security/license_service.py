@@ -9,7 +9,7 @@ import os
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Mapping, MutableMapping
 
 from nacl.exceptions import BadSignatureError
 from nacl.signing import VerifyKey
@@ -17,6 +17,11 @@ from nacl.signing import VerifyKey
 from bot_core.security.capabilities import LicenseCapabilities, build_capabilities_from_payload
 from bot_core.security.clock import ClockService
 from bot_core.security.hwid import HwIdProvider, HwIdProviderError
+from bot_core.security.fingerprint import (
+    FingerprintError,
+    sign_license_payload,
+    verify_license_payload_signature,
+)
 
 
 LOGGER = logging.getLogger(__name__)
@@ -38,6 +43,14 @@ class LicenseHardwareMismatchError(LicenseServiceError):
     """Fingerprint urządzenia nie zgadza się z licencją."""
 
 
+class LicenseStateTamperedError(LicenseServiceError):
+    """Plik stanu licencji został zmodyfikowany lub podpis nie jest poprawny."""
+
+
+class LicenseRollbackDetectedError(LicenseServiceError):
+    """Wykryto próbę wgrania starszej licencji niż ostatnio zaakceptowana."""
+
+
 @dataclass(slots=True)
 class LicenseSnapshot:
     """Wyliczone możliwości i surowy payload licencji."""
@@ -49,6 +62,15 @@ class LicenseSnapshot:
     capabilities: LicenseCapabilities
     effective_date: date
     local_hwid: str | None
+
+
+@dataclass(slots=True)
+class _MonotonicState:
+    license_id: str | None
+    sequence: int | None
+    issued_at: datetime | None
+    effective_date: date | None
+    payload_sha256: str | None
 
 
 class LicenseService:
@@ -69,6 +91,7 @@ class LicenseService:
         today_provider: Callable[[], date] | None = None,
         clock_service: ClockService | None = None,
         hwid_provider: HwIdProvider | None = None,
+        binding_secret_path: str | Path | None = None,
     ) -> None:
         if verify_key_hex is None:
             verify_key_hex = os.environ.get(self.PUBLIC_KEY_ENV)
@@ -91,6 +114,11 @@ class LicenseService:
         self._status_path = Path(status_path).expanduser() if status_path else self.DEFAULT_STATUS_PATH
         self._audit_log_path = (
             Path(audit_log_path).expanduser() if audit_log_path else self.DEFAULT_AUDIT_LOG_PATH
+        )
+        self._binding_secret_path = (
+            Path(binding_secret_path).expanduser()
+            if binding_secret_path is not None
+            else None
         )
 
     # --- API publiczne ---------------------------------------------------------
@@ -153,10 +181,12 @@ class LicenseService:
             local_hwid=local_hwid,
         )
 
-        self._write_status_snapshot(snapshot)
+        self._enforce_rollback_protection(snapshot, fingerprint=reference_hwid)
+        self._write_status_snapshot(snapshot, fingerprint=reference_hwid)
         self._append_audit_log(snapshot)
 
         return snapshot
+
 
     # --- obsługa plików --------------------------------------------------------
     def _read_bundle(self, path: Path) -> dict[str, Any]:
@@ -195,7 +225,7 @@ class LicenseService:
         self._clock.remember(license_id, value)
 
     # --- zapisywanie stanu -----------------------------------------------------
-    def _write_status_snapshot(self, snapshot: LicenseSnapshot) -> None:
+    def _write_status_snapshot(self, snapshot: LicenseSnapshot, *, fingerprint: str | None) -> None:
         document = {
             "license_id": snapshot.capabilities.license_id,
             "edition": snapshot.capabilities.edition,
@@ -249,8 +279,184 @@ class LicenseService:
             "bundle_path": str(snapshot.bundle_path),
         }
 
+        monotonic_payload = dict(self._build_monotonic_payload(snapshot))
+        document["monotonic"] = monotonic_payload
+
+        if fingerprint:
+            try:
+                signature = sign_license_payload(
+                    monotonic_payload,
+                    fingerprint=fingerprint,
+                    secret_path=self._binding_secret_path,
+                )
+            except FingerprintError as exc:
+                raise LicenseServiceError(
+                    "Nie udało się podpisać pliku statusu licencji lokalnym fingerprintem."
+                ) from exc
+            document["signature"] = dict(signature)
+        else:
+            document.pop("signature", None)
+
         self._status_path.parent.mkdir(parents=True, exist_ok=True)
         self._status_path.write_text(json.dumps(document, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+    def _build_monotonic_payload(self, snapshot: LicenseSnapshot) -> MutableMapping[str, object]:
+        payload: MutableMapping[str, object] = {
+            "license_id": snapshot.capabilities.license_id,
+            "effective_date": snapshot.effective_date.isoformat(),
+            "payload_sha256": hashlib.sha256(snapshot.payload_bytes).hexdigest(),
+            "recorded_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        }
+
+        issued_at = snapshot.capabilities.issued_at
+        if issued_at is None:
+            raw = snapshot.payload.get("issued_at") or snapshot.payload.get("issuedAt")
+            if isinstance(raw, str) and raw.strip():
+                try:
+                    issued_at = datetime.fromisoformat(raw.replace("Z", "+00:00")).astimezone(timezone.utc)
+                except ValueError:
+                    issued_at = None
+        if issued_at:
+            payload["issued_at"] = issued_at.isoformat().replace("+00:00", "Z")
+
+        sequence_value = snapshot.payload.get("sequence") or snapshot.payload.get("serial")
+        if isinstance(sequence_value, (int, float)):
+            payload["sequence"] = int(sequence_value)
+        elif isinstance(sequence_value, str) and sequence_value.strip():
+            try:
+                payload["sequence"] = int(sequence_value.strip())
+            except ValueError:
+                pass
+
+        return payload
+
+    def _load_status_document(self) -> Mapping[str, Any] | None:
+        if not self._status_path.exists():
+            return None
+        try:
+            return json.loads(self._status_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            LOGGER.warning("Plik statusu licencji ma niepoprawny format: %s", exc)
+        except OSError as exc:
+            LOGGER.warning("Nie udało się odczytać statusu licencji: %s", exc)
+        return None
+
+    @staticmethod
+    def _parse_iso_datetime(value: str | None) -> datetime | None:
+        if not value or not isinstance(value, str):
+            return None
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        return parsed.astimezone(timezone.utc)
+
+    @staticmethod
+    def _parse_iso_date(value: str | None) -> date | None:
+        if not value or not isinstance(value, str):
+            return None
+        try:
+            return datetime.fromisoformat(value).date()
+        except ValueError:
+            try:
+                return datetime.fromisoformat(value.replace("Z", "+00:00")).date()
+            except ValueError:
+                return None
+
+    def _parse_monotonic_payload(self, payload: Mapping[str, Any]) -> _MonotonicState:
+        license_id = str(payload.get("license_id") or "").strip() or None
+
+        sequence_value = payload.get("sequence")
+        sequence: int | None = None
+        if isinstance(sequence_value, int):
+            sequence = sequence_value
+        elif isinstance(sequence_value, str) and sequence_value.strip():
+            try:
+                sequence = int(sequence_value.strip())
+            except ValueError:
+                sequence = None
+
+        issued_at = self._parse_iso_datetime(payload.get("issued_at"))
+        effective_date = self._parse_iso_date(payload.get("effective_date"))
+        payload_sha = str(payload.get("payload_sha256") or "").strip() or None
+
+        return _MonotonicState(
+            license_id=license_id,
+            sequence=sequence,
+            issued_at=issued_at,
+            effective_date=effective_date,
+            payload_sha256=payload_sha,
+        )
+
+    @staticmethod
+    def _is_rollback(previous: _MonotonicState, current: _MonotonicState) -> bool:
+        if previous.sequence is not None and current.sequence is not None:
+            if current.sequence < previous.sequence:
+                return True
+        if previous.issued_at and current.issued_at:
+            if current.issued_at < previous.issued_at:
+                return True
+        if previous.effective_date and current.effective_date:
+            if current.effective_date < previous.effective_date:
+                return True
+        return False
+
+    def _enforce_rollback_protection(
+        self,
+        snapshot: LicenseSnapshot,
+        *,
+        fingerprint: str | None,
+    ) -> None:
+        if not fingerprint:
+            LOGGER.warning(
+                "Brak fingerprintu urządzenia – ochrona przed rollbackiem licencji została pominięta."
+            )
+            return
+
+        document = self._load_status_document()
+        if not document:
+            return
+
+        monotonic_section = document.get("monotonic")
+        signature_section = document.get("signature")
+        if not isinstance(monotonic_section, Mapping) or not isinstance(signature_section, Mapping):
+            return
+
+        try:
+            valid = verify_license_payload_signature(
+                monotonic_section,
+                signature_section,
+                fingerprint=fingerprint,
+                secret_path=self._binding_secret_path,
+            )
+        except FingerprintError as exc:
+            raise LicenseStateTamperedError(
+                "Nie udało się zweryfikować podpisu pliku statusu licencji."
+            ) from exc
+        if not valid:
+            raise LicenseStateTamperedError(
+                "Podpis pliku statusu licencji jest nieprawidłowy lub sekret został usunięty."
+            )
+
+        previous_state = self._parse_monotonic_payload(monotonic_section)
+        current_payload = self._build_monotonic_payload(snapshot)
+        current_state = self._parse_monotonic_payload(current_payload)
+
+        if (
+            previous_state.license_id
+            and current_state.license_id
+            and previous_state.license_id != current_state.license_id
+        ):
+            return
+
+        if previous_state.payload_sha256 and current_state.payload_sha256:
+            if previous_state.payload_sha256 == current_state.payload_sha256:
+                return
+
+        if self._is_rollback(previous_state, current_state):
+            raise LicenseRollbackDetectedError(
+                "Wykryto próbę załadowania starszej wersji licencji (rollback)."
+            )
 
     def _append_audit_log(self, snapshot: LicenseSnapshot) -> None:
         timestamp = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
@@ -300,8 +506,10 @@ class LicenseService:
 __all__ = [
     "LicenseBundleError",
     "LicenseHardwareMismatchError",
+    "LicenseRollbackDetectedError",
     "LicenseService",
     "LicenseServiceError",
     "LicenseSignatureError",
+    "LicenseStateTamperedError",
     "LicenseSnapshot",
 ]

@@ -52,6 +52,16 @@ def sample_config(tmp_path: Path) -> Path:
                 "tags": ["custom-tag"],
             }
         },
+        "futures_spread_strategies": {
+            "basis_guard": {
+                "parameters": {"entry_z": 1.4, "exit_z": 0.35, "max_bars": 24}
+            }
+        },
+        "cross_exchange_hedge_strategies": {
+            "delta_guard": {
+                "parameters": {"basis_scale": 0.009, "inventory_scale": 0.3}
+            }
+        },
         "multi_strategy_schedulers": {
             "default": {
                 "telemetry_namespace": "telemetry/main",

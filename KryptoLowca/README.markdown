@@ -1,11 +1,11 @@
-# KryptoŁowca Trading Bot
+# KryptoŁowca Trading Bot *(legacy namespace)*
 
 KryptoŁowca is a production-grade cryptocurrency trading stack built around a
-modular core (`bot_core`) and user-facing launchers that live in the
-`KryptoLowca` package. The system combines multi-exchange trading, automated
-risk governance, AI-driven signals and a desktop Trading GUI. Runtime metadata
-– including risk profiles and environment presets – is centralised in
-`bot_core.runtime.metadata` and consumed consistently by every launcher.
+modular core (`bot_core`) and user-facing launchers that historically lived in
+the `KryptoLowca` package. **Cały pakiet `KryptoLowca` jest obecnie traktowany
+jako warstwa zgodności wstecznej.** Nowe funkcje i integracje należy budować w
+`bot_core.*`, natomiast moduły takie jak `KryptoLowca.ai_models` pozostały tylko
+w formie shimów kierujących do `bot_core.ai.legacy_models`.
 
 > **Important:** Legacy source code that previously lived under
 > `KryptoLowca/bot` is archived in `archive/legacy_bot/` and kept for reference

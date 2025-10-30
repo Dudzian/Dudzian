@@ -409,10 +409,163 @@ struct HealthCheckResponseDefaultTypeInternal {
   };
 };
 PROTOBUF_ATTRIBUTE_NO_DESTROY PROTOBUF_CONSTINIT PROTOBUF_ATTRIBUTE_INIT_PRIORITY1 HealthCheckResponseDefaultTypeInternal _HealthCheckResponse_default_instance_;
+PROTOBUF_CONSTEXPR MarketplacePresetSummary::MarketplacePresetSummary(
+    ::_pbi::ConstantInitialized): _impl_{
+    /*decltype(_impl_.tags_)*/{}
+  , /*decltype(_impl_.issues_)*/{}
+  , /*decltype(_impl_.preset_id_)*/{&::_pbi::fixed_address_empty_string, ::_pbi::ConstantInitialized{}}
+  , /*decltype(_impl_.name_)*/{&::_pbi::fixed_address_empty_string, ::_pbi::ConstantInitialized{}}
+  , /*decltype(_impl_.version_)*/{&::_pbi::fixed_address_empty_string, ::_pbi::ConstantInitialized{}}
+  , /*decltype(_impl_.profile_)*/{&::_pbi::fixed_address_empty_string, ::_pbi::ConstantInitialized{}}
+  , /*decltype(_impl_.source_path_)*/{&::_pbi::fixed_address_empty_string, ::_pbi::ConstantInitialized{}}
+  , /*decltype(_impl_.signature_verified_)*/false
+  , /*decltype(_impl_._cached_size_)*/{}} {}
+struct MarketplacePresetSummaryDefaultTypeInternal {
+  PROTOBUF_CONSTEXPR MarketplacePresetSummaryDefaultTypeInternal()
+      : _instance(::_pbi::ConstantInitialized{}) {}
+  ~MarketplacePresetSummaryDefaultTypeInternal() {}
+  union {
+    MarketplacePresetSummary _instance;
+  };
+};
+PROTOBUF_ATTRIBUTE_NO_DESTROY PROTOBUF_CONSTINIT PROTOBUF_ATTRIBUTE_INIT_PRIORITY1 MarketplacePresetSummaryDefaultTypeInternal _MarketplacePresetSummary_default_instance_;
+PROTOBUF_CONSTEXPR ListMarketplacePresetsRequest::ListMarketplacePresetsRequest(
+    ::_pbi::ConstantInitialized) {}
+struct ListMarketplacePresetsRequestDefaultTypeInternal {
+  PROTOBUF_CONSTEXPR ListMarketplacePresetsRequestDefaultTypeInternal()
+      : _instance(::_pbi::ConstantInitialized{}) {}
+  ~ListMarketplacePresetsRequestDefaultTypeInternal() {}
+  union {
+    ListMarketplacePresetsRequest _instance;
+  };
+};
+PROTOBUF_ATTRIBUTE_NO_DESTROY PROTOBUF_CONSTINIT PROTOBUF_ATTRIBUTE_INIT_PRIORITY1 ListMarketplacePresetsRequestDefaultTypeInternal _ListMarketplacePresetsRequest_default_instance_;
+PROTOBUF_CONSTEXPR ListMarketplacePresetsResponse::ListMarketplacePresetsResponse(
+    ::_pbi::ConstantInitialized): _impl_{
+    /*decltype(_impl_.presets_)*/{}
+  , /*decltype(_impl_._cached_size_)*/{}} {}
+struct ListMarketplacePresetsResponseDefaultTypeInternal {
+  PROTOBUF_CONSTEXPR ListMarketplacePresetsResponseDefaultTypeInternal()
+      : _instance(::_pbi::ConstantInitialized{}) {}
+  ~ListMarketplacePresetsResponseDefaultTypeInternal() {}
+  union {
+    ListMarketplacePresetsResponse _instance;
+  };
+};
+PROTOBUF_ATTRIBUTE_NO_DESTROY PROTOBUF_CONSTINIT PROTOBUF_ATTRIBUTE_INIT_PRIORITY1 ListMarketplacePresetsResponseDefaultTypeInternal _ListMarketplacePresetsResponse_default_instance_;
+PROTOBUF_CONSTEXPR ImportMarketplacePresetRequest::ImportMarketplacePresetRequest(
+    ::_pbi::ConstantInitialized): _impl_{
+    /*decltype(_impl_.payload_)*/{&::_pbi::fixed_address_empty_string, ::_pbi::ConstantInitialized{}}
+  , /*decltype(_impl_.filename_)*/{&::_pbi::fixed_address_empty_string, ::_pbi::ConstantInitialized{}}
+  , /*decltype(_impl_._cached_size_)*/{}} {}
+struct ImportMarketplacePresetRequestDefaultTypeInternal {
+  PROTOBUF_CONSTEXPR ImportMarketplacePresetRequestDefaultTypeInternal()
+      : _instance(::_pbi::ConstantInitialized{}) {}
+  ~ImportMarketplacePresetRequestDefaultTypeInternal() {}
+  union {
+    ImportMarketplacePresetRequest _instance;
+  };
+};
+PROTOBUF_ATTRIBUTE_NO_DESTROY PROTOBUF_CONSTINIT PROTOBUF_ATTRIBUTE_INIT_PRIORITY1 ImportMarketplacePresetRequestDefaultTypeInternal _ImportMarketplacePresetRequest_default_instance_;
+PROTOBUF_CONSTEXPR ImportMarketplacePresetResponse::ImportMarketplacePresetResponse(
+    ::_pbi::ConstantInitialized): _impl_{
+    /*decltype(_impl_.preset_)*/nullptr
+  , /*decltype(_impl_._cached_size_)*/{}} {}
+struct ImportMarketplacePresetResponseDefaultTypeInternal {
+  PROTOBUF_CONSTEXPR ImportMarketplacePresetResponseDefaultTypeInternal()
+      : _instance(::_pbi::ConstantInitialized{}) {}
+  ~ImportMarketplacePresetResponseDefaultTypeInternal() {}
+  union {
+    ImportMarketplacePresetResponse _instance;
+  };
+};
+PROTOBUF_ATTRIBUTE_NO_DESTROY PROTOBUF_CONSTINIT PROTOBUF_ATTRIBUTE_INIT_PRIORITY1 ImportMarketplacePresetResponseDefaultTypeInternal _ImportMarketplacePresetResponse_default_instance_;
+PROTOBUF_CONSTEXPR ExportMarketplacePresetRequest::ExportMarketplacePresetRequest(
+    ::_pbi::ConstantInitialized): _impl_{
+    /*decltype(_impl_.preset_id_)*/{&::_pbi::fixed_address_empty_string, ::_pbi::ConstantInitialized{}}
+  , /*decltype(_impl_.format_)*/{&::_pbi::fixed_address_empty_string, ::_pbi::ConstantInitialized{}}
+  , /*decltype(_impl_._cached_size_)*/{}} {}
+struct ExportMarketplacePresetRequestDefaultTypeInternal {
+  PROTOBUF_CONSTEXPR ExportMarketplacePresetRequestDefaultTypeInternal()
+      : _instance(::_pbi::ConstantInitialized{}) {}
+  ~ExportMarketplacePresetRequestDefaultTypeInternal() {}
+  union {
+    ExportMarketplacePresetRequest _instance;
+  };
+};
+PROTOBUF_ATTRIBUTE_NO_DESTROY PROTOBUF_CONSTINIT PROTOBUF_ATTRIBUTE_INIT_PRIORITY1 ExportMarketplacePresetRequestDefaultTypeInternal _ExportMarketplacePresetRequest_default_instance_;
+PROTOBUF_CONSTEXPR ExportMarketplacePresetResponse::ExportMarketplacePresetResponse(
+    ::_pbi::ConstantInitialized): _impl_{
+    /*decltype(_impl_.payload_)*/{&::_pbi::fixed_address_empty_string, ::_pbi::ConstantInitialized{}}
+  , /*decltype(_impl_.filename_)*/{&::_pbi::fixed_address_empty_string, ::_pbi::ConstantInitialized{}}
+  , /*decltype(_impl_.format_)*/{&::_pbi::fixed_address_empty_string, ::_pbi::ConstantInitialized{}}
+  , /*decltype(_impl_.preset_)*/nullptr
+  , /*decltype(_impl_._cached_size_)*/{}} {}
+struct ExportMarketplacePresetResponseDefaultTypeInternal {
+  PROTOBUF_CONSTEXPR ExportMarketplacePresetResponseDefaultTypeInternal()
+      : _instance(::_pbi::ConstantInitialized{}) {}
+  ~ExportMarketplacePresetResponseDefaultTypeInternal() {}
+  union {
+    ExportMarketplacePresetResponse _instance;
+  };
+};
+PROTOBUF_ATTRIBUTE_NO_DESTROY PROTOBUF_CONSTINIT PROTOBUF_ATTRIBUTE_INIT_PRIORITY1 ExportMarketplacePresetResponseDefaultTypeInternal _ExportMarketplacePresetResponse_default_instance_;
+PROTOBUF_CONSTEXPR RemoveMarketplacePresetRequest::RemoveMarketplacePresetRequest(
+    ::_pbi::ConstantInitialized): _impl_{
+    /*decltype(_impl_.preset_id_)*/{&::_pbi::fixed_address_empty_string, ::_pbi::ConstantInitialized{}}
+  , /*decltype(_impl_._cached_size_)*/{}} {}
+struct RemoveMarketplacePresetRequestDefaultTypeInternal {
+  PROTOBUF_CONSTEXPR RemoveMarketplacePresetRequestDefaultTypeInternal()
+      : _instance(::_pbi::ConstantInitialized{}) {}
+  ~RemoveMarketplacePresetRequestDefaultTypeInternal() {}
+  union {
+    RemoveMarketplacePresetRequest _instance;
+  };
+};
+PROTOBUF_ATTRIBUTE_NO_DESTROY PROTOBUF_CONSTINIT PROTOBUF_ATTRIBUTE_INIT_PRIORITY1 RemoveMarketplacePresetRequestDefaultTypeInternal _RemoveMarketplacePresetRequest_default_instance_;
+PROTOBUF_CONSTEXPR RemoveMarketplacePresetResponse::RemoveMarketplacePresetResponse(
+    ::_pbi::ConstantInitialized): _impl_{
+    /*decltype(_impl_.removed_)*/false
+  , /*decltype(_impl_._cached_size_)*/{}} {}
+struct RemoveMarketplacePresetResponseDefaultTypeInternal {
+  PROTOBUF_CONSTEXPR RemoveMarketplacePresetResponseDefaultTypeInternal()
+      : _instance(::_pbi::ConstantInitialized{}) {}
+  ~RemoveMarketplacePresetResponseDefaultTypeInternal() {}
+  union {
+    RemoveMarketplacePresetResponse _instance;
+  };
+};
+PROTOBUF_ATTRIBUTE_NO_DESTROY PROTOBUF_CONSTINIT PROTOBUF_ATTRIBUTE_INIT_PRIORITY1 RemoveMarketplacePresetResponseDefaultTypeInternal _RemoveMarketplacePresetResponse_default_instance_;
+PROTOBUF_CONSTEXPR ActivateMarketplacePresetRequest::ActivateMarketplacePresetRequest(
+    ::_pbi::ConstantInitialized): _impl_{
+    /*decltype(_impl_.preset_id_)*/{&::_pbi::fixed_address_empty_string, ::_pbi::ConstantInitialized{}}
+  , /*decltype(_impl_._cached_size_)*/{}} {}
+struct ActivateMarketplacePresetRequestDefaultTypeInternal {
+  PROTOBUF_CONSTEXPR ActivateMarketplacePresetRequestDefaultTypeInternal()
+      : _instance(::_pbi::ConstantInitialized{}) {}
+  ~ActivateMarketplacePresetRequestDefaultTypeInternal() {}
+  union {
+    ActivateMarketplacePresetRequest _instance;
+  };
+};
+PROTOBUF_ATTRIBUTE_NO_DESTROY PROTOBUF_CONSTINIT PROTOBUF_ATTRIBUTE_INIT_PRIORITY1 ActivateMarketplacePresetRequestDefaultTypeInternal _ActivateMarketplacePresetRequest_default_instance_;
+PROTOBUF_CONSTEXPR ActivateMarketplacePresetResponse::ActivateMarketplacePresetResponse(
+    ::_pbi::ConstantInitialized): _impl_{
+    /*decltype(_impl_.preset_)*/nullptr
+  , /*decltype(_impl_._cached_size_)*/{}} {}
+struct ActivateMarketplacePresetResponseDefaultTypeInternal {
+  PROTOBUF_CONSTEXPR ActivateMarketplacePresetResponseDefaultTypeInternal()
+      : _instance(::_pbi::ConstantInitialized{}) {}
+  ~ActivateMarketplacePresetResponseDefaultTypeInternal() {}
+  union {
+    ActivateMarketplacePresetResponse _instance;
+  };
+};
+PROTOBUF_ATTRIBUTE_NO_DESTROY PROTOBUF_CONSTINIT PROTOBUF_ATTRIBUTE_INIT_PRIORITY1 ActivateMarketplacePresetResponseDefaultTypeInternal _ActivateMarketplacePresetResponse_default_instance_;
 }  // namespace v1
 }  // namespace trading
 }  // namespace botcore
-static ::_pb::Metadata file_level_metadata_trading_2eproto[25];
+static ::_pb::Metadata file_level_metadata_trading_2eproto[36];
 static const ::_pb::EnumDescriptor* file_level_enum_descriptors_trading_2eproto[5];
 static constexpr ::_pb::ServiceDescriptor const** file_level_service_descriptors_trading_2eproto = nullptr;
 
@@ -655,6 +808,94 @@ const uint32_t TableStruct_trading_2eproto::offsets[] PROTOBUF_SECTION_VARIABLE(
   PROTOBUF_FIELD_OFFSET(::botcore::trading::v1::HealthCheckResponse, _impl_.version_),
   PROTOBUF_FIELD_OFFSET(::botcore::trading::v1::HealthCheckResponse, _impl_.git_commit_),
   PROTOBUF_FIELD_OFFSET(::botcore::trading::v1::HealthCheckResponse, _impl_.started_at_),
+  ~0u,  // no _has_bits_
+  PROTOBUF_FIELD_OFFSET(::botcore::trading::v1::MarketplacePresetSummary, _internal_metadata_),
+  ~0u,  // no _extensions_
+  ~0u,  // no _oneof_case_
+  ~0u,  // no _weak_field_map_
+  ~0u,  // no _inlined_string_donated_
+  PROTOBUF_FIELD_OFFSET(::botcore::trading::v1::MarketplacePresetSummary, _impl_.preset_id_),
+  PROTOBUF_FIELD_OFFSET(::botcore::trading::v1::MarketplacePresetSummary, _impl_.name_),
+  PROTOBUF_FIELD_OFFSET(::botcore::trading::v1::MarketplacePresetSummary, _impl_.version_),
+  PROTOBUF_FIELD_OFFSET(::botcore::trading::v1::MarketplacePresetSummary, _impl_.profile_),
+  PROTOBUF_FIELD_OFFSET(::botcore::trading::v1::MarketplacePresetSummary, _impl_.tags_),
+  PROTOBUF_FIELD_OFFSET(::botcore::trading::v1::MarketplacePresetSummary, _impl_.signature_verified_),
+  PROTOBUF_FIELD_OFFSET(::botcore::trading::v1::MarketplacePresetSummary, _impl_.source_path_),
+  PROTOBUF_FIELD_OFFSET(::botcore::trading::v1::MarketplacePresetSummary, _impl_.issues_),
+  ~0u,  // no _has_bits_
+  PROTOBUF_FIELD_OFFSET(::botcore::trading::v1::ListMarketplacePresetsRequest, _internal_metadata_),
+  ~0u,  // no _extensions_
+  ~0u,  // no _oneof_case_
+  ~0u,  // no _weak_field_map_
+  ~0u,  // no _inlined_string_donated_
+  ~0u,  // no _has_bits_
+  PROTOBUF_FIELD_OFFSET(::botcore::trading::v1::ListMarketplacePresetsResponse, _internal_metadata_),
+  ~0u,  // no _extensions_
+  ~0u,  // no _oneof_case_
+  ~0u,  // no _weak_field_map_
+  ~0u,  // no _inlined_string_donated_
+  PROTOBUF_FIELD_OFFSET(::botcore::trading::v1::ListMarketplacePresetsResponse, _impl_.presets_),
+  ~0u,  // no _has_bits_
+  PROTOBUF_FIELD_OFFSET(::botcore::trading::v1::ImportMarketplacePresetRequest, _internal_metadata_),
+  ~0u,  // no _extensions_
+  ~0u,  // no _oneof_case_
+  ~0u,  // no _weak_field_map_
+  ~0u,  // no _inlined_string_donated_
+  PROTOBUF_FIELD_OFFSET(::botcore::trading::v1::ImportMarketplacePresetRequest, _impl_.payload_),
+  PROTOBUF_FIELD_OFFSET(::botcore::trading::v1::ImportMarketplacePresetRequest, _impl_.filename_),
+  ~0u,  // no _has_bits_
+  PROTOBUF_FIELD_OFFSET(::botcore::trading::v1::ImportMarketplacePresetResponse, _internal_metadata_),
+  ~0u,  // no _extensions_
+  ~0u,  // no _oneof_case_
+  ~0u,  // no _weak_field_map_
+  ~0u,  // no _inlined_string_donated_
+  PROTOBUF_FIELD_OFFSET(::botcore::trading::v1::ImportMarketplacePresetResponse, _impl_.preset_),
+  ~0u,  // no _has_bits_
+  PROTOBUF_FIELD_OFFSET(::botcore::trading::v1::ExportMarketplacePresetRequest, _internal_metadata_),
+  ~0u,  // no _extensions_
+  ~0u,  // no _oneof_case_
+  ~0u,  // no _weak_field_map_
+  ~0u,  // no _inlined_string_donated_
+  PROTOBUF_FIELD_OFFSET(::botcore::trading::v1::ExportMarketplacePresetRequest, _impl_.preset_id_),
+  PROTOBUF_FIELD_OFFSET(::botcore::trading::v1::ExportMarketplacePresetRequest, _impl_.format_),
+  ~0u,  // no _has_bits_
+  PROTOBUF_FIELD_OFFSET(::botcore::trading::v1::ExportMarketplacePresetResponse, _internal_metadata_),
+  ~0u,  // no _extensions_
+  ~0u,  // no _oneof_case_
+  ~0u,  // no _weak_field_map_
+  ~0u,  // no _inlined_string_donated_
+  PROTOBUF_FIELD_OFFSET(::botcore::trading::v1::ExportMarketplacePresetResponse, _impl_.payload_),
+  PROTOBUF_FIELD_OFFSET(::botcore::trading::v1::ExportMarketplacePresetResponse, _impl_.filename_),
+  PROTOBUF_FIELD_OFFSET(::botcore::trading::v1::ExportMarketplacePresetResponse, _impl_.preset_),
+  PROTOBUF_FIELD_OFFSET(::botcore::trading::v1::ExportMarketplacePresetResponse, _impl_.format_),
+  ~0u,  // no _has_bits_
+  PROTOBUF_FIELD_OFFSET(::botcore::trading::v1::RemoveMarketplacePresetRequest, _internal_metadata_),
+  ~0u,  // no _extensions_
+  ~0u,  // no _oneof_case_
+  ~0u,  // no _weak_field_map_
+  ~0u,  // no _inlined_string_donated_
+  PROTOBUF_FIELD_OFFSET(::botcore::trading::v1::RemoveMarketplacePresetRequest, _impl_.preset_id_),
+  ~0u,  // no _has_bits_
+  PROTOBUF_FIELD_OFFSET(::botcore::trading::v1::RemoveMarketplacePresetResponse, _internal_metadata_),
+  ~0u,  // no _extensions_
+  ~0u,  // no _oneof_case_
+  ~0u,  // no _weak_field_map_
+  ~0u,  // no _inlined_string_donated_
+  PROTOBUF_FIELD_OFFSET(::botcore::trading::v1::RemoveMarketplacePresetResponse, _impl_.removed_),
+  ~0u,  // no _has_bits_
+  PROTOBUF_FIELD_OFFSET(::botcore::trading::v1::ActivateMarketplacePresetRequest, _internal_metadata_),
+  ~0u,  // no _extensions_
+  ~0u,  // no _oneof_case_
+  ~0u,  // no _weak_field_map_
+  ~0u,  // no _inlined_string_donated_
+  PROTOBUF_FIELD_OFFSET(::botcore::trading::v1::ActivateMarketplacePresetRequest, _impl_.preset_id_),
+  ~0u,  // no _has_bits_
+  PROTOBUF_FIELD_OFFSET(::botcore::trading::v1::ActivateMarketplacePresetResponse, _internal_metadata_),
+  ~0u,  // no _extensions_
+  ~0u,  // no _oneof_case_
+  ~0u,  // no _weak_field_map_
+  ~0u,  // no _inlined_string_donated_
+  PROTOBUF_FIELD_OFFSET(::botcore::trading::v1::ActivateMarketplacePresetResponse, _impl_.preset_),
 };
 static const ::_pbi::MigrationSchema schemas[] PROTOBUF_SECTION_VARIABLE(protodesc_cold) = {
   { 0, -1, -1, sizeof(::botcore::trading::v1::Instrument)},
@@ -682,6 +923,17 @@ static const ::_pbi::MigrationSchema schemas[] PROTOBUF_SECTION_VARIABLE(protode
   { 216, -1, -1, sizeof(::botcore::trading::v1::MetricsAck)},
   { 223, -1, -1, sizeof(::botcore::trading::v1::HealthCheckRequest)},
   { 229, -1, -1, sizeof(::botcore::trading::v1::HealthCheckResponse)},
+  { 238, -1, -1, sizeof(::botcore::trading::v1::MarketplacePresetSummary)},
+  { 252, -1, -1, sizeof(::botcore::trading::v1::ListMarketplacePresetsRequest)},
+  { 258, -1, -1, sizeof(::botcore::trading::v1::ListMarketplacePresetsResponse)},
+  { 265, -1, -1, sizeof(::botcore::trading::v1::ImportMarketplacePresetRequest)},
+  { 273, -1, -1, sizeof(::botcore::trading::v1::ImportMarketplacePresetResponse)},
+  { 280, -1, -1, sizeof(::botcore::trading::v1::ExportMarketplacePresetRequest)},
+  { 288, -1, -1, sizeof(::botcore::trading::v1::ExportMarketplacePresetResponse)},
+  { 298, -1, -1, sizeof(::botcore::trading::v1::RemoveMarketplacePresetRequest)},
+  { 305, -1, -1, sizeof(::botcore::trading::v1::RemoveMarketplacePresetResponse)},
+  { 312, -1, -1, sizeof(::botcore::trading::v1::ActivateMarketplacePresetRequest)},
+  { 319, -1, -1, sizeof(::botcore::trading::v1::ActivateMarketplacePresetResponse)},
 };
 
 static const ::_pb::Message* const file_default_instances[] = {
@@ -710,6 +962,17 @@ static const ::_pb::Message* const file_default_instances[] = {
   &::botcore::trading::v1::_MetricsAck_default_instance_._instance,
   &::botcore::trading::v1::_HealthCheckRequest_default_instance_._instance,
   &::botcore::trading::v1::_HealthCheckResponse_default_instance_._instance,
+  &::botcore::trading::v1::_MarketplacePresetSummary_default_instance_._instance,
+  &::botcore::trading::v1::_ListMarketplacePresetsRequest_default_instance_._instance,
+  &::botcore::trading::v1::_ListMarketplacePresetsResponse_default_instance_._instance,
+  &::botcore::trading::v1::_ImportMarketplacePresetRequest_default_instance_._instance,
+  &::botcore::trading::v1::_ImportMarketplacePresetResponse_default_instance_._instance,
+  &::botcore::trading::v1::_ExportMarketplacePresetRequest_default_instance_._instance,
+  &::botcore::trading::v1::_ExportMarketplacePresetResponse_default_instance_._instance,
+  &::botcore::trading::v1::_RemoveMarketplacePresetRequest_default_instance_._instance,
+  &::botcore::trading::v1::_RemoveMarketplacePresetResponse_default_instance_._instance,
+  &::botcore::trading::v1::_ActivateMarketplacePresetRequest_default_instance_._instance,
+  &::botcore::trading::v1::_ActivateMarketplacePresetResponse_default_instance_._instance,
 };
 
 const char descriptor_table_protodef_trading_2eproto[] PROTOBUF_SECTION_VARIABLE(protodesc_cold) =
@@ -800,51 +1063,91 @@ const char descriptor_table_protodef_trading_2eproto[] PROTOBUF_SECTION_VARIABLE
   "\001(\010\"\024\n\022HealthCheckRequest\"j\n\023HealthCheck"
   "Response\022\017\n\007version\030\001 \001(\t\022\022\n\ngit_commit\030"
   "\002 \001(\t\022.\n\nstarted_at\030\003 \001(\0132\032.google.proto"
-  "buf.Timestamp*P\n\tOrderSide\022\032\n\026ORDER_SIDE"
-  "_UNSPECIFIED\020\000\022\022\n\016ORDER_SIDE_BUY\020\001\022\023\n\017OR"
-  "DER_SIDE_SELL\020\002*\213\001\n\tOrderType\022\032\n\026ORDER_T"
-  "YPE_UNSPECIFIED\020\000\022\025\n\021ORDER_TYPE_MARKET\020\001"
-  "\022\024\n\020ORDER_TYPE_LIMIT\020\002\022\032\n\026ORDER_TYPE_STO"
-  "P_MARKET\020\003\022\031\n\025ORDER_TYPE_STOP_LIMIT\020\004*\210\001"
-  "\n\013TimeInForce\022\035\n\031TIME_IN_FORCE_UNSPECIFI"
-  "ED\020\000\022\025\n\021TIME_IN_FORCE_GTC\020\001\022\025\n\021TIME_IN_F"
-  "ORCE_GTD\020\002\022\025\n\021TIME_IN_FORCE_IOC\020\003\022\025\n\021TIM"
-  "E_IN_FORCE_FOK\020\004*\233\001\n\013RiskProfile\022\034\n\030RISK"
-  "_PROFILE_UNSPECIFIED\020\000\022\035\n\031RISK_PROFILE_C"
-  "ONSERVATIVE\020\001\022\031\n\025RISK_PROFILE_BALANCED\020\002"
-  "\022\033\n\027RISK_PROFILE_AGGRESSIVE\020\003\022\027\n\023RISK_PR"
-  "OFILE_MANUAL\020\004*{\n\013OrderStatus\022\034\n\030ORDER_S"
-  "TATUS_UNSPECIFIED\020\000\022\031\n\025ORDER_STATUS_ACCE"
-  "PTED\020\001\022\031\n\025ORDER_STATUS_REJECTED\020\002\022\030\n\024ORD"
-  "ER_STATUS_PENDING\020\0032\344\002\n\021MarketDataServic"
-  "e\022j\n\017GetOhlcvHistory\022*.botcore.trading.v"
-  "1.GetOhlcvHistoryRequest\032+.botcore.tradi"
-  "ng.v1.GetOhlcvHistoryResponse\022^\n\013StreamO"
-  "hlcv\022&.botcore.trading.v1.StreamOhlcvReq"
-  "uest\032%.botcore.trading.v1.StreamOhlcvUpd"
-  "ate0\001\022\202\001\n\027ListTradableInstruments\0222.botc"
+  "buf.Timestamp\"\254\001\n\030MarketplacePresetSumma"
+  "ry\022\021\n\tpreset_id\030\001 \001(\t\022\014\n\004name\030\002 \001(\t\022\017\n\007v"
+  "ersion\030\003 \001(\t\022\017\n\007profile\030\004 \001(\t\022\014\n\004tags\030\005 "
+  "\003(\t\022\032\n\022signature_verified\030\006 \001(\010\022\023\n\013sourc"
+  "e_path\030\007 \001(\t\022\016\n\006issues\030\010 \003(\t\"\037\n\035ListMark"
+  "etplacePresetsRequest\"_\n\036ListMarketplace"
+  "PresetsResponse\022=\n\007presets\030\001 \003(\0132,.botco"
+  "re.trading.v1.MarketplacePresetSummary\"C"
+  "\n\036ImportMarketplacePresetRequest\022\017\n\007payl"
+  "oad\030\001 \001(\014\022\020\n\010filename\030\002 \001(\t\"_\n\037ImportMar"
+  "ketplacePresetResponse\022<\n\006preset\030\001 \001(\0132,"
+  ".botcore.trading.v1.MarketplacePresetSum"
+  "mary\"C\n\036ExportMarketplacePresetRequest\022\021"
+  "\n\tpreset_id\030\001 \001(\t\022\016\n\006format\030\002 \001(\t\"\222\001\n\037Ex"
+  "portMarketplacePresetResponse\022\017\n\007payload"
+  "\030\001 \001(\014\022\020\n\010filename\030\002 \001(\t\022<\n\006preset\030\003 \001(\013"
+  "2,.botcore.trading.v1.MarketplacePresetS"
+  "ummary\022\016\n\006format\030\004 \001(\t\"3\n\036RemoveMarketpl"
+  "acePresetRequest\022\021\n\tpreset_id\030\001 \001(\t\"2\n\037R"
+  "emoveMarketplacePresetResponse\022\017\n\007remove"
+  "d\030\001 \001(\010\"5\n ActivateMarketplacePresetRequ"
+  "est\022\021\n\tpreset_id\030\001 \001(\t\"a\n!ActivateMarket"
+  "placePresetResponse\022<\n\006preset\030\001 \001(\0132,.bo"
+  "tcore.trading.v1.MarketplacePresetSummar"
+  "y*P\n\tOrderSide\022\032\n\026ORDER_SIDE_UNSPECIFIED"
+  "\020\000\022\022\n\016ORDER_SIDE_BUY\020\001\022\023\n\017ORDER_SIDE_SEL"
+  "L\020\002*\213\001\n\tOrderType\022\032\n\026ORDER_TYPE_UNSPECIF"
+  "IED\020\000\022\025\n\021ORDER_TYPE_MARKET\020\001\022\024\n\020ORDER_TY"
+  "PE_LIMIT\020\002\022\032\n\026ORDER_TYPE_STOP_MARKET\020\003\022\031"
+  "\n\025ORDER_TYPE_STOP_LIMIT\020\004*\210\001\n\013TimeInForc"
+  "e\022\035\n\031TIME_IN_FORCE_UNSPECIFIED\020\000\022\025\n\021TIME"
+  "_IN_FORCE_GTC\020\001\022\025\n\021TIME_IN_FORCE_GTD\020\002\022\025"
+  "\n\021TIME_IN_FORCE_IOC\020\003\022\025\n\021TIME_IN_FORCE_F"
+  "OK\020\004*\233\001\n\013RiskProfile\022\034\n\030RISK_PROFILE_UNS"
+  "PECIFIED\020\000\022\035\n\031RISK_PROFILE_CONSERVATIVE\020"
+  "\001\022\031\n\025RISK_PROFILE_BALANCED\020\002\022\033\n\027RISK_PRO"
+  "FILE_AGGRESSIVE\020\003\022\027\n\023RISK_PROFILE_MANUAL"
+  "\020\004*{\n\013OrderStatus\022\034\n\030ORDER_STATUS_UNSPEC"
+  "IFIED\020\000\022\031\n\025ORDER_STATUS_ACCEPTED\020\001\022\031\n\025OR"
+  "DER_STATUS_REJECTED\020\002\022\030\n\024ORDER_STATUS_PE"
+  "NDING\020\0032\344\002\n\021MarketDataService\022j\n\017GetOhlc"
+  "vHistory\022*.botcore.trading.v1.GetOhlcvHi"
+  "storyRequest\032+.botcore.trading.v1.GetOhl"
+  "cvHistoryResponse\022^\n\013StreamOhlcv\022&.botco"
+  "re.trading.v1.StreamOhlcvRequest\032%.botco"
+  "re.trading.v1.StreamOhlcvUpdate0\001\022\202\001\n\027Li"
+  "stTradableInstruments\0222.botcore.trading."
+  "v1.ListTradableInstrumentsRequest\0323.botc"
   "ore.trading.v1.ListTradableInstrumentsRe"
-  "quest\0323.botcore.trading.v1.ListTradableI"
-  "nstrumentsResponse2\316\001\n\014OrderService\022^\n\013S"
-  "ubmitOrder\022&.botcore.trading.v1.SubmitOr"
-  "derRequest\032\'.botcore.trading.v1.SubmitOr"
-  "derResponse\022^\n\013CancelOrder\022&.botcore.tra"
-  "ding.v1.CancelOrderRequest\032\'.botcore.tra"
-  "ding.v1.CancelOrderResponse2\274\001\n\013RiskServ"
-  "ice\022S\n\014GetRiskState\022$.botcore.trading.v1"
-  ".RiskStateRequest\032\035.botcore.trading.v1.R"
-  "iskState\022X\n\017StreamRiskState\022$.botcore.tr"
-  "ading.v1.RiskStateRequest\032\035.botcore.trad"
-  "ing.v1.RiskState0\0012\300\001\n\016MetricsService\022Z\n"
-  "\rStreamMetrics\022\".botcore.trading.v1.Metr"
-  "icsRequest\032#.botcore.trading.v1.MetricsS"
-  "napshot0\001\022R\n\013PushMetrics\022#.botcore.tradi"
-  "ng.v1.MetricsSnapshot\032\036.botcore.trading."
-  "v1.MetricsAck2Y\n\rHealthService\022H\n\005Check\022"
-  "\026.google.protobuf.Empty\032\'.botcore.tradin"
-  "g.v1.HealthCheckResponseBLZ5github.com/d"
-  "udzian/bot/core/gen/go/botcore/trading/v"
-  "1\252\002\022BotCore.Trading.V1b\006proto3"
+  "sponse2\316\001\n\014OrderService\022^\n\013SubmitOrder\022&"
+  ".botcore.trading.v1.SubmitOrderRequest\032\'"
+  ".botcore.trading.v1.SubmitOrderResponse\022"
+  "^\n\013CancelOrder\022&.botcore.trading.v1.Canc"
+  "elOrderRequest\032\'.botcore.trading.v1.Canc"
+  "elOrderResponse2\274\001\n\013RiskService\022S\n\014GetRi"
+  "skState\022$.botcore.trading.v1.RiskStateRe"
+  "quest\032\035.botcore.trading.v1.RiskState\022X\n\017"
+  "StreamRiskState\022$.botcore.trading.v1.Ris"
+  "kStateRequest\032\035.botcore.trading.v1.RiskS"
+  "tate0\0012\300\001\n\016MetricsService\022Z\n\rStreamMetri"
+  "cs\022\".botcore.trading.v1.MetricsRequest\032#"
+  ".botcore.trading.v1.MetricsSnapshot0\001\022R\n"
+  "\013PushMetrics\022#.botcore.trading.v1.Metric"
+  "sSnapshot\032\036.botcore.trading.v1.MetricsAc"
+  "k2Y\n\rHealthService\022H\n\005Check\022\026.google.pro"
+  "tobuf.Empty\032\'.botcore.trading.v1.HealthC"
+  "heckResponse2\364\004\n\022MarketplaceService\022t\n\013L"
+  "istPresets\0221.botcore.trading.v1.ListMark"
+  "etplacePresetsRequest\0322.botcore.trading."
+  "v1.ListMarketplacePresetsResponse\022w\n\014Imp"
+  "ortPreset\0222.botcore.trading.v1.ImportMar"
+  "ketplacePresetRequest\0323.botcore.trading."
+  "v1.ImportMarketplacePresetResponse\022w\n\014Ex"
+  "portPreset\0222.botcore.trading.v1.ExportMa"
+  "rketplacePresetRequest\0323.botcore.trading"
+  ".v1.ExportMarketplacePresetResponse\022w\n\014R"
+  "emovePreset\0222.botcore.trading.v1.RemoveM"
+  "arketplacePresetRequest\0323.botcore.tradin"
+  "g.v1.RemoveMarketplacePresetResponse\022}\n\016"
+  "ActivatePreset\0224.botcore.trading.v1.Acti"
+  "vateMarketplacePresetRequest\0325.botcore.t"
+  "rading.v1.ActivateMarketplacePresetRespo"
+  "nseBLZ5github.com/dudzian/bot/core/gen/g"
+  "o/botcore/trading/v1\252\002\022BotCore.Trading.V"
+  "1b\006proto3"
   ;
 static const ::_pbi::DescriptorTable* const descriptor_table_trading_2eproto_deps[2] = {
   &::descriptor_table_google_2fprotobuf_2fempty_2eproto,
@@ -852,9 +1155,9 @@ static const ::_pbi::DescriptorTable* const descriptor_table_trading_2eproto_dep
 };
 static ::_pbi::once_flag descriptor_table_trading_2eproto_once;
 const ::_pbi::DescriptorTable descriptor_table_trading_2eproto = {
-    false, false, 5270, descriptor_table_protodef_trading_2eproto,
+    false, false, 6849, descriptor_table_protodef_trading_2eproto,
     "trading.proto",
-    &descriptor_table_trading_2eproto_once, descriptor_table_trading_2eproto_deps, 2, 25,
+    &descriptor_table_trading_2eproto_once, descriptor_table_trading_2eproto_deps, 2, 36,
     schemas, file_default_instances, TableStruct_trading_2eproto::offsets,
     file_level_metadata_trading_2eproto, file_level_enum_descriptors_trading_2eproto,
     file_level_service_descriptors_trading_2eproto,
@@ -8200,6 +8503,2550 @@ void HealthCheckResponse::InternalSwap(HealthCheckResponse* other) {
       file_level_metadata_trading_2eproto[24]);
 }
 
+// ===================================================================
+
+class MarketplacePresetSummary::_Internal {
+ public:
+};
+
+MarketplacePresetSummary::MarketplacePresetSummary(::PROTOBUF_NAMESPACE_ID::Arena* arena,
+                         bool is_message_owned)
+  : ::PROTOBUF_NAMESPACE_ID::Message(arena, is_message_owned) {
+  SharedCtor(arena, is_message_owned);
+  // @@protoc_insertion_point(arena_constructor:botcore.trading.v1.MarketplacePresetSummary)
+}
+MarketplacePresetSummary::MarketplacePresetSummary(const MarketplacePresetSummary& from)
+  : ::PROTOBUF_NAMESPACE_ID::Message() {
+  MarketplacePresetSummary* const _this = this; (void)_this;
+  new (&_impl_) Impl_{
+      decltype(_impl_.tags_){from._impl_.tags_}
+    , decltype(_impl_.issues_){from._impl_.issues_}
+    , decltype(_impl_.preset_id_){}
+    , decltype(_impl_.name_){}
+    , decltype(_impl_.version_){}
+    , decltype(_impl_.profile_){}
+    , decltype(_impl_.source_path_){}
+    , decltype(_impl_.signature_verified_){}
+    , /*decltype(_impl_._cached_size_)*/{}};
+
+  _internal_metadata_.MergeFrom<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>(from._internal_metadata_);
+  _impl_.preset_id_.InitDefault();
+  #ifdef PROTOBUF_FORCE_COPY_DEFAULT_STRING
+    _impl_.preset_id_.Set("", GetArenaForAllocation());
+  #endif // PROTOBUF_FORCE_COPY_DEFAULT_STRING
+  if (!from._internal_preset_id().empty()) {
+    _this->_impl_.preset_id_.Set(from._internal_preset_id(), 
+      _this->GetArenaForAllocation());
+  }
+  _impl_.name_.InitDefault();
+  #ifdef PROTOBUF_FORCE_COPY_DEFAULT_STRING
+    _impl_.name_.Set("", GetArenaForAllocation());
+  #endif // PROTOBUF_FORCE_COPY_DEFAULT_STRING
+  if (!from._internal_name().empty()) {
+    _this->_impl_.name_.Set(from._internal_name(), 
+      _this->GetArenaForAllocation());
+  }
+  _impl_.version_.InitDefault();
+  #ifdef PROTOBUF_FORCE_COPY_DEFAULT_STRING
+    _impl_.version_.Set("", GetArenaForAllocation());
+  #endif // PROTOBUF_FORCE_COPY_DEFAULT_STRING
+  if (!from._internal_version().empty()) {
+    _this->_impl_.version_.Set(from._internal_version(), 
+      _this->GetArenaForAllocation());
+  }
+  _impl_.profile_.InitDefault();
+  #ifdef PROTOBUF_FORCE_COPY_DEFAULT_STRING
+    _impl_.profile_.Set("", GetArenaForAllocation());
+  #endif // PROTOBUF_FORCE_COPY_DEFAULT_STRING
+  if (!from._internal_profile().empty()) {
+    _this->_impl_.profile_.Set(from._internal_profile(), 
+      _this->GetArenaForAllocation());
+  }
+  _impl_.source_path_.InitDefault();
+  #ifdef PROTOBUF_FORCE_COPY_DEFAULT_STRING
+    _impl_.source_path_.Set("", GetArenaForAllocation());
+  #endif // PROTOBUF_FORCE_COPY_DEFAULT_STRING
+  if (!from._internal_source_path().empty()) {
+    _this->_impl_.source_path_.Set(from._internal_source_path(), 
+      _this->GetArenaForAllocation());
+  }
+  _this->_impl_.signature_verified_ = from._impl_.signature_verified_;
+  // @@protoc_insertion_point(copy_constructor:botcore.trading.v1.MarketplacePresetSummary)
+}
+
+inline void MarketplacePresetSummary::SharedCtor(
+    ::_pb::Arena* arena, bool is_message_owned) {
+  (void)arena;
+  (void)is_message_owned;
+  new (&_impl_) Impl_{
+      decltype(_impl_.tags_){arena}
+    , decltype(_impl_.issues_){arena}
+    , decltype(_impl_.preset_id_){}
+    , decltype(_impl_.name_){}
+    , decltype(_impl_.version_){}
+    , decltype(_impl_.profile_){}
+    , decltype(_impl_.source_path_){}
+    , decltype(_impl_.signature_verified_){false}
+    , /*decltype(_impl_._cached_size_)*/{}
+  };
+  _impl_.preset_id_.InitDefault();
+  #ifdef PROTOBUF_FORCE_COPY_DEFAULT_STRING
+    _impl_.preset_id_.Set("", GetArenaForAllocation());
+  #endif // PROTOBUF_FORCE_COPY_DEFAULT_STRING
+  _impl_.name_.InitDefault();
+  #ifdef PROTOBUF_FORCE_COPY_DEFAULT_STRING
+    _impl_.name_.Set("", GetArenaForAllocation());
+  #endif // PROTOBUF_FORCE_COPY_DEFAULT_STRING
+  _impl_.version_.InitDefault();
+  #ifdef PROTOBUF_FORCE_COPY_DEFAULT_STRING
+    _impl_.version_.Set("", GetArenaForAllocation());
+  #endif // PROTOBUF_FORCE_COPY_DEFAULT_STRING
+  _impl_.profile_.InitDefault();
+  #ifdef PROTOBUF_FORCE_COPY_DEFAULT_STRING
+    _impl_.profile_.Set("", GetArenaForAllocation());
+  #endif // PROTOBUF_FORCE_COPY_DEFAULT_STRING
+  _impl_.source_path_.InitDefault();
+  #ifdef PROTOBUF_FORCE_COPY_DEFAULT_STRING
+    _impl_.source_path_.Set("", GetArenaForAllocation());
+  #endif // PROTOBUF_FORCE_COPY_DEFAULT_STRING
+}
+
+MarketplacePresetSummary::~MarketplacePresetSummary() {
+  // @@protoc_insertion_point(destructor:botcore.trading.v1.MarketplacePresetSummary)
+  if (auto *arena = _internal_metadata_.DeleteReturnArena<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>()) {
+  (void)arena;
+    return;
+  }
+  SharedDtor();
+}
+
+inline void MarketplacePresetSummary::SharedDtor() {
+  GOOGLE_DCHECK(GetArenaForAllocation() == nullptr);
+  _impl_.tags_.~RepeatedPtrField();
+  _impl_.issues_.~RepeatedPtrField();
+  _impl_.preset_id_.Destroy();
+  _impl_.name_.Destroy();
+  _impl_.version_.Destroy();
+  _impl_.profile_.Destroy();
+  _impl_.source_path_.Destroy();
+}
+
+void MarketplacePresetSummary::SetCachedSize(int size) const {
+  _impl_._cached_size_.Set(size);
+}
+
+void MarketplacePresetSummary::Clear() {
+// @@protoc_insertion_point(message_clear_start:botcore.trading.v1.MarketplacePresetSummary)
+  uint32_t cached_has_bits = 0;
+  // Prevent compiler warnings about cached_has_bits being unused
+  (void) cached_has_bits;
+
+  _impl_.tags_.Clear();
+  _impl_.issues_.Clear();
+  _impl_.preset_id_.ClearToEmpty();
+  _impl_.name_.ClearToEmpty();
+  _impl_.version_.ClearToEmpty();
+  _impl_.profile_.ClearToEmpty();
+  _impl_.source_path_.ClearToEmpty();
+  _impl_.signature_verified_ = false;
+  _internal_metadata_.Clear<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>();
+}
+
+const char* MarketplacePresetSummary::_InternalParse(const char* ptr, ::_pbi::ParseContext* ctx) {
+#define CHK_(x) if (PROTOBUF_PREDICT_FALSE(!(x))) goto failure
+  while (!ctx->Done(&ptr)) {
+    uint32_t tag;
+    ptr = ::_pbi::ReadTag(ptr, &tag);
+    switch (tag >> 3) {
+      // string preset_id = 1;
+      case 1:
+        if (PROTOBUF_PREDICT_TRUE(static_cast<uint8_t>(tag) == 10)) {
+          auto str = _internal_mutable_preset_id();
+          ptr = ::_pbi::InlineGreedyStringParser(str, ptr, ctx);
+          CHK_(ptr);
+          CHK_(::_pbi::VerifyUTF8(str, "botcore.trading.v1.MarketplacePresetSummary.preset_id"));
+        } else
+          goto handle_unusual;
+        continue;
+      // string name = 2;
+      case 2:
+        if (PROTOBUF_PREDICT_TRUE(static_cast<uint8_t>(tag) == 18)) {
+          auto str = _internal_mutable_name();
+          ptr = ::_pbi::InlineGreedyStringParser(str, ptr, ctx);
+          CHK_(ptr);
+          CHK_(::_pbi::VerifyUTF8(str, "botcore.trading.v1.MarketplacePresetSummary.name"));
+        } else
+          goto handle_unusual;
+        continue;
+      // string version = 3;
+      case 3:
+        if (PROTOBUF_PREDICT_TRUE(static_cast<uint8_t>(tag) == 26)) {
+          auto str = _internal_mutable_version();
+          ptr = ::_pbi::InlineGreedyStringParser(str, ptr, ctx);
+          CHK_(ptr);
+          CHK_(::_pbi::VerifyUTF8(str, "botcore.trading.v1.MarketplacePresetSummary.version"));
+        } else
+          goto handle_unusual;
+        continue;
+      // string profile = 4;
+      case 4:
+        if (PROTOBUF_PREDICT_TRUE(static_cast<uint8_t>(tag) == 34)) {
+          auto str = _internal_mutable_profile();
+          ptr = ::_pbi::InlineGreedyStringParser(str, ptr, ctx);
+          CHK_(ptr);
+          CHK_(::_pbi::VerifyUTF8(str, "botcore.trading.v1.MarketplacePresetSummary.profile"));
+        } else
+          goto handle_unusual;
+        continue;
+      // repeated string tags = 5;
+      case 5:
+        if (PROTOBUF_PREDICT_TRUE(static_cast<uint8_t>(tag) == 42)) {
+          ptr -= 1;
+          do {
+            ptr += 1;
+            auto str = _internal_add_tags();
+            ptr = ::_pbi::InlineGreedyStringParser(str, ptr, ctx);
+            CHK_(ptr);
+            CHK_(::_pbi::VerifyUTF8(str, "botcore.trading.v1.MarketplacePresetSummary.tags"));
+            if (!ctx->DataAvailable(ptr)) break;
+          } while (::PROTOBUF_NAMESPACE_ID::internal::ExpectTag<42>(ptr));
+        } else
+          goto handle_unusual;
+        continue;
+      // bool signature_verified = 6;
+      case 6:
+        if (PROTOBUF_PREDICT_TRUE(static_cast<uint8_t>(tag) == 48)) {
+          _impl_.signature_verified_ = ::PROTOBUF_NAMESPACE_ID::internal::ReadVarint64(&ptr);
+          CHK_(ptr);
+        } else
+          goto handle_unusual;
+        continue;
+      // string source_path = 7;
+      case 7:
+        if (PROTOBUF_PREDICT_TRUE(static_cast<uint8_t>(tag) == 58)) {
+          auto str = _internal_mutable_source_path();
+          ptr = ::_pbi::InlineGreedyStringParser(str, ptr, ctx);
+          CHK_(ptr);
+          CHK_(::_pbi::VerifyUTF8(str, "botcore.trading.v1.MarketplacePresetSummary.source_path"));
+        } else
+          goto handle_unusual;
+        continue;
+      // repeated string issues = 8;
+      case 8:
+        if (PROTOBUF_PREDICT_TRUE(static_cast<uint8_t>(tag) == 66)) {
+          ptr -= 1;
+          do {
+            ptr += 1;
+            auto str = _internal_add_issues();
+            ptr = ::_pbi::InlineGreedyStringParser(str, ptr, ctx);
+            CHK_(ptr);
+            CHK_(::_pbi::VerifyUTF8(str, "botcore.trading.v1.MarketplacePresetSummary.issues"));
+            if (!ctx->DataAvailable(ptr)) break;
+          } while (::PROTOBUF_NAMESPACE_ID::internal::ExpectTag<66>(ptr));
+        } else
+          goto handle_unusual;
+        continue;
+      default:
+        goto handle_unusual;
+    }  // switch
+  handle_unusual:
+    if ((tag == 0) || ((tag & 7) == 4)) {
+      CHK_(ptr);
+      ctx->SetLastTag(tag);
+      goto message_done;
+    }
+    ptr = UnknownFieldParse(
+        tag,
+        _internal_metadata_.mutable_unknown_fields<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>(),
+        ptr, ctx);
+    CHK_(ptr != nullptr);
+  }  // while
+message_done:
+  return ptr;
+failure:
+  ptr = nullptr;
+  goto message_done;
+#undef CHK_
+}
+
+uint8_t* MarketplacePresetSummary::_InternalSerialize(
+    uint8_t* target, ::PROTOBUF_NAMESPACE_ID::io::EpsCopyOutputStream* stream) const {
+  // @@protoc_insertion_point(serialize_to_array_start:botcore.trading.v1.MarketplacePresetSummary)
+  uint32_t cached_has_bits = 0;
+  (void) cached_has_bits;
+
+  // string preset_id = 1;
+  if (!this->_internal_preset_id().empty()) {
+    ::PROTOBUF_NAMESPACE_ID::internal::WireFormatLite::VerifyUtf8String(
+      this->_internal_preset_id().data(), static_cast<int>(this->_internal_preset_id().length()),
+      ::PROTOBUF_NAMESPACE_ID::internal::WireFormatLite::SERIALIZE,
+      "botcore.trading.v1.MarketplacePresetSummary.preset_id");
+    target = stream->WriteStringMaybeAliased(
+        1, this->_internal_preset_id(), target);
+  }
+
+  // string name = 2;
+  if (!this->_internal_name().empty()) {
+    ::PROTOBUF_NAMESPACE_ID::internal::WireFormatLite::VerifyUtf8String(
+      this->_internal_name().data(), static_cast<int>(this->_internal_name().length()),
+      ::PROTOBUF_NAMESPACE_ID::internal::WireFormatLite::SERIALIZE,
+      "botcore.trading.v1.MarketplacePresetSummary.name");
+    target = stream->WriteStringMaybeAliased(
+        2, this->_internal_name(), target);
+  }
+
+  // string version = 3;
+  if (!this->_internal_version().empty()) {
+    ::PROTOBUF_NAMESPACE_ID::internal::WireFormatLite::VerifyUtf8String(
+      this->_internal_version().data(), static_cast<int>(this->_internal_version().length()),
+      ::PROTOBUF_NAMESPACE_ID::internal::WireFormatLite::SERIALIZE,
+      "botcore.trading.v1.MarketplacePresetSummary.version");
+    target = stream->WriteStringMaybeAliased(
+        3, this->_internal_version(), target);
+  }
+
+  // string profile = 4;
+  if (!this->_internal_profile().empty()) {
+    ::PROTOBUF_NAMESPACE_ID::internal::WireFormatLite::VerifyUtf8String(
+      this->_internal_profile().data(), static_cast<int>(this->_internal_profile().length()),
+      ::PROTOBUF_NAMESPACE_ID::internal::WireFormatLite::SERIALIZE,
+      "botcore.trading.v1.MarketplacePresetSummary.profile");
+    target = stream->WriteStringMaybeAliased(
+        4, this->_internal_profile(), target);
+  }
+
+  // repeated string tags = 5;
+  for (int i = 0, n = this->_internal_tags_size(); i < n; i++) {
+    const auto& s = this->_internal_tags(i);
+    ::PROTOBUF_NAMESPACE_ID::internal::WireFormatLite::VerifyUtf8String(
+      s.data(), static_cast<int>(s.length()),
+      ::PROTOBUF_NAMESPACE_ID::internal::WireFormatLite::SERIALIZE,
+      "botcore.trading.v1.MarketplacePresetSummary.tags");
+    target = stream->WriteString(5, s, target);
+  }
+
+  // bool signature_verified = 6;
+  if (this->_internal_signature_verified() != 0) {
+    target = stream->EnsureSpace(target);
+    target = ::_pbi::WireFormatLite::WriteBoolToArray(6, this->_internal_signature_verified(), target);
+  }
+
+  // string source_path = 7;
+  if (!this->_internal_source_path().empty()) {
+    ::PROTOBUF_NAMESPACE_ID::internal::WireFormatLite::VerifyUtf8String(
+      this->_internal_source_path().data(), static_cast<int>(this->_internal_source_path().length()),
+      ::PROTOBUF_NAMESPACE_ID::internal::WireFormatLite::SERIALIZE,
+      "botcore.trading.v1.MarketplacePresetSummary.source_path");
+    target = stream->WriteStringMaybeAliased(
+        7, this->_internal_source_path(), target);
+  }
+
+  // repeated string issues = 8;
+  for (int i = 0, n = this->_internal_issues_size(); i < n; i++) {
+    const auto& s = this->_internal_issues(i);
+    ::PROTOBUF_NAMESPACE_ID::internal::WireFormatLite::VerifyUtf8String(
+      s.data(), static_cast<int>(s.length()),
+      ::PROTOBUF_NAMESPACE_ID::internal::WireFormatLite::SERIALIZE,
+      "botcore.trading.v1.MarketplacePresetSummary.issues");
+    target = stream->WriteString(8, s, target);
+  }
+
+  if (PROTOBUF_PREDICT_FALSE(_internal_metadata_.have_unknown_fields())) {
+    target = ::_pbi::WireFormat::InternalSerializeUnknownFieldsToArray(
+        _internal_metadata_.unknown_fields<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>(::PROTOBUF_NAMESPACE_ID::UnknownFieldSet::default_instance), target, stream);
+  }
+  // @@protoc_insertion_point(serialize_to_array_end:botcore.trading.v1.MarketplacePresetSummary)
+  return target;
+}
+
+size_t MarketplacePresetSummary::ByteSizeLong() const {
+// @@protoc_insertion_point(message_byte_size_start:botcore.trading.v1.MarketplacePresetSummary)
+  size_t total_size = 0;
+
+  uint32_t cached_has_bits = 0;
+  // Prevent compiler warnings about cached_has_bits being unused
+  (void) cached_has_bits;
+
+  // repeated string tags = 5;
+  total_size += 1 *
+      ::PROTOBUF_NAMESPACE_ID::internal::FromIntSize(_impl_.tags_.size());
+  for (int i = 0, n = _impl_.tags_.size(); i < n; i++) {
+    total_size += ::PROTOBUF_NAMESPACE_ID::internal::WireFormatLite::StringSize(
+      _impl_.tags_.Get(i));
+  }
+
+  // repeated string issues = 8;
+  total_size += 1 *
+      ::PROTOBUF_NAMESPACE_ID::internal::FromIntSize(_impl_.issues_.size());
+  for (int i = 0, n = _impl_.issues_.size(); i < n; i++) {
+    total_size += ::PROTOBUF_NAMESPACE_ID::internal::WireFormatLite::StringSize(
+      _impl_.issues_.Get(i));
+  }
+
+  // string preset_id = 1;
+  if (!this->_internal_preset_id().empty()) {
+    total_size += 1 +
+      ::PROTOBUF_NAMESPACE_ID::internal::WireFormatLite::StringSize(
+        this->_internal_preset_id());
+  }
+
+  // string name = 2;
+  if (!this->_internal_name().empty()) {
+    total_size += 1 +
+      ::PROTOBUF_NAMESPACE_ID::internal::WireFormatLite::StringSize(
+        this->_internal_name());
+  }
+
+  // string version = 3;
+  if (!this->_internal_version().empty()) {
+    total_size += 1 +
+      ::PROTOBUF_NAMESPACE_ID::internal::WireFormatLite::StringSize(
+        this->_internal_version());
+  }
+
+  // string profile = 4;
+  if (!this->_internal_profile().empty()) {
+    total_size += 1 +
+      ::PROTOBUF_NAMESPACE_ID::internal::WireFormatLite::StringSize(
+        this->_internal_profile());
+  }
+
+  // string source_path = 7;
+  if (!this->_internal_source_path().empty()) {
+    total_size += 1 +
+      ::PROTOBUF_NAMESPACE_ID::internal::WireFormatLite::StringSize(
+        this->_internal_source_path());
+  }
+
+  // bool signature_verified = 6;
+  if (this->_internal_signature_verified() != 0) {
+    total_size += 1 + 1;
+  }
+
+  return MaybeComputeUnknownFieldsSize(total_size, &_impl_._cached_size_);
+}
+
+const ::PROTOBUF_NAMESPACE_ID::Message::ClassData MarketplacePresetSummary::_class_data_ = {
+    ::PROTOBUF_NAMESPACE_ID::Message::CopyWithSourceCheck,
+    MarketplacePresetSummary::MergeImpl
+};
+const ::PROTOBUF_NAMESPACE_ID::Message::ClassData*MarketplacePresetSummary::GetClassData() const { return &_class_data_; }
+
+
+void MarketplacePresetSummary::MergeImpl(::PROTOBUF_NAMESPACE_ID::Message& to_msg, const ::PROTOBUF_NAMESPACE_ID::Message& from_msg) {
+  auto* const _this = static_cast<MarketplacePresetSummary*>(&to_msg);
+  auto& from = static_cast<const MarketplacePresetSummary&>(from_msg);
+  // @@protoc_insertion_point(class_specific_merge_from_start:botcore.trading.v1.MarketplacePresetSummary)
+  GOOGLE_DCHECK_NE(&from, _this);
+  uint32_t cached_has_bits = 0;
+  (void) cached_has_bits;
+
+  _this->_impl_.tags_.MergeFrom(from._impl_.tags_);
+  _this->_impl_.issues_.MergeFrom(from._impl_.issues_);
+  if (!from._internal_preset_id().empty()) {
+    _this->_internal_set_preset_id(from._internal_preset_id());
+  }
+  if (!from._internal_name().empty()) {
+    _this->_internal_set_name(from._internal_name());
+  }
+  if (!from._internal_version().empty()) {
+    _this->_internal_set_version(from._internal_version());
+  }
+  if (!from._internal_profile().empty()) {
+    _this->_internal_set_profile(from._internal_profile());
+  }
+  if (!from._internal_source_path().empty()) {
+    _this->_internal_set_source_path(from._internal_source_path());
+  }
+  if (from._internal_signature_verified() != 0) {
+    _this->_internal_set_signature_verified(from._internal_signature_verified());
+  }
+  _this->_internal_metadata_.MergeFrom<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>(from._internal_metadata_);
+}
+
+void MarketplacePresetSummary::CopyFrom(const MarketplacePresetSummary& from) {
+// @@protoc_insertion_point(class_specific_copy_from_start:botcore.trading.v1.MarketplacePresetSummary)
+  if (&from == this) return;
+  Clear();
+  MergeFrom(from);
+}
+
+bool MarketplacePresetSummary::IsInitialized() const {
+  return true;
+}
+
+void MarketplacePresetSummary::InternalSwap(MarketplacePresetSummary* other) {
+  using std::swap;
+  auto* lhs_arena = GetArenaForAllocation();
+  auto* rhs_arena = other->GetArenaForAllocation();
+  _internal_metadata_.InternalSwap(&other->_internal_metadata_);
+  _impl_.tags_.InternalSwap(&other->_impl_.tags_);
+  _impl_.issues_.InternalSwap(&other->_impl_.issues_);
+  ::PROTOBUF_NAMESPACE_ID::internal::ArenaStringPtr::InternalSwap(
+      &_impl_.preset_id_, lhs_arena,
+      &other->_impl_.preset_id_, rhs_arena
+  );
+  ::PROTOBUF_NAMESPACE_ID::internal::ArenaStringPtr::InternalSwap(
+      &_impl_.name_, lhs_arena,
+      &other->_impl_.name_, rhs_arena
+  );
+  ::PROTOBUF_NAMESPACE_ID::internal::ArenaStringPtr::InternalSwap(
+      &_impl_.version_, lhs_arena,
+      &other->_impl_.version_, rhs_arena
+  );
+  ::PROTOBUF_NAMESPACE_ID::internal::ArenaStringPtr::InternalSwap(
+      &_impl_.profile_, lhs_arena,
+      &other->_impl_.profile_, rhs_arena
+  );
+  ::PROTOBUF_NAMESPACE_ID::internal::ArenaStringPtr::InternalSwap(
+      &_impl_.source_path_, lhs_arena,
+      &other->_impl_.source_path_, rhs_arena
+  );
+  swap(_impl_.signature_verified_, other->_impl_.signature_verified_);
+}
+
+::PROTOBUF_NAMESPACE_ID::Metadata MarketplacePresetSummary::GetMetadata() const {
+  return ::_pbi::AssignDescriptors(
+      &descriptor_table_trading_2eproto_getter, &descriptor_table_trading_2eproto_once,
+      file_level_metadata_trading_2eproto[25]);
+}
+
+// ===================================================================
+
+class ListMarketplacePresetsRequest::_Internal {
+ public:
+};
+
+ListMarketplacePresetsRequest::ListMarketplacePresetsRequest(::PROTOBUF_NAMESPACE_ID::Arena* arena,
+                         bool is_message_owned)
+  : ::PROTOBUF_NAMESPACE_ID::internal::ZeroFieldsBase(arena, is_message_owned) {
+  // @@protoc_insertion_point(arena_constructor:botcore.trading.v1.ListMarketplacePresetsRequest)
+}
+ListMarketplacePresetsRequest::ListMarketplacePresetsRequest(const ListMarketplacePresetsRequest& from)
+  : ::PROTOBUF_NAMESPACE_ID::internal::ZeroFieldsBase() {
+  ListMarketplacePresetsRequest* const _this = this; (void)_this;
+  _internal_metadata_.MergeFrom<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>(from._internal_metadata_);
+  // @@protoc_insertion_point(copy_constructor:botcore.trading.v1.ListMarketplacePresetsRequest)
+}
+
+
+
+
+
+const ::PROTOBUF_NAMESPACE_ID::Message::ClassData ListMarketplacePresetsRequest::_class_data_ = {
+    ::PROTOBUF_NAMESPACE_ID::internal::ZeroFieldsBase::CopyImpl,
+    ::PROTOBUF_NAMESPACE_ID::internal::ZeroFieldsBase::MergeImpl,
+};
+const ::PROTOBUF_NAMESPACE_ID::Message::ClassData*ListMarketplacePresetsRequest::GetClassData() const { return &_class_data_; }
+
+
+
+
+
+
+
+::PROTOBUF_NAMESPACE_ID::Metadata ListMarketplacePresetsRequest::GetMetadata() const {
+  return ::_pbi::AssignDescriptors(
+      &descriptor_table_trading_2eproto_getter, &descriptor_table_trading_2eproto_once,
+      file_level_metadata_trading_2eproto[26]);
+}
+
+// ===================================================================
+
+class ListMarketplacePresetsResponse::_Internal {
+ public:
+};
+
+ListMarketplacePresetsResponse::ListMarketplacePresetsResponse(::PROTOBUF_NAMESPACE_ID::Arena* arena,
+                         bool is_message_owned)
+  : ::PROTOBUF_NAMESPACE_ID::Message(arena, is_message_owned) {
+  SharedCtor(arena, is_message_owned);
+  // @@protoc_insertion_point(arena_constructor:botcore.trading.v1.ListMarketplacePresetsResponse)
+}
+ListMarketplacePresetsResponse::ListMarketplacePresetsResponse(const ListMarketplacePresetsResponse& from)
+  : ::PROTOBUF_NAMESPACE_ID::Message() {
+  ListMarketplacePresetsResponse* const _this = this; (void)_this;
+  new (&_impl_) Impl_{
+      decltype(_impl_.presets_){from._impl_.presets_}
+    , /*decltype(_impl_._cached_size_)*/{}};
+
+  _internal_metadata_.MergeFrom<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>(from._internal_metadata_);
+  // @@protoc_insertion_point(copy_constructor:botcore.trading.v1.ListMarketplacePresetsResponse)
+}
+
+inline void ListMarketplacePresetsResponse::SharedCtor(
+    ::_pb::Arena* arena, bool is_message_owned) {
+  (void)arena;
+  (void)is_message_owned;
+  new (&_impl_) Impl_{
+      decltype(_impl_.presets_){arena}
+    , /*decltype(_impl_._cached_size_)*/{}
+  };
+}
+
+ListMarketplacePresetsResponse::~ListMarketplacePresetsResponse() {
+  // @@protoc_insertion_point(destructor:botcore.trading.v1.ListMarketplacePresetsResponse)
+  if (auto *arena = _internal_metadata_.DeleteReturnArena<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>()) {
+  (void)arena;
+    return;
+  }
+  SharedDtor();
+}
+
+inline void ListMarketplacePresetsResponse::SharedDtor() {
+  GOOGLE_DCHECK(GetArenaForAllocation() == nullptr);
+  _impl_.presets_.~RepeatedPtrField();
+}
+
+void ListMarketplacePresetsResponse::SetCachedSize(int size) const {
+  _impl_._cached_size_.Set(size);
+}
+
+void ListMarketplacePresetsResponse::Clear() {
+// @@protoc_insertion_point(message_clear_start:botcore.trading.v1.ListMarketplacePresetsResponse)
+  uint32_t cached_has_bits = 0;
+  // Prevent compiler warnings about cached_has_bits being unused
+  (void) cached_has_bits;
+
+  _impl_.presets_.Clear();
+  _internal_metadata_.Clear<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>();
+}
+
+const char* ListMarketplacePresetsResponse::_InternalParse(const char* ptr, ::_pbi::ParseContext* ctx) {
+#define CHK_(x) if (PROTOBUF_PREDICT_FALSE(!(x))) goto failure
+  while (!ctx->Done(&ptr)) {
+    uint32_t tag;
+    ptr = ::_pbi::ReadTag(ptr, &tag);
+    switch (tag >> 3) {
+      // repeated .botcore.trading.v1.MarketplacePresetSummary presets = 1;
+      case 1:
+        if (PROTOBUF_PREDICT_TRUE(static_cast<uint8_t>(tag) == 10)) {
+          ptr -= 1;
+          do {
+            ptr += 1;
+            ptr = ctx->ParseMessage(_internal_add_presets(), ptr);
+            CHK_(ptr);
+            if (!ctx->DataAvailable(ptr)) break;
+          } while (::PROTOBUF_NAMESPACE_ID::internal::ExpectTag<10>(ptr));
+        } else
+          goto handle_unusual;
+        continue;
+      default:
+        goto handle_unusual;
+    }  // switch
+  handle_unusual:
+    if ((tag == 0) || ((tag & 7) == 4)) {
+      CHK_(ptr);
+      ctx->SetLastTag(tag);
+      goto message_done;
+    }
+    ptr = UnknownFieldParse(
+        tag,
+        _internal_metadata_.mutable_unknown_fields<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>(),
+        ptr, ctx);
+    CHK_(ptr != nullptr);
+  }  // while
+message_done:
+  return ptr;
+failure:
+  ptr = nullptr;
+  goto message_done;
+#undef CHK_
+}
+
+uint8_t* ListMarketplacePresetsResponse::_InternalSerialize(
+    uint8_t* target, ::PROTOBUF_NAMESPACE_ID::io::EpsCopyOutputStream* stream) const {
+  // @@protoc_insertion_point(serialize_to_array_start:botcore.trading.v1.ListMarketplacePresetsResponse)
+  uint32_t cached_has_bits = 0;
+  (void) cached_has_bits;
+
+  // repeated .botcore.trading.v1.MarketplacePresetSummary presets = 1;
+  for (unsigned i = 0,
+      n = static_cast<unsigned>(this->_internal_presets_size()); i < n; i++) {
+    const auto& repfield = this->_internal_presets(i);
+    target = ::PROTOBUF_NAMESPACE_ID::internal::WireFormatLite::
+        InternalWriteMessage(1, repfield, repfield.GetCachedSize(), target, stream);
+  }
+
+  if (PROTOBUF_PREDICT_FALSE(_internal_metadata_.have_unknown_fields())) {
+    target = ::_pbi::WireFormat::InternalSerializeUnknownFieldsToArray(
+        _internal_metadata_.unknown_fields<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>(::PROTOBUF_NAMESPACE_ID::UnknownFieldSet::default_instance), target, stream);
+  }
+  // @@protoc_insertion_point(serialize_to_array_end:botcore.trading.v1.ListMarketplacePresetsResponse)
+  return target;
+}
+
+size_t ListMarketplacePresetsResponse::ByteSizeLong() const {
+// @@protoc_insertion_point(message_byte_size_start:botcore.trading.v1.ListMarketplacePresetsResponse)
+  size_t total_size = 0;
+
+  uint32_t cached_has_bits = 0;
+  // Prevent compiler warnings about cached_has_bits being unused
+  (void) cached_has_bits;
+
+  // repeated .botcore.trading.v1.MarketplacePresetSummary presets = 1;
+  total_size += 1UL * this->_internal_presets_size();
+  for (const auto& msg : this->_impl_.presets_) {
+    total_size +=
+      ::PROTOBUF_NAMESPACE_ID::internal::WireFormatLite::MessageSize(msg);
+  }
+
+  return MaybeComputeUnknownFieldsSize(total_size, &_impl_._cached_size_);
+}
+
+const ::PROTOBUF_NAMESPACE_ID::Message::ClassData ListMarketplacePresetsResponse::_class_data_ = {
+    ::PROTOBUF_NAMESPACE_ID::Message::CopyWithSourceCheck,
+    ListMarketplacePresetsResponse::MergeImpl
+};
+const ::PROTOBUF_NAMESPACE_ID::Message::ClassData*ListMarketplacePresetsResponse::GetClassData() const { return &_class_data_; }
+
+
+void ListMarketplacePresetsResponse::MergeImpl(::PROTOBUF_NAMESPACE_ID::Message& to_msg, const ::PROTOBUF_NAMESPACE_ID::Message& from_msg) {
+  auto* const _this = static_cast<ListMarketplacePresetsResponse*>(&to_msg);
+  auto& from = static_cast<const ListMarketplacePresetsResponse&>(from_msg);
+  // @@protoc_insertion_point(class_specific_merge_from_start:botcore.trading.v1.ListMarketplacePresetsResponse)
+  GOOGLE_DCHECK_NE(&from, _this);
+  uint32_t cached_has_bits = 0;
+  (void) cached_has_bits;
+
+  _this->_impl_.presets_.MergeFrom(from._impl_.presets_);
+  _this->_internal_metadata_.MergeFrom<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>(from._internal_metadata_);
+}
+
+void ListMarketplacePresetsResponse::CopyFrom(const ListMarketplacePresetsResponse& from) {
+// @@protoc_insertion_point(class_specific_copy_from_start:botcore.trading.v1.ListMarketplacePresetsResponse)
+  if (&from == this) return;
+  Clear();
+  MergeFrom(from);
+}
+
+bool ListMarketplacePresetsResponse::IsInitialized() const {
+  return true;
+}
+
+void ListMarketplacePresetsResponse::InternalSwap(ListMarketplacePresetsResponse* other) {
+  using std::swap;
+  _internal_metadata_.InternalSwap(&other->_internal_metadata_);
+  _impl_.presets_.InternalSwap(&other->_impl_.presets_);
+}
+
+::PROTOBUF_NAMESPACE_ID::Metadata ListMarketplacePresetsResponse::GetMetadata() const {
+  return ::_pbi::AssignDescriptors(
+      &descriptor_table_trading_2eproto_getter, &descriptor_table_trading_2eproto_once,
+      file_level_metadata_trading_2eproto[27]);
+}
+
+// ===================================================================
+
+class ImportMarketplacePresetRequest::_Internal {
+ public:
+};
+
+ImportMarketplacePresetRequest::ImportMarketplacePresetRequest(::PROTOBUF_NAMESPACE_ID::Arena* arena,
+                         bool is_message_owned)
+  : ::PROTOBUF_NAMESPACE_ID::Message(arena, is_message_owned) {
+  SharedCtor(arena, is_message_owned);
+  // @@protoc_insertion_point(arena_constructor:botcore.trading.v1.ImportMarketplacePresetRequest)
+}
+ImportMarketplacePresetRequest::ImportMarketplacePresetRequest(const ImportMarketplacePresetRequest& from)
+  : ::PROTOBUF_NAMESPACE_ID::Message() {
+  ImportMarketplacePresetRequest* const _this = this; (void)_this;
+  new (&_impl_) Impl_{
+      decltype(_impl_.payload_){}
+    , decltype(_impl_.filename_){}
+    , /*decltype(_impl_._cached_size_)*/{}};
+
+  _internal_metadata_.MergeFrom<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>(from._internal_metadata_);
+  _impl_.payload_.InitDefault();
+  #ifdef PROTOBUF_FORCE_COPY_DEFAULT_STRING
+    _impl_.payload_.Set("", GetArenaForAllocation());
+  #endif // PROTOBUF_FORCE_COPY_DEFAULT_STRING
+  if (!from._internal_payload().empty()) {
+    _this->_impl_.payload_.Set(from._internal_payload(), 
+      _this->GetArenaForAllocation());
+  }
+  _impl_.filename_.InitDefault();
+  #ifdef PROTOBUF_FORCE_COPY_DEFAULT_STRING
+    _impl_.filename_.Set("", GetArenaForAllocation());
+  #endif // PROTOBUF_FORCE_COPY_DEFAULT_STRING
+  if (!from._internal_filename().empty()) {
+    _this->_impl_.filename_.Set(from._internal_filename(), 
+      _this->GetArenaForAllocation());
+  }
+  // @@protoc_insertion_point(copy_constructor:botcore.trading.v1.ImportMarketplacePresetRequest)
+}
+
+inline void ImportMarketplacePresetRequest::SharedCtor(
+    ::_pb::Arena* arena, bool is_message_owned) {
+  (void)arena;
+  (void)is_message_owned;
+  new (&_impl_) Impl_{
+      decltype(_impl_.payload_){}
+    , decltype(_impl_.filename_){}
+    , /*decltype(_impl_._cached_size_)*/{}
+  };
+  _impl_.payload_.InitDefault();
+  #ifdef PROTOBUF_FORCE_COPY_DEFAULT_STRING
+    _impl_.payload_.Set("", GetArenaForAllocation());
+  #endif // PROTOBUF_FORCE_COPY_DEFAULT_STRING
+  _impl_.filename_.InitDefault();
+  #ifdef PROTOBUF_FORCE_COPY_DEFAULT_STRING
+    _impl_.filename_.Set("", GetArenaForAllocation());
+  #endif // PROTOBUF_FORCE_COPY_DEFAULT_STRING
+}
+
+ImportMarketplacePresetRequest::~ImportMarketplacePresetRequest() {
+  // @@protoc_insertion_point(destructor:botcore.trading.v1.ImportMarketplacePresetRequest)
+  if (auto *arena = _internal_metadata_.DeleteReturnArena<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>()) {
+  (void)arena;
+    return;
+  }
+  SharedDtor();
+}
+
+inline void ImportMarketplacePresetRequest::SharedDtor() {
+  GOOGLE_DCHECK(GetArenaForAllocation() == nullptr);
+  _impl_.payload_.Destroy();
+  _impl_.filename_.Destroy();
+}
+
+void ImportMarketplacePresetRequest::SetCachedSize(int size) const {
+  _impl_._cached_size_.Set(size);
+}
+
+void ImportMarketplacePresetRequest::Clear() {
+// @@protoc_insertion_point(message_clear_start:botcore.trading.v1.ImportMarketplacePresetRequest)
+  uint32_t cached_has_bits = 0;
+  // Prevent compiler warnings about cached_has_bits being unused
+  (void) cached_has_bits;
+
+  _impl_.payload_.ClearToEmpty();
+  _impl_.filename_.ClearToEmpty();
+  _internal_metadata_.Clear<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>();
+}
+
+const char* ImportMarketplacePresetRequest::_InternalParse(const char* ptr, ::_pbi::ParseContext* ctx) {
+#define CHK_(x) if (PROTOBUF_PREDICT_FALSE(!(x))) goto failure
+  while (!ctx->Done(&ptr)) {
+    uint32_t tag;
+    ptr = ::_pbi::ReadTag(ptr, &tag);
+    switch (tag >> 3) {
+      // bytes payload = 1;
+      case 1:
+        if (PROTOBUF_PREDICT_TRUE(static_cast<uint8_t>(tag) == 10)) {
+          auto str = _internal_mutable_payload();
+          ptr = ::_pbi::InlineGreedyStringParser(str, ptr, ctx);
+          CHK_(ptr);
+        } else
+          goto handle_unusual;
+        continue;
+      // string filename = 2;
+      case 2:
+        if (PROTOBUF_PREDICT_TRUE(static_cast<uint8_t>(tag) == 18)) {
+          auto str = _internal_mutable_filename();
+          ptr = ::_pbi::InlineGreedyStringParser(str, ptr, ctx);
+          CHK_(ptr);
+          CHK_(::_pbi::VerifyUTF8(str, "botcore.trading.v1.ImportMarketplacePresetRequest.filename"));
+        } else
+          goto handle_unusual;
+        continue;
+      default:
+        goto handle_unusual;
+    }  // switch
+  handle_unusual:
+    if ((tag == 0) || ((tag & 7) == 4)) {
+      CHK_(ptr);
+      ctx->SetLastTag(tag);
+      goto message_done;
+    }
+    ptr = UnknownFieldParse(
+        tag,
+        _internal_metadata_.mutable_unknown_fields<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>(),
+        ptr, ctx);
+    CHK_(ptr != nullptr);
+  }  // while
+message_done:
+  return ptr;
+failure:
+  ptr = nullptr;
+  goto message_done;
+#undef CHK_
+}
+
+uint8_t* ImportMarketplacePresetRequest::_InternalSerialize(
+    uint8_t* target, ::PROTOBUF_NAMESPACE_ID::io::EpsCopyOutputStream* stream) const {
+  // @@protoc_insertion_point(serialize_to_array_start:botcore.trading.v1.ImportMarketplacePresetRequest)
+  uint32_t cached_has_bits = 0;
+  (void) cached_has_bits;
+
+  // bytes payload = 1;
+  if (!this->_internal_payload().empty()) {
+    target = stream->WriteBytesMaybeAliased(
+        1, this->_internal_payload(), target);
+  }
+
+  // string filename = 2;
+  if (!this->_internal_filename().empty()) {
+    ::PROTOBUF_NAMESPACE_ID::internal::WireFormatLite::VerifyUtf8String(
+      this->_internal_filename().data(), static_cast<int>(this->_internal_filename().length()),
+      ::PROTOBUF_NAMESPACE_ID::internal::WireFormatLite::SERIALIZE,
+      "botcore.trading.v1.ImportMarketplacePresetRequest.filename");
+    target = stream->WriteStringMaybeAliased(
+        2, this->_internal_filename(), target);
+  }
+
+  if (PROTOBUF_PREDICT_FALSE(_internal_metadata_.have_unknown_fields())) {
+    target = ::_pbi::WireFormat::InternalSerializeUnknownFieldsToArray(
+        _internal_metadata_.unknown_fields<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>(::PROTOBUF_NAMESPACE_ID::UnknownFieldSet::default_instance), target, stream);
+  }
+  // @@protoc_insertion_point(serialize_to_array_end:botcore.trading.v1.ImportMarketplacePresetRequest)
+  return target;
+}
+
+size_t ImportMarketplacePresetRequest::ByteSizeLong() const {
+// @@protoc_insertion_point(message_byte_size_start:botcore.trading.v1.ImportMarketplacePresetRequest)
+  size_t total_size = 0;
+
+  uint32_t cached_has_bits = 0;
+  // Prevent compiler warnings about cached_has_bits being unused
+  (void) cached_has_bits;
+
+  // bytes payload = 1;
+  if (!this->_internal_payload().empty()) {
+    total_size += 1 +
+      ::PROTOBUF_NAMESPACE_ID::internal::WireFormatLite::BytesSize(
+        this->_internal_payload());
+  }
+
+  // string filename = 2;
+  if (!this->_internal_filename().empty()) {
+    total_size += 1 +
+      ::PROTOBUF_NAMESPACE_ID::internal::WireFormatLite::StringSize(
+        this->_internal_filename());
+  }
+
+  return MaybeComputeUnknownFieldsSize(total_size, &_impl_._cached_size_);
+}
+
+const ::PROTOBUF_NAMESPACE_ID::Message::ClassData ImportMarketplacePresetRequest::_class_data_ = {
+    ::PROTOBUF_NAMESPACE_ID::Message::CopyWithSourceCheck,
+    ImportMarketplacePresetRequest::MergeImpl
+};
+const ::PROTOBUF_NAMESPACE_ID::Message::ClassData*ImportMarketplacePresetRequest::GetClassData() const { return &_class_data_; }
+
+
+void ImportMarketplacePresetRequest::MergeImpl(::PROTOBUF_NAMESPACE_ID::Message& to_msg, const ::PROTOBUF_NAMESPACE_ID::Message& from_msg) {
+  auto* const _this = static_cast<ImportMarketplacePresetRequest*>(&to_msg);
+  auto& from = static_cast<const ImportMarketplacePresetRequest&>(from_msg);
+  // @@protoc_insertion_point(class_specific_merge_from_start:botcore.trading.v1.ImportMarketplacePresetRequest)
+  GOOGLE_DCHECK_NE(&from, _this);
+  uint32_t cached_has_bits = 0;
+  (void) cached_has_bits;
+
+  if (!from._internal_payload().empty()) {
+    _this->_internal_set_payload(from._internal_payload());
+  }
+  if (!from._internal_filename().empty()) {
+    _this->_internal_set_filename(from._internal_filename());
+  }
+  _this->_internal_metadata_.MergeFrom<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>(from._internal_metadata_);
+}
+
+void ImportMarketplacePresetRequest::CopyFrom(const ImportMarketplacePresetRequest& from) {
+// @@protoc_insertion_point(class_specific_copy_from_start:botcore.trading.v1.ImportMarketplacePresetRequest)
+  if (&from == this) return;
+  Clear();
+  MergeFrom(from);
+}
+
+bool ImportMarketplacePresetRequest::IsInitialized() const {
+  return true;
+}
+
+void ImportMarketplacePresetRequest::InternalSwap(ImportMarketplacePresetRequest* other) {
+  using std::swap;
+  auto* lhs_arena = GetArenaForAllocation();
+  auto* rhs_arena = other->GetArenaForAllocation();
+  _internal_metadata_.InternalSwap(&other->_internal_metadata_);
+  ::PROTOBUF_NAMESPACE_ID::internal::ArenaStringPtr::InternalSwap(
+      &_impl_.payload_, lhs_arena,
+      &other->_impl_.payload_, rhs_arena
+  );
+  ::PROTOBUF_NAMESPACE_ID::internal::ArenaStringPtr::InternalSwap(
+      &_impl_.filename_, lhs_arena,
+      &other->_impl_.filename_, rhs_arena
+  );
+}
+
+::PROTOBUF_NAMESPACE_ID::Metadata ImportMarketplacePresetRequest::GetMetadata() const {
+  return ::_pbi::AssignDescriptors(
+      &descriptor_table_trading_2eproto_getter, &descriptor_table_trading_2eproto_once,
+      file_level_metadata_trading_2eproto[28]);
+}
+
+// ===================================================================
+
+class ImportMarketplacePresetResponse::_Internal {
+ public:
+  static const ::botcore::trading::v1::MarketplacePresetSummary& preset(const ImportMarketplacePresetResponse* msg);
+};
+
+const ::botcore::trading::v1::MarketplacePresetSummary&
+ImportMarketplacePresetResponse::_Internal::preset(const ImportMarketplacePresetResponse* msg) {
+  return *msg->_impl_.preset_;
+}
+ImportMarketplacePresetResponse::ImportMarketplacePresetResponse(::PROTOBUF_NAMESPACE_ID::Arena* arena,
+                         bool is_message_owned)
+  : ::PROTOBUF_NAMESPACE_ID::Message(arena, is_message_owned) {
+  SharedCtor(arena, is_message_owned);
+  // @@protoc_insertion_point(arena_constructor:botcore.trading.v1.ImportMarketplacePresetResponse)
+}
+ImportMarketplacePresetResponse::ImportMarketplacePresetResponse(const ImportMarketplacePresetResponse& from)
+  : ::PROTOBUF_NAMESPACE_ID::Message() {
+  ImportMarketplacePresetResponse* const _this = this; (void)_this;
+  new (&_impl_) Impl_{
+      decltype(_impl_.preset_){nullptr}
+    , /*decltype(_impl_._cached_size_)*/{}};
+
+  _internal_metadata_.MergeFrom<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>(from._internal_metadata_);
+  if (from._internal_has_preset()) {
+    _this->_impl_.preset_ = new ::botcore::trading::v1::MarketplacePresetSummary(*from._impl_.preset_);
+  }
+  // @@protoc_insertion_point(copy_constructor:botcore.trading.v1.ImportMarketplacePresetResponse)
+}
+
+inline void ImportMarketplacePresetResponse::SharedCtor(
+    ::_pb::Arena* arena, bool is_message_owned) {
+  (void)arena;
+  (void)is_message_owned;
+  new (&_impl_) Impl_{
+      decltype(_impl_.preset_){nullptr}
+    , /*decltype(_impl_._cached_size_)*/{}
+  };
+}
+
+ImportMarketplacePresetResponse::~ImportMarketplacePresetResponse() {
+  // @@protoc_insertion_point(destructor:botcore.trading.v1.ImportMarketplacePresetResponse)
+  if (auto *arena = _internal_metadata_.DeleteReturnArena<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>()) {
+  (void)arena;
+    return;
+  }
+  SharedDtor();
+}
+
+inline void ImportMarketplacePresetResponse::SharedDtor() {
+  GOOGLE_DCHECK(GetArenaForAllocation() == nullptr);
+  if (this != internal_default_instance()) delete _impl_.preset_;
+}
+
+void ImportMarketplacePresetResponse::SetCachedSize(int size) const {
+  _impl_._cached_size_.Set(size);
+}
+
+void ImportMarketplacePresetResponse::Clear() {
+// @@protoc_insertion_point(message_clear_start:botcore.trading.v1.ImportMarketplacePresetResponse)
+  uint32_t cached_has_bits = 0;
+  // Prevent compiler warnings about cached_has_bits being unused
+  (void) cached_has_bits;
+
+  if (GetArenaForAllocation() == nullptr && _impl_.preset_ != nullptr) {
+    delete _impl_.preset_;
+  }
+  _impl_.preset_ = nullptr;
+  _internal_metadata_.Clear<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>();
+}
+
+const char* ImportMarketplacePresetResponse::_InternalParse(const char* ptr, ::_pbi::ParseContext* ctx) {
+#define CHK_(x) if (PROTOBUF_PREDICT_FALSE(!(x))) goto failure
+  while (!ctx->Done(&ptr)) {
+    uint32_t tag;
+    ptr = ::_pbi::ReadTag(ptr, &tag);
+    switch (tag >> 3) {
+      // .botcore.trading.v1.MarketplacePresetSummary preset = 1;
+      case 1:
+        if (PROTOBUF_PREDICT_TRUE(static_cast<uint8_t>(tag) == 10)) {
+          ptr = ctx->ParseMessage(_internal_mutable_preset(), ptr);
+          CHK_(ptr);
+        } else
+          goto handle_unusual;
+        continue;
+      default:
+        goto handle_unusual;
+    }  // switch
+  handle_unusual:
+    if ((tag == 0) || ((tag & 7) == 4)) {
+      CHK_(ptr);
+      ctx->SetLastTag(tag);
+      goto message_done;
+    }
+    ptr = UnknownFieldParse(
+        tag,
+        _internal_metadata_.mutable_unknown_fields<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>(),
+        ptr, ctx);
+    CHK_(ptr != nullptr);
+  }  // while
+message_done:
+  return ptr;
+failure:
+  ptr = nullptr;
+  goto message_done;
+#undef CHK_
+}
+
+uint8_t* ImportMarketplacePresetResponse::_InternalSerialize(
+    uint8_t* target, ::PROTOBUF_NAMESPACE_ID::io::EpsCopyOutputStream* stream) const {
+  // @@protoc_insertion_point(serialize_to_array_start:botcore.trading.v1.ImportMarketplacePresetResponse)
+  uint32_t cached_has_bits = 0;
+  (void) cached_has_bits;
+
+  // .botcore.trading.v1.MarketplacePresetSummary preset = 1;
+  if (this->_internal_has_preset()) {
+    target = ::PROTOBUF_NAMESPACE_ID::internal::WireFormatLite::
+      InternalWriteMessage(1, _Internal::preset(this),
+        _Internal::preset(this).GetCachedSize(), target, stream);
+  }
+
+  if (PROTOBUF_PREDICT_FALSE(_internal_metadata_.have_unknown_fields())) {
+    target = ::_pbi::WireFormat::InternalSerializeUnknownFieldsToArray(
+        _internal_metadata_.unknown_fields<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>(::PROTOBUF_NAMESPACE_ID::UnknownFieldSet::default_instance), target, stream);
+  }
+  // @@protoc_insertion_point(serialize_to_array_end:botcore.trading.v1.ImportMarketplacePresetResponse)
+  return target;
+}
+
+size_t ImportMarketplacePresetResponse::ByteSizeLong() const {
+// @@protoc_insertion_point(message_byte_size_start:botcore.trading.v1.ImportMarketplacePresetResponse)
+  size_t total_size = 0;
+
+  uint32_t cached_has_bits = 0;
+  // Prevent compiler warnings about cached_has_bits being unused
+  (void) cached_has_bits;
+
+  // .botcore.trading.v1.MarketplacePresetSummary preset = 1;
+  if (this->_internal_has_preset()) {
+    total_size += 1 +
+      ::PROTOBUF_NAMESPACE_ID::internal::WireFormatLite::MessageSize(
+        *_impl_.preset_);
+  }
+
+  return MaybeComputeUnknownFieldsSize(total_size, &_impl_._cached_size_);
+}
+
+const ::PROTOBUF_NAMESPACE_ID::Message::ClassData ImportMarketplacePresetResponse::_class_data_ = {
+    ::PROTOBUF_NAMESPACE_ID::Message::CopyWithSourceCheck,
+    ImportMarketplacePresetResponse::MergeImpl
+};
+const ::PROTOBUF_NAMESPACE_ID::Message::ClassData*ImportMarketplacePresetResponse::GetClassData() const { return &_class_data_; }
+
+
+void ImportMarketplacePresetResponse::MergeImpl(::PROTOBUF_NAMESPACE_ID::Message& to_msg, const ::PROTOBUF_NAMESPACE_ID::Message& from_msg) {
+  auto* const _this = static_cast<ImportMarketplacePresetResponse*>(&to_msg);
+  auto& from = static_cast<const ImportMarketplacePresetResponse&>(from_msg);
+  // @@protoc_insertion_point(class_specific_merge_from_start:botcore.trading.v1.ImportMarketplacePresetResponse)
+  GOOGLE_DCHECK_NE(&from, _this);
+  uint32_t cached_has_bits = 0;
+  (void) cached_has_bits;
+
+  if (from._internal_has_preset()) {
+    _this->_internal_mutable_preset()->::botcore::trading::v1::MarketplacePresetSummary::MergeFrom(
+        from._internal_preset());
+  }
+  _this->_internal_metadata_.MergeFrom<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>(from._internal_metadata_);
+}
+
+void ImportMarketplacePresetResponse::CopyFrom(const ImportMarketplacePresetResponse& from) {
+// @@protoc_insertion_point(class_specific_copy_from_start:botcore.trading.v1.ImportMarketplacePresetResponse)
+  if (&from == this) return;
+  Clear();
+  MergeFrom(from);
+}
+
+bool ImportMarketplacePresetResponse::IsInitialized() const {
+  return true;
+}
+
+void ImportMarketplacePresetResponse::InternalSwap(ImportMarketplacePresetResponse* other) {
+  using std::swap;
+  _internal_metadata_.InternalSwap(&other->_internal_metadata_);
+  swap(_impl_.preset_, other->_impl_.preset_);
+}
+
+::PROTOBUF_NAMESPACE_ID::Metadata ImportMarketplacePresetResponse::GetMetadata() const {
+  return ::_pbi::AssignDescriptors(
+      &descriptor_table_trading_2eproto_getter, &descriptor_table_trading_2eproto_once,
+      file_level_metadata_trading_2eproto[29]);
+}
+
+// ===================================================================
+
+class ExportMarketplacePresetRequest::_Internal {
+ public:
+};
+
+ExportMarketplacePresetRequest::ExportMarketplacePresetRequest(::PROTOBUF_NAMESPACE_ID::Arena* arena,
+                         bool is_message_owned)
+  : ::PROTOBUF_NAMESPACE_ID::Message(arena, is_message_owned) {
+  SharedCtor(arena, is_message_owned);
+  // @@protoc_insertion_point(arena_constructor:botcore.trading.v1.ExportMarketplacePresetRequest)
+}
+ExportMarketplacePresetRequest::ExportMarketplacePresetRequest(const ExportMarketplacePresetRequest& from)
+  : ::PROTOBUF_NAMESPACE_ID::Message() {
+  ExportMarketplacePresetRequest* const _this = this; (void)_this;
+  new (&_impl_) Impl_{
+      decltype(_impl_.preset_id_){}
+    , decltype(_impl_.format_){}
+    , /*decltype(_impl_._cached_size_)*/{}};
+
+  _internal_metadata_.MergeFrom<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>(from._internal_metadata_);
+  _impl_.preset_id_.InitDefault();
+  #ifdef PROTOBUF_FORCE_COPY_DEFAULT_STRING
+    _impl_.preset_id_.Set("", GetArenaForAllocation());
+  #endif // PROTOBUF_FORCE_COPY_DEFAULT_STRING
+  if (!from._internal_preset_id().empty()) {
+    _this->_impl_.preset_id_.Set(from._internal_preset_id(), 
+      _this->GetArenaForAllocation());
+  }
+  _impl_.format_.InitDefault();
+  #ifdef PROTOBUF_FORCE_COPY_DEFAULT_STRING
+    _impl_.format_.Set("", GetArenaForAllocation());
+  #endif // PROTOBUF_FORCE_COPY_DEFAULT_STRING
+  if (!from._internal_format().empty()) {
+    _this->_impl_.format_.Set(from._internal_format(), 
+      _this->GetArenaForAllocation());
+  }
+  // @@protoc_insertion_point(copy_constructor:botcore.trading.v1.ExportMarketplacePresetRequest)
+}
+
+inline void ExportMarketplacePresetRequest::SharedCtor(
+    ::_pb::Arena* arena, bool is_message_owned) {
+  (void)arena;
+  (void)is_message_owned;
+  new (&_impl_) Impl_{
+      decltype(_impl_.preset_id_){}
+    , decltype(_impl_.format_){}
+    , /*decltype(_impl_._cached_size_)*/{}
+  };
+  _impl_.preset_id_.InitDefault();
+  #ifdef PROTOBUF_FORCE_COPY_DEFAULT_STRING
+    _impl_.preset_id_.Set("", GetArenaForAllocation());
+  #endif // PROTOBUF_FORCE_COPY_DEFAULT_STRING
+  _impl_.format_.InitDefault();
+  #ifdef PROTOBUF_FORCE_COPY_DEFAULT_STRING
+    _impl_.format_.Set("", GetArenaForAllocation());
+  #endif // PROTOBUF_FORCE_COPY_DEFAULT_STRING
+}
+
+ExportMarketplacePresetRequest::~ExportMarketplacePresetRequest() {
+  // @@protoc_insertion_point(destructor:botcore.trading.v1.ExportMarketplacePresetRequest)
+  if (auto *arena = _internal_metadata_.DeleteReturnArena<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>()) {
+  (void)arena;
+    return;
+  }
+  SharedDtor();
+}
+
+inline void ExportMarketplacePresetRequest::SharedDtor() {
+  GOOGLE_DCHECK(GetArenaForAllocation() == nullptr);
+  _impl_.preset_id_.Destroy();
+  _impl_.format_.Destroy();
+}
+
+void ExportMarketplacePresetRequest::SetCachedSize(int size) const {
+  _impl_._cached_size_.Set(size);
+}
+
+void ExportMarketplacePresetRequest::Clear() {
+// @@protoc_insertion_point(message_clear_start:botcore.trading.v1.ExportMarketplacePresetRequest)
+  uint32_t cached_has_bits = 0;
+  // Prevent compiler warnings about cached_has_bits being unused
+  (void) cached_has_bits;
+
+  _impl_.preset_id_.ClearToEmpty();
+  _impl_.format_.ClearToEmpty();
+  _internal_metadata_.Clear<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>();
+}
+
+const char* ExportMarketplacePresetRequest::_InternalParse(const char* ptr, ::_pbi::ParseContext* ctx) {
+#define CHK_(x) if (PROTOBUF_PREDICT_FALSE(!(x))) goto failure
+  while (!ctx->Done(&ptr)) {
+    uint32_t tag;
+    ptr = ::_pbi::ReadTag(ptr, &tag);
+    switch (tag >> 3) {
+      // string preset_id = 1;
+      case 1:
+        if (PROTOBUF_PREDICT_TRUE(static_cast<uint8_t>(tag) == 10)) {
+          auto str = _internal_mutable_preset_id();
+          ptr = ::_pbi::InlineGreedyStringParser(str, ptr, ctx);
+          CHK_(ptr);
+          CHK_(::_pbi::VerifyUTF8(str, "botcore.trading.v1.ExportMarketplacePresetRequest.preset_id"));
+        } else
+          goto handle_unusual;
+        continue;
+      // string format = 2;
+      case 2:
+        if (PROTOBUF_PREDICT_TRUE(static_cast<uint8_t>(tag) == 18)) {
+          auto str = _internal_mutable_format();
+          ptr = ::_pbi::InlineGreedyStringParser(str, ptr, ctx);
+          CHK_(ptr);
+          CHK_(::_pbi::VerifyUTF8(str, "botcore.trading.v1.ExportMarketplacePresetRequest.format"));
+        } else
+          goto handle_unusual;
+        continue;
+      default:
+        goto handle_unusual;
+    }  // switch
+  handle_unusual:
+    if ((tag == 0) || ((tag & 7) == 4)) {
+      CHK_(ptr);
+      ctx->SetLastTag(tag);
+      goto message_done;
+    }
+    ptr = UnknownFieldParse(
+        tag,
+        _internal_metadata_.mutable_unknown_fields<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>(),
+        ptr, ctx);
+    CHK_(ptr != nullptr);
+  }  // while
+message_done:
+  return ptr;
+failure:
+  ptr = nullptr;
+  goto message_done;
+#undef CHK_
+}
+
+uint8_t* ExportMarketplacePresetRequest::_InternalSerialize(
+    uint8_t* target, ::PROTOBUF_NAMESPACE_ID::io::EpsCopyOutputStream* stream) const {
+  // @@protoc_insertion_point(serialize_to_array_start:botcore.trading.v1.ExportMarketplacePresetRequest)
+  uint32_t cached_has_bits = 0;
+  (void) cached_has_bits;
+
+  // string preset_id = 1;
+  if (!this->_internal_preset_id().empty()) {
+    ::PROTOBUF_NAMESPACE_ID::internal::WireFormatLite::VerifyUtf8String(
+      this->_internal_preset_id().data(), static_cast<int>(this->_internal_preset_id().length()),
+      ::PROTOBUF_NAMESPACE_ID::internal::WireFormatLite::SERIALIZE,
+      "botcore.trading.v1.ExportMarketplacePresetRequest.preset_id");
+    target = stream->WriteStringMaybeAliased(
+        1, this->_internal_preset_id(), target);
+  }
+
+  // string format = 2;
+  if (!this->_internal_format().empty()) {
+    ::PROTOBUF_NAMESPACE_ID::internal::WireFormatLite::VerifyUtf8String(
+      this->_internal_format().data(), static_cast<int>(this->_internal_format().length()),
+      ::PROTOBUF_NAMESPACE_ID::internal::WireFormatLite::SERIALIZE,
+      "botcore.trading.v1.ExportMarketplacePresetRequest.format");
+    target = stream->WriteStringMaybeAliased(
+        2, this->_internal_format(), target);
+  }
+
+  if (PROTOBUF_PREDICT_FALSE(_internal_metadata_.have_unknown_fields())) {
+    target = ::_pbi::WireFormat::InternalSerializeUnknownFieldsToArray(
+        _internal_metadata_.unknown_fields<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>(::PROTOBUF_NAMESPACE_ID::UnknownFieldSet::default_instance), target, stream);
+  }
+  // @@protoc_insertion_point(serialize_to_array_end:botcore.trading.v1.ExportMarketplacePresetRequest)
+  return target;
+}
+
+size_t ExportMarketplacePresetRequest::ByteSizeLong() const {
+// @@protoc_insertion_point(message_byte_size_start:botcore.trading.v1.ExportMarketplacePresetRequest)
+  size_t total_size = 0;
+
+  uint32_t cached_has_bits = 0;
+  // Prevent compiler warnings about cached_has_bits being unused
+  (void) cached_has_bits;
+
+  // string preset_id = 1;
+  if (!this->_internal_preset_id().empty()) {
+    total_size += 1 +
+      ::PROTOBUF_NAMESPACE_ID::internal::WireFormatLite::StringSize(
+        this->_internal_preset_id());
+  }
+
+  // string format = 2;
+  if (!this->_internal_format().empty()) {
+    total_size += 1 +
+      ::PROTOBUF_NAMESPACE_ID::internal::WireFormatLite::StringSize(
+        this->_internal_format());
+  }
+
+  return MaybeComputeUnknownFieldsSize(total_size, &_impl_._cached_size_);
+}
+
+const ::PROTOBUF_NAMESPACE_ID::Message::ClassData ExportMarketplacePresetRequest::_class_data_ = {
+    ::PROTOBUF_NAMESPACE_ID::Message::CopyWithSourceCheck,
+    ExportMarketplacePresetRequest::MergeImpl
+};
+const ::PROTOBUF_NAMESPACE_ID::Message::ClassData*ExportMarketplacePresetRequest::GetClassData() const { return &_class_data_; }
+
+
+void ExportMarketplacePresetRequest::MergeImpl(::PROTOBUF_NAMESPACE_ID::Message& to_msg, const ::PROTOBUF_NAMESPACE_ID::Message& from_msg) {
+  auto* const _this = static_cast<ExportMarketplacePresetRequest*>(&to_msg);
+  auto& from = static_cast<const ExportMarketplacePresetRequest&>(from_msg);
+  // @@protoc_insertion_point(class_specific_merge_from_start:botcore.trading.v1.ExportMarketplacePresetRequest)
+  GOOGLE_DCHECK_NE(&from, _this);
+  uint32_t cached_has_bits = 0;
+  (void) cached_has_bits;
+
+  if (!from._internal_preset_id().empty()) {
+    _this->_internal_set_preset_id(from._internal_preset_id());
+  }
+  if (!from._internal_format().empty()) {
+    _this->_internal_set_format(from._internal_format());
+  }
+  _this->_internal_metadata_.MergeFrom<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>(from._internal_metadata_);
+}
+
+void ExportMarketplacePresetRequest::CopyFrom(const ExportMarketplacePresetRequest& from) {
+// @@protoc_insertion_point(class_specific_copy_from_start:botcore.trading.v1.ExportMarketplacePresetRequest)
+  if (&from == this) return;
+  Clear();
+  MergeFrom(from);
+}
+
+bool ExportMarketplacePresetRequest::IsInitialized() const {
+  return true;
+}
+
+void ExportMarketplacePresetRequest::InternalSwap(ExportMarketplacePresetRequest* other) {
+  using std::swap;
+  auto* lhs_arena = GetArenaForAllocation();
+  auto* rhs_arena = other->GetArenaForAllocation();
+  _internal_metadata_.InternalSwap(&other->_internal_metadata_);
+  ::PROTOBUF_NAMESPACE_ID::internal::ArenaStringPtr::InternalSwap(
+      &_impl_.preset_id_, lhs_arena,
+      &other->_impl_.preset_id_, rhs_arena
+  );
+  ::PROTOBUF_NAMESPACE_ID::internal::ArenaStringPtr::InternalSwap(
+      &_impl_.format_, lhs_arena,
+      &other->_impl_.format_, rhs_arena
+  );
+}
+
+::PROTOBUF_NAMESPACE_ID::Metadata ExportMarketplacePresetRequest::GetMetadata() const {
+  return ::_pbi::AssignDescriptors(
+      &descriptor_table_trading_2eproto_getter, &descriptor_table_trading_2eproto_once,
+      file_level_metadata_trading_2eproto[30]);
+}
+
+// ===================================================================
+
+class ExportMarketplacePresetResponse::_Internal {
+ public:
+  static const ::botcore::trading::v1::MarketplacePresetSummary& preset(const ExportMarketplacePresetResponse* msg);
+};
+
+const ::botcore::trading::v1::MarketplacePresetSummary&
+ExportMarketplacePresetResponse::_Internal::preset(const ExportMarketplacePresetResponse* msg) {
+  return *msg->_impl_.preset_;
+}
+ExportMarketplacePresetResponse::ExportMarketplacePresetResponse(::PROTOBUF_NAMESPACE_ID::Arena* arena,
+                         bool is_message_owned)
+  : ::PROTOBUF_NAMESPACE_ID::Message(arena, is_message_owned) {
+  SharedCtor(arena, is_message_owned);
+  // @@protoc_insertion_point(arena_constructor:botcore.trading.v1.ExportMarketplacePresetResponse)
+}
+ExportMarketplacePresetResponse::ExportMarketplacePresetResponse(const ExportMarketplacePresetResponse& from)
+  : ::PROTOBUF_NAMESPACE_ID::Message() {
+  ExportMarketplacePresetResponse* const _this = this; (void)_this;
+  new (&_impl_) Impl_{
+      decltype(_impl_.payload_){}
+    , decltype(_impl_.filename_){}
+    , decltype(_impl_.format_){}
+    , decltype(_impl_.preset_){nullptr}
+    , /*decltype(_impl_._cached_size_)*/{}};
+
+  _internal_metadata_.MergeFrom<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>(from._internal_metadata_);
+  _impl_.payload_.InitDefault();
+  #ifdef PROTOBUF_FORCE_COPY_DEFAULT_STRING
+    _impl_.payload_.Set("", GetArenaForAllocation());
+  #endif // PROTOBUF_FORCE_COPY_DEFAULT_STRING
+  if (!from._internal_payload().empty()) {
+    _this->_impl_.payload_.Set(from._internal_payload(), 
+      _this->GetArenaForAllocation());
+  }
+  _impl_.filename_.InitDefault();
+  #ifdef PROTOBUF_FORCE_COPY_DEFAULT_STRING
+    _impl_.filename_.Set("", GetArenaForAllocation());
+  #endif // PROTOBUF_FORCE_COPY_DEFAULT_STRING
+  if (!from._internal_filename().empty()) {
+    _this->_impl_.filename_.Set(from._internal_filename(), 
+      _this->GetArenaForAllocation());
+  }
+  _impl_.format_.InitDefault();
+  #ifdef PROTOBUF_FORCE_COPY_DEFAULT_STRING
+    _impl_.format_.Set("", GetArenaForAllocation());
+  #endif // PROTOBUF_FORCE_COPY_DEFAULT_STRING
+  if (!from._internal_format().empty()) {
+    _this->_impl_.format_.Set(from._internal_format(), 
+      _this->GetArenaForAllocation());
+  }
+  if (from._internal_has_preset()) {
+    _this->_impl_.preset_ = new ::botcore::trading::v1::MarketplacePresetSummary(*from._impl_.preset_);
+  }
+  // @@protoc_insertion_point(copy_constructor:botcore.trading.v1.ExportMarketplacePresetResponse)
+}
+
+inline void ExportMarketplacePresetResponse::SharedCtor(
+    ::_pb::Arena* arena, bool is_message_owned) {
+  (void)arena;
+  (void)is_message_owned;
+  new (&_impl_) Impl_{
+      decltype(_impl_.payload_){}
+    , decltype(_impl_.filename_){}
+    , decltype(_impl_.format_){}
+    , decltype(_impl_.preset_){nullptr}
+    , /*decltype(_impl_._cached_size_)*/{}
+  };
+  _impl_.payload_.InitDefault();
+  #ifdef PROTOBUF_FORCE_COPY_DEFAULT_STRING
+    _impl_.payload_.Set("", GetArenaForAllocation());
+  #endif // PROTOBUF_FORCE_COPY_DEFAULT_STRING
+  _impl_.filename_.InitDefault();
+  #ifdef PROTOBUF_FORCE_COPY_DEFAULT_STRING
+    _impl_.filename_.Set("", GetArenaForAllocation());
+  #endif // PROTOBUF_FORCE_COPY_DEFAULT_STRING
+  _impl_.format_.InitDefault();
+  #ifdef PROTOBUF_FORCE_COPY_DEFAULT_STRING
+    _impl_.format_.Set("", GetArenaForAllocation());
+  #endif // PROTOBUF_FORCE_COPY_DEFAULT_STRING
+}
+
+ExportMarketplacePresetResponse::~ExportMarketplacePresetResponse() {
+  // @@protoc_insertion_point(destructor:botcore.trading.v1.ExportMarketplacePresetResponse)
+  if (auto *arena = _internal_metadata_.DeleteReturnArena<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>()) {
+  (void)arena;
+    return;
+  }
+  SharedDtor();
+}
+
+inline void ExportMarketplacePresetResponse::SharedDtor() {
+  GOOGLE_DCHECK(GetArenaForAllocation() == nullptr);
+  _impl_.payload_.Destroy();
+  _impl_.filename_.Destroy();
+  _impl_.format_.Destroy();
+  if (this != internal_default_instance()) delete _impl_.preset_;
+}
+
+void ExportMarketplacePresetResponse::SetCachedSize(int size) const {
+  _impl_._cached_size_.Set(size);
+}
+
+void ExportMarketplacePresetResponse::Clear() {
+// @@protoc_insertion_point(message_clear_start:botcore.trading.v1.ExportMarketplacePresetResponse)
+  uint32_t cached_has_bits = 0;
+  // Prevent compiler warnings about cached_has_bits being unused
+  (void) cached_has_bits;
+
+  _impl_.payload_.ClearToEmpty();
+  _impl_.filename_.ClearToEmpty();
+  _impl_.format_.ClearToEmpty();
+  if (GetArenaForAllocation() == nullptr && _impl_.preset_ != nullptr) {
+    delete _impl_.preset_;
+  }
+  _impl_.preset_ = nullptr;
+  _internal_metadata_.Clear<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>();
+}
+
+const char* ExportMarketplacePresetResponse::_InternalParse(const char* ptr, ::_pbi::ParseContext* ctx) {
+#define CHK_(x) if (PROTOBUF_PREDICT_FALSE(!(x))) goto failure
+  while (!ctx->Done(&ptr)) {
+    uint32_t tag;
+    ptr = ::_pbi::ReadTag(ptr, &tag);
+    switch (tag >> 3) {
+      // bytes payload = 1;
+      case 1:
+        if (PROTOBUF_PREDICT_TRUE(static_cast<uint8_t>(tag) == 10)) {
+          auto str = _internal_mutable_payload();
+          ptr = ::_pbi::InlineGreedyStringParser(str, ptr, ctx);
+          CHK_(ptr);
+        } else
+          goto handle_unusual;
+        continue;
+      // string filename = 2;
+      case 2:
+        if (PROTOBUF_PREDICT_TRUE(static_cast<uint8_t>(tag) == 18)) {
+          auto str = _internal_mutable_filename();
+          ptr = ::_pbi::InlineGreedyStringParser(str, ptr, ctx);
+          CHK_(ptr);
+          CHK_(::_pbi::VerifyUTF8(str, "botcore.trading.v1.ExportMarketplacePresetResponse.filename"));
+        } else
+          goto handle_unusual;
+        continue;
+      // .botcore.trading.v1.MarketplacePresetSummary preset = 3;
+      case 3:
+        if (PROTOBUF_PREDICT_TRUE(static_cast<uint8_t>(tag) == 26)) {
+          ptr = ctx->ParseMessage(_internal_mutable_preset(), ptr);
+          CHK_(ptr);
+        } else
+          goto handle_unusual;
+        continue;
+      // string format = 4;
+      case 4:
+        if (PROTOBUF_PREDICT_TRUE(static_cast<uint8_t>(tag) == 34)) {
+          auto str = _internal_mutable_format();
+          ptr = ::_pbi::InlineGreedyStringParser(str, ptr, ctx);
+          CHK_(ptr);
+          CHK_(::_pbi::VerifyUTF8(str, "botcore.trading.v1.ExportMarketplacePresetResponse.format"));
+        } else
+          goto handle_unusual;
+        continue;
+      default:
+        goto handle_unusual;
+    }  // switch
+  handle_unusual:
+    if ((tag == 0) || ((tag & 7) == 4)) {
+      CHK_(ptr);
+      ctx->SetLastTag(tag);
+      goto message_done;
+    }
+    ptr = UnknownFieldParse(
+        tag,
+        _internal_metadata_.mutable_unknown_fields<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>(),
+        ptr, ctx);
+    CHK_(ptr != nullptr);
+  }  // while
+message_done:
+  return ptr;
+failure:
+  ptr = nullptr;
+  goto message_done;
+#undef CHK_
+}
+
+uint8_t* ExportMarketplacePresetResponse::_InternalSerialize(
+    uint8_t* target, ::PROTOBUF_NAMESPACE_ID::io::EpsCopyOutputStream* stream) const {
+  // @@protoc_insertion_point(serialize_to_array_start:botcore.trading.v1.ExportMarketplacePresetResponse)
+  uint32_t cached_has_bits = 0;
+  (void) cached_has_bits;
+
+  // bytes payload = 1;
+  if (!this->_internal_payload().empty()) {
+    target = stream->WriteBytesMaybeAliased(
+        1, this->_internal_payload(), target);
+  }
+
+  // string filename = 2;
+  if (!this->_internal_filename().empty()) {
+    ::PROTOBUF_NAMESPACE_ID::internal::WireFormatLite::VerifyUtf8String(
+      this->_internal_filename().data(), static_cast<int>(this->_internal_filename().length()),
+      ::PROTOBUF_NAMESPACE_ID::internal::WireFormatLite::SERIALIZE,
+      "botcore.trading.v1.ExportMarketplacePresetResponse.filename");
+    target = stream->WriteStringMaybeAliased(
+        2, this->_internal_filename(), target);
+  }
+
+  // .botcore.trading.v1.MarketplacePresetSummary preset = 3;
+  if (this->_internal_has_preset()) {
+    target = ::PROTOBUF_NAMESPACE_ID::internal::WireFormatLite::
+      InternalWriteMessage(3, _Internal::preset(this),
+        _Internal::preset(this).GetCachedSize(), target, stream);
+  }
+
+  // string format = 4;
+  if (!this->_internal_format().empty()) {
+    ::PROTOBUF_NAMESPACE_ID::internal::WireFormatLite::VerifyUtf8String(
+      this->_internal_format().data(), static_cast<int>(this->_internal_format().length()),
+      ::PROTOBUF_NAMESPACE_ID::internal::WireFormatLite::SERIALIZE,
+      "botcore.trading.v1.ExportMarketplacePresetResponse.format");
+    target = stream->WriteStringMaybeAliased(
+        4, this->_internal_format(), target);
+  }
+
+  if (PROTOBUF_PREDICT_FALSE(_internal_metadata_.have_unknown_fields())) {
+    target = ::_pbi::WireFormat::InternalSerializeUnknownFieldsToArray(
+        _internal_metadata_.unknown_fields<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>(::PROTOBUF_NAMESPACE_ID::UnknownFieldSet::default_instance), target, stream);
+  }
+  // @@protoc_insertion_point(serialize_to_array_end:botcore.trading.v1.ExportMarketplacePresetResponse)
+  return target;
+}
+
+size_t ExportMarketplacePresetResponse::ByteSizeLong() const {
+// @@protoc_insertion_point(message_byte_size_start:botcore.trading.v1.ExportMarketplacePresetResponse)
+  size_t total_size = 0;
+
+  uint32_t cached_has_bits = 0;
+  // Prevent compiler warnings about cached_has_bits being unused
+  (void) cached_has_bits;
+
+  // bytes payload = 1;
+  if (!this->_internal_payload().empty()) {
+    total_size += 1 +
+      ::PROTOBUF_NAMESPACE_ID::internal::WireFormatLite::BytesSize(
+        this->_internal_payload());
+  }
+
+  // string filename = 2;
+  if (!this->_internal_filename().empty()) {
+    total_size += 1 +
+      ::PROTOBUF_NAMESPACE_ID::internal::WireFormatLite::StringSize(
+        this->_internal_filename());
+  }
+
+  // string format = 4;
+  if (!this->_internal_format().empty()) {
+    total_size += 1 +
+      ::PROTOBUF_NAMESPACE_ID::internal::WireFormatLite::StringSize(
+        this->_internal_format());
+  }
+
+  // .botcore.trading.v1.MarketplacePresetSummary preset = 3;
+  if (this->_internal_has_preset()) {
+    total_size += 1 +
+      ::PROTOBUF_NAMESPACE_ID::internal::WireFormatLite::MessageSize(
+        *_impl_.preset_);
+  }
+
+  return MaybeComputeUnknownFieldsSize(total_size, &_impl_._cached_size_);
+}
+
+const ::PROTOBUF_NAMESPACE_ID::Message::ClassData ExportMarketplacePresetResponse::_class_data_ = {
+    ::PROTOBUF_NAMESPACE_ID::Message::CopyWithSourceCheck,
+    ExportMarketplacePresetResponse::MergeImpl
+};
+const ::PROTOBUF_NAMESPACE_ID::Message::ClassData*ExportMarketplacePresetResponse::GetClassData() const { return &_class_data_; }
+
+
+void ExportMarketplacePresetResponse::MergeImpl(::PROTOBUF_NAMESPACE_ID::Message& to_msg, const ::PROTOBUF_NAMESPACE_ID::Message& from_msg) {
+  auto* const _this = static_cast<ExportMarketplacePresetResponse*>(&to_msg);
+  auto& from = static_cast<const ExportMarketplacePresetResponse&>(from_msg);
+  // @@protoc_insertion_point(class_specific_merge_from_start:botcore.trading.v1.ExportMarketplacePresetResponse)
+  GOOGLE_DCHECK_NE(&from, _this);
+  uint32_t cached_has_bits = 0;
+  (void) cached_has_bits;
+
+  if (!from._internal_payload().empty()) {
+    _this->_internal_set_payload(from._internal_payload());
+  }
+  if (!from._internal_filename().empty()) {
+    _this->_internal_set_filename(from._internal_filename());
+  }
+  if (!from._internal_format().empty()) {
+    _this->_internal_set_format(from._internal_format());
+  }
+  if (from._internal_has_preset()) {
+    _this->_internal_mutable_preset()->::botcore::trading::v1::MarketplacePresetSummary::MergeFrom(
+        from._internal_preset());
+  }
+  _this->_internal_metadata_.MergeFrom<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>(from._internal_metadata_);
+}
+
+void ExportMarketplacePresetResponse::CopyFrom(const ExportMarketplacePresetResponse& from) {
+// @@protoc_insertion_point(class_specific_copy_from_start:botcore.trading.v1.ExportMarketplacePresetResponse)
+  if (&from == this) return;
+  Clear();
+  MergeFrom(from);
+}
+
+bool ExportMarketplacePresetResponse::IsInitialized() const {
+  return true;
+}
+
+void ExportMarketplacePresetResponse::InternalSwap(ExportMarketplacePresetResponse* other) {
+  using std::swap;
+  auto* lhs_arena = GetArenaForAllocation();
+  auto* rhs_arena = other->GetArenaForAllocation();
+  _internal_metadata_.InternalSwap(&other->_internal_metadata_);
+  ::PROTOBUF_NAMESPACE_ID::internal::ArenaStringPtr::InternalSwap(
+      &_impl_.payload_, lhs_arena,
+      &other->_impl_.payload_, rhs_arena
+  );
+  ::PROTOBUF_NAMESPACE_ID::internal::ArenaStringPtr::InternalSwap(
+      &_impl_.filename_, lhs_arena,
+      &other->_impl_.filename_, rhs_arena
+  );
+  ::PROTOBUF_NAMESPACE_ID::internal::ArenaStringPtr::InternalSwap(
+      &_impl_.format_, lhs_arena,
+      &other->_impl_.format_, rhs_arena
+  );
+  swap(_impl_.preset_, other->_impl_.preset_);
+}
+
+::PROTOBUF_NAMESPACE_ID::Metadata ExportMarketplacePresetResponse::GetMetadata() const {
+  return ::_pbi::AssignDescriptors(
+      &descriptor_table_trading_2eproto_getter, &descriptor_table_trading_2eproto_once,
+      file_level_metadata_trading_2eproto[31]);
+}
+
+// ===================================================================
+
+class RemoveMarketplacePresetRequest::_Internal {
+ public:
+};
+
+RemoveMarketplacePresetRequest::RemoveMarketplacePresetRequest(::PROTOBUF_NAMESPACE_ID::Arena* arena,
+                         bool is_message_owned)
+  : ::PROTOBUF_NAMESPACE_ID::Message(arena, is_message_owned) {
+  SharedCtor(arena, is_message_owned);
+  // @@protoc_insertion_point(arena_constructor:botcore.trading.v1.RemoveMarketplacePresetRequest)
+}
+RemoveMarketplacePresetRequest::RemoveMarketplacePresetRequest(const RemoveMarketplacePresetRequest& from)
+  : ::PROTOBUF_NAMESPACE_ID::Message() {
+  RemoveMarketplacePresetRequest* const _this = this; (void)_this;
+  new (&_impl_) Impl_{
+      decltype(_impl_.preset_id_){}
+    , /*decltype(_impl_._cached_size_)*/{}};
+
+  _internal_metadata_.MergeFrom<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>(from._internal_metadata_);
+  _impl_.preset_id_.InitDefault();
+  #ifdef PROTOBUF_FORCE_COPY_DEFAULT_STRING
+    _impl_.preset_id_.Set("", GetArenaForAllocation());
+  #endif // PROTOBUF_FORCE_COPY_DEFAULT_STRING
+  if (!from._internal_preset_id().empty()) {
+    _this->_impl_.preset_id_.Set(from._internal_preset_id(), 
+      _this->GetArenaForAllocation());
+  }
+  // @@protoc_insertion_point(copy_constructor:botcore.trading.v1.RemoveMarketplacePresetRequest)
+}
+
+inline void RemoveMarketplacePresetRequest::SharedCtor(
+    ::_pb::Arena* arena, bool is_message_owned) {
+  (void)arena;
+  (void)is_message_owned;
+  new (&_impl_) Impl_{
+      decltype(_impl_.preset_id_){}
+    , /*decltype(_impl_._cached_size_)*/{}
+  };
+  _impl_.preset_id_.InitDefault();
+  #ifdef PROTOBUF_FORCE_COPY_DEFAULT_STRING
+    _impl_.preset_id_.Set("", GetArenaForAllocation());
+  #endif // PROTOBUF_FORCE_COPY_DEFAULT_STRING
+}
+
+RemoveMarketplacePresetRequest::~RemoveMarketplacePresetRequest() {
+  // @@protoc_insertion_point(destructor:botcore.trading.v1.RemoveMarketplacePresetRequest)
+  if (auto *arena = _internal_metadata_.DeleteReturnArena<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>()) {
+  (void)arena;
+    return;
+  }
+  SharedDtor();
+}
+
+inline void RemoveMarketplacePresetRequest::SharedDtor() {
+  GOOGLE_DCHECK(GetArenaForAllocation() == nullptr);
+  _impl_.preset_id_.Destroy();
+}
+
+void RemoveMarketplacePresetRequest::SetCachedSize(int size) const {
+  _impl_._cached_size_.Set(size);
+}
+
+void RemoveMarketplacePresetRequest::Clear() {
+// @@protoc_insertion_point(message_clear_start:botcore.trading.v1.RemoveMarketplacePresetRequest)
+  uint32_t cached_has_bits = 0;
+  // Prevent compiler warnings about cached_has_bits being unused
+  (void) cached_has_bits;
+
+  _impl_.preset_id_.ClearToEmpty();
+  _internal_metadata_.Clear<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>();
+}
+
+const char* RemoveMarketplacePresetRequest::_InternalParse(const char* ptr, ::_pbi::ParseContext* ctx) {
+#define CHK_(x) if (PROTOBUF_PREDICT_FALSE(!(x))) goto failure
+  while (!ctx->Done(&ptr)) {
+    uint32_t tag;
+    ptr = ::_pbi::ReadTag(ptr, &tag);
+    switch (tag >> 3) {
+      // string preset_id = 1;
+      case 1:
+        if (PROTOBUF_PREDICT_TRUE(static_cast<uint8_t>(tag) == 10)) {
+          auto str = _internal_mutable_preset_id();
+          ptr = ::_pbi::InlineGreedyStringParser(str, ptr, ctx);
+          CHK_(ptr);
+          CHK_(::_pbi::VerifyUTF8(str, "botcore.trading.v1.RemoveMarketplacePresetRequest.preset_id"));
+        } else
+          goto handle_unusual;
+        continue;
+      default:
+        goto handle_unusual;
+    }  // switch
+  handle_unusual:
+    if ((tag == 0) || ((tag & 7) == 4)) {
+      CHK_(ptr);
+      ctx->SetLastTag(tag);
+      goto message_done;
+    }
+    ptr = UnknownFieldParse(
+        tag,
+        _internal_metadata_.mutable_unknown_fields<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>(),
+        ptr, ctx);
+    CHK_(ptr != nullptr);
+  }  // while
+message_done:
+  return ptr;
+failure:
+  ptr = nullptr;
+  goto message_done;
+#undef CHK_
+}
+
+uint8_t* RemoveMarketplacePresetRequest::_InternalSerialize(
+    uint8_t* target, ::PROTOBUF_NAMESPACE_ID::io::EpsCopyOutputStream* stream) const {
+  // @@protoc_insertion_point(serialize_to_array_start:botcore.trading.v1.RemoveMarketplacePresetRequest)
+  uint32_t cached_has_bits = 0;
+  (void) cached_has_bits;
+
+  // string preset_id = 1;
+  if (!this->_internal_preset_id().empty()) {
+    ::PROTOBUF_NAMESPACE_ID::internal::WireFormatLite::VerifyUtf8String(
+      this->_internal_preset_id().data(), static_cast<int>(this->_internal_preset_id().length()),
+      ::PROTOBUF_NAMESPACE_ID::internal::WireFormatLite::SERIALIZE,
+      "botcore.trading.v1.RemoveMarketplacePresetRequest.preset_id");
+    target = stream->WriteStringMaybeAliased(
+        1, this->_internal_preset_id(), target);
+  }
+
+  if (PROTOBUF_PREDICT_FALSE(_internal_metadata_.have_unknown_fields())) {
+    target = ::_pbi::WireFormat::InternalSerializeUnknownFieldsToArray(
+        _internal_metadata_.unknown_fields<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>(::PROTOBUF_NAMESPACE_ID::UnknownFieldSet::default_instance), target, stream);
+  }
+  // @@protoc_insertion_point(serialize_to_array_end:botcore.trading.v1.RemoveMarketplacePresetRequest)
+  return target;
+}
+
+size_t RemoveMarketplacePresetRequest::ByteSizeLong() const {
+// @@protoc_insertion_point(message_byte_size_start:botcore.trading.v1.RemoveMarketplacePresetRequest)
+  size_t total_size = 0;
+
+  uint32_t cached_has_bits = 0;
+  // Prevent compiler warnings about cached_has_bits being unused
+  (void) cached_has_bits;
+
+  // string preset_id = 1;
+  if (!this->_internal_preset_id().empty()) {
+    total_size += 1 +
+      ::PROTOBUF_NAMESPACE_ID::internal::WireFormatLite::StringSize(
+        this->_internal_preset_id());
+  }
+
+  return MaybeComputeUnknownFieldsSize(total_size, &_impl_._cached_size_);
+}
+
+const ::PROTOBUF_NAMESPACE_ID::Message::ClassData RemoveMarketplacePresetRequest::_class_data_ = {
+    ::PROTOBUF_NAMESPACE_ID::Message::CopyWithSourceCheck,
+    RemoveMarketplacePresetRequest::MergeImpl
+};
+const ::PROTOBUF_NAMESPACE_ID::Message::ClassData*RemoveMarketplacePresetRequest::GetClassData() const { return &_class_data_; }
+
+
+void RemoveMarketplacePresetRequest::MergeImpl(::PROTOBUF_NAMESPACE_ID::Message& to_msg, const ::PROTOBUF_NAMESPACE_ID::Message& from_msg) {
+  auto* const _this = static_cast<RemoveMarketplacePresetRequest*>(&to_msg);
+  auto& from = static_cast<const RemoveMarketplacePresetRequest&>(from_msg);
+  // @@protoc_insertion_point(class_specific_merge_from_start:botcore.trading.v1.RemoveMarketplacePresetRequest)
+  GOOGLE_DCHECK_NE(&from, _this);
+  uint32_t cached_has_bits = 0;
+  (void) cached_has_bits;
+
+  if (!from._internal_preset_id().empty()) {
+    _this->_internal_set_preset_id(from._internal_preset_id());
+  }
+  _this->_internal_metadata_.MergeFrom<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>(from._internal_metadata_);
+}
+
+void RemoveMarketplacePresetRequest::CopyFrom(const RemoveMarketplacePresetRequest& from) {
+// @@protoc_insertion_point(class_specific_copy_from_start:botcore.trading.v1.RemoveMarketplacePresetRequest)
+  if (&from == this) return;
+  Clear();
+  MergeFrom(from);
+}
+
+bool RemoveMarketplacePresetRequest::IsInitialized() const {
+  return true;
+}
+
+void RemoveMarketplacePresetRequest::InternalSwap(RemoveMarketplacePresetRequest* other) {
+  using std::swap;
+  auto* lhs_arena = GetArenaForAllocation();
+  auto* rhs_arena = other->GetArenaForAllocation();
+  _internal_metadata_.InternalSwap(&other->_internal_metadata_);
+  ::PROTOBUF_NAMESPACE_ID::internal::ArenaStringPtr::InternalSwap(
+      &_impl_.preset_id_, lhs_arena,
+      &other->_impl_.preset_id_, rhs_arena
+  );
+}
+
+::PROTOBUF_NAMESPACE_ID::Metadata RemoveMarketplacePresetRequest::GetMetadata() const {
+  return ::_pbi::AssignDescriptors(
+      &descriptor_table_trading_2eproto_getter, &descriptor_table_trading_2eproto_once,
+      file_level_metadata_trading_2eproto[32]);
+}
+
+// ===================================================================
+
+class RemoveMarketplacePresetResponse::_Internal {
+ public:
+};
+
+RemoveMarketplacePresetResponse::RemoveMarketplacePresetResponse(::PROTOBUF_NAMESPACE_ID::Arena* arena,
+                         bool is_message_owned)
+  : ::PROTOBUF_NAMESPACE_ID::Message(arena, is_message_owned) {
+  SharedCtor(arena, is_message_owned);
+  // @@protoc_insertion_point(arena_constructor:botcore.trading.v1.RemoveMarketplacePresetResponse)
+}
+RemoveMarketplacePresetResponse::RemoveMarketplacePresetResponse(const RemoveMarketplacePresetResponse& from)
+  : ::PROTOBUF_NAMESPACE_ID::Message() {
+  RemoveMarketplacePresetResponse* const _this = this; (void)_this;
+  new (&_impl_) Impl_{
+      decltype(_impl_.removed_){}
+    , /*decltype(_impl_._cached_size_)*/{}};
+
+  _internal_metadata_.MergeFrom<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>(from._internal_metadata_);
+  _this->_impl_.removed_ = from._impl_.removed_;
+  // @@protoc_insertion_point(copy_constructor:botcore.trading.v1.RemoveMarketplacePresetResponse)
+}
+
+inline void RemoveMarketplacePresetResponse::SharedCtor(
+    ::_pb::Arena* arena, bool is_message_owned) {
+  (void)arena;
+  (void)is_message_owned;
+  new (&_impl_) Impl_{
+      decltype(_impl_.removed_){false}
+    , /*decltype(_impl_._cached_size_)*/{}
+  };
+}
+
+RemoveMarketplacePresetResponse::~RemoveMarketplacePresetResponse() {
+  // @@protoc_insertion_point(destructor:botcore.trading.v1.RemoveMarketplacePresetResponse)
+  if (auto *arena = _internal_metadata_.DeleteReturnArena<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>()) {
+  (void)arena;
+    return;
+  }
+  SharedDtor();
+}
+
+inline void RemoveMarketplacePresetResponse::SharedDtor() {
+  GOOGLE_DCHECK(GetArenaForAllocation() == nullptr);
+}
+
+void RemoveMarketplacePresetResponse::SetCachedSize(int size) const {
+  _impl_._cached_size_.Set(size);
+}
+
+void RemoveMarketplacePresetResponse::Clear() {
+// @@protoc_insertion_point(message_clear_start:botcore.trading.v1.RemoveMarketplacePresetResponse)
+  uint32_t cached_has_bits = 0;
+  // Prevent compiler warnings about cached_has_bits being unused
+  (void) cached_has_bits;
+
+  _impl_.removed_ = false;
+  _internal_metadata_.Clear<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>();
+}
+
+const char* RemoveMarketplacePresetResponse::_InternalParse(const char* ptr, ::_pbi::ParseContext* ctx) {
+#define CHK_(x) if (PROTOBUF_PREDICT_FALSE(!(x))) goto failure
+  while (!ctx->Done(&ptr)) {
+    uint32_t tag;
+    ptr = ::_pbi::ReadTag(ptr, &tag);
+    switch (tag >> 3) {
+      // bool removed = 1;
+      case 1:
+        if (PROTOBUF_PREDICT_TRUE(static_cast<uint8_t>(tag) == 8)) {
+          _impl_.removed_ = ::PROTOBUF_NAMESPACE_ID::internal::ReadVarint64(&ptr);
+          CHK_(ptr);
+        } else
+          goto handle_unusual;
+        continue;
+      default:
+        goto handle_unusual;
+    }  // switch
+  handle_unusual:
+    if ((tag == 0) || ((tag & 7) == 4)) {
+      CHK_(ptr);
+      ctx->SetLastTag(tag);
+      goto message_done;
+    }
+    ptr = UnknownFieldParse(
+        tag,
+        _internal_metadata_.mutable_unknown_fields<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>(),
+        ptr, ctx);
+    CHK_(ptr != nullptr);
+  }  // while
+message_done:
+  return ptr;
+failure:
+  ptr = nullptr;
+  goto message_done;
+#undef CHK_
+}
+
+uint8_t* RemoveMarketplacePresetResponse::_InternalSerialize(
+    uint8_t* target, ::PROTOBUF_NAMESPACE_ID::io::EpsCopyOutputStream* stream) const {
+  // @@protoc_insertion_point(serialize_to_array_start:botcore.trading.v1.RemoveMarketplacePresetResponse)
+  uint32_t cached_has_bits = 0;
+  (void) cached_has_bits;
+
+  // bool removed = 1;
+  if (this->_internal_removed() != 0) {
+    target = stream->EnsureSpace(target);
+    target = ::_pbi::WireFormatLite::WriteBoolToArray(1, this->_internal_removed(), target);
+  }
+
+  if (PROTOBUF_PREDICT_FALSE(_internal_metadata_.have_unknown_fields())) {
+    target = ::_pbi::WireFormat::InternalSerializeUnknownFieldsToArray(
+        _internal_metadata_.unknown_fields<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>(::PROTOBUF_NAMESPACE_ID::UnknownFieldSet::default_instance), target, stream);
+  }
+  // @@protoc_insertion_point(serialize_to_array_end:botcore.trading.v1.RemoveMarketplacePresetResponse)
+  return target;
+}
+
+size_t RemoveMarketplacePresetResponse::ByteSizeLong() const {
+// @@protoc_insertion_point(message_byte_size_start:botcore.trading.v1.RemoveMarketplacePresetResponse)
+  size_t total_size = 0;
+
+  uint32_t cached_has_bits = 0;
+  // Prevent compiler warnings about cached_has_bits being unused
+  (void) cached_has_bits;
+
+  // bool removed = 1;
+  if (this->_internal_removed() != 0) {
+    total_size += 1 + 1;
+  }
+
+  return MaybeComputeUnknownFieldsSize(total_size, &_impl_._cached_size_);
+}
+
+const ::PROTOBUF_NAMESPACE_ID::Message::ClassData RemoveMarketplacePresetResponse::_class_data_ = {
+    ::PROTOBUF_NAMESPACE_ID::Message::CopyWithSourceCheck,
+    RemoveMarketplacePresetResponse::MergeImpl
+};
+const ::PROTOBUF_NAMESPACE_ID::Message::ClassData*RemoveMarketplacePresetResponse::GetClassData() const { return &_class_data_; }
+
+
+void RemoveMarketplacePresetResponse::MergeImpl(::PROTOBUF_NAMESPACE_ID::Message& to_msg, const ::PROTOBUF_NAMESPACE_ID::Message& from_msg) {
+  auto* const _this = static_cast<RemoveMarketplacePresetResponse*>(&to_msg);
+  auto& from = static_cast<const RemoveMarketplacePresetResponse&>(from_msg);
+  // @@protoc_insertion_point(class_specific_merge_from_start:botcore.trading.v1.RemoveMarketplacePresetResponse)
+  GOOGLE_DCHECK_NE(&from, _this);
+  uint32_t cached_has_bits = 0;
+  (void) cached_has_bits;
+
+  if (from._internal_removed() != 0) {
+    _this->_internal_set_removed(from._internal_removed());
+  }
+  _this->_internal_metadata_.MergeFrom<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>(from._internal_metadata_);
+}
+
+void RemoveMarketplacePresetResponse::CopyFrom(const RemoveMarketplacePresetResponse& from) {
+// @@protoc_insertion_point(class_specific_copy_from_start:botcore.trading.v1.RemoveMarketplacePresetResponse)
+  if (&from == this) return;
+  Clear();
+  MergeFrom(from);
+}
+
+bool RemoveMarketplacePresetResponse::IsInitialized() const {
+  return true;
+}
+
+void RemoveMarketplacePresetResponse::InternalSwap(RemoveMarketplacePresetResponse* other) {
+  using std::swap;
+  _internal_metadata_.InternalSwap(&other->_internal_metadata_);
+  swap(_impl_.removed_, other->_impl_.removed_);
+}
+
+::PROTOBUF_NAMESPACE_ID::Metadata RemoveMarketplacePresetResponse::GetMetadata() const {
+  return ::_pbi::AssignDescriptors(
+      &descriptor_table_trading_2eproto_getter, &descriptor_table_trading_2eproto_once,
+      file_level_metadata_trading_2eproto[33]);
+}
+
+// ===================================================================
+
+class ActivateMarketplacePresetRequest::_Internal {
+ public:
+};
+
+ActivateMarketplacePresetRequest::ActivateMarketplacePresetRequest(::PROTOBUF_NAMESPACE_ID::Arena* arena,
+                         bool is_message_owned)
+  : ::PROTOBUF_NAMESPACE_ID::Message(arena, is_message_owned) {
+  SharedCtor(arena, is_message_owned);
+  // @@protoc_insertion_point(arena_constructor:botcore.trading.v1.ActivateMarketplacePresetRequest)
+}
+ActivateMarketplacePresetRequest::ActivateMarketplacePresetRequest(const ActivateMarketplacePresetRequest& from)
+  : ::PROTOBUF_NAMESPACE_ID::Message() {
+  ActivateMarketplacePresetRequest* const _this = this; (void)_this;
+  new (&_impl_) Impl_{
+      decltype(_impl_.preset_id_){}
+    , /*decltype(_impl_._cached_size_)*/{}};
+
+  _internal_metadata_.MergeFrom<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>(from._internal_metadata_);
+  _impl_.preset_id_.InitDefault();
+  #ifdef PROTOBUF_FORCE_COPY_DEFAULT_STRING
+    _impl_.preset_id_.Set("", GetArenaForAllocation());
+  #endif // PROTOBUF_FORCE_COPY_DEFAULT_STRING
+  if (!from._internal_preset_id().empty()) {
+    _this->_impl_.preset_id_.Set(from._internal_preset_id(), 
+      _this->GetArenaForAllocation());
+  }
+  // @@protoc_insertion_point(copy_constructor:botcore.trading.v1.ActivateMarketplacePresetRequest)
+}
+
+inline void ActivateMarketplacePresetRequest::SharedCtor(
+    ::_pb::Arena* arena, bool is_message_owned) {
+  (void)arena;
+  (void)is_message_owned;
+  new (&_impl_) Impl_{
+      decltype(_impl_.preset_id_){}
+    , /*decltype(_impl_._cached_size_)*/{}
+  };
+  _impl_.preset_id_.InitDefault();
+  #ifdef PROTOBUF_FORCE_COPY_DEFAULT_STRING
+    _impl_.preset_id_.Set("", GetArenaForAllocation());
+  #endif // PROTOBUF_FORCE_COPY_DEFAULT_STRING
+}
+
+ActivateMarketplacePresetRequest::~ActivateMarketplacePresetRequest() {
+  // @@protoc_insertion_point(destructor:botcore.trading.v1.ActivateMarketplacePresetRequest)
+  if (auto *arena = _internal_metadata_.DeleteReturnArena<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>()) {
+  (void)arena;
+    return;
+  }
+  SharedDtor();
+}
+
+inline void ActivateMarketplacePresetRequest::SharedDtor() {
+  GOOGLE_DCHECK(GetArenaForAllocation() == nullptr);
+  _impl_.preset_id_.Destroy();
+}
+
+void ActivateMarketplacePresetRequest::SetCachedSize(int size) const {
+  _impl_._cached_size_.Set(size);
+}
+
+void ActivateMarketplacePresetRequest::Clear() {
+// @@protoc_insertion_point(message_clear_start:botcore.trading.v1.ActivateMarketplacePresetRequest)
+  uint32_t cached_has_bits = 0;
+  // Prevent compiler warnings about cached_has_bits being unused
+  (void) cached_has_bits;
+
+  _impl_.preset_id_.ClearToEmpty();
+  _internal_metadata_.Clear<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>();
+}
+
+const char* ActivateMarketplacePresetRequest::_InternalParse(const char* ptr, ::_pbi::ParseContext* ctx) {
+#define CHK_(x) if (PROTOBUF_PREDICT_FALSE(!(x))) goto failure
+  while (!ctx->Done(&ptr)) {
+    uint32_t tag;
+    ptr = ::_pbi::ReadTag(ptr, &tag);
+    switch (tag >> 3) {
+      // string preset_id = 1;
+      case 1:
+        if (PROTOBUF_PREDICT_TRUE(static_cast<uint8_t>(tag) == 10)) {
+          auto str = _internal_mutable_preset_id();
+          ptr = ::_pbi::InlineGreedyStringParser(str, ptr, ctx);
+          CHK_(ptr);
+          CHK_(::_pbi::VerifyUTF8(str, "botcore.trading.v1.ActivateMarketplacePresetRequest.preset_id"));
+        } else
+          goto handle_unusual;
+        continue;
+      default:
+        goto handle_unusual;
+    }  // switch
+  handle_unusual:
+    if ((tag == 0) || ((tag & 7) == 4)) {
+      CHK_(ptr);
+      ctx->SetLastTag(tag);
+      goto message_done;
+    }
+    ptr = UnknownFieldParse(
+        tag,
+        _internal_metadata_.mutable_unknown_fields<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>(),
+        ptr, ctx);
+    CHK_(ptr != nullptr);
+  }  // while
+message_done:
+  return ptr;
+failure:
+  ptr = nullptr;
+  goto message_done;
+#undef CHK_
+}
+
+uint8_t* ActivateMarketplacePresetRequest::_InternalSerialize(
+    uint8_t* target, ::PROTOBUF_NAMESPACE_ID::io::EpsCopyOutputStream* stream) const {
+  // @@protoc_insertion_point(serialize_to_array_start:botcore.trading.v1.ActivateMarketplacePresetRequest)
+  uint32_t cached_has_bits = 0;
+  (void) cached_has_bits;
+
+  // string preset_id = 1;
+  if (!this->_internal_preset_id().empty()) {
+    ::PROTOBUF_NAMESPACE_ID::internal::WireFormatLite::VerifyUtf8String(
+      this->_internal_preset_id().data(), static_cast<int>(this->_internal_preset_id().length()),
+      ::PROTOBUF_NAMESPACE_ID::internal::WireFormatLite::SERIALIZE,
+      "botcore.trading.v1.ActivateMarketplacePresetRequest.preset_id");
+    target = stream->WriteStringMaybeAliased(
+        1, this->_internal_preset_id(), target);
+  }
+
+  if (PROTOBUF_PREDICT_FALSE(_internal_metadata_.have_unknown_fields())) {
+    target = ::_pbi::WireFormat::InternalSerializeUnknownFieldsToArray(
+        _internal_metadata_.unknown_fields<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>(::PROTOBUF_NAMESPACE_ID::UnknownFieldSet::default_instance), target, stream);
+  }
+  // @@protoc_insertion_point(serialize_to_array_end:botcore.trading.v1.ActivateMarketplacePresetRequest)
+  return target;
+}
+
+size_t ActivateMarketplacePresetRequest::ByteSizeLong() const {
+// @@protoc_insertion_point(message_byte_size_start:botcore.trading.v1.ActivateMarketplacePresetRequest)
+  size_t total_size = 0;
+
+  uint32_t cached_has_bits = 0;
+  // Prevent compiler warnings about cached_has_bits being unused
+  (void) cached_has_bits;
+
+  // string preset_id = 1;
+  if (!this->_internal_preset_id().empty()) {
+    total_size += 1 +
+      ::PROTOBUF_NAMESPACE_ID::internal::WireFormatLite::StringSize(
+        this->_internal_preset_id());
+  }
+
+  return MaybeComputeUnknownFieldsSize(total_size, &_impl_._cached_size_);
+}
+
+const ::PROTOBUF_NAMESPACE_ID::Message::ClassData ActivateMarketplacePresetRequest::_class_data_ = {
+    ::PROTOBUF_NAMESPACE_ID::Message::CopyWithSourceCheck,
+    ActivateMarketplacePresetRequest::MergeImpl
+};
+const ::PROTOBUF_NAMESPACE_ID::Message::ClassData*ActivateMarketplacePresetRequest::GetClassData() const { return &_class_data_; }
+
+
+void ActivateMarketplacePresetRequest::MergeImpl(::PROTOBUF_NAMESPACE_ID::Message& to_msg, const ::PROTOBUF_NAMESPACE_ID::Message& from_msg) {
+  auto* const _this = static_cast<ActivateMarketplacePresetRequest*>(&to_msg);
+  auto& from = static_cast<const ActivateMarketplacePresetRequest&>(from_msg);
+  // @@protoc_insertion_point(class_specific_merge_from_start:botcore.trading.v1.ActivateMarketplacePresetRequest)
+  GOOGLE_DCHECK_NE(&from, _this);
+  uint32_t cached_has_bits = 0;
+  (void) cached_has_bits;
+
+  if (!from._internal_preset_id().empty()) {
+    _this->_internal_set_preset_id(from._internal_preset_id());
+  }
+  _this->_internal_metadata_.MergeFrom<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>(from._internal_metadata_);
+}
+
+void ActivateMarketplacePresetRequest::CopyFrom(const ActivateMarketplacePresetRequest& from) {
+// @@protoc_insertion_point(class_specific_copy_from_start:botcore.trading.v1.ActivateMarketplacePresetRequest)
+  if (&from == this) return;
+  Clear();
+  MergeFrom(from);
+}
+
+bool ActivateMarketplacePresetRequest::IsInitialized() const {
+  return true;
+}
+
+void ActivateMarketplacePresetRequest::InternalSwap(ActivateMarketplacePresetRequest* other) {
+  using std::swap;
+  auto* lhs_arena = GetArenaForAllocation();
+  auto* rhs_arena = other->GetArenaForAllocation();
+  _internal_metadata_.InternalSwap(&other->_internal_metadata_);
+  ::PROTOBUF_NAMESPACE_ID::internal::ArenaStringPtr::InternalSwap(
+      &_impl_.preset_id_, lhs_arena,
+      &other->_impl_.preset_id_, rhs_arena
+  );
+}
+
+::PROTOBUF_NAMESPACE_ID::Metadata ActivateMarketplacePresetRequest::GetMetadata() const {
+  return ::_pbi::AssignDescriptors(
+      &descriptor_table_trading_2eproto_getter, &descriptor_table_trading_2eproto_once,
+      file_level_metadata_trading_2eproto[34]);
+}
+
+// ===================================================================
+
+class ActivateMarketplacePresetResponse::_Internal {
+ public:
+  static const ::botcore::trading::v1::MarketplacePresetSummary& preset(const ActivateMarketplacePresetResponse* msg);
+};
+
+const ::botcore::trading::v1::MarketplacePresetSummary&
+ActivateMarketplacePresetResponse::_Internal::preset(const ActivateMarketplacePresetResponse* msg) {
+  return *msg->_impl_.preset_;
+}
+ActivateMarketplacePresetResponse::ActivateMarketplacePresetResponse(::PROTOBUF_NAMESPACE_ID::Arena* arena,
+                         bool is_message_owned)
+  : ::PROTOBUF_NAMESPACE_ID::Message(arena, is_message_owned) {
+  SharedCtor(arena, is_message_owned);
+  // @@protoc_insertion_point(arena_constructor:botcore.trading.v1.ActivateMarketplacePresetResponse)
+}
+ActivateMarketplacePresetResponse::ActivateMarketplacePresetResponse(const ActivateMarketplacePresetResponse& from)
+  : ::PROTOBUF_NAMESPACE_ID::Message() {
+  ActivateMarketplacePresetResponse* const _this = this; (void)_this;
+  new (&_impl_) Impl_{
+      decltype(_impl_.preset_){nullptr}
+    , /*decltype(_impl_._cached_size_)*/{}};
+
+  _internal_metadata_.MergeFrom<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>(from._internal_metadata_);
+  if (from._internal_has_preset()) {
+    _this->_impl_.preset_ = new ::botcore::trading::v1::MarketplacePresetSummary(*from._impl_.preset_);
+  }
+  // @@protoc_insertion_point(copy_constructor:botcore.trading.v1.ActivateMarketplacePresetResponse)
+}
+
+inline void ActivateMarketplacePresetResponse::SharedCtor(
+    ::_pb::Arena* arena, bool is_message_owned) {
+  (void)arena;
+  (void)is_message_owned;
+  new (&_impl_) Impl_{
+      decltype(_impl_.preset_){nullptr}
+    , /*decltype(_impl_._cached_size_)*/{}
+  };
+}
+
+ActivateMarketplacePresetResponse::~ActivateMarketplacePresetResponse() {
+  // @@protoc_insertion_point(destructor:botcore.trading.v1.ActivateMarketplacePresetResponse)
+  if (auto *arena = _internal_metadata_.DeleteReturnArena<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>()) {
+  (void)arena;
+    return;
+  }
+  SharedDtor();
+}
+
+inline void ActivateMarketplacePresetResponse::SharedDtor() {
+  GOOGLE_DCHECK(GetArenaForAllocation() == nullptr);
+  if (this != internal_default_instance()) delete _impl_.preset_;
+}
+
+void ActivateMarketplacePresetResponse::SetCachedSize(int size) const {
+  _impl_._cached_size_.Set(size);
+}
+
+void ActivateMarketplacePresetResponse::Clear() {
+// @@protoc_insertion_point(message_clear_start:botcore.trading.v1.ActivateMarketplacePresetResponse)
+  uint32_t cached_has_bits = 0;
+  // Prevent compiler warnings about cached_has_bits being unused
+  (void) cached_has_bits;
+
+  if (GetArenaForAllocation() == nullptr && _impl_.preset_ != nullptr) {
+    delete _impl_.preset_;
+  }
+  _impl_.preset_ = nullptr;
+  _internal_metadata_.Clear<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>();
+}
+
+const char* ActivateMarketplacePresetResponse::_InternalParse(const char* ptr, ::_pbi::ParseContext* ctx) {
+#define CHK_(x) if (PROTOBUF_PREDICT_FALSE(!(x))) goto failure
+  while (!ctx->Done(&ptr)) {
+    uint32_t tag;
+    ptr = ::_pbi::ReadTag(ptr, &tag);
+    switch (tag >> 3) {
+      // .botcore.trading.v1.MarketplacePresetSummary preset = 1;
+      case 1:
+        if (PROTOBUF_PREDICT_TRUE(static_cast<uint8_t>(tag) == 10)) {
+          ptr = ctx->ParseMessage(_internal_mutable_preset(), ptr);
+          CHK_(ptr);
+        } else
+          goto handle_unusual;
+        continue;
+      default:
+        goto handle_unusual;
+    }  // switch
+  handle_unusual:
+    if ((tag == 0) || ((tag & 7) == 4)) {
+      CHK_(ptr);
+      ctx->SetLastTag(tag);
+      goto message_done;
+    }
+    ptr = UnknownFieldParse(
+        tag,
+        _internal_metadata_.mutable_unknown_fields<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>(),
+        ptr, ctx);
+    CHK_(ptr != nullptr);
+  }  // while
+message_done:
+  return ptr;
+failure:
+  ptr = nullptr;
+  goto message_done;
+#undef CHK_
+}
+
+uint8_t* ActivateMarketplacePresetResponse::_InternalSerialize(
+    uint8_t* target, ::PROTOBUF_NAMESPACE_ID::io::EpsCopyOutputStream* stream) const {
+  // @@protoc_insertion_point(serialize_to_array_start:botcore.trading.v1.ActivateMarketplacePresetResponse)
+  uint32_t cached_has_bits = 0;
+  (void) cached_has_bits;
+
+  // .botcore.trading.v1.MarketplacePresetSummary preset = 1;
+  if (this->_internal_has_preset()) {
+    target = ::PROTOBUF_NAMESPACE_ID::internal::WireFormatLite::
+      InternalWriteMessage(1, _Internal::preset(this),
+        _Internal::preset(this).GetCachedSize(), target, stream);
+  }
+
+  if (PROTOBUF_PREDICT_FALSE(_internal_metadata_.have_unknown_fields())) {
+    target = ::_pbi::WireFormat::InternalSerializeUnknownFieldsToArray(
+        _internal_metadata_.unknown_fields<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>(::PROTOBUF_NAMESPACE_ID::UnknownFieldSet::default_instance), target, stream);
+  }
+  // @@protoc_insertion_point(serialize_to_array_end:botcore.trading.v1.ActivateMarketplacePresetResponse)
+  return target;
+}
+
+size_t ActivateMarketplacePresetResponse::ByteSizeLong() const {
+// @@protoc_insertion_point(message_byte_size_start:botcore.trading.v1.ActivateMarketplacePresetResponse)
+  size_t total_size = 0;
+
+  uint32_t cached_has_bits = 0;
+  // Prevent compiler warnings about cached_has_bits being unused
+  (void) cached_has_bits;
+
+  // .botcore.trading.v1.MarketplacePresetSummary preset = 1;
+  if (this->_internal_has_preset()) {
+    total_size += 1 +
+      ::PROTOBUF_NAMESPACE_ID::internal::WireFormatLite::MessageSize(
+        *_impl_.preset_);
+  }
+
+  return MaybeComputeUnknownFieldsSize(total_size, &_impl_._cached_size_);
+}
+
+const ::PROTOBUF_NAMESPACE_ID::Message::ClassData ActivateMarketplacePresetResponse::_class_data_ = {
+    ::PROTOBUF_NAMESPACE_ID::Message::CopyWithSourceCheck,
+    ActivateMarketplacePresetResponse::MergeImpl
+};
+const ::PROTOBUF_NAMESPACE_ID::Message::ClassData*ActivateMarketplacePresetResponse::GetClassData() const { return &_class_data_; }
+
+
+void ActivateMarketplacePresetResponse::MergeImpl(::PROTOBUF_NAMESPACE_ID::Message& to_msg, const ::PROTOBUF_NAMESPACE_ID::Message& from_msg) {
+  auto* const _this = static_cast<ActivateMarketplacePresetResponse*>(&to_msg);
+  auto& from = static_cast<const ActivateMarketplacePresetResponse&>(from_msg);
+  // @@protoc_insertion_point(class_specific_merge_from_start:botcore.trading.v1.ActivateMarketplacePresetResponse)
+  GOOGLE_DCHECK_NE(&from, _this);
+  uint32_t cached_has_bits = 0;
+  (void) cached_has_bits;
+
+  if (from._internal_has_preset()) {
+    _this->_internal_mutable_preset()->::botcore::trading::v1::MarketplacePresetSummary::MergeFrom(
+        from._internal_preset());
+  }
+  _this->_internal_metadata_.MergeFrom<::PROTOBUF_NAMESPACE_ID::UnknownFieldSet>(from._internal_metadata_);
+}
+
+void ActivateMarketplacePresetResponse::CopyFrom(const ActivateMarketplacePresetResponse& from) {
+// @@protoc_insertion_point(class_specific_copy_from_start:botcore.trading.v1.ActivateMarketplacePresetResponse)
+  if (&from == this) return;
+  Clear();
+  MergeFrom(from);
+}
+
+bool ActivateMarketplacePresetResponse::IsInitialized() const {
+  return true;
+}
+
+void ActivateMarketplacePresetResponse::InternalSwap(ActivateMarketplacePresetResponse* other) {
+  using std::swap;
+  _internal_metadata_.InternalSwap(&other->_internal_metadata_);
+  swap(_impl_.preset_, other->_impl_.preset_);
+}
+
+::PROTOBUF_NAMESPACE_ID::Metadata ActivateMarketplacePresetResponse::GetMetadata() const {
+  return ::_pbi::AssignDescriptors(
+      &descriptor_table_trading_2eproto_getter, &descriptor_table_trading_2eproto_once,
+      file_level_metadata_trading_2eproto[35]);
+}
+
 // @@protoc_insertion_point(namespace_scope)
 }  // namespace v1
 }  // namespace trading
@@ -8304,6 +11151,50 @@ Arena::CreateMaybeMessage< ::botcore::trading::v1::HealthCheckRequest >(Arena* a
 template<> PROTOBUF_NOINLINE ::botcore::trading::v1::HealthCheckResponse*
 Arena::CreateMaybeMessage< ::botcore::trading::v1::HealthCheckResponse >(Arena* arena) {
   return Arena::CreateMessageInternal< ::botcore::trading::v1::HealthCheckResponse >(arena);
+}
+template<> PROTOBUF_NOINLINE ::botcore::trading::v1::MarketplacePresetSummary*
+Arena::CreateMaybeMessage< ::botcore::trading::v1::MarketplacePresetSummary >(Arena* arena) {
+  return Arena::CreateMessageInternal< ::botcore::trading::v1::MarketplacePresetSummary >(arena);
+}
+template<> PROTOBUF_NOINLINE ::botcore::trading::v1::ListMarketplacePresetsRequest*
+Arena::CreateMaybeMessage< ::botcore::trading::v1::ListMarketplacePresetsRequest >(Arena* arena) {
+  return Arena::CreateMessageInternal< ::botcore::trading::v1::ListMarketplacePresetsRequest >(arena);
+}
+template<> PROTOBUF_NOINLINE ::botcore::trading::v1::ListMarketplacePresetsResponse*
+Arena::CreateMaybeMessage< ::botcore::trading::v1::ListMarketplacePresetsResponse >(Arena* arena) {
+  return Arena::CreateMessageInternal< ::botcore::trading::v1::ListMarketplacePresetsResponse >(arena);
+}
+template<> PROTOBUF_NOINLINE ::botcore::trading::v1::ImportMarketplacePresetRequest*
+Arena::CreateMaybeMessage< ::botcore::trading::v1::ImportMarketplacePresetRequest >(Arena* arena) {
+  return Arena::CreateMessageInternal< ::botcore::trading::v1::ImportMarketplacePresetRequest >(arena);
+}
+template<> PROTOBUF_NOINLINE ::botcore::trading::v1::ImportMarketplacePresetResponse*
+Arena::CreateMaybeMessage< ::botcore::trading::v1::ImportMarketplacePresetResponse >(Arena* arena) {
+  return Arena::CreateMessageInternal< ::botcore::trading::v1::ImportMarketplacePresetResponse >(arena);
+}
+template<> PROTOBUF_NOINLINE ::botcore::trading::v1::ExportMarketplacePresetRequest*
+Arena::CreateMaybeMessage< ::botcore::trading::v1::ExportMarketplacePresetRequest >(Arena* arena) {
+  return Arena::CreateMessageInternal< ::botcore::trading::v1::ExportMarketplacePresetRequest >(arena);
+}
+template<> PROTOBUF_NOINLINE ::botcore::trading::v1::ExportMarketplacePresetResponse*
+Arena::CreateMaybeMessage< ::botcore::trading::v1::ExportMarketplacePresetResponse >(Arena* arena) {
+  return Arena::CreateMessageInternal< ::botcore::trading::v1::ExportMarketplacePresetResponse >(arena);
+}
+template<> PROTOBUF_NOINLINE ::botcore::trading::v1::RemoveMarketplacePresetRequest*
+Arena::CreateMaybeMessage< ::botcore::trading::v1::RemoveMarketplacePresetRequest >(Arena* arena) {
+  return Arena::CreateMessageInternal< ::botcore::trading::v1::RemoveMarketplacePresetRequest >(arena);
+}
+template<> PROTOBUF_NOINLINE ::botcore::trading::v1::RemoveMarketplacePresetResponse*
+Arena::CreateMaybeMessage< ::botcore::trading::v1::RemoveMarketplacePresetResponse >(Arena* arena) {
+  return Arena::CreateMessageInternal< ::botcore::trading::v1::RemoveMarketplacePresetResponse >(arena);
+}
+template<> PROTOBUF_NOINLINE ::botcore::trading::v1::ActivateMarketplacePresetRequest*
+Arena::CreateMaybeMessage< ::botcore::trading::v1::ActivateMarketplacePresetRequest >(Arena* arena) {
+  return Arena::CreateMessageInternal< ::botcore::trading::v1::ActivateMarketplacePresetRequest >(arena);
+}
+template<> PROTOBUF_NOINLINE ::botcore::trading::v1::ActivateMarketplacePresetResponse*
+Arena::CreateMaybeMessage< ::botcore::trading::v1::ActivateMarketplacePresetResponse >(Arena* arena) {
+  return Arena::CreateMessageInternal< ::botcore::trading::v1::ActivateMarketplacePresetResponse >(arena);
 }
 PROTOBUF_NAMESPACE_CLOSE
 

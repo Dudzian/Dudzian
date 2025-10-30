@@ -1,0 +1,29 @@
+platform = "macos"
+
+[pyinstaller]
+entrypoint = "../../scripts/run_local_bot.py"
+runtime_name = "bot_core_runtime"
+hidden_imports = [
+  "bot_core.runtime.bootstrap",
+  "bot_core.runtime.pipeline",
+  "bot_core.runtime.config",
+]
+dist_dir = "../../var/dist/pyinstaller/macos"
+work_dir = "../../var/build/pyinstaller/macos"
+
+[briefcase]
+project = "../../ui/briefcase"
+app = "BotTradingShell"
+output_dir = "../../var/dist/briefcase/macos"
+
+[bundle]
+output_dir = "../../var/dist/installers/macos"
+work_dir = "../../var/build/installers/macos"
+qt_dist = "../samples/ui"
+include = [
+  "config=../samples/config",
+  "daemon=../samples/daemon",
+  "resources=../samples/resources",
+]
+metadata_path = "../../var/dist/installers/macos/installer_metadata.json"
+

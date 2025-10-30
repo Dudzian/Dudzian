@@ -35,6 +35,11 @@ from bot_core.exchanges.errors import (
 )
 from bot_core.exchanges.error_mapping import raise_for_binance_error
 from bot_core.exchanges.health import Watchdog
+from bot_core.exchanges.rate_limiter import (
+    RateLimitRule,
+    get_global_rate_limiter_registry,
+    normalize_rate_limit_rules,
+)
 from bot_core.exchanges.streaming import LocalLongPollStream
 from bot_core.observability.metrics import MetricsRegistry, get_global_metrics_registry
 
@@ -51,6 +56,11 @@ _WEIGHT_HEADERS = (
     "x-mbx-used-weight-1m",
     "x-mbx-order-count-10s",
     "x-mbx-order-count-1m",
+)
+
+_RATE_LIMIT_DEFAULTS: tuple[RateLimitRule, ...] = (
+    RateLimitRule(rate=20, per=1.0),
+    RateLimitRule(rate=1200, per=60.0),
 )
 
 
@@ -227,6 +237,14 @@ class BinanceFuturesAdapter(ExchangeAdapter):
         )
         self._tracked_position_labels: set[tuple[str, str]] = set()
         self._watchdog = watchdog or Watchdog()
+        self._rate_limiter = get_global_rate_limiter_registry().configure(
+            f"{self.name}:{self._environment.value}",
+            normalize_rate_limit_rules(
+                self._settings.get("rate_limit_rules"),
+                _RATE_LIMIT_DEFAULTS,
+            ),
+            metric_labels={"exchange": self.name, "environment": self._environment.value},
+        )
 
     # ------------------------------------------------------------------
     # Konfiguracja streamingu long-pollowego
@@ -424,6 +442,8 @@ class BinanceFuturesAdapter(ExchangeAdapter):
     ) -> dict[str, object] | list[object]:
         attempt = 0
         while True:
+            weight = 10.0 if signed else 2.0
+            self._rate_limiter.acquire(weight=weight)
             start = time.perf_counter()
             try:
                 with urlopen(request, timeout=15) as response:  # nosec: B310 - zaufany endpoint

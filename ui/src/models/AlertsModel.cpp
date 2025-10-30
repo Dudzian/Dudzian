@@ -141,6 +141,9 @@ void AlertsModel::raiseAlert(const QString& alertId,
                              Severity severity,
                              bool sticky)
 {
+    const int existingIndex = indexOfAlert(alertId);
+    const Severity previousSeverity = existingIndex >= 0 ? m_alerts.at(existingIndex).severity : Severity::Info;
+
     Alert alert;
     alert.id = alertId;
     alert.title = title;
@@ -150,9 +153,14 @@ void AlertsModel::raiseAlert(const QString& alertId,
     alert.sticky = sticky;
 
     const bool ackChanged = upsertAlert(alert);
+    const bool severityEscalated = existingIndex >= 0 && severity > previousSeverity;
+    const bool isNew = existingIndex < 0;
+
     recomputeCounts();
     if (ackChanged)
         Q_EMIT acknowledgementsChanged();
+    if (isNew || severityEscalated)
+        Q_EMIT alertRaised(alertId, static_cast<int>(severity), title, description);
 }
 
 void AlertsModel::clearAlert(const QString& alertId)

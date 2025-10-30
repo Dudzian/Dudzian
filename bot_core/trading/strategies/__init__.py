@@ -3,7 +3,9 @@ from __future__ import annotations
 
 from .plugins import (
     ArbitrageStrategy,
+    CrossExchangeHedgeStrategy,
     DayTradingStrategy,
+    FuturesSpreadStrategy,
     GridTradingStrategy,
     MeanReversionStrategy,
     OptionsIncomeStrategy,
@@ -17,7 +19,9 @@ from .plugins import (
 
 __all__ = [
     "ArbitrageStrategy",
+    "CrossExchangeHedgeStrategy",
     "DayTradingStrategy",
+    "FuturesSpreadStrategy",
     "GridTradingStrategy",
     "MeanReversionStrategy",
     "OptionsIncomeStrategy",

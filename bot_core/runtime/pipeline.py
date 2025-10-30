@@ -26,13 +26,18 @@ from bot_core.config.models import (
     MultiStrategySchedulerConfig,
     MultiStrategySuspensionConfig,
     SignalLimitOverrideConfig,
+    RuntimeAppConfig,
+    RuntimeExecutionSettings,
+    RuntimeOptimizationSettings,
+    StrategyOptimizationTaskConfig,
 )
 from bot_core.config.loader import load_core_config
 from bot_core.data import CachedOHLCVSource, create_cached_ohlcv_source, resolve_cache_namespace
-from bot_core.data.base import OHLCVRequest
+from bot_core.data.base import OHLCVRequest, OHLCVResponse
 from bot_core.data.ohlcv import OHLCVBackfillService
 from bot_core.execution.base import ExecutionContext, ExecutionService, PriceResolver
 from bot_core.execution.paper import MarketMetadata, PaperTradingExecutionService
+from bot_core.execution import build_live_execution_service, resolve_execution_mode
 from bot_core.exchanges.base import (
     AccountSnapshot,
     Environment,
@@ -41,6 +46,7 @@ from bot_core.exchanges.base import (
 )
 from bot_core.exchanges.streaming import LocalLongPollStream, StreamBatch
 from bot_core.market_intel import MarketIntelAggregator, MarketIntelQuery, MarketIntelSnapshot
+from bot_core.optimization import OptimizationScheduler, StrategyOptimizer
 from bot_core.portfolio import (
     CopyTradingFollowerConfig,
     MultiPortfolioScheduler,
@@ -92,6 +98,7 @@ from bot_core.strategies.catalog import (
     StrategyDefinition,
 )
 
+
 try:  # pragma: no cover - strategia może być opcjonalna w starszych gałęziach
     from bot_core.strategies.daily_trend import (  # type: ignore
         DailyTrendMomentumSettings,
@@ -113,7 +120,122 @@ except Exception:  # pragma: no cover
     summarize_evaluation_payloads = None  # type: ignore
 
 _DEFAULT_LEDGER_SUBDIR = Path("audit/ledger")
+_DEFAULT_OHLCV_COLUMNS: tuple[str, ...] = (
+    "open_time",
+    "open",
+    "high",
+    "low",
+    "close",
+    "volume",
+)
 _LOGGER = logging.getLogger(__name__)
+
+
+def _ensure_local_market_data_availability(
+    environment: EnvironmentConfig,
+    data_source: CachedOHLCVSource,
+    markets: Mapping[str, MarketMetadata],
+    interval: str,
+    *,
+    backfill_service: OHLCVBackfillService | None = None,
+    adapter: ExchangeAdapter | None = None,
+) -> None:
+    """Zapewnia minimalny zestaw danych OHLCV wymaganych do startu runtime."""
+
+    offline_mode = bool(getattr(environment, "offline_mode", False))
+    now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+
+    # Wstępna kontrola – jeżeli wszystkie symbole są obecne w cache, nic nie robimy.
+    missing_symbols: list[str] = []
+    for symbol in markets.keys():
+        request = OHLCVRequest(symbol=symbol, interval=interval, start=0, end=now_ms, limit=1)
+        try:
+            response = data_source.fetch_ohlcv(request)
+        except Exception:  # pragma: no cover - upstream cache może rzucić podczas inicjalizacji
+            response = OHLCVResponse(columns=_DEFAULT_OHLCV_COLUMNS, rows=())
+        if response.rows:
+            continue
+        missing_symbols.append(symbol)
+
+    if not missing_symbols:
+        return
+
+    lookback_days = getattr(environment, "offline_backfill_days", 7 if offline_mode else 30)
+    lookback_ms = max(int(lookback_days) * 86_400_000, 86_400_000)
+    start_ms = max(0, now_ms - lookback_ms)
+
+    if offline_mode:
+        _LOGGER.debug(
+            "Środowisko offline – pomijam dogrywanie danych OHLCV (symbole=%s)",
+            missing_symbols,
+        )
+        return
+
+    if not offline_mode and backfill_service is not None:
+        try:
+            backfill_service.synchronize(
+                symbols=missing_symbols,
+                interval=interval,
+                start=start_ms,
+                end=now_ms,
+            )
+            return
+        except Exception:  # pragma: no cover - upstream może być chwilowo niedostępny
+            _LOGGER.exception(
+                "Nie udało się wykonać backfillu startowego (%s, %s) – spróbuję fallbacku adaptera",
+                missing_symbols,
+                interval,
+            )
+
+    if adapter is None:
+        _LOGGER.debug(
+            "Brak adaptera giełdowego – pomijam wypełnianie cache danych OHLCV (symbole=%s)",
+            missing_symbols,
+        )
+        return
+
+    warmup_limit = max(int(getattr(environment, "offline_warmup_candles", 180)), 1)
+    fetch_start = None if offline_mode else start_ms
+    fetch_end = None if offline_mode else now_ms
+
+    for symbol in missing_symbols:
+        try:
+            rows = adapter.fetch_ohlcv(
+                symbol,
+                interval,
+                start=fetch_start,
+                end=fetch_end,
+                limit=warmup_limit,
+            )
+        except Exception:  # pragma: no cover - diagnostyka adaptera testowego
+            _LOGGER.warning(
+                "Nie udało się pobrać danych OHLCV przez adapter w trybie offline (%s %s)",
+                symbol,
+                interval,
+                exc_info=True,
+            )
+            continue
+
+        if not rows:
+            _LOGGER.debug(
+                "Adapter nie zwrócił danych OHLCV (%s %s) – cache pozostaje pusty",
+                symbol,
+                interval,
+            )
+            continue
+
+        cache_key = data_source._cache_key(symbol, interval)  # pylint: disable=protected-access
+        payload_rows = [list(map(float, row)) for row in rows if row]
+        if not payload_rows:
+            continue
+
+        data_source.storage.write(
+            cache_key,
+            {
+                "columns": list(_DEFAULT_OHLCV_COLUMNS),
+                "rows": payload_rows,
+            },
+        )
 
 
 def _minutes_to_timedelta(value: float | int | None, default_minutes: float) -> timedelta | None:
@@ -238,6 +360,8 @@ def build_daily_trend_pipeline(
     secret_manager: SecretManager,
     adapter_factories: Mapping[str, ExchangeAdapterFactory] | None = None,
     risk_profile_name: str | None = None,
+    core_config: CoreConfig | None = None,
+    runtime_config: RuntimeAppConfig | None = None,
 ) -> DailyTrendPipeline:
     """Tworzy kompletny pipeline strategii trend-following D1 dla środowiska paper/testnet."""
     bootstrap_ctx = bootstrap_environment(
@@ -246,6 +370,7 @@ def build_daily_trend_pipeline(
         secret_manager=secret_manager,
         adapter_factories=adapter_factories,
         risk_profile_name=risk_profile_name,
+        core_config=core_config,
     )
     core_config = bootstrap_ctx.core_config
     environment = bootstrap_ctx.environment
@@ -288,7 +413,15 @@ def build_daily_trend_pipeline(
     runtime_cfg = _resolve_runtime(core_config, resolved_controller_name)
     universe = _resolve_universe(core_config, environment)
 
-    paper_settings = _normalize_paper_settings(environment)
+    execution_settings: RuntimeExecutionSettings | None = (
+        getattr(runtime_config, "execution", None) if runtime_config is not None else None
+    )
+    execution_mode = resolve_execution_mode(execution_settings, environment)
+
+    if execution_mode == "paper":
+        paper_settings = _normalize_paper_settings(environment)
+    else:
+        paper_settings = _derive_live_settings(environment, universe)
     allowed_quotes = paper_settings["allowed_quotes"]
 
     markets = _build_markets(universe, environment.exchange, allowed_quotes, paper_settings)
@@ -298,21 +431,25 @@ def build_daily_trend_pipeline(
         )
 
     cached_source = _create_cached_source(bootstrap_ctx.adapter, environment)
+    backfill_service = OHLCVBackfillService(cached_source)
     _ensure_local_market_data_availability(
         environment,
         cached_source,
         markets,
         runtime_cfg.interval,
+        backfill_service=backfill_service,
+        adapter=bootstrap_ctx.adapter,
     )
     storage = cached_source.storage
-    backfill_service = OHLCVBackfillService(cached_source)
 
     price_resolver = _build_price_resolver(cached_source, runtime_cfg.interval)
 
     execution_service = _select_execution_service(
-        bootstrap_ctx,
-        markets,
-        paper_settings,
+        bootstrap_ctx=bootstrap_ctx,
+        markets=markets,
+        paper_settings=paper_settings,
+        runtime_settings=execution_settings,
+        execution_mode=execution_mode,
         price_resolver=price_resolver,
     )
 
@@ -337,6 +474,7 @@ def build_daily_trend_pipeline(
     execution_metadata: MutableMapping[str, str] = {}
     if paper_settings["default_leverage"] > 1.0:
         execution_metadata["leverage"] = f"{paper_settings['default_leverage']:.2f}"
+    execution_metadata["mode"] = execution_mode
 
     execution_context = ExecutionContext(
         portfolio_id=paper_settings["portfolio_id"],
@@ -346,14 +484,22 @@ def build_daily_trend_pipeline(
         price_resolver=price_resolver,
     )
 
-    account_loader = _build_account_loader(
-        execution_service=execution_service,
-        data_source=cached_source,
-        markets=markets,
-        interval=runtime_cfg.interval,
-        valuation_asset=paper_settings["valuation_asset"],
-        cash_assets=allowed_quotes,
-    )
+    if isinstance(execution_service, PaperTradingExecutionService):
+        account_loader = _build_account_loader(
+            execution_service=execution_service,
+            data_source=cached_source,
+            markets=markets,
+            interval=runtime_cfg.interval,
+            valuation_asset=paper_settings["valuation_asset"],
+            cash_assets=allowed_quotes,
+        )
+    else:
+        adapter = getattr(bootstrap_ctx, "adapter", None)
+        if not isinstance(adapter, ExchangeAdapter):
+            raise RuntimeError(
+                "Tryb live wymaga aktywnego adaptera giełdowego udostępnionego przez bootstrap"
+            )
+        account_loader = _build_live_account_loader(adapter)
 
     controller = DailyTrendController(
         core_config=core_config,
@@ -610,6 +756,56 @@ def _normalize_paper_settings(environment: EnvironmentConfig) -> MutableMapping[
     }
 
 
+def _derive_live_settings(
+    environment: EnvironmentConfig,
+    universe: InstrumentUniverseConfig,
+) -> MutableMapping[str, object]:
+    """Buduje minimalny zestaw parametrów dla trybu live."""
+
+    adapter_settings = getattr(environment, "adapter_settings", {}) or {}
+    live_settings = adapter_settings.get("live_trading", {}) or {}
+
+    allowed_quotes: set[str] = {
+        instrument.quote_asset.upper()
+        for instrument in getattr(universe, "instruments", ())
+        if getattr(instrument, "quote_asset", None)
+    }
+    if not allowed_quotes:
+        fallback = str(live_settings.get("valuation_asset", "USDT"))
+        allowed_quotes = {fallback.upper() or "USDT"}
+
+    valuation_asset = str(live_settings.get("valuation_asset", next(iter(allowed_quotes)))).upper()
+    position_size = max(0.0, float(live_settings.get("position_size", 0.0)))
+    default_leverage = max(1.0, float(live_settings.get("default_leverage", 1.0)))
+    initial_balances = {
+        str(asset).upper(): float(amount)
+        for asset, amount in (live_settings.get("initial_balances", {}) or {}).items()
+    }
+
+    return {
+        "valuation_asset": valuation_asset,
+        "position_size": position_size,
+        "allowed_quotes": allowed_quotes,
+        "default_leverage": default_leverage,
+        "initial_balances": initial_balances,
+        "default_market": {
+            "min_quantity": 0.0,
+            "min_notional": 0.0,
+            "step_size": None,
+            "tick_size": None,
+        },
+        "market_overrides": {},
+        "portfolio_id": str(live_settings.get("portfolio_id", environment.name)),
+        "maker_fee": float(live_settings.get("maker_fee", 0.0)),
+        "taker_fee": float(live_settings.get("taker_fee", 0.0)),
+        "slippage_bps": float(live_settings.get("slippage_bps", 0.0)),
+        "ledger_directory": None,
+        "ledger_filename_pattern": "ledger-%Y%m%d.jsonl",
+        "ledger_retention_days": None,
+        "ledger_fsync": False,
+    }
+
+
 def _build_markets(
     universe: InstrumentUniverseConfig,
     exchange_name: str,
@@ -663,15 +859,38 @@ def _build_execution_service(
 
 
 def _select_execution_service(
+    *,
     bootstrap_ctx: BootstrapContext,
     markets: Mapping[str, MarketMetadata],
     paper_settings: Mapping[str, object],
-    *,
+    runtime_settings: RuntimeExecutionSettings | None,
+    execution_mode: str,
     price_resolver: PriceResolver | None = None,
-) -> PaperTradingExecutionService:
+) -> ExecutionService:
     """Zwraca usługę egzekucyjną preferując instancję z bootstrapu."""
 
     context_service = getattr(bootstrap_ctx, "execution_service", None)
+
+    if execution_mode == "live":
+        if isinstance(context_service, ExecutionService) and not isinstance(
+            context_service, PaperTradingExecutionService
+        ):
+            return context_service
+        settings = runtime_settings or RuntimeExecutionSettings()
+        service = build_live_execution_service(
+            bootstrap_ctx=bootstrap_ctx,
+            environment=bootstrap_ctx.environment,
+            runtime_settings=settings,
+        )
+        try:
+            bootstrap_ctx.execution_service = service
+        except Exception:  # pragma: no cover - kontekst może być typu tylko-do-odczytu
+            _LOGGER.debug(
+                "Nie udało się zapisać LiveExecutionRouter w BootstrapContext",
+                exc_info=True,
+            )
+        return service
+
     if isinstance(context_service, PaperTradingExecutionService):
         return context_service
 
@@ -859,6 +1078,16 @@ def _build_account_loader(
     return loader
 
 
+def _build_live_account_loader(adapter: ExchangeAdapter) -> Callable[[], AccountSnapshot]:
+    def loader() -> AccountSnapshot:
+        snapshot = adapter.fetch_account_snapshot()
+        if not isinstance(snapshot, AccountSnapshot):
+            raise TypeError("Adapter giełdowy zwrócił nieprawidłowy snapshot konta")
+        return snapshot
+
+    return loader
+
+
 @dataclass(slots=True)
 class MultiStrategyRuntime:
     """Zestaw komponentów do uruchomienia scheduler-a multi-strategy."""
@@ -875,12 +1104,15 @@ class MultiStrategyRuntime:
     tco_reporter: RuntimeTCOReporter | None = None
     stream_feed: "StreamingStrategyFeed | None" = None
     decision_sink: "DecisionAwareSignalSink | None" = None
+    optimization_scheduler: OptimizationScheduler | None = None
 
     def shutdown(self) -> None:
         """Zatrzymuje komponenty dodatkowe (np. stream feed)."""
 
         if self.stream_feed is not None:
             self.stream_feed.stop()
+        if self.optimization_scheduler is not None:
+            self.optimization_scheduler.stop()
 
     def diagnostics_snapshot(
         self,
@@ -913,6 +1145,11 @@ class MultiStrategyRuntime:
         }
         snapshot["strategies"] = strategies_summary
         return snapshot
+
+    def trigger_optimization(self, task_name: str | None = None):
+        if self.optimization_scheduler is None:
+            return ()
+        return self.optimization_scheduler.trigger(task_name)
 
 
 class OHLCVStrategyFeed(StrategyDataFeed):
@@ -1480,6 +1717,93 @@ def _apply_initial_suspensions(
                 until=until,
                 duration_seconds=duration,
             )
+
+
+def _build_optimization_evaluator(
+    runtime: "MultiStrategyRuntime",
+    task_cfg: StrategyOptimizationTaskConfig,
+    optimization_cfg: RuntimeOptimizationSettings,
+) -> Callable[[StrategyEngine, Mapping[str, Any]], tuple[float, Mapping[str, Any]]]:
+    history_bars = getattr(task_cfg.evaluation, "history_bars", None) or optimization_cfg.default_history_bars
+    warmup_bars = getattr(task_cfg.evaluation, "warmup_bars", 0)
+    warmup_bars = max(0, min(history_bars - 1, int(warmup_bars)))
+    data_feed = getattr(runtime, "data_feed", None)
+
+    def evaluator(engine: StrategyEngine, _: Mapping[str, Any]) -> tuple[float, Mapping[str, Any]]:
+        if data_feed is None or not hasattr(data_feed, "load_history"):
+            return 0.0, {"warning": "no-data-feed"}
+        try:
+            history = data_feed.load_history(task_cfg.strategy, history_bars)
+        except Exception as exc:  # pragma: no cover - defensywne
+            return 0.0, {"error": str(exc), "stage": "load_history"}
+        if not history:
+            return 0.0, {"warning": "empty-history", "bars": 0}
+        if warmup_bars:
+            try:
+                engine.warm_up(tuple(history[:warmup_bars]))
+            except Exception as exc:  # pragma: no cover - defensywne
+                return 0.0, {"error": str(exc), "stage": "warm_up"}
+        score_sum = 0.0
+        signal_count = 0
+        try:
+            for snapshot in history[warmup_bars:]:
+                signals = engine.on_data(snapshot)
+                for signal in signals:
+                    score_sum += abs(float(getattr(signal, "confidence", 0.0)))
+                    signal_count += 1
+        except Exception as exc:  # pragma: no cover - defensywne
+            return 0.0, {"error": str(exc), "stage": "on_data"}
+        average = score_sum / signal_count if signal_count else 0.0
+        metadata = {
+            "signals": signal_count,
+            "bars": len(history),
+            "avg_confidence": average,
+        }
+        return average, metadata
+
+    return evaluator
+
+
+def _configure_optimization_scheduler(
+    runtime: "MultiStrategyRuntime",
+    *,
+    core_config: CoreConfig,
+    optimization_cfg: RuntimeOptimizationSettings | None,
+    catalog: StrategyCatalog | None = None,
+) -> OptimizationScheduler | None:
+    if optimization_cfg is None or not optimization_cfg.enabled:
+        return None
+
+    definitions = _collect_strategy_definitions(core_config)
+    optimizer = StrategyOptimizer(catalog or DEFAULT_STRATEGY_CATALOG)
+    scheduler = OptimizationScheduler(
+        optimizer,
+        report_directory=getattr(optimization_cfg, "report_directory", None),
+    )
+
+    for task_cfg in optimization_cfg.tasks:
+        definition = definitions.get(task_cfg.strategy)
+        if definition is None:
+            _LOGGER.warning(
+                "Pominięto zadanie optymalizacji '%s' – brak definicji strategii '%s'",
+                task_cfg.name,
+                task_cfg.strategy,
+            )
+            continue
+        evaluator = _build_optimization_evaluator(runtime, task_cfg, optimization_cfg)
+        scheduler.add_task(
+            config=task_cfg,
+            definition=definition,
+            evaluator=evaluator,
+            default_algorithm=optimization_cfg.default_algorithm,
+        )
+
+    if not scheduler.has_tasks():
+        return None
+
+    scheduler.start()
+    runtime.optimization_scheduler = scheduler
+    return scheduler
 
 
 def _apply_initial_signal_limits(
@@ -2874,6 +3198,7 @@ def build_multi_strategy_runtime(
     secret_manager: SecretManager,
     adapter_factories: Mapping[str, ExchangeAdapterFactory] | None = None,
     telemetry_emitter: Callable[[str, Mapping[str, float]], None] | None = None,
+    runtime_config: RuntimeAppConfig | None = None,
 ) -> MultiStrategyRuntime:
     bootstrap_ctx = bootstrap_environment(
         environment_name,
@@ -3164,7 +3489,7 @@ def build_multi_strategy_runtime(
         getattr(scheduler_cfg, "initial_suspensions", None),
     )
 
-    return MultiStrategyRuntime(
+    runtime_instance = MultiStrategyRuntime(
         bootstrap=bootstrap_ctx,
         scheduler=scheduler,
         data_feed=data_feed,
@@ -3178,6 +3503,16 @@ def build_multi_strategy_runtime(
         stream_feed=stream_feed,
         decision_sink=decision_sink,
     )
+
+    optimization_cfg = getattr(runtime_config, "optimization", None) if runtime_config else None
+    _configure_optimization_scheduler(
+        runtime_instance,
+        core_config=core_config,
+        optimization_cfg=optimization_cfg,
+        catalog=DEFAULT_STRATEGY_CATALOG,
+    )
+
+    return runtime_instance
 
 
 def _collect_strategy_definitions(core_config: CoreConfig) -> dict[str, StrategyDefinition]:

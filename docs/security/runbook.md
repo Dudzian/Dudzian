@@ -66,3 +66,36 @@ Wszystkie zgłoszenia muszą zostać zarejestrowane w narzędziu śledzenia incy
 - Runbook jest przeglądany co kwartał przez Security Lead i aktualizowany w repozytorium.
 - Zmiany są zatwierdzane w ramach przeglądu technicznego (minimum 2 recenzentów z zespołu bezpieczeństwa).
 
+## 8. Aktywacja licencji offline i odzyskiwanie
+
+1. **Aktywacja**
+   - Przekaż klientowi plik licencji (`*.json`) podpisany Ed25519.
+   - Na maszynie docelowej uruchom proces weryfikacji (np. `python -m bot_core.security.license_service` poprzez narzędzia instalatora) wskazując plik licencji.
+   - Po poprawnej weryfikacji powstaje plik `var/security/license_status.json` zawierający możliwości licencji oraz podpis HMAC (`HMAC-SHA384`) powiązany z lokalnym fingerprintem sprzętowym.
+   - Lokalny sekret HMAC (`var/security/license_secret.key`) jest generowany automatycznie przy pierwszej aktywacji i zabezpieczony prawami `0600`.
+
+2. **Ochrona przed rollbackiem**
+   - Każde kolejne uruchomienie licencji porównuje monotoniczny stan (`sequence`, `issued_at`, `effective_date`).
+   - W przypadku próby wgrania starszej licencji system zgłosi `LicenseRollbackDetectedError` i przerwie start runtime'u.
+   - Jeśli podpis statusu licencji został zmodyfikowany lub usunięty, zostanie zgłoszony `LicenseStateTamperedError`; wymagane jest ponowne wydanie licencji lub ręczna weryfikacja plików.
+
+3. **Odzyskiwanie po awarii / wymiana sprzętu**
+   - Zabezpiecz kopie `var/security/license_status.json`, `var/security/license_secret.key` oraz dziennika `logs/security_admin.log` przed przeniesieniem systemu.
+   - W razie wymiany sprzętu wystąp do zespołu licencyjnego o ponownie podpisany pakiet licencji z nowym fingerprintem.
+   - Przy błędach podpisu usuń tylko plik statusu (pozostawiając `license_secret.key`), po czym wczytaj najnowszą licencję – system wygeneruje nowy snapshot i podpis.
+
+## 9. Magazyn kluczy API i rotacja
+
+- `KeyringSecretStorage` szyfruje każdy sekret algorytmem AES-GCM (klucz pochodny z lokalnego fingerprintu) i przechowuje go w natywnym keychainie. Indeks pomocniczy znajduje się w `var/security/secret_index.json`.
+- W razie podejrzenia kompromitacji uruchom rotację klucza głównego:
+  ```bash
+  python - <<'PY'
+  from bot_core.security.keyring_storage import KeyringSecretStorage
+
+  storage = KeyringSecretStorage(service_name="dudzian.trading")
+  storage.rotate_master_key()
+  PY
+  ```
+- Po rotacji zweryfikuj dostępność krytycznych sekretów (Binance, Coinbase, alerty) i wykonaj audyt uprawnień.
+- W środowiskach headless korzystaj z `EncryptedFileSecretStorage` i przechowuj passphrase w sejfie zgodnie z polityką SOC.
+

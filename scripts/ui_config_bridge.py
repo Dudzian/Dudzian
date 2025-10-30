@@ -305,6 +305,8 @@ def _collect_strategy_metadata(
     _register_section("cross_exchange_arbitrage_strategies", "cross_exchange_arbitrage")
     _register_section("scalping_strategies", "scalping")
     _register_section("options_income_strategies", "options_income")
+    _register_section("futures_spread_strategies", "futures_spread")
+    _register_section("cross_exchange_hedge_strategies", "cross_exchange_hedge")
     _register_section("statistical_arbitrage_strategies", "statistical_arbitrage")
     _register_section("day_trading_strategies", "day_trading")
     _register_section("grid_strategies", "grid_trading")

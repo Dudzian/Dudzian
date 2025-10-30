@@ -38,9 +38,129 @@ _OEM_DEFAULT_PURPOSE = "oem-fingerprint-signing"
 
 _HEX_RE = re.compile(r"[^0-9a-f]")
 
+# Lokalny sekret do podpisywania snapshotów licencji.
+LICENSE_SECRET_PATH = Path("var/security/license_secret.key")
+LICENSE_SIGNATURE_ALGORITHM = "HMAC-SHA384"
+
 
 class FingerprintError(RuntimeError):
     """Wyjątek zgłaszany przy problemach z generowaniem/podpisywaniem fingerprintu."""
+
+
+# ---------------------------------------------------------------------------
+# Lokalne podpisy licencji (ochrona przed rollbackiem)
+# ---------------------------------------------------------------------------
+
+
+def _normalize_binding_fingerprint(value: str | None) -> str:
+    if value is None:
+        raise FingerprintError("Fingerprint urządzenia jest wymagany do podpisania licencji.")
+    normalized = value.strip().upper()
+    if not normalized:
+        raise FingerprintError("Fingerprint urządzenia jest pusty – nie można podpisać licencji.")
+    return normalized
+
+
+def _license_secret_path(path: str | os.PathLike[str] | None) -> Path:
+    return Path(path).expanduser() if path is not None else LICENSE_SECRET_PATH
+
+
+def load_license_secret(path: str | os.PathLike[str] | None = None, *, create: bool = True) -> bytes:
+    """Zwraca sekret do podpisywania snapshotów licencji."""
+
+    target = _license_secret_path(path)
+    if target.exists():
+        try:
+            encoded = target.read_text(encoding="utf-8").strip()
+        except OSError as exc:
+            raise FingerprintError(
+                f"Nie udało się odczytać lokalnego sekretu licencji ({target})."
+            ) from exc
+        if not encoded:
+            if not create:
+                raise FingerprintError("Sekret licencji jest pusty.")
+            target.unlink(missing_ok=True)
+            return load_license_secret(path, create=create)
+        try:
+            secret = base64.b64decode(encoded.encode("ascii"))
+        except Exception as exc:  # pragma: no cover - defensywnie
+            raise FingerprintError("Sekret licencji jest uszkodzony (base64).") from exc
+        if len(secret) < 32:
+            if not create:
+                raise FingerprintError("Sekret licencji ma niepoprawną długość.")
+            target.unlink(missing_ok=True)
+            return load_license_secret(path, create=create)
+        return secret
+
+    if not create:
+        raise FingerprintError("Sekret licencji nie istnieje.")
+
+    secret = os.urandom(48)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    encoded = base64.b64encode(secret).decode("ascii")
+    tmp_path = target.with_suffix(target.suffix + ".tmp")
+    tmp_path.write_text(encoded + "\n", encoding="ascii")
+    os.replace(tmp_path, target)
+    try:
+        os.chmod(target, 0o600)
+    except PermissionError:  # pragma: no cover - brak uprawnień
+        pass
+    return secret
+
+
+def _derive_license_key(fingerprint: str, secret: bytes) -> bytes:
+    normalized = _normalize_binding_fingerprint(fingerprint)
+    return hmac.new(secret, normalized.encode("utf-8"), hashlib.sha384).digest()
+
+
+def sign_license_payload(
+    payload: Mapping[str, object],
+    *,
+    fingerprint: str,
+    secret: bytes | None = None,
+    secret_path: str | os.PathLike[str] | None = None,
+    key_id: str | None = None,
+) -> Mapping[str, str]:
+    """Podpisuje ładunek licencji wykorzystując lokalny fingerprint."""
+
+    secret_bytes = secret if secret is not None else load_license_secret(secret_path)
+    key = _derive_license_key(fingerprint, secret_bytes)
+    identifier = key_id or "local-hwid"
+    return build_hmac_signature(
+        payload,
+        key=key,
+        algorithm=LICENSE_SIGNATURE_ALGORITHM,
+        key_id=identifier,
+    )
+
+
+def verify_license_payload_signature(
+    payload: Mapping[str, object],
+    signature: Mapping[str, object] | None,
+    *,
+    fingerprint: str,
+    secret: bytes | None = None,
+    secret_path: str | os.PathLike[str] | None = None,
+) -> bool:
+    """Weryfikuje podpis ładunku licencji opartego o fingerprint."""
+
+    if signature is None:
+        return False
+    algorithm = signature.get("algorithm")
+    if algorithm != LICENSE_SIGNATURE_ALGORITHM:
+        return False
+    try:
+        secret_bytes = secret if secret is not None else load_license_secret(secret_path, create=False)
+    except FingerprintError:
+        return False
+    key = _derive_license_key(fingerprint, secret_bytes)
+    expected = build_hmac_signature(
+        payload,
+        key=key,
+        algorithm=LICENSE_SIGNATURE_ALGORITHM,
+        key_id=signature.get("key_id"),
+    )
+    return expected.get("value") == signature.get("value")
 
 
 # ---------------------------------------------------------------------------
@@ -816,6 +936,11 @@ __all__ = [
     "FingerprintError",
     "FINGERPRINT_HASH",
     "SIGNATURE_ALGORITHM",
+    "LICENSE_SIGNATURE_ALGORITHM",
+    "LICENSE_SECRET_PATH",
+    "load_license_secret",
+    "sign_license_payload",
+    "verify_license_payload_signature",
     "append_fingerprint_audit",
     "build_fingerprint_document",
     "get_local_fingerprint",

@@ -517,6 +517,235 @@ HealthService::Service::~Service() {
 }
 
 
+static const char* MarketplaceService_method_names[] = {
+  "/botcore.trading.v1.MarketplaceService/ListPresets",
+  "/botcore.trading.v1.MarketplaceService/ImportPreset",
+  "/botcore.trading.v1.MarketplaceService/ExportPreset",
+  "/botcore.trading.v1.MarketplaceService/RemovePreset",
+  "/botcore.trading.v1.MarketplaceService/ActivatePreset",
+};
+
+std::unique_ptr< MarketplaceService::Stub> MarketplaceService::NewStub(const std::shared_ptr< ::grpc::ChannelInterface>& channel, const ::grpc::StubOptions& options) {
+  (void)options;
+  std::unique_ptr< MarketplaceService::Stub> stub(new MarketplaceService::Stub(channel, options));
+  return stub;
+}
+
+MarketplaceService::Stub::Stub(const std::shared_ptr< ::grpc::ChannelInterface>& channel, const ::grpc::StubOptions& options)
+  : channel_(channel), rpcmethod_ListPresets_(MarketplaceService_method_names[0], options.suffix_for_stats(),::grpc::internal::RpcMethod::NORMAL_RPC, channel)
+  , rpcmethod_ImportPreset_(MarketplaceService_method_names[1], options.suffix_for_stats(),::grpc::internal::RpcMethod::NORMAL_RPC, channel)
+  , rpcmethod_ExportPreset_(MarketplaceService_method_names[2], options.suffix_for_stats(),::grpc::internal::RpcMethod::NORMAL_RPC, channel)
+  , rpcmethod_RemovePreset_(MarketplaceService_method_names[3], options.suffix_for_stats(),::grpc::internal::RpcMethod::NORMAL_RPC, channel)
+  , rpcmethod_ActivatePreset_(MarketplaceService_method_names[4], options.suffix_for_stats(),::grpc::internal::RpcMethod::NORMAL_RPC, channel)
+  {}
+
+::grpc::Status MarketplaceService::Stub::ListPresets(::grpc::ClientContext* context, const ::botcore::trading::v1::ListMarketplacePresetsRequest& request, ::botcore::trading::v1::ListMarketplacePresetsResponse* response) {
+  return ::grpc::internal::BlockingUnaryCall< ::botcore::trading::v1::ListMarketplacePresetsRequest, ::botcore::trading::v1::ListMarketplacePresetsResponse, ::grpc::protobuf::MessageLite, ::grpc::protobuf::MessageLite>(channel_.get(), rpcmethod_ListPresets_, context, request, response);
+}
+
+void MarketplaceService::Stub::async::ListPresets(::grpc::ClientContext* context, const ::botcore::trading::v1::ListMarketplacePresetsRequest* request, ::botcore::trading::v1::ListMarketplacePresetsResponse* response, std::function<void(::grpc::Status)> f) {
+  ::grpc::internal::CallbackUnaryCall< ::botcore::trading::v1::ListMarketplacePresetsRequest, ::botcore::trading::v1::ListMarketplacePresetsResponse, ::grpc::protobuf::MessageLite, ::grpc::protobuf::MessageLite>(stub_->channel_.get(), stub_->rpcmethod_ListPresets_, context, request, response, std::move(f));
+}
+
+void MarketplaceService::Stub::async::ListPresets(::grpc::ClientContext* context, const ::botcore::trading::v1::ListMarketplacePresetsRequest* request, ::botcore::trading::v1::ListMarketplacePresetsResponse* response, ::grpc::ClientUnaryReactor* reactor) {
+  ::grpc::internal::ClientCallbackUnaryFactory::Create< ::grpc::protobuf::MessageLite, ::grpc::protobuf::MessageLite>(stub_->channel_.get(), stub_->rpcmethod_ListPresets_, context, request, response, reactor);
+}
+
+::grpc::ClientAsyncResponseReader< ::botcore::trading::v1::ListMarketplacePresetsResponse>* MarketplaceService::Stub::PrepareAsyncListPresetsRaw(::grpc::ClientContext* context, const ::botcore::trading::v1::ListMarketplacePresetsRequest& request, ::grpc::CompletionQueue* cq) {
+  return ::grpc::internal::ClientAsyncResponseReaderHelper::Create< ::botcore::trading::v1::ListMarketplacePresetsResponse, ::botcore::trading::v1::ListMarketplacePresetsRequest, ::grpc::protobuf::MessageLite, ::grpc::protobuf::MessageLite>(channel_.get(), cq, rpcmethod_ListPresets_, context, request);
+}
+
+::grpc::ClientAsyncResponseReader< ::botcore::trading::v1::ListMarketplacePresetsResponse>* MarketplaceService::Stub::AsyncListPresetsRaw(::grpc::ClientContext* context, const ::botcore::trading::v1::ListMarketplacePresetsRequest& request, ::grpc::CompletionQueue* cq) {
+  auto* result =
+    this->PrepareAsyncListPresetsRaw(context, request, cq);
+  result->StartCall();
+  return result;
+}
+
+::grpc::Status MarketplaceService::Stub::ImportPreset(::grpc::ClientContext* context, const ::botcore::trading::v1::ImportMarketplacePresetRequest& request, ::botcore::trading::v1::ImportMarketplacePresetResponse* response) {
+  return ::grpc::internal::BlockingUnaryCall< ::botcore::trading::v1::ImportMarketplacePresetRequest, ::botcore::trading::v1::ImportMarketplacePresetResponse, ::grpc::protobuf::MessageLite, ::grpc::protobuf::MessageLite>(channel_.get(), rpcmethod_ImportPreset_, context, request, response);
+}
+
+void MarketplaceService::Stub::async::ImportPreset(::grpc::ClientContext* context, const ::botcore::trading::v1::ImportMarketplacePresetRequest* request, ::botcore::trading::v1::ImportMarketplacePresetResponse* response, std::function<void(::grpc::Status)> f) {
+  ::grpc::internal::CallbackUnaryCall< ::botcore::trading::v1::ImportMarketplacePresetRequest, ::botcore::trading::v1::ImportMarketplacePresetResponse, ::grpc::protobuf::MessageLite, ::grpc::protobuf::MessageLite>(stub_->channel_.get(), stub_->rpcmethod_ImportPreset_, context, request, response, std::move(f));
+}
+
+void MarketplaceService::Stub::async::ImportPreset(::grpc::ClientContext* context, const ::botcore::trading::v1::ImportMarketplacePresetRequest* request, ::botcore::trading::v1::ImportMarketplacePresetResponse* response, ::grpc::ClientUnaryReactor* reactor) {
+  ::grpc::internal::ClientCallbackUnaryFactory::Create< ::grpc::protobuf::MessageLite, ::grpc::protobuf::MessageLite>(stub_->channel_.get(), stub_->rpcmethod_ImportPreset_, context, request, response, reactor);
+}
+
+::grpc::ClientAsyncResponseReader< ::botcore::trading::v1::ImportMarketplacePresetResponse>* MarketplaceService::Stub::PrepareAsyncImportPresetRaw(::grpc::ClientContext* context, const ::botcore::trading::v1::ImportMarketplacePresetRequest& request, ::grpc::CompletionQueue* cq) {
+  return ::grpc::internal::ClientAsyncResponseReaderHelper::Create< ::botcore::trading::v1::ImportMarketplacePresetResponse, ::botcore::trading::v1::ImportMarketplacePresetRequest, ::grpc::protobuf::MessageLite, ::grpc::protobuf::MessageLite>(channel_.get(), cq, rpcmethod_ImportPreset_, context, request);
+}
+
+::grpc::ClientAsyncResponseReader< ::botcore::trading::v1::ImportMarketplacePresetResponse>* MarketplaceService::Stub::AsyncImportPresetRaw(::grpc::ClientContext* context, const ::botcore::trading::v1::ImportMarketplacePresetRequest& request, ::grpc::CompletionQueue* cq) {
+  auto* result =
+    this->PrepareAsyncImportPresetRaw(context, request, cq);
+  result->StartCall();
+  return result;
+}
+
+::grpc::Status MarketplaceService::Stub::ExportPreset(::grpc::ClientContext* context, const ::botcore::trading::v1::ExportMarketplacePresetRequest& request, ::botcore::trading::v1::ExportMarketplacePresetResponse* response) {
+  return ::grpc::internal::BlockingUnaryCall< ::botcore::trading::v1::ExportMarketplacePresetRequest, ::botcore::trading::v1::ExportMarketplacePresetResponse, ::grpc::protobuf::MessageLite, ::grpc::protobuf::MessageLite>(channel_.get(), rpcmethod_ExportPreset_, context, request, response);
+}
+
+void MarketplaceService::Stub::async::ExportPreset(::grpc::ClientContext* context, const ::botcore::trading::v1::ExportMarketplacePresetRequest* request, ::botcore::trading::v1::ExportMarketplacePresetResponse* response, std::function<void(::grpc::Status)> f) {
+  ::grpc::internal::CallbackUnaryCall< ::botcore::trading::v1::ExportMarketplacePresetRequest, ::botcore::trading::v1::ExportMarketplacePresetResponse, ::grpc::protobuf::MessageLite, ::grpc::protobuf::MessageLite>(stub_->channel_.get(), stub_->rpcmethod_ExportPreset_, context, request, response, std::move(f));
+}
+
+void MarketplaceService::Stub::async::ExportPreset(::grpc::ClientContext* context, const ::botcore::trading::v1::ExportMarketplacePresetRequest* request, ::botcore::trading::v1::ExportMarketplacePresetResponse* response, ::grpc::ClientUnaryReactor* reactor) {
+  ::grpc::internal::ClientCallbackUnaryFactory::Create< ::grpc::protobuf::MessageLite, ::grpc::protobuf::MessageLite>(stub_->channel_.get(), stub_->rpcmethod_ExportPreset_, context, request, response, reactor);
+}
+
+::grpc::ClientAsyncResponseReader< ::botcore::trading::v1::ExportMarketplacePresetResponse>* MarketplaceService::Stub::PrepareAsyncExportPresetRaw(::grpc::ClientContext* context, const ::botcore::trading::v1::ExportMarketplacePresetRequest& request, ::grpc::CompletionQueue* cq) {
+  return ::grpc::internal::ClientAsyncResponseReaderHelper::Create< ::botcore::trading::v1::ExportMarketplacePresetResponse, ::botcore::trading::v1::ExportMarketplacePresetRequest, ::grpc::protobuf::MessageLite, ::grpc::protobuf::MessageLite>(channel_.get(), cq, rpcmethod_ExportPreset_, context, request);
+}
+
+::grpc::ClientAsyncResponseReader< ::botcore::trading::v1::ExportMarketplacePresetResponse>* MarketplaceService::Stub::AsyncExportPresetRaw(::grpc::ClientContext* context, const ::botcore::trading::v1::ExportMarketplacePresetRequest& request, ::grpc::CompletionQueue* cq) {
+  auto* result =
+    this->PrepareAsyncExportPresetRaw(context, request, cq);
+  result->StartCall();
+  return result;
+}
+
+::grpc::Status MarketplaceService::Stub::RemovePreset(::grpc::ClientContext* context, const ::botcore::trading::v1::RemoveMarketplacePresetRequest& request, ::botcore::trading::v1::RemoveMarketplacePresetResponse* response) {
+  return ::grpc::internal::BlockingUnaryCall< ::botcore::trading::v1::RemoveMarketplacePresetRequest, ::botcore::trading::v1::RemoveMarketplacePresetResponse, ::grpc::protobuf::MessageLite, ::grpc::protobuf::MessageLite>(channel_.get(), rpcmethod_RemovePreset_, context, request, response);
+}
+
+void MarketplaceService::Stub::async::RemovePreset(::grpc::ClientContext* context, const ::botcore::trading::v1::RemoveMarketplacePresetRequest* request, ::botcore::trading::v1::RemoveMarketplacePresetResponse* response, std::function<void(::grpc::Status)> f) {
+  ::grpc::internal::CallbackUnaryCall< ::botcore::trading::v1::RemoveMarketplacePresetRequest, ::botcore::trading::v1::RemoveMarketplacePresetResponse, ::grpc::protobuf::MessageLite, ::grpc::protobuf::MessageLite>(stub_->channel_.get(), stub_->rpcmethod_RemovePreset_, context, request, response, std::move(f));
+}
+
+void MarketplaceService::Stub::async::RemovePreset(::grpc::ClientContext* context, const ::botcore::trading::v1::RemoveMarketplacePresetRequest* request, ::botcore::trading::v1::RemoveMarketplacePresetResponse* response, ::grpc::ClientUnaryReactor* reactor) {
+  ::grpc::internal::ClientCallbackUnaryFactory::Create< ::grpc::protobuf::MessageLite, ::grpc::protobuf::MessageLite>(stub_->channel_.get(), stub_->rpcmethod_RemovePreset_, context, request, response, reactor);
+}
+
+::grpc::ClientAsyncResponseReader< ::botcore::trading::v1::RemoveMarketplacePresetResponse>* MarketplaceService::Stub::PrepareAsyncRemovePresetRaw(::grpc::ClientContext* context, const ::botcore::trading::v1::RemoveMarketplacePresetRequest& request, ::grpc::CompletionQueue* cq) {
+  return ::grpc::internal::ClientAsyncResponseReaderHelper::Create< ::botcore::trading::v1::RemoveMarketplacePresetResponse, ::botcore::trading::v1::RemoveMarketplacePresetRequest, ::grpc::protobuf::MessageLite, ::grpc::protobuf::MessageLite>(channel_.get(), cq, rpcmethod_RemovePreset_, context, request);
+}
+
+::grpc::ClientAsyncResponseReader< ::botcore::trading::v1::RemoveMarketplacePresetResponse>* MarketplaceService::Stub::AsyncRemovePresetRaw(::grpc::ClientContext* context, const ::botcore::trading::v1::RemoveMarketplacePresetRequest& request, ::grpc::CompletionQueue* cq) {
+  auto* result =
+    this->PrepareAsyncRemovePresetRaw(context, request, cq);
+  result->StartCall();
+  return result;
+}
+
+::grpc::Status MarketplaceService::Stub::ActivatePreset(::grpc::ClientContext* context, const ::botcore::trading::v1::ActivateMarketplacePresetRequest& request, ::botcore::trading::v1::ActivateMarketplacePresetResponse* response) {
+  return ::grpc::internal::BlockingUnaryCall< ::botcore::trading::v1::ActivateMarketplacePresetRequest, ::botcore::trading::v1::ActivateMarketplacePresetResponse, ::grpc::protobuf::MessageLite, ::grpc::protobuf::MessageLite>(channel_.get(), rpcmethod_ActivatePreset_, context, request, response);
+}
+
+void MarketplaceService::Stub::async::ActivatePreset(::grpc::ClientContext* context, const ::botcore::trading::v1::ActivateMarketplacePresetRequest* request, ::botcore::trading::v1::ActivateMarketplacePresetResponse* response, std::function<void(::grpc::Status)> f) {
+  ::grpc::internal::CallbackUnaryCall< ::botcore::trading::v1::ActivateMarketplacePresetRequest, ::botcore::trading::v1::ActivateMarketplacePresetResponse, ::grpc::protobuf::MessageLite, ::grpc::protobuf::MessageLite>(stub_->channel_.get(), stub_->rpcmethod_ActivatePreset_, context, request, response, std::move(f));
+}
+
+void MarketplaceService::Stub::async::ActivatePreset(::grpc::ClientContext* context, const ::botcore::trading::v1::ActivateMarketplacePresetRequest* request, ::botcore::trading::v1::ActivateMarketplacePresetResponse* response, ::grpc::ClientUnaryReactor* reactor) {
+  ::grpc::internal::ClientCallbackUnaryFactory::Create< ::grpc::protobuf::MessageLite, ::grpc::protobuf::MessageLite>(stub_->channel_.get(), stub_->rpcmethod_ActivatePreset_, context, request, response, reactor);
+}
+
+::grpc::ClientAsyncResponseReader< ::botcore::trading::v1::ActivateMarketplacePresetResponse>* MarketplaceService::Stub::PrepareAsyncActivatePresetRaw(::grpc::ClientContext* context, const ::botcore::trading::v1::ActivateMarketplacePresetRequest& request, ::grpc::CompletionQueue* cq) {
+  return ::grpc::internal::ClientAsyncResponseReaderHelper::Create< ::botcore::trading::v1::ActivateMarketplacePresetResponse, ::botcore::trading::v1::ActivateMarketplacePresetRequest, ::grpc::protobuf::MessageLite, ::grpc::protobuf::MessageLite>(channel_.get(), cq, rpcmethod_ActivatePreset_, context, request);
+}
+
+::grpc::ClientAsyncResponseReader< ::botcore::trading::v1::ActivateMarketplacePresetResponse>* MarketplaceService::Stub::AsyncActivatePresetRaw(::grpc::ClientContext* context, const ::botcore::trading::v1::ActivateMarketplacePresetRequest& request, ::grpc::CompletionQueue* cq) {
+  auto* result =
+    this->PrepareAsyncActivatePresetRaw(context, request, cq);
+  result->StartCall();
+  return result;
+}
+
+MarketplaceService::Service::Service() {
+  AddMethod(new ::grpc::internal::RpcServiceMethod(
+      MarketplaceService_method_names[0],
+      ::grpc::internal::RpcMethod::NORMAL_RPC,
+      new ::grpc::internal::RpcMethodHandler< MarketplaceService::Service, ::botcore::trading::v1::ListMarketplacePresetsRequest, ::botcore::trading::v1::ListMarketplacePresetsResponse, ::grpc::protobuf::MessageLite, ::grpc::protobuf::MessageLite>(
+          [](MarketplaceService::Service* service,
+             ::grpc::ServerContext* ctx,
+             const ::botcore::trading::v1::ListMarketplacePresetsRequest* req,
+             ::botcore::trading::v1::ListMarketplacePresetsResponse* resp) {
+               return service->ListPresets(ctx, req, resp);
+             }, this)));
+  AddMethod(new ::grpc::internal::RpcServiceMethod(
+      MarketplaceService_method_names[1],
+      ::grpc::internal::RpcMethod::NORMAL_RPC,
+      new ::grpc::internal::RpcMethodHandler< MarketplaceService::Service, ::botcore::trading::v1::ImportMarketplacePresetRequest, ::botcore::trading::v1::ImportMarketplacePresetResponse, ::grpc::protobuf::MessageLite, ::grpc::protobuf::MessageLite>(
+          [](MarketplaceService::Service* service,
+             ::grpc::ServerContext* ctx,
+             const ::botcore::trading::v1::ImportMarketplacePresetRequest* req,
+             ::botcore::trading::v1::ImportMarketplacePresetResponse* resp) {
+               return service->ImportPreset(ctx, req, resp);
+             }, this)));
+  AddMethod(new ::grpc::internal::RpcServiceMethod(
+      MarketplaceService_method_names[2],
+      ::grpc::internal::RpcMethod::NORMAL_RPC,
+      new ::grpc::internal::RpcMethodHandler< MarketplaceService::Service, ::botcore::trading::v1::ExportMarketplacePresetRequest, ::botcore::trading::v1::ExportMarketplacePresetResponse, ::grpc::protobuf::MessageLite, ::grpc::protobuf::MessageLite>(
+          [](MarketplaceService::Service* service,
+             ::grpc::ServerContext* ctx,
+             const ::botcore::trading::v1::ExportMarketplacePresetRequest* req,
+             ::botcore::trading::v1::ExportMarketplacePresetResponse* resp) {
+               return service->ExportPreset(ctx, req, resp);
+             }, this)));
+  AddMethod(new ::grpc::internal::RpcServiceMethod(
+      MarketplaceService_method_names[3],
+      ::grpc::internal::RpcMethod::NORMAL_RPC,
+      new ::grpc::internal::RpcMethodHandler< MarketplaceService::Service, ::botcore::trading::v1::RemoveMarketplacePresetRequest, ::botcore::trading::v1::RemoveMarketplacePresetResponse, ::grpc::protobuf::MessageLite, ::grpc::protobuf::MessageLite>(
+          [](MarketplaceService::Service* service,
+             ::grpc::ServerContext* ctx,
+             const ::botcore::trading::v1::RemoveMarketplacePresetRequest* req,
+             ::botcore::trading::v1::RemoveMarketplacePresetResponse* resp) {
+               return service->RemovePreset(ctx, req, resp);
+             }, this)));
+  AddMethod(new ::grpc::internal::RpcServiceMethod(
+      MarketplaceService_method_names[4],
+      ::grpc::internal::RpcMethod::NORMAL_RPC,
+      new ::grpc::internal::RpcMethodHandler< MarketplaceService::Service, ::botcore::trading::v1::ActivateMarketplacePresetRequest, ::botcore::trading::v1::ActivateMarketplacePresetResponse, ::grpc::protobuf::MessageLite, ::grpc::protobuf::MessageLite>(
+          [](MarketplaceService::Service* service,
+             ::grpc::ServerContext* ctx,
+             const ::botcore::trading::v1::ActivateMarketplacePresetRequest* req,
+             ::botcore::trading::v1::ActivateMarketplacePresetResponse* resp) {
+               return service->ActivatePreset(ctx, req, resp);
+             }, this)));
+}
+
+MarketplaceService::Service::~Service() {
+}
+
+::grpc::Status MarketplaceService::Service::ListPresets(::grpc::ServerContext* context, const ::botcore::trading::v1::ListMarketplacePresetsRequest* request, ::botcore::trading::v1::ListMarketplacePresetsResponse* response) {
+  (void) context;
+  (void) request;
+  (void) response;
+  return ::grpc::Status(::grpc::StatusCode::UNIMPLEMENTED, "");
+}
+
+::grpc::Status MarketplaceService::Service::ImportPreset(::grpc::ServerContext* context, const ::botcore::trading::v1::ImportMarketplacePresetRequest* request, ::botcore::trading::v1::ImportMarketplacePresetResponse* response) {
+  (void) context;
+  (void) request;
+  (void) response;
+  return ::grpc::Status(::grpc::StatusCode::UNIMPLEMENTED, "");
+}
+
+::grpc::Status MarketplaceService::Service::ExportPreset(::grpc::ServerContext* context, const ::botcore::trading::v1::ExportMarketplacePresetRequest* request, ::botcore::trading::v1::ExportMarketplacePresetResponse* response) {
+  (void) context;
+  (void) request;
+  (void) response;
+  return ::grpc::Status(::grpc::StatusCode::UNIMPLEMENTED, "");
+}
+
+::grpc::Status MarketplaceService::Service::RemovePreset(::grpc::ServerContext* context, const ::botcore::trading::v1::RemoveMarketplacePresetRequest* request, ::botcore::trading::v1::RemoveMarketplacePresetResponse* response) {
+  (void) context;
+  (void) request;
+  (void) response;
+  return ::grpc::Status(::grpc::StatusCode::UNIMPLEMENTED, "");
+}
+
+::grpc::Status MarketplaceService::Service::ActivatePreset(::grpc::ServerContext* context, const ::botcore::trading::v1::ActivateMarketplacePresetRequest* request, ::botcore::trading::v1::ActivateMarketplacePresetResponse* response) {
+  (void) context;
+  (void) request;
+  (void) response;
+  return ::grpc::Status(::grpc::StatusCode::UNIMPLEMENTED, "");
+}
+
+
 }  // namespace botcore
 }  // namespace trading
 }  // namespace v1

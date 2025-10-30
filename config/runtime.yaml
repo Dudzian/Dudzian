@@ -1,0 +1,179 @@
+core:
+  path: core.yaml
+
+ai:
+  model_registry_path: models
+  retrain_schedule: "0 3 * * *"
+  drift_monitor_enabled: true
+  auto_activate_best_model: true
+
+trading:
+  default_entrypoint: trading_gui
+  entrypoints:
+    trading_gui:
+      environment: binance_paper
+      description: Desktop GUI paper trading pipeline
+      controller: stage6.desktop
+      strategy: multi_strategy_default
+      risk_profile: balanced
+      tags: [desktop, paper]
+      bootstrap: true
+      trusted_auto_confirm: false
+  auto_start: false
+  enable_paper_mode: true
+  enable_live_mode: false
+  strategy_overrides:
+    multi_strategy_default: stage6.standard
+  strategy_profiles:
+    theta_income_balanced:
+      engine: options_income
+      description: "Konserwatywny profil theta dla portfela dochodowego"
+      parameters:
+        min_iv: 0.32
+        max_delta: 0.28
+        min_days_to_expiry: 12
+        roll_threshold_iv: 0.22
+      metrics:
+        max_short_gamma: 0.45
+        target_theta_usd: 320.0
+    futures_basis_defender:
+      engine: futures_spread
+      description: "Strategia zabezpieczająca rozjazdy między kontraktami quarterly/perp"
+      parameters:
+        entry_z: 1.35
+        exit_z: 0.35
+        max_bars: 36
+        funding_exit: 0.0015
+        basis_exit: 0.015
+      tags: [derivatives, hedge]
+    cross_exchange_delta_guard:
+      engine: cross_exchange_hedge
+      description: "Neutralizacja delta pomiędzy spot i futures z kontrolą latency"
+      parameters:
+        basis_scale: 0.009
+        inventory_scale: 0.28
+        latency_limit_ms: 140.0
+        max_hedge_ratio: 0.85
+      telemetry:
+        exposure_budget: 0.6
+        latency_budget_ms: 120
+
+execution:
+  default_mode: paper
+  force_paper_when_offline: true
+  auth_token: null
+  live:
+    enabled: false
+    default_route: []
+
+risk:
+  service:
+    enabled: true
+    host: 127.0.0.1
+    port: 9550
+    history_size: 512
+    publish_interval_seconds: 5.0
+    profiles: [balanced]
+  decision_log:
+    enabled: true
+    path: logs/risk_decisions.jsonl
+    max_entries: 5000
+  portfolio_log:
+    enabled: true
+    path: logs/portfolio_decisions.jsonl
+    max_entries: 2000
+  max_drawdown_alert_pct: 0.25
+
+licensing:
+  enforcement: true
+  grace_period_hours: 24
+  offline_activation_required: true
+  license:
+    license_path: var/licenses/active/license.json
+    fingerprint_path: var/licenses/active/fingerprint.json
+    fingerprint_keys_path: config/oem_fingerprint_keys.json
+    allowed_profiles:
+      - desktop
+    allowed_issuers:
+      - dudzian
+    max_validity_days: 365
+    required_schema: core.oem.license
+    allowed_schema_versions:
+      - "1.0"
+    revocation_list_path: var/licenses/active/revocations.json
+    revocation_required: false
+
+ui:
+  theme: dark
+  workspace_root: ui/workspaces/default
+  enable_advanced_mode: true
+  auto_connect_runtime: true
+  restore_layout_on_start: true
+  telemetry_sink: logs/ui_metrics.jsonl
+
+marketplace:
+  enabled: true
+  presets_path: config/marketplace/presets
+  signing_keys: {}
+  allow_unsigned: false
+
+observability:
+  enable_log_metrics: true
+  prometheus:
+    enabled: true
+    host: 127.0.0.1
+    port: 9177
+    path: /metrics
+  alerts:
+    min_severity: warning
+
+optimization:
+  enabled: true
+  default_algorithm: bayesian
+  report_directory: var/reports/optimization
+  default_history_bars: 256
+  tasks:
+    - name: theta_income_retune
+      strategy: theta_income_balanced
+      algorithm: grid
+      max_trials: 12
+      search_space:
+        grid:
+          min_iv: [0.28, 0.32, 0.36]
+          max_delta: [0.22, 0.26, 0.30]
+        bounds:
+          roll_threshold_iv:
+            min: 0.18
+            max: 0.26
+            step: 0.02
+      objective:
+        metric: sharpe_ratio
+        goal: maximize
+      evaluation:
+        history_bars: 180
+        warmup_bars: 40
+      schedule:
+        cadence_seconds: 14400
+        jitter_seconds: 300
+        run_immediately: false
+    - name: cross_exchange_latency_guard
+      strategy: cross_exchange_delta_guard
+      algorithm: bayesian
+      max_trials: 20
+      search_space:
+        bounds:
+          latency_limit_ms:
+            min: 90
+            max: 180
+          basis_scale:
+            min: 0.005
+            max: 0.015
+      objective:
+        metric: pnl
+        goal: maximize
+      evaluation:
+        history_bars: 120
+        warmup_bars: 30
+      schedule:
+        cadence_seconds: 21600
+        jitter_seconds: 600

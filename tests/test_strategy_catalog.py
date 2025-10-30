@@ -10,7 +10,9 @@ from bot_core.strategies.catalog import DEFAULT_STRATEGY_CATALOG
 from bot_core.trading.engine import TechnicalIndicators, TradingParameters
 from bot_core.trading.strategies import (
     ArbitrageStrategy,
+    CrossExchangeHedgeStrategy,
     DayTradingStrategy,
+    FuturesSpreadStrategy,
     GridTradingStrategy,
     MeanReversionStrategy,
     OptionsIncomeStrategy,
@@ -50,6 +52,12 @@ def _dummy_market_data(index: pd.Index) -> pd.DataFrame:
         {
             "implied_volatility": pd.Series(0.25, index=index),
             "realized_volatility": pd.Series(0.18, index=index),
+            "spread_zscore": pd.Series(np.linspace(-1.2, 1.4, len(index)), index=index),
+            "basis": pd.Series(np.linspace(-0.012, 0.018, len(index)), index=index),
+            "funding_rate": pd.Series(np.linspace(-0.0006, 0.0008, len(index)), index=index),
+            "spot_basis": pd.Series(np.linspace(-0.009, 0.011, len(index)), index=index),
+            "inventory_skew": pd.Series(np.linspace(-0.35, 0.42, len(index)), index=index),
+            "latency_ms": pd.Series(85.0, index=index),
         }
     )
 
@@ -58,7 +66,9 @@ def test_default_catalog_contains_builtin_strategies() -> None:
     catalog = StrategyCatalog.default()
     assert catalog.available() == (
         "arbitrage",
+        "cross_exchange_hedge",
         "day_trading",
+        "futures_spread",
         "grid_trading",
         "mean_reversion",
         "options_income",
@@ -89,6 +99,8 @@ def test_plugin_metadata_matches_strategy_catalog() -> None:
         "scalping": "scalping",
         "options_income": "options_income",
         "statistical_arbitrage": "statistical_arbitrage",
+        "futures_spread": "futures_spread",
+        "cross_exchange_hedge": "cross_exchange_hedge",
     }
 
     for plugin_name, engine in mapping.items():
@@ -118,6 +130,8 @@ def test_plugins_generate_series_with_matching_index() -> None:
         ScalpingStrategy,
         OptionsIncomeStrategy,
         StatisticalArbitrageStrategy,
+        FuturesSpreadStrategy,
+        CrossExchangeHedgeStrategy,
     ):
         plugin = plugin_cls()
         signal = plugin.generate(indicators, params, market_data=market_data)

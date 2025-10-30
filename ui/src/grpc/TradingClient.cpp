@@ -48,11 +48,22 @@ using botcore::trading::v1::GetOhlcvHistoryResponse;
 using botcore::trading::v1::Instrument;
 using botcore::trading::v1::ListTradableInstrumentsRequest;
 using botcore::trading::v1::ListTradableInstrumentsResponse;
+using botcore::trading::v1::ListMarketplacePresetsRequest;
+using botcore::trading::v1::ListMarketplacePresetsResponse;
+using botcore::trading::v1::ImportMarketplacePresetRequest;
+using botcore::trading::v1::ImportMarketplacePresetResponse;
+using botcore::trading::v1::ExportMarketplacePresetRequest;
+using botcore::trading::v1::ExportMarketplacePresetResponse;
+using botcore::trading::v1::RemoveMarketplacePresetRequest;
+using botcore::trading::v1::RemoveMarketplacePresetResponse;
+using botcore::trading::v1::ActivateMarketplacePresetRequest;
+using botcore::trading::v1::ActivateMarketplacePresetResponse;
 using botcore::trading::v1::OhlcvCandle;
 using botcore::trading::v1::RiskState;
 using botcore::trading::v1::RiskStateRequest;
 using botcore::trading::v1::StreamOhlcvRequest;
 using botcore::trading::v1::StreamOhlcvUpdate;
+using botcore::trading::v1::MarketplacePresetSummary;
 
 class MarketDataStreamReader {
 public:
@@ -160,6 +171,72 @@ public:
 
 private:
     std::unique_ptr<botcore::trading::v1::RiskService::Stub> m_stub;
+};
+
+class TradingClient::MarketplaceServiceStubInterface {
+public:
+    virtual ~MarketplaceServiceStubInterface() = default;
+    virtual grpc::Status ListPresets(grpc::ClientContext* context,
+                                     const ListMarketplacePresetsRequest& request,
+                                     ListMarketplacePresetsResponse* response) = 0;
+    virtual grpc::Status ImportPreset(grpc::ClientContext* context,
+                                      const ImportMarketplacePresetRequest& request,
+                                      ImportMarketplacePresetResponse* response) = 0;
+    virtual grpc::Status ExportPreset(grpc::ClientContext* context,
+                                      const ExportMarketplacePresetRequest& request,
+                                      ExportMarketplacePresetResponse* response) = 0;
+    virtual grpc::Status RemovePreset(grpc::ClientContext* context,
+                                      const RemoveMarketplacePresetRequest& request,
+                                      RemoveMarketplacePresetResponse* response) = 0;
+    virtual grpc::Status ActivatePreset(grpc::ClientContext* context,
+                                        const ActivateMarketplacePresetRequest& request,
+                                        ActivateMarketplacePresetResponse* response) = 0;
+};
+
+class GrpcMarketplaceServiceStub final : public TradingClient::MarketplaceServiceStubInterface {
+public:
+    explicit GrpcMarketplaceServiceStub(std::shared_ptr<grpc::Channel> channel)
+        : m_stub(botcore::trading::v1::MarketplaceService::NewStub(std::move(channel)))
+    {
+    }
+
+    grpc::Status ListPresets(grpc::ClientContext* context,
+                             const ListMarketplacePresetsRequest& request,
+                             ListMarketplacePresetsResponse* response) override
+    {
+        return m_stub->ListPresets(context, request, response);
+    }
+
+    grpc::Status ImportPreset(grpc::ClientContext* context,
+                               const ImportMarketplacePresetRequest& request,
+                               ImportMarketplacePresetResponse* response) override
+    {
+        return m_stub->ImportPreset(context, request, response);
+    }
+
+    grpc::Status ExportPreset(grpc::ClientContext* context,
+                               const ExportMarketplacePresetRequest& request,
+                               ExportMarketplacePresetResponse* response) override
+    {
+        return m_stub->ExportPreset(context, request, response);
+    }
+
+    grpc::Status RemovePreset(grpc::ClientContext* context,
+                               const RemoveMarketplacePresetRequest& request,
+                               RemoveMarketplacePresetResponse* response) override
+    {
+        return m_stub->RemovePreset(context, request, response);
+    }
+
+    grpc::Status ActivatePreset(grpc::ClientContext* context,
+                                 const ActivateMarketplacePresetRequest& request,
+                                 ActivateMarketplacePresetResponse* response) override
+    {
+        return m_stub->ActivatePreset(context, request, response);
+    }
+
+private:
+    std::unique_ptr<botcore::trading::v1::MarketplaceService::Stub> m_stub;
 };
 
 google::protobuf::Timestamp toProtoTimestamp(qint64 timestampMs)
@@ -549,6 +626,7 @@ void TradingClient::setTransportMode(TransportMode mode)
     m_channel.reset();
     m_marketDataStub.reset();
     m_riskStub.reset();
+    m_marketplaceStub.reset();
     if (wasRunning)
         start();
 }
@@ -802,6 +880,7 @@ void TradingClient::ensureStub() {
         if (!m_riskStub) {
             m_riskStub = std::make_unique<InProcessRiskServiceStub>();
         }
+        m_marketplaceStub.reset();
         m_channel.reset();
         return;
     }
@@ -889,6 +968,9 @@ void TradingClient::ensureStub() {
     }
     if (m_channel && !m_riskStub) {
         m_riskStub = std::make_unique<GrpcRiskServiceStub>(m_channel);
+    }
+    if (m_channel && !m_marketplaceStub) {
+        m_marketplaceStub = std::make_unique<GrpcMarketplaceServiceStub>(m_channel);
     }
     m_transport->ensureReady();
 }
@@ -1214,6 +1296,199 @@ QVector<TradingClient::TradableInstrument> TradingClient::listTradableInstrument
         instruments.append(listing);
     }
     return instruments;
+}
+
+QVector<TradingClient::MarketplacePresetSummary> TradingClient::listMarketplacePresets()
+{
+    QVector<MarketplacePresetSummary> presets;
+    ensureStub();
+    if (!m_marketplaceStub) {
+        qCWarning(lcTradingClient) << "ListMarketplacePresets pominięte – brak stubu MarketplaceService.";
+        return presets;
+    }
+
+    auto context = createContext();
+    ListMarketplacePresetsRequest request;
+    ListMarketplacePresetsResponse response;
+
+    const grpc::Status status = m_marketplaceStub->ListPresets(context.get(), request, &response);
+    if (!status.ok()) {
+        qCWarning(lcTradingClient)
+            << "ListMarketplacePresets nie powiodło się:" << QString::fromStdString(status.error_message());
+        return presets;
+    }
+
+    presets.reserve(response.presets_size());
+    for (const auto& preset : response.presets()) {
+        presets.append(convertMarketplacePresetSummary(preset));
+    }
+    return presets;
+}
+
+TradingClient::MarketplacePresetSummary TradingClient::importMarketplacePreset(const QByteArray& payload,
+                                                                              const QString& filename)
+{
+    ensureStub();
+    MarketplacePresetSummary summary;
+    if (!m_marketplaceStub) {
+        qCWarning(lcTradingClient) << "ImportMarketplacePreset pominięty – brak stubu MarketplaceService.";
+        summary.issues.append(tr("Brak połączenia z usługą marketplace."));
+        return summary;
+    }
+
+    auto context = createContext();
+    ImportMarketplacePresetRequest request;
+    request.set_payload(payload.constData(), static_cast<int>(payload.size()));
+    const QString trimmedName = filename.trimmed();
+    if (!trimmedName.isEmpty()) {
+        request.set_filename(trimmedName.toStdString());
+    }
+
+    ImportMarketplacePresetResponse response;
+    const grpc::Status status = m_marketplaceStub->ImportPreset(context.get(), request, &response);
+    if (!status.ok()) {
+        const QString error = QString::fromStdString(status.error_message());
+        qCWarning(lcTradingClient) << "ImportMarketplacePreset nie powiódł się:" << error;
+        summary.issues.append(error);
+        return summary;
+    }
+
+    if (response.has_preset()) {
+        summary = convertMarketplacePresetSummary(response.preset());
+    }
+    return summary;
+}
+
+TradingClient::MarketplacePresetSummary TradingClient::activateMarketplacePreset(const QString& presetId)
+{
+    ensureStub();
+    MarketplacePresetSummary summary;
+    if (!m_marketplaceStub) {
+        qCWarning(lcTradingClient) << "ActivateMarketplacePreset pominięte – brak stubu MarketplaceService.";
+        summary.issues.append(tr("Brak połączenia z usługą marketplace."));
+        return summary;
+    }
+
+    auto context = createContext();
+    ActivateMarketplacePresetRequest request;
+    request.set_preset_id(presetId.trimmed().toStdString());
+    ActivateMarketplacePresetResponse response;
+
+    const grpc::Status status = m_marketplaceStub->ActivatePreset(context.get(), request, &response);
+    if (!status.ok()) {
+        const QString error = QString::fromStdString(status.error_message());
+        qCWarning(lcTradingClient) << "ActivateMarketplacePreset nie powiodło się:" << error;
+        summary.issues.append(error);
+        return summary;
+    }
+
+    if (response.has_preset()) {
+        summary = convertMarketplacePresetSummary(response.preset());
+    }
+    return summary;
+}
+
+QByteArray TradingClient::exportMarketplacePreset(const QString& presetId,
+                                                   const QString& format,
+                                                   MarketplacePresetSummary* summary,
+                                                   QString* exportedFilename)
+{
+    ensureStub();
+    if (summary) {
+        *summary = MarketplacePresetSummary{};
+    }
+    if (exportedFilename) {
+        exportedFilename->clear();
+    }
+    if (!m_marketplaceStub) {
+        qCWarning(lcTradingClient) << "ExportMarketplacePreset pominięte – brak stubu MarketplaceService.";
+        if (summary) {
+            summary->issues.append(tr("Brak połączenia z usługą marketplace."));
+        }
+        if (exportedFilename) {
+            *exportedFilename = QString();
+        }
+        return {};
+    }
+
+    auto context = createContext();
+    ExportMarketplacePresetRequest request;
+    request.set_preset_id(presetId.trimmed().toStdString());
+    const QString trimmedFormat = format.trimmed();
+    if (!trimmedFormat.isEmpty()) {
+        request.set_format(trimmedFormat.toStdString());
+    }
+
+    ExportMarketplacePresetResponse response;
+    const grpc::Status status = m_marketplaceStub->ExportPreset(context.get(), request, &response);
+    if (!status.ok()) {
+        const QString error = QString::fromStdString(status.error_message());
+        qCWarning(lcTradingClient) << "ExportMarketplacePreset nie powiodło się:" << error;
+        if (summary) {
+            summary->issues.append(error);
+        }
+        if (exportedFilename) {
+            *exportedFilename = QString();
+        }
+        return {};
+    }
+
+    if (summary && response.has_preset()) {
+        *summary = convertMarketplacePresetSummary(response.preset());
+    }
+
+    if (exportedFilename) {
+        *exportedFilename = QString::fromStdString(response.filename());
+    }
+
+    const std::string& payload = response.payload();
+    return QByteArray(payload.data(), static_cast<int>(payload.size()));
+}
+
+bool TradingClient::removeMarketplacePreset(const QString& presetId)
+{
+    ensureStub();
+    if (!m_marketplaceStub) {
+        qCWarning(lcTradingClient) << "RemoveMarketplacePreset pominięte – brak stubu MarketplaceService.";
+        return false;
+    }
+
+    auto context = createContext();
+    RemoveMarketplacePresetRequest request;
+    request.set_preset_id(presetId.trimmed().toStdString());
+    RemoveMarketplacePresetResponse response;
+
+    const grpc::Status status = m_marketplaceStub->RemovePreset(context.get(), request, &response);
+    if (!status.ok()) {
+        qCWarning(lcTradingClient)
+            << "RemoveMarketplacePreset nie powiodło się:" << QString::fromStdString(status.error_message());
+        return false;
+    }
+    return response.removed();
+}
+
+TradingClient::MarketplacePresetSummary TradingClient::convertMarketplacePresetSummary(
+    const botcore::trading::v1::MarketplacePresetSummary& preset) const
+{
+    MarketplacePresetSummary summary;
+    summary.presetId = QString::fromStdString(preset.preset_id());
+    summary.name = QString::fromStdString(preset.name());
+    summary.version = QString::fromStdString(preset.version());
+    summary.profile = QString::fromStdString(preset.profile());
+    summary.signatureVerified = preset.signature_verified();
+    summary.sourcePath = QString::fromStdString(preset.source_path());
+
+    summary.tags.reserve(preset.tags_size());
+    for (const auto& tag : preset.tags()) {
+        summary.tags.append(QString::fromStdString(tag));
+    }
+
+    summary.issues.reserve(preset.issues_size());
+    for (const auto& issue : preset.issues()) {
+        summary.issues.append(QString::fromStdString(issue));
+    }
+
+    return summary;
 }
 
 RiskSnapshotData TradingClient::convertRiskState(const RiskState& state) const {

@@ -5,6 +5,7 @@ import QtQuick.Window
 import Qt.labs.settings
 import "."
 import "workbench"
+import "../views" as Views
 
 ApplicationWindow {
     id: window
@@ -14,6 +15,7 @@ ApplicationWindow {
     property alias workbenchView: strategyWorkbench
     property var extraWindows: []
     property int extraWindowCount: 0
+    property bool wizardCompleted: licenseController ? licenseController.licenseActive : false
 
     title: qsTr("Bot Trading Shell")
     minimumWidth: 960
@@ -154,7 +156,6 @@ ApplicationWindow {
         anchors.fill: parent
         anchors.topMargin: header.height
         anchors.bottomMargin: footer.implicitHeight
-        enabled: licenseController.licenseActive
 
         RowLayout {
             anchors.fill: parent
@@ -179,8 +180,30 @@ ApplicationWindow {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
 
+                Component.onCompleted: currentIndex = wizardCompleted ? 1 : 0
+
+                Tab {
+                    title: qsTr("Kreator")
+
+                    Views.SetupWizard {
+                        anchors.fill: parent
+                        appController: appController
+                        strategyController: strategyController
+                        workbenchController: workbenchController
+                        licenseController: licenseController
+                        riskModel: riskModel
+                        onWizardCompleted: {
+                            window.wizardCompleted = true
+                            if (licenseController && !licenseController.licenseActive)
+                                licenseController.refreshLicenseStatus()
+                            mainTabView.currentIndex = 1
+                        }
+                    }
+                }
+
                 Tab {
                     title: qsTr("Wykres")
+                    enabled: licenseController.licenseActive
 
                     Item {
                         anchors.fill: parent
@@ -199,7 +222,21 @@ ApplicationWindow {
                 }
 
                 Tab {
+                    title: qsTr("Dashboard")
+                    enabled: licenseController.licenseActive
+
+                    Views.PortfolioDashboard {
+                        anchors.fill: parent
+                        appController: appController
+                        riskModel: riskModel
+                        riskHistoryModel: riskHistoryModel
+                        alertsModel: alertsModel
+                    }
+                }
+
+                Tab {
                     title: qsTr("Workbench")
+                    enabled: licenseController.licenseActive
 
                     StrategyWorkbench {
                         id: strategyWorkbench
@@ -214,7 +251,22 @@ ApplicationWindow {
                 }
 
                 Tab {
+                    title: qsTr("Konfigurator")
+                    enabled: licenseController.licenseActive
+
+                    Views.StrategyConfigurator {
+                        anchors.fill: parent
+                        appController: appController
+                        strategyController: strategyController
+                        workbenchController: workbenchController
+                        riskModel: riskModel
+                        licenseController: licenseController
+                    }
+                }
+
+                Tab {
                     title: qsTr("Ryzyko live")
+                    enabled: licenseController.licenseActive
 
                     Flickable {
                         anchors.fill: parent
@@ -236,7 +288,27 @@ ApplicationWindow {
                 }
 
                 Tab {
+                    title: qsTr("Monitoring")
+                    enabled: licenseController.licenseActive
+
+                    Flickable {
+                        anchors.fill: parent
+                        contentWidth: Math.max(width, monitoringDashboard.implicitWidth)
+                        contentHeight: Math.max(height, monitoringDashboard.implicitHeight)
+                        clip: true
+                        boundsBehavior: Flickable.StopAtBounds
+                        ScrollBar.vertical: ScrollBar {}
+
+                        Views.MonitoringDashboard {
+                            id: monitoringDashboard
+                            width: Math.max(parent.width, implicitWidth)
+                        }
+                    }
+                }
+
+                Tab {
                     title: qsTr("Moduły")
+                    enabled: licenseController.licenseActive
 
                     ModuleBrowser {
                         anchors.fill: parent
@@ -246,6 +318,7 @@ ApplicationWindow {
 
                 Tab {
                     title: qsTr("Portfele")
+                    enabled: licenseController.licenseActive
 
                     PortfolioManagerView {
                         anchors.fill: parent
@@ -254,12 +327,11 @@ ApplicationWindow {
 
                 Tab {
                     title: qsTr("Marketplace")
+                    enabled: licenseController.licenseActive
 
-                    MarketplaceView {
+                    Views.Marketplace {
                         anchors.fill: parent
-                        onPackageActivated: function(packageId) {
-                            console.info("Marketplace package selected", packageId)
-                        }
+                        appController: appController
                     }
                 }
             }
@@ -273,6 +345,12 @@ ApplicationWindow {
 
     FirstRunWizard {
         anchors.fill: parent
+        visible: !wizardCompleted
+    }
+
+    AlertToastOverlay {
+        id: alertToastOverlay
+        enabled: appController ? appController.alertToastsEnabled : false
     }
 
     Settings {
@@ -333,6 +411,30 @@ ApplicationWindow {
         }
         function onInstrumentChanged() {
             window.syncInstrumentLabel()
+        }
+        function onAlertToastsEnabledChanged() {
+            if (!appController.alertToastsEnabled)
+                alertToastOverlay.clear()
+        }
+    }
+
+    Connections {
+        target: licenseController
+        ignoreUnknownSignals: true
+        function onLicenseActiveChanged() {
+            window.wizardCompleted = licenseController.licenseActive
+            if (window.wizardCompleted && mainTabView.currentIndex === 0 && mainTabView.count > 1)
+                mainTabView.currentIndex = 1
+        }
+    }
+
+    Connections {
+        target: appController ? appController.alertsModel : null
+        ignoreUnknownSignals: true
+        function onAlertRaised(id, severity, title, description) {
+            if (!appController || !appController.alertToastsEnabled)
+                return
+            alertToastOverlay.showToast(id, severity, title, description)
         }
     }
 

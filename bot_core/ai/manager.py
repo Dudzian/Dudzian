@@ -422,22 +422,29 @@ def _build_fallback_ai_models() -> type:
     return _DefaultAIModels
 
 
-try:  # pragma: no cover - w testach zastępujemy _AIModels atrapą
-    from ai_models import AIModels as _DefaultAIModels  # type: ignore
-except Exception as exc:  # pragma: no cover - brak zależności na CI
-    try:
-        _kryptolowca_ai_models = importlib.import_module("KryptoLowca.ai_models")
-    except Exception as namespace_exc:
-        _AI_IMPORT_ERROR = _bundle_import_errors(exc, namespace_exc)
-        _FALLBACK_ACTIVE = True
-        _DefaultAIModels = _build_fallback_ai_models()
-    else:
+try:  # pragma: no cover - preferowana ścieżka po migracji do bot_core
+    from bot_core.ai.legacy_models import AIModels as _DefaultAIModels  # type: ignore
+except Exception as primary_exc:  # pragma: no cover - brak zależności opcjonalnych
+    try:  # zgodność z pakietami budującymi wheel z płaskim modułem ``ai_models``
+        from ai_models import AIModels as _DefaultAIModels  # type: ignore
+    except Exception as secondary_exc:  # pragma: no cover - fallback na namespace legacy
         try:
-            _DefaultAIModels = getattr(_kryptolowca_ai_models, "AIModels")
-        except AttributeError as attr_exc:
-            _AI_IMPORT_ERROR = _bundle_import_errors(exc, attr_exc)
+            _kryptolowca_ai_models = importlib.import_module("KryptoLowca.ai_models")
+        except Exception as namespace_exc:
+            _AI_IMPORT_ERROR = _bundle_import_errors(
+                primary_exc, _bundle_import_errors(secondary_exc, namespace_exc)
+            )
             _FALLBACK_ACTIVE = True
             _DefaultAIModels = _build_fallback_ai_models()
+        else:
+            try:
+                _DefaultAIModels = getattr(_kryptolowca_ai_models, "AIModels")
+            except AttributeError as attr_exc:
+                _AI_IMPORT_ERROR = _bundle_import_errors(
+                    primary_exc, _bundle_import_errors(secondary_exc, attr_exc)
+                )
+                _FALLBACK_ACTIVE = True
+                _DefaultAIModels = _build_fallback_ai_models()
 
 # --- Import funkcji windowize z różnych możliwych miejsc, z bezpiecznym fallbackiem ---
 _default_windowize: Callable[..., Tuple[np.ndarray, np.ndarray]]

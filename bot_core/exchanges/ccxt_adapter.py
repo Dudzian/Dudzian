@@ -22,7 +22,12 @@ from bot_core.exchanges.errors import (
     ExchangeThrottlingError,
 )
 from bot_core.observability.metrics import MetricsRegistry, get_global_metrics_registry
-from bot_core.exchanges.health import Watchdog
+from bot_core.exchanges.health import RetryPolicy, Watchdog
+from bot_core.exchanges.rate_limiter import (
+    RateLimitRule,
+    get_global_rate_limiter_registry,
+    normalize_rate_limit_rules,
+)
 
 try:  # pragma: no cover - opcjonalny import CCXT
     import ccxt  # type: ignore
@@ -104,6 +109,9 @@ class CCXTSpotAdapter(ExchangeAdapter):
         "_auth_errors",
         "_rate_limit_errors",
         "_base_errors",
+        "_rate_limiter",
+        "_retry_policy",
+        "_sleep",
     )
 
     name = "ccxt_spot"
@@ -157,6 +165,21 @@ class CCXTSpotAdapter(ExchangeAdapter):
             "base_error_types", (_CCXTExchangeError,) if _CCXTExchangeError else ()
         )
         self._client = client or self._build_client()
+        default_rules = (
+            RateLimitRule(rate=60, per=60.0),
+        )
+        configured_rules = self._settings.get("rate_limit_rules")
+        self._rate_limiter = get_global_rate_limiter_registry().configure(
+            f"{self.name}:{self._exchange_id}:{self._environment.value}",
+            normalize_rate_limit_rules(configured_rules, default_rules),
+            metric_labels={"exchange": self.name, "mode": self._environment.value},
+        )
+        retry_settings = self._settings.get("retry_policy")
+        if isinstance(retry_settings, Mapping):
+            self._retry_policy = RetryPolicy(**retry_settings)  # type: ignore[arg-type]
+        else:
+            self._retry_policy = RetryPolicy()
+        self._sleep: Callable[[float], None] = self._settings.get("sleep_callable") or time.sleep
 
     # --- Metody pomocnicze -------------------------------------------------
 
@@ -199,27 +222,50 @@ class CCXTSpotAdapter(ExchangeAdapter):
         return client
 
     def _wrap_call(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
-        start = time.perf_counter()
-        self._metric_requests.inc(labels=self._metric_labels)
-        try:
-            return func(*args, **kwargs)
-        except tuple(self._network_errors) as exc:
-            self._metric_failures.inc(labels=self._metric_labels)
-            raise ExchangeNetworkError("Błąd sieci CCXT", reason=exc) from exc
-        except tuple(self._auth_errors) as exc:
-            self._metric_failures.inc(labels=self._metric_labels)
-            raise ExchangeAuthError("Błąd autoryzacji CCXT", status_code=401, payload=str(exc)) from exc
-        except tuple(self._rate_limit_errors) as exc:
-            self._metric_failures.inc(labels=self._metric_labels)
-            raise ExchangeThrottlingError(
-                "Przekroczono limity CCXT", status_code=429, payload=str(exc)
-            ) from exc
-        except tuple(self._base_errors) as exc:
-            self._metric_failures.inc(labels=self._metric_labels)
-            raise ExchangeAPIError("Błąd CCXT", status_code=500, payload=str(exc)) from exc
-        finally:
-            elapsed = time.perf_counter() - start
-            self._metric_latency.observe(elapsed, labels=self._metric_labels)
+        last_exception: tuple[Exception, BaseException | None, bool] | None = None
+        for attempt in range(1, self._retry_policy.max_attempts + 1):
+            self._rate_limiter.acquire()
+            start = time.perf_counter()
+            self._metric_requests.inc(labels=self._metric_labels)
+            try:
+                result = func(*args, **kwargs)
+            except tuple(self._network_errors) as exc:
+                self._metric_failures.inc(labels=self._metric_labels)
+                wrapped = ExchangeNetworkError("Błąd sieci CCXT", reason=exc)
+                last_exception = (wrapped, exc, True)
+            except tuple(self._auth_errors) as exc:
+                self._metric_failures.inc(labels=self._metric_labels)
+                wrapped = ExchangeAuthError(
+                    "Błąd autoryzacji CCXT", status_code=401, payload=str(exc)
+                )
+                last_exception = (wrapped, exc, False)
+            except tuple(self._rate_limit_errors) as exc:
+                self._metric_failures.inc(labels=self._metric_labels)
+                wrapped = ExchangeThrottlingError(
+                    "Przekroczono limity CCXT", status_code=429, payload=str(exc)
+                )
+                last_exception = (wrapped, exc, True)
+            except tuple(self._base_errors) as exc:
+                self._metric_failures.inc(labels=self._metric_labels)
+                wrapped = ExchangeAPIError("Błąd CCXT", status_code=500, payload=str(exc))
+                last_exception = (wrapped, exc, False)
+            else:
+                return result
+            finally:
+                elapsed = time.perf_counter() - start
+                self._metric_latency.observe(elapsed, labels=self._metric_labels)
+
+            if last_exception is None:
+                continue
+            wrapped_exc, original_exc, should_retry = last_exception
+            if should_retry and attempt < self._retry_policy.max_attempts:
+                delay = self._retry_policy.compute_delay(attempt)
+                self._sleep(delay)
+                last_exception = None
+                continue
+            if original_exc is not None:
+                raise wrapped_exc from original_exc
+            raise wrapped_exc
 
     def _call_client(self, method_name: str, *args: Any, **kwargs: Any) -> Any:
         method = getattr(self._client, method_name)
