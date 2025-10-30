@@ -279,7 +279,6 @@ Application::Application(QQmlApplicationEngine& engine, QObject* parent)
     m_securityController->setLicensePath(defaultLicensePath);
     m_securityController->setLogPath(QDir::current().absoluteFilePath(QStringLiteral("logs/security_admin.log")));
     m_securityController->setTpmQuotePath(QDir::current().absoluteFilePath(QStringLiteral("var/security/tpm_quote.json")));
-    m_securityController->setTpmKeyringPath(QDir::current().absoluteFilePath(QStringLiteral("config/tpm_public_keys.json")));
     m_securityController->setIntegrityManifestPath(QDir::current().absoluteFilePath(QStringLiteral("config/integrity_manifest.json")));
     connect(m_securityController.get(),
             &SecurityAdminController::securityAlertRaised,
@@ -349,16 +348,6 @@ Application::Application(QQmlApplicationEngine& engine, QObject* parent)
                                          reason,
                                          AlertsModel::Warning,
                                          true);
-                if (m_securityController) {
-                    QVariantMap details;
-                    details.insert(QStringLiteral("id"), id);
-                    details.insert(QStringLiteral("reason"), reason);
-                    m_securityController->ingestSecurityEvent(QStringLiteral("updates"),
-                                                               tr("Aktualizacja %1 nie powiodła się: %2")
-                                                                   .arg(id, reason),
-                                                               details,
-                                                               2);
-                }
             });
     connect(m_updateManager.get(),
             &OfflineUpdateManager::updateCompleted,
@@ -370,14 +359,6 @@ Application::Application(QQmlApplicationEngine& engine, QObject* parent)
                                          tr("Zainstalowano pakiet %1.").arg(id),
                                          AlertsModel::Info,
                                          false);
-                if (m_securityController) {
-                    QVariantMap details;
-                    details.insert(QStringLiteral("id"), id);
-                    m_securityController->ingestSecurityEvent(QStringLiteral("updates"),
-                                                               tr("Zakończono instalację pakietu %1.").arg(id),
-                                                               details,
-                                                               0);
-                }
             });
 
     m_updateManager->refresh();

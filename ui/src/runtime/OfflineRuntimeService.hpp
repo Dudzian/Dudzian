@@ -22,8 +22,6 @@ public:
     void setAutoRunEnabled(bool enabled);
     void setStrategyConfig(const QVariantMap& config);
     void setDatasetPath(const QString& path);
-    void setStreamingEnabled(bool enabled);
-    void setStreamSnapshotPath(const QString& path);
 
 public slots:
     void start();
@@ -41,7 +39,6 @@ signals:
 
 private:
     void ensureDatasetLoaded();
-    bool tryLoadStreamSnapshot(QList<OhlcvPoint>& out) const;
     QList<OhlcvPoint> limitedHistory() const;
     RiskSnapshotData buildRiskSnapshot() const;
     PerformanceGuard buildPerformanceGuard() const;
@@ -52,13 +49,10 @@ private:
     QVariantMap                    m_strategyConfig;
     QString                        m_datasetPath;
     QString                        m_loadedDatasetPath;
-    QString                        m_streamSnapshotPath;
-    QString                        m_loadedStreamSnapshotPath;
     QList<OhlcvPoint>              m_history;
     int                            m_historyLimit = 500;
     bool                           m_running = false;
     bool                           m_autoRunEnabled = false;
     bool                           m_automationRunning = false;
     bool                           m_datasetDirty = true;
-    bool                           m_streamingEnabled = false;
 };

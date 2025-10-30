@@ -2,17 +2,12 @@
 
 #include <QDate>
 #include <QFile>
-#include <QJsonArray>
-#include <QJsonDocument>
-#include <QJsonObject>
-#include <QJsonValue>
 #include <QLoggingCategory>
 #include <QTextStream>
 #include <QTime>
 
 #include <algorithm>
 #include <cmath>
-#include <limits>
 #include <random>
 
 #include "utils/PathUtils.hpp"
@@ -75,37 +70,6 @@ void OfflineRuntimeService::setDatasetPath(const QString& path)
     }
 }
 
-void OfflineRuntimeService::setStreamingEnabled(bool enabled)
-{
-    if (m_streamingEnabled == enabled)
-        return;
-    m_streamingEnabled = enabled;
-    m_datasetDirty = true;
-    if (m_running) {
-        ensureDatasetLoaded();
-        emit historyReady(limitedHistory());
-        emit riskReady(buildRiskSnapshot());
-        emit guardReady(buildPerformanceGuard());
-    }
-}
-
-void OfflineRuntimeService::setStreamSnapshotPath(const QString& path)
-{
-    QString normalized = path.trimmed();
-    if (!normalized.isEmpty())
-        normalized = bot::shell::utils::expandPath(normalized);
-    if (normalized == m_streamSnapshotPath)
-        return;
-    m_streamSnapshotPath = normalized;
-    m_datasetDirty = true;
-    if (m_running) {
-        ensureDatasetLoaded();
-        emit historyReady(limitedHistory());
-        emit riskReady(buildRiskSnapshot());
-        emit guardReady(buildPerformanceGuard());
-    }
-}
-
 void OfflineRuntimeService::start()
 {
     ensureDatasetLoaded();
@@ -155,21 +119,6 @@ void OfflineRuntimeService::stopAutomation()
 
 void OfflineRuntimeService::ensureDatasetLoaded()
 {
-    if (m_streamingEnabled && !m_streamSnapshotPath.trimmed().isEmpty()) {
-        const QString streamPath = bot::shell::utils::expandPath(m_streamSnapshotPath);
-        if (!m_datasetDirty && streamPath == m_loadedStreamSnapshotPath)
-            return;
-        QList<OhlcvPoint> streamed;
-        if (tryLoadStreamSnapshot(streamed)) {
-            m_history = streamed;
-            m_loadedStreamSnapshotPath = streamPath;
-            m_loadedDatasetPath.clear();
-            m_datasetDirty = false;
-            return;
-        }
-        qCWarning(lcOfflineService) << "Nie udało się załadować snapshotu strumieniowego" << streamPath;
-    }
-
     QString candidate = m_datasetPath;
     if (candidate.trimmed().isEmpty())
         candidate = QStringLiteral(kDefaultDatasetPath);
@@ -240,96 +189,7 @@ void OfflineRuntimeService::ensureDatasetLoaded()
 
     m_history = loaded;
     m_loadedDatasetPath = candidate;
-    m_loadedStreamSnapshotPath.clear();
     m_datasetDirty = false;
-}
-
-bool OfflineRuntimeService::tryLoadStreamSnapshot(QList<OhlcvPoint>& out) const
-{
-    out.clear();
-    if (m_streamSnapshotPath.trimmed().isEmpty())
-        return false;
-
-    const QString path = bot::shell::utils::expandPath(m_streamSnapshotPath);
-    QFile file(path);
-    if (!file.exists() || !file.open(QIODevice::ReadOnly | QIODevice::Text))
-        return false;
-
-    const QByteArray payload = file.readAll();
-    QJsonParseError error{};
-    const QJsonDocument doc = QJsonDocument::fromJson(payload, &error);
-    if (error.error != QJsonParseError::NoError || !doc.isArray())
-        return false;
-
-    const QJsonArray array = doc.array();
-    if (array.isEmpty())
-        return false;
-
-    QList<OhlcvPoint> parsed;
-    parsed.reserve(array.size());
-    quint64 sequence = 0;
-    for (const QJsonValue& value : array) {
-        if (!value.isObject())
-            continue;
-        const QJsonObject object = value.toObject();
-        const QJsonValue timestampValue = object.value(QStringLiteral("timestamp_ms"));
-        if (!timestampValue.isDouble() && !timestampValue.isString())
-            continue;
-        qint64 timestampMs = -1;
-        if (timestampValue.isDouble())
-            timestampMs = static_cast<qint64>(timestampValue.toDouble());
-        else
-            timestampMs = timestampValue.toString().toLongLong();
-        if (timestampMs <= 0)
-            continue;
-
-        if (!object.value(QStringLiteral("open")).isDouble()
-            || !object.value(QStringLiteral("high")).isDouble()
-            || !object.value(QStringLiteral("low")).isDouble()
-            || !object.value(QStringLiteral("close")).isDouble()) {
-            continue;
-        }
-
-        const double volume = object.value(QStringLiteral("volume")).toDouble(0.0);
-
-        OhlcvPoint candle{};
-        candle.timestampMs = timestampMs;
-        candle.open = object.value(QStringLiteral("open")).toDouble();
-        candle.high = object.value(QStringLiteral("high")).toDouble();
-        candle.low = object.value(QStringLiteral("low")).toDouble();
-        candle.close = object.value(QStringLiteral("close")).toDouble();
-        candle.volume = volume;
-        candle.closed = object.value(QStringLiteral("closed")).toBool(true);
-        candle.sequence = sequence++;
-        parsed.append(candle);
-    }
-
-    if (parsed.isEmpty())
-        return false;
-
-    std::sort(parsed.begin(), parsed.end(), [](const OhlcvPoint& lhs, const OhlcvPoint& rhs) {
-        if (lhs.timestampMs == rhs.timestampMs)
-            return lhs.sequence < rhs.sequence;
-        return lhs.timestampMs < rhs.timestampMs;
-    });
-
-    QList<OhlcvPoint> normalized;
-    normalized.reserve(parsed.size());
-    qint64 lastTimestamp = std::numeric_limits<qint64>::min();
-    for (const OhlcvPoint& candle : parsed) {
-        if (!normalized.isEmpty() && candle.timestampMs == lastTimestamp) {
-            normalized.last() = candle;
-        } else {
-            normalized.append(candle);
-            lastTimestamp = candle.timestampMs;
-        }
-    }
-
-    for (int index = 0; index < normalized.size(); ++index)
-        normalized[index].sequence = static_cast<quint64>(index);
-
-    out = normalized;
-    return true;
 }
 
 QList<OhlcvPoint> OfflineRuntimeService::limitedHistory() const

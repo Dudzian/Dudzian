@@ -36,16 +36,10 @@ public:
     void setLicensePath(const QString& path);
     void setLogPath(const QString& path);
     void setTpmQuotePath(const QString& path);
-    void setTpmKeyringPath(const QString& path);
     void setIntegrityManifestPath(const QString& path);
 
     Q_INVOKABLE bool verifyTpmBinding();
     Q_INVOKABLE bool runIntegrityCheck();
-    Q_INVOKABLE bool exportSignedAuditLog(const QString& destinationDir);
-    Q_INVOKABLE void ingestSecurityEvent(const QString& category,
-                                         const QString& message,
-                                         const QVariantMap& details = {},
-                                         int severity = 1);
 
 signals:
     void userProfilesChanged();
@@ -61,6 +55,7 @@ private:
     bool runBridge(const QStringList& arguments, QByteArray* stdoutData, QByteArray* stderrData) const;
     bool loadStateFromJson(const QByteArray& data);
     bool loadStateFromFile(const QString& path);
+    QVariantMap readTpmEvidence(const QString& path) const;
     void recordAuditEvent(const QString& category, const QString& message, const QVariantMap& details = {});
     QString computeFileDigest(const QString& path) const;
     bool evaluateIntegrityManifest(QVariantMap* report);
@@ -70,7 +65,6 @@ private:
     QString m_licensePath;
     QString m_logPath;
     QString m_tpmQuotePath;
-    QString m_tpmKeyringPath;
     QString m_integrityManifestPath;
     QVariantList m_userProfiles;
     QVariantMap m_licenseInfo;

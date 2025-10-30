@@ -109,14 +109,6 @@ void SecurityAdminController::setTpmQuotePath(const QString& path)
     m_tpmQuotePath = normalized;
 }
 
-void SecurityAdminController::setTpmKeyringPath(const QString& path)
-{
-    const QString normalized = bot::shell::utils::expandPath(path);
-    if (m_tpmKeyringPath == normalized)
-        return;
-    m_tpmKeyringPath = normalized;
-}
-
 void SecurityAdminController::setIntegrityManifestPath(const QString& path)
 {
     const QString normalized = bot::shell::utils::expandPath(path);
@@ -445,8 +437,6 @@ bool SecurityAdminController::loadStateFromFile(const QString& path)
 
 bool SecurityAdminController::verifyTpmBinding()
 {
-    if (m_busy)
-        return false;
     QString evidencePath = m_tpmQuotePath;
     if (evidencePath.isEmpty()) {
         const QByteArray envPath = qgetenv("BOT_CORE_UI_TPM_QUOTE");
@@ -467,65 +457,18 @@ bool SecurityAdminController::verifyTpmBinding()
         return false;
     }
 
-    QStringList args;
-    args << QStringLiteral("-m")
-         << QStringLiteral("bot_core.security.ui_bridge")
-         << QStringLiteral("verify-tpm")
-         << QStringLiteral("--evidence-path") << evidencePath;
-    if (!m_licensePath.isEmpty())
-        args << QStringLiteral("--license-path") << m_licensePath;
+    status.insert(QStringLiteral("evidencePath"), evidencePath);
+    const QVariantMap evidence = readTpmEvidence(evidencePath);
+    status.insert(QStringLiteral("evidence"), evidence);
+
     const QVariantMap fingerprintInfo = m_licenseInfo.value(QStringLiteral("fingerprint")).toMap();
     const QString expectedFingerprint = fingerprintInfo.value(QStringLiteral("hash")).toString();
-    if (!expectedFingerprint.isEmpty())
-        args << QStringLiteral("--expected-fingerprint") << expectedFingerprint;
-    if (!m_tpmKeyringPath.isEmpty())
-        args << QStringLiteral("--keyring") << m_tpmKeyringPath;
+    status.insert(QStringLiteral("expectedFingerprint"), expectedFingerprint);
+    const QString sealedFingerprint = evidence.value(QStringLiteral("sealed_fingerprint")).toString();
+    status.insert(QStringLiteral("sealedFingerprint"), sealedFingerprint);
 
-    QByteArray stdoutData;
-    QByteArray stderrData;
-    if (!runBridge(args, &stdoutData, &stderrData)) {
-        status.insert(QStringLiteral("error"), tr("Nie udało się uruchomić walidatora TPM."));
-        status.insert(QStringLiteral("details"), QString::fromUtf8(stderrData));
-        status.insert(QStringLiteral("valid"), false);
-        m_tpmStatus = status;
-        Q_EMIT tpmStatusChanged();
-        recordAuditEvent(QStringLiteral("tpm"), tr("Niepowodzenie walidacji TPM"), status);
-        Q_EMIT securityAlertRaised(QStringLiteral("security:tpm"),
-                                   2,
-                                   tr("Weryfikacja TPM"),
-                                   tr("Nie udało się zweryfikować dowodu TPM."));
-        return false;
-    }
-
-    QJsonParseError parseError{};
-    const QJsonDocument doc = QJsonDocument::fromJson(stdoutData, &parseError);
-    if (parseError.error != QJsonParseError::NoError || !doc.isObject()) {
-        status.insert(QStringLiteral("error"), tr("Bridge zwrócił niepoprawny JSON."));
-        status.insert(QStringLiteral("details"), parseError.errorString());
-        status.insert(QStringLiteral("valid"), false);
-        m_tpmStatus = status;
-        Q_EMIT tpmStatusChanged();
-        recordAuditEvent(QStringLiteral("tpm"), tr("Niepowodzenie walidacji TPM"), status);
-        Q_EMIT securityAlertRaised(QStringLiteral("security:tpm"),
-                                   2,
-                                   tr("Weryfikacja TPM"),
-                                   tr("Niepoprawna odpowiedź walidatora TPM."));
-        return false;
-    }
-
-    const QVariantMap result = doc.object().toVariantMap();
-    status = result;
-    status.insert(QStringLiteral("checkedAt"), QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs));
-    const QStringList errorMessages =
-        collectIssueMessages(status, QStringLiteral("error_details"), QStringLiteral("errors"));
-    const QStringList warningMessages =
-        collectIssueMessages(status, QStringLiteral("warning_details"), QStringLiteral("warnings"));
-    status.insert(QStringLiteral("errorMessages"), errorMessages);
-    status.insert(QStringLiteral("warningMessages"), warningMessages);
-    const bool valid = status.value(QStringLiteral("status")).toString().compare(QStringLiteral("ok"),
-                                                                                Qt::CaseInsensitive)
-        == 0
-        && errorMessages.isEmpty();
+    const bool valid = !expectedFingerprint.isEmpty() && !sealedFingerprint.isEmpty()
+        && sealedFingerprint.startsWith(expectedFingerprint.left(16));
     status.insert(QStringLiteral("valid"), valid);
 
     const bool changed = (status != m_tpmStatus);
@@ -533,24 +476,19 @@ bool SecurityAdminController::verifyTpmBinding()
     if (changed)
         Q_EMIT tpmStatusChanged();
 
-    const QString message = valid ? tr("Weryfikacja TPM zakończona sukcesem")
-                                  : tr("Weryfikacja TPM nie powiodła się");
-    recordAuditEvent(QStringLiteral("tpm"), message, status);
+    recordAuditEvent(QStringLiteral("tpm"),
+                     valid ? tr("Weryfikacja TPM zakończona sukcesem")
+                           : tr("Weryfikacja TPM nie powiodła się"),
+                     status);
 
     if (!valid) {
-        const QString detail = errorMessages.isEmpty() ? tr("Dowód TPM nie jest zgodny z licencją.")
-                                                       : errorMessages.join(QStringLiteral("; "));
+        const QString detail = sealedFingerprint.isEmpty()
+            ? tr("Dowód TPM nie zawiera fingerprintu.")
+            : tr("Fingerprint z TPM nie zgadza się z licencją.");
         Q_EMIT securityAlertRaised(QStringLiteral("security:tpm"),
                                    2,
                                    tr("Weryfikacja TPM"),
                                    detail);
-    } else {
-        if (!warningMessages.isEmpty()) {
-            Q_EMIT securityAlertRaised(QStringLiteral("security:tpm"),
-                                       1,
-                                       tr("Weryfikacja TPM"),
-                                       warningMessages.join(QStringLiteral("; ")));
-        }
     }
 
     return valid;
@@ -579,6 +517,26 @@ bool SecurityAdminController::runIntegrityCheck()
     }
 
     return ok;
+}
+
+QVariantMap SecurityAdminController::readTpmEvidence(const QString& path) const
+{
+    QVariantMap evidence;
+    QFile file(path);
+    if (!file.exists())
+        return evidence;
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text))
+        return evidence;
+
+    const QByteArray payload = file.readAll();
+    file.close();
+    QJsonParseError parseError{};
+    const QJsonDocument doc = QJsonDocument::fromJson(payload, &parseError);
+    if (parseError.error == QJsonParseError::NoError && doc.isObject())
+        evidence = doc.object().toVariantMap();
+    else
+        evidence.insert(QStringLiteral("raw"), QString::fromUtf8(payload).trimmed());
+    return evidence;
 }
 
 void SecurityAdminController::recordAuditEvent(const QString& category,
@@ -687,71 +645,5 @@ bool SecurityAdminController::evaluateIntegrityManifest(QVariantMap* report)
     if (report)
         *report = localReport;
     return valid;
-}
-
-bool SecurityAdminController::exportSignedAuditLog(const QString& destinationDir)
-{
-    if (m_busy)
-        return false;
-    QString targetDir = destinationDir.trimmed();
-    if (targetDir.isEmpty())
-        targetDir = QStringLiteral("exports/security");
-    targetDir = bot::shell::utils::expandPath(targetDir);
-
-    QStringList args;
-    args << QStringLiteral("-m")
-         << QStringLiteral("bot_core.security.ui_bridge")
-         << QStringLiteral("export-audit")
-         << QStringLiteral("--output-dir") << targetDir;
-    if (!m_logPath.isEmpty())
-        args << QStringLiteral("--log-path") << m_logPath;
-
-    QByteArray stdoutData;
-    QByteArray stderrData;
-    if (!runBridge(args, &stdoutData, &stderrData)) {
-        qCWarning(lcSecurityAdmin) << "Nie udało się wyeksportować logów audytu" << stderrData;
-        recordAuditEvent(QStringLiteral("audit"),
-                         tr("Eksport logów bezpieczeństwa nie powiódł się."),
-                         QVariantMap{{QStringLiteral("destination"), targetDir}});
-        return false;
-    }
-
-    QJsonParseError parseError{};
-    const QJsonDocument doc = QJsonDocument::fromJson(stdoutData, &parseError);
-    if (parseError.error != QJsonParseError::NoError || !doc.isObject()) {
-        qCWarning(lcSecurityAdmin) << "export-audit zwrócił niepoprawny JSON" << parseError.errorString();
-        recordAuditEvent(QStringLiteral("audit"),
-                         tr("Eksport logów bezpieczeństwa nie powiódł się."),
-                         QVariantMap{{QStringLiteral("destination"), targetDir},
-                                     {QStringLiteral("error"), parseError.errorString()}});
-        return false;
-    }
-
-    const QVariantMap payload = doc.object().toVariantMap();
-    const QString bundlePath = payload.value(QStringLiteral("bundle_path")).toString();
-    QVariantMap details = payload;
-    details.insert(QStringLiteral("destination"), targetDir);
-    recordAuditEvent(QStringLiteral("audit"),
-                     tr("Wyeksportowano pakiet logów bezpieczeństwa."),
-                     details);
-    if (!bundlePath.isEmpty()) {
-        Q_EMIT securityAlertRaised(QStringLiteral("security:audit-export"),
-                                   0,
-                                   tr("Eksport logów"),
-                                   tr("Podpisany pakiet audytu zapisano w %1").arg(bundlePath));
-    }
-    return true;
-}
-
-void SecurityAdminController::ingestSecurityEvent(const QString& category,
-                                                  const QString& message,
-                                                  const QVariantMap& details,
-                                                  int severity)
-{
-    recordAuditEvent(category, message, details);
-    if (severity >= 0) {
-        const QString alertId = QStringLiteral("security:%1").arg(category);
-        Q_EMIT securityAlertRaised(alertId, severity, tr("Zdarzenie bezpieczeństwa"), message);
-    }
 }
 
