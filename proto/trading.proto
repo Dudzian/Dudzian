@@ -211,6 +211,60 @@ message HealthCheckResponse {
   google.protobuf.Timestamp started_at = 3;
 }
 
+message MarketplacePresetSummary {
+  string preset_id = 1;
+  string name = 2;
+  string version = 3;
+  string profile = 4;
+  repeated string tags = 5;
+  bool signature_verified = 6;
+  string source_path = 7;
+  repeated string issues = 8;
+}
+
+message ListMarketplacePresetsRequest {}
+
+message ListMarketplacePresetsResponse {
+  repeated MarketplacePresetSummary presets = 1;
+}
+
+message ImportMarketplacePresetRequest {
+  bytes payload = 1;
+  string filename = 2;
+}
+
+message ImportMarketplacePresetResponse {
+  MarketplacePresetSummary preset = 1;
+}
+
+message ExportMarketplacePresetRequest {
+  string preset_id = 1;
+  string format = 2;
+}
+
+message ExportMarketplacePresetResponse {
+  bytes payload = 1;
+  string filename = 2;
+  MarketplacePresetSummary preset = 3;
+  string format = 4;
+}
+
+message RemoveMarketplacePresetRequest {
+  string preset_id = 1;
+}
+
+message RemoveMarketplacePresetResponse {
+  bool removed = 1;
+}
+
+message ActivateMarketplacePresetRequest {
+  string preset_id = 1;
+}
+
+message ActivateMarketplacePresetResponse {
+  MarketplacePresetSummary preset = 1;
+}
+
 service MarketDataService {
   rpc GetOhlcvHistory(GetOhlcvHistoryRequest) returns (GetOhlcvHistoryResponse);
   rpc StreamOhlcv(StreamOhlcvRequest) returns (stream StreamOhlcvUpdate);
@@ -235,4 +289,17 @@ service MetricsService {
 
 service HealthService {
   rpc Check(google.protobuf.Empty) returns (HealthCheckResponse);
+}
+
+service MarketplaceService {
+  rpc ListPresets(ListMarketplacePresetsRequest)
+      returns (ListMarketplacePresetsResponse);
+  rpc ImportPreset(ImportMarketplacePresetRequest)
+      returns (ImportMarketplacePresetResponse);
+  rpc ExportPreset(ExportMarketplacePresetRequest)
+      returns (ExportMarketplacePresetResponse);
+  rpc RemovePreset(RemoveMarketplacePresetRequest)
+      returns (RemoveMarketplacePresetResponse);
+  rpc ActivatePreset(ActivateMarketplacePresetRequest)
+      returns (ActivateMarketplacePresetResponse);
 }

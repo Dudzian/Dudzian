@@ -11,6 +11,7 @@
 #include <mutex>
 #include <thread>
 #include <vector>
+#include <optional>
 
 #include <google/protobuf/repeated_field.h>
 
@@ -34,6 +35,18 @@ class StreamOhlcvUpdate;
 class RiskStateRequest;
 class ListTradableInstrumentsRequest;
 class ListTradableInstrumentsResponse;
+class MarketplaceService;
+class MarketplacePresetSummary;
+class ListMarketplacePresetsRequest;
+class ListMarketplacePresetsResponse;
+class ImportMarketplacePresetRequest;
+class ImportMarketplacePresetResponse;
+class ExportMarketplacePresetRequest;
+class ExportMarketplacePresetResponse;
+class RemoveMarketplacePresetRequest;
+class RemoveMarketplacePresetResponse;
+class ActivateMarketplacePresetRequest;
+class ActivateMarketplacePresetResponse;
 } // namespace botcore::trading::v1
 
 namespace grpc {
@@ -72,6 +85,17 @@ public:
         double maxPrice = 0.0;
     };
 
+    struct MarketplacePresetSummary {
+        QString     presetId;
+        QString     name;
+        QString     version;
+        QString     profile;
+        QStringList tags;
+        bool        signatureVerified = false;
+        QStringList issues;
+        QString     sourcePath;
+    };
+
     using TlsConfig = GrpcTlsConfig;
 
     struct PreLiveChecklistResult {
@@ -97,6 +121,15 @@ public:
     void setInProcessDatasetPath(const QString& path);
 
     QVector<TradableInstrument> listTradableInstruments(const QString& exchange);
+    QVector<MarketplacePresetSummary> listMarketplacePresets();
+    MarketplacePresetSummary importMarketplacePreset(const QByteArray& payload,
+                                                     const QString& filename);
+    MarketplacePresetSummary activateMarketplacePreset(const QString& presetId);
+    QByteArray exportMarketplacePreset(const QString& presetId,
+                                       const QString& format,
+                                       MarketplacePresetSummary* summary = nullptr,
+                                       QString* exportedFilename = nullptr);
+    bool removeMarketplacePreset(const QString& presetId);
 
     QVector<QPair<QByteArray, QByteArray>> authMetadataForTesting() const;
     bool hasGrpcChannelForTesting() const;
@@ -175,6 +208,8 @@ private:
                               const QVector<IndicatorSample>& vwap,
                               QVector<SignalEventEntry>& signalHistory);
     std::optional<MarketRegimeSnapshotEntry> evaluateRegimeSnapshotLocked();
+    MarketplacePresetSummary convertMarketplacePresetSummary(
+        const botcore::trading::v1::MarketplacePresetSummary& preset) const;
 
     // --- Konfiguracja połączenia/rynku ---
     QString m_endpoint = QStringLiteral("127.0.0.1:50061");
@@ -197,8 +232,10 @@ private:
     std::shared_ptr<grpc::Channel> m_channel;
     class MarketDataStubInterface;
     class RiskServiceStubInterface;
+    class MarketplaceServiceStubInterface;
     std::unique_ptr<MarketDataStubInterface> m_marketDataStub;
     std::unique_ptr<RiskServiceStubInterface> m_riskStub;
+    std::unique_ptr<MarketplaceServiceStubInterface> m_marketplaceStub;
 
     // --- Streaming ---
     std::atomic<bool> m_running{false};

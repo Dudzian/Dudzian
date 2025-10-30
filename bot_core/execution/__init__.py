@@ -24,6 +24,10 @@ from bot_core.execution.paper import (  # noqa: F401 - eksport publiczny
     PaperTradingExecutionService,
     ShortPosition,
 )
+from bot_core.execution.execution_service import (  # noqa: F401 - eksport publiczny
+    build_live_execution_service,
+    resolve_execution_mode,
+)
 
 __all__ = [
     "ExecutionContext",
@@ -40,4 +44,6 @@ __all__ = [
     "ShortPosition",
     "ExchangeAdapterExecutionService",
     "decision_to_order_request",
+    "resolve_execution_mode",
+    "build_live_execution_service",
 ]

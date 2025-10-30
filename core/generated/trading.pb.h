@@ -51,6 +51,12 @@ extern const ::PROTOBUF_NAMESPACE_ID::internal::DescriptorTable descriptor_table
 namespace botcore {
 namespace trading {
 namespace v1 {
+class ActivateMarketplacePresetRequest;
+struct ActivateMarketplacePresetRequestDefaultTypeInternal;
+extern ActivateMarketplacePresetRequestDefaultTypeInternal _ActivateMarketplacePresetRequest_default_instance_;
+class ActivateMarketplacePresetResponse;
+struct ActivateMarketplacePresetResponseDefaultTypeInternal;
+extern ActivateMarketplacePresetResponseDefaultTypeInternal _ActivateMarketplacePresetResponse_default_instance_;
 class CancelOrderRequest;
 struct CancelOrderRequestDefaultTypeInternal;
 extern CancelOrderRequestDefaultTypeInternal _CancelOrderRequest_default_instance_;
@@ -60,6 +66,12 @@ extern CancelOrderResponseDefaultTypeInternal _CancelOrderResponse_default_insta
 class CandleGranularity;
 struct CandleGranularityDefaultTypeInternal;
 extern CandleGranularityDefaultTypeInternal _CandleGranularity_default_instance_;
+class ExportMarketplacePresetRequest;
+struct ExportMarketplacePresetRequestDefaultTypeInternal;
+extern ExportMarketplacePresetRequestDefaultTypeInternal _ExportMarketplacePresetRequest_default_instance_;
+class ExportMarketplacePresetResponse;
+struct ExportMarketplacePresetResponseDefaultTypeInternal;
+extern ExportMarketplacePresetResponseDefaultTypeInternal _ExportMarketplacePresetResponse_default_instance_;
 class ExposureLimit;
 struct ExposureLimitDefaultTypeInternal;
 extern ExposureLimitDefaultTypeInternal _ExposureLimit_default_instance_;
@@ -75,15 +87,30 @@ extern HealthCheckRequestDefaultTypeInternal _HealthCheckRequest_default_instanc
 class HealthCheckResponse;
 struct HealthCheckResponseDefaultTypeInternal;
 extern HealthCheckResponseDefaultTypeInternal _HealthCheckResponse_default_instance_;
+class ImportMarketplacePresetRequest;
+struct ImportMarketplacePresetRequestDefaultTypeInternal;
+extern ImportMarketplacePresetRequestDefaultTypeInternal _ImportMarketplacePresetRequest_default_instance_;
+class ImportMarketplacePresetResponse;
+struct ImportMarketplacePresetResponseDefaultTypeInternal;
+extern ImportMarketplacePresetResponseDefaultTypeInternal _ImportMarketplacePresetResponse_default_instance_;
 class Instrument;
 struct InstrumentDefaultTypeInternal;
 extern InstrumentDefaultTypeInternal _Instrument_default_instance_;
+class ListMarketplacePresetsRequest;
+struct ListMarketplacePresetsRequestDefaultTypeInternal;
+extern ListMarketplacePresetsRequestDefaultTypeInternal _ListMarketplacePresetsRequest_default_instance_;
+class ListMarketplacePresetsResponse;
+struct ListMarketplacePresetsResponseDefaultTypeInternal;
+extern ListMarketplacePresetsResponseDefaultTypeInternal _ListMarketplacePresetsResponse_default_instance_;
 class ListTradableInstrumentsRequest;
 struct ListTradableInstrumentsRequestDefaultTypeInternal;
 extern ListTradableInstrumentsRequestDefaultTypeInternal _ListTradableInstrumentsRequest_default_instance_;
 class ListTradableInstrumentsResponse;
 struct ListTradableInstrumentsResponseDefaultTypeInternal;
 extern ListTradableInstrumentsResponseDefaultTypeInternal _ListTradableInstrumentsResponse_default_instance_;
+class MarketplacePresetSummary;
+struct MarketplacePresetSummaryDefaultTypeInternal;
+extern MarketplacePresetSummaryDefaultTypeInternal _MarketplacePresetSummary_default_instance_;
 class MetricsAck;
 struct MetricsAckDefaultTypeInternal;
 extern MetricsAckDefaultTypeInternal _MetricsAck_default_instance_;
@@ -99,6 +126,12 @@ extern OhlcvCandleDefaultTypeInternal _OhlcvCandle_default_instance_;
 class OrderConstraintViolation;
 struct OrderConstraintViolationDefaultTypeInternal;
 extern OrderConstraintViolationDefaultTypeInternal _OrderConstraintViolation_default_instance_;
+class RemoveMarketplacePresetRequest;
+struct RemoveMarketplacePresetRequestDefaultTypeInternal;
+extern RemoveMarketplacePresetRequestDefaultTypeInternal _RemoveMarketplacePresetRequest_default_instance_;
+class RemoveMarketplacePresetResponse;
+struct RemoveMarketplacePresetResponseDefaultTypeInternal;
+extern RemoveMarketplacePresetResponseDefaultTypeInternal _RemoveMarketplacePresetResponse_default_instance_;
 class RiskState;
 struct RiskStateDefaultTypeInternal;
 extern RiskStateDefaultTypeInternal _RiskState_default_instance_;
@@ -130,22 +163,33 @@ extern TradableInstrumentMetadataDefaultTypeInternal _TradableInstrumentMetadata
 }  // namespace trading
 }  // namespace botcore
 PROTOBUF_NAMESPACE_OPEN
+template<> ::botcore::trading::v1::ActivateMarketplacePresetRequest* Arena::CreateMaybeMessage<::botcore::trading::v1::ActivateMarketplacePresetRequest>(Arena*);
+template<> ::botcore::trading::v1::ActivateMarketplacePresetResponse* Arena::CreateMaybeMessage<::botcore::trading::v1::ActivateMarketplacePresetResponse>(Arena*);
 template<> ::botcore::trading::v1::CancelOrderRequest* Arena::CreateMaybeMessage<::botcore::trading::v1::CancelOrderRequest>(Arena*);
 template<> ::botcore::trading::v1::CancelOrderResponse* Arena::CreateMaybeMessage<::botcore::trading::v1::CancelOrderResponse>(Arena*);
 template<> ::botcore::trading::v1::CandleGranularity* Arena::CreateMaybeMessage<::botcore::trading::v1::CandleGranularity>(Arena*);
+template<> ::botcore::trading::v1::ExportMarketplacePresetRequest* Arena::CreateMaybeMessage<::botcore::trading::v1::ExportMarketplacePresetRequest>(Arena*);
+template<> ::botcore::trading::v1::ExportMarketplacePresetResponse* Arena::CreateMaybeMessage<::botcore::trading::v1::ExportMarketplacePresetResponse>(Arena*);
 template<> ::botcore::trading::v1::ExposureLimit* Arena::CreateMaybeMessage<::botcore::trading::v1::ExposureLimit>(Arena*);
 template<> ::botcore::trading::v1::GetOhlcvHistoryRequest* Arena::CreateMaybeMessage<::botcore::trading::v1::GetOhlcvHistoryRequest>(Arena*);
 template<> ::botcore::trading::v1::GetOhlcvHistoryResponse* Arena::CreateMaybeMessage<::botcore::trading::v1::GetOhlcvHistoryResponse>(Arena*);
 template<> ::botcore::trading::v1::HealthCheckRequest* Arena::CreateMaybeMessage<::botcore::trading::v1::HealthCheckRequest>(Arena*);
 template<> ::botcore::trading::v1::HealthCheckResponse* Arena::CreateMaybeMessage<::botcore::trading::v1::HealthCheckResponse>(Arena*);
+template<> ::botcore::trading::v1::ImportMarketplacePresetRequest* Arena::CreateMaybeMessage<::botcore::trading::v1::ImportMarketplacePresetRequest>(Arena*);
+template<> ::botcore::trading::v1::ImportMarketplacePresetResponse* Arena::CreateMaybeMessage<::botcore::trading::v1::ImportMarketplacePresetResponse>(Arena*);
 template<> ::botcore::trading::v1::Instrument* Arena::CreateMaybeMessage<::botcore::trading::v1::Instrument>(Arena*);
+template<> ::botcore::trading::v1::ListMarketplacePresetsRequest* Arena::CreateMaybeMessage<::botcore::trading::v1::ListMarketplacePresetsRequest>(Arena*);
+template<> ::botcore::trading::v1::ListMarketplacePresetsResponse* Arena::CreateMaybeMessage<::botcore::trading::v1::ListMarketplacePresetsResponse>(Arena*);
 template<> ::botcore::trading::v1::ListTradableInstrumentsRequest* Arena::CreateMaybeMessage<::botcore::trading::v1::ListTradableInstrumentsRequest>(Arena*);
 template<> ::botcore::trading::v1::ListTradableInstrumentsResponse* Arena::CreateMaybeMessage<::botcore::trading::v1::ListTradableInstrumentsResponse>(Arena*);
+template<> ::botcore::trading::v1::MarketplacePresetSummary* Arena::CreateMaybeMessage<::botcore::trading::v1::MarketplacePresetSummary>(Arena*);
 template<> ::botcore::trading::v1::MetricsAck* Arena::CreateMaybeMessage<::botcore::trading::v1::MetricsAck>(Arena*);
 template<> ::botcore::trading::v1::MetricsRequest* Arena::CreateMaybeMessage<::botcore::trading::v1::MetricsRequest>(Arena*);
 template<> ::botcore::trading::v1::MetricsSnapshot* Arena::CreateMaybeMessage<::botcore::trading::v1::MetricsSnapshot>(Arena*);
 template<> ::botcore::trading::v1::OhlcvCandle* Arena::CreateMaybeMessage<::botcore::trading::v1::OhlcvCandle>(Arena*);
 template<> ::botcore::trading::v1::OrderConstraintViolation* Arena::CreateMaybeMessage<::botcore::trading::v1::OrderConstraintViolation>(Arena*);
+template<> ::botcore::trading::v1::RemoveMarketplacePresetRequest* Arena::CreateMaybeMessage<::botcore::trading::v1::RemoveMarketplacePresetRequest>(Arena*);
+template<> ::botcore::trading::v1::RemoveMarketplacePresetResponse* Arena::CreateMaybeMessage<::botcore::trading::v1::RemoveMarketplacePresetResponse>(Arena*);
 template<> ::botcore::trading::v1::RiskState* Arena::CreateMaybeMessage<::botcore::trading::v1::RiskState>(Arena*);
 template<> ::botcore::trading::v1::RiskStateRequest* Arena::CreateMaybeMessage<::botcore::trading::v1::RiskStateRequest>(Arena*);
 template<> ::botcore::trading::v1::StreamOhlcvIncrement* Arena::CreateMaybeMessage<::botcore::trading::v1::StreamOhlcvIncrement>(Arena*);
@@ -5008,6 +5052,1872 @@ class HealthCheckResponse final :
   union { Impl_ _impl_; };
   friend struct ::TableStruct_trading_2eproto;
 };
+// -------------------------------------------------------------------
+
+class MarketplacePresetSummary final :
+    public ::PROTOBUF_NAMESPACE_ID::Message /* @@protoc_insertion_point(class_definition:botcore.trading.v1.MarketplacePresetSummary) */ {
+ public:
+  inline MarketplacePresetSummary() : MarketplacePresetSummary(nullptr) {}
+  ~MarketplacePresetSummary() override;
+  explicit PROTOBUF_CONSTEXPR MarketplacePresetSummary(::PROTOBUF_NAMESPACE_ID::internal::ConstantInitialized);
+
+  MarketplacePresetSummary(const MarketplacePresetSummary& from);
+  MarketplacePresetSummary(MarketplacePresetSummary&& from) noexcept
+    : MarketplacePresetSummary() {
+    *this = ::std::move(from);
+  }
+
+  inline MarketplacePresetSummary& operator=(const MarketplacePresetSummary& from) {
+    CopyFrom(from);
+    return *this;
+  }
+  inline MarketplacePresetSummary& operator=(MarketplacePresetSummary&& from) noexcept {
+    if (this == &from) return *this;
+    if (GetOwningArena() == from.GetOwningArena()
+  #ifdef PROTOBUF_FORCE_COPY_IN_MOVE
+        && GetOwningArena() != nullptr
+  #endif  // !PROTOBUF_FORCE_COPY_IN_MOVE
+    ) {
+      InternalSwap(&from);
+    } else {
+      CopyFrom(from);
+    }
+    return *this;
+  }
+
+  static const ::PROTOBUF_NAMESPACE_ID::Descriptor* descriptor() {
+    return GetDescriptor();
+  }
+  static const ::PROTOBUF_NAMESPACE_ID::Descriptor* GetDescriptor() {
+    return default_instance().GetMetadata().descriptor;
+  }
+  static const ::PROTOBUF_NAMESPACE_ID::Reflection* GetReflection() {
+    return default_instance().GetMetadata().reflection;
+  }
+  static const MarketplacePresetSummary& default_instance() {
+    return *internal_default_instance();
+  }
+  static inline const MarketplacePresetSummary* internal_default_instance() {
+    return reinterpret_cast<const MarketplacePresetSummary*>(
+               &_MarketplacePresetSummary_default_instance_);
+  }
+  static constexpr int kIndexInFileMessages =
+    25;
+
+  friend void swap(MarketplacePresetSummary& a, MarketplacePresetSummary& b) {
+    a.Swap(&b);
+  }
+  inline void Swap(MarketplacePresetSummary* other) {
+    if (other == this) return;
+  #ifdef PROTOBUF_FORCE_COPY_IN_SWAP
+    if (GetOwningArena() != nullptr &&
+        GetOwningArena() == other->GetOwningArena()) {
+   #else  // PROTOBUF_FORCE_COPY_IN_SWAP
+    if (GetOwningArena() == other->GetOwningArena()) {
+  #endif  // !PROTOBUF_FORCE_COPY_IN_SWAP
+      InternalSwap(other);
+    } else {
+      ::PROTOBUF_NAMESPACE_ID::internal::GenericSwap(this, other);
+    }
+  }
+  void UnsafeArenaSwap(MarketplacePresetSummary* other) {
+    if (other == this) return;
+    GOOGLE_DCHECK(GetOwningArena() == other->GetOwningArena());
+    InternalSwap(other);
+  }
+
+  // implements Message ----------------------------------------------
+
+  MarketplacePresetSummary* New(::PROTOBUF_NAMESPACE_ID::Arena* arena = nullptr) const final {
+    return CreateMaybeMessage<MarketplacePresetSummary>(arena);
+  }
+  using ::PROTOBUF_NAMESPACE_ID::Message::CopyFrom;
+  void CopyFrom(const MarketplacePresetSummary& from);
+  using ::PROTOBUF_NAMESPACE_ID::Message::MergeFrom;
+  void MergeFrom( const MarketplacePresetSummary& from) {
+    MarketplacePresetSummary::MergeImpl(*this, from);
+  }
+  private:
+  static void MergeImpl(::PROTOBUF_NAMESPACE_ID::Message& to_msg, const ::PROTOBUF_NAMESPACE_ID::Message& from_msg);
+  public:
+  PROTOBUF_ATTRIBUTE_REINITIALIZES void Clear() final;
+  bool IsInitialized() const final;
+
+  size_t ByteSizeLong() const final;
+  const char* _InternalParse(const char* ptr, ::PROTOBUF_NAMESPACE_ID::internal::ParseContext* ctx) final;
+  uint8_t* _InternalSerialize(
+      uint8_t* target, ::PROTOBUF_NAMESPACE_ID::io::EpsCopyOutputStream* stream) const final;
+  int GetCachedSize() const final { return _impl_._cached_size_.Get(); }
+
+  private:
+  void SharedCtor(::PROTOBUF_NAMESPACE_ID::Arena* arena, bool is_message_owned);
+  void SharedDtor();
+  void SetCachedSize(int size) const final;
+  void InternalSwap(MarketplacePresetSummary* other);
+
+  private:
+  friend class ::PROTOBUF_NAMESPACE_ID::internal::AnyMetadata;
+  static ::PROTOBUF_NAMESPACE_ID::StringPiece FullMessageName() {
+    return "botcore.trading.v1.MarketplacePresetSummary";
+  }
+  protected:
+  explicit MarketplacePresetSummary(::PROTOBUF_NAMESPACE_ID::Arena* arena,
+                       bool is_message_owned = false);
+  public:
+
+  static const ClassData _class_data_;
+  const ::PROTOBUF_NAMESPACE_ID::Message::ClassData*GetClassData() const final;
+
+  ::PROTOBUF_NAMESPACE_ID::Metadata GetMetadata() const final;
+
+  // nested types ----------------------------------------------------
+
+  // accessors -------------------------------------------------------
+
+  enum : int {
+    kTagsFieldNumber = 5,
+    kIssuesFieldNumber = 8,
+    kPresetIdFieldNumber = 1,
+    kNameFieldNumber = 2,
+    kVersionFieldNumber = 3,
+    kProfileFieldNumber = 4,
+    kSourcePathFieldNumber = 7,
+    kSignatureVerifiedFieldNumber = 6,
+  };
+  // repeated string tags = 5;
+  int tags_size() const;
+  private:
+  int _internal_tags_size() const;
+  public:
+  void clear_tags();
+  const std::string& tags(int index) const;
+  std::string* mutable_tags(int index);
+  void set_tags(int index, const std::string& value);
+  void set_tags(int index, std::string&& value);
+  void set_tags(int index, const char* value);
+  void set_tags(int index, const char* value, size_t size);
+  std::string* add_tags();
+  void add_tags(const std::string& value);
+  void add_tags(std::string&& value);
+  void add_tags(const char* value);
+  void add_tags(const char* value, size_t size);
+  const ::PROTOBUF_NAMESPACE_ID::RepeatedPtrField<std::string>& tags() const;
+  ::PROTOBUF_NAMESPACE_ID::RepeatedPtrField<std::string>* mutable_tags();
+  private:
+  const std::string& _internal_tags(int index) const;
+  std::string* _internal_add_tags();
+  public:
+
+  // repeated string issues = 8;
+  int issues_size() const;
+  private:
+  int _internal_issues_size() const;
+  public:
+  void clear_issues();
+  const std::string& issues(int index) const;
+  std::string* mutable_issues(int index);
+  void set_issues(int index, const std::string& value);
+  void set_issues(int index, std::string&& value);
+  void set_issues(int index, const char* value);
+  void set_issues(int index, const char* value, size_t size);
+  std::string* add_issues();
+  void add_issues(const std::string& value);
+  void add_issues(std::string&& value);
+  void add_issues(const char* value);
+  void add_issues(const char* value, size_t size);
+  const ::PROTOBUF_NAMESPACE_ID::RepeatedPtrField<std::string>& issues() const;
+  ::PROTOBUF_NAMESPACE_ID::RepeatedPtrField<std::string>* mutable_issues();
+  private:
+  const std::string& _internal_issues(int index) const;
+  std::string* _internal_add_issues();
+  public:
+
+  // string preset_id = 1;
+  void clear_preset_id();
+  const std::string& preset_id() const;
+  template <typename ArgT0 = const std::string&, typename... ArgT>
+  void set_preset_id(ArgT0&& arg0, ArgT... args);
+  std::string* mutable_preset_id();
+  PROTOBUF_NODISCARD std::string* release_preset_id();
+  void set_allocated_preset_id(std::string* preset_id);
+  private:
+  const std::string& _internal_preset_id() const;
+  inline PROTOBUF_ALWAYS_INLINE void _internal_set_preset_id(const std::string& value);
+  std::string* _internal_mutable_preset_id();
+  public:
+
+  // string name = 2;
+  void clear_name();
+  const std::string& name() const;
+  template <typename ArgT0 = const std::string&, typename... ArgT>
+  void set_name(ArgT0&& arg0, ArgT... args);
+  std::string* mutable_name();
+  PROTOBUF_NODISCARD std::string* release_name();
+  void set_allocated_name(std::string* name);
+  private:
+  const std::string& _internal_name() const;
+  inline PROTOBUF_ALWAYS_INLINE void _internal_set_name(const std::string& value);
+  std::string* _internal_mutable_name();
+  public:
+
+  // string version = 3;
+  void clear_version();
+  const std::string& version() const;
+  template <typename ArgT0 = const std::string&, typename... ArgT>
+  void set_version(ArgT0&& arg0, ArgT... args);
+  std::string* mutable_version();
+  PROTOBUF_NODISCARD std::string* release_version();
+  void set_allocated_version(std::string* version);
+  private:
+  const std::string& _internal_version() const;
+  inline PROTOBUF_ALWAYS_INLINE void _internal_set_version(const std::string& value);
+  std::string* _internal_mutable_version();
+  public:
+
+  // string profile = 4;
+  void clear_profile();
+  const std::string& profile() const;
+  template <typename ArgT0 = const std::string&, typename... ArgT>
+  void set_profile(ArgT0&& arg0, ArgT... args);
+  std::string* mutable_profile();
+  PROTOBUF_NODISCARD std::string* release_profile();
+  void set_allocated_profile(std::string* profile);
+  private:
+  const std::string& _internal_profile() const;
+  inline PROTOBUF_ALWAYS_INLINE void _internal_set_profile(const std::string& value);
+  std::string* _internal_mutable_profile();
+  public:
+
+  // string source_path = 7;
+  void clear_source_path();
+  const std::string& source_path() const;
+  template <typename ArgT0 = const std::string&, typename... ArgT>
+  void set_source_path(ArgT0&& arg0, ArgT... args);
+  std::string* mutable_source_path();
+  PROTOBUF_NODISCARD std::string* release_source_path();
+  void set_allocated_source_path(std::string* source_path);
+  private:
+  const std::string& _internal_source_path() const;
+  inline PROTOBUF_ALWAYS_INLINE void _internal_set_source_path(const std::string& value);
+  std::string* _internal_mutable_source_path();
+  public:
+
+  // bool signature_verified = 6;
+  void clear_signature_verified();
+  bool signature_verified() const;
+  void set_signature_verified(bool value);
+  private:
+  bool _internal_signature_verified() const;
+  void _internal_set_signature_verified(bool value);
+  public:
+
+  // @@protoc_insertion_point(class_scope:botcore.trading.v1.MarketplacePresetSummary)
+ private:
+  class _Internal;
+
+  template <typename T> friend class ::PROTOBUF_NAMESPACE_ID::Arena::InternalHelper;
+  typedef void InternalArenaConstructable_;
+  typedef void DestructorSkippable_;
+  struct Impl_ {
+    ::PROTOBUF_NAMESPACE_ID::RepeatedPtrField<std::string> tags_;
+    ::PROTOBUF_NAMESPACE_ID::RepeatedPtrField<std::string> issues_;
+    ::PROTOBUF_NAMESPACE_ID::internal::ArenaStringPtr preset_id_;
+    ::PROTOBUF_NAMESPACE_ID::internal::ArenaStringPtr name_;
+    ::PROTOBUF_NAMESPACE_ID::internal::ArenaStringPtr version_;
+    ::PROTOBUF_NAMESPACE_ID::internal::ArenaStringPtr profile_;
+    ::PROTOBUF_NAMESPACE_ID::internal::ArenaStringPtr source_path_;
+    bool signature_verified_;
+    mutable ::PROTOBUF_NAMESPACE_ID::internal::CachedSize _cached_size_;
+  };
+  union { Impl_ _impl_; };
+  friend struct ::TableStruct_trading_2eproto;
+};
+// -------------------------------------------------------------------
+
+class ListMarketplacePresetsRequest final :
+    public ::PROTOBUF_NAMESPACE_ID::internal::ZeroFieldsBase /* @@protoc_insertion_point(class_definition:botcore.trading.v1.ListMarketplacePresetsRequest) */ {
+ public:
+  inline ListMarketplacePresetsRequest() : ListMarketplacePresetsRequest(nullptr) {}
+  explicit PROTOBUF_CONSTEXPR ListMarketplacePresetsRequest(::PROTOBUF_NAMESPACE_ID::internal::ConstantInitialized);
+
+  ListMarketplacePresetsRequest(const ListMarketplacePresetsRequest& from);
+  ListMarketplacePresetsRequest(ListMarketplacePresetsRequest&& from) noexcept
+    : ListMarketplacePresetsRequest() {
+    *this = ::std::move(from);
+  }
+
+  inline ListMarketplacePresetsRequest& operator=(const ListMarketplacePresetsRequest& from) {
+    CopyFrom(from);
+    return *this;
+  }
+  inline ListMarketplacePresetsRequest& operator=(ListMarketplacePresetsRequest&& from) noexcept {
+    if (this == &from) return *this;
+    if (GetOwningArena() == from.GetOwningArena()
+  #ifdef PROTOBUF_FORCE_COPY_IN_MOVE
+        && GetOwningArena() != nullptr
+  #endif  // !PROTOBUF_FORCE_COPY_IN_MOVE
+    ) {
+      InternalSwap(&from);
+    } else {
+      CopyFrom(from);
+    }
+    return *this;
+  }
+
+  static const ::PROTOBUF_NAMESPACE_ID::Descriptor* descriptor() {
+    return GetDescriptor();
+  }
+  static const ::PROTOBUF_NAMESPACE_ID::Descriptor* GetDescriptor() {
+    return default_instance().GetMetadata().descriptor;
+  }
+  static const ::PROTOBUF_NAMESPACE_ID::Reflection* GetReflection() {
+    return default_instance().GetMetadata().reflection;
+  }
+  static const ListMarketplacePresetsRequest& default_instance() {
+    return *internal_default_instance();
+  }
+  static inline const ListMarketplacePresetsRequest* internal_default_instance() {
+    return reinterpret_cast<const ListMarketplacePresetsRequest*>(
+               &_ListMarketplacePresetsRequest_default_instance_);
+  }
+  static constexpr int kIndexInFileMessages =
+    26;
+
+  friend void swap(ListMarketplacePresetsRequest& a, ListMarketplacePresetsRequest& b) {
+    a.Swap(&b);
+  }
+  inline void Swap(ListMarketplacePresetsRequest* other) {
+    if (other == this) return;
+  #ifdef PROTOBUF_FORCE_COPY_IN_SWAP
+    if (GetOwningArena() != nullptr &&
+        GetOwningArena() == other->GetOwningArena()) {
+   #else  // PROTOBUF_FORCE_COPY_IN_SWAP
+    if (GetOwningArena() == other->GetOwningArena()) {
+  #endif  // !PROTOBUF_FORCE_COPY_IN_SWAP
+      InternalSwap(other);
+    } else {
+      ::PROTOBUF_NAMESPACE_ID::internal::GenericSwap(this, other);
+    }
+  }
+  void UnsafeArenaSwap(ListMarketplacePresetsRequest* other) {
+    if (other == this) return;
+    GOOGLE_DCHECK(GetOwningArena() == other->GetOwningArena());
+    InternalSwap(other);
+  }
+
+  // implements Message ----------------------------------------------
+
+  ListMarketplacePresetsRequest* New(::PROTOBUF_NAMESPACE_ID::Arena* arena = nullptr) const final {
+    return CreateMaybeMessage<ListMarketplacePresetsRequest>(arena);
+  }
+  using ::PROTOBUF_NAMESPACE_ID::internal::ZeroFieldsBase::CopyFrom;
+  inline void CopyFrom(const ListMarketplacePresetsRequest& from) {
+    ::PROTOBUF_NAMESPACE_ID::internal::ZeroFieldsBase::CopyImpl(*this, from);
+  }
+  using ::PROTOBUF_NAMESPACE_ID::internal::ZeroFieldsBase::MergeFrom;
+  void MergeFrom(const ListMarketplacePresetsRequest& from) {
+    ::PROTOBUF_NAMESPACE_ID::internal::ZeroFieldsBase::MergeImpl(*this, from);
+  }
+  public:
+
+  private:
+  friend class ::PROTOBUF_NAMESPACE_ID::internal::AnyMetadata;
+  static ::PROTOBUF_NAMESPACE_ID::StringPiece FullMessageName() {
+    return "botcore.trading.v1.ListMarketplacePresetsRequest";
+  }
+  protected:
+  explicit ListMarketplacePresetsRequest(::PROTOBUF_NAMESPACE_ID::Arena* arena,
+                       bool is_message_owned = false);
+  public:
+
+  static const ClassData _class_data_;
+  const ::PROTOBUF_NAMESPACE_ID::Message::ClassData*GetClassData() const final;
+
+  ::PROTOBUF_NAMESPACE_ID::Metadata GetMetadata() const final;
+
+  // nested types ----------------------------------------------------
+
+  // accessors -------------------------------------------------------
+
+  // @@protoc_insertion_point(class_scope:botcore.trading.v1.ListMarketplacePresetsRequest)
+ private:
+  class _Internal;
+
+  template <typename T> friend class ::PROTOBUF_NAMESPACE_ID::Arena::InternalHelper;
+  typedef void InternalArenaConstructable_;
+  typedef void DestructorSkippable_;
+  struct Impl_ {
+  };
+  friend struct ::TableStruct_trading_2eproto;
+};
+// -------------------------------------------------------------------
+
+class ListMarketplacePresetsResponse final :
+    public ::PROTOBUF_NAMESPACE_ID::Message /* @@protoc_insertion_point(class_definition:botcore.trading.v1.ListMarketplacePresetsResponse) */ {
+ public:
+  inline ListMarketplacePresetsResponse() : ListMarketplacePresetsResponse(nullptr) {}
+  ~ListMarketplacePresetsResponse() override;
+  explicit PROTOBUF_CONSTEXPR ListMarketplacePresetsResponse(::PROTOBUF_NAMESPACE_ID::internal::ConstantInitialized);
+
+  ListMarketplacePresetsResponse(const ListMarketplacePresetsResponse& from);
+  ListMarketplacePresetsResponse(ListMarketplacePresetsResponse&& from) noexcept
+    : ListMarketplacePresetsResponse() {
+    *this = ::std::move(from);
+  }
+
+  inline ListMarketplacePresetsResponse& operator=(const ListMarketplacePresetsResponse& from) {
+    CopyFrom(from);
+    return *this;
+  }
+  inline ListMarketplacePresetsResponse& operator=(ListMarketplacePresetsResponse&& from) noexcept {
+    if (this == &from) return *this;
+    if (GetOwningArena() == from.GetOwningArena()
+  #ifdef PROTOBUF_FORCE_COPY_IN_MOVE
+        && GetOwningArena() != nullptr
+  #endif  // !PROTOBUF_FORCE_COPY_IN_MOVE
+    ) {
+      InternalSwap(&from);
+    } else {
+      CopyFrom(from);
+    }
+    return *this;
+  }
+
+  static const ::PROTOBUF_NAMESPACE_ID::Descriptor* descriptor() {
+    return GetDescriptor();
+  }
+  static const ::PROTOBUF_NAMESPACE_ID::Descriptor* GetDescriptor() {
+    return default_instance().GetMetadata().descriptor;
+  }
+  static const ::PROTOBUF_NAMESPACE_ID::Reflection* GetReflection() {
+    return default_instance().GetMetadata().reflection;
+  }
+  static const ListMarketplacePresetsResponse& default_instance() {
+    return *internal_default_instance();
+  }
+  static inline const ListMarketplacePresetsResponse* internal_default_instance() {
+    return reinterpret_cast<const ListMarketplacePresetsResponse*>(
+               &_ListMarketplacePresetsResponse_default_instance_);
+  }
+  static constexpr int kIndexInFileMessages =
+    27;
+
+  friend void swap(ListMarketplacePresetsResponse& a, ListMarketplacePresetsResponse& b) {
+    a.Swap(&b);
+  }
+  inline void Swap(ListMarketplacePresetsResponse* other) {
+    if (other == this) return;
+  #ifdef PROTOBUF_FORCE_COPY_IN_SWAP
+    if (GetOwningArena() != nullptr &&
+        GetOwningArena() == other->GetOwningArena()) {
+   #else  // PROTOBUF_FORCE_COPY_IN_SWAP
+    if (GetOwningArena() == other->GetOwningArena()) {
+  #endif  // !PROTOBUF_FORCE_COPY_IN_SWAP
+      InternalSwap(other);
+    } else {
+      ::PROTOBUF_NAMESPACE_ID::internal::GenericSwap(this, other);
+    }
+  }
+  void UnsafeArenaSwap(ListMarketplacePresetsResponse* other) {
+    if (other == this) return;
+    GOOGLE_DCHECK(GetOwningArena() == other->GetOwningArena());
+    InternalSwap(other);
+  }
+
+  // implements Message ----------------------------------------------
+
+  ListMarketplacePresetsResponse* New(::PROTOBUF_NAMESPACE_ID::Arena* arena = nullptr) const final {
+    return CreateMaybeMessage<ListMarketplacePresetsResponse>(arena);
+  }
+  using ::PROTOBUF_NAMESPACE_ID::Message::CopyFrom;
+  void CopyFrom(const ListMarketplacePresetsResponse& from);
+  using ::PROTOBUF_NAMESPACE_ID::Message::MergeFrom;
+  void MergeFrom( const ListMarketplacePresetsResponse& from) {
+    ListMarketplacePresetsResponse::MergeImpl(*this, from);
+  }
+  private:
+  static void MergeImpl(::PROTOBUF_NAMESPACE_ID::Message& to_msg, const ::PROTOBUF_NAMESPACE_ID::Message& from_msg);
+  public:
+  PROTOBUF_ATTRIBUTE_REINITIALIZES void Clear() final;
+  bool IsInitialized() const final;
+
+  size_t ByteSizeLong() const final;
+  const char* _InternalParse(const char* ptr, ::PROTOBUF_NAMESPACE_ID::internal::ParseContext* ctx) final;
+  uint8_t* _InternalSerialize(
+      uint8_t* target, ::PROTOBUF_NAMESPACE_ID::io::EpsCopyOutputStream* stream) const final;
+  int GetCachedSize() const final { return _impl_._cached_size_.Get(); }
+
+  private:
+  void SharedCtor(::PROTOBUF_NAMESPACE_ID::Arena* arena, bool is_message_owned);
+  void SharedDtor();
+  void SetCachedSize(int size) const final;
+  void InternalSwap(ListMarketplacePresetsResponse* other);
+
+  private:
+  friend class ::PROTOBUF_NAMESPACE_ID::internal::AnyMetadata;
+  static ::PROTOBUF_NAMESPACE_ID::StringPiece FullMessageName() {
+    return "botcore.trading.v1.ListMarketplacePresetsResponse";
+  }
+  protected:
+  explicit ListMarketplacePresetsResponse(::PROTOBUF_NAMESPACE_ID::Arena* arena,
+                       bool is_message_owned = false);
+  public:
+
+  static const ClassData _class_data_;
+  const ::PROTOBUF_NAMESPACE_ID::Message::ClassData*GetClassData() const final;
+
+  ::PROTOBUF_NAMESPACE_ID::Metadata GetMetadata() const final;
+
+  // nested types ----------------------------------------------------
+
+  // accessors -------------------------------------------------------
+
+  enum : int {
+    kPresetsFieldNumber = 1,
+  };
+  // repeated .botcore.trading.v1.MarketplacePresetSummary presets = 1;
+  int presets_size() const;
+  private:
+  int _internal_presets_size() const;
+  public:
+  void clear_presets();
+  ::botcore::trading::v1::MarketplacePresetSummary* mutable_presets(int index);
+  ::PROTOBUF_NAMESPACE_ID::RepeatedPtrField< ::botcore::trading::v1::MarketplacePresetSummary >*
+      mutable_presets();
+  private:
+  const ::botcore::trading::v1::MarketplacePresetSummary& _internal_presets(int index) const;
+  ::botcore::trading::v1::MarketplacePresetSummary* _internal_add_presets();
+  public:
+  const ::botcore::trading::v1::MarketplacePresetSummary& presets(int index) const;
+  ::botcore::trading::v1::MarketplacePresetSummary* add_presets();
+  const ::PROTOBUF_NAMESPACE_ID::RepeatedPtrField< ::botcore::trading::v1::MarketplacePresetSummary >&
+      presets() const;
+
+  // @@protoc_insertion_point(class_scope:botcore.trading.v1.ListMarketplacePresetsResponse)
+ private:
+  class _Internal;
+
+  template <typename T> friend class ::PROTOBUF_NAMESPACE_ID::Arena::InternalHelper;
+  typedef void InternalArenaConstructable_;
+  typedef void DestructorSkippable_;
+  struct Impl_ {
+    ::PROTOBUF_NAMESPACE_ID::RepeatedPtrField< ::botcore::trading::v1::MarketplacePresetSummary > presets_;
+    mutable ::PROTOBUF_NAMESPACE_ID::internal::CachedSize _cached_size_;
+  };
+  union { Impl_ _impl_; };
+  friend struct ::TableStruct_trading_2eproto;
+};
+// -------------------------------------------------------------------
+
+class ImportMarketplacePresetRequest final :
+    public ::PROTOBUF_NAMESPACE_ID::Message /* @@protoc_insertion_point(class_definition:botcore.trading.v1.ImportMarketplacePresetRequest) */ {
+ public:
+  inline ImportMarketplacePresetRequest() : ImportMarketplacePresetRequest(nullptr) {}
+  ~ImportMarketplacePresetRequest() override;
+  explicit PROTOBUF_CONSTEXPR ImportMarketplacePresetRequest(::PROTOBUF_NAMESPACE_ID::internal::ConstantInitialized);
+
+  ImportMarketplacePresetRequest(const ImportMarketplacePresetRequest& from);
+  ImportMarketplacePresetRequest(ImportMarketplacePresetRequest&& from) noexcept
+    : ImportMarketplacePresetRequest() {
+    *this = ::std::move(from);
+  }
+
+  inline ImportMarketplacePresetRequest& operator=(const ImportMarketplacePresetRequest& from) {
+    CopyFrom(from);
+    return *this;
+  }
+  inline ImportMarketplacePresetRequest& operator=(ImportMarketplacePresetRequest&& from) noexcept {
+    if (this == &from) return *this;
+    if (GetOwningArena() == from.GetOwningArena()
+  #ifdef PROTOBUF_FORCE_COPY_IN_MOVE
+        && GetOwningArena() != nullptr
+  #endif  // !PROTOBUF_FORCE_COPY_IN_MOVE
+    ) {
+      InternalSwap(&from);
+    } else {
+      CopyFrom(from);
+    }
+    return *this;
+  }
+
+  static const ::PROTOBUF_NAMESPACE_ID::Descriptor* descriptor() {
+    return GetDescriptor();
+  }
+  static const ::PROTOBUF_NAMESPACE_ID::Descriptor* GetDescriptor() {
+    return default_instance().GetMetadata().descriptor;
+  }
+  static const ::PROTOBUF_NAMESPACE_ID::Reflection* GetReflection() {
+    return default_instance().GetMetadata().reflection;
+  }
+  static const ImportMarketplacePresetRequest& default_instance() {
+    return *internal_default_instance();
+  }
+  static inline const ImportMarketplacePresetRequest* internal_default_instance() {
+    return reinterpret_cast<const ImportMarketplacePresetRequest*>(
+               &_ImportMarketplacePresetRequest_default_instance_);
+  }
+  static constexpr int kIndexInFileMessages =
+    28;
+
+  friend void swap(ImportMarketplacePresetRequest& a, ImportMarketplacePresetRequest& b) {
+    a.Swap(&b);
+  }
+  inline void Swap(ImportMarketplacePresetRequest* other) {
+    if (other == this) return;
+  #ifdef PROTOBUF_FORCE_COPY_IN_SWAP
+    if (GetOwningArena() != nullptr &&
+        GetOwningArena() == other->GetOwningArena()) {
+   #else  // PROTOBUF_FORCE_COPY_IN_SWAP
+    if (GetOwningArena() == other->GetOwningArena()) {
+  #endif  // !PROTOBUF_FORCE_COPY_IN_SWAP
+      InternalSwap(other);
+    } else {
+      ::PROTOBUF_NAMESPACE_ID::internal::GenericSwap(this, other);
+    }
+  }
+  void UnsafeArenaSwap(ImportMarketplacePresetRequest* other) {
+    if (other == this) return;
+    GOOGLE_DCHECK(GetOwningArena() == other->GetOwningArena());
+    InternalSwap(other);
+  }
+
+  // implements Message ----------------------------------------------
+
+  ImportMarketplacePresetRequest* New(::PROTOBUF_NAMESPACE_ID::Arena* arena = nullptr) const final {
+    return CreateMaybeMessage<ImportMarketplacePresetRequest>(arena);
+  }
+  using ::PROTOBUF_NAMESPACE_ID::Message::CopyFrom;
+  void CopyFrom(const ImportMarketplacePresetRequest& from);
+  using ::PROTOBUF_NAMESPACE_ID::Message::MergeFrom;
+  void MergeFrom( const ImportMarketplacePresetRequest& from) {
+    ImportMarketplacePresetRequest::MergeImpl(*this, from);
+  }
+  private:
+  static void MergeImpl(::PROTOBUF_NAMESPACE_ID::Message& to_msg, const ::PROTOBUF_NAMESPACE_ID::Message& from_msg);
+  public:
+  PROTOBUF_ATTRIBUTE_REINITIALIZES void Clear() final;
+  bool IsInitialized() const final;
+
+  size_t ByteSizeLong() const final;
+  const char* _InternalParse(const char* ptr, ::PROTOBUF_NAMESPACE_ID::internal::ParseContext* ctx) final;
+  uint8_t* _InternalSerialize(
+      uint8_t* target, ::PROTOBUF_NAMESPACE_ID::io::EpsCopyOutputStream* stream) const final;
+  int GetCachedSize() const final { return _impl_._cached_size_.Get(); }
+
+  private:
+  void SharedCtor(::PROTOBUF_NAMESPACE_ID::Arena* arena, bool is_message_owned);
+  void SharedDtor();
+  void SetCachedSize(int size) const final;
+  void InternalSwap(ImportMarketplacePresetRequest* other);
+
+  private:
+  friend class ::PROTOBUF_NAMESPACE_ID::internal::AnyMetadata;
+  static ::PROTOBUF_NAMESPACE_ID::StringPiece FullMessageName() {
+    return "botcore.trading.v1.ImportMarketplacePresetRequest";
+  }
+  protected:
+  explicit ImportMarketplacePresetRequest(::PROTOBUF_NAMESPACE_ID::Arena* arena,
+                       bool is_message_owned = false);
+  public:
+
+  static const ClassData _class_data_;
+  const ::PROTOBUF_NAMESPACE_ID::Message::ClassData*GetClassData() const final;
+
+  ::PROTOBUF_NAMESPACE_ID::Metadata GetMetadata() const final;
+
+  // nested types ----------------------------------------------------
+
+  // accessors -------------------------------------------------------
+
+  enum : int {
+    kPayloadFieldNumber = 1,
+    kFilenameFieldNumber = 2,
+  };
+  // bytes payload = 1;
+  void clear_payload();
+  const std::string& payload() const;
+  template <typename ArgT0 = const std::string&, typename... ArgT>
+  void set_payload(ArgT0&& arg0, ArgT... args);
+  std::string* mutable_payload();
+  PROTOBUF_NODISCARD std::string* release_payload();
+  void set_allocated_payload(std::string* payload);
+  private:
+  const std::string& _internal_payload() const;
+  inline PROTOBUF_ALWAYS_INLINE void _internal_set_payload(const std::string& value);
+  std::string* _internal_mutable_payload();
+  public:
+
+  // string filename = 2;
+  void clear_filename();
+  const std::string& filename() const;
+  template <typename ArgT0 = const std::string&, typename... ArgT>
+  void set_filename(ArgT0&& arg0, ArgT... args);
+  std::string* mutable_filename();
+  PROTOBUF_NODISCARD std::string* release_filename();
+  void set_allocated_filename(std::string* filename);
+  private:
+  const std::string& _internal_filename() const;
+  inline PROTOBUF_ALWAYS_INLINE void _internal_set_filename(const std::string& value);
+  std::string* _internal_mutable_filename();
+  public:
+
+  // @@protoc_insertion_point(class_scope:botcore.trading.v1.ImportMarketplacePresetRequest)
+ private:
+  class _Internal;
+
+  template <typename T> friend class ::PROTOBUF_NAMESPACE_ID::Arena::InternalHelper;
+  typedef void InternalArenaConstructable_;
+  typedef void DestructorSkippable_;
+  struct Impl_ {
+    ::PROTOBUF_NAMESPACE_ID::internal::ArenaStringPtr payload_;
+    ::PROTOBUF_NAMESPACE_ID::internal::ArenaStringPtr filename_;
+    mutable ::PROTOBUF_NAMESPACE_ID::internal::CachedSize _cached_size_;
+  };
+  union { Impl_ _impl_; };
+  friend struct ::TableStruct_trading_2eproto;
+};
+// -------------------------------------------------------------------
+
+class ImportMarketplacePresetResponse final :
+    public ::PROTOBUF_NAMESPACE_ID::Message /* @@protoc_insertion_point(class_definition:botcore.trading.v1.ImportMarketplacePresetResponse) */ {
+ public:
+  inline ImportMarketplacePresetResponse() : ImportMarketplacePresetResponse(nullptr) {}
+  ~ImportMarketplacePresetResponse() override;
+  explicit PROTOBUF_CONSTEXPR ImportMarketplacePresetResponse(::PROTOBUF_NAMESPACE_ID::internal::ConstantInitialized);
+
+  ImportMarketplacePresetResponse(const ImportMarketplacePresetResponse& from);
+  ImportMarketplacePresetResponse(ImportMarketplacePresetResponse&& from) noexcept
+    : ImportMarketplacePresetResponse() {
+    *this = ::std::move(from);
+  }
+
+  inline ImportMarketplacePresetResponse& operator=(const ImportMarketplacePresetResponse& from) {
+    CopyFrom(from);
+    return *this;
+  }
+  inline ImportMarketplacePresetResponse& operator=(ImportMarketplacePresetResponse&& from) noexcept {
+    if (this == &from) return *this;
+    if (GetOwningArena() == from.GetOwningArena()
+  #ifdef PROTOBUF_FORCE_COPY_IN_MOVE
+        && GetOwningArena() != nullptr
+  #endif  // !PROTOBUF_FORCE_COPY_IN_MOVE
+    ) {
+      InternalSwap(&from);
+    } else {
+      CopyFrom(from);
+    }
+    return *this;
+  }
+
+  static const ::PROTOBUF_NAMESPACE_ID::Descriptor* descriptor() {
+    return GetDescriptor();
+  }
+  static const ::PROTOBUF_NAMESPACE_ID::Descriptor* GetDescriptor() {
+    return default_instance().GetMetadata().descriptor;
+  }
+  static const ::PROTOBUF_NAMESPACE_ID::Reflection* GetReflection() {
+    return default_instance().GetMetadata().reflection;
+  }
+  static const ImportMarketplacePresetResponse& default_instance() {
+    return *internal_default_instance();
+  }
+  static inline const ImportMarketplacePresetResponse* internal_default_instance() {
+    return reinterpret_cast<const ImportMarketplacePresetResponse*>(
+               &_ImportMarketplacePresetResponse_default_instance_);
+  }
+  static constexpr int kIndexInFileMessages =
+    29;
+
+  friend void swap(ImportMarketplacePresetResponse& a, ImportMarketplacePresetResponse& b) {
+    a.Swap(&b);
+  }
+  inline void Swap(ImportMarketplacePresetResponse* other) {
+    if (other == this) return;
+  #ifdef PROTOBUF_FORCE_COPY_IN_SWAP
+    if (GetOwningArena() != nullptr &&
+        GetOwningArena() == other->GetOwningArena()) {
+   #else  // PROTOBUF_FORCE_COPY_IN_SWAP
+    if (GetOwningArena() == other->GetOwningArena()) {
+  #endif  // !PROTOBUF_FORCE_COPY_IN_SWAP
+      InternalSwap(other);
+    } else {
+      ::PROTOBUF_NAMESPACE_ID::internal::GenericSwap(this, other);
+    }
+  }
+  void UnsafeArenaSwap(ImportMarketplacePresetResponse* other) {
+    if (other == this) return;
+    GOOGLE_DCHECK(GetOwningArena() == other->GetOwningArena());
+    InternalSwap(other);
+  }
+
+  // implements Message ----------------------------------------------
+
+  ImportMarketplacePresetResponse* New(::PROTOBUF_NAMESPACE_ID::Arena* arena = nullptr) const final {
+    return CreateMaybeMessage<ImportMarketplacePresetResponse>(arena);
+  }
+  using ::PROTOBUF_NAMESPACE_ID::Message::CopyFrom;
+  void CopyFrom(const ImportMarketplacePresetResponse& from);
+  using ::PROTOBUF_NAMESPACE_ID::Message::MergeFrom;
+  void MergeFrom( const ImportMarketplacePresetResponse& from) {
+    ImportMarketplacePresetResponse::MergeImpl(*this, from);
+  }
+  private:
+  static void MergeImpl(::PROTOBUF_NAMESPACE_ID::Message& to_msg, const ::PROTOBUF_NAMESPACE_ID::Message& from_msg);
+  public:
+  PROTOBUF_ATTRIBUTE_REINITIALIZES void Clear() final;
+  bool IsInitialized() const final;
+
+  size_t ByteSizeLong() const final;
+  const char* _InternalParse(const char* ptr, ::PROTOBUF_NAMESPACE_ID::internal::ParseContext* ctx) final;
+  uint8_t* _InternalSerialize(
+      uint8_t* target, ::PROTOBUF_NAMESPACE_ID::io::EpsCopyOutputStream* stream) const final;
+  int GetCachedSize() const final { return _impl_._cached_size_.Get(); }
+
+  private:
+  void SharedCtor(::PROTOBUF_NAMESPACE_ID::Arena* arena, bool is_message_owned);
+  void SharedDtor();
+  void SetCachedSize(int size) const final;
+  void InternalSwap(ImportMarketplacePresetResponse* other);
+
+  private:
+  friend class ::PROTOBUF_NAMESPACE_ID::internal::AnyMetadata;
+  static ::PROTOBUF_NAMESPACE_ID::StringPiece FullMessageName() {
+    return "botcore.trading.v1.ImportMarketplacePresetResponse";
+  }
+  protected:
+  explicit ImportMarketplacePresetResponse(::PROTOBUF_NAMESPACE_ID::Arena* arena,
+                       bool is_message_owned = false);
+  public:
+
+  static const ClassData _class_data_;
+  const ::PROTOBUF_NAMESPACE_ID::Message::ClassData*GetClassData() const final;
+
+  ::PROTOBUF_NAMESPACE_ID::Metadata GetMetadata() const final;
+
+  // nested types ----------------------------------------------------
+
+  // accessors -------------------------------------------------------
+
+  enum : int {
+    kPresetFieldNumber = 1,
+  };
+  // .botcore.trading.v1.MarketplacePresetSummary preset = 1;
+  bool has_preset() const;
+  private:
+  bool _internal_has_preset() const;
+  public:
+  void clear_preset();
+  const ::botcore::trading::v1::MarketplacePresetSummary& preset() const;
+  PROTOBUF_NODISCARD ::botcore::trading::v1::MarketplacePresetSummary* release_preset();
+  ::botcore::trading::v1::MarketplacePresetSummary* mutable_preset();
+  void set_allocated_preset(::botcore::trading::v1::MarketplacePresetSummary* preset);
+  private:
+  const ::botcore::trading::v1::MarketplacePresetSummary& _internal_preset() const;
+  ::botcore::trading::v1::MarketplacePresetSummary* _internal_mutable_preset();
+  public:
+  void unsafe_arena_set_allocated_preset(
+      ::botcore::trading::v1::MarketplacePresetSummary* preset);
+  ::botcore::trading::v1::MarketplacePresetSummary* unsafe_arena_release_preset();
+
+  // @@protoc_insertion_point(class_scope:botcore.trading.v1.ImportMarketplacePresetResponse)
+ private:
+  class _Internal;
+
+  template <typename T> friend class ::PROTOBUF_NAMESPACE_ID::Arena::InternalHelper;
+  typedef void InternalArenaConstructable_;
+  typedef void DestructorSkippable_;
+  struct Impl_ {
+    ::botcore::trading::v1::MarketplacePresetSummary* preset_;
+    mutable ::PROTOBUF_NAMESPACE_ID::internal::CachedSize _cached_size_;
+  };
+  union { Impl_ _impl_; };
+  friend struct ::TableStruct_trading_2eproto;
+};
+// -------------------------------------------------------------------
+
+class ExportMarketplacePresetRequest final :
+    public ::PROTOBUF_NAMESPACE_ID::Message /* @@protoc_insertion_point(class_definition:botcore.trading.v1.ExportMarketplacePresetRequest) */ {
+ public:
+  inline ExportMarketplacePresetRequest() : ExportMarketplacePresetRequest(nullptr) {}
+  ~ExportMarketplacePresetRequest() override;
+  explicit PROTOBUF_CONSTEXPR ExportMarketplacePresetRequest(::PROTOBUF_NAMESPACE_ID::internal::ConstantInitialized);
+
+  ExportMarketplacePresetRequest(const ExportMarketplacePresetRequest& from);
+  ExportMarketplacePresetRequest(ExportMarketplacePresetRequest&& from) noexcept
+    : ExportMarketplacePresetRequest() {
+    *this = ::std::move(from);
+  }
+
+  inline ExportMarketplacePresetRequest& operator=(const ExportMarketplacePresetRequest& from) {
+    CopyFrom(from);
+    return *this;
+  }
+  inline ExportMarketplacePresetRequest& operator=(ExportMarketplacePresetRequest&& from) noexcept {
+    if (this == &from) return *this;
+    if (GetOwningArena() == from.GetOwningArena()
+  #ifdef PROTOBUF_FORCE_COPY_IN_MOVE
+        && GetOwningArena() != nullptr
+  #endif  // !PROTOBUF_FORCE_COPY_IN_MOVE
+    ) {
+      InternalSwap(&from);
+    } else {
+      CopyFrom(from);
+    }
+    return *this;
+  }
+
+  static const ::PROTOBUF_NAMESPACE_ID::Descriptor* descriptor() {
+    return GetDescriptor();
+  }
+  static const ::PROTOBUF_NAMESPACE_ID::Descriptor* GetDescriptor() {
+    return default_instance().GetMetadata().descriptor;
+  }
+  static const ::PROTOBUF_NAMESPACE_ID::Reflection* GetReflection() {
+    return default_instance().GetMetadata().reflection;
+  }
+  static const ExportMarketplacePresetRequest& default_instance() {
+    return *internal_default_instance();
+  }
+  static inline const ExportMarketplacePresetRequest* internal_default_instance() {
+    return reinterpret_cast<const ExportMarketplacePresetRequest*>(
+               &_ExportMarketplacePresetRequest_default_instance_);
+  }
+  static constexpr int kIndexInFileMessages =
+    30;
+
+  friend void swap(ExportMarketplacePresetRequest& a, ExportMarketplacePresetRequest& b) {
+    a.Swap(&b);
+  }
+  inline void Swap(ExportMarketplacePresetRequest* other) {
+    if (other == this) return;
+  #ifdef PROTOBUF_FORCE_COPY_IN_SWAP
+    if (GetOwningArena() != nullptr &&
+        GetOwningArena() == other->GetOwningArena()) {
+   #else  // PROTOBUF_FORCE_COPY_IN_SWAP
+    if (GetOwningArena() == other->GetOwningArena()) {
+  #endif  // !PROTOBUF_FORCE_COPY_IN_SWAP
+      InternalSwap(other);
+    } else {
+      ::PROTOBUF_NAMESPACE_ID::internal::GenericSwap(this, other);
+    }
+  }
+  void UnsafeArenaSwap(ExportMarketplacePresetRequest* other) {
+    if (other == this) return;
+    GOOGLE_DCHECK(GetOwningArena() == other->GetOwningArena());
+    InternalSwap(other);
+  }
+
+  // implements Message ----------------------------------------------
+
+  ExportMarketplacePresetRequest* New(::PROTOBUF_NAMESPACE_ID::Arena* arena = nullptr) const final {
+    return CreateMaybeMessage<ExportMarketplacePresetRequest>(arena);
+  }
+  using ::PROTOBUF_NAMESPACE_ID::Message::CopyFrom;
+  void CopyFrom(const ExportMarketplacePresetRequest& from);
+  using ::PROTOBUF_NAMESPACE_ID::Message::MergeFrom;
+  void MergeFrom( const ExportMarketplacePresetRequest& from) {
+    ExportMarketplacePresetRequest::MergeImpl(*this, from);
+  }
+  private:
+  static void MergeImpl(::PROTOBUF_NAMESPACE_ID::Message& to_msg, const ::PROTOBUF_NAMESPACE_ID::Message& from_msg);
+  public:
+  PROTOBUF_ATTRIBUTE_REINITIALIZES void Clear() final;
+  bool IsInitialized() const final;
+
+  size_t ByteSizeLong() const final;
+  const char* _InternalParse(const char* ptr, ::PROTOBUF_NAMESPACE_ID::internal::ParseContext* ctx) final;
+  uint8_t* _InternalSerialize(
+      uint8_t* target, ::PROTOBUF_NAMESPACE_ID::io::EpsCopyOutputStream* stream) const final;
+  int GetCachedSize() const final { return _impl_._cached_size_.Get(); }
+
+  private:
+  void SharedCtor(::PROTOBUF_NAMESPACE_ID::Arena* arena, bool is_message_owned);
+  void SharedDtor();
+  void SetCachedSize(int size) const final;
+  void InternalSwap(ExportMarketplacePresetRequest* other);
+
+  private:
+  friend class ::PROTOBUF_NAMESPACE_ID::internal::AnyMetadata;
+  static ::PROTOBUF_NAMESPACE_ID::StringPiece FullMessageName() {
+    return "botcore.trading.v1.ExportMarketplacePresetRequest";
+  }
+  protected:
+  explicit ExportMarketplacePresetRequest(::PROTOBUF_NAMESPACE_ID::Arena* arena,
+                       bool is_message_owned = false);
+  public:
+
+  static const ClassData _class_data_;
+  const ::PROTOBUF_NAMESPACE_ID::Message::ClassData*GetClassData() const final;
+
+  ::PROTOBUF_NAMESPACE_ID::Metadata GetMetadata() const final;
+
+  // nested types ----------------------------------------------------
+
+  // accessors -------------------------------------------------------
+
+  enum : int {
+    kPresetIdFieldNumber = 1,
+    kFormatFieldNumber = 2,
+  };
+  // string preset_id = 1;
+  void clear_preset_id();
+  const std::string& preset_id() const;
+  template <typename ArgT0 = const std::string&, typename... ArgT>
+  void set_preset_id(ArgT0&& arg0, ArgT... args);
+  std::string* mutable_preset_id();
+  PROTOBUF_NODISCARD std::string* release_preset_id();
+  void set_allocated_preset_id(std::string* preset_id);
+  private:
+  const std::string& _internal_preset_id() const;
+  inline PROTOBUF_ALWAYS_INLINE void _internal_set_preset_id(const std::string& value);
+  std::string* _internal_mutable_preset_id();
+  public:
+
+  // string format = 2;
+  void clear_format();
+  const std::string& format() const;
+  template <typename ArgT0 = const std::string&, typename... ArgT>
+  void set_format(ArgT0&& arg0, ArgT... args);
+  std::string* mutable_format();
+  PROTOBUF_NODISCARD std::string* release_format();
+  void set_allocated_format(std::string* format);
+  private:
+  const std::string& _internal_format() const;
+  inline PROTOBUF_ALWAYS_INLINE void _internal_set_format(const std::string& value);
+  std::string* _internal_mutable_format();
+  public:
+
+  // @@protoc_insertion_point(class_scope:botcore.trading.v1.ExportMarketplacePresetRequest)
+ private:
+  class _Internal;
+
+  template <typename T> friend class ::PROTOBUF_NAMESPACE_ID::Arena::InternalHelper;
+  typedef void InternalArenaConstructable_;
+  typedef void DestructorSkippable_;
+  struct Impl_ {
+    ::PROTOBUF_NAMESPACE_ID::internal::ArenaStringPtr preset_id_;
+    ::PROTOBUF_NAMESPACE_ID::internal::ArenaStringPtr format_;
+    mutable ::PROTOBUF_NAMESPACE_ID::internal::CachedSize _cached_size_;
+  };
+  union { Impl_ _impl_; };
+  friend struct ::TableStruct_trading_2eproto;
+};
+// -------------------------------------------------------------------
+
+class ExportMarketplacePresetResponse final :
+    public ::PROTOBUF_NAMESPACE_ID::Message /* @@protoc_insertion_point(class_definition:botcore.trading.v1.ExportMarketplacePresetResponse) */ {
+ public:
+  inline ExportMarketplacePresetResponse() : ExportMarketplacePresetResponse(nullptr) {}
+  ~ExportMarketplacePresetResponse() override;
+  explicit PROTOBUF_CONSTEXPR ExportMarketplacePresetResponse(::PROTOBUF_NAMESPACE_ID::internal::ConstantInitialized);
+
+  ExportMarketplacePresetResponse(const ExportMarketplacePresetResponse& from);
+  ExportMarketplacePresetResponse(ExportMarketplacePresetResponse&& from) noexcept
+    : ExportMarketplacePresetResponse() {
+    *this = ::std::move(from);
+  }
+
+  inline ExportMarketplacePresetResponse& operator=(const ExportMarketplacePresetResponse& from) {
+    CopyFrom(from);
+    return *this;
+  }
+  inline ExportMarketplacePresetResponse& operator=(ExportMarketplacePresetResponse&& from) noexcept {
+    if (this == &from) return *this;
+    if (GetOwningArena() == from.GetOwningArena()
+  #ifdef PROTOBUF_FORCE_COPY_IN_MOVE
+        && GetOwningArena() != nullptr
+  #endif  // !PROTOBUF_FORCE_COPY_IN_MOVE
+    ) {
+      InternalSwap(&from);
+    } else {
+      CopyFrom(from);
+    }
+    return *this;
+  }
+
+  static const ::PROTOBUF_NAMESPACE_ID::Descriptor* descriptor() {
+    return GetDescriptor();
+  }
+  static const ::PROTOBUF_NAMESPACE_ID::Descriptor* GetDescriptor() {
+    return default_instance().GetMetadata().descriptor;
+  }
+  static const ::PROTOBUF_NAMESPACE_ID::Reflection* GetReflection() {
+    return default_instance().GetMetadata().reflection;
+  }
+  static const ExportMarketplacePresetResponse& default_instance() {
+    return *internal_default_instance();
+  }
+  static inline const ExportMarketplacePresetResponse* internal_default_instance() {
+    return reinterpret_cast<const ExportMarketplacePresetResponse*>(
+               &_ExportMarketplacePresetResponse_default_instance_);
+  }
+  static constexpr int kIndexInFileMessages =
+    31;
+
+  friend void swap(ExportMarketplacePresetResponse& a, ExportMarketplacePresetResponse& b) {
+    a.Swap(&b);
+  }
+  inline void Swap(ExportMarketplacePresetResponse* other) {
+    if (other == this) return;
+  #ifdef PROTOBUF_FORCE_COPY_IN_SWAP
+    if (GetOwningArena() != nullptr &&
+        GetOwningArena() == other->GetOwningArena()) {
+   #else  // PROTOBUF_FORCE_COPY_IN_SWAP
+    if (GetOwningArena() == other->GetOwningArena()) {
+  #endif  // !PROTOBUF_FORCE_COPY_IN_SWAP
+      InternalSwap(other);
+    } else {
+      ::PROTOBUF_NAMESPACE_ID::internal::GenericSwap(this, other);
+    }
+  }
+  void UnsafeArenaSwap(ExportMarketplacePresetResponse* other) {
+    if (other == this) return;
+    GOOGLE_DCHECK(GetOwningArena() == other->GetOwningArena());
+    InternalSwap(other);
+  }
+
+  // implements Message ----------------------------------------------
+
+  ExportMarketplacePresetResponse* New(::PROTOBUF_NAMESPACE_ID::Arena* arena = nullptr) const final {
+    return CreateMaybeMessage<ExportMarketplacePresetResponse>(arena);
+  }
+  using ::PROTOBUF_NAMESPACE_ID::Message::CopyFrom;
+  void CopyFrom(const ExportMarketplacePresetResponse& from);
+  using ::PROTOBUF_NAMESPACE_ID::Message::MergeFrom;
+  void MergeFrom( const ExportMarketplacePresetResponse& from) {
+    ExportMarketplacePresetResponse::MergeImpl(*this, from);
+  }
+  private:
+  static void MergeImpl(::PROTOBUF_NAMESPACE_ID::Message& to_msg, const ::PROTOBUF_NAMESPACE_ID::Message& from_msg);
+  public:
+  PROTOBUF_ATTRIBUTE_REINITIALIZES void Clear() final;
+  bool IsInitialized() const final;
+
+  size_t ByteSizeLong() const final;
+  const char* _InternalParse(const char* ptr, ::PROTOBUF_NAMESPACE_ID::internal::ParseContext* ctx) final;
+  uint8_t* _InternalSerialize(
+      uint8_t* target, ::PROTOBUF_NAMESPACE_ID::io::EpsCopyOutputStream* stream) const final;
+  int GetCachedSize() const final { return _impl_._cached_size_.Get(); }
+
+  private:
+  void SharedCtor(::PROTOBUF_NAMESPACE_ID::Arena* arena, bool is_message_owned);
+  void SharedDtor();
+  void SetCachedSize(int size) const final;
+  void InternalSwap(ExportMarketplacePresetResponse* other);
+
+  private:
+  friend class ::PROTOBUF_NAMESPACE_ID::internal::AnyMetadata;
+  static ::PROTOBUF_NAMESPACE_ID::StringPiece FullMessageName() {
+    return "botcore.trading.v1.ExportMarketplacePresetResponse";
+  }
+  protected:
+  explicit ExportMarketplacePresetResponse(::PROTOBUF_NAMESPACE_ID::Arena* arena,
+                       bool is_message_owned = false);
+  public:
+
+  static const ClassData _class_data_;
+  const ::PROTOBUF_NAMESPACE_ID::Message::ClassData*GetClassData() const final;
+
+  ::PROTOBUF_NAMESPACE_ID::Metadata GetMetadata() const final;
+
+  // nested types ----------------------------------------------------
+
+  // accessors -------------------------------------------------------
+
+  enum : int {
+    kPayloadFieldNumber = 1,
+    kFilenameFieldNumber = 2,
+    kFormatFieldNumber = 4,
+    kPresetFieldNumber = 3,
+  };
+  // bytes payload = 1;
+  void clear_payload();
+  const std::string& payload() const;
+  template <typename ArgT0 = const std::string&, typename... ArgT>
+  void set_payload(ArgT0&& arg0, ArgT... args);
+  std::string* mutable_payload();
+  PROTOBUF_NODISCARD std::string* release_payload();
+  void set_allocated_payload(std::string* payload);
+  private:
+  const std::string& _internal_payload() const;
+  inline PROTOBUF_ALWAYS_INLINE void _internal_set_payload(const std::string& value);
+  std::string* _internal_mutable_payload();
+  public:
+
+  // string filename = 2;
+  void clear_filename();
+  const std::string& filename() const;
+  template <typename ArgT0 = const std::string&, typename... ArgT>
+  void set_filename(ArgT0&& arg0, ArgT... args);
+  std::string* mutable_filename();
+  PROTOBUF_NODISCARD std::string* release_filename();
+  void set_allocated_filename(std::string* filename);
+  private:
+  const std::string& _internal_filename() const;
+  inline PROTOBUF_ALWAYS_INLINE void _internal_set_filename(const std::string& value);
+  std::string* _internal_mutable_filename();
+  public:
+
+  // string format = 4;
+  void clear_format();
+  const std::string& format() const;
+  template <typename ArgT0 = const std::string&, typename... ArgT>
+  void set_format(ArgT0&& arg0, ArgT... args);
+  std::string* mutable_format();
+  PROTOBUF_NODISCARD std::string* release_format();
+  void set_allocated_format(std::string* format);
+  private:
+  const std::string& _internal_format() const;
+  inline PROTOBUF_ALWAYS_INLINE void _internal_set_format(const std::string& value);
+  std::string* _internal_mutable_format();
+  public:
+
+  // .botcore.trading.v1.MarketplacePresetSummary preset = 3;
+  bool has_preset() const;
+  private:
+  bool _internal_has_preset() const;
+  public:
+  void clear_preset();
+  const ::botcore::trading::v1::MarketplacePresetSummary& preset() const;
+  PROTOBUF_NODISCARD ::botcore::trading::v1::MarketplacePresetSummary* release_preset();
+  ::botcore::trading::v1::MarketplacePresetSummary* mutable_preset();
+  void set_allocated_preset(::botcore::trading::v1::MarketplacePresetSummary* preset);
+  private:
+  const ::botcore::trading::v1::MarketplacePresetSummary& _internal_preset() const;
+  ::botcore::trading::v1::MarketplacePresetSummary* _internal_mutable_preset();
+  public:
+  void unsafe_arena_set_allocated_preset(
+      ::botcore::trading::v1::MarketplacePresetSummary* preset);
+  ::botcore::trading::v1::MarketplacePresetSummary* unsafe_arena_release_preset();
+
+  // @@protoc_insertion_point(class_scope:botcore.trading.v1.ExportMarketplacePresetResponse)
+ private:
+  class _Internal;
+
+  template <typename T> friend class ::PROTOBUF_NAMESPACE_ID::Arena::InternalHelper;
+  typedef void InternalArenaConstructable_;
+  typedef void DestructorSkippable_;
+  struct Impl_ {
+    ::PROTOBUF_NAMESPACE_ID::internal::ArenaStringPtr payload_;
+    ::PROTOBUF_NAMESPACE_ID::internal::ArenaStringPtr filename_;
+    ::PROTOBUF_NAMESPACE_ID::internal::ArenaStringPtr format_;
+    ::botcore::trading::v1::MarketplacePresetSummary* preset_;
+    mutable ::PROTOBUF_NAMESPACE_ID::internal::CachedSize _cached_size_;
+  };
+  union { Impl_ _impl_; };
+  friend struct ::TableStruct_trading_2eproto;
+};
+// -------------------------------------------------------------------
+
+class RemoveMarketplacePresetRequest final :
+    public ::PROTOBUF_NAMESPACE_ID::Message /* @@protoc_insertion_point(class_definition:botcore.trading.v1.RemoveMarketplacePresetRequest) */ {
+ public:
+  inline RemoveMarketplacePresetRequest() : RemoveMarketplacePresetRequest(nullptr) {}
+  ~RemoveMarketplacePresetRequest() override;
+  explicit PROTOBUF_CONSTEXPR RemoveMarketplacePresetRequest(::PROTOBUF_NAMESPACE_ID::internal::ConstantInitialized);
+
+  RemoveMarketplacePresetRequest(const RemoveMarketplacePresetRequest& from);
+  RemoveMarketplacePresetRequest(RemoveMarketplacePresetRequest&& from) noexcept
+    : RemoveMarketplacePresetRequest() {
+    *this = ::std::move(from);
+  }
+
+  inline RemoveMarketplacePresetRequest& operator=(const RemoveMarketplacePresetRequest& from) {
+    CopyFrom(from);
+    return *this;
+  }
+  inline RemoveMarketplacePresetRequest& operator=(RemoveMarketplacePresetRequest&& from) noexcept {
+    if (this == &from) return *this;
+    if (GetOwningArena() == from.GetOwningArena()
+  #ifdef PROTOBUF_FORCE_COPY_IN_MOVE
+        && GetOwningArena() != nullptr
+  #endif  // !PROTOBUF_FORCE_COPY_IN_MOVE
+    ) {
+      InternalSwap(&from);
+    } else {
+      CopyFrom(from);
+    }
+    return *this;
+  }
+
+  static const ::PROTOBUF_NAMESPACE_ID::Descriptor* descriptor() {
+    return GetDescriptor();
+  }
+  static const ::PROTOBUF_NAMESPACE_ID::Descriptor* GetDescriptor() {
+    return default_instance().GetMetadata().descriptor;
+  }
+  static const ::PROTOBUF_NAMESPACE_ID::Reflection* GetReflection() {
+    return default_instance().GetMetadata().reflection;
+  }
+  static const RemoveMarketplacePresetRequest& default_instance() {
+    return *internal_default_instance();
+  }
+  static inline const RemoveMarketplacePresetRequest* internal_default_instance() {
+    return reinterpret_cast<const RemoveMarketplacePresetRequest*>(
+               &_RemoveMarketplacePresetRequest_default_instance_);
+  }
+  static constexpr int kIndexInFileMessages =
+    32;
+
+  friend void swap(RemoveMarketplacePresetRequest& a, RemoveMarketplacePresetRequest& b) {
+    a.Swap(&b);
+  }
+  inline void Swap(RemoveMarketplacePresetRequest* other) {
+    if (other == this) return;
+  #ifdef PROTOBUF_FORCE_COPY_IN_SWAP
+    if (GetOwningArena() != nullptr &&
+        GetOwningArena() == other->GetOwningArena()) {
+   #else  // PROTOBUF_FORCE_COPY_IN_SWAP
+    if (GetOwningArena() == other->GetOwningArena()) {
+  #endif  // !PROTOBUF_FORCE_COPY_IN_SWAP
+      InternalSwap(other);
+    } else {
+      ::PROTOBUF_NAMESPACE_ID::internal::GenericSwap(this, other);
+    }
+  }
+  void UnsafeArenaSwap(RemoveMarketplacePresetRequest* other) {
+    if (other == this) return;
+    GOOGLE_DCHECK(GetOwningArena() == other->GetOwningArena());
+    InternalSwap(other);
+  }
+
+  // implements Message ----------------------------------------------
+
+  RemoveMarketplacePresetRequest* New(::PROTOBUF_NAMESPACE_ID::Arena* arena = nullptr) const final {
+    return CreateMaybeMessage<RemoveMarketplacePresetRequest>(arena);
+  }
+  using ::PROTOBUF_NAMESPACE_ID::Message::CopyFrom;
+  void CopyFrom(const RemoveMarketplacePresetRequest& from);
+  using ::PROTOBUF_NAMESPACE_ID::Message::MergeFrom;
+  void MergeFrom( const RemoveMarketplacePresetRequest& from) {
+    RemoveMarketplacePresetRequest::MergeImpl(*this, from);
+  }
+  private:
+  static void MergeImpl(::PROTOBUF_NAMESPACE_ID::Message& to_msg, const ::PROTOBUF_NAMESPACE_ID::Message& from_msg);
+  public:
+  PROTOBUF_ATTRIBUTE_REINITIALIZES void Clear() final;
+  bool IsInitialized() const final;
+
+  size_t ByteSizeLong() const final;
+  const char* _InternalParse(const char* ptr, ::PROTOBUF_NAMESPACE_ID::internal::ParseContext* ctx) final;
+  uint8_t* _InternalSerialize(
+      uint8_t* target, ::PROTOBUF_NAMESPACE_ID::io::EpsCopyOutputStream* stream) const final;
+  int GetCachedSize() const final { return _impl_._cached_size_.Get(); }
+
+  private:
+  void SharedCtor(::PROTOBUF_NAMESPACE_ID::Arena* arena, bool is_message_owned);
+  void SharedDtor();
+  void SetCachedSize(int size) const final;
+  void InternalSwap(RemoveMarketplacePresetRequest* other);
+
+  private:
+  friend class ::PROTOBUF_NAMESPACE_ID::internal::AnyMetadata;
+  static ::PROTOBUF_NAMESPACE_ID::StringPiece FullMessageName() {
+    return "botcore.trading.v1.RemoveMarketplacePresetRequest";
+  }
+  protected:
+  explicit RemoveMarketplacePresetRequest(::PROTOBUF_NAMESPACE_ID::Arena* arena,
+                       bool is_message_owned = false);
+  public:
+
+  static const ClassData _class_data_;
+  const ::PROTOBUF_NAMESPACE_ID::Message::ClassData*GetClassData() const final;
+
+  ::PROTOBUF_NAMESPACE_ID::Metadata GetMetadata() const final;
+
+  // nested types ----------------------------------------------------
+
+  // accessors -------------------------------------------------------
+
+  enum : int {
+    kPresetIdFieldNumber = 1,
+  };
+  // string preset_id = 1;
+  void clear_preset_id();
+  const std::string& preset_id() const;
+  template <typename ArgT0 = const std::string&, typename... ArgT>
+  void set_preset_id(ArgT0&& arg0, ArgT... args);
+  std::string* mutable_preset_id();
+  PROTOBUF_NODISCARD std::string* release_preset_id();
+  void set_allocated_preset_id(std::string* preset_id);
+  private:
+  const std::string& _internal_preset_id() const;
+  inline PROTOBUF_ALWAYS_INLINE void _internal_set_preset_id(const std::string& value);
+  std::string* _internal_mutable_preset_id();
+  public:
+
+  // @@protoc_insertion_point(class_scope:botcore.trading.v1.RemoveMarketplacePresetRequest)
+ private:
+  class _Internal;
+
+  template <typename T> friend class ::PROTOBUF_NAMESPACE_ID::Arena::InternalHelper;
+  typedef void InternalArenaConstructable_;
+  typedef void DestructorSkippable_;
+  struct Impl_ {
+    ::PROTOBUF_NAMESPACE_ID::internal::ArenaStringPtr preset_id_;
+    mutable ::PROTOBUF_NAMESPACE_ID::internal::CachedSize _cached_size_;
+  };
+  union { Impl_ _impl_; };
+  friend struct ::TableStruct_trading_2eproto;
+};
+// -------------------------------------------------------------------
+
+class RemoveMarketplacePresetResponse final :
+    public ::PROTOBUF_NAMESPACE_ID::Message /* @@protoc_insertion_point(class_definition:botcore.trading.v1.RemoveMarketplacePresetResponse) */ {
+ public:
+  inline RemoveMarketplacePresetResponse() : RemoveMarketplacePresetResponse(nullptr) {}
+  ~RemoveMarketplacePresetResponse() override;
+  explicit PROTOBUF_CONSTEXPR RemoveMarketplacePresetResponse(::PROTOBUF_NAMESPACE_ID::internal::ConstantInitialized);
+
+  RemoveMarketplacePresetResponse(const RemoveMarketplacePresetResponse& from);
+  RemoveMarketplacePresetResponse(RemoveMarketplacePresetResponse&& from) noexcept
+    : RemoveMarketplacePresetResponse() {
+    *this = ::std::move(from);
+  }
+
+  inline RemoveMarketplacePresetResponse& operator=(const RemoveMarketplacePresetResponse& from) {
+    CopyFrom(from);
+    return *this;
+  }
+  inline RemoveMarketplacePresetResponse& operator=(RemoveMarketplacePresetResponse&& from) noexcept {
+    if (this == &from) return *this;
+    if (GetOwningArena() == from.GetOwningArena()
+  #ifdef PROTOBUF_FORCE_COPY_IN_MOVE
+        && GetOwningArena() != nullptr
+  #endif  // !PROTOBUF_FORCE_COPY_IN_MOVE
+    ) {
+      InternalSwap(&from);
+    } else {
+      CopyFrom(from);
+    }
+    return *this;
+  }
+
+  static const ::PROTOBUF_NAMESPACE_ID::Descriptor* descriptor() {
+    return GetDescriptor();
+  }
+  static const ::PROTOBUF_NAMESPACE_ID::Descriptor* GetDescriptor() {
+    return default_instance().GetMetadata().descriptor;
+  }
+  static const ::PROTOBUF_NAMESPACE_ID::Reflection* GetReflection() {
+    return default_instance().GetMetadata().reflection;
+  }
+  static const RemoveMarketplacePresetResponse& default_instance() {
+    return *internal_default_instance();
+  }
+  static inline const RemoveMarketplacePresetResponse* internal_default_instance() {
+    return reinterpret_cast<const RemoveMarketplacePresetResponse*>(
+               &_RemoveMarketplacePresetResponse_default_instance_);
+  }
+  static constexpr int kIndexInFileMessages =
+    33;
+
+  friend void swap(RemoveMarketplacePresetResponse& a, RemoveMarketplacePresetResponse& b) {
+    a.Swap(&b);
+  }
+  inline void Swap(RemoveMarketplacePresetResponse* other) {
+    if (other == this) return;
+  #ifdef PROTOBUF_FORCE_COPY_IN_SWAP
+    if (GetOwningArena() != nullptr &&
+        GetOwningArena() == other->GetOwningArena()) {
+   #else  // PROTOBUF_FORCE_COPY_IN_SWAP
+    if (GetOwningArena() == other->GetOwningArena()) {
+  #endif  // !PROTOBUF_FORCE_COPY_IN_SWAP
+      InternalSwap(other);
+    } else {
+      ::PROTOBUF_NAMESPACE_ID::internal::GenericSwap(this, other);
+    }
+  }
+  void UnsafeArenaSwap(RemoveMarketplacePresetResponse* other) {
+    if (other == this) return;
+    GOOGLE_DCHECK(GetOwningArena() == other->GetOwningArena());
+    InternalSwap(other);
+  }
+
+  // implements Message ----------------------------------------------
+
+  RemoveMarketplacePresetResponse* New(::PROTOBUF_NAMESPACE_ID::Arena* arena = nullptr) const final {
+    return CreateMaybeMessage<RemoveMarketplacePresetResponse>(arena);
+  }
+  using ::PROTOBUF_NAMESPACE_ID::Message::CopyFrom;
+  void CopyFrom(const RemoveMarketplacePresetResponse& from);
+  using ::PROTOBUF_NAMESPACE_ID::Message::MergeFrom;
+  void MergeFrom( const RemoveMarketplacePresetResponse& from) {
+    RemoveMarketplacePresetResponse::MergeImpl(*this, from);
+  }
+  private:
+  static void MergeImpl(::PROTOBUF_NAMESPACE_ID::Message& to_msg, const ::PROTOBUF_NAMESPACE_ID::Message& from_msg);
+  public:
+  PROTOBUF_ATTRIBUTE_REINITIALIZES void Clear() final;
+  bool IsInitialized() const final;
+
+  size_t ByteSizeLong() const final;
+  const char* _InternalParse(const char* ptr, ::PROTOBUF_NAMESPACE_ID::internal::ParseContext* ctx) final;
+  uint8_t* _InternalSerialize(
+      uint8_t* target, ::PROTOBUF_NAMESPACE_ID::io::EpsCopyOutputStream* stream) const final;
+  int GetCachedSize() const final { return _impl_._cached_size_.Get(); }
+
+  private:
+  void SharedCtor(::PROTOBUF_NAMESPACE_ID::Arena* arena, bool is_message_owned);
+  void SharedDtor();
+  void SetCachedSize(int size) const final;
+  void InternalSwap(RemoveMarketplacePresetResponse* other);
+
+  private:
+  friend class ::PROTOBUF_NAMESPACE_ID::internal::AnyMetadata;
+  static ::PROTOBUF_NAMESPACE_ID::StringPiece FullMessageName() {
+    return "botcore.trading.v1.RemoveMarketplacePresetResponse";
+  }
+  protected:
+  explicit RemoveMarketplacePresetResponse(::PROTOBUF_NAMESPACE_ID::Arena* arena,
+                       bool is_message_owned = false);
+  public:
+
+  static const ClassData _class_data_;
+  const ::PROTOBUF_NAMESPACE_ID::Message::ClassData*GetClassData() const final;
+
+  ::PROTOBUF_NAMESPACE_ID::Metadata GetMetadata() const final;
+
+  // nested types ----------------------------------------------------
+
+  // accessors -------------------------------------------------------
+
+  enum : int {
+    kRemovedFieldNumber = 1,
+  };
+  // bool removed = 1;
+  void clear_removed();
+  bool removed() const;
+  void set_removed(bool value);
+  private:
+  bool _internal_removed() const;
+  void _internal_set_removed(bool value);
+  public:
+
+  // @@protoc_insertion_point(class_scope:botcore.trading.v1.RemoveMarketplacePresetResponse)
+ private:
+  class _Internal;
+
+  template <typename T> friend class ::PROTOBUF_NAMESPACE_ID::Arena::InternalHelper;
+  typedef void InternalArenaConstructable_;
+  typedef void DestructorSkippable_;
+  struct Impl_ {
+    bool removed_;
+    mutable ::PROTOBUF_NAMESPACE_ID::internal::CachedSize _cached_size_;
+  };
+  union { Impl_ _impl_; };
+  friend struct ::TableStruct_trading_2eproto;
+};
+// -------------------------------------------------------------------
+
+class ActivateMarketplacePresetRequest final :
+    public ::PROTOBUF_NAMESPACE_ID::Message /* @@protoc_insertion_point(class_definition:botcore.trading.v1.ActivateMarketplacePresetRequest) */ {
+ public:
+  inline ActivateMarketplacePresetRequest() : ActivateMarketplacePresetRequest(nullptr) {}
+  ~ActivateMarketplacePresetRequest() override;
+  explicit PROTOBUF_CONSTEXPR ActivateMarketplacePresetRequest(::PROTOBUF_NAMESPACE_ID::internal::ConstantInitialized);
+
+  ActivateMarketplacePresetRequest(const ActivateMarketplacePresetRequest& from);
+  ActivateMarketplacePresetRequest(ActivateMarketplacePresetRequest&& from) noexcept
+    : ActivateMarketplacePresetRequest() {
+    *this = ::std::move(from);
+  }
+
+  inline ActivateMarketplacePresetRequest& operator=(const ActivateMarketplacePresetRequest& from) {
+    CopyFrom(from);
+    return *this;
+  }
+  inline ActivateMarketplacePresetRequest& operator=(ActivateMarketplacePresetRequest&& from) noexcept {
+    if (this == &from) return *this;
+    if (GetOwningArena() == from.GetOwningArena()
+  #ifdef PROTOBUF_FORCE_COPY_IN_MOVE
+        && GetOwningArena() != nullptr
+  #endif  // !PROTOBUF_FORCE_COPY_IN_MOVE
+    ) {
+      InternalSwap(&from);
+    } else {
+      CopyFrom(from);
+    }
+    return *this;
+  }
+
+  static const ::PROTOBUF_NAMESPACE_ID::Descriptor* descriptor() {
+    return GetDescriptor();
+  }
+  static const ::PROTOBUF_NAMESPACE_ID::Descriptor* GetDescriptor() {
+    return default_instance().GetMetadata().descriptor;
+  }
+  static const ::PROTOBUF_NAMESPACE_ID::Reflection* GetReflection() {
+    return default_instance().GetMetadata().reflection;
+  }
+  static const ActivateMarketplacePresetRequest& default_instance() {
+    return *internal_default_instance();
+  }
+  static inline const ActivateMarketplacePresetRequest* internal_default_instance() {
+    return reinterpret_cast<const ActivateMarketplacePresetRequest*>(
+               &_ActivateMarketplacePresetRequest_default_instance_);
+  }
+  static constexpr int kIndexInFileMessages =
+    34;
+
+  friend void swap(ActivateMarketplacePresetRequest& a, ActivateMarketplacePresetRequest& b) {
+    a.Swap(&b);
+  }
+  inline void Swap(ActivateMarketplacePresetRequest* other) {
+    if (other == this) return;
+  #ifdef PROTOBUF_FORCE_COPY_IN_SWAP
+    if (GetOwningArena() != nullptr &&
+        GetOwningArena() == other->GetOwningArena()) {
+   #else  // PROTOBUF_FORCE_COPY_IN_SWAP
+    if (GetOwningArena() == other->GetOwningArena()) {
+  #endif  // !PROTOBUF_FORCE_COPY_IN_SWAP
+      InternalSwap(other);
+    } else {
+      ::PROTOBUF_NAMESPACE_ID::internal::GenericSwap(this, other);
+    }
+  }
+  void UnsafeArenaSwap(ActivateMarketplacePresetRequest* other) {
+    if (other == this) return;
+    GOOGLE_DCHECK(GetOwningArena() == other->GetOwningArena());
+    InternalSwap(other);
+  }
+
+  // implements Message ----------------------------------------------
+
+  ActivateMarketplacePresetRequest* New(::PROTOBUF_NAMESPACE_ID::Arena* arena = nullptr) const final {
+    return CreateMaybeMessage<ActivateMarketplacePresetRequest>(arena);
+  }
+  using ::PROTOBUF_NAMESPACE_ID::Message::CopyFrom;
+  void CopyFrom(const ActivateMarketplacePresetRequest& from);
+  using ::PROTOBUF_NAMESPACE_ID::Message::MergeFrom;
+  void MergeFrom( const ActivateMarketplacePresetRequest& from) {
+    ActivateMarketplacePresetRequest::MergeImpl(*this, from);
+  }
+  private:
+  static void MergeImpl(::PROTOBUF_NAMESPACE_ID::Message& to_msg, const ::PROTOBUF_NAMESPACE_ID::Message& from_msg);
+  public:
+  PROTOBUF_ATTRIBUTE_REINITIALIZES void Clear() final;
+  bool IsInitialized() const final;
+
+  size_t ByteSizeLong() const final;
+  const char* _InternalParse(const char* ptr, ::PROTOBUF_NAMESPACE_ID::internal::ParseContext* ctx) final;
+  uint8_t* _InternalSerialize(
+      uint8_t* target, ::PROTOBUF_NAMESPACE_ID::io::EpsCopyOutputStream* stream) const final;
+  int GetCachedSize() const final { return _impl_._cached_size_.Get(); }
+
+  private:
+  void SharedCtor(::PROTOBUF_NAMESPACE_ID::Arena* arena, bool is_message_owned);
+  void SharedDtor();
+  void SetCachedSize(int size) const final;
+  void InternalSwap(ActivateMarketplacePresetRequest* other);
+
+  private:
+  friend class ::PROTOBUF_NAMESPACE_ID::internal::AnyMetadata;
+  static ::PROTOBUF_NAMESPACE_ID::StringPiece FullMessageName() {
+    return "botcore.trading.v1.ActivateMarketplacePresetRequest";
+  }
+  protected:
+  explicit ActivateMarketplacePresetRequest(::PROTOBUF_NAMESPACE_ID::Arena* arena,
+                       bool is_message_owned = false);
+  public:
+
+  static const ClassData _class_data_;
+  const ::PROTOBUF_NAMESPACE_ID::Message::ClassData*GetClassData() const final;
+
+  ::PROTOBUF_NAMESPACE_ID::Metadata GetMetadata() const final;
+
+  // nested types ----------------------------------------------------
+
+  // accessors -------------------------------------------------------
+
+  enum : int {
+    kPresetIdFieldNumber = 1,
+  };
+  // string preset_id = 1;
+  void clear_preset_id();
+  const std::string& preset_id() const;
+  template <typename ArgT0 = const std::string&, typename... ArgT>
+  void set_preset_id(ArgT0&& arg0, ArgT... args);
+  std::string* mutable_preset_id();
+  PROTOBUF_NODISCARD std::string* release_preset_id();
+  void set_allocated_preset_id(std::string* preset_id);
+  private:
+  const std::string& _internal_preset_id() const;
+  inline PROTOBUF_ALWAYS_INLINE void _internal_set_preset_id(const std::string& value);
+  std::string* _internal_mutable_preset_id();
+  public:
+
+  // @@protoc_insertion_point(class_scope:botcore.trading.v1.ActivateMarketplacePresetRequest)
+ private:
+  class _Internal;
+
+  template <typename T> friend class ::PROTOBUF_NAMESPACE_ID::Arena::InternalHelper;
+  typedef void InternalArenaConstructable_;
+  typedef void DestructorSkippable_;
+  struct Impl_ {
+    ::PROTOBUF_NAMESPACE_ID::internal::ArenaStringPtr preset_id_;
+    mutable ::PROTOBUF_NAMESPACE_ID::internal::CachedSize _cached_size_;
+  };
+  union { Impl_ _impl_; };
+  friend struct ::TableStruct_trading_2eproto;
+};
+// -------------------------------------------------------------------
+
+class ActivateMarketplacePresetResponse final :
+    public ::PROTOBUF_NAMESPACE_ID::Message /* @@protoc_insertion_point(class_definition:botcore.trading.v1.ActivateMarketplacePresetResponse) */ {
+ public:
+  inline ActivateMarketplacePresetResponse() : ActivateMarketplacePresetResponse(nullptr) {}
+  ~ActivateMarketplacePresetResponse() override;
+  explicit PROTOBUF_CONSTEXPR ActivateMarketplacePresetResponse(::PROTOBUF_NAMESPACE_ID::internal::ConstantInitialized);
+
+  ActivateMarketplacePresetResponse(const ActivateMarketplacePresetResponse& from);
+  ActivateMarketplacePresetResponse(ActivateMarketplacePresetResponse&& from) noexcept
+    : ActivateMarketplacePresetResponse() {
+    *this = ::std::move(from);
+  }
+
+  inline ActivateMarketplacePresetResponse& operator=(const ActivateMarketplacePresetResponse& from) {
+    CopyFrom(from);
+    return *this;
+  }
+  inline ActivateMarketplacePresetResponse& operator=(ActivateMarketplacePresetResponse&& from) noexcept {
+    if (this == &from) return *this;
+    if (GetOwningArena() == from.GetOwningArena()
+  #ifdef PROTOBUF_FORCE_COPY_IN_MOVE
+        && GetOwningArena() != nullptr
+  #endif  // !PROTOBUF_FORCE_COPY_IN_MOVE
+    ) {
+      InternalSwap(&from);
+    } else {
+      CopyFrom(from);
+    }
+    return *this;
+  }
+
+  static const ::PROTOBUF_NAMESPACE_ID::Descriptor* descriptor() {
+    return GetDescriptor();
+  }
+  static const ::PROTOBUF_NAMESPACE_ID::Descriptor* GetDescriptor() {
+    return default_instance().GetMetadata().descriptor;
+  }
+  static const ::PROTOBUF_NAMESPACE_ID::Reflection* GetReflection() {
+    return default_instance().GetMetadata().reflection;
+  }
+  static const ActivateMarketplacePresetResponse& default_instance() {
+    return *internal_default_instance();
+  }
+  static inline const ActivateMarketplacePresetResponse* internal_default_instance() {
+    return reinterpret_cast<const ActivateMarketplacePresetResponse*>(
+               &_ActivateMarketplacePresetResponse_default_instance_);
+  }
+  static constexpr int kIndexInFileMessages =
+    35;
+
+  friend void swap(ActivateMarketplacePresetResponse& a, ActivateMarketplacePresetResponse& b) {
+    a.Swap(&b);
+  }
+  inline void Swap(ActivateMarketplacePresetResponse* other) {
+    if (other == this) return;
+  #ifdef PROTOBUF_FORCE_COPY_IN_SWAP
+    if (GetOwningArena() != nullptr &&
+        GetOwningArena() == other->GetOwningArena()) {
+   #else  // PROTOBUF_FORCE_COPY_IN_SWAP
+    if (GetOwningArena() == other->GetOwningArena()) {
+  #endif  // !PROTOBUF_FORCE_COPY_IN_SWAP
+      InternalSwap(other);
+    } else {
+      ::PROTOBUF_NAMESPACE_ID::internal::GenericSwap(this, other);
+    }
+  }
+  void UnsafeArenaSwap(ActivateMarketplacePresetResponse* other) {
+    if (other == this) return;
+    GOOGLE_DCHECK(GetOwningArena() == other->GetOwningArena());
+    InternalSwap(other);
+  }
+
+  // implements Message ----------------------------------------------
+
+  ActivateMarketplacePresetResponse* New(::PROTOBUF_NAMESPACE_ID::Arena* arena = nullptr) const final {
+    return CreateMaybeMessage<ActivateMarketplacePresetResponse>(arena);
+  }
+  using ::PROTOBUF_NAMESPACE_ID::Message::CopyFrom;
+  void CopyFrom(const ActivateMarketplacePresetResponse& from);
+  using ::PROTOBUF_NAMESPACE_ID::Message::MergeFrom;
+  void MergeFrom( const ActivateMarketplacePresetResponse& from) {
+    ActivateMarketplacePresetResponse::MergeImpl(*this, from);
+  }
+  private:
+  static void MergeImpl(::PROTOBUF_NAMESPACE_ID::Message& to_msg, const ::PROTOBUF_NAMESPACE_ID::Message& from_msg);
+  public:
+  PROTOBUF_ATTRIBUTE_REINITIALIZES void Clear() final;
+  bool IsInitialized() const final;
+
+  size_t ByteSizeLong() const final;
+  const char* _InternalParse(const char* ptr, ::PROTOBUF_NAMESPACE_ID::internal::ParseContext* ctx) final;
+  uint8_t* _InternalSerialize(
+      uint8_t* target, ::PROTOBUF_NAMESPACE_ID::io::EpsCopyOutputStream* stream) const final;
+  int GetCachedSize() const final { return _impl_._cached_size_.Get(); }
+
+  private:
+  void SharedCtor(::PROTOBUF_NAMESPACE_ID::Arena* arena, bool is_message_owned);
+  void SharedDtor();
+  void SetCachedSize(int size) const final;
+  void InternalSwap(ActivateMarketplacePresetResponse* other);
+
+  private:
+  friend class ::PROTOBUF_NAMESPACE_ID::internal::AnyMetadata;
+  static ::PROTOBUF_NAMESPACE_ID::StringPiece FullMessageName() {
+    return "botcore.trading.v1.ActivateMarketplacePresetResponse";
+  }
+  protected:
+  explicit ActivateMarketplacePresetResponse(::PROTOBUF_NAMESPACE_ID::Arena* arena,
+                       bool is_message_owned = false);
+  public:
+
+  static const ClassData _class_data_;
+  const ::PROTOBUF_NAMESPACE_ID::Message::ClassData*GetClassData() const final;
+
+  ::PROTOBUF_NAMESPACE_ID::Metadata GetMetadata() const final;
+
+  // nested types ----------------------------------------------------
+
+  // accessors -------------------------------------------------------
+
+  enum : int {
+    kPresetFieldNumber = 1,
+  };
+  // .botcore.trading.v1.MarketplacePresetSummary preset = 1;
+  bool has_preset() const;
+  private:
+  bool _internal_has_preset() const;
+  public:
+  void clear_preset();
+  const ::botcore::trading::v1::MarketplacePresetSummary& preset() const;
+  PROTOBUF_NODISCARD ::botcore::trading::v1::MarketplacePresetSummary* release_preset();
+  ::botcore::trading::v1::MarketplacePresetSummary* mutable_preset();
+  void set_allocated_preset(::botcore::trading::v1::MarketplacePresetSummary* preset);
+  private:
+  const ::botcore::trading::v1::MarketplacePresetSummary& _internal_preset() const;
+  ::botcore::trading::v1::MarketplacePresetSummary* _internal_mutable_preset();
+  public:
+  void unsafe_arena_set_allocated_preset(
+      ::botcore::trading::v1::MarketplacePresetSummary* preset);
+  ::botcore::trading::v1::MarketplacePresetSummary* unsafe_arena_release_preset();
+
+  // @@protoc_insertion_point(class_scope:botcore.trading.v1.ActivateMarketplacePresetResponse)
+ private:
+  class _Internal;
+
+  template <typename T> friend class ::PROTOBUF_NAMESPACE_ID::Arena::InternalHelper;
+  typedef void InternalArenaConstructable_;
+  typedef void DestructorSkippable_;
+  struct Impl_ {
+    ::botcore::trading::v1::MarketplacePresetSummary* preset_;
+    mutable ::PROTOBUF_NAMESPACE_ID::internal::CachedSize _cached_size_;
+  };
+  union { Impl_ _impl_; };
+  friend struct ::TableStruct_trading_2eproto;
+};
 // ===================================================================
 
 
@@ -8932,9 +10842,1275 @@ inline void HealthCheckResponse::set_allocated_started_at(::PROTOBUF_NAMESPACE_I
   // @@protoc_insertion_point(field_set_allocated:botcore.trading.v1.HealthCheckResponse.started_at)
 }
 
+// -------------------------------------------------------------------
+
+// MarketplacePresetSummary
+
+// string preset_id = 1;
+inline void MarketplacePresetSummary::clear_preset_id() {
+  _impl_.preset_id_.ClearToEmpty();
+}
+inline const std::string& MarketplacePresetSummary::preset_id() const {
+  // @@protoc_insertion_point(field_get:botcore.trading.v1.MarketplacePresetSummary.preset_id)
+  return _internal_preset_id();
+}
+template <typename ArgT0, typename... ArgT>
+inline PROTOBUF_ALWAYS_INLINE
+void MarketplacePresetSummary::set_preset_id(ArgT0&& arg0, ArgT... args) {
+ 
+ _impl_.preset_id_.Set(static_cast<ArgT0 &&>(arg0), args..., GetArenaForAllocation());
+  // @@protoc_insertion_point(field_set:botcore.trading.v1.MarketplacePresetSummary.preset_id)
+}
+inline std::string* MarketplacePresetSummary::mutable_preset_id() {
+  std::string* _s = _internal_mutable_preset_id();
+  // @@protoc_insertion_point(field_mutable:botcore.trading.v1.MarketplacePresetSummary.preset_id)
+  return _s;
+}
+inline const std::string& MarketplacePresetSummary::_internal_preset_id() const {
+  return _impl_.preset_id_.Get();
+}
+inline void MarketplacePresetSummary::_internal_set_preset_id(const std::string& value) {
+  
+  _impl_.preset_id_.Set(value, GetArenaForAllocation());
+}
+inline std::string* MarketplacePresetSummary::_internal_mutable_preset_id() {
+  
+  return _impl_.preset_id_.Mutable(GetArenaForAllocation());
+}
+inline std::string* MarketplacePresetSummary::release_preset_id() {
+  // @@protoc_insertion_point(field_release:botcore.trading.v1.MarketplacePresetSummary.preset_id)
+  return _impl_.preset_id_.Release();
+}
+inline void MarketplacePresetSummary::set_allocated_preset_id(std::string* preset_id) {
+  if (preset_id != nullptr) {
+    
+  } else {
+    
+  }
+  _impl_.preset_id_.SetAllocated(preset_id, GetArenaForAllocation());
+#ifdef PROTOBUF_FORCE_COPY_DEFAULT_STRING
+  if (_impl_.preset_id_.IsDefault()) {
+    _impl_.preset_id_.Set("", GetArenaForAllocation());
+  }
+#endif // PROTOBUF_FORCE_COPY_DEFAULT_STRING
+  // @@protoc_insertion_point(field_set_allocated:botcore.trading.v1.MarketplacePresetSummary.preset_id)
+}
+
+// string name = 2;
+inline void MarketplacePresetSummary::clear_name() {
+  _impl_.name_.ClearToEmpty();
+}
+inline const std::string& MarketplacePresetSummary::name() const {
+  // @@protoc_insertion_point(field_get:botcore.trading.v1.MarketplacePresetSummary.name)
+  return _internal_name();
+}
+template <typename ArgT0, typename... ArgT>
+inline PROTOBUF_ALWAYS_INLINE
+void MarketplacePresetSummary::set_name(ArgT0&& arg0, ArgT... args) {
+ 
+ _impl_.name_.Set(static_cast<ArgT0 &&>(arg0), args..., GetArenaForAllocation());
+  // @@protoc_insertion_point(field_set:botcore.trading.v1.MarketplacePresetSummary.name)
+}
+inline std::string* MarketplacePresetSummary::mutable_name() {
+  std::string* _s = _internal_mutable_name();
+  // @@protoc_insertion_point(field_mutable:botcore.trading.v1.MarketplacePresetSummary.name)
+  return _s;
+}
+inline const std::string& MarketplacePresetSummary::_internal_name() const {
+  return _impl_.name_.Get();
+}
+inline void MarketplacePresetSummary::_internal_set_name(const std::string& value) {
+  
+  _impl_.name_.Set(value, GetArenaForAllocation());
+}
+inline std::string* MarketplacePresetSummary::_internal_mutable_name() {
+  
+  return _impl_.name_.Mutable(GetArenaForAllocation());
+}
+inline std::string* MarketplacePresetSummary::release_name() {
+  // @@protoc_insertion_point(field_release:botcore.trading.v1.MarketplacePresetSummary.name)
+  return _impl_.name_.Release();
+}
+inline void MarketplacePresetSummary::set_allocated_name(std::string* name) {
+  if (name != nullptr) {
+    
+  } else {
+    
+  }
+  _impl_.name_.SetAllocated(name, GetArenaForAllocation());
+#ifdef PROTOBUF_FORCE_COPY_DEFAULT_STRING
+  if (_impl_.name_.IsDefault()) {
+    _impl_.name_.Set("", GetArenaForAllocation());
+  }
+#endif // PROTOBUF_FORCE_COPY_DEFAULT_STRING
+  // @@protoc_insertion_point(field_set_allocated:botcore.trading.v1.MarketplacePresetSummary.name)
+}
+
+// string version = 3;
+inline void MarketplacePresetSummary::clear_version() {
+  _impl_.version_.ClearToEmpty();
+}
+inline const std::string& MarketplacePresetSummary::version() const {
+  // @@protoc_insertion_point(field_get:botcore.trading.v1.MarketplacePresetSummary.version)
+  return _internal_version();
+}
+template <typename ArgT0, typename... ArgT>
+inline PROTOBUF_ALWAYS_INLINE
+void MarketplacePresetSummary::set_version(ArgT0&& arg0, ArgT... args) {
+ 
+ _impl_.version_.Set(static_cast<ArgT0 &&>(arg0), args..., GetArenaForAllocation());
+  // @@protoc_insertion_point(field_set:botcore.trading.v1.MarketplacePresetSummary.version)
+}
+inline std::string* MarketplacePresetSummary::mutable_version() {
+  std::string* _s = _internal_mutable_version();
+  // @@protoc_insertion_point(field_mutable:botcore.trading.v1.MarketplacePresetSummary.version)
+  return _s;
+}
+inline const std::string& MarketplacePresetSummary::_internal_version() const {
+  return _impl_.version_.Get();
+}
+inline void MarketplacePresetSummary::_internal_set_version(const std::string& value) {
+  
+  _impl_.version_.Set(value, GetArenaForAllocation());
+}
+inline std::string* MarketplacePresetSummary::_internal_mutable_version() {
+  
+  return _impl_.version_.Mutable(GetArenaForAllocation());
+}
+inline std::string* MarketplacePresetSummary::release_version() {
+  // @@protoc_insertion_point(field_release:botcore.trading.v1.MarketplacePresetSummary.version)
+  return _impl_.version_.Release();
+}
+inline void MarketplacePresetSummary::set_allocated_version(std::string* version) {
+  if (version != nullptr) {
+    
+  } else {
+    
+  }
+  _impl_.version_.SetAllocated(version, GetArenaForAllocation());
+#ifdef PROTOBUF_FORCE_COPY_DEFAULT_STRING
+  if (_impl_.version_.IsDefault()) {
+    _impl_.version_.Set("", GetArenaForAllocation());
+  }
+#endif // PROTOBUF_FORCE_COPY_DEFAULT_STRING
+  // @@protoc_insertion_point(field_set_allocated:botcore.trading.v1.MarketplacePresetSummary.version)
+}
+
+// string profile = 4;
+inline void MarketplacePresetSummary::clear_profile() {
+  _impl_.profile_.ClearToEmpty();
+}
+inline const std::string& MarketplacePresetSummary::profile() const {
+  // @@protoc_insertion_point(field_get:botcore.trading.v1.MarketplacePresetSummary.profile)
+  return _internal_profile();
+}
+template <typename ArgT0, typename... ArgT>
+inline PROTOBUF_ALWAYS_INLINE
+void MarketplacePresetSummary::set_profile(ArgT0&& arg0, ArgT... args) {
+ 
+ _impl_.profile_.Set(static_cast<ArgT0 &&>(arg0), args..., GetArenaForAllocation());
+  // @@protoc_insertion_point(field_set:botcore.trading.v1.MarketplacePresetSummary.profile)
+}
+inline std::string* MarketplacePresetSummary::mutable_profile() {
+  std::string* _s = _internal_mutable_profile();
+  // @@protoc_insertion_point(field_mutable:botcore.trading.v1.MarketplacePresetSummary.profile)
+  return _s;
+}
+inline const std::string& MarketplacePresetSummary::_internal_profile() const {
+  return _impl_.profile_.Get();
+}
+inline void MarketplacePresetSummary::_internal_set_profile(const std::string& value) {
+  
+  _impl_.profile_.Set(value, GetArenaForAllocation());
+}
+inline std::string* MarketplacePresetSummary::_internal_mutable_profile() {
+  
+  return _impl_.profile_.Mutable(GetArenaForAllocation());
+}
+inline std::string* MarketplacePresetSummary::release_profile() {
+  // @@protoc_insertion_point(field_release:botcore.trading.v1.MarketplacePresetSummary.profile)
+  return _impl_.profile_.Release();
+}
+inline void MarketplacePresetSummary::set_allocated_profile(std::string* profile) {
+  if (profile != nullptr) {
+    
+  } else {
+    
+  }
+  _impl_.profile_.SetAllocated(profile, GetArenaForAllocation());
+#ifdef PROTOBUF_FORCE_COPY_DEFAULT_STRING
+  if (_impl_.profile_.IsDefault()) {
+    _impl_.profile_.Set("", GetArenaForAllocation());
+  }
+#endif // PROTOBUF_FORCE_COPY_DEFAULT_STRING
+  // @@protoc_insertion_point(field_set_allocated:botcore.trading.v1.MarketplacePresetSummary.profile)
+}
+
+// repeated string tags = 5;
+inline int MarketplacePresetSummary::_internal_tags_size() const {
+  return _impl_.tags_.size();
+}
+inline int MarketplacePresetSummary::tags_size() const {
+  return _internal_tags_size();
+}
+inline void MarketplacePresetSummary::clear_tags() {
+  _impl_.tags_.Clear();
+}
+inline std::string* MarketplacePresetSummary::add_tags() {
+  std::string* _s = _internal_add_tags();
+  // @@protoc_insertion_point(field_add_mutable:botcore.trading.v1.MarketplacePresetSummary.tags)
+  return _s;
+}
+inline const std::string& MarketplacePresetSummary::_internal_tags(int index) const {
+  return _impl_.tags_.Get(index);
+}
+inline const std::string& MarketplacePresetSummary::tags(int index) const {
+  // @@protoc_insertion_point(field_get:botcore.trading.v1.MarketplacePresetSummary.tags)
+  return _internal_tags(index);
+}
+inline std::string* MarketplacePresetSummary::mutable_tags(int index) {
+  // @@protoc_insertion_point(field_mutable:botcore.trading.v1.MarketplacePresetSummary.tags)
+  return _impl_.tags_.Mutable(index);
+}
+inline void MarketplacePresetSummary::set_tags(int index, const std::string& value) {
+  _impl_.tags_.Mutable(index)->assign(value);
+  // @@protoc_insertion_point(field_set:botcore.trading.v1.MarketplacePresetSummary.tags)
+}
+inline void MarketplacePresetSummary::set_tags(int index, std::string&& value) {
+  _impl_.tags_.Mutable(index)->assign(std::move(value));
+  // @@protoc_insertion_point(field_set:botcore.trading.v1.MarketplacePresetSummary.tags)
+}
+inline void MarketplacePresetSummary::set_tags(int index, const char* value) {
+  GOOGLE_DCHECK(value != nullptr);
+  _impl_.tags_.Mutable(index)->assign(value);
+  // @@protoc_insertion_point(field_set_char:botcore.trading.v1.MarketplacePresetSummary.tags)
+}
+inline void MarketplacePresetSummary::set_tags(int index, const char* value, size_t size) {
+  _impl_.tags_.Mutable(index)->assign(
+    reinterpret_cast<const char*>(value), size);
+  // @@protoc_insertion_point(field_set_pointer:botcore.trading.v1.MarketplacePresetSummary.tags)
+}
+inline std::string* MarketplacePresetSummary::_internal_add_tags() {
+  return _impl_.tags_.Add();
+}
+inline void MarketplacePresetSummary::add_tags(const std::string& value) {
+  _impl_.tags_.Add()->assign(value);
+  // @@protoc_insertion_point(field_add:botcore.trading.v1.MarketplacePresetSummary.tags)
+}
+inline void MarketplacePresetSummary::add_tags(std::string&& value) {
+  _impl_.tags_.Add(std::move(value));
+  // @@protoc_insertion_point(field_add:botcore.trading.v1.MarketplacePresetSummary.tags)
+}
+inline void MarketplacePresetSummary::add_tags(const char* value) {
+  GOOGLE_DCHECK(value != nullptr);
+  _impl_.tags_.Add()->assign(value);
+  // @@protoc_insertion_point(field_add_char:botcore.trading.v1.MarketplacePresetSummary.tags)
+}
+inline void MarketplacePresetSummary::add_tags(const char* value, size_t size) {
+  _impl_.tags_.Add()->assign(reinterpret_cast<const char*>(value), size);
+  // @@protoc_insertion_point(field_add_pointer:botcore.trading.v1.MarketplacePresetSummary.tags)
+}
+inline const ::PROTOBUF_NAMESPACE_ID::RepeatedPtrField<std::string>&
+MarketplacePresetSummary::tags() const {
+  // @@protoc_insertion_point(field_list:botcore.trading.v1.MarketplacePresetSummary.tags)
+  return _impl_.tags_;
+}
+inline ::PROTOBUF_NAMESPACE_ID::RepeatedPtrField<std::string>*
+MarketplacePresetSummary::mutable_tags() {
+  // @@protoc_insertion_point(field_mutable_list:botcore.trading.v1.MarketplacePresetSummary.tags)
+  return &_impl_.tags_;
+}
+
+// bool signature_verified = 6;
+inline void MarketplacePresetSummary::clear_signature_verified() {
+  _impl_.signature_verified_ = false;
+}
+inline bool MarketplacePresetSummary::_internal_signature_verified() const {
+  return _impl_.signature_verified_;
+}
+inline bool MarketplacePresetSummary::signature_verified() const {
+  // @@protoc_insertion_point(field_get:botcore.trading.v1.MarketplacePresetSummary.signature_verified)
+  return _internal_signature_verified();
+}
+inline void MarketplacePresetSummary::_internal_set_signature_verified(bool value) {
+  
+  _impl_.signature_verified_ = value;
+}
+inline void MarketplacePresetSummary::set_signature_verified(bool value) {
+  _internal_set_signature_verified(value);
+  // @@protoc_insertion_point(field_set:botcore.trading.v1.MarketplacePresetSummary.signature_verified)
+}
+
+// string source_path = 7;
+inline void MarketplacePresetSummary::clear_source_path() {
+  _impl_.source_path_.ClearToEmpty();
+}
+inline const std::string& MarketplacePresetSummary::source_path() const {
+  // @@protoc_insertion_point(field_get:botcore.trading.v1.MarketplacePresetSummary.source_path)
+  return _internal_source_path();
+}
+template <typename ArgT0, typename... ArgT>
+inline PROTOBUF_ALWAYS_INLINE
+void MarketplacePresetSummary::set_source_path(ArgT0&& arg0, ArgT... args) {
+ 
+ _impl_.source_path_.Set(static_cast<ArgT0 &&>(arg0), args..., GetArenaForAllocation());
+  // @@protoc_insertion_point(field_set:botcore.trading.v1.MarketplacePresetSummary.source_path)
+}
+inline std::string* MarketplacePresetSummary::mutable_source_path() {
+  std::string* _s = _internal_mutable_source_path();
+  // @@protoc_insertion_point(field_mutable:botcore.trading.v1.MarketplacePresetSummary.source_path)
+  return _s;
+}
+inline const std::string& MarketplacePresetSummary::_internal_source_path() const {
+  return _impl_.source_path_.Get();
+}
+inline void MarketplacePresetSummary::_internal_set_source_path(const std::string& value) {
+  
+  _impl_.source_path_.Set(value, GetArenaForAllocation());
+}
+inline std::string* MarketplacePresetSummary::_internal_mutable_source_path() {
+  
+  return _impl_.source_path_.Mutable(GetArenaForAllocation());
+}
+inline std::string* MarketplacePresetSummary::release_source_path() {
+  // @@protoc_insertion_point(field_release:botcore.trading.v1.MarketplacePresetSummary.source_path)
+  return _impl_.source_path_.Release();
+}
+inline void MarketplacePresetSummary::set_allocated_source_path(std::string* source_path) {
+  if (source_path != nullptr) {
+    
+  } else {
+    
+  }
+  _impl_.source_path_.SetAllocated(source_path, GetArenaForAllocation());
+#ifdef PROTOBUF_FORCE_COPY_DEFAULT_STRING
+  if (_impl_.source_path_.IsDefault()) {
+    _impl_.source_path_.Set("", GetArenaForAllocation());
+  }
+#endif // PROTOBUF_FORCE_COPY_DEFAULT_STRING
+  // @@protoc_insertion_point(field_set_allocated:botcore.trading.v1.MarketplacePresetSummary.source_path)
+}
+
+// repeated string issues = 8;
+inline int MarketplacePresetSummary::_internal_issues_size() const {
+  return _impl_.issues_.size();
+}
+inline int MarketplacePresetSummary::issues_size() const {
+  return _internal_issues_size();
+}
+inline void MarketplacePresetSummary::clear_issues() {
+  _impl_.issues_.Clear();
+}
+inline std::string* MarketplacePresetSummary::add_issues() {
+  std::string* _s = _internal_add_issues();
+  // @@protoc_insertion_point(field_add_mutable:botcore.trading.v1.MarketplacePresetSummary.issues)
+  return _s;
+}
+inline const std::string& MarketplacePresetSummary::_internal_issues(int index) const {
+  return _impl_.issues_.Get(index);
+}
+inline const std::string& MarketplacePresetSummary::issues(int index) const {
+  // @@protoc_insertion_point(field_get:botcore.trading.v1.MarketplacePresetSummary.issues)
+  return _internal_issues(index);
+}
+inline std::string* MarketplacePresetSummary::mutable_issues(int index) {
+  // @@protoc_insertion_point(field_mutable:botcore.trading.v1.MarketplacePresetSummary.issues)
+  return _impl_.issues_.Mutable(index);
+}
+inline void MarketplacePresetSummary::set_issues(int index, const std::string& value) {
+  _impl_.issues_.Mutable(index)->assign(value);
+  // @@protoc_insertion_point(field_set:botcore.trading.v1.MarketplacePresetSummary.issues)
+}
+inline void MarketplacePresetSummary::set_issues(int index, std::string&& value) {
+  _impl_.issues_.Mutable(index)->assign(std::move(value));
+  // @@protoc_insertion_point(field_set:botcore.trading.v1.MarketplacePresetSummary.issues)
+}
+inline void MarketplacePresetSummary::set_issues(int index, const char* value) {
+  GOOGLE_DCHECK(value != nullptr);
+  _impl_.issues_.Mutable(index)->assign(value);
+  // @@protoc_insertion_point(field_set_char:botcore.trading.v1.MarketplacePresetSummary.issues)
+}
+inline void MarketplacePresetSummary::set_issues(int index, const char* value, size_t size) {
+  _impl_.issues_.Mutable(index)->assign(
+    reinterpret_cast<const char*>(value), size);
+  // @@protoc_insertion_point(field_set_pointer:botcore.trading.v1.MarketplacePresetSummary.issues)
+}
+inline std::string* MarketplacePresetSummary::_internal_add_issues() {
+  return _impl_.issues_.Add();
+}
+inline void MarketplacePresetSummary::add_issues(const std::string& value) {
+  _impl_.issues_.Add()->assign(value);
+  // @@protoc_insertion_point(field_add:botcore.trading.v1.MarketplacePresetSummary.issues)
+}
+inline void MarketplacePresetSummary::add_issues(std::string&& value) {
+  _impl_.issues_.Add(std::move(value));
+  // @@protoc_insertion_point(field_add:botcore.trading.v1.MarketplacePresetSummary.issues)
+}
+inline void MarketplacePresetSummary::add_issues(const char* value) {
+  GOOGLE_DCHECK(value != nullptr);
+  _impl_.issues_.Add()->assign(value);
+  // @@protoc_insertion_point(field_add_char:botcore.trading.v1.MarketplacePresetSummary.issues)
+}
+inline void MarketplacePresetSummary::add_issues(const char* value, size_t size) {
+  _impl_.issues_.Add()->assign(reinterpret_cast<const char*>(value), size);
+  // @@protoc_insertion_point(field_add_pointer:botcore.trading.v1.MarketplacePresetSummary.issues)
+}
+inline const ::PROTOBUF_NAMESPACE_ID::RepeatedPtrField<std::string>&
+MarketplacePresetSummary::issues() const {
+  // @@protoc_insertion_point(field_list:botcore.trading.v1.MarketplacePresetSummary.issues)
+  return _impl_.issues_;
+}
+inline ::PROTOBUF_NAMESPACE_ID::RepeatedPtrField<std::string>*
+MarketplacePresetSummary::mutable_issues() {
+  // @@protoc_insertion_point(field_mutable_list:botcore.trading.v1.MarketplacePresetSummary.issues)
+  return &_impl_.issues_;
+}
+
+// -------------------------------------------------------------------
+
+// ListMarketplacePresetsRequest
+
+// -------------------------------------------------------------------
+
+// ListMarketplacePresetsResponse
+
+// repeated .botcore.trading.v1.MarketplacePresetSummary presets = 1;
+inline int ListMarketplacePresetsResponse::_internal_presets_size() const {
+  return _impl_.presets_.size();
+}
+inline int ListMarketplacePresetsResponse::presets_size() const {
+  return _internal_presets_size();
+}
+inline void ListMarketplacePresetsResponse::clear_presets() {
+  _impl_.presets_.Clear();
+}
+inline ::botcore::trading::v1::MarketplacePresetSummary* ListMarketplacePresetsResponse::mutable_presets(int index) {
+  // @@protoc_insertion_point(field_mutable:botcore.trading.v1.ListMarketplacePresetsResponse.presets)
+  return _impl_.presets_.Mutable(index);
+}
+inline ::PROTOBUF_NAMESPACE_ID::RepeatedPtrField< ::botcore::trading::v1::MarketplacePresetSummary >*
+ListMarketplacePresetsResponse::mutable_presets() {
+  // @@protoc_insertion_point(field_mutable_list:botcore.trading.v1.ListMarketplacePresetsResponse.presets)
+  return &_impl_.presets_;
+}
+inline const ::botcore::trading::v1::MarketplacePresetSummary& ListMarketplacePresetsResponse::_internal_presets(int index) const {
+  return _impl_.presets_.Get(index);
+}
+inline const ::botcore::trading::v1::MarketplacePresetSummary& ListMarketplacePresetsResponse::presets(int index) const {
+  // @@protoc_insertion_point(field_get:botcore.trading.v1.ListMarketplacePresetsResponse.presets)
+  return _internal_presets(index);
+}
+inline ::botcore::trading::v1::MarketplacePresetSummary* ListMarketplacePresetsResponse::_internal_add_presets() {
+  return _impl_.presets_.Add();
+}
+inline ::botcore::trading::v1::MarketplacePresetSummary* ListMarketplacePresetsResponse::add_presets() {
+  ::botcore::trading::v1::MarketplacePresetSummary* _add = _internal_add_presets();
+  // @@protoc_insertion_point(field_add:botcore.trading.v1.ListMarketplacePresetsResponse.presets)
+  return _add;
+}
+inline const ::PROTOBUF_NAMESPACE_ID::RepeatedPtrField< ::botcore::trading::v1::MarketplacePresetSummary >&
+ListMarketplacePresetsResponse::presets() const {
+  // @@protoc_insertion_point(field_list:botcore.trading.v1.ListMarketplacePresetsResponse.presets)
+  return _impl_.presets_;
+}
+
+// -------------------------------------------------------------------
+
+// ImportMarketplacePresetRequest
+
+// bytes payload = 1;
+inline void ImportMarketplacePresetRequest::clear_payload() {
+  _impl_.payload_.ClearToEmpty();
+}
+inline const std::string& ImportMarketplacePresetRequest::payload() const {
+  // @@protoc_insertion_point(field_get:botcore.trading.v1.ImportMarketplacePresetRequest.payload)
+  return _internal_payload();
+}
+template <typename ArgT0, typename... ArgT>
+inline PROTOBUF_ALWAYS_INLINE
+void ImportMarketplacePresetRequest::set_payload(ArgT0&& arg0, ArgT... args) {
+ 
+ _impl_.payload_.SetBytes(static_cast<ArgT0 &&>(arg0), args..., GetArenaForAllocation());
+  // @@protoc_insertion_point(field_set:botcore.trading.v1.ImportMarketplacePresetRequest.payload)
+}
+inline std::string* ImportMarketplacePresetRequest::mutable_payload() {
+  std::string* _s = _internal_mutable_payload();
+  // @@protoc_insertion_point(field_mutable:botcore.trading.v1.ImportMarketplacePresetRequest.payload)
+  return _s;
+}
+inline const std::string& ImportMarketplacePresetRequest::_internal_payload() const {
+  return _impl_.payload_.Get();
+}
+inline void ImportMarketplacePresetRequest::_internal_set_payload(const std::string& value) {
+  
+  _impl_.payload_.Set(value, GetArenaForAllocation());
+}
+inline std::string* ImportMarketplacePresetRequest::_internal_mutable_payload() {
+  
+  return _impl_.payload_.Mutable(GetArenaForAllocation());
+}
+inline std::string* ImportMarketplacePresetRequest::release_payload() {
+  // @@protoc_insertion_point(field_release:botcore.trading.v1.ImportMarketplacePresetRequest.payload)
+  return _impl_.payload_.Release();
+}
+inline void ImportMarketplacePresetRequest::set_allocated_payload(std::string* payload) {
+  if (payload != nullptr) {
+    
+  } else {
+    
+  }
+  _impl_.payload_.SetAllocated(payload, GetArenaForAllocation());
+#ifdef PROTOBUF_FORCE_COPY_DEFAULT_STRING
+  if (_impl_.payload_.IsDefault()) {
+    _impl_.payload_.Set("", GetArenaForAllocation());
+  }
+#endif // PROTOBUF_FORCE_COPY_DEFAULT_STRING
+  // @@protoc_insertion_point(field_set_allocated:botcore.trading.v1.ImportMarketplacePresetRequest.payload)
+}
+
+// string filename = 2;
+inline void ImportMarketplacePresetRequest::clear_filename() {
+  _impl_.filename_.ClearToEmpty();
+}
+inline const std::string& ImportMarketplacePresetRequest::filename() const {
+  // @@protoc_insertion_point(field_get:botcore.trading.v1.ImportMarketplacePresetRequest.filename)
+  return _internal_filename();
+}
+template <typename ArgT0, typename... ArgT>
+inline PROTOBUF_ALWAYS_INLINE
+void ImportMarketplacePresetRequest::set_filename(ArgT0&& arg0, ArgT... args) {
+ 
+ _impl_.filename_.Set(static_cast<ArgT0 &&>(arg0), args..., GetArenaForAllocation());
+  // @@protoc_insertion_point(field_set:botcore.trading.v1.ImportMarketplacePresetRequest.filename)
+}
+inline std::string* ImportMarketplacePresetRequest::mutable_filename() {
+  std::string* _s = _internal_mutable_filename();
+  // @@protoc_insertion_point(field_mutable:botcore.trading.v1.ImportMarketplacePresetRequest.filename)
+  return _s;
+}
+inline const std::string& ImportMarketplacePresetRequest::_internal_filename() const {
+  return _impl_.filename_.Get();
+}
+inline void ImportMarketplacePresetRequest::_internal_set_filename(const std::string& value) {
+  
+  _impl_.filename_.Set(value, GetArenaForAllocation());
+}
+inline std::string* ImportMarketplacePresetRequest::_internal_mutable_filename() {
+  
+  return _impl_.filename_.Mutable(GetArenaForAllocation());
+}
+inline std::string* ImportMarketplacePresetRequest::release_filename() {
+  // @@protoc_insertion_point(field_release:botcore.trading.v1.ImportMarketplacePresetRequest.filename)
+  return _impl_.filename_.Release();
+}
+inline void ImportMarketplacePresetRequest::set_allocated_filename(std::string* filename) {
+  if (filename != nullptr) {
+    
+  } else {
+    
+  }
+  _impl_.filename_.SetAllocated(filename, GetArenaForAllocation());
+#ifdef PROTOBUF_FORCE_COPY_DEFAULT_STRING
+  if (_impl_.filename_.IsDefault()) {
+    _impl_.filename_.Set("", GetArenaForAllocation());
+  }
+#endif // PROTOBUF_FORCE_COPY_DEFAULT_STRING
+  // @@protoc_insertion_point(field_set_allocated:botcore.trading.v1.ImportMarketplacePresetRequest.filename)
+}
+
+// -------------------------------------------------------------------
+
+// ImportMarketplacePresetResponse
+
+// .botcore.trading.v1.MarketplacePresetSummary preset = 1;
+inline bool ImportMarketplacePresetResponse::_internal_has_preset() const {
+  return this != internal_default_instance() && _impl_.preset_ != nullptr;
+}
+inline bool ImportMarketplacePresetResponse::has_preset() const {
+  return _internal_has_preset();
+}
+inline void ImportMarketplacePresetResponse::clear_preset() {
+  if (GetArenaForAllocation() == nullptr && _impl_.preset_ != nullptr) {
+    delete _impl_.preset_;
+  }
+  _impl_.preset_ = nullptr;
+}
+inline const ::botcore::trading::v1::MarketplacePresetSummary& ImportMarketplacePresetResponse::_internal_preset() const {
+  const ::botcore::trading::v1::MarketplacePresetSummary* p = _impl_.preset_;
+  return p != nullptr ? *p : reinterpret_cast<const ::botcore::trading::v1::MarketplacePresetSummary&>(
+      ::botcore::trading::v1::_MarketplacePresetSummary_default_instance_);
+}
+inline const ::botcore::trading::v1::MarketplacePresetSummary& ImportMarketplacePresetResponse::preset() const {
+  // @@protoc_insertion_point(field_get:botcore.trading.v1.ImportMarketplacePresetResponse.preset)
+  return _internal_preset();
+}
+inline void ImportMarketplacePresetResponse::unsafe_arena_set_allocated_preset(
+    ::botcore::trading::v1::MarketplacePresetSummary* preset) {
+  if (GetArenaForAllocation() == nullptr) {
+    delete reinterpret_cast<::PROTOBUF_NAMESPACE_ID::MessageLite*>(_impl_.preset_);
+  }
+  _impl_.preset_ = preset;
+  if (preset) {
+    
+  } else {
+    
+  }
+  // @@protoc_insertion_point(field_unsafe_arena_set_allocated:botcore.trading.v1.ImportMarketplacePresetResponse.preset)
+}
+inline ::botcore::trading::v1::MarketplacePresetSummary* ImportMarketplacePresetResponse::release_preset() {
+  
+  ::botcore::trading::v1::MarketplacePresetSummary* temp = _impl_.preset_;
+  _impl_.preset_ = nullptr;
+#ifdef PROTOBUF_FORCE_COPY_IN_RELEASE
+  auto* old =  reinterpret_cast<::PROTOBUF_NAMESPACE_ID::MessageLite*>(temp);
+  temp = ::PROTOBUF_NAMESPACE_ID::internal::DuplicateIfNonNull(temp);
+  if (GetArenaForAllocation() == nullptr) { delete old; }
+#else  // PROTOBUF_FORCE_COPY_IN_RELEASE
+  if (GetArenaForAllocation() != nullptr) {
+    temp = ::PROTOBUF_NAMESPACE_ID::internal::DuplicateIfNonNull(temp);
+  }
+#endif  // !PROTOBUF_FORCE_COPY_IN_RELEASE
+  return temp;
+}
+inline ::botcore::trading::v1::MarketplacePresetSummary* ImportMarketplacePresetResponse::unsafe_arena_release_preset() {
+  // @@protoc_insertion_point(field_release:botcore.trading.v1.ImportMarketplacePresetResponse.preset)
+  
+  ::botcore::trading::v1::MarketplacePresetSummary* temp = _impl_.preset_;
+  _impl_.preset_ = nullptr;
+  return temp;
+}
+inline ::botcore::trading::v1::MarketplacePresetSummary* ImportMarketplacePresetResponse::_internal_mutable_preset() {
+  
+  if (_impl_.preset_ == nullptr) {
+    auto* p = CreateMaybeMessage<::botcore::trading::v1::MarketplacePresetSummary>(GetArenaForAllocation());
+    _impl_.preset_ = p;
+  }
+  return _impl_.preset_;
+}
+inline ::botcore::trading::v1::MarketplacePresetSummary* ImportMarketplacePresetResponse::mutable_preset() {
+  ::botcore::trading::v1::MarketplacePresetSummary* _msg = _internal_mutable_preset();
+  // @@protoc_insertion_point(field_mutable:botcore.trading.v1.ImportMarketplacePresetResponse.preset)
+  return _msg;
+}
+inline void ImportMarketplacePresetResponse::set_allocated_preset(::botcore::trading::v1::MarketplacePresetSummary* preset) {
+  ::PROTOBUF_NAMESPACE_ID::Arena* message_arena = GetArenaForAllocation();
+  if (message_arena == nullptr) {
+    delete _impl_.preset_;
+  }
+  if (preset) {
+    ::PROTOBUF_NAMESPACE_ID::Arena* submessage_arena =
+        ::PROTOBUF_NAMESPACE_ID::Arena::InternalGetOwningArena(preset);
+    if (message_arena != submessage_arena) {
+      preset = ::PROTOBUF_NAMESPACE_ID::internal::GetOwnedMessage(
+          message_arena, preset, submessage_arena);
+    }
+    
+  } else {
+    
+  }
+  _impl_.preset_ = preset;
+  // @@protoc_insertion_point(field_set_allocated:botcore.trading.v1.ImportMarketplacePresetResponse.preset)
+}
+
+// -------------------------------------------------------------------
+
+// ExportMarketplacePresetRequest
+
+// string preset_id = 1;
+inline void ExportMarketplacePresetRequest::clear_preset_id() {
+  _impl_.preset_id_.ClearToEmpty();
+}
+inline const std::string& ExportMarketplacePresetRequest::preset_id() const {
+  // @@protoc_insertion_point(field_get:botcore.trading.v1.ExportMarketplacePresetRequest.preset_id)
+  return _internal_preset_id();
+}
+template <typename ArgT0, typename... ArgT>
+inline PROTOBUF_ALWAYS_INLINE
+void ExportMarketplacePresetRequest::set_preset_id(ArgT0&& arg0, ArgT... args) {
+ 
+ _impl_.preset_id_.Set(static_cast<ArgT0 &&>(arg0), args..., GetArenaForAllocation());
+  // @@protoc_insertion_point(field_set:botcore.trading.v1.ExportMarketplacePresetRequest.preset_id)
+}
+inline std::string* ExportMarketplacePresetRequest::mutable_preset_id() {
+  std::string* _s = _internal_mutable_preset_id();
+  // @@protoc_insertion_point(field_mutable:botcore.trading.v1.ExportMarketplacePresetRequest.preset_id)
+  return _s;
+}
+inline const std::string& ExportMarketplacePresetRequest::_internal_preset_id() const {
+  return _impl_.preset_id_.Get();
+}
+inline void ExportMarketplacePresetRequest::_internal_set_preset_id(const std::string& value) {
+  
+  _impl_.preset_id_.Set(value, GetArenaForAllocation());
+}
+inline std::string* ExportMarketplacePresetRequest::_internal_mutable_preset_id() {
+  
+  return _impl_.preset_id_.Mutable(GetArenaForAllocation());
+}
+inline std::string* ExportMarketplacePresetRequest::release_preset_id() {
+  // @@protoc_insertion_point(field_release:botcore.trading.v1.ExportMarketplacePresetRequest.preset_id)
+  return _impl_.preset_id_.Release();
+}
+inline void ExportMarketplacePresetRequest::set_allocated_preset_id(std::string* preset_id) {
+  if (preset_id != nullptr) {
+    
+  } else {
+    
+  }
+  _impl_.preset_id_.SetAllocated(preset_id, GetArenaForAllocation());
+#ifdef PROTOBUF_FORCE_COPY_DEFAULT_STRING
+  if (_impl_.preset_id_.IsDefault()) {
+    _impl_.preset_id_.Set("", GetArenaForAllocation());
+  }
+#endif // PROTOBUF_FORCE_COPY_DEFAULT_STRING
+  // @@protoc_insertion_point(field_set_allocated:botcore.trading.v1.ExportMarketplacePresetRequest.preset_id)
+}
+
+// string format = 2;
+inline void ExportMarketplacePresetRequest::clear_format() {
+  _impl_.format_.ClearToEmpty();
+}
+inline const std::string& ExportMarketplacePresetRequest::format() const {
+  // @@protoc_insertion_point(field_get:botcore.trading.v1.ExportMarketplacePresetRequest.format)
+  return _internal_format();
+}
+template <typename ArgT0, typename... ArgT>
+inline PROTOBUF_ALWAYS_INLINE
+void ExportMarketplacePresetRequest::set_format(ArgT0&& arg0, ArgT... args) {
+ 
+ _impl_.format_.Set(static_cast<ArgT0 &&>(arg0), args..., GetArenaForAllocation());
+  // @@protoc_insertion_point(field_set:botcore.trading.v1.ExportMarketplacePresetRequest.format)
+}
+inline std::string* ExportMarketplacePresetRequest::mutable_format() {
+  std::string* _s = _internal_mutable_format();
+  // @@protoc_insertion_point(field_mutable:botcore.trading.v1.ExportMarketplacePresetRequest.format)
+  return _s;
+}
+inline const std::string& ExportMarketplacePresetRequest::_internal_format() const {
+  return _impl_.format_.Get();
+}
+inline void ExportMarketplacePresetRequest::_internal_set_format(const std::string& value) {
+  
+  _impl_.format_.Set(value, GetArenaForAllocation());
+}
+inline std::string* ExportMarketplacePresetRequest::_internal_mutable_format() {
+  
+  return _impl_.format_.Mutable(GetArenaForAllocation());
+}
+inline std::string* ExportMarketplacePresetRequest::release_format() {
+  // @@protoc_insertion_point(field_release:botcore.trading.v1.ExportMarketplacePresetRequest.format)
+  return _impl_.format_.Release();
+}
+inline void ExportMarketplacePresetRequest::set_allocated_format(std::string* format) {
+  if (format != nullptr) {
+    
+  } else {
+    
+  }
+  _impl_.format_.SetAllocated(format, GetArenaForAllocation());
+#ifdef PROTOBUF_FORCE_COPY_DEFAULT_STRING
+  if (_impl_.format_.IsDefault()) {
+    _impl_.format_.Set("", GetArenaForAllocation());
+  }
+#endif // PROTOBUF_FORCE_COPY_DEFAULT_STRING
+  // @@protoc_insertion_point(field_set_allocated:botcore.trading.v1.ExportMarketplacePresetRequest.format)
+}
+
+// -------------------------------------------------------------------
+
+// ExportMarketplacePresetResponse
+
+// bytes payload = 1;
+inline void ExportMarketplacePresetResponse::clear_payload() {
+  _impl_.payload_.ClearToEmpty();
+}
+inline const std::string& ExportMarketplacePresetResponse::payload() const {
+  // @@protoc_insertion_point(field_get:botcore.trading.v1.ExportMarketplacePresetResponse.payload)
+  return _internal_payload();
+}
+template <typename ArgT0, typename... ArgT>
+inline PROTOBUF_ALWAYS_INLINE
+void ExportMarketplacePresetResponse::set_payload(ArgT0&& arg0, ArgT... args) {
+ 
+ _impl_.payload_.SetBytes(static_cast<ArgT0 &&>(arg0), args..., GetArenaForAllocation());
+  // @@protoc_insertion_point(field_set:botcore.trading.v1.ExportMarketplacePresetResponse.payload)
+}
+inline std::string* ExportMarketplacePresetResponse::mutable_payload() {
+  std::string* _s = _internal_mutable_payload();
+  // @@protoc_insertion_point(field_mutable:botcore.trading.v1.ExportMarketplacePresetResponse.payload)
+  return _s;
+}
+inline const std::string& ExportMarketplacePresetResponse::_internal_payload() const {
+  return _impl_.payload_.Get();
+}
+inline void ExportMarketplacePresetResponse::_internal_set_payload(const std::string& value) {
+  
+  _impl_.payload_.Set(value, GetArenaForAllocation());
+}
+inline std::string* ExportMarketplacePresetResponse::_internal_mutable_payload() {
+  
+  return _impl_.payload_.Mutable(GetArenaForAllocation());
+}
+inline std::string* ExportMarketplacePresetResponse::release_payload() {
+  // @@protoc_insertion_point(field_release:botcore.trading.v1.ExportMarketplacePresetResponse.payload)
+  return _impl_.payload_.Release();
+}
+inline void ExportMarketplacePresetResponse::set_allocated_payload(std::string* payload) {
+  if (payload != nullptr) {
+    
+  } else {
+    
+  }
+  _impl_.payload_.SetAllocated(payload, GetArenaForAllocation());
+#ifdef PROTOBUF_FORCE_COPY_DEFAULT_STRING
+  if (_impl_.payload_.IsDefault()) {
+    _impl_.payload_.Set("", GetArenaForAllocation());
+  }
+#endif // PROTOBUF_FORCE_COPY_DEFAULT_STRING
+  // @@protoc_insertion_point(field_set_allocated:botcore.trading.v1.ExportMarketplacePresetResponse.payload)
+}
+
+// string filename = 2;
+inline void ExportMarketplacePresetResponse::clear_filename() {
+  _impl_.filename_.ClearToEmpty();
+}
+inline const std::string& ExportMarketplacePresetResponse::filename() const {
+  // @@protoc_insertion_point(field_get:botcore.trading.v1.ExportMarketplacePresetResponse.filename)
+  return _internal_filename();
+}
+template <typename ArgT0, typename... ArgT>
+inline PROTOBUF_ALWAYS_INLINE
+void ExportMarketplacePresetResponse::set_filename(ArgT0&& arg0, ArgT... args) {
+ 
+ _impl_.filename_.Set(static_cast<ArgT0 &&>(arg0), args..., GetArenaForAllocation());
+  // @@protoc_insertion_point(field_set:botcore.trading.v1.ExportMarketplacePresetResponse.filename)
+}
+inline std::string* ExportMarketplacePresetResponse::mutable_filename() {
+  std::string* _s = _internal_mutable_filename();
+  // @@protoc_insertion_point(field_mutable:botcore.trading.v1.ExportMarketplacePresetResponse.filename)
+  return _s;
+}
+inline const std::string& ExportMarketplacePresetResponse::_internal_filename() const {
+  return _impl_.filename_.Get();
+}
+inline void ExportMarketplacePresetResponse::_internal_set_filename(const std::string& value) {
+  
+  _impl_.filename_.Set(value, GetArenaForAllocation());
+}
+inline std::string* ExportMarketplacePresetResponse::_internal_mutable_filename() {
+  
+  return _impl_.filename_.Mutable(GetArenaForAllocation());
+}
+inline std::string* ExportMarketplacePresetResponse::release_filename() {
+  // @@protoc_insertion_point(field_release:botcore.trading.v1.ExportMarketplacePresetResponse.filename)
+  return _impl_.filename_.Release();
+}
+inline void ExportMarketplacePresetResponse::set_allocated_filename(std::string* filename) {
+  if (filename != nullptr) {
+    
+  } else {
+    
+  }
+  _impl_.filename_.SetAllocated(filename, GetArenaForAllocation());
+#ifdef PROTOBUF_FORCE_COPY_DEFAULT_STRING
+  if (_impl_.filename_.IsDefault()) {
+    _impl_.filename_.Set("", GetArenaForAllocation());
+  }
+#endif // PROTOBUF_FORCE_COPY_DEFAULT_STRING
+  // @@protoc_insertion_point(field_set_allocated:botcore.trading.v1.ExportMarketplacePresetResponse.filename)
+}
+
+// .botcore.trading.v1.MarketplacePresetSummary preset = 3;
+inline bool ExportMarketplacePresetResponse::_internal_has_preset() const {
+  return this != internal_default_instance() && _impl_.preset_ != nullptr;
+}
+inline bool ExportMarketplacePresetResponse::has_preset() const {
+  return _internal_has_preset();
+}
+inline void ExportMarketplacePresetResponse::clear_preset() {
+  if (GetArenaForAllocation() == nullptr && _impl_.preset_ != nullptr) {
+    delete _impl_.preset_;
+  }
+  _impl_.preset_ = nullptr;
+}
+inline const ::botcore::trading::v1::MarketplacePresetSummary& ExportMarketplacePresetResponse::_internal_preset() const {
+  const ::botcore::trading::v1::MarketplacePresetSummary* p = _impl_.preset_;
+  return p != nullptr ? *p : reinterpret_cast<const ::botcore::trading::v1::MarketplacePresetSummary&>(
+      ::botcore::trading::v1::_MarketplacePresetSummary_default_instance_);
+}
+inline const ::botcore::trading::v1::MarketplacePresetSummary& ExportMarketplacePresetResponse::preset() const {
+  // @@protoc_insertion_point(field_get:botcore.trading.v1.ExportMarketplacePresetResponse.preset)
+  return _internal_preset();
+}
+inline void ExportMarketplacePresetResponse::unsafe_arena_set_allocated_preset(
+    ::botcore::trading::v1::MarketplacePresetSummary* preset) {
+  if (GetArenaForAllocation() == nullptr) {
+    delete reinterpret_cast<::PROTOBUF_NAMESPACE_ID::MessageLite*>(_impl_.preset_);
+  }
+  _impl_.preset_ = preset;
+  if (preset) {
+    
+  } else {
+    
+  }
+  // @@protoc_insertion_point(field_unsafe_arena_set_allocated:botcore.trading.v1.ExportMarketplacePresetResponse.preset)
+}
+inline ::botcore::trading::v1::MarketplacePresetSummary* ExportMarketplacePresetResponse::release_preset() {
+  
+  ::botcore::trading::v1::MarketplacePresetSummary* temp = _impl_.preset_;
+  _impl_.preset_ = nullptr;
+#ifdef PROTOBUF_FORCE_COPY_IN_RELEASE
+  auto* old =  reinterpret_cast<::PROTOBUF_NAMESPACE_ID::MessageLite*>(temp);
+  temp = ::PROTOBUF_NAMESPACE_ID::internal::DuplicateIfNonNull(temp);
+  if (GetArenaForAllocation() == nullptr) { delete old; }
+#else  // PROTOBUF_FORCE_COPY_IN_RELEASE
+  if (GetArenaForAllocation() != nullptr) {
+    temp = ::PROTOBUF_NAMESPACE_ID::internal::DuplicateIfNonNull(temp);
+  }
+#endif  // !PROTOBUF_FORCE_COPY_IN_RELEASE
+  return temp;
+}
+inline ::botcore::trading::v1::MarketplacePresetSummary* ExportMarketplacePresetResponse::unsafe_arena_release_preset() {
+  // @@protoc_insertion_point(field_release:botcore.trading.v1.ExportMarketplacePresetResponse.preset)
+  
+  ::botcore::trading::v1::MarketplacePresetSummary* temp = _impl_.preset_;
+  _impl_.preset_ = nullptr;
+  return temp;
+}
+inline ::botcore::trading::v1::MarketplacePresetSummary* ExportMarketplacePresetResponse::_internal_mutable_preset() {
+  
+  if (_impl_.preset_ == nullptr) {
+    auto* p = CreateMaybeMessage<::botcore::trading::v1::MarketplacePresetSummary>(GetArenaForAllocation());
+    _impl_.preset_ = p;
+  }
+  return _impl_.preset_;
+}
+inline ::botcore::trading::v1::MarketplacePresetSummary* ExportMarketplacePresetResponse::mutable_preset() {
+  ::botcore::trading::v1::MarketplacePresetSummary* _msg = _internal_mutable_preset();
+  // @@protoc_insertion_point(field_mutable:botcore.trading.v1.ExportMarketplacePresetResponse.preset)
+  return _msg;
+}
+inline void ExportMarketplacePresetResponse::set_allocated_preset(::botcore::trading::v1::MarketplacePresetSummary* preset) {
+  ::PROTOBUF_NAMESPACE_ID::Arena* message_arena = GetArenaForAllocation();
+  if (message_arena == nullptr) {
+    delete _impl_.preset_;
+  }
+  if (preset) {
+    ::PROTOBUF_NAMESPACE_ID::Arena* submessage_arena =
+        ::PROTOBUF_NAMESPACE_ID::Arena::InternalGetOwningArena(preset);
+    if (message_arena != submessage_arena) {
+      preset = ::PROTOBUF_NAMESPACE_ID::internal::GetOwnedMessage(
+          message_arena, preset, submessage_arena);
+    }
+    
+  } else {
+    
+  }
+  _impl_.preset_ = preset;
+  // @@protoc_insertion_point(field_set_allocated:botcore.trading.v1.ExportMarketplacePresetResponse.preset)
+}
+
+// string format = 4;
+inline void ExportMarketplacePresetResponse::clear_format() {
+  _impl_.format_.ClearToEmpty();
+}
+inline const std::string& ExportMarketplacePresetResponse::format() const {
+  // @@protoc_insertion_point(field_get:botcore.trading.v1.ExportMarketplacePresetResponse.format)
+  return _internal_format();
+}
+template <typename ArgT0, typename... ArgT>
+inline PROTOBUF_ALWAYS_INLINE
+void ExportMarketplacePresetResponse::set_format(ArgT0&& arg0, ArgT... args) {
+ 
+ _impl_.format_.Set(static_cast<ArgT0 &&>(arg0), args..., GetArenaForAllocation());
+  // @@protoc_insertion_point(field_set:botcore.trading.v1.ExportMarketplacePresetResponse.format)
+}
+inline std::string* ExportMarketplacePresetResponse::mutable_format() {
+  std::string* _s = _internal_mutable_format();
+  // @@protoc_insertion_point(field_mutable:botcore.trading.v1.ExportMarketplacePresetResponse.format)
+  return _s;
+}
+inline const std::string& ExportMarketplacePresetResponse::_internal_format() const {
+  return _impl_.format_.Get();
+}
+inline void ExportMarketplacePresetResponse::_internal_set_format(const std::string& value) {
+  
+  _impl_.format_.Set(value, GetArenaForAllocation());
+}
+inline std::string* ExportMarketplacePresetResponse::_internal_mutable_format() {
+  
+  return _impl_.format_.Mutable(GetArenaForAllocation());
+}
+inline std::string* ExportMarketplacePresetResponse::release_format() {
+  // @@protoc_insertion_point(field_release:botcore.trading.v1.ExportMarketplacePresetResponse.format)
+  return _impl_.format_.Release();
+}
+inline void ExportMarketplacePresetResponse::set_allocated_format(std::string* format) {
+  if (format != nullptr) {
+    
+  } else {
+    
+  }
+  _impl_.format_.SetAllocated(format, GetArenaForAllocation());
+#ifdef PROTOBUF_FORCE_COPY_DEFAULT_STRING
+  if (_impl_.format_.IsDefault()) {
+    _impl_.format_.Set("", GetArenaForAllocation());
+  }
+#endif // PROTOBUF_FORCE_COPY_DEFAULT_STRING
+  // @@protoc_insertion_point(field_set_allocated:botcore.trading.v1.ExportMarketplacePresetResponse.format)
+}
+
+// -------------------------------------------------------------------
+
+// RemoveMarketplacePresetRequest
+
+// string preset_id = 1;
+inline void RemoveMarketplacePresetRequest::clear_preset_id() {
+  _impl_.preset_id_.ClearToEmpty();
+}
+inline const std::string& RemoveMarketplacePresetRequest::preset_id() const {
+  // @@protoc_insertion_point(field_get:botcore.trading.v1.RemoveMarketplacePresetRequest.preset_id)
+  return _internal_preset_id();
+}
+template <typename ArgT0, typename... ArgT>
+inline PROTOBUF_ALWAYS_INLINE
+void RemoveMarketplacePresetRequest::set_preset_id(ArgT0&& arg0, ArgT... args) {
+ 
+ _impl_.preset_id_.Set(static_cast<ArgT0 &&>(arg0), args..., GetArenaForAllocation());
+  // @@protoc_insertion_point(field_set:botcore.trading.v1.RemoveMarketplacePresetRequest.preset_id)
+}
+inline std::string* RemoveMarketplacePresetRequest::mutable_preset_id() {
+  std::string* _s = _internal_mutable_preset_id();
+  // @@protoc_insertion_point(field_mutable:botcore.trading.v1.RemoveMarketplacePresetRequest.preset_id)
+  return _s;
+}
+inline const std::string& RemoveMarketplacePresetRequest::_internal_preset_id() const {
+  return _impl_.preset_id_.Get();
+}
+inline void RemoveMarketplacePresetRequest::_internal_set_preset_id(const std::string& value) {
+  
+  _impl_.preset_id_.Set(value, GetArenaForAllocation());
+}
+inline std::string* RemoveMarketplacePresetRequest::_internal_mutable_preset_id() {
+  
+  return _impl_.preset_id_.Mutable(GetArenaForAllocation());
+}
+inline std::string* RemoveMarketplacePresetRequest::release_preset_id() {
+  // @@protoc_insertion_point(field_release:botcore.trading.v1.RemoveMarketplacePresetRequest.preset_id)
+  return _impl_.preset_id_.Release();
+}
+inline void RemoveMarketplacePresetRequest::set_allocated_preset_id(std::string* preset_id) {
+  if (preset_id != nullptr) {
+    
+  } else {
+    
+  }
+  _impl_.preset_id_.SetAllocated(preset_id, GetArenaForAllocation());
+#ifdef PROTOBUF_FORCE_COPY_DEFAULT_STRING
+  if (_impl_.preset_id_.IsDefault()) {
+    _impl_.preset_id_.Set("", GetArenaForAllocation());
+  }
+#endif // PROTOBUF_FORCE_COPY_DEFAULT_STRING
+  // @@protoc_insertion_point(field_set_allocated:botcore.trading.v1.RemoveMarketplacePresetRequest.preset_id)
+}
+
+// -------------------------------------------------------------------
+
+// RemoveMarketplacePresetResponse
+
+// bool removed = 1;
+inline void RemoveMarketplacePresetResponse::clear_removed() {
+  _impl_.removed_ = false;
+}
+inline bool RemoveMarketplacePresetResponse::_internal_removed() const {
+  return _impl_.removed_;
+}
+inline bool RemoveMarketplacePresetResponse::removed() const {
+  // @@protoc_insertion_point(field_get:botcore.trading.v1.RemoveMarketplacePresetResponse.removed)
+  return _internal_removed();
+}
+inline void RemoveMarketplacePresetResponse::_internal_set_removed(bool value) {
+  
+  _impl_.removed_ = value;
+}
+inline void RemoveMarketplacePresetResponse::set_removed(bool value) {
+  _internal_set_removed(value);
+  // @@protoc_insertion_point(field_set:botcore.trading.v1.RemoveMarketplacePresetResponse.removed)
+}
+
+// -------------------------------------------------------------------
+
+// ActivateMarketplacePresetRequest
+
+// string preset_id = 1;
+inline void ActivateMarketplacePresetRequest::clear_preset_id() {
+  _impl_.preset_id_.ClearToEmpty();
+}
+inline const std::string& ActivateMarketplacePresetRequest::preset_id() const {
+  // @@protoc_insertion_point(field_get:botcore.trading.v1.ActivateMarketplacePresetRequest.preset_id)
+  return _internal_preset_id();
+}
+template <typename ArgT0, typename... ArgT>
+inline PROTOBUF_ALWAYS_INLINE
+void ActivateMarketplacePresetRequest::set_preset_id(ArgT0&& arg0, ArgT... args) {
+ 
+ _impl_.preset_id_.Set(static_cast<ArgT0 &&>(arg0), args..., GetArenaForAllocation());
+  // @@protoc_insertion_point(field_set:botcore.trading.v1.ActivateMarketplacePresetRequest.preset_id)
+}
+inline std::string* ActivateMarketplacePresetRequest::mutable_preset_id() {
+  std::string* _s = _internal_mutable_preset_id();
+  // @@protoc_insertion_point(field_mutable:botcore.trading.v1.ActivateMarketplacePresetRequest.preset_id)
+  return _s;
+}
+inline const std::string& ActivateMarketplacePresetRequest::_internal_preset_id() const {
+  return _impl_.preset_id_.Get();
+}
+inline void ActivateMarketplacePresetRequest::_internal_set_preset_id(const std::string& value) {
+  
+  _impl_.preset_id_.Set(value, GetArenaForAllocation());
+}
+inline std::string* ActivateMarketplacePresetRequest::_internal_mutable_preset_id() {
+  
+  return _impl_.preset_id_.Mutable(GetArenaForAllocation());
+}
+inline std::string* ActivateMarketplacePresetRequest::release_preset_id() {
+  // @@protoc_insertion_point(field_release:botcore.trading.v1.ActivateMarketplacePresetRequest.preset_id)
+  return _impl_.preset_id_.Release();
+}
+inline void ActivateMarketplacePresetRequest::set_allocated_preset_id(std::string* preset_id) {
+  if (preset_id != nullptr) {
+    
+  } else {
+    
+  }
+  _impl_.preset_id_.SetAllocated(preset_id, GetArenaForAllocation());
+#ifdef PROTOBUF_FORCE_COPY_DEFAULT_STRING
+  if (_impl_.preset_id_.IsDefault()) {
+    _impl_.preset_id_.Set("", GetArenaForAllocation());
+  }
+#endif // PROTOBUF_FORCE_COPY_DEFAULT_STRING
+  // @@protoc_insertion_point(field_set_allocated:botcore.trading.v1.ActivateMarketplacePresetRequest.preset_id)
+}
+
+// -------------------------------------------------------------------
+
+// ActivateMarketplacePresetResponse
+
+// .botcore.trading.v1.MarketplacePresetSummary preset = 1;
+inline bool ActivateMarketplacePresetResponse::_internal_has_preset() const {
+  return this != internal_default_instance() && _impl_.preset_ != nullptr;
+}
+inline bool ActivateMarketplacePresetResponse::has_preset() const {
+  return _internal_has_preset();
+}
+inline void ActivateMarketplacePresetResponse::clear_preset() {
+  if (GetArenaForAllocation() == nullptr && _impl_.preset_ != nullptr) {
+    delete _impl_.preset_;
+  }
+  _impl_.preset_ = nullptr;
+}
+inline const ::botcore::trading::v1::MarketplacePresetSummary& ActivateMarketplacePresetResponse::_internal_preset() const {
+  const ::botcore::trading::v1::MarketplacePresetSummary* p = _impl_.preset_;
+  return p != nullptr ? *p : reinterpret_cast<const ::botcore::trading::v1::MarketplacePresetSummary&>(
+      ::botcore::trading::v1::_MarketplacePresetSummary_default_instance_);
+}
+inline const ::botcore::trading::v1::MarketplacePresetSummary& ActivateMarketplacePresetResponse::preset() const {
+  // @@protoc_insertion_point(field_get:botcore.trading.v1.ActivateMarketplacePresetResponse.preset)
+  return _internal_preset();
+}
+inline void ActivateMarketplacePresetResponse::unsafe_arena_set_allocated_preset(
+    ::botcore::trading::v1::MarketplacePresetSummary* preset) {
+  if (GetArenaForAllocation() == nullptr) {
+    delete reinterpret_cast<::PROTOBUF_NAMESPACE_ID::MessageLite*>(_impl_.preset_);
+  }
+  _impl_.preset_ = preset;
+  if (preset) {
+    
+  } else {
+    
+  }
+  // @@protoc_insertion_point(field_unsafe_arena_set_allocated:botcore.trading.v1.ActivateMarketplacePresetResponse.preset)
+}
+inline ::botcore::trading::v1::MarketplacePresetSummary* ActivateMarketplacePresetResponse::release_preset() {
+  
+  ::botcore::trading::v1::MarketplacePresetSummary* temp = _impl_.preset_;
+  _impl_.preset_ = nullptr;
+#ifdef PROTOBUF_FORCE_COPY_IN_RELEASE
+  auto* old =  reinterpret_cast<::PROTOBUF_NAMESPACE_ID::MessageLite*>(temp);
+  temp = ::PROTOBUF_NAMESPACE_ID::internal::DuplicateIfNonNull(temp);
+  if (GetArenaForAllocation() == nullptr) { delete old; }
+#else  // PROTOBUF_FORCE_COPY_IN_RELEASE
+  if (GetArenaForAllocation() != nullptr) {
+    temp = ::PROTOBUF_NAMESPACE_ID::internal::DuplicateIfNonNull(temp);
+  }
+#endif  // !PROTOBUF_FORCE_COPY_IN_RELEASE
+  return temp;
+}
+inline ::botcore::trading::v1::MarketplacePresetSummary* ActivateMarketplacePresetResponse::unsafe_arena_release_preset() {
+  // @@protoc_insertion_point(field_release:botcore.trading.v1.ActivateMarketplacePresetResponse.preset)
+  
+  ::botcore::trading::v1::MarketplacePresetSummary* temp = _impl_.preset_;
+  _impl_.preset_ = nullptr;
+  return temp;
+}
+inline ::botcore::trading::v1::MarketplacePresetSummary* ActivateMarketplacePresetResponse::_internal_mutable_preset() {
+  
+  if (_impl_.preset_ == nullptr) {
+    auto* p = CreateMaybeMessage<::botcore::trading::v1::MarketplacePresetSummary>(GetArenaForAllocation());
+    _impl_.preset_ = p;
+  }
+  return _impl_.preset_;
+}
+inline ::botcore::trading::v1::MarketplacePresetSummary* ActivateMarketplacePresetResponse::mutable_preset() {
+  ::botcore::trading::v1::MarketplacePresetSummary* _msg = _internal_mutable_preset();
+  // @@protoc_insertion_point(field_mutable:botcore.trading.v1.ActivateMarketplacePresetResponse.preset)
+  return _msg;
+}
+inline void ActivateMarketplacePresetResponse::set_allocated_preset(::botcore::trading::v1::MarketplacePresetSummary* preset) {
+  ::PROTOBUF_NAMESPACE_ID::Arena* message_arena = GetArenaForAllocation();
+  if (message_arena == nullptr) {
+    delete _impl_.preset_;
+  }
+  if (preset) {
+    ::PROTOBUF_NAMESPACE_ID::Arena* submessage_arena =
+        ::PROTOBUF_NAMESPACE_ID::Arena::InternalGetOwningArena(preset);
+    if (message_arena != submessage_arena) {
+      preset = ::PROTOBUF_NAMESPACE_ID::internal::GetOwnedMessage(
+          message_arena, preset, submessage_arena);
+    }
+    
+  } else {
+    
+  }
+  _impl_.preset_ = preset;
+  // @@protoc_insertion_point(field_set_allocated:botcore.trading.v1.ActivateMarketplacePresetResponse.preset)
+}
+
 #ifdef __GNUC__
   #pragma GCC diagnostic pop
 #endif  // __GNUC__
+// -------------------------------------------------------------------
+
+// -------------------------------------------------------------------
+
+// -------------------------------------------------------------------
+
+// -------------------------------------------------------------------
+
+// -------------------------------------------------------------------
+
+// -------------------------------------------------------------------
+
+// -------------------------------------------------------------------
+
+// -------------------------------------------------------------------
+
+// -------------------------------------------------------------------
+
+// -------------------------------------------------------------------
+
+// -------------------------------------------------------------------
+
 // -------------------------------------------------------------------
 
 // -------------------------------------------------------------------

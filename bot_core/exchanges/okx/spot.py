@@ -5,6 +5,7 @@ from typing import Any, Mapping
 
 from bot_core.exchanges.base import Environment, ExchangeCredentials
 from bot_core.exchanges.ccxt_adapter import CCXTSpotAdapter, merge_adapter_settings
+from bot_core.exchanges.rate_limiter import RateLimitRule
 
 
 class OKXSpotAdapter(CCXTSpotAdapter):
@@ -25,6 +26,16 @@ class OKXSpotAdapter(CCXTSpotAdapter):
             {
                 "ccxt_config": {"timeout": 20_000},
                 "fetch_ohlcv_params": {"price": "mark"},
+                "rate_limit_rules": (
+                    RateLimitRule(rate=30, per=1.0),
+                    RateLimitRule(rate=300, per=60.0),
+                ),
+                "retry_policy": {
+                    "max_attempts": 5,
+                    "base_delay": 0.2,
+                    "max_delay": 2.0,
+                    "jitter": (0.05, 0.3),
+                },
             },
             settings or {},
         )

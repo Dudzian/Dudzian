@@ -1,0 +1,128 @@
+name: Cross-platform installer build
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Wersja bundla przekazywana do instalatora"
+        required: false
+        type: string
+  workflow_call:
+    inputs:
+      version:
+        required: false
+        type: string
+  schedule:
+    - cron: '30 1 * * 3'
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux
+            runner:
+              - self-hosted
+              - linux-desktop
+            shell: bash
+            build_script: scripts/build_installer_linux.sh
+            metadata: var/dist/installers/linux/installer_metadata.json
+          - name: macos
+            runner:
+              - self-hosted
+              - macos-desktop
+            shell: bash
+            build_script: scripts/build_installer_macos.sh
+            metadata: var/dist/installers/macos/installer_metadata.json
+          - name: windows
+            runner:
+              - self-hosted
+              - windows-desktop
+            shell: pwsh
+            build_script: scripts/build_installer_windows.ps1
+            metadata: var/dist/installers/windows/installer_metadata.json
+    runs-on: ${{ matrix.runner }}
+    env:
+      INSTALLER_VERSION: ${{ inputs.version || format('{0}.{1}', github.run_number, github.run_attempt) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install packaging requirements (POSIX)
+        if: matrix.name != 'windows'
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r deploy/packaging/requirements-desktop.txt
+        shell: bash
+
+      - name: Install packaging requirements (Windows)
+        if: matrix.name == 'windows'
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r deploy/packaging/requirements-desktop.txt
+        shell: pwsh
+
+      - name: Build installer bundle (POSIX)
+        if: matrix.name != 'windows'
+        run: |
+          "${{ matrix.build_script }}" --version "$INSTALLER_VERSION"
+        shell: bash
+
+      - name: Build installer bundle (Windows)
+        if: matrix.name == 'windows'
+        run: |
+          pwsh -File "${{ matrix.build_script }}" -Version "$env:INSTALLER_VERSION"
+        shell: pwsh
+
+      - name: Parse metadata
+        id: metadata
+        shell: python
+        env:
+          METADATA_PATH: ${{ matrix.metadata }}
+        run: |
+          from pathlib import Path
+          import json
+          import os
+
+          metadata_path = Path(os.environ["METADATA_PATH"]).expanduser()
+          if not metadata_path.exists():
+              raise SystemExit(f"Brak metadanych instalatora: {metadata_path}")
+
+          payload = json.loads(metadata_path.read_text(encoding="utf-8"))
+          print(json.dumps(payload, indent=2, ensure_ascii=False))
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
+              fh.write(f"runtime={payload.get('runtime_executable', '')}\n")
+              fh.write(f"bundle={payload.get('bundle_archive', '')}\n")
+              fh.write(f"metadata={metadata_path}\n")
+
+      - name: Smoke test runtime (POSIX)
+        if: matrix.name != 'windows' && steps.metadata.outputs.runtime != ''
+        run: |
+          "$RUNTIME" --help >/dev/null
+        shell: bash
+        env:
+          RUNTIME: ${{ steps.metadata.outputs.runtime }}
+
+      - name: Smoke test runtime (Windows)
+        if: matrix.name == 'windows' && steps.metadata.outputs.runtime != ''
+        run: |
+          & $env:RUNTIME --help | Out-Null
+        shell: pwsh
+        env:
+          RUNTIME: ${{ steps.metadata.outputs.runtime }}
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: installer-${{ matrix.name }}
+          if-no-files-found: warn
+          path: |
+            ${{ steps.metadata.outputs.bundle }}
+            ${{ matrix.metadata }}

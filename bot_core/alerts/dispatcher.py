@@ -9,6 +9,7 @@ from enum import Enum
 from typing import Any, Callable, Dict, Optional
 
 LOGGER = logging.getLogger(__name__)
+_OFFLINE_LOGGER = logging.getLogger("bot_core.alerts.offline")
 
 
 class AlertSeverity(str, Enum):
@@ -18,6 +19,14 @@ class AlertSeverity(str, Enum):
     WARNING = "warning"
     ERROR = "error"
     CRITICAL = "critical"
+
+
+_SEVERITY_ORDER = {
+    AlertSeverity.INFO: 0,
+    AlertSeverity.WARNING: 1,
+    AlertSeverity.ERROR: 2,
+    AlertSeverity.CRITICAL: 3,
+}
 
 
 @dataclass(slots=True)
@@ -66,6 +75,33 @@ class BotError(Exception):
         )
 
 
+class OfflineAlertSink:
+    """Odbiorca alertów zapisujący zdarzenia do lokalnych logów."""
+
+    def __init__(self, *, min_severity: AlertSeverity = AlertSeverity.WARNING) -> None:
+        self._min_severity = min_severity
+
+    def handle(self, event: AlertEvent) -> None:
+        severity = event.severity
+        if not isinstance(severity, AlertSeverity):
+            candidate = getattr(event.severity, "value", event.severity)
+            try:
+                severity = AlertSeverity(str(candidate).lower())
+            except Exception:  # pragma: no cover - defensywne
+                severity = AlertSeverity.INFO
+        if _SEVERITY_ORDER.get(severity, 0) < _SEVERITY_ORDER.get(self._min_severity, 1):
+            return
+        message = "%s | %s" % (event.source, event.message)
+        if severity is AlertSeverity.CRITICAL:
+            _OFFLINE_LOGGER.critical(message, extra=event.to_dict())
+        elif severity is AlertSeverity.ERROR:
+            _OFFLINE_LOGGER.error(message, extra=event.to_dict())
+        elif severity is AlertSeverity.WARNING:
+            _OFFLINE_LOGGER.warning(message, extra=event.to_dict())
+        else:
+            _OFFLINE_LOGGER.info(message, extra=event.to_dict())
+
+
 class AlertDispatcher:
     """Simple dispatcher delivering alerts to registered listeners."""
 
@@ -110,6 +146,7 @@ class AlertDispatcher:
 
 
 _DISPATCHER = AlertDispatcher()
+_OFFLINE_SINK_TOKEN: str | None = None
 
 
 def get_alert_dispatcher() -> AlertDispatcher:
@@ -139,6 +176,23 @@ def emit_alert(
     return event
 
 
+def ensure_offline_logging_sink(
+    *,
+    dispatcher: AlertDispatcher | None = None,
+    min_severity: AlertSeverity = AlertSeverity.WARNING,
+) -> str:
+    """Rejestruje domyślnego słuchacza logującego alerty offline."""
+
+    global _OFFLINE_SINK_TOKEN
+    target = dispatcher or _DISPATCHER
+    if _OFFLINE_SINK_TOKEN:
+        return _OFFLINE_SINK_TOKEN
+    sink = OfflineAlertSink(min_severity=min_severity)
+    token = target.register(sink.handle, name="offline-logging-sink")
+    _OFFLINE_SINK_TOKEN = token
+    return token
+
+
 __all__ = [
     "AlertDispatcher",
     "AlertEvent",
@@ -146,4 +200,6 @@ __all__ = [
     "BotError",
     "emit_alert",
     "get_alert_dispatcher",
+    "OfflineAlertSink",
+    "ensure_offline_logging_sink",
 ]

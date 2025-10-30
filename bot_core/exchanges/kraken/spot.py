@@ -31,6 +31,11 @@ from bot_core.exchanges.errors import (
 )
 from bot_core.exchanges.error_mapping import raise_for_kraken_error
 from bot_core.exchanges.health import Watchdog
+from bot_core.exchanges.rate_limiter import (
+    RateLimitRule,
+    get_global_rate_limiter_registry,
+    normalize_rate_limit_rules,
+)
 from bot_core.exchanges.streaming import LocalLongPollStream
 from bot_core.observability.metrics import MetricsRegistry, get_global_metrics_registry
 
@@ -52,6 +57,11 @@ _RETRYABLE_STATUS = {429, 500, 502, 503, 504, 520, 521, 522, 524}
 _MAX_RETRIES = 3
 _BASE_BACKOFF = 0.5
 _BACKOFF_CAP = 4.0
+
+_RATE_LIMIT_DEFAULTS: tuple[RateLimitRule, ...] = (
+    RateLimitRule(rate=20, per=1.0),
+    RateLimitRule(rate=180, per=60.0),
+)
 
 
 _INTERVAL_MAPPING: Mapping[str, int] = {
@@ -217,6 +227,14 @@ class KrakenSpotAdapter(ExchangeAdapter):
             "Łączna liczba poziomów orderbooka (bids+asks) zwracanych przez Kraken Spot.",
         )
         self._watchdog = watchdog or Watchdog()
+        self._rate_limiter = get_global_rate_limiter_registry().configure(
+            f"{self.name}:{self._environment.value}",
+            normalize_rate_limit_rules(
+                self._settings.get("rate_limit_rules"),
+                _RATE_LIMIT_DEFAULTS,
+            ),
+            metric_labels={"exchange": self.name, "environment": self._environment.value},
+        )
 
     # ------------------------------------------------------------------
     # Konfiguracja streamingu long-pollowego
@@ -831,6 +849,8 @@ class KrakenSpotAdapter(ExchangeAdapter):
         attempt = 0
         backoff = _BASE_BACKOFF
         while True:
+            weight = 2.0 if signed else 1.0
+            self._rate_limiter.acquire(weight=weight)
             request = request_factory()
             labels = self._labels(endpoint=endpoint, signed="true" if signed else "false")
             start = time.monotonic()

@@ -41,6 +41,20 @@ from bot_core.config.models import (
     RiskProfileConfig,
     RiskServiceConfig,
     RuntimeResourceLimitsConfig,
+    RuntimeAppConfig,
+    RuntimeAISettings,
+    RuntimeTradingSettings,
+    RuntimeExecutionLiveSettings,
+    RuntimeExecutionSettings,
+    RuntimeObservabilityAlertSettings,
+    RuntimeObservabilityMetricsSettings,
+    RuntimeObservabilitySettings,
+    RuntimeOptimizationSettings,
+    RuntimeMarketplaceSettings,
+    RuntimeRiskSettings,
+    RuntimeLicensingSettings,
+    RuntimeUISettings,
+    RuntimeCoreReference,
     SMSProviderSettings,
     TelegramChannelSettings,
     PortfolioGovernorConfig,
@@ -50,6 +64,12 @@ from bot_core.config.models import (
     PortfolioSloOverrideConfig,
     PortfolioDecisionLogConfig,
     PortfolioRuntimeInputsConfig,
+    StrategyOptimizationBoundConfig,
+    StrategyOptimizationSearchSpaceConfig,
+    StrategyOptimizationObjectiveConfig,
+    StrategyOptimizationScheduleConfig,
+    StrategyOptimizationEvaluationConfig,
+    StrategyOptimizationTaskConfig,
     SignalLimitOverrideConfig,
     SequentialModelConfig,
     SequentialModelRepositoryConfig,
@@ -59,7 +79,10 @@ from bot_core.config.models import (
 )
 from bot_core.exchanges.base import Environment
 from bot_core.exchanges.core import Mode
-from bot_core.strategies.catalog import DEFAULT_STRATEGY_CATALOG
+try:
+    from bot_core.strategies.catalog import DEFAULT_STRATEGY_CATALOG
+except Exception:  # pragma: no cover - niektóre gałęzie mają niekompletne strategie
+    DEFAULT_STRATEGY_CATALOG = {}  # type: ignore[assignment]
 
 
 try:  # Stage6 asset-level konfiguracja governora
@@ -114,12 +137,16 @@ try:
         OptionsIncomeStrategyConfig,
         ScalpingStrategyConfig,
         StatisticalArbitrageStrategyConfig,
+        FuturesSpreadStrategyConfig,
+        CrossExchangeHedgeStrategyConfig,
     )
 except Exception:  # opcjonalne strategie intraday/opcyjne
     DayTradingStrategyConfig = None  # type: ignore
     OptionsIncomeStrategyConfig = None  # type: ignore
     ScalpingStrategyConfig = None  # type: ignore
     StatisticalArbitrageStrategyConfig = None  # type: ignore
+    FuturesSpreadStrategyConfig = None  # type: ignore
+    CrossExchangeHedgeStrategyConfig = None  # type: ignore
 
 try:
     from bot_core.config.models import (  # type: ignore
@@ -633,6 +660,23 @@ def _load_options_income_strategies(raw: Mapping[str, Any]):
     return strategies
 
 
+def _load_futures_spread_strategies(raw: Mapping[str, Any]):
+    if FuturesSpreadStrategyConfig is None:
+        return {}
+    strategies: dict[str, FuturesSpreadStrategyConfig] = {}
+    for name, entry in (raw.get("futures_spread_strategies", {}) or {}).items():
+        params = entry.get("parameters", entry) or {}
+        strategies[name] = FuturesSpreadStrategyConfig(
+            name=name,
+            entry_z=float(params.get("entry_z", 1.25)),
+            exit_z=float(params.get("exit_z", 0.4)),
+            max_bars=int(params.get("max_bars", 48)),
+            funding_exit=float(params.get("funding_exit", 0.002)),
+            basis_exit=float(params.get("basis_exit", 0.02)),
+        )
+    return strategies
+
+
 def _load_statistical_arbitrage_strategies(raw: Mapping[str, Any]):
     if StatisticalArbitrageStrategyConfig is None:
         return {}
@@ -666,6 +710,22 @@ def _load_day_trading_strategies(raw: Mapping[str, Any]):
             max_holding_bars=int(params.get("max_holding_bars", 12)),
             atr_floor=float(params.get("atr_floor", 0.0005)),
             bias_strength=float(params.get("bias_strength", 0.2)),
+        )
+    return strategies
+
+
+def _load_cross_exchange_hedge_strategies(raw: Mapping[str, Any]):
+    if CrossExchangeHedgeStrategyConfig is None:
+        return {}
+    strategies: dict[str, CrossExchangeHedgeStrategyConfig] = {}
+    for name, entry in (raw.get("cross_exchange_hedge_strategies", {}) or {}).items():
+        params = entry.get("parameters", entry) or {}
+        strategies[name] = CrossExchangeHedgeStrategyConfig(
+            name=name,
+            basis_scale=float(params.get("basis_scale", 0.01)),
+            inventory_scale=float(params.get("inventory_scale", 0.35)),
+            latency_limit_ms=float(params.get("latency_limit_ms", 180.0)),
+            max_hedge_ratio=float(params.get("max_hedge_ratio", 0.9)),
         )
     return strategies
 
@@ -801,6 +861,14 @@ def _load_strategy_definitions(raw: Mapping[str, Any]):
     for name, entry in (raw.get("grid_strategies", {}) or {}).items():
         params = entry.get("parameters", entry) or {}
         _ensure(name, "grid_trading", params)
+
+    for name, entry in (raw.get("futures_spread_strategies", {}) or {}).items():
+        params = entry.get("parameters", entry) or {}
+        _ensure(name, "futures_spread", params)
+
+    for name, entry in (raw.get("cross_exchange_hedge_strategies", {}) or {}).items():
+        params = entry.get("parameters", entry) or {}
+        _ensure(name, "cross_exchange_hedge", params)
 
     return definitions
 
@@ -4022,8 +4090,10 @@ def load_core_config(path: str | Path) -> CoreConfig:
     mean_reversion_strategies = _load_mean_reversion_strategies(raw)
     volatility_target_strategies = _load_volatility_target_strategies(raw)
     cross_exchange_arbitrage_strategies = _load_cross_exchange_arbitrage_strategies(raw)
+    cross_exchange_hedge_strategies = _load_cross_exchange_hedge_strategies(raw)
     scalping_strategies = _load_scalping_strategies(raw)
     options_income_strategies = _load_options_income_strategies(raw)
+    futures_spread_strategies = _load_futures_spread_strategies(raw)
     statistical_arbitrage_strategies = _load_statistical_arbitrage_strategies(raw)
     day_trading_strategies = _load_day_trading_strategies(raw)
     strategy_definitions = _load_strategy_definitions(raw)
@@ -4092,10 +4162,14 @@ def load_core_config(path: str | Path) -> CoreConfig:
         core_kwargs["volatility_target_strategies"] = volatility_target_strategies
     if _core_has("cross_exchange_arbitrage_strategies"):
         core_kwargs["cross_exchange_arbitrage_strategies"] = cross_exchange_arbitrage_strategies
+    if _core_has("cross_exchange_hedge_strategies"):
+        core_kwargs["cross_exchange_hedge_strategies"] = cross_exchange_hedge_strategies
     if _core_has("scalping_strategies"):
         core_kwargs["scalping_strategies"] = scalping_strategies
     if _core_has("options_income_strategies"):
         core_kwargs["options_income_strategies"] = options_income_strategies
+    if _core_has("futures_spread_strategies"):
+        core_kwargs["futures_spread_strategies"] = futures_spread_strategies
     if _core_has("statistical_arbitrage_strategies"):
         core_kwargs["statistical_arbitrage_strategies"] = statistical_arbitrage_strategies
     if _core_has("day_trading_strategies"):
@@ -4218,4 +4292,479 @@ def load_core_config(path: str | Path) -> CoreConfig:
     return CoreConfig(**core_kwargs)  # type: ignore[arg-type]
 
 
-__all__ = ["load_core_config"]
+def load_runtime_app_config(path: str | Path) -> RuntimeAppConfig:
+    """Wczytaj zunifikowaną konfigurację runtime z ``config/runtime.yaml``."""
+
+    config_path = Path(path).expanduser()
+    with config_path.open("r", encoding="utf-8") as handle:
+        raw: dict[str, Any] = yaml.safe_load(handle) or {}
+
+    try:
+        config_base_dir = config_path.resolve(strict=False).parent
+    except Exception:  # noqa: BLE001 - fallback na katalog względny
+        config_base_dir = config_path.parent
+
+    def _as_optional_str(value: object | None) -> str | None:
+        if value in (None, "", False):
+            return None
+        text = str(value).strip()
+        return text or None
+
+    def _normalize_path(value: object | None) -> str | None:
+        normalized = _normalize_runtime_path(value, base_dir=config_base_dir)
+        if normalized is None:
+            return None
+        return str(normalized)
+
+    def _as_tuple(value: object | None) -> tuple[str, ...]:
+        if value in (None, "", False):
+            return ()
+        if isinstance(value, str):
+            candidates = [value]
+        else:
+            try:
+                candidates = list(value)  # type: ignore[arg-type]
+            except TypeError:
+                candidates = [value]
+        normalized: list[str] = []
+        for candidate in candidates:
+            text = str(candidate).strip()
+            if text:
+                normalized.append(text)
+        return tuple(normalized)
+
+    core_section = raw.get("core") or {}
+    core_path_value = core_section.get("path", "core.yaml")
+    core_reference = RuntimeCoreReference(
+        path=str(core_path_value),
+        resolved_path=_normalize_path(core_path_value),
+    )
+
+    ai_section = raw.get("ai") or {}
+    registry_raw = ai_section.get("model_registry_path", "models")
+    registry_path = _normalize_path(registry_raw) or str(registry_raw)
+    ai_settings = RuntimeAISettings(
+        model_registry_path=registry_path,
+        retrain_schedule=_as_optional_str(ai_section.get("retrain_schedule")),
+        drift_monitor_enabled=bool(ai_section.get("drift_monitor_enabled", True)),
+        auto_activate_best_model=bool(ai_section.get("auto_activate_best_model", True)),
+    )
+
+    trading_section = raw.get("trading") or {}
+    entrypoints_raw = trading_section.get("entrypoints") or {}
+    if not isinstance(entrypoints_raw, Mapping) or not entrypoints_raw:
+        raise ValueError("Sekcja trading.entrypoints nie może być pusta")
+
+    entry_field_names = {field.name for field in fields(RuntimeEntrypointConfig)}
+    entrypoints: dict[str, RuntimeEntrypointConfig] = {}
+    for name, cfg in entrypoints_raw.items():
+        if not isinstance(cfg, Mapping):
+            continue
+        if "environment" not in cfg:
+            raise ValueError(f"entrypoint '{name}' musi zawierać pole 'environment'")
+        kwargs: dict[str, Any] = {
+            "environment": str(cfg["environment"]),
+        }
+        if "description" in entry_field_names:
+            kwargs["description"] = _as_optional_str(cfg.get("description"))
+        if "controller" in entry_field_names:
+            kwargs["controller"] = _as_optional_str(cfg.get("controller"))
+        if "strategy" in entry_field_names:
+            kwargs["strategy"] = _as_optional_str(cfg.get("strategy"))
+        if "risk_profile" in entry_field_names:
+            kwargs["risk_profile"] = _as_optional_str(cfg.get("risk_profile"))
+        if "tags" in entry_field_names:
+            kwargs["tags"] = _as_tuple(cfg.get("tags"))
+        if "bootstrap" in entry_field_names:
+            kwargs["bootstrap"] = bool(cfg.get("bootstrap", True))
+        if "trusted_auto_confirm" in entry_field_names:
+            kwargs["trusted_auto_confirm"] = bool(cfg.get("trusted_auto_confirm", False))
+        entrypoints[name] = RuntimeEntrypointConfig(**kwargs)
+
+    default_entrypoint_raw = trading_section.get("default_entrypoint")
+    default_entrypoint = (
+        str(default_entrypoint_raw)
+        if _as_optional_str(default_entrypoint_raw)
+        else next(iter(entrypoints))
+    )
+
+    trading_settings = RuntimeTradingSettings(
+        default_entrypoint=default_entrypoint,
+        entrypoints=entrypoints,
+        auto_start=bool(trading_section.get("auto_start", False)),
+        enable_paper_mode=bool(trading_section.get("enable_paper_mode", True)),
+        enable_live_mode=bool(trading_section.get("enable_live_mode", False)),
+        strategy_overrides={
+            str(key): str(value)
+            for key, value in (trading_section.get("strategy_overrides") or {}).items()
+        },
+        strategy_profiles={
+            str(key): value
+            for key, value in (trading_section.get("strategy_profiles") or {}).items()
+        },
+    )
+
+    execution_section = raw.get("execution") or {}
+    live_section = execution_section.get("live") or {}
+    live_settings: RuntimeExecutionLiveSettings | None = None
+    if isinstance(live_section, Mapping) and live_section:
+        overrides_raw = live_section.get("route_overrides") or {}
+        overrides: dict[str, tuple[str, ...]] = {}
+        if isinstance(overrides_raw, Mapping):
+            for symbol, route in overrides_raw.items():
+                route_tuple = _as_tuple(route)
+                if route_tuple:
+                    overrides[str(symbol)] = route_tuple
+        latency_buckets: list[float] = []
+        for entry in live_section.get("latency_histogram_buckets", ()):
+            if entry in (None, ""):
+                continue
+            try:
+                latency_buckets.append(float(entry))
+            except (TypeError, ValueError) as exc:
+                raise ValueError("execution.live.latency_histogram_buckets musi zawierać wartości liczbowe") from exc
+        decision_log_path = _normalize_path(live_section.get("decision_log_path"))
+        live_settings = RuntimeExecutionLiveSettings(
+            enabled=bool(live_section.get("enabled", False)),
+            default_route=_as_tuple(live_section.get("default_route")),
+            route_overrides=overrides,
+            decision_log_path=decision_log_path,
+            decision_log_key_env=_as_optional_str(live_section.get("decision_log_key_env")),
+            decision_log_key_path=_normalize_path(live_section.get("decision_log_key_path")),
+            decision_log_key_value=_as_optional_str(live_section.get("decision_log_key_value")),
+            decision_log_key_id=_as_optional_str(live_section.get("decision_log_key_id")),
+            decision_log_rotate_bytes=int(live_section.get("decision_log_rotate_bytes", 8 * 1024 * 1024)),
+            decision_log_keep=int(live_section.get("decision_log_keep", 3)),
+            latency_histogram_buckets=tuple(latency_buckets),
+        )
+
+    mode_raw = _as_optional_str(execution_section.get("default_mode")) or "paper"
+    execution_settings = RuntimeExecutionSettings(
+        default_mode=mode_raw,
+        force_paper_when_offline=bool(execution_section.get("force_paper_when_offline", True)),
+        auth_token=_as_optional_str(execution_section.get("auth_token")),
+        live=live_settings,
+    )
+
+    risk_section = raw.get("risk") or {}
+    service_raw = risk_section.get("service")
+    service_config: RiskServiceConfig | None = None
+    if isinstance(service_raw, Mapping) and service_raw:
+        service_fields = {field.name for field in fields(RiskServiceConfig)}
+        service_kwargs: dict[str, Any] = {}
+        if "enabled" in service_fields:
+            service_kwargs["enabled"] = bool(service_raw.get("enabled", True))
+        if "host" in service_fields:
+            service_kwargs["host"] = str(service_raw.get("host", "127.0.0.1"))
+        if "port" in service_fields and service_raw.get("port") not in (None, ""):
+            service_kwargs["port"] = int(service_raw.get("port", 0))
+        if "history_size" in service_fields and service_raw.get("history_size") not in (None, ""):
+            service_kwargs["history_size"] = int(service_raw.get("history_size", 0))
+        if "publish_interval_seconds" in service_fields:
+            publish_raw = service_raw.get("publish_interval_seconds")
+            service_kwargs["publish_interval_seconds"] = (
+                float(publish_raw) if publish_raw not in (None, "") else 5.0
+            )
+        if "profiles" in service_fields:
+            service_kwargs["profiles"] = _as_tuple(service_raw.get("profiles"))
+        service_config = RiskServiceConfig(**service_kwargs)  # type: ignore[arg-type]
+
+    def _build_log_config(
+        section: Mapping[str, Any] | None,
+        cls: type[RiskDecisionLogConfig] | type[PortfolioDecisionLogConfig],
+    ) -> RiskDecisionLogConfig | PortfolioDecisionLogConfig | None:
+        if not isinstance(section, Mapping) or not section:
+            return None
+        field_names = {field.name for field in fields(cls)}
+        kwargs: dict[str, Any] = {}
+        if "enabled" in field_names:
+            kwargs["enabled"] = bool(section.get("enabled", True))
+        if "path" in field_names:
+            kwargs["path"] = _normalize_path(section.get("path"))
+        if "max_entries" in field_names and section.get("max_entries") not in (None, ""):
+            kwargs["max_entries"] = int(section.get("max_entries"))
+        if "signing_key_env" in field_names:
+            kwargs["signing_key_env"] = _as_optional_str(section.get("signing_key_env"))
+        if "signing_key_path" in field_names:
+            kwargs["signing_key_path"] = _normalize_path(section.get("signing_key_path"))
+        if "signing_key_value" in field_names:
+            kwargs["signing_key_value"] = _as_optional_str(section.get("signing_key_value"))
+        if "signing_key_id" in field_names:
+            kwargs["signing_key_id"] = _as_optional_str(section.get("signing_key_id"))
+        if "jsonl_fsync" in field_names:
+            kwargs["jsonl_fsync"] = bool(section.get("jsonl_fsync", False))
+        return cls(**kwargs)  # type: ignore[call-arg]
+
+    decision_log = _build_log_config(
+        risk_section.get("decision_log"),
+        RiskDecisionLogConfig,
+    )
+    portfolio_log = _build_log_config(
+        risk_section.get("portfolio_log"),
+        PortfolioDecisionLogConfig,
+    )
+    max_drawdown_alert_pct = risk_section.get("max_drawdown_alert_pct")
+    risk_settings = RuntimeRiskSettings(
+        service=service_config,
+        decision_log=decision_log,
+        portfolio_log=portfolio_log,
+        max_drawdown_alert_pct=(
+            float(max_drawdown_alert_pct)
+            if max_drawdown_alert_pct not in (None, "")
+            else None
+        ),
+    )
+
+    licensing_section = raw.get("licensing") or {}
+    grace_raw = licensing_section.get("grace_period_hours")
+    licensing_settings = RuntimeLicensingSettings(
+        enforcement=bool(licensing_section.get("enforcement", True)),
+        grace_period_hours=(
+            float(grace_raw) if grace_raw not in (None, "") else None
+        ),
+        offline_activation_required=bool(
+            licensing_section.get("offline_activation_required", True)
+        ),
+        license=_load_license_config(licensing_section.get("license")),
+    )
+
+    ui_section = raw.get("ui") or {}
+    ui_settings = RuntimeUISettings(
+        theme=_as_optional_str(ui_section.get("theme")) or "dark",
+        workspace_root=_normalize_path(ui_section.get("workspace_root")),
+        enable_advanced_mode=bool(ui_section.get("enable_advanced_mode", False)),
+        auto_connect_runtime=bool(ui_section.get("auto_connect_runtime", True)),
+        restore_layout_on_start=bool(
+            ui_section.get("restore_layout_on_start", True)
+        ),
+        telemetry_sink=_normalize_path(ui_section.get("telemetry_sink")),
+    )
+
+    observability_section = raw.get("observability") or {}
+    observability_settings: RuntimeObservabilitySettings | None = None
+    if isinstance(observability_section, Mapping) and observability_section:
+        metrics_raw = observability_section.get("prometheus") or observability_section.get("metrics")
+        metrics_config: RuntimeObservabilityMetricsSettings | None = None
+        if isinstance(metrics_raw, Mapping) and metrics_raw.get("enabled", True):
+            host_value = str(metrics_raw.get("host", "127.0.0.1")).strip() or "127.0.0.1"
+            path_value = str(
+                metrics_raw.get("path", metrics_raw.get("metrics_path", "/metrics"))
+            ).strip()
+            if not path_value:
+                path_value = "/metrics"
+            if not path_value.startswith("/"):
+                path_value = "/" + path_value
+            port_raw = metrics_raw.get("port", 0)
+            try:
+                port_value = int(port_raw)
+            except Exception:
+                port_value = 0
+            metrics_config = RuntimeObservabilityMetricsSettings(
+                enabled=bool(metrics_raw.get("enabled", True)),
+                host=host_value,
+                port=port_value,
+                path=path_value,
+            )
+
+        alerts_raw = observability_section.get("alerts") or {}
+        alerts_config: RuntimeObservabilityAlertSettings | None = None
+        if isinstance(alerts_raw, Mapping) and alerts_raw:
+            severity_raw = str(alerts_raw.get("min_severity", "warning")).strip().lower()
+            if severity_raw not in {"info", "warning", "error", "critical"}:
+                severity_raw = "warning"
+            alerts_config = RuntimeObservabilityAlertSettings(min_severity=severity_raw)
+
+        enable_log_metrics = bool(observability_section.get("enable_log_metrics", True))
+        observability_settings = RuntimeObservabilitySettings(
+            prometheus=metrics_config,
+            alerts=alerts_config,
+            enable_log_metrics=enable_log_metrics,
+        )
+
+    optimization_section = raw.get("optimization") or {}
+    optimization_settings: RuntimeOptimizationSettings | None = None
+    if isinstance(optimization_section, Mapping) and optimization_section:
+
+        def _parse_search_space(space_raw: object) -> StrategyOptimizationSearchSpaceConfig:
+            if not isinstance(space_raw, Mapping):
+                return StrategyOptimizationSearchSpaceConfig()
+            grid_payload = space_raw.get("grid") or space_raw.get("categorical") or {}
+            grid: dict[str, tuple[object, ...]] = {}
+            if isinstance(grid_payload, Mapping):
+                for key, values in grid_payload.items():
+                    if isinstance(values, Mapping):
+                        seq = list(values.values())
+                    elif isinstance(values, Sequence) and not isinstance(values, (str, bytes)):
+                        seq = list(values)
+                    else:
+                        seq = [values]
+                    normalized = [value for value in seq if value not in (None, "")]
+                    if normalized:
+                        grid[str(key)] = tuple(normalized)
+            bounds_payload = space_raw.get("bounds") or space_raw.get("continuous") or {}
+            bounds: dict[str, StrategyOptimizationBoundConfig] = {}
+            if isinstance(bounds_payload, Mapping):
+                for key, spec in bounds_payload.items():
+                    if isinstance(spec, Mapping):
+                        lower = spec.get("min") or spec.get("lower") or spec.get("minimum")
+                        upper = spec.get("max") or spec.get("upper") or spec.get("maximum")
+                        step = spec.get("step") or spec.get("resolution")
+                        if lower in (None, "") or upper in (None, ""):
+                            continue
+                        try:
+                            bounds[str(key)] = StrategyOptimizationBoundConfig(
+                                lower=float(lower),
+                                upper=float(upper),
+                                step=step,
+                            )
+                        except Exception:  # pragma: no cover - walidacja danych wejściowych
+                            continue
+                    elif isinstance(spec, (list, tuple)) and len(spec) >= 2:
+                        lower, upper, *rest = spec
+                        step = rest[0] if rest else None
+                        try:
+                            bounds[str(key)] = StrategyOptimizationBoundConfig(
+                                lower=float(lower),
+                                upper=float(upper),
+                                step=step,
+                            )
+                        except Exception:  # pragma: no cover - walidacja danych wejściowych
+                            continue
+            return StrategyOptimizationSearchSpaceConfig(grid=grid, bounds=bounds)
+
+        def _parse_objective(obj_raw: object) -> StrategyOptimizationObjectiveConfig:
+            if not isinstance(obj_raw, Mapping):
+                metric = str(obj_raw).strip() if obj_raw not in (None, "") else "score"
+                return StrategyOptimizationObjectiveConfig(metric=metric)
+            metric = obj_raw.get("metric") or obj_raw.get("name") or "score"
+            goal = obj_raw.get("goal") or obj_raw.get("direction") or obj_raw.get("mode")
+            min_improvement = obj_raw.get("min_improvement") or obj_raw.get("threshold")
+            return StrategyOptimizationObjectiveConfig(
+                metric=str(metric),
+                goal=str(goal) if goal not in (None, "") else "maximize",
+                min_improvement=min_improvement,
+            )
+
+        def _parse_schedule(schedule_raw: object) -> StrategyOptimizationScheduleConfig:
+            if not isinstance(schedule_raw, Mapping):
+                if schedule_raw in (None, "", False):
+                    return StrategyOptimizationScheduleConfig()
+                try:
+                    cadence_value = float(schedule_raw)
+                except Exception:
+                    cadence_value = 0.0
+                return StrategyOptimizationScheduleConfig(cadence_seconds=cadence_value)
+            cadence = schedule_raw.get("cadence_seconds")
+            if cadence in (None, ""):
+                cadence = schedule_raw.get("interval") or schedule_raw.get("cadence")
+            jitter = schedule_raw.get("jitter_seconds")
+            if jitter in (None, ""):
+                jitter = schedule_raw.get("jitter")
+            start_delay = schedule_raw.get("start_delay_seconds")
+            if start_delay in (None, ""):
+                start_delay = schedule_raw.get("start_delay")
+            return StrategyOptimizationScheduleConfig(
+                cadence_seconds=float(cadence or 0.0),
+                jitter_seconds=float(jitter or 0.0),
+                run_immediately=bool(schedule_raw.get("run_immediately", True)),
+                start_delay_seconds=float(start_delay or 0.0),
+            )
+
+        def _parse_evaluation(eval_raw: object) -> StrategyOptimizationEvaluationConfig:
+            if not isinstance(eval_raw, Mapping):
+                if eval_raw in (None, ""):
+                    return StrategyOptimizationEvaluationConfig()
+                try:
+                    history = int(eval_raw)
+                except Exception:
+                    history = 0
+                return StrategyOptimizationEvaluationConfig(history_bars=history)
+            history = eval_raw.get("history_bars")
+            if history in (None, ""):
+                history = eval_raw.get("history") or eval_raw.get("bars")
+            warmup = eval_raw.get("warmup_bars")
+            if warmup in (None, ""):
+                warmup = eval_raw.get("warmup")
+            dataset = _as_optional_str(eval_raw.get("dataset"))
+            return StrategyOptimizationEvaluationConfig(
+                history_bars=int(history or 0),
+                warmup_bars=int(warmup or 0),
+                dataset=dataset,
+            )
+
+        tasks_raw = optimization_section.get("tasks") or optimization_section.get("jobs") or ()
+        tasks: list[StrategyOptimizationTaskConfig] = []
+        if isinstance(tasks_raw, Mapping):
+            tasks_raw = list(tasks_raw.values())
+        if isinstance(tasks_raw, Sequence) and not isinstance(tasks_raw, (str, bytes)):
+            for entry in tasks_raw:
+                if not isinstance(entry, Mapping):
+                    continue
+                name = str(entry.get("name") or entry.get("id") or "").strip()
+                strategy = str(entry.get("strategy") or entry.get("preset") or "").strip()
+                if not name or not strategy:
+                    continue
+                algorithm_value = entry.get("algorithm") or optimization_section.get("default_algorithm")
+                max_trials_value = entry.get("max_trials")
+                if max_trials_value in (None, ""):
+                    max_trials_value = optimization_section.get("default_max_trials")
+                random_seed_value = entry.get("random_seed")
+                tags_value = entry.get("tags") or ()
+                task = StrategyOptimizationTaskConfig(
+                    name=name,
+                    strategy=strategy,
+                    algorithm=str(algorithm_value or "grid"),
+                    max_trials=int(max_trials_value or 0),
+                    random_seed=int(random_seed_value) if random_seed_value not in (None, "") else None,
+                    tags=_as_tuple(tags_value),
+                    search_space=_parse_search_space(entry.get("search_space") or entry.get("space") or {}),
+                    objective=_parse_objective(entry.get("objective") or {}),
+                    schedule=_parse_schedule(entry.get("schedule")),
+                    evaluation=_parse_evaluation(entry.get("evaluation")),
+                )
+                tasks.append(task)
+
+        optimization_settings = RuntimeOptimizationSettings(
+            enabled=bool(optimization_section.get("enabled", True)),
+            default_algorithm=str(optimization_section.get("default_algorithm", "grid")),
+            max_concurrent_jobs=int(optimization_section.get("max_concurrent_jobs", 1) or 1),
+            report_directory=_normalize_path(optimization_section.get("report_directory")),
+            default_history_bars=int(optimization_section.get("default_history_bars", 256) or 256),
+            tasks=tuple(tasks),
+        )
+
+    marketplace_section = raw.get("marketplace") or {}
+    if not isinstance(marketplace_section, Mapping):
+        marketplace_section = {}
+    presets_raw = marketplace_section.get("presets_path", "config/marketplace/presets")
+    presets_path = _normalize_path(presets_raw) or str(presets_raw)
+    signing_keys_raw = marketplace_section.get("signing_keys") or {}
+    signing_keys: dict[str, str] = {}
+    if isinstance(signing_keys_raw, Mapping):
+        for key, value in signing_keys_raw.items():
+            key_text = str(key).strip()
+            value_text = str(value).strip()
+            if key_text and value_text:
+                signing_keys[key_text] = value_text
+    marketplace_settings = RuntimeMarketplaceSettings(
+        enabled=bool(marketplace_section.get("enabled", True)),
+        presets_path=presets_path,
+        signing_keys=signing_keys,
+        allow_unsigned=bool(marketplace_section.get("allow_unsigned", False)),
+    )
+
+    return RuntimeAppConfig(
+        core=core_reference,
+        ai=ai_settings,
+        trading=trading_settings,
+        execution=execution_settings,
+        risk=risk_settings,
+        licensing=licensing_settings,
+        ui=ui_settings,
+        observability=observability_settings,
+        optimization=optimization_settings,
+        marketplace=marketplace_settings,
+    )
+
+
+__all__ = ["load_core_config", "load_runtime_app_config"]

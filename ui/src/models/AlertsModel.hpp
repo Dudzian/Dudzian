@@ -66,6 +66,7 @@ public:
 signals:
     void countsChanged();
     void acknowledgementsChanged();
+    void alertRaised(const QString& id, int severity, const QString& title, const QString& description);
 
 private:
     struct Alert {

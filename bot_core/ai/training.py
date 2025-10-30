@@ -5,9 +5,11 @@ from __future__ import annotations
 import logging
 import math
 import statistics
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import (
+    TYPE_CHECKING,
     Callable,
     Iterable,
     Mapping,
@@ -22,7 +24,17 @@ import numpy as np
 
 from ._license import ensure_ai_signals_enabled
 from .feature_engineering import FeatureDataset
+from .inference import ModelRepository
 from .models import ModelArtifact
+from .validation import (
+    ModelQualityMonitor,
+    ModelQualityReport,
+    record_model_quality_report,
+)
+
+
+if TYPE_CHECKING:  # pragma: no cover - tylko dla statycznego typowania
+    from .scheduler import RetrainingScheduler, WalkForwardResult, WalkForwardValidator
 
 
 _LOGGER = logging.getLogger(__name__)
@@ -1310,6 +1322,209 @@ def _lightgbm_adapter_load(
     return _LightGBMAdapterModel(feature_names, scalers, booster)
 
 
+@dataclass(slots=True)
+class TrainingRunOutcome:
+    """Podsumowanie pojedynczego uruchomienia pipeline'u treningowego."""
+
+    artifact: ModelArtifact
+    version: str
+    artifact_path: Path
+    report: ModelQualityReport
+    validation: "WalkForwardResult | None"
+    trigger: str
+
+
+@dataclass(slots=True)
+class WalkForwardTrainingCoordinator:
+    """Koordynuje trening modeli wraz z walidacją walk-forward i wersjonowaniem."""
+
+    job_name: str
+    trainer_factory: Callable[[], "ModelTrainer"]
+    dataset_provider: Callable[[], FeatureDataset]
+    base_path: Path | str = Path("var/models")
+    repository: ModelRepository | None = None
+    scheduler: "RetrainingScheduler | None" = None
+    validator_factory: Callable[[FeatureDataset], "WalkForwardValidator"] | None = None
+    quality_monitor: ModelQualityMonitor | None = None
+    aliases: Sequence[str] = field(default_factory=lambda: ("latest",))
+    directional_tolerance: float = 0.03
+    mae_tolerance: float = 0.15
+    _repository_root: Path | None = field(init=False, repr=False, default=None)
+
+    def __post_init__(self) -> None:
+        name = self.job_name.strip()
+        if not name:
+            raise ValueError("job_name nie może być puste")
+        self.job_name = name
+
+        repository_root = Path(self.base_path).expanduser()
+        repository_root.mkdir(parents=True, exist_ok=True)
+        self._repository_root = repository_root / self.job_name
+        self._repository_root.mkdir(parents=True, exist_ok=True)
+
+        if self.repository is None:
+            self.repository = ModelRepository(self._repository_root)
+        else:
+            Path(self.repository.base_path).mkdir(parents=True, exist_ok=True)
+
+        aliases = tuple(str(alias).strip() for alias in self.aliases if str(alias).strip())
+        self.aliases = aliases or ("latest",)
+
+        if self.quality_monitor is None:
+            self.quality_monitor = ModelQualityMonitor(
+                model_name=self.job_name,
+                history_root=self._repository_root.parent / "quality",
+                directional_tolerance=self.directional_tolerance,
+                mae_tolerance=self.mae_tolerance,
+            )
+
+    @property
+    def repository_path(self) -> Path:
+        return self._repository_root
+
+    def tick(
+        self,
+        *,
+        production_metrics: Mapping[str, float] | None = None,
+        now: datetime | None = None,
+    ) -> TrainingRunOutcome | None:
+        should_run, reason = self._should_run(production_metrics, now)
+        if not should_run:
+            return None
+
+        dataset = self.dataset_provider()
+        validator = self._build_validator(dataset)
+        validation_result: "WalkForwardResult | None" = None
+        if validator is not None:
+            validation_result = validator.validate(self.trainer_factory)
+
+        trainer = self.trainer_factory()
+        artifact = trainer.train(dataset)
+
+        version = self._resolve_version(artifact)
+        filename = f"{self.job_name}-{version}.json"
+        artifact_path = self.repository.publish(
+            artifact,
+            version=version,
+            filename=filename,
+            aliases=self.aliases,
+            activate=True,
+        )
+
+        if self.scheduler is not None:
+            self.scheduler.mark_executed(now)
+
+        summary_metrics = self._summarize_metrics(artifact)
+        validation_payload = (
+            {
+                "average_mae": float(validation_result.average_mae),
+                "average_directional_accuracy": float(
+                    validation_result.average_directional_accuracy
+                ),
+                "windows": [dict(window) for window in validation_result.windows],
+            }
+            if validation_result is not None
+            else None
+        )
+
+        report = self.quality_monitor.record_training_run(
+            version=version,
+            metrics=summary_metrics,
+            trained_at=artifact.trained_at,
+            dataset_rows=len(dataset.vectors),
+            validation=validation_payload,
+        )
+
+        record_model_quality_report(
+            report,
+            history_root=self.quality_monitor.history_root,
+        )
+
+        return TrainingRunOutcome(
+            artifact=artifact,
+            version=version,
+            artifact_path=artifact_path,
+            report=report,
+            validation=validation_result,
+            trigger=reason,
+        )
+
+    def _should_run(
+        self,
+        production_metrics: Mapping[str, float] | None,
+        now: datetime | None,
+    ) -> tuple[bool, str]:
+        baseline_missing = (
+            self.quality_monitor is None or self.quality_monitor.baseline_report is None
+        )
+        due_schedule = self.scheduler.should_retrain(now) if self.scheduler else False
+        due_drift = False
+        if self.quality_monitor is not None and production_metrics:
+            due_drift = self.quality_monitor.should_retrain(production_metrics)
+
+        if baseline_missing:
+            return True, "initial"
+        if due_drift:
+            return True, "drift"
+        if due_schedule:
+            return True, "schedule"
+        return False, "idle"
+
+    def _build_validator(
+        self, dataset: FeatureDataset
+    ) -> "WalkForwardValidator | None":
+        if self.validator_factory is not None:
+            return self.validator_factory(dataset)
+        try:
+            from .scheduler import WalkForwardValidator  # lokalny import, aby uniknąć cykli
+        except Exception:  # pragma: no cover - brak modułu harmonogramu
+            return None
+
+        total = len(dataset.vectors)
+        if total < 16:
+            return None
+
+        train_window = max(8, int(total * 0.6))
+        test_window = max(4, total - train_window)
+        if train_window + test_window > total:
+            test_window = total - train_window
+        if train_window <= 0 or test_window <= 0:
+            return None
+
+        return WalkForwardValidator(
+            dataset,
+            train_window=train_window,
+            test_window=test_window,
+        )
+
+    def _summarize_metrics(self, artifact: ModelArtifact) -> Mapping[str, float]:
+        summary = getattr(artifact.metrics, "summary", None)
+        if callable(summary):
+            payload = summary()
+            if isinstance(payload, Mapping) and payload:
+                return {
+                    str(key): float(value)
+                    for key, value in payload.items()
+                    if isinstance(value, (int, float))
+                }
+
+        metrics: MutableMapping[str, float] = {}
+        for key in artifact.metrics:
+            try:
+                value = float(artifact.metrics[key])
+            except (TypeError, ValueError, KeyError):
+                continue
+            metrics[str(key)] = value
+        return metrics
+
+    def _resolve_version(self, artifact: ModelArtifact) -> str:
+        metadata_version = artifact.metadata.get("model_version")
+        if isinstance(metadata_version, str) and metadata_version.strip():
+            return metadata_version.strip()
+        timestamp = artifact.trained_at.astimezone(timezone.utc)
+        return timestamp.strftime("%Y%m%dT%H%M%S%fZ")
+
+
 def _ensure_default_external_adapters() -> None:
     if "linear" not in _EXTERNAL_ADAPTERS:
         register_external_model_adapter(
@@ -1347,6 +1562,8 @@ __all__ = [
     "ExternalTrainingResult",
     "ModelTrainer",
     "SimpleGradientBoostingModel",
+    "TrainingRunOutcome",
+    "WalkForwardTrainingCoordinator",
     "get_external_model_adapter",
     "register_external_model_adapter",
 ]

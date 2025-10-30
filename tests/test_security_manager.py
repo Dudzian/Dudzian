@@ -9,6 +9,8 @@ import pytest
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
+from typing import Callable
+
 from bot_core.exchanges.base import Environment, ExchangeCredentials
 from bot_core.security import (
     EncryptedFileSecretStorage,
@@ -42,6 +44,14 @@ class _InMemoryKeyring:
             raise self.errors.PasswordDeleteError(str(exc)) from exc
 
 
+class _StaticHwIdProvider:
+    def __init__(self, value: str = "unit-hwid") -> None:
+        self._value = value
+
+    def read(self) -> str:
+        return self._value
+
+
 @pytest.fixture(autouse=True)
 def fake_keyring() -> types.ModuleType:
     """Podmienia moduł ``keyring`` na wariant in-memory, aby testy były deterministyczne."""
@@ -56,8 +66,20 @@ def fake_keyring() -> types.ModuleType:
     sys.modules.pop("keyring", None)
 
 
-def test_roundtrip_store_and_load_credentials() -> None:
-    storage = KeyringSecretStorage(service_name="unit.test")
+@pytest.fixture()
+def keyring_storage(tmp_path: Path) -> Callable[[str], KeyringSecretStorage]:
+    def factory(service: str = "unit.test") -> KeyringSecretStorage:
+        return KeyringSecretStorage(
+            service_name=service,
+            hwid_provider=_StaticHwIdProvider(),
+            index_path=tmp_path / f"{service}.index.json",
+        )
+
+    return factory
+
+
+def test_roundtrip_store_and_load_credentials(keyring_storage: Callable[[str], KeyringSecretStorage]) -> None:
+    storage = keyring_storage()
     manager = SecretManager(storage, namespace="tests")
 
     credentials = ExchangeCredentials(
@@ -83,16 +105,16 @@ def test_roundtrip_store_and_load_credentials() -> None:
     assert loaded.environment == Environment.PAPER
 
 
-def test_load_missing_secret_raises_error() -> None:
-    storage = KeyringSecretStorage(service_name="unit.test")
+def test_load_missing_secret_raises_error(keyring_storage: Callable[[str], KeyringSecretStorage]) -> None:
+    storage = keyring_storage()
     manager = SecretManager(storage)
 
     with pytest.raises(SecretStorageError):
         manager.load_exchange_credentials("missing", expected_environment=Environment.LIVE)
 
 
-def test_environment_mismatch_detected() -> None:
-    storage = KeyringSecretStorage(service_name="unit.test")
+def test_environment_mismatch_detected(keyring_storage: Callable[[str], KeyringSecretStorage]) -> None:
+    storage = keyring_storage()
     manager = SecretManager(storage)
 
     credentials = ExchangeCredentials(
@@ -111,8 +133,8 @@ def test_environment_mismatch_detected() -> None:
     assert "nie pasuje" in str(excinfo.value)
 
 
-def test_required_permissions_are_enforced() -> None:
-    storage = KeyringSecretStorage(service_name="unit.test")
+def test_required_permissions_are_enforced(keyring_storage: Callable[[str], KeyringSecretStorage]) -> None:
+    storage = keyring_storage()
     manager = SecretManager(storage)
 
     credentials = ExchangeCredentials(
@@ -135,8 +157,8 @@ def test_required_permissions_are_enforced() -> None:
     assert "wymaganych uprawnień" in str(excinfo.value)
 
 
-def test_forbidden_permissions_are_detected() -> None:
-    storage = KeyringSecretStorage(service_name="unit.test")
+def test_forbidden_permissions_are_detected(keyring_storage: Callable[[str], KeyringSecretStorage]) -> None:
+    storage = keyring_storage()
     manager = SecretManager(storage)
 
     credentials = ExchangeCredentials(
@@ -159,8 +181,8 @@ def test_forbidden_permissions_are_detected() -> None:
     assert "zabronione uprawnienia" in str(excinfo.value)
 
 
-def test_store_and_load_generic_secret() -> None:
-    storage = KeyringSecretStorage(service_name="unit.test")
+def test_store_and_load_generic_secret(keyring_storage: Callable[[str], KeyringSecretStorage]) -> None:
+    storage = keyring_storage()
     manager = SecretManager(storage, namespace="tests")
 
     manager.store_secret_value("telegram_bot", "token123", purpose="alerts")

@@ -10,17 +10,23 @@ import logging
 from pathlib import Path
 from typing import Any, Mapping, MutableMapping, Protocol, Sequence
 
+from bot_core.marketplace import PresetSignatureVerification, verify_preset_signature
 from bot_core.security.hwid import HwIdProvider, HwIdProviderError
 from bot_core.security.guards import get_capability_guard
-from bot_core.security.signing import build_hmac_signature, verify_hmac_signature
+from bot_core.security.signing import build_hmac_signature
 
 from .base import StrategyEngine
 from .cross_exchange_arbitrage import (
     CrossExchangeArbitrageSettings,
     CrossExchangeArbitrageStrategy,
 )
+from .cross_exchange_hedge import (
+    CrossExchangeHedgeSettings,
+    CrossExchangeHedgeStrategy,
+)
 from .day_trading import DayTradingSettings, DayTradingStrategy
 from .daily_trend import DailyTrendMomentumSettings, DailyTrendMomentumStrategy
+from .futures_spread import FuturesSpreadSettings, FuturesSpreadStrategy
 from .grid import GridTradingSettings, GridTradingStrategy
 from .mean_reversion import MeanReversionSettings, MeanReversionStrategy
 from .options import OptionsIncomeSettings, OptionsIncomeStrategy
@@ -619,27 +625,19 @@ class StrategyCatalog:
         if not isinstance(preset_payload, Mapping):
             raise ValueError(f"Preset file {path} must define mapping payload")
 
-        signature_verified = False
         issues: list[str] = []
         if signature_doc is not None:
-            key_id = str(signature_doc.get("key_id") or "").strip()
-            algorithm = str(signature_doc.get("algorithm") or "HMAC-SHA256")
-            key_bytes = signing_keys.get(key_id) if signing_keys else None
-            if key_bytes is None:
-                issues.append("missing-signing-key")
-            else:
-                try:
-                    signature_verified = verify_hmac_signature(
-                        preset_payload,
-                        signature_doc,
-                        key=key_bytes,
-                        algorithm=algorithm,
-                    )
-                    if not signature_verified:
-                        issues.append("signature-mismatch")
-                except Exception as exc:  # pragma: no cover - defensywne logowanie
-                    LOGGER.debug("Signature verification error for preset %s", path, exc_info=True)
-                    issues.append(f"signature-error:{exc}")
+            verification, _signature = verify_preset_signature(
+                preset_payload,
+                signature_doc,
+                signing_keys=signing_keys,
+            )
+        else:
+            verification = PresetSignatureVerification(False, ("missing-signature",))
+
+        signature_verified = verification.verified
+        if verification.issues:
+            issues.extend(verification.issues)
 
         descriptor = self._build_preset_descriptor(
             preset_payload,
@@ -676,6 +674,7 @@ class StrategyCatalog:
             raise FileNotFoundError(f"Preset directory does not exist: {directory}")
 
         descriptors: list[StrategyPresetDescriptor] = []
+        seen_ids: set[str] = set()
         for candidate in sorted(base_path.glob("*.json")):
             descriptor = self._load_preset_file(
                 candidate,
@@ -683,6 +682,11 @@ class StrategyCatalog:
                 hwid_provider=hwid_provider,
             )
             descriptors.append(descriptor)
+            seen_ids.add(descriptor.preset_id)
+        for preset_id in list(self._presets):
+            if preset_id not in seen_ids:
+                self._presets.pop(preset_id, None)
+                self._license_overrides.pop(preset_id, None)
         return tuple(descriptors)
 
     def preset(
@@ -961,6 +965,31 @@ def _build_options_income_strategy(
     return OptionsIncomeStrategy(settings)
 
 
+def _build_futures_spread_strategy(
+    *, name: str, parameters: Mapping[str, Any], metadata: Mapping[str, Any] | None = None
+) -> StrategyEngine:
+    settings = FuturesSpreadSettings(
+        entry_z=float(parameters.get("entry_z", 1.25)),
+        exit_z=float(parameters.get("exit_z", 0.4)),
+        max_bars=int(parameters.get("max_bars", 48)),
+        funding_exit=float(parameters.get("funding_exit", 0.002)),
+        basis_exit=float(parameters.get("basis_exit", 0.02)),
+    )
+    return FuturesSpreadStrategy(settings)
+
+
+def _build_cross_exchange_hedge_strategy(
+    *, name: str, parameters: Mapping[str, Any], metadata: Mapping[str, Any] | None = None
+) -> StrategyEngine:
+    settings = CrossExchangeHedgeSettings(
+        basis_scale=float(parameters.get("basis_scale", 0.01)),
+        inventory_scale=float(parameters.get("inventory_scale", 0.35)),
+        latency_limit_ms=float(parameters.get("latency_limit_ms", 180.0)),
+        max_hedge_ratio=float(parameters.get("max_hedge_ratio", 0.9)),
+    )
+    return CrossExchangeHedgeStrategy(settings)
+
+
 def _build_statistical_arbitrage_strategy(
     *, name: str, parameters: Mapping[str, Any], metadata: Mapping[str, Any] | None = None
 ) -> StrategyEngine:
@@ -1074,6 +1103,28 @@ def build_default_catalog() -> StrategyCatalog:
             required_data=("ohlcv", "technical_indicators"),
             capability="day_trading",
             default_tags=("intraday", "momentum"),
+        )
+    )
+    catalog.register(
+        StrategyEngineSpec(
+            key="futures_spread",
+            factory=_build_futures_spread_strategy,
+            license_tier="enterprise",
+            risk_classes=("derivatives", "market_neutral"),
+            required_data=("futures_curve", "funding_rates", "ohlcv"),
+            capability="futures_spread",
+            default_tags=("futures", "hedge", "basis"),
+        )
+    )
+    catalog.register(
+        StrategyEngineSpec(
+            key="cross_exchange_hedge",
+            factory=_build_cross_exchange_hedge_strategy,
+            license_tier="enterprise",
+            risk_classes=("hedging", "liquidity"),
+            required_data=("spot_basis", "inventory_skew", "latency_metrics"),
+            capability="cross_exchange_hedge",
+            default_tags=("hedge", "multi_venue", "delta"),
         )
     )
     return catalog

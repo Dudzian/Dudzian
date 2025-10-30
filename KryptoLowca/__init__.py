@@ -6,6 +6,15 @@ Ten plik sprawia, że katalog staje się pakietem Pythona i udostępnia najważn
 """
 from __future__ import annotations
 
+import warnings
+
+warnings.warn(
+    "Pakiet KryptoLowca jest przestarzały i pozostaje jedynie jako warstwa"
+    " kompatybilności. Nowy kod powinien korzystać z bot_core.*",
+    DeprecationWarning,
+    stacklevel=2,
+)
+
 __all__ = [
     "DatabaseManager",
     "DBOptions",

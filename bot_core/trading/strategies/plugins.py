@@ -25,6 +25,16 @@ if TYPE_CHECKING:  # pragma: no cover - hints only
 
 from bot_core.strategies.catalog import DEFAULT_STRATEGY_CATALOG
 
+from .cross_exchange_hedge import (
+    CrossExchangeHedgeConfig,
+    compute_cross_exchange_hedge_signal,
+)
+from .futures_spread import (
+    FuturesSpreadSignalConfig,
+    compute_futures_spread_signal,
+)
+from .options_income import OptionsIncomeSignalConfig, compute_options_income_signal
+
 _BUILTIN_PLUGIN_REGISTRY: MutableMapping[str, Type["StrategyPlugin"]] = {}
 _REGISTERED_ENGINE_KEYS: set[str] = set()
 
@@ -253,6 +263,8 @@ class StrategyCatalog:
                 ScalpingStrategy,
                 OptionsIncomeStrategy,
                 StatisticalArbitrageStrategy,
+                FuturesSpreadStrategy,
+                CrossExchangeHedgeStrategy,
             ),
         )
 
@@ -480,28 +492,21 @@ class OptionsIncomeStrategy(StrategyPlugin):
         *,
         market_data: Optional[pd.DataFrame] = None,
     ) -> pd.Series:
-        index = indicators.ema_fast.index
-        atr = indicators.atr.replace(0.0, np.nan)
-        realized = (atr / (indicators.ema_fast.abs() + 1e-12)).rolling(window=10, min_periods=1).mean()
+        config = OptionsIncomeSignalConfig(
+            spread_scale=float(getattr(params, "options_income_spread_scale", 0.35) or 0.35),
+            delta_anchor_weight=float(getattr(params, "options_income_delta_weight", 0.3) or 0.3),
+            theta_weight=float(getattr(params, "options_income_theta_weight", 0.7) or 0.7),
+            anchor_window=int(getattr(params, "options_income_anchor_window", 12) or 12),
+        )
 
-        implied: Optional[pd.Series]
-        implied = None
-        if market_data is not None:
-            if "implied_volatility" in market_data:
-                implied = market_data["implied_volatility"].reindex(index).interpolate(limit_direction="both")
-            elif "iv" in market_data:
-                implied = market_data["iv"].reindex(index).interpolate(limit_direction="both")
-        if implied is None:
-            implied = realized * 1.1
-
-        vol_spread = (implied - realized).fillna(0.0)
-        theta_bias = np.tanh(vol_spread / (realized.replace(0.0, np.nan).fillna(1e-4)))
-
-        trend_anchor = (indicators.ema_fast - indicators.sma_trend) / (atr + 1e-12)
-        delta_neutraliser = trend_anchor.clip(-1.0, 1.0) * 0.3
-
-        signal = (theta_bias * 0.7 - delta_neutraliser).clip(-1.0, 1.0)
-        return pd.Series(signal, index=index)
+        series = compute_options_income_signal(
+            fast_price=indicators.ema_fast,
+            atr=indicators.atr,
+            slow_anchor=indicators.sma_trend,
+            market_data=market_data,
+            config=config,
+        )
+        return self.ensure_index(series, indicators.ema_fast.index)
 
 
 class StatisticalArbitrageStrategy(StrategyPlugin):
@@ -534,4 +539,107 @@ class StatisticalArbitrageStrategy(StrategyPlugin):
 
         signal = (-np.tanh(macd_norm) * 0.6 - spread * 0.4).clip(-1.0, 1.0)
         return pd.Series(signal, index=indicators.macd.index)
+
+
+class FuturesSpreadStrategy(StrategyPlugin):
+    """Kontroluje rozjazd kontraktów futures względem siebie oraz rynku kasowego."""
+
+    engine_key = "futures_spread"
+    name = "futures_spread"
+    description = "Hedguje carry oraz funding poprzez adaptacyjny trading spreadów."
+    license_tier = "enterprise"
+    risk_classes = ("derivatives", "market_neutral")
+    required_data = ("futures_curve", "funding_rates", "ohlcv")
+    capability = "futures_spread"
+    tags = ("futures", "hedge", "basis")
+
+    def generate(
+        self,
+        indicators: "TechnicalIndicators",
+        params: "TradingParameters",
+        *,
+        market_data: Optional[pd.DataFrame] = None,
+    ) -> pd.Series:
+        spread_source: Optional[pd.Series] = None
+        if market_data is not None:
+            for column in ("spread_z", "spread_zscore", "futures_spread_zscore"):
+                if column in market_data:
+                    spread_source = market_data[column]
+                    break
+        if spread_source is None:
+            spread_source = (
+                (indicators.macd - indicators.macd_signal)
+                / (indicators.atr.replace(0.0, np.nan).ffill().replace(0.0, 1.0))
+            )
+        spread_source = spread_source.reindex(indicators.macd.index).ffill().fillna(0.0)
+
+        config = FuturesSpreadSignalConfig(
+            entry_z=float(getattr(params, "futures_spread_entry_z", 1.25) or 1.25),
+            exit_z=float(getattr(params, "futures_spread_exit_z", 0.4) or 0.4),
+            basis_scale=float(getattr(params, "futures_spread_basis_scale", 0.015) or 0.015),
+            funding_scale=float(getattr(params, "futures_spread_funding_scale", 0.0008) or 0.0008),
+            carry_weight=float(getattr(params, "futures_spread_carry_weight", 0.35) or 0.35),
+            funding_weight=float(getattr(params, "futures_spread_funding_weight", 0.25) or 0.25),
+        )
+
+        series = compute_futures_spread_signal(
+            spread_zscore=spread_source,
+            market_data=market_data,
+            config=config,
+        )
+        return self.ensure_index(series, indicators.macd.index)
+
+
+class CrossExchangeHedgeStrategy(StrategyPlugin):
+    """Neutralizuje ekspozycję poprzez dynamiczne hedgingi między venue."""
+
+    engine_key = "cross_exchange_hedge"
+    name = "cross_exchange_hedge"
+    description = "Rebalansuje delta pomiędzy spot a futures biorąc pod uwagę latency i inventory."
+    license_tier = "enterprise"
+    risk_classes = ("hedging", "liquidity")
+    required_data = ("spot_basis", "inventory_skew", "latency_metrics")
+    capability = "cross_exchange_hedge"
+    tags = ("hedge", "multi_venue", "delta")
+
+    def generate(
+        self,
+        indicators: "TechnicalIndicators",
+        params: "TradingParameters",
+        *,
+        market_data: Optional[pd.DataFrame] = None,
+    ) -> pd.Series:
+        basis_series: Optional[pd.Series] = None
+        inventory_series: Optional[pd.Series] = None
+        if market_data is not None:
+            if "spot_basis" in market_data:
+                basis_series = market_data["spot_basis"]
+            if "inventory_skew" in market_data:
+                inventory_series = market_data["inventory_skew"]
+
+        if basis_series is None:
+            basis_series = (indicators.ema_fast - indicators.sma_trend) / (
+                indicators.atr.replace(0.0, np.nan).ffill().replace(0.0, 1.0)
+            )
+        if inventory_series is None:
+            inventory_series = (indicators.stochastic_k - 50.0) / 50.0
+
+        basis_series = basis_series.reindex(indicators.ema_fast.index).ffill().fillna(0.0)
+        inventory_series = inventory_series.reindex(indicators.ema_fast.index).ffill().fillna(0.0)
+
+        config = CrossExchangeHedgeConfig(
+            basis_scale=float(getattr(params, "cross_exchange_basis_scale", 0.01) or 0.01),
+            inventory_scale=float(getattr(params, "cross_exchange_inventory_scale", 0.35) or 0.35),
+            latency_penalty=float(getattr(params, "cross_exchange_latency_penalty", 0.2) or 0.2),
+            hedge_weight=float(getattr(params, "cross_exchange_hedge_weight", 0.55) or 0.55),
+            inventory_weight=float(getattr(params, "cross_exchange_inventory_weight", 0.25) or 0.25),
+        )
+
+        series = compute_cross_exchange_hedge_signal(
+            spot_basis=basis_series,
+            inventory_skew=inventory_series,
+            market_data=market_data,
+            config=config,
+        )
+        return self.ensure_index(series, indicators.ema_fast.index)
 

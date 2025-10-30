@@ -5,9 +5,13 @@ import logging
 import math
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Callable, Mapping, MutableMapping, Sequence
 
 from bot_core.ai import DecisionModelInference, MarketRegime, ModelScore
+from bot_core.ai.inference import ModelRepository
+from bot_core.ai.validation import ModelQualityReport, load_latest_quality_report
+from bot_core.reporting.model_quality import DEFAULT_QUALITY_DIR
 from bot_core.config.models import (
     DecisionEngineConfig,
     DecisionOrchestratorThresholds,
@@ -130,6 +134,41 @@ class DecisionOrchestrator:
         if self._default_model_name == key:
             self._default_model_name = None
             self._inference = None
+
+    def load_repository_inference(
+        self,
+        repository: ModelRepository,
+        *,
+        model_name: str,
+        alias: str = "latest",
+        inference_name: str = "__default__",
+        quality_history: str | Path | None = None,
+        fallback_alias: str | None = None,
+    ) -> tuple[str, ModelQualityReport | None]:
+        """Ładuje model z repozytorium respektując raporty jakości."""
+
+        quality_root = quality_history if quality_history is not None else DEFAULT_QUALITY_DIR
+        report = load_latest_quality_report(model_name, history_root=quality_root)
+
+        reference = alias
+        if report is not None and report.status == "degraded":
+            baseline = report.baseline_version or fallback_alias
+            if baseline:
+                try:
+                    repository.resolve(baseline)
+                except (KeyError, FileNotFoundError):
+                    baseline = None
+            if baseline:
+                _LOGGER.warning(
+                    "Rolling back model %s to baseline %s after degraded quality", model_name, baseline
+                )
+                reference = baseline
+
+        inference = DecisionModelInference(repository)
+        inference.model_label = model_name
+        inference.load_weights(reference)
+        self.attach_named_inference(inference_name, inference, set_default=(inference_name == "__default__"))
+        return reference, report
 
     def update_model_performance(
         self,

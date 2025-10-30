@@ -1093,6 +1093,7 @@ environments:
     keychain_key: binance_paper_trading
     keychain_user: default
     credential_purpose: trading
+    offline_mode: true
     data_cache_path: ./var/data/binance_paper
     risk_profile: balanced
     default_strategy: core_daily_trend

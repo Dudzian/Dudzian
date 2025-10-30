@@ -73,6 +73,8 @@ from bot_core.exchanges.kraken import KrakenFuturesAdapter, KrakenSpotAdapter
 from bot_core.exchanges.nowa_gielda import NowaGieldaSpotAdapter
 from bot_core.exchanges.kucoin import KuCoinSpotAdapter
 from bot_core.exchanges.okx import OKXFuturesAdapter, OKXMarginAdapter, OKXSpotAdapter
+from bot_core.exchanges.health import HealthCheckResult, HealthMonitor, HealthStatus
+from bot_core.exchanges.health_checks import build_standard_health_checks
 from bot_core.exchanges.zonda import ZondaSpotAdapter
 from bot_core.risk.base import RiskRepository
 from bot_core.risk.engine import ThresholdRiskEngine
@@ -1723,6 +1725,7 @@ class BootstrapContext:
     ai_pipeline_pending: Sequence[str] | None = None
     execution_service: Any | None = None
     live_readiness_checklist: Sequence[Mapping[str, Any]] | None = None
+    exchange_health_results: Sequence[HealthCheckResult] | None = None
 
 
 def bootstrap_environment(
@@ -2183,6 +2186,41 @@ def bootstrap_environment(
         offline_mode=offline_mode,
     )
     adapter.configure_network(ip_allowlist=environment.ip_allowlist or None)
+
+    health_results: Sequence[HealthCheckResult] | None = None
+    if not offline_mode:
+        try:
+            checks = build_standard_health_checks(adapter)
+            monitor = HealthMonitor(checks)
+            health_results = monitor.run()
+        except Exception as exc:
+            _LOGGER.error("Health-check giełdy %s nie powiódł się", environment.exchange, exc_info=True)
+            raise RuntimeError(f"Health-check giełdy {environment.exchange} zakończył się błędem") from exc
+    if health_results is not None:
+        overall = HealthMonitor.overall_status(health_results)
+        if overall is HealthStatus.UNAVAILABLE:
+            env_type = getattr(environment, "environment", Environment.LIVE)
+            try:
+                env_enum = Environment(env_type) if not isinstance(env_type, Environment) else env_type
+            except ValueError:  # pragma: no cover - niestandardowe środowisko
+                env_enum = Environment.LIVE
+
+            if env_enum is Environment.LIVE:
+                raise RuntimeError(
+                    f"Giełda {environment.exchange} jest niedostępna – przerwano bootstrap."
+                )
+
+            _LOGGER.warning(
+                "Health-check giełdy %s zakończony w stanie UNAVAILABLE, ale środowisko=%s – kontynuuję w trybie zdegradowanym.",
+                environment.exchange,
+                env_enum.value,
+            )
+        if overall is HealthStatus.DEGRADED:
+            _LOGGER.warning(
+                "Health-check giełdy %s zakończony w stanie DEGRADED: %s",
+                environment.exchange,
+                [result.details for result in health_results],
+            )
 
     alert_channels, alert_router, audit_log = build_alert_channels(
         core_config=core_config,
@@ -3127,6 +3165,7 @@ def bootstrap_environment(
         ai_pipeline_pending=tuple(ai_pipeline_pending) if ai_pipeline_pending else None,
         execution_service=execution_service,
         live_readiness_checklist=live_readiness_checklist,
+        exchange_health_results=health_results,
     )
 
 

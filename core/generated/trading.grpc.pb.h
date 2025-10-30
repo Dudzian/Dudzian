@@ -1846,6 +1846,841 @@ class HealthService final {
   typedef WithStreamedUnaryMethod_Check<Service > StreamedService;
 };
 
+class MarketplaceService final {
+ public:
+  static constexpr char const* service_full_name() {
+    return "botcore.trading.v1.MarketplaceService";
+  }
+  class StubInterface {
+   public:
+    virtual ~StubInterface() {}
+    virtual ::grpc::Status ListPresets(::grpc::ClientContext* context, const ::botcore::trading::v1::ListMarketplacePresetsRequest& request, ::botcore::trading::v1::ListMarketplacePresetsResponse* response) = 0;
+    std::unique_ptr< ::grpc::ClientAsyncResponseReaderInterface< ::botcore::trading::v1::ListMarketplacePresetsResponse>> AsyncListPresets(::grpc::ClientContext* context, const ::botcore::trading::v1::ListMarketplacePresetsRequest& request, ::grpc::CompletionQueue* cq) {
+      return std::unique_ptr< ::grpc::ClientAsyncResponseReaderInterface< ::botcore::trading::v1::ListMarketplacePresetsResponse>>(AsyncListPresetsRaw(context, request, cq));
+    }
+    std::unique_ptr< ::grpc::ClientAsyncResponseReaderInterface< ::botcore::trading::v1::ListMarketplacePresetsResponse>> PrepareAsyncListPresets(::grpc::ClientContext* context, const ::botcore::trading::v1::ListMarketplacePresetsRequest& request, ::grpc::CompletionQueue* cq) {
+      return std::unique_ptr< ::grpc::ClientAsyncResponseReaderInterface< ::botcore::trading::v1::ListMarketplacePresetsResponse>>(PrepareAsyncListPresetsRaw(context, request, cq));
+    }
+    virtual ::grpc::Status ImportPreset(::grpc::ClientContext* context, const ::botcore::trading::v1::ImportMarketplacePresetRequest& request, ::botcore::trading::v1::ImportMarketplacePresetResponse* response) = 0;
+    std::unique_ptr< ::grpc::ClientAsyncResponseReaderInterface< ::botcore::trading::v1::ImportMarketplacePresetResponse>> AsyncImportPreset(::grpc::ClientContext* context, const ::botcore::trading::v1::ImportMarketplacePresetRequest& request, ::grpc::CompletionQueue* cq) {
+      return std::unique_ptr< ::grpc::ClientAsyncResponseReaderInterface< ::botcore::trading::v1::ImportMarketplacePresetResponse>>(AsyncImportPresetRaw(context, request, cq));
+    }
+    std::unique_ptr< ::grpc::ClientAsyncResponseReaderInterface< ::botcore::trading::v1::ImportMarketplacePresetResponse>> PrepareAsyncImportPreset(::grpc::ClientContext* context, const ::botcore::trading::v1::ImportMarketplacePresetRequest& request, ::grpc::CompletionQueue* cq) {
+      return std::unique_ptr< ::grpc::ClientAsyncResponseReaderInterface< ::botcore::trading::v1::ImportMarketplacePresetResponse>>(PrepareAsyncImportPresetRaw(context, request, cq));
+    }
+    virtual ::grpc::Status ExportPreset(::grpc::ClientContext* context, const ::botcore::trading::v1::ExportMarketplacePresetRequest& request, ::botcore::trading::v1::ExportMarketplacePresetResponse* response) = 0;
+    std::unique_ptr< ::grpc::ClientAsyncResponseReaderInterface< ::botcore::trading::v1::ExportMarketplacePresetResponse>> AsyncExportPreset(::grpc::ClientContext* context, const ::botcore::trading::v1::ExportMarketplacePresetRequest& request, ::grpc::CompletionQueue* cq) {
+      return std::unique_ptr< ::grpc::ClientAsyncResponseReaderInterface< ::botcore::trading::v1::ExportMarketplacePresetResponse>>(AsyncExportPresetRaw(context, request, cq));
+    }
+    std::unique_ptr< ::grpc::ClientAsyncResponseReaderInterface< ::botcore::trading::v1::ExportMarketplacePresetResponse>> PrepareAsyncExportPreset(::grpc::ClientContext* context, const ::botcore::trading::v1::ExportMarketplacePresetRequest& request, ::grpc::CompletionQueue* cq) {
+      return std::unique_ptr< ::grpc::ClientAsyncResponseReaderInterface< ::botcore::trading::v1::ExportMarketplacePresetResponse>>(PrepareAsyncExportPresetRaw(context, request, cq));
+    }
+    virtual ::grpc::Status RemovePreset(::grpc::ClientContext* context, const ::botcore::trading::v1::RemoveMarketplacePresetRequest& request, ::botcore::trading::v1::RemoveMarketplacePresetResponse* response) = 0;
+    std::unique_ptr< ::grpc::ClientAsyncResponseReaderInterface< ::botcore::trading::v1::RemoveMarketplacePresetResponse>> AsyncRemovePreset(::grpc::ClientContext* context, const ::botcore::trading::v1::RemoveMarketplacePresetRequest& request, ::grpc::CompletionQueue* cq) {
+      return std::unique_ptr< ::grpc::ClientAsyncResponseReaderInterface< ::botcore::trading::v1::RemoveMarketplacePresetResponse>>(AsyncRemovePresetRaw(context, request, cq));
+    }
+    std::unique_ptr< ::grpc::ClientAsyncResponseReaderInterface< ::botcore::trading::v1::RemoveMarketplacePresetResponse>> PrepareAsyncRemovePreset(::grpc::ClientContext* context, const ::botcore::trading::v1::RemoveMarketplacePresetRequest& request, ::grpc::CompletionQueue* cq) {
+      return std::unique_ptr< ::grpc::ClientAsyncResponseReaderInterface< ::botcore::trading::v1::RemoveMarketplacePresetResponse>>(PrepareAsyncRemovePresetRaw(context, request, cq));
+    }
+    virtual ::grpc::Status ActivatePreset(::grpc::ClientContext* context, const ::botcore::trading::v1::ActivateMarketplacePresetRequest& request, ::botcore::trading::v1::ActivateMarketplacePresetResponse* response) = 0;
+    std::unique_ptr< ::grpc::ClientAsyncResponseReaderInterface< ::botcore::trading::v1::ActivateMarketplacePresetResponse>> AsyncActivatePreset(::grpc::ClientContext* context, const ::botcore::trading::v1::ActivateMarketplacePresetRequest& request, ::grpc::CompletionQueue* cq) {
+      return std::unique_ptr< ::grpc::ClientAsyncResponseReaderInterface< ::botcore::trading::v1::ActivateMarketplacePresetResponse>>(AsyncActivatePresetRaw(context, request, cq));
+    }
+    std::unique_ptr< ::grpc::ClientAsyncResponseReaderInterface< ::botcore::trading::v1::ActivateMarketplacePresetResponse>> PrepareAsyncActivatePreset(::grpc::ClientContext* context, const ::botcore::trading::v1::ActivateMarketplacePresetRequest& request, ::grpc::CompletionQueue* cq) {
+      return std::unique_ptr< ::grpc::ClientAsyncResponseReaderInterface< ::botcore::trading::v1::ActivateMarketplacePresetResponse>>(PrepareAsyncActivatePresetRaw(context, request, cq));
+    }
+    class async_interface {
+     public:
+      virtual ~async_interface() {}
+      virtual void ListPresets(::grpc::ClientContext* context, const ::botcore::trading::v1::ListMarketplacePresetsRequest* request, ::botcore::trading::v1::ListMarketplacePresetsResponse* response, std::function<void(::grpc::Status)>) = 0;
+      virtual void ListPresets(::grpc::ClientContext* context, const ::botcore::trading::v1::ListMarketplacePresetsRequest* request, ::botcore::trading::v1::ListMarketplacePresetsResponse* response, ::grpc::ClientUnaryReactor* reactor) = 0;
+      virtual void ImportPreset(::grpc::ClientContext* context, const ::botcore::trading::v1::ImportMarketplacePresetRequest* request, ::botcore::trading::v1::ImportMarketplacePresetResponse* response, std::function<void(::grpc::Status)>) = 0;
+      virtual void ImportPreset(::grpc::ClientContext* context, const ::botcore::trading::v1::ImportMarketplacePresetRequest* request, ::botcore::trading::v1::ImportMarketplacePresetResponse* response, ::grpc::ClientUnaryReactor* reactor) = 0;
+      virtual void ExportPreset(::grpc::ClientContext* context, const ::botcore::trading::v1::ExportMarketplacePresetRequest* request, ::botcore::trading::v1::ExportMarketplacePresetResponse* response, std::function<void(::grpc::Status)>) = 0;
+      virtual void ExportPreset(::grpc::ClientContext* context, const ::botcore::trading::v1::ExportMarketplacePresetRequest* request, ::botcore::trading::v1::ExportMarketplacePresetResponse* response, ::grpc::ClientUnaryReactor* reactor) = 0;
+      virtual void RemovePreset(::grpc::ClientContext* context, const ::botcore::trading::v1::RemoveMarketplacePresetRequest* request, ::botcore::trading::v1::RemoveMarketplacePresetResponse* response, std::function<void(::grpc::Status)>) = 0;
+      virtual void RemovePreset(::grpc::ClientContext* context, const ::botcore::trading::v1::RemoveMarketplacePresetRequest* request, ::botcore::trading::v1::RemoveMarketplacePresetResponse* response, ::grpc::ClientUnaryReactor* reactor) = 0;
+      virtual void ActivatePreset(::grpc::ClientContext* context, const ::botcore::trading::v1::ActivateMarketplacePresetRequest* request, ::botcore::trading::v1::ActivateMarketplacePresetResponse* response, std::function<void(::grpc::Status)>) = 0;
+      virtual void ActivatePreset(::grpc::ClientContext* context, const ::botcore::trading::v1::ActivateMarketplacePresetRequest* request, ::botcore::trading::v1::ActivateMarketplacePresetResponse* response, ::grpc::ClientUnaryReactor* reactor) = 0;
+    };
+    typedef class async_interface experimental_async_interface;
+    virtual class async_interface* async() { return nullptr; }
+    class async_interface* experimental_async() { return async(); }
+   private:
+    virtual ::grpc::ClientAsyncResponseReaderInterface< ::botcore::trading::v1::ListMarketplacePresetsResponse>* AsyncListPresetsRaw(::grpc::ClientContext* context, const ::botcore::trading::v1::ListMarketplacePresetsRequest& request, ::grpc::CompletionQueue* cq) = 0;
+    virtual ::grpc::ClientAsyncResponseReaderInterface< ::botcore::trading::v1::ListMarketplacePresetsResponse>* PrepareAsyncListPresetsRaw(::grpc::ClientContext* context, const ::botcore::trading::v1::ListMarketplacePresetsRequest& request, ::grpc::CompletionQueue* cq) = 0;
+    virtual ::grpc::ClientAsyncResponseReaderInterface< ::botcore::trading::v1::ImportMarketplacePresetResponse>* AsyncImportPresetRaw(::grpc::ClientContext* context, const ::botcore::trading::v1::ImportMarketplacePresetRequest& request, ::grpc::CompletionQueue* cq) = 0;
+    virtual ::grpc::ClientAsyncResponseReaderInterface< ::botcore::trading::v1::ImportMarketplacePresetResponse>* PrepareAsyncImportPresetRaw(::grpc::ClientContext* context, const ::botcore::trading::v1::ImportMarketplacePresetRequest& request, ::grpc::CompletionQueue* cq) = 0;
+    virtual ::grpc::ClientAsyncResponseReaderInterface< ::botcore::trading::v1::ExportMarketplacePresetResponse>* AsyncExportPresetRaw(::grpc::ClientContext* context, const ::botcore::trading::v1::ExportMarketplacePresetRequest& request, ::grpc::CompletionQueue* cq) = 0;
+    virtual ::grpc::ClientAsyncResponseReaderInterface< ::botcore::trading::v1::ExportMarketplacePresetResponse>* PrepareAsyncExportPresetRaw(::grpc::ClientContext* context, const ::botcore::trading::v1::ExportMarketplacePresetRequest& request, ::grpc::CompletionQueue* cq) = 0;
+    virtual ::grpc::ClientAsyncResponseReaderInterface< ::botcore::trading::v1::RemoveMarketplacePresetResponse>* AsyncRemovePresetRaw(::grpc::ClientContext* context, const ::botcore::trading::v1::RemoveMarketplacePresetRequest& request, ::grpc::CompletionQueue* cq) = 0;
+    virtual ::grpc::ClientAsyncResponseReaderInterface< ::botcore::trading::v1::RemoveMarketplacePresetResponse>* PrepareAsyncRemovePresetRaw(::grpc::ClientContext* context, const ::botcore::trading::v1::RemoveMarketplacePresetRequest& request, ::grpc::CompletionQueue* cq) = 0;
+    virtual ::grpc::ClientAsyncResponseReaderInterface< ::botcore::trading::v1::ActivateMarketplacePresetResponse>* AsyncActivatePresetRaw(::grpc::ClientContext* context, const ::botcore::trading::v1::ActivateMarketplacePresetRequest& request, ::grpc::CompletionQueue* cq) = 0;
+    virtual ::grpc::ClientAsyncResponseReaderInterface< ::botcore::trading::v1::ActivateMarketplacePresetResponse>* PrepareAsyncActivatePresetRaw(::grpc::ClientContext* context, const ::botcore::trading::v1::ActivateMarketplacePresetRequest& request, ::grpc::CompletionQueue* cq) = 0;
+  };
+  class Stub final : public StubInterface {
+   public:
+    Stub(const std::shared_ptr< ::grpc::ChannelInterface>& channel, const ::grpc::StubOptions& options = ::grpc::StubOptions());
+    ::grpc::Status ListPresets(::grpc::ClientContext* context, const ::botcore::trading::v1::ListMarketplacePresetsRequest& request, ::botcore::trading::v1::ListMarketplacePresetsResponse* response) override;
+    std::unique_ptr< ::grpc::ClientAsyncResponseReader< ::botcore::trading::v1::ListMarketplacePresetsResponse>> AsyncListPresets(::grpc::ClientContext* context, const ::botcore::trading::v1::ListMarketplacePresetsRequest& request, ::grpc::CompletionQueue* cq) {
+      return std::unique_ptr< ::grpc::ClientAsyncResponseReader< ::botcore::trading::v1::ListMarketplacePresetsResponse>>(AsyncListPresetsRaw(context, request, cq));
+    }
+    std::unique_ptr< ::grpc::ClientAsyncResponseReader< ::botcore::trading::v1::ListMarketplacePresetsResponse>> PrepareAsyncListPresets(::grpc::ClientContext* context, const ::botcore::trading::v1::ListMarketplacePresetsRequest& request, ::grpc::CompletionQueue* cq) {
+      return std::unique_ptr< ::grpc::ClientAsyncResponseReader< ::botcore::trading::v1::ListMarketplacePresetsResponse>>(PrepareAsyncListPresetsRaw(context, request, cq));
+    }
+    ::grpc::Status ImportPreset(::grpc::ClientContext* context, const ::botcore::trading::v1::ImportMarketplacePresetRequest& request, ::botcore::trading::v1::ImportMarketplacePresetResponse* response) override;
+    std::unique_ptr< ::grpc::ClientAsyncResponseReader< ::botcore::trading::v1::ImportMarketplacePresetResponse>> AsyncImportPreset(::grpc::ClientContext* context, const ::botcore::trading::v1::ImportMarketplacePresetRequest& request, ::grpc::CompletionQueue* cq) {
+      return std::unique_ptr< ::grpc::ClientAsyncResponseReader< ::botcore::trading::v1::ImportMarketplacePresetResponse>>(AsyncImportPresetRaw(context, request, cq));
+    }
+    std::unique_ptr< ::grpc::ClientAsyncResponseReader< ::botcore::trading::v1::ImportMarketplacePresetResponse>> PrepareAsyncImportPreset(::grpc::ClientContext* context, const ::botcore::trading::v1::ImportMarketplacePresetRequest& request, ::grpc::CompletionQueue* cq) {
+      return std::unique_ptr< ::grpc::ClientAsyncResponseReader< ::botcore::trading::v1::ImportMarketplacePresetResponse>>(PrepareAsyncImportPresetRaw(context, request, cq));
+    }
+    ::grpc::Status ExportPreset(::grpc::ClientContext* context, const ::botcore::trading::v1::ExportMarketplacePresetRequest& request, ::botcore::trading::v1::ExportMarketplacePresetResponse* response) override;
+    std::unique_ptr< ::grpc::ClientAsyncResponseReader< ::botcore::trading::v1::ExportMarketplacePresetResponse>> AsyncExportPreset(::grpc::ClientContext* context, const ::botcore::trading::v1::ExportMarketplacePresetRequest& request, ::grpc::CompletionQueue* cq) {
+      return std::unique_ptr< ::grpc::ClientAsyncResponseReader< ::botcore::trading::v1::ExportMarketplacePresetResponse>>(AsyncExportPresetRaw(context, request, cq));
+    }
+    std::unique_ptr< ::grpc::ClientAsyncResponseReader< ::botcore::trading::v1::ExportMarketplacePresetResponse>> PrepareAsyncExportPreset(::grpc::ClientContext* context, const ::botcore::trading::v1::ExportMarketplacePresetRequest& request, ::grpc::CompletionQueue* cq) {
+      return std::unique_ptr< ::grpc::ClientAsyncResponseReader< ::botcore::trading::v1::ExportMarketplacePresetResponse>>(PrepareAsyncExportPresetRaw(context, request, cq));
+    }
+    ::grpc::Status RemovePreset(::grpc::ClientContext* context, const ::botcore::trading::v1::RemoveMarketplacePresetRequest& request, ::botcore::trading::v1::RemoveMarketplacePresetResponse* response) override;
+    std::unique_ptr< ::grpc::ClientAsyncResponseReader< ::botcore::trading::v1::RemoveMarketplacePresetResponse>> AsyncRemovePreset(::grpc::ClientContext* context, const ::botcore::trading::v1::RemoveMarketplacePresetRequest& request, ::grpc::CompletionQueue* cq) {
+      return std::unique_ptr< ::grpc::ClientAsyncResponseReader< ::botcore::trading::v1::RemoveMarketplacePresetResponse>>(AsyncRemovePresetRaw(context, request, cq));
+    }
+    std::unique_ptr< ::grpc::ClientAsyncResponseReader< ::botcore::trading::v1::RemoveMarketplacePresetResponse>> PrepareAsyncRemovePreset(::grpc::ClientContext* context, const ::botcore::trading::v1::RemoveMarketplacePresetRequest& request, ::grpc::CompletionQueue* cq) {
+      return std::unique_ptr< ::grpc::ClientAsyncResponseReader< ::botcore::trading::v1::RemoveMarketplacePresetResponse>>(PrepareAsyncRemovePresetRaw(context, request, cq));
+    }
+    ::grpc::Status ActivatePreset(::grpc::ClientContext* context, const ::botcore::trading::v1::ActivateMarketplacePresetRequest& request, ::botcore::trading::v1::ActivateMarketplacePresetResponse* response) override;
+    std::unique_ptr< ::grpc::ClientAsyncResponseReader< ::botcore::trading::v1::ActivateMarketplacePresetResponse>> AsyncActivatePreset(::grpc::ClientContext* context, const ::botcore::trading::v1::ActivateMarketplacePresetRequest& request, ::grpc::CompletionQueue* cq) {
+      return std::unique_ptr< ::grpc::ClientAsyncResponseReader< ::botcore::trading::v1::ActivateMarketplacePresetResponse>>(AsyncActivatePresetRaw(context, request, cq));
+    }
+    std::unique_ptr< ::grpc::ClientAsyncResponseReader< ::botcore::trading::v1::ActivateMarketplacePresetResponse>> PrepareAsyncActivatePreset(::grpc::ClientContext* context, const ::botcore::trading::v1::ActivateMarketplacePresetRequest& request, ::grpc::CompletionQueue* cq) {
+      return std::unique_ptr< ::grpc::ClientAsyncResponseReader< ::botcore::trading::v1::ActivateMarketplacePresetResponse>>(PrepareAsyncActivatePresetRaw(context, request, cq));
+    }
+    class async final :
+      public StubInterface::async_interface {
+     public:
+      void ListPresets(::grpc::ClientContext* context, const ::botcore::trading::v1::ListMarketplacePresetsRequest* request, ::botcore::trading::v1::ListMarketplacePresetsResponse* response, std::function<void(::grpc::Status)>) override;
+      void ListPresets(::grpc::ClientContext* context, const ::botcore::trading::v1::ListMarketplacePresetsRequest* request, ::botcore::trading::v1::ListMarketplacePresetsResponse* response, ::grpc::ClientUnaryReactor* reactor) override;
+      void ImportPreset(::grpc::ClientContext* context, const ::botcore::trading::v1::ImportMarketplacePresetRequest* request, ::botcore::trading::v1::ImportMarketplacePresetResponse* response, std::function<void(::grpc::Status)>) override;
+      void ImportPreset(::grpc::ClientContext* context, const ::botcore::trading::v1::ImportMarketplacePresetRequest* request, ::botcore::trading::v1::ImportMarketplacePresetResponse* response, ::grpc::ClientUnaryReactor* reactor) override;
+      void ExportPreset(::grpc::ClientContext* context, const ::botcore::trading::v1::ExportMarketplacePresetRequest* request, ::botcore::trading::v1::ExportMarketplacePresetResponse* response, std::function<void(::grpc::Status)>) override;
+      void ExportPreset(::grpc::ClientContext* context, const ::botcore::trading::v1::ExportMarketplacePresetRequest* request, ::botcore::trading::v1::ExportMarketplacePresetResponse* response, ::grpc::ClientUnaryReactor* reactor) override;
+      void RemovePreset(::grpc::ClientContext* context, const ::botcore::trading::v1::RemoveMarketplacePresetRequest* request, ::botcore::trading::v1::RemoveMarketplacePresetResponse* response, std::function<void(::grpc::Status)>) override;
+      void RemovePreset(::grpc::ClientContext* context, const ::botcore::trading::v1::RemoveMarketplacePresetRequest* request, ::botcore::trading::v1::RemoveMarketplacePresetResponse* response, ::grpc::ClientUnaryReactor* reactor) override;
+      void ActivatePreset(::grpc::ClientContext* context, const ::botcore::trading::v1::ActivateMarketplacePresetRequest* request, ::botcore::trading::v1::ActivateMarketplacePresetResponse* response, std::function<void(::grpc::Status)>) override;
+      void ActivatePreset(::grpc::ClientContext* context, const ::botcore::trading::v1::ActivateMarketplacePresetRequest* request, ::botcore::trading::v1::ActivateMarketplacePresetResponse* response, ::grpc::ClientUnaryReactor* reactor) override;
+     private:
+      friend class Stub;
+      explicit async(Stub* stub): stub_(stub) { }
+      Stub* stub() { return stub_; }
+      Stub* stub_;
+    };
+    class async* async() override { return &async_stub_; }
+
+   private:
+    std::shared_ptr< ::grpc::ChannelInterface> channel_;
+    class async async_stub_{this};
+    ::grpc::ClientAsyncResponseReader< ::botcore::trading::v1::ListMarketplacePresetsResponse>* AsyncListPresetsRaw(::grpc::ClientContext* context, const ::botcore::trading::v1::ListMarketplacePresetsRequest& request, ::grpc::CompletionQueue* cq) override;
+    ::grpc::ClientAsyncResponseReader< ::botcore::trading::v1::ListMarketplacePresetsResponse>* PrepareAsyncListPresetsRaw(::grpc::ClientContext* context, const ::botcore::trading::v1::ListMarketplacePresetsRequest& request, ::grpc::CompletionQueue* cq) override;
+    ::grpc::ClientAsyncResponseReader< ::botcore::trading::v1::ImportMarketplacePresetResponse>* AsyncImportPresetRaw(::grpc::ClientContext* context, const ::botcore::trading::v1::ImportMarketplacePresetRequest& request, ::grpc::CompletionQueue* cq) override;
+    ::grpc::ClientAsyncResponseReader< ::botcore::trading::v1::ImportMarketplacePresetResponse>* PrepareAsyncImportPresetRaw(::grpc::ClientContext* context, const ::botcore::trading::v1::ImportMarketplacePresetRequest& request, ::grpc::CompletionQueue* cq) override;
+    ::grpc::ClientAsyncResponseReader< ::botcore::trading::v1::ExportMarketplacePresetResponse>* AsyncExportPresetRaw(::grpc::ClientContext* context, const ::botcore::trading::v1::ExportMarketplacePresetRequest& request, ::grpc::CompletionQueue* cq) override;
+    ::grpc::ClientAsyncResponseReader< ::botcore::trading::v1::ExportMarketplacePresetResponse>* PrepareAsyncExportPresetRaw(::grpc::ClientContext* context, const ::botcore::trading::v1::ExportMarketplacePresetRequest& request, ::grpc::CompletionQueue* cq) override;
+    ::grpc::ClientAsyncResponseReader< ::botcore::trading::v1::RemoveMarketplacePresetResponse>* AsyncRemovePresetRaw(::grpc::ClientContext* context, const ::botcore::trading::v1::RemoveMarketplacePresetRequest& request, ::grpc::CompletionQueue* cq) override;
+    ::grpc::ClientAsyncResponseReader< ::botcore::trading::v1::RemoveMarketplacePresetResponse>* PrepareAsyncRemovePresetRaw(::grpc::ClientContext* context, const ::botcore::trading::v1::RemoveMarketplacePresetRequest& request, ::grpc::CompletionQueue* cq) override;
+    ::grpc::ClientAsyncResponseReader< ::botcore::trading::v1::ActivateMarketplacePresetResponse>* AsyncActivatePresetRaw(::grpc::ClientContext* context, const ::botcore::trading::v1::ActivateMarketplacePresetRequest& request, ::grpc::CompletionQueue* cq) override;
+    ::grpc::ClientAsyncResponseReader< ::botcore::trading::v1::ActivateMarketplacePresetResponse>* PrepareAsyncActivatePresetRaw(::grpc::ClientContext* context, const ::botcore::trading::v1::ActivateMarketplacePresetRequest& request, ::grpc::CompletionQueue* cq) override;
+    const ::grpc::internal::RpcMethod rpcmethod_ListPresets_;
+    const ::grpc::internal::RpcMethod rpcmethod_ImportPreset_;
+    const ::grpc::internal::RpcMethod rpcmethod_ExportPreset_;
+    const ::grpc::internal::RpcMethod rpcmethod_RemovePreset_;
+    const ::grpc::internal::RpcMethod rpcmethod_ActivatePreset_;
+  };
+  static std::unique_ptr<Stub> NewStub(const std::shared_ptr< ::grpc::ChannelInterface>& channel, const ::grpc::StubOptions& options = ::grpc::StubOptions());
+
+  class Service : public ::grpc::Service {
+   public:
+    Service();
+    virtual ~Service();
+    virtual ::grpc::Status ListPresets(::grpc::ServerContext* context, const ::botcore::trading::v1::ListMarketplacePresetsRequest* request, ::botcore::trading::v1::ListMarketplacePresetsResponse* response);
+    virtual ::grpc::Status ImportPreset(::grpc::ServerContext* context, const ::botcore::trading::v1::ImportMarketplacePresetRequest* request, ::botcore::trading::v1::ImportMarketplacePresetResponse* response);
+    virtual ::grpc::Status ExportPreset(::grpc::ServerContext* context, const ::botcore::trading::v1::ExportMarketplacePresetRequest* request, ::botcore::trading::v1::ExportMarketplacePresetResponse* response);
+    virtual ::grpc::Status RemovePreset(::grpc::ServerContext* context, const ::botcore::trading::v1::RemoveMarketplacePresetRequest* request, ::botcore::trading::v1::RemoveMarketplacePresetResponse* response);
+    virtual ::grpc::Status ActivatePreset(::grpc::ServerContext* context, const ::botcore::trading::v1::ActivateMarketplacePresetRequest* request, ::botcore::trading::v1::ActivateMarketplacePresetResponse* response);
+  };
+  template <class BaseClass>
+  class WithAsyncMethod_ListPresets : public BaseClass {
+   private:
+    void BaseClassMustBeDerivedFromService(const Service* /*service*/) {}
+   public:
+    WithAsyncMethod_ListPresets() {
+      ::grpc::Service::MarkMethodAsync(0);
+    }
+    ~WithAsyncMethod_ListPresets() override {
+      BaseClassMustBeDerivedFromService(this);
+    }
+    // disable synchronous version of this method
+    ::grpc::Status ListPresets(::grpc::ServerContext* /*context*/, const ::botcore::trading::v1::ListMarketplacePresetsRequest* /*request*/, ::botcore::trading::v1::ListMarketplacePresetsResponse* /*response*/) override {
+      abort();
+      return ::grpc::Status(::grpc::StatusCode::UNIMPLEMENTED, "");
+    }
+    void RequestListPresets(::grpc::ServerContext* context, ::botcore::trading::v1::ListMarketplacePresetsRequest* request, ::grpc::ServerAsyncResponseWriter< ::botcore::trading::v1::ListMarketplacePresetsResponse>* response, ::grpc::CompletionQueue* new_call_cq, ::grpc::ServerCompletionQueue* notification_cq, void *tag) {
+      ::grpc::Service::RequestAsyncUnary(0, context, request, response, new_call_cq, notification_cq, tag);
+    }
+  };
+  template <class BaseClass>
+  class WithAsyncMethod_ImportPreset : public BaseClass {
+   private:
+    void BaseClassMustBeDerivedFromService(const Service* /*service*/) {}
+   public:
+    WithAsyncMethod_ImportPreset() {
+      ::grpc::Service::MarkMethodAsync(1);
+    }
+    ~WithAsyncMethod_ImportPreset() override {
+      BaseClassMustBeDerivedFromService(this);
+    }
+    // disable synchronous version of this method
+    ::grpc::Status ImportPreset(::grpc::ServerContext* /*context*/, const ::botcore::trading::v1::ImportMarketplacePresetRequest* /*request*/, ::botcore::trading::v1::ImportMarketplacePresetResponse* /*response*/) override {
+      abort();
+      return ::grpc::Status(::grpc::StatusCode::UNIMPLEMENTED, "");
+    }
+    void RequestImportPreset(::grpc::ServerContext* context, ::botcore::trading::v1::ImportMarketplacePresetRequest* request, ::grpc::ServerAsyncResponseWriter< ::botcore::trading::v1::ImportMarketplacePresetResponse>* response, ::grpc::CompletionQueue* new_call_cq, ::grpc::ServerCompletionQueue* notification_cq, void *tag) {
+      ::grpc::Service::RequestAsyncUnary(1, context, request, response, new_call_cq, notification_cq, tag);
+    }
+  };
+  template <class BaseClass>
+  class WithAsyncMethod_ExportPreset : public BaseClass {
+   private:
+    void BaseClassMustBeDerivedFromService(const Service* /*service*/) {}
+   public:
+    WithAsyncMethod_ExportPreset() {
+      ::grpc::Service::MarkMethodAsync(2);
+    }
+    ~WithAsyncMethod_ExportPreset() override {
+      BaseClassMustBeDerivedFromService(this);
+    }
+    // disable synchronous version of this method
+    ::grpc::Status ExportPreset(::grpc::ServerContext* /*context*/, const ::botcore::trading::v1::ExportMarketplacePresetRequest* /*request*/, ::botcore::trading::v1::ExportMarketplacePresetResponse* /*response*/) override {
+      abort();
+      return ::grpc::Status(::grpc::StatusCode::UNIMPLEMENTED, "");
+    }
+    void RequestExportPreset(::grpc::ServerContext* context, ::botcore::trading::v1::ExportMarketplacePresetRequest* request, ::grpc::ServerAsyncResponseWriter< ::botcore::trading::v1::ExportMarketplacePresetResponse>* response, ::grpc::CompletionQueue* new_call_cq, ::grpc::ServerCompletionQueue* notification_cq, void *tag) {
+      ::grpc::Service::RequestAsyncUnary(2, context, request, response, new_call_cq, notification_cq, tag);
+    }
+  };
+  template <class BaseClass>
+  class WithAsyncMethod_RemovePreset : public BaseClass {
+   private:
+    void BaseClassMustBeDerivedFromService(const Service* /*service*/) {}
+   public:
+    WithAsyncMethod_RemovePreset() {
+      ::grpc::Service::MarkMethodAsync(3);
+    }
+    ~WithAsyncMethod_RemovePreset() override {
+      BaseClassMustBeDerivedFromService(this);
+    }
+    // disable synchronous version of this method
+    ::grpc::Status RemovePreset(::grpc::ServerContext* /*context*/, const ::botcore::trading::v1::RemoveMarketplacePresetRequest* /*request*/, ::botcore::trading::v1::RemoveMarketplacePresetResponse* /*response*/) override {
+      abort();
+      return ::grpc::Status(::grpc::StatusCode::UNIMPLEMENTED, "");
+    }
+    void RequestRemovePreset(::grpc::ServerContext* context, ::botcore::trading::v1::RemoveMarketplacePresetRequest* request, ::grpc::ServerAsyncResponseWriter< ::botcore::trading::v1::RemoveMarketplacePresetResponse>* response, ::grpc::CompletionQueue* new_call_cq, ::grpc::ServerCompletionQueue* notification_cq, void *tag) {
+      ::grpc::Service::RequestAsyncUnary(3, context, request, response, new_call_cq, notification_cq, tag);
+    }
+  };
+  template <class BaseClass>
+  class WithAsyncMethod_ActivatePreset : public BaseClass {
+   private:
+    void BaseClassMustBeDerivedFromService(const Service* /*service*/) {}
+   public:
+    WithAsyncMethod_ActivatePreset() {
+      ::grpc::Service::MarkMethodAsync(4);
+    }
+    ~WithAsyncMethod_ActivatePreset() override {
+      BaseClassMustBeDerivedFromService(this);
+    }
+    // disable synchronous version of this method
+    ::grpc::Status ActivatePreset(::grpc::ServerContext* /*context*/, const ::botcore::trading::v1::ActivateMarketplacePresetRequest* /*request*/, ::botcore::trading::v1::ActivateMarketplacePresetResponse* /*response*/) override {
+      abort();
+      return ::grpc::Status(::grpc::StatusCode::UNIMPLEMENTED, "");
+    }
+    void RequestActivatePreset(::grpc::ServerContext* context, ::botcore::trading::v1::ActivateMarketplacePresetRequest* request, ::grpc::ServerAsyncResponseWriter< ::botcore::trading::v1::ActivateMarketplacePresetResponse>* response, ::grpc::CompletionQueue* new_call_cq, ::grpc::ServerCompletionQueue* notification_cq, void *tag) {
+      ::grpc::Service::RequestAsyncUnary(4, context, request, response, new_call_cq, notification_cq, tag);
+    }
+  };
+  typedef WithAsyncMethod_ListPresets<WithAsyncMethod_ImportPreset<WithAsyncMethod_ExportPreset<WithAsyncMethod_RemovePreset<WithAsyncMethod_ActivatePreset<Service > > > > > AsyncService;
+  template <class BaseClass>
+  class WithCallbackMethod_ListPresets : public BaseClass {
+   private:
+    void BaseClassMustBeDerivedFromService(const Service* /*service*/) {}
+   public:
+    WithCallbackMethod_ListPresets() {
+      ::grpc::Service::MarkMethodCallback(0,
+          new ::grpc::internal::CallbackUnaryHandler< ::botcore::trading::v1::ListMarketplacePresetsRequest, ::botcore::trading::v1::ListMarketplacePresetsResponse>(
+            [this](
+                   ::grpc::CallbackServerContext* context, const ::botcore::trading::v1::ListMarketplacePresetsRequest* request, ::botcore::trading::v1::ListMarketplacePresetsResponse* response) { return this->ListPresets(context, request, response); }));}
+    void SetMessageAllocatorFor_ListPresets(
+        ::grpc::MessageAllocator< ::botcore::trading::v1::ListMarketplacePresetsRequest, ::botcore::trading::v1::ListMarketplacePresetsResponse>* allocator) {
+      ::grpc::internal::MethodHandler* const handler = ::grpc::Service::GetHandler(0);
+      static_cast<::grpc::internal::CallbackUnaryHandler< ::botcore::trading::v1::ListMarketplacePresetsRequest, ::botcore::trading::v1::ListMarketplacePresetsResponse>*>(handler)
+              ->SetMessageAllocator(allocator);
+    }
+    ~WithCallbackMethod_ListPresets() override {
+      BaseClassMustBeDerivedFromService(this);
+    }
+    // disable synchronous version of this method
+    ::grpc::Status ListPresets(::grpc::ServerContext* /*context*/, const ::botcore::trading::v1::ListMarketplacePresetsRequest* /*request*/, ::botcore::trading::v1::ListMarketplacePresetsResponse* /*response*/) override {
+      abort();
+      return ::grpc::Status(::grpc::StatusCode::UNIMPLEMENTED, "");
+    }
+    virtual ::grpc::ServerUnaryReactor* ListPresets(
+      ::grpc::CallbackServerContext* /*context*/, const ::botcore::trading::v1::ListMarketplacePresetsRequest* /*request*/, ::botcore::trading::v1::ListMarketplacePresetsResponse* /*response*/)  { return nullptr; }
+  };
+  template <class BaseClass>
+  class WithCallbackMethod_ImportPreset : public BaseClass {
+   private:
+    void BaseClassMustBeDerivedFromService(const Service* /*service*/) {}
+   public:
+    WithCallbackMethod_ImportPreset() {
+      ::grpc::Service::MarkMethodCallback(1,
+          new ::grpc::internal::CallbackUnaryHandler< ::botcore::trading::v1::ImportMarketplacePresetRequest, ::botcore::trading::v1::ImportMarketplacePresetResponse>(
+            [this](
+                   ::grpc::CallbackServerContext* context, const ::botcore::trading::v1::ImportMarketplacePresetRequest* request, ::botcore::trading::v1::ImportMarketplacePresetResponse* response) { return this->ImportPreset(context, request, response); }));}
+    void SetMessageAllocatorFor_ImportPreset(
+        ::grpc::MessageAllocator< ::botcore::trading::v1::ImportMarketplacePresetRequest, ::botcore::trading::v1::ImportMarketplacePresetResponse>* allocator) {
+      ::grpc::internal::MethodHandler* const handler = ::grpc::Service::GetHandler(1);
+      static_cast<::grpc::internal::CallbackUnaryHandler< ::botcore::trading::v1::ImportMarketplacePresetRequest, ::botcore::trading::v1::ImportMarketplacePresetResponse>*>(handler)
+              ->SetMessageAllocator(allocator);
+    }
+    ~WithCallbackMethod_ImportPreset() override {
+      BaseClassMustBeDerivedFromService(this);
+    }
+    // disable synchronous version of this method
+    ::grpc::Status ImportPreset(::grpc::ServerContext* /*context*/, const ::botcore::trading::v1::ImportMarketplacePresetRequest* /*request*/, ::botcore::trading::v1::ImportMarketplacePresetResponse* /*response*/) override {
+      abort();
+      return ::grpc::Status(::grpc::StatusCode::UNIMPLEMENTED, "");
+    }
+    virtual ::grpc::ServerUnaryReactor* ImportPreset(
+      ::grpc::CallbackServerContext* /*context*/, const ::botcore::trading::v1::ImportMarketplacePresetRequest* /*request*/, ::botcore::trading::v1::ImportMarketplacePresetResponse* /*response*/)  { return nullptr; }
+  };
+  template <class BaseClass>
+  class WithCallbackMethod_ExportPreset : public BaseClass {
+   private:
+    void BaseClassMustBeDerivedFromService(const Service* /*service*/) {}
+   public:
+    WithCallbackMethod_ExportPreset() {
+      ::grpc::Service::MarkMethodCallback(2,
+          new ::grpc::internal::CallbackUnaryHandler< ::botcore::trading::v1::ExportMarketplacePresetRequest, ::botcore::trading::v1::ExportMarketplacePresetResponse>(
+            [this](
+                   ::grpc::CallbackServerContext* context, const ::botcore::trading::v1::ExportMarketplacePresetRequest* request, ::botcore::trading::v1::ExportMarketplacePresetResponse* response) { return this->ExportPreset(context, request, response); }));}
+    void SetMessageAllocatorFor_ExportPreset(
+        ::grpc::MessageAllocator< ::botcore::trading::v1::ExportMarketplacePresetRequest, ::botcore::trading::v1::ExportMarketplacePresetResponse>* allocator) {
+      ::grpc::internal::MethodHandler* const handler = ::grpc::Service::GetHandler(2);
+      static_cast<::grpc::internal::CallbackUnaryHandler< ::botcore::trading::v1::ExportMarketplacePresetRequest, ::botcore::trading::v1::ExportMarketplacePresetResponse>*>(handler)
+              ->SetMessageAllocator(allocator);
+    }
+    ~WithCallbackMethod_ExportPreset() override {
+      BaseClassMustBeDerivedFromService(this);
+    }
+    // disable synchronous version of this method
+    ::grpc::Status ExportPreset(::grpc::ServerContext* /*context*/, const ::botcore::trading::v1::ExportMarketplacePresetRequest* /*request*/, ::botcore::trading::v1::ExportMarketplacePresetResponse* /*response*/) override {
+      abort();
+      return ::grpc::Status(::grpc::StatusCode::UNIMPLEMENTED, "");
+    }
+    virtual ::grpc::ServerUnaryReactor* ExportPreset(
+      ::grpc::CallbackServerContext* /*context*/, const ::botcore::trading::v1::ExportMarketplacePresetRequest* /*request*/, ::botcore::trading::v1::ExportMarketplacePresetResponse* /*response*/)  { return nullptr; }
+  };
+  template <class BaseClass>
+  class WithCallbackMethod_RemovePreset : public BaseClass {
+   private:
+    void BaseClassMustBeDerivedFromService(const Service* /*service*/) {}
+   public:
+    WithCallbackMethod_RemovePreset() {
+      ::grpc::Service::MarkMethodCallback(3,
+          new ::grpc::internal::CallbackUnaryHandler< ::botcore::trading::v1::RemoveMarketplacePresetRequest, ::botcore::trading::v1::RemoveMarketplacePresetResponse>(
+            [this](
+                   ::grpc::CallbackServerContext* context, const ::botcore::trading::v1::RemoveMarketplacePresetRequest* request, ::botcore::trading::v1::RemoveMarketplacePresetResponse* response) { return this->RemovePreset(context, request, response); }));}
+    void SetMessageAllocatorFor_RemovePreset(
+        ::grpc::MessageAllocator< ::botcore::trading::v1::RemoveMarketplacePresetRequest, ::botcore::trading::v1::RemoveMarketplacePresetResponse>* allocator) {
+      ::grpc::internal::MethodHandler* const handler = ::grpc::Service::GetHandler(3);
+      static_cast<::grpc::internal::CallbackUnaryHandler< ::botcore::trading::v1::RemoveMarketplacePresetRequest, ::botcore::trading::v1::RemoveMarketplacePresetResponse>*>(handler)
+              ->SetMessageAllocator(allocator);
+    }
+    ~WithCallbackMethod_RemovePreset() override {
+      BaseClassMustBeDerivedFromService(this);
+    }
+    // disable synchronous version of this method
+    ::grpc::Status RemovePreset(::grpc::ServerContext* /*context*/, const ::botcore::trading::v1::RemoveMarketplacePresetRequest* /*request*/, ::botcore::trading::v1::RemoveMarketplacePresetResponse* /*response*/) override {
+      abort();
+      return ::grpc::Status(::grpc::StatusCode::UNIMPLEMENTED, "");
+    }
+    virtual ::grpc::ServerUnaryReactor* RemovePreset(
+      ::grpc::CallbackServerContext* /*context*/, const ::botcore::trading::v1::RemoveMarketplacePresetRequest* /*request*/, ::botcore::trading::v1::RemoveMarketplacePresetResponse* /*response*/)  { return nullptr; }
+  };
+  template <class BaseClass>
+  class WithCallbackMethod_ActivatePreset : public BaseClass {
+   private:
+    void BaseClassMustBeDerivedFromService(const Service* /*service*/) {}
+   public:
+    WithCallbackMethod_ActivatePreset() {
+      ::grpc::Service::MarkMethodCallback(4,
+          new ::grpc::internal::CallbackUnaryHandler< ::botcore::trading::v1::ActivateMarketplacePresetRequest, ::botcore::trading::v1::ActivateMarketplacePresetResponse>(
+            [this](
+                   ::grpc::CallbackServerContext* context, const ::botcore::trading::v1::ActivateMarketplacePresetRequest* request, ::botcore::trading::v1::ActivateMarketplacePresetResponse* response) { return this->ActivatePreset(context, request, response); }));}
+    void SetMessageAllocatorFor_ActivatePreset(
+        ::grpc::MessageAllocator< ::botcore::trading::v1::ActivateMarketplacePresetRequest, ::botcore::trading::v1::ActivateMarketplacePresetResponse>* allocator) {
+      ::grpc::internal::MethodHandler* const handler = ::grpc::Service::GetHandler(4);
+      static_cast<::grpc::internal::CallbackUnaryHandler< ::botcore::trading::v1::ActivateMarketplacePresetRequest, ::botcore::trading::v1::ActivateMarketplacePresetResponse>*>(handler)
+              ->SetMessageAllocator(allocator);
+    }
+    ~WithCallbackMethod_ActivatePreset() override {
+      BaseClassMustBeDerivedFromService(this);
+    }
+    // disable synchronous version of this method
+    ::grpc::Status ActivatePreset(::grpc::ServerContext* /*context*/, const ::botcore::trading::v1::ActivateMarketplacePresetRequest* /*request*/, ::botcore::trading::v1::ActivateMarketplacePresetResponse* /*response*/) override {
+      abort();
+      return ::grpc::Status(::grpc::StatusCode::UNIMPLEMENTED, "");
+    }
+    virtual ::grpc::ServerUnaryReactor* ActivatePreset(
+      ::grpc::CallbackServerContext* /*context*/, const ::botcore::trading::v1::ActivateMarketplacePresetRequest* /*request*/, ::botcore::trading::v1::ActivateMarketplacePresetResponse* /*response*/)  { return nullptr; }
+  };
+  typedef WithCallbackMethod_ListPresets<WithCallbackMethod_ImportPreset<WithCallbackMethod_ExportPreset<WithCallbackMethod_RemovePreset<WithCallbackMethod_ActivatePreset<Service > > > > > CallbackService;
+  typedef CallbackService ExperimentalCallbackService;
+  template <class BaseClass>
+  class WithGenericMethod_ListPresets : public BaseClass {
+   private:
+    void BaseClassMustBeDerivedFromService(const Service* /*service*/) {}
+   public:
+    WithGenericMethod_ListPresets() {
+      ::grpc::Service::MarkMethodGeneric(0);
+    }
+    ~WithGenericMethod_ListPresets() override {
+      BaseClassMustBeDerivedFromService(this);
+    }
+    // disable synchronous version of this method
+    ::grpc::Status ListPresets(::grpc::ServerContext* /*context*/, const ::botcore::trading::v1::ListMarketplacePresetsRequest* /*request*/, ::botcore::trading::v1::ListMarketplacePresetsResponse* /*response*/) override {
+      abort();
+      return ::grpc::Status(::grpc::StatusCode::UNIMPLEMENTED, "");
+    }
+  };
+  template <class BaseClass>
+  class WithGenericMethod_ImportPreset : public BaseClass {
+   private:
+    void BaseClassMustBeDerivedFromService(const Service* /*service*/) {}
+   public:
+    WithGenericMethod_ImportPreset() {
+      ::grpc::Service::MarkMethodGeneric(1);
+    }
+    ~WithGenericMethod_ImportPreset() override {
+      BaseClassMustBeDerivedFromService(this);
+    }
+    // disable synchronous version of this method
+    ::grpc::Status ImportPreset(::grpc::ServerContext* /*context*/, const ::botcore::trading::v1::ImportMarketplacePresetRequest* /*request*/, ::botcore::trading::v1::ImportMarketplacePresetResponse* /*response*/) override {
+      abort();
+      return ::grpc::Status(::grpc::StatusCode::UNIMPLEMENTED, "");
+    }
+  };
+  template <class BaseClass>
+  class WithGenericMethod_ExportPreset : public BaseClass {
+   private:
+    void BaseClassMustBeDerivedFromService(const Service* /*service*/) {}
+   public:
+    WithGenericMethod_ExportPreset() {
+      ::grpc::Service::MarkMethodGeneric(2);
+    }
+    ~WithGenericMethod_ExportPreset() override {
+      BaseClassMustBeDerivedFromService(this);
+    }
+    // disable synchronous version of this method
+    ::grpc::Status ExportPreset(::grpc::ServerContext* /*context*/, const ::botcore::trading::v1::ExportMarketplacePresetRequest* /*request*/, ::botcore::trading::v1::ExportMarketplacePresetResponse* /*response*/) override {
+      abort();
+      return ::grpc::Status(::grpc::StatusCode::UNIMPLEMENTED, "");
+    }
+  };
+  template <class BaseClass>
+  class WithGenericMethod_RemovePreset : public BaseClass {
+   private:
+    void BaseClassMustBeDerivedFromService(const Service* /*service*/) {}
+   public:
+    WithGenericMethod_RemovePreset() {
+      ::grpc::Service::MarkMethodGeneric(3);
+    }
+    ~WithGenericMethod_RemovePreset() override {
+      BaseClassMustBeDerivedFromService(this);
+    }
+    // disable synchronous version of this method
+    ::grpc::Status RemovePreset(::grpc::ServerContext* /*context*/, const ::botcore::trading::v1::RemoveMarketplacePresetRequest* /*request*/, ::botcore::trading::v1::RemoveMarketplacePresetResponse* /*response*/) override {
+      abort();
+      return ::grpc::Status(::grpc::StatusCode::UNIMPLEMENTED, "");
+    }
+  };
+  template <class BaseClass>
+  class WithGenericMethod_ActivatePreset : public BaseClass {
+   private:
+    void BaseClassMustBeDerivedFromService(const Service* /*service*/) {}
+   public:
+    WithGenericMethod_ActivatePreset() {
+      ::grpc::Service::MarkMethodGeneric(4);
+    }
+    ~WithGenericMethod_ActivatePreset() override {
+      BaseClassMustBeDerivedFromService(this);
+    }
+    // disable synchronous version of this method
+    ::grpc::Status ActivatePreset(::grpc::ServerContext* /*context*/, const ::botcore::trading::v1::ActivateMarketplacePresetRequest* /*request*/, ::botcore::trading::v1::ActivateMarketplacePresetResponse* /*response*/) override {
+      abort();
+      return ::grpc::Status(::grpc::StatusCode::UNIMPLEMENTED, "");
+    }
+  };
+  template <class BaseClass>
+  class WithRawMethod_ListPresets : public BaseClass {
+   private:
+    void BaseClassMustBeDerivedFromService(const Service* /*service*/) {}
+   public:
+    WithRawMethod_ListPresets() {
+      ::grpc::Service::MarkMethodRaw(0);
+    }
+    ~WithRawMethod_ListPresets() override {
+      BaseClassMustBeDerivedFromService(this);
+    }
+    // disable synchronous version of this method
+    ::grpc::Status ListPresets(::grpc::ServerContext* /*context*/, const ::botcore::trading::v1::ListMarketplacePresetsRequest* /*request*/, ::botcore::trading::v1::ListMarketplacePresetsResponse* /*response*/) override {
+      abort();
+      return ::grpc::Status(::grpc::StatusCode::UNIMPLEMENTED, "");
+    }
+    void RequestListPresets(::grpc::ServerContext* context, ::grpc::ByteBuffer* request, ::grpc::ServerAsyncResponseWriter< ::grpc::ByteBuffer>* response, ::grpc::CompletionQueue* new_call_cq, ::grpc::ServerCompletionQueue* notification_cq, void *tag) {
+      ::grpc::Service::RequestAsyncUnary(0, context, request, response, new_call_cq, notification_cq, tag);
+    }
+  };
+  template <class BaseClass>
+  class WithRawMethod_ImportPreset : public BaseClass {
+   private:
+    void BaseClassMustBeDerivedFromService(const Service* /*service*/) {}
+   public:
+    WithRawMethod_ImportPreset() {
+      ::grpc::Service::MarkMethodRaw(1);
+    }
+    ~WithRawMethod_ImportPreset() override {
+      BaseClassMustBeDerivedFromService(this);
+    }
+    // disable synchronous version of this method
+    ::grpc::Status ImportPreset(::grpc::ServerContext* /*context*/, const ::botcore::trading::v1::ImportMarketplacePresetRequest* /*request*/, ::botcore::trading::v1::ImportMarketplacePresetResponse* /*response*/) override {
+      abort();
+      return ::grpc::Status(::grpc::StatusCode::UNIMPLEMENTED, "");
+    }
+    void RequestImportPreset(::grpc::ServerContext* context, ::grpc::ByteBuffer* request, ::grpc::ServerAsyncResponseWriter< ::grpc::ByteBuffer>* response, ::grpc::CompletionQueue* new_call_cq, ::grpc::ServerCompletionQueue* notification_cq, void *tag) {
+      ::grpc::Service::RequestAsyncUnary(1, context, request, response, new_call_cq, notification_cq, tag);
+    }
+  };
+  template <class BaseClass>
+  class WithRawMethod_ExportPreset : public BaseClass {
+   private:
+    void BaseClassMustBeDerivedFromService(const Service* /*service*/) {}
+   public:
+    WithRawMethod_ExportPreset() {
+      ::grpc::Service::MarkMethodRaw(2);
+    }
+    ~WithRawMethod_ExportPreset() override {
+      BaseClassMustBeDerivedFromService(this);
+    }
+    // disable synchronous version of this method
+    ::grpc::Status ExportPreset(::grpc::ServerContext* /*context*/, const ::botcore::trading::v1::ExportMarketplacePresetRequest* /*request*/, ::botcore::trading::v1::ExportMarketplacePresetResponse* /*response*/) override {
+      abort();
+      return ::grpc::Status(::grpc::StatusCode::UNIMPLEMENTED, "");
+    }
+    void RequestExportPreset(::grpc::ServerContext* context, ::grpc::ByteBuffer* request, ::grpc::ServerAsyncResponseWriter< ::grpc::ByteBuffer>* response, ::grpc::CompletionQueue* new_call_cq, ::grpc::ServerCompletionQueue* notification_cq, void *tag) {
+      ::grpc::Service::RequestAsyncUnary(2, context, request, response, new_call_cq, notification_cq, tag);
+    }
+  };
+  template <class BaseClass>
+  class WithRawMethod_RemovePreset : public BaseClass {
+   private:
+    void BaseClassMustBeDerivedFromService(const Service* /*service*/) {}
+   public:
+    WithRawMethod_RemovePreset() {
+      ::grpc::Service::MarkMethodRaw(3);
+    }
+    ~WithRawMethod_RemovePreset() override {
+      BaseClassMustBeDerivedFromService(this);
+    }
+    // disable synchronous version of this method
+    ::grpc::Status RemovePreset(::grpc::ServerContext* /*context*/, const ::botcore::trading::v1::RemoveMarketplacePresetRequest* /*request*/, ::botcore::trading::v1::RemoveMarketplacePresetResponse* /*response*/) override {
+      abort();
+      return ::grpc::Status(::grpc::StatusCode::UNIMPLEMENTED, "");
+    }
+    void RequestRemovePreset(::grpc::ServerContext* context, ::grpc::ByteBuffer* request, ::grpc::ServerAsyncResponseWriter< ::grpc::ByteBuffer>* response, ::grpc::CompletionQueue* new_call_cq, ::grpc::ServerCompletionQueue* notification_cq, void *tag) {
+      ::grpc::Service::RequestAsyncUnary(3, context, request, response, new_call_cq, notification_cq, tag);
+    }
+  };
+  template <class BaseClass>
+  class WithRawMethod_ActivatePreset : public BaseClass {
+   private:
+    void BaseClassMustBeDerivedFromService(const Service* /*service*/) {}
+   public:
+    WithRawMethod_ActivatePreset() {
+      ::grpc::Service::MarkMethodRaw(4);
+    }
+    ~WithRawMethod_ActivatePreset() override {
+      BaseClassMustBeDerivedFromService(this);
+    }
+    // disable synchronous version of this method
+    ::grpc::Status ActivatePreset(::grpc::ServerContext* /*context*/, const ::botcore::trading::v1::ActivateMarketplacePresetRequest* /*request*/, ::botcore::trading::v1::ActivateMarketplacePresetResponse* /*response*/) override {
+      abort();
+      return ::grpc::Status(::grpc::StatusCode::UNIMPLEMENTED, "");
+    }
+    void RequestActivatePreset(::grpc::ServerContext* context, ::grpc::ByteBuffer* request, ::grpc::ServerAsyncResponseWriter< ::grpc::ByteBuffer>* response, ::grpc::CompletionQueue* new_call_cq, ::grpc::ServerCompletionQueue* notification_cq, void *tag) {
+      ::grpc::Service::RequestAsyncUnary(4, context, request, response, new_call_cq, notification_cq, tag);
+    }
+  };
+  template <class BaseClass>
+  class WithRawCallbackMethod_ListPresets : public BaseClass {
+   private:
+    void BaseClassMustBeDerivedFromService(const Service* /*service*/) {}
+   public:
+    WithRawCallbackMethod_ListPresets() {
+      ::grpc::Service::MarkMethodRawCallback(0,
+          new ::grpc::internal::CallbackUnaryHandler< ::grpc::ByteBuffer, ::grpc::ByteBuffer>(
+            [this](
+                   ::grpc::CallbackServerContext* context, const ::grpc::ByteBuffer* request, ::grpc::ByteBuffer* response) { return this->ListPresets(context, request, response); }));
+    }
+    ~WithRawCallbackMethod_ListPresets() override {
+      BaseClassMustBeDerivedFromService(this);
+    }
+    // disable synchronous version of this method
+    ::grpc::Status ListPresets(::grpc::ServerContext* /*context*/, const ::botcore::trading::v1::ListMarketplacePresetsRequest* /*request*/, ::botcore::trading::v1::ListMarketplacePresetsResponse* /*response*/) override {
+      abort();
+      return ::grpc::Status(::grpc::StatusCode::UNIMPLEMENTED, "");
+    }
+    virtual ::grpc::ServerUnaryReactor* ListPresets(
+      ::grpc::CallbackServerContext* /*context*/, const ::grpc::ByteBuffer* /*request*/, ::grpc::ByteBuffer* /*response*/)  { return nullptr; }
+  };
+  template <class BaseClass>
+  class WithRawCallbackMethod_ImportPreset : public BaseClass {
+   private:
+    void BaseClassMustBeDerivedFromService(const Service* /*service*/) {}
+   public:
+    WithRawCallbackMethod_ImportPreset() {
+      ::grpc::Service::MarkMethodRawCallback(1,
+          new ::grpc::internal::CallbackUnaryHandler< ::grpc::ByteBuffer, ::grpc::ByteBuffer>(
+            [this](
+                   ::grpc::CallbackServerContext* context, const ::grpc::ByteBuffer* request, ::grpc::ByteBuffer* response) { return this->ImportPreset(context, request, response); }));
+    }
+    ~WithRawCallbackMethod_ImportPreset() override {
+      BaseClassMustBeDerivedFromService(this);
+    }
+    // disable synchronous version of this method
+    ::grpc::Status ImportPreset(::grpc::ServerContext* /*context*/, const ::botcore::trading::v1::ImportMarketplacePresetRequest* /*request*/, ::botcore::trading::v1::ImportMarketplacePresetResponse* /*response*/) override {
+      abort();
+      return ::grpc::Status(::grpc::StatusCode::UNIMPLEMENTED, "");
+    }
+    virtual ::grpc::ServerUnaryReactor* ImportPreset(
+      ::grpc::CallbackServerContext* /*context*/, const ::grpc::ByteBuffer* /*request*/, ::grpc::ByteBuffer* /*response*/)  { return nullptr; }
+  };
+  template <class BaseClass>
+  class WithRawCallbackMethod_ExportPreset : public BaseClass {
+   private:
+    void BaseClassMustBeDerivedFromService(const Service* /*service*/) {}
+   public:
+    WithRawCallbackMethod_ExportPreset() {
+      ::grpc::Service::MarkMethodRawCallback(2,
+          new ::grpc::internal::CallbackUnaryHandler< ::grpc::ByteBuffer, ::grpc::ByteBuffer>(
+            [this](
+                   ::grpc::CallbackServerContext* context, const ::grpc::ByteBuffer* request, ::grpc::ByteBuffer* response) { return this->ExportPreset(context, request, response); }));
+    }
+    ~WithRawCallbackMethod_ExportPreset() override {
+      BaseClassMustBeDerivedFromService(this);
+    }
+    // disable synchronous version of this method
+    ::grpc::Status ExportPreset(::grpc::ServerContext* /*context*/, const ::botcore::trading::v1::ExportMarketplacePresetRequest* /*request*/, ::botcore::trading::v1::ExportMarketplacePresetResponse* /*response*/) override {
+      abort();
+      return ::grpc::Status(::grpc::StatusCode::UNIMPLEMENTED, "");
+    }
+    virtual ::grpc::ServerUnaryReactor* ExportPreset(
+      ::grpc::CallbackServerContext* /*context*/, const ::grpc::ByteBuffer* /*request*/, ::grpc::ByteBuffer* /*response*/)  { return nullptr; }
+  };
+  template <class BaseClass>
+  class WithRawCallbackMethod_RemovePreset : public BaseClass {
+   private:
+    void BaseClassMustBeDerivedFromService(const Service* /*service*/) {}
+   public:
+    WithRawCallbackMethod_RemovePreset() {
+      ::grpc::Service::MarkMethodRawCallback(3,
+          new ::grpc::internal::CallbackUnaryHandler< ::grpc::ByteBuffer, ::grpc::ByteBuffer>(
+            [this](
+                   ::grpc::CallbackServerContext* context, const ::grpc::ByteBuffer* request, ::grpc::ByteBuffer* response) { return this->RemovePreset(context, request, response); }));
+    }
+    ~WithRawCallbackMethod_RemovePreset() override {
+      BaseClassMustBeDerivedFromService(this);
+    }
+    // disable synchronous version of this method
+    ::grpc::Status RemovePreset(::grpc::ServerContext* /*context*/, const ::botcore::trading::v1::RemoveMarketplacePresetRequest* /*request*/, ::botcore::trading::v1::RemoveMarketplacePresetResponse* /*response*/) override {
+      abort();
+      return ::grpc::Status(::grpc::StatusCode::UNIMPLEMENTED, "");
+    }
+    virtual ::grpc::ServerUnaryReactor* RemovePreset(
+      ::grpc::CallbackServerContext* /*context*/, const ::grpc::ByteBuffer* /*request*/, ::grpc::ByteBuffer* /*response*/)  { return nullptr; }
+  };
+  template <class BaseClass>
+  class WithRawCallbackMethod_ActivatePreset : public BaseClass {
+   private:
+    void BaseClassMustBeDerivedFromService(const Service* /*service*/) {}
+   public:
+    WithRawCallbackMethod_ActivatePreset() {
+      ::grpc::Service::MarkMethodRawCallback(4,
+          new ::grpc::internal::CallbackUnaryHandler< ::grpc::ByteBuffer, ::grpc::ByteBuffer>(
+            [this](
+                   ::grpc::CallbackServerContext* context, const ::grpc::ByteBuffer* request, ::grpc::ByteBuffer* response) { return this->ActivatePreset(context, request, response); }));
+    }
+    ~WithRawCallbackMethod_ActivatePreset() override {
+      BaseClassMustBeDerivedFromService(this);
+    }
+    // disable synchronous version of this method
+    ::grpc::Status ActivatePreset(::grpc::ServerContext* /*context*/, const ::botcore::trading::v1::ActivateMarketplacePresetRequest* /*request*/, ::botcore::trading::v1::ActivateMarketplacePresetResponse* /*response*/) override {
+      abort();
+      return ::grpc::Status(::grpc::StatusCode::UNIMPLEMENTED, "");
+    }
+    virtual ::grpc::ServerUnaryReactor* ActivatePreset(
+      ::grpc::CallbackServerContext* /*context*/, const ::grpc::ByteBuffer* /*request*/, ::grpc::ByteBuffer* /*response*/)  { return nullptr; }
+  };
+  template <class BaseClass>
+  class WithStreamedUnaryMethod_ListPresets : public BaseClass {
+   private:
+    void BaseClassMustBeDerivedFromService(const Service* /*service*/) {}
+   public:
+    WithStreamedUnaryMethod_ListPresets() {
+      ::grpc::Service::MarkMethodStreamed(0,
+        new ::grpc::internal::StreamedUnaryHandler<
+          ::botcore::trading::v1::ListMarketplacePresetsRequest, ::botcore::trading::v1::ListMarketplacePresetsResponse>(
+            [this](::grpc::ServerContext* context,
+                   ::grpc::ServerUnaryStreamer<
+                     ::botcore::trading::v1::ListMarketplacePresetsRequest, ::botcore::trading::v1::ListMarketplacePresetsResponse>* streamer) {
+                       return this->StreamedListPresets(context,
+                         streamer);
+                  }));
+    }
+    ~WithStreamedUnaryMethod_ListPresets() override {
+      BaseClassMustBeDerivedFromService(this);
+    }
+    // disable regular version of this method
+    ::grpc::Status ListPresets(::grpc::ServerContext* /*context*/, const ::botcore::trading::v1::ListMarketplacePresetsRequest* /*request*/, ::botcore::trading::v1::ListMarketplacePresetsResponse* /*response*/) override {
+      abort();
+      return ::grpc::Status(::grpc::StatusCode::UNIMPLEMENTED, "");
+    }
+    // replace default version of method with streamed unary
+    virtual ::grpc::Status StreamedListPresets(::grpc::ServerContext* context, ::grpc::ServerUnaryStreamer< ::botcore::trading::v1::ListMarketplacePresetsRequest,::botcore::trading::v1::ListMarketplacePresetsResponse>* server_unary_streamer) = 0;
+  };
+  template <class BaseClass>
+  class WithStreamedUnaryMethod_ImportPreset : public BaseClass {
+   private:
+    void BaseClassMustBeDerivedFromService(const Service* /*service*/) {}
+   public:
+    WithStreamedUnaryMethod_ImportPreset() {
+      ::grpc::Service::MarkMethodStreamed(1,
+        new ::grpc::internal::StreamedUnaryHandler<
+          ::botcore::trading::v1::ImportMarketplacePresetRequest, ::botcore::trading::v1::ImportMarketplacePresetResponse>(
+            [this](::grpc::ServerContext* context,
+                   ::grpc::ServerUnaryStreamer<
+                     ::botcore::trading::v1::ImportMarketplacePresetRequest, ::botcore::trading::v1::ImportMarketplacePresetResponse>* streamer) {
+                       return this->StreamedImportPreset(context,
+                         streamer);
+                  }));
+    }
+    ~WithStreamedUnaryMethod_ImportPreset() override {
+      BaseClassMustBeDerivedFromService(this);
+    }
+    // disable regular version of this method
+    ::grpc::Status ImportPreset(::grpc::ServerContext* /*context*/, const ::botcore::trading::v1::ImportMarketplacePresetRequest* /*request*/, ::botcore::trading::v1::ImportMarketplacePresetResponse* /*response*/) override {
+      abort();
+      return ::grpc::Status(::grpc::StatusCode::UNIMPLEMENTED, "");
+    }
+    // replace default version of method with streamed unary
+    virtual ::grpc::Status StreamedImportPreset(::grpc::ServerContext* context, ::grpc::ServerUnaryStreamer< ::botcore::trading::v1::ImportMarketplacePresetRequest,::botcore::trading::v1::ImportMarketplacePresetResponse>* server_unary_streamer) = 0;
+  };
+  template <class BaseClass>
+  class WithStreamedUnaryMethod_ExportPreset : public BaseClass {
+   private:
+    void BaseClassMustBeDerivedFromService(const Service* /*service*/) {}
+   public:
+    WithStreamedUnaryMethod_ExportPreset() {
+      ::grpc::Service::MarkMethodStreamed(2,
+        new ::grpc::internal::StreamedUnaryHandler<
+          ::botcore::trading::v1::ExportMarketplacePresetRequest, ::botcore::trading::v1::ExportMarketplacePresetResponse>(
+            [this](::grpc::ServerContext* context,
+                   ::grpc::ServerUnaryStreamer<
+                     ::botcore::trading::v1::ExportMarketplacePresetRequest, ::botcore::trading::v1::ExportMarketplacePresetResponse>* streamer) {
+                       return this->StreamedExportPreset(context,
+                         streamer);
+                  }));
+    }
+    ~WithStreamedUnaryMethod_ExportPreset() override {
+      BaseClassMustBeDerivedFromService(this);
+    }
+    // disable regular version of this method
+    ::grpc::Status ExportPreset(::grpc::ServerContext* /*context*/, const ::botcore::trading::v1::ExportMarketplacePresetRequest* /*request*/, ::botcore::trading::v1::ExportMarketplacePresetResponse* /*response*/) override {
+      abort();
+      return ::grpc::Status(::grpc::StatusCode::UNIMPLEMENTED, "");
+    }
+    // replace default version of method with streamed unary
+    virtual ::grpc::Status StreamedExportPreset(::grpc::ServerContext* context, ::grpc::ServerUnaryStreamer< ::botcore::trading::v1::ExportMarketplacePresetRequest,::botcore::trading::v1::ExportMarketplacePresetResponse>* server_unary_streamer) = 0;
+  };
+  template <class BaseClass>
+  class WithStreamedUnaryMethod_RemovePreset : public BaseClass {
+   private:
+    void BaseClassMustBeDerivedFromService(const Service* /*service*/) {}
+   public:
+    WithStreamedUnaryMethod_RemovePreset() {
+      ::grpc::Service::MarkMethodStreamed(3,
+        new ::grpc::internal::StreamedUnaryHandler<
+          ::botcore::trading::v1::RemoveMarketplacePresetRequest, ::botcore::trading::v1::RemoveMarketplacePresetResponse>(
+            [this](::grpc::ServerContext* context,
+                   ::grpc::ServerUnaryStreamer<
+                     ::botcore::trading::v1::RemoveMarketplacePresetRequest, ::botcore::trading::v1::RemoveMarketplacePresetResponse>* streamer) {
+                       return this->StreamedRemovePreset(context,
+                         streamer);
+                  }));
+    }
+    ~WithStreamedUnaryMethod_RemovePreset() override {
+      BaseClassMustBeDerivedFromService(this);
+    }
+    // disable regular version of this method
+    ::grpc::Status RemovePreset(::grpc::ServerContext* /*context*/, const ::botcore::trading::v1::RemoveMarketplacePresetRequest* /*request*/, ::botcore::trading::v1::RemoveMarketplacePresetResponse* /*response*/) override {
+      abort();
+      return ::grpc::Status(::grpc::StatusCode::UNIMPLEMENTED, "");
+    }
+    // replace default version of method with streamed unary
+    virtual ::grpc::Status StreamedRemovePreset(::grpc::ServerContext* context, ::grpc::ServerUnaryStreamer< ::botcore::trading::v1::RemoveMarketplacePresetRequest,::botcore::trading::v1::RemoveMarketplacePresetResponse>* server_unary_streamer) = 0;
+  };
+  template <class BaseClass>
+  class WithStreamedUnaryMethod_ActivatePreset : public BaseClass {
+   private:
+    void BaseClassMustBeDerivedFromService(const Service* /*service*/) {}
+   public:
+    WithStreamedUnaryMethod_ActivatePreset() {
+      ::grpc::Service::MarkMethodStreamed(4,
+        new ::grpc::internal::StreamedUnaryHandler<
+          ::botcore::trading::v1::ActivateMarketplacePresetRequest, ::botcore::trading::v1::ActivateMarketplacePresetResponse>(
+            [this](::grpc::ServerContext* context,
+                   ::grpc::ServerUnaryStreamer<
+                     ::botcore::trading::v1::ActivateMarketplacePresetRequest, ::botcore::trading::v1::ActivateMarketplacePresetResponse>* streamer) {
+                       return this->StreamedActivatePreset(context,
+                         streamer);
+                  }));
+    }
+    ~WithStreamedUnaryMethod_ActivatePreset() override {
+      BaseClassMustBeDerivedFromService(this);
+    }
+    // disable regular version of this method
+    ::grpc::Status ActivatePreset(::grpc::ServerContext* /*context*/, const ::botcore::trading::v1::ActivateMarketplacePresetRequest* /*request*/, ::botcore::trading::v1::ActivateMarketplacePresetResponse* /*response*/) override {
+      abort();
+      return ::grpc::Status(::grpc::StatusCode::UNIMPLEMENTED, "");
+    }
+    // replace default version of method with streamed unary
+    virtual ::grpc::Status StreamedActivatePreset(::grpc::ServerContext* context, ::grpc::ServerUnaryStreamer< ::botcore::trading::v1::ActivateMarketplacePresetRequest,::botcore::trading::v1::ActivateMarketplacePresetResponse>* server_unary_streamer) = 0;
+  };
+  typedef WithStreamedUnaryMethod_ListPresets<WithStreamedUnaryMethod_ImportPreset<WithStreamedUnaryMethod_ExportPreset<WithStreamedUnaryMethod_RemovePreset<WithStreamedUnaryMethod_ActivatePreset<Service > > > > > StreamedUnaryService;
+  typedef Service SplitStreamedService;
+  typedef WithStreamedUnaryMethod_ListPresets<WithStreamedUnaryMethod_ImportPreset<WithStreamedUnaryMethod_ExportPreset<WithStreamedUnaryMethod_RemovePreset<WithStreamedUnaryMethod_ActivatePreset<Service > > > > > StreamedService;
+};
+
 }  // namespace v1
 }  // namespace trading
 }  // namespace botcore

@@ -826,6 +826,18 @@ class OptionsIncomeStrategyConfig:
 
 
 @dataclass(slots=True)
+class FuturesSpreadStrategyConfig:
+    """Parametry konfiguracji strategii spreadów futures."""
+
+    name: str
+    entry_z: float
+    exit_z: float
+    max_bars: int
+    funding_exit: float
+    basis_exit: float
+
+
+@dataclass(slots=True)
 class StatisticalArbitrageStrategyConfig:
     """Parametry strategii pairs trading/statystycznego arbitrażu."""
 
@@ -850,6 +862,17 @@ class DayTradingStrategyConfig:
     max_holding_bars: int
     atr_floor: float
     bias_strength: float
+
+
+@dataclass(slots=True)
+class CrossExchangeHedgeStrategyConfig:
+    """Parametry strategii zabezpieczającej delta cross-exchange."""
+
+    name: str
+    basis_scale: float
+    inventory_scale: float
+    latency_limit_ms: float
+    max_hedge_ratio: float
 
 
 @dataclass(slots=True)
@@ -890,6 +913,120 @@ class StrategyDefinitionConfig:
     risk_profile: str | None = None
     tags: Sequence[str] = field(default_factory=tuple)
     metadata: Mapping[str, object] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class StrategyOptimizationBoundConfig:
+    """Zakres ciągłych parametrów optymalizacji."""
+
+    lower: float
+    upper: float
+    step: float | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "lower", float(self.lower))
+        object.__setattr__(self, "upper", float(self.upper))
+        step = self.step
+        if step in (None, ""):
+            object.__setattr__(self, "step", None)
+        else:
+            object.__setattr__(self, "step", abs(float(step)))
+
+
+@dataclass(slots=True)
+class StrategyOptimizationSearchSpaceConfig:
+    """Definicja przestrzeni przeszukiwania parametrów."""
+
+    grid: Mapping[str, Sequence[object]] = field(default_factory=dict)
+    bounds: Mapping[str, StrategyOptimizationBoundConfig] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class StrategyOptimizationObjectiveConfig:
+    """Cel optymalizacji (metryka i kierunek)."""
+
+    metric: str = "score"
+    goal: str = "maximize"
+    min_improvement: float | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "metric", str(self.metric).strip() or "score")
+        goal = str(self.goal or "maximize").strip().lower()
+        if goal not in {"maximize", "minimize"}:
+            goal = "maximize"
+        object.__setattr__(self, "goal", goal)
+        if self.min_improvement not in (None, ""):
+            object.__setattr__(self, "min_improvement", float(self.min_improvement))
+        else:
+            object.__setattr__(self, "min_improvement", None)
+
+
+@dataclass(slots=True)
+class StrategyOptimizationScheduleConfig:
+    """Parametry harmonogramu uruchamiania optymalizacji."""
+
+    cadence_seconds: float = 0.0
+    jitter_seconds: float = 0.0
+    run_immediately: bool = True
+    start_delay_seconds: float = 0.0
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "cadence_seconds", max(0.0, float(self.cadence_seconds or 0.0)))
+        object.__setattr__(self, "jitter_seconds", max(0.0, float(self.jitter_seconds or 0.0)))
+        object.__setattr__(self, "run_immediately", bool(self.run_immediately))
+        object.__setattr__(self, "start_delay_seconds", max(0.0, float(self.start_delay_seconds or 0.0)))
+
+
+@dataclass(slots=True)
+class StrategyOptimizationEvaluationConfig:
+    """Parametry danych wykorzystywanych do oceny kandydatów."""
+
+    history_bars: int = 256
+    warmup_bars: int = 32
+    dataset: str | None = None
+
+    def __post_init__(self) -> None:
+        history = int(self.history_bars or 0)
+        object.__setattr__(self, "history_bars", max(1, history))
+        warmup = int(self.warmup_bars or 0)
+        if warmup >= history:
+            warmup = max(0, history // 4)
+        object.__setattr__(self, "warmup_bars", max(0, warmup))
+        if self.dataset in (None, ""):
+            object.__setattr__(self, "dataset", None)
+        else:
+            object.__setattr__(self, "dataset", str(self.dataset))
+
+
+@dataclass(slots=True)
+class StrategyOptimizationTaskConfig:
+    """Opis pojedynczego zadania optymalizacji strategii."""
+
+    name: str
+    strategy: str
+    algorithm: str = "grid"
+    max_trials: int = 25
+    random_seed: int | None = None
+    tags: Sequence[str] = field(default_factory=tuple)
+    search_space: StrategyOptimizationSearchSpaceConfig = field(default_factory=StrategyOptimizationSearchSpaceConfig)
+    objective: StrategyOptimizationObjectiveConfig = field(default_factory=StrategyOptimizationObjectiveConfig)
+    schedule: StrategyOptimizationScheduleConfig = field(default_factory=StrategyOptimizationScheduleConfig)
+    evaluation: StrategyOptimizationEvaluationConfig = field(default_factory=StrategyOptimizationEvaluationConfig)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "name", str(self.name).strip())
+        object.__setattr__(self, "strategy", str(self.strategy).strip())
+        algorithm = str(self.algorithm or "grid").strip().lower()
+        if algorithm not in {"grid", "bayesian"}:
+            algorithm = "grid"
+        object.__setattr__(self, "algorithm", algorithm)
+        object.__setattr__(self, "max_trials", max(1, int(self.max_trials or 0)))
+        if self.random_seed in (None, ""):
+            object.__setattr__(self, "random_seed", None)
+        else:
+            object.__setattr__(self, "random_seed", int(self.random_seed))
+        normalized_tags = [str(tag).strip() for tag in self.tags if str(tag).strip()]
+        object.__setattr__(self, "tags", tuple(dict.fromkeys(normalized_tags)))
 
 
 @dataclass(slots=True)
@@ -1226,8 +1363,10 @@ class CoreConfig:
     mean_reversion_strategies: Mapping[str, MeanReversionStrategyConfig] = field(default_factory=dict)
     volatility_target_strategies: Mapping[str, VolatilityTargetingStrategyConfig] = field(default_factory=dict)
     cross_exchange_arbitrage_strategies: Mapping[str, CrossExchangeArbitrageStrategyConfig] = field(default_factory=dict)
+    cross_exchange_hedge_strategies: Mapping[str, CrossExchangeHedgeStrategyConfig] = field(default_factory=dict)
     scalping_strategies: Mapping[str, ScalpingStrategyConfig] = field(default_factory=dict)
     options_income_strategies: Mapping[str, OptionsIncomeStrategyConfig] = field(default_factory=dict)
+    futures_spread_strategies: Mapping[str, FuturesSpreadStrategyConfig] = field(default_factory=dict)
     statistical_arbitrage_strategies: Mapping[str, StatisticalArbitrageStrategyConfig] = field(default_factory=dict)
     day_trading_strategies: Mapping[str, DayTradingStrategyConfig] = field(default_factory=dict)
     multi_strategy_schedulers: Mapping[str, MultiStrategySchedulerConfig] = field(default_factory=dict)
@@ -1266,6 +1405,195 @@ class CoreConfig:
     source_directory: str | None = None
 
 
+@dataclass(slots=True)
+class RuntimeCoreReference:
+    """Odniesienie do głównego pliku ``core.yaml``."""
+
+    path: str = "core.yaml"
+    resolved_path: str | None = None
+
+    def __post_init__(self) -> None:
+        path_value = (self.path or "").strip()
+        if not path_value:
+            raise ValueError("RuntimeCoreReference.path nie może być puste")
+        self.path = path_value
+        if self.resolved_path:
+            self.resolved_path = str(self.resolved_path)
+
+
+@dataclass(slots=True)
+class RuntimeAISettings:
+    """Sekcja konfiguracji AI ładowana z ``runtime.yaml``."""
+
+    model_registry_path: str
+    retrain_schedule: str | None = None
+    drift_monitor_enabled: bool = True
+    auto_activate_best_model: bool = True
+
+    def __post_init__(self) -> None:
+        if not self.model_registry_path:
+            raise ValueError("model_registry_path nie może być puste")
+
+
+@dataclass(slots=True)
+class RuntimeTradingSettings:
+    """Konfiguracja sekcji tradingowej ``runtime.yaml``."""
+
+    default_entrypoint: str
+    entrypoints: Mapping[str, RuntimeEntrypointConfig] = field(default_factory=dict)
+    auto_start: bool = False
+    enable_paper_mode: bool = True
+    enable_live_mode: bool = False
+    strategy_overrides: Mapping[str, str] = field(default_factory=dict)
+    strategy_profiles: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if not self.default_entrypoint:
+            raise ValueError("default_entrypoint nie może być pusty")
+        if self.default_entrypoint not in self.entrypoints:
+            raise ValueError(
+                "default_entrypoint musi wskazywać nazwę zdefiniowaną w sekcji entrypoints"
+            )
+
+
+@dataclass(slots=True)
+class RuntimeRiskSettings:
+    """Sekcja ryzyka w ``runtime.yaml``."""
+
+    service: RiskServiceConfig | None = None
+    decision_log: RiskDecisionLogConfig | None = None
+    portfolio_log: PortfolioDecisionLogConfig | None = None
+    max_drawdown_alert_pct: float | None = None
+
+
+@dataclass(slots=True)
+class RuntimeLicensingSettings:
+    """Parametry egzekwowania licencji OEM."""
+
+    enforcement: bool = True
+    grace_period_hours: float | None = None
+    offline_activation_required: bool = True
+    license: LicenseValidationConfig | None = None
+
+
+@dataclass(slots=True)
+class RuntimeUISettings:
+    """Sekcja ustawień interfejsu użytkownika."""
+
+    theme: str = "dark"
+    workspace_root: str | None = None
+    enable_advanced_mode: bool = False
+    auto_connect_runtime: bool = True
+    restore_layout_on_start: bool = True
+    telemetry_sink: str | None = None
+
+
+@dataclass(slots=True)
+class RuntimeExecutionLiveSettings:
+    """Parametry trybu live wykorzystywane przez lokalny runtime."""
+
+    enabled: bool = False
+    default_route: Sequence[str] = field(default_factory=tuple)
+    route_overrides: Mapping[str, Sequence[str]] = field(default_factory=dict)
+    decision_log_path: str | None = None
+    decision_log_key_env: str | None = None
+    decision_log_key_path: str | None = None
+    decision_log_key_value: str | None = None
+    decision_log_key_id: str | None = None
+    decision_log_rotate_bytes: int = 8 * 1024 * 1024
+    decision_log_keep: int = 3
+    latency_histogram_buckets: Sequence[float] = field(default_factory=tuple)
+
+
+@dataclass(slots=True)
+class RuntimeExecutionSettings:
+    """Sekcja konfiguracji egzekucji (paper/live) w ``runtime.yaml``."""
+
+    default_mode: str = "paper"
+    force_paper_when_offline: bool = True
+    auth_token: str | None = None
+    live: RuntimeExecutionLiveSettings | None = None
+
+
+@dataclass(slots=True)
+class RuntimeObservabilityMetricsSettings:
+    """Parametry eksportera Prometheusa w środowisku lokalnym."""
+
+    enabled: bool = True
+    host: str = "127.0.0.1"
+    port: int = 0
+    path: str = "/metrics"
+
+
+@dataclass(slots=True)
+class RuntimeObservabilityAlertSettings:
+    """Konfiguracja progów alertów offline."""
+
+    min_severity: str = "warning"
+
+
+@dataclass(slots=True)
+class RuntimeObservabilitySettings:
+    """Zunifikowana konfiguracja obserwowalności runtime."""
+
+    prometheus: RuntimeObservabilityMetricsSettings | None = None
+    alerts: RuntimeObservabilityAlertSettings | None = None
+    enable_log_metrics: bool = True
+
+
+@dataclass(slots=True)
+class RuntimeOptimizationSettings:
+    """Konfiguracja harmonogramu optymalizacji strategii."""
+
+    enabled: bool = True
+    default_algorithm: str = "grid"
+    max_concurrent_jobs: int = 1
+    report_directory: str | None = None
+    default_history_bars: int = 256
+    tasks: Sequence[StrategyOptimizationTaskConfig] = field(default_factory=tuple)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "enabled", bool(self.enabled))
+        algorithm = str(self.default_algorithm or "grid").strip().lower()
+        if algorithm not in {"grid", "bayesian"}:
+            algorithm = "grid"
+        object.__setattr__(self, "default_algorithm", algorithm)
+        object.__setattr__(self, "max_concurrent_jobs", max(1, int(self.max_concurrent_jobs or 1)))
+        if self.report_directory in (None, ""):
+            object.__setattr__(self, "report_directory", None)
+        else:
+            object.__setattr__(self, "report_directory", str(self.report_directory))
+        object.__setattr__(self, "default_history_bars", max(1, int(self.default_history_bars or 256)))
+        normalized = [task for task in self.tasks if getattr(task, "name", "")]  # type: ignore[arg-type]
+        object.__setattr__(self, "tasks", tuple(normalized))
+
+
+@dataclass(slots=True)
+class RuntimeMarketplaceSettings:
+    """Ustawienia lokalnego marketplace z presetami strategii."""
+
+    enabled: bool = True
+    presets_path: str = "config/marketplace/presets"
+    signing_keys: Mapping[str, str] = field(default_factory=dict)
+    allow_unsigned: bool = False
+
+
+@dataclass(slots=True)
+class RuntimeAppConfig:
+    """Wspólny model konfiguracji runtime ładowany z ``config/runtime.yaml``."""
+
+    core: RuntimeCoreReference
+    ai: RuntimeAISettings
+    trading: RuntimeTradingSettings
+    execution: RuntimeExecutionSettings
+    risk: RuntimeRiskSettings
+    licensing: RuntimeLicensingSettings
+    ui: RuntimeUISettings
+    observability: RuntimeObservabilitySettings | None = None
+    optimization: RuntimeOptimizationSettings | None = None
+    marketplace: RuntimeMarketplaceSettings | None = None
+
+
 __all__ = [
     "EnvironmentConfig",
     "EnvironmentDataSourceConfig",
@@ -1289,12 +1617,20 @@ __all__ = [
     "MeanReversionStrategyConfig",
     "VolatilityTargetingStrategyConfig",
     "CrossExchangeArbitrageStrategyConfig",
+    "CrossExchangeHedgeStrategyConfig",
     "ScalpingStrategyConfig",
     "OptionsIncomeStrategyConfig",
+    "FuturesSpreadStrategyConfig",
     "StatisticalArbitrageStrategyConfig",
     "DayTradingStrategyConfig",
     "StrategyScheduleConfig",
     "MultiStrategySchedulerConfig",
+    "StrategyOptimizationBoundConfig",
+    "StrategyOptimizationSearchSpaceConfig",
+    "StrategyOptimizationObjectiveConfig",
+    "StrategyOptimizationScheduleConfig",
+    "StrategyOptimizationEvaluationConfig",
+    "StrategyOptimizationTaskConfig",
     "SMSProviderSettings",
     "TelegramChannelSettings",
     "EmailChannelSettings",
@@ -1360,4 +1696,18 @@ __all__ = [
     "ResilienceDrillConfig",
     "ResilienceDrillThresholdsConfig",
     "PortfolioGovernorV6Config",
+    "RuntimeCoreReference",
+    "RuntimeAISettings",
+    "RuntimeTradingSettings",
+    "RuntimeRiskSettings",
+    "RuntimeLicensingSettings",
+    "RuntimeExecutionLiveSettings",
+    "RuntimeExecutionSettings",
+    "RuntimeObservabilityMetricsSettings",
+    "RuntimeObservabilityAlertSettings",
+    "RuntimeObservabilitySettings",
+    "RuntimeOptimizationSettings",
+    "RuntimeMarketplaceSettings",
+    "RuntimeUISettings",
+    "RuntimeAppConfig",
 ]

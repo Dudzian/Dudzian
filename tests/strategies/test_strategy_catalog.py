@@ -8,7 +8,9 @@ import pytest
 from bot_core.security.capabilities import build_capabilities_from_payload
 from bot_core.security.guards import install_capability_guard, reset_capability_guard
 from bot_core.config.loader import (
+    _load_cross_exchange_hedge_strategies,
     _load_day_trading_strategies,
+    _load_futures_spread_strategies,
     _load_options_income_strategies,
     _load_scalping_strategies,
     _load_statistical_arbitrage_strategies,
@@ -19,6 +21,8 @@ from bot_core.config.models import (
     EnvironmentConfig,
     RiskProfileConfig,
     ScalpingStrategyConfig,
+    CrossExchangeHedgeStrategyConfig,
+    FuturesSpreadStrategyConfig,
     StrategyDefinitionConfig,
 )
 from bot_core.exchanges.base import Environment
@@ -248,6 +252,27 @@ def test_loader_builds_specialized_strategy_configs() -> None:
                 }
             }
         },
+        "futures_spread_strategies": {
+            "basis_guard": {
+                "parameters": {
+                    "entry_z": 1.4,
+                    "exit_z": 0.3,
+                    "max_bars": 24,
+                    "funding_exit": 0.001,
+                    "basis_exit": 0.012,
+                }
+            }
+        },
+        "cross_exchange_hedge_strategies": {
+            "delta_guard": {
+                "parameters": {
+                    "basis_scale": 0.008,
+                    "inventory_scale": 0.25,
+                    "latency_limit_ms": 120.0,
+                    "max_hedge_ratio": 0.8,
+                }
+            }
+        },
     }
 
     scalping_cfg = _load_scalping_strategies(raw)["quick_scalp"]
@@ -267,6 +292,14 @@ def test_loader_builds_specialized_strategy_configs() -> None:
     assert day_cfg.entry_threshold == pytest.approx(0.8)
     assert day_cfg.bias_strength == pytest.approx(0.1)
 
+    futures_cfg = _load_futures_spread_strategies(raw)["basis_guard"]
+    assert futures_cfg.entry_z == pytest.approx(1.4)
+    assert futures_cfg.basis_exit == pytest.approx(0.012)
+
+    hedge_cfg = _load_cross_exchange_hedge_strategies(raw)["delta_guard"]
+    assert hedge_cfg.basis_scale == pytest.approx(0.008)
+    assert hedge_cfg.max_hedge_ratio == pytest.approx(0.8)
+
 
 def test_loader_backfills_specialized_definitions_with_metadata() -> None:
     raw = {
@@ -274,6 +307,8 @@ def test_loader_backfills_specialized_definitions_with_metadata() -> None:
         "options_income_strategies": {"theta_vault": {}},
         "statistical_arbitrage_strategies": {"pairs_alpha": {}},
         "day_trading_strategies": {"intraday_momo": {}},
+        "futures_spread_strategies": {"basis_guard": {}},
+        "cross_exchange_hedge_strategies": {"delta_guard": {}},
     }
 
     result = _load_strategy_definitions(raw)
@@ -313,6 +348,24 @@ def test_loader_backfills_specialized_definitions_with_metadata() -> None:
     assert day.capability == "day_trading"
     assert day.tags == ("intraday", "momentum")
     assert day.metadata["tags"] == ("intraday", "momentum")
+
+    futures = result["basis_guard"]
+    assert futures.engine == "futures_spread"
+    assert futures.license_tier == "enterprise"
+    assert futures.risk_classes == ("derivatives", "market_neutral")
+    assert futures.required_data == ("futures_curve", "funding_rates", "ohlcv")
+    assert futures.capability == "futures_spread"
+    assert futures.tags == ("futures", "hedge", "basis")
+    assert futures.metadata["tags"] == ("futures", "hedge", "basis")
+
+    hedge = result["delta_guard"]
+    assert hedge.engine == "cross_exchange_hedge"
+    assert hedge.license_tier == "enterprise"
+    assert hedge.risk_classes == ("hedging", "liquidity")
+    assert hedge.required_data == ("spot_basis", "inventory_skew", "latency_metrics")
+    assert hedge.capability == "cross_exchange_hedge"
+    assert hedge.tags == ("hedge", "multi_venue", "delta")
+    assert hedge.metadata["tags"] == ("hedge", "multi_venue", "delta")
 
 
 def test_collect_strategy_definitions_merges_default_tags() -> None:

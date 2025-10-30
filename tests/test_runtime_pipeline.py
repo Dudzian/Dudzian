@@ -217,6 +217,7 @@ def pipeline_fixture(tmp_path: Path) -> tuple[Path, FakeExchangeAdapter, SecretM
             "fake_paper": {
                 "exchange": "fake_exchange",
                 "environment": "paper",
+                "offline_mode": True,
                 "keychain_key": "fake_key",
                 "data_cache_path": str(tmp_path / "data"),
                 "risk_profile": "balanced",
