@@ -9,9 +9,7 @@ from pathlib import Path
 from typing import List, Mapping, Sequence
 from datetime import datetime, timedelta, timezone
 from urllib import request
-import sys
 
-sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 import pytest
 

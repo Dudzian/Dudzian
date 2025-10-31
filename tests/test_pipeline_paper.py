@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import math
-import sys
 import yaml
 from dataclasses import dataclass
 from pathlib import Path
@@ -11,7 +10,6 @@ from typing import Iterable, Mapping, MutableMapping, Sequence
 
 import pytest
 
-sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from bot_core.alerts import AlertMessage, DefaultAlertRouter, InMemoryAlertAuditLog
 from bot_core.alerts.base import AlertChannel

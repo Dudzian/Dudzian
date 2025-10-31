@@ -2,12 +2,7 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 from pathlib import Path
-
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
 
 from bot_core.observability.bundle import (
     AssetSource,
@@ -17,6 +12,9 @@ from bot_core.observability.bundle import (
     load_signature,
     verify_signature,
 )
+
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def _write(path: Path, data: str) -> None:
@@ -79,4 +77,3 @@ def test_observability_bundle_detects_tamper(tmp_path: Path) -> None:
     verifier = ObservabilityBundleVerifier(artifacts.bundle_path, manifest)
     errors = verifier.verify_files()
     assert any("nieoczekiwane" in message for message in errors)
-

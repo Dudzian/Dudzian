@@ -12,9 +12,12 @@ Repozytorium zawiera kompletny stack aplikacji desktopowej do automatycznego han
 
 ## Szybki start
 1. Skonfiguruj środowisko (Python 3.11, Poetry) i zainstaluj zależności: `poetry install`.
-2. Przygotuj konfigurację runtime: `python scripts/migrate_runtime_config.py --output config/runtime.yaml`.
-3. Uruchom pipeline papierowy: `poetry run python scripts/run_local_bot.py --paper`.
-4. Z aplikacji desktopowej (Qt) przeprowadź konfigurację w kreatorze.
+2. Zainstaluj pakiet `bot_core` w trybie deweloperskim wraz z profilami `dev` i `desktop`, aby moduły były dostępne bez ręcznych modyfikacji `sys.path`: `python -m pip install -e .[dev,desktop]`.
+3. Wygeneruj stuby gRPC potrzebne do testów i lokalnego pipeline’u: `python scripts/generate_trading_stubs.py --skip-cpp`.
+4. Przygotuj konfigurację runtime: `python scripts/migrate_runtime_config.py --output config/runtime.yaml`.
+5. Uruchom pipeline papierowy: `poetry run python scripts/run_local_bot.py --paper`.
+6. Zweryfikuj środowisko poleceniem `pytest --fast`; pełny suite wymaga dodatkowych sandboxów OEM oraz dostępu do danych produkcyjnych.
+7. Z aplikacji desktopowej (Qt) przeprowadź konfigurację w kreatorze.
 
 Szczegółowe instrukcje znajdują się w dokumentacji:
 - [Przewodnik użytkownika](docs/user_manual/index.md)

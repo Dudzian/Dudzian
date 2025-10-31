@@ -52,6 +52,7 @@ class CrossExchangeHedgeStrategy(StrategyEngine):
             symbol=snapshot.symbol,
             side="rebalance_delta",
             confidence=min(1.0, abs(hedge_ratio)),
+            intent="neutral",
             metadata={
                 "target_ratio": hedge_ratio,
                 "basis": basis,

@@ -10,7 +10,6 @@ from typing import Any, Mapping, Sequence
 
 import pytest
 
-sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from scripts import run_multi_strategy_scheduler  # type: ignore  # noqa: E402
 from bot_core.runtime.capital_policies import FixedWeightAllocation

@@ -64,6 +64,7 @@ class VolatilityTargetStrategy(StrategyEngine):
             symbol=snapshot.symbol,
             side="rebalance",
             confidence=confidence,
+            intent="neutral",
             metadata={
                 "target_allocation": target,
                 "current_allocation": target - diff,

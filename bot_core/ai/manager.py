@@ -422,29 +422,51 @@ def _build_fallback_ai_models() -> type:
     return _DefaultAIModels
 
 
-try:  # pragma: no cover - preferowana ścieżka po migracji do bot_core
-    from bot_core.ai.legacy_models import AIModels as _DefaultAIModels  # type: ignore
-except Exception as primary_exc:  # pragma: no cover - brak zależności opcjonalnych
-    try:  # zgodność z pakietami budującymi wheel z płaskim modułem ``ai_models``
+_DefaultAIModels: type | None = None
+_import_failures: list[BaseException] = []
+
+try:  # preferowany backend OEM
+    _kryptolowca_ai_models = importlib.import_module("KryptoLowca.ai_models")
+except Exception as kryptolowca_exc:  # pragma: no cover - środowiska bez OEM
+    _import_failures.append(kryptolowca_exc)
+else:
+    try:
+        _DefaultAIModels = getattr(_kryptolowca_ai_models, "AIModels")  # type: ignore[attr-defined]
+    except AttributeError as attr_exc:  # pragma: no cover - niepełna instalacja OEM
+        _import_failures.append(attr_exc)
+    else:
+        _import_failures.clear()
+
+if _DefaultAIModels is None:
+    try:  # płaski moduł zbudowany podczas bundlowania pakietu
         from ai_models import AIModels as _DefaultAIModels  # type: ignore
-    except Exception as secondary_exc:  # pragma: no cover - fallback na namespace legacy
-        try:
-            _kryptolowca_ai_models = importlib.import_module("KryptoLowca.ai_models")
-        except Exception as namespace_exc:
-            _AI_IMPORT_ERROR = _bundle_import_errors(
-                primary_exc, _bundle_import_errors(secondary_exc, namespace_exc)
-            )
-            _FALLBACK_ACTIVE = True
-            _DefaultAIModels = _build_fallback_ai_models()
-        else:
-            try:
-                _DefaultAIModels = getattr(_kryptolowca_ai_models, "AIModels")
-            except AttributeError as attr_exc:
-                _AI_IMPORT_ERROR = _bundle_import_errors(
-                    primary_exc, _bundle_import_errors(secondary_exc, attr_exc)
-                )
-                _FALLBACK_ACTIVE = True
-                _DefaultAIModels = _build_fallback_ai_models()
+    except Exception as flat_exc:  # pragma: no cover - brak legacy wheel
+        _import_failures.append(flat_exc)
+    else:
+        _import_failures.clear()
+
+if _DefaultAIModels is None:
+    try:  # lokalny fallback z repozytorium
+        from bot_core.ai.legacy_models import AIModels as _DefaultAIModels  # type: ignore
+    except Exception as legacy_exc:  # pragma: no cover - środowisko minimalne
+        _import_failures.append(legacy_exc)
+        _DefaultAIModels = _build_fallback_ai_models()
+        _FALLBACK_ACTIVE = True
+    else:
+        _FALLBACK_ACTIVE = True
+
+if _DefaultAIModels is None:
+    _DefaultAIModels = _build_fallback_ai_models()
+    _FALLBACK_ACTIVE = True
+
+if _import_failures:
+    combined_error = _import_failures[0]
+    for exc in _import_failures[1:]:
+        combined_error = _bundle_import_errors(combined_error, exc)
+    _AI_IMPORT_ERROR = combined_error
+else:
+    _AI_IMPORT_ERROR = None
+    _FALLBACK_ACTIVE = False
 
 # --- Import funkcji windowize z różnych możliwych miejsc, z bezpiecznym fallbackiem ---
 _default_windowize: Callable[..., Tuple[np.ndarray, np.ndarray]]

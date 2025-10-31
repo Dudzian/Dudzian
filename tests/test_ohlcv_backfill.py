@@ -7,9 +7,7 @@ from typing import Iterable, Mapping, MutableMapping, Sequence
 
 import pytest
 
-import sys
 
-sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from bot_core.data.base import CacheStorage, DataSource, OHLCVRequest, OHLCVResponse
 from bot_core.data.ohlcv.backfill import OHLCVBackfillService

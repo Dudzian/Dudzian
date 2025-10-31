@@ -1,5 +1,4 @@
 """Wspólne funkcje dla obsługi pakietów aktualizacji offline."""
-"""Wspólne funkcje dla obsługi pakietów aktualizacji offline."""
 from __future__ import annotations
 
 import hashlib

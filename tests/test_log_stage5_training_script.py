@@ -1,13 +1,9 @@
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 import pytest
 
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
 
 from bot_core.security.signing import build_hmac_signature  # noqa: E402
 from scripts.log_stage5_training import run as log_training  # noqa: E402
@@ -15,6 +11,7 @@ from tests._json_helpers import read_jsonl
 from tests._signing_helpers import write_random_hmac_key
 
 
+ROOT = Path(__file__).resolve().parents[1]
 def test_log_stage5_training_writes_signed_file(tmp_path: Path) -> None:
     """
     Zastępuje starszy test z HEAD: weryfikuje, że narzędzie zapisuje

@@ -9,11 +9,10 @@ from pathlib import Path
 
 import pytest
 
-sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from bot_core.reporting.audit import PaperSmokeJsonSyncResult
 from bot_core.reporting.upload import SmokeArchiveUploadResult
-from scripts import run_daily_trend  # noqa: E402  - import po modyfikacji sys.path
+from scripts import run_daily_trend  # noqa: E402 - import modułu CLI w testach
 
 
 def test_run_paper_precheck_skip(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:

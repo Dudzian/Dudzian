@@ -13,14 +13,12 @@ import pytest
 
 import deploy.packaging.build_core_bundle as build_core_bundle_module
 
-ROOT = Path(__file__).resolve().parents[2]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
 
 from deploy.packaging import BundleInputs, CoreBundleBuilder, build_from_cli
 from bot_core.security.signing import canonical_json_bytes
 
 
+ROOT = Path(__file__).resolve().parents[2]
 def _write_signing_key(path: Path, *, mode: int = 0o600) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(os.urandom(48))

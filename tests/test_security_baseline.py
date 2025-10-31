@@ -1,12 +1,10 @@
 import os
-import sys
 from pathlib import Path
 from types import SimpleNamespace
 
 import os
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from bot_core.security.baseline import generate_security_baseline_report
 from tests.test_audit_tls_assets_script import _CERT, _KEY

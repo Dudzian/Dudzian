@@ -49,11 +49,6 @@ if "nacl" not in sys.modules:
     sys.modules["nacl.exceptions"] = nacl_exceptions
     sys.modules["nacl.signing"] = nacl_signing
 
-# Import modułu zapewniającego, że katalog repozytorium znajduje się na sys.path.
-# Dzięki temu wszystkie testy mogą importować kod projektu niezależnie od miejsca uruchomienia.
-import tests._pathbootstrap  # noqa: F401  # pylint: disable=unused-import
-
-
 _FAST_ENV_VAR = "PYTEST_FAST"
 _FAST_MODE_ENABLED = False
 _TRADING_STUBS: tuple[Path, ...] = generate_trading_stubs.python_stub_targets()

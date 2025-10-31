@@ -6,13 +6,9 @@ import hmac
 import json
 import os
 import stat
-import sys
 import zipfile
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
 
 import pytest
 
@@ -21,6 +17,7 @@ from bot_core.security.signing import canonical_json_bytes
 from deploy.packaging.build_strategy_bundle import build_from_cli
 
 
+REPO_ROOT = Path(__file__).resolve().parents[2]
 def _read_zip_entry(archive: zipfile.ZipFile, name: str) -> bytes:
     with archive.open(name) as handle:
         return handle.read()

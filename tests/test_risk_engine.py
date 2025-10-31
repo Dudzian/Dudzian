@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import json
-import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -10,7 +9,6 @@ from typing import Callable, Mapping, Sequence
 
 import pytest
 
-sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from bot_core.ai import ModelScore
 from bot_core.config.models import (

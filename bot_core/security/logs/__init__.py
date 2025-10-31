@@ -13,6 +13,7 @@ from bot_core.security.fingerprint import decode_secret
 from bot_core.security.signing import build_hmac_signature
 
 DEFAULT_AUDIT_PATH = Path("logs/security_admin.log")
+DEFAULT_ALERTS_PATH = Path("logs/security_alerts.log")
 AUDIT_KEY_ENV = "BOT_CORE_SECURITY_AUDIT_KEY"
 AUDIT_KEY_ID_ENV = "BOT_CORE_SECURITY_AUDIT_KEY_ID"
 
@@ -83,6 +84,13 @@ def read_audit_entries(path: str | os.PathLike[str] | None, *, limit: int = 200)
     return entries
 
 
+def _read_text_log(path: Path) -> tuple[int, list[str]]:
+    if not path.exists():
+        return 0, []
+    lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    return len(lines), lines[-50:]
+
+
 def export_signed_audit_log(
     *,
     log_path: str | os.PathLike[str] | None,
@@ -130,9 +138,77 @@ def export_signed_audit_log(
     )
 
 
+def export_security_bundle(
+    *,
+    audit_path: str | os.PathLike[str] | None,
+    alerts_path: str | os.PathLike[str] | None,
+    destination_dir: str | os.PathLike[str] | None,
+    include_logs: Sequence[str] | None = None,
+    key_source: str | None = None,
+    key_id: str | None = None,
+    metadata: Mapping[str, Any] | None = None,
+) -> AuditExportResult:
+    """Eksportuje pełen pakiet logów bezpieczeństwa wraz z podpisem."""
+
+    generated_at = datetime.now(timezone.utc)
+    audit_source = _coerce_path(audit_path, default=DEFAULT_AUDIT_PATH)
+    alerts_source = _coerce_path(alerts_path, default=DEFAULT_ALERTS_PATH)
+    audit_entries = read_audit_entries(audit_source, limit=0)
+    alerts_entries = read_audit_entries(alerts_source, limit=0)
+
+    logs_section: dict[str, Any] = {}
+    for candidate in include_logs or ():
+        path = Path(candidate).expanduser()
+        resolved = str(path.resolve()) if path.exists() else str(path)
+        line_count, tail = _read_text_log(path)
+        logs_section[resolved] = {
+            "line_count": line_count,
+            "tail": tail,
+        }
+
+    bundle = {
+        "generated_at": generated_at.isoformat(),
+        "metadata": dict(metadata) if metadata else {},
+        "audit": {
+            "source": str(audit_source),
+            "entries": audit_entries,
+        },
+        "alerts": {
+            "source": str(alerts_source),
+            "entries": alerts_entries,
+        },
+        "logs": logs_section,
+    }
+
+    key_bytes, env_key_id = _load_signing_key(key_source)
+    effective_key_id = key_id or env_key_id
+    signature = build_hmac_signature(bundle, key=key_bytes, key_id=effective_key_id)
+
+    output_dir = _coerce_path(destination_dir, default=Path.cwd() / "exports")
+    if output_dir.suffix:
+        output_dir.parent.mkdir(parents=True, exist_ok=True)
+        output_path = output_dir
+    else:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        filename = f"security_bundle_{generated_at.strftime('%Y%m%dT%H%M%SZ')}.json"
+        output_path = output_dir / filename
+
+    payload = {"bundle": bundle, "signature": signature}
+    output_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    total_entries = len(audit_entries) + len(alerts_entries)
+    return AuditExportResult(
+        bundle_path=output_path,
+        entry_count=total_entries,
+        generated_at=generated_at,
+        signature=signature,
+    )
+
+
 __all__ = [
     "AuditExportResult",
     "export_signed_audit_log",
+    "export_security_bundle",
     "read_audit_entries",
 ]
 
