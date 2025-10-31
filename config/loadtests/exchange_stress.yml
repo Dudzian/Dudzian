@@ -1,0 +1,30 @@
+# Domyślne ustawienia kolejki i charakterystyki endpointów
+defaults:
+  max_concurrency: 8
+  burst: 16
+  request_count: 60
+  base_latency_ms: 35.0
+  jitter_ms: 8.0
+  error_rate: 0.02
+  throttle_rate: 0.05
+
+# Scenariusze dla poszczególnych giełd (mockowanych endpointów)
+exchanges:
+  - name: binance_spot
+    request_count: 90
+    base_latency_ms: 32.0
+    jitter_ms: 6.0
+    throttle_rate: 0.07
+  - name: kraken_spot
+    max_concurrency: 4
+    burst: 8
+    request_count: 70
+    base_latency_ms: 45.0
+    jitter_ms: 10.0
+    error_rate: 0.03
+  - name: coinbase_spot
+    request_count: 60
+    base_latency_ms: 28.0
+    jitter_ms: 5.0
+    error_rate: 0.01
+    throttle_rate: 0.03

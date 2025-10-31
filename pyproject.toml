@@ -39,6 +39,8 @@ markers = [
   "timeout: oznaczenie testów z ograniczeniem czasu wykonywania",
   "integration: testy wymagające środowisk demo/sandbox lub zewnętrznych zasobów",
   "requires_trading_stubs: test wymaga wygenerowanych stubów trading_pb2",
+  "e2e_demo_paper: scenariusz demo→paper wykonywany lokalnie",
+  "asyncio: testy wykorzystujące pętlę asynchroniczną",
 ]
 
 [project]
@@ -64,6 +66,8 @@ dependencies = [
   "lightgbm>=4.6",
   "requests>=2.31",
   "responses>=0.25",
+  "httpx>=0.26",
+  "respx>=0.20",
   "jsonschema>=4.21",
   "sqlalchemy>=2.0",
   "PySide6>=6.6",
@@ -72,6 +76,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
   "pytest>=7.4",
+  "pytest-asyncio>=0.23",
   "pytest-cov>=4.1",
   "grpcio-tools>=1.62",
   "grpcio>=1.62",
@@ -87,6 +92,8 @@ dev = [
   "lightgbm>=4.6",
   "requests>=2.31",
   "responses>=0.25",
+  "httpx>=0.26",
+  "respx>=0.20",
   "sqlalchemy>=2.0",
 ]
 desktop = [

@@ -1,0 +1,21 @@
+{
+  "generated_at": "2025-05-26T09:00:00Z",
+  "environment": "demo",
+  "strategies": {
+    "mean_reversion": {
+      "total_return": 0.0315,
+      "max_drawdown": 0.047,
+      "win_rate": 0.57,
+      "trades": 86,
+      "avg_position_minutes": 22.4
+    },
+    "trend_following": {
+      "total_return": 0.042,
+      "max_drawdown": 0.053,
+      "win_rate": 0.62,
+      "trades": 74,
+      "avg_position_minutes": 35.1
+    }
+  },
+  "notes": "Snapshot wyników przed migracją do warstwy async."
+}

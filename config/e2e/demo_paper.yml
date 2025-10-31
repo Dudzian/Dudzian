@@ -1,0 +1,34 @@
+core:
+  path: ../core.yaml
+
+auto_trader:
+  enable: true
+
+trading:
+  default_entrypoint: demo_desktop
+  auto_start: false
+  enable_paper_mode: true
+  enable_live_mode: false
+  entrypoints:
+    demo_desktop:
+      environment: binance_paper
+      description: "Scenariusz demonstracyjny: demo → paper"
+      controller: stage6.desktop
+      strategy: multi_strategy_default
+      risk_profile: balanced
+      bootstrap: true
+      trusted_auto_confirm: false
+      tags: [demo, paper]
+
+execution:
+  default_mode: paper
+  force_paper_when_offline: true
+  live:
+    enabled: false
+
+io_queue:
+  max_concurrency: 4
+  burst: 8
+
+observability:
+  enable_log_metrics: false
