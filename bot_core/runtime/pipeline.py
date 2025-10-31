@@ -38,6 +38,7 @@ from bot_core.data.base import OHLCVRequest, OHLCVResponse
 from bot_core.data.ohlcv import OHLCVBackfillService
 from bot_core.execution.base import ExecutionContext, ExecutionService, PriceResolver
 from bot_core.execution.paper import MarketMetadata, PaperTradingExecutionService
+from core.monitoring import AsyncIOGuardrails
 from bot_core.execution import build_live_execution_service, resolve_execution_mode
 from bot_core.exchanges.base import (
     AccountSnapshot,
@@ -83,6 +84,7 @@ from bot_core.runtime.multi_strategy_scheduler import (
     StrategyDataFeed,
     StrategySignalSink,
 )
+from bot_core.runtime.scheduler import AsyncIOTaskQueue
 from bot_core.runtime.journal import TradingDecisionEvent, TradingDecisionJournal
 from bot_core.runtime.portfolio_coordinator import PortfolioRuntimeCoordinator
 from bot_core.runtime.portfolio_inputs import (
@@ -3365,6 +3367,34 @@ def build_multi_strategy_runtime(
     if allocation_interval is None and policy_interval is not None:
         allocation_interval = policy_interval
 
+    io_dispatcher: AsyncIOTaskQueue | None = None
+    io_guardrails: AsyncIOGuardrails | None = None
+    if runtime_config and runtime_config.io_queue is not None:
+        io_config = runtime_config.io_queue
+        log_directory = io_config.log_directory
+        if not log_directory:
+            log_directory = "logs/guardrails"
+        ui_alerts_path = getattr(bootstrap_ctx, "metrics_ui_alerts_path", None)
+        ui_alerts_path = Path(ui_alerts_path) if ui_alerts_path else None
+        io_guardrails = AsyncIOGuardrails(
+            environment=environment_name,
+            log_directory=Path(log_directory).expanduser(),
+            rate_limit_warning_threshold=io_config.rate_limit_warning_seconds,
+            timeout_warning_threshold=io_config.timeout_warning_seconds,
+            ui_alerts_path=ui_alerts_path,
+        )
+        io_dispatcher = AsyncIOTaskQueue(
+            default_max_concurrency=io_config.max_concurrency,
+            default_burst=io_config.burst,
+            event_listener=io_guardrails,
+        )
+        for name, limits in io_config.exchanges.items():
+            io_dispatcher.configure_exchange(
+                name,
+                max_concurrency=limits.max_concurrency,
+                burst=limits.burst,
+            )
+
     scheduler = MultiStrategyScheduler(
         environment=environment_name,
         portfolio=str(paper_settings["portfolio_id"]),
@@ -3373,6 +3403,7 @@ def build_multi_strategy_runtime(
         portfolio_governor=portfolio_governor,
         capital_policy=capital_policy,
         allocation_rebalance_seconds=allocation_interval,
+        io_dispatcher=io_dispatcher,
     )
 
     signal_limits = getattr(scheduler_cfg, "signal_limits", None)

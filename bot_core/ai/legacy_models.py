@@ -34,6 +34,8 @@ import numpy as np
 import pandas as pd
 import types
 
+from .backends import is_backend_available, require_backend
+
 # Configuration
 CONFIG = {
     "MIN_SAMPLES": 10,
@@ -111,19 +113,17 @@ else:
     def _load_object(path: Path) -> Any:
         return joblib.load(path)
 
-LGB_AVAILABLE = False
-try:
-    import lightgbm as lgb
-    LGB_AVAILABLE = True
-except ImportError:
-    pass
+LGB_AVAILABLE = is_backend_available("lightgbm")
+if LGB_AVAILABLE:
+    lgb = require_backend("lightgbm")  # type: ignore[assignment]
+else:
+    lgb = None  # type: ignore[assignment]
 
-XGB_AVAILABLE = False
-try:
-    import xgboost as xgb
-    XGB_AVAILABLE = True
-except ImportError:
-    pass
+XGB_AVAILABLE = is_backend_available("xgboost")
+if XGB_AVAILABLE:
+    xgb = require_backend("xgboost")  # type: ignore[assignment]
+else:
+    xgb = None  # type: ignore[assignment]
 
 VBT_AVAILABLE = False
 try:

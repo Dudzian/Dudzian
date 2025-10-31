@@ -1,6 +1,7 @@
 """Minimalistyczny adapter REST dla rynku spot nowa_gielda."""
 from __future__ import annotations
 
+import asyncio
 import hmac
 import logging
 import time
@@ -9,9 +10,7 @@ from dataclasses import dataclass
 from hashlib import sha256
 from typing import Any, Callable, Deque, Iterable, Mapping, Optional, Protocol, Sequence
 
-import requests
-from requests import Response, Session
-from requests.exceptions import RequestException
+import httpx
 
 from bot_core.exchanges.base import (
     AccountSnapshot,
@@ -29,6 +28,7 @@ from bot_core.exchanges.errors import (
 )
 from bot_core.exchanges.nowa_gielda import symbols
 from bot_core.exchanges.streaming import LocalLongPollStream, StreamBatch
+from core.network import RateLimitedAsyncClient, get_rate_limited_client
 
 _PUBLIC_STREAM_CHANNEL_MAP: Mapping[str, str] = {
     "ticker": "ticker",
@@ -136,23 +136,52 @@ _ERROR_CODE_MAPPING: Mapping[str, type[ExchangeAPIError]] = {
 class NowaGieldaHTTPClient:
     """Klient HTTP odpowiadający za komunikację z REST API nowa_gielda."""
 
-    __slots__ = ("_base_url", "_session", "_timeout", "_rate_limiter")
+    __slots__ = ("_base_url", "_client", "_rate_limiter", "_owns_client")
 
     def __init__(
         self,
         base_url: str,
         *,
-        session: Session | None = None,
+        client: RateLimitedAsyncClient | None = None,
         timeout: float = 10.0,
     ) -> None:
         self._base_url = base_url.rstrip("/")
-        self._session = session or requests.Session()
-        self._timeout = timeout
         self._rate_limiter = _RateLimiter(_RATE_LIMITS)
+        if client is None:
+            self._client = get_rate_limited_client(base_url=self._base_url, timeout=timeout)
+            self._owns_client = True
+        else:
+            self._client = client
+            self._owns_client = False
 
     @property
     def rate_limiter(self) -> _RateLimiter:
         return self._rate_limiter
+
+    async def _request_async(
+        self,
+        method: str,
+        path: str,
+        *,
+        params: Mapping[str, Any] | None = None,
+        json_body: Mapping[str, Any] | None = None,
+        headers: Mapping[str, str] | None = None,
+    ) -> Mapping[str, Any]:
+        self._rate_limiter.consume(method, path)
+        query = _strip_none(params)
+        body = _strip_none(json_body)
+        try:
+            response = await self._client.request(
+                method,
+                path,
+                params=query or None,
+                json=body or None,
+                headers=headers,
+            )
+        except httpx.RequestError as exc:  # pragma: no cover - zabezpieczenie
+            raise ExchangeNetworkError("Błąd połączenia z API nowa_gielda", reason=exc) from exc
+
+        return self._parse_response(method, path, response)
 
     def _request(
         self,
@@ -163,25 +192,17 @@ class NowaGieldaHTTPClient:
         json_body: Mapping[str, Any] | None = None,
         headers: Mapping[str, str] | None = None,
     ) -> Mapping[str, Any]:
-        self._rate_limiter.consume(method, path)
-        url = f"{self._base_url}{path}"
-        query = _strip_none(params)
-        body = _strip_none(json_body)
-        try:
-            response = self._session.request(
+        return asyncio.run(
+            self._request_async(
                 method,
-                url,
-                params=query or None,
-                json=body or None,
+                path,
+                params=params,
+                json_body=json_body,
                 headers=headers,
-                timeout=self._timeout,
             )
-        except RequestException as exc:  # pragma: no cover - zabezpieczenie
-            raise ExchangeNetworkError("Błąd połączenia z API nowa_gielda", reason=exc) from exc
+        )
 
-        return self._parse_response(method, path, response)
-
-    def _parse_response(self, method: str, path: str, response: Response) -> Mapping[str, Any]:
+    def _parse_response(self, method: str, path: str, response: httpx.Response) -> Mapping[str, Any]:
         status = response.status_code
         if 200 <= status < 300:
             try:
@@ -223,6 +244,10 @@ class NowaGieldaHTTPClient:
             status_code=status,
             payload=payload,
         )
+
+    def close(self) -> None:
+        if self._owns_client:
+            asyncio.run(self._client.aclose())
 
     # --- Public helpers -------------------------------------------------
     def fetch_ticker(self, symbol: str) -> Mapping[str, Any]:

@@ -1,10 +1,28 @@
 """Ogólny harmonogram zadań dla operacji multi-portfelowych."""
 from __future__ import annotations
 
+import asyncio
 import inspect
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, time, timedelta, timezone
-from typing import Awaitable, Callable, Mapping, MutableMapping, Sequence
+from typing import (
+    Awaitable,
+    Callable,
+    Mapping,
+    MutableMapping,
+    Protocol,
+    Sequence,
+    TypeVar,
+)
+
+try:  # pragma: no cover - httpx może być opcjonalne w niektórych dystrybucjach
+    import httpx
+except Exception:  # pragma: no cover
+    httpx = None  # type: ignore
+
+
+_QueueResult = TypeVar("_QueueResult")
 
 CallbackResult = Mapping[str, object] | None
 TaskCallback = Callable[[datetime], Awaitable[CallbackResult] | CallbackResult]
@@ -169,9 +187,175 @@ class CyclicTaskScheduler:
         return dict(result)
 
 
+@dataclass(slots=True)
+class _QueueLimits:
+    max_concurrency: int
+    burst: int
+
+
+@dataclass(slots=True)
+class _QueueState:
+    limits: _QueueLimits
+    semaphore: asyncio.Semaphore
+    condition: asyncio.Condition
+    pending: int = 0
+
+
+class AsyncIOQueueListener(Protocol):
+    """Interfejs powiadomień o zdarzeniach kolejki I/O."""
+
+    def on_rate_limit_wait(self, *, key: str, waited: float, burst: int, pending: int) -> None:
+        ...
+
+    def on_timeout(self, *, key: str, duration: float, exception: BaseException) -> None:
+        ...
+
+
+class AsyncIOTaskQueue:
+    """Dispatcher zarządzający limitami I/O dla operacji sieciowych."""
+
+    def __init__(
+        self,
+        *,
+        default_max_concurrency: int = 8,
+        default_burst: int = 16,
+        event_listener: AsyncIOQueueListener | None = None,
+    ) -> None:
+        if default_max_concurrency <= 0:
+            raise ValueError("default_max_concurrency musi być dodatnie")
+        if default_burst <= 0:
+            raise ValueError("default_burst musi być dodatnie")
+        self._default_limits = _QueueLimits(
+            max_concurrency=int(default_max_concurrency),
+            burst=int(default_burst),
+        )
+        self._queues: MutableMapping[str, _QueueState] = {}
+        self._lock = asyncio.Lock()
+        self._event_listener = event_listener
+
+    def configure_exchange(
+        self,
+        name: str,
+        *,
+        max_concurrency: int | None = None,
+        burst: int | None = None,
+    ) -> None:
+        """Aktualizuje limity dla wskazanego klucza (np. giełdy)."""
+
+        normalized = self._normalize_key(name)
+        if not normalized:
+            raise ValueError("Nazwa kolejki nie może być pusta")
+        limits = _QueueLimits(
+            max_concurrency=self._default_limits.max_concurrency,
+            burst=self._default_limits.burst,
+        )
+        if max_concurrency is not None:
+            if max_concurrency <= 0:
+                raise ValueError("max_concurrency musi być dodatnie")
+            limits = _QueueLimits(
+                max_concurrency=int(max_concurrency),
+                burst=int(burst if burst is not None else limits.burst),
+            )
+        if burst is not None:
+            if burst <= 0:
+                raise ValueError("burst musi być dodatnie")
+            limits = _QueueLimits(
+                max_concurrency=int(max_concurrency if max_concurrency is not None else limits.max_concurrency),
+                burst=int(burst),
+            )
+        self._queues[normalized] = _QueueState(
+            limits,
+            asyncio.Semaphore(limits.max_concurrency),
+            asyncio.Condition(),
+        )
+
+    async def submit(
+        self,
+        key: str,
+        coroutine_factory: Callable[[], Awaitable[_QueueResult]],
+    ) -> _QueueResult:
+        """Planuje wykonanie korutyny respektując limity dla klucza."""
+
+        normalized = self._normalize_key(key)
+        queue = await self._get_or_create_queue(normalized)
+        async with queue.condition:
+            wait_started: float | None = None
+            while queue.pending >= queue.limits.burst:
+                if wait_started is None and self._event_listener is not None:
+                    wait_started = self._loop_time()
+                await queue.condition.wait()
+            queue.pending += 1
+            pending_after = queue.pending
+        if self._event_listener is not None and wait_started is not None:
+            waited = self._loop_time() - wait_started
+            self._event_listener.on_rate_limit_wait(
+                key=normalized,
+                waited=waited,
+                burst=queue.limits.burst,
+                pending=pending_after,
+            )
+        await queue.semaphore.acquire()
+        started = self._loop_time()
+        try:
+            result = await coroutine_factory()
+        except Exception as exc:
+            if self._event_listener is not None and self._is_timeout_exception(exc):
+                duration = self._loop_time() - started
+                self._event_listener.on_timeout(
+                    key=normalized,
+                    duration=duration,
+                    exception=exc,
+                )
+            raise
+        finally:
+            queue.semaphore.release()
+            async with queue.condition:
+                queue.pending -= 1
+                queue.condition.notify(1)
+        return result
+
+    async def _get_or_create_queue(self, key: str) -> _QueueState:
+        normalized = self._normalize_key(key)
+        async with self._lock:
+            existing = self._queues.get(normalized)
+            if existing is not None:
+                return existing
+            limits = self._default_limits
+            state = _QueueState(
+                limits,
+                asyncio.Semaphore(limits.max_concurrency),
+                asyncio.Condition(),
+            )
+            self._queues[normalized] = state
+            return state
+
+    @staticmethod
+    def _normalize_key(key: str) -> str:
+        normalized = str(key).strip()
+        return normalized or "default"
+
+    @staticmethod
+    def _loop_time() -> float:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return time.monotonic()
+        return loop.time()
+
+    @staticmethod
+    def _is_timeout_exception(exc: BaseException) -> bool:
+        if isinstance(exc, asyncio.TimeoutError):
+            return True
+        if httpx is not None and isinstance(exc, httpx.TimeoutException):  # type: ignore[attr-defined]
+            return True
+        return False
+
+
 __all__ = [
     "ScheduleWindow",
     "ScheduledTask",
     "TaskResult",
     "CyclicTaskScheduler",
+    "AsyncIOQueueListener",
+    "AsyncIOTaskQueue",
 ]

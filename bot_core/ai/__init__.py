@@ -30,6 +30,10 @@ _EXPORTS: Dict[str, Tuple[str, str]] = {
     "ExternalModelAdapter": (".training", "ExternalModelAdapter"),
     "get_external_model_adapter": (".training", "get_external_model_adapter"),
     "register_external_model_adapter": (".training", "register_external_model_adapter"),
+    "BackendUnavailableError": (".backends", "BackendUnavailableError"),
+    "is_backend_available": (".backends", "is_backend_available"),
+    "require_backend": (".backends", "require_backend"),
+    "get_backend_priority": (".backends", "get_backend_priority"),
     # audyt
     "AUDIT_SUBDIRECTORIES": (".audit", "AUDIT_SUBDIRECTORIES"),
     "DEFAULT_AUDIT_ROOT": (".audit", "DEFAULT_AUDIT_ROOT"),

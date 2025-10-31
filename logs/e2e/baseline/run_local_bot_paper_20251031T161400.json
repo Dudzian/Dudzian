@@ -1,0 +1,35 @@
+{
+  "mode": "paper",
+  "config_path": "logs/e2e/baseline/runtime.yaml",
+  "started_at": "2025-10-31T16:14:00.442429+00:00",
+  "errors": [],
+  "warnings": [],
+  "entrypoint": "demo_desktop",
+  "validation": {
+    "mode": "paper",
+    "environment": "DemoEnv",
+    "strategy": "demo_strategy",
+    "risk_profile": "balanced",
+    "keychain_key": "demo_key",
+    "expected_environment": "paper",
+    "credentials_validated": true,
+    "symbols": [
+      "BTCUSDT",
+      "ETHUSDT"
+    ]
+  },
+  "checkpoint": {
+    "entrypoint": "demo_desktop",
+    "mode": "demo",
+    "config_path": "logs/e2e/baseline/runtime.yaml",
+    "created_at": "2025-10-31T16:14:00.440911+00:00",
+    "metadata": {
+      "metrics_endpoint": "http://127.0.0.1:9100/metrics"
+    }
+  },
+  "metrics_endpoint": "http://127.0.0.1:9100/metrics",
+  "decision_events": 2,
+  "status": "success",
+  "finished_at": "2025-10-31T16:14:00.442678+00:00",
+  "report_markdown": "reports/e2e/demo_paper_paper_20251031T161400.md"
+}

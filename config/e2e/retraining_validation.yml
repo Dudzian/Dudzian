@@ -1,0 +1,8 @@
+# Konfiguracja scenariusza E2E weryfikującego retrening i fallback backendów ML.
+interval_minutes: 30
+chaos:
+  enabled: false
+  drift_frequency: 0.0
+  drift_threshold: 0.0
+  delay_frequency: 0.0
+  missing_data_frequency: 0.0

@@ -1542,6 +1542,72 @@ class RuntimeObservabilitySettings:
 
 
 @dataclass(slots=True)
+class RuntimeIOQueueLimit:
+    """Limity kolejki I/O dla pojedynczego adaptera."""
+
+    max_concurrency: int
+    burst: int
+
+    def __post_init__(self) -> None:
+        if self.max_concurrency <= 0:
+            raise ValueError("max_concurrency musi być dodatnie")
+        if self.burst <= 0:
+            raise ValueError("burst musi być dodatnie")
+        object.__setattr__(self, "max_concurrency", int(self.max_concurrency))
+        object.__setattr__(self, "burst", int(self.burst))
+
+
+@dataclass(slots=True)
+class RuntimeIOQueueSettings:
+    """Konfiguracja dispatcher-a AsyncIOTaskQueue."""
+
+    max_concurrency: int = 8
+    burst: int = 16
+    rate_limit_warning_seconds: float = 0.75
+    timeout_warning_seconds: float = 10.0
+    log_directory: str | None = "logs/guardrails"
+    exchanges: Mapping[str, RuntimeIOQueueLimit | Mapping[str, object]] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if self.max_concurrency <= 0:
+            raise ValueError("max_concurrency musi być dodatnie")
+        if self.burst <= 0:
+            raise ValueError("burst musi być dodatnie")
+        object.__setattr__(self, "max_concurrency", int(self.max_concurrency))
+        object.__setattr__(self, "burst", int(self.burst))
+        object.__setattr__(
+            self,
+            "rate_limit_warning_seconds",
+            max(0.0, float(self.rate_limit_warning_seconds)),
+        )
+        object.__setattr__(
+            self,
+            "timeout_warning_seconds",
+            max(0.0, float(self.timeout_warning_seconds)),
+        )
+        if self.log_directory in (None, ""):
+            object.__setattr__(self, "log_directory", None)
+        else:
+            object.__setattr__(self, "log_directory", str(self.log_directory))
+        normalized: dict[str, RuntimeIOQueueLimit] = {}
+        for name, raw in (self.exchanges or {}).items():
+            key = str(name).strip()
+            if not key:
+                continue
+            if isinstance(raw, RuntimeIOQueueLimit):
+                limit = raw
+            elif isinstance(raw, Mapping):
+                limit = RuntimeIOQueueLimit(
+                    max_concurrency=int(raw.get("max_concurrency", self.max_concurrency)),
+                    burst=int(raw.get("burst", self.burst)),
+                )
+            else:
+                continue
+            normalized[key] = limit
+        object.__setattr__(self, "exchanges", normalized)
+
+
+@dataclass(slots=True)
 class RuntimeOptimizationSettings:
     """Konfiguracja harmonogramu optymalizacji strategii."""
 
@@ -1592,6 +1658,7 @@ class RuntimeAppConfig:
     observability: RuntimeObservabilitySettings | None = None
     optimization: RuntimeOptimizationSettings | None = None
     marketplace: RuntimeMarketplaceSettings | None = None
+    io_queue: RuntimeIOQueueSettings | None = None
 
 
 __all__ = [
@@ -1706,6 +1773,8 @@ __all__ = [
     "RuntimeObservabilityMetricsSettings",
     "RuntimeObservabilityAlertSettings",
     "RuntimeObservabilitySettings",
+    "RuntimeIOQueueLimit",
+    "RuntimeIOQueueSettings",
     "RuntimeOptimizationSettings",
     "RuntimeMarketplaceSettings",
     "RuntimeUISettings",
