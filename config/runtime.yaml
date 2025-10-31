@@ -66,6 +66,20 @@ execution:
     enabled: false
     default_route: []
 
+io_queue:
+  max_concurrency: 6
+  burst: 16
+  rate_limit_warning_seconds: 0.75
+  timeout_warning_seconds: 12.0
+  log_directory: logs/guardrails
+  exchanges:
+    binance_spot:
+      max_concurrency: 4
+      burst: 8
+    nowa_gielda_spot:
+      max_concurrency: 2
+      burst: 6
+
 risk:
   service:
     enabled: true

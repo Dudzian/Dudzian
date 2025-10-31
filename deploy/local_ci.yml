@@ -1,0 +1,27 @@
+version: "1"
+description: "Lokalny pipeline CI dla scenariusza demo→paper"
+
+tasks:
+  setup:
+    steps:
+      - name: Instalacja zależności deweloperskich
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .[dev]
+  e2e-demo-paper:
+    needs:
+      - setup
+    steps:
+      - name: Uruchom test demo→paper
+        run: |
+          pytest -m e2e_demo_paper --maxfail=1 --disable-warnings
+      - name: Archiwizuj raporty Markdown
+        run: |
+          mkdir -p reports/e2e
+          mkdir -p logs/e2e
+          find reports/e2e -maxdepth 1 -type f -print || true
+
+artifacts:
+  paths:
+    - reports/e2e
+    - logs/e2e
