@@ -2,14 +2,9 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 from pathlib import Path
 
 import pytest
-
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
 
 from scripts.disable_multi_strategy import (
     COMPONENTS,
@@ -18,6 +13,9 @@ from scripts.disable_multi_strategy import (
     main as disable_main,
     run as disable_scheduler,
 )
+
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_disable_scheduler_creates_override(tmp_path: Path) -> None:

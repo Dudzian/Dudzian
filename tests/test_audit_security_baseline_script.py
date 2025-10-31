@@ -6,7 +6,6 @@ from types import SimpleNamespace
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from scripts import audit_security_baseline as audit_security_baseline_script
 from tests.test_audit_tls_assets_script import _CERT, _KEY

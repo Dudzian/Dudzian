@@ -1,17 +1,14 @@
 from __future__ import annotations
 
 import json
-import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
 
 from scripts.generate_alert_overrides import run as generate_overrides
 
 
+ROOT = Path(__file__).resolve().parents[1]
 def _write_json(path: Path, payload: dict[str, object]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload), encoding="utf-8")

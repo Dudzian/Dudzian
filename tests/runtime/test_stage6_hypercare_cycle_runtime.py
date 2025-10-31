@@ -202,8 +202,7 @@ def test_stage6_hypercare_cycle_runtime(
         config_path.as_posix(),
     ]
 
-    import sys
-
+    
     monkeypatch.setattr(sys, "argv", argv)
 
     with pytest.raises(SystemExit) as exit_info:

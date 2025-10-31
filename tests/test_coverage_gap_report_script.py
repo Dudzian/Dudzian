@@ -1,21 +1,21 @@
+from __future__ import annotations
+
 import json
-import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
-
-from scripts import coverage_gap_report as cli  # noqa: E402 - import po modyfikacji sys.path
-from tests.test_check_data_coverage_script import (  # noqa: E402 - wspólne helpery
+from scripts import coverage_gap_report as cli
+from tests.test_check_data_coverage_script import (
     _generate_rows,
     _last_row_iso,
     _write_cache,
     _write_config,
 )
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
 def _run_cli(argv: list[str], capsys: pytest.CaptureFixture[str]) -> tuple[int, dict[str, object]]:
@@ -118,4 +118,3 @@ def test_gap_report_all_configured_uses_monitoring(tmp_path: Path, capsys: pytes
 
     assert exit_code == 0
     assert len(payload["reports"]) == 1
-

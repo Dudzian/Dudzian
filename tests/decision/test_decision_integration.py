@@ -1,12 +1,10 @@
 from __future__ import annotations
 
-import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from bot_core.ai import MarketRegime, ModelScore
 from bot_core.config.models import DecisionEngineConfig, DecisionOrchestratorThresholds

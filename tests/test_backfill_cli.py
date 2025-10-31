@@ -4,7 +4,6 @@ import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from bot_core.config.loader import load_core_config
 from bot_core.config.models import (

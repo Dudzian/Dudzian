@@ -2,19 +2,16 @@ import base64
 import hashlib
 import hmac
 import json
-import sys
 from pathlib import Path
 
 import pytest
 
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
 
 from bot_core.security.signing import canonical_json_bytes
 from scripts import oem_provision_license
 
 
+ROOT = Path(__file__).resolve().parents[1]
 def test_oem_provision_license_creates_signed_entry(tmp_path):
     registry_path = tmp_path / "registry.jsonl"
     key_path = tmp_path / "signing.key"

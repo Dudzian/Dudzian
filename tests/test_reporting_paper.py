@@ -3,14 +3,12 @@ from __future__ import annotations
 
 import csv
 import json
-import sys
 from datetime import date, datetime, timezone
 from pathlib import Path
 from zipfile import ZipFile
 
 import pytest
 
-sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from bot_core.execution.base import ExecutionContext
 from bot_core.execution.paper import MarketMetadata, PaperTradingExecutionService

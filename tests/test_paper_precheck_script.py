@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import json
 from datetime import datetime, timezone
 from pathlib import Path
@@ -5,23 +7,8 @@ from pathlib import Path
 import pytest
 import yaml
 
-sys_path_added = False
-
-
-def _ensure_sys_path() -> None:
-    global sys_path_added  # noqa: PLW0603 - modyfikujemy cache w module testowym
-    if sys_path_added:
-        return
-    sys_path_added = True
-    import sys
-
-    sys.path.append(str(Path(__file__).resolve().parents[1]))
-
-
-_ensure_sys_path()
-
-from scripts import paper_precheck  # noqa: E402  - import po modyfikacji sys.path
-from tests.test_check_data_coverage_script import (  # noqa: E402
+from scripts import paper_precheck
+from tests.test_check_data_coverage_script import (
     _generate_rows,
     _write_cache,
     _write_config,

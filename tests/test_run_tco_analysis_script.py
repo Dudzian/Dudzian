@@ -10,10 +10,8 @@ import pytest
 from tests._cli_parser_helpers import parser_supports
 from tests._signing_helpers import write_random_hmac_key
 
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
 
+ROOT = Path(__file__).resolve().parents[1]
 # HMAC helper wspólny dla obu wariantów
 from bot_core.security.signing import build_hmac_signature  # noqa: E402
 

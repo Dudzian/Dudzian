@@ -1,15 +1,12 @@
+from __future__ import annotations
+
 import base64
 import hashlib
 import hmac
-import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
-
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
 
 from bot_core.security.fingerprint import (
     DeviceFingerprintGenerator,
@@ -19,6 +16,9 @@ from bot_core.security.fingerprint import (
 )
 from bot_core.security.rotation import RotationRegistry
 from bot_core.security.signing import canonical_json_bytes
+
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_device_fingerprint_is_deterministic():

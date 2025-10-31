@@ -1,14 +1,10 @@
 from __future__ import annotations
 
 import json
-import sys
 from pathlib import Path
 
 import pytest
 
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
 
 from bot_core.security.signing import build_hmac_signature
 from scripts.publish_strategy_bundle import run as publish_bundle
@@ -16,6 +12,7 @@ from tests._json_helpers import read_jsonl
 from tests._signing_helpers import write_random_hmac_key
 
 
+ROOT = Path(__file__).resolve().parents[1]
 def _sha256(path: Path) -> str:
     import hashlib
 

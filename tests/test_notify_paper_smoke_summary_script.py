@@ -7,14 +7,12 @@ from typing import Iterable, Mapping
 
 import pytest
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
 
 from bot_core.alerts import AlertMessage
-from scripts import notify_paper_smoke_summary as cli  # noqa: E402 - import po modyfikacji sys.path
+from scripts import notify_paper_smoke_summary as cli  # noqa: E402 - import modułu CLI w testach
 
 
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 @dataclass
 class _RecordedAuditLog:
     records: list[Mapping[str, str]]

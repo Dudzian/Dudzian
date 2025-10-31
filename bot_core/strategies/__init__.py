@@ -2,6 +2,7 @@
 
 from bot_core.strategies.base import (
     MarketSnapshot,
+    SignalLeg,
     StrategyEngine,
     StrategySignal,
     WalkForwardOptimizer,
@@ -70,6 +71,7 @@ from bot_core.strategies.volatility_target import (
 
 __all__ = [
     "MarketSnapshot",
+    "SignalLeg",
     "StrategyEngine",
     "StrategySignal",
     "WalkForwardOptimizer",

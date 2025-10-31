@@ -3,12 +3,10 @@ from __future__ import annotations
 import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-import sys
 from typing import Mapping
 
 import pytest
 
-sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from bot_core.config.models import (
     DailyTrendMomentumStrategyConfig,
