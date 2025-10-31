@@ -15,6 +15,14 @@
   - ekspozycję per giełda i per strategia (na podstawie kodów `exchange:*` i `strategy:*`),
   - listę aktywnych alertów wraz z akcjami potwierdzenia.
 * Widok aktualizuje się automatycznie po każdej zmianie snapshotu ryzyka lub historii.
+* Nowy panel **Explainability** korzysta z `bot_core.ui.api.build_explainability_feed`, aby prezentować listę ostatnich decyzji AI wraz z wiodącymi cechami modelu. Dane pobierane są z dziennika decyzji (`TradingDecisionJournal`) i zawierają nazwę modelu, metodę wyjaśnienia oraz top cechy pozytywne/negatywne.
+
+## Offline Runtime API dla UI
+
+* Backend udostępnia funkcję `bot_core.ui.api.build_runtime_snapshot`, która zbiera migawkę portfela, statusy giełd, katalog strategii oraz najnowsze wpisy explainability/alertów. Snapshot jest zgodny z wymaganiami panelu dashboardu i konfiguratora strategii.
+* `bot_core.ui.api.describe_strategy_catalog` serializuje wpisy katalogu strategii (`StrategyCatalog` + `StrategyDefinition`) do formatu wykorzystywanego w QML (nazwa, engine, licencja, klasy ryzyka, tagi i metadane).
+* `bot_core.ui.api.RuntimeStateSync` realizuje lokalny polling (bez WebSocketów) i przekazuje kolejne snapshoty do zarejestrowanych słuchaczy w UI. Polling domyślnie odbywa się co 2 sekundy, można go spersonalizować przy inicjalizacji mostka.
+* W trybie testowym wystarczy utworzyć `RuntimeStateSync`, dodać listener i wywołać `start()` – komponent zadba o regularne odświeżanie stanu i można go zatrzymać poprzez `stop()` (np. w `Component.onDestruction`).
 
 ## Alerty – powiadomienia toast
 

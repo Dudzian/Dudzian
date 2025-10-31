@@ -26,6 +26,17 @@ from bot_core.strategies.catalog import (
     StrategyPresetProfile,
     StrategyPresetWizard,
 )
+from bot_core.strategies.installer import (
+    MarketplaceInstallResult,
+    MarketplacePresetInstaller,
+)
+from bot_core.strategies.marketplace import (
+    MarketplaceAuthor,
+    MarketplaceCatalog,
+    MarketplaceCatalogError,
+    MarketplacePreset,
+    load_catalog,
+)
 from bot_core.strategies.regime_workflow import (
     ActivationCadenceStats,
     ActivationHistoryStats,
@@ -88,6 +99,13 @@ __all__ = [
     "StrategyPresetProfile",
     "PresetLicenseStatus",
     "PresetLicenseState",
+    "MarketplaceCatalog",
+    "MarketplaceCatalogError",
+    "MarketplacePreset",
+    "MarketplaceAuthor",
+    "MarketplacePresetInstaller",
+    "MarketplaceInstallResult",
+    "load_catalog",
     "StrategyParameterTester",
     "StrategyParameterTestReport",
     "ParameterTestResult",

@@ -5,10 +5,10 @@ import argparse
 import json
 import logging
 import math
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from dataclasses import dataclass
-from typing import Mapping, Sequence
+from typing import Iterable, Mapping, MutableMapping, Sequence
 
 import numpy as np
 import pandas as pd
@@ -16,6 +16,19 @@ import pandas as pd
 from .inference import DecisionModelInference, ModelRepository
 from .models import ModelArtifact, ModelScore
 from .training import SimpleGradientBoostingModel
+
+try:  # pragma: no cover - opcjonalna zależność
+    import yaml
+except Exception:  # pragma: no cover - środowiska minimalne mogą nie mieć PyYAML
+    yaml = None
+
+try:  # pragma: no cover - import na potrzeby typowania
+    from typing import TYPE_CHECKING
+except ImportError:  # pragma: no cover - Python <3.8 fallback
+    TYPE_CHECKING = False  # type: ignore[assignment]
+
+if TYPE_CHECKING:  # pragma: no cover - tylko dla statycznych analizatorów
+    from .manager import AIManager
 
 
 def _calibrate_predictions(
@@ -88,6 +101,501 @@ def _cross_validate(
 
 LOGGER = logging.getLogger(__name__)
 
+
+@dataclass(slots=True)
+class TrainingDatasetSpec:
+    """Opis pojedynczego zbioru danych wykorzystywanego w profilu treningowym."""
+
+    name: str
+    path: Path | None = None
+    format: str = "csv"
+
+    def load_frame(self, overrides: Mapping[str, pd.DataFrame] | None = None) -> pd.DataFrame:
+        if overrides and self.name in overrides:
+            frame = overrides[self.name]
+            if not isinstance(frame, pd.DataFrame):
+                raise TypeError(f"override dla datasetu {self.name!r} nie jest DataFrame")
+            return frame.copy()
+        if self.path is None:
+            raise FileNotFoundError(f"Dataset {self.name!r} nie posiada ścieżki do danych")
+        return _load_frame_from_path(self.path)
+
+
+@dataclass(slots=True)
+class TrainingModelSpec:
+    """Specyfikacja modelu budowanego w ramach profilu treningowego."""
+
+    name: str
+    dataset: str
+    target: str
+    features: tuple[str, ...]
+    trainer: str = "gradient_boosting"
+    options: Mapping[str, object] = field(default_factory=dict)
+    metadata: Mapping[str, object] = field(default_factory=dict)
+    publish_aliases: tuple[str, ...] = field(default_factory=tuple)
+    activate_version: bool = True
+    decision_name: str | None = None
+    set_default: bool = False
+
+    def normalized_trainer(self) -> str:
+        return self.trainer.strip().lower()
+
+
+@dataclass(slots=True)
+class TrainingEnsembleSpec:
+    """Definicja zespołu modeli rejestrowanego po treningu."""
+
+    name: str
+    components: tuple[str, ...]
+    aggregation: str = "mean"
+    weights: tuple[float, ...] | None = None
+
+
+@dataclass(slots=True)
+class QualityThresholds:
+    """Progi jakości wykorzystywane podczas automatycznego retrainingu."""
+
+    min_directional_accuracy: float | None = None
+    max_mae: float | None = None
+    max_rmse: float | None = None
+
+
+@dataclass(slots=True)
+class AutoRetrainPolicy:
+    """Parametry automatycznego retrainingu dla profilu."""
+
+    interval_seconds: float
+    quality: QualityThresholds | None = None
+    journal_environment: str = "paper-trading"
+    journal_portfolio: str = "ai-pipeline"
+    journal_risk_profile: str = "ai-research"
+    journal_strategy: str | None = None
+    metadata: Mapping[str, str] = field(default_factory=dict)
+
+    def interval_timedelta(self) -> "timedelta | None":
+        from datetime import timedelta
+
+        if self.interval_seconds <= 0:
+            return None
+        return timedelta(seconds=float(self.interval_seconds))
+
+
+@dataclass(slots=True)
+class TrainingProfile:
+    """Kompletna definicja profilu treningowego."""
+
+    name: str
+    datasets: Mapping[str, TrainingDatasetSpec]
+    models: tuple[TrainingModelSpec, ...]
+    ensembles: tuple[TrainingEnsembleSpec, ...] = ()
+    auto_retrain: AutoRetrainPolicy | None = None
+    description: str | None = None
+
+    def dataset(self, name: str) -> TrainingDatasetSpec:
+        try:
+            return self.datasets[name]
+        except KeyError as exc:
+            raise KeyError(f"Dataset {name!r} nie istnieje w profilu {self.name!r}") from exc
+
+
+@dataclass(slots=True)
+class TrainingManifest:
+    """Zbiór profili treningowych dostępnych dla pipeline'u."""
+
+    profiles: Mapping[str, TrainingProfile]
+
+    def profile(self, name: str) -> TrainingProfile:
+        key = name.strip().lower()
+        for candidate_name, profile in self.profiles.items():
+            if candidate_name.lower() == key:
+                return profile
+        available = ", ".join(sorted(self.profiles)) or "<brak>"
+        raise KeyError(f"Profil {name!r} nie został odnaleziony (dostępne: {available})")
+
+    def list_profiles(self) -> tuple[str, ...]:
+        return tuple(sorted(self.profiles))
+
+
+@dataclass(slots=True)
+class ModelTrainingResult:
+    """Szczegóły pojedynczego modelu wytrenowanego w profilu."""
+
+    spec: TrainingModelSpec
+    artifact_path: Path
+    metrics: Mapping[str, object]
+    metadata: Mapping[str, object]
+
+
+@dataclass(slots=True)
+class ProfileTrainingSummary:
+    """Wynik wykonania profilu treningowego."""
+
+    profile: TrainingProfile
+    results: tuple[ModelTrainingResult, ...]
+
+    @property
+    def models(self) -> tuple[ModelTrainingResult, ...]:
+        return self.results
+
+
+_GBM_OPTIONS: frozenset[str] = frozenset(
+    {
+        "validation_ratio",
+        "test_ratio",
+        "random_state",
+        "model_version",
+        "publish_aliases",
+        "activate_version",
+    }
+)
+
+
+def _ensure_sequence(value: object, *, field_name: str) -> tuple[str, ...]:
+    if value is None:
+        return ()
+    if isinstance(value, (str, bytes)):
+        return (str(value),)
+    if isinstance(value, Iterable):
+        return tuple(str(item) for item in value)
+    raise TypeError(f"Pole {field_name} musi być sekwencją lub stringiem")
+
+
+def _ensure_optional_sequence_of_float(value: object, *, field_name: str) -> tuple[float, ...] | None:
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return (float(value),)
+    if isinstance(value, Iterable):
+        return tuple(float(item) for item in value)
+    raise TypeError(f"Pole {field_name} musi być sekwencją liczb rzeczywistych")
+
+
+def _load_structured_payload(source: Path | Mapping[str, object]) -> Mapping[str, object]:
+    if isinstance(source, Mapping):
+        return source
+    payload_text = Path(source).read_text(encoding="utf-8")
+    suffix = Path(source).suffix.lower()
+    if suffix in {".yaml", ".yml"}:
+        if yaml is None:
+            raise RuntimeError("Obsługa YAML wymaga pakietu PyYAML")
+        loaded = yaml.safe_load(payload_text) or {}
+        if not isinstance(loaded, MutableMapping):
+            raise TypeError("Manifest YAML musi być obiektem mapującym u korzenia")
+        return loaded
+    data = json.loads(payload_text or "{}")
+    if not isinstance(data, MutableMapping):
+        raise TypeError("Manifest JSON musi być obiektem mapującym u korzenia")
+    return data
+
+
+def _parse_datasets(profile_name: str, payload: Mapping[str, object]) -> dict[str, TrainingDatasetSpec]:
+    datasets_raw = payload.get("datasets") or {}
+    if not isinstance(datasets_raw, Mapping):
+        raise TypeError(f"profiles.{profile_name}.datasets musi być mapowaniem")
+    datasets: dict[str, TrainingDatasetSpec] = {}
+    for dataset_name, dataset_payload in datasets_raw.items():
+        if not isinstance(dataset_payload, Mapping):
+            raise TypeError(
+                f"profiles.{profile_name}.datasets.{dataset_name} musi być mapowaniem"
+            )
+        path_raw = dataset_payload.get("path")
+        path = Path(path_raw).expanduser() if path_raw is not None else None
+        fmt = str(dataset_payload.get("format", "csv")).lower()
+        datasets[str(dataset_name)] = TrainingDatasetSpec(
+            name=str(dataset_name),
+            path=path,
+            format=fmt,
+        )
+    return datasets
+
+
+def _parse_models(profile_name: str, payload: Mapping[str, object]) -> tuple[TrainingModelSpec, ...]:
+    models_raw = payload.get("models") or ()
+    if not isinstance(models_raw, Iterable):
+        raise TypeError(f"profiles.{profile_name}.models musi być sekwencją")
+    models: list[TrainingModelSpec] = []
+    for index, model_payload in enumerate(models_raw):
+        if not isinstance(model_payload, Mapping):
+            raise TypeError(
+                f"profiles.{profile_name}.models[{index}] musi być mapowaniem"
+            )
+        name = str(model_payload.get("name") or f"model_{index}")
+        dataset = str(model_payload.get("dataset") or "")
+        if not dataset:
+            raise ValueError(f"profiles.{profile_name}.models[{index}] wymaga pola dataset")
+        target = str(model_payload.get("target") or "")
+        if not target:
+            raise ValueError(f"profiles.{profile_name}.models[{index}] wymaga pola target")
+        features_raw = model_payload.get("features")
+        features = _ensure_sequence(features_raw, field_name=f"profiles.{profile_name}.models[{index}].features")
+        if not features:
+            raise ValueError(
+                f"profiles.{profile_name}.models[{index}] wymaga co najmniej jednej cechy"
+            )
+        trainer = str(model_payload.get("trainer", "gradient_boosting"))
+        options_raw = model_payload.get("options") or {}
+        if not isinstance(options_raw, Mapping):
+            raise TypeError(
+                f"profiles.{profile_name}.models[{index}].options musi być mapowaniem"
+            )
+        options = {str(key): value for key, value in options_raw.items() if key in _GBM_OPTIONS}
+        metadata_raw = model_payload.get("metadata") or {}
+        if not isinstance(metadata_raw, Mapping):
+            raise TypeError(
+                f"profiles.{profile_name}.models[{index}].metadata musi być mapowaniem"
+            )
+        publish_aliases = _ensure_sequence(
+            model_payload.get("publish_aliases"),
+            field_name=f"profiles.{profile_name}.models[{index}].publish_aliases",
+        )
+        activate_version = bool(model_payload.get("activate_version", True))
+        decision_name_raw = model_payload.get("decision_name")
+        decision_name = str(decision_name_raw) if decision_name_raw is not None else None
+        set_default = bool(model_payload.get("set_default", False))
+        models.append(
+            TrainingModelSpec(
+                name=name,
+                dataset=dataset,
+                target=target,
+                features=features,
+                trainer=trainer,
+                options=options,
+                metadata=dict(metadata_raw),
+                publish_aliases=publish_aliases,
+                activate_version=activate_version,
+                decision_name=decision_name,
+                set_default=set_default,
+            )
+        )
+    return tuple(models)
+
+
+def _parse_ensembles(profile_name: str, payload: Mapping[str, object]) -> tuple[TrainingEnsembleSpec, ...]:
+    raw = payload.get("ensembles") or ()
+    if not raw:
+        return ()
+    if not isinstance(raw, Iterable):
+        raise TypeError(f"profiles.{profile_name}.ensembles musi być sekwencją")
+    ensembles: list[TrainingEnsembleSpec] = []
+    for index, entry in enumerate(raw):
+        if not isinstance(entry, Mapping):
+            raise TypeError(
+                f"profiles.{profile_name}.ensembles[{index}] musi być mapowaniem"
+            )
+        name = str(entry.get("name") or f"ensemble_{index}")
+        components_raw = entry.get("components")
+        components = _ensure_sequence(
+            components_raw,
+            field_name=f"profiles.{profile_name}.ensembles[{index}].components",
+        )
+        if not components:
+            raise ValueError(
+                f"profiles.{profile_name}.ensembles[{index}] wymaga listy komponentów"
+            )
+        aggregation = str(entry.get("aggregation", "mean"))
+        weights = _ensure_optional_sequence_of_float(
+            entry.get("weights"),
+            field_name=f"profiles.{profile_name}.ensembles[{index}].weights",
+        )
+        ensembles.append(
+            TrainingEnsembleSpec(
+                name=name,
+                components=components,
+                aggregation=aggregation,
+                weights=weights,
+            )
+        )
+    return tuple(ensembles)
+
+
+def _parse_auto_retrain(profile_name: str, payload: Mapping[str, object]) -> AutoRetrainPolicy | None:
+    raw = payload.get("auto_retrain")
+    if not raw:
+        return None
+    if not isinstance(raw, Mapping):
+        raise TypeError(f"profiles.{profile_name}.auto_retrain musi być mapowaniem")
+    interval = float(raw.get("interval_seconds", 0.0))
+    if interval <= 0:
+        raise ValueError(
+            f"profiles.{profile_name}.auto_retrain.interval_seconds musi być dodatni"
+        )
+    quality_raw = raw.get("quality") or {}
+    quality: QualityThresholds | None
+    if quality_raw:
+        if not isinstance(quality_raw, Mapping):
+            raise TypeError(
+                f"profiles.{profile_name}.auto_retrain.quality musi być mapowaniem"
+            )
+        quality = QualityThresholds(
+            min_directional_accuracy=(
+                float(quality_raw["min_directional_accuracy"])
+                if "min_directional_accuracy" in quality_raw
+                else None
+            ),
+            max_mae=(
+                float(quality_raw["max_mae"])
+                if "max_mae" in quality_raw
+                else None
+            ),
+            max_rmse=(
+                float(quality_raw["max_rmse"])
+                if "max_rmse" in quality_raw
+                else None
+            ),
+        )
+    else:
+        quality = None
+    journal_raw = raw.get("journal") or {}
+    if not isinstance(journal_raw, Mapping):
+        raise TypeError(
+            f"profiles.{profile_name}.auto_retrain.journal musi być mapowaniem"
+        )
+    metadata_raw = raw.get("metadata") or {}
+    if metadata_raw and not isinstance(metadata_raw, Mapping):
+        raise TypeError(
+            f"profiles.{profile_name}.auto_retrain.metadata musi być mapowaniem"
+        )
+    return AutoRetrainPolicy(
+        interval_seconds=interval,
+        quality=quality,
+        journal_environment=str(journal_raw.get("environment", "paper-trading")),
+        journal_portfolio=str(journal_raw.get("portfolio", "ai-pipeline")),
+        journal_risk_profile=str(journal_raw.get("risk_profile", "ai-research")),
+        journal_strategy=(
+            str(journal_raw.get("strategy")) if journal_raw.get("strategy") is not None else None
+        ),
+        metadata={str(key): str(value) for key, value in dict(metadata_raw).items()},
+    )
+
+
+def load_training_manifest(source: Path | Mapping[str, object]) -> TrainingManifest:
+    """Wczytaj manifest profili treningowych z pliku YAML/JSON lub mapowania."""
+
+    payload = _load_structured_payload(source)
+    profiles_raw = payload.get("profiles") or {}
+    if not isinstance(profiles_raw, Mapping):
+        raise TypeError("Pole 'profiles' musi być mapowaniem")
+    profiles: dict[str, TrainingProfile] = {}
+    for profile_name, profile_payload in profiles_raw.items():
+        if not isinstance(profile_payload, Mapping):
+            raise TypeError(f"profiles.{profile_name} musi być mapowaniem")
+        datasets = _parse_datasets(str(profile_name), profile_payload)
+        models = _parse_models(str(profile_name), profile_payload)
+        ensembles = _parse_ensembles(str(profile_name), profile_payload)
+        auto_retrain = _parse_auto_retrain(str(profile_name), profile_payload)
+        description_raw = profile_payload.get("description")
+        description = str(description_raw) if description_raw is not None else None
+        profiles[str(profile_name)] = TrainingProfile(
+            name=str(profile_name),
+            datasets=datasets,
+            models=models,
+            ensembles=ensembles,
+            auto_retrain=auto_retrain,
+            description=description,
+        )
+    return TrainingManifest(profiles=profiles)
+
+
+def run_training_profile(
+    manifest: TrainingManifest,
+    profile_name: str,
+    *,
+    output_dir: Path,
+    dataset_overrides: Mapping[str, pd.DataFrame] | None = None,
+) -> ProfileTrainingSummary:
+    """Uruchom trening dla wskazanego profilu i zwróć podsumowanie wyników."""
+
+    profile = manifest.profile(profile_name)
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+    overrides = dict(dataset_overrides) if dataset_overrides else {}
+    frames: dict[str, pd.DataFrame] = {}
+    for dataset_name, dataset_spec in profile.datasets.items():
+        frames[dataset_name] = dataset_spec.load_frame(overrides)
+
+    results: list[ModelTrainingResult] = []
+    for spec in profile.models:
+        if spec.dataset not in frames:
+            raise KeyError(
+                f"Dataset {spec.dataset!r} wymagany przez model {spec.name!r} nie został zdefiniowany"
+            )
+        frame = frames[spec.dataset]
+        trainer = spec.normalized_trainer()
+        if trainer != "gradient_boosting":
+            raise ValueError(f"Nieobsługiwany typ trenera: {spec.trainer!r}")
+        options: dict[str, object] = {}
+        for key, value in spec.options.items():
+            if key in _GBM_OPTIONS:
+                options[key] = value
+        if spec.publish_aliases:
+            options["publish_aliases"] = tuple(spec.publish_aliases)
+        elif "publish_aliases" in options and not options["publish_aliases"]:
+            options.pop("publish_aliases")
+        if "activate_version" not in options:
+            options["activate_version"] = bool(spec.activate_version)
+        artifact_path = train_gradient_boosting_model(
+            frame,
+            spec.features,
+            spec.target,
+            output_dir=output_path,
+            model_name=spec.name,
+            metadata=dict(spec.metadata),
+            publish_aliases=options.pop("publish_aliases", None),
+            activate_version=bool(options.pop("activate_version", True)),
+            **options,
+        )
+        artifact_file = Path(artifact_path)
+        payload = json.loads(artifact_file.read_text(encoding="utf-8"))
+        metrics = payload.get("metrics", {}) if isinstance(payload, Mapping) else {}
+        metadata = payload.get("metadata", {}) if isinstance(payload, Mapping) else {}
+        if not isinstance(metrics, Mapping):
+            metrics = {}
+        if not isinstance(metadata, Mapping):
+            metadata = {}
+        results.append(
+            ModelTrainingResult(
+                spec=spec,
+                artifact_path=artifact_file,
+                metrics=dict(metrics),
+                metadata=dict(metadata),
+            )
+        )
+    return ProfileTrainingSummary(profile=profile, results=tuple(results))
+
+
+def register_profile_results(
+    summary: ProfileTrainingSummary,
+    manager: "AIManager",
+    *,
+    repository_root: Path,
+    register_ensembles: bool = True,
+    set_default_if_missing: bool = True,
+) -> None:
+    """Zarejestruj wyniki profilu w AIManagerze i ewentualnie zaktualizuj zespoły."""
+
+    repo_root = Path(repository_root)
+    manager.configure_decision_repository(repo_root)
+    default_assigned = False
+    for result in summary.models:
+        decision_name = result.spec.decision_name or result.spec.name
+        mark_default = result.spec.set_default or (set_default_if_missing and not default_assigned)
+        manager.load_decision_artifact(
+            decision_name,
+            result.artifact_path,
+            repository_root=repo_root,
+            set_default=mark_default,
+        )
+        if mark_default:
+            default_assigned = True
+    if register_ensembles and summary.profile.ensembles:
+        for ensemble in summary.profile.ensembles:
+            manager.register_ensemble(
+                ensemble.name,
+                ensemble.components,
+                aggregation=ensemble.aggregation,
+                weights=ensemble.weights,
+                override=True,
+            )
 
 @dataclass(slots=True)
 class _LearningSet:

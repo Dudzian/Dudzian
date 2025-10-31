@@ -1,0 +1,22 @@
+schema_version: "1.0"
+generated_at: "2025-01-10T12:00:00Z"
+presets:
+  - id: "mean_reversion_demo"
+    name: "Mean Reversion Demo"
+    version: "1.0.0"
+    author:
+      name: "Marketplace Labs"
+      email: "marketplace@example.com"
+    summary: "Starterowy preset strategii mean reversion dla rynku spot."
+    required_exchanges:
+      - "BINANCE"
+      - "KRAKEN"
+    tags:
+      - "mean-reversion"
+      - "spot"
+    license_tier: "community"
+    artifact: "presets/mean_reversion_demo.json"
+    signature:
+      algorithm: "ed25519"
+      key_id: "demo-publisher"
+      public_key: "CwpbBQKoGYQ80Cyukhg1Y0QmZOv64QCVE5HlbEaey8k="

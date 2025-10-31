@@ -20,11 +20,20 @@ from typing import (
 )
 
 try:  # pragma: no cover - w niektórych gałęziach warstwa AI może nie być zainstalowana
-    from bot_core.ai import DecisionModelInference, FeatureDataset, FeatureEngineer
+    from bot_core.ai import (
+        DecisionModelInference,
+        FeatureDataset,
+        FeatureEngineer,
+        flatten_explainability,
+        parse_explainability_payload,
+    )
 except Exception:  # pragma: no cover
     DecisionModelInference = Any  # type: ignore
     FeatureDataset = Any  # type: ignore
     FeatureEngineer = Any  # type: ignore
+    flatten_explainability = lambda report, prefix="ai_explainability": {}  # type: ignore
+    parse_explainability_payload = lambda payload: None  # type: ignore
+from bot_core.ai.health import ModelHealthMonitor, ModelHealthStatus
 
 # --- elastyczne importy (różne gałęzie mogą mieć różne ścieżki modułów) -----
 
@@ -194,6 +203,19 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _normalize_modes(values: Sequence[object] | None, *, default: Sequence[str]) -> tuple[str, ...]:
+    candidates = values if values is not None else default
+    normalized: list[str] = []
+    for value in candidates:
+        if value is None:
+            continue
+        candidate = str(value).strip().lower()
+        if not candidate or candidate in normalized:
+            continue
+        normalized.append(candidate)
+    return tuple(normalized)
+
+
 @dataclass(slots=True)
 class ControllerSignal:
     """Zbiera sygnał strategii wraz ze snapshotem rynku."""
@@ -232,6 +254,10 @@ class TradingController:
     decision_orchestrator: Any | None = None
     decision_min_probability: float | None = None
     decision_default_notional: float = 1_000.0
+    ai_health_monitor: ModelHealthMonitor | None = None
+    ai_signal_modes: Sequence[str] | None = None
+    rules_signal_modes: Sequence[str] | None = None
+    signal_mode_priorities: Mapping[str, int] | None = None
 
     _clock: Callable[[], datetime] = field(init=False, repr=False)
     _health_interval: timedelta = field(init=False, repr=False)
@@ -253,6 +279,14 @@ class TradingController:
     _decision_orchestrator: Any | None = field(init=False, repr=False, default=None)
     _decision_min_probability: float = field(init=False, repr=False, default=0.0)
     _decision_default_notional: float = field(init=False, repr=False, default=1_000.0)
+    _signal_mode_priorities: Mapping[str, int] = field(init=False, repr=False, default_factory=dict)
+    _default_signal_priority: int = field(init=False, repr=False, default=0)
+    _ai_signal_modes: tuple[str, ...] = field(init=False, repr=False, default_factory=tuple)
+    _rules_signal_modes: tuple[str, ...] = field(init=False, repr=False, default_factory=tuple)
+    _ai_health_monitor: ModelHealthMonitor | None = field(init=False, repr=False, default=None)
+    _ai_failover_active: bool = field(init=False, repr=False, default=False)
+    _ai_failover_reason: str | None = field(init=False, repr=False, default=None)
+    _ai_health_status: ModelHealthStatus | None = field(init=False, repr=False, default=None)
 
     def __post_init__(self) -> None:
         self._clock = self.clock
@@ -317,6 +351,42 @@ class TradingController:
         else:
             candidate = 0.0
         self._decision_min_probability = max(0.0, min(0.995, candidate))
+        raw_priorities = dict(self.signal_mode_priorities or {})
+        normalized_priorities: dict[str, int] = {}
+        for key, value in raw_priorities.items():
+            if key is None:
+                continue
+            try:
+                normalized_priorities[str(key).strip().lower()] = int(value)  # type: ignore[arg-type]
+            except (TypeError, ValueError):
+                continue
+        if not normalized_priorities:
+            normalized_priorities = {
+                "ai": 100,
+                "ml": 100,
+                "ensemble": 100,
+                "rules": 60,
+                "rule": 60,
+                "heuristic": 60,
+                "fallback": 40,
+                "default": 50,
+            }
+        else:
+            normalized_priorities.setdefault("default", 0)
+        self._signal_mode_priorities = normalized_priorities
+        self._default_signal_priority = normalized_priorities.get("default", 0)
+        self._ai_signal_modes = _normalize_modes(
+            self.ai_signal_modes,
+            default=("ai", "ml", "ensemble"),
+        )
+        self._rules_signal_modes = _normalize_modes(
+            self.rules_signal_modes,
+            default=("rules", "rule", "heuristic", "fallback"),
+        )
+        self._ai_health_monitor = self.ai_health_monitor
+        self._ai_failover_active = False
+        self._ai_failover_reason = None
+        self._ai_health_status = None
 
     def _record_decision_event(
         self,
@@ -335,7 +405,9 @@ class TradingController:
             meta.update({str(k): str(v) for k, v in metadata.items()})
         if signal is not None:
             meta.setdefault("signal_confidence", f"{signal.confidence:.6f}")
-            for key, value in signal.metadata.items():
+            enriched_signal_metadata = self._clone_metadata(signal.metadata)
+            self._inject_explainability_metadata(enriched_signal_metadata)
+            for key, value in enriched_signal_metadata.items():
                 meta.setdefault(f"signal_{key}", str(value))
         if request is not None:
             meta.setdefault("order_type", request.order_type)
@@ -343,6 +415,10 @@ class TradingController:
                 meta.setdefault("time_in_force", request.time_in_force)
             if request.client_order_id:
                 meta.setdefault("client_order_id", request.client_order_id)
+            enriched_request_metadata = self._clone_metadata(getattr(request, "metadata", None))
+            self._inject_explainability_metadata(enriched_request_metadata)
+            for key, value in enriched_request_metadata.items():
+                meta.setdefault(f"order_{key}", str(value))
 
         symbol = request.symbol if request else (signal.symbol if signal else None)
         side = None
@@ -434,6 +510,7 @@ class TradingController:
             metric_labels = dict(self._metric_labels)
             metric_labels["symbol"] = signal.symbol
             self._metric_signals_total.inc(labels={**metric_labels, "status": "received"})
+            mode = self._resolve_signal_mode(signal)
             self._record_decision_event(
                 "signal_received",
                 signal=signal,
@@ -928,6 +1005,8 @@ class TradingController:
             for k, v in extra_metadata.items():
                 metadata_source[str(k)] = v
 
+        self._inject_explainability_metadata(metadata_source)
+
         # Wymagane parametry
         try:
             quantity = float(metadata_source.get("quantity", 0.0))
@@ -1000,6 +1079,7 @@ class TradingController:
         metadata.setdefault("environment", self.environment)
         metadata.setdefault("portfolio", self.portfolio_id)
         metadata.setdefault("controller", self._strategy_name or self.__class__.__name__)
+        self._inject_explainability_metadata(metadata)
         return metadata
 
     def _build_decision_candidate(

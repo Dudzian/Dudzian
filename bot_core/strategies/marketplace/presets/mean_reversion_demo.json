@@ -1,0 +1,42 @@
+{
+  "preset": {
+    "name": "Mean Reversion Demo",
+    "metadata": {
+      "id": "mean_reversion_demo",
+      "version": "1.0.0",
+      "author": {
+        "name": "Marketplace Labs",
+        "email": "marketplace@example.com"
+      },
+      "required_exchanges": ["BINANCE", "KRAKEN"],
+      "tags": ["mean-reversion", "spot"],
+      "profile": "mean_reversion",
+      "summary": "Preset pokazowy mean reversion dla rynku spot"
+    },
+    "strategies": [
+      {
+        "name": "mean_reversion_demo",
+        "engine": "mean_reversion",
+        "parameters": {
+          "lookback": 20,
+          "z_score": 1.5,
+          "take_profit": 0.8,
+          "stop_loss": 1.2
+        },
+        "license_tier": "community",
+        "risk_classes": ["spot"],
+        "required_data": ["ohlcv"],
+        "tags": ["mean-reversion", "spot"],
+        "metadata": {
+          "description": "Przykładowa konfiguracja mean reversion"
+        }
+      }
+    ]
+  },
+  "signature": {
+    "algorithm": "ed25519",
+    "key_id": "demo-publisher",
+    "public_key": "CwpbBQKoGYQ80Cyukhg1Y0QmZOv64QCVE5HlbEaey8k=",
+    "value": "Q/mofig7huUv1UHqRqiKymDTPfTPw1iFwK30dlxCBG95uTwe1XjnJ7bAlJRViCs9KVhq9Caj2oxgi3v0tSYzCA=="
+  }
+}

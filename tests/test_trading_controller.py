@@ -12,6 +12,7 @@ import pytest
 from bot_core.alerts import DefaultAlertRouter, InMemoryAlertAuditLog
 from bot_core.execution import ExecutionService
 from bot_core.observability import MetricsRegistry
+from bot_core.ui.api import build_explainability_feed
 
 from bot_core.exchanges.base import AccountSnapshot, OrderRequest, OrderResult
 from bot_core.risk import RiskCheckResult, RiskEngine, RiskProfile
@@ -432,6 +433,56 @@ def test_controller_scales_quantity_when_risk_suggests_limit() -> None:
     assert channel.messages[-1].category == "execution"
     events = [event["event"] for event in journal.export()]
     assert "risk_adjusted" in events
+
+
+def test_controller_records_explainability_metadata() -> None:
+    risk_engine = DummyRiskEngine()
+    execution = DummyExecutionService()
+    router, _, _ = _router_with_channel()
+    journal = CollectingDecisionJournal()
+    controller = TradingController(
+        risk_engine=risk_engine,
+        execution_service=execution,
+        alert_router=router,
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id="paper-1",
+        environment="paper",
+        risk_profile="balanced",
+        health_check_interval=timedelta(hours=1),
+        decision_journal=journal,
+    )
+
+    signal = StrategySignal(
+        symbol="BTC/USDT",
+        side="BUY",
+        confidence=0.8,
+        metadata={
+            "quantity": "1",
+            "price": "100",
+            "order_type": "market",
+            "decision_engine": {
+                "explainability": {
+                    "model": "stub",
+                    "method": "perturbation",
+                    "feature_importance": {"momentum": 0.5, "volume": -0.2},
+                }
+            },
+        },
+    )
+
+    controller.process_signals([signal])
+
+    assert execution.requests
+    metadata = execution.requests[0].metadata
+    assert "ai_explainability_json" in metadata
+    events = journal.export()
+    order_event = next(event for event in events if event["event"] == "order_submitted")
+    assert "signal_ai_explainability_method" in order_event
+    feed = build_explainability_feed(journal, limit=1)
+    assert feed
+    entry = feed[0]
+    assert entry.model == "stub"
+    assert entry.top_features
 
 
 def test_decision_journal_event_order() -> None:
