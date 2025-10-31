@@ -506,14 +506,7 @@ class TradingController:
     def process_signals(self, signals: Sequence[StrategySignal]) -> list[OrderResult]:
         """Przetwarza listę sygnałów strategii i zarządza alertami."""
         results: list[OrderResult] = []
-        self._update_ai_failover_state()
-        enumerated_signals = list(enumerate(signals))
-        ordered_signals = sorted(
-            enumerated_signals,
-            key=lambda item: (self._signal_priority_value(item[1]), -item[0]),
-            reverse=True,
-        )
-        for _, signal in ordered_signals:
+        for signal in signals:
             metric_labels = dict(self._metric_labels)
             metric_labels["symbol"] = signal.symbol
             self._metric_signals_total.inc(labels={**metric_labels, "status": "received"})
@@ -525,15 +518,8 @@ class TradingController:
                 metadata={
                     "intent": str(getattr(signal, "intent", "single")),
                     "leg_count": str(len(getattr(signal, "legs", ()) or ())),
-                    "mode": mode,
                 },
             )
-            if self._should_skip_signal_due_to_failover(
-                signal,
-                mode=mode,
-                metric_labels=metric_labels,
-            ):
-                continue
             expanded_signals = self._expand_signal(signal)
             if not expanded_signals:
                 continue
@@ -727,110 +713,6 @@ class TradingController:
                 metadata=combined_metadata,
             )
         ]
-
-    def _signal_priority_value(self, signal: StrategySignal) -> int:
-        mode = self._resolve_signal_mode(signal)
-        return int(self._signal_mode_priorities.get(mode, self._default_signal_priority))
-
-    def _resolve_signal_mode(self, signal: StrategySignal) -> str:
-        metadata = getattr(signal, "metadata", {}) or {}
-        if isinstance(metadata, Mapping):
-            for key in ("mode", "source", "origin", "strategy_type"):
-                value = metadata.get(key)
-                if isinstance(value, str) and value.strip():
-                    return value.strip().lower()
-        intent = str(getattr(signal, "intent", "") or "").strip().lower()
-        if intent in self._ai_signal_modes:
-            return intent
-        if intent in self._rules_signal_modes:
-            return intent
-        return "default"
-
-    def _should_skip_signal_due_to_failover(
-        self,
-        signal: StrategySignal,
-        *,
-        mode: str,
-        metric_labels: Mapping[str, str],
-    ) -> bool:
-        if not self._ai_failover_active:
-            return False
-        normalized_mode = mode or "default"
-        if normalized_mode not in self._ai_signal_modes:
-            return False
-        self._metric_signals_total.inc(
-            labels={**metric_labels, "status": "skipped_ai_failover"}
-        )
-        metadata: dict[str, object] = {
-            "reason": "ai_failover_active",
-            "mode": normalized_mode,
-        }
-        if self._ai_failover_reason:
-            metadata["ai_failover_reason"] = self._ai_failover_reason
-        if self._ai_health_status is not None:
-            status = self._ai_health_status
-            metadata.setdefault("backend_degraded", str(status.backend_degraded))
-            if status.quality_failures:
-                metadata.setdefault("quality_failures", str(status.quality_failures))
-            if status.failing_models:
-                metadata.setdefault("failing_models", ",".join(status.failing_models))
-        self._record_decision_event(
-            "signal_skipped",
-            signal=signal,
-            status="skipped",
-            metadata=metadata,
-        )
-        _LOGGER.info(
-            "Pomijam sygnał %s w trybie failover AI (mode=%s, reason=%s)",
-            signal.symbol,
-            normalized_mode,
-            self._ai_failover_reason or "unknown",
-        )
-        return True
-
-    def _update_ai_failover_state(self) -> None:
-        monitor = self._ai_health_monitor
-        if monitor is None:
-            if self._ai_failover_active:
-                self._ai_failover_active = False
-                self._ai_failover_reason = None
-                self._ai_health_status = None
-            return
-        try:
-            status = monitor.snapshot()
-        except Exception:  # pragma: no cover - diagnostyka monitorowania
-            _LOGGER.exception("Nie udało się pobrać statusu zdrowia AI")
-            return
-        self._ai_health_status = status
-        degraded = bool(status.degraded)
-        if degraded and not self._ai_failover_active:
-            self._ai_failover_active = True
-            self._ai_failover_reason = status.reason or "degraded"
-            metadata: dict[str, object] = {
-                "reason": self._ai_failover_reason,
-                "backend_degraded": str(status.backend_degraded),
-                "quality_failures": str(status.quality_failures),
-            }
-            if status.failing_models:
-                metadata["failing_models"] = ",".join(status.failing_models)
-            self._record_decision_event(
-                "ai_failover",
-                status="activated",
-                metadata=metadata,
-            )
-        elif not degraded and self._ai_failover_active:
-            metadata: dict[str, object] = {}
-            if self._ai_failover_reason:
-                metadata["previous_reason"] = self._ai_failover_reason
-            self._ai_failover_active = False
-            self._ai_failover_reason = None
-            self._record_decision_event(
-                "ai_failover",
-                status="cleared",
-                metadata=metadata,
-            )
-        elif degraded:
-            self._ai_failover_reason = status.reason or self._ai_failover_reason
 
     # ------------------------------------------- internals ----------------------------------------------
     def _handle_signal(self, signal: StrategySignal) -> OrderResult | None:
@@ -1182,53 +1064,6 @@ class TradingController:
         except Exception:
             return {}
         return {str(k): v for k, v in candidate.items()}
-
-    def _iter_explainability_payloads(
-        self, metadata: Mapping[str, object]
-    ) -> list[object]:
-        candidates: list[object] = []
-        for key in ("explainability", "explainability_json"):
-            value = metadata.get(key)
-            if value is not None:
-                candidates.append(value)
-        for section_key in ("decision_engine", "ai_manager", "ai"):
-            section = metadata.get(section_key)
-            if isinstance(section, Mapping):
-                value = section.get("explainability")
-                if value is not None:
-                    candidates.append(value)
-                json_value = section.get("explainability_json")
-                if json_value is not None:
-                    candidates.append(json_value)
-        return candidates
-
-    def _inject_explainability_metadata(self, metadata: dict[str, object]) -> None:
-        for payload in self._iter_explainability_payloads(metadata):
-            report = parse_explainability_payload(payload)
-            if report is not None:
-                metadata.update(flatten_explainability(report))
-                serialized = json.dumps(
-                    report.as_metadata(), ensure_ascii=False, sort_keys=True
-                )
-                metadata.setdefault("ai_explainability_json", serialized)
-                return
-            flattened = flatten_explainability(payload)
-            if not flattened:
-                continue
-            metadata.update(flattened)
-            if "ai_explainability_json" not in metadata and isinstance(payload, str):
-                metadata["ai_explainability_json"] = payload
-            elif (
-                "ai_explainability_json" not in metadata
-                and isinstance(payload, Mapping)
-            ):
-                try:
-                    metadata["ai_explainability_json"] = json.dumps(
-                        dict(payload), ensure_ascii=False, sort_keys=True
-                    )
-                except TypeError:
-                    continue
-                return
 
     def _normalize_signal_metadata(self, signal: StrategySignal) -> Mapping[str, object]:
         raw_metadata = getattr(signal, "metadata", None)

@@ -3,7 +3,8 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from pathlib import Path
 
-import pytest
+import pyarrow as pa
+import pyarrow.parquet as pq
 
 from bot_core.risk.engine import ThresholdRiskEngine
 from bot_core.risk.simulation import (
@@ -15,10 +16,6 @@ from bot_core.risk.simulation import (
 
 
 ROOT = Path(__file__).resolve().parents[2]
-
-
-pa = pytest.importorskip("pyarrow")
-pq = pytest.importorskip("pyarrow.parquet")
 
 
 def _write_orders_parquet(path: str) -> None:
