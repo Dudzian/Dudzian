@@ -1,0 +1,11 @@
+# Konfiguracja harmonogramu retrainingu oraz scenariuszy chaosowych na środowisku lokalnym.
+interval_minutes: 180
+chaos:
+  enabled: false
+  missing_data_frequency: 0.05
+  missing_data_intensity: 2
+  drift_frequency: 0.1
+  drift_threshold: 0.35
+  delay_frequency: 0.1
+  delay_min_seconds: 2.0
+  delay_max_seconds: 8.0

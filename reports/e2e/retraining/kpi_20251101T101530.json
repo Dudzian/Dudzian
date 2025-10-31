@@ -1,0 +1,37 @@
+{
+  "generated_at": "2025-11-01T10:15:30+00:00",
+  "status": "completed",
+  "backend": "reference",
+  "kpi": {
+    "status": "completed",
+    "delay_seconds": 0.0,
+    "duration_seconds": 30.0,
+    "drift_score": null,
+    "backend": "reference",
+    "fallback_count": 1,
+    "validation_log_path": "logs/e2e/retraining/validation/dataset_validation_20251101T101530.json",
+    "dataset_rows": 3,
+    "feature_count": 3
+  },
+  "alerts": [
+    "Aktywowano fallback backendów: lightgbm"
+  ],
+  "errors": [],
+  "dataset_metadata": {
+    "source": "synthetic",
+    "row_count": 3,
+    "feature_names": [
+      "momentum",
+      "spread",
+      "volatility"
+    ]
+  },
+  "fallback_chain": [
+    {
+      "backend": "lightgbm",
+      "message": "Backend 'lightgbm' wymaga modułu 'lightgbm', który nie jest zainstalowany.",
+      "module": "lightgbm",
+      "install_hint": "pip install lightgbm"
+    }
+  ]
+}

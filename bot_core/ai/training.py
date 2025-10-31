@@ -19,10 +19,10 @@ from typing import (
     runtime_checkable,
 )
 
-import lightgbm as lgb
 import numpy as np
 
 from ._license import ensure_ai_signals_enabled
+from .backends import is_backend_available, require_backend
 from .feature_engineering import FeatureDataset
 from .inference import ModelRepository
 from .models import ModelArtifact
@@ -1241,6 +1241,7 @@ def _linear_adapter_load(
 
 
 def _lightgbm_adapter_train(context: ExternalTrainingContext) -> ExternalTrainingResult:
+    lgb = require_backend("lightgbm")
     params = {
         "objective": context.options.get("objective", "regression"),
         "metric": context.options.get("metric", ["l2", "l1"]),
@@ -1306,6 +1307,7 @@ def _lightgbm_adapter_load(
     feature_names: Sequence[str],
     metadata: Mapping[str, object],
 ) -> SupportsInference:
+    lgb = require_backend("lightgbm")
     model_str = state.get("model_str")
     if not isinstance(model_str, str):
         raise ValueError("Invalid LightGBM state: missing 'model_str'")
@@ -1543,6 +1545,10 @@ def _ensure_default_external_adapters() -> None:
             )
         )
     if "lightgbm" not in _EXTERNAL_ADAPTERS:
+        if not is_backend_available("lightgbm"):
+            _LOGGER.debug(
+                "Rejestracja adaptera LightGBM pomimo braku modułu - import nastąpi leniwie"
+            )
         register_external_model_adapter(
             ExternalModelAdapter(
                 backend="lightgbm",

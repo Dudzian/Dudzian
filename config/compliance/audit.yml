@@ -1,0 +1,31 @@
+# Konfiguracja reguł audytu zgodności.
+kyc:
+  required_fields:
+    - full_name
+    - address
+    - country
+    - id_document
+  severity: high
+aml:
+  blocked_countries:
+    - IR
+    - KP
+    - SY
+  high_risk_jurisdictions:
+    - RU
+    - IR
+    - SY
+  suspicious_tags:
+    - sanctioned
+    - mixer
+    - privacy_enhanced
+  forbidden_data_sources:
+    - darkpool
+    - mixer_feed
+  max_unverified_volume_usd: 10000
+  severity: critical
+transaction_limits:
+  max_single_trade_usd: 25000
+  max_daily_volume_usd: 100000
+  lookback_days: 1
+  severity: warning

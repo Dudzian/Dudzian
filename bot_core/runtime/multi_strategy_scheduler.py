@@ -41,6 +41,7 @@ from bot_core.runtime.capital_policies import (
     normalize_weights,
 )
 from bot_core.runtime.journal import TradingDecisionEvent, TradingDecisionJournal
+from bot_core.runtime.scheduler import AsyncIOTaskQueue
 from bot_core.runtime.signal_limits import SignalLimitManager, SignalLimitOverride
 from bot_core.runtime.suspensions import SuspensionManager, SuspensionRecord
 from bot_core.strategies.base import MarketSnapshot, StrategyEngine, StrategySignal
@@ -135,6 +136,7 @@ class _ScheduleContext:
     failover_count: int = 0
     cost_report_summary: Mapping[str, float] | None = None
     last_window_state: bool | None = None
+    order_index: int = 0
 
 def _extract_tags(metadata: Mapping[str, object] | None) -> tuple[tuple[str, ...], str | None]:
     if not isinstance(metadata, Mapping):
@@ -364,6 +366,7 @@ class MultiStrategyScheduler:
         capital_policy: CapitalAllocationPolicy | None = None,
         signal_limits: Mapping[str, Mapping[str, int]] | None = None,
         allocation_rebalance_seconds: float | None = 300.0,
+        io_dispatcher: AsyncIOTaskQueue | None = None,
     ) -> None:
         self._environment = environment
         self._portfolio = portfolio
@@ -394,6 +397,7 @@ class MultiStrategyScheduler:
         self._signal_limit_manager = SignalLimitManager(clock=self._clock, logger=_LOGGER)
         self._suspension_manager = SuspensionManager(clock=self._clock, logger=_LOGGER)
         self._alerts: deque[Mapping[str, object]] = deque(maxlen=256)
+        self._io_dispatcher = io_dispatcher
         for strategy, profiles in (signal_limits or {}).items():
             for profile, limit in (profiles or {}).items():
                 self.configure_signal_limit(strategy, profile, limit)
@@ -734,9 +738,10 @@ class MultiStrategyScheduler:
             priority=priority,
             windows=windows,
             fallback_schedules=fallbacks,
+            order_index=len(self._schedules),
         )
         self._schedules.append(context)
-        self._schedules.sort(key=lambda item: (-item.priority, item.name))
+        self._schedules.sort(key=lambda item: (-item.priority, item.order_index))
         _LOGGER.debug("Zarejestrowano harmonogram %s dla strategii %s", name, strategy_name)
 
     def attach_cost_report(self, schedule_name: str, report: "WalkForwardReport") -> None:
@@ -856,6 +861,48 @@ class MultiStrategyScheduler:
         if clear:
             self._alerts.clear()
         return payload
+
+    def _io_queue_key(self, schedule: _ScheduleContext) -> str:
+        for item in schedule.required_data:
+            if not item:
+                continue
+            parts = str(item).split(":", 1)
+            if len(parts) == 2 and parts[0].strip().lower() in {"exchange", "market"}:
+                candidate = parts[1].strip()
+                if candidate:
+                    return candidate
+        return schedule.strategy_name
+
+    async def _load_history_async(
+        self,
+        schedule: _ScheduleContext,
+        bars: int,
+    ) -> Sequence[MarketSnapshot]:
+        if bars <= 0:
+            return ()
+        if self._io_dispatcher is None:
+            return schedule.feed.load_history(schedule.strategy_name, bars)
+        key = self._io_queue_key(schedule)
+        return await self._io_dispatcher.submit(
+            key,
+            lambda: asyncio.to_thread(
+                schedule.feed.load_history,
+                schedule.strategy_name,
+                bars,
+            ),
+        )
+
+    async def _fetch_latest_async(self, schedule: _ScheduleContext) -> Sequence[MarketSnapshot]:
+        if self._io_dispatcher is None:
+            return schedule.feed.fetch_latest(schedule.strategy_name)
+        key = self._io_queue_key(schedule)
+        return await self._io_dispatcher.submit(
+            key,
+            lambda: asyncio.to_thread(
+                schedule.feed.fetch_latest,
+                schedule.strategy_name,
+            ),
+        )
 
     def _record_alert(
         self,
@@ -1096,7 +1143,7 @@ class MultiStrategyScheduler:
         try:
             await self._maybe_rebalance_allocation(timestamp)
             if not schedule.warmed_up and schedule.warmup_bars > 0:
-                history = schedule.feed.load_history(schedule.strategy_name, schedule.warmup_bars)
+                history = await self._load_history_async(schedule, schedule.warmup_bars)
                 if history:
                     schedule.strategy.warm_up(history)
                 schedule.warmed_up = True
@@ -1142,7 +1189,7 @@ class MultiStrategyScheduler:
                 return
 
             try:
-                snapshots = schedule.feed.fetch_latest(schedule.strategy_name)
+                snapshots = await self._fetch_latest_async(schedule)
             except Exception as exc:  # pragma: no cover - diagnostyka feedu
                 self._handle_schedule_failure(schedule, "feed", exc)
                 return

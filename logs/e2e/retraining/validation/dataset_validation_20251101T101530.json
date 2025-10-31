@@ -1,0 +1,25 @@
+{
+  "generated_at": "2025-11-01T10:15:30+00:00",
+  "issues": [
+    {
+      "rule": "feature_anomalies",
+      "severity": "warning",
+      "message": "Część cech ma zerową zmienność.",
+      "details": {
+        "features": [
+          "spread"
+        ]
+      }
+    }
+  ],
+  "dataset_metadata": {
+    "source": "synthetic",
+    "row_count": 3,
+    "feature_names": [
+      "momentum",
+      "spread",
+      "volatility"
+    ]
+  },
+  "status": "passed"
+}

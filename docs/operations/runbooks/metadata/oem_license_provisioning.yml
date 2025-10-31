@@ -1,0 +1,10 @@
+id: oem_license_provisioning
+automatic_actions:
+  - id: refresh_license_cache
+    label: "Odśwież cache licencji"
+    script: refresh_license_cache.py
+    description: "Czyści lokalny cache i wymusza ponowną walidację podpisów OEM."
+    confirm: "Operacja wyloguje aktywnych użytkowników do czasu zakończenia walidacji. Kontynuować?"
+manual_steps:
+  - "Zweryfikuj połączenie sieciowe i dostęp do serwera licencyjnego OEM."
+  - "Po zakończeniu walidacji sprawdź stan licencji w panelu audytu."

@@ -5,13 +5,13 @@ import time
 
 import pytest
 
-responses = pytest.importorskip("responses")
-
 import tests._pathbootstrap  # noqa: F401  # pylint: disable=unused-import
 
 from typing import Any, Mapping, Sequence
 from urllib.error import URLError
 from urllib.parse import parse_qs, urlparse
+
+import httpx
 
 from bot_core.exchanges.base import Environment, ExchangeCredentials, OrderRequest
 from bot_core.exchanges.errors import (
@@ -24,6 +24,14 @@ from bot_core.exchanges.nowa_gielda import NowaGieldaSpotAdapter, NowaGieldaStre
 from bot_core.exchanges.streaming import StreamBatch
 
 _BASE_URL = "https://paper.nowa-gielda.example"
+
+respx = pytest.importorskip("respx")
+
+
+@pytest.fixture
+def api_mock() -> "respx.Router":
+    with respx.mock(base_url=_BASE_URL) as router:
+        yield router
 
 
 def _build_adapter() -> NowaGieldaSpotAdapter:
@@ -149,20 +157,19 @@ class _FakeStreamResponse:
         return self._payload
 
 
-@responses.activate
-def test_fetch_ticker_validates_symbol_translation() -> None:
+def test_fetch_ticker_validates_symbol_translation(api_mock: "respx.Router") -> None:
     adapter = _build_adapter()
-    responses.add(
-        responses.GET,
-        f"{_BASE_URL}/public/ticker",
-        json={
-            "symbol": "BTC-USDT",
-            "bestBid": "50000.5",
-            "bestAsk": "50010.5",
-            "lastPrice": "50005.1",
-            "timestamp": 1_700_000_000_000,
-        },
-        match=[responses.matchers.query_param_matcher({"symbol": "BTC-USDT"})],
+    route = api_mock.get("/public/ticker").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "symbol": "BTC-USDT",
+                "bestBid": "50000.5",
+                "bestAsk": "50010.5",
+                "lastPrice": "50005.1",
+                "timestamp": 1_700_000_000_000,
+            },
+        )
     )
 
     ticker = adapter.fetch_ticker("BTC_USDT")
@@ -176,44 +183,35 @@ def test_fetch_ticker_validates_symbol_translation() -> None:
     }
 
 
-@responses.activate
-def test_fetch_ticker_rejects_symbol_mismatch() -> None:
+def test_fetch_ticker_rejects_symbol_mismatch(api_mock: "respx.Router") -> None:
     adapter = _build_adapter()
-    responses.add(
-        responses.GET,
-        f"{_BASE_URL}/public/ticker",
-        json={
-            "symbol": "ETH-USDT",
-            "bestBid": "1800",
-            "bestAsk": "1800.5",
-            "lastPrice": "1800.25",
-        },
-        match=[responses.matchers.query_param_matcher({"symbol": "BTC-USDT"})],
+    api_mock.get("/public/ticker").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "symbol": "ETH-USDT",
+                "bestBid": "1800",
+                "bestAsk": "1800.5",
+                "lastPrice": "1800.25",
+            },
+        )
     )
 
     with pytest.raises(ExchangeAPIError):
         adapter.fetch_ticker("BTC_USDT")
 
 
-@responses.activate
-def test_fetch_orderbook_translates_symbol() -> None:
+def test_fetch_orderbook_translates_symbol(api_mock: "respx.Router") -> None:
     adapter = _build_adapter()
-    responses.add(
-        responses.GET,
-        f"{_BASE_URL}/public/orderbook",
-        json={
-            "symbol": "BTC-USDT",
-            "bids": [["50000", "1"]],
-            "asks": [["50010", "2"]],
-        },
-        match=[
-            responses.matchers.query_param_matcher(
-                {
-                    "symbol": "BTC-USDT",
-                    "depth": "50",
-                }
-            )
-        ],
+    api_mock.get("/public/orderbook").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "symbol": "BTC-USDT",
+                "bids": [["50000", "1"]],
+                "asks": [["50010", "2"]],
+            },
+        )
     )
 
     orderbook = adapter.fetch_orderbook("BTC_USDT")
@@ -222,18 +220,18 @@ def test_fetch_orderbook_translates_symbol() -> None:
     assert orderbook["asks"][0][0] == "50010"
 
 
-@responses.activate
-def test_place_order_sends_signed_payload() -> None:
+def test_place_order_sends_signed_payload(api_mock: "respx.Router") -> None:
     adapter = _build_adapter()
-    responses.add(
-        responses.POST,
-        f"{_BASE_URL}/private/orders",
-        json={
-            "orderId": "sim-1",
-            "status": "NEW",
-            "filledQuantity": "0",
-            "avgPrice": None,
-        },
+    route = api_mock.post("/private/orders").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "orderId": "sim-1",
+                "status": "NEW",
+                "filledQuantity": "0",
+                "avgPrice": None,
+            },
+        )
     )
 
     request = OrderRequest(
@@ -251,20 +249,19 @@ def test_place_order_sends_signed_payload() -> None:
     assert result.filled_quantity == 0.0
     assert result.avg_price is None
 
-    call = responses.calls[0]
-    body = json.loads(call.request.body)
+    call = route.calls.last
+    body = json.loads(call.request.content)
     assert body["symbol"] == "BTC-USDT"
     assert call.request.headers["X-API-KEY"] == "test-key"
 
 
-@responses.activate
-def test_place_order_maps_auth_errors() -> None:
+def test_place_order_maps_auth_errors(api_mock: "respx.Router") -> None:
     adapter = _build_adapter()
-    responses.add(
-        responses.POST,
-        f"{_BASE_URL}/private/orders",
-        json={"code": "INVALID_SIGNATURE", "message": "signature error"},
-        status=401,
+    api_mock.post("/private/orders").mock(
+        return_value=httpx.Response(
+            401,
+            json={"code": "INVALID_SIGNATURE", "message": "signature error"},
+        )
     )
 
     request = OrderRequest(
@@ -278,20 +275,22 @@ def test_place_order_maps_auth_errors() -> None:
         adapter.place_order(request)
 
 
-@responses.activate
-def test_place_market_order_strips_null_fields(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_place_market_order_strips_null_fields(
+    api_mock: "respx.Router", monkeypatch: pytest.MonkeyPatch
+) -> None:
     adapter = _build_adapter()
     fixed_ts = 1_700_000_123_000
     monkeypatch.setattr(adapter, "_timestamp", lambda: fixed_ts)
-    responses.add(
-        responses.POST,
-        f"{_BASE_URL}/private/orders",
-        json={
-            "orderId": "sim-2",
-            "status": "FILLED",
-            "filledQuantity": "1",
-            "avgPrice": "25010.0",
-        },
+    route = api_mock.post("/private/orders").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "orderId": "sim-2",
+                "status": "FILLED",
+                "filledQuantity": "1",
+                "avgPrice": "25010.0",
+            },
+        )
     )
 
     request = OrderRequest(
@@ -303,8 +302,8 @@ def test_place_market_order_strips_null_fields(monkeypatch: pytest.MonkeyPatch) 
 
     adapter.place_order(request)
 
-    call = responses.calls[0]
-    body = json.loads(call.request.body)
+    call = route.calls.last
+    body = json.loads(call.request.content)
     assert "price" not in body
     assert body == {
         "symbol": "BTC-USDT",
@@ -341,27 +340,18 @@ def test_rate_limiter_blocks_excessive_requests() -> None:
         adapter.place_order(request)
 
 
-@responses.activate
-def test_cancel_order_translates_symbol_and_headers(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_cancel_order_translates_symbol_and_headers(
+    api_mock: "respx.Router", monkeypatch: pytest.MonkeyPatch
+) -> None:
     adapter = _build_adapter()
     monkeypatch.setattr(adapter, "_timestamp", lambda: 1_700_000_000_000)
-    responses.add(
-        responses.DELETE,
-        f"{_BASE_URL}/private/orders",
-        json={"status": "CANCELLED"},
-        match=[
-            responses.matchers.query_param_matcher(
-                {
-                    "orderId": "sim-1",
-                    "symbol": "BTC-USDT",
-                }
-            )
-        ],
+    route = api_mock.delete("/private/orders").mock(
+        return_value=httpx.Response(200, json={"status": "CANCELLED"})
     )
 
     adapter.cancel_order("sim-1", symbol="BTC_USDT")
 
-    call = responses.calls[0]
+    call = route.calls.last
     assert call.request.headers["X-API-KEY"] == "test-key"
     assert (
         call.request.headers["X-API-SIGN"]
