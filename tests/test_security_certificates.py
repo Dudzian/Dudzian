@@ -1,9 +1,7 @@
 from pathlib import Path
-import sys
 
 import pytest
 
-sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from bot_core.security.certificates import certificate_reference_metadata
 

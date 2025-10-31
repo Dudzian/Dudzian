@@ -14,7 +14,7 @@ Dokument opisuje proces przygotowania kompletu artefaktów OEM dla środowisk
   środowisku (`pip install pyinstaller briefcase`).
 * Zbudowana w trybie `Release` aplikacja Qt (`ui/`) – katalog z binarką i
   zasobami QML (`build/ui/Release` lub analogiczny).
-* Pakiet `bot_core` z zainstalowanymi komponentami AI (`pip install -e .`), aby
+* Pakiet `bot_core` z zainstalowanymi komponentami AI (`pip install -e .[dev,desktop]`), aby
   moduł `bot_core.ai.legacy_models` był dostępny na ścieżce importu.  Wydanie
   utrzymuje również shim `KryptoLowca.ai_models` dla starszych integracji,
   jednak nowy kod powinien odwoływać się bezpośrednio do modułu w `bot_core`.

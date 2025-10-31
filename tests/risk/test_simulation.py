@@ -2,14 +2,8 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 from pathlib import Path
-import sys
 
-ROOT = Path(__file__).resolve().parents[2]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-
-import pyarrow as pa
-import pyarrow.parquet as pq
+import pytest
 
 from bot_core.risk.engine import ThresholdRiskEngine
 from bot_core.risk.simulation import (
@@ -18,6 +12,13 @@ from bot_core.risk.simulation import (
     load_orders_from_parquet,
     write_default_smoke_scenarios,
 )
+
+
+ROOT = Path(__file__).resolve().parents[2]
+
+
+pa = pytest.importorskip("pyarrow")
+pq = pytest.importorskip("pyarrow.parquet")
 
 
 def _write_orders_parquet(path: str) -> None:

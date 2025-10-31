@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import math
+from collections.abc import Sequence as SequenceABC
 from dataclasses import asdict, dataclass, field, is_dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -19,11 +20,20 @@ from typing import (
 )
 
 try:  # pragma: no cover - w niektórych gałęziach warstwa AI może nie być zainstalowana
-    from bot_core.ai import DecisionModelInference, FeatureDataset, FeatureEngineer
+    from bot_core.ai import (
+        DecisionModelInference,
+        FeatureDataset,
+        FeatureEngineer,
+        flatten_explainability,
+        parse_explainability_payload,
+    )
 except Exception:  # pragma: no cover
     DecisionModelInference = Any  # type: ignore
     FeatureDataset = Any  # type: ignore
     FeatureEngineer = Any  # type: ignore
+    flatten_explainability = lambda report, prefix="ai_explainability": {}  # type: ignore
+    parse_explainability_payload = lambda payload: None  # type: ignore
+from bot_core.ai.health import ModelHealthMonitor, ModelHealthStatus
 
 # --- elastyczne importy (różne gałęzie mogą mieć różne ścieżki modułów) -----
 
@@ -108,6 +118,48 @@ except Exception:  # pragma: no cover
 
 _LOGGER = logging.getLogger(__name__)
 
+_NEUTRAL_SIDES = {
+    "HOLD",
+    "NEUTRAL",
+    "FLAT",
+    "NONE",
+    "REBALANCE",
+    "REBALANCE_DELTA",
+    "REBALANCE_DELTA_RATIO",
+}
+_NEUTRAL_INTENTS = {"neutral", "rebalance", "rebalance_delta", "hedge"}
+_SIDE_ALIASES = {
+    "LONG": "BUY",
+    "ENTER_LONG": "BUY",
+    "OPEN_LONG": "BUY",
+    "BUY_TO_OPEN": "BUY",
+    "COVER": "BUY",
+    "CLOSE_SHORT": "BUY",
+    "EXIT_SHORT": "BUY",
+    "BUY_TO_CLOSE": "BUY",
+    "SHORT": "SELL",
+    "ENTER_SHORT": "SELL",
+    "OPEN_SHORT": "SELL",
+    "SELL_SHORT": "SELL",
+    "SELL_TO_OPEN": "SELL",
+    "CLOSE_LONG": "SELL",
+    "EXIT_LONG": "SELL",
+    "SELL_TO_CLOSE": "SELL",
+}
+
+
+def _normalize_trade_side(value: object | None) -> str | None:
+    if value is None:
+        return None
+    candidate = str(value).strip().upper()
+    if not candidate:
+        return None
+    if candidate in _NEUTRAL_SIDES:
+        return None
+    if candidate in {"BUY", "SELL"}:
+        return candidate
+    return _SIDE_ALIASES.get(candidate)
+
 
 def _extract_adjusted_quantity(
     original_quantity: float,
@@ -151,6 +203,19 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _normalize_modes(values: Sequence[object] | None, *, default: Sequence[str]) -> tuple[str, ...]:
+    candidates = values if values is not None else default
+    normalized: list[str] = []
+    for value in candidates:
+        if value is None:
+            continue
+        candidate = str(value).strip().lower()
+        if not candidate or candidate in normalized:
+            continue
+        normalized.append(candidate)
+    return tuple(normalized)
+
+
 @dataclass(slots=True)
 class ControllerSignal:
     """Zbiera sygnał strategii wraz ze snapshotem rynku."""
@@ -189,6 +254,10 @@ class TradingController:
     decision_orchestrator: Any | None = None
     decision_min_probability: float | None = None
     decision_default_notional: float = 1_000.0
+    ai_health_monitor: ModelHealthMonitor | None = None
+    ai_signal_modes: Sequence[str] | None = None
+    rules_signal_modes: Sequence[str] | None = None
+    signal_mode_priorities: Mapping[str, int] | None = None
 
     _clock: Callable[[], datetime] = field(init=False, repr=False)
     _health_interval: timedelta = field(init=False, repr=False)
@@ -210,6 +279,14 @@ class TradingController:
     _decision_orchestrator: Any | None = field(init=False, repr=False, default=None)
     _decision_min_probability: float = field(init=False, repr=False, default=0.0)
     _decision_default_notional: float = field(init=False, repr=False, default=1_000.0)
+    _signal_mode_priorities: Mapping[str, int] = field(init=False, repr=False, default_factory=dict)
+    _default_signal_priority: int = field(init=False, repr=False, default=0)
+    _ai_signal_modes: tuple[str, ...] = field(init=False, repr=False, default_factory=tuple)
+    _rules_signal_modes: tuple[str, ...] = field(init=False, repr=False, default_factory=tuple)
+    _ai_health_monitor: ModelHealthMonitor | None = field(init=False, repr=False, default=None)
+    _ai_failover_active: bool = field(init=False, repr=False, default=False)
+    _ai_failover_reason: str | None = field(init=False, repr=False, default=None)
+    _ai_health_status: ModelHealthStatus | None = field(init=False, repr=False, default=None)
 
     def __post_init__(self) -> None:
         self._clock = self.clock
@@ -274,6 +351,42 @@ class TradingController:
         else:
             candidate = 0.0
         self._decision_min_probability = max(0.0, min(0.995, candidate))
+        raw_priorities = dict(self.signal_mode_priorities or {})
+        normalized_priorities: dict[str, int] = {}
+        for key, value in raw_priorities.items():
+            if key is None:
+                continue
+            try:
+                normalized_priorities[str(key).strip().lower()] = int(value)  # type: ignore[arg-type]
+            except (TypeError, ValueError):
+                continue
+        if not normalized_priorities:
+            normalized_priorities = {
+                "ai": 100,
+                "ml": 100,
+                "ensemble": 100,
+                "rules": 60,
+                "rule": 60,
+                "heuristic": 60,
+                "fallback": 40,
+                "default": 50,
+            }
+        else:
+            normalized_priorities.setdefault("default", 0)
+        self._signal_mode_priorities = normalized_priorities
+        self._default_signal_priority = normalized_priorities.get("default", 0)
+        self._ai_signal_modes = _normalize_modes(
+            self.ai_signal_modes,
+            default=("ai", "ml", "ensemble"),
+        )
+        self._rules_signal_modes = _normalize_modes(
+            self.rules_signal_modes,
+            default=("rules", "rule", "heuristic", "fallback"),
+        )
+        self._ai_health_monitor = self.ai_health_monitor
+        self._ai_failover_active = False
+        self._ai_failover_reason = None
+        self._ai_health_status = None
 
     def _record_decision_event(
         self,
@@ -292,7 +405,9 @@ class TradingController:
             meta.update({str(k): str(v) for k, v in metadata.items()})
         if signal is not None:
             meta.setdefault("signal_confidence", f"{signal.confidence:.6f}")
-            for key, value in signal.metadata.items():
+            enriched_signal_metadata = self._clone_metadata(signal.metadata)
+            self._inject_explainability_metadata(enriched_signal_metadata)
+            for key, value in enriched_signal_metadata.items():
                 meta.setdefault(f"signal_{key}", str(value))
         if request is not None:
             meta.setdefault("order_type", request.order_type)
@@ -300,6 +415,10 @@ class TradingController:
                 meta.setdefault("time_in_force", request.time_in_force)
             if request.client_order_id:
                 meta.setdefault("client_order_id", request.client_order_id)
+            enriched_request_metadata = self._clone_metadata(getattr(request, "metadata", None))
+            self._inject_explainability_metadata(enriched_request_metadata)
+            for key, value in enriched_request_metadata.items():
+                meta.setdefault(f"order_{key}", str(value))
 
         symbol = request.symbol if request else (signal.symbol if signal else None)
         side = None
@@ -387,28 +506,57 @@ class TradingController:
     def process_signals(self, signals: Sequence[StrategySignal]) -> list[OrderResult]:
         """Przetwarza listę sygnałów strategii i zarządza alertami."""
         results: list[OrderResult] = []
-        for signal in signals:
-            if signal.side.upper() not in {"BUY", "SELL"}:
-                _LOGGER.debug("Pomijam sygnał %s o kierunku %s", signal.symbol, signal.side)
-                continue
+        self._update_ai_failover_state()
+        enumerated_signals = list(enumerate(signals))
+        ordered_signals = sorted(
+            enumerated_signals,
+            key=lambda item: (self._signal_priority_value(item[1]), -item[0]),
+            reverse=True,
+        )
+        for _, signal in ordered_signals:
             metric_labels = dict(self._metric_labels)
             metric_labels["symbol"] = signal.symbol
             self._metric_signals_total.inc(labels={**metric_labels, "status": "received"})
+            mode = self._resolve_signal_mode(signal)
             self._record_decision_event(
                 "signal_received",
                 signal=signal,
                 status="received",
+                metadata={
+                    "intent": str(getattr(signal, "intent", "single")),
+                    "leg_count": str(len(getattr(signal, "legs", ()) or ())),
+                    "mode": mode,
+                },
             )
-            try:
-                result = self._handle_signal(signal)
-            except Exception:  # noqa: BLE001
-                _LOGGER.exception("Błąd podczas przetwarzania sygnału %s", signal)
-                raise
-            if result is not None:
-                results.append(result)
-                self._metric_orders_total.inc(
-                    labels={**metric_labels, "result": "executed", "side": signal.side.upper()},
-                )
+            if self._should_skip_signal_due_to_failover(
+                signal,
+                mode=mode,
+                metric_labels=metric_labels,
+            ):
+                continue
+            expanded_signals = self._expand_signal(signal)
+            if not expanded_signals:
+                continue
+            for expanded_signal in expanded_signals:
+                per_leg_labels = dict(metric_labels)
+                per_leg_labels["symbol"] = expanded_signal.symbol
+                try:
+                    result = self._handle_signal(expanded_signal)
+                except Exception:  # noqa: BLE001
+                    _LOGGER.exception(
+                        "Błąd podczas przetwarzania rozszerzonego sygnału %s",
+                        expanded_signal,
+                    )
+                    raise
+                if result is not None:
+                    results.append(result)
+                    self._metric_orders_total.inc(
+                        labels={
+                            **per_leg_labels,
+                            "result": "executed",
+                            "side": expanded_signal.side.upper(),
+                        },
+                    )
 
         self.maybe_report_health()
         return results
@@ -451,6 +599,238 @@ class TradingController:
         self.alert_router.dispatch(message)
         self._last_health_report = now
         self._metric_health_reports.inc(labels=self._metric_labels)
+
+    def _expand_signal(self, signal: StrategySignal) -> Sequence[StrategySignal]:
+        intent_raw = getattr(signal, "intent", "") or ""
+        intent = str(intent_raw).strip().lower()
+        legs_attr = getattr(signal, "legs", ()) or ()
+        legs: Sequence[object] = (
+            tuple(legs_attr) if isinstance(legs_attr, SequenceABC) else tuple()
+        )
+        base_metadata = self._clone_metadata(getattr(signal, "metadata", None))
+        parent_quantity: float | None = None
+        if signal.quantity is not None:
+            try:
+                parent_quantity = float(signal.quantity)
+            except (TypeError, ValueError) as exc:
+                raise ValueError("StrategySignal.quantity musi być liczbą dodatnią") from exc
+            if parent_quantity <= 0:
+                raise ValueError("StrategySignal.quantity musi być dodatnia")
+            base_metadata.setdefault("quantity", parent_quantity)
+        if not intent:
+            if legs:
+                intent = "multi_leg"
+            else:
+                side_candidate = _normalize_trade_side(signal.side)
+                if side_candidate is None and str(signal.side).upper() in _NEUTRAL_SIDES:
+                    intent = "neutral"
+                else:
+                    intent = "single"
+
+        if intent in _NEUTRAL_INTENTS or str(signal.side).upper() in _NEUTRAL_SIDES:
+            self._record_decision_event(
+                "signal_neutral",
+                signal=signal,
+                status="neutral",
+                metadata={"intent": intent},
+            )
+            _LOGGER.debug("Pomijam neutralny sygnał %s intent=%s", signal.symbol, intent)
+            return []
+
+        if legs:
+            expanded: list[StrategySignal] = []
+            leg_count = len(legs)
+            for index, leg in enumerate(legs):
+                leg_side = getattr(leg, "side", None)
+                normalized_side = _normalize_trade_side(leg_side)
+                if normalized_side is None:
+                    _LOGGER.debug(
+                        "Pomijam nogę sygnału %s o nierozpoznanym kierunku %s",
+                        signal.symbol,
+                        leg_side,
+                    )
+                    continue
+                leg_quantity = getattr(leg, "quantity", None)
+                if leg_quantity is not None:
+                    try:
+                        leg_quantity = float(leg_quantity)
+                    except (TypeError, ValueError):
+                        _LOGGER.debug(
+                            "Pomijam nogę sygnału %s z niepoprawną wielkością: %s",
+                            signal.symbol,
+                            leg_quantity,
+                        )
+                        continue
+                    if leg_quantity <= 0:
+                        _LOGGER.debug(
+                            "Pomijam nogę sygnału %s z nie-dodatnią wielkością: %s",
+                            signal.symbol,
+                            leg_quantity,
+                        )
+                        continue
+                metadata = self._clone_metadata(getattr(leg, "metadata", None))
+                combined_metadata: dict[str, object] = {**base_metadata}
+                combined_metadata.update(metadata)
+                combined_metadata.setdefault("signal_intent", intent or "multi_leg")
+                combined_metadata.setdefault("leg_index", index)
+                combined_metadata.setdefault("leg_count", leg_count)
+                if leg_quantity is not None:
+                    combined_metadata.setdefault("quantity", leg_quantity)
+                exchange = getattr(leg, "exchange", None)
+                if exchange:
+                    combined_metadata.setdefault("exchange", exchange)
+                leg_confidence = getattr(leg, "confidence", None)
+                expanded.append(
+                    StrategySignal(
+                        symbol=getattr(leg, "symbol", "") or signal.symbol,
+                        side=normalized_side,
+                        confidence=leg_confidence if leg_confidence is not None else signal.confidence,
+                        quantity=leg_quantity if leg_quantity is not None else parent_quantity,
+                        intent="single",
+                        metadata=combined_metadata,
+                    )
+                )
+            if not expanded:
+                self._record_decision_event(
+                    "signal_skipped",
+                    signal=signal,
+                    status="skipped",
+                    metadata={"reason": "no_valid_legs", "intent": intent or "multi_leg"},
+                )
+            return expanded
+
+        normalized_side = _normalize_trade_side(signal.side)
+        if normalized_side is None:
+            if intent not in _NEUTRAL_INTENTS:
+                self._record_decision_event(
+                    "signal_skipped",
+                    signal=signal,
+                    status="skipped",
+                    metadata={"reason": "unsupported_side", "intent": intent or "single"},
+                )
+            _LOGGER.debug(
+                "Pomijam sygnał %s o nierozpoznanym kierunku %s",
+                signal.symbol,
+                signal.side,
+            )
+            return []
+
+        combined_metadata = {**base_metadata}
+        combined_metadata.setdefault("signal_intent", intent or "single")
+        return [
+            StrategySignal(
+                symbol=signal.symbol,
+                side=normalized_side,
+                confidence=signal.confidence,
+                quantity=parent_quantity,
+                intent="single",
+                metadata=combined_metadata,
+            )
+        ]
+
+    def _signal_priority_value(self, signal: StrategySignal) -> int:
+        mode = self._resolve_signal_mode(signal)
+        return int(self._signal_mode_priorities.get(mode, self._default_signal_priority))
+
+    def _resolve_signal_mode(self, signal: StrategySignal) -> str:
+        metadata = getattr(signal, "metadata", {}) or {}
+        if isinstance(metadata, Mapping):
+            for key in ("mode", "source", "origin", "strategy_type"):
+                value = metadata.get(key)
+                if isinstance(value, str) and value.strip():
+                    return value.strip().lower()
+        intent = str(getattr(signal, "intent", "") or "").strip().lower()
+        if intent in self._ai_signal_modes:
+            return intent
+        if intent in self._rules_signal_modes:
+            return intent
+        return "default"
+
+    def _should_skip_signal_due_to_failover(
+        self,
+        signal: StrategySignal,
+        *,
+        mode: str,
+        metric_labels: Mapping[str, str],
+    ) -> bool:
+        if not self._ai_failover_active:
+            return False
+        normalized_mode = mode or "default"
+        if normalized_mode not in self._ai_signal_modes:
+            return False
+        self._metric_signals_total.inc(
+            labels={**metric_labels, "status": "skipped_ai_failover"}
+        )
+        metadata: dict[str, object] = {
+            "reason": "ai_failover_active",
+            "mode": normalized_mode,
+        }
+        if self._ai_failover_reason:
+            metadata["ai_failover_reason"] = self._ai_failover_reason
+        if self._ai_health_status is not None:
+            status = self._ai_health_status
+            metadata.setdefault("backend_degraded", str(status.backend_degraded))
+            if status.quality_failures:
+                metadata.setdefault("quality_failures", str(status.quality_failures))
+            if status.failing_models:
+                metadata.setdefault("failing_models", ",".join(status.failing_models))
+        self._record_decision_event(
+            "signal_skipped",
+            signal=signal,
+            status="skipped",
+            metadata=metadata,
+        )
+        _LOGGER.info(
+            "Pomijam sygnał %s w trybie failover AI (mode=%s, reason=%s)",
+            signal.symbol,
+            normalized_mode,
+            self._ai_failover_reason or "unknown",
+        )
+        return True
+
+    def _update_ai_failover_state(self) -> None:
+        monitor = self._ai_health_monitor
+        if monitor is None:
+            if self._ai_failover_active:
+                self._ai_failover_active = False
+                self._ai_failover_reason = None
+                self._ai_health_status = None
+            return
+        try:
+            status = monitor.snapshot()
+        except Exception:  # pragma: no cover - diagnostyka monitorowania
+            _LOGGER.exception("Nie udało się pobrać statusu zdrowia AI")
+            return
+        self._ai_health_status = status
+        degraded = bool(status.degraded)
+        if degraded and not self._ai_failover_active:
+            self._ai_failover_active = True
+            self._ai_failover_reason = status.reason or "degraded"
+            metadata: dict[str, object] = {
+                "reason": self._ai_failover_reason,
+                "backend_degraded": str(status.backend_degraded),
+                "quality_failures": str(status.quality_failures),
+            }
+            if status.failing_models:
+                metadata["failing_models"] = ",".join(status.failing_models)
+            self._record_decision_event(
+                "ai_failover",
+                status="activated",
+                metadata=metadata,
+            )
+        elif not degraded and self._ai_failover_active:
+            metadata: dict[str, object] = {}
+            if self._ai_failover_reason:
+                metadata["previous_reason"] = self._ai_failover_reason
+            self._ai_failover_active = False
+            self._ai_failover_reason = None
+            self._record_decision_event(
+                "ai_failover",
+                status="cleared",
+                metadata=metadata,
+            )
+        elif degraded:
+            self._ai_failover_reason = status.reason or self._ai_failover_reason
 
     # ------------------------------------------- internals ----------------------------------------------
     def _handle_signal(self, signal: StrategySignal) -> OrderResult | None:
@@ -743,6 +1123,8 @@ class TradingController:
             for k, v in extra_metadata.items():
                 metadata_source[str(k)] = v
 
+        self._inject_explainability_metadata(metadata_source)
+
         # Wymagane parametry
         try:
             quantity = float(metadata_source.get("quantity", 0.0))
@@ -790,6 +1172,64 @@ class TradingController:
     def _decision_engine_enabled(self) -> bool:
         return DecisionCandidate is not None and self._decision_orchestrator is not None
 
+    def _clone_metadata(self, metadata: Mapping[str, object] | None) -> dict[str, object]:
+        if isinstance(metadata, Mapping):
+            return {str(k): v for k, v in metadata.items()}
+        if metadata is None:
+            return {}
+        try:
+            candidate = dict(metadata)  # type: ignore[arg-type]
+        except Exception:
+            return {}
+        return {str(k): v for k, v in candidate.items()}
+
+    def _iter_explainability_payloads(
+        self, metadata: Mapping[str, object]
+    ) -> list[object]:
+        candidates: list[object] = []
+        for key in ("explainability", "explainability_json"):
+            value = metadata.get(key)
+            if value is not None:
+                candidates.append(value)
+        for section_key in ("decision_engine", "ai_manager", "ai"):
+            section = metadata.get(section_key)
+            if isinstance(section, Mapping):
+                value = section.get("explainability")
+                if value is not None:
+                    candidates.append(value)
+                json_value = section.get("explainability_json")
+                if json_value is not None:
+                    candidates.append(json_value)
+        return candidates
+
+    def _inject_explainability_metadata(self, metadata: dict[str, object]) -> None:
+        for payload in self._iter_explainability_payloads(metadata):
+            report = parse_explainability_payload(payload)
+            if report is not None:
+                metadata.update(flatten_explainability(report))
+                serialized = json.dumps(
+                    report.as_metadata(), ensure_ascii=False, sort_keys=True
+                )
+                metadata.setdefault("ai_explainability_json", serialized)
+                return
+            flattened = flatten_explainability(payload)
+            if not flattened:
+                continue
+            metadata.update(flattened)
+            if "ai_explainability_json" not in metadata and isinstance(payload, str):
+                metadata["ai_explainability_json"] = payload
+            elif (
+                "ai_explainability_json" not in metadata
+                and isinstance(payload, Mapping)
+            ):
+                try:
+                    metadata["ai_explainability_json"] = json.dumps(
+                        dict(payload), ensure_ascii=False, sort_keys=True
+                    )
+                except TypeError:
+                    continue
+                return
+
     def _normalize_signal_metadata(self, signal: StrategySignal) -> Mapping[str, object]:
         raw_metadata = getattr(signal, "metadata", None)
         if isinstance(raw_metadata, Mapping):
@@ -804,6 +1244,7 @@ class TradingController:
         metadata.setdefault("environment", self.environment)
         metadata.setdefault("portfolio", self.portfolio_id)
         metadata.setdefault("controller", self._strategy_name or self.__class__.__name__)
+        self._inject_explainability_metadata(metadata)
         return metadata
 
     def _build_decision_candidate(

@@ -1,5 +1,6 @@
-"""Testy skryptu check_data_coverage oraz współdzielone helpery CLI."""
 from __future__ import annotations
+
+"""Testy skryptu check_data_coverage oraz współdzielone helpery CLI."""
 
 import json
 import sqlite3
@@ -11,11 +12,10 @@ from typing import Mapping, Sequence
 import pytest
 import yaml
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
+from scripts import check_data_coverage as cli  # noqa: E402 - import modułu CLI w testach
 
-from scripts import check_data_coverage as cli  # noqa: E402  - import po modyfikacji sys.path
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
 def _last_row_iso(rows: Sequence[Sequence[float]]) -> str:

@@ -1,14 +1,9 @@
 from __future__ import annotations
 
 from pathlib import Path
-import sys
 
 import pytest
 import yaml
-
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
 
 from bot_core.risk.profiles.aggressive import AggressiveProfile
 from bot_core.risk.profiles.balanced import BalancedProfile
@@ -20,6 +15,9 @@ from bot_core.risk.simulation import (
     SimulationSettings,
     run_simulations_from_config,
 )
+
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 @pytest.fixture()

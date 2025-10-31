@@ -9,6 +9,7 @@ import time
 from typing import Callable, Iterable, Mapping, Sequence, TypeVar
 
 from bot_core.exchanges.errors import ExchangeError, ExchangeNetworkError, ExchangeThrottlingError
+from bot_core.monitoring import record_retry_event
 
 
 _LOGGER = logging.getLogger(__name__)
@@ -166,13 +167,24 @@ class Watchdog:
                 if not should_retry or attempt >= self.retry_policy.max_attempts:
                     raise
                 delay = self.retry_policy.compute_delay(attempt)
-                _LOGGER.debug(
-                    "Watchdog retry for %s after %s (attempt=%s, delay=%.2fs)",
+                _LOGGER.warning(
+                    "Watchdog retry %s (attempt=%s/%s, delay=%.2fs, error=%s)",
                     operation,
-                    type(exc).__name__,
                     attempt,
+                    self.retry_policy.max_attempts,
                     delay,
+                    type(exc).__name__,
                 )
+                try:
+                    record_retry_event(
+                        operation=operation,
+                        attempt=attempt,
+                        delay=delay,
+                        exception=exc,
+                        max_attempts=self.retry_policy.max_attempts,
+                    )
+                except Exception:  # pragma: no cover - monitorowanie nie powinno zatrzymywać retry
+                    _LOGGER.debug("record_retry_event failed", exc_info=True)
                 attempt += 1
                 self.sleep(delay)
                 continue

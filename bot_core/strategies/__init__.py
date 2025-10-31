@@ -2,6 +2,7 @@
 
 from bot_core.strategies.base import (
     MarketSnapshot,
+    SignalLeg,
     StrategyEngine,
     StrategySignal,
     WalkForwardOptimizer,
@@ -24,6 +25,17 @@ from bot_core.strategies.catalog import (
     StrategyPresetDescriptor,
     StrategyPresetProfile,
     StrategyPresetWizard,
+)
+from bot_core.strategies.installer import (
+    MarketplaceInstallResult,
+    MarketplacePresetInstaller,
+)
+from bot_core.strategies.marketplace import (
+    MarketplaceAuthor,
+    MarketplaceCatalog,
+    MarketplaceCatalogError,
+    MarketplacePreset,
+    load_catalog,
 )
 from bot_core.strategies.regime_workflow import (
     ActivationCadenceStats,
@@ -70,6 +82,7 @@ from bot_core.strategies.volatility_target import (
 
 __all__ = [
     "MarketSnapshot",
+    "SignalLeg",
     "StrategyEngine",
     "StrategySignal",
     "WalkForwardOptimizer",
@@ -86,6 +99,13 @@ __all__ = [
     "StrategyPresetProfile",
     "PresetLicenseStatus",
     "PresetLicenseState",
+    "MarketplaceCatalog",
+    "MarketplaceCatalogError",
+    "MarketplacePreset",
+    "MarketplaceAuthor",
+    "MarketplacePresetInstaller",
+    "MarketplaceInstallResult",
+    "load_catalog",
     "StrategyParameterTester",
     "StrategyParameterTestReport",
     "ParameterTestResult",

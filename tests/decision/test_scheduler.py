@@ -1,14 +1,12 @@
 from __future__ import annotations
 
 import json
-import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import List, Mapping, Sequence
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from bot_core.ai import (
     FeatureDataset,

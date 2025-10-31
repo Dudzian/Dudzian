@@ -2,12 +2,8 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
 
 from bot_core.resilience.audit import audit_bundles as audit_bundles_fn
 from bot_core.resilience.policy import load_policy
@@ -17,6 +13,7 @@ from scripts.verify_resilience_bundle import run as verify_bundle
 from bot_core.security.signing import build_hmac_signature
 
 
+ROOT = Path(__file__).resolve().parents[1]
 def _write_file(base: Path, name: str, data: str) -> Path:
     path = base / name
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -292,4 +289,3 @@ def test_audit_resilience_bundles_detects_issues(tmp_path: Path) -> None:
     payload = json.loads(json_path.read_text(encoding="utf-8"))
     assert payload["failed"] == 1
     assert any("Brak podpisu" in msg for msg in payload["results"][0]["errors"])
-

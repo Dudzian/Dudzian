@@ -58,6 +58,8 @@ from .data_monitoring import (
     normalize_compliance_sign_off_roles,
 )
 from .feature_engineering import FeatureDataset
+from .explainability import build_explainability_report, serialize_explainability
+from .health import ModelHealthMonitor, ModelHealthStatus
 from .inference import DecisionModelInference, ModelRepository
 from .models import ModelArtifact, ModelScore
 from .validation import ModelArtifactValidationError, validate_model_artifact_schema
@@ -422,29 +424,51 @@ def _build_fallback_ai_models() -> type:
     return _DefaultAIModels
 
 
-try:  # pragma: no cover - preferowana ścieżka po migracji do bot_core
-    from bot_core.ai.legacy_models import AIModels as _DefaultAIModels  # type: ignore
-except Exception as primary_exc:  # pragma: no cover - brak zależności opcjonalnych
-    try:  # zgodność z pakietami budującymi wheel z płaskim modułem ``ai_models``
+_DefaultAIModels: type | None = None
+_import_failures: list[BaseException] = []
+
+try:  # preferowany backend OEM
+    _kryptolowca_ai_models = importlib.import_module("KryptoLowca.ai_models")
+except Exception as kryptolowca_exc:  # pragma: no cover - środowiska bez OEM
+    _import_failures.append(kryptolowca_exc)
+else:
+    try:
+        _DefaultAIModels = getattr(_kryptolowca_ai_models, "AIModels")  # type: ignore[attr-defined]
+    except AttributeError as attr_exc:  # pragma: no cover - niepełna instalacja OEM
+        _import_failures.append(attr_exc)
+    else:
+        _import_failures.clear()
+
+if _DefaultAIModels is None:
+    try:  # płaski moduł zbudowany podczas bundlowania pakietu
         from ai_models import AIModels as _DefaultAIModels  # type: ignore
-    except Exception as secondary_exc:  # pragma: no cover - fallback na namespace legacy
-        try:
-            _kryptolowca_ai_models = importlib.import_module("KryptoLowca.ai_models")
-        except Exception as namespace_exc:
-            _AI_IMPORT_ERROR = _bundle_import_errors(
-                primary_exc, _bundle_import_errors(secondary_exc, namespace_exc)
-            )
-            _FALLBACK_ACTIVE = True
-            _DefaultAIModels = _build_fallback_ai_models()
-        else:
-            try:
-                _DefaultAIModels = getattr(_kryptolowca_ai_models, "AIModels")
-            except AttributeError as attr_exc:
-                _AI_IMPORT_ERROR = _bundle_import_errors(
-                    primary_exc, _bundle_import_errors(secondary_exc, attr_exc)
-                )
-                _FALLBACK_ACTIVE = True
-                _DefaultAIModels = _build_fallback_ai_models()
+    except Exception as flat_exc:  # pragma: no cover - brak legacy wheel
+        _import_failures.append(flat_exc)
+    else:
+        _import_failures.clear()
+
+if _DefaultAIModels is None:
+    try:  # lokalny fallback z repozytorium
+        from bot_core.ai.legacy_models import AIModels as _DefaultAIModels  # type: ignore
+    except Exception as legacy_exc:  # pragma: no cover - środowisko minimalne
+        _import_failures.append(legacy_exc)
+        _DefaultAIModels = _build_fallback_ai_models()
+        _FALLBACK_ACTIVE = True
+    else:
+        _FALLBACK_ACTIVE = True
+
+if _DefaultAIModels is None:
+    _DefaultAIModels = _build_fallback_ai_models()
+    _FALLBACK_ACTIVE = True
+
+if _import_failures:
+    combined_error = _import_failures[0]
+    for exc in _import_failures[1:]:
+        combined_error = _bundle_import_errors(combined_error, exc)
+    _AI_IMPORT_ERROR = combined_error
+else:
+    _AI_IMPORT_ERROR = None
+    _FALLBACK_ACTIVE = False
 
 # --- Import funkcji windowize z różnych możliwych miejsc, z bezpiecznym fallbackiem ---
 _default_windowize: Callable[..., Tuple[np.ndarray, np.ndarray]]
@@ -786,6 +810,7 @@ class AIManager:
         self._require_compliance_sign_offs = False
         self._compliance_sign_off_roles: tuple[str, ...] | None = None
         self._decision_journal = decision_journal
+        self._health_monitor = ModelHealthMonitor()
         if decision_journal_context is not None and not isinstance(decision_journal_context, Mapping):
             raise TypeError("decision_journal_context musi być mapowaniem lub None")
         self._decision_journal_context: Mapping[str, Any] | None = (
@@ -810,6 +835,11 @@ class AIManager:
         elif _FALLBACK_ACTIVE:
             self._degraded = True
             self._degradation_reason = "fallback_ai_models"
+        if self._degraded:
+            self._health_monitor.record_backend_failure(
+                reason=self._degradation_reason or "ai_backend_degraded",
+                details=self._degradation_details,
+            )
         try:
             init_signature = inspect.signature(_AIModels.__init__)  # type: ignore[attr-defined]
         except (TypeError, ValueError, AttributeError):
@@ -1568,6 +1598,7 @@ class AIManager:
             started_at=activation_time,
         )
         self._degradation_history.append(event)
+        self._health_monitor.record_backend_failure(reason=reason, details=details)
 
     def _finalize_degradation_event(self, *, ended_at: datetime | None = None) -> None:
         if not self._degradation_history:
@@ -1588,6 +1619,17 @@ class AIManager:
         self._degradation_exception_diagnostics = ()
         self._degradation_since = None
         self._finalize_degradation_event()
+        self._health_monitor.resolve_backend_recovery()
+
+    def get_model_health_status(self) -> ModelHealthStatus:
+        """Zwraca aktualny stan kondycji backendu AI."""
+
+        return self._health_monitor.snapshot()
+
+    def model_health_monitor(self) -> ModelHealthMonitor:
+        """Udostępnia monitor zdrowia modeli AI."""
+
+        return self._health_monitor
 
     # -------------------------- Harmonogram treningów --------------------------
     def _ensure_training_scheduler(self) -> TrainingScheduler:
@@ -2046,7 +2088,8 @@ class AIManager:
     ) -> Mapping[str, object]:
         """Przygotuj metadane zgodne z oczekiwaniami RiskEngine."""
 
-        score = self.score_decision_features(features, model_name=model_name)
+        inference = self._resolve_decision_inference(model_name)
+        score = inference.score(features)
         candidate_payload: Dict[str, object] = {
             "strategy": strategy,
             "action": action,
@@ -2068,6 +2111,30 @@ class AIManager:
             "model": model_name or self._decision_default_name or "default",
             "threshold_bps": threshold,
         }
+        explanation = build_explainability_report(
+            inference,
+            features,
+            model_name=ai_payload["model"],
+            score=score,
+            baseline_prediction=float(score.expected_return_bps),
+        )
+        if explanation is not None:
+            explain_payload = explanation.as_metadata()
+            explain_json = serialize_explainability(explanation)
+            decision_metadata = candidate_payload["metadata"].setdefault(
+                "decision_engine", {}
+            )
+            if isinstance(decision_metadata, dict):
+                decision_metadata["explainability"] = explain_payload
+                decision_metadata["explainability_json"] = explain_json
+            ai_payload["explainability"] = explain_payload
+            ai_payload["explainability_json"] = explain_json
+            return {
+                "candidate": candidate_payload,
+                "ai": ai_payload,
+                "explainability": explain_payload,
+                "explainability_json": explain_json,
+            }
         return {
             "candidate": candidate_payload,
             "ai": ai_payload,
@@ -2474,6 +2541,7 @@ class AIManager:
                 self._degradation_exceptions = ()
                 self._degradation_exception_types = ()
                 self._degradation_exception_diagnostics = ()
+                self._health_monitor.resolve_backend_recovery()
             return
         if _AI_IMPORT_ERROR is not None:
             return
@@ -2485,12 +2553,20 @@ class AIManager:
                 self._degradation_exceptions = ()
                 self._degradation_exception_types = ()
                 self._degradation_exception_diagnostics = ()
+                self._health_monitor.resolve_backend_recovery()
 
     def _evaluate_decision_model_quality(
         self, inference: DecisionModelInference, name: str
     ) -> Tuple[bool, Tuple[str, ...]]:
         artifact = getattr(inference, "_artifact", None)
         if artifact is None:
+            self._health_monitor.record_quality(
+                model_name=name,
+                ok=True,
+                metrics={},
+                thresholds={},
+                source="quality_thresholds",
+            )
             return True, ()
         metadata = getattr(artifact, "metadata", {}) or {}
         thresholds = metadata.get("quality_thresholds", {}) if isinstance(metadata, Mapping) else {}
@@ -2500,6 +2576,14 @@ class AIManager:
         summary_metrics = _select_metric_block(metrics_payload)
         directional = float(summary_metrics.get("directional_accuracy", 0.0))
         mae = float(summary_metrics.get("mae", 0.0))
+        thresholds_payload = {
+            "min_directional_accuracy": min_directional,
+            "max_mae": max_mae,
+        }
+        metrics_summary = {
+            "directional_accuracy": directional,
+            "mae": mae,
+        }
         if directional < min_directional or mae > max_mae:
             logger.warning(
                 "Decision model %s failed quality thresholds (directional=%.3f, mae=%.3f, min_directional=%.3f, max_mae=%.3f)",
@@ -2518,7 +2602,22 @@ class AIManager:
                 )
             if mae > max_mae:
                 details.append(f"mae={mae:.3f} > max {max_mae:.3f}")
+            self._health_monitor.record_quality(
+                model_name=name,
+                ok=False,
+                metrics=metrics_summary,
+                thresholds=thresholds_payload,
+                reason="quality_thresholds_failed",
+                source="quality_thresholds",
+            )
             return False, tuple(details)
+        self._health_monitor.record_quality(
+            model_name=name,
+            ok=True,
+            metrics=metrics_summary,
+            thresholds=thresholds_payload,
+            source="quality_thresholds",
+        )
         return True, ()
 
     def _compose_performance_metrics(

@@ -1,11 +1,9 @@
 from pathlib import Path
-import sys
 
 import math
 
 import pytest
 
-sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from bot_core.observability.metrics import (  # type: ignore[import-not-found]
     CounterMetric,

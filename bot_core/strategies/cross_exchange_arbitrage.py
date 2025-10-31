@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Dict, List, Sequence
 
-from bot_core.strategies.base import MarketSnapshot, StrategyEngine, StrategySignal
+from bot_core.strategies.base import MarketSnapshot, SignalLeg, StrategyEngine, StrategySignal
 
 
 @dataclass(slots=True)
@@ -64,11 +64,36 @@ class CrossExchangeArbitrageStrategy(StrategyEngine):
                     opened_at=timestamp,
                     entry_spread=spread_ratio_positive,
                 )
+                primary_qty = _notional_to_quantity(self._settings.max_notional, primary_ask)
+                secondary_qty = _notional_to_quantity(self._settings.max_notional, secondary_bid)
                 signals.append(
                     StrategySignal(
                         symbol=snapshot.symbol,
                         side="long_primary_short_secondary",
                         confidence=min(1.0, spread_ratio_positive / self._settings.spread_entry),
+                        intent="multi_leg",
+                        legs=(
+                            SignalLeg(
+                                symbol=snapshot.symbol,
+                                side="BUY",
+                                quantity=primary_qty,
+                                exchange=self._settings.primary_exchange,
+                                metadata={
+                                    "leg": "primary_entry",
+                                    "price": primary_ask,
+                                },
+                            ),
+                            SignalLeg(
+                                symbol=snapshot.symbol,
+                                side="SELL",
+                                quantity=secondary_qty,
+                                exchange=self._settings.secondary_exchange,
+                                metadata={
+                                    "leg": "secondary_entry",
+                                    "price": secondary_bid,
+                                },
+                            ),
+                        ),
                         metadata={
                             "primary_exchange": self._settings.primary_exchange,
                             "secondary_exchange": self._settings.secondary_exchange,
@@ -84,11 +109,36 @@ class CrossExchangeArbitrageStrategy(StrategyEngine):
                     opened_at=timestamp,
                     entry_spread=spread_ratio_negative,
                 )
+                primary_qty = _notional_to_quantity(self._settings.max_notional, primary_bid)
+                secondary_qty = _notional_to_quantity(self._settings.max_notional, secondary_ask)
                 signals.append(
                     StrategySignal(
                         symbol=snapshot.symbol,
                         side="short_primary_long_secondary",
                         confidence=min(1.0, spread_ratio_negative / self._settings.spread_entry),
+                        intent="multi_leg",
+                        legs=(
+                            SignalLeg(
+                                symbol=snapshot.symbol,
+                                side="SELL",
+                                quantity=primary_qty,
+                                exchange=self._settings.primary_exchange,
+                                metadata={
+                                    "leg": "primary_entry",
+                                    "price": primary_bid,
+                                },
+                            ),
+                            SignalLeg(
+                                symbol=snapshot.symbol,
+                                side="BUY",
+                                quantity=secondary_qty,
+                                exchange=self._settings.secondary_exchange,
+                                metadata={
+                                    "leg": "secondary_entry",
+                                    "price": secondary_ask,
+                                },
+                            ),
+                        ),
                         metadata={
                             "primary_exchange": self._settings.primary_exchange,
                             "secondary_exchange": self._settings.secondary_exchange,
@@ -108,11 +158,36 @@ class CrossExchangeArbitrageStrategy(StrategyEngine):
                 or elapsed >= self._settings.max_open_seconds
             ):
                 del self._positions[snapshot.symbol]
+                primary_qty = _notional_to_quantity(self._settings.max_notional, primary_bid)
+                secondary_qty = _notional_to_quantity(self._settings.max_notional, secondary_ask)
                 signals.append(
                     StrategySignal(
                         symbol=snapshot.symbol,
                         side="close_long_primary_short_secondary",
                         confidence=1.0,
+                        intent="multi_leg",
+                        legs=(
+                            SignalLeg(
+                                symbol=snapshot.symbol,
+                                side="SELL",
+                                quantity=primary_qty,
+                                exchange=self._settings.primary_exchange,
+                                metadata={
+                                    "leg": "primary_exit",
+                                    "price": primary_bid,
+                                },
+                            ),
+                            SignalLeg(
+                                symbol=snapshot.symbol,
+                                side="BUY",
+                                quantity=secondary_qty,
+                                exchange=self._settings.secondary_exchange,
+                                metadata={
+                                    "leg": "secondary_exit",
+                                    "price": secondary_ask,
+                                },
+                            ),
+                        ),
                         metadata={
                             "exit_spread": positive_spread,
                             "entry_spread": position.entry_spread,
@@ -129,11 +204,36 @@ class CrossExchangeArbitrageStrategy(StrategyEngine):
                 or elapsed >= self._settings.max_open_seconds
             ):
                 del self._positions[snapshot.symbol]
+                primary_qty = _notional_to_quantity(self._settings.max_notional, primary_ask)
+                secondary_qty = _notional_to_quantity(self._settings.max_notional, secondary_bid)
                 signals.append(
                     StrategySignal(
                         symbol=snapshot.symbol,
                         side="close_short_primary_long_secondary",
                         confidence=1.0,
+                        intent="multi_leg",
+                        legs=(
+                            SignalLeg(
+                                symbol=snapshot.symbol,
+                                side="BUY",
+                                quantity=primary_qty,
+                                exchange=self._settings.primary_exchange,
+                                metadata={
+                                    "leg": "primary_exit",
+                                    "price": primary_ask,
+                                },
+                            ),
+                            SignalLeg(
+                                symbol=snapshot.symbol,
+                                side="SELL",
+                                quantity=secondary_qty,
+                                exchange=self._settings.secondary_exchange,
+                                metadata={
+                                    "leg": "secondary_exit",
+                                    "price": secondary_bid,
+                                },
+                            ),
+                        ),
                         metadata={
                             "exit_spread": negative_spread,
                             "entry_spread": position.entry_spread,
@@ -158,3 +258,11 @@ def _to_datetime(value: int | float) -> datetime:
 
 
 __all__ = ["CrossExchangeArbitrageSettings", "CrossExchangeArbitrageStrategy"]
+
+
+def _notional_to_quantity(max_notional: float, price: float) -> float:
+    reference_price = max(price, 1e-9)
+    if max_notional <= 0:
+        return 1.0
+    quantity = max_notional / reference_price
+    return max(quantity, 1e-9)

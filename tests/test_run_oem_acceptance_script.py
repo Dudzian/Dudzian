@@ -5,16 +5,13 @@ import hashlib
 import hmac
 import json
 import os
-import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
 
 from scripts.run_oem_acceptance import main as run_acceptance
 
 
+ROOT = Path(__file__).resolve().parents[1]
 def _write_signing_key(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(os.urandom(48))

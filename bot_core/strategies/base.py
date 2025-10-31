@@ -27,13 +27,36 @@ class MarketSnapshot:
 
 
 @dataclass(slots=True)
+class SignalLeg:
+    """Pojedyncza noga sygnału wielonogowego."""
+
+    symbol: str
+    side: str
+    quantity: float | None = None
+    exchange: str | None = None
+    confidence: float | None = None
+    metadata: Mapping[str, object] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
 class StrategySignal:
     """Rezultat działania strategii (np. sygnał wejścia/wyjścia)."""
 
     symbol: str
     side: str               # "BUY" / "SELL" / "FLAT" itp.
     confidence: float       # 0.0–1.0
-    metadata: Mapping[str, float] = field(default_factory=dict)
+    quantity: float | None = None
+    intent: str = "single"
+    legs: Sequence[SignalLeg] = field(default_factory=tuple)
+    metadata: Mapping[str, object] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if self.legs is None:
+            object.__setattr__(self, "legs", tuple())
+        if self.metadata is None:
+            object.__setattr__(self, "metadata", {})
+        normalized_intent = (self.intent or "single").strip() or "single"
+        object.__setattr__(self, "intent", normalized_intent)
 
 
 class StrategyEngine(abc.ABC):
@@ -60,6 +83,7 @@ class WalkForwardOptimizer(Protocol):
 
 __all__ = [
     "MarketSnapshot",
+    "SignalLeg",
     "StrategySignal",
     "StrategyEngine",
     "WalkForwardOptimizer",

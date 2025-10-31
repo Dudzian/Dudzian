@@ -8,11 +8,9 @@ from pathlib import Path
 
 import pytest
 
+ROOT = Path(__file__).resolve().parents[1]
 # Upewnij się, że projekt jest na ścieżce importów, aby importy skryptów i modułów działały zarówno
 # w bezpośrednich wywołaniach, jak i w podprocesach z ustawionym PYTHONPATH=".".
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
 
 from bot_core.resilience.bundle import ResilienceBundleBuilder  # noqa: E402
 from scripts.failover_drill import main as run_failover_drill  # noqa: E402

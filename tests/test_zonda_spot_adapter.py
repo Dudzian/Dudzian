@@ -1,5 +1,4 @@
 import json
-import sys
 from io import BytesIO
 from pathlib import Path
 from hashlib import sha512
@@ -10,7 +9,6 @@ from urllib.request import Request
 
 import pytest
 
-sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from bot_core.exchanges.base import AccountSnapshot, Environment, ExchangeCredentials, OrderRequest
 from bot_core.exchanges.errors import (

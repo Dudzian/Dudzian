@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict, List, Sequence
 
-from .base import MarketSnapshot, StrategyEngine, StrategySignal
+from .base import MarketSnapshot, SignalLeg, StrategyEngine, StrategySignal
 
 
 @dataclass(slots=True)
@@ -41,6 +41,10 @@ class FuturesSpreadStrategy(StrategyEngine):
         zscore = float(snapshot.indicators.get("spread_zscore", snapshot.indicators.get("spread_z", 0.0)))
         basis = float(snapshot.indicators.get("basis", 0.0))
         funding = float(snapshot.indicators.get("funding_rate", 0.0))
+        front_symbol = str(snapshot.indicators.get("front_contract", snapshot.symbol))
+        back_symbol = str(snapshot.indicators.get("back_contract", snapshot.symbol))
+        front_price = float(snapshot.indicators.get("front_price", snapshot.close))
+        back_price = float(snapshot.indicators.get("back_price", snapshot.close))
 
         signals: List[StrategySignal] = []
 
@@ -52,11 +56,27 @@ class FuturesSpreadStrategy(StrategyEngine):
                 state.entry_z = zscore
                 side = "short_front_long_back" if direction < 0 else "long_front_short_back"
                 confidence = min(1.0, abs(zscore) / self._settings.entry_z)
+                legs = (
+                    SignalLeg(
+                        symbol=front_symbol,
+                        side="SELL" if direction < 0 else "BUY",
+                        quantity=_spread_leg_quantity(front_price),
+                        metadata={"leg": "front", "price": front_price},
+                    ),
+                    SignalLeg(
+                        symbol=back_symbol,
+                        side="BUY" if direction < 0 else "SELL",
+                        quantity=_spread_leg_quantity(back_price),
+                        metadata={"leg": "back", "price": back_price},
+                    ),
+                )
                 signals.append(
                     StrategySignal(
                         symbol=snapshot.symbol,
                         side=side,
                         confidence=confidence,
+                        intent="multi_leg",
+                        legs=legs,
                         metadata={
                             "basis": basis,
                             "funding_rate": funding,
@@ -75,11 +95,27 @@ class FuturesSpreadStrategy(StrategyEngine):
 
         if exit_due_to_z or exit_due_to_funding or exit_due_to_basis or exit_due_to_time:
             side = "close_spread_position"
+            legs = (
+                SignalLeg(
+                    symbol=front_symbol,
+                    side="BUY" if state.direction < 0 else "SELL",
+                    quantity=_spread_leg_quantity(front_price),
+                    metadata={"leg": "front_exit", "price": front_price},
+                ),
+                SignalLeg(
+                    symbol=back_symbol,
+                    side="SELL" if state.direction < 0 else "BUY",
+                    quantity=_spread_leg_quantity(back_price),
+                    metadata={"leg": "back_exit", "price": back_price},
+                ),
+            )
             signals.append(
                 StrategySignal(
                     symbol=snapshot.symbol,
                     side=side,
                     confidence=1.0,
+                    intent="multi_leg",
+                    legs=legs,
                     metadata={
                         "basis": basis,
                         "funding_rate": funding,
@@ -120,3 +156,9 @@ def _exit_reason(z: bool, funding: bool, basis: bool, time_stop: bool) -> str:
 
 
 __all__ = ["FuturesSpreadSettings", "FuturesSpreadStrategy"]
+
+
+def _spread_leg_quantity(price: float) -> float:
+    if price <= 0:
+        return 1.0
+    return max(1.0 / max(price, 1e-9), 1e-9)

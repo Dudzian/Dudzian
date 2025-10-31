@@ -5,21 +5,20 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Mapping, Sequence
 
-import sys
 
 import pytest
 
-sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from bot_core.alerts import DefaultAlertRouter, InMemoryAlertAuditLog
 from bot_core.execution import ExecutionService
 from bot_core.observability import MetricsRegistry
+from bot_core.ui.api import build_explainability_feed
 
 from bot_core.exchanges.base import AccountSnapshot, OrderRequest, OrderResult
 from bot_core.risk import RiskCheckResult, RiskEngine, RiskProfile
 from bot_core.runtime import TradingController
 from bot_core.runtime.journal import TradingDecisionEvent
-from bot_core.strategies import StrategySignal
+from bot_core.strategies import SignalLeg, StrategySignal
 
 from tests._alert_channel_helpers import CollectingChannel
 
@@ -178,6 +177,87 @@ def test_controller_emits_alert_on_buy_signal() -> None:
     exported = tuple(audit.export())
     assert len(exported) >= 2
     assert any(event["event"] == "order_executed" for event in journal.export())
+
+
+def test_controller_handles_multi_leg_signal() -> None:
+    risk_engine = DummyRiskEngine()
+    execution = DummyExecutionService()
+    router, channel, audit = _router_with_channel()
+    journal = CollectingDecisionJournal()
+    controller = TradingController(
+        risk_engine=risk_engine,
+        execution_service=execution,
+        alert_router=router,
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id="paper-1",
+        environment="paper",
+        risk_profile="balanced",
+        health_check_interval=timedelta(hours=1),
+        decision_journal=journal,
+    )
+
+    signal = StrategySignal(
+        symbol="BTC/USDT",
+        side="arbitrage_entry",
+        confidence=0.85,
+        intent="multi_leg",
+        metadata={"order_type": "market"},
+        legs=(
+            SignalLeg(
+                symbol="BTC/USDT",
+                side="BUY",
+                quantity=1.5,
+                metadata={"price": 101.0},
+            ),
+            SignalLeg(
+                symbol="BTC/USDT",
+                side="SELL",
+                quantity=1.5,
+                metadata={"price": 102.0},
+            ),
+        ),
+    )
+
+    results = controller.process_signals([signal])
+
+    assert len(results) == 2
+    assert [request.side for request in execution.requests] == ["BUY", "SELL"]
+    assert all(message.category == "execution" for message in channel.messages if message.category == "execution")
+    assert any(event["event"] == "order_executed" for event in journal.export())
+
+
+def test_controller_skips_neutral_signal() -> None:
+    risk_engine = DummyRiskEngine()
+    execution = DummyExecutionService()
+    router, channel, audit = _router_with_channel()
+    journal = CollectingDecisionJournal()
+    controller = TradingController(
+        risk_engine=risk_engine,
+        execution_service=execution,
+        alert_router=router,
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id="paper-1",
+        environment="paper",
+        risk_profile="balanced",
+        health_check_interval=timedelta(hours=1),
+        decision_journal=journal,
+    )
+
+    signal = StrategySignal(
+        symbol="BTC/USDT",
+        side="rebalance_delta",
+        confidence=0.4,
+        intent="neutral",
+        metadata={"target_ratio": 0.25},
+    )
+
+    results = controller.process_signals([signal])
+
+    assert results == []
+    assert execution.requests == []
+    assert all(message.category != "execution" for message in channel.messages)
+    exported = tuple(audit.export())
+    assert exported == ()
 
 
 def test_controller_reverses_position_before_opening_new_one() -> None:
@@ -353,6 +433,56 @@ def test_controller_scales_quantity_when_risk_suggests_limit() -> None:
     assert channel.messages[-1].category == "execution"
     events = [event["event"] for event in journal.export()]
     assert "risk_adjusted" in events
+
+
+def test_controller_records_explainability_metadata() -> None:
+    risk_engine = DummyRiskEngine()
+    execution = DummyExecutionService()
+    router, _, _ = _router_with_channel()
+    journal = CollectingDecisionJournal()
+    controller = TradingController(
+        risk_engine=risk_engine,
+        execution_service=execution,
+        alert_router=router,
+        account_snapshot_provider=_account_snapshot,
+        portfolio_id="paper-1",
+        environment="paper",
+        risk_profile="balanced",
+        health_check_interval=timedelta(hours=1),
+        decision_journal=journal,
+    )
+
+    signal = StrategySignal(
+        symbol="BTC/USDT",
+        side="BUY",
+        confidence=0.8,
+        metadata={
+            "quantity": "1",
+            "price": "100",
+            "order_type": "market",
+            "decision_engine": {
+                "explainability": {
+                    "model": "stub",
+                    "method": "perturbation",
+                    "feature_importance": {"momentum": 0.5, "volume": -0.2},
+                }
+            },
+        },
+    )
+
+    controller.process_signals([signal])
+
+    assert execution.requests
+    metadata = execution.requests[0].metadata
+    assert "ai_explainability_json" in metadata
+    events = journal.export()
+    order_event = next(event for event in events if event["event"] == "order_submitted")
+    assert "signal_ai_explainability_method" in order_event
+    feed = build_explainability_feed(journal, limit=1)
+    assert feed
+    entry = feed[0]
+    assert entry.model == "stub"
+    assert entry.top_features
 
 
 def test_decision_journal_event_order() -> None:

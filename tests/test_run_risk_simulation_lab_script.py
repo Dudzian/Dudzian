@@ -2,15 +2,11 @@ from __future__ import annotations
 
 import json
 import logging
-from pathlib import Path
 import sys
+from pathlib import Path
 
 import pytest
 import yaml
-
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
 
 from scripts.run_risk_simulation_lab import (
     DEFAULT_CONFIG_PATH,
@@ -18,6 +14,9 @@ from scripts.run_risk_simulation_lab import (
     _build_parser,
     main as run_main,
 )
+
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 @pytest.fixture()

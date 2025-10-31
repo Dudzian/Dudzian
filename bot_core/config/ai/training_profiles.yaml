@@ -1,0 +1,57 @@
+# Przykładowe profile trenowania Decision Engine wykorzystywane przez pipeline.
+# Plik może zostać skopiowany i dostosowany do potrzeb środowiska produkcyjnego.
+profiles:
+  sample_desktop:
+    description: "Domyślny profil demonstracyjny wykorzystywany w instalacji desktopowej"
+    datasets:
+      momentum_sample:
+        path: data/ai/sample_training.csv
+        format: csv
+    models:
+      - name: momentum_alpha
+        dataset: momentum_sample
+        target: target_bps
+        features:
+          - momentum
+          - volume_ratio
+        trainer: gradient_boosting
+        options:
+          validation_ratio: 0.2
+          test_ratio: 0.1
+          random_state: 42
+        metadata:
+          symbol: BTCUSDT
+          regime: momentum
+      - name: momentum_beta
+        dataset: momentum_sample
+        target: target_bps
+        features:
+          - momentum
+          - volatility
+        trainer: gradient_boosting
+        options:
+          validation_ratio: 0.2
+          test_ratio: 0.1
+          random_state: 7
+        metadata:
+          symbol: BTCUSDT
+          regime: momentum
+    ensembles:
+      - name: momentum_combo
+        components:
+          - momentum_alpha
+          - momentum_beta
+        aggregation: weighted
+        weights:
+          - 0.6
+          - 0.4
+    auto_retrain:
+      interval_seconds: 14400  # co 4 godziny
+      quality:
+        min_directional_accuracy: 0.45
+        max_mae: 60.0
+      journal:
+        environment: paper-trading
+        portfolio: ai-pipeline
+        risk_profile: ai-research
+        strategy: momentum_combo

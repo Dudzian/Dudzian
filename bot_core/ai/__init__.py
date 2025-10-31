@@ -9,6 +9,15 @@ _EXPORTS: Dict[str, Tuple[str, str]] = {
     # inference / repository
     "DecisionModelInference": (".inference", "DecisionModelInference"),
     "ModelRepository": (".inference", "ModelRepository"),
+    "ModelHealthMonitor": (".health", "ModelHealthMonitor"),
+    "ModelHealthStatus": (".health", "ModelHealthStatus"),
+    "HealthObservation": (".health", "HealthObservation"),
+    "ExplainabilityReport": (".explainability", "ExplainabilityReport"),
+    "FeatureAttribution": (".explainability", "FeatureAttribution"),
+    "build_explainability_report": (".explainability", "build_explainability_report"),
+    "serialize_explainability": (".explainability", "serialize_explainability"),
+    "flatten_explainability": (".explainability", "flatten_explainability"),
+    "parse_explainability_payload": (".explainability", "parse_explainability_payload"),
     # modele i serializacja
     "ModelArtifact": (".models", "ModelArtifact"),
     "ModelMetrics": (".models", "ModelMetrics"),

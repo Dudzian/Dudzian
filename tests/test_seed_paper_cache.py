@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from bot_core.data.ohlcv import ParquetCacheStorage, SQLiteCacheStorage
 
