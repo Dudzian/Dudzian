@@ -14,6 +14,7 @@
 #include <QLoggingCategory>
 #include <QProcess>
 #include <QtGlobal>
+#include <utility>
 
 #include "utils/PathUtils.hpp"
 

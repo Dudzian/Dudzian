@@ -14,7 +14,21 @@ find_package(Qt6 6.5 COMPONENTS Quick QuickControls2 Charts REQUIRED)
 include(CTest)
 if(BUILD_TESTING)
     # Pull in all modules needed by tests only when testing is enabled
-    find_package(Qt6 6.5 COMPONENTS Test Gui Qml Quick Charts REQUIRED)
+    find_package(Qt6 6.5 COMPONENTS Test Gui Qml Quick Charts QmlTest REQUIRED)
+
+    set(QML_TEST_FILES
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/qml/tst_style_components.qml
+    )
+
+    foreach(qml_test ${QML_TEST_FILES})
+        get_filename_component(test_name ${qml_test} NAME_WE)
+        add_test(
+            NAME ui_${test_name}
+            COMMAND Qt6::qmltestrunner
+                -import ${CMAKE_CURRENT_SOURCE_DIR}/qml
+                -input ${qml_test}
+        )
+    endforeach()
 endif()
 
 # --- Protobuf / gRPC ---

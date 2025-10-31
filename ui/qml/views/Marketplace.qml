@@ -365,11 +365,26 @@ Item {
                             font.bold: true
                         }
 
-                        Label {
+                        ColumnLayout {
                             visible: preset.issues && preset.issues.length > 0
-                            text: qsTr("Problemy: %1").arg((preset.issues || []).join(", "))
-                            color: "#c0392b"
-                            wrapMode: Text.WordWrap
+                            Layout.fillWidth: true
+                            spacing: 4
+
+                            Label {
+                                text: qsTr("Problemy walidacji:")
+                                color: "#c0392b"
+                                font.bold: true
+                            }
+
+                            Repeater {
+                                model: preset.issues || []
+                                delegate: Label {
+                                    Layout.fillWidth: true
+                                    text: String.fromUtf8("\u2022 ") + (typeof modelData === "string" ? modelData : JSON.stringify(modelData))
+                                    color: "#c0392b"
+                                    wrapMode: Text.WordWrap
+                                }
+                            }
                         }
 
                         RowLayout {

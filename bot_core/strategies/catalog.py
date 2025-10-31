@@ -129,6 +129,131 @@ def _match_fingerprint(candidate: str, pattern: str) -> bool:
     return normalized_candidate == normalized_pattern
 
 
+PRESET_SCHEMA_DOC = """Opis wymaganej struktury presetów strategii.
+
+Każdy preset musi definiować co najmniej następujące pola:
+
+* ``name`` – przyjazna nazwa presetu, prezentowana w UI.
+* ``metadata`` – słownik metadanych zawierający ``id`` lub ``preset_id`` (używany
+  do identyfikacji presetu) oraz opcjonalnie ``profile``/``preset_profile``
+  określające profil (np. ``grid``, ``dca``).
+* ``strategies`` – lista co najmniej jednej strategii. Każdy wpis wymaga pól
+  ``engine`` (klucz zarejestrowanego silnika) oraz ``parameters`` (słownik
+  parametrów przekazywanych do silnika). Dodatkowe pola jak ``license_tier``,
+  ``risk_classes``, ``required_data`` czy ``tags`` są opcjonalne, ale muszą być
+  listami tekstów.
+
+Pola dodatkowe są dozwolone, lecz muszą mieć formę kompatybilną z JSON (str,
+liczby, bool, listy lub słowniki). Walidator schematu zapewnia normalizację
+ciągów i sekwencji oraz raportuje szczegółowe błędy, które trafiają do UI.
+"""
+
+
+class StrategyPresetValidationError(ValueError):
+    """Błąd walidacji schematu presetu strategii."""
+
+    def __init__(self, errors: Sequence[str], *, preset_id: str | None = None) -> None:
+        self.errors = tuple(errors)
+        self.preset_id = preset_id
+        message = ", ".join(errors) if errors else "Niepoprawny preset strategii"
+        super().__init__(message)
+
+    @classmethod
+    def from_validation(cls, exc: ValidationError, *, preset_id: str | None = None) -> "StrategyPresetValidationError":
+        details: list[str] = []
+        for error in exc.errors():
+            location = ".".join(str(part) for part in error.get("loc", ()))
+            msg = error.get("msg", "niepoprawna wartość")
+            if location:
+                details.append(f"{location}: {msg}")
+            else:
+                details.append(msg)
+        if not details:
+            details.append("Walidacja schematu presetu zakończyła się niepowodzeniem")
+        return cls(details, preset_id=preset_id)
+
+
+class _PresetStrategySchema(BaseModel):
+    """Schemat pojedynczej strategii wchodzącej w skład presetu."""
+
+    model_config = ConfigDict(extra="allow")
+
+    name: str = Field(..., min_length=1, description="Nazwa strategii wyświetlana w UI")
+    engine: str = Field(..., min_length=1, description="Klucz zarejestrowanego silnika strategii")
+    parameters: Mapping[str, Any] = Field(default_factory=dict, description="Parametry przekazywane do silnika")
+    license_tier: str | None = Field(default=None)
+    risk_classes: tuple[str, ...] = Field(default_factory=tuple)
+    required_data: tuple[str, ...] = Field(default_factory=tuple)
+    tags: tuple[str, ...] = Field(default_factory=tuple)
+    risk_profile: str | None = Field(default=None)
+    metadata: Mapping[str, Any] = Field(default_factory=dict)
+
+    @field_validator("parameters", "metadata", mode="before")
+    @classmethod
+    def _ensure_mapping(cls, value: Any) -> Mapping[str, Any]:
+        if value in (None, ""):
+            return {}
+        if isinstance(value, Mapping):
+            return {str(key): value[key] for key in value.keys()}
+        raise TypeError("Sekcja strategii musi być słownikiem klucz→wartość")
+
+    @field_validator("risk_classes", "required_data", "tags", mode="before")
+    @classmethod
+    def _normalize_sequences(cls, value: Any) -> tuple[str, ...]:
+        return _normalize_optional_str_sequence(value)
+
+
+class _PresetMetadataSchema(BaseModel):
+    """Schemat sekcji metadata presetu strategii."""
+
+    model_config = ConfigDict(extra="allow")
+
+    id: str | None = Field(default=None)
+    preset_id: str | None = Field(default=None)
+    profile: str | None = Field(default=None)
+    preset_profile: str | None = Field(default=None)
+    license: Mapping[str, Any] | None = Field(default=None)
+
+    @field_validator("license", mode="before")
+    @classmethod
+    def _normalize_license(cls, value: Any) -> Mapping[str, Any] | None:
+        if value in (None, ""):
+            return None
+        if isinstance(value, Mapping):
+            return {str(key): value[key] for key in value.keys()}
+        raise TypeError("Sekcja metadata.license musi być słownikiem")
+
+    @model_validator(mode="after")
+    def _ensure_identifier(self) -> "_PresetMetadataSchema":
+        if not (self.id or self.preset_id):
+            raise ValueError("metadata.id lub metadata.preset_id musi być określone")
+        return self
+
+
+class StrategyPresetSchema(BaseModel):
+    """Model walidujący strukturę JSON presetu strategii."""
+
+    model_config = ConfigDict(extra="allow")
+
+    name: str = Field(..., min_length=1, description="Nazwa presetu wyświetlana w UI")
+    strategies: tuple[_PresetStrategySchema, ...] = Field(..., min_length=1, description="Lista strategii wchodzących w skład presetu")
+    metadata: _PresetMetadataSchema | Mapping[str, Any] = Field(default_factory=dict)
+
+    @field_validator("metadata", mode="before")
+    @classmethod
+    def _ensure_metadata_mapping(cls, value: Any) -> Mapping[str, Any]:
+        if value in (None, ""):
+            return {}
+        if isinstance(value, Mapping):
+            return {str(key): value[key] for key in value.keys()}
+        raise TypeError("Sekcja metadata musi być słownikiem")
+
+    @model_validator(mode="after")
+    def _normalize_metadata(self) -> "StrategyPresetSchema":
+        if isinstance(self.metadata, Mapping) and not isinstance(self.metadata, _PresetMetadataSchema):
+            self.metadata = _PresetMetadataSchema.model_validate(self.metadata)
+        return self
+
 class StrategyPresetProfile(str, Enum):
     GRID = "grid"
     DCA = "dca"
@@ -319,6 +444,8 @@ def _is_capability_allowed(spec: StrategyEngineSpec) -> bool:
 class StrategyCatalog:
     """Rejestr zarejestrowanych silników strategii i presetów marketplace."""
 
+    preset_schema_doc: str = PRESET_SCHEMA_DOC
+
     def __init__(self, *, hwid_provider: HwIdProvider | None = None) -> None:
         self._registry: MutableMapping[str, StrategyEngineSpec] = {}
         self._presets: MutableMapping[str, StrategyPresetDescriptor] = {}
@@ -350,6 +477,26 @@ class StrategyCatalog:
                 if text:
                     candidates.append(text)
         return tuple(dict.fromkeys(candidates))
+
+    def validate_preset_payload(self, payload: Mapping[str, Any]) -> Mapping[str, Any]:
+        """Waliduje i normalizuje strukturę JSON presetu.
+
+        Metoda zwraca przekształcony słownik zgodny z ``StrategyPresetSchema``.
+        W przypadku błędów walidacyjnych podnosi ``StrategyPresetValidationError``
+        z listą szczegółowych komunikatów.
+        """
+
+        try:
+            schema = StrategyPresetSchema.model_validate(payload)
+        except ValidationError as exc:
+            preset_id: str | None = None
+            metadata = payload.get("metadata") if isinstance(payload, Mapping) else None
+            if isinstance(metadata, Mapping):
+                candidate = metadata.get("id") or metadata.get("preset_id")
+                if isinstance(candidate, str):
+                    preset_id = candidate
+            raise StrategyPresetValidationError.from_validation(exc, preset_id=preset_id) from exc
+        return schema.model_dump()
 
     def _compute_license_status(
         self,
@@ -559,10 +706,11 @@ class StrategyCatalog:
         if not isinstance(preset_payload, Mapping):
             raise TypeError("Preset payload must be a mapping")
 
-        metadata_payload = preset_payload.get("metadata") or {}
+        validated_payload = self.validate_preset_payload(preset_payload)
+        metadata_payload = validated_payload.get("metadata") or {}
         metadata = dict(metadata_payload) if isinstance(metadata_payload, Mapping) else {}
 
-        raw_name = preset_payload.get("name") or metadata.get("name") or metadata.get("id")
+        raw_name = validated_payload.get("name") or metadata.get("name") or metadata.get("id")
         if raw_name is None:
             raise ValueError("Preset must define a name")
         name = _normalize_non_empty_str(str(raw_name), field_name="preset.name")
@@ -572,7 +720,7 @@ class StrategyCatalog:
 
         profile = StrategyPresetProfile.from_value(metadata.get("profile") or metadata.get("preset_profile"))
 
-        strategies, required_parameters, strategy_issues = self._parse_preset_strategies(preset_payload)
+        strategies, required_parameters, strategy_issues = self._parse_preset_strategies(validated_payload)
 
         issues = list(additional_issues)
         issues.extend(strategy_issues)
@@ -1372,5 +1520,8 @@ __all__ = [
     "StrategyPresetProfile",
     "PresetLicenseStatus",
     "PresetLicenseState",
+    "StrategyPresetValidationError",
+    "StrategyPresetSchema",
+    "PRESET_SCHEMA_DOC",
 ]
 LOGGER = logging.getLogger(__name__)
