@@ -1,0 +1,27 @@
+# Konfiguracja priorytetów backendów ML oraz dodatkowych metadanych instalacyjnych.
+priority:
+  - lightgbm
+  - reference
+  - builtin
+backends:
+  reference:
+    module: null
+    optional: false
+    available: true
+    description: "Referencyjny regresor liniowy w czystym Pythonie"
+  builtin:
+    module: null
+    optional: false
+    available: true
+  lightgbm:
+    module: lightgbm
+    optional: true
+    install_hint: "pip install lightgbm"
+  xgboost:
+    module: xgboost
+    optional: true
+    install_hint: "pip install xgboost"
+  linear:
+    module: null
+    optional: false
+    available: true

@@ -1,0 +1,16 @@
+{
+  "timestamp": "2025-11-01T10:15:30+00:00",
+  "preferred_backends": [
+    "lightgbm",
+    "reference"
+  ],
+  "selected_backend": "reference",
+  "errors": [
+    {
+      "backend": "lightgbm",
+      "message": "Backend 'lightgbm' wymaga modułu 'lightgbm', który nie jest zainstalowany.",
+      "module": "lightgbm",
+      "install_hint": "pip install lightgbm"
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "started_at": "2025-11-01T10:15:00+00:00",
+  "finished_at": "2025-11-01T10:15:30+00:00",
+  "status": "completed",
+  "reason": null,
+  "delay_seconds": 0.0,
+  "drift_score": null,
+  "report_json": "reports/e2e/retraining/retraining_20251101T101530.json",
+  "report_markdown": "reports/e2e/retraining/retraining_20251101T101530.md",
+  "kpi_snapshot": "reports/e2e/retraining/kpi_20251101T101530.json",
+  "fallback_log": "logs/e2e/retraining/fallback/fallback_20251101T101530.json",
+  "validation_log": "logs/e2e/retraining/validation/dataset_validation_20251101T101530.json"
+}

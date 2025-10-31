@@ -26,10 +26,17 @@
         <file>components/UpdateManagerPanel.qml</file>
         <file>components/workbench/StrategyWorkbench.qml</file>
         <file>components/workbench/StrategyWorkbenchViewModel.qml</file>
+        <file>dashboard/RuntimeOverview.qml</file>
+        <file>dashboard/RunbookPanel.qml</file>
+        <file>settings/DashboardSettings.qml</file>
+        <file>settings/UpdateDialog.qml</file>
+        <file>onboarding/LicenseWizard.qml</file>
+        <file>onboarding/StrategySetupStep.qml</file>
         <file>views/MonitoringDashboard.qml</file>
         <file>views/Marketplace.qml</file>
         <file>views/StrategyConfigurator.qml</file>
         <file>views/SetupWizard.qml</file>
         <file>views/PortfolioDashboard.qml</file>
+        <file>views/LicenseAuditView.qml</file>
     </qresource>
 </RCC>
