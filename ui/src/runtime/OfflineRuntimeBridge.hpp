@@ -25,8 +25,6 @@ public:
     void setAutoRunEnabled(bool enabled);
     void setStrategyConfig(const QVariantMap& config);
     void setDatasetPath(const QString& path);
-    void setStreamSnapshotPath(const QString& path);
-    void setStreamingEnabled(bool enabled);
 
 public slots:
     void start();
@@ -52,10 +50,8 @@ private:
     TradingClient::InstrumentConfig        m_instrument{};
     QVariantMap                            m_strategyConfig;
     QString                                m_datasetPath;
-    QString                                m_streamSnapshotPath;
     int                                    m_historyLimit = 500;
     bool                                   m_running = false;
     bool                                   m_autoRunEnabled = false;
-    bool                                   m_streamingEnabled = false;
     QString                                m_connectionState;
 };

@@ -1383,15 +1383,7 @@ class ExchangeManager:
         *,
         parameter_overrides: Mapping[str, Mapping[str, Any]] | None = None,
     ) -> Mapping[str, object]:
-        """Przypina preset strategii do wskazanego kontekstu giełdowego.
-
-        Preset wskazywany przez ``preset_id`` musi być zgodny ze schematem
-        opisanym w ``bot_core.strategies.catalog.PRESET_SCHEMA_DOC``,
-        tj. zawierać pola ``name``, ``metadata.id`` (lub ``metadata.preset_id``)
-        oraz listę ``strategies`` z wpisami definiującymi ``engine`` i
-        ``parameters``. Dzięki temu UI i runtime mogą jednoznacznie odtworzyć
-        konfigurację strategii na rachunku live lub papierowym.
-        """
+        """Przypina preset strategii do wskazanego kontekstu giełdowego."""
 
         normalized_env = self._normalize_strategy_environment(environment)
         self._ensure_strategy_catalog()

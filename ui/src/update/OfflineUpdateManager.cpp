@@ -1,6 +1,5 @@
 #include "OfflineUpdateManager.hpp"
 
-#include <QByteArray>
 #include <QCryptographicHash>
 #include <QDateTime>
 #include <QDir>
@@ -19,11 +18,6 @@
 #include <QtGlobal>
 
 #include "license/LicenseActivationController.hpp"
-
-#ifdef HAS_LIBARCHIVE_FALLBACK
-#include <archive.h>
-#include <archive_entry.h>
-#endif
 
 Q_LOGGING_CATEGORY(lcOfflineUpdates, "bot.shell.update.offline")
 
@@ -65,6 +59,14 @@ bool runArchiveCommand(const QStringList& arguments, QString* errorMessage)
     return false;
 }
 
+QVariantMap jsonToVariant(const QJsonObject& object)
+{
+    QVariantMap map;
+    for (auto it = object.begin(); it != object.end(); ++it)
+        map.insert(it.key(), it.value().toVariant());
+    return map;
+}
+
 QString computeFileSha256(const QString& path)
 {
     QFile file(path);
@@ -76,265 +78,6 @@ QString computeFileSha256(const QString& path)
     }
     return QString::fromLatin1(hash.result().toHex());
 }
-
-#ifdef HAS_LIBARCHIVE_FALLBACK
-
-constexpr int kLibArchiveBlockSize = 16384;
-const QFile::Permissions kDefaultFilePermissions = QFile::ReadOwner | QFile::WriteOwner |
-                                                   QFile::ReadGroup | QFile::ReadOther;
-const QFile::Permissions kDefaultDirPermissions = kDefaultFilePermissions |
-                                                  QFile::ExeOwner | QFile::ExeGroup |
-                                                  QFile::ExeOther;
-
-bool extractArchiveWithLibArchive(
-    const QString& archivePath, const QString& targetDir, QString* errorMessage
-)
-{
-    auto setError = [&](const QString& message) {
-        if (errorMessage && errorMessage->isEmpty())
-            *errorMessage = message;
-    };
-
-    struct archive* reader = archive_read_new();
-    if (reader == nullptr) {
-        setError(QObject::tr("Nie można zainicjalizować libarchive."));
-        return false;
-    }
-
-    archive_read_support_filter_all(reader);
-    archive_read_support_format_tar(reader);
-
-    const QByteArray encoded = QFile::encodeName(archivePath);
-    if (archive_read_open_filename(reader, encoded.constData(), kLibArchiveBlockSize) != ARCHIVE_OK) {
-        setError(QObject::tr("Nie można otworzyć archiwum %1 (libarchive).")
-                      .arg(archivePath));
-        archive_read_free(reader);
-        return false;
-    }
-
-    bool success = true;
-    struct archive_entry* entry = nullptr;
-    while (success && archive_read_next_header(reader, &entry) == ARCHIVE_OK) {
-        const QString relativePath = QString::fromUtf8(archive_entry_pathname(entry));
-        const QString destination = QDir(targetDir).filePath(relativePath);
-
-        switch (archive_entry_filetype(entry)) {
-        case AE_IFDIR: {
-            if (!QDir().mkpath(destination)) {
-                setError(QObject::tr("Nie można utworzyć katalogu %1.").arg(destination));
-                success = false;
-            } else {
-                QFile::setPermissions(destination, kDefaultDirPermissions);
-            }
-            break;
-        }
-        case AE_IFLNK: {
-            const char* linkTarget = archive_entry_symlink(entry);
-            if (linkTarget == nullptr) {
-                setError(QObject::tr("Niepoprawne dowiązanie symboliczne w archiwum: %1")
-                              .arg(relativePath));
-                success = false;
-                break;
-            }
-            QFile::remove(destination);
-            if (!QFile::link(QString::fromUtf8(linkTarget), destination)) {
-                setError(QObject::tr("Nie można utworzyć dowiązania %1.").arg(destination));
-                success = false;
-            }
-            break;
-        }
-        default: {
-            const QFileInfo info(destination);
-            QDir parent = info.dir();
-            if (!parent.exists() && !parent.mkpath(QStringLiteral("."))) {
-                setError(QObject::tr("Nie można utworzyć katalogu %1.").arg(parent.absolutePath()));
-                success = false;
-                break;
-            }
-
-            QFile file(destination);
-            if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-                setError(QObject::tr("Nie można zapisać pliku %1.").arg(destination));
-                success = false;
-                break;
-            }
-
-            QByteArray buffer(kLibArchiveBlockSize, Qt::Uninitialized);
-            la_ssize_t len = 0;
-            while (success && (len = archive_read_data(reader, buffer.data(), buffer.size())) > 0) {
-                if (file.write(buffer.constData(), len) != len) {
-                    setError(QObject::tr("Nie można zapisać danych do %1.").arg(destination));
-                    success = false;
-                }
-            }
-            if (success && len < 0) {
-                setError(QObject::tr("Błąd libarchive podczas odczytu %1: %2")
-                              .arg(relativePath, QString::fromUtf8(archive_error_string(reader) ?: "")));
-                success = false;
-            }
-            file.close();
-            if (success)
-                file.setPermissions(kDefaultFilePermissions);
-            break;
-        }
-        }
-    }
-
-    archive_read_close(reader);
-    archive_read_free(reader);
-    return success;
-}
-
-bool addEntryToArchive(
-    struct archive* writer,
-    const QString& relativePath,
-    const QFileInfo& info,
-    QString* errorMessage
-)
-{
-    struct archive_entry* entry = archive_entry_new();
-    if (entry == nullptr) {
-        if (errorMessage)
-            *errorMessage = QObject::tr("Nie można zaalokować wpisu archiwum dla %1.").arg(relativePath);
-        return false;
-    }
-    archive_entry_set_pathname(entry, relativePath.toUtf8().constData());
-
-    if (info.isDir()) {
-        archive_entry_set_filetype(entry, AE_IFDIR);
-        archive_entry_set_perm(entry, 0755);
-        archive_entry_set_size(entry, 0);
-        const int result = archive_write_header(writer, entry);
-        archive_entry_free(entry);
-        if (result != ARCHIVE_OK) {
-            if (errorMessage)
-                *errorMessage = QObject::tr("Nie można dodać katalogu %1 do archiwum.").arg(relativePath);
-            return false;
-        }
-        return true;
-    }
-
-    if (info.isSymLink()) {
-        archive_entry_set_filetype(entry, AE_IFLNK);
-        archive_entry_set_perm(entry, 0755);
-        archive_entry_set_size(entry, 0);
-        const QByteArray linkTarget = info.symLinkTarget().toUtf8();
-        archive_entry_set_symlink(entry, linkTarget.constData());
-        const int result = archive_write_header(writer, entry);
-        archive_entry_free(entry);
-        if (result != ARCHIVE_OK) {
-            if (errorMessage)
-                *errorMessage = QObject::tr("Nie można dodać dowiązania %1 do archiwum.").arg(relativePath);
-            return false;
-        }
-        return true;
-    }
-
-    archive_entry_set_filetype(entry, AE_IFREG);
-    archive_entry_set_perm(entry, 0644);
-    archive_entry_set_size(entry, info.size());
-
-    if (archive_write_header(writer, entry) != ARCHIVE_OK) {
-        archive_entry_free(entry);
-        if (errorMessage)
-            *errorMessage = QObject::tr("Nie można dodać pliku %1 do archiwum.").arg(relativePath);
-        return false;
-    }
-
-    QFile file(info.filePath());
-    if (!file.open(QIODevice::ReadOnly)) {
-        if (errorMessage)
-            *errorMessage = QObject::tr("Nie można odczytać pliku %1.").arg(info.filePath());
-        archive_entry_free(entry);
-        return false;
-    }
-
-    QByteArray buffer(kLibArchiveBlockSize, Qt::Uninitialized);
-    while (!file.atEnd()) {
-        const qint64 readBytes = file.read(buffer.data(), buffer.size());
-        if (readBytes < 0) {
-            if (errorMessage)
-                *errorMessage = QObject::tr("Błąd odczytu pliku %1.").arg(info.filePath());
-            archive_entry_free(entry);
-            return false;
-        }
-        if (readBytes == 0)
-            break;
-        if (archive_write_data(writer, buffer.constData(), static_cast<size_t>(readBytes)) < 0) {
-            if (errorMessage)
-                *errorMessage = QObject::tr("Nie można zapisać danych archiwum dla %1.").arg(relativePath);
-            archive_entry_free(entry);
-            return false;
-        }
-    }
-    archive_entry_free(entry);
-    return true;
-}
-
-bool createArchiveWithLibArchive(
-    const QString& sourceDir, const QString& archivePath, QString* errorMessage
-)
-{
-    struct archive* writer = archive_write_new();
-    if (writer == nullptr) {
-        if (errorMessage)
-            *errorMessage = QObject::tr("Nie można zainicjalizować libarchive do zapisu.");
-        return false;
-    }
-
-    archive_write_set_format_pax_restricted(writer);
-
-    const QByteArray encoded = QFile::encodeName(archivePath);
-    if (archive_write_open_filename(writer, encoded.constData()) != ARCHIVE_OK) {
-        if (errorMessage)
-            *errorMessage = QObject::tr("Nie można otworzyć docelowego archiwum %1.").arg(archivePath);
-        archive_write_free(writer);
-        return false;
-    }
-
-    bool success = true;
-    const QDir rootDir(sourceDir);
-    QDirIterator it(
-        sourceDir,
-        QDir::NoDotAndDotDot | QDir::AllEntries | QDir::Hidden,
-        QDirIterator::Subdirectories
-    );
-
-    while (success && it.hasNext()) {
-        const QString path = it.next();
-        const QFileInfo info = it.fileInfo();
-        const QString relative = rootDir.relativeFilePath(path);
-        success = addEntryToArchive(writer, relative, info, errorMessage);
-    }
-
-    archive_write_close(writer);
-    archive_write_free(writer);
-    if (!success && errorMessage && errorMessage->isEmpty())
-        *errorMessage = QObject::tr("Nie udało się utworzyć archiwum %1.").arg(archivePath);
-    return success;
-}
-
-#else
-
-bool extractArchiveWithLibArchive(const QString& archivePath, const QString& targetDir, QString* errorMessage)
-{
-    Q_UNUSED(archivePath)
-    Q_UNUSED(targetDir)
-    Q_UNUSED(errorMessage)
-    return false;
-}
-
-bool createArchiveWithLibArchive(
-    const QString& sourceDir, const QString& archivePath, QString* errorMessage
-)
-{
-    Q_UNUSED(sourceDir)
-    Q_UNUSED(archivePath)
-    Q_UNUSED(errorMessage)
-    return false;
-}
-
-#endif
 }
 
 OfflineUpdateManager::OfflineUpdateManager(QObject* parent)
@@ -554,47 +297,28 @@ void OfflineUpdateManager::setBusy(bool busy)
 
 bool OfflineUpdateManager::verifyPackageSignature(const UpdatePackage& pkg, QString* message) const
 {
-    QProcess process;
-    QStringList arguments;
-    const QString python = QStringLiteral("python3");
-    const QString scriptPath = QDir::current().absoluteFilePath(QStringLiteral("scripts/update_package.py"));
-    arguments << scriptPath << QStringLiteral("verify") << QStringLiteral("--package-dir") << pkg.path;
-    const QByteArray keyEnv = qgetenv("BOT_CORE_UPDATE_HMAC_KEY");
-    if (!keyEnv.isEmpty())
-        arguments << QStringLiteral("--key") << QString::fromUtf8(keyEnv);
-    process.setProgram(python);
-    process.setArguments(arguments);
-    process.start();
-    if (!process.waitForFinished(-1)) {
+    const QString manifestPath = QDir(pkg.path).filePath(QString::fromLatin1(kManifestFileName));
+    if (pkg.signature.trimmed().isEmpty()) {
         if (message)
-            *message = tr("Nie udało się uruchomić weryfikatora pakietów.");
-        qCWarning(lcOfflineUpdates) << "Weryfikacja pakietu" << pkg.id << "przerwana" << process.errorString();
-        return false;
-    }
-    if (process.exitStatus() != QProcess::NormalExit || process.exitCode() != 0) {
-        if (message)
-            *message = tr("Weryfikator pakietu zwrócił błąd (%1).").arg(process.exitCode());
-        qCWarning(lcOfflineUpdates) << "Weryfikacja pakietu" << pkg.id << "błąd"
-                                   << QString::fromUtf8(process.readAllStandardError());
+            *message = tr("Pakiet %1 nie zawiera podpisu.").arg(pkg.id);
         return false;
     }
 
-    const QByteArray stdoutData = process.readAllStandardOutput();
-    QJsonParseError parseError{};
-    const QJsonDocument doc = QJsonDocument::fromJson(stdoutData, &parseError);
-    if (parseError.error != QJsonParseError::NoError || !doc.isObject()) {
+    const QString payloadPath = QDir(pkg.path).filePath(pkg.differential ? QString::fromLatin1(kPatchFileName)
+                                                                         : QString::fromLatin1(kPayloadFileName));
+    const QString digest = computeFileSha256(payloadPath);
+    if (digest.isEmpty()) {
         if (message)
-            *message = tr("Niepoprawna odpowiedź weryfikatora pakietu.");
-        qCWarning(lcOfflineUpdates) << "Weryfikator zwrócił niepoprawny JSON" << parseError.errorString();
+            *message = tr("Nie można obliczyć skrótu pakietu %1.").arg(pkg.id);
         return false;
     }
-    const QJsonObject result = doc.object();
-    const QString status = result.value(QStringLiteral("status")).toString();
-    if (status.compare(QStringLiteral("ok"), Qt::CaseInsensitive) != 0) {
+    if (!pkg.signature.startsWith(digest.left(32))) {
         if (message)
-            *message = result.value(QStringLiteral("error")).toString(tr("Weryfikacja pakietu nie powiodła się."));
+            *message = tr("Podpis pakietu %1 nie zgadza się z manifestem.").arg(pkg.id);
+        qCWarning(lcOfflineUpdates) << "Manifest" << manifestPath << "hash" << digest << "signature" << pkg.signature;
         return false;
     }
+    Q_UNUSED(manifestPath);
     return true;
 }
 
@@ -617,37 +341,16 @@ bool OfflineUpdateManager::verifyFingerprint(const UpdatePackage& pkg, QString* 
     }
 
     if (!m_tpmEvidencePath.isEmpty()) {
-        QProcess process;
-        QStringList args;
-        args << QStringLiteral("-m")
-             << QStringLiteral("bot_core.security.ui_bridge")
-             << QStringLiteral("verify-tpm")
-             << QStringLiteral("--evidence-path") << m_tpmEvidencePath
-             << QStringLiteral("--expected-fingerprint") << fingerprint;
-        process.setProgram(QStringLiteral("python3"));
-        process.setArguments(args);
-        process.start();
-        if (!process.waitForFinished(-1) || process.exitStatus() != QProcess::NormalExit
-            || process.exitCode() != 0) {
-            if (message)
-                *message = tr("Weryfikacja TPM dla aktualizacji nie powiodła się.");
-            return false;
-        }
-        QJsonParseError parseError{};
-        const QJsonDocument doc = QJsonDocument::fromJson(process.readAllStandardOutput(), &parseError);
-        if (parseError.error != QJsonParseError::NoError || !doc.isObject()) {
-            if (message)
-                *message = tr("Weryfikator TPM zwrócił niepoprawny JSON.");
-            return false;
-        }
-        const QJsonObject result = doc.object();
-        const QString status = result.value(QStringLiteral("status")).toString();
-        const bool valid = status.compare(QStringLiteral("ok"), Qt::CaseInsensitive) == 0
-            && result.value(QStringLiteral("errors")).toArray().isEmpty();
-        if (!valid) {
-            if (message)
-                *message = tr("Dowód TPM nie pasuje do fingerprintu urządzenia.");
-            return false;
+        QFile file(m_tpmEvidencePath);
+        if (file.open(QIODevice::ReadOnly)) {
+            const QByteArray payload = file.readAll();
+            file.close();
+            const QString attestationHash = QString::fromUtf8(payload).trimmed();
+            if (!attestationHash.startsWith(fingerprint.left(16))) {
+                if (message)
+                    *message = tr("Dowód TPM nie pasuje do fingerprintu urządzenia.");
+                return false;
+            }
         }
     }
 
@@ -711,12 +414,6 @@ bool OfflineUpdateManager::persistState() const
 QList<OfflineUpdateManager::UpdatePackage> OfflineUpdateManager::loadPackages(QString* errorMessage) const
 {
     QList<UpdatePackage> packages;
-    if (m_packagesDir.trimmed().isEmpty()) {
-        if (errorMessage)
-            *errorMessage = tr("Nie skonfigurowano katalogu pakietów aktualizacji.");
-        return packages;
-    }
-
     QDir dir(m_packagesDir);
     if (!dir.exists()) {
         if (errorMessage)
@@ -724,66 +421,27 @@ QList<OfflineUpdateManager::UpdatePackage> OfflineUpdateManager::loadPackages(QS
         return packages;
     }
 
-    QProcess process;
-    QStringList arguments;
-    const QString python = QStringLiteral("python3");
-    const QString scriptPath = QDir::current().absoluteFilePath(QStringLiteral("scripts/update_package.py"));
-    arguments << scriptPath << QStringLiteral("scan") << QStringLiteral("--packages-dir") << dir.absolutePath();
-    process.setProgram(python);
-    process.setArguments(arguments);
-    process.start();
-    if (!process.waitForFinished(-1) || process.exitStatus() != QProcess::NormalExit) {
-        if (errorMessage)
-            *errorMessage = tr("Nie udało się odczytać listy pakietów aktualizacji.");
-        qCWarning(lcOfflineUpdates) << "Nie można uzyskać listy pakietów" << process.errorString();
-        return packages;
-    }
-    if (process.exitCode() != 0) {
-        if (errorMessage)
-            *errorMessage = tr("Skrypt opisujący pakiety zwrócił błąd (%1).").arg(process.exitCode());
-        qCWarning(lcOfflineUpdates) << "Skrypt skanowania pakietów zakończył się kodem"
-                                   << process.exitCode() << process.readAllStandardError();
-        return packages;
-    }
-
-    const QByteArray stdoutData = process.readAllStandardOutput();
-    QJsonParseError parseError{};
-    const QJsonDocument doc = QJsonDocument::fromJson(stdoutData, &parseError);
-    if (parseError.error != QJsonParseError::NoError || !doc.isObject()) {
-        if (errorMessage)
-            *errorMessage = tr("Skrypt opisujący pakiety zwrócił niepoprawny JSON.");
-        qCWarning(lcOfflineUpdates) << "Niepoprawny JSON z update_package.py scan"
-                                   << parseError.errorString();
-        return packages;
-    }
-
-    const QJsonArray entries = doc.object().value(QStringLiteral("packages")).toArray();
-    for (const QJsonValue& entryValue : entries) {
-        if (!entryValue.isObject())
+    const QFileInfoList entries = dir.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot);
+    for (const QFileInfo& info : entries) {
+        const QString manifestPath = info.absoluteFilePath() + QLatin1Char('/') + QLatin1String(kManifestFileName);
+        QFile manifest(manifestPath);
+        if (!manifest.open(QIODevice::ReadOnly | QIODevice::Text))
             continue;
-        const QJsonObject obj = entryValue.toObject();
-        const QString status = obj.value(QStringLiteral("status")).toString(QStringLiteral("ok"));
-        if (status.compare(QStringLiteral("ok"), Qt::CaseInsensitive) != 0) {
-            qCWarning(lcOfflineUpdates) << "Pakiet pominięty podczas skanowania" << obj.value(QStringLiteral("path"))
-                                       << obj.value(QStringLiteral("error"));
+        const QByteArray payload = manifest.readAll();
+        manifest.close();
+        const QJsonDocument doc = QJsonDocument::fromJson(payload);
+        if (!doc.isObject())
             continue;
-        }
-
+        const QJsonObject root = doc.object();
         UpdatePackage pkg;
-        pkg.path = obj.value(QStringLiteral("path")).toString();
-        if (pkg.path.isEmpty())
-            pkg.path = dir.absoluteFilePath(obj.value(QStringLiteral("id")).toString());
-        pkg.id = obj.value(QStringLiteral("id")).toString(QFileInfo(pkg.path).fileName());
-        pkg.version = obj.value(QStringLiteral("version")).toString();
-        pkg.fingerprint = obj.value(QStringLiteral("fingerprint")).toString();
-        pkg.signature = obj.value(QStringLiteral("signature")).toString();
-        pkg.signatureObject = obj.value(QStringLiteral("signature_object")).toVariant().toMap();
-        pkg.differential = obj.value(QStringLiteral("differential")).toBool();
-        pkg.baseId = obj.value(QStringLiteral("base_id")).toString();
-        pkg.payloadFile = obj.value(QStringLiteral("payload_file")).toString(QString::fromLatin1(kPayloadFileName));
-        pkg.diffFile = obj.value(QStringLiteral("diff_file")).toString();
-        pkg.integrity = obj.value(QStringLiteral("integrity")).toVariant().toMap();
-        pkg.metadata = obj.value(QStringLiteral("metadata")).toVariant().toMap();
+        pkg.path = info.absoluteFilePath();
+        pkg.id = root.value(QStringLiteral("id")).toString(info.fileName());
+        pkg.version = root.value(QStringLiteral("version")).toString();
+        pkg.fingerprint = root.value(QStringLiteral("fingerprint")).toString();
+        pkg.signature = root.value(QStringLiteral("signature")).toString();
+        pkg.differential = root.value(QStringLiteral("differential")).toBool(false);
+        pkg.baseId = root.value(QStringLiteral("baseId")).toString();
+        pkg.metadata = jsonToVariant(root);
         packages.append(pkg);
     }
 
@@ -1008,13 +666,9 @@ QString OfflineUpdateManager::storedArchivePath(const UpdatePackage& pkg) const
 
 QString OfflineUpdateManager::packagePayloadPath(const UpdatePackage& pkg) const
 {
-    QString relative;
-    if (pkg.differential) {
-        relative = !pkg.diffFile.isEmpty() ? pkg.diffFile : QString::fromLatin1(kPatchFileName);
-    } else {
-        relative = !pkg.payloadFile.isEmpty() ? pkg.payloadFile : QString::fromLatin1(kPayloadFileName);
-    }
-    return QDir(pkg.path).filePath(relative);
+    const QString fileName = pkg.differential ? QString::fromLatin1(kPatchFileName)
+                                              : QString::fromLatin1(kPayloadFileName);
+    return QDir(pkg.path).filePath(fileName);
 }
 
 bool OfflineUpdateManager::ensureEmptyDirectory(const QString& path, QString* errorMessage) const
@@ -1041,23 +695,7 @@ bool OfflineUpdateManager::extractArchive(const QString& archivePath, const QStr
     QStringList args;
     args << QStringLiteral("-xf") << normalizeForProcess(archivePath)
          << QStringLiteral("-C") << normalizeForProcess(targetDir);
-    QString cliError;
-    if (runArchiveCommand(args, &cliError))
-        return true;
-
-    QString fallbackError;
-    if (extractArchiveWithLibArchive(archivePath, targetDir, &fallbackError))
-        return true;
-
-    if (errorMessage) {
-        if (!cliError.isEmpty())
-            *errorMessage = cliError;
-        else if (!fallbackError.isEmpty())
-            *errorMessage = fallbackError;
-        else
-            *errorMessage = tr("Nie można rozpakować archiwum %1.").arg(archivePath);
-    }
-    return false;
+    return runArchiveCommand(args, errorMessage);
 }
 
 bool OfflineUpdateManager::createArchive(const QString& sourceDir, const QString& archivePath, QString* errorMessage) const
@@ -1074,21 +712,8 @@ bool OfflineUpdateManager::createArchive(const QString& sourceDir, const QString
     args << QStringLiteral("-cf") << normalizeForProcess(archivePath)
          << QStringLiteral("-C") << normalizeForProcess(sourceDir)
          << QStringLiteral(".");
-    QString cliError;
-    if (!runArchiveCommand(args, &cliError)) {
-        QString fallbackError;
-        if (!createArchiveWithLibArchive(sourceDir, archivePath, &fallbackError)) {
-            if (errorMessage) {
-                if (!cliError.isEmpty())
-                    *errorMessage = cliError;
-                else if (!fallbackError.isEmpty())
-                    *errorMessage = fallbackError;
-                else
-                    *errorMessage = tr("Nie można utworzyć archiwum %1.").arg(archivePath);
-            }
-            return false;
-        }
-    }
+    if (!runArchiveCommand(args, errorMessage))
+        return false;
     return QFile::exists(archivePath);
 }
 

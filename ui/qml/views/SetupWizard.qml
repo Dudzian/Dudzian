@@ -351,59 +351,43 @@ Item {
                         GroupBox {
                             Layout.fillWidth: true
                             title: qsTr("Harmonogramy automatyzacji")
-                            background: Rectangle {
-                                radius: Styles.AppTheme.radiusLarge
-                                color: Styles.AppTheme.cardBackground(0.85)
-                            }
+                            background: Rectangle { radius: 10; color: Qt.rgba(1,1,1,0.04) }
 
                             ColumnLayout {
                                 anchors.fill: parent
-                                spacing: Styles.AppTheme.spacingSm
+                                spacing: 8
 
                                 Label {
                                     Layout.fillWidth: true
                                     wrapMode: Text.WordWrap
                                     text: qsTr("Zarządzaj harmonogramami wykonania strategii – możesz je uruchamiać ręcznie oraz usuwać bezpośrednio z kreatora.")
-                                    font.family: Styles.AppTheme.fontFamily
-                                    font.pixelSize: Styles.AppTheme.fontSizeBody
-                                    color: Styles.AppTheme.textSecondary
                                 }
 
                                 Repeater {
                                     model: schedulerItems || []
                                     delegate: Frame {
                                         Layout.fillWidth: true
-                                        background: Rectangle {
-                                            radius: Styles.AppTheme.radiusMedium
-                                            color: Styles.AppTheme.cardBackground(0.9)
-                                        }
+                                        background: Rectangle { radius: 8; color: Qt.rgba(1,1,1,0.06) }
                                         ColumnLayout {
                                             anchors.fill: parent
-                                            anchors.margins: Styles.AppTheme.spacingSm
-                                            spacing: Styles.AppTheme.spacingXs
+                                            anchors.margins: 8
+                                            spacing: 4
                                             Label {
                                                 text: (modelData.name || qsTr("harmonogram")) + (modelData.enabled === false ? qsTr(" (wyłączony)") : "")
                                                 font.bold: true
-                                                font.family: Styles.AppTheme.fontFamily
-                                                font.pixelSize: Styles.AppTheme.fontSizeBody
-                                                color: Styles.AppTheme.textPrimary
                                             }
                                             Label {
                                                 Layout.fillWidth: true
                                                 wrapMode: Text.WordWrap
-                                                color: Styles.AppTheme.textSecondary
-                                                font.family: Styles.AppTheme.fontFamily
-                                                font.pixelSize: Styles.AppTheme.fontSizeBody
+                                                color: palette.mid
                                                 text: modelData.cron || modelData.expression || qsTr("Brak zdefiniowanej reguły.")
                                             }
                                             RowLayout {
                                                 Layout.fillWidth: true
-                                                spacing: Styles.AppTheme.spacingSm
+                                                spacing: 8
                                                 Label {
                                                     text: modelData.next_run || modelData.nextRun || ""
-                                                    color: Styles.AppTheme.textSecondary
-                                                    font.family: Styles.AppTheme.fontFamily
-                                                    font.pixelSize: Styles.AppTheme.fontSizeBody
+                                                    color: palette.mid
                                                 }
                                                 Item { Layout.fillWidth: true }
                                                 Button {
@@ -546,10 +530,7 @@ Item {
                         GroupBox {
                             Layout.fillWidth: true
                             title: qsTr("Alerty bezpieczeństwa")
-                            background: Rectangle {
-                                radius: Styles.AppTheme.radiusLarge
-                                color: Styles.AppTheme.cardBackground(0.85)
-                            }
+                            background: Rectangle { radius: 10; color: Qt.rgba(1,1,1,0.04) }
 
                             ListView {
                                 Layout.fillWidth: true
@@ -558,34 +539,24 @@ Item {
                                 model: securityAlertsModel
                                 delegate: Frame {
                                     width: ListView.view.width
-                                    background: Rectangle {
-                                        radius: Styles.AppTheme.radiusMedium
-                                        color: Styles.AppTheme.cardBackground(0.9)
-                                    }
+                                    background: Rectangle { radius: 6; color: Qt.rgba(1,1,1,0.05) }
                                     ColumnLayout {
                                         anchors.fill: parent
-                                        anchors.margins: Styles.AppTheme.spacingSm
-                                        spacing: Styles.AppTheme.spacingXs
+                                        anchors.margins: 8
+                                        spacing: 4
                                         Label {
                                             text: model.title || qsTr("Alert")
                                             font.bold: true
-                                            font.family: Styles.AppTheme.fontFamily
-                                            font.pixelSize: Styles.AppTheme.fontSizeBody
-                                            color: model.severity === 2 ? Styles.AppTheme.negative : (model.severity === 1 ? Styles.AppTheme.warning : Styles.AppTheme.textPrimary)
+                                            color: model.severity === 2 ? "#c0392b" : (model.severity === 1 ? "#d68910" : palette.text)
                                         }
                                         Label {
                                             Layout.fillWidth: true
                                             wrapMode: Text.WordWrap
                                             text: model.description || ""
-                                            font.family: Styles.AppTheme.fontFamily
-                                            font.pixelSize: Styles.AppTheme.fontSizeBody
-                                            color: Styles.AppTheme.textSecondary
                                         }
                                         Label {
                                             text: Qt.formatDateTime(model.timestamp, Qt.ISODate)
-                                            font.family: Styles.AppTheme.fontFamily
-                                            font.pixelSize: Styles.AppTheme.fontSizeCaption
-                                            color: Styles.AppTheme.textSecondary
+                                            color: palette.mid
                                         }
                                     }
                                 }

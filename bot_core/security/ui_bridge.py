@@ -18,11 +18,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from bot_core.security.fingerprint import HardwareFingerprintService, build_key_provider, decode_secret
-from bot_core.security.logs import (
-    export_security_bundle,
-    export_signed_audit_log,
-    read_audit_entries,
-)
+from bot_core.security.logs import export_signed_audit_log, read_audit_entries
 from bot_core.security.license import validate_license
 from bot_core.security.license_service import (
     LicenseBundleError,
@@ -516,36 +512,6 @@ def export_audit_bundle(
     return payload
 
 
-def export_security_bundle_cli(
-    *,
-    audit_path: str | None,
-    alerts_path: str | None,
-    output_dir: str | None,
-    audit_limit: int | None,
-    alert_limit: int | None,
-    include_logs: list[str] | None,
-    log_tail: int | None,
-    key_source: str | None = None,
-    key_id: str | None = None,
-    metadata: Mapping[str, Any] | None = None,
-) -> dict[str, Any]:
-    result = export_security_bundle(
-        audit_path=audit_path,
-        alerts_path=alerts_path,
-        destination_dir=output_dir,
-        audit_limit=audit_limit,
-        alert_limit=alert_limit,
-        include_logs=include_logs,
-        log_tail=log_tail,
-        key_source=key_source,
-        key_id=key_id,
-        metadata=metadata or {},
-    )
-    payload = result.to_dict()
-    payload["status"] = "ok"
-    return payload
-
-
 def generate_fingerprint(
     *,
     keys: Mapping[str, bytes],
@@ -706,22 +672,6 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     audit_parser.add_argument("--key-id", dest="key_id", default=None)
     audit_parser.add_argument("--metadata", dest="metadata", default=None, help="Dodatkowe metadane w formacie JSON")
 
-    bundle_parser = subparsers.add_parser(
-        "export-security-bundle", help="Eksportuje zbiorczy pakiet logów audytowych, alertów i diagnostyki"
-    )
-    bundle_parser.add_argument("--audit-path", dest="audit_path", default=None)
-    bundle_parser.add_argument("--alerts-path", dest="alerts_path", default=None)
-    bundle_parser.add_argument("--include-log", dest="include_logs", action="append", default=[])
-    bundle_parser.add_argument("--output-dir", dest="output_dir", default=None)
-    bundle_parser.add_argument("--audit-limit", dest="audit_limit", type=int, default=None)
-    bundle_parser.add_argument("--alert-limit", dest="alert_limit", type=int, default=None)
-    bundle_parser.add_argument("--log-tail", dest="log_tail", type=int, default=500)
-    bundle_parser.add_argument("--key", dest="key_source", default=None)
-    bundle_parser.add_argument("--key-id", dest="key_id", default=None)
-    bundle_parser.add_argument(
-        "--metadata", dest="metadata", default=None, help="Dodatkowe metadane w formacie JSON"
-    )
-
     return parser.parse_args(argv)
 
 
@@ -819,32 +769,6 @@ def main(argv: list[str] | None = None) -> int:
                 log_path=args.log_path,
                 output_dir=args.output_dir,
                 limit=args.limit,
-                key_source=args.key_source,
-                key_id=args.key_id,
-                metadata=metadata,
-            )
-        except ValueError as exc:
-            print(str(exc), file=sys.stderr)
-            return 1
-        print(json.dumps(result, ensure_ascii=False))
-        return 0
-    if args.command == "export-security-bundle":
-        metadata: Mapping[str, Any] | None = None
-        if args.metadata:
-            try:
-                metadata = json.loads(args.metadata)
-            except json.JSONDecodeError as exc:
-                print(f"Niepoprawne metadane JSON: {exc}", file=sys.stderr)
-                return 2
-        try:
-            result = export_security_bundle_cli(
-                audit_path=args.audit_path,
-                alerts_path=args.alerts_path,
-                output_dir=args.output_dir,
-                audit_limit=args.audit_limit,
-                alert_limit=args.alert_limit,
-                include_logs=args.include_logs or [],
-                log_tail=args.log_tail,
                 key_source=args.key_source,
                 key_id=args.key_id,
                 metadata=metadata,

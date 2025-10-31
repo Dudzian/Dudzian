@@ -58,24 +58,6 @@ void OfflineRuntimeBridge::setDatasetPath(const QString& path)
         m_service->setDatasetPath(m_datasetPath);
 }
 
-void OfflineRuntimeBridge::setStreamSnapshotPath(const QString& path)
-{
-    if (m_streamSnapshotPath == path)
-        return;
-    m_streamSnapshotPath = path;
-    if (m_service)
-        m_service->setStreamSnapshotPath(m_streamSnapshotPath);
-}
-
-void OfflineRuntimeBridge::setStreamingEnabled(bool enabled)
-{
-    if (m_streamingEnabled == enabled)
-        return;
-    m_streamingEnabled = enabled;
-    if (m_service)
-        m_service->setStreamingEnabled(m_streamingEnabled);
-}
-
 void OfflineRuntimeBridge::start()
 {
     if (m_running)
@@ -149,8 +131,6 @@ void OfflineRuntimeBridge::configureService()
     m_service->setAutoRunEnabled(m_autoRunEnabled);
     m_service->setStrategyConfig(m_strategyConfig);
     m_service->setDatasetPath(m_datasetPath);
-    m_service->setStreamSnapshotPath(m_streamSnapshotPath);
-    m_service->setStreamingEnabled(m_streamingEnabled);
     Q_UNUSED(m_endpoint);
 }
 

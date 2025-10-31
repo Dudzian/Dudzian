@@ -138,17 +138,14 @@ def capture_stream_snapshot(
     return events
 
 
-def normalize_snapshot_events(events: Sequence[Mapping[str, Any]]) -> list[MutableMapping[str, Any]]:
-    """Zapewnia deterministyczną kolejność i brak duplikatów w snapshotcie."""
+def write_snapshot_to_file(events: Sequence[Mapping[str, Any]], path: str) -> None:
+    import json
 
     normalized: list[MutableMapping[str, Any]] = []
     for event in events:
         if not isinstance(event, Mapping):
             continue
-        payload = _normalize_event(event)
-        # domyślna informacja o zamknięciu świecy – runtime offline tego oczekuje
-        payload.setdefault("closed", True)
-        normalized.append(payload)
+        normalized.append(_normalize_event(event))
 
     normalized.sort(key=lambda item: (item.get("timestamp_ms", 0), item.get("channel")))
 
@@ -163,19 +160,8 @@ def normalize_snapshot_events(events: Sequence[Mapping[str, Any]]) -> list[Mutab
             deduplicated.append(item)
             last_key = key
 
-    for index, item in enumerate(deduplicated):
-        item["sequence"] = index
-
-    return deduplicated
-
-
-def write_snapshot_to_file(events: Sequence[Mapping[str, Any]], path: str) -> None:
-    import json
-
-    normalized = normalize_snapshot_events(events)
-
     with open(path, "w", encoding="utf-8") as handle:
-        json.dump([dict(event) for event in normalized], handle, ensure_ascii=False, indent=2)
+        json.dump([dict(event) for event in deduplicated], handle, ensure_ascii=False, indent=2)
 
 
 def load_snapshot_from_file(path: str) -> list[MutableMapping[str, Any]]:
@@ -183,16 +169,16 @@ def load_snapshot_from_file(path: str) -> list[MutableMapping[str, Any]]:
 
     with open(path, "r", encoding="utf-8") as handle:
         payload = json.load(handle)
-
-    return normalize_snapshot_events(
-        [entry for entry in payload if isinstance(entry, Mapping)]
-    )
+    return [
+        _normalize_event(entry)
+        for entry in payload
+        if isinstance(entry, Mapping)
+    ]
 
 
 __all__ = [
     "capture_stream_snapshot",
     "history_to_stream_batches",
-    "normalize_snapshot_events",
     "load_snapshot_from_file",
     "stream_batches_to_frame",
     "write_snapshot_to_file",

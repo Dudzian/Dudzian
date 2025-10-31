@@ -264,6 +264,42 @@ bool StrategyConfigController::removeSchedulerConfig(const QString& name)
     return refresh();
 }
 
+bool StrategyConfigController::removeSchedulerConfig(const QString& name)
+{
+    if (!ensureReady())
+        return false;
+
+    const QString trimmed = name.trimmed();
+    if (trimmed.isEmpty()) {
+        m_lastError = tr("Nie wskazano nazwy schedulera do usunięcia.");
+        Q_EMIT lastErrorChanged();
+        return false;
+    }
+
+    QJsonObject schedulers;
+    schedulers.insert(trimmed, QJsonValue());
+
+    QJsonObject root;
+    root.insert(QStringLiteral("schedulers"), schedulers);
+    const QByteArray payload = QJsonDocument(root).toJson(QJsonDocument::Compact);
+
+    m_busy = true;
+    Q_EMIT busyChanged();
+
+    const BridgeResult result = invokeBridge({QStringLiteral("--apply")}, payload);
+
+    m_busy = false;
+    Q_EMIT busyChanged();
+
+    if (!result.ok) {
+        m_lastError = result.errorMessage;
+        Q_EMIT lastErrorChanged();
+        return false;
+    }
+
+    return refresh();
+}
+
 bool StrategyConfigController::runSchedulerNow(const QString& name)
 {
     if (!ensureReady())
@@ -284,8 +320,11 @@ bool StrategyConfigController::runSchedulerNow(const QString& name)
     m_busy = false;
     Q_EMIT busyChanged();
 
-    if (!handleBridgeValidation(result))
+    if (!result.ok) {
+        m_lastError = result.errorMessage;
+        Q_EMIT lastErrorChanged();
         return false;
+    }
 
     if (!m_lastError.isEmpty()) {
         m_lastError.clear();

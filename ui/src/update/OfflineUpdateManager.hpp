@@ -55,10 +55,6 @@ private:
         bool differential = false;
         QString baseId;
         QVariantMap metadata;
-        QString payloadFile;
-        QString diffFile;
-        QVariantMap signatureObject;
-        QVariantMap integrity;
     };
 
     void setBusy(bool busy);

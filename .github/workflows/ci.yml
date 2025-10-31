@@ -26,10 +26,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r KryptoLowca/requirements.txt
-          pip install pytest pytest-cov pre-commit grpcio-tools
-
-      - name: Generate trading stubs
-        run: python scripts/generate_trading_stubs.py --skip-cpp
+          pip install pytest pytest-cov pre-commit
 
       - name: Pre-commit (ruff + mypy)
         run: pre-commit run --all-files --show-diff-on-failure
