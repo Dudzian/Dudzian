@@ -6,6 +6,7 @@ import logging
 import math
 import threading
 from collections import Counter, defaultdict, deque
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
 import time
@@ -1162,11 +1163,13 @@ class OHLCVStrategyFeed(StrategyDataFeed):
         symbols_map: Mapping[str, Sequence[str]],
         interval_map: Mapping[str, str],
         default_interval: str = "1h",
+        max_workers: int | None = None,
     ) -> None:
         self._data_source = data_source
         self._symbols_map = {key: tuple(values) for key, values in symbols_map.items()}
         self._interval_map = dict(interval_map)
         self._default_interval = default_interval
+        self._max_workers = max_workers if max_workers and max_workers > 0 else 4
 
     def load_history(self, strategy_name: str, bars: int) -> Sequence[MarketSnapshot]:
         interval = self._interval_map.get(strategy_name, self._default_interval)
@@ -1175,10 +1178,40 @@ class OHLCVStrategyFeed(StrategyDataFeed):
             return ()
         now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
         snapshots: list[MarketSnapshot] = []
-        for symbol in symbols:
-            request = OHLCVRequest(symbol=symbol, interval=interval, start=0, end=now_ms, limit=bars)
-            response = self._data_source.fetch_ohlcv(request)
-            snapshots.extend(_response_to_snapshots(symbol, response))
+        tasks: Mapping[str, OHLCVRequest] = {
+            symbol: OHLCVRequest(
+                symbol=symbol,
+                interval=interval,
+                start=0,
+                end=now_ms,
+                limit=bars,
+            )
+            for symbol in symbols
+        }
+        if len(tasks) == 1 or self._max_workers == 1:
+            for symbol, request in tasks.items():
+                response = self._data_source.fetch_ohlcv(request)
+                snapshots.extend(_response_to_snapshots(symbol, response))
+        else:
+            workers = min(self._max_workers, len(tasks))
+            with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="ohlcv-feed") as executor:
+                futures = {
+                    executor.submit(self._data_source.fetch_ohlcv, request): symbol
+                    for symbol, request in tasks.items()
+                }
+                for future in as_completed(futures):
+                    symbol = futures[future]
+                    try:
+                        response = future.result()
+                    except Exception as exc:  # pragma: no cover - logowanie diagnostyczne
+                        _LOGGER.warning(
+                            "Nie udało się pobrać historii OHLCV (%s/%s): %s",
+                            strategy_name,
+                            symbol,
+                            exc,
+                        )
+                        continue
+                    snapshots.extend(_response_to_snapshots(symbol, response))
         snapshots.sort(key=lambda snap: (snap.symbol, snap.timestamp))
         return tuple(snapshots)
 
@@ -1189,12 +1222,44 @@ class OHLCVStrategyFeed(StrategyDataFeed):
             return ()
         now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
         snapshots: list[MarketSnapshot] = []
-        for symbol in symbols:
-            request = OHLCVRequest(symbol=symbol, interval=interval, start=0, end=now_ms, limit=1)
-            response = self._data_source.fetch_ohlcv(request)
-            converted = _response_to_snapshots(symbol, response)
-            if converted:
-                snapshots.append(converted[-1])
+        tasks: Mapping[str, OHLCVRequest] = {
+            symbol: OHLCVRequest(
+                symbol=symbol,
+                interval=interval,
+                start=0,
+                end=now_ms,
+                limit=1,
+            )
+            for symbol in symbols
+        }
+        if len(tasks) == 1 or self._max_workers == 1:
+            for symbol, request in tasks.items():
+                response = self._data_source.fetch_ohlcv(request)
+                converted = _response_to_snapshots(symbol, response)
+                if converted:
+                    snapshots.append(converted[-1])
+        else:
+            workers = min(self._max_workers, len(tasks))
+            with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="ohlcv-feed") as executor:
+                futures = {
+                    executor.submit(self._data_source.fetch_ohlcv, request): symbol
+                    for symbol, request in tasks.items()
+                }
+                for future in as_completed(futures):
+                    symbol = futures[future]
+                    try:
+                        response = future.result()
+                    except Exception as exc:  # pragma: no cover - diagnostyka środowiska
+                        _LOGGER.warning(
+                            "Nie udało się pobrać ostatniej świecy OHLCV (%s/%s): %s",
+                            strategy_name,
+                            symbol,
+                            exc,
+                        )
+                        continue
+                    converted = _response_to_snapshots(symbol, response)
+                    if converted:
+                        snapshots.append(converted[-1])
         snapshots.sort(key=lambda snap: (snap.symbol, snap.timestamp))
         return tuple(snapshots)
 

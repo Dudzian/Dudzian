@@ -3,7 +3,6 @@ from __future__ import annotations
 import subprocess
 import sys
 from itertools import islice
-from pathlib import Path
 
 import pytest
 grpc = pytest.importorskip("grpc")
@@ -32,9 +31,6 @@ def ensure_trading_stubs() -> None:
 
 @pytest.fixture(scope="module")
 def trading_modules():
-    generated_dir = Path("bot_core/generated").resolve()
-    if str(generated_dir) not in sys.path:
-        sys.path.insert(0, str(generated_dir))
     from bot_core.generated import trading_pb2, trading_pb2_grpc
 
     return trading_pb2, trading_pb2_grpc

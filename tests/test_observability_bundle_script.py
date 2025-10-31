@@ -2,12 +2,8 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
 
 from datetime import datetime, timedelta, timezone
 
@@ -16,6 +12,7 @@ from bot_core.observability.alert_overrides import AlertOverride, AlertOverrideM
 from scripts.export_observability_bundle import run as export_bundle
 
 
+ROOT = Path(__file__).resolve().parents[1]
 def _write(path: Path, data: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(data, encoding="utf-8")
@@ -91,4 +88,3 @@ def test_export_observability_bundle_cli(tmp_path: Path) -> None:
     overrides_metadata = manifest_data["metadata"].get("alert_overrides")
     assert overrides_metadata
     assert overrides_metadata["summary"]["active"] == 1
-

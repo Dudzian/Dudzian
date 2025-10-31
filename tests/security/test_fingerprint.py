@@ -2,11 +2,9 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-import sys
 
 import pytest
 
-sys.path.append(str(Path(__file__).resolve().parents[2]))
 
 from bot_core.security.fingerprint import HardwareFingerprintService, RotatingHmacKeyProvider
 from bot_core.security.rotation import RotationRegistry

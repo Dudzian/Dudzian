@@ -579,11 +579,9 @@ __all__ = [
 
 # --- Preserved content from the other merge side (tests), kept verbatim as a non-executed string ---
 __MERGE_PRESERVED_TESTS__ = r'''
-import sys
 
 import pytest
 
-sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from bot_core.config import (
     AlertAuditConfig,

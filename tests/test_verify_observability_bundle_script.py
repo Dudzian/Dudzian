@@ -1,11 +1,7 @@
 import json
 import os
-import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
 
 from datetime import datetime, timedelta, timezone
 
@@ -15,6 +11,7 @@ from scripts.export_observability_bundle import run as export_bundle
 from scripts.verify_observability_bundle import run as verify_bundle
 
 
+ROOT = Path(__file__).resolve().parents[1]
 def _prepare_sources(base: Path) -> tuple[Path, Path]:
     dashboards = base / "dashboards"
     alerts = base / "alerts"
@@ -134,4 +131,3 @@ def test_verify_observability_bundle_detects_tamper(tmp_path: Path) -> None:
     )
 
     assert exit_code == 2
-

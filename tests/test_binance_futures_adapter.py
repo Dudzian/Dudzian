@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import io
 import json
-import sys
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 from urllib.error import HTTPError, URLError
@@ -11,7 +10,6 @@ from urllib.request import Request
 
 import pytest
 
-sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from bot_core.exchanges.base import AccountSnapshot, Environment, ExchangeCredentials, OrderRequest
 from bot_core.exchanges.binance import futures as futures_module

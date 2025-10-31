@@ -1,12 +1,17 @@
 """Wspólny limiter żądań HTTP dla adapterów giełdowych."""
 from __future__ import annotations
 
+import logging
 import threading
 import time
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping, MutableMapping, Sequence
 
+from bot_core.monitoring import record_rate_limit_wait
 from bot_core.observability.metrics import MetricsRegistry, get_global_metrics_registry
+
+
+_LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,6 +40,8 @@ class RateLimiter:
         "_metric_labels",
         "_metrics_gauge",
         "_metrics_wait",
+        "_metrics_wait_events",
+        "_last_limiting_rule",
     )
 
     def __init__(
@@ -74,6 +81,11 @@ class RateLimiter:
             "Czas oczekiwania na zwolnienie limitu.",
             buckets=(0.0, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0),
         )
+        self._metrics_wait_events = self._metrics.counter(
+            "exchange_rate_limiter_wait_total",
+            "Łączna liczba zdarzeń oczekiwania na limiter żądań giełdowych.",
+        )
+        self._last_limiting_rule: tuple[float, float, float] | None = None
 
     def acquire(self, weight: float = 1.0) -> None:
         if weight <= 0:
@@ -100,13 +112,36 @@ class RateLimiter:
                         missing = required - tokens
                         wait_for = missing / (rate / per)
                         next_wait = max(next_wait, wait_for)
+                        self._last_limiting_rule = bucket["rule"]
                     bucket["tokens"] = tokens
                     bucket["updated"] = now
                     self._metrics_gauge.set(tokens, labels={**self._metric_labels, "rule": f"{rate}/{per}"})
 
                 if ready:
                     if waited:
+                        limiting_rule = self._last_limiting_rule
                         self._metrics_wait.observe(waited, labels=self._metric_labels)
+                        self._metrics_wait_events.inc(labels=self._metric_labels)
+                        level = logging.WARNING if waited >= 1.0 else logging.INFO
+                        _LOGGER.log(
+                            level,
+                            "Rate limiter wait %.3fs for %s (weight=%.2f, rule=%s)",
+                            waited,
+                            self._metric_labels.get("exchange", "unknown"),
+                            weight,
+                            f"{limiting_rule[0]}/{limiting_rule[1]}" if limiting_rule else "unknown",
+                        )
+                        try:
+                            record_rate_limit_wait(
+                                waited=waited,
+                                labels=self._metric_labels,
+                                weight=weight,
+                                rule=limiting_rule,
+                            )
+                        except Exception:  # pragma: no cover - monitorowanie nie powinno psuć limitera
+                            _LOGGER.debug("record_rate_limit_wait failed", exc_info=True)
+                        finally:
+                            self._last_limiting_rule = None
                     return
 
             sleep_for = max(0.0, next_wait)

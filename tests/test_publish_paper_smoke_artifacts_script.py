@@ -11,7 +11,7 @@ sys_path_added = False
 if not sys_path_added:
     import sys
 
-    sys.path.append(str(Path(__file__).resolve().parents[1]))
+    
     sys_path_added = True
 
 from scripts import publish_paper_smoke_artifacts as publish_script  # noqa: E402

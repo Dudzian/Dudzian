@@ -5,7 +5,7 @@ from collections import deque
 from dataclasses import dataclass
 from typing import Any, Deque, Dict, List, Mapping, Sequence
 
-from bot_core.strategies.base import MarketSnapshot, StrategyEngine, StrategySignal
+from bot_core.strategies.base import MarketSnapshot, SignalLeg, StrategyEngine, StrategySignal
 
 
 @dataclass(slots=True)
@@ -106,6 +106,21 @@ class StatisticalArbitrageStrategy(StrategyEngine):
                         symbol=snapshot.symbol,
                         side="short_primary_long_secondary",
                         confidence=min(1.0, z_score / self._settings.spread_entry_z),
+                        intent="multi_leg",
+                        legs=(
+                            SignalLeg(
+                                symbol=snapshot.symbol,
+                                side="SELL",
+                                quantity=_leg_quantity(self._settings.max_notional, snapshot.close),
+                                metadata={"leg": "primary_short", "price": snapshot.close},
+                            ),
+                            SignalLeg(
+                                symbol=paired_symbol or snapshot.symbol,
+                                side="BUY",
+                                quantity=_leg_quantity(self._settings.max_notional, paired_price),
+                                metadata={"leg": "secondary_long", "price": paired_price},
+                            ),
+                        ),
                         metadata=self._build_metadata(
                             snapshot,
                             paired_symbol,
@@ -123,6 +138,21 @@ class StatisticalArbitrageStrategy(StrategyEngine):
                         symbol=snapshot.symbol,
                         side="long_primary_short_secondary",
                         confidence=min(1.0, abs(z_score) / self._settings.spread_entry_z),
+                        intent="multi_leg",
+                        legs=(
+                            SignalLeg(
+                                symbol=snapshot.symbol,
+                                side="BUY",
+                                quantity=_leg_quantity(self._settings.max_notional, snapshot.close),
+                                metadata={"leg": "primary_long", "price": snapshot.close},
+                            ),
+                            SignalLeg(
+                                symbol=paired_symbol or snapshot.symbol,
+                                side="SELL",
+                                quantity=_leg_quantity(self._settings.max_notional, paired_price),
+                                metadata={"leg": "secondary_short", "price": paired_price},
+                            ),
+                        ),
                         metadata=self._build_metadata(
                             snapshot,
                             paired_symbol,
@@ -138,12 +168,45 @@ class StatisticalArbitrageStrategy(StrategyEngine):
         if state.entry_z is not None and z_score * state.entry_z <= 0:
             exit_condition = True
         if exit_condition:
-            side = "close_" + state.position
+            direction = state.position or ""
+            side = "close_" + direction
+            if direction == "short_primary_long_secondary":
+                legs = (
+                    SignalLeg(
+                        symbol=snapshot.symbol,
+                        side="BUY",
+                        quantity=_leg_quantity(self._settings.max_notional, snapshot.close),
+                        metadata={"leg": "primary_exit", "price": snapshot.close},
+                    ),
+                    SignalLeg(
+                        symbol=paired_symbol or snapshot.symbol,
+                        side="SELL",
+                        quantity=_leg_quantity(self._settings.max_notional, paired_price),
+                        metadata={"leg": "secondary_exit", "price": paired_price},
+                    ),
+                )
+            else:
+                legs = (
+                    SignalLeg(
+                        symbol=snapshot.symbol,
+                        side="SELL",
+                        quantity=_leg_quantity(self._settings.max_notional, snapshot.close),
+                        metadata={"leg": "primary_exit", "price": snapshot.close},
+                    ),
+                    SignalLeg(
+                        symbol=paired_symbol or snapshot.symbol,
+                        side="BUY",
+                        quantity=_leg_quantity(self._settings.max_notional, paired_price),
+                        metadata={"leg": "secondary_exit", "price": paired_price},
+                    ),
+                )
             signals.append(
                 StrategySignal(
                     symbol=snapshot.symbol,
                     side=side,
                     confidence=1.0,
+                    intent="multi_leg",
+                    legs=legs,
                     metadata=self._build_metadata(
                         snapshot,
                         paired_symbol,
@@ -185,3 +248,10 @@ __all__ = [
     "StatisticalArbitrageSettings",
     "StatisticalArbitrageStrategy",
 ]
+
+
+def _leg_quantity(max_notional: float, price: float) -> float:
+    if price <= 0:
+        return 1.0
+    quantity = max_notional / max(price, 1e-9)
+    return max(quantity, 1e-9)

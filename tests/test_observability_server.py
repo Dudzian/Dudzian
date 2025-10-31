@@ -1,11 +1,9 @@
 import socket
-import sys
 import time
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import urlopen
 
-sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from bot_core.observability import MetricsRegistry, start_http_server
 

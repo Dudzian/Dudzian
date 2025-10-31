@@ -1,8 +1,8 @@
-"""Testy skryptu coverage_alert_runner wykorzystującego runner alertów."""
 from __future__ import annotations
 
+"""Testy skryptu coverage_alert_runner wykorzystującego runner alertów."""
+
 import json
-import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -10,17 +10,17 @@ from typing import Any
 import pytest
 import yaml
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
 
-from scripts import coverage_alert_runner as cli  # noqa: E402 - import po modyfikacji sys.path
+from scripts import coverage_alert_runner as cli  # noqa: E402 - import modułu CLI w testach
 from tests.test_check_data_coverage_script import (  # noqa: E402 - współdzielone helpery
     _generate_rows,
     _last_row_iso,
     _write_cache,
     _write_config,
 )
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 SAMPLE_ROOT = Path(__file__).resolve().parent / "assets" / "coverage_sample"
 SAMPLE_CONFIG = SAMPLE_ROOT / "core.yaml"
@@ -393,4 +393,3 @@ def test_runner_sample_assets_threshold_violation(tmp_path: Path, capsys: pytest
     assert payload["threshold_issues"]
     assert any(issue.startswith("max_gap_exceeded") for issue in payload["threshold_issues"])
     assert payload["summary"]["status"] in {"warning", "error"}
-

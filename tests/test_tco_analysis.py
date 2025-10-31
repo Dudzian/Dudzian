@@ -1,15 +1,10 @@
 from __future__ import annotations
 
 import json
-import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
-
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
 
 from bot_core.reporting.tco import (
     TcoUsageMetrics,
@@ -20,6 +15,9 @@ from bot_core.reporting.tco import (
     write_summary_signature,
 )
 from bot_core.security.signing import build_hmac_signature
+
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_tco_summary_and_exports(tmp_path: Path) -> None:

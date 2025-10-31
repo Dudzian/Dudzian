@@ -77,7 +77,7 @@ class OptionsIncomeStrategy(StrategyEngine):
                 signals.append(
                     StrategySignal(
                         symbol=snapshot.symbol,
-                        side="sell_call",
+                        side="SELL",
                         confidence=self._entry_confidence(iv, delta),
                         metadata=self._build_metadata(
                             snapshot,
@@ -95,7 +95,7 @@ class OptionsIncomeStrategy(StrategyEngine):
             signals.append(
                 StrategySignal(
                     symbol=snapshot.symbol,
-                    side="buy_to_close",
+                    side="BUY",
                     confidence=1.0,
                     metadata=self._build_metadata(
                         snapshot,

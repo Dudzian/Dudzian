@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import math
+from collections.abc import Sequence as SequenceABC
 from dataclasses import asdict, dataclass, field, is_dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -107,6 +108,48 @@ except Exception:  # pragma: no cover
         return MetricsRegistry()
 
 _LOGGER = logging.getLogger(__name__)
+
+_NEUTRAL_SIDES = {
+    "HOLD",
+    "NEUTRAL",
+    "FLAT",
+    "NONE",
+    "REBALANCE",
+    "REBALANCE_DELTA",
+    "REBALANCE_DELTA_RATIO",
+}
+_NEUTRAL_INTENTS = {"neutral", "rebalance", "rebalance_delta", "hedge"}
+_SIDE_ALIASES = {
+    "LONG": "BUY",
+    "ENTER_LONG": "BUY",
+    "OPEN_LONG": "BUY",
+    "BUY_TO_OPEN": "BUY",
+    "COVER": "BUY",
+    "CLOSE_SHORT": "BUY",
+    "EXIT_SHORT": "BUY",
+    "BUY_TO_CLOSE": "BUY",
+    "SHORT": "SELL",
+    "ENTER_SHORT": "SELL",
+    "OPEN_SHORT": "SELL",
+    "SELL_SHORT": "SELL",
+    "SELL_TO_OPEN": "SELL",
+    "CLOSE_LONG": "SELL",
+    "EXIT_LONG": "SELL",
+    "SELL_TO_CLOSE": "SELL",
+}
+
+
+def _normalize_trade_side(value: object | None) -> str | None:
+    if value is None:
+        return None
+    candidate = str(value).strip().upper()
+    if not candidate:
+        return None
+    if candidate in _NEUTRAL_SIDES:
+        return None
+    if candidate in {"BUY", "SELL"}:
+        return candidate
+    return _SIDE_ALIASES.get(candidate)
 
 
 def _extract_adjusted_quantity(
@@ -388,9 +431,6 @@ class TradingController:
         """Przetwarza listę sygnałów strategii i zarządza alertami."""
         results: list[OrderResult] = []
         for signal in signals:
-            if signal.side.upper() not in {"BUY", "SELL"}:
-                _LOGGER.debug("Pomijam sygnał %s o kierunku %s", signal.symbol, signal.side)
-                continue
             metric_labels = dict(self._metric_labels)
             metric_labels["symbol"] = signal.symbol
             self._metric_signals_total.inc(labels={**metric_labels, "status": "received"})
@@ -398,17 +438,34 @@ class TradingController:
                 "signal_received",
                 signal=signal,
                 status="received",
+                metadata={
+                    "intent": str(getattr(signal, "intent", "single")),
+                    "leg_count": str(len(getattr(signal, "legs", ()) or ())),
+                },
             )
-            try:
-                result = self._handle_signal(signal)
-            except Exception:  # noqa: BLE001
-                _LOGGER.exception("Błąd podczas przetwarzania sygnału %s", signal)
-                raise
-            if result is not None:
-                results.append(result)
-                self._metric_orders_total.inc(
-                    labels={**metric_labels, "result": "executed", "side": signal.side.upper()},
-                )
+            expanded_signals = self._expand_signal(signal)
+            if not expanded_signals:
+                continue
+            for expanded_signal in expanded_signals:
+                per_leg_labels = dict(metric_labels)
+                per_leg_labels["symbol"] = expanded_signal.symbol
+                try:
+                    result = self._handle_signal(expanded_signal)
+                except Exception:  # noqa: BLE001
+                    _LOGGER.exception(
+                        "Błąd podczas przetwarzania rozszerzonego sygnału %s",
+                        expanded_signal,
+                    )
+                    raise
+                if result is not None:
+                    results.append(result)
+                    self._metric_orders_total.inc(
+                        labels={
+                            **per_leg_labels,
+                            "result": "executed",
+                            "side": expanded_signal.side.upper(),
+                        },
+                    )
 
         self.maybe_report_health()
         return results
@@ -451,6 +508,134 @@ class TradingController:
         self.alert_router.dispatch(message)
         self._last_health_report = now
         self._metric_health_reports.inc(labels=self._metric_labels)
+
+    def _expand_signal(self, signal: StrategySignal) -> Sequence[StrategySignal]:
+        intent_raw = getattr(signal, "intent", "") or ""
+        intent = str(intent_raw).strip().lower()
+        legs_attr = getattr(signal, "legs", ()) or ()
+        legs: Sequence[object] = (
+            tuple(legs_attr) if isinstance(legs_attr, SequenceABC) else tuple()
+        )
+        base_metadata = self._clone_metadata(getattr(signal, "metadata", None))
+        parent_quantity: float | None = None
+        if signal.quantity is not None:
+            try:
+                parent_quantity = float(signal.quantity)
+            except (TypeError, ValueError) as exc:
+                raise ValueError("StrategySignal.quantity musi być liczbą dodatnią") from exc
+            if parent_quantity <= 0:
+                raise ValueError("StrategySignal.quantity musi być dodatnia")
+            base_metadata.setdefault("quantity", parent_quantity)
+        if not intent:
+            if legs:
+                intent = "multi_leg"
+            else:
+                side_candidate = _normalize_trade_side(signal.side)
+                if side_candidate is None and str(signal.side).upper() in _NEUTRAL_SIDES:
+                    intent = "neutral"
+                else:
+                    intent = "single"
+
+        if intent in _NEUTRAL_INTENTS or str(signal.side).upper() in _NEUTRAL_SIDES:
+            self._record_decision_event(
+                "signal_neutral",
+                signal=signal,
+                status="neutral",
+                metadata={"intent": intent},
+            )
+            _LOGGER.debug("Pomijam neutralny sygnał %s intent=%s", signal.symbol, intent)
+            return []
+
+        if legs:
+            expanded: list[StrategySignal] = []
+            leg_count = len(legs)
+            for index, leg in enumerate(legs):
+                leg_side = getattr(leg, "side", None)
+                normalized_side = _normalize_trade_side(leg_side)
+                if normalized_side is None:
+                    _LOGGER.debug(
+                        "Pomijam nogę sygnału %s o nierozpoznanym kierunku %s",
+                        signal.symbol,
+                        leg_side,
+                    )
+                    continue
+                leg_quantity = getattr(leg, "quantity", None)
+                if leg_quantity is not None:
+                    try:
+                        leg_quantity = float(leg_quantity)
+                    except (TypeError, ValueError):
+                        _LOGGER.debug(
+                            "Pomijam nogę sygnału %s z niepoprawną wielkością: %s",
+                            signal.symbol,
+                            leg_quantity,
+                        )
+                        continue
+                    if leg_quantity <= 0:
+                        _LOGGER.debug(
+                            "Pomijam nogę sygnału %s z nie-dodatnią wielkością: %s",
+                            signal.symbol,
+                            leg_quantity,
+                        )
+                        continue
+                metadata = self._clone_metadata(getattr(leg, "metadata", None))
+                combined_metadata: dict[str, object] = {**base_metadata}
+                combined_metadata.update(metadata)
+                combined_metadata.setdefault("signal_intent", intent or "multi_leg")
+                combined_metadata.setdefault("leg_index", index)
+                combined_metadata.setdefault("leg_count", leg_count)
+                if leg_quantity is not None:
+                    combined_metadata.setdefault("quantity", leg_quantity)
+                exchange = getattr(leg, "exchange", None)
+                if exchange:
+                    combined_metadata.setdefault("exchange", exchange)
+                leg_confidence = getattr(leg, "confidence", None)
+                expanded.append(
+                    StrategySignal(
+                        symbol=getattr(leg, "symbol", "") or signal.symbol,
+                        side=normalized_side,
+                        confidence=leg_confidence if leg_confidence is not None else signal.confidence,
+                        quantity=leg_quantity if leg_quantity is not None else parent_quantity,
+                        intent="single",
+                        metadata=combined_metadata,
+                    )
+                )
+            if not expanded:
+                self._record_decision_event(
+                    "signal_skipped",
+                    signal=signal,
+                    status="skipped",
+                    metadata={"reason": "no_valid_legs", "intent": intent or "multi_leg"},
+                )
+            return expanded
+
+        normalized_side = _normalize_trade_side(signal.side)
+        if normalized_side is None:
+            if intent not in _NEUTRAL_INTENTS:
+                self._record_decision_event(
+                    "signal_skipped",
+                    signal=signal,
+                    status="skipped",
+                    metadata={"reason": "unsupported_side", "intent": intent or "single"},
+                )
+            _LOGGER.debug(
+                "Pomijam sygnał %s o nierozpoznanym kierunku %s",
+                signal.symbol,
+                signal.side,
+            )
+            return []
+
+        combined_metadata = {**base_metadata}
+        combined_metadata.setdefault("signal_intent", intent or "single")
+        return [
+            StrategySignal(
+                symbol=signal.symbol,
+                side=normalized_side,
+                confidence=signal.confidence,
+                quantity=parent_quantity,
+                intent="single",
+                metadata=combined_metadata,
+            )
+        ]
 
     # ------------------------------------------- internals ----------------------------------------------
     def _handle_signal(self, signal: StrategySignal) -> OrderResult | None:
@@ -789,6 +974,17 @@ class TradingController:
 
     def _decision_engine_enabled(self) -> bool:
         return DecisionCandidate is not None and self._decision_orchestrator is not None
+
+    def _clone_metadata(self, metadata: Mapping[str, object] | None) -> dict[str, object]:
+        if isinstance(metadata, Mapping):
+            return {str(k): v for k, v in metadata.items()}
+        if metadata is None:
+            return {}
+        try:
+            candidate = dict(metadata)  # type: ignore[arg-type]
+        except Exception:
+            return {}
+        return {str(k): v for k, v in candidate.items()}
 
     def _normalize_signal_metadata(self, signal: StrategySignal) -> Mapping[str, object]:
         raw_metadata = getattr(signal, "metadata", None)

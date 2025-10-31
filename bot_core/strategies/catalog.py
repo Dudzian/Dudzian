@@ -10,6 +10,8 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Mapping, MutableMapping, Protocol, Sequence
 
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
+
 from bot_core.marketplace import (
     PresetDocument,
     PresetSignatureVerification,

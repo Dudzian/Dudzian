@@ -14,9 +14,7 @@ from urllib.request import Request
 
 import pytest
 
-import sys
 
-sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from bot_core.exchanges.base import AccountSnapshot, Environment, ExchangeCredentials, OrderRequest
 from bot_core.exchanges.errors import ExchangeAPIError, ExchangeAuthError, ExchangeThrottlingError
