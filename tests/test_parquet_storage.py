@@ -3,10 +3,13 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 
-import pyarrow.parquet as pq
+import pytest
 
 
 from bot_core.data.ohlcv import ParquetCacheStorage, DualCacheStorage, SQLiteCacheStorage
+
+
+pq = pytest.importorskip("pyarrow.parquet")
 
 
 def _timestamp(year: int, month: int, day: int) -> float:
