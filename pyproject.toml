@@ -40,9 +40,7 @@ markers = [
   "integration: testy wymagające środowisk demo/sandbox lub zewnętrznych zasobów",
   "requires_trading_stubs: test wymaga wygenerowanych stubów trading_pb2",
   "e2e_demo_paper: scenariusz demo→paper wykonywany lokalnie",
-  "e2e_retraining: scenariusz E2E walidujący retrening i fallback backendów",
   "asyncio: testy wykorzystujące pętlę asynchroniczną",
-  "retraining: testy weryfikujące cykl retreningu i raporty",
 ]
 
 [project]

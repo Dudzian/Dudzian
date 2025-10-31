@@ -14,17 +14,14 @@ Dokument opisuje sposób uruchomienia scenariusza demo → paper na stacji roboc
    python -m pip install --upgrade pip
    pip install -e .[dev]
    pytest -m e2e_demo_paper --maxfail=1 --disable-warnings
-   pytest -m retraining tests/reporting/test_retraining_reporter.py --maxfail=1 --disable-warnings
    ```
 3. Raporty JSON oraz Markdown znajdziesz w `reports/e2e/`. Artefakty logów testu umieszczane są w `logs/e2e/`.
-4. Raporty z retrainingu (Markdown i JSON) są zapisywane w `reports/retraining/`.
 
 ## Artefakty
 - `reports/e2e/` – raporty generowane przez `DemoPaperReport` (JSON + Markdown).
-- `reports/retraining/` – raporty generowane przez `RetrainingReport` (JSON + Markdown).
 - `logs/e2e/` – logi pomocnicze oraz checkpointy tworzone podczas przebiegu scenariusza.
 
 ## Runbook
 1. Jeśli test zakończy się niepowodzeniem, sprawdź najnowszy raport w `reports/e2e/` i komunikaty błędów w logach.
 2. Usuń zawartość katalogów `logs/e2e/` oraz `reports/e2e/`, jeżeli chcesz wykonać scenariusz ponownie od zera.
-3. Po wprowadzeniu poprawek uruchom ponownie polecenia `pytest -m e2e_demo_paper` oraz `pytest -m retraining tests/reporting/test_retraining_reporter.py`.
+3. Po wprowadzeniu poprawek uruchom ponownie polecenie `pytest -m e2e_demo_paper`.

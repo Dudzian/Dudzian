@@ -6,7 +6,7 @@ import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable, Iterable, Mapping, MutableMapping, Sequence
+from typing import Iterable, Mapping, MutableMapping, Sequence
 
 from bot_core.observability.metrics import MetricsRegistry, get_global_metrics_registry
 
@@ -364,59 +364,4 @@ __all__ = [
     "GuardrailReport",
     "GuardrailQueueSummary",
     "GuardrailLogRecord",
-    "GuardrailReportEndpoint",
 ]
-
-
-class GuardrailReportEndpoint:
-    """Zapewnia wgląd w raport guardrail'i poprzez REST/IPC."""
-
-    def __init__(
-        self,
-        *,
-        registry: MetricsRegistry | None = None,
-        log_directory: str | Path | None = None,
-        environment_hint: str | None = None,
-        max_log_records: int = 20,
-        report_factory: Callable[[], GuardrailReport] | None = None,
-    ) -> None:
-        self._registry = registry
-        self._log_directory = Path(log_directory).expanduser() if log_directory else None
-        self._environment_hint = environment_hint
-        self._max_log_records = max(0, int(max_log_records))
-        self._report_factory = report_factory
-
-    # ------------------------------------------------------------------
-    def build_report(self) -> GuardrailReport:
-        """Generuje aktualny raport guardrail'i."""
-
-        if self._report_factory is not None:
-            return self._report_factory()
-        return GuardrailReport.from_sources(
-            registry=self._registry,
-            log_directory=self._log_directory,
-            environment_hint=self._environment_hint,
-            max_log_records=self._max_log_records,
-        )
-
-    def to_dict(self) -> Mapping[str, object]:
-        """Zwraca raport guardrail'i w formacie słownika JSON."""
-
-        return self.build_report().to_dict()
-
-    # ------------------------------------------------------------------
-    def as_fastapi_router(self):  # pragma: no cover - zależne od FastAPI
-        """Buduje router FastAPI obsługujący zapytania REST o raport guardrail."""
-
-        from fastapi import APIRouter, HTTPException
-
-        router = APIRouter()
-
-        @router.get("/guardrails/report", summary="Aktualny raport guardrail")
-        async def get_guardrail_report() -> Mapping[str, object]:
-            try:
-                return self.to_dict()
-            except Exception as exc:  # pragma: no cover - obsługa awaryjna
-                raise HTTPException(status_code=500, detail=str(exc)) from exc
-
-        return router

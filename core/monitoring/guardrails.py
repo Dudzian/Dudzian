@@ -1,7 +1,5 @@
-"""Guardrails monitorujące kolejkę I/O, retraining i powiązane alerty."""
+"""Guardrails monitorujące kolejkę I/O i limity zapytań adapterów."""
 from __future__ import annotations
-
-"""Guardrails monitorujące kolejkę I/O i retraining."""
 
 import json
 import logging
@@ -11,14 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Mapping, MutableMapping
 
-from .events import (
-    DataDriftDetected,
-    MissingDataDetected,
-    MonitoringEvent,
-    RetrainingCycleCompleted,
-    RetrainingDelayInjected,
-)
-from .metrics import AsyncIOMetricSet, RetrainingMetricSet
+from .metrics import AsyncIOMetricSet
 
 
 @dataclass(slots=True)
@@ -56,10 +47,6 @@ class AsyncIOGuardrails:
         timeout_warning_threshold: float = 10.0,
         ui_alerts_path: Path | None = None,
         ui_notifier: GuardrailUiNotifier | None = None,
-        retraining_metrics: RetrainingMetricSet | None = None,
-        retraining_log_directory: str | Path | None = None,
-        retraining_duration_warning_threshold: float = 300.0,
-        drift_warning_threshold: float | None = None,
     ) -> None:
         self._environment = environment or "unknown"
         self._metrics = metrics or AsyncIOMetricSet()
@@ -82,31 +69,6 @@ class AsyncIOGuardrails:
         self._ui_notifier = ui_notifier
         self._rate_limit_streaks: MutableMapping[str, int] = {}
         self._timeout_streaks: MutableMapping[str, int] = {}
-        self._retraining_metrics = retraining_metrics or RetrainingMetricSet()
-        self._retraining_duration_threshold = max(0.0, float(retraining_duration_warning_threshold))
-        self._drift_warning_threshold = None if drift_warning_threshold is None else max(
-            0.0, float(drift_warning_threshold)
-        )
-        self._retraining_log_path = Path(
-            retraining_log_directory or (self._log_path / "retraining")
-        )
-        self._retraining_log_path.mkdir(parents=True, exist_ok=True)
-        self._retraining_logger = logging.getLogger(
-            f"core.monitoring.guardrails.retraining[{self._retraining_log_path}]"
-        )
-        self._retraining_logger.setLevel(logging.INFO)
-        self._retraining_logger.propagate = False
-        if not self._retraining_logger.handlers:
-            retraining_handler = logging.FileHandler(
-                self._retraining_log_path / "events.log", encoding="utf-8"
-            )
-            retraining_handler.setLevel(logging.INFO)
-            retraining_handler.setFormatter(
-                logging.Formatter(
-                    "%(asctime)s %(levelname)s %(message)s", "%Y-%m-%dT%H:%M:%S%z"
-                )
-            )
-            self._retraining_logger.addHandler(retraining_handler)
 
     def on_rate_limit_wait(self, *, key: str, waited: float, burst: int, pending: int) -> None:
         """Obsługuje zdarzenie oczekiwania na limiter kolejki."""
@@ -181,102 +143,6 @@ class AsyncIOGuardrails:
             streak,
         )
         self._emit_ui_event("io_timeout", severity, payload)
-
-    def __call__(self, event: MonitoringEvent) -> None:
-        """Umożliwia traktowanie guardrail'i jako subskrybenta eventów retrainingu."""
-
-        self.handle_monitoring_event(event)
-
-    # pylint: disable=too-many-branches
-    def handle_monitoring_event(self, event: MonitoringEvent) -> None:
-        """Przetwarza zdarzenia monitorujące publikowane przez retraining scheduler."""
-
-        if isinstance(event, RetrainingCycleCompleted):
-            duration = max(0.0, float(event.duration_seconds))
-            labels = {"environment": self._environment, "status": event.status}
-            self._retraining_metrics.duration_seconds.observe(duration, labels=labels)
-
-            severity = "info"
-            if self._retraining_duration_threshold > 0 and duration >= self._retraining_duration_threshold:
-                severity = "warning"
-
-            payload = {
-                "environment": self._environment,
-                "status": event.status,
-                "duration_seconds": round(duration, 6),
-                "source": event.source,
-            }
-            if event.drift_score is not None:
-                payload["drift_score"] = float(event.drift_score)
-            if event.metadata:
-                payload["metadata"] = dict(event.metadata)
-
-            self._retraining_logger.log(
-                logging.WARNING if severity == "warning" else logging.INFO,
-                "RETRAINING duration=%.6fs status=%s source=%s",
-                duration,
-                event.status,
-                event.source,
-            )
-            self._emit_ui_event("retraining_cycle_completed", severity, payload)
-
-            if event.drift_score is not None:
-                drift_labels = {"environment": self._environment, "status": event.status}
-                self._retraining_metrics.drift_score.observe(event.drift_score, labels=drift_labels)
-            return
-
-        if isinstance(event, DataDriftDetected):
-            drift_value = float(event.drift_score)
-            labels = {"environment": self._environment, "source": event.source}
-            self._retraining_metrics.drift_score.observe(drift_value, labels=labels)
-            threshold = (
-                self._drift_warning_threshold
-                if self._drift_warning_threshold is not None
-                else event.drift_threshold
-            )
-            severity = "warning" if threshold and drift_value >= threshold else "info"
-            payload = {
-                "environment": self._environment,
-                "source": event.source,
-                "drift_score": drift_value,
-                "drift_threshold": event.drift_threshold,
-            }
-            self._retraining_logger.log(
-                logging.WARNING if severity == "warning" else logging.INFO,
-                "RETRAINING DRIFT source=%s score=%.6f threshold=%.6f",
-                event.source,
-                drift_value,
-                event.drift_threshold,
-            )
-            self._emit_ui_event("retraining_drift_detected", severity, payload)
-            return
-
-        if isinstance(event, MissingDataDetected):
-            payload = {
-                "environment": self._environment,
-                "source": event.source,
-                "missing_batches": int(event.missing_batches),
-            }
-            self._retraining_logger.error(
-                "RETRAINING MISSING_DATA source=%s missing_batches=%s",
-                event.source,
-                event.missing_batches,
-            )
-            self._emit_ui_event("retraining_missing_data", "error", payload)
-            return
-
-        if isinstance(event, RetrainingDelayInjected):
-            payload = {
-                "environment": self._environment,
-                "reason": event.reason,
-                "delay_seconds": round(float(event.delay_seconds), 6),
-            }
-            self._retraining_logger.info(
-                "RETRAINING DELAY reason=%s delay_seconds=%.6f",
-                event.reason,
-                event.delay_seconds,
-            )
-            self._emit_ui_event("retraining_delay_injected", "info", payload)
 
     def _emit_ui_event(self, event: str, severity: str, payload: Mapping[str, object]) -> None:
         if self._ui_alerts_path is not None:
