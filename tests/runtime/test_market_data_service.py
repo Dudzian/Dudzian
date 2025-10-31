@@ -6,6 +6,9 @@ from bot_core.runtime.market_data_service import MarketDataServiceServicer
 from bot_core.generated import trading_pb2
 
 
+pytestmark = pytest.mark.requires_trading_stubs
+
+
 class FakeManager:
     def __init__(self, markets: dict[str, dict[str, object]], rules: dict[str, MarketRules]) -> None:
         self._public = type("_Public", (), {"_markets": markets})()

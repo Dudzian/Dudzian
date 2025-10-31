@@ -1,8 +1,11 @@
 #include "SecurityAdminController.hpp"
 
 #include <QByteArray>
+#include <QCryptographicHash>
+#include <QDateTime>
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QIODevice>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -11,10 +14,65 @@
 #include <QLoggingCategory>
 #include <QProcess>
 #include <QtGlobal>
+#include <utility>
 
 #include "utils/PathUtils.hpp"
 
 Q_LOGGING_CATEGORY(lcSecurityAdmin, "bot.shell.security.admin")
+
+namespace {
+
+QStringList collectIssueMessages(const QVariantMap& map,
+                                 const QString& detailKey,
+                                 const QString& fallbackKey)
+{
+    QStringList messages;
+    const QVariant detailVariant = map.value(detailKey);
+    if (detailVariant.canConvert<QVariantList>()) {
+        const QVariantList detailList = detailVariant.toList();
+        for (const QVariant& entry : detailList) {
+            const QVariantMap issue = entry.toMap();
+            if (issue.isEmpty())
+                continue;
+            QString text = issue.value(QStringLiteral("message")).toString();
+            const QString hint = issue.value(QStringLiteral("hint")).toString();
+            const QString code = issue.value(QStringLiteral("code")).toString();
+            if (!hint.isEmpty())
+                text += QStringLiteral(" — %1").arg(hint);
+            if (!code.isEmpty())
+                text += QStringLiteral(" [%1]").arg(code);
+            if (!text.isEmpty())
+                messages.append(text);
+        }
+    }
+    if (messages.isEmpty()) {
+        const QVariant fallbackVariant = map.value(fallbackKey);
+        if (fallbackVariant.canConvert<QStringList>()) {
+            messages = fallbackVariant.toStringList();
+        } else if (fallbackVariant.canConvert<QVariantList>()) {
+            const QVariantList fallbackList = fallbackVariant.toList();
+            for (const QVariant& entry : fallbackList) {
+                if (entry.canConvert<QString>()) {
+                    const QString text = entry.toString();
+                    if (!text.isEmpty())
+                        messages.append(text);
+                } else if (entry.canConvert<QVariantMap>()) {
+                    const QVariantMap issue = entry.toMap();
+                    const QString text = issue.value(QStringLiteral("message")).toString();
+                    if (!text.isEmpty())
+                        messages.append(text);
+                }
+            }
+        } else if (fallbackVariant.canConvert<QString>()) {
+            const QString text = fallbackVariant.toString();
+            if (!text.isEmpty())
+                messages.append(text);
+        }
+    }
+    return messages;
+}
+
+} // namespace
 
 SecurityAdminController::SecurityAdminController(QObject* parent)
     : QObject(parent)
@@ -44,6 +102,47 @@ void SecurityAdminController::setLogPath(const QString& path)
     m_logPath = bot::shell::utils::expandPath(path);
 }
 
+void SecurityAdminController::setAlertsPath(const QString& path)
+{
+    m_alertsPath = bot::shell::utils::expandPath(path);
+}
+
+void SecurityAdminController::setAdditionalLogPaths(const QStringList& paths)
+{
+    QStringList normalized;
+    normalized.reserve(paths.size());
+    for (const QString& entry : paths) {
+        const QString expanded = bot::shell::utils::expandPath(entry);
+        if (!expanded.trimmed().isEmpty())
+            normalized.append(expanded);
+    }
+    m_additionalLogPaths = normalized;
+}
+
+void SecurityAdminController::setTpmQuotePath(const QString& path)
+{
+    const QString normalized = bot::shell::utils::expandPath(path);
+    if (m_tpmQuotePath == normalized)
+        return;
+    m_tpmQuotePath = normalized;
+}
+
+void SecurityAdminController::setTpmKeyringPath(const QString& path)
+{
+    const QString normalized = bot::shell::utils::expandPath(path);
+    if (m_tpmKeyringPath == normalized)
+        return;
+    m_tpmKeyringPath = normalized;
+}
+
+void SecurityAdminController::setIntegrityManifestPath(const QString& path)
+{
+    const QString normalized = bot::shell::utils::expandPath(path);
+    if (m_integrityManifestPath == normalized)
+        return;
+    m_integrityManifestPath = normalized;
+}
+
 bool SecurityAdminController::refresh()
 {
     if (m_busy) {
@@ -67,6 +166,10 @@ bool SecurityAdminController::refresh()
         if (!m_profilesPath.isEmpty()) {
             args << QStringLiteral("--profiles-path") << m_profilesPath;
         }
+        if (!m_logPath.isEmpty()) {
+            args << QStringLiteral("--audit-path") << m_logPath;
+        }
+        args << QStringLiteral("--audit-limit") << QString::number(200);
 
         QByteArray stdoutData;
         QByteArray stderrData;
@@ -140,6 +243,13 @@ bool SecurityAdminController::assignProfile(const QString& userId,
             if (status.compare(QStringLiteral("ok"), Qt::CaseInsensitive) == 0) {
                 const QString message = QStringLiteral("Zaktualizowano profil %1").arg(trimmedId);
                 Q_EMIT adminEventLogged(message);
+                QVariantMap details;
+                details.insert(QStringLiteral("userId"), trimmedId);
+                QVariantList roleList;
+                for (const QString& role : roles)
+                    roleList.append(role);
+                details.insert(QStringLiteral("roles"), roleList);
+                recordAuditEvent(QStringLiteral("profiles"), message, details);
                 shouldRefresh = true;
             } else {
                 qCWarning(lcSecurityAdmin) << "Bridge zwrócił status" << status;
@@ -208,6 +318,9 @@ bool SecurityAdminController::removeProfile(const QString& userId)
             if (status.compare(QStringLiteral("ok"), Qt::CaseInsensitive) == 0) {
                 const QString message = QStringLiteral("Usunięto profil %1").arg(trimmedId);
                 Q_EMIT adminEventLogged(message);
+                QVariantMap details;
+                details.insert(QStringLiteral("userId"), trimmedId);
+                recordAuditEvent(QStringLiteral("profiles"), message, details);
                 shouldRefresh = true;
             } else {
                 qCWarning(lcSecurityAdmin) << "Bridge remove-profile zwrócił status" << status;
@@ -277,6 +390,29 @@ bool SecurityAdminController::loadStateFromJson(const QByteArray& data)
     m_licenseInfo = license;
     Q_EMIT licenseInfoChanged();
 
+    const QVariantMap policy = license.value(QStringLiteral("policy")).toMap();
+    if (!policy.isEmpty()) {
+        const QString state = policy.value(QStringLiteral("state")).toString();
+        if (state.compare(QStringLiteral("expired"), Qt::CaseInsensitive) == 0) {
+            recordAuditEvent(QStringLiteral("license"),
+                             tr("Licencja utrzymaniowa wygasła."),
+                             policy);
+            Q_EMIT securityAlertRaised(QStringLiteral("security:license"),
+                                       2,
+                                       tr("Licencja OEM"),
+                                       tr("Licencja utrzymaniowa wygasła i wymaga odnowienia."));
+        } else if (state.compare(QStringLiteral("critical"), Qt::CaseInsensitive) == 0
+                   || state.compare(QStringLiteral("warning"), Qt::CaseInsensitive) == 0) {
+            recordAuditEvent(QStringLiteral("license"),
+                             tr("Licencja zbliża się do wygaśnięcia."),
+                             policy);
+            Q_EMIT securityAlertRaised(QStringLiteral("security:license"),
+                                       1,
+                                       tr("Licencja OEM"),
+                                       tr("Licencja wkrótce wygaśnie – zaplanuj odnowienie."));
+        }
+    }
+
     QVariantList profiles;
     const QJsonArray profilesArray = root.value(QStringLiteral("profiles")).toArray();
     profiles.reserve(profilesArray.size());
@@ -293,6 +429,20 @@ bool SecurityAdminController::loadStateFromJson(const QByteArray& data)
     }
     m_userProfiles = profiles;
     Q_EMIT userProfilesChanged();
+
+    QVariantList auditEntries;
+    const QJsonObject auditObject = root.value(QStringLiteral("audit")).toObject();
+    const QJsonArray auditArray = auditObject.value(QStringLiteral("entries")).toArray();
+    auditEntries.reserve(auditArray.size());
+    for (const QJsonValue& entryValue : auditArray) {
+        if (!entryValue.isObject())
+            continue;
+        auditEntries.prepend(entryValue.toObject().toVariantMap());
+    }
+    if (!auditEntries.isEmpty()) {
+        m_auditLog = auditEntries;
+        Q_EMIT auditLogChanged();
+    }
     return true;
 }
 
@@ -309,5 +459,326 @@ bool SecurityAdminController::loadStateFromFile(const QString& path)
     }
     const QByteArray data = file.readAll();
     return loadStateFromJson(data);
+}
+
+bool SecurityAdminController::verifyTpmBinding()
+{
+    if (m_busy)
+        return false;
+    QString evidencePath = m_tpmQuotePath;
+    if (evidencePath.isEmpty()) {
+        const QByteArray envPath = qgetenv("BOT_CORE_UI_TPM_QUOTE");
+        if (!envPath.isEmpty())
+            evidencePath = bot::shell::utils::expandPath(QString::fromUtf8(envPath));
+    }
+
+    QVariantMap status;
+    status.insert(QStringLiteral("checkedAt"), QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs));
+    if (evidencePath.isEmpty()) {
+        status.insert(QStringLiteral("error"), tr("Brak ścieżki do pliku z dowodem TPM."));
+        status.insert(QStringLiteral("valid"), false);
+        m_tpmStatus = status;
+        Q_EMIT tpmStatusChanged();
+        recordAuditEvent(QStringLiteral("tpm"), tr("Niepowodzenie walidacji TPM"), status);
+        Q_EMIT securityAlertRaised(QStringLiteral("security:tpm"), 2, tr("Weryfikacja TPM"),
+                                   tr("Nie znaleziono dowodu TPM."));
+        return false;
+    }
+
+    QStringList args;
+    args << QStringLiteral("-m")
+         << QStringLiteral("bot_core.security.ui_bridge")
+         << QStringLiteral("verify-tpm")
+         << QStringLiteral("--evidence-path") << evidencePath;
+    if (!m_licensePath.isEmpty())
+        args << QStringLiteral("--license-path") << m_licensePath;
+    const QVariantMap fingerprintInfo = m_licenseInfo.value(QStringLiteral("fingerprint")).toMap();
+    const QString expectedFingerprint = fingerprintInfo.value(QStringLiteral("hash")).toString();
+    if (!expectedFingerprint.isEmpty())
+        args << QStringLiteral("--expected-fingerprint") << expectedFingerprint;
+    if (!m_tpmKeyringPath.isEmpty())
+        args << QStringLiteral("--keyring") << m_tpmKeyringPath;
+
+    QByteArray stdoutData;
+    QByteArray stderrData;
+    if (!runBridge(args, &stdoutData, &stderrData)) {
+        status.insert(QStringLiteral("error"), tr("Nie udało się uruchomić walidatora TPM."));
+        status.insert(QStringLiteral("details"), QString::fromUtf8(stderrData));
+        status.insert(QStringLiteral("valid"), false);
+        m_tpmStatus = status;
+        Q_EMIT tpmStatusChanged();
+        recordAuditEvent(QStringLiteral("tpm"), tr("Niepowodzenie walidacji TPM"), status);
+        Q_EMIT securityAlertRaised(QStringLiteral("security:tpm"),
+                                   2,
+                                   tr("Weryfikacja TPM"),
+                                   tr("Nie udało się zweryfikować dowodu TPM."));
+        return false;
+    }
+
+    QJsonParseError parseError{};
+    const QJsonDocument doc = QJsonDocument::fromJson(stdoutData, &parseError);
+    if (parseError.error != QJsonParseError::NoError || !doc.isObject()) {
+        status.insert(QStringLiteral("error"), tr("Bridge zwrócił niepoprawny JSON."));
+        status.insert(QStringLiteral("details"), parseError.errorString());
+        status.insert(QStringLiteral("valid"), false);
+        m_tpmStatus = status;
+        Q_EMIT tpmStatusChanged();
+        recordAuditEvent(QStringLiteral("tpm"), tr("Niepowodzenie walidacji TPM"), status);
+        Q_EMIT securityAlertRaised(QStringLiteral("security:tpm"),
+                                   2,
+                                   tr("Weryfikacja TPM"),
+                                   tr("Niepoprawna odpowiedź walidatora TPM."));
+        return false;
+    }
+
+    const QVariantMap result = doc.object().toVariantMap();
+    status = result;
+    status.insert(QStringLiteral("checkedAt"), QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs));
+    const QStringList errorMessages =
+        collectIssueMessages(status, QStringLiteral("error_details"), QStringLiteral("errors"));
+    const QStringList warningMessages =
+        collectIssueMessages(status, QStringLiteral("warning_details"), QStringLiteral("warnings"));
+    status.insert(QStringLiteral("errorMessages"), errorMessages);
+    status.insert(QStringLiteral("warningMessages"), warningMessages);
+    const bool valid = status.value(QStringLiteral("status")).toString().compare(QStringLiteral("ok"),
+                                                                                Qt::CaseInsensitive)
+        == 0
+        && errorMessages.isEmpty();
+    status.insert(QStringLiteral("valid"), valid);
+
+    const bool changed = (status != m_tpmStatus);
+    m_tpmStatus = status;
+    if (changed)
+        Q_EMIT tpmStatusChanged();
+
+    const QString message = valid ? tr("Weryfikacja TPM zakończona sukcesem")
+                                  : tr("Weryfikacja TPM nie powiodła się");
+    recordAuditEvent(QStringLiteral("tpm"), message, status);
+
+    if (!valid) {
+        const QString detail = errorMessages.isEmpty() ? tr("Dowód TPM nie jest zgodny z licencją.")
+                                                       : errorMessages.join(QStringLiteral("; "));
+        Q_EMIT securityAlertRaised(QStringLiteral("security:tpm"),
+                                   2,
+                                   tr("Weryfikacja TPM"),
+                                   detail);
+    } else {
+        if (!warningMessages.isEmpty()) {
+            Q_EMIT securityAlertRaised(QStringLiteral("security:tpm"),
+                                       1,
+                                       tr("Weryfikacja TPM"),
+                                       warningMessages.join(QStringLiteral("; ")));
+        }
+    }
+
+    return valid;
+}
+
+bool SecurityAdminController::runIntegrityCheck()
+{
+    QVariantMap report;
+    const bool ok = evaluateIntegrityManifest(&report);
+    const bool changed = (report != m_lastIntegrityReport);
+    m_lastIntegrityReport = report;
+    if (changed)
+        Q_EMIT integrityReportChanged();
+
+    recordAuditEvent(QStringLiteral("integrity"),
+                     ok ? tr("Kontrola integralności zakończona sukcesem")
+                        : tr("Kontrola integralności wykryła odchylenia"),
+                     report);
+
+    const QVariantList mismatches = report.value(QStringLiteral("mismatches")).toList();
+    if (!ok || !mismatches.isEmpty()) {
+        const QString detail = mismatches.isEmpty()
+            ? tr("Sprawdź logi integralności po szczegóły.")
+            : tr("Wykryto %1 niespójności plików.").arg(mismatches.size());
+        Q_EMIT securityAlertRaised(QStringLiteral("security:integrity"), 1, tr("Kontrola integralności"), detail);
+    }
+
+    return ok;
+}
+
+void SecurityAdminController::recordAuditEvent(const QString& category,
+                                               const QString& message,
+                                               const QVariantMap& details)
+{
+    QVariantMap entry;
+    entry.insert(QStringLiteral("timestamp"), QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs));
+    entry.insert(QStringLiteral("category"), category);
+    entry.insert(QStringLiteral("message"), message);
+    if (!details.isEmpty())
+        entry.insert(QStringLiteral("details"), details);
+
+    m_auditLog.prepend(entry);
+    constexpr int kMaxAuditEntries = 200;
+    while (m_auditLog.size() > kMaxAuditEntries)
+        m_auditLog.removeLast();
+
+    Q_EMIT auditLogChanged();
+}
+
+QString SecurityAdminController::computeFileDigest(const QString& path) const
+{
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly))
+        return {};
+    QCryptographicHash hash(QCryptographicHash::Sha256);
+    while (!file.atEnd())
+        hash.addData(file.read(8192));
+    return QString::fromLatin1(hash.result().toHex());
+}
+
+bool SecurityAdminController::evaluateIntegrityManifest(QVariantMap* report)
+{
+    QString manifestPath = m_integrityManifestPath;
+    if (manifestPath.isEmpty()) {
+        const QByteArray envPath = qgetenv("BOT_CORE_UI_INTEGRITY_MANIFEST");
+        if (!envPath.isEmpty())
+            manifestPath = bot::shell::utils::expandPath(QString::fromUtf8(envPath));
+    }
+    if (manifestPath.isEmpty())
+        manifestPath = bot::shell::utils::expandPath(QStringLiteral("config/integrity_manifest.json"));
+
+    QVariantMap localReport;
+    localReport.insert(QStringLiteral("manifestPath"), manifestPath);
+    localReport.insert(QStringLiteral("checkedAt"), QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs));
+    QVariantList mismatches;
+
+    if (manifestPath.isEmpty()) {
+        localReport.insert(QStringLiteral("valid"), false);
+        localReport.insert(QStringLiteral("error"), tr("Nie wskazano manifestu integralności."));
+        if (report)
+            *report = localReport;
+        return false;
+    }
+
+    QFile manifest(manifestPath);
+    if (!manifest.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        localReport.insert(QStringLiteral("valid"), false);
+        localReport.insert(QStringLiteral("error"), tr("Nie można otworzyć manifestu %1").arg(manifestPath));
+        if (report)
+            *report = localReport;
+        return false;
+    }
+
+    const QByteArray data = manifest.readAll();
+    manifest.close();
+    QJsonParseError parseError{};
+    const QJsonDocument doc = QJsonDocument::fromJson(data, &parseError);
+    if (parseError.error != QJsonParseError::NoError || !doc.isObject()) {
+        localReport.insert(QStringLiteral("valid"), false);
+        localReport.insert(QStringLiteral("error"), tr("Manifest ma niepoprawny format (%1)").arg(parseError.errorString()));
+        if (report)
+            *report = localReport;
+        return false;
+    }
+
+    const QJsonArray filesArray = doc.object().value(QStringLiteral("files")).toArray();
+    for (const QJsonValue& value : filesArray) {
+        if (!value.isObject())
+            continue;
+        const QJsonObject obj = value.toObject();
+        const QString relativePath = obj.value(QStringLiteral("path")).toString();
+        const QString expectedDigest = obj.value(QStringLiteral("sha256")).toString();
+        const QString absolutePath = bot::shell::utils::expandPath(relativePath);
+        QString actualDigest = computeFileDigest(absolutePath);
+        if (actualDigest.isEmpty()) {
+            QVariantMap mismatch;
+            mismatch.insert(QStringLiteral("path"), absolutePath);
+            mismatch.insert(QStringLiteral("reason"), tr("Nie można odczytać pliku."));
+            mismatches.append(mismatch);
+            continue;
+        }
+        if (!expectedDigest.isEmpty() && actualDigest.compare(expectedDigest, Qt::CaseInsensitive) != 0) {
+            QVariantMap mismatch;
+            mismatch.insert(QStringLiteral("path"), absolutePath);
+            mismatch.insert(QStringLiteral("expected"), expectedDigest);
+            mismatch.insert(QStringLiteral("actual"), actualDigest);
+            mismatches.append(mismatch);
+        }
+    }
+
+    const bool valid = mismatches.isEmpty();
+    localReport.insert(QStringLiteral("valid"), valid);
+    localReport.insert(QStringLiteral("mismatches"), mismatches);
+    if (report)
+        *report = localReport;
+    return valid;
+}
+
+bool SecurityAdminController::exportSignedAuditLog(const QString& destinationDir)
+{
+    if (m_busy)
+        return false;
+    QString targetDir = destinationDir.trimmed();
+    if (targetDir.isEmpty())
+        targetDir = QStringLiteral("exports/security");
+    targetDir = bot::shell::utils::expandPath(targetDir);
+
+    QStringList args;
+    args << QStringLiteral("-m")
+         << QStringLiteral("bot_core.security.ui_bridge")
+         << QStringLiteral("export-security-bundle")
+         << QStringLiteral("--output-dir") << targetDir;
+    if (!m_logPath.isEmpty())
+        args << QStringLiteral("--audit-path") << m_logPath;
+    if (!m_alertsPath.isEmpty())
+        args << QStringLiteral("--alerts-path") << m_alertsPath;
+    for (const QString& extraPath : std::as_const(m_additionalLogPaths)) {
+        args << QStringLiteral("--include-log") << extraPath;
+    }
+
+    QByteArray stdoutData;
+    QByteArray stderrData;
+    if (!runBridge(args, &stdoutData, &stderrData)) {
+        qCWarning(lcSecurityAdmin) << "Nie udało się wyeksportować logów audytu" << stderrData;
+        recordAuditEvent(QStringLiteral("audit"),
+                         tr("Eksport logów bezpieczeństwa nie powiódł się."),
+                         QVariantMap{{QStringLiteral("destination"), targetDir}});
+        return false;
+    }
+
+    QJsonParseError parseError{};
+    const QJsonDocument doc = QJsonDocument::fromJson(stdoutData, &parseError);
+    if (parseError.error != QJsonParseError::NoError || !doc.isObject()) {
+        qCWarning(lcSecurityAdmin) << "export-audit zwrócił niepoprawny JSON" << parseError.errorString();
+        recordAuditEvent(QStringLiteral("audit"),
+                         tr("Eksport logów bezpieczeństwa nie powiódł się."),
+                         QVariantMap{{QStringLiteral("destination"), targetDir},
+                                     {QStringLiteral("error"), parseError.errorString()}});
+        return false;
+    }
+
+    const QVariantMap payload = doc.object().toVariantMap();
+    const QString bundlePath = payload.value(QStringLiteral("bundle_path")).toString();
+    const int auditEntries = payload.value(QStringLiteral("audit_entries")).toInt();
+    const int alertEntries = payload.value(QStringLiteral("alert_entries")).toInt();
+    QVariantMap details = payload;
+    details.insert(QStringLiteral("destination"), targetDir);
+    details.insert(QStringLiteral("audit_entries"), auditEntries);
+    details.insert(QStringLiteral("alert_entries"), alertEntries);
+    recordAuditEvent(QStringLiteral("audit"),
+                     tr("Wyeksportowano pakiet logów i alertów bezpieczeństwa."),
+                     details);
+    if (!bundlePath.isEmpty()) {
+        Q_EMIT securityAlertRaised(QStringLiteral("security:audit-export"),
+                                   0,
+                                   tr("Eksport logów"),
+                                   tr("Podpisany pakiet bezpieczeństwa zapisano w %1").arg(bundlePath));
+    }
+    return true;
+}
+
+void SecurityAdminController::ingestSecurityEvent(const QString& category,
+                                                  const QString& message,
+                                                  const QVariantMap& details,
+                                                  int severity)
+{
+    recordAuditEvent(category, message, details);
+    if (severity >= 0) {
+        const QString alertId = QStringLiteral("security:%1").arg(category);
+        Q_EMIT securityAlertRaised(alertId, severity, tr("Zdarzenie bezpieczeństwa"), message);
+    }
 }
 

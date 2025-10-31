@@ -20,6 +20,10 @@ __all__ = [
     "VolatilityEstimator",
     "CorrelationAnalyzer",
     "RiskManagement",
+    "AccountExposure",
+    "AccountRiskReport",
+    "MultiAccountRiskSnapshot",
+    "MultiAccountRiskManager",
     "create_risk_manager",
     "backtest_risk_strategy",
     "calculate_optimal_leverage",
@@ -69,6 +73,35 @@ class PositionSizing:
     risk_adjusted_size: float
     confidence_level: float
     reasoning: str
+
+
+@dataclass(slots=True)
+class AccountExposure:
+    """Ekspozycja pojedynczego konta używana do agregacji ryzyka."""
+
+    account_id: str
+    portfolio: Mapping[str, Mapping[str, Any]]
+    equity: float
+    params: Mapping[str, Any] | None = None
+
+
+@dataclass(slots=True)
+class AccountRiskReport:
+    """Raport ryzyka dla konta."""
+
+    account_id: str
+    equity: float
+    metrics: RiskMetrics
+    dynamic_limit: float
+
+
+@dataclass(slots=True)
+class MultiAccountRiskSnapshot:
+    """Zbiorczy widok metryk multi-account."""
+
+    aggregate_metrics: RiskMetrics
+    accounts: tuple[AccountRiskReport, ...]
+    symbol_limits: Mapping[str, float]
 
 
 class VolatilityEstimator:
@@ -529,15 +562,106 @@ class RiskManagement:
             )
         except Exception as exc:  # pragma: no cover - log i fallback
             self.logger.error("Error calculating risk metrics: %s", exc)
-            return RiskMetrics(
-                var_95=0.05,
-                expected_shortfall=0.08,
-                max_drawdown_risk=0.1,
-                correlation_risk=0.5,
-                liquidity_risk=0.3,
-                overall_risk_score=0.5,
-                risk_level=RiskLevel.MEDIUM,
+        return RiskMetrics(
+            var_95=0.05,
+            expected_shortfall=0.08,
+            max_drawdown_risk=0.1,
+            correlation_risk=0.5,
+            liquidity_risk=0.3,
+            overall_risk_score=0.5,
+            risk_level=RiskLevel.MEDIUM,
+        )
+
+
+class MultiAccountRiskManager:
+    """Agreguje metryki ryzyka dla wielu kont i wyznacza limity dynamiczne."""
+
+    def __init__(self, *, base_params: Mapping[str, Any] | None = None) -> None:
+        self._base_params = dict(base_params or {})
+        self._managers: Dict[str, RiskManagement] = {}
+        self.logger = logging.getLogger(__name__)
+
+    def _ensure_manager(
+        self, account_id: str, params: Mapping[str, Any] | None
+    ) -> RiskManagement:
+        if account_id not in self._managers:
+            merged = dict(self._base_params)
+            if params:
+                merged.update(params)
+            self._managers[account_id] = RiskManagement(merged)
+        return self._managers[account_id]
+
+    def reset_account(self, account_id: str) -> None:
+        self._managers.pop(account_id, None)
+
+    def collect_snapshot(
+        self,
+        exposures: Sequence[AccountExposure],
+        market_data: Mapping[str, pd.DataFrame],
+    ) -> MultiAccountRiskSnapshot:
+        if not exposures:
+            base_manager = RiskManagement(self._base_params)
+            aggregate_metrics = base_manager.calculate_risk_metrics({}, market_data)
+            return MultiAccountRiskSnapshot(
+                aggregate_metrics=aggregate_metrics,
+                accounts=tuple(),
+                symbol_limits={},
             )
+
+        account_reports: list[AccountRiskReport] = []
+        aggregated_portfolio: Dict[str, Dict[str, float]] = {}
+
+        for exposure in exposures:
+            manager = self._ensure_manager(exposure.account_id, exposure.params)
+            metrics = manager.calculate_risk_metrics(exposure.portfolio, market_data)
+            dynamic_limit = float(
+                min(
+                    manager.max_portfolio_risk,
+                    max(0.01, metrics.var_95 * 1.5 + metrics.correlation_risk * 0.5),
+                )
+            )
+            account_reports.append(
+                AccountRiskReport(
+                    account_id=exposure.account_id,
+                    equity=float(exposure.equity),
+                    metrics=metrics,
+                    dynamic_limit=dynamic_limit,
+                )
+            )
+
+            for symbol, position in exposure.portfolio.items():
+                container = aggregated_portfolio.setdefault(symbol, {"size": 0.0, "notional": 0.0})
+                size = float(position.get("size") or position.get("quantity") or 0.0)
+                price = float(position.get("price") or position.get("last_price") or 0.0)
+                notional = float(position.get("notional") or size * price)
+                container["size"] += size
+                container["notional"] += notional
+
+        aggregate_manager = RiskManagement(self._base_params)
+        aggregate_metrics = aggregate_manager.calculate_risk_metrics(aggregated_portfolio, market_data)
+
+        symbol_limits: Dict[str, float] = {}
+        for symbol, payload in aggregated_portfolio.items():
+            base_limit = float(
+                max(
+                    0.01,
+                    min(1.0, aggregate_metrics.var_95 * 1.2 + aggregate_metrics.correlation_risk * 0.6),
+                )
+            )
+            symbol_limit = base_limit
+            for report, exposure in zip(account_reports, exposures):
+                if symbol in exposure.portfolio:
+                    symbol_limit = max(symbol_limit, report.dynamic_limit)
+            exposure_size = payload.get("size", 0.0)
+            if exposure_size:
+                symbol_limit = min(1.0, symbol_limit + abs(exposure_size) * 0.01)
+            symbol_limits[symbol] = symbol_limit
+
+        return MultiAccountRiskSnapshot(
+            aggregate_metrics=aggregate_metrics,
+            accounts=tuple(account_reports),
+            symbol_limits=symbol_limits,
+        )
 
     def _calculate_var(
         self,

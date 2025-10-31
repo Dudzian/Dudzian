@@ -47,6 +47,7 @@
 #include "utils/PathUtils.hpp"
 #include "license/LicenseActivationController.hpp"
 #include "app/ActivationController.hpp"
+#include "app/ConfigurationWizardController.hpp"
 #include "app/UiModuleManager.hpp"
 #include "app/UiModuleViewsModel.hpp"
 #include "app/StrategyConfigController.hpp"
@@ -58,6 +59,8 @@
 #include "support/SupportBundleController.hpp"
 #include "health/HealthStatusController.hpp"
 #include "reporting/ReportCenterController.hpp"
+#include "update/OfflineUpdateManager.hpp"
+#include "models/ResultsDashboardModel.hpp"
 #include "grpc/BotCoreLocalService.hpp"
 #include "grpc/HealthClient.hpp"
 #include "grpc/MetricsClient.hpp"
@@ -249,7 +252,7 @@ Application::Application(QQmlApplicationEngine& engine, QObject* parent)
     : QObject(parent)
     , m_engine(engine)
 {
-    m_offlineStatus = tr("Offline daemon: nieaktywny");
+    m_offlineStatus = tr("Offline runtime: nieaktywny");
     m_activationController = std::make_unique<ActivationController>(this);
     connect(m_activationController.get(), &ActivationController::errorChanged, this,
             &Application::handleActivationErrorChanged);
@@ -275,6 +278,23 @@ Application::Application(QQmlApplicationEngine& engine, QObject* parent)
     m_securityController->setProfilesPath(QDir::current().absoluteFilePath(QStringLiteral("config/user_profiles.json")));
     m_securityController->setLicensePath(defaultLicensePath);
     m_securityController->setLogPath(QDir::current().absoluteFilePath(QStringLiteral("logs/security_admin.log")));
+    m_securityController->setTpmQuotePath(QDir::current().absoluteFilePath(QStringLiteral("var/security/tpm_quote.json")));
+    m_securityController->setTpmKeyringPath(QDir::current().absoluteFilePath(QStringLiteral("config/tpm_public_keys.json")));
+    m_securityController->setIntegrityManifestPath(QDir::current().absoluteFilePath(QStringLiteral("config/integrity_manifest.json")));
+    connect(m_securityController.get(),
+            &SecurityAdminController::securityAlertRaised,
+            this,
+            [this](const QString& id, int severity, const QString& title, const QString& message) {
+                const int boundedSeverity = qBound(0, severity, 2);
+                m_alertsModel.raiseAlert(id,
+                                         title,
+                                         message,
+                                         static_cast<AlertsModel::Severity>(boundedSeverity),
+                                         true);
+            });
+    connect(m_securityController.get(), &SecurityAdminController::tpmStatusChanged, this, &Application::updateSecurityCacheFromControllers);
+    connect(m_securityController.get(), &SecurityAdminController::integrityReportChanged, this, &Application::updateSecurityCacheFromControllers);
+    connect(m_securityController.get(), &SecurityAdminController::auditLogChanged, this, &Application::updateSecurityCacheFromControllers);
 
     m_reportController = std::make_unique<ReportCenterController>(this);
     m_reportController->setReportsDirectory(QDir::current().absoluteFilePath(QStringLiteral("var/reports")));
@@ -300,6 +320,67 @@ Application::Application(QQmlApplicationEngine& engine, QObject* parent)
     m_portfolioController = std::make_unique<PortfolioManagerController>(this);
     m_portfolioController->setBridgeScriptPath(QDir::current().absoluteFilePath(QStringLiteral("scripts/ui_portfolio_bridge.py")));
     m_portfolioController->setStorePath(QDir::current().absoluteFilePath(QStringLiteral("var/portfolio_links.json")));
+
+    m_configurationWizard = std::make_unique<ConfigurationWizardController>(this);
+    m_configurationWizard->setStrategyConfigController(m_strategyController.get());
+    m_configurationWizard->setMarketplaceController(m_marketplaceController.get());
+    m_configurationWizard->setRiskModel(&m_riskModel);
+    m_configurationWizard->setAlertsModel(&m_alertsModel);
+
+    m_updateManager = std::make_unique<OfflineUpdateManager>(this);
+    m_updateManager->setPackagesDirectory(QDir::current().absoluteFilePath(QStringLiteral("var/updates/packages")));
+    m_updateManager->setInstallDirectory(QDir::current().absoluteFilePath(QStringLiteral("var/updates/install")));
+    m_updateManager->setStateFilePath(QDir::current().absoluteFilePath(QStringLiteral("var/updates/state.json")));
+    m_updateManager->setLicenseController(m_licenseController.get());
+    m_updateManager->setTpmEvidencePath(QDir::current().absoluteFilePath(QStringLiteral("var/security/tpm_quote.json")));
+
+    m_resultsDashboard = std::make_unique<ResultsDashboardModel>(this);
+    m_resultsDashboard->setRiskHistoryModel(&m_riskHistoryModel);
+    m_resultsDashboard->setRiskStateModel(&m_riskModel);
+    m_resultsDashboard->setDecisionLogModel(&m_decisionLogModel);
+
+    connect(m_updateManager.get(),
+            &OfflineUpdateManager::updateFailed,
+            this,
+            [this](const QString& id, const QString& reason) {
+                const QString alertId = QStringLiteral("updates:%1").arg(id);
+                m_alertsModel.raiseAlert(alertId,
+                                         tr("Aktualizacja offline"),
+                                         reason,
+                                         AlertsModel::Warning,
+                                         true);
+                if (m_securityController) {
+                    QVariantMap details;
+                    details.insert(QStringLiteral("id"), id);
+                    details.insert(QStringLiteral("reason"), reason);
+                    m_securityController->ingestSecurityEvent(QStringLiteral("updates"),
+                                                               tr("Aktualizacja %1 nie powiodła się: %2")
+                                                                   .arg(id, reason),
+                                                               details,
+                                                               2);
+                }
+            });
+    connect(m_updateManager.get(),
+            &OfflineUpdateManager::updateCompleted,
+            this,
+            [this](const QString& id) {
+                const QString alertId = QStringLiteral("updates:%1").arg(id);
+                m_alertsModel.raiseAlert(alertId,
+                                         tr("Aktualizacja offline"),
+                                         tr("Zainstalowano pakiet %1.").arg(id),
+                                         AlertsModel::Info,
+                                         false);
+                if (m_securityController) {
+                    QVariantMap details;
+                    details.insert(QStringLiteral("id"), id);
+                    m_securityController->ingestSecurityEvent(QStringLiteral("updates"),
+                                                               tr("Zakończono instalację pakietu %1.").arg(id),
+                                                               details,
+                                                               0);
+                }
+            });
+
+    m_updateManager->refresh();
 
     m_moduleManager = std::make_unique<UiModuleManager>(this);
     m_moduleViewsModel = std::make_unique<UiModuleViewsModel>(this);
@@ -750,12 +831,14 @@ bool Application::applyParser(const QCommandLineParser& parser) {
 
     m_offlineMode = parser.isSet("offline-mode");
     m_offlineEndpoint = parser.value("offline-endpoint").trimmed();
-    if (m_offlineEndpoint.trimmed().isEmpty())
-        m_offlineEndpoint = QStringLiteral("http://127.0.0.1:58081");
+    if (m_offlineEndpoint.trimmed().isEmpty()) {
+        m_offlineEndpoint = m_offlineMode ? QStringLiteral("inprocess://offline")
+                                          : QStringLiteral("http://127.0.0.1:58081");
+    }
     m_offlineAutoRun = parser.isSet("offline-auto-run");
     m_offlineStrategyConfig.clear();
     m_offlineAutomationRunning = false;
-    m_offlineStatus = tr("Offline daemon: nieaktywny");
+    m_offlineStatus = tr("Offline runtime: nieaktywny");
     const QString offlineConfigPath = parser.value("offline-strategy-config").trimmed();
     m_offlineStrategyPath.clear();
     if (!offlineConfigPath.isEmpty()) {
@@ -2505,6 +2588,15 @@ void Application::updateSecurityCacheFromControllers()
         if (!m_lastSecurityError.isEmpty())
             cache.insert(QStringLiteral("lastError"), m_lastSecurityError);
     }
+    if (m_securityController) {
+        cache.insert(QStringLiteral("tpmStatus"), m_securityController->tpmStatus());
+        cache.insert(QStringLiteral("integrityReport"), m_securityController->integrityReport());
+        cache.insert(QStringLiteral("auditLog"), m_securityController->auditLog());
+    }
+    if (m_updateManager) {
+        cache.insert(QStringLiteral("updatesAvailable"), !m_updateManager->availableUpdates().isEmpty());
+        cache.insert(QStringLiteral("installedUpdates"), m_updateManager->installedUpdates());
+    }
     cache.insert(QStringLiteral("refreshIntervalSeconds"), m_licenseRefreshIntervalSeconds);
     cache.insert(QStringLiteral("refreshActive"), m_licenseRefreshTimer.isActive());
     if (m_lastLicenseRefreshRequestUtc.isValid())
@@ -3258,6 +3350,7 @@ void Application::start() {
             m_offlineBridge->setEndpoint(endpointUrl);
             m_offlineBridge->setInstrument(m_instrument);
             m_offlineBridge->setHistoryLimit(m_historyLimit);
+            m_offlineBridge->setDatasetPath(m_inProcessDatasetPath);
             m_offlineBridge->setStrategyConfig(m_offlineStrategyConfig);
             m_offlineBridge->setAutoRunEnabled(m_offlineAutoRun);
             m_connectionStatus = m_offlineStatus;
@@ -3382,6 +3475,8 @@ void Application::handleActivationErrorChanged()
 void Application::handleActivationFingerprintChanged()
 {
     processSecurityArtifactsUpdate();
+    if (m_updateManager && m_licenseController)
+        m_updateManager->setFingerprintOverride(m_licenseController->fingerprint().value(QStringLiteral("hash")).toString());
 }
 
 void Application::handleActivationLicensesChanged()
@@ -3485,6 +3580,9 @@ void Application::exposeToQml() {
     m_engine.rootContext()->setContextProperty(QStringLiteral("moduleViewsModel"), m_moduleViewsModel.get());
     m_engine.rootContext()->setContextProperty(QStringLiteral("marketplaceController"), m_marketplaceController.get());
     m_engine.rootContext()->setContextProperty(QStringLiteral("portfolioController"), m_portfolioController.get());
+    m_engine.rootContext()->setContextProperty(QStringLiteral("configurationWizard"), m_configurationWizard.get());
+    m_engine.rootContext()->setContextProperty(QStringLiteral("updateManager"), m_updateManager.get());
+    m_engine.rootContext()->setContextProperty(QStringLiteral("resultsDashboard"), m_resultsDashboard.get());
 }
 
 QObject* Application::activationController() const
@@ -3540,6 +3638,21 @@ QObject* Application::marketplaceController() const
 QObject* Application::portfolioController() const
 {
     return m_portfolioController.get();
+}
+
+QObject* Application::configurationWizard() const
+{
+    return m_configurationWizard.get();
+}
+
+QObject* Application::updateManager() const
+{
+    return m_updateManager.get();
+}
+
+QObject* Application::resultsDashboard() const
+{
+    return m_resultsDashboard.get();
 }
 
 void Application::setModuleManagerForTesting(std::unique_ptr<UiModuleManager> manager)
@@ -3642,6 +3755,8 @@ void Application::setInProcessDatasetPathForTesting(const QString& path)
     m_client.setInProcessDatasetPath(m_inProcessDatasetPath);
     if (m_inProcessHealthClient)
         m_inProcessHealthClient->setDatasetPath(m_inProcessDatasetPath);
+    if (m_offlineBridge)
+        m_offlineBridge->setDatasetPath(m_inProcessDatasetPath);
 }
 
 std::shared_ptr<MetricsClientInterface> Application::activeMetricsClientForTesting() const

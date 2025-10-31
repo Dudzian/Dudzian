@@ -193,11 +193,8 @@ bool StrategyConfigController::saveDecisionConfig(const QVariantMap& config)
     m_busy = false;
     Q_EMIT busyChanged();
 
-    if (!result.ok) {
-        m_lastError = result.errorMessage;
-        Q_EMIT lastErrorChanged();
+    if (!handleBridgeValidation(result))
         return false;
-    }
 
     return refresh();
 }
@@ -228,13 +225,73 @@ bool StrategyConfigController::saveSchedulerConfig(const QString& name, const QV
     m_busy = false;
     Q_EMIT busyChanged();
 
-    if (!result.ok) {
-        m_lastError = result.errorMessage;
+    if (!handleBridgeValidation(result))
+        return false;
+
+    return refresh();
+}
+
+bool StrategyConfigController::removeSchedulerConfig(const QString& name)
+{
+    if (!ensureReady())
+        return false;
+
+    const QString trimmed = name.trimmed();
+    if (trimmed.isEmpty()) {
+        m_lastError = tr("Nie wskazano nazwy schedulera do usunięcia.");
         Q_EMIT lastErrorChanged();
         return false;
     }
 
+    QJsonObject schedulers;
+    schedulers.insert(trimmed, QJsonValue());
+
+    QJsonObject root;
+    root.insert(QStringLiteral("schedulers"), schedulers);
+    const QByteArray payload = QJsonDocument(root).toJson(QJsonDocument::Compact);
+
+    m_busy = true;
+    Q_EMIT busyChanged();
+
+    const BridgeResult result = invokeBridge({QStringLiteral("--apply")}, payload);
+
+    m_busy = false;
+    Q_EMIT busyChanged();
+
+    if (!handleBridgeValidation(result))
+        return false;
+
     return refresh();
+}
+
+bool StrategyConfigController::runSchedulerNow(const QString& name)
+{
+    if (!ensureReady())
+        return false;
+
+    const QString trimmed = name.trimmed();
+    if (trimmed.isEmpty()) {
+        m_lastError = tr("Nie wskazano nazwy schedulera do uruchomienia.");
+        Q_EMIT lastErrorChanged();
+        return false;
+    }
+
+    m_busy = true;
+    Q_EMIT busyChanged();
+
+    const BridgeResult result = invokeBridge({QStringLiteral("--run-scheduler"), QStringLiteral("--name"), trimmed});
+
+    m_busy = false;
+    Q_EMIT busyChanged();
+
+    if (!handleBridgeValidation(result))
+        return false;
+
+    if (!m_lastError.isEmpty()) {
+        m_lastError.clear();
+        Q_EMIT lastErrorChanged();
+    }
+    return true;
 }
 
 StrategyConfigController::BridgeResult StrategyConfigController::invokeBridge(const QStringList& args,
@@ -288,6 +345,112 @@ StrategyConfigController::BridgeResult StrategyConfigController::invokeBridge(co
 
     result.ok = true;
     return result;
+}
+
+bool StrategyConfigController::handleBridgeValidation(const BridgeResult& result)
+{
+    if (!result.ok) {
+        if (m_lastError != result.errorMessage) {
+            m_lastError = result.errorMessage;
+            Q_EMIT lastErrorChanged();
+        }
+        return false;
+    }
+
+    auto clearIssues = [this]() {
+        if (!m_validationIssues.isEmpty()) {
+            m_validationIssues.clear();
+            Q_EMIT validationIssuesChanged();
+        }
+    };
+
+    if (result.stdoutData.isEmpty()) {
+        clearIssues();
+        return true;
+    }
+
+    QJsonParseError parseError;
+    const QJsonDocument doc = QJsonDocument::fromJson(result.stdoutData, &parseError);
+    if (parseError.error != QJsonParseError::NoError || !doc.isObject()) {
+        clearIssues();
+        return true;
+    }
+
+    const QJsonObject root = doc.object();
+    const bool ok = root.value(QStringLiteral("ok")).toBool(true);
+
+    QStringList errors;
+    const QJsonValue errorsValue = root.value(QStringLiteral("errors"));
+    if (errorsValue.isArray()) {
+        const auto array = errorsValue.toArray();
+        for (const QJsonValue& entry : array) {
+            if (entry.isString())
+                errors.append(entry.toString());
+        }
+    }
+
+    QStringList issues;
+    const QJsonValue issuesValue = root.value(QStringLiteral("issues"));
+    if (issuesValue.isArray()) {
+        const auto array = issuesValue.toArray();
+        issues.reserve(array.size());
+        for (const QJsonValue& item : array) {
+            if (item.isString()) {
+                issues.append(item.toString());
+                continue;
+            }
+            if (item.isObject()) {
+                const QJsonObject obj = item.toObject();
+                const QString severity = obj.value(QStringLiteral("severity")).toString();
+                const QString entryName = obj.value(QStringLiteral("entry")).toString();
+                const QString field = obj.value(QStringLiteral("field")).toString();
+                const QString message = obj.value(QStringLiteral("message")).toString();
+                const QString suggested = obj.value(QStringLiteral("suggested")).toString();
+
+                QStringList parts;
+                if (!severity.trimmed().isEmpty())
+                    parts.append(QStringLiteral("[%1]").arg(severity.trimmed().toUpper()));
+                QString location;
+                if (!entryName.trimmed().isEmpty() && !field.trimmed().isEmpty())
+                    location = QStringLiteral("%1.%2").arg(entryName.trimmed(), field.trimmed());
+                else if (!entryName.trimmed().isEmpty())
+                    location = entryName.trimmed();
+                else if (!field.trimmed().isEmpty())
+                    location = field.trimmed();
+                if (!location.isEmpty())
+                    parts.append(location);
+                if (!message.trimmed().isEmpty())
+                    parts.append(message.trimmed());
+                if (!suggested.trimmed().isEmpty())
+                    parts.append(QStringLiteral("(sugerowane: %1)").arg(suggested.trimmed()));
+                const QString formatted = parts.join(QStringLiteral(" ")).trimmed();
+                if (!formatted.isEmpty())
+                    issues.append(formatted);
+            }
+        }
+    }
+
+    if (issues != m_validationIssues) {
+        m_validationIssues = issues;
+        Q_EMIT validationIssuesChanged();
+    }
+
+    if (!ok || !errors.isEmpty()) {
+        const QString message = errors.isEmpty() ? tr("Operacja zakończyła się błędami walidacji.")
+                                                : errors.join(QStringLiteral("\n"));
+        if (m_lastError != message) {
+            m_lastError = message;
+            Q_EMIT lastErrorChanged();
+        }
+        return false;
+    }
+
+    if (!m_lastError.isEmpty()) {
+        m_lastError.clear();
+        Q_EMIT lastErrorChanged();
+    }
+
+    return true;
 }
 
 bool StrategyConfigController::parseDump(const QByteArray& payload)

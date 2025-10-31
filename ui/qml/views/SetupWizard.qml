@@ -4,6 +4,7 @@ import QtQuick.Layouts
 import QtQuick.Dialogs
 import "../components" as Components
 import "../views" as Views
+import "../styles" as Styles
 
 Item {
     id: root
@@ -15,6 +16,9 @@ Item {
     property var workbenchController: (typeof workbenchController !== "undefined" ? workbenchController : null)
     property var licenseController: (typeof licenseController !== "undefined" ? licenseController : null)
     property var riskModel: (typeof riskModel !== "undefined" ? riskModel : null)
+    property var wizardController: (typeof configurationWizard !== "undefined" ? configurationWizard : null)
+    property var schedulerItems: strategyController ? strategyController.schedulerList() : []
+    property var securityAlertsModel: (typeof alertsModel !== "undefined" ? alertsModel : null)
     property int currentStep: 0
     property var exchangeOptions: []
     property string selectedExchange: ""
@@ -68,6 +72,8 @@ Item {
     Component.onCompleted: {
         refreshExchangeOptions()
         refreshPersonalization()
+        if (wizardController)
+            wizardController.start("default")
     }
 
     Connections {
@@ -78,14 +84,21 @@ Item {
         function onAlertToastsEnabledChanged() { refreshPersonalization() }
     }
 
+    Connections {
+        target: strategyController
+        ignoreUnknownSignals: true
+        function onSchedulerListChanged() { schedulerItems = strategyController.schedulerList() }
+    }
+
     ColumnLayout {
         anchors.fill: parent
-        spacing: 18
-        padding: 18
+        objectName: "setupWizardRootColumn"
+        spacing: Styles.AppTheme.spacingLg
+        padding: Styles.AppTheme.spacingLg
 
         RowLayout {
             Layout.fillWidth: true
-            spacing: 12
+            spacing: Styles.AppTheme.spacingSm
             Repeater {
                 model: totalSteps
                 delegate: Rectangle {
@@ -93,7 +106,7 @@ Item {
                     Layout.fillWidth: true
                     Layout.preferredHeight: 8
                     radius: 4
-                    color: visited ? palette.highlight : Qt.rgba(1,1,1,0.18)
+                    color: visited ? Styles.AppTheme.accent : Qt.rgba(Styles.AppTheme.surfaceSubtle.r, Styles.AppTheme.surfaceSubtle.g, Styles.AppTheme.surfaceSubtle.b, 0.4)
                 }
             }
         }
@@ -101,7 +114,11 @@ Item {
         Frame {
             Layout.fillWidth: true
             Layout.fillHeight: true
-            background: Rectangle { color: Qt.darker(palette.base, 1.05); radius: 10 }
+            objectName: "setupWizardFrame"
+            background: Rectangle {
+                color: Styles.AppTheme.cardBackground(0.9)
+                radius: Styles.AppTheme.radiusLarge
+            }
 
             StackLayout {
                 id: stepStack
@@ -118,19 +135,24 @@ Item {
                     ColumnLayout {
                         id: licenseColumn
                         width: parent.width
-                        spacing: 12
-                        padding: 16
+                        spacing: Styles.AppTheme.spacingSm
+                        padding: Styles.AppTheme.spacingLg
 
                         Label {
                             text: qsTr("Krok 1 z 4 – aktywacja licencji")
-                            font.pixelSize: 22
+                            font.pixelSize: Styles.AppTheme.fontSizeTitle
+                            font.family: Styles.AppTheme.fontFamily
                             font.bold: true
+                            color: Styles.AppTheme.textPrimary
                         }
 
                         Label {
                             Layout.fillWidth: true
                             wrapMode: Text.WordWrap
                             text: qsTr("Zweryfikuj licencję OEM i fingerprint urządzenia. Bez aktywnej licencji interfejs będzie działać w trybie ograniczonym.")
+                            font.family: Styles.AppTheme.fontFamily
+                            font.pixelSize: Styles.AppTheme.fontSizeBody
+                            color: Styles.AppTheme.textSecondary
                         }
 
                         Components.FirstRunWizard {
@@ -143,7 +165,9 @@ Item {
                         Label {
                             Layout.fillWidth: true
                             wrapMode: Text.WordWrap
-                            color: palette.mid
+                            color: Styles.AppTheme.textSecondary
+                            font.family: Styles.AppTheme.fontFamily
+                            font.pixelSize: Styles.AppTheme.fontSizeBody
                             text: licenseController && licenseController.licenseActive ?
                                   qsTr("Licencja została poprawnie aktywowana. Możesz przejść dalej.") :
                                   qsTr("Po pomyślnej aktywacji licencji przycisk 'Dalej' odblokuje kolejne kroki kreatora.")
@@ -161,24 +185,29 @@ Item {
                     ColumnLayout {
                         id: exchangeColumn
                         width: parent.width
-                        spacing: 12
-                        padding: 16
+                        spacing: Styles.AppTheme.spacingSm
+                        padding: Styles.AppTheme.spacingLg
 
                         Label {
                             text: qsTr("Krok 2 z 4 – konfiguracja giełdy")
-                            font.pixelSize: 22
+                            font.pixelSize: Styles.AppTheme.fontSizeTitle
+                            font.family: Styles.AppTheme.fontFamily
                             font.bold: true
+                            color: Styles.AppTheme.textPrimary
                         }
 
                         Label {
                             Layout.fillWidth: true
                             wrapMode: Text.WordWrap
                             text: qsTr("Wybierz domyślną giełdę i instrument, z którym aplikacja wystartuje po uruchomieniu. Pełne klucze API możesz uzupełnić w panelu bezpieczeństwa.")
+                            font.family: Styles.AppTheme.fontFamily
+                            font.pixelSize: Styles.AppTheme.fontSizeBody
+                            color: Styles.AppTheme.textSecondary
                         }
 
                         RowLayout {
                             Layout.fillWidth: true
-                            spacing: 12
+                            spacing: Styles.AppTheme.spacingSm
 
                             ComboBox {
                                 id: exchangeCombo
@@ -214,27 +243,33 @@ Item {
                                 required property int index
                                 required property var modelData
                                 width: ListView.view.width
-                                padding: 10
+                                padding: Styles.AppTheme.spacingSm
                                 background: Rectangle {
-                                    radius: 8
-                                    color: ListView.isCurrentItem ? palette.highlight : Qt.darker(palette.base, 1.02)
+                                    radius: Styles.AppTheme.radiusMedium
+                                    color: ListView.isCurrentItem ? Styles.AppTheme.accentMuted : Styles.AppTheme.cardBackground(0.85)
                                 }
                                 ColumnLayout {
                                     anchors.fill: parent
-                                    spacing: 4
+                                    spacing: Styles.AppTheme.spacingXs
                                     Label {
                                         text: (modelData.config && modelData.config.symbol) ? modelData.config.symbol : qsTr("Instrument")
-                                        font.pixelSize: 16
+                                        font.pixelSize: Styles.AppTheme.fontSizeSubtitle
+                                        font.family: Styles.AppTheme.fontFamily
                                         font.bold: true
+                                        color: Styles.AppTheme.textPrimary
                                     }
                                     Label {
                                         Layout.fillWidth: true
-                                        color: palette.mid
+                                        color: Styles.AppTheme.textSecondary
+                                        font.family: Styles.AppTheme.fontFamily
+                                        font.pixelSize: Styles.AppTheme.fontSizeBody
                                         text: qsTr("Krok: %1 | Min. notional: %2").arg(modelData.priceStep || "-\u2009?").arg(modelData.minNotional || "—")
                                     }
                                     Label {
                                         Layout.fillWidth: true
-                                        color: palette.mid
+                                        color: Styles.AppTheme.textSecondary
+                                        font.family: Styles.AppTheme.fontFamily
+                                        font.pixelSize: Styles.AppTheme.fontSizeBody
                                         text: qsTr("Venue: %1").arg(modelData.config && modelData.config.venueSymbol ? modelData.config.venueSymbol : qsTr("brak"))
                                     }
                                 }
@@ -250,7 +285,7 @@ Item {
 
                         RowLayout {
                             Layout.fillWidth: true
-                            spacing: 12
+                            spacing: Styles.AppTheme.spacingSm
                             Button {
                                 text: qsTr("Ustaw jako domyślny")
                                 enabled: selectedInstrumentIndex >= 0
@@ -263,7 +298,9 @@ Item {
                             Item { Layout.fillWidth: true }
                             Label {
                                 visible: selectedInstrumentIndex >= 0
-                                color: palette.mid
+                                color: Styles.AppTheme.textSecondary
+                                font.family: Styles.AppTheme.fontFamily
+                                font.pixelSize: Styles.AppTheme.fontSizeBody
                                 text: selectedInstrumentIndex >= 0 && instruments[selectedInstrumentIndex] ?
                                       qsTr("Wybrany instrument: %1").arg(instruments[selectedInstrumentIndex].config.symbol) : ""
                             }
@@ -281,19 +318,24 @@ Item {
                     ColumnLayout {
                         id: strategyColumn
                         width: parent.width
-                        spacing: 12
-                        padding: 16
+                        spacing: Styles.AppTheme.spacingSm
+                        padding: Styles.AppTheme.spacingLg
 
                         Label {
                             text: qsTr("Krok 3 z 4 – strategie handlowe")
-                            font.pixelSize: 22
+                            font.pixelSize: Styles.AppTheme.fontSizeTitle
+                            font.family: Styles.AppTheme.fontFamily
                             font.bold: true
+                            color: Styles.AppTheme.textPrimary
                         }
 
                         Label {
                             Layout.fillWidth: true
                             wrapMode: Text.WordWrap
                             text: qsTr("Możesz szybko przejrzeć katalog strategii i dostosować parametry jeszcze przed uruchomieniem bota.")
+                            font.family: Styles.AppTheme.fontFamily
+                            font.pixelSize: Styles.AppTheme.fontSizeBody
+                            color: Styles.AppTheme.textSecondary
                         }
 
                         Views.StrategyConfigurator {
@@ -306,10 +348,93 @@ Item {
                             licenseController: root.licenseController
                         }
 
+                        GroupBox {
+                            Layout.fillWidth: true
+                            title: qsTr("Harmonogramy automatyzacji")
+                            background: Rectangle {
+                                radius: Styles.AppTheme.radiusLarge
+                                color: Styles.AppTheme.cardBackground(0.85)
+                            }
+
+                            ColumnLayout {
+                                anchors.fill: parent
+                                spacing: Styles.AppTheme.spacingSm
+
+                                Label {
+                                    Layout.fillWidth: true
+                                    wrapMode: Text.WordWrap
+                                    text: qsTr("Zarządzaj harmonogramami wykonania strategii – możesz je uruchamiać ręcznie oraz usuwać bezpośrednio z kreatora.")
+                                    font.family: Styles.AppTheme.fontFamily
+                                    font.pixelSize: Styles.AppTheme.fontSizeBody
+                                    color: Styles.AppTheme.textSecondary
+                                }
+
+                                Repeater {
+                                    model: schedulerItems || []
+                                    delegate: Frame {
+                                        Layout.fillWidth: true
+                                        background: Rectangle {
+                                            radius: Styles.AppTheme.radiusMedium
+                                            color: Styles.AppTheme.cardBackground(0.9)
+                                        }
+                                        ColumnLayout {
+                                            anchors.fill: parent
+                                            anchors.margins: Styles.AppTheme.spacingSm
+                                            spacing: Styles.AppTheme.spacingXs
+                                            Label {
+                                                text: (modelData.name || qsTr("harmonogram")) + (modelData.enabled === false ? qsTr(" (wyłączony)") : "")
+                                                font.bold: true
+                                                font.family: Styles.AppTheme.fontFamily
+                                                font.pixelSize: Styles.AppTheme.fontSizeBody
+                                                color: Styles.AppTheme.textPrimary
+                                            }
+                                            Label {
+                                                Layout.fillWidth: true
+                                                wrapMode: Text.WordWrap
+                                                color: Styles.AppTheme.textSecondary
+                                                font.family: Styles.AppTheme.fontFamily
+                                                font.pixelSize: Styles.AppTheme.fontSizeBody
+                                                text: modelData.cron || modelData.expression || qsTr("Brak zdefiniowanej reguły.")
+                                            }
+                                            RowLayout {
+                                                Layout.fillWidth: true
+                                                spacing: Styles.AppTheme.spacingSm
+                                                Label {
+                                                    text: modelData.next_run || modelData.nextRun || ""
+                                                    color: Styles.AppTheme.textSecondary
+                                                    font.family: Styles.AppTheme.fontFamily
+                                                    font.pixelSize: Styles.AppTheme.fontSizeBody
+                                                }
+                                                Item { Layout.fillWidth: true }
+                                                Button {
+                                                    text: qsTr("Uruchom teraz")
+                                                    enabled: strategyController && !strategyController.busy
+                                                    onClicked: strategyController.runSchedulerNow(modelData.name || "")
+                                                }
+                                                Button {
+                                                    text: qsTr("Usuń")
+                                                    enabled: strategyController && !strategyController.busy
+                                                    onClicked: strategyController.removeSchedulerConfig(modelData.name || "")
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                Button {
+                                    text: qsTr("Odśwież harmonogramy")
+                                    enabled: strategyController && !strategyController.busy
+                                    onClicked: strategyController.refresh()
+                                }
+                            }
+                        }
+
                         Label {
                             Layout.fillWidth: true
                             wrapMode: Text.WordWrap
-                            color: palette.mid
+                            color: Styles.AppTheme.textSecondary
+                            font.family: Styles.AppTheme.fontFamily
+                            font.pixelSize: Styles.AppTheme.fontSizeBody
                             text: qsTr("Zmiany zapisują się automatycznie po kliknięciu przycisków w konfiguratorze. Możesz wrócić do tego kroku w każdej chwili.")
                         }
                     }
@@ -325,25 +450,35 @@ Item {
                     ColumnLayout {
                         id: personalizationColumn
                         width: parent.width
-                        spacing: 12
-                        padding: 16
+                        spacing: Styles.AppTheme.spacingSm
+                        padding: Styles.AppTheme.spacingLg
 
                         Label {
                             text: qsTr("Krok 4 z 4 – personalizacja interfejsu")
-                            font.pixelSize: 22
+                            font.pixelSize: Styles.AppTheme.fontSizeTitle
+                            font.family: Styles.AppTheme.fontFamily
                             font.bold: true
+                            color: Styles.AppTheme.textPrimary
                         }
 
                         Label {
                             Layout.fillWidth: true
                             wrapMode: Text.WordWrap
                             text: qsTr("Dostosuj wygląd aplikacji do swoich preferencji. Ustawienia zostaną zapisane lokalnie w pliku config/ui_prefs.json.")
+                            font.family: Styles.AppTheme.fontFamily
+                            font.pixelSize: Styles.AppTheme.fontSizeBody
+                            color: Styles.AppTheme.textSecondary
                         }
 
                         RowLayout {
                             Layout.fillWidth: true
-                            spacing: 12
-                            Label { text: qsTr("Motyw kolorystyczny") }
+                            spacing: Styles.AppTheme.spacingSm
+                            Label {
+                                text: qsTr("Motyw kolorystyczny")
+                                font.family: Styles.AppTheme.fontFamily
+                                font.pixelSize: Styles.AppTheme.fontSizeBody
+                                color: Styles.AppTheme.textPrimary
+                            }
                             ComboBox {
                                 id: themeCombo
                                 objectName: "setupWizardThemeCombo"
@@ -363,8 +498,13 @@ Item {
 
                         RowLayout {
                             Layout.fillWidth: true
-                            spacing: 12
-                            Label { text: qsTr("Układ paneli") }
+                            spacing: Styles.AppTheme.spacingSm
+                            Label {
+                                text: qsTr("Układ paneli")
+                                font.family: Styles.AppTheme.fontFamily
+                                font.pixelSize: Styles.AppTheme.fontSizeBody
+                                color: Styles.AppTheme.textPrimary
+                            }
                             ComboBox {
                                 id: layoutCombo
                                 objectName: "setupWizardLayoutCombo"
@@ -384,10 +524,13 @@ Item {
 
                         RowLayout {
                             Layout.fillWidth: true
-                            spacing: 12
+                            spacing: Styles.AppTheme.spacingSm
                             Label {
                                 text: qsTr("Powiadomienia w postaci toasts")
                                 Layout.fillWidth: true
+                                font.family: Styles.AppTheme.fontFamily
+                                font.pixelSize: Styles.AppTheme.fontSizeBody
+                                color: Styles.AppTheme.textPrimary
                             }
                             Switch {
                                 id: toastSwitch
@@ -400,10 +543,62 @@ Item {
                             }
                         }
 
+                        GroupBox {
+                            Layout.fillWidth: true
+                            title: qsTr("Alerty bezpieczeństwa")
+                            background: Rectangle {
+                                radius: Styles.AppTheme.radiusLarge
+                                color: Styles.AppTheme.cardBackground(0.85)
+                            }
+
+                            ListView {
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: 160
+                                clip: true
+                                model: securityAlertsModel
+                                delegate: Frame {
+                                    width: ListView.view.width
+                                    background: Rectangle {
+                                        radius: Styles.AppTheme.radiusMedium
+                                        color: Styles.AppTheme.cardBackground(0.9)
+                                    }
+                                    ColumnLayout {
+                                        anchors.fill: parent
+                                        anchors.margins: Styles.AppTheme.spacingSm
+                                        spacing: Styles.AppTheme.spacingXs
+                                        Label {
+                                            text: model.title || qsTr("Alert")
+                                            font.bold: true
+                                            font.family: Styles.AppTheme.fontFamily
+                                            font.pixelSize: Styles.AppTheme.fontSizeBody
+                                            color: model.severity === 2 ? Styles.AppTheme.negative : (model.severity === 1 ? Styles.AppTheme.warning : Styles.AppTheme.textPrimary)
+                                        }
+                                        Label {
+                                            Layout.fillWidth: true
+                                            wrapMode: Text.WordWrap
+                                            text: model.description || ""
+                                            font.family: Styles.AppTheme.fontFamily
+                                            font.pixelSize: Styles.AppTheme.fontSizeBody
+                                            color: Styles.AppTheme.textSecondary
+                                        }
+                                        Label {
+                                            text: Qt.formatDateTime(model.timestamp, Qt.ISODate)
+                                            font.family: Styles.AppTheme.fontFamily
+                                            font.pixelSize: Styles.AppTheme.fontSizeCaption
+                                            color: Styles.AppTheme.textSecondary
+                                        }
+                                    }
+                                }
+                                ScrollBar.vertical: ScrollBar {}
+                            }
+                        }
+
                         Label {
                             Layout.fillWidth: true
                             wrapMode: Text.WordWrap
-                            color: palette.mid
+                            color: Styles.AppTheme.textSecondary
+                            font.family: Styles.AppTheme.fontFamily
+                            font.pixelSize: Styles.AppTheme.fontSizeBody
                             text: qsTr("Zmiany są zapisywane automatycznie i obowiązują dla całego interfejsu. Możesz je później zmienić w ustawieniach." )
                         }
                     }
@@ -413,7 +608,7 @@ Item {
 
         RowLayout {
             Layout.fillWidth: true
-            spacing: 12
+            spacing: Styles.AppTheme.spacingSm
 
             Button {
                 text: qsTr("Wstecz")

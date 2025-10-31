@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import QtQuick.Dialogs
+import "../components" as Components
 
 Item {
     id: root
@@ -14,8 +15,14 @@ Item {
     property string statusError: ""
     property string exportFormat: "yaml"
     property var selectedPreset: null
+    property var marketplaceControllerRef: (typeof marketplaceController !== "undefined" ? marketplaceController : null)
+    property var updateController: (typeof updateManager !== "undefined" ? updateManager : null)
+    property string selectedCategory: ""
+    property var categories: []
 
     function resolvedController() {
+        if (marketplaceControllerRef)
+            return marketplaceControllerRef
         if (root.appController)
             return root.appController
         if (typeof appController !== "undefined")
@@ -24,25 +31,48 @@ Item {
     }
 
     function refreshPresets() {
-        const ctrl = resolvedController()
-        if (!ctrl || !ctrl.marketplaceListPresets) {
+        const ctrl = marketplaceControllerRef
+        if (!ctrl) {
             statusError = qsTr("Brak połączenia z usługą marketplace.")
             statusMessage = ""
             presets = []
             return
         }
         busy = true
-        try {
-            const result = ctrl.marketplaceListPresets()
-            presets = Array.isArray(result) ? result : []
+        if (ctrl.refreshPresets)
+            ctrl.refreshPresets()
+        categories = buildCategoryList(ctrl.categories || [])
+        if (categories.length > 0)
+            selectedCategory = categories[Math.max(0, categorySelector.currentIndex)].value
+        updatePresetList()
+        statusError = ctrl.lastError || ""
+        if (!statusError || statusError.length === 0)
             statusMessage = qsTr("Załadowano %1 presetów").arg(presets.length)
-            statusError = ""
-        } catch (error) {
-            statusError = error ? error.toString() : qsTr("Nieznany błąd podczas pobierania presetów.")
+        else
             statusMessage = ""
-            presets = []
-        }
         busy = false
+    }
+
+    function updatePresetList() {
+        const ctrl = marketplaceControllerRef
+        if (!ctrl) {
+            presets = []
+            return
+        }
+        if (!selectedCategory || selectedCategory.length === 0 || !ctrl.presetsForCategory) {
+            presets = ctrl.presets || []
+        } else {
+            presets = ctrl.presetsForCategory(selectedCategory)
+        }
+    }
+
+    function buildCategoryList(source) {
+        var list = [{ display: qsTr("Wszystkie kategorie"), value: "" }]
+        if (source && source.length) {
+            for (var i = 0; i < source.length; ++i)
+                list.push({ display: source[i], value: source[i] })
+        }
+        return list
     }
 
     function applyBackendResult(result, successMessage, refreshAfterSuccess) {
@@ -160,6 +190,18 @@ Item {
 
     Component.onCompleted: refreshPresets()
 
+    Connections {
+        target: marketplaceControllerRef
+        ignoreUnknownSignals: true
+        function onPresetsChanged() { updatePresetList() }
+        function onCategoriesChanged() {
+            categories = marketplaceControllerRef ? buildCategoryList(marketplaceControllerRef.categories || []) : buildCategoryList([])
+            if (categorySelector.currentIndex < 0)
+                categorySelector.currentIndex = 0
+        }
+        function onLastErrorChanged() { statusError = marketplaceControllerRef && marketplaceControllerRef.lastError ? marketplaceControllerRef.lastError : "" }
+    }
+
     ColumnLayout {
         anchors.fill: parent
         spacing: 12
@@ -175,6 +217,26 @@ Item {
             }
 
             Item { Layout.fillWidth: true }
+
+            ComboBox {
+                id: categorySelector
+                Layout.preferredWidth: 200
+                model: categories
+                textRole: "display"
+                valueRole: "value"
+                editable: false
+                onActivated: {
+                    selectedCategory = categorySelector.currentValue
+                    updatePresetList()
+                }
+                onCurrentIndexChanged: {
+                    if (currentIndex >= 0) {
+                        selectedCategory = categorySelector.currentValue
+                        updatePresetList()
+                    }
+                }
+                Component.onCompleted: currentIndex = 0
+            }
 
             ComboBox {
                 id: formatSelector
@@ -286,10 +348,15 @@ Item {
                                         anchors.centerIn: parent
                                         text: modelData
                                         font.pixelSize: 12
-                                    }
-                                }
-                            }
-                        }
+            }
+        }
+
+        Components.UpdateManagerPanel {
+            Layout.fillWidth: true
+            manager: updateController
+        }
+    }
+}
 
                         Label {
                             visible: preset.signatureVerified === false
@@ -298,11 +365,26 @@ Item {
                             font.bold: true
                         }
 
-                        Label {
+                        ColumnLayout {
                             visible: preset.issues && preset.issues.length > 0
-                            text: qsTr("Problemy: %1").arg((preset.issues || []).join(", "))
-                            color: "#c0392b"
-                            wrapMode: Text.WordWrap
+                            Layout.fillWidth: true
+                            spacing: 4
+
+                            Label {
+                                text: qsTr("Problemy walidacji:")
+                                color: "#c0392b"
+                                font.bold: true
+                            }
+
+                            Repeater {
+                                model: preset.issues || []
+                                delegate: Label {
+                                    Layout.fillWidth: true
+                                    text: String.fromUtf8("\u2022 ") + (typeof modelData === "string" ? modelData : JSON.stringify(modelData))
+                                    color: "#c0392b"
+                                    wrapMode: Text.WordWrap
+                                }
+                            }
                         }
 
                         RowLayout {

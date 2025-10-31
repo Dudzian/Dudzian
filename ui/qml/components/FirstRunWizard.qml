@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import QtQuick.Dialogs
+import "../styles" as Styles
 
 FocusScope {
     id: wizard
@@ -26,28 +27,32 @@ FocusScope {
 
     Rectangle {
         anchors.fill: parent
-        color: Qt.rgba(0, 0, 0, 0.76)
+        color: Styles.AppTheme.overlayBackground()
     }
 
     Pane {
         id: card
+        objectName: "firstRunWizardCard"
         anchors.centerIn: parent
         width: Math.min(parent.width - 80, 720)
-        padding: 24
+        padding: Styles.AppTheme.spacingXl
         background: Rectangle {
-            color: Qt.darker(card.palette.window, 1.05)
-            radius: 14
-            border.color: Qt.rgba(0.2, 0.6, 0.9, 0.4)
+            color: Styles.AppTheme.cardBackground(0.95)
+            radius: Styles.AppTheme.radiusLarge
+            border.color: Styles.AppTheme.accentMuted
         }
 
         ColumnLayout {
             anchors.fill: parent
-            spacing: 18
+            objectName: "firstRunWizardColumn"
+            spacing: Styles.AppTheme.spacingLg
 
             Label {
                 text: qsTr("Kreator pierwszego uruchomienia")
-                font.pixelSize: 24
+                font.pixelSize: Styles.AppTheme.fontSizeHeadline
+                font.family: Styles.AppTheme.fontFamily
                 font.bold: true
+                color: Styles.AppTheme.textPrimary
             }
 
             Label {
@@ -58,10 +63,14 @@ FocusScope {
                       : step === 1
                         ? qsTr("Zaimportuj licencję OEM zgodną z fingerprintem urządzenia.")
                         : qsTr("Licencja aktywowana – możesz korzystać z aplikacji.")
+                font.family: Styles.AppTheme.fontFamily
+                font.pixelSize: Styles.AppTheme.fontSizeBody
+                color: Styles.AppTheme.textSecondary
             }
 
             StackLayout {
                 id: stack
+                objectName: "firstRunWizardSteps"
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 currentIndex: step
@@ -70,12 +79,14 @@ FocusScope {
                 Item {
                     ColumnLayout {
                         anchors.fill: parent
-                        spacing: 12
+                        spacing: Styles.AppTheme.spacingSm
 
                         Label {
                             text: qsTr("Fingerprint")
-                            font.pixelSize: 18
+                            font.pixelSize: Styles.AppTheme.fontSizeTitle
+                            font.family: Styles.AppTheme.fontFamily
                             font.bold: true
+                            color: Styles.AppTheme.textPrimary
                         }
 
                         TextArea {
@@ -87,11 +98,17 @@ FocusScope {
                             text: activationController && activationController.fingerprint
                                   ? JSON.stringify(activationController.fingerprint, null, 2)
                                   : qsTr("Brak danych fingerprintu")
+                            font.family: Styles.AppTheme.monoFontFamily
+                            color: Styles.AppTheme.textPrimary
+                            background: Rectangle {
+                                radius: Styles.AppTheme.radiusSmall
+                                color: Styles.AppTheme.surfaceSubtle
+                            }
                         }
 
                         RowLayout {
                             Layout.fillWidth: true
-                            spacing: 8
+                            spacing: Styles.AppTheme.spacingSm
 
                             Button {
                                 text: qsTr("Kopiuj do schowka")
@@ -124,21 +141,34 @@ FocusScope {
                             delegate: Frame {
                                 required property var modelData
                                 Layout.fillWidth: true
-                                padding: 8
+                                padding: Styles.AppTheme.spacingSm
+                                background: Rectangle {
+                                    radius: Styles.AppTheme.radiusSmall
+                                    color: Styles.AppTheme.cardBackground(0.85)
+                                }
 
                                 ColumnLayout {
                                     anchors.fill: parent
-                                    spacing: 2
-                                    Label { text: modelData.name || qsTr("Komponent") }
+                                    spacing: Styles.AppTheme.spacingXs
+                                    Label {
+                                        text: modelData.name || qsTr("Komponent")
+                                        font.family: Styles.AppTheme.fontFamily
+                                        font.pixelSize: Styles.AppTheme.fontSizeBody
+                                        color: Styles.AppTheme.textPrimary
+                                    }
                                     Label {
                                         visible: !!modelData.normalized
                                         text: qsTr("Normalized: %1").arg(modelData.normalized)
-                                        color: palette.mid
+                                        font.family: Styles.AppTheme.fontFamily
+                                        font.pixelSize: Styles.AppTheme.fontSizeCaption
+                                        color: Styles.AppTheme.textTertiary
                                     }
                                     Label {
                                         visible: !!modelData.digest
                                         text: qsTr("Digest: %1").arg(modelData.digest)
-                                        font.family: "monospace"
+                                        font.family: Styles.AppTheme.monoFontFamily
+                                        font.pixelSize: Styles.AppTheme.fontSizeCaption
+                                        color: Styles.AppTheme.textSecondary
                                     }
                                 }
                             }
@@ -150,17 +180,19 @@ FocusScope {
                 Item {
                     ColumnLayout {
                         anchors.fill: parent
-                        spacing: 12
+                        spacing: Styles.AppTheme.spacingSm
 
                         Label {
                             text: qsTr("Wczytaj licencję OEM")
-                            font.pixelSize: 18
+                            font.pixelSize: Styles.AppTheme.fontSizeTitle
+                            font.family: Styles.AppTheme.fontFamily
                             font.bold: true
+                            color: Styles.AppTheme.textPrimary
                         }
 
                         RowLayout {
                             Layout.fillWidth: true
-                            spacing: 8
+                            spacing: Styles.AppTheme.spacingSm
 
                             Button {
                                 text: qsTr("Wybierz plik")
@@ -198,6 +230,12 @@ FocusScope {
                             Layout.preferredHeight: 140
                             wrapMode: TextEdit.Wrap
                             placeholderText: qsTr("Wklej payload licencji JSON lub base64")
+                            font.family: Styles.AppTheme.monoFontFamily
+                            color: Styles.AppTheme.textPrimary
+                            background: Rectangle {
+                                radius: Styles.AppTheme.radiusSmall
+                                color: Styles.AppTheme.surfaceSubtle
+                            }
                         }
 
                         Label {
@@ -205,9 +243,11 @@ FocusScope {
                             wrapMode: Text.WordWrap
                             visible: licenseController.statusMessage.length > 0
                             text: licenseController.statusMessage
+                            font.family: Styles.AppTheme.fontFamily
+                            font.pixelSize: Styles.AppTheme.fontSizeBody
                             color: licenseController.statusIsError
-                                   ? Qt.rgba(0.92, 0.36, 0.32, 1)
-                                   : Qt.rgba(0.36, 0.72, 0.46, 1)
+                                   ? Styles.AppTheme.negative
+                                   : Styles.AppTheme.positive
                         }
 
                         Label {
@@ -217,6 +257,9 @@ FocusScope {
                             text: qsTr("Aktywowano edycję %1 – utrzymanie do %2")
                                   .arg(licenseController.licenseEdition)
                                   .arg(licenseController.licenseMaintenanceUntil || qsTr("bez terminu"))
+                            font.family: Styles.AppTheme.fontFamily
+                            font.pixelSize: Styles.AppTheme.fontSizeBody
+                            color: Styles.AppTheme.textSecondary
                         }
                     }
                 }
@@ -225,23 +268,30 @@ FocusScope {
                 Item {
                     ColumnLayout {
                         anchors.centerIn: parent
-                        spacing: 12
+                        spacing: Styles.AppTheme.spacingSm
 
                         Label {
                             text: qsTr("Licencja aktywna")
-                            font.pixelSize: 22
+                            font.pixelSize: Styles.AppTheme.fontSizeTitle
+                            font.family: Styles.AppTheme.fontFamily
                             font.bold: true
+                            color: Styles.AppTheme.textPrimary
                         }
 
                         Label {
                             text: qsTr("Fingerprint: %1").arg(licenseController.licenseFingerprint)
-                            color: palette.mid
+                            font.family: Styles.AppTheme.fontFamily
+                            font.pixelSize: Styles.AppTheme.fontSizeBody
+                            color: Styles.AppTheme.textSecondary
                         }
 
                         Label {
                             text: qsTr("Edycja: %1 (utrzymanie do %2)")
                                   .arg(licenseController.licenseEdition)
                                   .arg(licenseController.licenseMaintenanceUntil || qsTr("bez terminu"))
+                            font.family: Styles.AppTheme.fontFamily
+                            font.pixelSize: Styles.AppTheme.fontSizeBody
+                            color: Styles.AppTheme.textSecondary
                         }
                     }
                 }
@@ -249,7 +299,7 @@ FocusScope {
 
             RowLayout {
                 Layout.fillWidth: true
-                spacing: 12
+                spacing: Styles.AppTheme.spacingSm
 
                 Button {
                     text: qsTr("Wstecz")

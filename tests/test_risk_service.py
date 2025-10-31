@@ -3,8 +3,6 @@ import hashlib
 import pytest
 import threading
 
-import pytest
-
 from bot_core.exchanges.base import AccountSnapshot, OrderRequest
 from bot_core.risk.engine import ThresholdRiskEngine
 from bot_core.risk.events import RiskDecisionLog
@@ -19,6 +17,9 @@ from bot_core.runtime.risk_service import (
     RiskSnapshotPublisher,
     RiskSnapshotStore,
 )
+
+
+pytestmark = pytest.mark.requires_trading_stubs
 
 
 def _snapshot(equity: float) -> AccountSnapshot:

@@ -11,6 +11,10 @@ from bot_core.strategies.daily_trend import (
     DailyTrendMomentumSettings,
     DailyTrendMomentumStrategy,
 )
+from bot_core.strategies.dca import (
+    DollarCostAveragingSettings,
+    DollarCostAveragingStrategy,
+)
 from bot_core.strategies.catalog import (
     DEFAULT_STRATEGY_CATALOG,
     PresetLicenseState,
@@ -43,12 +47,21 @@ from bot_core.strategies.futures_spread import (
     FuturesSpreadStrategy,
 )
 from bot_core.strategies.grid import GridTradingSettings, GridTradingStrategy
+from bot_core.strategies.market_making import (
+    MarketMakingSettings,
+    MarketMakingStrategy,
+)
 from bot_core.strategies.mean_reversion import MeanReversionSettings, MeanReversionStrategy
 from bot_core.strategies.options import OptionsIncomeSettings, OptionsIncomeStrategy
 from bot_core.strategies.scalping import ScalpingSettings, ScalpingStrategy
 from bot_core.strategies.statistical_arbitrage import (
     StatisticalArbitrageSettings,
     StatisticalArbitrageStrategy,
+)
+from bot_core.strategies.testing import (
+    ParameterTestResult,
+    StrategyParameterTestReport,
+    StrategyParameterTester,
 )
 from bot_core.strategies.volatility_target import (
     VolatilityTargetSettings,
@@ -64,6 +77,8 @@ __all__ = [
     "DailyTrendMomentumStrategy",
     "DayTradingSettings",
     "DayTradingStrategy",
+    "DollarCostAveragingSettings",
+    "DollarCostAveragingStrategy",
     "StrategyCatalog",
     "StrategyDefinition",
     "StrategyPresetWizard",
@@ -71,6 +86,9 @@ __all__ = [
     "StrategyPresetProfile",
     "PresetLicenseStatus",
     "PresetLicenseState",
+    "StrategyParameterTester",
+    "StrategyParameterTestReport",
+    "ParameterTestResult",
     "StrategyRegimeWorkflow",
     "ActivationHistoryStats",
     "ActivationTransitionStats",
@@ -81,6 +99,8 @@ __all__ = [
     "DEFAULT_STRATEGY_CATALOG",
     "GridTradingSettings",
     "GridTradingStrategy",
+    "MarketMakingSettings",
+    "MarketMakingStrategy",
     "MeanReversionSettings",
     "MeanReversionStrategy",
     "OptionsIncomeSettings",

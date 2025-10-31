@@ -38,6 +38,7 @@ filterwarnings = [
 markers = [
   "timeout: oznaczenie testów z ograniczeniem czasu wykonywania",
   "integration: testy wymagające środowisk demo/sandbox lub zewnętrznych zasobów",
+  "requires_trading_stubs: test wymaga wygenerowanych stubów trading_pb2",
 ]
 
 [project]

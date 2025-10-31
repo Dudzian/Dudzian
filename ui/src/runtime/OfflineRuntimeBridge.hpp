@@ -1,24 +1,16 @@
 #pragma once
 
 #include <QObject>
-#include <QNetworkAccessManager>
-#include <QNetworkRequest>
-#include <QTimer>
 #include <QUrl>
-#include <QUrlQuery>
 #include <QVariantMap>
-#include <functional>
-
-#include <QJsonArray>
-#include <QJsonDocument>
-#include <QJsonObject>
+#include <memory>
 
 #include "grpc/TradingClient.hpp"
 #include "models/OhlcvListModel.hpp"
 #include "models/RiskTypes.hpp"
 #include "utils/PerformanceGuard.hpp"
 
-class QNetworkReply;
+class OfflineRuntimeService;
 
 class OfflineRuntimeBridge : public QObject {
     Q_OBJECT
@@ -32,6 +24,9 @@ public:
     void setHistoryLimit(int limit);
     void setAutoRunEnabled(bool enabled);
     void setStrategyConfig(const QVariantMap& config);
+    void setDatasetPath(const QString& path);
+    void setStreamSnapshotPath(const QString& path);
+    void setStreamingEnabled(bool enabled);
 
 public slots:
     void start();
@@ -47,35 +42,20 @@ signals:
     void performanceGuardUpdated(const PerformanceGuard& guard);
     void automationStateChanged(bool running);
 
-private slots:
-    void handlePollTick();
-
 private:
-    void fetchStatus();
-    void fetchHistory();
-    void fetchRisk();
-    void fetchPerformanceGuard();
-    void pushStrategyConfig();
+    void ensureService();
+    void configureService();
     void applyConnectionState(const QString& state);
-    void handleAutomationPayload(const QJsonObject& object);
 
-    QList<OhlcvPoint> parseCandles(const QJsonArray& array) const;
-    RiskSnapshotData parseRisk(const QJsonObject& object) const;
-    PerformanceGuard parseGuard(const QJsonObject& object) const;
-
-    void postJson(const QString& path, const QJsonObject& payload, std::function<void(const QJsonObject&)> onSuccess);
-    void getJson(const QString& path, const QUrlQuery& query, std::function<void(const QJsonObject&)> onSuccess);
-    void requestJson(const QNetworkRequest& request, std::function<void(const QJsonDocument&)> callback);
-    QUrl buildUrl(const QString& path, const QUrlQuery& query = {}) const;
-
-    QNetworkAccessManager m_network;
-    QTimer                m_pollTimer;
-    QUrl                  m_endpoint;
-    TradingClient::InstrumentConfig m_instrument{};
-    QVariantMap           m_strategyConfig;
-    int                   m_historyLimit = 500;
-    bool                  m_running = false;
-    bool                  m_autoRunEnabled = false;
-    bool                  m_automationRunning = false;
-    QString               m_connectionState;
+    std::unique_ptr<OfflineRuntimeService> m_service;
+    QUrl                                   m_endpoint;
+    TradingClient::InstrumentConfig        m_instrument{};
+    QVariantMap                            m_strategyConfig;
+    QString                                m_datasetPath;
+    QString                                m_streamSnapshotPath;
+    int                                    m_historyLimit = 500;
+    bool                                   m_running = false;
+    bool                                   m_autoRunEnabled = false;
+    bool                                   m_streamingEnabled = false;
+    QString                                m_connectionState;
 };

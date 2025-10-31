@@ -4,6 +4,7 @@
 #include <QVariant>
 #include <QProcess>
 #include <QHash>
+#include <QStringList>
 
 #include <memory>
 
@@ -11,6 +12,7 @@ class StrategyConfigController : public QObject {
     Q_OBJECT
     Q_PROPERTY(bool busy READ busy NOTIFY busyChanged)
     Q_PROPERTY(QString lastError READ lastError NOTIFY lastErrorChanged)
+    Q_PROPERTY(QStringList validationIssues READ validationIssues NOTIFY validationIssuesChanged)
 
 public:
     explicit StrategyConfigController(QObject* parent = nullptr);
@@ -22,6 +24,7 @@ public:
 
     bool busy() const { return m_busy; }
     QString lastError() const { return m_lastError; }
+    QStringList validationIssues() const { return m_validationIssues; }
 
     Q_INVOKABLE bool refresh();
     Q_INVOKABLE QVariantMap decisionConfigSnapshot() const;
@@ -29,10 +32,13 @@ public:
     Q_INVOKABLE QVariantMap schedulerConfigSnapshot(const QString& name) const;
     Q_INVOKABLE bool saveDecisionConfig(const QVariantMap& config);
     Q_INVOKABLE bool saveSchedulerConfig(const QString& name, const QVariantMap& config);
+    Q_INVOKABLE bool removeSchedulerConfig(const QString& name);
+    Q_INVOKABLE bool runSchedulerNow(const QString& name);
 
 signals:
     void busyChanged();
     void lastErrorChanged();
+    void validationIssuesChanged();
     void decisionConfigChanged();
     void schedulerListChanged();
 
@@ -44,6 +50,7 @@ private:
     };
 
     BridgeResult invokeBridge(const QStringList& args, const QByteArray& stdinData = QByteArray()) const;
+    bool handleBridgeValidation(const BridgeResult& result);
     bool parseDump(const QByteArray& payload);
     bool ensureReady() const;
 
@@ -57,4 +64,5 @@ private:
 
     bool m_busy = false;
     QString m_lastError;
+    QStringList m_validationIssues;
 };

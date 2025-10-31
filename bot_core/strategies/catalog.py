@@ -8,12 +8,23 @@ from datetime import datetime, timezone
 from enum import Enum
 import logging
 from pathlib import Path
-from typing import Any, Mapping, MutableMapping, Protocol, Sequence
+from typing import TYPE_CHECKING, Any, Mapping, MutableMapping, Protocol, Sequence
 
-from bot_core.marketplace import PresetSignatureVerification, verify_preset_signature
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
+
+from bot_core.marketplace import (
+    PresetDocument,
+    PresetSignatureVerification,
+    verify_preset_signature,
+)
 from bot_core.security.hwid import HwIdProvider, HwIdProviderError
 from bot_core.security.guards import get_capability_guard
 from bot_core.security.signing import build_hmac_signature
+
+if TYPE_CHECKING:
+    from bot_core.backtest.walk_forward import TransactionCostModel
+    from bot_core.marketplace.signed import MarketplaceSyncResult
+    from .testing import StrategyParameterTester
 
 from .base import StrategyEngine
 from .cross_exchange_arbitrage import (
@@ -26,8 +37,10 @@ from .cross_exchange_hedge import (
 )
 from .day_trading import DayTradingSettings, DayTradingStrategy
 from .daily_trend import DailyTrendMomentumSettings, DailyTrendMomentumStrategy
+from .dca import DollarCostAveragingSettings, DollarCostAveragingStrategy
 from .futures_spread import FuturesSpreadSettings, FuturesSpreadStrategy
 from .grid import GridTradingSettings, GridTradingStrategy
+from .market_making import MarketMakingSettings, MarketMakingStrategy
 from .mean_reversion import MeanReversionSettings, MeanReversionStrategy
 from .options import OptionsIncomeSettings, OptionsIncomeStrategy
 from .scalping import ScalpingSettings, ScalpingStrategy
@@ -117,6 +130,131 @@ def _match_fingerprint(candidate: str, pattern: str) -> bool:
         return normalized_candidate.startswith(prefix)
     return normalized_candidate == normalized_pattern
 
+
+PRESET_SCHEMA_DOC = """Opis wymaganej struktury presetów strategii.
+
+Każdy preset musi definiować co najmniej następujące pola:
+
+* ``name`` – przyjazna nazwa presetu, prezentowana w UI.
+* ``metadata`` – słownik metadanych zawierający ``id`` lub ``preset_id`` (używany
+  do identyfikacji presetu) oraz opcjonalnie ``profile``/``preset_profile``
+  określające profil (np. ``grid``, ``dca``).
+* ``strategies`` – lista co najmniej jednej strategii. Każdy wpis wymaga pól
+  ``engine`` (klucz zarejestrowanego silnika) oraz ``parameters`` (słownik
+  parametrów przekazywanych do silnika). Dodatkowe pola jak ``license_tier``,
+  ``risk_classes``, ``required_data`` czy ``tags`` są opcjonalne, ale muszą być
+  listami tekstów.
+
+Pola dodatkowe są dozwolone, lecz muszą mieć formę kompatybilną z JSON (str,
+liczby, bool, listy lub słowniki). Walidator schematu zapewnia normalizację
+ciągów i sekwencji oraz raportuje szczegółowe błędy, które trafiają do UI.
+"""
+
+
+class StrategyPresetValidationError(ValueError):
+    """Błąd walidacji schematu presetu strategii."""
+
+    def __init__(self, errors: Sequence[str], *, preset_id: str | None = None) -> None:
+        self.errors = tuple(errors)
+        self.preset_id = preset_id
+        message = ", ".join(errors) if errors else "Niepoprawny preset strategii"
+        super().__init__(message)
+
+    @classmethod
+    def from_validation(cls, exc: ValidationError, *, preset_id: str | None = None) -> "StrategyPresetValidationError":
+        details: list[str] = []
+        for error in exc.errors():
+            location = ".".join(str(part) for part in error.get("loc", ()))
+            msg = error.get("msg", "niepoprawna wartość")
+            if location:
+                details.append(f"{location}: {msg}")
+            else:
+                details.append(msg)
+        if not details:
+            details.append("Walidacja schematu presetu zakończyła się niepowodzeniem")
+        return cls(details, preset_id=preset_id)
+
+
+class _PresetStrategySchema(BaseModel):
+    """Schemat pojedynczej strategii wchodzącej w skład presetu."""
+
+    model_config = ConfigDict(extra="allow")
+
+    name: str = Field(..., min_length=1, description="Nazwa strategii wyświetlana w UI")
+    engine: str = Field(..., min_length=1, description="Klucz zarejestrowanego silnika strategii")
+    parameters: Mapping[str, Any] = Field(default_factory=dict, description="Parametry przekazywane do silnika")
+    license_tier: str | None = Field(default=None)
+    risk_classes: tuple[str, ...] = Field(default_factory=tuple)
+    required_data: tuple[str, ...] = Field(default_factory=tuple)
+    tags: tuple[str, ...] = Field(default_factory=tuple)
+    risk_profile: str | None = Field(default=None)
+    metadata: Mapping[str, Any] = Field(default_factory=dict)
+
+    @field_validator("parameters", "metadata", mode="before")
+    @classmethod
+    def _ensure_mapping(cls, value: Any) -> Mapping[str, Any]:
+        if value in (None, ""):
+            return {}
+        if isinstance(value, Mapping):
+            return {str(key): value[key] for key in value.keys()}
+        raise TypeError("Sekcja strategii musi być słownikiem klucz→wartość")
+
+    @field_validator("risk_classes", "required_data", "tags", mode="before")
+    @classmethod
+    def _normalize_sequences(cls, value: Any) -> tuple[str, ...]:
+        return _normalize_optional_str_sequence(value)
+
+
+class _PresetMetadataSchema(BaseModel):
+    """Schemat sekcji metadata presetu strategii."""
+
+    model_config = ConfigDict(extra="allow")
+
+    id: str | None = Field(default=None)
+    preset_id: str | None = Field(default=None)
+    profile: str | None = Field(default=None)
+    preset_profile: str | None = Field(default=None)
+    license: Mapping[str, Any] | None = Field(default=None)
+
+    @field_validator("license", mode="before")
+    @classmethod
+    def _normalize_license(cls, value: Any) -> Mapping[str, Any] | None:
+        if value in (None, ""):
+            return None
+        if isinstance(value, Mapping):
+            return {str(key): value[key] for key in value.keys()}
+        raise TypeError("Sekcja metadata.license musi być słownikiem")
+
+    @model_validator(mode="after")
+    def _ensure_identifier(self) -> "_PresetMetadataSchema":
+        if not (self.id or self.preset_id):
+            raise ValueError("metadata.id lub metadata.preset_id musi być określone")
+        return self
+
+
+class StrategyPresetSchema(BaseModel):
+    """Model walidujący strukturę JSON presetu strategii."""
+
+    model_config = ConfigDict(extra="allow")
+
+    name: str = Field(..., min_length=1, description="Nazwa presetu wyświetlana w UI")
+    strategies: tuple[_PresetStrategySchema, ...] = Field(..., min_length=1, description="Lista strategii wchodzących w skład presetu")
+    metadata: _PresetMetadataSchema | Mapping[str, Any] = Field(default_factory=dict)
+
+    @field_validator("metadata", mode="before")
+    @classmethod
+    def _ensure_metadata_mapping(cls, value: Any) -> Mapping[str, Any]:
+        if value in (None, ""):
+            return {}
+        if isinstance(value, Mapping):
+            return {str(key): value[key] for key in value.keys()}
+        raise TypeError("Sekcja metadata musi być słownikiem")
+
+    @model_validator(mode="after")
+    def _normalize_metadata(self) -> "StrategyPresetSchema":
+        if isinstance(self.metadata, Mapping) and not isinstance(self.metadata, _PresetMetadataSchema):
+            self.metadata = _PresetMetadataSchema.model_validate(self.metadata)
+        return self
 
 class StrategyPresetProfile(str, Enum):
     GRID = "grid"
@@ -308,6 +446,8 @@ def _is_capability_allowed(spec: StrategyEngineSpec) -> bool:
 class StrategyCatalog:
     """Rejestr zarejestrowanych silników strategii i presetów marketplace."""
 
+    preset_schema_doc: str = PRESET_SCHEMA_DOC
+
     def __init__(self, *, hwid_provider: HwIdProvider | None = None) -> None:
         self._registry: MutableMapping[str, StrategyEngineSpec] = {}
         self._presets: MutableMapping[str, StrategyPresetDescriptor] = {}
@@ -339,6 +479,26 @@ class StrategyCatalog:
                 if text:
                     candidates.append(text)
         return tuple(dict.fromkeys(candidates))
+
+    def validate_preset_payload(self, payload: Mapping[str, Any]) -> Mapping[str, Any]:
+        """Waliduje i normalizuje strukturę JSON presetu.
+
+        Metoda zwraca przekształcony słownik zgodny z ``StrategyPresetSchema``.
+        W przypadku błędów walidacyjnych podnosi ``StrategyPresetValidationError``
+        z listą szczegółowych komunikatów.
+        """
+
+        try:
+            schema = StrategyPresetSchema.model_validate(payload)
+        except ValidationError as exc:
+            preset_id: str | None = None
+            metadata = payload.get("metadata") if isinstance(payload, Mapping) else None
+            if isinstance(metadata, Mapping):
+                candidate = metadata.get("id") or metadata.get("preset_id")
+                if isinstance(candidate, str):
+                    preset_id = candidate
+            raise StrategyPresetValidationError.from_validation(exc, preset_id=preset_id) from exc
+        return schema.model_dump()
 
     def _compute_license_status(
         self,
@@ -548,10 +708,11 @@ class StrategyCatalog:
         if not isinstance(preset_payload, Mapping):
             raise TypeError("Preset payload must be a mapping")
 
-        metadata_payload = preset_payload.get("metadata") or {}
+        validated_payload = self.validate_preset_payload(preset_payload)
+        metadata_payload = validated_payload.get("metadata") or {}
         metadata = dict(metadata_payload) if isinstance(metadata_payload, Mapping) else {}
 
-        raw_name = preset_payload.get("name") or metadata.get("name") or metadata.get("id")
+        raw_name = validated_payload.get("name") or metadata.get("name") or metadata.get("id")
         if raw_name is None:
             raise ValueError("Preset must define a name")
         name = _normalize_non_empty_str(str(raw_name), field_name="preset.name")
@@ -561,7 +722,7 @@ class StrategyCatalog:
 
         profile = StrategyPresetProfile.from_value(metadata.get("profile") or metadata.get("preset_profile"))
 
-        strategies, required_parameters, strategy_issues = self._parse_preset_strategies(preset_payload)
+        strategies, required_parameters, strategy_issues = self._parse_preset_strategies(validated_payload)
 
         issues = list(additional_issues)
         issues.extend(strategy_issues)
@@ -658,6 +819,36 @@ class StrategyCatalog:
             additional_issues=descriptor.license_status.issues,
         )
 
+    def register_signed_preset(
+        self,
+        document: PresetDocument,
+        *,
+        hwid_provider: HwIdProvider | None = None,
+    ) -> StrategyPresetDescriptor:
+        """Rejestruje pojedynczy preset podpisany kryptograficznie."""
+
+        if not isinstance(document, PresetDocument):
+            raise TypeError("document must be instancją PresetDocument")
+        if not document.verification.verified:
+            raise ValueError("Preset musi posiadać zweryfikowany podpis")
+
+        descriptor = self._build_preset_descriptor(
+            document.payload,
+            signature_verified=True,
+            source_path=document.path,
+            hwid_provider=hwid_provider,
+            additional_issues=document.issues,
+        )
+        self._presets[descriptor.preset_id] = replace(
+            descriptor,
+            metadata=dict(descriptor.metadata),
+        )
+        return self._descriptor_with_overrides(
+            descriptor,
+            hwid_provider=hwid_provider,
+            additional_issues=descriptor.license_status.issues,
+        )
+
     # ------------------------------------------------------------------
     # API publiczne presetów
     # ------------------------------------------------------------------
@@ -721,6 +912,31 @@ class StrategyCatalog:
                 )
             )
         return tuple(result)
+
+    def build_parameter_tester(
+        self,
+        *,
+        cost_model: "TransactionCostModel" | None = None,
+    ) -> "StrategyParameterTester":
+        """Buduje tester parametrów wykorzystujący walk-forward backtest."""
+
+        from .testing import StrategyParameterTester
+
+        return StrategyParameterTester(self, cost_model=cost_model)
+
+    def sync_signed_marketplace(
+        self,
+        root: str | Path,
+        *,
+        signing_keys: Mapping[str, bytes | str],
+        hwid_provider: HwIdProvider | None = None,
+    ) -> "MarketplaceSyncResult":
+        """Synchronizuje katalog z lokalnym marketplace'em podpisanych presetów."""
+
+        from bot_core.marketplace.signed import SignedPresetMarketplace
+
+        marketplace = SignedPresetMarketplace(root, signing_keys=signing_keys)
+        return marketplace.sync(self, hwid_provider=hwid_provider)
 
     def describe_presets(
         self,
@@ -923,6 +1139,19 @@ def _build_grid_strategy(
     return GridTradingStrategy(settings)
 
 
+def _build_dca_strategy(
+    *, name: str, parameters: Mapping[str, Any], metadata: Mapping[str, Any] | None = None
+) -> StrategyEngine:
+    settings = DollarCostAveragingSettings(
+        cadence_days=int(parameters.get("cadence_days", 7)),
+        max_allocation=float(parameters.get("max_allocation", 1.0)),
+        drawdown_acceleration=float(parameters.get("drawdown_acceleration", 0.25)),
+        min_drawdown=float(parameters.get("min_drawdown", 0.02)),
+        max_drawdown=float(parameters.get("max_drawdown", 0.25)),
+    )
+    return DollarCostAveragingStrategy(settings)
+
+
 def _build_volatility_target_strategy(
     *, name: str, parameters: Mapping[str, Any], metadata: Mapping[str, Any] | None = None
 ) -> StrategyEngine:
@@ -956,6 +1185,18 @@ def _build_scalping_strategy(
 ) -> StrategyEngine:
     settings = ScalpingSettings.from_parameters(parameters)
     return ScalpingStrategy(settings)
+
+
+def _build_market_making_strategy(
+    *, name: str, parameters: Mapping[str, Any], metadata: Mapping[str, Any] | None = None
+) -> StrategyEngine:
+    settings = MarketMakingSettings(
+        spread_bps=float(parameters.get("spread_bps", 12.0)),
+        inventory_target=float(parameters.get("inventory_target", 0.0)),
+        max_inventory=float(parameters.get("max_inventory", 5.0)),
+        rebalance_threshold=float(parameters.get("rebalance_threshold", 0.6)),
+    )
+    return MarketMakingStrategy(settings)
 
 
 def _build_options_income_strategy(
@@ -1041,6 +1282,17 @@ def build_default_catalog() -> StrategyCatalog:
     )
     catalog.register(
         StrategyEngineSpec(
+            key="dollar_cost_averaging",
+            factory=_build_dca_strategy,
+            license_tier="standard",
+            risk_classes=("accumulation", "long_term"),
+            required_data=("ohlcv",),
+            capability="dca_auto",
+            default_tags=("dca", "passive"),
+        )
+    )
+    catalog.register(
+        StrategyEngineSpec(
             key="volatility_target",
             factory=_build_volatility_target_strategy,
             license_tier="enterprise",
@@ -1070,6 +1322,17 @@ def build_default_catalog() -> StrategyCatalog:
             required_data=("ohlcv", "order_book"),
             capability="scalping",
             default_tags=("intraday", "scalping"),
+        )
+    )
+    catalog.register(
+        StrategyEngineSpec(
+            key="market_making",
+            factory=_build_market_making_strategy,
+            license_tier="enterprise",
+            risk_classes=("market_making", "liquidity"),
+            required_data=("order_book", "ohlcv"),
+            capability="market_making_core",
+            default_tags=("market_making", "liquidity"),
         )
     )
     catalog.register(
@@ -1259,5 +1522,8 @@ __all__ = [
     "StrategyPresetProfile",
     "PresetLicenseStatus",
     "PresetLicenseState",
+    "StrategyPresetValidationError",
+    "StrategyPresetSchema",
+    "PRESET_SCHEMA_DOC",
 ]
 LOGGER = logging.getLogger(__name__)

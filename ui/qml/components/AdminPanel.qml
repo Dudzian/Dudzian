@@ -1050,6 +1050,28 @@ Drawer {
                                 text: decisionStatusMessage
                                 color: decisionStatusColor
                             }
+
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                spacing: 2
+                                visible: typeof strategyController !== "undefined" && strategyController.validationIssues.length > 0
+
+                                Label {
+                                    text: qsTr("Ostrzeżenia walidacji:")
+                                    color: "#c0392b"
+                                    font.bold: true
+                                }
+
+                                Repeater {
+                                    model: typeof strategyController !== "undefined" ? strategyController.validationIssues : []
+                                    delegate: Label {
+                                        Layout.fillWidth: true
+                                        text: String.fromUtf8("\u2022 ") + modelData
+                                        color: "#c0392b"
+                                        wrapMode: Text.WordWrap
+                                    }
+                                }
+                            }
                         }
                     }
 

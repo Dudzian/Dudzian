@@ -4,10 +4,11 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
-from collections import defaultdict
+from collections import defaultdict, deque
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+from typing import Any
 from typing import (
     TYPE_CHECKING,
     Callable,
@@ -20,6 +21,7 @@ from typing import (
 from threading import RLock
 
 if TYPE_CHECKING:
+    from bot_core.backtest.walk_forward import WalkForwardReport
     from bot_core.runtime.portfolio_coordinator import PortfolioRuntimeCoordinator
 
 from bot_core.runtime.capital_policies import (
@@ -126,6 +128,13 @@ class _ScheduleContext:
     last_run: datetime | None = None
     warmed_up: bool = False
     metrics: MutableMapping[str, float] = field(default_factory=dict)
+    priority: int = 0
+    windows: tuple[tuple[int, int], ...] = ()
+    fallback_schedules: tuple[str, ...] = ()
+    active_fallback: str | None = None
+    failover_count: int = 0
+    cost_report_summary: Mapping[str, float] | None = None
+    last_window_state: bool | None = None
 
 def _extract_tags(metadata: Mapping[str, object] | None) -> tuple[tuple[str, ...], str | None]:
     if not isinstance(metadata, Mapping):
@@ -197,9 +206,110 @@ def _normalize_metadata_sequence(value: object | None) -> tuple[str, ...]:
     return tuple(normalized)
 
 
+def _parse_schedule_priority(metadata: Mapping[str, object] | None) -> int:
+    if not isinstance(metadata, Mapping):
+        return 0
+    candidate = metadata.get("schedule_priority") or metadata.get("priority")
+    if candidate in (None, ""):
+        return 0
+    try:
+        return int(candidate)
+    except (TypeError, ValueError):  # pragma: no cover - diagnostyka danych
+        return 0
+
+
+def _parse_window_entry(entry: str) -> tuple[int, int] | None:
+    parts = entry.split("-", 1)
+    if len(parts) != 2:
+        return None
+    try:
+        start_hours, start_minutes = [int(value) for value in parts[0].split(":", 1)]
+        end_hours, end_minutes = [int(value) for value in parts[1].split(":", 1)]
+    except ValueError:
+        return None
+    start_total = max(0, min(23, start_hours)) * 60 + max(0, min(59, start_minutes))
+    end_total = max(0, min(23, end_hours)) * 60 + max(0, min(59, end_minutes))
+    return start_total % (24 * 60), end_total % (24 * 60)
+
+
+def _parse_schedule_windows(metadata: Mapping[str, object] | None) -> tuple[tuple[int, int], ...]:
+    if not isinstance(metadata, Mapping):
+        return ()
+    source = metadata.get("schedule_windows") or metadata.get("windows")
+    entries: list[str] = []
+    if isinstance(source, str):
+        entries = [segment.strip() for segment in source.split(",") if segment.strip()]
+    elif isinstance(source, Mapping):
+        start = source.get("start")
+        end = source.get("end")
+        if isinstance(start, str) and isinstance(end, str):
+            candidate = _parse_window_entry(f"{start}-{end}")
+            if candidate:
+                return (candidate,)
+        return ()
+    elif isinstance(source, Iterable):
+        for item in source:
+            if isinstance(item, str) and item.strip():
+                entries.append(item.strip())
+            elif isinstance(item, Mapping):
+                start = item.get("start")
+                end = item.get("end")
+                if isinstance(start, str) and isinstance(end, str):
+                    candidate = _parse_window_entry(f"{start}-{end}")
+                    if candidate:
+                        entries.append(f"{start}-{end}")
+    windows: list[tuple[int, int]] = []
+    for entry in entries:
+        candidate = _parse_window_entry(entry)
+        if candidate is not None:
+            windows.append(candidate)
+    return tuple(windows)
+
+
+def _parse_schedule_fallbacks(metadata: Mapping[str, object] | None) -> tuple[str, ...]:
+    if not isinstance(metadata, Mapping):
+        return ()
+    raw = metadata.get("fallback_schedules") or metadata.get("schedule_fallbacks")
+    if raw in (None, ""):
+        return ()
+    if isinstance(raw, str):
+        entries = [raw]
+    elif isinstance(raw, Iterable):
+        entries = list(raw)
+    else:
+        return ()
+    normalized: list[str] = []
+    for item in entries:
+        text = str(item).strip()
+        if text:
+            normalized.append(text)
+    return tuple(dict.fromkeys(normalized))
+
+
+def _format_window(window: tuple[int, int]) -> str:
+    start, end = window
+    def _format(minutes: int) -> str:
+        minutes %= 24 * 60
+        hour = minutes // 60
+        minute = minutes % 60
+        return f"{hour:02d}:{minute:02d}"
+
+    return f"{_format(start)}-{_format(end)}"
+
+
 def _extract_schedule_metadata(
     strategy: StrategyEngine,
-) -> tuple[tuple[str, ...], str | None, str | None, tuple[str, ...], tuple[str, ...], str | None]:
+) -> tuple[
+    tuple[str, ...],
+    str | None,
+    str | None,
+    tuple[str, ...],
+    tuple[str, ...],
+    str | None,
+    int,
+    tuple[tuple[int, int], ...],
+    tuple[str, ...],
+]:
     raw_metadata = getattr(strategy, "metadata", None)
     metadata = raw_metadata if isinstance(raw_metadata, Mapping) else None
 
@@ -222,7 +332,21 @@ def _extract_schedule_metadata(
         getattr(strategy, "required_data", None)
     )
 
-    return tags, primary_tag, license_tier, risk_classes, required_data, capability
+    priority = _parse_schedule_priority(metadata)
+    windows = _parse_schedule_windows(metadata)
+    fallbacks = _parse_schedule_fallbacks(metadata)
+
+    return (
+        tags,
+        primary_tag,
+        license_tier,
+        risk_classes,
+        required_data,
+        capability,
+        priority,
+        windows,
+        fallbacks,
+    )
 
 
 class MultiStrategyScheduler:
@@ -269,6 +393,7 @@ class MultiStrategyScheduler:
         self._last_allocator_flags: dict[str, bool] = {}
         self._signal_limit_manager = SignalLimitManager(clock=self._clock, logger=_LOGGER)
         self._suspension_manager = SuspensionManager(clock=self._clock, logger=_LOGGER)
+        self._alerts: deque[Mapping[str, object]] = deque(maxlen=256)
         for strategy, profiles in (signal_limits or {}).items():
             for profile, limit in (profiles or {}).items():
                 self.configure_signal_limit(strategy, profile, limit)
@@ -404,6 +529,17 @@ class MultiStrategyScheduler:
                 descriptor["required_data"] = list(schedule.required_data)
             if schedule.last_run is not None:
                 descriptor["last_run"] = schedule.last_run.isoformat()
+            if schedule.priority:
+                descriptor["priority"] = int(schedule.priority)
+            if schedule.windows:
+                descriptor["windows"] = [_format_window(window) for window in schedule.windows]
+            if schedule.fallback_schedules:
+                descriptor["fallbacks"] = list(schedule.fallback_schedules)
+            if schedule.active_fallback:
+                descriptor["active_fallback"] = schedule.active_fallback
+            descriptor["failover_count"] = int(schedule.failover_count)
+            if schedule.cost_report_summary:
+                descriptor["cost_report"] = dict(schedule.cost_report_summary)
             limit_override = active_overrides.get(
                 (schedule.strategy_name, schedule.risk_profile)
             )
@@ -572,6 +708,9 @@ class MultiStrategyScheduler:
             risk_classes,
             required_data,
             capability,
+            priority,
+            windows,
+            fallbacks,
         ) = _extract_schedule_metadata(strategy)
 
         context = _ScheduleContext(
@@ -592,9 +731,31 @@ class MultiStrategyScheduler:
             risk_classes=risk_classes,
             required_data=required_data,
             capability=capability,
+            priority=priority,
+            windows=windows,
+            fallback_schedules=fallbacks,
         )
         self._schedules.append(context)
+        self._schedules.sort(key=lambda item: (-item.priority, item.name))
         _LOGGER.debug("Zarejestrowano harmonogram %s dla strategii %s", name, strategy_name)
+
+    def attach_cost_report(self, schedule_name: str, report: "WalkForwardReport") -> None:
+        """Podpina raport kosztowy walk-forward do harmonogramu."""
+
+        try:
+            schedule = self._find_schedule(schedule_name)
+        except KeyError:
+            raise KeyError(f"Harmonogram '{schedule_name}' nie jest zarejestrowany") from None
+
+        summary = {
+            "total_return_pct": float(report.total_return_pct),
+            "total_trades": float(report.cost_summary.total_trades),
+            "total_fees": float(report.cost_summary.total_fees),
+            "total_slippage": float(report.cost_summary.total_slippage),
+            "total_notional": float(report.cost_summary.total_notional),
+            "segments": float(len(report.segments)),
+        }
+        schedule.cost_report_summary = summary
 
     def configure_signal_limit(
         self,
@@ -687,6 +848,140 @@ class MultiStrategyScheduler:
 
     def suspension_snapshot(self) -> Mapping[str, Mapping[str, object]]:
         return self._suspension_manager.snapshot()
+
+    def alerts_snapshot(self, *, clear: bool = False) -> tuple[Mapping[str, object], ...]:
+        """Zwraca kolejkę alertów zarejestrowanych przez scheduler."""
+
+        payload = tuple(self._alerts)
+        if clear:
+            self._alerts.clear()
+        return payload
+
+    def _record_alert(
+        self,
+        code: str,
+        *,
+        message: str,
+        schedule: str | None = None,
+        severity: str = "warning",
+        metadata: Mapping[str, Any] | None = None,
+    ) -> None:
+        payload: dict[str, object] = {
+            "code": code,
+            "message": message,
+            "severity": severity,
+            "timestamp": self._clock().isoformat(),
+        }
+        if schedule:
+            payload["schedule"] = schedule
+        if metadata:
+            payload["metadata"] = dict(metadata)
+        self._alerts.append(payload)
+
+    def _find_schedule(self, name: str) -> _ScheduleContext:
+        for schedule in self._schedules:
+            if schedule.name == name:
+                return schedule
+        raise KeyError(name)
+
+    def _apply_cost_summary(self, schedule: _ScheduleContext) -> None:
+        if not schedule.cost_report_summary:
+            return
+        for key, value in schedule.cost_report_summary.items():
+            try:
+                schedule.metrics[f"cost_{key}"] = float(value)
+            except (TypeError, ValueError):  # pragma: no cover - diagnostyka danych
+                continue
+
+    def _update_window_state(
+        self, schedule: _ScheduleContext, *, active: bool, timestamp: datetime
+    ) -> None:
+        previous = schedule.last_window_state
+        schedule.last_window_state = active
+        if previous is None:
+            if not active:
+                self._record_alert(
+                    "schedule-window-closed",
+                    message=f"Harmonogram {schedule.name} poza oknem czasowym",
+                    schedule=schedule.name,
+                    severity="info",
+                    metadata={"timestamp": timestamp.isoformat()},
+                )
+            return
+        if previous == active:
+            return
+        code = "schedule-window-open" if active else "schedule-window-closed"
+        severity = "info" if active else "warning"
+        self._record_alert(
+            code,
+            message=(
+                f"Harmonogram {schedule.name} wznowił działanie"
+                if active
+                else f"Harmonogram {schedule.name} został wstrzymany poza oknem czasowym"
+            ),
+            schedule=schedule.name,
+            severity=severity,
+            metadata={"timestamp": timestamp.isoformat()},
+        )
+
+    @staticmethod
+    def _is_window_open(schedule: _ScheduleContext, timestamp: datetime) -> bool:
+        if not schedule.windows:
+            return True
+        minutes = timestamp.hour * 60 + timestamp.minute
+        for start, end in schedule.windows:
+            if start == end:
+                return True
+            if start < end and start <= minutes < end:
+                return True
+            if start > end and (minutes >= start or minutes < end):
+                return True
+        return False
+
+    def _handle_schedule_failure(
+        self,
+        schedule: _ScheduleContext,
+        reason: str,
+        exc: Exception | None = None,
+    ) -> None:
+        metadata: dict[str, object] = {"reason": reason}
+        if exc is not None:
+            metadata["error"] = str(exc)
+        schedule.metrics["failed"] = 1.0
+        self._record_alert(
+            "strategy-failure",
+            message=f"Harmonogram {schedule.name} zgłosił błąd: {reason}",
+            schedule=schedule.name,
+            metadata=metadata,
+        )
+        self._trigger_failover(schedule, reason, metadata)
+
+    def _trigger_failover(
+        self,
+        schedule: _ScheduleContext,
+        reason: str,
+        metadata: Mapping[str, object] | None = None,
+    ) -> None:
+        schedule.failover_count += 1
+        schedule.metrics["failover_count"] = float(schedule.failover_count)
+        for candidate in schedule.fallback_schedules:
+            if candidate == schedule.name:
+                continue
+            try:
+                fallback = self._find_schedule(candidate)
+            except KeyError:
+                continue
+            schedule.active_fallback = fallback.name
+            self._record_alert(
+                "strategy-failover",
+                message=f"Aktywowano fallback {fallback.name} dla harmonogramu {schedule.name}",
+                schedule=schedule.name,
+                metadata={"reason": reason, "fallback": fallback.name, **(metadata or {})},
+            )
+            self.resume_schedule(fallback.name)
+            self.suspend_schedule(schedule.name, reason=f"failover:{reason}", duration_seconds=900.0)
+            return
+
     def attach_portfolio_coordinator(
         self, coordinator: "PortfolioRuntimeCoordinator"
     ) -> None:
@@ -835,8 +1130,23 @@ class MultiStrategyScheduler:
                 schedule.base_max_signals * max(0.0, schedule.governor_signal_factor)
             )
             self._apply_signal_limits(schedule)
+            self._apply_cost_summary(schedule)
+            schedule.metrics["priority"] = float(schedule.priority)
+            schedule.metrics["failover_count"] = float(schedule.failover_count)
+            schedule.metrics["active_fallback_indicator"] = 1.0 if schedule.active_fallback else 0.0
 
-            snapshots = schedule.feed.fetch_latest(schedule.strategy_name)
+            window_active = self._is_window_open(schedule, timestamp)
+            schedule.metrics["window_active"] = 1.0 if window_active else 0.0
+            self._update_window_state(schedule, active=window_active, timestamp=timestamp)
+            if not window_active:
+                return
+
+            try:
+                snapshots = schedule.feed.fetch_latest(schedule.strategy_name)
+            except Exception as exc:  # pragma: no cover - diagnostyka feedu
+                self._handle_schedule_failure(schedule, "feed", exc)
+                return
+
             total_signals = 0
             confidence_sum = 0.0
             confidence_count = 0
@@ -846,13 +1156,18 @@ class MultiStrategyScheduler:
             volatility_target_errors: list[float] = []
             arbitrage_captures: list[float] = []
             arbitrage_delays: list[float] = []
+
             for snapshot in snapshots:
-                signals = list(schedule.strategy.on_data(snapshot))
-                if not signals:
+                try:
+                    raw_signals = list(schedule.strategy.on_data(snapshot))
+                except Exception as exc:  # pragma: no cover - diagnostyka strategii
+                    self._handle_schedule_failure(schedule, "strategy", exc)
+                    return
+                if not raw_signals:
                     continue
-                bounded_signals = self._bounded_signals(
-                    signals, schedule.active_max_signals
-                )
+                bounded_signals = self._bounded_signals(raw_signals, schedule.active_max_signals)
+                if not bounded_signals:
+                    continue
                 total_signals += len(bounded_signals)
                 for signal in bounded_signals:
                     confidence_sum += float(signal.confidence)
@@ -891,13 +1206,17 @@ class MultiStrategyScheduler:
                         capture = (float(entry_spread) - float(exit_spread)) / abs(float(entry_spread))
                         arbitrage_captures.append(capture * 10_000.0)
                 self._record_decisions(schedule, bounded_signals, timestamp, snapshot.symbol)
-                schedule.sink.submit(
-                    strategy_name=schedule.strategy_name,
-                    schedule_name=schedule.name,
-                    risk_profile=schedule.risk_profile,
-                    timestamp=timestamp,
-                    signals=bounded_signals,
-                )
+                try:
+                    schedule.sink.submit(
+                        strategy_name=schedule.strategy_name,
+                        schedule_name=schedule.name,
+                        risk_profile=schedule.risk_profile,
+                        timestamp=timestamp,
+                        signals=bounded_signals,
+                    )
+                except Exception as exc:  # pragma: no cover - diagnostyka sinka
+                    self._handle_schedule_failure(schedule, "sink", exc)
+                    return
             schedule.metrics["signals"] = float(total_signals)
             schedule.metrics["active_max_signals"] = float(schedule.active_max_signals)
             schedule.metrics["last_latency_ms"] = max(
