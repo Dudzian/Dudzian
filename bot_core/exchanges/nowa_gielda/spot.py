@@ -27,6 +27,7 @@ from bot_core.exchanges.errors import (
 )
 from bot_core.exchanges.nowa_gielda import symbols
 from bot_core.exchanges.streaming import LocalLongPollStream, StreamBatch
+from bot_core.observability.metrics import MetricsRegistry, get_global_metrics_registry
 from core.network import RateLimitedAsyncClient, get_rate_limited_client, run_sync
 
 _PUBLIC_STREAM_CHANNEL_MAP: Mapping[str, str] = {
@@ -344,6 +345,7 @@ class NowaGieldaStreamClient(Iterable[StreamBatch]):
     """Lokalny klient streamingu z obsługą reconnectów i bufora."""
 
     __slots__ = (
+        "_adapter",
         "_scope",
         "_channels",
         "_remote_channels",
@@ -366,6 +368,15 @@ class NowaGieldaStreamClient(Iterable[StreamBatch]):
         "_total_events",
         "_heartbeats",
         "_reconnects_total",
+        "_metrics",
+        "_metric_labels",
+        "_metric_pending",
+        "_metric_history",
+        "_metric_reconnects",
+        "_metric_batches",
+        "_metric_events",
+        "_metric_heartbeats",
+        "_metric_replays",
     )
 
     _CURSOR_UNCHANGED = object()
@@ -373,6 +384,7 @@ class NowaGieldaStreamClient(Iterable[StreamBatch]):
     def __init__(
         self,
         *,
+        adapter: str | None = None,
         scope: str,
         channels: Sequence[str],
         fallback_factory: Callable[[Sequence[str], Optional[str]], LocalLongPollStream],
@@ -384,6 +396,7 @@ class NowaGieldaStreamClient(Iterable[StreamBatch]):
         buffer_size: int = 8,
         clock: Callable[[], float] | None = None,
         sleep: Callable[[float], None] | None = None,
+        metrics_registry: MetricsRegistry | None = None,
     ) -> None:
         normalized_channels = tuple(
             dict.fromkeys(
@@ -395,6 +408,7 @@ class NowaGieldaStreamClient(Iterable[StreamBatch]):
         if not normalized_channels:
             raise ValueError("Lista kanałów subskrypcji nie może być pusta.")
 
+        self._adapter = (adapter or "nowa_gielda_stream").strip() or "nowa_gielda_stream"
         self._scope = scope
         self._channels = normalized_channels
         self._channel_map = dict(channel_mapping or {})
@@ -430,6 +444,37 @@ class NowaGieldaStreamClient(Iterable[StreamBatch]):
         self._heartbeats = 0
         self._reconnects_total = 0
         self._stream = self._fallback_factory(self._remote_channels, None)
+        self._metrics = metrics_registry or get_global_metrics_registry()
+        self._metric_labels = {"adapter": self._adapter, "scope": self._scope}
+        self._metric_pending = self._metrics.gauge(
+            "bot_exchange_stream_client_pending_batches",
+            "Aktualna liczba paczek oczekujących na wydanie przez klienta streamu.",
+        )
+        self._metric_history = self._metrics.gauge(
+            "bot_exchange_stream_client_history_size",
+            "Liczba paczek przechowywanych w historii klienta streamu.",
+        )
+        self._metric_reconnects = self._metrics.counter(
+            "bot_exchange_stream_client_reconnects_total",
+            "Łączna liczba restartów fallbackowego streamu.",
+        )
+        self._metric_batches = self._metrics.counter(
+            "bot_exchange_stream_client_batches_total",
+            "Łączna liczba paczek zwróconych przez klienta streamu.",
+        )
+        self._metric_events = self._metrics.counter(
+            "bot_exchange_stream_client_events_total",
+            "Łączna liczba zdarzeń dostarczonych przez klienta streamu.",
+        )
+        self._metric_heartbeats = self._metrics.counter(
+            "bot_exchange_stream_client_heartbeats_total",
+            "Liczba heartbeatów zwróconych przez klienta streamu.",
+        )
+        self._metric_replays = self._metrics.counter(
+            "bot_exchange_stream_client_history_replays_total",
+            "Łączna liczba paczek ponownie wysłanych z historii klienta streamu.",
+        )
+        self._update_queue_metrics()
 
     def __iter__(self) -> "NowaGieldaStreamClient":
         return self
@@ -445,6 +490,7 @@ class NowaGieldaStreamClient(Iterable[StreamBatch]):
         while not self._closed:
             if self._pending:
                 batch = self._pending.popleft()
+                self._update_queue_metrics()
                 self._record_yield(batch)
                 return batch
             try:
@@ -474,6 +520,7 @@ class NowaGieldaStreamClient(Iterable[StreamBatch]):
         finally:
             self._pending.clear()
             self._history.clear()
+            self._update_queue_metrics()
 
     @property
     def closed(self) -> bool:
@@ -605,6 +652,9 @@ class NowaGieldaStreamClient(Iterable[StreamBatch]):
         for batch in snapshots:
             self._pending.append(batch)
 
+        self._metric_replays.inc(len(snapshots), labels=self._metric_labels)
+        self._update_queue_metrics()
+
         return True
 
     def force_reconnect(
@@ -628,11 +678,14 @@ class NowaGieldaStreamClient(Iterable[StreamBatch]):
         self._restart_stream(cursor=cursor)
         self._reconnect_attempt = 0
         self._reconnects_total += 1
+        self._metric_reconnects.inc(labels=self._metric_labels)
         if replay_history and self._history:
             self._pending.extend(self._history)
             self._replay_scheduled = True
+            self._metric_replays.inc(len(self._history), labels=self._metric_labels)
         else:
             self._replay_scheduled = False
+        self._update_queue_metrics()
 
     # ------------------------------------------------------------------
     # Helpers
@@ -643,6 +696,7 @@ class NowaGieldaStreamClient(Iterable[StreamBatch]):
             self._history.append(batch)
         self._replay_scheduled = False
         self._reconnect_attempt = 0
+        self._update_queue_metrics()
 
     def _handle_disconnect(self, exc: Exception) -> None:
         if self._closed:
@@ -656,10 +710,13 @@ class NowaGieldaStreamClient(Iterable[StreamBatch]):
             self._sleep(delay)
         self._restart_stream()
         self._reconnects_total += 1
+        self._metric_reconnects.inc(labels=self._metric_labels)
         if self._history and not self._replay_scheduled:
             # udostępnij ostatnie dane zanim pojawią się nowe paczki
             self._pending.extend(self._history)
             self._replay_scheduled = True
+            self._metric_replays.inc(len(self._history), labels=self._metric_labels)
+        self._update_queue_metrics()
 
     def _restart_stream(self, *, cursor: object = _CURSOR_UNCHANGED) -> None:
         if cursor is not self._CURSOR_UNCHANGED:
@@ -695,6 +752,15 @@ class NowaGieldaStreamClient(Iterable[StreamBatch]):
         self._total_events += len(batch.events)
         if batch.heartbeat:
             self._heartbeats += 1
+            self._metric_heartbeats.inc(labels=self._metric_labels)
+        if batch.events:
+            self._metric_events.inc(len(batch.events), labels=self._metric_labels)
+        self._metric_batches.inc(labels=self._metric_labels)
+        self._update_queue_metrics()
+
+    def _update_queue_metrics(self) -> None:
+        self._metric_pending.set(len(self._pending), labels=self._metric_labels)
+        self._metric_history.set(len(self._history), labels=self._metric_labels)
 
     def _matches_symbol(self, event: Mapping[str, Any]) -> bool:
         if not isinstance(event, Mapping):
@@ -742,11 +808,12 @@ class NowaGieldaSpotAdapter(ExchangeAdapter):
         *,
         environment: Environment | None = None,
         settings: Mapping[str, Any] | None = None,
+        metrics_registry: MetricsRegistry | None = None,
     ) -> None:
         super().__init__(credentials)
         self._environment = environment or credentials.environment
         self._ip_allowlist: tuple[str, ...] = ()
-        self._metrics: Mapping[str, Any] | None = None
+        self._metrics: MetricsRegistry = metrics_registry or get_global_metrics_registry()
         self._http_client = NowaGieldaHTTPClient(self._determine_base_url(self._environment))
         self._settings = dict(settings or {})
         self._permission_set = frozenset(perm.lower() for perm in self.credentials.permissions)
@@ -884,6 +951,11 @@ class NowaGieldaSpotAdapter(ExchangeAdapter):
         if isinstance(scope_body, Mapping):
             body_params.update(scope_body)
         body_encoder = stream_settings.get(f"{scope}_body_encoder", stream_settings.get("body_encoder"))
+        buffer_size = int(
+            stream_settings.get(
+                f"{scope}_buffer_size", stream_settings.get("buffer_size", 64)
+            )
+        )
 
         return LocalLongPollStream(
             base_url=base_url,
@@ -910,6 +982,8 @@ class NowaGieldaSpotAdapter(ExchangeAdapter):
             cursor_in_body=cursor_in_body,
             body_params=body_params or None,
             body_encoder=body_encoder,
+            buffer_size=buffer_size,
+            metrics_registry=self._metrics,
         )
 
     # --- ExchangeAdapter API -----------------------------------------------
@@ -1425,6 +1499,7 @@ class NowaGieldaSpotAdapter(ExchangeAdapter):
             return self._build_stream("public", mapped_channels, initial_cursor=cursor)
 
         return NowaGieldaStreamClient(
+            adapter=self.name,
             scope="public",
             channels=channels,
             fallback_factory=factory,
@@ -1434,6 +1509,7 @@ class NowaGieldaSpotAdapter(ExchangeAdapter):
             backoff_base=backoff_base,
             backoff_cap=backoff_cap,
             buffer_size=buffer_size,
+            metrics_registry=self._metrics,
         )
 
     def stream_private_data(self, *, channels: Sequence[str]) -> Protocol:
@@ -1447,6 +1523,7 @@ class NowaGieldaSpotAdapter(ExchangeAdapter):
             return self._build_stream("private", mapped_channels, initial_cursor=cursor)
 
         return NowaGieldaStreamClient(
+            adapter=self.name,
             scope="private",
             channels=channels,
             fallback_factory=factory,
@@ -1456,6 +1533,7 @@ class NowaGieldaSpotAdapter(ExchangeAdapter):
             backoff_base=backoff_base,
             backoff_cap=backoff_cap,
             buffer_size=buffer_size,
+            metrics_registry=self._metrics,
         )
 
     # --- Custom helpers ----------------------------------------------------

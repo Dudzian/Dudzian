@@ -23,6 +23,13 @@ from bot_core.exchanges.errors import (
     ExchangeThrottlingError,
 )
 from bot_core.exchanges.http_client import urlopen
+from bot_core.observability.metrics import (
+    CounterMetric,
+    GaugeMetric,
+    HistogramMetric,
+    MetricsRegistry,
+    get_global_metrics_registry,
+)
 
 try:  # pragma: no cover - sprawdzamy dostępność opcjonalnej zależności
     import brotli  # type: ignore[import-not-found]
@@ -101,6 +108,9 @@ _DEFAULT_MAX_RETRIES = 3
 _DEFAULT_BACKOFF_BASE = 0.25
 _DEFAULT_BACKOFF_CAP = 2.0
 _DEFAULT_JITTER = (0.05, 0.30)
+_DEFAULT_BUFFER_SIZE = 64
+_DEFAULT_LATENCY_BUCKETS = (0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 5.0, 10.0)
+_DEFAULT_LAG_BUCKETS = (0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 5.0)
 
 
 @dataclass(slots=True)
@@ -149,6 +159,8 @@ class LocalLongPollStream(Iterable[StreamBatch]):
         body_encoder: str
         | Callable[[Mapping[str, object]], bytes | tuple[bytes, str | None]]
         | None = None,
+        buffer_size: int = _DEFAULT_BUFFER_SIZE,
+        metrics_registry: MetricsRegistry | None = None,
     ) -> None:
         normalized_channels = tuple(
             dict.fromkeys(
@@ -192,6 +204,7 @@ class LocalLongPollStream(Iterable[StreamBatch]):
         self._clock = clock or time.monotonic
         self._sleep = sleep or time.sleep
 
+        self._buffer_size = max(1, int(buffer_size))
         self._pending: Deque[StreamBatch] = deque()
         self._channel_param = (channel_param or "").strip()
         self._cursor_param = (cursor_param or "").strip()
@@ -207,6 +220,31 @@ class LocalLongPollStream(Iterable[StreamBatch]):
         self._cursor_in_body = bool(cursor_in_body)
         self._body_params = dict(body_params) if isinstance(body_params, Mapping) else {}
         self._body_encoder = body_encoder
+        self._metrics: MetricsRegistry = metrics_registry or get_global_metrics_registry()
+        self._metric_labels = {
+            "adapter": self._adapter,
+            "scope": self._scope,
+            "environment": self._environment,
+        }
+        self._metric_latency: HistogramMetric = self._metrics.histogram(
+            "bot_exchange_stream_long_poll_latency_seconds",
+            "Rozkład opóźnień zapytań long-pollowych",
+            buckets=_DEFAULT_LATENCY_BUCKETS,
+        )
+        self._metric_delivery_lag: HistogramMetric = self._metrics.histogram(
+            "bot_exchange_stream_delivery_lag_seconds",
+            "Różnica między pobraniem paczki a jej konsumpcją",
+            buckets=_DEFAULT_LAG_BUCKETS,
+        )
+        self._metric_queue: GaugeMetric = self._metrics.gauge(
+            "bot_exchange_stream_pending_batches",
+            "Aktualna liczba oczekujących paczek long-pollowych",
+        )
+        self._metric_backpressure: CounterMetric = self._metrics.counter(
+            "bot_exchange_stream_backpressure_total",
+            "Liczba paczek usuniętych z kolejki long-pollowej z powodu backpressure",
+        )
+        self._update_queue_metric()
 
     def __iter__(self) -> "LocalLongPollStream":
         return self
@@ -227,7 +265,10 @@ class LocalLongPollStream(Iterable[StreamBatch]):
     def __next__(self) -> StreamBatch:
         while not self._closed:
             if self._pending:
-                return self._pending.popleft()
+                batch = self._pending.popleft()
+                self._update_queue_metric()
+                self._record_delivery_lag(batch)
+                return batch
             self._poll_once()
         raise StopIteration
 
@@ -238,6 +279,7 @@ class LocalLongPollStream(Iterable[StreamBatch]):
             return
         self._closed = True
         self._pending.clear()
+        self._update_queue_metric()
 
     # ------------------------------------------------------------------
     # Wewnętrzne operacje long-polla
@@ -254,6 +296,7 @@ class LocalLongPollStream(Iterable[StreamBatch]):
             request = self._build_request()
             should_backoff = True
             headers = None
+            poll_started = self._clock()
             try:
                 with urlopen(request, timeout=self._timeout) as response:
                     raw_payload = response.read()
@@ -295,7 +338,9 @@ class LocalLongPollStream(Iterable[StreamBatch]):
             else:
                 payload = self._parse_payload(raw_payload, headers)
                 retry_after = self._enqueue_batches(payload)
-                self._last_poll = self._clock()
+                finished = self._clock()
+                self._record_poll_latency(max(0.0, finished - poll_started))
+                self._last_poll = finished
                 if retry_after > 0:
                     self._sleep(retry_after)
                 return
@@ -615,10 +660,13 @@ class LocalLongPollStream(Iterable[StreamBatch]):
                 received_at=now,
                 raw=dict(entry),
             )
+            self._apply_backpressure()
             self._pending.append(batch)
+            self._update_queue_metric()
             appended = True
 
         if not appended:
+            self._apply_backpressure()
             self._pending.append(
                 StreamBatch(
                     channel="*",
@@ -629,6 +677,7 @@ class LocalLongPollStream(Iterable[StreamBatch]):
                     raw={},
                 )
             )
+            self._update_queue_metric()
 
         retry_after = self._coerce_positive_float(payload.get("retry_after"))
         if retry_after is not None:
@@ -810,6 +859,24 @@ class LocalLongPollStream(Iterable[StreamBatch]):
         if value in (None, ""):
             return
         params.append((str(key), value))
+
+    def _apply_backpressure(self) -> None:
+        dropped = 0
+        while len(self._pending) >= self._buffer_size:
+            self._pending.popleft()
+            dropped += 1
+        if dropped:
+            self._metric_backpressure.inc(dropped, labels=self._metric_labels)
+
+    def _update_queue_metric(self) -> None:
+        self._metric_queue.set(float(len(self._pending)), labels=self._metric_labels)
+
+    def _record_poll_latency(self, duration: float) -> None:
+        self._metric_latency.observe(duration, labels=self._metric_labels)
+
+    def _record_delivery_lag(self, batch: StreamBatch) -> None:
+        lag = max(0.0, self._clock() - batch.received_at)
+        self._metric_delivery_lag.observe(lag, labels=self._metric_labels)
 
     @staticmethod
     def _coerce_positive_float(value: object) -> float | None:

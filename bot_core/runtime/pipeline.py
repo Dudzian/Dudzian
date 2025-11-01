@@ -47,6 +47,7 @@ from bot_core.exchanges.base import (
     ExchangeAdapterFactory,
 )
 from bot_core.exchanges.streaming import LocalLongPollStream, StreamBatch
+from bot_core.observability.metrics import MetricsRegistry
 from bot_core.market_intel import MarketIntelAggregator, MarketIntelQuery, MarketIntelSnapshot
 from bot_core.optimization import OptimizationScheduler, StrategyOptimizer
 from bot_core.portfolio import (
@@ -1473,6 +1474,23 @@ class StreamingStrategyFeed(StrategyDataFeed):
             return None
 
 
+def _resolve_adapter_metrics_registry(adapter: ExchangeAdapter | object | None) -> MetricsRegistry | None:
+    """Wyszukuje rejestr metryk powiązany z adapterem giełdowym."""
+
+    if adapter is None:
+        return None
+
+    candidate = getattr(adapter, "metrics_registry", None)
+    if isinstance(candidate, MetricsRegistry):
+        return candidate
+
+    private_candidate = getattr(adapter, "_metrics", None)
+    if isinstance(private_candidate, MetricsRegistry):
+        return private_candidate
+
+    return None
+
+
 def _build_streaming_feed(
     *,
     bootstrap: BootstrapContext,
@@ -1510,6 +1528,8 @@ def _build_streaming_feed(
     all_symbols = tuple(
         dict.fromkeys(symbol for values in symbols_map.values() for symbol in values)
     )
+
+    adapter_metrics = _resolve_adapter_metrics_registry(getattr(bootstrap, "adapter", None))
 
     def _build_params() -> dict[str, object]:
         params: dict[str, object] = {}
@@ -1589,6 +1609,25 @@ def _build_streaming_feed(
     channels_in_body = bool(stream_settings.get("public_channels_in_body", stream_settings.get("channels_in_body", False)))
     cursor_in_body = bool(stream_settings.get("public_cursor_in_body", stream_settings.get("cursor_in_body", False)))
 
+    buffer_size_raw = stream_settings.get("buffer_size", 256)
+    try:
+        feed_buffer_size = int(buffer_size_raw)
+    except (TypeError, ValueError):
+        feed_buffer_size = 256
+    if feed_buffer_size < 1:
+        feed_buffer_size = 1
+
+    stream_buffer_raw = stream_settings.get("public_buffer_size")
+    if stream_buffer_raw is None:
+        stream_buffer_size = feed_buffer_size
+    else:
+        try:
+            stream_buffer_size = int(stream_buffer_raw)
+        except (TypeError, ValueError):
+            stream_buffer_size = feed_buffer_size
+        if stream_buffer_size < 1:
+            stream_buffer_size = 1
+
     def _factory() -> LocalLongPollStream:
         return LocalLongPollStream(
             base_url=base_url,
@@ -1615,19 +1654,20 @@ def _build_streaming_feed(
             cursor_in_body=cursor_in_body,
             body_params=_build_body_params(),
             body_encoder=body_encoder,
+            buffer_size=stream_buffer_size,
+            metrics_registry=adapter_metrics,
         )
 
     heartbeat_interval = float(stream_settings.get("heartbeat_interval", 15.0))
     idle_timeout_raw = stream_settings.get("idle_timeout")
     idle_timeout = None if idle_timeout_raw in (None, "") else float(idle_timeout_raw)
     restart_delay = float(stream_settings.get("restart_delay", 5.0))
-    buffer_size = int(stream_settings.get("buffer_size", 256))
 
     return StreamingStrategyFeed(
         history_feed=base_feed,
         stream_factory=_factory,
         symbols_map=symbols_map,
-        buffer_size=buffer_size,
+        buffer_size=feed_buffer_size,
         heartbeat_interval=heartbeat_interval,
         idle_timeout=idle_timeout,
         restart_delay=restart_delay,
