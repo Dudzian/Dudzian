@@ -6,16 +6,26 @@ from typing import Callable, Iterable, Sequence
 
 from PySide6.QtCore import QObject, Property, Signal, Slot
 
-from core.runtime.strategy_catalog import StrategyDescriptor, list_available_strategies
+from bot_core.strategies.public import StrategyDescriptor, list_available_strategies
 from core.security.secret_store import ExchangeCredentials, SecretStore, SecretStoreError
 
 
 _DEFAULT_EXCHANGES: tuple[str, ...] = (
     "binance",
     "binanceus",
-    "kraken",
     "coinbase",
     "bitfinex",
+    "bitstamp",
+    "bybit",
+    "gateio",
+    "gemini",
+    "huobi",
+    "kraken",
+    "kucoin",
+    "mexc",
+    "okx",
+    "bitget",
+    "zonda",
 )
 
 
@@ -142,10 +152,19 @@ class OnboardingService(QObject):
         except SecretStoreError as exc:
             self._set_status("onboarding.strategy.error.secretStore", str(exc))
             return False
+
         self._has_credentials = True
         self._last_saved_exchange = credentials.normalized_exchange()
         self.lastSavedExchangeChanged.emit()
-        self._set_status("onboarding.strategy.credentials.saved", self._last_saved_exchange)
+
+        details_token = ""
+        if hasattr(self._secret_store, "security_details_token"):
+            try:
+                details_token = str(self._secret_store.security_details_token())
+            except Exception:  # pragma: no cover - defensywne logowanie
+                details_token = ""
+
+        self._set_status("onboarding.strategy.credentials.saved", details_token)
         self._update_configuration_state()
         return True
 

@@ -11,8 +11,11 @@ Item {
     property var telemetryProvider: (typeof telemetryProvider !== "undefined" ? telemetryProvider : null)
     property var dashboardSettingsController: (typeof dashboardSettingsController !== "undefined" ? dashboardSettingsController : null)
     property var complianceController: (typeof complianceController !== "undefined" ? complianceController : null)
+    property var runtimeService: (typeof runtimeService !== "undefined" ? runtimeService : null)
     property int refreshIntervalMs: dashboardSettingsController ? dashboardSettingsController.refreshIntervalMs : 4000
-    readonly property var defaultCardOrder: ["io_queue", "guardrails", "retraining", "compliance"]
+    readonly property var defaultCardOrder: ["io_queue", "guardrails", "retraining", "compliance", "ai_decisions"]
+    property var aiDecisions: []
+    property string aiDecisionError: ""
 
     function componentForCard(cardId) {
         switch (cardId) {
@@ -24,6 +27,8 @@ Item {
             return retrainingCardComponent
         case "compliance":
             return complianceCardComponent
+        case "ai_decisions":
+            return aiDecisionCardComponent
         default:
             return null
         }
@@ -35,13 +40,26 @@ Item {
         root.telemetryProvider.refreshTelemetry()
     }
 
+    function refreshDecisions() {
+        if (!root.runtimeService)
+            return
+        const result = root.runtimeService.loadRecentDecisions(10)
+        if (Array.isArray(result))
+            root.aiDecisions = result
+    }
+
+    function refreshAll() {
+        root.refreshTelemetry()
+        root.refreshDecisions()
+    }
+
     Timer {
         id: refreshTimer
         interval: Math.max(1500, root.refreshIntervalMs)
         repeat: true
         running: !!root.telemetryProvider
         triggeredOnStart: true
-        onTriggered: root.refreshTelemetry()
+        onTriggered: root.refreshAll()
     }
 
     Connections {
@@ -49,6 +67,22 @@ Item {
         ignoreUnknownSignals: true
         function onErrorMessageChanged() {
             errorBanner.visible = root.telemetryProvider.errorMessage.length > 0
+        }
+    }
+
+    Connections {
+        target: root.runtimeService
+        ignoreUnknownSignals: true
+
+        function onDecisionsChanged() {
+            if (root.runtimeService)
+                root.aiDecisions = root.runtimeService.decisions
+        }
+
+        function onErrorMessageChanged() {
+            if (!root.runtimeService)
+                return
+            root.aiDecisionError = root.runtimeService.errorMessage
         }
     }
 
@@ -77,7 +111,7 @@ Item {
                 id: manualRefreshButton
                 text: qsTr("Odśwież")
                 enabled: !!root.telemetryProvider
-                onClicked: root.refreshTelemetry()
+                onClicked: root.refreshAll()
             }
         }
 
@@ -372,6 +406,154 @@ Item {
             objectName: "runtimeOverviewCompliancePanel"
             telemetryProvider: root.telemetryProvider
             complianceController: root.complianceController
+        }
+    }
+
+    Component {
+        id: aiDecisionCardComponent
+        Rectangle {
+            objectName: "runtimeOverviewAiCard"
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            color: Styles.AppTheme.surfaceStrong
+            radius: 8
+            border.color: Styles.AppTheme.surfaceSubtle
+            border.width: 1
+
+            ColumnLayout {
+                anchors.fill: parent
+                anchors.margins: 16
+                spacing: 12
+
+                Text {
+                    text: qsTr("Decyzje AI")
+                    font.bold: true
+                    font.pointSize: 15
+                    color: Styles.AppTheme.textPrimary
+                }
+
+                Rectangle {
+                    objectName: "runtimeOverviewAiErrorBanner"
+                    Layout.fillWidth: true
+                    visible: root.aiDecisionError.length > 0
+                    color: Qt.rgba(0.75, 0.25, 0.28, 0.9)
+                    radius: 6
+                    implicitHeight: visible ? 32 : 0
+
+                    Text {
+                        anchors.centerIn: parent
+                        text: root.aiDecisionError
+                        color: "white"
+                        font.pointSize: 11
+                    }
+                }
+
+                ScrollView {
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+
+                    ColumnLayout {
+                        width: parent.width
+                        spacing: 8
+                        objectName: "runtimeOverviewAiRepeater"
+
+                        Repeater {
+                            model: root.aiDecisions
+                            delegate: Frame {
+                                Layout.fillWidth: true
+                                background: Rectangle {
+                                    radius: 6
+                                    color: Qt.rgba(0.12, 0.14, 0.18, 0.85)
+                                }
+
+                                ColumnLayout {
+                                    anchors.fill: parent
+                                    anchors.margins: 12
+                                    spacing: 4
+
+                                    Text {
+                                        text: qsTr("%1 • %2").arg(model.timestamp || "").arg(model.strategy || model.event)
+                                        font.bold: true
+                                        color: Styles.AppTheme.textPrimary
+                                    }
+
+                                    Text {
+                                        text: model.environment && model.portfolio
+                                              ? qsTr("Środowisko: %1 • Portfel: %2").arg(model.environment).arg(model.portfolio)
+                                              : qsTr("Środowisko: %1").arg(model.environment || "n/d")
+                                        color: Styles.AppTheme.textSecondary
+                                    }
+
+                                    RowLayout {
+                                        Layout.fillWidth: true
+                                        spacing: 12
+
+                                        Text {
+                                            text: model.decision && model.decision.state
+                                                  ? qsTr("Decyzja: %1").arg(model.decision.state)
+                                                  : qsTr("Decyzja: n/d")
+                                            color: Styles.AppTheme.textSecondary
+                                        }
+
+                                        Text {
+                                            text: model.decision && model.decision.signal
+                                                  ? qsTr("Sygnał: %1").arg(model.decision.signal)
+                                                  : qsTr("Sygnał: n/d")
+                                            color: Styles.AppTheme.textSecondary
+                                        }
+
+                                        Text {
+                                            text: model.decision && model.decision.shouldTrade !== undefined
+                                                  ? (model.decision.shouldTrade ? qsTr("Handel: TAK") : qsTr("Handel: NIE"))
+                                                  : qsTr("Handel: n/d")
+                                            color: Styles.AppTheme.textSecondary
+                                        }
+                                    }
+
+                                    RowLayout {
+                                        Layout.fillWidth: true
+                                        spacing: 12
+
+                                        Text {
+                                            text: model.decision && model.decision.model
+                                                  ? qsTr("Model: %1").arg(model.decision.model)
+                                                  : qsTr("Model: n/d")
+                                            color: Styles.AppTheme.textSecondary
+                                        }
+
+                                        Text {
+                                            text: model.marketRegime && model.marketRegime.regime
+                                                  ? qsTr("Reżim: %1").arg(model.marketRegime.regime)
+                                                  : qsTr("Reżim: n/d")
+                                            color: Styles.AppTheme.textSecondary
+                                        }
+
+                                        Text {
+                                            text: model.marketRegime && model.marketRegime.riskLevel
+                                                  ? qsTr("Poziom ryzyka: %1").arg(model.marketRegime.riskLevel)
+                                                  : qsTr("Poziom ryzyka: n/d")
+                                            color: Styles.AppTheme.textSecondary
+                                        }
+                                    }
+
+                                    Text {
+                                        visible: model.metadata && model.metadata.strategy_recommendation
+                                        text: qsTr("Rekomendacja: %1").arg(model.metadata.strategy_recommendation)
+                                        color: Styles.AppTheme.textSecondary
+                                    }
+                                }
+                            }
+                        }
+
+                        Label {
+                            objectName: "runtimeOverviewAiEmptyLabel"
+                            visible: root.aiDecisions.length === 0 && root.aiDecisionError.length === 0
+                            text: qsTr("Brak zarejestrowanych decyzji AI")
+                            color: Styles.AppTheme.textSecondary
+                        }
+                    }
+                }
+            }
         }
     }
 }

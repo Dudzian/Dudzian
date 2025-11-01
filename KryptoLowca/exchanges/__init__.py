@@ -16,14 +16,13 @@ from .bybit import BybitSpotAdapter
 from .interfaces import (
     ExchangeAdapter,
     ExchangeCredentials,
+    MarketStreamHandle,
     MarketSubscription,
     OrderRequest,
     OrderStatus,
     RateLimitRule,
-    RESTWebSocketAdapter,
-    WebSocketSubscription,
+    RESTStreamingAdapter,
 )
-from .polling import MarketDataPoller
 from .kraken import KrakenDemoAdapter
 from .okx import OKXDerivativesAdapter, OKXMarginAdapter
 from .zonda import ZondaAdapter
@@ -33,12 +32,11 @@ def _register_default_adapters() -> None:
     """Rejestruje wbudowane adaptery REST w fabryce."""
 
     def _factory_for(
-        adapter_cls: Type[RESTWebSocketAdapter],
+        adapter_cls: Type[RESTStreamingAdapter],
     ) -> "Callable[[Dict[str, Any]], BaseExchangeAdapter]":
-        def _build(options: Dict[str, Any]) -> RESTWebSocketAdapter:
+        def _build(options: Dict[str, Any]) -> RESTStreamingAdapter:
             opts = dict(options)
             http_client = opts.pop("http_client", None)
-            ws_factory = opts.pop("ws_factory", None)
             demo_mode = bool(opts.pop("demo_mode", True))
             compliance_ack = bool(opts.pop("compliance_ack", False))
             adapter_kwargs = opts.pop("adapter_kwargs", None) or {}
@@ -50,14 +48,13 @@ def _register_default_adapters() -> None:
             return adapter_cls(
                 demo_mode=demo_mode,
                 http_client=http_client,
-                ws_factory=ws_factory,
                 compliance_ack=compliance_ack,
                 **extra_kwargs,
             )
 
         return _build
 
-    registrations: Dict[str, Type[RESTWebSocketAdapter]] = {
+    registrations: Dict[str, Type[RESTStreamingAdapter]] = {
         "binance-testnet": BinanceTestnetAdapter,
         "bitstamp": BitstampAdapter,
         "bybit-spot": BybitSpotAdapter,
@@ -88,13 +85,12 @@ __all__ = [
     "OKXDerivativesAdapter",
     "OKXMarginAdapter",
     "ZondaAdapter",
-    "MarketDataPoller",
     "ExchangeAdapter",
     "ExchangeCredentials",
+    "MarketStreamHandle",
     "MarketSubscription",
     "OrderRequest",
     "OrderStatus",
     "RateLimitRule",
-    "RESTWebSocketAdapter",
-    "WebSocketSubscription",
+    "RESTStreamingAdapter",
 ]

@@ -75,6 +75,7 @@ from bot_core.strategies.testing import (
     StrategyParameterTestReport,
     StrategyParameterTester,
 )
+from bot_core.strategies.public import StrategyDescriptor, list_available_strategies
 from bot_core.strategies.volatility_target import (
     VolatilityTargetSettings,
     VolatilityTargetStrategy,
@@ -137,4 +138,6 @@ __all__ = [
     "FuturesSpreadStrategy",
     "CrossExchangeHedgeSettings",
     "CrossExchangeHedgeStrategy",
+    "StrategyDescriptor",
+    "list_available_strategies",
 ]

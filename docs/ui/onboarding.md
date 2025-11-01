@@ -11,7 +11,7 @@ Nowy kreator **LicenseWizard** zapewnia operatorom prowadzenie krok po kroku prz
 
 ## Warstwa backendowa
 - Moduł `ui.backend.licensing_controller.LicensingController` integruje się z `core.security.license_verifier.LicenseVerifier`, zapewniając spójne kody statusu i sygnały Qt dla QML.
-- `OnboardingService` udostępnia strategiom dane z `core.runtime.strategy_catalog.list_available_strategies`, przechowuje wybrany wariant i zapisuje klucze API przez `core.security.secret_store.SecretStore`.
+- `OnboardingService` udostępnia strategiom dane z `bot_core.strategies.public.list_available_strategies`, przechowuje wybrany wariant i zapisuje klucze API przez `core.security.secret_store.SecretStore`.
 - `LicenseVerifier` oraz `SecretStore` mapują komunikaty na identyfikatory tłumaczeń, aby w UI można było prezentować lokalizowane treści.
 
 ## Testy automatyczne

@@ -541,7 +541,31 @@ class AutoTrader:
             "auto_trader_strategy_active",
             "Aktywna strategia handlowa AutoTradera.",
         )
+        self._metric_regime_confidence_gauge = self._metrics.gauge(
+            "auto_trader_regime_confidence",
+            "Pewność ostatniej klasyfikacji reżimu rynku.",
+        )
+        self._metric_regime_risk_score_gauge = self._metrics.gauge(
+            "auto_trader_regime_risk_score",
+            "Znormalizowany poziom ryzyka ostatniego reżimu.",
+        )
+        self._metric_risk_profile_state_gauge = self._metrics.gauge(
+            "auto_trader_risk_profile_active",
+            "Aktywny profil ryzyka AutoTradera.",
+        )
+        self._metric_decision_confidence_gauge = self._metrics.gauge(
+            "auto_trader_decision_confidence",
+            "Pewność ostatniej decyzji handlowej.",
+        )
+        self._metric_decision_signal_gauge = self._metrics.gauge(
+            "auto_trader_decision_signal",
+            "Bieżący sygnał decyzyjny AutoTradera.",
+        )
         self._last_strategy_metric: str | None = None
+        self._last_strategy_metric_labels: Mapping[str, str] | None = None
+        self._last_regime_metric_labels: Mapping[str, str] | None = None
+        self._last_risk_profile_metric_labels: Mapping[str, str] | None = None
+        self._last_decision_metric_labels: Mapping[str, str] | None = None
         self._schedule_last_alert_state: bool | None = None
 
         self._controller_runner: Any | None = controller_runner
@@ -569,6 +593,8 @@ class AutoTrader:
             controller_cycle_history_ttl_s
         )
         self._last_ai_context: Mapping[str, Any] | None = None
+        self._decision_cycle_metadata: Mapping[str, str] = {}
+        self._strategy_recommendations: list[dict[str, object]] = []
         self._cooldown_until: float = 0.0
         self._cooldown_reason: str | None = None
         self._last_guardrail_reasons: list[str] = []
@@ -593,6 +619,7 @@ class AutoTrader:
         )
         self._last_schedule_snapshot = (initial_state.mode, initial_state.is_open)
         self._update_strategy_metrics(self.current_strategy)
+        self._initialise_risk_profile_metrics()
         self._risk_evaluations: list[dict[str, Any]] = []
         self._risk_evaluations_limit: int | None = None
         self._risk_evaluations_ttl_s: float | None = self._normalise_cycle_history_ttl(
@@ -1486,13 +1513,321 @@ class AutoTrader:
     def _update_strategy_metrics(self, strategy: str) -> None:
         strategy_label = str(strategy)
         labels = self._metric_label_payload(strategy=strategy_label)
+        previous_strategy = self._last_strategy_metric
+        previous_labels = self._last_strategy_metric_labels
         self._metric_strategy_state_gauge.set(1.0, labels=labels)
-        if self._last_strategy_metric and self._last_strategy_metric != strategy_label:
-            previous_labels = self._metric_label_payload(strategy=self._last_strategy_metric)
+        if previous_labels is not None and previous_labels != labels:
             self._metric_strategy_state_gauge.set(0.0, labels=previous_labels)
+        if previous_strategy is not None and previous_strategy != strategy_label:
             self._metric_strategy_switch_total.inc(labels=self._base_metric_labels)
-        if self._last_strategy_metric != strategy_label:
-            self._last_strategy_metric = strategy_label
+        self._last_strategy_metric = strategy_label
+        self._last_strategy_metric_labels = labels
+
+    def _initialise_risk_profile_metrics(self) -> None:
+        labels = self._metric_label_payload()
+        self._metric_risk_profile_state_gauge.set(1.0, labels=labels)
+        self._last_risk_profile_metric_labels = labels
+
+    def _derive_risk_profile_from_regime(
+        self,
+        assessment: MarketRegimeAssessment,
+        summary: RegimeSummary | None,
+    ) -> str:
+        confidence_penalty = 0.0
+        if summary is not None:
+            level = getattr(summary, "risk_level", None)
+            if level is RiskLevel.CRITICAL:
+                return "conservative"
+            if level is RiskLevel.ELEVATED:
+                return "balanced"
+            if level is RiskLevel.CALM:
+                if assessment.regime is MarketRegime.TREND and assessment.risk_score < 0.5:
+                    return "aggressive"
+                return "balanced"
+            if level is RiskLevel.BALANCED:
+                return "balanced"
+            if level is RiskLevel.WATCH and assessment.risk_score >= 0.6:
+                return "conservative"
+        risk_score = float(assessment.risk_score)
+        if risk_score >= 0.75:
+            return "conservative"
+        if risk_score >= 0.5:
+            return "balanced"
+        if assessment.regime is MarketRegime.TREND and risk_score <= 0.35:
+            return "aggressive"
+        if assessment.regime is MarketRegime.MEAN_REVERSION:
+            return "balanced"
+        return "conservative"
+
+    def _apply_risk_profile_transition(
+        self,
+        profile: str,
+        *,
+        assessment: MarketRegimeAssessment | None = None,
+        summary: RegimeSummary | None = None,
+    ) -> bool:
+        target = str(profile or "").strip()
+        if not target:
+            return False
+        current = self._risk_profile_name
+        if target == current:
+            return False
+        previous_labels = self._last_risk_profile_metric_labels
+        previous_strategy_labels = self._last_strategy_metric_labels
+        with self._lock:
+            self._risk_profile_name = target
+            self._base_metric_labels = {
+                "environment": self._environment_name,
+                "portfolio": self._portfolio_id,
+                "risk_profile": self._risk_profile_name,
+            }
+            self._execution_context = None
+            self._decision_journal_context["risk_profile"] = target
+        if previous_labels is not None:
+            self._metric_risk_profile_state_gauge.set(0.0, labels=previous_labels)
+        new_labels = self._metric_label_payload()
+        self._metric_risk_profile_state_gauge.set(1.0, labels=new_labels)
+        self._last_risk_profile_metric_labels = new_labels
+        if previous_strategy_labels is not None and self._last_strategy_metric_labels is not None:
+            # Reset strategię w poprzednim profilu ryzyka, aby uniknąć wiszących metryk.
+            self._metric_strategy_state_gauge.set(0.0, labels=previous_strategy_labels)
+            self._last_strategy_metric_labels = None
+        self._update_strategy_metrics(self.current_strategy)
+        payload: dict[str, object] = {
+            "previous": current,
+            "selected": target,
+        }
+        if assessment is not None:
+            payload["regime"] = assessment.regime.value
+            payload["regime_confidence"] = f"{float(assessment.confidence):.4f}"
+            payload["regime_risk_score"] = f"{float(assessment.risk_score):.4f}"
+        if summary is not None:
+            level = getattr(summary, "risk_level", None)
+            if isinstance(level, RiskLevel):
+                payload["risk_level"] = level.value
+        self._log(
+            "Risk profile switched by regime autonomy",
+            level=logging.INFO,
+            previous=current,
+            selected=target,
+        )
+        self._log_decision_event(
+            "risk_profile_transition",
+            status="updated",
+            metadata=payload,
+        )
+        self._record_decision_audit_stage(
+            "risk_profile_transition",
+            symbol=_SCHEDULE_SYMBOL,
+            payload=payload,
+        )
+        return True
+
+    def _update_risk_profile_from_assessment(
+        self,
+        assessment: MarketRegimeAssessment,
+        summary: RegimeSummary | None,
+    ) -> None:
+        target_profile = self._derive_risk_profile_from_regime(assessment, summary)
+        self._apply_risk_profile_transition(
+            target_profile,
+            assessment=assessment,
+            summary=summary,
+        )
+
+    def _update_regime_metrics(
+        self,
+        assessment: MarketRegimeAssessment,
+        summary: RegimeSummary | None,
+        *,
+        effective_risk: float,
+    ) -> None:
+        labels = dict(self._metric_label_payload(regime=assessment.regime.value))
+        risk_level = getattr(summary, "risk_level", None)
+        labels["risk_level"] = risk_level.value if isinstance(risk_level, RiskLevel) else "unknown"
+        previous = self._last_regime_metric_labels
+        self._metric_regime_confidence_gauge.set(float(assessment.confidence), labels=labels)
+        self._metric_regime_risk_score_gauge.set(float(effective_risk), labels=labels)
+        if previous is not None and previous != labels:
+            self._metric_regime_confidence_gauge.set(0.0, labels=previous)
+            self._metric_regime_risk_score_gauge.set(0.0, labels=previous)
+        self._last_regime_metric_labels = labels
+
+    def _update_strategy_recommendations(
+        self,
+        assessment: MarketRegimeAssessment,
+    ) -> None:
+        orchestrator = self._resolve_decision_orchestrator()
+        snapshot_fn = getattr(orchestrator, "strategy_performance_snapshot", None)
+        if not callable(snapshot_fn):
+            self._strategy_recommendations = []
+            return
+        try:
+            snapshot = snapshot_fn()
+        except Exception:
+            self._strategy_recommendations = []
+            return
+        entries: list[dict[str, object]] = []
+        for summary in snapshot.values():
+            strategy = getattr(summary, "strategy", None)
+            if not strategy:
+                continue
+            regime_value = getattr(summary, "regime", None)
+            if isinstance(regime_value, MarketRegime):
+                regime_name = regime_value.value
+            else:
+                regime_name = str(regime_value or "")
+            score = float(getattr(summary, "hit_rate", 0.0)) * (
+                1.0 + max(float(getattr(summary, "sharpe", 0.0)), 0.0)
+            ) + float(getattr(summary, "pnl", 0.0))
+            updated_at = getattr(summary, "updated_at", None)
+            if isinstance(updated_at, datetime):
+                updated_iso = updated_at.astimezone(timezone.utc).isoformat()
+            else:
+                updated_iso = None
+            entries.append(
+                {
+                    "strategy": str(strategy),
+                    "regime": regime_name,
+                    "hit_rate": float(getattr(summary, "hit_rate", 0.0)),
+                    "sharpe": float(getattr(summary, "sharpe", 0.0)),
+                    "pnl": float(getattr(summary, "pnl", 0.0)),
+                    "observations": int(getattr(summary, "observations", 0)),
+                    "updated_at": updated_iso,
+                    "_score": score,
+                }
+            )
+        if not entries:
+            self._strategy_recommendations = []
+            return
+        current_regime = assessment.regime.value
+        entries.sort(key=lambda item: item["_score"], reverse=True)
+        regime_specific = [item for item in entries if item.get("regime") == current_regime]
+        pool = regime_specific or entries
+        recommendations = []
+        for item in pool[:5]:
+            payload = {key: value for key, value in item.items() if key != "_score"}
+            recommendations.append(payload)
+        self._strategy_recommendations = recommendations
+
+    def _resolve_active_model_label(
+        self,
+        ai_manager: Any | None,
+        symbol: str | None,
+    ) -> str | None:
+        if ai_manager is None:
+            return None
+        getter = getattr(ai_manager, "get_active_model", None)
+        if not callable(getter):
+            return None
+        try:
+            if symbol is not None:
+                model = getter(symbol)
+            else:
+                model = getter()
+        except TypeError:
+            try:
+                model = getter()
+            except Exception:
+                return None
+        except Exception:
+            return None
+        return str(model) if model else None
+
+    def _update_decision_cycle_metadata(
+        self,
+        *,
+        assessment: MarketRegimeAssessment,
+        summary: RegimeSummary | None,
+        effective_risk: float,
+        decision: RiskDecision,
+        signal: str,
+        decision_status: str,
+        decision_side: str | None,
+        ai_context: Mapping[str, object] | None,
+        ai_manager: Any | None,
+        symbol: str | None,
+        decision_model: str | None = None,
+        evaluation_payload: Mapping[str, object] | None = None,
+    ) -> None:
+        self._update_regime_metrics(assessment, summary, effective_risk=effective_risk)
+        self._update_strategy_recommendations(assessment)
+        decision_confidence = self._extract_decision_confidence(decision.details)
+        cycle_metadata: dict[str, str] = {
+            "market_regime": assessment.regime.value,
+            "market_regime_confidence": f"{float(assessment.confidence):.4f}",
+            "market_regime_risk_score": f"{float(assessment.risk_score):.4f}",
+            "effective_risk": f"{float(effective_risk):.4f}",
+            "risk_profile": self._risk_profile_name,
+            "decision_state": decision_status,
+            "decision_signal": str(decision_side or signal or "hold"),
+            "decision_should_trade": "true" if decision.should_trade else "false",
+            "strategy": self.current_strategy,
+            "ai_degraded": "true" if self._ai_degraded else "false",
+        }
+        if summary is not None:
+            level = getattr(summary, "risk_level", None)
+            if isinstance(level, RiskLevel):
+                cycle_metadata["market_regime_risk_level"] = level.value
+        if decision_confidence is not None:
+            cycle_metadata["decision_confidence"] = f"{float(decision_confidence):.4f}"
+        model_from_evaluation: str | None = None
+        if evaluation_payload is not None:
+            model_selection = evaluation_payload.get("model_selection")
+            if isinstance(model_selection, Mapping):
+                selected = model_selection.get("selected")
+                if selected:
+                    model_from_evaluation = str(selected)
+        active_model = decision_model or model_from_evaluation or self._resolve_active_model_label(
+            ai_manager, symbol
+        )
+        if active_model:
+            cycle_metadata["decision_model"] = active_model
+        if ai_context:
+            direction = ai_context.get("direction")
+            if direction:
+                cycle_metadata["ai_direction"] = str(direction)
+            prediction = ai_context.get("prediction_bps")
+            if isinstance(prediction, (int, float)):
+                cycle_metadata["ai_prediction_bps"] = f"{float(prediction):.4f}"
+            probability = ai_context.get("probability")
+            if isinstance(probability, (int, float)):
+                cycle_metadata["ai_probability"] = f"{float(probability):.4f}"
+            threshold = ai_context.get("threshold_bps")
+            if isinstance(threshold, (int, float)):
+                cycle_metadata["ai_threshold_bps"] = f"{float(threshold):.4f}"
+        if self._strategy_recommendations:
+            top = self._strategy_recommendations[0]
+            strategy_rec = top.get("strategy")
+            if strategy_rec:
+                cycle_metadata.setdefault("strategy_recommendation", str(strategy_rec))
+            regime_rec = top.get("regime")
+            if regime_rec:
+                cycle_metadata.setdefault("strategy_recommendation_regime", str(regime_rec))
+        self._decision_cycle_metadata = cycle_metadata
+
+        decision_signal_label = str(decision_side or signal or "hold")
+        signal_labels = dict(
+            self._metric_label_payload(
+                decision_state=decision_status,
+                signal=decision_signal_label,
+                regime=assessment.regime.value,
+            )
+        )
+        risk_level = cycle_metadata.get("market_regime_risk_level", "unknown")
+        signal_labels["risk_level"] = risk_level
+        if active_model:
+            signal_labels["model"] = active_model
+        previous_decision_labels = self._last_decision_metric_labels
+        if previous_decision_labels is not None and previous_decision_labels != signal_labels:
+            self._metric_decision_signal_gauge.set(0.0, labels=previous_decision_labels)
+        self._metric_decision_signal_gauge.set(1.0, labels=signal_labels)
+        self._last_decision_metric_labels = signal_labels
+        confidence_value = float(decision_confidence or 0.0)
+        self._metric_decision_confidence_gauge.set(
+            confidence_value,
+            labels=self._metric_label_payload(),
+        )
 
     def _emit_alert(
         self,
@@ -2423,6 +2758,10 @@ class AutoTrader:
                     merged_meta[str(key)] = value
             for key, value in self._execution_metadata.items():
                 merged_meta.setdefault(str(key), value)
+            cycle_meta = getattr(self, "_decision_cycle_metadata", None)
+            if isinstance(cycle_meta, Mapping):
+                for key, value in cycle_meta.items():
+                    merged_meta.setdefault(str(key), value)
             if metadata:
                 for key, value in metadata.items():
                     merged_meta[str(key)] = value
@@ -5330,6 +5669,7 @@ class AutoTrader:
                 ai_threshold_bps = 0.0
 
         effective_risk = assessment.risk_score
+        confidence_penalty = 0.0
         if summary is not None:
             effective_risk = max(
                 effective_risk,
@@ -5594,7 +5934,6 @@ class AutoTrader:
                         + min(abs(summary.volume_imbalance) / 0.7, 1.0) * 0.25,
                     ),
                 )
-            confidence_penalty = 0.0
             if summary.confidence_trend < -0.05:
                 confidence_penalty += min(abs(summary.confidence_trend) * 0.6, 0.15)
             if summary.confidence_volatility >= 0.1:
@@ -5655,9 +5994,10 @@ class AutoTrader:
                 and summary.liquidity_pressure >= 0.45
             ):
                 confidence_penalty += min(abs(summary.volume_imbalance) / 0.7, 0.15)
-            if confidence_penalty:
-                effective_risk = max(effective_risk, min(1.0, assessment.risk_score + confidence_penalty))
+        if confidence_penalty:
+            effective_risk = max(effective_risk, min(1.0, assessment.risk_score + confidence_penalty))
 
+        self._update_risk_profile_from_assessment(assessment, summary)
         cooldown_active, cooldown_remaining = self._update_cooldown(
             summary=summary,
             effective_risk=effective_risk,
@@ -5703,6 +6043,7 @@ class AutoTrader:
 
         decision_evaluation: Any | None = None
         evaluation_payload: Mapping[str, object] | None = None
+        selected_model: str | None = None
         if signal in {"buy", "sell"}:
             decision_evaluation = self._evaluate_decision_candidate(
                 symbol=symbol,
@@ -5736,6 +6077,15 @@ class AutoTrader:
             evaluation_confidence = self._safe_float(
                 evaluation_payload.get("model_success_probability")
             )
+            model_selection = evaluation_payload.get("model_selection")
+            if isinstance(model_selection, Mapping):
+                selected_value = model_selection.get("selected")
+                if selected_value:
+                    selected_model = str(selected_value)
+            if not selected_model:
+                model_candidate = evaluation_payload.get("model")
+                if model_candidate:
+                    selected_model = str(model_candidate)
             self._log_decision_event(
                 "decision_evaluated",
                 symbol=str(symbol) if symbol else None,
@@ -5801,6 +6151,20 @@ class AutoTrader:
         if decision_side is None and decision.should_trade:
             decision_side = signal
         confidence = self._extract_decision_confidence(decision.details)
+        self._update_decision_cycle_metadata(
+            assessment=assessment,
+            summary=summary,
+            effective_risk=effective_risk,
+            decision=decision,
+            signal=signal,
+            decision_status=decision_status,
+            decision_side=str(decision_side) if decision_side is not None else None,
+            ai_context=ai_context,
+            ai_manager=ai_manager,
+            symbol=str(symbol) if symbol is not None else None,
+            decision_model=selected_model,
+            evaluation_payload=evaluation_payload,
+        )
         self._log_decision_event(
             "decision_composed",
             symbol=str(symbol) if symbol else None,
@@ -11540,6 +11904,33 @@ class AutoTrader:
             strategy_section["metadata"] = strategy_metadata
         if strategy_summary:
             strategy_section["metadata_summary"] = strategy_summary
+        if self._strategy_recommendations:
+            strategy_section["recommendations"] = copy.deepcopy(self._strategy_recommendations)
+
+        regime_section: dict[str, Any] = {
+            "regime": last_regime.get("regime") if isinstance(last_regime, Mapping) else None,
+            "confidence": last_regime.get("confidence") if isinstance(last_regime, Mapping) else None,
+            "risk_score": last_regime.get("risk_score") if isinstance(last_regime, Mapping) else None,
+            "risk_profile": self._risk_profile_name,
+        }
+        if isinstance(last_regime, Mapping):
+            for key in ("risk_level", "instability_score", "transition_rate"):
+                if key in last_regime:
+                    regime_section[key] = last_regime[key]
+        if self._decision_cycle_metadata:
+            for key, value in self._decision_cycle_metadata.items():
+                if key.startswith("market_regime") and key not in regime_section:
+                    regime_section[key] = value
+
+        decision_section_extra: dict[str, Any] = {}
+        if self._decision_cycle_metadata:
+            decision_section_extra = {
+                key: value
+                for key, value in self._decision_cycle_metadata.items()
+                if key.startswith("decision_") or key.startswith("ai_") or key == "strategy_recommendation"
+                or key == "strategy_recommendation_regime"
+                or key == "decision_model"
+            }
 
         snapshot = {
             "timestamp": now_dt.isoformat(),
@@ -11549,6 +11940,7 @@ class AutoTrader:
             "risk_profile": self._risk_profile_name,
             "schedule": schedule_payload,
             "strategy": strategy_section,
+            "regime": regime_section,
             "guardrails": {
                 "summary": guardrail_summary,
                 "last_reasons": last_guardrail_reasons,
@@ -11569,6 +11961,7 @@ class AutoTrader:
                     None,
                 ),
             },
+            "decision": decision_section_extra,
             "controller": {
                 **controller_summary,
                 "auto_trade": auto_trade_state,

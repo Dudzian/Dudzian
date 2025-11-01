@@ -1,162 +1,33 @@
-"""Adapter OKX Margin/Derivatives spełniające kontrakt RESTWebSocketAdapter."""
+"""OKX adapters using REST endpoints and long-polling."""
 from __future__ import annotations
 
-import asyncio
 import base64
-import contextlib
 import hashlib
 import hmac
 import json
 import logging
-from datetime import datetime, timezone
-from collections.abc import Awaitable, Callable, Iterable, Sequence
-from typing import Any, Dict, Optional
 import urllib.parse
+from datetime import datetime, timezone
+from collections.abc import Awaitable, Callable, Iterable
+from typing import Any, Dict, Optional
 
 from .interfaces import (
     ExchangeCredentials,
     MarketPayload,
+    MarketStreamHandle,
     MarketSubscription,
     OrderRequest,
     OrderStatus,
-    RESTWebSocketAdapter,
-    WebSocketSubscription,
+    RESTStreamingAdapter,
 )
-
-try:  # pragma: no cover - zależność opcjonalna
-    import websockets
-except Exception:  # pragma: no cover - środowiska bez websocketów
-    websockets = None  # type: ignore[assignment]
+from .streaming import LongPollSubscription
 
 
 logger = logging.getLogger(__name__)
 
-_OKX_PUBLIC_WS = "wss://ws.okx.com:8443/ws/v5/public"
-_OKX_WS_INITIAL_BACKOFF = 1.0
-_OKX_WS_MAX_BACKOFF = 20.0
 
-
-class _OKXWebSocketSubscription(WebSocketSubscription):
-    """Obsługa subskrypcji publicznych kanałów OKX."""
-
-    def __init__(
-        self,
-        *,
-        endpoint: str,
-        subscriptions: Sequence[Dict[str, Any]],
-        callback: Callable[[MarketPayload], Awaitable[None]],
-        initial_backoff: float = _OKX_WS_INITIAL_BACKOFF,
-        max_backoff: float = _OKX_WS_MAX_BACKOFF,
-    ) -> None:
-        if websockets is None:  # pragma: no cover - zabezpieczenie
-            raise RuntimeError("Pakiet 'websockets' jest wymagany do streamingu OKX")
-        if not subscriptions:
-            raise ValueError("OKX WS wymaga co najmniej jednej subskrypcji")
-        self._endpoint = endpoint
-        self._subscriptions = list(subscriptions)
-        self._callback = callback
-        self._initial_backoff = max(0.1, initial_backoff)
-        self._max_backoff = max(self._initial_backoff, max_backoff)
-        self._task: Optional[asyncio.Task[None]] = None
-        self._ws: Any = None
-        self._closed = False
-
-    async def __aenter__(self) -> "_OKXWebSocketSubscription":
-        self._task = asyncio.create_task(self._runner(), name="okx-ws-runner")
-        return self
-
-    async def __aexit__(self, exc_type, exc, tb) -> Optional[bool]:  # type: ignore[override]
-        self._closed = True
-        if self._ws:
-            with contextlib.suppress(Exception):
-                await self._send_unsubscribe()
-            with contextlib.suppress(Exception):
-                await self._ws.close()
-            self._ws = None
-        if self._task:
-            self._task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._task
-        return None
-
-    async def _runner(self) -> None:
-        attempt = 0
-        while not self._closed:
-            try:
-                self._ws = await websockets.connect(self._endpoint, ping_interval=20)
-                try:
-                    await self._send_subscribe()
-                    attempt = 0
-                    async for message in self._ws:
-                        await self._handle_message(message)
-                finally:
-                    if self._ws:
-                        with contextlib.suppress(Exception):
-                            await self._ws.close()
-                    self._ws = None
-            except asyncio.CancelledError:  # pragma: no cover - zamykanie
-                raise
-            except Exception as exc:
-                if self._closed:
-                    break
-                attempt += 1
-                wait_for = min(self._initial_backoff * (2 ** (attempt - 1)), self._max_backoff)
-                logger.debug("OKX WS reconnect in %.2fs after error: %s", wait_for, exc)
-                await asyncio.sleep(wait_for)
-            else:
-                if not self._closed:
-                    attempt += 1
-                    wait_for = min(self._initial_backoff * (2 ** (attempt - 1)), self._max_backoff)
-                    logger.debug("OKX WS reconnect in %.2fs after close", wait_for)
-                    await asyncio.sleep(wait_for)
-
-    async def _send_subscribe(self) -> None:
-        if not self._ws:
-            return
-        payload = {"op": "subscribe", "args": self._subscriptions}
-        await self._ws.send(json.dumps(payload))
-
-    async def _send_unsubscribe(self) -> None:
-        if not self._ws:
-            return
-        payload = {"op": "unsubscribe", "args": self._subscriptions}
-        await self._ws.send(json.dumps(payload))
-
-    async def _handle_message(self, message: str | bytes) -> None:
-        if isinstance(message, bytes):
-            message = message.decode("utf-8", "ignore")
-        try:
-            payload: MarketPayload = json.loads(message)
-        except json.JSONDecodeError:
-            logger.debug("OKX WS otrzymał nieprawidłowy JSON: %s", message)
-            return
-        try:
-            await self._callback(payload)
-        except Exception as exc:  # pragma: no cover - callback użytkownika
-            logger.exception("Błąd callbacka OKX WS: %s", exc)
-
-
-def _build_ws_args(
-    subscriptions: Iterable[MarketSubscription],
-    *,
-    default_channel: str,
-) -> list[Dict[str, Any]]:
-    payloads: list[Dict[str, Any]] = []
-    for subscription in subscriptions:
-        channel = subscription.params.get("channel") if subscription.params else None
-        channel = channel or subscription.channel or default_channel
-        base_args = {k: v for k, v in (subscription.params or {}).items() if k != "channel"}
-        symbols = list(subscription.symbols) or [None]
-        for symbol in symbols:
-            payload = {"channel": channel, **base_args}
-            if symbol:
-                payload.setdefault("instId", symbol)
-            payloads.append(payload)
-    return payloads
-
-
-class _OKXBaseAdapter(RESTWebSocketAdapter):
-    """Bazowa implementacja adapterów OKX."""
+class _OKXBaseAdapter(RESTStreamingAdapter):
+    """Bazowa implementacja adapterów OKX z long-pollingiem."""
 
     def __init__(
         self,
@@ -166,9 +37,7 @@ class _OKXBaseAdapter(RESTWebSocketAdapter):
         default_td_mode: str,
         demo_mode: bool,
         http_client=None,
-        ws_factory: Optional[
-            Callable[[Iterable[MarketSubscription], Callable[[MarketPayload], Awaitable[None]]], WebSocketSubscription]
-        ],
+        stream_poll_interval: float = 1.0,
         compliance_ack: bool,
     ) -> None:
         super().__init__(
@@ -178,7 +47,9 @@ class _OKXBaseAdapter(RESTWebSocketAdapter):
             http_client=http_client,
             compliance_ack=compliance_ack,
         )
-        self._ws_factory = ws_factory or self._default_ws_factory
+        if stream_poll_interval <= 0:
+            raise ValueError("stream_poll_interval musi być dodatni")
+        self._stream_poll_interval = float(stream_poll_interval)
         self._inst_type = inst_type
         self._default_td_mode = default_td_mode
 
@@ -212,8 +83,13 @@ class _OKXBaseAdapter(RESTWebSocketAdapter):
 
     async def stream_market_data(
         self, subscriptions: Iterable[MarketSubscription], callback: Callable[[MarketPayload], Awaitable[None]]
-    ) -> WebSocketSubscription:
-        return self._ws_factory(subscriptions, callback)
+    ) -> MarketStreamHandle:
+        return LongPollSubscription(
+            self,
+            subscriptions,
+            callback,
+            default_interval=self._stream_poll_interval,
+        )
 
     async def submit_order(self, order: OrderRequest) -> OrderStatus:
         body: Dict[str, Any] = {
@@ -313,20 +189,6 @@ class _OKXBaseAdapter(RESTWebSocketAdapter):
             raw=raw,
         )
 
-    def _default_ws_factory(
-        self,
-        subscriptions: Iterable[MarketSubscription],
-        callback: Callable[[MarketPayload], Awaitable[None]],
-    ) -> WebSocketSubscription:
-        args = _build_ws_args(subscriptions, default_channel="tickers")
-        return _OKXWebSocketSubscription(
-            endpoint=_OKX_PUBLIC_WS,
-            subscriptions=args,
-            callback=callback,
-            initial_backoff=_OKX_WS_INITIAL_BACKOFF,
-            max_backoff=_OKX_WS_MAX_BACKOFF,
-        )
-
 
 class OKXMarginAdapter(_OKXBaseAdapter):
     """Adapter obsługujący rynek margin OKX."""
@@ -336,9 +198,7 @@ class OKXMarginAdapter(_OKXBaseAdapter):
         *,
         demo_mode: bool = True,
         http_client=None,
-        ws_factory: Optional[
-            Callable[[Iterable[MarketSubscription], Callable[[MarketPayload], Awaitable[None]]], WebSocketSubscription]
-        ] = None,
+        stream_poll_interval: float = 1.0,
         compliance_ack: bool = False,
     ) -> None:
         super().__init__(
@@ -347,7 +207,7 @@ class OKXMarginAdapter(_OKXBaseAdapter):
             default_td_mode="cross",
             demo_mode=demo_mode,
             http_client=http_client,
-            ws_factory=ws_factory,
+            stream_poll_interval=stream_poll_interval,
             compliance_ack=compliance_ack,
         )
 
@@ -360,9 +220,7 @@ class OKXDerivativesAdapter(_OKXBaseAdapter):
         *,
         demo_mode: bool = True,
         http_client=None,
-        ws_factory: Optional[
-            Callable[[Iterable[MarketSubscription], Callable[[MarketPayload], Awaitable[None]]], WebSocketSubscription]
-        ] = None,
+        stream_poll_interval: float = 1.0,
         compliance_ack: bool = False,
         inst_type: str = "SWAP",
     ) -> None:
@@ -372,10 +230,9 @@ class OKXDerivativesAdapter(_OKXBaseAdapter):
             default_td_mode="cross",
             demo_mode=demo_mode,
             http_client=http_client,
-            ws_factory=ws_factory,
+            stream_poll_interval=stream_poll_interval,
             compliance_ack=compliance_ack,
         )
 
 
 __all__ = ["OKXMarginAdapter", "OKXDerivativesAdapter"]
-

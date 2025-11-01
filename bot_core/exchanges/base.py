@@ -116,11 +116,11 @@ class ExchangeAdapter(abc.ABC):
 
     @abc.abstractmethod
     def stream_public_data(self, *, channels: Sequence[str]) -> Protocol:
-        """Udostępnia strumień danych publicznych (websocket/REST poll)."""
+        """Udostępnia strumień danych publicznych (gRPC lub REST long-poll)."""
 
     @abc.abstractmethod
     def stream_private_data(self, *, channels: Sequence[str]) -> Protocol:
-        """Udostępnia strumień zdarzeń prywatnych (zlecenia, fills)."""
+        """Udostępnia strumień zdarzeń prywatnych (gRPC lub REST long-poll)."""
 
 
 class ExchangeAdapterFactory(Protocol):

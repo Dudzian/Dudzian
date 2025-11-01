@@ -1,167 +1,39 @@
-"""Adapter Bybit Spot implementujący RESTWebSocketAdapter."""
+"""Bybit spot adapter using REST endpoints and long-polling."""
 from __future__ import annotations
 
-import asyncio
-import contextlib
 import hashlib
 import hmac
 import json
 import logging
 import time
 import urllib.parse
-from collections.abc import Awaitable, Callable, Iterable, Sequence
+from collections.abc import Awaitable, Callable, Iterable
 from typing import Any, Dict, Optional
 
 from .interfaces import (
     ExchangeCredentials,
     MarketPayload,
+    MarketStreamHandle,
     MarketSubscription,
     OrderRequest,
     OrderStatus,
-    RESTWebSocketAdapter,
-    WebSocketSubscription,
+    RESTStreamingAdapter,
 )
-
-try:  # pragma: no cover - zależność opcjonalna
-    import websockets
-except Exception:  # pragma: no cover - środowiska bez websocketów
-    websockets = None  # type: ignore[assignment]
+from .streaming import LongPollSubscription
 
 
 logger = logging.getLogger(__name__)
 
-_BYBIT_WS_ENDPOINT = "wss://stream.bybit.com/v5/public/spot"
-_BYBIT_WS_INITIAL_BACKOFF = 1.0
-_BYBIT_WS_MAX_BACKOFF = 20.0
 
-
-class _BybitWebSocketSubscription(WebSocketSubscription):
-    """Obsługa subskrypcji kanałów Bybit WebSocket v5."""
-
-    def __init__(
-        self,
-        *,
-        endpoint: str,
-        channels: Sequence[str],
-        callback: Callable[[MarketPayload], Awaitable[None]],
-        initial_backoff: float = _BYBIT_WS_INITIAL_BACKOFF,
-        max_backoff: float = _BYBIT_WS_MAX_BACKOFF,
-    ) -> None:
-        if websockets is None:  # pragma: no cover - zabezpieczenie
-            raise RuntimeError("Pakiet 'websockets' jest wymagany do streamingu Bybit")
-        if not channels:
-            raise ValueError("Bybit WS wymaga co najmniej jednej subskrypcji")
-        self._endpoint = endpoint
-        self._channels = list(dict.fromkeys(channels))
-        self._callback = callback
-        self._initial_backoff = max(0.1, initial_backoff)
-        self._max_backoff = max(self._initial_backoff, max_backoff)
-        self._task: Optional[asyncio.Task[None]] = None
-        self._ws: Any = None
-        self._closed = False
-
-    async def __aenter__(self) -> "_BybitWebSocketSubscription":
-        self._task = asyncio.create_task(self._runner(), name="bybit-ws-runner")
-        return self
-
-    async def __aexit__(self, exc_type, exc, tb) -> Optional[bool]:  # type: ignore[override]
-        self._closed = True
-        if self._ws:
-            with contextlib.suppress(Exception):
-                await self._send_unsubscribe()
-            with contextlib.suppress(Exception):
-                await self._ws.close()
-            self._ws = None
-        if self._task:
-            self._task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._task
-        return None
-
-    async def _runner(self) -> None:
-        attempt = 0
-        while not self._closed:
-            try:
-                self._ws = await websockets.connect(self._endpoint, ping_interval=20)
-                try:
-                    await self._send_subscribe()
-                    attempt = 0
-                    async for message in self._ws:
-                        await self._handle_message(message)
-                finally:
-                    if self._ws:
-                        with contextlib.suppress(Exception):
-                            await self._ws.close()
-                    self._ws = None
-            except asyncio.CancelledError:  # pragma: no cover - zamykanie
-                raise
-            except Exception as exc:
-                if self._closed:
-                    break
-                attempt += 1
-                wait_for = min(self._initial_backoff * (2 ** (attempt - 1)), self._max_backoff)
-                logger.debug("Bybit WS reconnect in %.2fs after error: %s", wait_for, exc)
-                await asyncio.sleep(wait_for)
-            else:
-                if not self._closed:
-                    attempt += 1
-                    wait_for = min(self._initial_backoff * (2 ** (attempt - 1)), self._max_backoff)
-                    logger.debug("Bybit WS reconnect in %.2fs after close", wait_for)
-                    await asyncio.sleep(wait_for)
-
-    async def _send_subscribe(self) -> None:
-        if not self._ws:
-            return
-        payload = {"op": "subscribe", "args": self._channels}
-        await self._ws.send(json.dumps(payload))
-
-    async def _send_unsubscribe(self) -> None:
-        if not self._ws:
-            return
-        payload = {"op": "unsubscribe", "args": self._channels}
-        await self._ws.send(json.dumps(payload))
-
-    async def _handle_message(self, message: str | bytes) -> None:
-        if isinstance(message, bytes):
-            message = message.decode("utf-8", "ignore")
-        try:
-            payload: MarketPayload = json.loads(message)
-        except json.JSONDecodeError:
-            logger.debug("Bybit WS otrzymał nieprawidłowy JSON: %s", message)
-            return
-        try:
-            await self._callback(payload)
-        except Exception as exc:  # pragma: no cover - callback użytkownika
-            logger.exception("Błąd callbacka Bybit WS: %s", exc)
-
-
-def _resolve_channels(subscriptions: Iterable[MarketSubscription]) -> list[str]:
-    channels: list[str] = []
-    for subscription in subscriptions:
-        base = subscription.params.get("topic") if subscription.params else None
-        base = base or subscription.channel
-        symbols = list(subscription.symbols) or [None]
-        for symbol in symbols:
-            if symbol is None:
-                channels.append(base)
-            elif "{symbol}" in base:
-                channels.append(base.format(symbol=symbol))
-            else:
-                channels.append(f"{base}.{symbol}")
-    return channels
-
-
-class BybitSpotAdapter(RESTWebSocketAdapter):
-    """Adapter REST/WS dla rynku spot Bybit v5."""
+class BybitSpotAdapter(RESTStreamingAdapter):
+    """Adapter REST dla rynku spot Bybit v5 oparty o long-poll."""
 
     def __init__(
         self,
         *,
         demo_mode: bool = True,
         http_client=None,
-        ws_factory: Optional[
-            Callable[[Iterable[MarketSubscription], Callable[[MarketPayload], Awaitable[None]]], WebSocketSubscription]
-        ] = None,
+        stream_poll_interval: float = 1.0,
         compliance_ack: bool = False,
     ) -> None:
         super().__init__(
@@ -171,7 +43,9 @@ class BybitSpotAdapter(RESTWebSocketAdapter):
             http_client=http_client,
             compliance_ack=compliance_ack,
         )
-        self._ws_factory = ws_factory or self._default_ws_factory
+        if stream_poll_interval <= 0:
+            raise ValueError("stream_poll_interval musi być dodatni")
+        self._stream_poll_interval = float(stream_poll_interval)
 
     async def authenticate(self, credentials: ExchangeCredentials) -> None:
         if not credentials.api_key or not credentials.api_secret:
@@ -182,7 +56,9 @@ class BybitSpotAdapter(RESTWebSocketAdapter):
         params = {"category": "spot", "symbol": symbol}
         response: Dict[str, Any] = await self._request("GET", "/v5/market/tickers", params=params)
         if response.get("retCode") not in (0, "0", None):
-            raise RuntimeError(f"Bybit API error {response.get('retCode')}: {response.get('retMsg')}")
+            raise RuntimeError(
+                f"Bybit API error {response.get('retCode')}: {response.get('retMsg')}"
+            )
         result = response.get("result", {})
         tickers = result.get("list") or []
         ticker = tickers[0] if tickers else {}
@@ -204,8 +80,13 @@ class BybitSpotAdapter(RESTWebSocketAdapter):
 
     async def stream_market_data(
         self, subscriptions: Iterable[MarketSubscription], callback: Callable[[MarketPayload], Awaitable[None]]
-    ) -> WebSocketSubscription:
-        return self._ws_factory(subscriptions, callback)
+    ) -> MarketStreamHandle:
+        return LongPollSubscription(
+            self,
+            subscriptions,
+            callback,
+            default_interval=self._stream_poll_interval,
+        )
 
     async def submit_order(self, order: OrderRequest) -> OrderStatus:
         body: Dict[str, Any] = {
@@ -317,23 +198,10 @@ class BybitSpotAdapter(RESTWebSocketAdapter):
             headers=headers,
         )
         if response.get("retCode") not in (0, "0"):
-            raise RuntimeError(f"Bybit API error {response.get('retCode')}: {response.get('retMsg')}")
+            raise RuntimeError(
+                f"Bybit API error {response.get('retCode')}: {response.get('retMsg')}"
+            )
         return response
-
-    def _default_ws_factory(
-        self,
-        subscriptions: Iterable[MarketSubscription],
-        callback: Callable[[MarketPayload], Awaitable[None]],
-    ) -> WebSocketSubscription:
-        channels = _resolve_channels(subscriptions)
-        return _BybitWebSocketSubscription(
-            endpoint=_BYBIT_WS_ENDPOINT,
-            channels=channels,
-            callback=callback,
-            initial_backoff=_BYBIT_WS_INITIAL_BACKOFF,
-            max_backoff=_BYBIT_WS_MAX_BACKOFF,
-        )
 
 
 __all__ = ["BybitSpotAdapter"]
-

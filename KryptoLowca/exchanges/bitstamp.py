@@ -1,169 +1,39 @@
-"""Adapter Bitstamp zgodny z kontraktem RESTWebSocketAdapter."""
+"""Bitstamp adapter relying on REST endpoints and long-polling."""
 from __future__ import annotations
 
-import asyncio
-import contextlib
 import hashlib
 import hmac
-import json
 import logging
 import time
 import uuid
 import urllib.parse
-from collections.abc import Awaitable, Callable, Iterable, Sequence
+from collections.abc import Awaitable, Callable, Iterable
 from typing import Any, Dict, Optional
 
 from .interfaces import (
     ExchangeCredentials,
     MarketPayload,
+    MarketStreamHandle,
     MarketSubscription,
     OrderRequest,
     OrderStatus,
-    RESTWebSocketAdapter,
-    WebSocketSubscription,
+    RESTStreamingAdapter,
 )
-
-try:  # pragma: no cover - zależność opcjonalna
-    import websockets
-except Exception:  # pragma: no cover - środowiska bez websocketów
-    websockets = None  # type: ignore[assignment]
+from .streaming import LongPollSubscription
 
 
 logger = logging.getLogger(__name__)
 
-_BITSTAMP_WS_ENDPOINT = "wss://ws.bitstamp.net"
-_BITSTAMP_WS_INITIAL_BACKOFF = 1.0
-_BITSTAMP_WS_MAX_BACKOFF = 20.0
 
-
-class _BitstampWebSocketSubscription(WebSocketSubscription):
-    """Obsługuje subskrypcje kanałów Bitstamp WebSocket v2."""
-
-    def __init__(
-        self,
-        *,
-        endpoint: str,
-        channels: Sequence[str],
-        callback: Callable[[MarketPayload], Awaitable[None]],
-        initial_backoff: float = _BITSTAMP_WS_INITIAL_BACKOFF,
-        max_backoff: float = _BITSTAMP_WS_MAX_BACKOFF,
-    ) -> None:
-        if websockets is None:  # pragma: no cover - zabezpieczenie
-            raise RuntimeError("Pakiet 'websockets' jest wymagany do streamingu Bitstamp")
-        if not channels:
-            raise ValueError("Bitstamp WS wymaga co najmniej jednego kanału")
-        self._endpoint = endpoint
-        self._channels = list(dict.fromkeys(channels))
-        self._callback = callback
-        self._initial_backoff = max(0.1, initial_backoff)
-        self._max_backoff = max(self._initial_backoff, max_backoff)
-        self._task: Optional[asyncio.Task[None]] = None
-        self._ws: Any = None
-        self._closed = False
-
-    async def __aenter__(self) -> "_BitstampWebSocketSubscription":
-        self._task = asyncio.create_task(self._runner(), name="bitstamp-ws-runner")
-        return self
-
-    async def __aexit__(self, exc_type, exc, tb) -> Optional[bool]:  # type: ignore[override]
-        self._closed = True
-        if self._ws:
-            with contextlib.suppress(Exception):
-                await self._send_unsubscribe()
-            with contextlib.suppress(Exception):
-                await self._ws.close()
-            self._ws = None
-        if self._task:
-            self._task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._task
-        return None
-
-    async def _runner(self) -> None:
-        attempt = 0
-        while not self._closed:
-            try:
-                self._ws = await websockets.connect(self._endpoint, ping_interval=20)
-                try:
-                    await self._send_subscribe()
-                    attempt = 0
-                    async for message in self._ws:
-                        await self._handle_message(message)
-                finally:
-                    if self._ws:
-                        with contextlib.suppress(Exception):
-                            await self._ws.close()
-                    self._ws = None
-            except asyncio.CancelledError:  # pragma: no cover - zamykanie
-                raise
-            except Exception as exc:
-                if self._closed:
-                    break
-                attempt += 1
-                wait_for = min(self._initial_backoff * (2 ** (attempt - 1)), self._max_backoff)
-                logger.debug("Bitstamp WS reconnect in %.2fs after error: %s", wait_for, exc)
-                await asyncio.sleep(wait_for)
-            else:
-                if not self._closed:
-                    attempt += 1
-                    wait_for = min(self._initial_backoff * (2 ** (attempt - 1)), self._max_backoff)
-                    logger.debug("Bitstamp WS reconnect in %.2fs after close", wait_for)
-                    await asyncio.sleep(wait_for)
-
-    async def _send_subscribe(self) -> None:
-        if not self._ws:
-            return
-        for channel in self._channels:
-            payload = {"event": "bts:subscribe", "data": {"channel": channel}}
-            await self._ws.send(json.dumps(payload))
-
-    async def _send_unsubscribe(self) -> None:
-        if not self._ws:
-            return
-        for channel in self._channels:
-            payload = {"event": "bts:unsubscribe", "data": {"channel": channel}}
-            await self._ws.send(json.dumps(payload))
-
-    async def _handle_message(self, message: str | bytes) -> None:
-        if isinstance(message, bytes):
-            message = message.decode("utf-8", "ignore")
-        try:
-            payload: MarketPayload = json.loads(message)
-        except json.JSONDecodeError:
-            logger.debug("Bitstamp WS otrzymał nieprawidłowy JSON: %s", message)
-            return
-        try:
-            await self._callback(payload)
-        except Exception as exc:  # pragma: no cover - callback użytkownika
-            logger.exception("Błąd callbacka Bitstamp WS: %s", exc)
-
-
-def _resolve_channels(subscriptions: Iterable[MarketSubscription]) -> list[str]:
-    channels: list[str] = []
-    for subscription in subscriptions:
-        template = subscription.params.get("channel") if subscription.params else None
-        template = template or subscription.channel
-        symbols = list(subscription.symbols) or [None]
-        for symbol in symbols:
-            if symbol is not None:
-                channel = template.format(symbol=symbol.lower()) if "{symbol}" in template else f"{template}_{symbol.lower()}"
-            else:
-                channel = template
-            channels.append(channel)
-    return channels
-
-
-class BitstampAdapter(RESTWebSocketAdapter):
-    """Adapter REST/WS dla Bitstamp."""
+class BitstampAdapter(RESTStreamingAdapter):
+    """Adapter REST dla Bitstamp z obsługą streamingu przez long-poll."""
 
     def __init__(
         self,
         *,
         demo_mode: bool = True,
         http_client=None,
-        ws_factory: Optional[
-            Callable[[Iterable[MarketSubscription], Callable[[MarketPayload], Awaitable[None]]], WebSocketSubscription]
-        ] = None,
+        stream_poll_interval: float = 1.0,
         compliance_ack: bool = False,
     ) -> None:
         super().__init__(
@@ -173,7 +43,9 @@ class BitstampAdapter(RESTWebSocketAdapter):
             http_client=http_client,
             compliance_ack=compliance_ack,
         )
-        self._ws_factory = ws_factory or self._default_ws_factory
+        if stream_poll_interval <= 0:
+            raise ValueError("stream_poll_interval musi być dodatni")
+        self._stream_poll_interval = float(stream_poll_interval)
 
     async def authenticate(self, credentials: ExchangeCredentials) -> None:
         if not credentials.api_key or not credentials.api_secret:
@@ -202,8 +74,13 @@ class BitstampAdapter(RESTWebSocketAdapter):
 
     async def stream_market_data(
         self, subscriptions: Iterable[MarketSubscription], callback: Callable[[MarketPayload], Awaitable[None]]
-    ) -> WebSocketSubscription:
-        return self._ws_factory(subscriptions, callback)
+    ) -> MarketStreamHandle:
+        return LongPollSubscription(
+            self,
+            subscriptions,
+            callback,
+            default_interval=self._stream_poll_interval,
+        )
 
     async def submit_order(self, order: OrderRequest) -> OrderStatus:
         side = order.side.lower()
@@ -280,7 +157,9 @@ class BitstampAdapter(RESTWebSocketAdapter):
             headers=headers,
         )
         if isinstance(response, dict) and response.get("status") == "error":
-            raise RuntimeError(f"Bitstamp API error: {response.get('reason') or response.get('message')}")
+            raise RuntimeError(
+                f"Bitstamp API error: {response.get('reason') or response.get('message')}"
+            )
         return response
 
     def _extract_order_payload(self, response: Dict[str, Any]) -> Dict[str, Any]:
@@ -297,7 +176,12 @@ class BitstampAdapter(RESTWebSocketAdapter):
     ) -> OrderStatus:
         order_id = str(payload.get("id") or payload.get("order_id") or payload.get("orderId") or "")
         status = str(payload.get("status") or default_status).upper()
-        filled = float(payload.get("filled") or payload.get("filled_amount") or payload.get("amount_filled") or 0.0)
+        filled = float(
+            payload.get("filled")
+            or payload.get("filled_amount")
+            or payload.get("amount_filled")
+            or 0.0
+        )
         amount = float(payload.get("amount") or payload.get("original_amount") or filled)
         price = payload.get("price") or payload.get("avg_price")
         average_price = float(price) if price not in (None, "") else None
@@ -311,20 +195,5 @@ class BitstampAdapter(RESTWebSocketAdapter):
             raw=raw,
         )
 
-    def _default_ws_factory(
-        self,
-        subscriptions: Iterable[MarketSubscription],
-        callback: Callable[[MarketPayload], Awaitable[None]],
-    ) -> WebSocketSubscription:
-        channels = _resolve_channels(subscriptions)
-        return _BitstampWebSocketSubscription(
-            endpoint=_BITSTAMP_WS_ENDPOINT,
-            channels=channels,
-            callback=callback,
-            initial_backoff=_BITSTAMP_WS_INITIAL_BACKOFF,
-            max_backoff=_BITSTAMP_WS_MAX_BACKOFF,
-        )
-
 
 __all__ = ["BitstampAdapter"]
-
