@@ -20,6 +20,7 @@ from bot_core.marketplace import (
 from bot_core.security.hwid import HwIdProvider, HwIdProviderError
 from bot_core.security.guards import get_capability_guard
 from bot_core.security.signing import build_hmac_signature
+from bot_core.security.license import _emit_license_telemetry, _coerce_license_identifier
 
 if TYPE_CHECKING:
     from bot_core.backtest.walk_forward import TransactionCostModel
@@ -498,7 +499,30 @@ class StrategyCatalog:
                 if isinstance(candidate, str):
                     preset_id = candidate
             raise StrategyPresetValidationError.from_validation(exc, preset_id=preset_id) from exc
-        return schema.model_dump()
+        normalized = schema.model_dump()
+        if self._registry:
+            missing: list[str] = []
+            strategies_payload = normalized.get("strategies") or ()
+            for index, entry in enumerate(strategies_payload):
+                if not isinstance(entry, Mapping):
+                    continue
+                engine_name = str(entry.get("engine") or "").strip()
+                if not engine_name:
+                    continue
+                if engine_name.lower() not in self._registry:
+                    missing.append(
+                        f"strategies[{index}].engine: nieznany silnik '{engine_name}' (brak rejestracji w katalogu)"
+                    )
+            if missing:
+                metadata_candidate = normalized.get("metadata")
+                metadata_payload = metadata_candidate if isinstance(metadata_candidate, Mapping) else {}
+                preset_id_value: str | None = None
+                if isinstance(metadata_payload, Mapping):
+                    candidate = metadata_payload.get("id") or metadata_payload.get("preset_id")
+                    if isinstance(candidate, str) and candidate.strip():
+                        preset_id_value = candidate.strip()
+                raise StrategyPresetValidationError(missing, preset_id=preset_id_value)
+        return normalized
 
     def _compute_license_status(
         self,
@@ -520,6 +544,15 @@ class StrategyCatalog:
         fingerprint_verified = False
         status = PresetLicenseState.UNLICENSED
         payload: Mapping[str, Any] = license_payload or {}
+        license_identifier: str | None = None
+        if payload:
+            license_identifier = _coerce_license_identifier(payload.get("license_id"))
+        if license_identifier is None and isinstance(metadata, Mapping):
+            license_identifier = _coerce_license_identifier(metadata.get("license_id"))
+            if license_identifier is None:
+                metadata_license = metadata.get("license")
+                if isinstance(metadata_license, Mapping):
+                    license_identifier = _coerce_license_identifier(metadata_license.get("license_id"))
 
         if payload:
             module_id_value = payload.get("module_id") or metadata.get("module_id") or preset_id
@@ -542,11 +575,30 @@ class StrategyCatalog:
             if fingerprint_candidates:
                 if provider is None:
                     issues.append("fingerprint-provider-missing")
+                    _emit_license_telemetry(
+                        event="fingerprint_provider_missing",
+                        preset_id=preset_id,
+                        module_id=module_id,
+                        license_id=license_identifier,
+                        capability=capability,
+                        fingerprint_candidates=fingerprint_candidates,
+                        issues=tuple(issues),
+                    )
                 else:
                     try:
                         hwid_value = provider.read()
                     except HwIdProviderError as exc:  # pragma: no cover - zależne od środowiska
                         issues.append(f"hwid-error:{exc}")
+                        _emit_license_telemetry(
+                            event="fingerprint_provider_error",
+                            preset_id=preset_id,
+                            module_id=module_id,
+                            license_id=license_identifier,
+                            capability=capability,
+                            fingerprint_candidates=fingerprint_candidates,
+                            issues=tuple(issues),
+                            error=str(exc),
+                        )
             else:
                 provider = self._resolve_hwid_provider(hwid_provider)
                 if provider is not None:
@@ -554,11 +606,30 @@ class StrategyCatalog:
                         hwid_value = provider.read()
                     except HwIdProviderError as exc:  # pragma: no cover
                         issues.append(f"hwid-error:{exc}")
+                        _emit_license_telemetry(
+                            event="fingerprint_provider_error",
+                            preset_id=preset_id,
+                            module_id=module_id,
+                            license_id=license_identifier,
+                            capability=capability,
+                            fingerprint_candidates=fingerprint_candidates,
+                            issues=tuple(issues),
+                            error=str(exc),
+                        )
 
             if fingerprint_candidates:
                 if hwid_value is None:
                     issues.append("fingerprint-unavailable")
                     status = PresetLicenseState.PENDING
+                    _emit_license_telemetry(
+                        event="fingerprint_unavailable",
+                        preset_id=preset_id,
+                        module_id=module_id,
+                        license_id=license_identifier,
+                        capability=capability,
+                        fingerprint_candidates=fingerprint_candidates,
+                        issues=tuple(issues),
+                    )
                 else:
                     fingerprint_verified = any(
                         _match_fingerprint(hwid_value, candidate) for candidate in fingerprint_candidates
@@ -568,6 +639,17 @@ class StrategyCatalog:
                         if fingerprint_verified
                         else PresetLicenseState.FINGERPRINT_MISMATCH
                     )
+                    if not fingerprint_verified:
+                        _emit_license_telemetry(
+                            event="fingerprint_mismatch",
+                            preset_id=preset_id,
+                            module_id=module_id,
+                            license_id=license_identifier,
+                            capability=capability,
+                            fingerprint_candidates=fingerprint_candidates,
+                            issues=tuple(issues),
+                            hwid=hwid_value,
+                        )
             else:
                 status = PresetLicenseState.PENDING
                 fingerprint_verified = hwid_value is None or bool(hwid_value)

@@ -1,4 +1,17 @@
-"""Silniki strategii oraz optymalizacja."""
+"""Silniki strategii oraz optymalizacja.
+
+Pakiet udostępnia komplet strategii budowanych przez katalog OEM.  Wbudowane
+silniki obejmują m.in. ``daily_trend_momentum`` (momentum dzienne),
+``grid_trading`` (handel siatkowy), ``dollar_cost_averaging`` (akumulacja DCA),
+``volatility_target`` (zarządzanie zmiennością), strategie arbitrażowe,
+hedgingowe oraz intraday.  Aktualną listę silników można uzyskać poprzez
+funkcje :func:`describe_supported_strategies` oraz
+:func:`supported_strategy_keys`.
+"""
+
+from __future__ import annotations
+
+from functools import lru_cache
 
 from bot_core.strategies.base import (
     MarketSnapshot,
@@ -81,6 +94,20 @@ from bot_core.strategies.volatility_target import (
     VolatilityTargetStrategy,
 )
 
+
+@lru_cache(maxsize=1)
+def describe_supported_strategies() -> tuple[StrategyDescriptor, ...]:
+    """Zwraca listę strategii dostępnych w domyślnym katalogu."""
+
+    return list_available_strategies()
+
+
+def supported_strategy_keys() -> tuple[str, ...]:
+    """Zwraca identyfikatory silników strategii wspieranych w dystrybucji."""
+
+    return tuple(entry.engine for entry in describe_supported_strategies())
+
+
 __all__ = [
     "MarketSnapshot",
     "SignalLeg",
@@ -140,4 +167,6 @@ __all__ = [
     "CrossExchangeHedgeStrategy",
     "StrategyDescriptor",
     "list_available_strategies",
+    "describe_supported_strategies",
+    "supported_strategy_keys",
 ]

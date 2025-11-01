@@ -1,21 +1,16 @@
 # trading_strategies_enhanced.py
 # -*- coding: utf-8 -*-
 
-"""
-Production-grade Trading Engine with Clean Architecture - Enhanced Version 2.0
+"""Silnik tradingowy wykorzystywany w backendzie bota.
 
-Key improvements for 10/10 rating:
-- Fixed all deprecated pandas methods
-- Implemented comprehensive risk management with stop-loss/take-profit
-- Added vectorized operations throughout
-- Comprehensive error handling with custom exceptions
-- Advanced performance metrics including Sortino, Omega ratios
-- Complete test coverage
-- Configuration management
-- Performance optimization with caching
-- Advanced logging and monitoring
-- Documentation following Google style
-- Type safety with strict mypy compliance
+Moduł udostępnia komplet klas potrzebnych do trenowania i uruchamiania
+strategii tradingowych: od ``TradingParameters``, przez usługi wyznaczania
+wskaźników, po ``TradingEngine`` z silnikiem backtestu.  Wbudowane strategie,
+które są faktycznie wspierane w pakiecie OEM, zostały udokumentowane i są
+dostępne poprzez funkcje :func:`describe_supported_strategies` oraz
+:func:`supported_strategy_keys`.  Informacje zwracane przez te API są pobierane
+z domyślnego katalogu strategii (:mod:`bot_core.strategies.catalog`), dzięki
+czemu pozostają zsynchronizowane z realnym stanem implementacji.
 """
 
 from __future__ import annotations
@@ -30,7 +25,7 @@ from itertools import product
 from enum import Enum
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Protocol, Tuple, Union
+from typing import TYPE_CHECKING, Any, Callable, Dict, Iterable, List, Mapping, Optional, Protocol, Tuple, Union
 
 from bot_core.trading.exit_reasons import ExitReason
 from bot_core.trading.strategies import StrategyCatalog
@@ -42,6 +37,32 @@ from numpy.typing import NDArray
 # Suppress warnings for cleaner output
 warnings.filterwarnings('ignore', category=pd.errors.PerformanceWarning)
 warnings.filterwarnings('ignore', category=FutureWarning)
+
+if TYPE_CHECKING:  # pragma: no cover - tylko dla typowania
+    from bot_core.strategies.public import StrategyDescriptor
+
+
+@lru_cache(maxsize=1)
+def describe_supported_strategies() -> tuple['StrategyDescriptor', ...]:
+    """Zwraca zcache'owaną listę strategii dostępnych w katalogu domyślnym."""
+
+    from bot_core.strategies.public import list_available_strategies
+
+    return list_available_strategies()
+
+
+_SUPPORTED_STRATEGY_KEYS: tuple[str, ...] | None = None
+
+
+def supported_strategy_keys() -> tuple[str, ...]:
+    """Zwraca krotkę z identyfikatorami silników strategii."""
+
+    global _SUPPORTED_STRATEGY_KEYS
+    if _SUPPORTED_STRATEGY_KEYS is None:
+        _SUPPORTED_STRATEGY_KEYS = tuple(
+            descriptor.engine for descriptor in describe_supported_strategies()
+        )
+    return _SUPPORTED_STRATEGY_KEYS
 
 # =================== Enhanced Constants and Types ===================
 
@@ -2792,6 +2813,8 @@ __all__ = [
     'PerformanceMonitor',
     'StrategyTester',
     'enhanced_example_usage',
+    'describe_supported_strategies',
+    'supported_strategy_keys',
     # Exceptions
     'TradingEngineError',
     'DataValidationError',

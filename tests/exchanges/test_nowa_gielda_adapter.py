@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import anyio
+import asyncio
 import json
 import time
 
@@ -218,6 +220,35 @@ def test_fetch_orderbook_translates_symbol(api_mock: "respx.Router") -> None:
 
     assert orderbook["bids"][0][0] == "50000"
     assert orderbook["asks"][0][0] == "50010"
+
+
+def test_fetch_ticker_sync_wrapper_supports_running_loop(
+    api_mock: "respx.Router",
+) -> None:
+    adapter = _build_adapter()
+    api_mock.get("/public/ticker").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "symbol": "BTC-USDT",
+                "bestBid": "50000.5",
+                "bestAsk": "50010.5",
+                "lastPrice": "50005.1",
+                "timestamp": 1_700_000_000_000,
+            },
+        )
+    )
+
+    def _call_sync() -> Mapping[str, Any]:
+        return adapter.fetch_ticker("BTC_USDT")
+
+    async def _exercise() -> Mapping[str, Any]:
+        return await asyncio.to_thread(_call_sync)
+
+    ticker = anyio.run(_exercise)
+
+    assert ticker["symbol"] == "BTC_USDT"
+    assert ticker["last_price"] == 50005.1
 
 
 def test_place_order_sends_signed_payload(api_mock: "respx.Router") -> None:

@@ -97,7 +97,11 @@ void ApplicationUiModulesTest::cliOverridesModuleDirectories()
 
     auto* viewsModel = app.moduleViewsModelForTesting();
     QVERIFY(viewsModel);
-    QCOMPARE(viewsModel->rowCount(), 0);
+    const int baselineCount = viewsModel->rowCount();
+    QVERIFY2(baselineCount >= 5, "Powinny zostać zarejestrowane wbudowane moduły UI");
+    QVERIFY(!viewsModel->findById(QStringLiteral("strategy.configurator")).isEmpty());
+    QVERIFY(!viewsModel->findById(QStringLiteral("monitoring.operations")).isEmpty());
+    QVERIFY(!viewsModel->findById(QStringLiteral("license.audit")).isEmpty());
 
     UiModuleManager::ViewDescriptor view;
     view.id = QStringLiteral("stub.view");
@@ -105,8 +109,8 @@ void ApplicationUiModulesTest::cliOverridesModuleDirectories()
     view.source = QUrl(QStringLiteral("qrc:/stub.qml"));
     view.category = QStringLiteral("main");
     QVERIFY(recording->registerView(QStringLiteral("stub"), view));
-    QCOMPARE(viewsModel->rowCount(), 1);
-    QCOMPARE(viewsModel->viewAt(0).value(QStringLiteral("id")).toString(), QStringLiteral("stub.view"));
+    QCOMPARE(viewsModel->rowCount(), baselineCount + 1);
+    QVERIFY(viewsModel->findById(QStringLiteral("stub.view")).value(QStringLiteral("id")).toString() == QStringLiteral("stub.view"));
 }
 
 void ApplicationUiModulesTest::environmentProvidesDirectories()

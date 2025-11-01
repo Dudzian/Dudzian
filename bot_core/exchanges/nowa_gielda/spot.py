@@ -1,7 +1,6 @@
 """Minimalistyczny adapter REST dla rynku spot nowa_gielda."""
 from __future__ import annotations
 
-import asyncio
 import hmac
 import logging
 import time
@@ -28,7 +27,7 @@ from bot_core.exchanges.errors import (
 )
 from bot_core.exchanges.nowa_gielda import symbols
 from bot_core.exchanges.streaming import LocalLongPollStream, StreamBatch
-from core.network import RateLimitedAsyncClient, get_rate_limited_client
+from core.network import RateLimitedAsyncClient, get_rate_limited_client, run_sync
 
 _PUBLIC_STREAM_CHANNEL_MAP: Mapping[str, str] = {
     "ticker": "ticker",
@@ -192,14 +191,13 @@ class NowaGieldaHTTPClient:
         json_body: Mapping[str, Any] | None = None,
         headers: Mapping[str, str] | None = None,
     ) -> Mapping[str, Any]:
-        return asyncio.run(
-            self._request_async(
-                method,
-                path,
-                params=params,
-                json_body=json_body,
-                headers=headers,
-            )
+        return run_sync(
+            self._request_async,
+            method,
+            path,
+            params=params,
+            json_body=json_body,
+            headers=headers,
         )
 
     def _parse_response(self, method: str, path: str, response: httpx.Response) -> Mapping[str, Any]:
@@ -247,7 +245,7 @@ class NowaGieldaHTTPClient:
 
     def close(self) -> None:
         if self._owns_client:
-            asyncio.run(self._client.aclose())
+            run_sync(self._client.aclose)
 
     # --- Public helpers -------------------------------------------------
     def fetch_ticker(self, symbol: str) -> Mapping[str, Any]:

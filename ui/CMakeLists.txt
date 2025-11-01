@@ -88,6 +88,7 @@ set(UI_SOURCES
     src/grpc/HealthClient.cpp
     src/runtime/OfflineRuntimeBridge.cpp
     src/runtime/OfflineRuntimeService.cpp
+    src/runtime/RuntimeDecisionBridge.cpp
     src/models/OhlcvListModel.cpp
     src/models/AlertsModel.cpp
     src/models/AlertsFilterProxyModel.cpp
@@ -130,6 +131,7 @@ set(UI_HEADERS
     src/grpc/HealthClient.hpp
     src/runtime/OfflineRuntimeBridge.hpp
     src/runtime/OfflineRuntimeService.hpp
+    src/runtime/RuntimeDecisionBridge.hpp
     src/grpc/GrpcTlsConfig.hpp
     src/models/AlertsModel.hpp
     src/models/AlertsFilterProxyModel.hpp
@@ -208,6 +210,7 @@ if(BUILD_TESTING)
         src/app/Application.cpp
         src/app/UiModuleViewsModel.cpp
         src/models/DecisionLogModel.cpp
+        src/runtime/RuntimeDecisionBridge.cpp
         src/utils/PathUtils.cpp
         src/grpc/TradingClient.cpp
         src/grpc/HealthClient.cpp
@@ -304,6 +307,7 @@ if(BUILD_TESTING)
         src/models/RiskHistoryModel.cpp
         src/models/RiskStateModel.cpp
         src/models/DecisionLogModel.cpp
+        src/runtime/RuntimeDecisionBridge.cpp
         src/utils/PerformanceGuard.cpp
         src/utils/FrameRateMonitor.cpp
         src/telemetry/UiTelemetryReporter.cpp
@@ -337,6 +341,7 @@ if(BUILD_TESTING)
         src/models/RiskHistoryModel.cpp
         src/models/RiskStateModel.cpp
         src/models/DecisionLogModel.cpp
+        src/runtime/RuntimeDecisionBridge.cpp
         src/utils/PerformanceGuard.cpp
         src/utils/FrameRateMonitor.cpp
         src/telemetry/UiTelemetryReporter.cpp
@@ -382,6 +387,18 @@ if(BUILD_TESTING)
     )
     add_test(NAME ui_module_views_model_tests COMMAND ui_module_views_model_tests)
 
+    add_executable(runtime_decision_bridge_tests
+        tests/RuntimeDecisionBridgeTest.cpp
+        src/runtime/RuntimeDecisionBridge.cpp
+    )
+    target_include_directories(runtime_decision_bridge_tests PRIVATE src)
+    target_link_libraries(runtime_decision_bridge_tests
+        PRIVATE
+            Qt6::Core
+            Qt6::Test
+    )
+    add_test(NAME runtime_decision_bridge_tests COMMAND runtime_decision_bridge_tests)
+
     add_executable(application_risk_history_auto_export_tests
         tests/ApplicationRiskHistoryAutoExportTest.cpp
         src/app/Application.cpp
@@ -395,6 +412,7 @@ if(BUILD_TESTING)
         src/models/RiskHistoryModel.cpp
         src/models/RiskStateModel.cpp
         src/models/DecisionLogModel.cpp
+        src/runtime/RuntimeDecisionBridge.cpp
         src/utils/PerformanceGuard.cpp
         src/utils/FrameRateMonitor.cpp
         src/telemetry/UiTelemetryReporter.cpp
@@ -429,6 +447,7 @@ if(BUILD_TESTING)
         src/models/RiskHistoryModel.cpp
         src/models/RiskStateModel.cpp
         src/models/DecisionLogModel.cpp
+        src/runtime/RuntimeDecisionBridge.cpp
         src/utils/PerformanceGuard.cpp
         src/utils/FrameRateMonitor.cpp
         src/telemetry/UiTelemetryReporter.cpp
@@ -465,6 +484,7 @@ if(BUILD_TESTING)
         src/models/RiskHistoryModel.cpp
         src/models/RiskStateModel.cpp
         src/models/DecisionLogModel.cpp
+        src/runtime/RuntimeDecisionBridge.cpp
         src/utils/PerformanceGuard.cpp
         src/utils/FrameRateMonitor.cpp
         src/telemetry/UiTelemetryReporter.cpp

@@ -761,6 +761,114 @@ class AutoTrader:
         context["direction"] = direction
         return context
 
+    def _run_ai_manager_maintenance(self, ai_manager: Any) -> None:
+        run_due = getattr(ai_manager, "run_due_training_jobs", None)
+        if not callable(run_due):
+            return
+        try:
+            results = run_due()
+        except Exception as exc:  # pragma: no cover - diagnostyka integracji
+            self._handle_ai_failure("run_due_training_jobs", exc)
+            return
+        if isinstance(results, Mapping):
+            iterator = results.values()
+        elif isinstance(results, Iterable):
+            iterator = results
+        else:
+            iterator = ()
+        entries: list[Mapping[str, object]] = []
+        for item in iterator:
+            summary = self._summarize_training_result(item)
+            if summary:
+                entries.append(summary)
+        if not entries:
+            return
+        payload = {"jobs": [dict(entry) for entry in entries]}
+        self._log(
+            "Zakończono zadania treningowe AI",
+            level=logging.INFO,
+            jobs=[dict(entry) for entry in entries],
+        )
+        self._log_decision_event(
+            "ai_training_completed",
+            status="completed",
+            metadata=payload,
+        )
+        self._record_decision_audit_stage(
+            "ai_training_completed",
+            symbol=_SCHEDULE_SYMBOL,
+            payload=payload,
+        )
+
+    def _summarize_training_result(self, result: Any) -> Mapping[str, object]:
+        if result is None:
+            return {}
+        summary: dict[str, object] = {}
+        job: Any | None = None
+        artifact: Any | None = None
+        path: Any | None = None
+        if isinstance(result, Mapping):
+            job = result.get("job")
+            artifact = result.get("artifact")
+            path = result.get("path")
+            status = result.get("status")
+            if status is not None:
+                summary["status"] = str(status)
+        elif isinstance(result, tuple):
+            if result:
+                job = result[0]
+            if len(result) > 1:
+                artifact = result[1]
+            if len(result) > 2:
+                path = result[2]
+        else:
+            job = result
+        if job is not None:
+            name = getattr(job, "name", None)
+            if name:
+                summary["job"] = str(name)
+            else:
+                summary["job"] = str(job)
+        if artifact is not None:
+            label = getattr(artifact, "name", None) or getattr(artifact, "model_name", None)
+            if label:
+                summary["artifact"] = str(label)
+            version = getattr(artifact, "version", None)
+            if version is not None:
+                summary["version"] = str(version)
+        if path is not None:
+            summary["path"] = str(path)
+        return summary
+
+    def _handle_ai_failure(
+        self,
+        stage: str,
+        exc: BaseException,
+        *,
+        symbol: str | None = None,
+    ) -> None:
+        error_text = repr(exc)
+        self._ai_degraded = True
+        self._log(
+            "AI manager failure; uruchamiam fallback",
+            level=logging.ERROR,
+            stage=stage,
+            error=error_text,
+            symbol=symbol,
+        )
+        metadata = {"stage": stage, "error": error_text}
+        self._log_decision_event(
+            "ai_decision_fallback",
+            symbol=str(symbol) if symbol else None,
+            status="error",
+            metadata=metadata,
+        )
+        self._record_decision_audit_stage(
+            "ai_decision_fallback",
+            symbol=symbol or _SCHEDULE_SYMBOL,
+            payload=metadata,
+        )
+
     def _default_ai_feature_columns(self, market_data: pd.DataFrame) -> list[str]:
         """Return ordered feature columns available in ``market_data``.
 
@@ -4252,6 +4360,35 @@ class AutoTrader:
             expected_return = abs(expected_return)
         expected_probability = max(0.0, min(1.0, float(assessment.confidence)))
         candidate_notional = self._estimate_candidate_notional(symbol)
+        ai_score_payload: dict[str, object] | None = None
+        if ai_manager is not None:
+            score_fn = getattr(ai_manager, "score_decision_features", None)
+            if callable(score_fn):
+                try:
+                    score = score_fn(features)
+                except Exception as exc:  # pragma: no cover - diagnostyka integracji
+                    self._handle_ai_failure("score_decision_features", exc, symbol=symbol)
+                else:
+                    payload: dict[str, object] = {}
+                    score_return = getattr(score, "expected_return_bps", None)
+                    score_probability = getattr(score, "success_probability", None)
+                    score_model = getattr(score, "model_name", None)
+                    if score_return is not None:
+                        try:
+                            expected_return = float(score_return)
+                            payload["expected_return_bps"] = expected_return
+                        except (TypeError, ValueError):
+                            pass
+                    if score_probability is not None:
+                        try:
+                            expected_probability = max(0.0, min(1.0, float(score_probability)))
+                            payload["success_probability"] = expected_probability
+                        except (TypeError, ValueError):
+                            pass
+                    if score_model:
+                        payload["model_name"] = str(score_model)
+                    if payload:
+                        ai_score_payload = payload
         if ai_manager is not None and hasattr(ai_manager, "build_decision_engine_payload"):
             try:
                 engine_payload = ai_manager.build_decision_engine_payload(
@@ -4270,13 +4407,20 @@ class AutoTrader:
                     decision_section.update(engine_payload)
                     if ai_context is None and isinstance(engine_payload.get("ai"), Mapping):
                         ai_context = engine_payload.get("ai")
+        ai_payload_combined: dict[str, Any] | None = None
         if ai_context:
             expected_return, expected_probability, ai_payload = self._normalize_ai_context(
                 ai_context,
                 default_return_bps=expected_return,
                 default_probability=expected_probability,
             )
-            decision_section["ai"] = ai_payload
+            ai_payload_combined = dict(ai_payload)
+        if ai_score_payload is not None:
+            if ai_payload_combined is None:
+                ai_payload_combined = {}
+            ai_payload_combined.setdefault("score", ai_score_payload)
+        if ai_payload_combined is not None:
+            decision_section["ai"] = ai_payload_combined
         candidate = DecisionCandidate(
             strategy=self.current_strategy,
             action="enter" if signal == "buy" else "exit",
@@ -5588,6 +5732,8 @@ class AutoTrader:
         )
 
         ai_manager = self._resolve_ai_manager()
+        if ai_manager is not None:
+            self._run_ai_manager_maintenance(ai_manager)
         self._ai_degraded = bool(getattr(ai_manager, "is_degraded", False)) if ai_manager else False
         if self._ai_degraded:
             self._log(
