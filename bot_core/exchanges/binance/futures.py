@@ -11,7 +11,7 @@ from hashlib import sha256
 from typing import Iterable, Mapping, Optional, Sequence
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
-from urllib.request import Request, urlopen
+from urllib.request import Request
 
 from bot_core.exchanges.base import (
     AccountSnapshot,
@@ -42,6 +42,7 @@ from bot_core.exchanges.rate_limiter import (
 )
 from bot_core.exchanges.streaming import LocalLongPollStream
 from bot_core.observability.metrics import MetricsRegistry, get_global_metrics_registry
+from bot_core.exchanges.http_client import urlopen
 
 _LOGGER = logging.getLogger(__name__)
 

@@ -9,7 +9,7 @@ import time
 from dataclasses import dataclass
 from typing import Any, Mapping, MutableMapping, Sequence
 from urllib.parse import urlencode
-from urllib.request import Request, urlopen
+from urllib.request import Request
 
 from bot_core.exchanges.base import (
     AccountSnapshot,
@@ -23,6 +23,7 @@ from bot_core.exchanges.error_mapping import raise_for_kraken_error
 from bot_core.exchanges.errors import ExchangeAPIError
 from bot_core.exchanges.health import Watchdog
 from bot_core.exchanges.streaming import LocalLongPollStream
+from bot_core.exchanges.http_client import urlopen
 
 _API_PREFIX = "/derivatives/api/v3"
 _BASE_ORIGINS: Mapping[Environment, str] = {

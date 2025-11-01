@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from pathlib import Path
 from types import MappingProxyType
 from typing import Iterator, Mapping, MutableMapping, Sequence, TYPE_CHECKING
+
+from bot_core.security.signing import build_hmac_signature
 
 if TYPE_CHECKING:
     from .training import SupportsInference
@@ -472,4 +477,151 @@ class ModelArtifact:
         return adapter.load(self.model_state, self.feature_names, self.metadata)
 
 
-__all__ = ["ModelArtifact", "ModelMetrics", "ModelScore"]
+@dataclass(slots=True, frozen=True)
+class ModelArtifactBundle:
+    """Opis zapisanych plików artefaktu modelu AI."""
+
+    artifact: ModelArtifact
+    artifact_path: Path
+    metadata_path: Path
+    checksums_path: Path
+    signature_path: Path | None
+    metadata_payload: Mapping[str, object]
+    checksums: Mapping[str, str]
+
+
+def _bundle_base_name(name: str | Path | None) -> str:
+    if name is None:
+        return "model-artifact"
+    candidate = Path(str(name).strip())
+    if candidate.name and candidate.name not in {".", ".."}:
+        if candidate.suffix == ".json":
+            return candidate.stem or "model-artifact"
+        return candidate.name
+    normalized = str(name).strip()
+    return normalized or "model-artifact"
+
+
+def _hash_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(65536), b""):
+            if not chunk:
+                break
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _build_metadata_summary(
+    artifact: ModelArtifact,
+    overrides: Mapping[str, object] | None = None,
+) -> dict[str, object]:
+    summary: dict[str, object] = {
+        "trained_at": artifact.trained_at.astimezone(timezone.utc).isoformat(),
+        "backend": artifact.backend,
+        "feature_names": list(artifact.feature_names),
+        "rows": {
+            "train": artifact.training_rows,
+            "validation": artifact.validation_rows,
+            "test": artifact.test_rows,
+        },
+        "target_scale": artifact.target_scale,
+        "feature_scalers": {
+            name: {"mean": mean, "stdev": stdev}
+            for name, (mean, stdev) in artifact.feature_scalers.items()
+        },
+        "metrics": artifact.metrics.to_dict(),
+    }
+    if artifact.decision_journal_entry_id is not None:
+        summary["decision_journal_entry_id"] = artifact.decision_journal_entry_id
+    metadata_block = dict(artifact.metadata)
+    if metadata_block:
+        summary["source_metadata"] = metadata_block
+    if overrides:
+        summary.update({str(key): value for key, value in overrides.items()})
+    return summary
+
+
+def generate_model_artifact_bundle(
+    artifact: ModelArtifact,
+    output_dir: str | Path,
+    *,
+    name: str | Path | None = None,
+    signing_key: bytes | None = None,
+    signing_key_id: str | None = None,
+    metadata_overrides: Mapping[str, object] | None = None,
+) -> ModelArtifactBundle:
+    """Zapisuje artefakt modelu wraz z metadanymi, checksumami i podpisem HMAC."""
+
+    output_path = Path(output_dir).expanduser().resolve()
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    base_name = _bundle_base_name(name)
+    artifact_path = output_path / f"{base_name}.json"
+    metadata_path = output_path / f"{base_name}.metadata.json"
+    checksums_path = output_path / "checksums.sha256"
+    signature_path: Path | None = output_path / f"{base_name}.sig" if signing_key else None
+
+    artifact_payload = artifact.to_dict()
+    artifact_path.write_text(
+        json.dumps(artifact_payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+    metadata_payload_dict = _build_metadata_summary(artifact, metadata_overrides)
+    metadata_path.write_text(
+        json.dumps(metadata_payload_dict, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+    written_signature_path: Path | None = None
+    if signing_key is not None:
+        signature_payload = {
+            "target": artifact_path.name,
+            "signed_at": datetime.now(timezone.utc).isoformat(),
+            "signature": build_hmac_signature(
+                artifact_payload,
+                key=signing_key,
+                key_id=signing_key_id,
+            ),
+        }
+        signature_path = signature_path or output_path / f"{base_name}.sig"
+        signature_path.write_text(
+            json.dumps(signature_payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        written_signature_path = signature_path
+
+    checksum_entries: list[tuple[str, str]] = [
+        (artifact_path.name, _hash_file(artifact_path)),
+        (metadata_path.name, _hash_file(metadata_path)),
+    ]
+    if written_signature_path is not None:
+        checksum_entries.append(
+            (written_signature_path.name, _hash_file(written_signature_path))
+        )
+
+    with checksums_path.open("w", encoding="utf-8") as handle:
+        for filename, digest in checksum_entries:
+            handle.write(f"{digest}  {filename}\n")
+
+    checksums_payload = MappingProxyType(dict(checksum_entries))
+
+    return ModelArtifactBundle(
+        artifact=artifact,
+        artifact_path=artifact_path,
+        metadata_path=metadata_path,
+        checksums_path=checksums_path,
+        signature_path=written_signature_path,
+        metadata_payload=MappingProxyType(dict(metadata_payload_dict)),
+        checksums=checksums_payload,
+    )
+
+
+__all__ = [
+    "ModelArtifact",
+    "ModelArtifactBundle",
+    "ModelMetrics",
+    "ModelScore",
+    "generate_model_artifact_bundle",
+]

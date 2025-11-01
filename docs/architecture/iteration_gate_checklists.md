@@ -29,7 +29,7 @@ Dokument zbiera rozszerzone checklisty wejścia i wyjścia dla iteracji rozwojow
 
 | Krok | Opis | Dowód/Artefakt | Kamień sprintu (Phase 2 – Stream AI) |
 | --- | --- | --- | --- |
-| 1 | Artefakt modelu (`ModelArtifact`) zapisany w repozytorium modeli z metadanymi `target_scale`, `feature_scalers`, `training_rows`/`validation_rows` i metrykami MAE/RMSE (train + validation). | Plik JSON w katalogu wersji + podpis w decision logu. | Sprint 1: `ModelArtifact` z kompletem metadanych + podpis w decision journalu. |
+| 1 | Artefakt modelu (`ModelArtifact`) zapisany w repozytorium modeli z metadanymi `target_scale`, `feature_scalers`, `training_rows`/`validation_rows` i metrykami MAE/RMSE (train + validation). | Plik JSON w katalogu wersji + pakiet `generate_model_artifact_bundle` (`*.metadata.json`, `checksums.sha256`, `*.sig`) oraz podpis w decision logu. | Sprint 1: `ModelArtifact` z kompletem metadanych + podpis w decision journalu. |
 | 2 | Walidacja walk-forward (`WalkForwardValidator`) zakończona sukcesem, średnie MAE/directional accuracy zapisane w raporcie. | Raport z `tests/decision/test_scheduler.py` + log walidacji w `audit/ai_decision/`. | Sprint 2: Raporty walidacji walk-forward i monitoring danych wejściowych. |
 | 3 | Scheduler retreningu (`RetrainingScheduler`) posiada aktualny `last_run` i zaplanowany `next_run`. | Zrzut konfiguracji/metryk w `audit/ai_decision/scheduler.json`. | Sprint 3: `RetrainingScheduler` z `last_run`/`next_run` w audycie. |
 | 4 | `DecisionOrchestrator` zintegrowany z inference (`DecisionModelInference.is_ready == True`), `AIDecisionLoop` generuje kandydatów on-line. | Log z uruchomienia pętli oraz wpis audytowy w decision journal. | Sprint 3: Potwierdzony `is_ready` DecisionOrchestratora przed autotraderem. |

@@ -33,3 +33,24 @@ io_queue:
 Wartości domyślne (`max_concurrency=8`, `burst=16`) można nadpisać globalnie, a następnie
 precyzyjnie dopasować dla poszczególnych giełd. Dodanie nowych adapterów wymaga jedynie
 uzupełnienia wpisu w `exchanges` lub skorzystania z limitów globalnych.
+
+## Weryfikacja podpisów dokumentów LIVE
+
+Procedura `bootstrap_environment` blokuje uruchomienie środowiska `Environment.LIVE`, dopóki
+nie zweryfikuje podpisów HMAC dla wszystkich wymaganych dokumentów:
+
+- **Compliance/KYC** – każdy dokument podpisany przez zespół compliance (np. pakiet KYC)
+  musi posiadać ważny podpis HMAC; klucz oczekiwany jest w `secrets/hmac/compliance*.key`.
+- **Ryzyko** – raporty limitów lub alignmentu profili ryzyka podpisane przez zespół risk
+  muszą być zweryfikowane tym samym mechanizmem (`secrets/hmac/risk*.key`).
+- **Penetration test** – raport z testów penetracyjnych (dokument z nazwą zawierającą
+  `penetration` lub `pentest`) wymaga podpisu HMAC i klucza w `secrets/hmac/`.
+
+Podczas bootstrapa moduł oblicza sumy SHA-256 plików, wczytuje metadane podpisu, a następnie
+weryfikuje podpis za pomocą `bot_core.security.signing.verify_hmac_signature`. Brak dokumentu,
+klucza lub niepoprawny podpis powodują `RuntimeError`, dzięki czemu tryb live nie zostanie
+uruchomiony w stanie niespełniającym wymogów compliance.
+
+Informacje o rezultacie weryfikacji (ścieżki, identyfikatory kluczy, kategorie) są przechowywane
+w `BootstrapContext.live_signature_verification` i mogą być wyświetlane w UI lub raportach
+operacyjnych.

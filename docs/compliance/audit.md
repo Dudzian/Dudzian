@@ -79,3 +79,13 @@ Metoda `audit()` zwraca obiekt `ComplianceAuditResult`, który zawiera:
 Raport można serializować do słownika (`to_dict`) i włączyć do istniejących pipeline’ów
 raportowania. Brak naruszeń (`passed=True`) oznacza, że strategia spełnia minimalne
 wymagania zgodności lokalnej instalacji.
+
+## Checklisty LIVE i podpisy kryptograficzne
+
+Od wersji z weryfikacją guardrail’i LIVE każdy raport compliance używany w konfiguracji
+`environment.live_readiness` musi być podpisany kluczem HMAC i udostępniony lokalnie.
+Klucze przechowujemy w katalogu `secrets/hmac/`, a podpisy są walidowane przy
+uruchamianiu `bootstrap_environment`. Brak podpisu lub klucza blokuje start środowiska
+`Environment.LIVE`, dlatego proces publikacji raportów compliance powinien zawsze
+obejmować wygenerowanie podpisu (`bot_core.security.signing.build_hmac_signature`) oraz
+zapis metadanych (`signature_path`) w konfiguracji środowiska.

@@ -42,6 +42,17 @@
 Artefakt powinien być podpisany kryptograficznie oraz przechowywany wraz z `checksums.sha256`, aby umożliwić audyt integralności. Schemat JSON przechowujemy w `docs/schemas/model_artifact.schema.json`, a każde odchylenie wymaga aktualizacji dokumentacji oraz zatwierdzenia compliance.
 W CI uruchamiamy walidację `tests/decision/test_model_artifact_schema.py`, która potwierdza zgodność artefaktu z tym schematem (w tym obecność pól `target_scale`, `training_rows` i ustrukturyzowanych metryk).
 
+### Generowanie pakietu artefaktu
+
+Funkcja `bot_core.ai.generate_model_artifact_bundle` zapisuje:
+
+- `*.json` – kompletny artefakt modelu zgodny ze schematem,
+- `*.metadata.json` – streszczenie metadanych (`rows.*`, `feature_scalers`, `metrics`, dodatkowe atrybuty procesu retreningu),
+- `checksums.sha256` – sumy kontrolne SHA-256 każdej z powyższych części (oraz pliku podpisu, jeśli istnieje),
+- `*.sig` – podpis HMAC (`algorithm=HMAC-SHA256`) obejmujący zawartość artefaktu.
+
+Pakiet należy archiwizować w `audit/ai_decision/models/<model>/<timestamp>/`. Podczas publikacji artefaktu scheduler retreningu odkłada JSON do repozytorium modeli (`ModelRepository.save`) oraz zapisuje metadane/podpisy przy pomocy `generate_model_artifact_bundle`, dzięki czemu checklista AI ma jednoznaczny dowód integralności pliku.
+
 ## Monitoring danych wejściowych
 
 Monitoring skupia się na wykrywaniu anomalii w danych zasilających inference:
