@@ -7,6 +7,7 @@ import pandas as pd
 import pytest
 
 from bot_core.strategies.catalog import DEFAULT_STRATEGY_CATALOG
+from bot_core.strategies.public import StrategyDescriptor, list_available_strategies
 from bot_core.trading.engine import TechnicalIndicators, TradingParameters
 from bot_core.trading.strategies import (
     ArbitrageStrategy,
@@ -171,3 +172,32 @@ def test_plugin_rejects_duplicate_engine_key() -> None:
                 market_data: pd.DataFrame | None = None,
             ) -> pd.Series:
                 return indicators.ema_fast.reindex(indicators.ema_fast.index).clip(-1.0, 1.0)
+
+
+def test_public_descriptors_match_catalog_metadata() -> None:
+    descriptors = list_available_strategies()
+    assert descriptors, "Publiczny katalog strategii nie może być pusty"
+
+    payloads = {entry["engine"]: entry for entry in DEFAULT_STRATEGY_CATALOG.describe_engines()}
+    assert set(payloads) == {descriptor.engine for descriptor in descriptors}
+
+    for descriptor in descriptors:
+        payload = payloads[descriptor.engine]
+        assert descriptor.license_tier == payload["license_tier"]
+        assert descriptor.risk_classes == tuple(payload.get("risk_classes", ()))
+        assert descriptor.required_data == tuple(payload.get("required_data", ()))
+        expected_tags = tuple(
+            str(item).strip()
+            for item in payload.get("default_tags", ())
+            if str(item).strip()
+        )
+        assert descriptor.tags == expected_tags
+        capability = payload.get("capability")
+        if capability:
+            assert descriptor.metadata.get("capability") == capability
+
+
+def test_public_descriptor_limit_is_respected() -> None:
+    descriptors = list_available_strategies(limit=2)
+    assert len(descriptors) == 2
+    assert all(isinstance(item, StrategyDescriptor) for item in descriptors)

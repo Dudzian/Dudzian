@@ -13,6 +13,7 @@ Item {
     property string selectedStrategyName: ""
     property string statusMessageId: ""
     property string statusDetails: ""
+    property string lastSavedExchange: ""
 
     signal completionStateChanged(bool ready)
 
@@ -43,6 +44,7 @@ Item {
             return
         statusMessageId = onboardingService.statusMessageId || ""
         statusDetails = onboardingService.statusDetails || ""
+        lastSavedExchange = onboardingService.lastSavedExchange || ""
     }
 
     function _emitCompletion() {
@@ -72,6 +74,9 @@ Item {
             _syncStatus()
         }
         function onStatusDetailsChanged() {
+            _syncStatus()
+        }
+        function onLastSavedExchangeChanged() {
             _syncStatus()
         }
         function onConfigurationReadyChanged() {
@@ -315,7 +320,10 @@ Item {
                         text: {
                             if (!statusMessageId)
                                 return root.trId("licenseWizard.strategy.status.missingSelection", "Wybierz strategię i dodaj klucze API, aby kontynuować.")
-                            return root.trId(statusMessageId, statusMessageId)
+                            const translated = root.trId(statusMessageId, statusMessageId)
+                            if (statusMessageId === "onboarding.strategy.credentials.saved" && lastSavedExchange.length > 0)
+                                return translated.arg(lastSavedExchange)
+                            return translated
                         }
                     }
 
@@ -324,7 +332,7 @@ Item {
                         visible: statusDetails.length > 0
                         Layout.fillWidth: true
                         wrapMode: Text.WordWrap
-                        text: statusDetails
+                        text: root.trId(statusDetails, statusDetails)
                         color: Styles.AppTheme.textSecondary
                     }
                 }

@@ -2,7 +2,8 @@
 
 Ten katalog zawiera definicję Protobuf v1 dla komunikacji pomiędzy powłoką desktopową Qt/QML a rdzeniem
 `bot_core`. Zgodnie z architekturą shell↔daemon wszystkie operacje odbywają się przez gRPC (HTTP/2) –
-brak WebSocketów i brak bezpośrednich połączeń HTTP z giełdami po stronie UI.
+brak WebSocketów i brak bezpośrednich połączeń HTTP z giełdami po stronie UI. Warstwa legacy korzysta
+z long-pollingu REST, jeśli potrzebne są strumienie pomocnicze.
 
 ## Pliki
 

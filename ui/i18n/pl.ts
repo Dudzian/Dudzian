@@ -254,6 +254,10 @@
       <source>onboarding.strategy.credentials.saved</source>
       <translation>Klucze API dla giełdy %1 zostały zapisane.</translation>
     </message>
+    <message id="onboarding.strategy.credentials.secured">
+      <source>onboarding.strategy.credentials.secured</source>
+      <translation>Klucze API zostały zaszyfrowane i zapisane w natywnym systemowym keychainie powiązanym z fingerprintem urządzenia.</translation>
+    </message>
     <message id="onboarding.strategy.error.load">
       <source>onboarding.strategy.error.load</source>
       <translation>Nie udało się załadować listy strategii.</translation>

@@ -23,6 +23,7 @@ from core.monitoring.metrics_api import (
     RetrainingTelemetry,
     RuntimeTelemetrySnapshot,
 )
+from ui.backend.runtime_service import RuntimeService
 from ui.backend.telemetry_provider import TelemetryProvider
 
 
@@ -70,12 +71,41 @@ def _sample_snapshot() -> RuntimeTelemetrySnapshot:
     )
 
 
+def _sample_decisions() -> list[dict[str, str]]:
+    return [
+        {
+            "event": "order_submitted",
+            "timestamp": "2025-01-01T12:00:00+00:00",
+            "environment": "prod",
+            "portfolio": "alpha",
+            "risk_profile": "balanced",
+            "strategy": "mean_reversion",
+            "schedule": "auto",
+            "symbol": "BTC/USDT",
+            "side": "buy",
+            "status": "submitted",
+            "decision_state": "trade",
+            "decision_signal": "long",
+            "decision_should_trade": "true",
+            "decision_model": "xgb-v5",
+            "decision_confidence": "0.9120",
+            "ai_probability": "0.8450",
+            "market_regime": "bull",
+            "market_regime_risk_level": "elevated",
+            "market_regime_confidence": "0.7800",
+            "strategy_recommendation": "momentum_v2",
+        }
+    ]
+
+
 @pytest.mark.timeout(30)
 def test_runtime_overview_renders_snapshot(tmp_path: Path) -> None:
     provider = TelemetryProvider(snapshot_loader=_sample_snapshot)
+    runtime_service = RuntimeService(decision_loader=lambda limit: [])
     app = QApplication.instance() or QApplication([])
     engine = QQmlApplicationEngine()
     engine.rootContext().setContextProperty("telemetryProvider", provider)
+    engine.rootContext().setContextProperty("runtimeService", runtime_service)
     qml_path = Path(__file__).resolve().parents[2] / "ui" / "qml" / "dashboard" / "RuntimeOverview.qml"
     engine.load(QUrl.fromLocalFile(str(qml_path)))
     assert engine.rootObjects(), "Nie udało się załadować RuntimeOverview.qml"
@@ -96,6 +126,80 @@ def test_runtime_overview_renders_snapshot(tmp_path: Path) -> None:
     assert guardrail_card is not None
     manual_button = root.findChild(QObject, "manualRefreshButton")
     assert manual_button is not None and manual_button.property("enabled") is True
+
+    engine.deleteLater()
+    app.quit()
+
+
+@pytest.mark.timeout(30)
+def test_runtime_overview_ai_card_populates_decisions() -> None:
+    provider = TelemetryProvider(snapshot_loader=_sample_snapshot)
+
+    def _loader(limit: int) -> list[dict[str, str]]:
+        return _sample_decisions()
+
+    runtime_service = RuntimeService(decision_loader=_loader)
+
+    app = QApplication.instance() or QApplication([])
+    engine = QQmlApplicationEngine()
+    engine.rootContext().setContextProperty("telemetryProvider", provider)
+    engine.rootContext().setContextProperty("runtimeService", runtime_service)
+    qml_path = Path(__file__).resolve().parents[2] / "ui" / "qml" / "dashboard" / "RuntimeOverview.qml"
+    engine.load(QUrl.fromLocalFile(str(qml_path)))
+    assert engine.rootObjects(), "Nie udało się załadować RuntimeOverview.qml"
+    root = engine.rootObjects()[0]
+
+    provider.refreshTelemetry()
+    runtime_service.loadRecentDecisions(5)
+    app.processEvents()
+
+    decisions = root.property("aiDecisions")
+    assert isinstance(decisions, list)
+    assert len(decisions) == 1
+    first = decisions[0]
+    assert first["decision"]["state"] == "trade"
+    assert first["marketRegime"]["regime"] == "bull"
+
+    card = root.findChild(QObject, "runtimeOverviewAiCard")
+    assert card is not None
+    error_banner = root.findChild(QObject, "runtimeOverviewAiErrorBanner")
+    assert error_banner is not None
+    assert error_banner.property("visible") is False
+
+    engine.deleteLater()
+    app.quit()
+
+
+@pytest.mark.timeout(30)
+def test_runtime_overview_ai_card_handles_errors() -> None:
+    provider = TelemetryProvider(snapshot_loader=_sample_snapshot)
+
+    def _loader(limit: int) -> list[dict[str, str]]:
+        raise RuntimeError("journal offline")
+
+    runtime_service = RuntimeService(decision_loader=_loader)
+
+    app = QApplication.instance() or QApplication([])
+    engine = QQmlApplicationEngine()
+    engine.rootContext().setContextProperty("telemetryProvider", provider)
+    engine.rootContext().setContextProperty("runtimeService", runtime_service)
+    qml_path = Path(__file__).resolve().parents[2] / "ui" / "qml" / "dashboard" / "RuntimeOverview.qml"
+    engine.load(QUrl.fromLocalFile(str(qml_path)))
+    assert engine.rootObjects(), "Nie udało się załadować RuntimeOverview.qml"
+    root = engine.rootObjects()[0]
+
+    runtime_service.loadRecentDecisions(3)
+    app.processEvents()
+
+    error_text = root.property("aiDecisionError")
+    assert error_text == "journal offline"
+    error_banner = root.findChild(QObject, "runtimeOverviewAiErrorBanner")
+    assert error_banner is not None
+    assert error_banner.property("visible") is True
+
+    empty_label = root.findChild(QObject, "runtimeOverviewAiEmptyLabel")
+    assert empty_label is not None
+    assert empty_label.property("visible") is False
 
     engine.deleteLater()
     app.quit()
