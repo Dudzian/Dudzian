@@ -16,12 +16,12 @@
 > implementations reappear when touching this area.
 
 ## Implemented Scope
-- Unified adapter abstraction defined in `KryptoLowca/exchanges/interfaces.py`, with REST and WebSocket helpers, rate limiting, and order handling primitives.
-- Binance Testnet and Kraken Demo adapters leveraging shared base classes, with dependency injection points for HTTP and WebSocket clients.
+- Unified adapter abstraction defined in `KryptoLowca/exchanges/interfaces.py`, with REST and long-poll helpers, rate limiting, and order handling primitives.
+- Binance Testnet and Kraken Demo adapters leveraging shared base classes, with dependency injection points for HTTP and long-poll clients.
 - Encrypted API key manager integrated with `ConfigManager` for credential storage, rotation, and compliance controls.
 - Live execution router (`bot_core.execution.live_router.LiveExecutionRouter`) obsługujący trasowanie między adapterami oraz telemetryjne
   metryki tras wraz z fallbackiem dla profili ryzyka.
-- ZondaAdapter dostępny w `KryptoLowca/exchanges/zonda.py` wraz ze smoke testem tickera i scenariuszem cyklu życia zlecenia w `KryptoLowca/tests/integration/test_demo_sandboxes.py`. Streaming WebSocket pozostaje funkcją opcjonalną, domyślnie wyłączoną w produkcji, a `MarketDataPoller` w `KryptoLowca/exchanges/polling.py` zapewnia REST-owe odpytywanie dla finalnego GUI i progresywny backoff błędów, aby ograniczyć obciążenie API podczas awarii.
+- ZondaAdapter dostępny w `KryptoLowca/exchanges/zonda.py` wraz ze smoke testem tickera i scenariuszem cyklu życia zlecenia w `KryptoLowca/tests/integration/test_demo_sandboxes.py`. Streaming long-poll pozostaje funkcją opcjonalną, domyślnie wyłączoną w produkcji, a `MarketDataPoller` w `KryptoLowca/exchanges/polling.py` zapewnia REST-owe odpytywanie dla finalnego GUI i progresywny backoff błędów, aby ograniczyć obciążenie API podczas awarii.
 - Nowy Trading GUI korzysta z `MarketDataPoller` poprzez mostek REST, aktualizując ticker w interfejsie po kliknięciu „Start”, prezentując komunikaty o stanie połączenia (łączenie, aktywny ticker, błędy REST) i utrzymując kompatybilność z trybem sandbox/live. Domyślny symbol oraz interwał odpytywania można nadpisać zmiennymi środowiskowymi `TRADING_GUI_DEFAULT_SYMBOL` oraz `TRADING_GUI_MARKET_INTERVAL`.
 - Encrypted API key manager oparty na `EncryptedFileSecretStorage` i adapterze `PresetConfigService`, zapewniający rotację i kontrolę zgodności.
 - Multi-exchange account manager supporting round-robin order dispatch and monitoring across adapters.
@@ -29,7 +29,7 @@
 - `NowaGieldaStreamClient` udostępnia wskaźnik `closed` oraz może działać jako menedżer kontekstu (`with`), co gwarantuje domknięcie strumienia i zwolnienie bufora przy wyjątkach lub wczesnym zakończeniu pracy. Dodatkowo eksponuje właściwości `channels`, `remote_channels`, `scope`, `last_cursor`, `buffer_size`, `history_size`, `pending_size`, `max_reconnects`, `reconnect_attempt` oraz liczniki `reconnects_total`, `total_batches`, `total_events`, `heartbeats_received`. Wbudowana metoda `replay_history()` pozwala manualnie odtworzyć zbuforowane paczki (z opcjonalnym pominięciem heartbeatów) oraz wymusić ponowną emisję nawet podczas oczekiwania na świeże dane po reconnectach, `force_reconnect()` umożliwia natychmiastowe restartowanie streamu z opcjonalnym nadpisaniem kursora i decyzją o ponownej emisji historii, a `reset_counters()` zeruje lokalne liczniki diagnostyczne po wykonaniu pomiarów.
 
 ## Missing Scope / Follow-up Items
-- Finalne GUI korzysta wyłącznie z odpytywania REST; ewentualne włączenie strumieni WebSocket wymaga osobnej walidacji wydajnościowej i monitoringu reconnectów w stagingu.
+- Finalne GUI korzysta wyłącznie z odpytywania REST; ewentualne włączenie strumieni long-poll wymaga osobnej walidacji wydajnościowej i monitoringu reconnectów w stagingu.
 
 ## Test Coverage Notes
 - Contract tests exist for adapter protocols i rotację kluczy, a zestaw integracyjny pokrywa cykl zlecenia Binance/Kraken oraz smoke ticker Zondy; potrzebne są jednak dalsze scenariusze integracyjne.

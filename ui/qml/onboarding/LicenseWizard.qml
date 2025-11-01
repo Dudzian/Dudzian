@@ -527,7 +527,15 @@ Item {
                                     visible: onboardingStatusMessageId.length > 0
                                     Layout.fillWidth: true
                                     wrapMode: Text.WordWrap
-                                    text: root.trId(onboardingStatusMessageId, root.trId("licenseWizard.strategy.status.ready", "Konfiguracja strategii zakończona."))
+                                    text: {
+                                        const translated = root.trId(
+                                            onboardingStatusMessageId,
+                                            root.trId("licenseWizard.strategy.status.ready", "Konfiguracja strategii zakończona.")
+                                        )
+                                        if (onboardingStatusMessageId === "onboarding.strategy.credentials.saved" && lastConfiguredExchangeId.length > 0)
+                                            return translated.arg(lastConfiguredExchangeId)
+                                        return translated
+                                    }
                                     color: summarySuccess ? Styles.AppTheme.success : Styles.AppTheme.textPrimary
                                 }
 
@@ -536,7 +544,7 @@ Item {
                                     visible: onboardingStatusDetails.length > 0
                                     Layout.fillWidth: true
                                     wrapMode: Text.WordWrap
-                                    text: onboardingStatusDetails
+                                    text: root.trId(onboardingStatusDetails, onboardingStatusDetails)
                                     color: Styles.AppTheme.textSecondary
                                 }
                             }

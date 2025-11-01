@@ -14,6 +14,7 @@ from .logging import (
 from .onboarding_service import OnboardingService
 from .privacy_settings import PrivacySettingsController
 from .runbook_controller import RunbookController
+from .runtime_service import RuntimeService
 from .support_center import SupportCenterController
 from .telemetry_provider import TelemetryProvider
 from .update_controller import OfflineUpdateController
@@ -27,6 +28,7 @@ __all__ = [
     "OnboardingService",
     "PrivacySettingsController",
     "RunbookController",
+    "RuntimeService",
     "SupportCenterController",
     "TelemetryProvider",
     "OfflineUpdateController",

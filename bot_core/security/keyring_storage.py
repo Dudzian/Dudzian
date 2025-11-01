@@ -77,6 +77,15 @@ class KeyringSecretStorage(SecretStorage):
             return
         self._unregister_key(key)
 
+    def list_registered_keys(self) -> tuple[str, ...]:
+        """Zwraca krotkę kluczy zarejestrowanych w indeksie magazynu."""
+
+        index = self._load_index()
+        keys = index.get("keys", {})
+        if not isinstance(keys, Mapping):  # pragma: no cover - defensywne
+            return ()
+        return tuple(sorted(str(key) for key in keys.keys()))
+
     # ------------------------------------------------------------------
     # Rotacja klucza głównego
     # ------------------------------------------------------------------

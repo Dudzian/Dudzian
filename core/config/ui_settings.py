@@ -25,7 +25,13 @@ class UISettingsError(RuntimeError):
 class DashboardSettings:
     """Preferencje widoku dashboardu runtime."""
 
-    card_order: tuple[str, ...] = ("io_queue", "guardrails", "retraining", "compliance")
+    card_order: tuple[str, ...] = (
+        "io_queue",
+        "guardrails",
+        "retraining",
+        "compliance",
+        "ai_decisions",
+    )
     hidden_cards: tuple[str, ...] = ()
     refresh_interval_ms: int = 4000
     theme: str = "system"

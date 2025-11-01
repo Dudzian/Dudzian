@@ -15,13 +15,14 @@ try:  # pragma: no cover - zależne od środowiska CI
 except ImportError as exc:  # pragma: no cover - brak bibliotek systemowych
     pytest.skip(f"Brak zależności QtWidgets: {exc}", allow_module_level=True)
 
-from core.runtime.strategy_catalog import StrategyDescriptor
+from bot_core.strategies.public import StrategyDescriptor
 from ui.backend.onboarding_service import OnboardingService
 
 
 class _StubSecretStore:
     def __init__(self) -> None:
         self.saved: list[tuple[str, str, str, str | None]] = []
+        self._token = "onboarding.strategy.credentials.secured"
 
     def save_exchange_credentials(self, credentials) -> None:  # pragma: no cover - prosty stub
         self.saved.append(
@@ -32,6 +33,9 @@ class _StubSecretStore:
                 credentials.api_passphrase,
             )
         )
+
+    def security_details_token(self) -> str:
+        return self._token
 
 
 def _strategy_loader() -> tuple[StrategyDescriptor, ...]:

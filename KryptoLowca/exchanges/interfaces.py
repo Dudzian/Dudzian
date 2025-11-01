@@ -1,4 +1,4 @@
-"""Abstrakcje adapterów giełdowych dla REST + WebSocket."""
+"""Abstrakcje adapterów giełdowych dla REST + long-pollingu."""
 from __future__ import annotations
 
 import asyncio
@@ -102,11 +102,19 @@ class OrderStatus:
     raw: Dict[str, Any] = field(default_factory=dict)
 
 
-class WebSocketSubscription(Protocol):
-    async def __aenter__(self) -> "WebSocketSubscription":
+class MarketStreamHandle(Protocol):
+    """Uchwyt do zarządzania strumieniem danych rynkowych opartym na long-pollingu."""
+
+    async def __aenter__(self) -> "MarketStreamHandle":
         ...
 
     async def __aexit__(self, exc_type, exc, tb) -> Optional[bool]:  # type: ignore[override]
+        ...
+
+    async def start(self) -> None:
+        ...
+
+    async def stop(self) -> None:
         ...
 
 
@@ -135,7 +143,7 @@ class ExchangeAdapter(Protocol):
 
     async def stream_market_data(
         self, subscriptions: Iterable[MarketSubscription], callback: CallbackT
-    ) -> WebSocketSubscription:
+    ) -> MarketStreamHandle:
         ...
 
     async def submit_order(self, order: OrderRequest) -> OrderStatus:
@@ -172,8 +180,8 @@ class RESTClient(Protocol):
         ...
 
 
-class RESTWebSocketAdapter(ABC):
-    """Bazowa implementacja adaptera REST + WebSocket z retry/backoff."""
+class RESTStreamingAdapter(ABC):
+    """Bazowa implementacja adaptera REST + long-pollingu z retry/backoff."""
 
     http_client: RESTClient
 
@@ -276,7 +284,7 @@ class RESTWebSocketAdapter(ABC):
     @abstractmethod
     async def stream_market_data(
         self, subscriptions: Iterable[MarketSubscription], callback: CallbackT
-    ) -> WebSocketSubscription:
+    ) -> MarketStreamHandle:
         raise NotImplementedError
 
     @abstractmethod
@@ -317,6 +325,6 @@ __all__ = [
     "OrderRequest",
     "OrderStatus",
     "ExchangeAdapter",
-    "RESTWebSocketAdapter",
-    "WebSocketSubscription",
+    "RESTStreamingAdapter",
+    "MarketStreamHandle",
 ]
