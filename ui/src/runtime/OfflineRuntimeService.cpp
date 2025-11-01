@@ -3,6 +3,7 @@
 #include <QDate>
 #include <QFile>
 #include <QLoggingCategory>
+#include <QtGlobal>
 #include <QTextStream>
 #include <QTime>
 
@@ -16,7 +17,20 @@ Q_LOGGING_CATEGORY(lcOfflineService, "bot.shell.offline.service")
 
 namespace {
 constexpr auto kDefaultDatasetPath = "data/sample_ohlcv/trend.csv";
+
+QVariantMap windowDescriptor(qint64 startMs, qint64 endMs)
+{
+    QVariantMap window;
+    if (startMs <= 0 || endMs <= 0 || endMs < startMs)
+        return window;
+    const QDateTime start = QDateTime::fromMSecsSinceEpoch(startMs, Qt::UTC);
+    const QDateTime end = QDateTime::fromMSecsSinceEpoch(endMs, Qt::UTC);
+    window.insert(QStringLiteral("start"), start.toString(Qt::ISODate));
+    window.insert(QStringLiteral("end"), end.toString(Qt::ISODate));
+    window.insert(QStringLiteral("duration_s"), qMax<qint64>(0, (endMs - startMs) / 1000));
+    return window;
 }
+} // namespace
 
 OfflineRuntimeService::OfflineRuntimeService(QObject* parent)
     : QObject(parent)
@@ -70,6 +84,41 @@ void OfflineRuntimeService::setDatasetPath(const QString& path)
     }
 }
 
+void OfflineRuntimeService::setAlertPreferences(const QVariantMap& preferences)
+{
+    if (m_alertPreferences == preferences)
+        return;
+    m_alertPreferences = preferences;
+    if (m_running)
+        emit alertPreferencesChanged(m_alertPreferences);
+}
+
+QVariantMap OfflineRuntimeService::buildAutoModeSnapshot() const
+{
+    QVariantMap snapshot;
+    snapshot.insert(QStringLiteral("timestamp"), QDateTime::currentDateTimeUtc().toString(Qt::ISODate));
+    QVariantMap automation;
+    automation.insert(QStringLiteral("enabled"), m_autoRunEnabled);
+    automation.insert(QStringLiteral("running"), m_automationRunning);
+    snapshot.insert(QStringLiteral("automation"), automation);
+    snapshot.insert(QStringLiteral("strategy"), m_strategyConfig);
+    snapshot.insert(QStringLiteral("metrics"), buildAutomationMetrics());
+    snapshot.insert(QStringLiteral("equity_curve"), buildEquityCurveSeries());
+    snapshot.insert(QStringLiteral("risk_heatmap"), buildRiskHeatmapCells());
+    snapshot.insert(QStringLiteral("performance"), buildPerformanceSummary());
+    snapshot.insert(QStringLiteral("performance_window"), buildRecentPerformanceSummary());
+    snapshot.insert(QStringLiteral("alerts"), m_alertPreferences);
+    QVariantMap schedule;
+    schedule.insert(QStringLiteral("mode"), m_autoRunEnabled ? QStringLiteral("auto") : QStringLiteral("manual"));
+    schedule.insert(QStringLiteral("is_open"), true);
+    snapshot.insert(QStringLiteral("schedule"), schedule);
+    snapshot.insert(QStringLiteral("reasons"), QVariantList());
+    snapshot.insert(QStringLiteral("controller_history"), QVariantList());
+    snapshot.insert(QStringLiteral("decision_summary"), QVariantMap());
+    snapshot.insert(QStringLiteral("guardrail_summary"), QVariantMap());
+    return snapshot;
+}
+
 void OfflineRuntimeService::start()
 {
     ensureDatasetLoaded();
@@ -80,6 +129,7 @@ void OfflineRuntimeService::start()
     emit guardReady(buildPerformanceGuard());
     applyAutomationPreference();
     emit automationStateChanged(m_automationRunning);
+    emit alertPreferencesChanged(m_alertPreferences);
 }
 
 void OfflineRuntimeService::stop()
@@ -330,4 +380,159 @@ void OfflineRuntimeService::buildSyntheticDataset(QList<OhlcvPoint>& out) const
         candle.sequence = static_cast<quint64>(i);
         out.append(candle);
     }
+}
+
+QVariantList OfflineRuntimeService::buildEquityCurveSeries() const
+{
+    QVariantList points;
+    if (m_history.isEmpty())
+        return points;
+
+    double equity = 100000.0;
+    double previous = m_history.first().close;
+    for (int i = 0; i < m_history.size(); ++i) {
+        const OhlcvPoint& candle = m_history.at(i);
+        if (i == 0) {
+            equity = 100000.0;
+        } else if (previous > 0.0) {
+            equity *= candle.close / previous;
+        }
+        previous = candle.close;
+
+        QVariantMap entry;
+        entry.insert(QStringLiteral("timestamp"), QDateTime::fromMSecsSinceEpoch(candle.timestampMs, Qt::UTC).toString(Qt::ISODate));
+        entry.insert(QStringLiteral("value"), equity);
+        entry.insert(QStringLiteral("source"), QStringLiteral("offline"));
+        entry.insert(QStringLiteral("category"), QStringLiteral("auto-mode"));
+        points.append(entry);
+    }
+    return points;
+}
+
+QVariantList OfflineRuntimeService::buildRiskHeatmapCells() const
+{
+    QVariantList cells;
+    const RiskSnapshotData snapshot = buildRiskSnapshot();
+    for (const RiskExposureData& exposure : snapshot.exposures) {
+        QVariantMap cell;
+        cell.insert(QStringLiteral("asset"), exposure.code);
+        cell.insert(QStringLiteral("label"), exposure.code);
+        cell.insert(QStringLiteral("value"), exposure.currentValue);
+        QVariantList sources;
+        QVariantMap limitEntry;
+        limitEntry.insert(QStringLiteral("source"), tr("Limit"));
+        limitEntry.insert(QStringLiteral("category"), QStringLiteral("limit"));
+        limitEntry.insert(QStringLiteral("value"), exposure.maxValue);
+        sources.append(limitEntry);
+        QVariantMap thresholdEntry;
+        thresholdEntry.insert(QStringLiteral("source"), tr("Próg"));
+        thresholdEntry.insert(QStringLiteral("category"), QStringLiteral("threshold"));
+        thresholdEntry.insert(QStringLiteral("value"), exposure.thresholdValue);
+        sources.append(thresholdEntry);
+        cell.insert(QStringLiteral("sources"), sources);
+        cells.append(cell);
+    }
+    return cells;
+}
+
+QVariantMap OfflineRuntimeService::buildAutomationMetrics() const
+{
+    QVariantMap metrics;
+    metrics.insert(QStringLiteral("history_size"), m_history.size());
+    metrics.insert(QStringLiteral("auto_enabled"), m_autoRunEnabled);
+    metrics.insert(QStringLiteral("automation_running"), m_automationRunning);
+    if (!m_history.isEmpty())
+        metrics.insert(QStringLiteral("last_close"), m_history.constLast().close);
+    return metrics;
+}
+
+QVariantMap OfflineRuntimeService::buildPerformanceSummary() const
+{
+    return buildPerformanceSummaryFor(m_history);
+}
+
+QVariantMap OfflineRuntimeService::buildRecentPerformanceSummary(int hours) const
+{
+    if (m_history.isEmpty() || hours <= 0)
+        return QVariantMap();
+
+    const qint64 horizonMs = static_cast<qint64>(hours) * 3600 * 1000;
+    const qint64 endMs = m_history.constLast().timestampMs;
+    const qint64 startMs = endMs - horizonMs;
+
+    QList<OhlcvPoint> subset;
+    subset.reserve(m_history.size());
+    for (const OhlcvPoint& candle : m_history) {
+        if (candle.timestampMs >= startMs)
+            subset.append(candle);
+    }
+
+    if (subset.size() < 2)
+        return QVariantMap();
+
+    QVariantMap summary = buildPerformanceSummaryFor(subset);
+    QVariantMap window = summary.value(QStringLiteral("window")).toMap();
+    if (window.isEmpty()) {
+        window = windowDescriptor(subset.constFirst().timestampMs, subset.constLast().timestampMs);
+        if (!window.isEmpty())
+            summary.insert(QStringLiteral("window"), window);
+    }
+    summary.insert(QStringLiteral("hours"), hours);
+    summary.insert(QStringLiteral("label"), tr("Ostatnie %1 h").arg(hours));
+    return summary;
+}
+
+QVariantMap OfflineRuntimeService::buildPerformanceSummaryFor(const QList<OhlcvPoint>& candles) const
+{
+    QVariantMap summary;
+    if (candles.isEmpty())
+        return summary;
+
+    summary.insert(QStringLiteral("total"), candles.size());
+    summary.insert(QStringLiteral("cycle_count"), candles.size());
+
+    const double firstClose = candles.constFirst().close;
+    const double lastClose = candles.constLast().close;
+    if (!qFuzzyIsNull(firstClose))
+        summary.insert(QStringLiteral("net_return_pct"), (lastClose - firstClose) / firstClose);
+
+    double peak = firstClose;
+    double maxDrawdown = 0.0;
+    for (const OhlcvPoint& candle : candles) {
+        peak = std::max(peak, candle.close);
+        if (peak > 0.0) {
+            const double drawdown = (peak - candle.close) / peak;
+            if (drawdown > maxDrawdown)
+                maxDrawdown = drawdown;
+        }
+    }
+    summary.insert(QStringLiteral("max_drawdown_pct"), maxDrawdown);
+
+    double previousClose = firstClose;
+    double sumReturns = 0.0;
+    double sumSquares = 0.0;
+    int sampleCount = 0;
+    for (int index = 1; index < candles.size(); ++index) {
+        const double close = candles.at(index).close;
+        if (previousClose > 0.0) {
+            const double ret = (close - previousClose) / previousClose;
+            sumReturns += ret;
+            sumSquares += ret * ret;
+            ++sampleCount;
+        }
+        previousClose = close;
+    }
+
+    if (sampleCount > 0) {
+        const double mean = sumReturns / static_cast<double>(sampleCount);
+        const double variance = std::max(0.0, (sumSquares / static_cast<double>(sampleCount)) - (mean * mean));
+        summary.insert(QStringLiteral("avg_return_pct"), mean);
+        summary.insert(QStringLiteral("volatility_pct"), std::sqrt(variance));
+    }
+
+    const QVariantMap window = windowDescriptor(candles.constFirst().timestampMs, candles.constLast().timestampMs);
+    if (!window.isEmpty())
+        summary.insert(QStringLiteral("window"), window);
+
+    return summary;
 }

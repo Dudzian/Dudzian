@@ -3,6 +3,8 @@
 #include <QCoreApplication>
 #include <QDir>
 #include <QElapsedTimer>
+#include <QEventLoop>
+#include <QDebug>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -189,11 +191,15 @@ void BotCoreLocalService::handleRpcMessage(const QJsonObject& object)
         const QString message = error.value(QStringLiteral("message")).toString();
         if (method == QStringLiteral("market_data.stream_ohlcv"))
             emit ohlcvStreamError(message.isEmpty() ? tr("Błąd strumienia OHLCV") : message);
+        else
+            emit rpcRequestFailed(id, method, message);
         return;
     }
     const QJsonObject result = object.value(QStringLiteral("result")).toObject();
     if (method == QStringLiteral("market_data.stream_ohlcv"))
         handleStreamResponse(result);
+    else
+        emit rpcRequestSucceeded(id, method, result);
 }
 
 void BotCoreLocalService::handleStreamResponse(const QJsonObject& result)
@@ -311,6 +317,107 @@ void BotCoreLocalService::stopOhlcvStream()
     request.insert(QStringLiteral("params"), params);
     sendJsonRequest(request, id, QStringLiteral("market_data.stream_ohlcv"));
     m_streamSymbol.clear();
+}
+
+QVariantMap BotCoreLocalService::fetchAutoModeSnapshot(int timeoutMs)
+{
+    bool ok = false;
+    const QJsonObject response = invokeRpc(QStringLiteral("autotrader.get_auto_mode_snapshot"), QJsonObject(), timeoutMs, &ok);
+    if (!ok)
+        return {};
+    return response.toVariantMap();
+}
+
+QVariantMap BotCoreLocalService::toggleAutoMode(bool enabled, int timeoutMs)
+{
+    QJsonObject params;
+    params.insert(QStringLiteral("enabled"), enabled);
+    bool ok = false;
+    const QJsonObject response = invokeRpc(QStringLiteral("autotrader.toggle_auto_mode"), params, timeoutMs, &ok);
+    if (!ok)
+        return {};
+    return response.toVariantMap();
+}
+
+QVariantMap BotCoreLocalService::updateAutoModeAlerts(const QVariantMap& preferences, int timeoutMs)
+{
+    QJsonObject params;
+    params.insert(QStringLiteral("preferences"), QJsonObject::fromVariantMap(preferences));
+    bool ok = false;
+    const QJsonObject response = invokeRpc(QStringLiteral("autotrader.update_alert_preferences"), params, timeoutMs, &ok);
+    if (!ok)
+        return {};
+    return response.toVariantMap();
+}
+
+QJsonObject BotCoreLocalService::invokeRpc(const QString& method, const QJsonObject& params, int timeoutMs, bool* ok)
+{
+    if (ok)
+        *ok = false;
+    if (!isRunning())
+        return {};
+
+    const quint64 id = nextRequestId();
+    QJsonObject request;
+    request.insert(QStringLiteral("id"), static_cast<double>(id));
+    request.insert(QStringLiteral("method"), method);
+    if (!params.isEmpty())
+        request.insert(QStringLiteral("params"), params);
+    if (!sendJsonRequest(request, id, method))
+        return {};
+
+    QEventLoop loop;
+    QTimer timer;
+    QJsonObject result;
+    QString error;
+    bool finished = false;
+
+    const QMetaObject::Connection successConn = connect(
+        this,
+        &BotCoreLocalService::rpcRequestSucceeded,
+        &loop,
+        [&](quint64 responseId, const QString& responseMethod, const QJsonObject& payload) {
+            if (responseId != id || responseMethod != method)
+                return;
+            result = payload;
+            finished = true;
+            loop.quit();
+        });
+
+    const QMetaObject::Connection failureConn = connect(
+        this,
+        &BotCoreLocalService::rpcRequestFailed,
+        &loop,
+        [&](quint64 responseId, const QString& responseMethod, const QString& message) {
+            if (responseId != id || responseMethod != method)
+                return;
+            finished = true;
+            error = message;
+            loop.quit();
+        });
+
+    if (timeoutMs > 0) {
+        timer.setSingleShot(true);
+        timer.setInterval(timeoutMs);
+        connect(&timer, &QTimer::timeout, &loop, &QEventLoop::quit);
+        timer.start();
+    }
+
+    loop.exec(QEventLoop::ExcludeUserInputEvents);
+
+    disconnect(successConn);
+    disconnect(failureConn);
+
+    if (!finished)
+        error = tr("Brak odpowiedzi z lokalnego runtime (%1)").arg(method);
+
+    if (ok)
+        *ok = finished && error.isEmpty();
+
+    if (!error.isEmpty() && (!ok || !*ok))
+        qWarning() << "BotCoreLocalService" << method << "request failed:" << error;
+
+    return result;
 }
 
 bool BotCoreLocalService::waitForReady(int timeoutMs)

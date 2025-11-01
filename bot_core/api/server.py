@@ -12,7 +12,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import ModuleType
 from typing import Any, Callable, Dict, Iterable, Mapping, MutableMapping, Optional, Sequence
@@ -80,6 +80,7 @@ _ensure_trading_engine_available()
 
 _LOGGER = logging.getLogger(__name__)
 
+from bot_core.runtime.journal import aggregate_decision_statistics  # noqa: E402
 from bot_core.runtime.pipeline import (  # noqa: E402
     DailyTrendPipeline,
     build_daily_trend_pipeline,
@@ -537,6 +538,7 @@ class LocalRuntimeContext:
     marketplace_signing_keys: Mapping[str, bytes] = field(default_factory=dict)
     marketplace_allow_unsigned: bool = False
     marketplace_enabled: bool = True
+    auto_mode_alerts: MutableMapping[str, Any] = field(default_factory=dict)
     _started: bool = field(default=False, init=False, repr=False)
 
     def start(self, *, auto_confirm: bool = True) -> None:
@@ -758,6 +760,16 @@ class LocalRuntimeContext:
             router.dispatch(message)
         except Exception:  # pragma: no cover - alerty nie powinny blokować runtime
             _LOGGER.debug("Nie udało się wysłać alertu", exc_info=True)
+
+    def update_auto_mode_alerts(self, payload: Mapping[str, Any]) -> Mapping[str, Any]:
+        """Store UI-provided alert preferences for the auto-mode dashboard."""
+
+        try:
+            normalised = {str(key): value for key, value in dict(payload).items()}
+        except Exception:
+            normalised = {}
+        self.auto_mode_alerts = normalised
+        return dict(self.auto_mode_alerts)
 
     @property
     def execution_context(self) -> ExecutionContext:
@@ -1230,6 +1242,7 @@ class LocalRuntimeGateway:
             if context.marketplace_repository is not None and context.marketplace_enabled
             else None
         )
+        self._auto_trader = getattr(context, "auto_trader", None)
 
     def dispatch(self, method: str, params: Mapping[str, Any]) -> Mapping[str, Any]:
         handlers: Mapping[str, Callable[[Mapping[str, Any]], Mapping[str, Any]]] = {
@@ -1243,6 +1256,9 @@ class LocalRuntimeGateway:
             "marketplace.export_preset": self._export_marketplace_preset,
             "marketplace.remove_preset": self._remove_marketplace_preset,
             "marketplace.activate_preset": self._activate_marketplace_preset,
+            "autotrader.get_auto_mode_snapshot": self._get_auto_mode_snapshot,
+            "autotrader.toggle_auto_mode": self._toggle_auto_mode,
+            "autotrader.update_alert_preferences": self._update_auto_mode_alerts,
         }
         handler = handlers.get(method)
         if handler is None:
@@ -1321,6 +1337,137 @@ class LocalRuntimeGateway:
         response = service.ListPresets(trading_pb2.ListMarketplacePresetsRequest(), None)
         presets = [_serialize_marketplace_summary(entry) for entry in response.presets]
         return {"presets": presets}
+
+    def _get_auto_mode_snapshot(self, params: Mapping[str, Any]) -> Mapping[str, Any]:
+        del params
+        auto_trader = self._auto_trader
+        if auto_trader is None:
+            return {
+                "automation": {"enabled": False, "running": False},
+                "presets": [],
+                "alerts": dict(self._context.auto_mode_alerts),
+            }
+
+        try:
+            snapshot = auto_trader.build_auto_mode_snapshot()
+        except Exception:  # pragma: no cover - diagnostyka integracji
+            _LOGGER.debug("AutoTrader.build_auto_mode_snapshot failed", exc_info=True)
+            snapshot = {}
+
+        automation = snapshot.get("automation") if isinstance(snapshot, Mapping) else {}
+        schedule = snapshot.get("schedule") if isinstance(snapshot, Mapping) else {}
+        strategy = snapshot.get("strategy") if isinstance(snapshot, Mapping) else {}
+        metrics = snapshot.get("metrics") if isinstance(snapshot, Mapping) else {}
+        decision_summary = snapshot.get("decision_summary") if isinstance(snapshot, Mapping) else {}
+        guardrail_summary = snapshot.get("guardrail_summary") if isinstance(snapshot, Mapping) else {}
+        reasons = snapshot.get("reasons") if isinstance(snapshot, Mapping) else []
+        controller_history = snapshot.get("controller_history") if isinstance(snapshot, Mapping) else []
+        recalibrations = snapshot.get("recalibrations") if isinstance(snapshot, Mapping) else []
+        equity_curve = snapshot.get("equity_curve") if isinstance(snapshot, Mapping) else []
+        risk_heatmap = snapshot.get("risk_heatmap") if isinstance(snapshot, Mapping) else []
+        performance = snapshot.get("performance") if isinstance(snapshot, Mapping) else {}
+        performance_window = snapshot.get("performance_window") if isinstance(snapshot, Mapping) else {}
+        journal = getattr(auto_trader, "_decision_journal", None)
+
+        if not isinstance(performance, Mapping) or not performance:
+            if journal is not None:
+                try:
+                    performance = aggregate_decision_statistics(journal)
+                except Exception:  # pragma: no cover - zabezpieczenie przed błędami danych
+                    _LOGGER.debug("aggregate_decision_statistics failed", exc_info=True)
+                    performance = {}
+            else:
+                performance = {}
+
+        if not isinstance(performance_window, Mapping) or not performance_window:
+            if journal is not None:
+                now_utc = datetime.now(timezone.utc)
+                window_start = now_utc - timedelta(hours=24)
+                try:
+                    performance_window = aggregate_decision_statistics(
+                        journal,
+                        start=window_start,
+                        end=now_utc,
+                    )
+                except Exception:  # pragma: no cover - zabezpieczenie przed błędami danych
+                    _LOGGER.debug("aggregate_decision_statistics window failed", exc_info=True)
+                    performance_window = {}
+                if isinstance(performance_window, Mapping) and performance_window:
+                    performance_window = dict(performance_window)
+                    performance_window.setdefault(
+                        "window",
+                        {
+                            "start": window_start.isoformat(),
+                            "end": now_utc.isoformat(),
+                            "duration_s": int((now_utc - window_start).total_seconds()),
+                        },
+                    )
+                    performance_window.setdefault("label", "last-24h")
+            else:
+                performance_window = {}
+
+        presets: list[Mapping[str, Any]] = []
+        for document in self._context.list_marketplace_presets():
+            try:
+                preset_id = document.preset_id or document.name or "preset"
+            except Exception:
+                preset_id = "preset"
+            preset_payload: dict[str, Any] = {
+                "id": preset_id,
+                "name": getattr(document, "name", None) or preset_id,
+                "version": getattr(document, "version", None),
+                "tags": list(getattr(document, "tags", ())),
+                "issues": list(getattr(document, "issues", ())),
+                "signatureVerified": getattr(document.verification, "verified", False),
+            }
+            summary_text = None
+            payload = getattr(document, "payload", {})
+            if isinstance(payload, Mapping):
+                summary_text = payload.get("summary")
+                preset_payload["metadata"] = dict(payload.get("metadata", {})) if isinstance(payload.get("metadata"), Mapping) else {}
+            if summary_text:
+                preset_payload["summary"] = summary_text
+            if getattr(document, "path", None) is not None:
+                preset_payload["path"] = str(document.path)
+            presets.append(preset_payload)
+
+        response: dict[str, Any] = {
+            "timestamp": snapshot.get("timestamp") if isinstance(snapshot, Mapping) else None,
+            "automation": automation,
+            "schedule": schedule,
+            "strategy": strategy,
+            "metrics": metrics,
+            "decisionSummary": decision_summary,
+            "guardrailSummary": guardrail_summary,
+            "reasons": reasons,
+            "controllerHistory": controller_history,
+            "recalibrations": recalibrations,
+            "equityCurve": equity_curve,
+            "riskHeatmap": risk_heatmap,
+            "performance": dict(performance),
+            "performanceWindow": dict(performance_window) if isinstance(performance_window, Mapping) else {},
+            "presets": presets,
+            "alerts": dict(self._context.auto_mode_alerts),
+        }
+        return response
+
+    def _toggle_auto_mode(self, params: Mapping[str, Any]) -> Mapping[str, Any]:
+        auto_trader = self._auto_trader
+        if auto_trader is None:
+            return {"automation": {"enabled": False, "running": False}}
+        enabled = bool(params.get("enabled", True))
+        try:
+            auto_trader.confirm_auto_trade(enabled)
+        except Exception:  # pragma: no cover - diagnostyka
+            _LOGGER.debug("AutoTrader.confirm_auto_trade failed", exc_info=True)
+        return {"automation": self._get_auto_mode_snapshot({}).get("automation", {})}
+
+    def _update_auto_mode_alerts(self, params: Mapping[str, Any]) -> Mapping[str, Any]:
+        preferences = params.get("preferences") if isinstance(params, Mapping) else None
+        if not isinstance(preferences, Mapping):
+            preferences = params
+        stored = self._context.update_auto_mode_alerts(preferences if isinstance(preferences, Mapping) else {})
+        return {"alerts": stored}
 
     def _import_marketplace_preset(self, params: Mapping[str, Any]) -> Mapping[str, Any]:
         service = self._ensure_marketplace()

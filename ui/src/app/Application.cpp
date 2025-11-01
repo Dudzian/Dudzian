@@ -3411,6 +3411,8 @@ void Application::configureLocalBotCoreService(const QCommandLineParser& parser,
         if (m_localService && m_localServiceEnabled)
             m_localService->stop();
         m_localServiceEnabled = false;
+        if (m_runtimeBridge)
+            m_runtimeBridge->setLocalService(nullptr);
         return;
     }
 
@@ -3419,6 +3421,8 @@ void Application::configureLocalBotCoreService(const QCommandLineParser& parser,
             m_localService->stop();
         }
         m_localServiceEnabled = false;
+        if (m_runtimeBridge)
+            m_runtimeBridge->setLocalService(nullptr);
         return;
     }
 
@@ -3503,11 +3507,15 @@ void Application::configureLocalBotCoreService(const QCommandLineParser& parser,
         qCWarning(lcAppMetrics)
             << "Nie udało się uruchomić lokalnego serwisu bot_core:" << m_localService->lastError();
         m_localServiceEnabled = false;
+        if (m_runtimeBridge)
+            m_runtimeBridge->setLocalService(nullptr);
         return;
     }
 
     endpoint = m_localService->endpoint();
     m_localServiceEnabled = true;
+    if (m_runtimeBridge)
+        m_runtimeBridge->setLocalService(m_localService.get());
     qCInfo(lcAppMetrics) << "Uruchomiono lokalny stub bot_core pod adresem" << endpoint;
 }
 
@@ -3569,6 +3577,8 @@ void Application::stop() {
     if (m_localService && m_localServiceEnabled) {
         m_localService->stop();
         m_localServiceEnabled = false;
+        if (m_runtimeBridge)
+            m_runtimeBridge->setLocalService(nullptr);
     }
     m_started = false;
     applyRiskRefreshTimerState();
@@ -3618,6 +3628,8 @@ void Application::ensureOfflineBridge()
             &Application::handleOfflineStatusChanged);
     connect(m_offlineBridge.get(), &OfflineRuntimeBridge::automationStateChanged, this,
             &Application::handleOfflineAutomationChanged);
+    if (m_runtimeBridge)
+        m_runtimeBridge->setOfflineBridge(m_offlineBridge.get());
 }
 
 void Application::handleOfflineStatusChanged(const QString& status)

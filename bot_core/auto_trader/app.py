@@ -35,6 +35,7 @@ import pandas as pd
 
 from bot_core.alerts.base import AlertMessage, AlertRouter
 from bot_core.auto_trader.audit import DecisionAuditLog
+from bot_core.auto_trader.performance import build_cycle_equity_summary
 from bot_core.auto_trader.schedule import (
     ScheduleOverride,
     ScheduleState,
@@ -65,7 +66,11 @@ from bot_core.trading.strategy_aliasing import (
     canonical_alias_map,
     normalise_suffixes,
 )
-from bot_core.runtime.journal import TradingDecisionJournal, log_decision_event
+from bot_core.runtime.journal import (
+    TradingDecisionJournal,
+    aggregate_decision_statistics,
+    log_decision_event,
+)
 
 
 LOGGER = logging.getLogger(__name__)
@@ -12130,6 +12135,235 @@ class AutoTrader:
                 risk_decision_section[key] = copy.deepcopy(value)
 
         return snapshot
+
+    # ------------------------------------------------------------------
+    def build_auto_mode_snapshot(
+        self,
+        *,
+        include_history: bool = True,
+        tz: tzinfo | None = timezone.utc,
+    ) -> dict[str, Any]:
+        """Build a condensed snapshot tailored for the desktop shell auto-mode UI."""
+
+        lifecycle = self.build_lifecycle_snapshot(bucket_s=3600.0, tz=tz)
+
+        controller = lifecycle.get("controller", {}) if isinstance(lifecycle, Mapping) else {}
+        guardrails = lifecycle.get("guardrails", {}) if isinstance(lifecycle, Mapping) else {}
+        risk_decisions = lifecycle.get("risk_decisions", {}) if isinstance(lifecycle, Mapping) else {}
+        cooldown = lifecycle.get("cooldown", {}) if isinstance(lifecycle, Mapping) else {}
+        strategy = lifecycle.get("strategy", {}) if isinstance(lifecycle, Mapping) else {}
+        metrics = lifecycle.get("metrics", {}) if isinstance(lifecycle, Mapping) else {}
+
+        auto_trade = controller.get("auto_trade", {}) if isinstance(controller, Mapping) else {}
+        schedule_state = lifecycle.get("schedule", {}) if isinstance(lifecycle, Mapping) else {}
+        schedule_alert = controller.get("schedule_last_alert") if isinstance(controller, Mapping) else None
+
+        reasons: list[dict[str, Any]] = []
+
+        if isinstance(schedule_alert, Mapping):
+            reasons.append(
+                {
+                    "type": "schedule",
+                    "reason": schedule_alert.get("reason"),
+                    "timestamp": schedule_alert.get("timestamp"),
+                    "details": dict(schedule_alert),
+                }
+            )
+
+        guardrail_reasons = guardrails.get("last_reasons") if isinstance(guardrails, Mapping) else None
+        if isinstance(guardrail_reasons, Sequence):
+            for entry in guardrail_reasons:
+                if not entry:
+                    continue
+                payload: dict[str, Any]
+                if isinstance(entry, Mapping):
+                    payload = dict(entry)
+                else:
+                    payload = {"reason": str(entry)}
+                payload.setdefault("type", "guardrail")
+                reasons.append(payload)
+
+        last_decision = risk_decisions.get("last_decision") if isinstance(risk_decisions, Mapping) else None
+        if isinstance(last_decision, Mapping):
+            reasons.append(
+                {
+                    "type": "decision",
+                    "reason": last_decision.get("decision_reason"),
+                    "mode": last_decision.get("decision_mode"),
+                    "approved": last_decision.get("approved"),
+                    "timestamp": last_decision.get("timestamp"),
+                }
+            )
+
+        cooldown_reason = cooldown.get("reason") if isinstance(cooldown, Mapping) else None
+        if cooldown_reason:
+            reasons.append(
+                {
+                    "type": "cooldown",
+                    "reason": cooldown_reason,
+                    "until": cooldown.get("until") if isinstance(cooldown, Mapping) else None,
+                }
+            )
+
+        controller_history: Sequence[Mapping[str, Any]] | None = None
+        if isinstance(controller, Mapping):
+            history_raw = controller.get("history")
+            if isinstance(history_raw, Sequence):
+                controller_history = [dict(entry) for entry in history_raw if isinstance(entry, Mapping)]
+
+        decision_summary = (
+            dict(risk_decisions.get("summary"))
+            if isinstance(risk_decisions, Mapping) and isinstance(risk_decisions.get("summary"), Mapping)
+            else {}
+        )
+
+        guardrail_summary = (
+            dict(guardrails.get("summary"))
+            if isinstance(guardrails, Mapping) and isinstance(guardrails.get("summary"), Mapping)
+            else {}
+        )
+
+        strategy_snapshot = dict(strategy) if isinstance(strategy, Mapping) else {}
+        metrics_snapshot = dict(metrics) if isinstance(metrics, Mapping) else {}
+
+        auto_section = {
+            "enabled": bool(auto_trade.get("user_confirmed", False)),
+            "running": bool(auto_trade.get("active", False)),
+            "trusted": bool(auto_trade.get("trusted_auto_confirm", False)),
+            "started": bool(auto_trade.get("started", False)),
+        }
+
+        performance_summary: dict[str, Any] = {}
+        performance_window: dict[str, Any] = {}
+        journal = getattr(self, "_decision_journal", None)
+        if journal is not None:
+            try:
+                performance_summary = dict(aggregate_decision_statistics(journal))
+            except Exception:
+                LOGGER.debug("aggregate_decision_statistics failed", exc_info=True)
+            now_utc = datetime.now(timezone.utc)
+            window_start = now_utc - timedelta(hours=24)
+            try:
+                window_payload = aggregate_decision_statistics(
+                    journal,
+                    start=window_start,
+                    end=now_utc,
+                )
+            except Exception:
+                LOGGER.debug("aggregate_decision_statistics window failed", exc_info=True)
+                window_payload = {}
+            if isinstance(window_payload, Mapping):
+                performance_window = dict(window_payload)
+                performance_window.setdefault(
+                    "window",
+                    {
+                        "start": window_start.isoformat(),
+                        "end": now_utc.isoformat(),
+                        "duration_s": int((now_utc - window_start).total_seconds()),
+                    },
+                )
+                performance_window.setdefault("label", "last-24h")
+
+        result: dict[str, Any] = {
+            "timestamp": lifecycle.get("timestamp"),
+            "symbol": lifecycle.get("symbol"),
+            "environment": lifecycle.get("environment"),
+            "portfolio": lifecycle.get("portfolio"),
+            "risk_profile": lifecycle.get("risk_profile"),
+            "automation": auto_section,
+            "schedule": schedule_state,
+            "strategy": strategy_snapshot,
+            "metrics": metrics_snapshot,
+            "decision_summary": decision_summary,
+            "guardrail_summary": guardrail_summary,
+            "reasons": reasons,
+        }
+
+        if controller_history is not None:
+            result["controller_history"] = controller_history
+        if lifecycle.get("recalibrations"):
+            result["recalibrations"] = list(lifecycle["recalibrations"])  # type: ignore[index]
+
+        if include_history:
+            try:
+                risk_snapshot = self._build_risk_snapshot(self._risk_profile_name)
+            except Exception:
+                risk_snapshot = {}
+            positions = (
+                risk_snapshot.get("positions")
+                if isinstance(risk_snapshot, Mapping)
+                else None
+            )
+            if isinstance(positions, Mapping):
+                heatmap = []
+                for asset, payload in positions.items():
+                    if not asset:
+                        continue
+                    value_candidate: Any
+                    if isinstance(payload, Mapping):
+                        value_candidate = (
+                            payload.get("notional")
+                            or payload.get("exposure")
+                            or payload.get("value")
+                            or payload.get("pnl")
+                        )
+                    else:
+                        value_candidate = payload
+                    try:
+                        numeric = float(value_candidate)
+                    except (TypeError, ValueError):
+                        continue
+                    heatmap.append(
+                        {
+                            "asset": str(asset),
+                            "label": str(asset),
+                            "value": numeric,
+                            "source": "positions",
+                            "category": "auto-mode",
+                        }
+                    )
+                if heatmap:
+                    result["risk_heatmap"] = heatmap
+
+            history = (
+                self.get_controller_cycle_history(limit=128, reverse=True)
+                if hasattr(self, "get_controller_cycle_history")
+                else []
+            )
+            if history:
+                now_reference = datetime.now(tz or timezone.utc)
+                points, derived_metrics, derived_window = build_cycle_equity_summary(
+                    history,
+                    tz=tz,
+                    now=now_reference,
+                    base_equity=100_000.0,
+                    window_hours=24.0,
+                )
+                if points:
+                    result["equity_curve"] = points
+                if derived_metrics:
+                    if performance_summary:
+                        for key, value in derived_metrics.items():
+                            if key == "window" and performance_summary.get("window"):
+                                continue
+                            performance_summary[key] = value
+                    else:
+                        performance_summary = dict(derived_metrics)
+                if derived_window:
+                    if performance_window:
+                        for key, value in derived_window.items():
+                            if key == "window" and performance_window.get("window"):
+                                continue
+                            performance_window[key] = value
+                    else:
+                        performance_window = dict(derived_window)
+
+        if performance_summary:
+            result["performance"] = performance_summary
+        if performance_window:
+            result["performance_window"] = performance_window
+
+        return result
 
     def risk_evaluations_to_dataframe(
         self,

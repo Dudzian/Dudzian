@@ -12,6 +12,9 @@
 
 #include <algorithm>
 
+#include "runtime/OfflineRuntimeBridge.hpp"
+#include "grpc/BotCoreLocalService.hpp"
+
 Q_LOGGING_CATEGORY(lcRuntimeBridge, "bot.shell.runtime.bridge")
 
 namespace {
@@ -22,6 +25,20 @@ QString normalizePath(const QString& raw)
     if (!info.exists())
         return info.absoluteFilePath();
     return info.absoluteFilePath();
+}
+
+void emitAutomationSignals(RuntimeDecisionBridge* bridge, const QVariantMap& snapshot)
+{
+    if (!bridge)
+        return;
+
+    const QVariantMap automation = snapshot.value(QStringLiteral("automation")).toMap();
+    if (!automation.isEmpty())
+        emit bridge->automationStateChanged(automation.value(QStringLiteral("running")).toBool());
+
+    const QVariantMap alerts = snapshot.value(QStringLiteral("alerts")).toMap();
+    if (!alerts.isEmpty())
+        emit bridge->alertPreferencesChanged(alerts);
 }
 
 QString toString(const QVariant& value)
@@ -43,6 +60,53 @@ QString toString(const QVariant& value)
 RuntimeDecisionBridge::RuntimeDecisionBridge(QObject* parent)
     : QObject(parent)
 {
+}
+
+void RuntimeDecisionBridge::setOfflineBridge(OfflineRuntimeBridge* bridge)
+{
+    if (m_offlineBridge == bridge)
+        return;
+
+    if (!m_offlineBridge.isNull())
+        QObject::disconnect(m_offlineBridge.data(), nullptr, this, nullptr);
+
+    m_offlineBridge = bridge;
+
+    if (!m_offlineBridge.isNull()) {
+        QObject::connect(m_offlineBridge.data(), &OfflineRuntimeBridge::automationStateChanged,
+                         this, &RuntimeDecisionBridge::automationStateChanged);
+        QObject::connect(m_offlineBridge.data(), &OfflineRuntimeBridge::alertPreferencesChanged,
+                         this, &RuntimeDecisionBridge::alertPreferencesChanged);
+
+        const QVariantMap snapshot = m_offlineBridge->autoModeSnapshot();
+        emitAutomationSignals(this, snapshot);
+
+        const QVariantMap storedAlerts = m_offlineBridge->alertPreferences();
+        if (!storedAlerts.isEmpty())
+            emit alertPreferencesChanged(storedAlerts);
+    }
+}
+
+void RuntimeDecisionBridge::setLocalService(BotCoreLocalService* service)
+{
+    if (m_localService == service)
+        return;
+
+    if (!m_localService.isNull())
+        QObject::disconnect(m_localService.data(), nullptr, this, nullptr);
+
+    m_localService = service;
+
+    if (!m_localService.isNull()) {
+        QObject::connect(m_localService.data(), &QObject::destroyed, this, [this]() {
+            const QVariantMap snapshot = autoModeSnapshot();
+            emitAutomationSignals(this, snapshot);
+        });
+    }
+
+    const QVariantMap snapshot = autoModeSnapshot();
+    if (!snapshot.isEmpty())
+        emitAutomationSignals(this, snapshot);
 }
 
 void RuntimeDecisionBridge::setLogPath(const QString& path)
@@ -76,6 +140,76 @@ QVariantList RuntimeDecisionBridge::loadRecentDecisions(int limit)
         emit errorMessageChanged();
     }
     return {};
+}
+
+QVariantMap RuntimeDecisionBridge::autoModeSnapshot() const
+{
+    if (!m_localService.isNull()) {
+        const QVariantMap response = m_localService->fetchAutoModeSnapshot();
+        if (!response.isEmpty())
+            return response;
+    }
+    if (!m_offlineBridge.isNull())
+        return m_offlineBridge->autoModeSnapshot();
+
+    qCWarning(lcRuntimeBridge) << "autoModeSnapshot requested without offline bridge";
+    return {};
+}
+
+void RuntimeDecisionBridge::toggleAutoMode(bool enabled)
+{
+    if (!m_localService.isNull()) {
+        const QVariantMap response = m_localService->toggleAutoMode(enabled);
+        if (!response.isEmpty())
+            emitAutomationSignals(this, response);
+        return;
+    }
+    if (!m_offlineBridge.isNull()) {
+        m_offlineBridge->toggleAutoMode(enabled);
+        return;
+    }
+    qCWarning(lcRuntimeBridge) << "toggleAutoMode called without offline bridge";
+}
+
+void RuntimeDecisionBridge::startAutomation()
+{
+    if (!m_localService.isNull()) {
+        toggleAutoMode(true);
+        return;
+    }
+    if (!m_offlineBridge.isNull()) {
+        m_offlineBridge->startAutomation();
+        return;
+    }
+    qCWarning(lcRuntimeBridge) << "startAutomation called without offline bridge";
+}
+
+void RuntimeDecisionBridge::stopAutomation()
+{
+    if (!m_localService.isNull()) {
+        toggleAutoMode(false);
+        return;
+    }
+    if (!m_offlineBridge.isNull()) {
+        m_offlineBridge->stopAutomation();
+        return;
+    }
+    qCWarning(lcRuntimeBridge) << "stopAutomation called without offline bridge";
+}
+
+void RuntimeDecisionBridge::updateAlertPreferences(const QVariantMap& preferences)
+{
+    if (!m_localService.isNull()) {
+        const QVariantMap response = m_localService->updateAutoModeAlerts(preferences);
+        if (!response.isEmpty())
+            emitAutomationSignals(this, response);
+        return;
+    }
+    if (!m_offlineBridge.isNull()) {
+        m_offlineBridge->updateAlertPreferences(preferences);
+        return;
+    }
+    qCWarning(lcRuntimeBridge) << "updateAlertPreferences called without offline bridge";
 }
 
 QVariantList RuntimeDecisionBridge::readDecisions(int limit, QString* error) const

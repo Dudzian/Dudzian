@@ -1,7 +1,12 @@
 #pragma once
 
 #include <QObject>
+#include <QPointer>
 #include <QVariantList>
+#include <QVariantMap>
+
+class OfflineRuntimeBridge;
+class BotCoreLocalService;
 
 class RuntimeDecisionBridge : public QObject {
     Q_OBJECT
@@ -12,6 +17,9 @@ class RuntimeDecisionBridge : public QObject {
 public:
     explicit RuntimeDecisionBridge(QObject* parent = nullptr);
 
+    void setOfflineBridge(OfflineRuntimeBridge* bridge);
+    void setLocalService(BotCoreLocalService* service);
+
     QVariantList decisions() const { return m_decisions; }
     QString errorMessage() const { return m_errorMessage; }
 
@@ -19,11 +27,18 @@ public:
     void setLogPath(const QString& path);
 
     Q_INVOKABLE QVariantList loadRecentDecisions(int limit = 0);
+    Q_INVOKABLE QVariantMap autoModeSnapshot() const;
+    Q_INVOKABLE void toggleAutoMode(bool enabled);
+    Q_INVOKABLE void startAutomation();
+    Q_INVOKABLE void stopAutomation();
+    Q_INVOKABLE void updateAlertPreferences(const QVariantMap& preferences);
 
 signals:
     void decisionsChanged();
     void errorMessageChanged();
     void logPathChanged();
+    void automationStateChanged(bool running);
+    void alertPreferencesChanged(const QVariantMap& preferences);
 
 private:
     QVariantList readDecisions(int limit, QString* error) const;
@@ -35,5 +50,7 @@ private:
     QVariantList m_decisions;
     QString m_errorMessage;
     QString m_logPath;
+    QPointer<OfflineRuntimeBridge> m_offlineBridge;
+    QPointer<BotCoreLocalService> m_localService;
 };
 
