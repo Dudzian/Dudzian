@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import "./" as Workbench
+import "./panels" as Panels
 
 Item {
     id: root
@@ -241,6 +242,13 @@ Item {
                         }
                     }
                 }
+            }
+
+            Panels.AutoModePanel {
+                Layout.fillWidth: true
+                runtimeService: root.appController && root.appController.runtimeService
+                                 ? root.appController.runtimeService()
+                                 : (typeof runtimeService !== "undefined" ? runtimeService : null)
             }
 
             RowLayout {

@@ -58,6 +58,36 @@ void OfflineRuntimeBridge::setDatasetPath(const QString& path)
         m_service->setDatasetPath(m_datasetPath);
 }
 
+QVariantMap OfflineRuntimeBridge::autoModeSnapshot() const
+{
+    if (!m_service)
+        return QVariantMap();
+    return m_service->buildAutoModeSnapshot();
+}
+
+QVariantMap OfflineRuntimeBridge::alertPreferences() const
+{
+    if (!m_service)
+        return QVariantMap();
+    return m_service->alertPreferences();
+}
+
+void OfflineRuntimeBridge::updateAlertPreferences(const QVariantMap& preferences)
+{
+    ensureService();
+    if (!m_service)
+        return;
+    m_service->setAlertPreferences(preferences);
+}
+
+void OfflineRuntimeBridge::toggleAutoMode(bool enabled)
+{
+    if (enabled)
+        startAutomation();
+    else
+        stopAutomation();
+}
+
 void OfflineRuntimeBridge::start()
 {
     if (m_running)
@@ -119,6 +149,8 @@ void OfflineRuntimeBridge::ensureService()
             this, &OfflineRuntimeBridge::performanceGuardUpdated);
     connect(m_service.get(), &OfflineRuntimeService::automationStateChanged,
             this, &OfflineRuntimeBridge::automationStateChanged);
+    connect(m_service.get(), &OfflineRuntimeService::alertPreferencesChanged,
+            this, &OfflineRuntimeBridge::alertPreferencesChanged);
 }
 
 void OfflineRuntimeBridge::configureService()

@@ -26,6 +26,11 @@ public:
     void setStrategyConfig(const QVariantMap& config);
     void setDatasetPath(const QString& path);
 
+    Q_INVOKABLE QVariantMap autoModeSnapshot() const;
+    Q_INVOKABLE QVariantMap alertPreferences() const;
+    Q_INVOKABLE void updateAlertPreferences(const QVariantMap& preferences);
+    Q_INVOKABLE void toggleAutoMode(bool enabled);
+
 public slots:
     void start();
     void stop();
@@ -39,6 +44,7 @@ signals:
     void riskStateReceived(const RiskSnapshotData& snapshot);
     void performanceGuardUpdated(const PerformanceGuard& guard);
     void automationStateChanged(bool running);
+    void alertPreferencesChanged(const QVariantMap& preferences);
 
 private:
     void ensureService();

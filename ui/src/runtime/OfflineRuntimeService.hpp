@@ -22,6 +22,9 @@ public:
     void setAutoRunEnabled(bool enabled);
     void setStrategyConfig(const QVariantMap& config);
     void setDatasetPath(const QString& path);
+    QVariantMap alertPreferences() const { return m_alertPreferences; }
+    void setAlertPreferences(const QVariantMap& preferences);
+    QVariantMap buildAutoModeSnapshot() const;
 
 public slots:
     void start();
@@ -36,6 +39,7 @@ signals:
     void riskReady(const RiskSnapshotData& snapshot);
     void guardReady(const PerformanceGuard& guard);
     void automationStateChanged(bool running);
+    void alertPreferencesChanged(const QVariantMap& preferences);
 
 private:
     void ensureDatasetLoaded();
@@ -44,6 +48,12 @@ private:
     PerformanceGuard buildPerformanceGuard() const;
     void applyAutomationPreference();
     void buildSyntheticDataset(QList<OhlcvPoint>& out) const;
+    QVariantList buildEquityCurveSeries() const;
+    QVariantList buildRiskHeatmapCells() const;
+    QVariantMap buildAutomationMetrics() const;
+    QVariantMap buildPerformanceSummary() const;
+    QVariantMap buildRecentPerformanceSummary(int hours = 24) const;
+    QVariantMap buildPerformanceSummaryFor(const QList<OhlcvPoint>& candles) const;
 
     TradingClient::InstrumentConfig m_instrument{};
     QVariantMap                    m_strategyConfig;
@@ -55,4 +65,5 @@ private:
     bool                           m_autoRunEnabled = false;
     bool                           m_automationRunning = false;
     bool                           m_datasetDirty = true;
+    QVariantMap                    m_alertPreferences;
 };

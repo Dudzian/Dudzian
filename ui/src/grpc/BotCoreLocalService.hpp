@@ -8,6 +8,7 @@
 #include <QStringList>
 #include <QTimer>
 #include <QVariantList>
+#include <QVariantMap>
 
 class BotCoreLocalService : public QObject {
     Q_OBJECT
@@ -35,11 +36,17 @@ public:
     void startOhlcvStream(const QString& symbol, int maxUpdates = 1, int timeoutMs = 250);
     void stopOhlcvStream();
 
+    [[nodiscard]] QVariantMap fetchAutoModeSnapshot(int timeoutMs = 800);
+    [[nodiscard]] QVariantMap toggleAutoMode(bool enabled, int timeoutMs = 800);
+    [[nodiscard]] QVariantMap updateAutoModeAlerts(const QVariantMap& preferences, int timeoutMs = 800);
+
 signals:
     void ohlcvSnapshotReady(const QVariantList& snapshot, const QString& subscriptionId);
     void ohlcvUpdatesReady(const QVariantList& updates, const QString& subscriptionId);
     void ohlcvStreamClosed(const QString& subscriptionId);
     void ohlcvStreamError(const QString& message);
+    void rpcRequestSucceeded(quint64 id, const QString& method, const QJsonObject& result);
+    void rpcRequestFailed(quint64 id, const QString& method, const QString& errorMessage);
 
 private:
     void resetState();
@@ -57,6 +64,7 @@ private:
     void handleStreamResponse(const QJsonObject& result);
     void scheduleNextPoll(int delayMs = 0);
     void sendStreamPoll();
+    QJsonObject invokeRpc(const QString& method, const QJsonObject& params, int timeoutMs, bool* ok = nullptr);
 
     QProcess m_process;
     QString m_pythonExecutable = QStringLiteral("python3");
