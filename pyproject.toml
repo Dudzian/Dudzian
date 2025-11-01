@@ -107,6 +107,11 @@ desktop = [
   "briefcase>=0.3.18",
   "PySide6>=6.6",
 ]
+compression = [
+  "brotli>=1.1; platform_python_implementation != 'PyPy'",
+  "brotlicffi>=1.1.0; platform_python_implementation == 'PyPy'",
+  "zstandard>=0.22",
+]
 
 [build-system]
 requires = ["setuptools>=68", "wheel"]
