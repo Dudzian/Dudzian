@@ -3,15 +3,13 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
-import grpc
 import pytest
 import yaml
-from google.protobuf import empty_pb2
 
-from bot_core.api.server import LocalRuntimeContext, LocalRuntimeServer
+from bot_core.api.server import LocalRuntimeContext, LocalRuntimeGateway
+from bot_core.exchanges import streaming as core_streaming
 from bot_core.exchanges.base import AccountSnapshot
 from bot_core.execution.paper import MarketMetadata
-from bot_core.generated import trading_pb2_grpc
 from KryptoLowca.exchanges import interfaces as exchange_interfaces
 from KryptoLowca.exchanges import streaming as exchange_streaming
 
@@ -100,18 +98,23 @@ def _build_stub_context():
 
 
 @pytest.mark.integration
-def test_local_runtime_server_exposes_health_service() -> None:
+def test_local_runtime_gateway_exposes_health_data() -> None:
     context = _build_stub_context()
-    server = LocalRuntimeServer(context)
-    server.start()
-    try:
-        channel = grpc.insecure_channel(server.address)
-        stub = trading_pb2_grpc.HealthServiceStub(channel)
-        response = stub.Check(empty_pb2.Empty(), timeout=5)
-        assert response.version
-        assert response.started_at.seconds > 0
-    finally:
-        server.stop(0)
+    gateway = LocalRuntimeGateway(context)
+    payload = gateway.dispatch("health.check", {})
+    assert payload["version"]
+    assert int(payload["started_at_ms"]) > 0
+
+
+def test_local_runtime_gateway_serves_market_data() -> None:
+    context = _build_stub_context()
+    gateway = LocalRuntimeGateway(context)
+    response = gateway.dispatch(
+        "market_data.get_ohlcv_history",
+        {"symbol": "BTC/USDT", "limit": 3},
+    )
+    assert len(response["candles"]) == 3
+    assert response["candles"][0]["close"] > 0
 
 
 def test_ui_transport_configuration_defaults_to_grpc() -> None:
@@ -127,3 +130,5 @@ def test_streaming_layer_exposes_long_poll_only() -> None:
     assert not exported
     assert hasattr(exchange_interfaces, "MarketStreamHandle")
     assert "websocket" not in (exchange_streaming.LongPollSubscription.__doc__ or "").lower()
+    assert not hasattr(core_streaming, "LocalWebSocketBridge")
+    assert not hasattr(core_streaming.LocalLongPollStream, "websocket_bridge")

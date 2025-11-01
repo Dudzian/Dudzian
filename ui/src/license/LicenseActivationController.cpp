@@ -9,7 +9,9 @@
 #include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QStringList>
 #include <QLoggingCategory>
+#include <QProcess>
 #include <QSaveFile>
 #include <QTimer>
 #include <QtGlobal>
@@ -107,6 +109,13 @@ QByteArray tryDecodeBase64(const QString& text)
 LicenseActivationController::LicenseActivationController(QObject* parent)
     : QObject(parent)
 {
+    const QByteArray pythonEnv = qgetenv("BOT_CORE_UI_PYTHON");
+    if (pythonEnv.isEmpty())
+        m_pythonExecutable = QStringLiteral("python3");
+    else
+        m_pythonExecutable = expandPath(QString::fromUtf8(pythonEnv));
+    m_bindingSecretPath = expandPath(QStringLiteral("var/security/license_secret.key"));
+
     m_provisioningScanTimer.setSingleShot(true);
     m_provisioningScanTimer.setInterval(150);
     connect(&m_provisioningScanTimer, &QTimer::timeout, this, [this]() {
@@ -179,6 +188,24 @@ void LicenseActivationController::setProvisioningDirectory(const QString& path)
     Q_EMIT provisioningDirectoryChanged();
     if (m_initialized)
         setupProvisioningWatcher();
+}
+
+void LicenseActivationController::setPythonExecutable(const QString& executable)
+{
+    QString resolved = expandPath(executable).trimmed();
+    if (resolved.isEmpty())
+        resolved = QStringLiteral("python3");
+    if (m_pythonExecutable == resolved)
+        return;
+    m_pythonExecutable = resolved;
+}
+
+void LicenseActivationController::setBindingSecretPath(const QString& path)
+{
+    const QString resolved = expandPath(path).trimmed();
+    if (m_bindingSecretPath == resolved)
+        return;
+    m_bindingSecretPath = resolved;
 }
 
 void LicenseActivationController::initialize()
@@ -301,6 +328,13 @@ QString LicenseActivationController::resolveProvisioningDirectory() const
     if (!m_configDirectory.isEmpty())
         return QDir(m_configDirectory).filePath(QStringLiteral("licenses/inbox"));
     return expandPath(QStringLiteral("var/licenses/inbox"));
+}
+
+QString LicenseActivationController::resolveBindingSecretPath() const
+{
+    if (!m_bindingSecretPath.isEmpty())
+        return m_bindingSecretPath;
+    return expandPath(QStringLiteral("var/security/license_secret.key"));
 }
 
 bool LicenseActivationController::loadLicenseUrl(const QUrl& url)
@@ -471,6 +505,12 @@ bool LicenseActivationController::activateFromDocument(const QJsonDocument& docu
 
     if (persist && !persistLicense(document))
         return false;
+
+    if (persist && !primeBindingSecret(info.fingerprint)) {
+        QFile::remove(resolveLicenseOutputPath());
+        setStatusMessage(tr("Nie udało się zabezpieczyć sekretu licencji."), true);
+        return false;
+    }
 
     const bool wasActive = m_licenseActive;
     m_licenseActive = true;
@@ -1125,4 +1165,67 @@ void LicenseActivationController::clearLicenseState()
     Q_EMIT licenseDataChanged();
     if (!m_statusIsError)
         setStatusMessage(tr("Brak aktywnej licencji"), false);
+}
+
+bool LicenseActivationController::primeBindingSecret(const QString& fingerprint)
+{
+    QString program = m_pythonExecutable.trimmed();
+    if (program.isEmpty())
+        program = QStringLiteral("python3");
+
+    QStringList args;
+    args << QStringLiteral("-m") << QStringLiteral("bot_core.security.ui_bridge")
+         << QStringLiteral("ensure-binding-secret");
+
+    const QString secretPath = resolveBindingSecretPath();
+    if (!secretPath.isEmpty())
+        args << QStringLiteral("--secret-path") << secretPath;
+
+    const QString normalized = normalizeFingerprint(fingerprint);
+    if (!normalized.isEmpty())
+        args << QStringLiteral("--fingerprint") << normalized;
+
+    QProcess process;
+    process.setProgram(program);
+    process.setArguments(args);
+    process.start();
+    if (!process.waitForFinished()) {
+        qCWarning(lcActivation) << "Nie udało się uruchomić ensure-binding-secret" << program
+                               << process.errorString();
+        return false;
+    }
+
+    const QByteArray stdoutData = process.readAllStandardOutput();
+    const QByteArray stderrData = process.readAllStandardError();
+    if (!stderrData.isEmpty())
+        qCDebug(lcActivation) << "ensure-binding-secret stderr:" << QString::fromUtf8(stderrData);
+
+    if (process.exitStatus() != QProcess::NormalExit || process.exitCode() != 0) {
+        qCWarning(lcActivation) << "ensure-binding-secret zakończył się kodem" << process.exitCode()
+                               << QString::fromUtf8(stdoutData);
+        return false;
+    }
+
+    if (stdoutData.isEmpty())
+        return true;
+
+    QJsonParseError parseError{};
+    const QJsonDocument doc = QJsonDocument::fromJson(stdoutData, &parseError);
+    if (parseError.error != QJsonParseError::NoError || !doc.isObject()) {
+        qCWarning(lcActivation) << "ensure-binding-secret zwrócił niepoprawny JSON"
+                               << parseError.errorString();
+        return false;
+    }
+
+    const QJsonObject root = doc.object();
+    const QString status = root.value(QStringLiteral("status")).toString();
+    if (status.compare(QStringLiteral("ok"), Qt::CaseInsensitive) == 0)
+        return true;
+
+    const QString errorMessage = root.value(QStringLiteral("error")).toString();
+    if (!errorMessage.isEmpty())
+        qCWarning(lcActivation) << "ensure-binding-secret zgłosił błąd" << errorMessage;
+    else
+        qCWarning(lcActivation) << "ensure-binding-secret zwrócił status" << status;
+    return false;
 }

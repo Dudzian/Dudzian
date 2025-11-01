@@ -40,6 +40,8 @@ public:
     void setLicenseStoragePath(const QString& path);
     void setFingerprintDocumentPath(const QString& path);
     Q_INVOKABLE void setProvisioningDirectory(const QString& path);
+    Q_INVOKABLE void setPythonExecutable(const QString& executable);
+    Q_INVOKABLE void setBindingSecretPath(const QString& path);
     void initialize();
 
     Q_INVOKABLE bool loadLicenseUrl(const QUrl& url);
@@ -106,6 +108,7 @@ private:
     QString resolveLicenseOutputPath() const;
     QString resolveFingerprintDocumentPath() const;
     QString resolveProvisioningDirectory() const;
+    QString resolveBindingSecretPath() const;
     void refreshExpectedFingerprint();
     void loadPersistedLicense();
     bool activateFromDocument(const QJsonDocument& document, bool persist, const QString& sourceDescription);
@@ -152,6 +155,8 @@ private:
     QString m_fingerprintDocumentPath;
     QString m_expectedFingerprint;
     QString m_provisioningDirectory;
+    QString m_pythonExecutable;
+    QString m_bindingSecretPath;
 
     QFileSystemWatcher m_provisioningWatcher;
     QTimer m_provisioningScanTimer;
@@ -169,4 +174,5 @@ private:
     void scheduleLicenseReload(int delayMs = 0);
     void scheduleFingerprintReload(int delayMs = 0);
     void clearLicenseState();
+    bool primeBindingSecret(const QString& fingerprint);
 };

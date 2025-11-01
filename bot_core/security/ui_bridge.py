@@ -17,8 +17,17 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
-from bot_core.security.fingerprint import HardwareFingerprintService, build_key_provider, decode_secret
-from bot_core.security.logs import export_signed_audit_log, read_audit_entries
+from bot_core.security.fingerprint import (
+    FingerprintError,
+    HardwareFingerprintService,
+    LICENSE_SECRET_PATH,
+    build_key_provider,
+    decode_secret,
+    get_local_fingerprint,
+    load_license_secret,
+    _normalize_binding_fingerprint,
+)
+from bot_core.security.logs import export_security_bundle, export_signed_audit_log, read_audit_entries
 from bot_core.security.license import validate_license
 from bot_core.security.license_service import (
     LicenseBundleError,
@@ -70,6 +79,49 @@ def _load_keys_from_file(path: Path) -> dict[str, bytes]:
         value = str(raw_value)
         decoded[key_id] = decode_secret(value)
     return decoded
+
+
+def ensure_binding_secret(secret_path: str | None = None, expected_fingerprint: str | None = None) -> dict[str, Any]:
+    normalized_expected = (
+        _normalize_binding_fingerprint(expected_fingerprint)
+        if expected_fingerprint is not None and expected_fingerprint.strip()
+        else None
+    )
+    if normalized_expected:
+        try:
+            local = _normalize_binding_fingerprint(get_local_fingerprint())
+        except FingerprintError as exc:
+            return {
+                "status": "error",
+                "error": str(exc),
+            }
+        except Exception as exc:  # pragma: no cover - zabezpieczenie defensywne
+            return {
+                "status": "error",
+                "error": str(exc),
+            }
+        if local != normalized_expected:
+            return {
+                "status": "error",
+                "error": "Fingerprint urządzenia nie zgadza się z oczekiwaną licencją.",
+                "fingerprint": local,
+                "expected": normalized_expected,
+            }
+
+    destination = Path(secret_path).expanduser() if secret_path else LICENSE_SECRET_PATH
+    try:
+        secret = load_license_secret(destination)
+    except FingerprintError as exc:
+        return {
+            "status": "error",
+            "error": str(exc),
+        }
+
+    return {
+        "status": "ok",
+        "secret_length": len(secret),
+        "path": str(destination),
+    }
 
 
 def _empty_license_summary(path: Path) -> dict[str, Any]:
@@ -664,6 +716,32 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     verify_tpm_parser.add_argument("--license-path", dest="license_path", default=None)
     verify_tpm_parser.add_argument("--keyring", dest="keyring", default=None)
 
+    ensure_secret_parser = subparsers.add_parser(
+        "ensure-binding-secret", help="Zapewnia wygenerowanie i zabezpieczenie lokalnego sekretu licencyjnego"
+    )
+    ensure_secret_parser.add_argument("--secret-path", dest="secret_path", default=None)
+    ensure_secret_parser.add_argument("--fingerprint", dest="fingerprint", default=None)
+
+    bundle_parser = subparsers.add_parser(
+        "export-security-bundle", help="Eksportuje podpisany pakiet logów bezpieczeństwa oraz alertów"
+    )
+    bundle_parser.add_argument("--audit-path", dest="audit_path", required=True)
+    bundle_parser.add_argument("--alerts-path", dest="alerts_path", required=True)
+    bundle_parser.add_argument("--output-dir", dest="output_dir", required=True)
+    bundle_parser.add_argument(
+        "--include-log",
+        dest="include_logs",
+        action="append",
+        default=[],
+        help="Dodatkowe pliki logów do dołączenia (można powtórzyć).",
+    )
+    bundle_parser.add_argument(
+        "--metadata",
+        dest="metadata",
+        default=None,
+        help="Opcjonalne metadane w formacie JSON do zapisania w pakiecie.",
+    )
+
     audit_parser = subparsers.add_parser("export-audit", help="Eksportuje podpisany pakiet logów bezpieczeństwa")
     audit_parser.add_argument("--log-path", dest="log_path", default=None)
     audit_parser.add_argument("--output-dir", dest="output_dir", default=None)
@@ -755,6 +833,34 @@ def main(argv: list[str] | None = None) -> int:
             keyring_path=args.keyring,
         )
         print(json.dumps(result, ensure_ascii=False))
+        return 0
+    if args.command == "ensure-binding-secret":
+        result = ensure_binding_secret(
+            secret_path=args.secret_path,
+            expected_fingerprint=args.fingerprint,
+        )
+        print(json.dumps(result, ensure_ascii=False))
+        return 0
+    if args.command == "export-security-bundle":
+        metadata: Mapping[str, Any] | None = None
+        if args.metadata:
+            try:
+                parsed = json.loads(args.metadata)
+            except json.JSONDecodeError as exc:
+                print(str(exc), file=sys.stderr)
+                return 1
+            if not isinstance(parsed, Mapping):
+                print("Metadane muszą być obiektem JSON.", file=sys.stderr)
+                return 1
+            metadata = parsed
+        result = export_security_bundle(
+            audit_path=args.audit_path,
+            alerts_path=args.alerts_path,
+            destination_dir=args.output_dir,
+            include_logs=args.include_logs,
+            metadata=metadata,
+        )
+        print(json.dumps(result.to_dict(), ensure_ascii=False))
         return 0
     if args.command == "export-audit":
         metadata: Mapping[str, Any] | None = None
