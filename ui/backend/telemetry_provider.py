@@ -2,11 +2,12 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Callable, Iterable
+from typing import Callable, Iterable, Mapping
 
 from PySide6.QtCore import QObject, Property, QTimer, Signal, Slot
 
 from core.monitoring.metrics_api import (
+    ComplianceTelemetry,
     GuardrailOverview,
     IOQueueTelemetry,
     RetrainingTelemetry,
@@ -67,6 +68,7 @@ class TelemetryProvider(QObject):
     ioQueuesChanged = Signal()
     guardrailSummaryChanged = Signal()
     retrainingChanged = Signal()
+    complianceSummaryChanged = Signal()
     lastUpdatedChanged = Signal()
     errorMessageChanged = Signal()
 
@@ -84,6 +86,7 @@ class TelemetryProvider(QObject):
             GuardrailOverview(0, 0, 0, 0, 0, 0.0, 0.0)
         )
         self._retraining: list[dict[str, object]] = []
+        self._compliance_summary: dict[str, object] = self._default_compliance_payload()
         self._last_updated: str = ""
         self._error_message: str = ""
         self._timer: QTimer | None = None
@@ -107,6 +110,10 @@ class TelemetryProvider(QObject):
     @Property("QVariantList", notify=retrainingChanged)
     def retraining(self) -> list[dict[str, object]]:  # type: ignore[override]
         return list(self._retraining)
+
+    @Property("QVariantMap", notify=complianceSummaryChanged)
+    def complianceSummary(self) -> dict[str, object]:  # type: ignore[override]
+        return dict(self._compliance_summary)
 
     @Property(str, notify=lastUpdatedChanged)
     def lastUpdated(self) -> str:  # type: ignore[override]
@@ -140,9 +147,30 @@ class TelemetryProvider(QObject):
         self._retraining = _retraining_payload(snapshot.retraining)
         self.retrainingChanged.emit()
 
+        self._compliance_summary = self._compliance_payload(snapshot.compliance)
+        self.complianceSummaryChanged.emit()
+
         self._last_updated = _format_timestamp(snapshot.generated_at)
         self.lastUpdatedChanged.emit()
         return True
+
+    @Slot("QVariantMap")
+    def updateComplianceSummary(self, payload: Mapping[str, object] | None = None) -> None:
+        """Umożliwia kontrolerom UI aktualizację danych zgodności."""
+
+        summary = dict(payload or {})
+        self._compliance_summary = summary or self._default_compliance_payload()
+        self.complianceSummaryChanged.emit()
+
+    def _default_compliance_payload(self) -> dict[str, object]:
+        return {
+            "totalViolations": 0.0,
+            "bySeverity": {},
+            "byRule": {},
+        }
+
+    def _compliance_payload(self, telemetry: ComplianceTelemetry) -> dict[str, object]:
+        return telemetry.to_dict()
 
 
 __all__ = ["TelemetryProvider"]

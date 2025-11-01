@@ -47,6 +47,22 @@ class RetrainingTelemetry:
 
 
 @dataclass(slots=True)
+class ComplianceTelemetry:
+    """Syntetyczne dane o naruszeniach zgodności."""
+
+    total_violations: float
+    by_severity: Mapping[str, float]
+    by_rule: Mapping[str, float]
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "totalViolations": float(self.total_violations),
+            "bySeverity": {key: float(value) for key, value in self.by_severity.items()},
+            "byRule": {key: float(value) for key, value in self.by_rule.items()},
+        }
+
+
+@dataclass(slots=True)
 class RuntimeTelemetrySnapshot:
     """Kompletny zrzut danych telemetrycznych dla panelu runtime."""
 
@@ -54,6 +70,7 @@ class RuntimeTelemetrySnapshot:
     io_queues: tuple[IOQueueTelemetry, ...]
     guardrail_overview: GuardrailOverview
     retraining: tuple[RetrainingTelemetry, ...]
+    compliance: ComplianceTelemetry
 
 
 def load_runtime_snapshot(
@@ -66,11 +83,13 @@ def load_runtime_snapshot(
     queue_rows = _collect_queue_metrics(metrics_text)
     guardrail = _summarize_guardrails(queue_rows)
     retraining_rows = _collect_retraining_metrics(metrics_text)
+    compliance = _collect_compliance_metrics(metrics_text)
     return RuntimeTelemetrySnapshot(
         generated_at=datetime.now(timezone.utc),
         io_queues=queue_rows,
         guardrail_overview=guardrail,
         retraining=retraining_rows,
+        compliance=compliance,
     )
 
 
@@ -173,6 +192,25 @@ def _collect_retraining_metrics(text: str) -> tuple[RetrainingTelemetry, ...]:
     return tuple(rows)
 
 
+def _collect_compliance_metrics(text: str) -> ComplianceTelemetry:
+    severity_totals: dict[str, float] = {}
+    rule_totals: dict[str, float] = {}
+    total = 0.0
+    for name, labels, value in _iter_metric_samples(text):
+        if name != "compliance_violation_total":
+            continue
+        severity = labels.get("severity", "unknown")
+        rule = labels.get("rule", "unknown")
+        severity_totals[severity] = severity_totals.get(severity, 0.0) + value
+        rule_totals[rule] = rule_totals.get(rule, 0.0) + value
+        total += value
+    return ComplianceTelemetry(
+        total_violations=total,
+        by_severity=severity_totals,
+        by_rule=rule_totals,
+    )
+
+
 def _iter_metric_samples(text: str) -> Iterable[tuple[str, Mapping[str, str], float]]:
     for line in text.splitlines():
         line = line.strip()
@@ -250,6 +288,7 @@ def _determine_severity(
 
 
 __all__ = [
+    "ComplianceTelemetry",
     "GuardrailOverview",
     "IOQueueTelemetry",
     "RetrainingTelemetry",

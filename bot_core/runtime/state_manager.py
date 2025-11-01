@@ -7,7 +7,7 @@ import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Mapping, MutableMapping
 
 
 class RuntimeStateError(RuntimeError):
@@ -106,6 +106,36 @@ class RuntimeStateManager:
             self._path.parent.mkdir(parents=True, exist_ok=True)
             self._path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
         return checkpoint
+
+    def set_active_model(self, metadata: Mapping[str, Any]) -> None:
+        """Aktualizuje metadane checkpointu o identyfikator aktywnego modelu."""
+
+        normalized: MutableMapping[str, Any] = {
+            str(key): value for key, value in metadata.items()
+        }
+        normalized["updated_at"] = datetime.now(timezone.utc).isoformat()
+
+        with self._lock:
+            try:
+                raw = self._path.read_text(encoding="utf-8")
+            except FileNotFoundError:
+                return
+            try:
+                payload = json.loads(raw)
+            except json.JSONDecodeError:
+                payload = {}
+
+            meta_section = payload.get("metadata")
+            if not isinstance(meta_section, dict):
+                meta_section = {}
+            meta_section["active_model"] = dict(normalized)
+            payload["metadata"] = meta_section
+
+            self._path.parent.mkdir(parents=True, exist_ok=True)
+            self._path.write_text(
+                json.dumps(payload, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
 
     def require_checkpoint(
         self,

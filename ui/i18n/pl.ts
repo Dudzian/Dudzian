@@ -293,6 +293,30 @@
       <source>runbookPanel.openRunbook</source>
       <translation>Otwórz runbook</translation>
     </message>
+    <message id="runbookPanel.manualSteps">
+      <source>runbookPanel.manualSteps</source>
+      <translation>Kroki manualne</translation>
+    </message>
+    <message id="runbookPanel.automaticActions">
+      <source>runbookPanel.automaticActions</source>
+      <translation>Akcje automatyczne</translation>
+    </message>
+    <message id="runbookPanel.confirmActionTitle">
+      <source>runbookPanel.confirmActionTitle</source>
+      <translation>Potwierdź akcję runbooka</translation>
+    </message>
+    <message id="runbookPanel.confirmActionText">
+      <source>runbookPanel.confirmActionText</source>
+      <translation>Czy na pewno chcesz uruchomić akcję „%1”?</translation>
+    </message>
+    <message id="runbookPanel.actionSuccess">
+      <source>runbookPanel.actionSuccess</source>
+      <translation>Akcja „%1” zakończyła się sukcesem.</translation>
+    </message>
+    <message id="runbookPanel.actionFailure">
+      <source>runbookPanel.actionFailure</source>
+      <translation>Akcja runbooka zakończyła się błędem.</translation>
+    </message>
     <message id="runbookPanel.emptyState">
       <source>runbookPanel.emptyState</source>
       <translation>Brak alertów guardrail</translation>
@@ -482,6 +506,167 @@
     <message>
       <source>Zapisano: %1, %2</source>
       <translation>Zapisano: %1, %2</translation>
+    </message>
+  </context>
+  <context>
+    <name>SupportCenter</name>
+    <message id="supportCenter.search.placeholder">
+      <source>supportCenter.search.placeholder</source>
+      <translation>Wyszukaj artykuł lub słowo kluczowe…</translation>
+    </message>
+    <message id="supportCenter.search.action">
+      <source>supportCenter.search.action</source>
+      <translation>Szukaj</translation>
+    </message>
+    <message id="supportCenter.search.clear">
+      <source>supportCenter.search.clear</source>
+      <translation>Wyczyść</translation>
+    </message>
+    <message id="supportCenter.refresh">
+      <source>supportCenter.refresh</source>
+      <translation>Odśwież</translation>
+    </message>
+    <message id="supportCenter.lastUpdated">
+      <source>supportCenter.lastUpdated</source>
+      <translation>Ostatnia aktualizacja: %1</translation>
+    </message>
+    <message id="supportCenter.lastUpdatedUnknown">
+      <source>supportCenter.lastUpdatedUnknown</source>
+      <translation>Ostatnia aktualizacja: n/d</translation>
+    </message>
+    <message id="supportCenter.resultsTotal">
+      <source>supportCenter.resultsTotal</source>
+      <translation>Znalezione artykuły: %1</translation>
+    </message>
+    <message id="supportCenter.ticket.action">
+      <source>supportCenter.ticket.action</source>
+      <translation>Zgłoś problem</translation>
+    </message>
+    <message id="supportCenter.noSelection">
+      <source>supportCenter.noSelection</source>
+      <translation>Wybierz artykuł z listy po lewej stronie.</translation>
+    </message>
+    <message id="supportCenter.noContent">
+      <source>supportCenter.noContent</source>
+      <translation>Brak treści do wyświetlenia.</translation>
+    </message>
+  </context>
+  <context>
+    <name>TicketDialog</name>
+    <message id="ticketDialog.title">
+      <source>ticketDialog.title</source>
+      <translation>Zgłoszenie serwisowe</translation>
+    </message>
+    <message id="ticketDialog.descriptionLabel">
+      <source>ticketDialog.descriptionLabel</source>
+      <translation>Opis problemu</translation>
+    </message>
+    <message id="ticketDialog.descriptionPlaceholder">
+      <source>ticketDialog.descriptionPlaceholder</source>
+      <translation>Opisz symptomy, kroki odtworzenia i oczekiwany rezultat…</translation>
+    </message>
+    <message id="ticketDialog.outputLabel">
+      <source>ticketDialog.outputLabel</source>
+      <translation>Katalog zapisu paczki diagnostycznej</translation>
+    </message>
+    <message id="ticketDialog.action.useDefault">
+      <source>ticketDialog.action.useDefault</source>
+      <translation>Przywróć domyślny</translation>
+    </message>
+    <message id="ticketDialog.action.generate">
+      <source>ticketDialog.action.generate</source>
+      <translation>Wygeneruj paczkę</translation>
+    </message>
+    <message id="ticketDialog.action.close">
+      <source>ticketDialog.action.close</source>
+      <translation>Zamknij</translation>
+    </message>
+    <message id="ticketDialog.action.closeDisabled">
+      <source>ticketDialog.action.closeDisabled</source>
+      <translation>Trwa generowanie…</translation>
+    </message>
+    <message id="ticketDialog.status.idle">
+      <source>ticketDialog.status.idle</source>
+      <translation>Oczekiwanie na rozpoczęcie generowania</translation>
+    </message>
+    <message id="ticketDialog.status.processing">
+      <source>ticketDialog.status.processing</source>
+      <translation>Trwa przygotowywanie paczki diagnostycznej…</translation>
+    </message>
+    <message id="ticketDialog.status.success">
+      <source>ticketDialog.status.success</source>
+      <translation>Paczka diagnostyczna została utworzona</translation>
+    </message>
+    <message id="ticketDialog.status.error">
+      <source>ticketDialog.status.error</source>
+      <translation>Nie udało się utworzyć paczki diagnostycznej</translation>
+    </message>
+  </context>
+  <context>
+    <name>PrivacySettings</name>
+    <message>
+      <source>Anonimowa telemetria pozwala na ulepszanie produktu na podstawie zanonimizowanych danych użycia. Dane są przetwarzane lokalnie i mogą zostać wyeksportowane ręcznie.</source>
+      <translation>Anonimowa telemetria pozwala na ulepszanie produktu na podstawie zanonimizowanych danych użycia. Dane są przetwarzane lokalnie i mogą zostać wyeksportowane ręcznie.</translation>
+    </message>
+    <message>
+      <source>Zgoda użytkownika</source>
+      <translation>Zgoda użytkownika</translation>
+    </message>
+    <message>
+      <source>Włącz anonimową telemetrię</source>
+      <translation>Włącz anonimową telemetrię</translation>
+    </message>
+    <message>
+      <source>Fingerprint sprzętowy (opcjonalnie)</source>
+      <translation>Fingerprint sprzętowy (opcjonalnie)</translation>
+    </message>
+    <message>
+      <source>Odśwież identyfikator</source>
+      <translation>Odśwież identyfikator</translation>
+    </message>
+    <message>
+      <source>Pseudonim: %1</source>
+      <translation>Pseudonim: %1</translation>
+    </message>
+    <message>
+      <source>Pseudonim zostanie wygenerowany po wyrażeniu zgody.</source>
+      <translation>Pseudonim zostanie wygenerowany po wyrażeniu zgody.</translation>
+    </message>
+    <message>
+      <source>Identyfikator instalacji: %1</source>
+      <translation>Identyfikator instalacji: %1</translation>
+    </message>
+    <message>
+      <source>Ostatni eksport: %1</source>
+      <translation>Ostatni eksport: %1</translation>
+    </message>
+    <message>
+      <source>Brak wyeksportowanych raportów.</source>
+      <translation>Brak wyeksportowanych raportów.</translation>
+    </message>
+    <message>
+      <source>Kolejka danych</source>
+      <translation>Kolejka danych</translation>
+    </message>
+    <message>
+      <source>Liczba zdarzeń w kolejce: %1</source>
+      <translation>Liczba zdarzeń w kolejce: %1</translation>
+    </message>
+    <message>
+      <source>Lokalizacja kolejki: %1</source>
+      <translation>Lokalizacja kolejki: %1</translation>
+    </message>
+    <message>
+      <source>Eksportuj do pliku</source>
+      <translation>Eksportuj do pliku</translation>
+    </message>
+    <message>
+      <source>Wyczyść kolejkę</source>
+      <translation>Wyczyść kolejkę</translation>
+    </message>
+    <message>
+      <source>Wyeksportowano do: %1</source>
+      <translation>Wyeksportowano do: %1</translation>
     </message>
   </context>
 </TS>

@@ -5,6 +5,7 @@ Plik `core/config/ui_settings.py` wprowadza zunifikowany model ustawień interfe
 ## Najważniejsze elementy
 
 - **DashboardSettingsController** (`ui/backend/dashboard_settings.py`) – warstwa pośrednia udostępniana QML, odpowiedzialna za walidację, normalizację i trwały zapis ustawień. Umożliwia zmianę kolejności kart, ukrywanie widoków, konfigurację interwału odświeżania oraz wybór motywu UI.
+- **PrivacySettingsController** (`ui/backend/privacy_settings.py`) – zarządza zgodą na telemetrię anonimową, udostępnia liczbę zdarzeń w kolejce oraz funkcje eksportu/wyczyszczenia danych w widoku `PrivacySettings.qml`.
 - **RuntimeOverview.qml** – panel telemetry odczytuje preferencje z kontrolera i w czasie rzeczywistym dostosowuje kolejność kart, a także interwał auto-odświeżania.
 - **DashboardSettings.qml** – nowy widok ustawień, w którym użytkownik może zarządzać kartami, motywem i parametrami odświeżania. Formularz korzysta z `DashboardSettingsController` i automatycznie zapisuje zmiany.
 
@@ -35,6 +36,7 @@ Plik JSON ma następującą strukturę:
 ## Testy
 
 - `tests/ui/test_dashboard_settings.py` zawiera testy kontrolera oraz sprawdza, czy komponent QML ładuje się poprawnie. Testy są automatycznie pomijane, gdy środowisko nie udostępnia bibliotek Qt (analogicznie do pozostałych testów UI).
+- `tests/ui/test_privacy_settings.py` weryfikuje obsługę zgody na telemetrię i poprawne ładowanie widoku ustawień prywatności.
 
 ## Dalsze kroki
 

@@ -10,8 +10,9 @@ Item {
 
     property var telemetryProvider: (typeof telemetryProvider !== "undefined" ? telemetryProvider : null)
     property var dashboardSettingsController: (typeof dashboardSettingsController !== "undefined" ? dashboardSettingsController : null)
+    property var complianceController: (typeof complianceController !== "undefined" ? complianceController : null)
     property int refreshIntervalMs: dashboardSettingsController ? dashboardSettingsController.refreshIntervalMs : 4000
-    readonly property var defaultCardOrder: ["io_queue", "guardrails", "retraining"]
+    readonly property var defaultCardOrder: ["io_queue", "guardrails", "retraining", "compliance"]
 
     function componentForCard(cardId) {
         switch (cardId) {
@@ -21,6 +22,8 @@ Item {
             return guardrailCardComponent
         case "retraining":
             return retrainingCardComponent
+        case "compliance":
+            return complianceCardComponent
         default:
             return null
         }
@@ -360,6 +363,15 @@ Item {
                     }
                 }
             }
+        }
+    }
+
+    Component {
+        id: complianceCardComponent
+        CompliancePanel {
+            objectName: "runtimeOverviewCompliancePanel"
+            telemetryProvider: root.telemetryProvider
+            complianceController: root.complianceController
         }
     }
 }

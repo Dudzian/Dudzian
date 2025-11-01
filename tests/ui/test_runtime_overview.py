@@ -17,6 +17,7 @@ except ImportError as exc:  # pragma: no cover - brak bibliotek systemowych
     pytest.skip(f"Brak zależności QtWidgets: {exc}", allow_module_level=True)
 
 from core.monitoring.metrics_api import (
+    ComplianceTelemetry,
     GuardrailOverview,
     IOQueueTelemetry,
     RetrainingTelemetry,
@@ -55,11 +56,17 @@ def _sample_snapshot() -> RuntimeTelemetrySnapshot:
             average_drift_score=0.12,
         ),
     )
+    compliance = ComplianceTelemetry(
+        total_violations=1.0,
+        by_severity={"warning": 1.0},
+        by_rule={"KYC_MISSING_FIELDS": 1.0},
+    )
     return RuntimeTelemetrySnapshot(
         generated_at=generated,
         io_queues=io_entries,
         guardrail_overview=guardrail,
         retraining=retraining_entries,
+        compliance=compliance,
     )
 
 
@@ -77,6 +84,9 @@ def test_runtime_overview_renders_snapshot(tmp_path: Path) -> None:
     ok = provider.refreshTelemetry()
     assert ok is True
     app.processEvents()
+
+    summary = provider.complianceSummary
+    assert summary["totalViolations"] == 1.0
 
     last_updated = root.findChild(QObject, "runtimeOverviewLastUpdated")
     assert last_updated is not None

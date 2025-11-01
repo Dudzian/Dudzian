@@ -1,0 +1,10 @@
+id: strategy_incident_playbook
+automatic_actions:
+  - id: restart_io_queue
+    label: "Restart kolejki I/O"
+    script: restart_io_queue.py
+    description: "Restartuje asynchroniczną kolejkę zapytań po krytycznych timeoutach."
+    confirm: "Czy na pewno chcesz wykonać restart kolejki? Handel zostanie chwilowo wstrzymany."
+manual_steps:
+  - "Zweryfikuj status giełdy oraz limity API w panelu telemetry runtime."
+  - "Potwierdź brak zaplanowanych zadań krytycznych przed restartem kolejki."

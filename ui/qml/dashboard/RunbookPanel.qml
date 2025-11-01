@@ -10,6 +10,8 @@ Item {
 
     property var runbookController: (typeof runbookController !== "undefined" ? runbookController : null)
     property int refreshIntervalMs: 5000
+    property var pendingAction: ({ runbookId: "", actionId: "", label: "", confirmMessage: "" })
+    property var actionStatus: ({})
 
     function refreshAlerts() {
         if (!root.runbookController)
@@ -31,6 +33,15 @@ Item {
         ignoreUnknownSignals: true
         function onErrorMessageChanged() {
             errorBanner.visible = root.runbookController.errorMessage.length > 0
+        }
+        function onActionStatusChanged() {
+            try {
+                root.actionStatus = JSON.parse(root.runbookController.actionStatus)
+                actionStatusBanner.visible = root.actionStatus && root.actionStatus.status
+            } catch (err) {
+                root.actionStatus = ({})
+                actionStatusBanner.visible = false
+            }
         }
     }
 
@@ -77,6 +88,40 @@ Item {
                 text: root.runbookController ? root.runbookController.errorMessage : ""
                 color: "white"
                 font.pointSize: 11
+            }
+        }
+
+        Rectangle {
+            id: actionStatusBanner
+            objectName: "runbookPanelActionBanner"
+            Layout.fillWidth: true
+            visible: false
+            color: root.actionStatus && root.actionStatus.status === "success" ? Qt.rgba(0.2, 0.55, 0.3, 0.9)
+                                                                               : Qt.rgba(0.75, 0.25, 0.28, 0.9)
+            radius: 6
+            implicitHeight: visible ? 48 : 0
+
+            ColumnLayout {
+                anchors.fill: parent
+                anchors.margins: 8
+
+                Text {
+                    text: root.actionStatus && root.actionStatus.status === "success"
+                          ? qsTrId("runbookPanel.actionSuccess").arg(root.actionStatus.action_id)
+                          : qsTrId("runbookPanel.actionFailure")
+                    color: "white"
+                    font.pointSize: 11
+                }
+
+                Text {
+                    text: root.actionStatus && root.actionStatus.message ? root.actionStatus.message
+                                                                          : root.actionStatus && root.actionStatus.stdout
+                                                                                ? root.actionStatus.stdout
+                                                                                : ""
+                    color: "white"
+                    font.pointSize: 10
+                    wrapMode: Text.Wrap
+                }
             }
         }
 
@@ -171,6 +216,50 @@ Item {
                                     }
                                 }
                             }
+
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                spacing: 6
+                                visible: model.manualSteps && model.manualSteps.length > 0
+
+                                Text {
+                                    text: qsTrId("runbookPanel.manualSteps")
+                                    font.bold: true
+                                    color: Styles.AppTheme.textPrimary
+                                }
+
+                                Repeater {
+                                    model: model.manualSteps || []
+
+                                    Text {
+                                        text: "• " + modelData
+                                        color: Styles.AppTheme.textSecondary
+                                        wrapMode: Text.Wrap
+                                    }
+                                }
+                            }
+
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                spacing: 6
+                                visible: model.automaticActions && model.automaticActions.length > 0
+
+                                Text {
+                                    text: qsTrId("runbookPanel.automaticActions")
+                                    font.bold: true
+                                    color: Styles.AppTheme.textPrimary
+                                }
+
+                                Repeater {
+                                    model: model.automaticActions || []
+
+                                    Button {
+                                        objectName: "runbookActionButton_" + modelData.id
+                                        text: modelData.label
+                                        onClicked: root.requestRunbookAction(model.runbookId, modelData)
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -182,5 +271,49 @@ Item {
                 }
             }
         }
+    }
+
+    Dialog {
+        id: confirmActionDialog
+        modal: true
+        standardButtons: Dialog.Ok | Dialog.Cancel
+        title: qsTrId("runbookPanel.confirmActionTitle")
+
+        contentItem: ColumnLayout {
+            spacing: 8
+            width: Math.max(320, implicitWidth)
+
+            Text {
+                text: root.pendingAction.confirmMessage && root.pendingAction.confirmMessage.length > 0
+                      ? root.pendingAction.confirmMessage
+                      : qsTrId("runbookPanel.confirmActionText").arg(root.pendingAction.label)
+                wrapMode: Text.WordWrap
+            }
+        }
+
+        onAccepted: root.executePendingAction()
+    }
+
+    function requestRunbookAction(runbookId, actionPayload) {
+        if (!root.runbookController)
+            return
+        root.pendingAction = ({
+            runbookId: runbookId,
+            actionId: actionPayload.id,
+            label: actionPayload.label,
+            confirmMessage: actionPayload.confirmMessage
+        })
+
+        if (actionPayload.confirmMessage && actionPayload.confirmMessage.length > 0) {
+            confirmActionDialog.open()
+        } else {
+            root.executePendingAction()
+        }
+    }
+
+    function executePendingAction() {
+        if (!root.runbookController || !root.pendingAction.runbookId || !root.pendingAction.actionId)
+            return
+        root.runbookController.runAction(root.pendingAction.runbookId, root.pendingAction.actionId)
     }
 }

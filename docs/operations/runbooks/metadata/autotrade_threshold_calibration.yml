@@ -1,0 +1,9 @@
+id: autotrade_threshold_calibration
+automatic_actions:
+  - id: calibrate_thresholds
+    label: "Przelicz progi autotrade"
+    script: recalculate_autotrade_thresholds.py
+    description: "Generuje rekomendowane wartości progów na podstawie ostatnich metryk guardrail."
+manual_steps:
+  - "Zapisz aktualne wartości progów przed rozpoczęciem procedury."
+  - "Po automatycznym przeliczeniu zweryfikuj wynik na koncie demo."

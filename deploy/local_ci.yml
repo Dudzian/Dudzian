@@ -1,5 +1,5 @@
 version: "1"
-description: "Lokalny pipeline CI dla scenariusza demo→paper"
+description: "Lokalny pipeline CI dla scenariusza demo→paper, retrainingu oraz RC"
 
 tasks:
   setup:
@@ -20,8 +20,84 @@ tasks:
           mkdir -p reports/e2e
           mkdir -p logs/e2e
           find reports/e2e -maxdepth 1 -type f -print || true
+  retraining-report:
+    needs:
+      - setup
+    steps:
+      - name: Uruchom testy retrainingu
+        run: |
+          pytest -m retraining tests/reporting/test_retraining_reporter.py --maxfail=1 --disable-warnings
+      - name: Archiwizuj raporty retreningu
+        run: |
+          mkdir -p reports/retraining
+          find reports/retraining -maxdepth 1 -type f -print || true
+  desktop-installer:
+    needs:
+      - setup
+    steps:
+      - name: Zbuduj instalator desktopowy (profil linux)
+        run: |
+          python deploy/packaging/desktop_installer.py \
+            --version ci \
+            --platform linux \
+            --profiles-dir deploy/packaging/profiles \
+            --hook-source probe_keyring.py
+      - name: Wylistuj artefakty instalatora
+        run: |
+          find var/dist/installers -maxdepth 2 -type f -print || true
+  smoke-tests:
+    needs:
+      - setup
+    steps:
+      - name: Uruchom zestaw smoke
+        run: |
+          python scripts/run_smoke_tests.py --report-dir reports/smoke
+      - name: Wylistuj raporty smoke
+        run: |
+          find reports/smoke -maxdepth 1 -type f -print || true
+  release-candidate:
+    needs:
+      - desktop-installer
+      - smoke-tests
+    steps:
+      - name: Utwórz tag RC i manifest pre-release
+        run: |
+          python - <<'PY'
+import subprocess
+from datetime import datetime, timezone
+from pathlib import Path
+try:
+    import tomllib
+except ModuleNotFoundError:
+    import tomli as tomllib  # type: ignore
+
+config = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+version = config.get("project", {}).get("version", "0.0.0")
+timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+tag = f"rc-{version}-{timestamp}"
+subprocess.run(["git", "tag", "-f", tag], check=True)
+Path("var/dist").mkdir(parents=True, exist_ok=True)
+manifest = Path("var/dist/rc_manifest.json")
+manifest.write_text(
+    "{\n  \"tag\": \"%s\",\n  \"created_at\": \"%s\"\n}\n" % (tag, timestamp),
+    encoding="utf-8",
+)
+Path("var/dist/rc_tag.txt").write_text(tag + "\n", encoding="utf-8")
+print(f"Utworzono tag {tag}")
+PY
+      - name: Archiwizuj paczki pre-release
+        run: |
+          mkdir -p var/dist/rc
+          if [ -d var/dist/installers ]; then
+            cp -r var/dist/installers var/dist/rc/
+          fi
+          find var/dist/rc -maxdepth 2 -type f -print || true
 
 artifacts:
   paths:
     - reports/e2e
     - logs/e2e
+    - reports/retraining
+    - var/dist/installers
+    - reports/smoke
+    - var/dist/rc

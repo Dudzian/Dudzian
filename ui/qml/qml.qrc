@@ -28,7 +28,11 @@
         <file>components/workbench/StrategyWorkbenchViewModel.qml</file>
         <file>dashboard/RuntimeOverview.qml</file>
         <file>dashboard/RunbookPanel.qml</file>
+        <file>dashboard/CompliancePanel.qml</file>
+        <file>support/SupportCenter.qml</file>
+        <file>support/TicketDialog.qml</file>
         <file>settings/DashboardSettings.qml</file>
+        <file>settings/PrivacySettings.qml</file>
         <file>settings/UpdateDialog.qml</file>
         <file>onboarding/LicenseWizard.qml</file>
         <file>onboarding/StrategySetupStep.qml</file>

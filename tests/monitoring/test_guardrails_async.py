@@ -8,7 +8,12 @@ import pytest
 
 from bot_core.observability.metrics import MetricsRegistry
 from bot_core.runtime.scheduler import AsyncIOTaskQueue
-from core.monitoring import AsyncIOGuardrails, AsyncIOMetricSet
+from core.monitoring import (
+    AsyncIOGuardrails,
+    AsyncIOMetricSet,
+    ComplianceMetricSet,
+)
+from core.monitoring.events import ComplianceViolation
 
 
 def test_guardrails_records_rate_limit_wait(tmp_path: Path) -> None:
@@ -96,3 +101,42 @@ def test_guardrails_records_timeout(tmp_path: Path) -> None:
     log_file = tmp_path / "events.log"
     assert log_file.exists()
     assert "TIMEOUT" in log_file.read_text(encoding="utf-8")
+
+
+def test_guardrails_handles_compliance_violation(tmp_path: Path) -> None:
+    ui_events: list[tuple[str, dict[str, object]]] = []
+    registry = MetricsRegistry()
+    compliance_metrics = ComplianceMetricSet(registry=registry)
+    guardrails = AsyncIOGuardrails(
+        environment="paper",
+        metrics=AsyncIOMetricSet(registry=registry),
+        log_directory=tmp_path,
+        compliance_metrics=compliance_metrics,
+        ui_notifier=lambda event, payload: ui_events.append((event, dict(payload))),
+    )
+    event = ComplianceViolation(
+        rule_id="AML_BLOCKED_COUNTRY",
+        severity="critical",
+        message="Zablokowany kraj",
+        metadata={"country": "IR"},
+    )
+
+    guardrails.handle_monitoring_event(event)
+
+    labels = {
+        "environment": "paper",
+        "rule": "AML_BLOCKED_COUNTRY",
+        "severity": "critical",
+    }
+    assert compliance_metrics.violations_total.value(labels=labels) == 1.0
+
+    log_file = tmp_path / "events.log"
+    assert log_file.exists()
+    contents = log_file.read_text(encoding="utf-8")
+    assert "COMPLIANCE" in contents
+    assert "rule=AML_BLOCKED_COUNTRY" in contents
+
+    assert ui_events
+    event_name, payload = ui_events[0]
+    assert event_name == "compliance_violation"
+    assert payload["rule"] == "AML_BLOCKED_COUNTRY"

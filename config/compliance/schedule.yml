@@ -1,0 +1,5 @@
+enabled: true
+interval_hours: 12
+window:
+  start: "06:00"
+  end: "22:00"

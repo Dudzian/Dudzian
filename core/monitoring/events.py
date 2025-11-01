@@ -78,6 +78,26 @@ class OnboardingFailed(MonitoringEvent):
     onboarding_status_id: str | None = None
 
 
+@dataclass(slots=True)
+class ComplianceViolation(MonitoringEvent):
+    """Alert naruszenia reguł zgodności wykryty przez audyt."""
+
+    rule_id: str
+    severity: str
+    message: str
+    metadata: dict[str, object] | None = None
+
+
+@dataclass(slots=True)
+class ComplianceAuditCompleted(MonitoringEvent):
+    """Informacja o zakończeniu audytu zgodności."""
+
+    passed: bool
+    findings_total: int
+    severity_breakdown: dict[str, int]
+    config_path: str | None = None
+
+
 class EventPublisher(Protocol):
     """Interfejs do publikacji zdarzeń monitorujących."""
 
@@ -86,6 +106,8 @@ class EventPublisher(Protocol):
 
 
 __all__ = [
+    "ComplianceAuditCompleted",
+    "ComplianceViolation",
     "DataDriftDetected",
     "EventPublisher",
     "MissingDataDetected",

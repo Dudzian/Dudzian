@@ -13,7 +13,7 @@ from core.config.ui_settings import (
     UISettingsStore,
 )
 
-_AVAILABLE_CARDS: tuple[str, ...] = ("io_queue", "guardrails", "retraining")
+_AVAILABLE_CARDS: tuple[str, ...] = ("io_queue", "guardrails", "retraining", "compliance")
 
 
 class DashboardSettingsController(QObject):

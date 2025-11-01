@@ -33,8 +33,8 @@ def test_dashboard_settings_controller_persists_changes(tmp_path: Path, qapp: QA
     store = UISettingsStore(store_path)
     controller = DashboardSettingsController(store=store)
 
-    assert controller.cardOrder == ["io_queue", "guardrails", "retraining"]
-    assert controller.visibleCardOrder == ["io_queue", "guardrails", "retraining"]
+    assert controller.cardOrder == ["io_queue", "guardrails", "retraining", "compliance"]
+    assert controller.visibleCardOrder == ["io_queue", "guardrails", "retraining", "compliance"]
 
     controller.moveCard("retraining", -2)
     controller.setCardVisibility("guardrails", False)
@@ -42,7 +42,7 @@ def test_dashboard_settings_controller_persists_changes(tmp_path: Path, qapp: QA
     controller.setTheme("dark")
 
     assert controller.cardOrder[0] == "retraining"
-    assert controller.visibleCardOrder == ["retraining", "io_queue"]
+    assert controller.visibleCardOrder == ["retraining", "io_queue", "compliance"]
 
     payload = json.loads(store_path.read_text(encoding="utf-8"))
     assert payload["dashboard"]["card_order"][0] == "retraining"

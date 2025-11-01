@@ -7,8 +7,12 @@ from typing import Final
 
 _ONBOARDING_LOG_DIRECTORY: Final[Path] = Path("logs/ui/onboarding")
 _UPDATE_LOG_DIRECTORY: Final[Path] = Path("logs/ui/updates")
+_SUPPORT_LOG_DIRECTORY: Final[Path] = Path("logs/ui/support")
+_RUNBOOK_LOG_DIRECTORY: Final[Path] = Path("logs/ui/runbook_actions")
 _ONBOARDING_LOGGER_NAMESPACE: Final[str] = "ui.onboarding"
 _UPDATE_LOGGER_NAMESPACE: Final[str] = "ui.offline_update"
+_SUPPORT_LOGGER_NAMESPACE: Final[str] = "ui.support"
+_RUNBOOK_LOGGER_NAMESPACE: Final[str] = "ui.runbook"
 _LOG_FORMAT = "%(asctime)s %(levelname)s %(message)s"
 _LOG_DATE_FORMAT = "%Y-%m-%dT%H:%M:%S%z"
 
@@ -41,4 +45,16 @@ def get_update_logger(log_directory: str | Path = _UPDATE_LOG_DIRECTORY) -> logg
     return _get_or_create_file_logger(Path(log_directory), _UPDATE_LOGGER_NAMESPACE, "offline_update.log")
 
 
-__all__ = ["get_onboarding_logger", "get_update_logger"]
+def get_support_logger(log_directory: str | Path = _SUPPORT_LOG_DIRECTORY) -> logging.Logger:
+    """Zwraca logger zapisujący operacje wsparcia technicznego (diagnostyka, zgłoszenia)."""
+
+    return _get_or_create_file_logger(Path(log_directory), _SUPPORT_LOGGER_NAMESPACE, "support.log")
+
+
+def get_runbook_logger(log_directory: str | Path = _RUNBOOK_LOG_DIRECTORY) -> logging.Logger:
+    """Zwraca logger akcji runbooków uruchamianych z UI."""
+
+    return _get_or_create_file_logger(Path(log_directory), _RUNBOOK_LOGGER_NAMESPACE, "runbook_actions.log")
+
+
+__all__ = ["get_onboarding_logger", "get_update_logger", "get_support_logger", "get_runbook_logger"]
