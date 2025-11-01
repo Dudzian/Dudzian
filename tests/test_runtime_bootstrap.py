@@ -4,10 +4,11 @@ import copy
 import hashlib
 import json
 import os
+import re
 import sys
 import time
 from pathlib import Path
-from typing import Mapping, Sequence
+from typing import Any, Mapping, Sequence
 from textwrap import dedent
 from types import SimpleNamespace
 from dataclasses import is_dataclass
@@ -338,6 +339,102 @@ ymp4BN4Riifev8GdFf+lMg==
 """
 
 
+def _create_signed_document(
+    root: Path,
+    doc_relative: str,
+    signature_relative: str,
+    *,
+    key_id: str,
+    signed_by: Sequence[str],
+) -> Mapping[str, str]:
+    """Tworzy podpisany dokument i zapisuje plik klucza w secrets/hmac."""
+
+    normalized_key = re.sub(r"[^A-Za-z0-9]+", "_", key_id).strip("_").lower() or "default"
+    key_path = root / "secrets" / "hmac" / f"{normalized_key}.key"
+    key_path.parent.mkdir(parents=True, exist_ok=True)
+    key_bytes = os.urandom(48)
+    key_path.write_bytes(key_bytes)
+
+    document_path = root / doc_relative
+    document_path.parent.mkdir(parents=True, exist_ok=True)
+    content = f"{doc_relative}:{key_id}".encode("utf-8")
+    document_path.write_bytes(content)
+    sha_value = hashlib.sha256(content).hexdigest()
+
+    payload = {
+        "document": {
+            "name": Path(doc_relative).name,
+            "path": doc_relative,
+            "sha256": sha_value,
+            "signed_by": list(signed_by),
+            "signed_at": "2024-06-01T10:00:00Z",
+        },
+        "hashes": {"sha256": sha_value},
+        "generated_at": "2024-06-01T10:00:00Z",
+    }
+    signature = build_hmac_signature(payload, key=key_bytes, key_id=key_id)
+
+    signature_path = root / signature_relative
+    signature_path.parent.mkdir(parents=True, exist_ok=True)
+    signature_path.write_text(
+        json.dumps({"payload": payload, "signature": signature}, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+    return {"sha256": sha_value, "signature_path": signature_relative}
+
+
+def _stub_license_validation(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(
+        bootstrap_module,
+        "validate_license_from_config",
+        lambda _cfg: bootstrap_module.LicenseValidationResult(
+            status="ok",
+            fingerprint=None,
+            license_path=tmp_path / "license.json",
+            issued_at=None,
+            expires_at=None,
+            fingerprint_source=None,
+            profile=None,
+            issuer=None,
+            schema=None,
+            schema_version=None,
+            license_id=None,
+            revocation_list_path=None,
+            revocation_status=None,
+            revocation_reason=None,
+            revocation_revoked_at=None,
+            revocation_generated_at=None,
+            revocation_checked=True,
+            revocation_signature_key=None,
+            errors=[],
+            warnings=[],
+            payload=None,
+            license_signature_key=None,
+            fingerprint_signature_key=None,
+        ),
+    )
+
+
+def _disable_exchange_health(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        bootstrap_module,
+        "build_standard_health_checks",
+        lambda _adapter: (),
+    )
+
+
+def _apply_license_stub(data: Mapping[str, Any], tmp_path: Path) -> None:
+    license_section = {
+        "license_path": str(tmp_path / "license.json"),
+        "fingerprint_path": str(tmp_path / "fingerprint.json"),
+        "license_keys_path": str(tmp_path / "license_keys.json"),
+        "fingerprint_keys_path": str(tmp_path / "fingerprint_keys.json"),
+    }
+    if isinstance(data, dict):
+        data["license"] = license_section
+
+
 def _write_config(tmp_path: Path) -> Path:
     data = yaml.safe_load(_BASE_CONFIG)
     env_section = data.get("environments", {})
@@ -526,8 +623,14 @@ def test_bootstrap_environment_initialises_components(tmp_path: Path) -> None:
     assert context.live_readiness_checklist is None
 
 
-def test_bootstrap_environment_live_exposes_checklist(tmp_path: Path) -> None:
+def test_bootstrap_environment_live_exposes_checklist(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _stub_license_validation(monkeypatch, tmp_path)
+    _disable_exchange_health(monkeypatch)
+    _prepare_signed_license_bundle(tmp_path)
     data = yaml.safe_load(_BASE_CONFIG)
+    _apply_license_stub(data, tmp_path)
     live_env = copy.deepcopy(data["environments"]["binance_paper"])
     live_env.update(
         {
@@ -536,37 +639,78 @@ def test_bootstrap_environment_live_exposes_checklist(tmp_path: Path) -> None:
             "alert_audit": {"backend": "file", "directory": "./var/live_alerts"},
         }
     )
+    compliance_doc = _create_signed_document(
+        tmp_path,
+        "compliance/live/binance/kyc_packet.pdf",
+        "compliance/live/binance/kyc_packet.sig",
+        key_id="compliance-key",
+        signed_by=("compliance",),
+    )
+    risk_doc = _create_signed_document(
+        tmp_path,
+        "risk/live/binance/risk_profile_alignment.pdf",
+        "risk/live/binance/risk_profile_alignment.sig",
+        key_id="risk-key",
+        signed_by=("risk",),
+    )
+    penetration_doc = _create_signed_document(
+        tmp_path,
+        "security/live/binance/penetration_report.pdf",
+        "security/live/binance/penetration_report.sig",
+        key_id="security-key",
+        signed_by=("security",),
+    )
+    alerting_doc = _create_signed_document(
+        tmp_path,
+        "sre/live/binance/alerting_playbook.pdf",
+        "sre/live/binance/alerting_playbook.sig",
+        key_id="sre-key",
+        signed_by=("sre",),
+    )
     live_env["live_readiness"] = {
         "checklist_id": "binance-q3",
         "signed": True,
         "signed_by": ["compliance", "security"],
         "signed_at": "2024-06-01T10:00:00Z",
         "signature_path": "compliance/live/binance/checklist.sig",
-        "required_documents": ["kyc_packet", "license_attestation", "alerting_playbook"],
+        "required_documents": [
+            "kyc_packet",
+            "risk_profile_alignment",
+            "penetration_report",
+        ],
         "documents": [
             {
                 "name": "kyc_packet",
                 "path": "compliance/live/binance/kyc_packet.pdf",
-                "sha256": "79b8d3b02b3e29f4c4a0d428c2a7c4de48bd97f49deed19c7ef287c93883bf94",
-                "signature_path": "compliance/live/binance/kyc_packet.sig",
+                "sha256": compliance_doc["sha256"],
+                "signature_path": compliance_doc["signature_path"],
                 "signed": True,
                 "signed_by": ["compliance"],
                 "signed_at": "2024-05-28T09:45:00Z",
             },
             {
-                "name": "license_attestation",
-                "path": "compliance/live/binance/license_attestation.pdf",
-                "sha256": "2aef8fd61ebcbb22f4241e62a40759fd8461b06b0a604724449fbda037be6da9",
-                "signature_path": "compliance/live/binance/license_attestation.sig",
+                "name": "risk_profile_alignment",
+                "path": "risk/live/binance/risk_profile_alignment.pdf",
+                "sha256": risk_doc["sha256"],
+                "signature_path": risk_doc["signature_path"],
+                "signed": True,
+                "signed_by": ["risk"],
+                "signed_at": "2024-05-29T15:30:00Z",
+            },
+            {
+                "name": "penetration_report",
+                "path": "security/live/binance/penetration_report.pdf",
+                "sha256": penetration_doc["sha256"],
+                "signature_path": penetration_doc["signature_path"],
                 "signed": True,
                 "signed_by": ["security"],
-                "signed_at": "2024-05-29T15:30:00Z",
+                "signed_at": "2024-05-30T07:10:00Z",
             },
             {
                 "name": "alerting_playbook",
                 "path": "sre/live/binance/alerting_playbook.pdf",
-                "sha256": "6d5e7806dd7f6d91cb8f7d73a7a3f8646215d70a7b12c5d05b8b1ab2a4bc41a7",
-                "signature_path": "sre/live/binance/alerting_playbook.sig",
+                "sha256": alerting_doc["sha256"],
+                "signature_path": alerting_doc["signature_path"],
                 "signed": True,
                 "signed_by": ["sre"],
                 "signed_at": "2024-05-30T07:10:00Z",
@@ -622,8 +766,22 @@ def test_bootstrap_environment_live_exposes_checklist(tmp_path: Path) -> None:
     assert checklist_meta["signed_by"] == ("compliance", "security")
     documents = {doc["name"]: doc for doc in checklist_details["documents"]}
     assert documents["kyc_packet"]["status"] == "ok"
-    assert documents["license_attestation"]["signed_by"] == ("security",)
+    assert documents["risk_profile_alignment"]["signed_by"] == ("risk",)
+    assert documents["penetration_report"]["status"] == "ok"
     assert documents["alerting_playbook"]["signature_path"].endswith("alerting_playbook.sig")
+    verification = context.live_signature_verification
+    assert verification is not None
+    verified_docs = verification["documents"]
+    assert set(verified_docs) == {
+        "kyc_packet",
+        "risk_profile_alignment",
+        "penetration_report",
+    }
+    assert verification["categories"] == {
+        "compliance": True,
+        "risk": True,
+        "penetration": True,
+    }
     assert entries["risk_limits"]["status"] == "ok"
     assert entries["alerting"]["status"] == "ok"
     assert context.metrics_ui_alert_sink_active is True
@@ -664,40 +822,71 @@ def test_bootstrap_environment_live_exposes_checklist(tmp_path: Path) -> None:
     assert audit_info["note"] == "inherited_environment_router"
 
 
-def test_live_checklist_blocks_on_missing_documents(tmp_path: Path) -> None:
+def test_live_checklist_blocks_on_missing_documents(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _stub_license_validation(monkeypatch, tmp_path)
+    _disable_exchange_health(monkeypatch)
+    _prepare_signed_license_bundle(tmp_path)
     data = yaml.safe_load(_BASE_CONFIG)
+    _apply_license_stub(data, tmp_path)
     live_env = copy.deepcopy(data["environments"]["binance_paper"])
     live_env.update(
         {
             "environment": "live",
             "keychain_key": "binance_live_key",
             "alert_audit": {"backend": "file", "directory": "./var/live_alerts"},
-            "live_readiness": {
-                "checklist_id": "binance-q3",
-                "signed": True,
-                "signed_by": ["compliance"],
-                "signature_path": "compliance/live/binance/checklist.sig",
-                "required_documents": ["kyc_packet", "alerting_playbook"],
-                "documents": [
-                    {
-                        "name": "kyc_packet",
-                        "path": "compliance/live/binance/kyc_packet.pdf",
-                        "sha256": "79b8d3b02b3e29f4c4a0d428c2a7c4de48bd97f49deed19c7ef287c93883bf94",
-                        "signed": True,
-                        "signed_by": ["compliance"],
-                        "signature_path": "compliance/live/binance/kyc_packet.sig",
-                    },
-                    {
-                        "name": "alerting_playbook",
-                        "path": "sre/live/binance/alerting_playbook.pdf",
-                        "sha256": "6d5e7806dd7f6d91cb8f7d73a7a3f8646215d70a7b12c5d05b8b1ab2a4bc41a7",
-                        "signed": False,
-                        "signed_by": [],
-                    },
-                ],
-            },
         }
     )
+    compliance_doc = _create_signed_document(
+        tmp_path,
+        "compliance/live/binance/kyc_packet.pdf",
+        "compliance/live/binance/kyc_packet.sig",
+        key_id="compliance-key",
+        signed_by=("compliance",),
+    )
+    risk_doc = _create_signed_document(
+        tmp_path,
+        "risk/live/binance/risk_profile_alignment.pdf",
+        "risk/live/binance/risk_profile_alignment.sig",
+        key_id="risk-key",
+        signed_by=("risk",),
+    )
+    live_env["live_readiness"] = {
+        "checklist_id": "binance-q3",
+        "signed": True,
+        "signed_by": ["compliance"],
+        "signature_path": "compliance/live/binance/checklist.sig",
+        "required_documents": [
+            "kyc_packet",
+            "risk_profile_alignment",
+            "penetration_report",
+        ],
+        "documents": [
+            {
+                "name": "kyc_packet",
+                "path": "compliance/live/binance/kyc_packet.pdf",
+                "sha256": compliance_doc["sha256"],
+                "signed": True,
+                "signed_by": ["compliance"],
+                "signature_path": compliance_doc["signature_path"],
+            },
+            {
+                "name": "risk_profile_alignment",
+                "path": "risk/live/binance/risk_profile_alignment.pdf",
+                "sha256": risk_doc["sha256"],
+                "signed": True,
+                "signed_by": ["risk"],
+                "signature_path": risk_doc["signature_path"],
+            },
+            {
+                "name": "penetration_report",
+                "path": "security/live/binance/penetration_report.pdf",
+                "signed": True,
+                "signed_by": ["security"],
+            },
+        ],
+    }
     data["environments"]["binance_live"] = live_env
     auto_trader_entry = data["runtime_entrypoints"]["auto_trader"]
     auto_trader_entry["environment"] = "binance_live"
@@ -726,20 +915,129 @@ def test_live_checklist_blocks_on_missing_documents(tmp_path: Path) -> None:
         json.dumps(credentials_payload),
     )
 
-    context = bootstrap_environment(
-        "binance_live", config_path=config_path, secret_manager=manager
+    with pytest.raises(RuntimeError) as exc:
+        bootstrap_environment("binance_live", config_path=config_path, secret_manager=manager)
+
+    assert "penetration_report" in str(exc.value)
+
+
+def test_live_checklist_blocks_on_invalid_signature(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _stub_license_validation(monkeypatch, tmp_path)
+    _disable_exchange_health(monkeypatch)
+    _prepare_signed_license_bundle(tmp_path)
+    data = yaml.safe_load(_BASE_CONFIG)
+    _apply_license_stub(data, tmp_path)
+    live_env = copy.deepcopy(data["environments"]["binance_paper"])
+    live_env.update(
+        {
+            "environment": "live",
+            "keychain_key": "binance_live_key",
+            "alert_audit": {"backend": "file", "directory": "./var/live_alerts"},
+        }
     )
 
-    checklist = context.live_readiness_checklist
-    assert checklist is not None
-    entries = {entry["item"]: entry for entry in checklist}
-    checklist_entry = entries["live_checklist"]
-    assert checklist_entry["status"] == "blocked"
-    documents = checklist_entry["details"]["documents"]
-    document_map = {doc["name"]: doc for doc in documents if "name" in doc}
-    assert document_map["alerting_playbook"]["status"] == "blocked"
-    missing = [doc for doc in documents if doc.get("status") == "missing"]
-    assert missing == []
+    compliance_doc = _create_signed_document(
+        tmp_path,
+        "compliance/live/binance/kyc_packet.pdf",
+        "compliance/live/binance/kyc_packet.sig",
+        key_id="compliance-key",
+        signed_by=("compliance",),
+    )
+    risk_doc = _create_signed_document(
+        tmp_path,
+        "risk/live/binance/risk_profile_alignment.pdf",
+        "risk/live/binance/risk_profile_alignment.sig",
+        key_id="risk-key",
+        signed_by=("risk",),
+    )
+    penetration_doc = _create_signed_document(
+        tmp_path,
+        "security/live/binance/penetration_report.pdf",
+        "security/live/binance/penetration_report.sig",
+        key_id="security-key",
+        signed_by=("security",),
+    )
+
+    tampered_signature_path = tmp_path / risk_doc["signature_path"]
+    signature_payload = json.loads(tampered_signature_path.read_text(encoding="utf-8"))
+    signature_payload["signature"]["value"] = "A" + signature_payload["signature"]["value"]
+    tampered_signature_path.write_text(
+        json.dumps(signature_payload, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+    live_env["live_readiness"] = {
+        "checklist_id": "binance-q3",
+        "signed": True,
+        "signed_by": ["compliance", "security"],
+        "signature_path": "compliance/live/binance/checklist.sig",
+        "required_documents": [
+            "kyc_packet",
+            "risk_profile_alignment",
+            "penetration_report",
+        ],
+        "documents": [
+            {
+                "name": "kyc_packet",
+                "path": "compliance/live/binance/kyc_packet.pdf",
+                "sha256": compliance_doc["sha256"],
+                "signed": True,
+                "signed_by": ["compliance"],
+                "signature_path": compliance_doc["signature_path"],
+            },
+            {
+                "name": "risk_profile_alignment",
+                "path": "risk/live/binance/risk_profile_alignment.pdf",
+                "sha256": risk_doc["sha256"],
+                "signed": True,
+                "signed_by": ["risk"],
+                "signature_path": risk_doc["signature_path"],
+            },
+            {
+                "name": "penetration_report",
+                "path": "security/live/binance/penetration_report.pdf",
+                "sha256": penetration_doc["sha256"],
+                "signed": True,
+                "signed_by": ["security"],
+                "signature_path": penetration_doc["signature_path"],
+            },
+        ],
+    }
+    data["environments"]["binance_live"] = live_env
+
+    auto_trader_entry = data["runtime_entrypoints"]["auto_trader"]
+    auto_trader_entry["environment"] = "binance_live"
+    auto_trader_entry["trusted_auto_confirm"] = True
+    auto_trader_entry["compliance"] = {
+        "live_allowed": True,
+        "signed": True,
+        "require_signoff": True,
+        "risk_profiles": ["balanced"],
+        "signoffs": ["kyc2024", "risk_limits"],
+    }
+
+    config_path = tmp_path / "core_live.yaml"
+    config_path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+
+    storage, manager = _prepare_manager()
+    credentials_payload = {
+        "key_id": "live-key",
+        "secret": "live-secret",
+        "passphrase": None,
+        "permissions": ["read", "trade"],
+        "environment": Environment.LIVE.value,
+    }
+    storage.set_secret(
+        "tests:binance_live_key:trading",
+        json.dumps(credentials_payload),
+    )
+
+    with pytest.raises(RuntimeError) as exc:
+        bootstrap_environment("binance_live", config_path=config_path, secret_manager=manager)
+
+    assert "risk_profile_alignment" in str(exc.value)
 
 
 def test_sms_provider_fallback_without_providers_module(

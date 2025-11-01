@@ -47,6 +47,8 @@ from bot_core.config.models import (
     EnvironmentAIPipelineScheduleConfig,
     EnvironmentConfig,
     LicenseValidationConfig,
+    LiveChecklistDocumentConfig,
+    LiveReadinessChecklistConfig,
     MessengerChannelSettings,
     RiskProfileConfig,
     SMSProviderSettings,
@@ -78,6 +80,7 @@ from bot_core.exchanges.health_checks import build_standard_health_checks
 from bot_core.exchanges.zonda import ZondaSpotAdapter
 from bot_core.risk.base import RiskRepository
 from bot_core.risk.engine import ThresholdRiskEngine
+from bot_core.security.signing import verify_hmac_signature
 from bot_core.risk.events import RiskDecisionLog
 from bot_core.risk.factory import build_risk_profile_from_config
 from bot_core.risk.repository import FileRiskRepository
@@ -1600,6 +1603,262 @@ def build_live_readiness_checklist(
 _build_live_readiness_checklist = build_live_readiness_checklist
 
 
+class LiveSignatureVerificationError(RuntimeError):
+    """Błąd zgłaszany, gdy dokumenty LIVE nie przechodzą weryfikacji podpisów."""
+
+
+def _normalize_signature_identifier(value: str) -> str:
+    normalized = re.sub(r"[^A-Za-z0-9]+", "_", str(value)).strip("_")
+    return normalized.lower()
+
+
+def _resolve_live_document_path(path_value: str, *, document_root: Path | None) -> Path:
+    candidate = Path(path_value).expanduser()
+    if not candidate.is_absolute() and document_root is not None:
+        candidate = (document_root / candidate).expanduser()
+    return candidate.resolve(strict=False)
+
+
+def _compute_file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        while True:
+            chunk = handle.read(65536)
+            if not chunk:
+                break
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _extract_payload_sha256(payload: Mapping[str, Any]) -> str | None:
+    candidate = payload.get("sha256")
+    if isinstance(candidate, str) and candidate.strip():
+        return candidate
+    hashes = payload.get("hashes")
+    if isinstance(hashes, Mapping):
+        candidate = hashes.get("sha256")
+        if isinstance(candidate, str) and candidate.strip():
+            return candidate
+    document_entry = payload.get("document")
+    if isinstance(document_entry, Mapping):
+        candidate = document_entry.get("sha256")
+        if isinstance(candidate, str) and candidate.strip():
+            return candidate
+        hashes = document_entry.get("hashes")
+        if isinstance(hashes, Mapping):
+            candidate = hashes.get("sha256")
+            if isinstance(candidate, str) and candidate.strip():
+                return candidate
+    return None
+
+
+def _resolve_signature_key(key_id: str, *, document_root: Path | None) -> bytes:
+    if not key_id:
+        raise LiveSignatureVerificationError("Plik podpisu nie zawiera identyfikatora key_id.")
+
+    normalized = _normalize_signature_identifier(key_id)
+    candidates: list[Path] = []
+    if document_root is not None:
+        candidates.append(document_root / "secrets" / "hmac" / f"{normalized}.key")
+        if normalized != key_id:
+            candidates.append(document_root / "secrets" / "hmac" / f"{key_id}.key")
+    cwd_root = Path.cwd()
+    candidates.append(cwd_root / "secrets" / "hmac" / f"{normalized}.key")
+    if normalized != key_id:
+        candidates.append(cwd_root / "secrets" / "hmac" / f"{key_id}.key")
+
+    for candidate in candidates:
+        candidate = candidate.expanduser()
+        try:
+            data = candidate.read_bytes()
+        except FileNotFoundError:
+            continue
+        data = data.strip()
+        if not data:
+            raise LiveSignatureVerificationError(
+                f"Plik klucza HMAC {candidate} jest pusty."  # pragma: no cover - niepoprawna konfiguracja
+            )
+        return data
+
+    raise LiveSignatureVerificationError(
+        f"Nie znaleziono klucza HMAC dla key_id='{key_id}'. Umieść plik secrets/hmac/{normalized}.key."
+    )
+
+
+def _categorize_live_document(document: LiveChecklistDocumentConfig) -> tuple[str, ...]:
+    categories: list[str] = []
+    name_lower = str(document.name).strip().lower()
+    signed_by = {
+        str(entry).strip().lower()
+        for entry in (getattr(document, "signed_by", None) or ())
+        if str(entry).strip()
+    }
+    if "compliance" in signed_by or "kyc" in name_lower or "aml" in name_lower:
+        categories.append("compliance")
+    if "risk" in signed_by or "risk" in name_lower:
+        categories.append("risk")
+    if "penetration" in name_lower or "pentest" in name_lower:
+        categories.append("penetration")
+    return tuple(dict.fromkeys(categories))
+
+
+def _verify_live_document_signature(
+    document: LiveChecklistDocumentConfig,
+    *,
+    document_root: Path | None,
+) -> Mapping[str, Any]:
+    doc_path = _resolve_live_document_path(document.path, document_root=document_root)
+    if not doc_path.exists():
+        raise LiveSignatureVerificationError(f"Dokument '{document.name}' nie istnieje w ścieżce {doc_path}.")
+
+    actual_sha = _compute_file_sha256(doc_path)
+    declared_sha = getattr(document, "sha256", None)
+    if isinstance(declared_sha, str) and declared_sha.strip():
+        if declared_sha.strip().lower() != actual_sha.lower():
+            raise LiveSignatureVerificationError(
+                f"Suma kontrolna dokumentu '{document.name}' nie zgadza się z deklaracją w konfiguracji."
+            )
+
+    signature_path_value = getattr(document, "signature_path", None)
+    if not signature_path_value:
+        raise LiveSignatureVerificationError(
+            f"Dokument '{document.name}' nie posiada skonfigurowanej ścieżki podpisu."
+        )
+
+    signature_path = _resolve_live_document_path(signature_path_value, document_root=document_root)
+    if not signature_path.exists():
+        raise LiveSignatureVerificationError(
+            f"Plik podpisu dla dokumentu '{document.name}' nie istnieje: {signature_path}."
+        )
+
+    try:
+        signature_doc = json.loads(signature_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise LiveSignatureVerificationError(
+            f"Plik podpisu {signature_path} ma niepoprawny format JSON."
+        ) from exc
+
+    if not isinstance(signature_doc, Mapping):
+        raise LiveSignatureVerificationError(
+            f"Plik podpisu {signature_path} musi zawierać obiekt JSON z danymi podpisu."
+        )
+
+    payload_candidate = signature_doc.get("payload")
+    if isinstance(payload_candidate, Mapping):
+        payload = payload_candidate
+    else:
+        payload = {key: value for key, value in signature_doc.items() if key != "signature"}
+
+    signature_entry = signature_doc.get("signature")
+    if not isinstance(signature_entry, Mapping):
+        raise LiveSignatureVerificationError(
+            f"Plik podpisu {signature_path} nie zawiera sekcji 'signature'."
+        )
+
+    key_id = str(signature_entry.get("key_id") or "").strip()
+    key_bytes = _resolve_signature_key(key_id, document_root=document_root)
+    if not verify_hmac_signature(payload, signature_entry, key=key_bytes):
+        raise LiveSignatureVerificationError(
+            f"Niepoprawny podpis HMAC dokumentu '{document.name}'."
+        )
+
+    payload_sha = _extract_payload_sha256(payload)
+    if payload_sha and payload_sha.strip().lower() != actual_sha.lower():
+        raise LiveSignatureVerificationError(
+            f"Suma kontrolna w podpisie dokumentu '{document.name}' nie zgadza się z plikiem źródłowym."
+        )
+
+    return {
+        "name": document.name,
+        "path": str(doc_path),
+        "signature_path": str(signature_path),
+        "key_id": key_id,
+        "sha256": actual_sha,
+    }
+
+
+def _validate_live_signatures(
+    environment: EnvironmentConfig,
+    *,
+    document_root: Path | None,
+) -> Mapping[str, Any]:
+    readiness: LiveReadinessChecklistConfig | None = getattr(environment, "live_readiness", None)
+    if readiness is None:
+        raise LiveSignatureVerificationError("Środowisko live nie posiada sekcji live_readiness.")
+
+    documents = tuple(getattr(readiness, "documents", ()) or ())
+    if not documents:
+        raise LiveSignatureVerificationError(
+            "Sekcja live_readiness nie zawiera żadnych dokumentów do weryfikacji."
+        )
+
+    required_names = {str(name) for name in getattr(readiness, "required_documents", ()) or () if str(name)}
+    verification_results: dict[str, Mapping[str, Any]] = {}
+    failures: list[str] = []
+    categories_status = {"compliance": False, "risk": False, "penetration": False}
+    categories_seen = {"compliance": False, "risk": False, "penetration": False}
+
+    resolved_root = None
+    if document_root is not None:
+        try:
+            resolved_root = document_root.expanduser().resolve(strict=False)
+        except Exception:  # pragma: no cover - defensywnie wobec nietypowych ścieżek
+            resolved_root = document_root
+
+    for document in documents:
+        is_required = getattr(document, "required", True)
+        if required_names:
+            is_required = is_required or document.name in required_names
+        if not is_required:
+            continue
+
+        categories = _categorize_live_document(document)
+        if not categories:
+            continue
+        for category in categories:
+            categories_seen[category] = True
+
+        try:
+            verification = _verify_live_document_signature(
+                document,
+                document_root=resolved_root,
+            )
+        except LiveSignatureVerificationError as exc:
+            failures.append(f"{document.name}: {exc}")
+            continue
+
+        verification_results[document.name] = verification
+        for category in categories:
+            categories_status[category] = True
+
+    for category, seen in categories_seen.items():
+        if not seen:
+            failures.append(
+                {
+                    "compliance": "Brak podpisanego dokumentu compliance wymaganego do trybu live.",
+                    "risk": "Brak podpisanego dokumentu ryzyka wymaganego do trybu live.",
+                    "penetration": "Brak podpisanego raportu z testów penetracyjnych wymaganego do trybu live.",
+                }[category]
+            )
+        elif not categories_status[category]:
+            failures.append(
+                {
+                    "compliance": "Dokumenty compliance posiadają niepoprawny podpis HMAC.",
+                    "risk": "Dokumenty ryzyka posiadają niepoprawny podpis HMAC.",
+                    "penetration": "Raport penetracyjny posiada niepoprawny podpis HMAC.",
+                }[category]
+            )
+
+    if failures:
+        raise LiveSignatureVerificationError("; ".join(failures))
+
+    return {
+        "documents": verification_results,
+        "categories": categories_status,
+        "document_root": str(resolved_root) if resolved_root is not None else None,
+    }
+
+
 def extract_live_readiness_metadata(
     checklist: Sequence[Mapping[str, Any]] | None,
 ) -> Mapping[str, Any] | None:
@@ -1725,6 +1984,7 @@ class BootstrapContext:
     ai_pipeline_pending: Sequence[str] | None = None
     execution_service: Any | None = None
     live_readiness_checklist: Sequence[Mapping[str, Any]] | None = None
+    live_signature_verification: Mapping[str, Any] | None = None
     exchange_health_results: Sequence[HealthCheckResult] | None = None
 
 
@@ -3086,7 +3346,9 @@ def bootstrap_environment(
             risk_profile=selected_profile,
         )
     live_readiness_checklist: Sequence[Mapping[str, Any]] | None = None
+    live_signature_verification: Mapping[str, Any] | None = None
     if environment.environment is Environment.LIVE:
+        document_root = config_path_obj.parent
         try:
             live_readiness_checklist = build_live_readiness_checklist(
                 core_config=core_config,
@@ -3096,11 +3358,21 @@ def bootstrap_environment(
                 alert_router=alert_router,
                 alert_channels=alert_channels,
                 audit_log=audit_log,
-                document_root=config_path_obj.parent,
+                document_root=document_root,
             )
         except Exception:  # pragma: no cover - diagnostyka checklisty
             live_readiness_checklist = None
             _LOGGER.exception("Nie udało się zbudować checklisty live readiness")
+
+        try:
+            live_signature_verification = _validate_live_signatures(
+                environment,
+                document_root=document_root,
+            )
+        except LiveSignatureVerificationError as exc:
+            raise RuntimeError(
+                f"Nie można aktywować środowiska live '{environment.name}': {exc}"
+            ) from exc
 
     return BootstrapContext(
         core_config=core_config,
@@ -3165,6 +3437,7 @@ def bootstrap_environment(
         ai_pipeline_pending=tuple(ai_pipeline_pending) if ai_pipeline_pending else None,
         execution_service=execution_service,
         live_readiness_checklist=live_readiness_checklist,
+        live_signature_verification=live_signature_verification,
         exchange_health_results=health_results,
     )
 

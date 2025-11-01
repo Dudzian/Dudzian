@@ -1,19 +1,21 @@
 """Wspólne narzędzia do lokalnego streamingu opartego o long-polle REST/gRPC."""
 from __future__ import annotations
 
+import asyncio
 import gzip
 import json
 import logging
 import random
+import threading
 import time
 import zlib
 from collections import deque
 from datetime import timezone
 from dataclasses import dataclass
-from typing import Any, Callable, Deque, Iterable, Mapping, MutableMapping, Sequence
+from typing import Any, AsyncIterator, Callable, Deque, Iterable, Mapping, MutableMapping, Sequence
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urlsplit
-from urllib.request import Request, urlopen
+from urllib.request import Request
 from email.utils import parsedate_to_datetime
 
 from bot_core.exchanges.errors import (
@@ -22,6 +24,7 @@ from bot_core.exchanges.errors import (
     ExchangeNetworkError,
     ExchangeThrottlingError,
 )
+from bot_core.exchanges.http_client import urlopen
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -172,6 +175,11 @@ class LocalLongPollStream(Iterable[StreamBatch]):
             return
         self._closed = True
         self._pending.clear()
+
+    def websocket_bridge(self, *, buffer_size: int = 128) -> "LocalWebSocketBridge":
+        """Tworzy most asynchroniczny wystawiający dane jak kanał websocketowy."""
+
+        return LocalWebSocketBridge(self, buffer_size=buffer_size)
 
     # ------------------------------------------------------------------
     # Wewnętrzne operacje long-polla
@@ -710,4 +718,99 @@ class LocalLongPollStream(Iterable[StreamBatch]):
         return numeric
 
 
-__all__ = ["LocalLongPollStream", "StreamBatch"]
+class LocalWebSocketBridge:
+    """Przekształca strumień long-pollowy w asynchroniczny kanał websocketowy."""
+
+    __slots__ = (
+        "_stream",
+        "_stream_factory",
+        "_buffer_size",
+        "_queue",
+        "_thread",
+        "_loop",
+        "_stop_event",
+    )
+
+    def __init__(
+        self,
+        stream: LocalLongPollStream | Callable[[], LocalLongPollStream],
+        *,
+        buffer_size: int = 128,
+    ) -> None:
+        if isinstance(stream, LocalLongPollStream):
+            self._stream = stream
+            self._stream_factory: Callable[[], LocalLongPollStream] | None = None
+        else:
+            self._stream = None
+            self._stream_factory = stream
+        self._buffer_size = max(1, int(buffer_size))
+        self._queue: asyncio.Queue[StreamBatch | Exception | None] = asyncio.Queue(
+            maxsize=self._buffer_size
+        )
+        self._thread: threading.Thread | None = None
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._stop_event = threading.Event()
+
+    async def __aenter__(self) -> "LocalWebSocketBridge":  # noqa: D401
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb) -> None:  # noqa: D401
+        await self.close()
+
+    def __aiter__(self) -> AsyncIterator[StreamBatch]:  # noqa: D401
+        return self.batches()
+
+    def _ensure_thread(self) -> None:
+        if self._thread and self._thread.is_alive():
+            return
+        if self._loop is None:
+            raise RuntimeError("Most websocketowy wymaga aktywnej pętli asyncio.")
+        self._stop_event.clear()
+        self._thread = threading.Thread(target=self._run, name="LocalWebSocketBridge", daemon=True)
+        self._thread.start()
+
+    def _run(self) -> None:
+        stream = self._stream if self._stream is not None else self._stream_factory()
+        if stream is None:
+            asyncio.run_coroutine_threadsafe(
+                self._queue.put(Exception("Nie udało się utworzyć strumienia long-pollowego.")),
+                self._loop,
+            )
+            return
+        try:
+            with stream:
+                for batch in stream:
+                    if self._stop_event.is_set():
+                        break
+                    fut = asyncio.run_coroutine_threadsafe(self._queue.put(batch), self._loop)
+                    try:
+                        fut.result()
+                    except Exception:
+                        break
+        except Exception as exc:  # pragma: no cover - błędy przekazywane asynchronicznie
+            asyncio.run_coroutine_threadsafe(self._queue.put(exc), self._loop).result()
+        finally:
+            asyncio.run_coroutine_threadsafe(self._queue.put(None), self._loop).result()
+
+    async def batches(self) -> AsyncIterator[StreamBatch]:
+        """Asynchroniczny iterator paczek strumienia."""
+
+        self._loop = asyncio.get_running_loop()
+        self._ensure_thread()
+        while True:
+            item = await self._queue.get()
+            if item is None:
+                break
+            if isinstance(item, Exception):
+                raise item
+            yield item
+
+    async def close(self) -> None:
+        if self._thread and self._thread.is_alive():
+            self._stop_event.set()
+            await asyncio.to_thread(self._thread.join, timeout=1.0)
+        self._thread = None
+        self._loop = None
+
+
+__all__ = ["LocalLongPollStream", "StreamBatch", "LocalWebSocketBridge"]

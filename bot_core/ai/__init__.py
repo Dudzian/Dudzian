@@ -20,8 +20,10 @@ _EXPORTS: Dict[str, Tuple[str, str]] = {
     "parse_explainability_payload": (".explainability", "parse_explainability_payload"),
     # modele i serializacja
     "ModelArtifact": (".models", "ModelArtifact"),
+    "ModelArtifactBundle": (".models", "ModelArtifactBundle"),
     "ModelMetrics": (".models", "ModelMetrics"),
     "ModelScore": (".models", "ModelScore"),
+    "generate_model_artifact_bundle": (".models", "generate_model_artifact_bundle"),
     "ModelArtifactValidationError": (".validation", "ModelArtifactValidationError"),
     "validate_model_artifact_schema": (".validation", "validate_model_artifact_schema"),
     # training pipeline
