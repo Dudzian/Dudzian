@@ -62,7 +62,8 @@ class LicenseActivationRecord:
 
         repeat_activation = bool(payload.get("repeat_activation"))
         bundle_path = str(payload.get("bundle_path") or "").strip() or None
-        payload_sha256 = str(payload.get("payload_sha256") or "").strip() or None
+        raw_digest = str(payload.get("payload_sha256") or "").strip()
+        payload_sha256 = raw_digest.lower() or None
 
         return cls(
             timestamp=timestamp,

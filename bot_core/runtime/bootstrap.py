@@ -96,6 +96,7 @@ from bot_core.security.license import (
     LicenseValidationResult,
     validate_license_from_config,
 )
+from bot_core.security.messages import make_warning
 from bot_core.security.license_service import LicenseService, LicenseServiceError
 from bot_core.security.guards import (
     LicenseCapabilityError,
@@ -1631,23 +1632,30 @@ def _compute_file_sha256(path: Path) -> str:
 
 
 def _extract_payload_sha256(payload: Mapping[str, Any]) -> str | None:
-    candidate = payload.get("sha256")
-    if isinstance(candidate, str) and candidate.strip():
+    def _normalize(candidate: object) -> str | None:
+        if isinstance(candidate, str):
+            normalized = candidate.strip().lower()
+            if normalized:
+                return normalized
+        return None
+
+    candidate = _normalize(payload.get("sha256"))
+    if candidate:
         return candidate
     hashes = payload.get("hashes")
     if isinstance(hashes, Mapping):
-        candidate = hashes.get("sha256")
-        if isinstance(candidate, str) and candidate.strip():
+        candidate = _normalize(hashes.get("sha256"))
+        if candidate:
             return candidate
     document_entry = payload.get("document")
     if isinstance(document_entry, Mapping):
-        candidate = document_entry.get("sha256")
-        if isinstance(candidate, str) and candidate.strip():
+        candidate = _normalize(document_entry.get("sha256"))
+        if candidate:
             return candidate
         hashes = document_entry.get("hashes")
         if isinstance(hashes, Mapping):
-            candidate = hashes.get("sha256")
-            if isinstance(candidate, str) and candidate.strip():
+            candidate = _normalize(hashes.get("sha256"))
+            if candidate:
                 return candidate
     return None
 
@@ -1763,7 +1771,7 @@ def _verify_live_document_signature(
         )
 
     payload_sha = _extract_payload_sha256(payload)
-    if payload_sha and payload_sha.strip().lower() != actual_sha.lower():
+    if payload_sha and payload_sha != actual_sha:
         raise LiveSignatureVerificationError(
             f"Suma kontrolna w podpisie dokumentu '{document.name}' nie zgadza się z plikiem źródłowym."
         )
@@ -2055,7 +2063,10 @@ def bootstrap_environment(
             revocation_signature_key=None,
             errors=[],
             warnings=[
-                "Pominięto weryfikację licencji OEM – brak konfiguracji kluczy HMAC."
+                make_warning(
+                    "license.validation_skipped",
+                    "Pominięto weryfikację licencji OEM – brak konfiguracji kluczy HMAC.",
+                )
             ],
             payload=None,
             license_signature_key=None,
@@ -2084,8 +2095,9 @@ def bootstrap_environment(
 
     if license_result is not None:
         if license_result.warnings:
-            for message in license_result.warnings:
-                _LOGGER.warning("Weryfikacja licencji: %s", message)
+            for warning in license_result.warnings:
+                text = warning.message if hasattr(warning, "message") else str(warning)
+                _LOGGER.warning("Weryfikacja licencji: %s", text)
         _LOGGER.info(
             "Licencja OEM zweryfikowana (id=%s, fingerprint=%s, wygasa=%s, revocation=%s)",
             license_result.license_id or "brak",
