@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Mapping
 
+import anyio
+import asyncio
 import json
 import httpx
 import pytest
@@ -201,6 +203,20 @@ def test_fetch_trades_does_not_mutate_params(api_mock: "respx.Router", client: N
     client.fetch_trades(headers={"X-Auth": "abc"}, params=params)
 
     assert params == {"symbol": "BTCUSDT", "limit": 10, "start": None}
+
+
+def test_client_sync_calls_work_in_thread_with_running_loop(
+    api_mock: "respx.Router",
+    client: NowaGieldaHTTPClient,
+) -> None:
+    api_mock.get("/private/account").mock(return_value=httpx.Response(200, json={"balances": []}))
+
+    async def _exercise() -> Mapping[str, Any]:
+        return await asyncio.to_thread(client.fetch_account, headers={"X-Auth": "abc"})
+
+    result = anyio.run(_exercise)
+
+    assert result == {"balances": []}
 
 
 def test_create_order_sends_json_payload(api_mock: "respx.Router", client: NowaGieldaHTTPClient) -> None:

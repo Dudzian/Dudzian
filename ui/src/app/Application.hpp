@@ -16,6 +16,7 @@
 
 #include <memory>
 #include <optional>
+#include <vector>
 
 #include "grpc/GrpcTlsConfig.hpp"
 #include "grpc/TradingClient.hpp"
@@ -34,6 +35,7 @@
 #include "telemetry/TelemetryReporter.hpp"
 #include "telemetry/TelemetryTlsConfig.hpp"
 #include "telemetry/PerformanceTelemetryController.hpp"
+#include "runtime/RuntimeDecisionBridge.hpp"
 
 class QQuickWindow;
 class QScreen;
@@ -49,6 +51,7 @@ class HealthStatusController;          // forward decl (health/HealthStatusContr
 class OfflineRuntimeBridge;            // forward decl (runtime/OfflineRuntimeBridge.hpp)
 class UiModuleManager;                 // forward decl (app/UiModuleManager.hpp)
 class UiModuleViewsModel;              // forward decl (app/UiModuleViewsModel.hpp)
+class UiModuleInterface;               // forward decl (app/UiModuleInterface.hpp)
 class MetricsClientInterface;          // forward decl (grpc/MetricsClient.hpp)
 class HealthClientInterface;           // forward decl (grpc/HealthClient.hpp)
 class ConfigurationWizardController;   // forward decl (app/ConfigurationWizardController.hpp)
@@ -130,12 +133,14 @@ public:
     bool             reduceMotionActive() const { return m_reduceMotionActive; }
     QObject*         riskModel() const { return const_cast<RiskStateModel*>(&m_riskModel); }
     QObject*         activationController() const;
+    QObject*         licenseController() const { return m_licenseController.get(); }
     QObject*         reportController() const;
     QObject*         strategyController() const;
     QObject*         workbenchController() const;
     QObject*         supportController() const;
     QObject*         healthController() const;
     QObject*         decisionLogModel() const;
+    QObject*         decisionFilterModel() const { return const_cast<DecisionLogFilterProxyModel*>(&m_decisionLogFilter); }
     QObject*         moduleManager() const;
     QObject*         moduleViewsModel() const;
     QObject*         marketplaceController() const;
@@ -143,6 +148,7 @@ public:
     QObject*         configurationWizard() const;
     QObject*         updateManager() const;
     QObject*         resultsDashboard() const;
+    QObject*         runtimeService() const { return m_runtimeBridge.get(); }
     QObject*         alertsModel() const { return const_cast<AlertsModel*>(&m_alertsModel); }
     QObject*         alertsFilterModel() const { return const_cast<AlertsFilterProxyModel*>(&m_filteredAlertsModel); }
     QObject*         riskHistoryModel() const { return const_cast<RiskHistoryModel*>(&m_riskHistoryModel); }
@@ -294,6 +300,7 @@ private slots:
 private:
     // Rejestracja obiektów w kontekście QML
     void exposeToQml();
+    void registerBuiltinModules();
 
     // FPS/Reduce-motion
     void ensureFrameMonitor();
@@ -479,6 +486,8 @@ private:
     std::unique_ptr<ResultsDashboardModel>     m_resultsDashboard;
     std::unique_ptr<UiModuleManager>           m_moduleManager;
     std::unique_ptr<UiModuleViewsModel>        m_moduleViewsModel;
+    std::unique_ptr<RuntimeDecisionBridge>     m_runtimeBridge;
+    std::vector<std::unique_ptr<UiModuleInterface>> m_builtinModules;
 
     // --- Telemetry state ---
     std::unique_ptr<PerformanceTelemetryController> m_performanceTelemetry;

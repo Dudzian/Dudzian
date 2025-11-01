@@ -1,6 +1,7 @@
 import pytest
 
 from bot_core.strategies.catalog import (
+    DEFAULT_STRATEGY_CATALOG,
     StrategyCatalog,
     StrategyPresetValidationError,
 )
@@ -56,3 +57,13 @@ def test_validate_preset_payload_requires_engine_field() -> None:
         catalog.validate_preset_payload(payload)
 
     assert any("strategies.0.engine" in message for message in excinfo.value.errors)
+
+
+def test_validate_preset_payload_rejects_unknown_engine() -> None:
+    payload = _build_minimal_preset()
+    payload["strategies"][0]["engine"] = "non_existing"  # type: ignore[index]
+
+    with pytest.raises(StrategyPresetValidationError) as excinfo:
+        DEFAULT_STRATEGY_CATALOG.validate_preset_payload(payload)
+
+    assert any("nieznany silnik" in message for message in excinfo.value.errors)

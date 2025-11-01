@@ -1,7 +1,6 @@
 """Asynchroniczny wrapper HTTP zastępujący ``urllib.request.urlopen`` w adapterach giełdowych."""
 from __future__ import annotations
 
-import asyncio
 import io
 import threading
 from dataclasses import dataclass
@@ -12,7 +11,7 @@ from urllib.request import Request
 
 import httpx
 
-from core.network import RateLimitedAsyncClient, get_rate_limited_client
+from core.network import RateLimitedAsyncClient, get_rate_limited_client, run_sync
 
 
 __all__ = ["urlopen", "AsyncHTTPResponse"]
@@ -156,4 +155,4 @@ async def _async_open(request: Request | str, timeout: float | None = None) -> A
 def urlopen(request: Request | str, timeout: float | None = None) -> AsyncHTTPResponse:
     """Blokujące API kompatybilne z ``urllib.request.urlopen``."""
 
-    return asyncio.run(_async_open(request, timeout=timeout))
+    return run_sync(_async_open, request, timeout=timeout)

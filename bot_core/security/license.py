@@ -5,6 +5,8 @@ import json
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+import hashlib
+import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Mapping, Sequence
 
@@ -18,6 +20,66 @@ if TYPE_CHECKING:
     from bot_core.security.guards import CapabilityGuard
 
 LOGGER = logging.getLogger(__name__)
+
+
+LICENSE_TELEMETRY_ENV = "BOT_CORE_LICENSE_TELEMETRY_PATH"
+DEFAULT_LICENSE_TELEMETRY_PATH = Path("logs/security/license_telemetry.jsonl")
+
+
+def _mask_identifier(value: str | None) -> str | None:
+    if not value:
+        return None
+    digest = hashlib.sha256(value.encode("utf-8")).hexdigest()
+    return digest[:32]
+
+
+def _license_telemetry_path() -> Path:
+    location = os.environ.get(LICENSE_TELEMETRY_ENV)
+    if location:
+        return Path(location).expanduser()
+    return DEFAULT_LICENSE_TELEMETRY_PATH
+
+
+def _write_license_telemetry(payload: Mapping[str, Any]) -> None:
+    path = _license_telemetry_path()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as handle:
+            json.dump(payload, handle, ensure_ascii=False, separators=(",", ":"))
+            handle.write("\n")
+    except Exception:  # pragma: no cover - logujemy tylko w debug
+        LOGGER.debug("Nie udało się zapisać telemetrii licencji", exc_info=True)
+
+
+def _emit_license_telemetry(
+    *,
+    event: str,
+    preset_id: str,
+    module_id: str | None,
+    license_id: str | None,
+    capability: str | None,
+    fingerprint_candidates: Sequence[str],
+    issues: Sequence[str],
+    hwid: str | None = None,
+    error: str | None = None,
+) -> None:
+    payload: dict[str, Any] = {
+        "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "event": event,
+        "preset_id": preset_id,
+        "module_id": module_id,
+        "license_id_hash": _mask_identifier(license_id),
+        "capability": capability,
+        "fingerprint_candidate_count": len(fingerprint_candidates),
+        "fingerprint_candidates": [
+            _mask_identifier(candidate) for candidate in fingerprint_candidates if candidate
+        ],
+        "hwid_hash": _mask_identifier(hwid),
+        "issues": list(dict.fromkeys(str(issue) for issue in issues)),
+    }
+    if error:
+        payload["error"] = error
+    _write_license_telemetry(payload)
 
 
 @dataclass(slots=True)

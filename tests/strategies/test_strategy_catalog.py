@@ -6,6 +6,9 @@ from datetime import date
 import pytest
 
 from bot_core.security.capabilities import build_capabilities_from_payload
+import json
+from pathlib import Path
+
 from bot_core.security.guards import install_capability_guard, reset_capability_guard
 from bot_core.config.loader import (
     _load_cross_exchange_hedge_strategies,
@@ -29,6 +32,8 @@ from bot_core.exchanges.base import Environment
 from bot_core.strategies.base import StrategyEngine
 from bot_core.strategies.catalog import (
     DEFAULT_STRATEGY_CATALOG,
+    PresetLicenseState,
+    StrategyCatalog,
     StrategyDefinition,
     StrategyPresetWizard,
 )
@@ -211,6 +216,42 @@ def test_catalog_describe_definitions_skips_blocked_capabilities() -> None:
         assert summary == []
     finally:
         reset_capability_guard()
+
+
+def test_license_telemetry_records_mismatch(tmp_path: Path, monkeypatch) -> None:
+    telemetry_path = tmp_path / "license_telemetry.jsonl"
+    monkeypatch.setenv("BOT_CORE_LICENSE_TELEMETRY_PATH", str(telemetry_path))
+
+    catalog = StrategyCatalog()
+    metadata = {"module_id": "demo", "license_id": "demo"}
+    license_payload = {
+        "module_id": "demo",
+        "license_id": "demo",
+        "edition": "standard",
+        "capability": "demo_capability",
+        "fingerprint": "expected-fingerprint",
+    }
+
+    class _DummyProvider:
+        def read(self) -> str:
+            return "other-fingerprint"
+
+    status = catalog._compute_license_status(
+        "preset-demo",
+        metadata=metadata,
+        license_payload=license_payload,
+        signature_verified=True,
+        hwid_provider=_DummyProvider(),
+    )
+
+    assert status.status == PresetLicenseState.FINGERPRINT_MISMATCH
+    assert telemetry_path.exists()
+    payloads = telemetry_path.read_text(encoding="utf-8").strip().splitlines()
+    assert payloads
+    event = json.loads(payloads[-1])
+    assert event["event"] == "fingerprint_mismatch"
+    assert event["preset_id"] == "preset-demo"
+    assert event["fingerprint_candidate_count"] == 1
 
 
 def test_loader_backfills_metadata_for_legacy_definitions() -> None:

@@ -80,9 +80,18 @@ from bot_core.config.models import (
 from bot_core.exchanges.base import Environment
 from bot_core.exchanges.core import Mode
 try:
-    from bot_core.strategies.catalog import DEFAULT_STRATEGY_CATALOG
+    from bot_core.strategies.catalog import DEFAULT_STRATEGY_CATALOG as _DEFAULT_STRATEGY_CATALOG
 except Exception:  # pragma: no cover - niektóre gałęzie mają niekompletne strategie
-    DEFAULT_STRATEGY_CATALOG = {}  # type: ignore[assignment]
+    _DEFAULT_STRATEGY_CATALOG = None  # type: ignore[assignment]
+
+
+def _resolve_strategy_catalog():
+    global _DEFAULT_STRATEGY_CATALOG
+    if _DEFAULT_STRATEGY_CATALOG is None:
+        from bot_core.strategies.catalog import DEFAULT_STRATEGY_CATALOG as _catalog
+
+        _DEFAULT_STRATEGY_CATALOG = _catalog
+    return _DEFAULT_STRATEGY_CATALOG
 
 
 try:  # Stage6 asset-level konfiguracja governora
@@ -766,8 +775,9 @@ def _load_strategy_definitions(raw: Mapping[str, Any]):
             tags = tuple(str(tag) for tag in tags_source)
         else:
             tags = (str(tags_source),) if tags_source else ()
+        catalog = _resolve_strategy_catalog()
         try:
-            spec = DEFAULT_STRATEGY_CATALOG.get(engine)
+            spec = catalog.get(engine)
         except KeyError:
             spec = None
         license_tier = str(entry.get("license_tier", "")).strip()
@@ -800,8 +810,9 @@ def _load_strategy_definitions(raw: Mapping[str, Any]):
     def _ensure(name: str, engine: str, params: Mapping[str, Any]) -> None:
         if name in definitions:
             return
+        catalog = _resolve_strategy_catalog()
         try:
-            spec = DEFAULT_STRATEGY_CATALOG.get(engine)
+            spec = catalog.get(engine)
             license_tier = spec.license_tier
             risk_classes = spec.risk_classes
             required_data = spec.required_data

@@ -48,6 +48,7 @@
 #include "license/LicenseActivationController.hpp"
 #include "app/ActivationController.hpp"
 #include "app/ConfigurationWizardController.hpp"
+#include "app/UiModuleInterface.hpp"
 #include "app/UiModuleManager.hpp"
 #include "app/UiModuleViewsModel.hpp"
 #include "app/StrategyConfigController.hpp"
@@ -89,6 +90,192 @@ constexpr auto kRegimeThresholdsEnv = QByteArrayLiteral("BOT_CORE_UI_REGIME_THRE
 constexpr auto kRegimeTimelineLimitEnv = QByteArrayLiteral("BOT_CORE_UI_REGIME_TIMELINE_LIMIT");
 constexpr auto kTransportModeEnv = QByteArrayLiteral("BOT_CORE_UI_TRANSPORT_MODE");
 constexpr auto kTransportDatasetEnv = QByteArrayLiteral("BOT_CORE_UI_TRANSPORT_DATASET");
+
+class StrategyUiModule final : public UiModuleInterface {
+public:
+    explicit StrategyUiModule(Application* app)
+        : m_app(app)
+    {
+    }
+
+    QString moduleId() const override { return QStringLiteral("core.strategy"); }
+
+    void registerComponents(UiModuleManager& manager) override
+    {
+        UiModuleManager::ViewDescriptor configurator;
+        configurator.id = QStringLiteral("strategy.configurator");
+        configurator.name = QObject::tr("Konfigurator strategii");
+        configurator.source = QUrl(QStringLiteral("qrc:/qml/views/StrategyConfigurator.qml"));
+        configurator.category = QObject::tr("Strategie");
+        QVariantMap configMeta;
+        configMeta.insert(QStringLiteral("description"),
+                          QObject::tr("Definiuj parametry decyzji, harmonogramy i profile AI."));
+        configMeta.insert(QStringLiteral("requiresLicense"), true);
+        configurator.metadata = configMeta;
+        manager.registerView(moduleId(), configurator);
+
+        UiModuleManager::ViewDescriptor workbench;
+        workbench.id = QStringLiteral("strategy.workbench");
+        workbench.name = QObject::tr("Warsztat strategii");
+        workbench.source = QUrl(QStringLiteral("qrc:/qml/components/workbench/StrategyWorkbench.qml"));
+        workbench.category = QObject::tr("Strategie");
+        QVariantMap workbenchMeta;
+        workbenchMeta.insert(QStringLiteral("description"),
+                             QObject::tr("Kalibruj strategie na danych historycznych i profilach ryzyka."));
+        workbench.metadata = workbenchMeta;
+        manager.registerView(moduleId(), workbench);
+
+        UiModuleManager::ServiceDescriptor configService;
+        configService.id = QStringLiteral("strategy.configController");
+        configService.name = QStringLiteral("StrategyConfigController");
+        configService.singleton = true;
+        configService.factory = [this](QObject*) -> QObject* {
+            return m_app ? m_app->strategyController() : nullptr;
+        };
+        manager.registerService(moduleId(), configService);
+
+        UiModuleManager::ServiceDescriptor workbenchService;
+        workbenchService.id = QStringLiteral("strategy.workbenchController");
+        workbenchService.name = QStringLiteral("StrategyWorkbenchController");
+        workbenchService.singleton = true;
+        workbenchService.factory = [this](QObject*) -> QObject* {
+            return m_app ? m_app->workbenchController() : nullptr;
+        };
+        manager.registerService(moduleId(), workbenchService);
+    }
+
+private:
+    Application* m_app = nullptr;
+};
+
+class MonitoringUiModule final : public UiModuleInterface {
+public:
+    explicit MonitoringUiModule(Application* app)
+        : m_app(app)
+    {
+    }
+
+    QString moduleId() const override { return QStringLiteral("core.monitoring"); }
+
+    void registerComponents(UiModuleManager& manager) override
+    {
+        UiModuleManager::ViewDescriptor operations;
+        operations.id = QStringLiteral("monitoring.operations");
+        operations.name = QObject::tr("Centrum operacyjne");
+        operations.source = QUrl(QStringLiteral("qrc:/qml/views/OperationsCenter.qml"));
+        operations.category = QObject::tr("Monitoring");
+        QVariantMap operationsMeta;
+        operationsMeta.insert(QStringLiteral("description"),
+                              QObject::tr("Podgląd portfela, alertów i logów decyzji w czasie rzeczywistym."));
+        operationsMeta.insert(QStringLiteral("requiresLicense"), true);
+        operations.metadata = operationsMeta;
+        manager.registerView(moduleId(), operations);
+
+        UiModuleManager::ViewDescriptor portfolio;
+        portfolio.id = QStringLiteral("monitoring.portfolio");
+        portfolio.name = QObject::tr("Dashboard portfela");
+        portfolio.source = QUrl(QStringLiteral("qrc:/qml/views/PortfolioDashboard.qml"));
+        portfolio.category = QObject::tr("Monitoring");
+        QVariantMap portfolioMeta;
+        portfolioMeta.insert(QStringLiteral("description"),
+                             QObject::tr("Analizuj ekspozycję giełd, strategii i historię kapitału."));
+        portfolio.metadata = portfolioMeta;
+        manager.registerView(moduleId(), portfolio);
+
+        UiModuleManager::ServiceDescriptor alertsService;
+        alertsService.id = QStringLiteral("monitoring.alertsModel");
+        alertsService.name = QStringLiteral("AlertsModel");
+        alertsService.singleton = true;
+        alertsService.factory = [this](QObject*) -> QObject* {
+            return m_app ? m_app->alertsModel() : nullptr;
+        };
+        manager.registerService(moduleId(), alertsService);
+
+        UiModuleManager::ServiceDescriptor alertsFilterService;
+        alertsFilterService.id = QStringLiteral("monitoring.alertsFilterModel");
+        alertsFilterService.name = QStringLiteral("AlertsFilterProxyModel");
+        alertsFilterService.singleton = true;
+        alertsFilterService.factory = [this](QObject*) -> QObject* {
+            return m_app ? m_app->alertsFilterModel() : nullptr;
+        };
+        manager.registerService(moduleId(), alertsFilterService);
+
+        UiModuleManager::ServiceDescriptor decisionService;
+        decisionService.id = QStringLiteral("monitoring.decisionLogModel");
+        decisionService.name = QStringLiteral("DecisionLogModel");
+        decisionService.singleton = true;
+        decisionService.factory = [this](QObject*) -> QObject* {
+            return m_app ? m_app->decisionLogModel() : nullptr;
+        };
+        manager.registerService(moduleId(), decisionService);
+
+        UiModuleManager::ServiceDescriptor decisionFilterService;
+        decisionFilterService.id = QStringLiteral("monitoring.decisionFilterModel");
+        decisionFilterService.name = QStringLiteral("DecisionLogFilterProxyModel");
+        decisionFilterService.singleton = true;
+        decisionFilterService.factory = [this](QObject*) -> QObject* {
+            return m_app ? m_app->decisionFilterModel() : nullptr;
+        };
+        manager.registerService(moduleId(), decisionFilterService);
+
+        UiModuleManager::ServiceDescriptor runtimeService;
+        runtimeService.id = QStringLiteral("monitoring.runtimeService");
+        runtimeService.name = QStringLiteral("RuntimeDecisionBridge");
+        runtimeService.singleton = true;
+        runtimeService.factory = [this](QObject*) -> QObject* {
+            return m_app ? m_app->runtimeService() : nullptr;
+        };
+        manager.registerService(moduleId(), runtimeService);
+    }
+
+private:
+    Application* m_app = nullptr;
+};
+
+class LicenseUiModule final : public UiModuleInterface {
+public:
+    explicit LicenseUiModule(Application* app)
+        : m_app(app)
+    {
+    }
+
+    QString moduleId() const override { return QStringLiteral("core.license"); }
+
+    void registerComponents(UiModuleManager& manager) override
+    {
+        UiModuleManager::ViewDescriptor audit;
+        audit.id = QStringLiteral("license.audit");
+        audit.name = QObject::tr("Audyt licencji");
+        audit.source = QUrl(QStringLiteral("qrc:/qml/views/LicenseAuditView.qml"));
+        audit.category = QObject::tr("Licencje");
+        QVariantMap auditMeta;
+        auditMeta.insert(QStringLiteral("description"),
+                         QObject::tr("Weryfikuj status OEM, historię odświeżeń i ścieżkę fingerprintu."));
+        audit.metadata = auditMeta;
+        manager.registerView(moduleId(), audit);
+
+        UiModuleManager::ServiceDescriptor licenseController;
+        licenseController.id = QStringLiteral("license.controller");
+        licenseController.name = QStringLiteral("LicenseActivationController");
+        licenseController.singleton = true;
+        licenseController.factory = [this](QObject*) -> QObject* {
+            return m_app ? m_app->licenseController() : nullptr;
+        };
+        manager.registerService(moduleId(), licenseController);
+
+        UiModuleManager::ServiceDescriptor activationController;
+        activationController.id = QStringLiteral("license.activationController");
+        activationController.name = QStringLiteral("ActivationController");
+        activationController.singleton = true;
+        activationController.factory = [this](QObject*) -> QObject* {
+            return m_app ? m_app->activationController() : nullptr;
+        };
+        manager.registerService(moduleId(), activationController);
+    }
+
+private:
+    Application* m_app = nullptr;
+};
 
 class InProcessMetricsClient final : public MetricsClientInterface
 {
@@ -366,9 +553,11 @@ Application::Application(QQmlApplicationEngine& engine, QObject* parent)
     m_moduleManager = std::make_unique<UiModuleManager>(this);
     m_moduleViewsModel = std::make_unique<UiModuleViewsModel>(this);
     m_moduleViewsModel->setModuleManager(m_moduleManager.get());
+    registerBuiltinModules();
 
     m_decisionLogModel.setParent(this);
     m_decisionLogFilter.setSourceModel(&m_decisionLogModel);
+    m_runtimeBridge = std::make_unique<RuntimeDecisionBridge>(this);
     m_performanceTelemetry = std::make_unique<PerformanceTelemetryController>(this);
     m_performanceTelemetry->setPerformanceGuard(m_guard);
 
@@ -1979,6 +2168,23 @@ void Application::updateSupportBundleMetadata()
     m_supportController->setMetadata(metadata);
 }
 
+void Application::registerBuiltinModules()
+{
+    if (!m_moduleManager)
+        return;
+
+    m_builtinModules.clear();
+    m_builtinModules.emplace_back(std::make_unique<StrategyUiModule>(this));
+    m_builtinModules.emplace_back(std::make_unique<MonitoringUiModule>(this));
+    m_builtinModules.emplace_back(std::make_unique<LicenseUiModule>(this));
+
+    for (const auto& module : m_builtinModules) {
+        if (!module)
+            continue;
+        m_moduleManager->registerModule(module.get());
+    }
+}
+
 void Application::configureUiModules(const QCommandLineParser& parser)
 {
     if (!m_moduleManager)
@@ -3001,11 +3207,15 @@ bool Application::setDecisionLogPathInternal(const QString& path, bool emitSigna
     if (m_decisionLogPath == candidate) {
         if (emitSignal)
             Q_EMIT decisionLogPathChanged();
+        if (m_runtimeBridge)
+            m_runtimeBridge->setLogPath(m_decisionLogPath);
         return true;
     }
 
     m_decisionLogPath = candidate;
     m_decisionLogModel.setLogPath(m_decisionLogPath);
+    if (m_runtimeBridge)
+        m_runtimeBridge->setLogPath(m_decisionLogPath);
     if (emitSignal)
         Q_EMIT decisionLogPathChanged();
     return true;
@@ -3557,6 +3767,7 @@ void Application::exposeToQml() {
     m_engine.rootContext()->setContextProperty(QStringLiteral("supportController"), m_supportController.get());
     m_engine.rootContext()->setContextProperty(QStringLiteral("healthController"), m_healthController.get());
     m_engine.rootContext()->setContextProperty(QStringLiteral("decisionLogModel"), &m_decisionLogModel);
+    m_engine.rootContext()->setContextProperty(QStringLiteral("decisionFilterModel"), &m_decisionLogFilter);
     m_engine.rootContext()->setContextProperty(QStringLiteral("moduleManager"), m_moduleManager.get());
     m_engine.rootContext()->setContextProperty(QStringLiteral("moduleViewsModel"), m_moduleViewsModel.get());
     m_engine.rootContext()->setContextProperty(QStringLiteral("marketplaceController"), m_marketplaceController.get());
@@ -3564,6 +3775,7 @@ void Application::exposeToQml() {
     m_engine.rootContext()->setContextProperty(QStringLiteral("configurationWizard"), m_configurationWizard.get());
     m_engine.rootContext()->setContextProperty(QStringLiteral("updateManager"), m_updateManager.get());
     m_engine.rootContext()->setContextProperty(QStringLiteral("resultsDashboard"), m_resultsDashboard.get());
+    m_engine.rootContext()->setContextProperty(QStringLiteral("runtimeService"), m_runtimeBridge.get());
 }
 
 QObject* Application::activationController() const
@@ -3644,6 +3856,9 @@ void Application::setModuleManagerForTesting(std::unique_ptr<UiModuleManager> ma
     m_moduleManager = std::move(manager);
     if (m_moduleViewsModel)
         m_moduleViewsModel->setModuleManager(m_moduleManager.get());
+
+    if (m_moduleManager)
+        registerBuiltinModules();
 
     if (m_started)
         m_engine.rootContext()->setContextProperty(QStringLiteral("moduleManager"), m_moduleManager.get());
