@@ -221,9 +221,4 @@ private:
     void scheduleFingerprintReload(int delayMs = 0);
     void clearLicenseState();
     bool primeBindingSecret(const QString& fingerprint);
-    void handleBindingSecretCompletion(bool success, const QString& message,
-                                       const QByteArray& stdoutData, const QByteArray& stderrData);
-    void finalizeLicenseActivation(const LicenseInfo& info, bool persist, const QString& sourceDescription);
-    void cleanupBindingSecretJob();
-    void handleBindingSecretFailure(const QString& message);
 };

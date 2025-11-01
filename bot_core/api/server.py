@@ -3,7 +3,6 @@ from __future__ import annotations
 import sys
 
 import base64
-import inspect
 import logging
 import os
 import subprocess
@@ -1216,81 +1215,6 @@ def _serialize_marketplace_summary(
     return MessageToDict(summary, preserving_proto_field_name=True)
 
 
-def _resolve_stream_timeout_mode(stream: Any) -> tuple[Callable[..., Any] | None, str]:
-    """Inspect iterator to determine how to request timed messages."""
-
-    next_with_timeout = getattr(stream, "next_with_timeout", None)
-    if callable(next_with_timeout):
-        return next_with_timeout, "keyword"
-
-    candidate = getattr(stream, "next", None)
-    if not callable(candidate):
-        return None, "none"
-
-    try:
-        signature = inspect.signature(candidate)
-    except (TypeError, ValueError):
-        return candidate, "none"
-
-    parameters = list(signature.parameters.values())
-    if not parameters:
-        return candidate, "none"
-
-    for parameter in parameters:
-        if parameter.kind == inspect.Parameter.KEYWORD_ONLY and parameter.name == "timeout":
-            return candidate, "keyword"
-        if parameter.kind == inspect.Parameter.VAR_KEYWORD:
-            return candidate, "keyword"
-
-    for parameter in parameters:
-        if parameter.kind in (
-            inspect.Parameter.POSITIONAL_ONLY,
-            inspect.Parameter.POSITIONAL_OR_KEYWORD,
-        ):
-            return candidate, "positional"
-        if parameter.kind == inspect.Parameter.VAR_POSITIONAL:
-            return candidate, "positional"
-
-    return candidate, "none"
-
-
-def _start_market_stream(
-    service: Any,
-    request: trading_pb2.StreamOhlcvRequest,
-    *,
-    timeout_seconds: float | None,
-) -> Any:
-    """Invoke ``StreamOhlcv`` handling both local stubs and gRPC stubs."""
-
-    method = getattr(service, "StreamOhlcv")
-
-    attempts: list[Callable[[], Any]] = []
-    if timeout_seconds is not None:
-        attempts.extend(
-            [
-                lambda: method(request, timeout=timeout_seconds),
-                lambda: method(request, timeout_seconds),
-            ]
-        )
-    attempts.extend(
-        [
-            lambda: method(request, None),
-            lambda: method(request),
-        ]
-    )
-
-    last_error: TypeError | None = None
-    for attempt in attempts:
-        try:
-            return attempt()
-        except TypeError as exc:
-            last_error = exc
-            continue
-    if last_error is not None:
-        raise last_error
-    raise RuntimeError("Unable to start StreamOhlcv call")
-
-
 class LocalRuntimeGateway:
     """Small dispatch layer used by the desktop shell JSON bridge."""
 
@@ -1306,8 +1230,6 @@ class LocalRuntimeGateway:
             if context.marketplace_repository is not None and context.marketplace_enabled
             else None
         )
-        self._subscriptions: dict[str, _StreamSubscription] = {}
-        self._subscriptions_lock = threading.Lock()
 
     def dispatch(self, method: str, params: Mapping[str, Any]) -> Mapping[str, Any]:
         handlers: Mapping[str, Callable[[Mapping[str, Any]], Mapping[str, Any]]] = {
@@ -1326,79 +1248,6 @@ class LocalRuntimeGateway:
         if handler is None:
             raise KeyError(f"Unsupported method: {method}")
         return handler(params)
-
-    def _cleanup_subscription(self, subscription_id: str, *, cancel: bool = False) -> None:
-        with self._subscriptions_lock:
-            subscription = self._subscriptions.pop(subscription_id, None)
-        if subscription is None:
-            return
-        if cancel:
-            cancel_method = getattr(subscription.stream, "cancel", None)
-            if callable(cancel_method):
-                try:
-                    cancel_method()
-                except Exception:  # pragma: no cover - defensywny fallback
-                    _LOGGER.debug("Cancel stream for %s failed", subscription_id, exc_info=True)
-
-    def _consume_stream(
-        self,
-        subscription: _StreamSubscription,
-        *,
-        max_updates: int,
-        timeout_ms: int,
-    ) -> tuple[list[Mapping[str, Any]], list[Mapping[str, Any]], bool]:
-        snapshot: list[Mapping[str, Any]] = []
-        updates: list[Mapping[str, Any]] = []
-        exhausted = False
-        start = time.monotonic()
-        deadline = start + (timeout_ms / 1000.0) if timeout_ms > 0 else None
-        consumed = 0
-        stream = subscription.stream
-        timeout_callable, timeout_mode = _resolve_stream_timeout_mode(stream)
-        subscription.timeout_mode = timeout_mode
-
-        while True:
-            if snapshot and max_updates > 0 and consumed >= max_updates:
-                break
-            if deadline is not None:
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    break
-            else:
-                remaining = None
-            try:
-                if remaining is None or timeout_callable is None or timeout_mode == "none":
-                    message = next(stream)
-                else:
-                    arg = max(remaining, 0.0)
-                    try:
-                        if timeout_mode == "keyword":
-                            message = timeout_callable(timeout=arg)
-                        else:
-                            message = timeout_callable(arg)
-                    except TypeError:
-                        message = next(stream)
-                        timeout_callable = None
-                        timeout_mode = "none"
-                        subscription.timeout_mode = timeout_mode
-            except StopIteration:
-                exhausted = True
-                break
-            except grpc.RpcError as exc:
-                if exc.code() == grpc.StatusCode.DEADLINE_EXCEEDED:
-                    break
-                raise
-            subscription.last_access = time.monotonic()
-            if message.HasField("snapshot"):
-                snapshot = [_serialize_candle(c) for c in message.snapshot.candles]
-                if max_updates == 0 and deadline is None:
-                    break
-            if message.HasField("increment"):
-                updates.append(_serialize_candle(message.increment.candle))
-                consumed += 1
-        if not updates and not snapshot:
-            subscription.last_access = time.monotonic()
-        return snapshot, updates, exhausted
 
     def _health_check(self, params: Mapping[str, Any]) -> Mapping[str, Any]:
         del params
@@ -1431,106 +1280,20 @@ class LocalRuntimeGateway:
         return {"candles": candles, "has_more": response.has_more}
 
     def _stream_ohlcv(self, params: Mapping[str, Any]) -> Mapping[str, Any]:
-        subscription_id = str(params.get("subscription_id") or "").strip()
-        cancel_requested = bool(params.get("cancel"))
-        timeout_ms = int(params.get("timeout_ms") or 250)
-        max_updates = int(params.get("max_updates") or 1)
-        if max_updates < 0:
-            max_updates = 0
-        if timeout_ms < 0:
-            timeout_ms = 0
-
-        if subscription_id:
-            with self._subscriptions_lock:
-                subscription = self._subscriptions.get(subscription_id)
-            if subscription is None:
-                if cancel_requested:
-                    return {
-                        "subscription_id": subscription_id,
-                        "snapshot": [],
-                        "updates": [],
-                        "has_more": False,
-                        "cancelled": True,
-                    }
-                raise KeyError(f"Unknown subscription_id: {subscription_id}")
-            if cancel_requested:
-                self._cleanup_subscription(subscription_id, cancel=True)
-                return {
-                    "subscription_id": subscription_id,
-                    "snapshot": [],
-                    "updates": [],
-                    "has_more": False,
-                    "cancelled": True,
-                }
-            with subscription.lock:
-                _, subscription.timeout_mode = _resolve_stream_timeout_mode(subscription.stream)
-                snapshot, updates, exhausted = self._consume_stream(
-                    subscription,
-                    max_updates=max_updates,
-                    timeout_ms=timeout_ms,
-                )
-                subscription.exhausted = exhausted
-            if exhausted:
-                self._cleanup_subscription(subscription_id)
-            return {
-                "subscription_id": subscription_id,
-                "snapshot": snapshot,
-                "updates": updates,
-                "has_more": not exhausted,
-            }
-
         request = trading_pb2.StreamOhlcvRequest()
         instrument = request.instrument
         instrument.symbol = str(params.get("symbol") or "") or self._context.primary_symbol
-        stream = _start_market_stream(self._market, request, timeout_seconds=None)
-        _, timeout_mode = _resolve_stream_timeout_mode(stream)
-        if (
-            timeout_ms > 0
-            and timeout_mode == "none"
-            and not bool(params.get("continuous"))
-        ):
-            cancel_method = getattr(stream, "cancel", None)
-            if callable(cancel_method):
-                try:
-                    cancel_method()
-                except Exception:  # pragma: no cover - diagnostyczny fallback
-                    _LOGGER.debug("Stream cancel during retry failed", exc_info=True)
-            stream = _start_market_stream(
-                self._market,
-                request,
-                timeout_seconds=timeout_ms / 1000.0,
-            )
-            _, timeout_mode = _resolve_stream_timeout_mode(stream)
-        subscription = _StreamSubscription(stream=stream, timeout_mode=timeout_mode)
-        snapshot: list[Mapping[str, Any]]
-        updates: list[Mapping[str, Any]]
-        with subscription.lock:
-            snapshot, updates, exhausted = self._consume_stream(
-                subscription,
-                max_updates=max_updates,
-                timeout_ms=timeout_ms,
-            )
-            subscription.exhausted = exhausted
-
-        continuous = bool(params.get("continuous"))
-        response: dict[str, Any] = {
-            "snapshot": snapshot,
-            "updates": updates,
-            "has_more": continuous and not exhausted,
-        }
-        if continuous and not exhausted:
-            subscription_id = uuid.uuid4().hex
-            response["subscription_id"] = subscription_id
-            with self._subscriptions_lock:
-                self._subscriptions[subscription_id] = subscription
-        else:
-            cancel_method = getattr(subscription.stream, "cancel", None)
-            if callable(cancel_method):
-                try:
-                    cancel_method()
-                except Exception:  # pragma: no cover - diagnostyczne logowanie
-                    _LOGGER.debug("Stream cancel failed", exc_info=True)
-        return response
+        if params.get("limit"):
+            request.limit = int(params.get("limit"))
+        stream = self._market.StreamOhlcv(request, None)
+        snapshot: list[Mapping[str, Any]] = []
+        updates: list[Mapping[str, Any]] = []
+        for update in stream:
+            if update.HasField("snapshot"):
+                snapshot = [_serialize_candle(c) for c in update.snapshot.candles]
+            if update.HasField("increment"):
+                updates.append(_serialize_candle(update.increment.candle))
+        return {"snapshot": snapshot, "updates": updates}
 
     def _list_instruments(self, params: Mapping[str, Any]) -> Mapping[str, Any]:
         request = trading_pb2.ListTradableInstrumentsRequest()
