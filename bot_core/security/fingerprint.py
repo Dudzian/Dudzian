@@ -20,8 +20,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, MutableMapping, Optional, Sequence
 
-from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-
+from bot_core.security.fingerprint_crypto import (
+    current_hwid_digest as crypto_current_hwid_digest,
+    decrypt_license_secret as crypto_decrypt_license_secret,
+    derive_encryption_key as crypto_derive_encryption_key,
+    encrypt_license_secret as crypto_encrypt_license_secret,
+)
 from bot_core.security.rotation import RotationRegistry, RotationStatus
 from bot_core.security.signing import build_hmac_signature, canonical_json_bytes
 
@@ -77,64 +81,38 @@ def _license_secret_path(path: str | os.PathLike[str] | None) -> Path:
 
 def _current_hwid_digest(fingerprint: str) -> str:
     normalized = _normalize_binding_fingerprint(fingerprint)
-    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+    return crypto_current_hwid_digest(normalized)
 
 
 def _derive_encryption_key(fingerprint: str, salt: bytes) -> bytes:
     normalized = _normalize_binding_fingerprint(fingerprint)
-    return hmac.new(normalized.encode("utf-8"), salt, hashlib.sha256).digest()
+    return crypto_derive_encryption_key(normalized, salt)
 
 
 def _encrypt_license_secret(secret: bytes, fingerprint: str) -> Mapping[str, object]:
-    salt = os.urandom(16)
-    nonce = os.urandom(12)
-    key = _derive_encryption_key(fingerprint, salt)
-    cipher = AESGCM(key)
     normalized = _normalize_binding_fingerprint(fingerprint)
-    ciphertext = cipher.encrypt(nonce, secret, normalized.encode("utf-8"))
-    return {
-        "version": LICENSE_SECRET_FILE_VERSION,
-        "salt": base64.b64encode(salt).decode("ascii"),
-        "nonce": base64.b64encode(nonce).decode("ascii"),
-        "ciphertext": base64.b64encode(ciphertext).decode("ascii"),
-        "hwid_digest": _current_hwid_digest(fingerprint),
-        "length": len(secret),
-    }
+    return crypto_encrypt_license_secret(
+        secret,
+        normalized,
+        file_version=LICENSE_SECRET_FILE_VERSION,
+    )
 
 
 def _decrypt_license_secret(document: Mapping[str, object]) -> bytes:
-    version = document.get("version")
-    if version != LICENSE_SECRET_FILE_VERSION:
-        raise FingerprintError("Nieobsługiwana wersja zaszyfrowanego sekretu licencji.")
-
-    salt_b64 = document.get("salt")
-    nonce_b64 = document.get("nonce")
-    ciphertext_b64 = document.get("ciphertext")
-    if not all(isinstance(value, str) and value for value in (salt_b64, nonce_b64, ciphertext_b64)):
-        raise FingerprintError("Sekret licencji jest uszkodzony (brak danych szyfru).")
-
-    try:
-        salt = base64.b64decode(str(salt_b64).encode("ascii"))
-        nonce = base64.b64decode(str(nonce_b64).encode("ascii"))
-        ciphertext = base64.b64decode(str(ciphertext_b64).encode("ascii"))
-    except Exception as exc:  # pragma: no cover - dane mogą być zewnętrznie uszkodzone
-        raise FingerprintError("Sekret licencji zawiera niepoprawne dane base64.") from exc
-
     try:
         fingerprint = get_local_fingerprint()
     except Exception as exc:  # pragma: no cover - propagujemy w postaci FingerprintError
         raise FingerprintError("Nie udało się pobrać lokalnego fingerprintu do odszyfrowania sekretu.") from exc
 
     normalized = _normalize_binding_fingerprint(fingerprint)
-    expected_digest = _current_hwid_digest(fingerprint)
-    stored_digest = document.get("hwid_digest")
-    if isinstance(stored_digest, str) and stored_digest and stored_digest != expected_digest:
-        raise FingerprintError("Sekret licencji został zapisany dla innego urządzenia (fingerprint mismatch).")
-
-    key = _derive_encryption_key(fingerprint, salt)
-    cipher = AESGCM(key)
     try:
-        secret = cipher.decrypt(nonce, ciphertext, normalized.encode("utf-8"))
+        secret = crypto_decrypt_license_secret(
+            document,
+            normalized,
+            file_version=LICENSE_SECRET_FILE_VERSION,
+        )
+    except ValueError as exc:
+        raise FingerprintError(str(exc)) from exc
     except Exception as exc:  # pragma: no cover - błędne dane szyfru
         raise FingerprintError("Nie udało się odszyfrować sekretu licencji.") from exc
 
