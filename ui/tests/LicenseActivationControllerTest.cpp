@@ -8,6 +8,7 @@
 #include <QJsonObject>
 #include <QTemporaryDir>
 #include <QSignalSpy>
+#include <QTimer>
 
 #include "license/LicenseActivationController.hpp"
 
@@ -60,6 +61,60 @@ void writeLicenseFile(const QString& path, const QJsonDocument& doc)
     file.close();
 }
 
+class MockBindingSecretJob : public LicenseActivationController::BindingSecretJob {
+public:
+    enum Mode {
+        AutoSuccess,
+        AutoFailure,
+        Manual,
+    };
+
+    explicit MockBindingSecretJob(Mode mode, QObject* parent = nullptr)
+        : LicenseActivationController::BindingSecretJob(parent)
+        , m_mode(mode)
+    {
+        s_lastInstance = this;
+    }
+
+    void start(const QString&, const QStringList&) override
+    {
+        Q_EMIT started();
+        if (m_mode == AutoSuccess) {
+            QTimer::singleShot(0, this, [this]() { emitSuccess(); });
+        } else if (m_mode == AutoFailure) {
+            QTimer::singleShot(0, this, [this]() { emitFailure(QStringLiteral("auto-failure")); });
+        }
+    }
+
+    void cancel() override
+    {
+        QTimer::singleShot(0, this, [this]() { emitFailure(QStringLiteral("cancelled")); });
+    }
+
+    void emitSuccess(const QByteArray& stdoutPayload = QByteArrayLiteral("{\"status\":\"ok\"}"))
+    {
+        Q_EMIT completed(true, QString(), stdoutPayload, QByteArray());
+    }
+
+    void emitFailure(const QString& message, const QByteArray& stdoutPayload = QByteArray())
+    {
+        Q_EMIT completed(false, message, stdoutPayload, QByteArray());
+    }
+
+    static MockBindingSecretJob* takeLastInstance()
+    {
+        auto* instance = s_lastInstance;
+        s_lastInstance = nullptr;
+        return instance;
+    }
+
+private:
+    Mode m_mode;
+    static MockBindingSecretJob* s_lastInstance;
+};
+
+MockBindingSecretJob* MockBindingSecretJob::s_lastInstance = nullptr;
+
 } // namespace
 
 class LicenseActivationControllerTest : public QObject {
@@ -69,6 +124,8 @@ private slots:
     void activatesWithValidLicense();
     void rejectsMismatchedFingerprint();
     void acceptsBase64Payload();
+    void cancelsBindingSecretPriming();
+    void propagatesBindingSecretFailureStatus();
     void autoProvisionImportsMatchingLicense();
     void autoProvisionRunsDuringInitialize();
     void updatesFingerprintWhenDocumentCreated();
@@ -92,11 +149,17 @@ void LicenseActivationControllerTest::activatesWithValidLicense()
     writeLicenseFile(licenseFile, buildLicenseDocument(expectedFingerprint));
 
     LicenseActivationController controller;
+    controller.setBindingSecretJobFactory([](QObject* owner) {
+        return new MockBindingSecretJob(MockBindingSecretJob::AutoSuccess, owner);
+    });
     controller.setConfigDirectory(configDir);
     controller.setLicenseStoragePath(QDir(licenseDir).filePath(QStringLiteral("license.json")));
     controller.initialize();
 
+    QSignalSpy primingSpy(&controller, &LicenseActivationController::bindingSecretPrimingFinished);
     QVERIFY(controller.loadLicenseFile(licenseFile));
+    QVERIFY(primingSpy.wait());
+    QCOMPARE(primingSpy.takeFirst().at(0).toBool(), true);
     QVERIFY(controller.licenseActive());
     QCOMPARE(controller.licenseFingerprint(), expectedFingerprint);
     QCOMPARE(controller.licenseEdition(), QStringLiteral("pro"));
@@ -121,6 +184,9 @@ void LicenseActivationControllerTest::rejectsMismatchedFingerprint()
     writeFingerprintDocument(configDir, QStringLiteral("DEVICE-AAA"));
 
     LicenseActivationController controller;
+    controller.setBindingSecretJobFactory([](QObject* owner) {
+        return new MockBindingSecretJob(MockBindingSecretJob::Manual, owner);
+    });
     controller.setConfigDirectory(configDir);
     controller.setLicenseStoragePath(tempDir.filePath(QStringLiteral("var/licenses/active/license.json")));
     controller.initialize();
@@ -148,6 +214,9 @@ void LicenseActivationControllerTest::acceptsBase64Payload()
     writeFingerprintDocument(configDir, fingerprint);
 
     LicenseActivationController controller;
+    controller.setBindingSecretJobFactory([](QObject* owner) {
+        return new MockBindingSecretJob(MockBindingSecretJob::AutoSuccess, owner);
+    });
     controller.setConfigDirectory(configDir);
     controller.setLicenseStoragePath(tempDir.filePath(QStringLiteral("var/licenses/active/license.json")));
     controller.initialize();
@@ -156,11 +225,91 @@ void LicenseActivationControllerTest::acceptsBase64Payload()
                                    .toJson(QJsonDocument::Compact)
                                    .toBase64();
 
+    QSignalSpy primingSpy(&controller, &LicenseActivationController::bindingSecretPrimingFinished);
     QVERIFY(controller.applyLicenseText(QString::fromUtf8(encoded)));
+    QVERIFY(primingSpy.wait());
+    QCOMPARE(primingSpy.takeFirst().at(0).toBool(), true);
     QVERIFY(controller.licenseActive());
     QCOMPARE(controller.licenseFingerprint(), fingerprint);
     QCOMPARE(controller.licenseEdition(), QStringLiteral("pro"));
     QVERIFY(controller.statusMessage().contains(QStringLiteral("Licencja aktywna")));
+}
+
+void LicenseActivationControllerTest::cancelsBindingSecretPriming()
+{
+    QTemporaryDir tempDir;
+    QVERIFY(tempDir.isValid());
+
+    const QString configDir = tempDir.filePath(QStringLiteral("config"));
+    QDir().mkpath(configDir);
+    const QString fingerprint = QStringLiteral("DEVICE-CANCEL");
+    writeFingerprintDocument(configDir, fingerprint);
+
+    LicenseActivationController controller;
+    controller.setBindingSecretJobFactory([](QObject* owner) {
+        return new MockBindingSecretJob(MockBindingSecretJob::Manual, owner);
+    });
+    controller.setConfigDirectory(configDir);
+    controller.setLicenseStoragePath(tempDir.filePath(QStringLiteral("var/licenses/active/license.json")));
+    controller.initialize();
+
+    const QByteArray encoded = buildLicenseDocument(fingerprint)
+                                   .toJson(QJsonDocument::Compact)
+                                   .toBase64();
+
+    QSignalSpy primingSpy(&controller, &LicenseActivationController::bindingSecretPrimingFinished);
+    QVERIFY(controller.applyLicenseText(QString::fromUtf8(encoded)));
+    MockBindingSecretJob* job = MockBindingSecretJob::takeLastInstance();
+    QVERIFY(job != nullptr);
+
+    controller.cancelBindingSecretPriming();
+    QVERIFY(primingSpy.wait());
+    const QList<QVariant> arguments = primingSpy.takeFirst();
+    QCOMPARE(arguments.at(0).toBool(), false);
+    QVERIFY(controller.statusIsError());
+    QVERIFY(controller.statusMessage().contains(QStringLiteral("anul"), Qt::CaseInsensitive));
+    QFile persisted(controller.licenseStoragePath());
+    QVERIFY(!persisted.exists());
+    QVERIFY(!controller.licenseActive());
+}
+
+void LicenseActivationControllerTest::propagatesBindingSecretFailureStatus()
+{
+    QTemporaryDir tempDir;
+    QVERIFY(tempDir.isValid());
+
+    const QString configDir = tempDir.filePath(QStringLiteral("config"));
+    QDir().mkpath(configDir);
+    const QString fingerprint = QStringLiteral("DEVICE-FAILURE");
+    writeFingerprintDocument(configDir, fingerprint);
+
+    LicenseActivationController controller;
+    controller.setBindingSecretJobFactory([](QObject* owner) {
+        return new MockBindingSecretJob(MockBindingSecretJob::Manual, owner);
+    });
+    controller.setConfigDirectory(configDir);
+    controller.setLicenseStoragePath(tempDir.filePath(QStringLiteral("var/licenses/active/license.json")));
+    controller.initialize();
+
+    const QByteArray encoded = buildLicenseDocument(fingerprint)
+                                   .toJson(QJsonDocument::Compact)
+                                   .toBase64();
+
+    QSignalSpy primingSpy(&controller, &LicenseActivationController::bindingSecretPrimingFinished);
+    QVERIFY(controller.applyLicenseText(QString::fromUtf8(encoded)));
+    MockBindingSecretJob* job = MockBindingSecretJob::takeLastInstance();
+    QVERIFY(job != nullptr);
+
+    job->emitSuccess(QByteArrayLiteral("{\"status\":\"error\",\"error\":\"denied\"}"));
+
+    QVERIFY(primingSpy.wait());
+    const QList<QVariant> arguments = primingSpy.takeFirst();
+    QCOMPARE(arguments.at(0).toBool(), false);
+    QVERIFY(controller.statusIsError());
+    QVERIFY(controller.statusMessage().contains(QStringLiteral("denied"), Qt::CaseInsensitive));
+    QFile persisted(controller.licenseStoragePath());
+    QVERIFY(!persisted.exists());
+    QVERIFY(!controller.licenseActive());
 }
 
 void LicenseActivationControllerTest::autoProvisionImportsMatchingLicense()
@@ -178,13 +327,19 @@ void LicenseActivationControllerTest::autoProvisionImportsMatchingLicense()
     writeLicenseFile(licenseFile, buildLicenseDocument(fingerprint));
 
     LicenseActivationController controller;
+    controller.setBindingSecretJobFactory([](QObject* owner) {
+        return new MockBindingSecretJob(MockBindingSecretJob::AutoSuccess, owner);
+    });
     controller.setConfigDirectory(configDir);
     controller.setProvisioningDirectory(inboxDir);
     controller.setLicenseStoragePath(tempDir.filePath(QStringLiteral("var/licenses/active/license.json")));
     controller.initialize();
 
     QVariantMap fingerprintDoc{{QStringLiteral("fingerprint"), fingerprint}};
+    QSignalSpy primingSpy(&controller, &LicenseActivationController::bindingSecretPrimingFinished);
     QVERIFY(controller.autoProvision(fingerprintDoc));
+    QVERIFY(primingSpy.wait());
+    QCOMPARE(primingSpy.takeFirst().at(0).toBool(), true);
     QVERIFY(controller.licenseActive());
     QCOMPARE(controller.licenseFingerprint(), fingerprint);
 
@@ -208,10 +363,17 @@ void LicenseActivationControllerTest::autoProvisionRunsDuringInitialize()
     writeLicenseFile(licenseFile, buildLicenseDocument(fingerprint));
 
     LicenseActivationController controller;
+    controller.setBindingSecretJobFactory([](QObject* owner) {
+        return new MockBindingSecretJob(MockBindingSecretJob::AutoSuccess, owner);
+    });
     controller.setConfigDirectory(configDir);
     controller.setProvisioningDirectory(inboxDir);
     controller.setLicenseStoragePath(tempDir.filePath(QStringLiteral("var/licenses/active/license.json")));
+    QSignalSpy primingSpy(&controller, &LicenseActivationController::bindingSecretPrimingFinished);
     controller.initialize();
+
+    QVERIFY(primingSpy.wait());
+    QCOMPARE(primingSpy.takeFirst().at(0).toBool(), true);
 
     QVERIFY(controller.licenseActive());
     QCOMPARE(controller.licenseFingerprint(), fingerprint);

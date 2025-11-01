@@ -1,9 +1,13 @@
 #pragma once
 
 #include <QObject>
+#include <QHash>
+#include <QJsonObject>
 #include <QProcess>
 #include <QString>
 #include <QStringList>
+#include <QTimer>
+#include <QVariantList>
 
 class BotCoreLocalService : public QObject {
     Q_OBJECT
@@ -28,6 +32,15 @@ public:
     [[nodiscard]] QString lastError() const { return m_lastError; }
     [[nodiscard]] bool isRunning() const { return m_process.state() != QProcess::NotRunning; }
 
+    void startOhlcvStream(const QString& symbol, int maxUpdates = 1, int timeoutMs = 250);
+    void stopOhlcvStream();
+
+signals:
+    void ohlcvSnapshotReady(const QVariantList& snapshot, const QString& subscriptionId);
+    void ohlcvUpdatesReady(const QVariantList& updates, const QString& subscriptionId);
+    void ohlcvStreamClosed(const QString& subscriptionId);
+    void ohlcvStreamError(const QString& message);
+
 private:
     void resetState();
     bool waitForReady(int timeoutMs);
@@ -38,6 +51,12 @@ private:
     QString locateRepoRootFromCwd() const;
     void appendStderr(const QByteArray& chunk);
     QString lastStderrLines(int maxLines = 3) const;
+    quint64 nextRequestId();
+    bool sendJsonRequest(const QJsonObject& object, quint64 id, const QString& method);
+    void handleRpcMessage(const QJsonObject& object);
+    void handleStreamResponse(const QJsonObject& result);
+    void scheduleNextPoll(int delayMs = 0);
+    void sendStreamPoll();
 
     QProcess m_process;
     QString m_pythonExecutable = QStringLiteral("python3");
@@ -52,4 +71,12 @@ private:
     QString m_lastError;
     QByteArray m_stdoutBuffer;
     QByteArray m_stderrBuffer;
+    quint64 m_nextRequestId = 1;
+    QHash<quint64, QString> m_pendingMethods;
+    QTimer m_streamPollTimer;
+    QString m_streamSubscriptionId;
+    QString m_streamSymbol;
+    int m_streamMaxUpdates = 1;
+    int m_streamTimeoutMs = 250;
+    bool m_streamActive = false;
 };
