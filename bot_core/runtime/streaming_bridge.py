@@ -8,6 +8,7 @@ from typing import Any, Iterable, Mapping, MutableMapping, Sequence
 import pandas as pd
 
 from bot_core.exchanges.streaming import LocalLongPollStream, StreamBatch
+from bot_core.observability.metrics import MetricsRegistry
 
 
 def _normalize_timestamp(value: Any) -> int:
@@ -108,8 +109,18 @@ def capture_stream_snapshot(
     limit: int = 500,
     poll_interval: float = 0.25,
     timeout: float = 10.0,
+    metrics_registry: MetricsRegistry | None = None,
 ) -> list[MutableMapping[str, Any]]:
     """Pobiera snapshot danych strumieniowych korzystając z LocalLongPollStream."""
+
+    try:
+        limit_value = int(limit)
+    except (TypeError, ValueError):
+        limit_value = 0
+    if limit_value <= 0:
+        buffer_size = 512
+    else:
+        buffer_size = max(1, limit_value)
 
     stream = LocalLongPollStream(
         base_url=base_url,
@@ -124,6 +135,8 @@ def capture_stream_snapshot(
         backoff_base=0.0,
         backoff_cap=0.0,
         jitter=(0.0, 0.0),
+        buffer_size=buffer_size,
+        metrics_registry=metrics_registry,
     )
     events: list[MutableMapping[str, Any]] = []
     try:

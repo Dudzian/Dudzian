@@ -143,6 +143,7 @@ def test_streaming_matches_walk_forward_history() -> None:
             backoff_base=0.0,
             backoff_cap=0.0,
             jitter=(0.0, 0.0),
+            buffer_size=8,
         )
         collected: list = []
         for batch in stream:

@@ -17,6 +17,12 @@ from bot_core.exchanges.binance.spot import BinanceSpotAdapter
 from bot_core.exchanges.kraken.spot import KrakenSpotAdapter
 from bot_core.exchanges.streaming import LocalLongPollStream, StreamBatch
 from bot_core.exchanges.zonda.spot import ZondaSpotAdapter
+from bot_core.observability.metrics import (
+    CounterMetric,
+    GaugeMetric,
+    HistogramMetric,
+    MetricsRegistry,
+)
 
 
 @dataclass
@@ -161,6 +167,117 @@ def test_stream_retries_after_network_error(monkeypatch: pytest.MonkeyPatch) -> 
     assert batch.events and batch.events[0]["price"] == 42.0
     assert attempts == 2
     stream.close()
+
+
+def test_local_long_poll_stream_backpressure_metrics(monkeypatch: pytest.MonkeyPatch) -> None:
+    registry = MetricsRegistry()
+    payload = {
+        "batches": [
+            {"channel": "ticker", "events": [{"seq": 1}]},
+            {"channel": "ticker", "events": [{"seq": 2}]},
+            {"channel": "ticker", "events": [{"seq": 3}]},
+            {"channel": "ticker", "events": [{"seq": 4}]},
+        ]
+    }
+    responses = [json.dumps(payload).encode("utf-8")]
+
+    def fake_urlopen(request, timeout=0.0):  # noqa: D401
+        if not responses:
+            raise AssertionError("Nieoczekiwany dodatkowy polling")
+        return _FakeResponse(responses.pop(0))
+
+    clock_values = iter([0.0, 0.0, 0.2, 0.2, 1.2, 1.4])
+
+    stream = LocalLongPollStream(
+        base_url="http://127.0.0.1",
+        path="/stream",
+        channels=["ticker"],
+        adapter="test",
+        scope="public",
+        environment="test",
+        poll_interval=0.0,
+        timeout=0.1,
+        max_retries=1,
+        backoff_base=0.0,
+        backoff_cap=0.0,
+        jitter=(0.0, 0.0),
+        clock=lambda: next(clock_values),
+        sleep=lambda _: None,
+        buffer_size=2,
+        metrics_registry=registry,
+    )
+
+    monkeypatch.setattr("bot_core.exchanges.streaming.urlopen", fake_urlopen)
+
+    first = next(stream)
+    second = next(stream)
+    stream.close()
+
+    assert first.events and first.events[0]["seq"] == 3
+    assert second.events and second.events[0]["seq"] == 4
+
+    expected_labels = {"adapter": "test", "scope": "public", "environment": "test"}
+
+    backpressure_metric = registry.get("bot_exchange_stream_backpressure_total")
+    assert isinstance(backpressure_metric, CounterMetric)
+    assert backpressure_metric.value(labels=expected_labels) == 2
+
+    queue_metric = registry.get("bot_exchange_stream_pending_batches")
+    assert isinstance(queue_metric, GaugeMetric)
+    assert queue_metric.value(labels=expected_labels) == pytest.approx(0.0)
+
+    latency_metric = registry.get("bot_exchange_stream_long_poll_latency_seconds")
+    assert isinstance(latency_metric, HistogramMetric)
+    latency_state = latency_metric.snapshot(labels=expected_labels)
+    assert latency_state.count == 1
+    assert latency_state.sum == pytest.approx(0.2, rel=1e-6)
+
+    lag_metric = registry.get("bot_exchange_stream_delivery_lag_seconds")
+    assert isinstance(lag_metric, HistogramMetric)
+    lag_state = lag_metric.snapshot(labels=expected_labels)
+    assert lag_state.count == 2
+    assert lag_state.sum == pytest.approx(2.2, rel=1e-6)
+
+
+def test_binance_stream_respects_scope_buffer_size() -> None:
+    credentials = ExchangeCredentials(key_id="buffer", permissions=("read",), environment=Environment.PAPER)
+    adapter = BinanceSpotAdapter(
+        credentials,
+        environment=Environment.PAPER,
+        settings={
+            "stream": {
+                **_build_stream_settings(),
+                "buffer_size": 19,
+                "public_buffer_size": 3,
+            }
+        },
+    )
+
+    stream = adapter.stream_public_data(channels=["ticker"])
+    try:
+        assert stream._buffer_size == 3
+    finally:
+        stream.close()
+
+
+def test_binance_stream_uses_adapter_metrics_registry() -> None:
+    registry = MetricsRegistry()
+    credentials = ExchangeCredentials(key_id="metrics", permissions=("read",), environment=Environment.PAPER)
+    adapter = BinanceSpotAdapter(
+        credentials,
+        environment=Environment.PAPER,
+        settings={"stream": _build_stream_settings()},
+        metrics_registry=registry,
+    )
+
+    stream = adapter.stream_public_data(channels=["ticker"])
+    try:
+        metric = registry.get("bot_exchange_stream_pending_batches")
+        assert isinstance(metric, GaugeMetric)
+        labels = {"adapter": adapter.name, "scope": "public", "environment": Environment.PAPER.value}
+        assert metric.value(labels=labels) == pytest.approx(0.0)
+    finally:
+        stream.close()
 
 
 def test_kraken_stream_applies_scope_params(monkeypatch: pytest.MonkeyPatch) -> None:

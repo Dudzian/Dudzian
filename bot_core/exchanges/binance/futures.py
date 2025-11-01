@@ -348,6 +348,16 @@ class BinanceFuturesAdapter(ExchangeAdapter):
         if body_encoder is None:
             body_encoder = stream_settings.get("body_encoder")
 
+        buffer_size_raw = stream_settings.get(f"{scope}_buffer_size")
+        if buffer_size_raw is None:
+            buffer_size_raw = stream_settings.get("buffer_size", 64)
+        try:
+            buffer_size = int(buffer_size_raw)
+        except (TypeError, ValueError):
+            buffer_size = 64
+        if buffer_size < 1:
+            buffer_size = 1
+
         return LocalLongPollStream(
             base_url=base_url,
             path=path,
@@ -373,6 +383,8 @@ class BinanceFuturesAdapter(ExchangeAdapter):
             cursor_in_body=bool(cursor_in_body),
             body_params=body_params or None,
             body_encoder=body_encoder,
+            buffer_size=buffer_size,
+            metrics_registry=self._metrics,
         )
 
     def configure_network(self, *, ip_allowlist: Optional[Sequence[str]] = None) -> None:

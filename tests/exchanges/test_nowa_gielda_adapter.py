@@ -24,6 +24,7 @@ from bot_core.exchanges.errors import (
 )
 from bot_core.exchanges.nowa_gielda import NowaGieldaSpotAdapter, NowaGieldaStreamClient, symbols
 from bot_core.exchanges.streaming import StreamBatch
+from bot_core.observability.metrics import MetricsRegistry
 
 _BASE_URL = "https://paper.nowa-gielda.example"
 
@@ -61,6 +62,43 @@ def _build_stream_adapter(
         environment=Environment.PAPER,
         settings={"stream": dict(stream_settings)},
     )
+
+
+def test_stream_public_uses_metrics_registry(monkeypatch: pytest.MonkeyPatch) -> None:
+    registry = MetricsRegistry()
+    captured: dict[str, MetricsRegistry | None] = {}
+
+    class _StubStream:
+        def __init__(self, *_, **kwargs) -> None:
+            captured["metrics"] = kwargs.get("metrics_registry")
+
+        def __iter__(self):  # pragma: no cover - pomocnicza implementacja iteratora
+            return iter(())
+
+        def close(self) -> None:  # pragma: no cover - stub API
+            pass
+
+    monkeypatch.setattr(
+        "bot_core.exchanges.nowa_gielda.spot.LocalLongPollStream",
+        _StubStream,
+    )
+
+    credentials = ExchangeCredentials(
+        key_id="metrics",
+        secret="secret",
+        environment=Environment.PAPER,
+    )
+    adapter = NowaGieldaSpotAdapter(
+        credentials,
+        environment=Environment.PAPER,
+        settings={"stream": {"base_url": "http://127.0.0.1:9999"}},
+        metrics_registry=registry,
+    )
+
+    client = adapter.stream_public_data(channels=["ticker"])
+
+    assert isinstance(client, NowaGieldaStreamClient)
+    assert captured["metrics"] is registry
 
 
 def test_symbol_mapping_roundtrip() -> None:
@@ -558,6 +596,109 @@ def test_stream_client_context_manager_closes() -> None:
     assert static_stream.closed
 
 
+def test_stream_client_records_metrics_on_reconnect_and_replay() -> None:
+    registry = MetricsRegistry()
+
+    class _ScriptedStream:
+        def __init__(self, script: Sequence[StreamBatch | Exception]) -> None:
+            self._script = list(script)
+            self.closed = False
+
+        def __iter__(self) -> "_ScriptedStream":
+            return self
+
+        def __next__(self) -> StreamBatch:
+            if not self._script:
+                raise StopIteration
+            item = self._script.pop(0)
+            if isinstance(item, Exception):
+                raise item
+            return item
+
+        def close(self) -> None:
+            self.closed = True
+
+    base_batch = StreamBatch(
+        channel="ticker",
+        events=({"symbol": "BTC-USDT", "price": 100.0},),
+        received_at=1.0,
+        cursor="cursor-1",
+    )
+    reconnect_batch = StreamBatch(
+        channel="ticker",
+        events=({"symbol": "BTC-USDT", "price": 105.0},),
+        received_at=2.0,
+        cursor="cursor-2",
+    )
+    post_reconnect_batch = StreamBatch(
+        channel="ticker",
+        events=({"symbol": "BTC-USDT", "price": 110.0},),
+        received_at=3.0,
+        cursor="cursor-3",
+    )
+
+    scripts: list[list[StreamBatch | Exception]] = [
+        [base_batch, ExchangeNetworkError("zerwanie")],
+        [reconnect_batch],
+        [post_reconnect_batch],
+    ]
+
+    def factory(mapped_channels: Sequence[str], cursor: str | None) -> _ScriptedStream:
+        assert mapped_channels == ("ticker",)
+        assert scripts, "nieoczekiwany dodatkowy restart streamu"
+        return _ScriptedStream(scripts.pop(0))
+
+    client = NowaGieldaStreamClient(
+        adapter="nowa_gielda_spot",
+        scope="public",
+        channels=["ticker"],
+        fallback_factory=factory,  # type: ignore[arg-type]
+        channel_mapping={},
+        buffer_size=4,
+        metrics_registry=registry,
+    )
+
+    first = next(client)
+    assert first.cursor == "cursor-1"
+
+    second = next(client)
+    assert second.cursor == "cursor-1"
+
+    third = next(client)
+    assert third.cursor == "cursor-2"
+
+    labels = {"adapter": "nowa_gielda_spot", "scope": "public"}
+    assert registry.get("bot_exchange_stream_client_batches_total").value(labels=labels) == pytest.approx(3.0)
+    assert registry.get("bot_exchange_stream_client_events_total").value(labels=labels) == pytest.approx(3.0)
+    assert registry.get("bot_exchange_stream_client_heartbeats_total").value(labels=labels) == pytest.approx(0.0)
+    assert registry.get("bot_exchange_stream_client_reconnects_total").value(labels=labels) == pytest.approx(1.0)
+    assert registry.get("bot_exchange_stream_client_history_replays_total").value(labels=labels) == pytest.approx(1.0)
+    assert registry.get("bot_exchange_stream_client_pending_batches").value(labels=labels) == pytest.approx(0.0)
+    assert registry.get("bot_exchange_stream_client_history_size").value(labels=labels) == pytest.approx(2.0)
+
+    client.force_reconnect(replay_history=True)
+
+    assert registry.get("bot_exchange_stream_client_reconnects_total").value(labels=labels) == pytest.approx(2.0)
+    assert registry.get("bot_exchange_stream_client_history_replays_total").value(labels=labels) == pytest.approx(3.0)
+    assert registry.get("bot_exchange_stream_client_pending_batches").value(labels=labels) == pytest.approx(2.0)
+
+    assert client.replay_history(include_heartbeats=False, force=True)
+
+    assert registry.get("bot_exchange_stream_client_history_replays_total").value(labels=labels) == pytest.approx(5.0)
+    assert registry.get("bot_exchange_stream_client_pending_batches").value(labels=labels) == pytest.approx(2.0)
+
+    replay_first = next(client)
+    replay_second = next(client)
+    assert replay_first.cursor == "cursor-1"
+    assert replay_second.cursor == "cursor-2"
+
+    assert registry.get("bot_exchange_stream_client_batches_total").value(labels=labels) == pytest.approx(5.0)
+    assert registry.get("bot_exchange_stream_client_events_total").value(labels=labels) == pytest.approx(5.0)
+    assert registry.get("bot_exchange_stream_client_pending_batches").value(labels=labels) == pytest.approx(0.0)
+
+    client.close()
+
+    assert registry.get("bot_exchange_stream_client_pending_batches").value(labels=labels) == pytest.approx(0.0)
 def test_stream_client_manual_history_replay() -> None:
     class _SequenceStream:
         def __init__(self, batches: Sequence[StreamBatch]) -> None:

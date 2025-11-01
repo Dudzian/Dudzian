@@ -5,8 +5,12 @@ from types import SimpleNamespace
 
 import pytest
 
+import bot_core.runtime.pipeline as pipeline_module
+from bot_core.config.models import EnvironmentConfig, EnvironmentStreamConfig
 from bot_core.decision.models import DecisionEvaluation
+from bot_core.exchanges.base import Environment
 from bot_core.exchanges.streaming import StreamBatch
+from bot_core.observability.metrics import MetricsRegistry
 from bot_core.runtime.pipeline import (
     DecisionAwareSignalSink,
     InMemoryStrategySignalSink,
@@ -36,6 +40,56 @@ class _DummyJournal:
 
     def export(self):  # pragma: no cover - zgodność interfejsu
         return tuple(event.as_dict() for event in self.events)
+
+
+def test_build_streaming_feed_uses_adapter_metrics_registry(monkeypatch: pytest.MonkeyPatch) -> None:
+    registry = MetricsRegistry()
+
+    class _StubAdapter:
+        def __init__(self, metrics: MetricsRegistry) -> None:
+            self._metrics = metrics
+
+    bootstrap = SimpleNamespace(adapter=_StubAdapter(registry))
+    stream_settings = {
+        "base_url": "http://127.0.0.1:9999",
+        "public_path": "/stream/demo/public",
+        "public_channels": ["ticker"],
+    }
+    environment = EnvironmentConfig(
+        name="demo",
+        exchange="demo",
+        environment=Environment.PAPER,
+        keychain_key="key",
+        data_cache_path="/tmp",
+        risk_profile="balanced",
+        alert_channels=(),
+        adapter_settings={"stream": stream_settings},
+        stream=EnvironmentStreamConfig(),
+    )
+    captured: dict[str, MetricsRegistry | None] = {}
+
+    class _StubStream:
+        def __init__(self, *_, **kwargs) -> None:
+            captured["metrics"] = kwargs.get("metrics_registry")
+
+        def __iter__(self):  # pragma: no cover - nie używane
+            return iter(())
+
+        def close(self) -> None:  # pragma: no cover - nie używane
+            pass
+
+    monkeypatch.setattr(pipeline_module, "LocalLongPollStream", _StubStream)
+
+    feed = pipeline_module._build_streaming_feed(
+        bootstrap=bootstrap,
+        environment=environment,
+        base_feed=_DummyHistoryFeed(),
+        symbols_map={"daily": ("BTC/USDT",)},
+    )
+
+    assert feed is not None
+    feed._stream_factory()
+    assert captured["metrics"] is registry
 
 
 def test_streaming_strategy_feed_converts_events() -> None:
