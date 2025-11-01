@@ -3,11 +3,14 @@
 #include <QCoreApplication>
 #include <QDir>
 #include <QElapsedTimer>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QProcessEnvironment>
 #include <QStandardPaths>
+#include <QVariant>
 #include <QtGlobal>
+#include <limits>
 
 namespace {
 constexpr int kReadChunkMs = 200;
@@ -45,6 +48,8 @@ BotCoreLocalService::BotCoreLocalService(QObject* parent)
     connect(&m_process, &QProcess::readyReadStandardError, this, &BotCoreLocalService::handleReadyReadError);
     connect(&m_process, &QProcess::finished, this, &BotCoreLocalService::handleProcessFinished);
     m_process.setProcessChannelMode(QProcess::SeparateChannels);
+    m_streamPollTimer.setSingleShot(true);
+    connect(&m_streamPollTimer, &QTimer::timeout, this, &BotCoreLocalService::sendStreamPoll);
 }
 
 BotCoreLocalService::~BotCoreLocalService()
@@ -101,6 +106,11 @@ void BotCoreLocalService::resetState()
     m_lastError.clear();
     m_stdoutBuffer.clear();
     m_stderrBuffer.clear();
+    m_pendingMethods.clear();
+    m_streamPollTimer.stop();
+    m_streamSubscriptionId.clear();
+    m_streamSymbol.clear();
+    m_streamActive = false;
 }
 
 void BotCoreLocalService::handleReadyRead()
@@ -136,9 +146,171 @@ bool BotCoreLocalService::parseStdoutBuffer()
                 ready = true;
                 break;
             }
+            continue;
         }
+        if (obj.contains(QStringLiteral("id")))
+            handleRpcMessage(obj);
     }
     return ready;
+}
+
+quint64 BotCoreLocalService::nextRequestId()
+{
+    if (m_nextRequestId == std::numeric_limits<quint64>::max())
+        m_nextRequestId = 1;
+    return m_nextRequestId++;
+}
+
+bool BotCoreLocalService::sendJsonRequest(const QJsonObject& object, quint64 id, const QString& method)
+{
+    if (!isRunning())
+        return false;
+    QJsonDocument doc(object);
+    QByteArray payload = doc.toJson(QJsonDocument::Compact);
+    payload.append('\n');
+    const qint64 written = m_process.write(payload);
+    if (written != payload.size())
+        return false;
+    m_process.waitForBytesWritten(50);
+    m_pendingMethods.insert(id, method);
+    return true;
+}
+
+void BotCoreLocalService::handleRpcMessage(const QJsonObject& object)
+{
+    const quint64 id = static_cast<quint64>(object.value(QStringLiteral("id")).toVariant().toULongLong());
+    if (id == 0)
+        return;
+    const QString method = m_pendingMethods.take(id);
+    if (method.isEmpty())
+        return;
+    if (object.contains(QStringLiteral("error"))) {
+        const QJsonObject error = object.value(QStringLiteral("error")).toObject();
+        const QString message = error.value(QStringLiteral("message")).toString();
+        if (method == QStringLiteral("market_data.stream_ohlcv"))
+            emit ohlcvStreamError(message.isEmpty() ? tr("Błąd strumienia OHLCV") : message);
+        return;
+    }
+    const QJsonObject result = object.value(QStringLiteral("result")).toObject();
+    if (method == QStringLiteral("market_data.stream_ohlcv"))
+        handleStreamResponse(result);
+}
+
+void BotCoreLocalService::handleStreamResponse(const QJsonObject& result)
+{
+    if (!m_streamActive)
+        m_streamActive = true;
+    const QString subscription = result.value(QStringLiteral("subscription_id")).toString();
+    if (!subscription.isEmpty())
+        m_streamSubscriptionId = subscription;
+    const QString effectiveId = m_streamSubscriptionId;
+    if (result.value(QStringLiteral("cancelled")).toBool(false)) {
+        if (!effectiveId.isEmpty())
+            emit ohlcvStreamClosed(effectiveId);
+        m_streamPollTimer.stop();
+        m_streamSubscriptionId.clear();
+        m_streamActive = false;
+        return;
+    }
+
+    const QJsonArray snapshotArray = result.value(QStringLiteral("snapshot")).toArray();
+    if (!snapshotArray.isEmpty() && !effectiveId.isEmpty())
+        emit ohlcvSnapshotReady(snapshotArray.toVariantList(), effectiveId);
+
+    const QJsonArray updatesArray = result.value(QStringLiteral("updates")).toArray();
+    if (!updatesArray.isEmpty() && !effectiveId.isEmpty())
+        emit ohlcvUpdatesReady(updatesArray.toVariantList(), effectiveId);
+
+    const bool hasMore = result.value(QStringLiteral("has_more")).toBool(false);
+    if (hasMore && !effectiveId.isEmpty()) {
+        scheduleNextPoll();
+        return;
+    }
+
+    if (!effectiveId.isEmpty())
+        emit ohlcvStreamClosed(effectiveId);
+    m_streamPollTimer.stop();
+    m_streamSubscriptionId.clear();
+    m_streamActive = false;
+}
+
+void BotCoreLocalService::scheduleNextPoll(int delayMs)
+{
+    if (!m_streamActive || m_streamSubscriptionId.isEmpty())
+        return;
+    if (delayMs < 0)
+        delayMs = 0;
+    m_streamPollTimer.start(delayMs);
+}
+
+void BotCoreLocalService::sendStreamPoll()
+{
+    if (!m_streamActive || m_streamSubscriptionId.isEmpty())
+        return;
+    QJsonObject params;
+    params.insert(QStringLiteral("subscription_id"), m_streamSubscriptionId);
+    params.insert(QStringLiteral("timeout_ms"), m_streamTimeoutMs);
+    params.insert(QStringLiteral("max_updates"), m_streamMaxUpdates);
+    const quint64 id = nextRequestId();
+    QJsonObject request;
+    request.insert(QStringLiteral("id"), static_cast<double>(id));
+    request.insert(QStringLiteral("method"), QStringLiteral("market_data.stream_ohlcv"));
+    request.insert(QStringLiteral("params"), params);
+    if (!sendJsonRequest(request, id, QStringLiteral("market_data.stream_ohlcv"))) {
+        emit ohlcvStreamError(tr("Nie udało się odczytać danych strumienia OHLCV"));
+        m_streamPollTimer.stop();
+        m_streamActive = false;
+    }
+}
+
+void BotCoreLocalService::startOhlcvStream(const QString& symbol, int maxUpdates, int timeoutMs)
+{
+    if (!isRunning())
+        return;
+    const QString trimmed = symbol.trimmed();
+    if (trimmed.isEmpty())
+        return;
+    m_streamSymbol = trimmed;
+    m_streamMaxUpdates = qMax(0, maxUpdates);
+    m_streamTimeoutMs = qMax(0, timeoutMs);
+    m_streamSubscriptionId.clear();
+    m_streamActive = true;
+    QJsonObject params;
+    params.insert(QStringLiteral("symbol"), trimmed);
+    params.insert(QStringLiteral("continuous"), true);
+    params.insert(QStringLiteral("max_updates"), m_streamMaxUpdates);
+    params.insert(QStringLiteral("timeout_ms"), m_streamTimeoutMs);
+    const quint64 id = nextRequestId();
+    QJsonObject request;
+    request.insert(QStringLiteral("id"), static_cast<double>(id));
+    request.insert(QStringLiteral("method"), QStringLiteral("market_data.stream_ohlcv"));
+    request.insert(QStringLiteral("params"), params);
+    if (!sendJsonRequest(request, id, QStringLiteral("market_data.stream_ohlcv"))) {
+        m_streamActive = false;
+        emit ohlcvStreamError(tr("Nie udało się zainicjować strumienia OHLCV"));
+    }
+}
+
+void BotCoreLocalService::stopOhlcvStream()
+{
+    if (!m_streamActive)
+        return;
+    m_streamActive = false;
+    m_streamPollTimer.stop();
+    if (m_streamSubscriptionId.isEmpty()) {
+        m_streamSymbol.clear();
+        return;
+    }
+    QJsonObject params;
+    params.insert(QStringLiteral("subscription_id"), m_streamSubscriptionId);
+    params.insert(QStringLiteral("cancel"), true);
+    const quint64 id = nextRequestId();
+    QJsonObject request;
+    request.insert(QStringLiteral("id"), static_cast<double>(id));
+    request.insert(QStringLiteral("method"), QStringLiteral("market_data.stream_ohlcv"));
+    request.insert(QStringLiteral("params"), params);
+    sendJsonRequest(request, id, QStringLiteral("market_data.stream_ohlcv"));
+    m_streamSymbol.clear();
 }
 
 bool BotCoreLocalService::waitForReady(int timeoutMs)

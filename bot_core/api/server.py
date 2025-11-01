@@ -8,6 +8,7 @@ import os
 import subprocess
 import threading
 import time
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -203,6 +204,16 @@ class _Emitter:
                 handler(**payload)
             except Exception:  # pragma: no cover - diagnostyczne logowanie
                 _LOGGER.exception("Emitter handler for %s failed", event)
+
+
+@dataclass(slots=True)
+class _StreamSubscription:
+    stream: Any
+    created_at: float = field(default_factory=time.monotonic)
+    last_access: float = field(default_factory=time.monotonic)
+    lock: threading.Lock = field(default_factory=threading.Lock)
+    exhausted: bool = False
+    timeout_mode: str = "none"
 
     def log(self, message: str, *args: Any, level: int = logging.INFO, **kwargs: Any) -> None:
         numeric_level: int
@@ -882,12 +893,20 @@ class _MarketDataServicer(trading_pb2_grpc.MarketDataServiceServicer):
         return trading_pb2.GetOhlcvHistoryResponse(candles=candles, has_more=False)
 
     def StreamOhlcv(self, request, context):  # noqa: N802
-        history = self.GetOhlcvHistory(request, context)
+        history_request = trading_pb2.GetOhlcvHistoryRequest()
+        history_request.instrument.CopyFrom(request.instrument)
+        if request.HasField("granularity"):
+            history_request.granularity.CopyFrom(request.granularity)
+        history = self.GetOhlcvHistory(history_request, context)
         if not history.candles:
             return
         snapshot = trading_pb2.StreamOhlcvSnapshot(candles=history.candles)
         update = trading_pb2.StreamOhlcvUpdate(snapshot=snapshot)
         yield update
+        # emit a short series of incremental updates for consumers exercising streaming APIs
+        for candle in history.candles[-3:]:
+            increment = trading_pb2.StreamOhlcvIncrement(candle=candle)
+            yield trading_pb2.StreamOhlcvUpdate(increment=increment)
 
     def ListTradableInstruments(self, request, context):  # noqa: N802
         requested_exchange = (request.exchange or "").strip().upper()
