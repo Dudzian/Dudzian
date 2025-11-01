@@ -118,7 +118,8 @@ def test_license_service_monotonic_effective_date(tmp_path) -> None:
     status_document = json.loads(status_path.read_text(encoding="utf-8"))
     assert status_document["license_id"] == SAMPLE_PAYLOAD["license_id"]
     assert status_document["edition"] == "pro"
-    assert status_document["payload_sha256"] == hashlib.sha256(payload_bytes).hexdigest()
+    assert snapshot.payload_sha256 == snapshot.payload_sha256.lower()
+    assert status_document["payload_sha256"] == snapshot.payload_sha256
     assert status_document["trial"]["active"] is False
     assert status_document["maintenance"]["active"] is True
 

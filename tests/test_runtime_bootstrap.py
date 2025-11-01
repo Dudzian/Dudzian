@@ -62,6 +62,26 @@ from bot_core.security import SecretManager, SecretStorage, SecretStorageError
 from bot_core.security.signing import build_hmac_signature
 
 
+@pytest.mark.parametrize(
+    ("payload", "expected"),
+    (
+        ({"sha256": "  ABCDEF123456  "}, "abcdef123456"),
+        ({"hashes": {"sha256": "ABCDEF123456"}}, "abcdef123456"),
+        ({"document": {"sha256": "ABCDEF123456"}}, "abcdef123456"),
+        (
+            {"document": {"hashes": {"sha256": "ABCDEF123456"}}},
+            "abcdef123456",
+        ),
+    ),
+)
+def test_extract_payload_sha256_normalizes_candidates(payload, expected) -> None:
+    assert bootstrap_module._extract_payload_sha256(payload) == expected
+
+
+def test_extract_payload_sha256_handles_missing_candidates() -> None:
+    assert bootstrap_module._extract_payload_sha256({"sha512": "noop"}) is None
+
+
 class _MemorySecretStorage(SecretStorage):
     def __init__(self) -> None:
         self._store: dict[str, str] = {}

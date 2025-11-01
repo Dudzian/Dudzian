@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import base64
+import contextlib
 import hashlib
 import json
 import logging
@@ -51,17 +52,40 @@ class LicenseRollbackDetectedError(LicenseServiceError):
     """Wykryto próbę wgrania starszej licencji niż ostatnio zaakceptowana."""
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, init=False)
 class LicenseSnapshot:
     """Wyliczone możliwości i surowy payload licencji."""
 
     bundle_path: Path
     payload: Mapping[str, Any]
     payload_bytes: bytes
+    payload_sha256: str
     signature_bytes: bytes
     capabilities: LicenseCapabilities
     effective_date: date
     local_hwid: str | None
+
+    def __init__(
+        self,
+        *,
+        bundle_path: Path,
+        payload: Mapping[str, Any],
+        payload_bytes: bytes,
+        signature_bytes: bytes,
+        capabilities: LicenseCapabilities,
+        effective_date: date,
+        local_hwid: str | None,
+        payload_sha256: str | None = None,
+    ) -> None:
+        self.bundle_path = bundle_path
+        self.payload = payload
+        self.payload_bytes = payload_bytes
+        self.signature_bytes = signature_bytes
+        self.capabilities = capabilities
+        self.effective_date = effective_date
+        self.local_hwid = local_hwid
+        digest = payload_sha256 or hashlib.sha256(payload_bytes).hexdigest()
+        self.payload_sha256 = digest.lower()
 
 
 @dataclass(slots=True)
@@ -275,11 +299,11 @@ class LicenseService:
             "holder": dict(snapshot.capabilities.holder),
             "metadata": dict(snapshot.capabilities.metadata),
             "local_hwid": snapshot.local_hwid,
-            "payload_sha256": hashlib.sha256(snapshot.payload_bytes).hexdigest(),
+            "payload_sha256": snapshot.payload_sha256,
             "bundle_path": str(snapshot.bundle_path),
         }
 
-        monotonic_payload = dict(self._build_monotonic_payload(snapshot))
+        monotonic_payload = self._build_monotonic_payload(snapshot)
         document["monotonic"] = monotonic_payload
 
         if fingerprint:
@@ -298,13 +322,42 @@ class LicenseService:
             document.pop("signature", None)
 
         self._status_path.parent.mkdir(parents=True, exist_ok=True)
-        self._status_path.write_text(json.dumps(document, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+        payload = json.dumps(document, ensure_ascii=False, indent=2) + "\n"
+        tmp_path = self._status_path.with_suffix(self._status_path.suffix + ".tmp")
+        try:
+            with tmp_path.open("w", encoding="utf-8") as handle:
+                handle.write(payload)
+                handle.flush()
+                try:
+                    os.fsync(handle.fileno())
+                except (OSError, AttributeError):  # pragma: no cover - platform dependent behaviour
+                    LOGGER.debug("Nie udało się wykonać fsync na pliku statusu.", exc_info=True)
+            tmp_path.replace(self._status_path)
+            dir_flags = os.O_RDONLY
+            if hasattr(os, "O_DIRECTORY"):
+                dir_flags |= os.O_DIRECTORY
+            try:
+                dir_fd = os.open(str(self._status_path.parent), dir_flags)
+            except OSError:  # pragma: no cover - zależne od platformy i uprawnień
+                LOGGER.debug("Nie udało się zsynchronizować katalogu statusu.", exc_info=True)
+            else:
+                try:
+                    os.fsync(dir_fd)
+                except OSError:  # pragma: no cover - zależne od systemu plików
+                    LOGGER.debug("fsync katalogu statusu zakończone ostrzeżeniem.", exc_info=True)
+                finally:
+                    os.close(dir_fd)
+        except Exception:
+            with contextlib.suppress(FileNotFoundError):
+                tmp_path.unlink()
+            raise
 
     def _build_monotonic_payload(self, snapshot: LicenseSnapshot) -> MutableMapping[str, object]:
         payload: MutableMapping[str, object] = {
             "license_id": snapshot.capabilities.license_id,
             "effective_date": snapshot.effective_date.isoformat(),
-            "payload_sha256": hashlib.sha256(snapshot.payload_bytes).hexdigest(),
+            "payload_sha256": snapshot.payload_sha256,
             "recorded_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         }
 
@@ -378,7 +431,8 @@ class LicenseService:
 
         issued_at = self._parse_iso_datetime(payload.get("issued_at"))
         effective_date = self._parse_iso_date(payload.get("effective_date"))
-        payload_sha = str(payload.get("payload_sha256") or "").strip() or None
+        raw_digest = str(payload.get("payload_sha256") or "").strip()
+        payload_sha = raw_digest.lower() or None
 
         return _MonotonicState(
             license_id=license_id,
@@ -492,7 +546,7 @@ class LicenseService:
             "trial_active": snapshot.capabilities.is_trial_active(snapshot.effective_date),
             "maintenance_active": snapshot.capabilities.is_maintenance_active(snapshot.effective_date),
             "bundle_path": str(snapshot.bundle_path),
-            "payload_sha256": hashlib.sha256(snapshot.payload_bytes).hexdigest(),
+            "payload_sha256": snapshot.payload_sha256,
             "local_hwid_hash": local_hwid_hash,
             "activation_count": (previous_activations + 1) if local_hwid_hash else 1,
             "repeat_activation": previous_activations > 0,
