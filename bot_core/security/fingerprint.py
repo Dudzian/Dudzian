@@ -7,6 +7,7 @@ import base64
 import hashlib
 import hmac
 import json
+import logging
 import os
 import platform
 import re
@@ -18,6 +19,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, MutableMapping, Optional, Sequence
+
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from bot_core.security.rotation import RotationRegistry, RotationStatus
 from bot_core.security.signing import build_hmac_signature, canonical_json_bytes
@@ -42,6 +45,13 @@ _HEX_RE = re.compile(r"[^0-9a-f]")
 LICENSE_SECRET_PATH = Path("var/security/license_secret.key")
 LICENSE_SIGNATURE_ALGORITHM = "HMAC-SHA384"
 
+LICENSE_SECRET_KEYRING_SERVICE = "dudzian.license"
+LICENSE_SECRET_KEYRING_ENTRY = "binding-secret.v1"
+LICENSE_SECRET_FILE_VERSION = 2
+
+
+LOGGER = logging.getLogger(__name__)
+
 
 class FingerprintError(RuntimeError):
     """Wyjątek zgłaszany przy problemach z generowaniem/podpisywaniem fingerprintu."""
@@ -65,46 +75,210 @@ def _license_secret_path(path: str | os.PathLike[str] | None) -> Path:
     return Path(path).expanduser() if path is not None else LICENSE_SECRET_PATH
 
 
+def _current_hwid_digest(fingerprint: str) -> str:
+    normalized = _normalize_binding_fingerprint(fingerprint)
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+
+def _derive_encryption_key(fingerprint: str, salt: bytes) -> bytes:
+    normalized = _normalize_binding_fingerprint(fingerprint)
+    return hmac.new(normalized.encode("utf-8"), salt, hashlib.sha256).digest()
+
+
+def _encrypt_license_secret(secret: bytes, fingerprint: str) -> Mapping[str, object]:
+    salt = os.urandom(16)
+    nonce = os.urandom(12)
+    key = _derive_encryption_key(fingerprint, salt)
+    cipher = AESGCM(key)
+    normalized = _normalize_binding_fingerprint(fingerprint)
+    ciphertext = cipher.encrypt(nonce, secret, normalized.encode("utf-8"))
+    return {
+        "version": LICENSE_SECRET_FILE_VERSION,
+        "salt": base64.b64encode(salt).decode("ascii"),
+        "nonce": base64.b64encode(nonce).decode("ascii"),
+        "ciphertext": base64.b64encode(ciphertext).decode("ascii"),
+        "hwid_digest": _current_hwid_digest(fingerprint),
+        "length": len(secret),
+    }
+
+
+def _decrypt_license_secret(document: Mapping[str, object]) -> bytes:
+    version = document.get("version")
+    if version != LICENSE_SECRET_FILE_VERSION:
+        raise FingerprintError("Nieobsługiwana wersja zaszyfrowanego sekretu licencji.")
+
+    salt_b64 = document.get("salt")
+    nonce_b64 = document.get("nonce")
+    ciphertext_b64 = document.get("ciphertext")
+    if not all(isinstance(value, str) and value for value in (salt_b64, nonce_b64, ciphertext_b64)):
+        raise FingerprintError("Sekret licencji jest uszkodzony (brak danych szyfru).")
+
+    try:
+        salt = base64.b64decode(str(salt_b64).encode("ascii"))
+        nonce = base64.b64decode(str(nonce_b64).encode("ascii"))
+        ciphertext = base64.b64decode(str(ciphertext_b64).encode("ascii"))
+    except Exception as exc:  # pragma: no cover - dane mogą być zewnętrznie uszkodzone
+        raise FingerprintError("Sekret licencji zawiera niepoprawne dane base64.") from exc
+
+    try:
+        fingerprint = get_local_fingerprint()
+    except Exception as exc:  # pragma: no cover - propagujemy w postaci FingerprintError
+        raise FingerprintError("Nie udało się pobrać lokalnego fingerprintu do odszyfrowania sekretu.") from exc
+
+    normalized = _normalize_binding_fingerprint(fingerprint)
+    expected_digest = _current_hwid_digest(fingerprint)
+    stored_digest = document.get("hwid_digest")
+    if isinstance(stored_digest, str) and stored_digest and stored_digest != expected_digest:
+        raise FingerprintError("Sekret licencji został zapisany dla innego urządzenia (fingerprint mismatch).")
+
+    key = _derive_encryption_key(fingerprint, salt)
+    cipher = AESGCM(key)
+    try:
+        secret = cipher.decrypt(nonce, ciphertext, normalized.encode("utf-8"))
+    except Exception as exc:  # pragma: no cover - błędne dane szyfru
+        raise FingerprintError("Nie udało się odszyfrować sekretu licencji.") from exc
+
+    if len(secret) < 32:
+        raise FingerprintError("Sekret licencji ma niepoprawną długość po odszyfrowaniu.")
+
+    return secret
+
+
+def _load_secret_from_keyring() -> bytes | None:
+    try:  # pragma: no cover - zależne od środowiska testowego
+        import keyring  # type: ignore[import-not-found]
+    except ImportError:
+        return None
+
+    try:
+        record = keyring.get_password(LICENSE_SECRET_KEYRING_SERVICE, LICENSE_SECRET_KEYRING_ENTRY)
+    except Exception as exc:  # pragma: no cover - logujemy i wracamy do pliku
+        LOGGER.warning("Nie udało się pobrać sekretu licencji z keychaina: %s", exc)
+        return None
+
+    if record is None:
+        return None
+
+    document: Mapping[str, object]
+    try:
+        document = json.loads(record)
+    except json.JSONDecodeError:
+        try:
+            decoded = base64.b64decode(record.encode("ascii"))
+        except Exception as exc:  # pragma: no cover - odziedziczone formaty
+            raise FingerprintError("Sekret licencji w keychainie ma niepoprawny format.") from exc
+        if len(decoded) < 32:
+            raise FingerprintError("Sekret licencji w keychainie ma niepoprawną długość.")
+        return decoded
+
+    secret_b64 = document.get("secret_b64")
+    if not isinstance(secret_b64, str) or not secret_b64:
+        raise FingerprintError("Rekord keychaina nie zawiera poprawnych danych sekretu.")
+    try:
+        secret = base64.b64decode(secret_b64.encode("ascii"))
+    except Exception as exc:  # pragma: no cover - dane mogą być uszkodzone
+        raise FingerprintError("Sekret licencji w keychainie jest uszkodzony (base64).") from exc
+    if len(secret) < 32:
+        raise FingerprintError("Sekret licencji w keychainie ma niepoprawną długość.")
+    return secret
+
+
+def _store_secret_in_keyring(secret: bytes) -> bool:
+    try:  # pragma: no cover - zależne od środowiska testowego
+        import keyring  # type: ignore[import-not-found]
+    except ImportError:
+        return False
+
+    payload = {
+        "version": 1,
+        "secret_b64": base64.b64encode(secret).decode("ascii"),
+        "stored_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+    }
+    try:
+        result = keyring.set_password(
+            LICENSE_SECRET_KEYRING_SERVICE,
+            LICENSE_SECRET_KEYRING_ENTRY,
+            json.dumps(payload, ensure_ascii=False),
+        )
+    except Exception as exc:  # pragma: no cover - logujemy ostrzeżenie i kontynuujemy
+        LOGGER.warning("Nie udało się zapisać sekretu licencji w keychainie: %s", exc)
+        return False
+
+    if result is not None:  # pragma: no cover - backend powinien zwrócić None
+        LOGGER.warning("Backend keychain zwrócił nieoczekiwany rezultat przy zapisie sekretu licencji: %r", result)
+        return False
+    return True
+
+
+def _load_secret_from_disk(path: Path) -> tuple[bytes, str] | None:
+    if not path.exists():
+        return None
+    try:
+        raw = path.read_text(encoding="utf-8").strip()
+    except OSError as exc:
+        raise FingerprintError(f"Nie udało się odczytać pliku sekretu licencji ({path}): {exc}") from exc
+
+    if not raw:
+        path.unlink(missing_ok=True)
+        return None
+
+    try:
+        document = json.loads(raw)
+    except json.JSONDecodeError:
+        try:
+            secret = base64.b64decode(raw.encode("ascii"))
+        except Exception as exc:
+            raise FingerprintError("Sekret licencji ma niepoprawny format (legacy).") from exc
+        if len(secret) < 32:
+            raise FingerprintError("Sekret licencji ma niepoprawną długość (legacy).")
+        return secret, "legacy"
+
+    if not isinstance(document, Mapping):
+        raise FingerprintError("Zaszyfrowany sekret licencji ma niepoprawną strukturę.")
+    secret = _decrypt_license_secret(document)
+    return secret, "encrypted"
+
+
+def _write_encrypted_secret(secret: bytes, path: Path) -> None:
+    try:
+        fingerprint = get_local_fingerprint()
+    except Exception as exc:  # pragma: no cover - propagujemy w postaci FingerprintError
+        raise FingerprintError("Nie udało się pobrać fingerprintu urządzenia do zapisania sekretu licencji.") from exc
+
+    payload = _encrypt_license_secret(secret, fingerprint)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    tmp_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    os.replace(tmp_path, path)
+    try:
+        os.chmod(path, 0o600)
+    except PermissionError:  # pragma: no cover - brak uprawnień na niektórych systemach
+        pass
+
+
 def load_license_secret(path: str | os.PathLike[str] | None = None, *, create: bool = True) -> bytes:
     """Zwraca sekret do podpisywania snapshotów licencji."""
 
     target = _license_secret_path(path)
-    if target.exists():
-        try:
-            encoded = target.read_text(encoding="utf-8").strip()
-        except OSError as exc:
-            raise FingerprintError(
-                f"Nie udało się odczytać lokalnego sekretu licencji ({target})."
-            ) from exc
-        if not encoded:
-            if not create:
-                raise FingerprintError("Sekret licencji jest pusty.")
-            target.unlink(missing_ok=True)
-            return load_license_secret(path, create=create)
-        try:
-            secret = base64.b64decode(encoded.encode("ascii"))
-        except Exception as exc:  # pragma: no cover - defensywnie
-            raise FingerprintError("Sekret licencji jest uszkodzony (base64).") from exc
-        if len(secret) < 32:
-            if not create:
-                raise FingerprintError("Sekret licencji ma niepoprawną długość.")
-            target.unlink(missing_ok=True)
-            return load_license_secret(path, create=create)
+    secret = _load_secret_from_keyring()
+    if secret is not None:
+        _write_encrypted_secret(secret, target)
+        return secret
+
+    disk_result = _load_secret_from_disk(target)
+    if disk_result is not None:
+        secret, source = disk_result
+        _store_secret_in_keyring(secret)
+        if source != "encrypted":
+            _write_encrypted_secret(secret, target)
         return secret
 
     if not create:
         raise FingerprintError("Sekret licencji nie istnieje.")
 
     secret = os.urandom(48)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    encoded = base64.b64encode(secret).decode("ascii")
-    tmp_path = target.with_suffix(target.suffix + ".tmp")
-    tmp_path.write_text(encoded + "\n", encoding="ascii")
-    os.replace(tmp_path, target)
-    try:
-        os.chmod(target, 0o600)
-    except PermissionError:  # pragma: no cover - brak uprawnień
-        pass
+    _store_secret_in_keyring(secret)
+    _write_encrypted_secret(secret, target)
     return secret
 
 

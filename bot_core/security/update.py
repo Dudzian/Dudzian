@@ -25,6 +25,9 @@ class UpdateArtifact:
     kind: str = "full"
     sha256: str | None = None
     base_id: str | None = None
+    has_type: bool = False
+    has_sha384: bool = False
+    has_sha256: bool = False
 
 
 @dataclass(slots=True)
@@ -64,7 +67,9 @@ class UpdateManifest:
                     raise ValueError("Pole 'sha384' musi być napisem")
                 if sha256 is not None and not isinstance(sha256, str):
                     raise ValueError("Pole 'sha256' musi być napisem")
-                kind = str(entry.get("type") or "full").lower()
+                type_field = entry.get("type")
+                include_type = type_field is not None and str(type_field).strip() != ""
+                kind = str(type_field).lower() if include_type else "full"
                 base_id = entry.get("base_id") or entry.get("baseId")
                 if base_id is not None:
                     base_id = str(base_id)
@@ -76,6 +81,9 @@ class UpdateManifest:
                         size=size,
                         kind=kind,
                         base_id=base_id,
+                        has_type=include_type,
+                        has_sha384="sha384" in entry,
+                        has_sha256="sha256" in entry,
                     )
                 )
         except Exception as exc:
@@ -108,17 +116,18 @@ class UpdateManifest:
 
         raw_payload = dict(payload)
         raw_payload.pop("signature", None)
-        raw_payload["artifacts"] = [
-            {
-                "path": art.path,
-                "sha384": art.sha384,
-                "sha256": art.sha256,
-                "size": art.size,
-                "type": art.kind,
-                **({"base_id": art.base_id} if art.base_id else {}),
-            }
-            for art in artifacts
-        ]
+        raw_payload["artifacts"] = []
+        for art in artifacts:
+            entry_payload = {"path": art.path, "size": art.size}
+            if art.has_sha384:
+                entry_payload["sha384"] = art.sha384
+            if art.has_sha256:
+                entry_payload["sha256"] = art.sha256
+            if art.has_type:
+                entry_payload["type"] = art.kind
+            if art.base_id:
+                entry_payload["base_id"] = art.base_id
+            raw_payload["artifacts"].append(entry_payload)
         if metadata_raw is not None:
             raw_payload["metadata"] = dict(metadata)
         if allowed_profiles is not None:

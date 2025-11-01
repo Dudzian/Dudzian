@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 
+import base64
 import logging
 import os
 import subprocess
@@ -17,7 +18,8 @@ from typing import Any, Callable, Dict, Iterable, Mapping, MutableMapping, Optio
 
 import grpc
 import pandas as pd
-from google.protobuf import timestamp_pb2
+from google.protobuf import empty_pb2, timestamp_pb2
+from google.protobuf.json_format import MessageToDict
 
 from bot_core.alerts import DefaultAlertRouter
 from bot_core.alerts.dispatcher import (
@@ -1144,6 +1146,203 @@ class _MarketplaceServicer(trading_pb2_grpc.MarketplaceServiceServicer):
         return trading_pb2.ActivateMarketplacePresetResponse(
             preset=self._build_summary(document)
         )
+
+
+def _serialize_timestamp(timestamp: timestamp_pb2.Timestamp) -> int:
+    return int(timestamp.seconds) * 1000 + int(timestamp.nanos) // 1_000_000
+
+
+def _serialize_candle(candle: trading_pb2.OhlcvCandle) -> Mapping[str, Any]:
+    return {
+        "timestamp_ms": _serialize_timestamp(candle.open_time),
+        "open": candle.open,
+        "high": candle.high,
+        "low": candle.low,
+        "close": candle.close,
+        "volume": candle.volume,
+        "sequence": candle.sequence,
+    }
+
+
+def _serialize_instrument_metadata(
+    entry: trading_pb2.TradableInstrumentMetadata,
+) -> Mapping[str, Any]:
+    instrument = entry.instrument
+    return {
+        "exchange": instrument.exchange,
+        "symbol": instrument.symbol,
+        "venue_symbol": instrument.venue_symbol,
+        "quote_currency": instrument.quote_currency,
+        "base_currency": instrument.base_currency,
+        "price_step": entry.price_step,
+        "amount_step": entry.amount_step,
+        "min_notional": entry.min_notional,
+        "min_amount": entry.min_amount,
+        "max_amount": entry.max_amount,
+        "min_price": entry.min_price,
+        "max_price": entry.max_price,
+    }
+
+
+def _serialize_risk_state(state: trading_pb2.RiskState) -> Mapping[str, Any]:
+    payload = MessageToDict(state, preserving_proto_field_name=True)
+    payload["generated_at_ms"] = _serialize_timestamp(state.generated_at)
+    return payload
+
+
+def _serialize_marketplace_summary(
+    summary: trading_pb2.MarketplacePresetSummary,
+) -> Mapping[str, Any]:
+    return MessageToDict(summary, preserving_proto_field_name=True)
+
+
+class LocalRuntimeGateway:
+    """Small dispatch layer used by the desktop shell JSON bridge."""
+
+    def __init__(self, context: LocalRuntimeContext) -> None:
+        self._context = context
+        self._market = _MarketDataServicer(context)
+        self._order = _OrderServicer(context)
+        self._metrics = _MetricsServicer(context)
+        self._health = _HealthServicer(context)
+        self._risk = _RiskServicer(context) if context.risk_store is not None else None
+        self._marketplace = (
+            _MarketplaceServicer(context)
+            if context.marketplace_repository is not None and context.marketplace_enabled
+            else None
+        )
+
+    def dispatch(self, method: str, params: Mapping[str, Any]) -> Mapping[str, Any]:
+        handlers: Mapping[str, Callable[[Mapping[str, Any]], Mapping[str, Any]]] = {
+            "health.check": self._health_check,
+            "market_data.get_ohlcv_history": self._get_ohlcv_history,
+            "market_data.stream_ohlcv": self._stream_ohlcv,
+            "market_data.list_tradable_instruments": self._list_instruments,
+            "risk.get_state": self._get_risk_state,
+            "marketplace.list_presets": self._list_marketplace_presets,
+            "marketplace.import_preset": self._import_marketplace_preset,
+            "marketplace.export_preset": self._export_marketplace_preset,
+            "marketplace.remove_preset": self._remove_marketplace_preset,
+            "marketplace.activate_preset": self._activate_marketplace_preset,
+        }
+        handler = handlers.get(method)
+        if handler is None:
+            raise KeyError(f"Unsupported method: {method}")
+        return handler(params)
+
+    def _health_check(self, params: Mapping[str, Any]) -> Mapping[str, Any]:
+        del params
+        response = self._health.Check(empty_pb2.Empty(), None)
+        payload = MessageToDict(response, preserving_proto_field_name=True)
+        payload["started_at_ms"] = _serialize_timestamp(response.started_at)
+        return payload
+
+    def _get_ohlcv_history(self, params: Mapping[str, Any]) -> Mapping[str, Any]:
+        request = trading_pb2.GetOhlcvHistoryRequest()
+        instrument = request.instrument
+        symbol = str(params.get("symbol") or "").strip() or self._context.primary_symbol
+        instrument.symbol = symbol
+        instrument.venue_symbol = str(params.get("venue_symbol") or "")
+        instrument.exchange = str(params.get("exchange") or "")
+        if params.get("granularity"):
+            request.granularity.iso8601_duration = str(params.get("granularity"))
+        if params.get("limit"):
+            request.limit = int(params.get("limit"))
+        if params.get("start_ms"):
+            request.start_time.CopyFrom(
+                _timestamp_from_ms(int(params.get("start_ms")))
+            )
+        if params.get("end_ms"):
+            request.end_time.CopyFrom(
+                _timestamp_from_ms(int(params.get("end_ms")))
+            )
+        response = self._market.GetOhlcvHistory(request, None)
+        candles = [_serialize_candle(candle) for candle in response.candles]
+        return {"candles": candles, "has_more": response.has_more}
+
+    def _stream_ohlcv(self, params: Mapping[str, Any]) -> Mapping[str, Any]:
+        request = trading_pb2.StreamOhlcvRequest()
+        instrument = request.instrument
+        instrument.symbol = str(params.get("symbol") or "") or self._context.primary_symbol
+        if params.get("limit"):
+            request.limit = int(params.get("limit"))
+        stream = self._market.StreamOhlcv(request, None)
+        snapshot: list[Mapping[str, Any]] = []
+        updates: list[Mapping[str, Any]] = []
+        for update in stream:
+            if update.HasField("snapshot"):
+                snapshot = [_serialize_candle(c) for c in update.snapshot.candles]
+            if update.HasField("increment"):
+                updates.append(_serialize_candle(update.increment.candle))
+        return {"snapshot": snapshot, "updates": updates}
+
+    def _list_instruments(self, params: Mapping[str, Any]) -> Mapping[str, Any]:
+        request = trading_pb2.ListTradableInstrumentsRequest()
+        if params.get("exchange"):
+            request.exchange = str(params["exchange"])
+        response = self._market.ListTradableInstruments(request, None)
+        instruments = [_serialize_instrument_metadata(entry) for entry in response.instruments]
+        return {"instruments": instruments}
+
+    def _get_risk_state(self, params: Mapping[str, Any]) -> Mapping[str, Any]:
+        del params
+        if self._risk is None:
+            return {}
+        response = self._risk.GetRiskState(trading_pb2.RiskStateRequest(), None)
+        return _serialize_risk_state(response)
+
+    def _ensure_marketplace(self) -> _MarketplaceServicer:
+        if self._marketplace is None:
+            raise RuntimeError("Marketplace is disabled")
+        return self._marketplace
+
+    def _list_marketplace_presets(self, params: Mapping[str, Any]) -> Mapping[str, Any]:
+        del params
+        service = self._ensure_marketplace()
+        response = service.ListPresets(trading_pb2.ListMarketplacePresetsRequest(), None)
+        presets = [_serialize_marketplace_summary(entry) for entry in response.presets]
+        return {"presets": presets}
+
+    def _import_marketplace_preset(self, params: Mapping[str, Any]) -> Mapping[str, Any]:
+        service = self._ensure_marketplace()
+        request = trading_pb2.ImportMarketplacePresetRequest()
+        payload = params.get("payload", b"")
+        if isinstance(payload, str):
+            request.payload = base64.b64decode(payload.encode("ascii"))
+        else:
+            request.payload = payload or b""
+        if params.get("filename"):
+            request.filename = str(params["filename"])
+        response = service.ImportPreset(request, None)
+        return MessageToDict(response, preserving_proto_field_name=True)
+
+    def _export_marketplace_preset(self, params: Mapping[str, Any]) -> Mapping[str, Any]:
+        service = self._ensure_marketplace()
+        request = trading_pb2.ExportMarketplacePresetRequest()
+        request.preset_id = str(params.get("preset_id") or "")
+        if params.get("format"):
+            request.format = str(params["format"])
+        response = service.ExportPreset(request, None)
+        payload = base64.b64encode(response.payload).decode("ascii")
+        return {
+            "preset": MessageToDict(response.preset, preserving_proto_field_name=True),
+            "payload_base64": payload,
+            "filename": response.filename,
+        }
+
+    def _remove_marketplace_preset(self, params: Mapping[str, Any]) -> Mapping[str, Any]:
+        service = self._ensure_marketplace()
+        request = trading_pb2.RemoveMarketplacePresetRequest()
+        request.preset_id = str(params.get("preset_id") or "")
+        response = service.RemovePreset(request, None)
+        return MessageToDict(response, preserving_proto_field_name=True)
+
+    def _activate_marketplace_preset(self, params: Mapping[str, Any]) -> Mapping[str, Any]:
+        service = self._ensure_marketplace()
+        request = trading_pb2.ActivateMarketplacePresetRequest()
+        request.preset_id = str(params.get("preset_id") or "")
+        response = service.ActivatePreset(request, None)
+        return MessageToDict(response, preserving_proto_field_name=True)
 
 
 class LocalRuntimeServer:
