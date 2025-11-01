@@ -4,7 +4,8 @@ Dokument opisuje sposób uruchomienia scenariusza demo → paper na stacji roboc
 
 ## Wymagania wstępne
 - Python 3.11 wraz z wirtualnym środowiskiem.
-- Zainstalowane zależności projektu (`pip install -e .[dev]`).
+- Zainstalowane zależności projektu (`pip install -e .[dev,compression]`, co doinstaluje
+  `brotli` lub `brotlicffi` oraz `zstandard` w zależności od platformy).
 - Dostęp do repozytorium z aktualnym kodem bota.
 
 ## Uruchomienie
@@ -12,7 +13,7 @@ Dokument opisuje sposób uruchomienia scenariusza demo → paper na stacji roboc
 2. Uruchom pipeline:
    ```bash
    python -m pip install --upgrade pip
-   pip install -e .[dev]
+   pip install -e .[dev,compression]
    pytest -m e2e_demo_paper --maxfail=1 --disable-warnings
    pytest -m retraining tests/reporting/test_retraining_reporter.py --maxfail=1 --disable-warnings
    ```

@@ -1,4 +1,3 @@
-import builtins
 import gzip
 import json
 import zlib
@@ -7,6 +6,8 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, urlparse
+
+from types import SimpleNamespace
 
 import pytest
 
@@ -457,7 +458,10 @@ def test_local_long_poll_stream_sets_accept_encoding(monkeypatch: pytest.MonkeyP
 
     batch = next(stream)
     assert batch.events and batch.events[0]["price"] == 42.0
-    assert captured_headers == ["gzip, deflate, br"]
+    from bot_core.exchanges import streaming as streaming_module
+
+    expected_header = streaming_module._build_default_headers()["Accept-Encoding"]
+    assert captured_headers == [expected_header]
 
     stream.close()
 
@@ -565,22 +569,51 @@ def test_local_long_poll_stream_sends_accept_encoding_header(
     next(stream)
     stream.close()
 
-    assert captured_header == ["gzip, deflate, br"]
+    from bot_core.exchanges import streaming as streaming_module
+
+    expected_header = streaming_module._build_default_headers()["Accept-Encoding"]
+    assert captured_header == [expected_header]
 
 
-def test_local_long_poll_stream_brotli_requires_dependency(
-    monkeypatch: pytest.MonkeyPatch,
+@pytest.mark.parametrize("brotli_variant", ["brotli", "brotlicffi", None])
+def test_local_long_poll_stream_handles_brotli_encoding(
+    monkeypatch: pytest.MonkeyPatch, brotli_variant: str | None
 ) -> None:
-    def fake_import(name, *args, **kwargs):  # noqa: D401
-        if name == "brotli":
-            raise ModuleNotFoundError("No module named 'brotli'")
-        return original_import(name, *args, **kwargs)
+    from bot_core.exchanges import streaming as streaming_module
 
-    original_import = builtins.__import__
-    monkeypatch.setattr(builtins, "__import__", fake_import)
+    payload = json.dumps(
+        {
+            "batches": [
+                {
+                    "channel": "ticker",
+                    "events": [{"price": 88.0}],
+                }
+            ],
+            "retry_after": 0.0,
+        }
+    ).encode("utf-8")
+    encoded_payload = b"brotli-encoded"
+    captured_header: list[str | None] = []
+
+    if brotli_variant:
+        decompress_calls: list[bytes] = []
+
+        def fake_decompress(data: bytes) -> bytes:  # noqa: D401
+            decompress_calls.append(data)
+            assert data == encoded_payload
+            return payload
+
+        fake_brotli = SimpleNamespace(decompress=fake_decompress)
+        error_attribute = "error" if brotli_variant == "brotli" else "BrotliError"
+        setattr(fake_brotli, error_attribute, RuntimeError)
+        monkeypatch.setattr(streaming_module, "brotli", fake_brotli, raising=False)
+    else:
+        monkeypatch.setattr(streaming_module, "brotli", None, raising=False)
 
     def fake_urlopen(request, timeout=0.0):  # noqa: D401
-        return _FakeResponse(b"{}", {"Content-Encoding": "br"})
+        captured_header.append(request.get_header("Accept-encoding"))
+        body = encoded_payload if brotli_variant else payload
+        return _FakeResponse(body, {"Content-Encoding": "br"})
 
     monkeypatch.setattr("bot_core.exchanges.streaming.urlopen", fake_urlopen)
 
@@ -599,8 +632,175 @@ def test_local_long_poll_stream_brotli_requires_dependency(
         jitter=(0.0, 0.0),
     )
 
-    with pytest.raises(ExchangeAPIError):
-        next(stream)
+    batch = next(stream)
+    assert batch.events and batch.events[0]["price"] == 88.0
+
+    stream.close()
+
+    expected_header = streaming_module._build_default_headers()["Accept-Encoding"]
+    assert captured_header == [expected_header]
+
+    if brotli_variant:
+        assert decompress_calls == [encoded_payload]
+
+
+@pytest.mark.parametrize("zstd_variant", ["module", "decompressor", None])
+def test_local_long_poll_stream_handles_zstd_encoding(
+    monkeypatch: pytest.MonkeyPatch, zstd_variant: str | None
+) -> None:
+    from bot_core.exchanges import streaming as streaming_module
+
+    payload = json.dumps(
+        {
+            "batches": [
+                {
+                    "channel": "ticker",
+                    "events": [{"price": 93.0}],
+                }
+            ],
+            "retry_after": 0.0,
+        }
+    ).encode("utf-8")
+    encoded_payload = b"zstd" + payload
+    captured_header: list[str | None] = []
+
+    if zstd_variant:
+        decompress_calls: list[bytes] = []
+
+        if zstd_variant == "module":
+            def fake_decompress(data: bytes) -> bytes:  # noqa: D401
+                decompress_calls.append(data)
+                assert data == encoded_payload
+                return payload
+
+            fake_zstd = SimpleNamespace(decompress=fake_decompress, ZstdError=RuntimeError)
+        else:
+            class FakeZstdDecompressor:
+                def decompress(self, data: bytes) -> bytes:  # noqa: D401
+                    decompress_calls.append(data)
+                    assert data == encoded_payload
+                    return payload
+
+            fake_zstd = SimpleNamespace(ZstdDecompressor=FakeZstdDecompressor, ZstdError=RuntimeError)
+
+        monkeypatch.setattr(streaming_module, "zstandard", fake_zstd, raising=False)
+    else:
+        monkeypatch.setattr(streaming_module, "zstandard", None, raising=False)
+
+    def fake_urlopen(request, timeout=0.0):  # noqa: D401
+        captured_header.append(request.get_header("Accept-encoding"))
+        body = encoded_payload if zstd_variant else payload
+        return _FakeResponse(body, {"Content-Encoding": "zstd"})
+
+    monkeypatch.setattr("bot_core.exchanges.streaming.urlopen", fake_urlopen)
+
+    stream = LocalLongPollStream(
+        base_url="http://127.0.0.1:9006",
+        path="/zstd",
+        channels=["ticker"],
+        adapter="test",
+        scope="public",
+        environment="paper",
+        poll_interval=0.0,
+        timeout=0.1,
+        max_retries=1,
+        backoff_base=0.0,
+        backoff_cap=0.0,
+        jitter=(0.0, 0.0),
+    )
+
+    batch = next(stream)
+    assert batch.events and batch.events[0]["price"] == 93.0
+
+    stream.close()
+
+    expected_header = streaming_module._build_default_headers()["Accept-Encoding"]
+    assert captured_header == [expected_header]
+
+    if zstd_variant:
+        assert decompress_calls == [encoded_payload]
+
+
+def test_local_long_poll_stream_ignores_encoding_parameters(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = json.dumps(
+        {
+            "batches": [
+                {
+                    "channel": "ticker",
+                    "events": [{"price": 12.5}],
+                }
+            ],
+            "retry_after": 0.0,
+        }
+    ).encode("utf-8")
+    gzip_payload = gzip.compress(payload)
+
+    def fake_urlopen(request, timeout=0.0):  # noqa: D401
+        return _FakeResponse(gzip_payload, {"Content-Encoding": "gzip; q=1.0"})
+
+    monkeypatch.setattr("bot_core.exchanges.streaming.urlopen", fake_urlopen)
+
+    stream = LocalLongPollStream(
+        base_url="http://127.0.0.1:9999",
+        path="/params",
+        channels=["ticker"],
+        adapter="binance",
+        scope="public",
+        environment="paper",
+        poll_interval=0.0,
+        timeout=0.1,
+        max_retries=1,
+        backoff_base=0.0,
+        backoff_cap=0.0,
+        jitter=(0.0, 0.0),
+    )
+
+    batch = next(stream)
+    assert batch.events and batch.events[0]["price"] == 12.5
+
+    stream.close()
+
+
+def test_local_long_poll_stream_reads_lowercase_content_encoding(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = json.dumps(
+        {
+            "batches": [
+                {
+                    "channel": "ticker",
+                    "events": [{"price": 99.0}],
+                }
+            ],
+            "retry_after": 0.0,
+        }
+    ).encode("utf-8")
+    encoded = gzip.compress(payload)
+
+    def fake_urlopen(request, timeout=0.0):  # noqa: D401
+        return _FakeResponse(encoded, {"content-encoding": ["GZIP"]})
+
+    monkeypatch.setattr("bot_core.exchanges.streaming.urlopen", fake_urlopen)
+
+    stream = LocalLongPollStream(
+        base_url="http://127.0.0.1:9007",
+        path="/gzip",
+        channels=["ticker"],
+        adapter="test",
+        scope="public",
+        environment="paper",
+        poll_interval=0.0,
+        timeout=0.1,
+        max_retries=1,
+        backoff_base=0.0,
+        backoff_cap=0.0,
+        jitter=(0.0, 0.0),
+    )
+
+    batch = next(stream)
+    assert batch.events and batch.events[0]["price"] == 99.0
 
     stream.close()
 
@@ -620,7 +820,10 @@ def test_local_long_poll_stream_multiple_encodings(monkeypatch: pytest.MonkeyPat
     gzip_then_brotli = gzip.compress(brotli_compressed)
 
     def fake_urlopen(request, timeout=0.0):  # noqa: D401
-        return _FakeResponse(gzip_then_brotli, {"Content-Encoding": "gzip, br"})
+        return _FakeResponse(
+            gzip_then_brotli,
+            {"Content-Encoding": "br; q=0.8, gzip; level=1"},
+        )
 
     monkeypatch.setattr("bot_core.exchanges.streaming.urlopen", fake_urlopen)
 
@@ -641,6 +844,125 @@ def test_local_long_poll_stream_multiple_encodings(monkeypatch: pytest.MonkeyPat
 
     batch = next(stream)
     assert batch.events and batch.events[0]["price"] == 101.0
+
+    stream.close()
+
+
+def test_local_long_poll_stream_sequence_content_encoding(monkeypatch: pytest.MonkeyPatch) -> None:
+    brotli = pytest.importorskip("brotli")
+
+    payload = json.dumps(
+        {
+            "batches": [
+                {"channel": "ticker", "events": [{"price": 77.0}]},
+            ],
+            "retry_after": 0.0,
+        }
+    ).encode("utf-8")
+    encoded = gzip.compress(brotli.compress(payload))
+
+    header_value = ("x-brotli; q=1.0", "X-GZIP; level=1")
+
+    def fake_urlopen(request, timeout=0.0):  # noqa: D401
+        return _FakeResponse(encoded, {"Content-Encoding": header_value})
+
+    monkeypatch.setattr("bot_core.exchanges.streaming.urlopen", fake_urlopen)
+
+    stream = LocalLongPollStream(
+        base_url="http://127.0.0.1:9011",
+        path="/sequence",
+        channels=["ticker"],
+        adapter="test",
+        scope="public",
+        environment="paper",
+        poll_interval=0.0,
+        timeout=0.1,
+        max_retries=1,
+        backoff_base=0.0,
+        backoff_cap=0.0,
+        jitter=(0.0, 0.0),
+    )
+
+    batch = next(stream)
+    assert batch.events and batch.events[0]["price"] == 77.0
+
+    stream.close()
+
+
+def test_local_long_poll_stream_bytes_content_encoding(monkeypatch: pytest.MonkeyPatch) -> None:
+    payload = json.dumps(
+        {
+            "batches": [
+                {"channel": "ticker", "events": [{"price": 55.0}]},
+            ],
+            "retry_after": 0.0,
+        }
+    ).encode("utf-8")
+    encoded = gzip.compress(payload)
+
+    def fake_urlopen(request, timeout=0.0):  # noqa: D401
+        return _FakeResponse(encoded, {"Content-Encoding": b"gzip"})
+
+    monkeypatch.setattr("bot_core.exchanges.streaming.urlopen", fake_urlopen)
+
+    stream = LocalLongPollStream(
+        base_url="http://127.0.0.1:9013",
+        path="/bytes",
+        channels=["ticker"],
+        adapter="test",
+        scope="public",
+        environment="paper",
+        poll_interval=0.0,
+        timeout=0.1,
+        max_retries=1,
+        backoff_base=0.0,
+        backoff_cap=0.0,
+        jitter=(0.0, 0.0),
+    )
+
+    batch = next(stream)
+    assert batch.events and batch.events[0]["price"] == 55.0
+
+    stream.close()
+
+
+def test_local_long_poll_stream_iterable_content_encoding(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = json.dumps(
+        {
+            "batches": [
+                {"channel": "ticker", "events": [{"price": 61.0}]},
+            ],
+            "retry_after": 0.0,
+        }
+    ).encode("utf-8")
+    encoded = gzip.compress(payload)
+
+    header_iterable = (value for value in ("identity", "gzip"))
+
+    def fake_urlopen(request, timeout=0.0):  # noqa: D401
+        return _FakeResponse(encoded, {"Content-Encoding": header_iterable})
+
+    monkeypatch.setattr("bot_core.exchanges.streaming.urlopen", fake_urlopen)
+
+    stream = LocalLongPollStream(
+        base_url="http://127.0.0.1:9014",
+        path="/iterable",
+        channels=["ticker"],
+        adapter="test",
+        scope="public",
+        environment="paper",
+        poll_interval=0.0,
+        timeout=0.1,
+        max_retries=1,
+        backoff_base=0.0,
+        backoff_cap=0.0,
+        jitter=(0.0, 0.0),
+    )
+
+    batch = next(stream)
+    assert batch.events and batch.events[0]["price"] == 61.0
 
     stream.close()
 

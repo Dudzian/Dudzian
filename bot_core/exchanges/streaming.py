@@ -24,12 +24,77 @@ from bot_core.exchanges.errors import (
 )
 from bot_core.exchanges.http_client import urlopen
 
+try:  # pragma: no cover - sprawdzamy dostępność opcjonalnej zależności
+    import brotli  # type: ignore[import-not-found]
+except ModuleNotFoundError:  # pragma: no cover - brak brotli w środowisku testowym
+    try:  # pragma: no cover - alternatywa dla środowisk bez brotli
+        import brotlicffi as brotli  # type: ignore[import-not-found]
+    except ModuleNotFoundError:  # pragma: no cover - brak obu bibliotek
+        brotli = None  # type: ignore[assignment]
+
+try:  # pragma: no cover - zstd jest opcjonalny
+    import zstandard  # type: ignore[import-not-found]
+except ModuleNotFoundError:  # pragma: no cover - brak biblioteki zstd
+    zstandard = None  # type: ignore[assignment]
+
 _LOGGER = logging.getLogger(__name__)
 
-_DEFAULT_HEADERS = {
-    "User-Agent": "bot-core/stream/1.0",
-    "Accept-Encoding": "gzip, deflate, br",
+_BASE_ACCEPT_ENCODING_VALUES = ("gzip", "deflate")
+
+_CONTENT_ENCODING_ALIASES: Mapping[str, str] = {
+    "x-gzip": "gzip",
+    "x-deflate": "deflate",
+    "x-brotli": "br",
+    "x-zstd": "zstd",
+    "zst": "zstd",
 }
+
+
+def _build_accept_encoding_values() -> list[str]:
+    values = list(_BASE_ACCEPT_ENCODING_VALUES)
+    if brotli is not None:
+        values.append("br")
+    if zstandard is not None:
+        values.append("zstd")
+    return values
+
+
+def _build_default_headers() -> dict[str, str]:
+    return {
+        "User-Agent": "bot-core/stream/1.0",
+        "Accept-Encoding": ", ".join(_build_accept_encoding_values()),
+    }
+
+
+_DEFAULT_HEADERS = _build_default_headers()
+
+
+def _iter_header_entries(value: object) -> Iterable[str]:
+    if value is None:
+        return ()
+    if isinstance(value, (str, bytes, bytearray)):
+        if isinstance(value, (bytes, bytearray)):
+            try:
+                return (value.decode("latin-1"),)
+            except UnicodeDecodeError:
+                return (value.decode("utf-8", errors="ignore"),)
+        return (value,)
+    if isinstance(value, Mapping):
+        items: list[str] = []
+        for item in value.values():
+            items.extend(_iter_header_entries(item))
+        return tuple(items)
+    if isinstance(value, Sequence):
+        items: list[str] = []
+        for item in value:
+            items.extend(_iter_header_entries(item))
+        return tuple(items)
+    if isinstance(value, Iterable):
+        items: list[str] = []
+        for item in value:
+            items.extend(_iter_header_entries(item))
+        return tuple(items)
+    return (str(value),)
 _DEFAULT_POLL_INTERVAL = 0.5
 _DEFAULT_TIMEOUT = 10.0
 _DEFAULT_MAX_RETRIES = 3
@@ -112,7 +177,7 @@ class LocalLongPollStream(Iterable[StreamBatch]):
                     continue
                 self._params[str(key)] = value
 
-        self._headers: MutableMapping[str, str] = dict(_DEFAULT_HEADERS)
+        self._headers: MutableMapping[str, str] = _build_default_headers()
         if headers:
             for key, value in headers.items():
                 self._headers[str(key)] = str(value)
@@ -337,23 +402,35 @@ class LocalLongPollStream(Iterable[StreamBatch]):
     ) -> bytes:
         if not payload:
             return b""
-        encoding_header: str | None = None
+        encoding_header: object | None = None
         if headers:
             try:
                 encoding_header = headers.get("Content-Encoding")  # type: ignore[arg-type]
             except AttributeError:  # pragma: no cover - nietypowy typ nagłówków
                 encoding_header = None
+            if encoding_header is None and isinstance(headers, Mapping):
+                for key, value in headers.items():
+                    if isinstance(key, str) and key.lower() == "content-encoding":
+                        encoding_header = value
+                        break
         if not encoding_header:
             return payload
-        encoding_values = [
-            item.strip().lower()
-            for item in str(encoding_header).split(",")
-            if item and item.strip()
-        ]
+        encoding_values: list[str] = []
+        for entry in _iter_header_entries(encoding_header):
+            for raw_item in entry.split(","):
+                if not raw_item:
+                    continue
+                token = raw_item.split(";", 1)[0].strip().lower()
+                if not token:
+                    continue
+                token = _CONTENT_ENCODING_ALIASES.get(token, token)
+                encoding_values.append(token)
         if not encoding_values:
             return payload
         data = payload
-        for encoding in encoding_values:
+        # Zgodnie z RFC 9110 sekcja 8.4, kodowania są stosowane w kolejności podanej
+        # w nagłówku, więc dekodowanie musi przebiegać w odwrotnej kolejności.
+        for encoding in reversed(encoding_values):
             if encoding in {"gzip"}:
                 try:
                     data = gzip.decompress(data)
@@ -378,22 +455,61 @@ class LocalLongPollStream(Iterable[StreamBatch]):
                         ) from exc
                 continue
             if encoding in {"br", "brotli"}:
+                if brotli is None or not hasattr(brotli, "decompress"):
+                    _LOGGER.debug(
+                        "Odebrano odpowiedź brotli, ale brak opcjonalnej biblioteki 'brotli' – pomijam dekodowanie."
+                    )
+                    continue
                 try:
-                    import brotli  # type: ignore[import-not-found]
-                except ModuleNotFoundError as exc:  # pragma: no cover - brak opcjonalnej zależności
-                    raise ExchangeAPIError(
-                        "Odebrano odpowiedź skompresowaną brotli, ale biblioteka 'brotli' nie jest dostępna.",
-                        0,
-                        payload="brotli_missing",
-                    ) from exc
-                try:
-                    data = brotli.decompress(data)
-                except brotli.error as exc:  # type: ignore[attr-defined]
+                    data = brotli.decompress(data)  # type: ignore[attr-defined]
+                except Exception as exc:  # pragma: no cover - zależy od implementacji
                     raise ExchangeAPIError(
                         "Nie udało się zdekompresować odpowiedzi brotli streamu.",
                         0,
                         payload=str(exc),
                     ) from exc
+                continue
+            if encoding in {"zstd", "zstandard"}:
+                if zstandard is None:
+                    _LOGGER.debug(
+                        "Odebrano odpowiedź zstd, ale brak opcjonalnej biblioteki 'zstandard' – pomijam dekodowanie."
+                    )
+                    continue
+                decompressor = getattr(zstandard, "decompress", None)
+                if callable(decompressor):
+                    try:
+                        data = decompressor(data)
+                    except Exception as exc:  # pragma: no cover - zależy od implementacji
+                        raise ExchangeAPIError(
+                            "Nie udało się zdekompresować odpowiedzi zstd streamu.",
+                            0,
+                            payload=str(exc),
+                        ) from exc
+                    continue
+                decompressor_cls = getattr(zstandard, "ZstdDecompressor", None)
+                if decompressor_cls is not None:
+                    try:
+                        instance = decompressor_cls()
+                    except Exception as exc:  # pragma: no cover - inicjalizacja może rzucić
+                        raise ExchangeAPIError(
+                            "Nie udało się zainicjalizować dekodera zstd streamu.",
+                            0,
+                            payload=str(exc),
+                        ) from exc
+                    decompress_method = getattr(instance, "decompress", None)
+                    if callable(decompress_method):
+                        try:
+                            data = decompress_method(data)
+                        except Exception as exc:  # pragma: no cover - zależy od implementacji
+                            raise ExchangeAPIError(
+                                "Nie udało się zdekompresować odpowiedzi zstd streamu.",
+                                0,
+                                payload=str(exc),
+                            ) from exc
+                        continue
+                _LOGGER.debug(
+                    "Odebrano odpowiedź zstd, ale moduł 'zstandard' nie udostępnia funkcji dekodowania – pomijam dekodowanie."
+                )
                 continue
             if encoding in {"identity"}:
                 continue
