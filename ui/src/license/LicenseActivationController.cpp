@@ -9,7 +9,9 @@
 #include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QStringList>
 #include <QLoggingCategory>
+#include <QProcess>
 #include <QSaveFile>
 #include <QTimer>
 #include <QtGlobal>
@@ -104,9 +106,117 @@ QByteArray tryDecodeBase64(const QString& text)
 
 } // namespace
 
+class ProcessBindingSecretJob : public LicenseActivationController::BindingSecretJob {
+    Q_OBJECT
+
+public:
+    explicit ProcessBindingSecretJob(QObject* parent = nullptr)
+        : LicenseActivationController::BindingSecretJob(parent)
+    {
+        m_process.setProcessChannelMode(QProcess::SeparateChannels);
+        connect(&m_process, &QProcess::started, this, &ProcessBindingSecretJob::handleStarted);
+        connect(&m_process, &QProcess::readyReadStandardOutput, this, &ProcessBindingSecretJob::handleStdout);
+        connect(&m_process, &QProcess::readyReadStandardError, this, &ProcessBindingSecretJob::handleStderr);
+        connect(&m_process,
+                QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+                this,
+                &ProcessBindingSecretJob::handleFinished);
+        connect(&m_process, &QProcess::errorOccurred, this, &ProcessBindingSecretJob::handleError);
+    }
+
+    void start(const QString& program, const QStringList& arguments) override
+    {
+        if (m_process.state() != QProcess::NotRunning)
+            m_process.kill();
+        m_stdoutBuffer.clear();
+        m_stderrBuffer.clear();
+        m_cancelled = false;
+        m_completed = false;
+        m_process.setProgram(program);
+        m_process.setArguments(arguments);
+        m_process.start();
+    }
+
+    void cancel() override
+    {
+        if (m_completed)
+            return;
+        m_cancelled = true;
+        if (m_process.state() != QProcess::NotRunning)
+            m_process.kill();
+        else {
+            m_completed = true;
+            Q_EMIT completed(false, QObject::tr("Anulowano zabezpieczanie sekretu licencji."), m_stdoutBuffer, m_stderrBuffer);
+        }
+    }
+
+private slots:
+    void handleStarted()
+    {
+        if (!m_completed)
+            Q_EMIT started();
+    }
+
+    void handleStdout()
+    {
+        m_stdoutBuffer += m_process.readAllStandardOutput();
+    }
+
+    void handleStderr()
+    {
+        m_stderrBuffer += m_process.readAllStandardError();
+    }
+
+    void handleFinished(int exitCode, QProcess::ExitStatus status)
+    {
+        if (m_completed)
+            return;
+        m_stdoutBuffer += m_process.readAllStandardOutput();
+        m_stderrBuffer += m_process.readAllStandardError();
+        m_completed = true;
+
+        if (m_cancelled) {
+            Q_EMIT completed(false, QObject::tr("Anulowano zabezpieczanie sekretu licencji."), m_stdoutBuffer, m_stderrBuffer);
+            return;
+        }
+
+        if (status != QProcess::NormalExit || exitCode != 0) {
+            const QString message = QObject::tr("ensure-binding-secret zakończył się kodem %1").arg(exitCode);
+            Q_EMIT completed(false, message, m_stdoutBuffer, m_stderrBuffer);
+            return;
+        }
+
+        Q_EMIT completed(true, QString(), m_stdoutBuffer, m_stderrBuffer);
+    }
+
+    void handleError(QProcess::ProcessError error)
+    {
+        if (m_completed)
+            return;
+        if (error == QProcess::FailedToStart) {
+            m_completed = true;
+            Q_EMIT completed(false, m_process.errorString(), m_stdoutBuffer, m_stderrBuffer);
+        }
+    }
+
+private:
+    QProcess m_process;
+    QByteArray m_stdoutBuffer;
+    QByteArray m_stderrBuffer;
+    bool m_cancelled = false;
+    bool m_completed = false;
+};
+
 LicenseActivationController::LicenseActivationController(QObject* parent)
     : QObject(parent)
 {
+    const QByteArray pythonEnv = qgetenv("BOT_CORE_UI_PYTHON");
+    if (pythonEnv.isEmpty())
+        m_pythonExecutable = QStringLiteral("python3");
+    else
+        m_pythonExecutable = expandPath(QString::fromUtf8(pythonEnv));
+    m_bindingSecretPath = expandPath(QStringLiteral("var/security/license_secret.key"));
+
     m_provisioningScanTimer.setSingleShot(true);
     m_provisioningScanTimer.setInterval(150);
     connect(&m_provisioningScanTimer, &QTimer::timeout, this, [this]() {
@@ -141,6 +251,15 @@ LicenseActivationController::LicenseActivationController(QObject* parent)
             &LicenseActivationController::handleFingerprintPathEvent);
     connect(&m_fingerprintWatcher, &QFileSystemWatcher::directoryChanged, this,
             &LicenseActivationController::handleFingerprintPathEvent);
+
+    m_bindingSecretJobFactory = [](QObject* owner) { return new ProcessBindingSecretJob(owner); };
+    m_bindingSecretTimeoutTimer.setSingleShot(true);
+    connect(&m_bindingSecretTimeoutTimer, &QTimer::timeout, this, [this]() {
+        if (!m_bindingSecretJob)
+            return;
+        m_bindingSecretAbortReason = BindingSecretAbortReason::TimedOut;
+        m_bindingSecretJob->cancel();
+    });
 }
 
 void LicenseActivationController::setConfigDirectory(const QString& path)
@@ -179,6 +298,44 @@ void LicenseActivationController::setProvisioningDirectory(const QString& path)
     Q_EMIT provisioningDirectoryChanged();
     if (m_initialized)
         setupProvisioningWatcher();
+}
+
+void LicenseActivationController::setPythonExecutable(const QString& executable)
+{
+    QString resolved = expandPath(executable).trimmed();
+    if (resolved.isEmpty())
+        resolved = QStringLiteral("python3");
+    if (m_pythonExecutable == resolved)
+        return;
+    m_pythonExecutable = resolved;
+}
+
+void LicenseActivationController::setBindingSecretPath(const QString& path)
+{
+    const QString resolved = expandPath(path).trimmed();
+    if (m_bindingSecretPath == resolved)
+        return;
+    m_bindingSecretPath = resolved;
+}
+
+void LicenseActivationController::setBindingSecretJobFactory(const std::function<BindingSecretJob*(QObject*)>& factory)
+{
+    m_bindingSecretJobFactory = factory;
+}
+
+void LicenseActivationController::setBindingSecretTimeout(int timeoutMs)
+{
+    if (timeoutMs > 0)
+        m_bindingSecretTimeoutMs = timeoutMs;
+}
+
+void LicenseActivationController::cancelBindingSecretPriming()
+{
+    if (!m_bindingSecretJob)
+        return;
+    m_bindingSecretAbortReason = BindingSecretAbortReason::Cancelled;
+    m_bindingSecretTimeoutTimer.stop();
+    m_bindingSecretJob->cancel();
 }
 
 void LicenseActivationController::initialize()
@@ -301,6 +458,13 @@ QString LicenseActivationController::resolveProvisioningDirectory() const
     if (!m_configDirectory.isEmpty())
         return QDir(m_configDirectory).filePath(QStringLiteral("licenses/inbox"));
     return expandPath(QStringLiteral("var/licenses/inbox"));
+}
+
+QString LicenseActivationController::resolveBindingSecretPath() const
+{
+    if (!m_bindingSecretPath.isEmpty())
+        return m_bindingSecretPath;
+    return expandPath(QStringLiteral("var/security/license_secret.key"));
 }
 
 bool LicenseActivationController::loadLicenseUrl(const QUrl& url)
@@ -472,43 +636,24 @@ bool LicenseActivationController::activateFromDocument(const QJsonDocument& docu
     if (persist && !persistLicense(document))
         return false;
 
-    const bool wasActive = m_licenseActive;
-    m_licenseActive = true;
-    m_licenseFingerprint = info.fingerprint;
-    m_licenseEdition = info.edition;
-    m_licenseLicenseId = info.licenseId;
-    m_licenseIssuedAt = info.issuedAtIso;
-    m_licenseMaintenanceUntil = info.maintenanceUntilIso;
-    m_licenseMaintenanceActive = info.maintenanceActive;
-    m_licenseHolderName = info.holderName;
-    m_licenseHolderEmail = info.holderEmail;
-    m_licenseSeats = info.seats;
-    m_licenseTrialActive = info.trialActive;
-    m_licenseTrialExpiresAt = info.trialExpiresIso;
-    m_licenseModules = info.modules;
-    m_licenseEnvironments = info.environments;
-    m_licenseRuntime = info.runtime;
-    m_lastDocument = info.document;
+    if (persist) {
+        m_pendingActivation = std::make_unique<PendingActivation>();
+        m_pendingActivation->info = info;
+        m_pendingActivation->sourceDescription = sourceDescription;
+        m_pendingActivation->persist = true;
 
-    if (!wasActive)
-        Q_EMIT licenseActiveChanged();
-    Q_EMIT licenseDataChanged();
+        if (!primeBindingSecret(info.fingerprint)) {
+            QFile::remove(resolveLicenseOutputPath());
+            m_pendingActivation.reset();
+            setStatusMessage(tr("Nie udało się zabezpieczyć sekretu licencji."), true);
+            return false;
+        }
 
-    QStringList summaryParts;
-    summaryParts.append(tr("edycja %1").arg(info.edition.isEmpty() ? tr("nieznana") : info.edition));
-    if (!info.licenseId.isEmpty())
-        summaryParts.append(tr("ID %1").arg(info.licenseId));
-    if (!info.maintenanceUntilIso.isEmpty())
-        summaryParts.append(tr("utrzymanie do %1").arg(info.maintenanceUntilIso));
-    if (!info.fingerprint.isEmpty())
-        summaryParts.append(tr("HWID %1").arg(info.fingerprint));
+        setStatusMessage(tr("Trwa zabezpieczanie sekretu licencji..."), false);
+        return true;
+    }
 
-    QString summary = tr("Licencja aktywna (%1)").arg(summaryParts.join(QStringLiteral(", ")));
-    if (!sourceDescription.isEmpty())
-        summary += tr(" • źródło: %1").arg(sourceDescription);
-    setStatusMessage(summary, false);
-    if (persist)
-        Q_EMIT licensePersisted(resolveLicenseOutputPath());
+    finalizeLicenseActivation(info, false, sourceDescription);
     return true;
 }
 
@@ -1126,3 +1271,182 @@ void LicenseActivationController::clearLicenseState()
     if (!m_statusIsError)
         setStatusMessage(tr("Brak aktywnej licencji"), false);
 }
+
+bool LicenseActivationController::primeBindingSecret(const QString& fingerprint)
+{
+    if (!m_bindingSecretJobFactory) {
+        qCWarning(lcActivation) << "Brak fabryki zadania ensure-binding-secret";
+        return false;
+    }
+
+    QString program = m_pythonExecutable.trimmed();
+    if (program.isEmpty())
+        program = QStringLiteral("python3");
+
+    QStringList args;
+    args << QStringLiteral("-m") << QStringLiteral("bot_core.security.ui_bridge")
+         << QStringLiteral("ensure-binding-secret");
+
+    const QString secretPath = resolveBindingSecretPath();
+    if (!secretPath.isEmpty())
+        args << QStringLiteral("--secret-path") << secretPath;
+
+    const QString normalized = normalizeFingerprint(fingerprint);
+    if (!normalized.isEmpty())
+        args << QStringLiteral("--fingerprint") << normalized;
+
+    cleanupBindingSecretJob();
+    m_bindingSecretJob = m_bindingSecretJobFactory(this);
+    if (!m_bindingSecretJob) {
+        qCWarning(lcActivation) << "Fabryka zadań ensure-binding-secret zwróciła null";
+        return false;
+    }
+
+    connect(m_bindingSecretJob,
+            &BindingSecretJob::completed,
+            this,
+            [this](bool success, const QString& message, const QByteArray& stdoutData, const QByteArray& stderrData) {
+                handleBindingSecretCompletion(success, message, stdoutData, stderrData);
+            });
+
+    m_bindingSecretStdout.clear();
+    m_bindingSecretStderr.clear();
+    m_bindingSecretAbortReason = BindingSecretAbortReason::None;
+
+    m_bindingSecretTimeoutTimer.start(m_bindingSecretTimeoutMs);
+    m_bindingSecretJob->start(program, args);
+    Q_EMIT bindingSecretPrimingStarted();
+    return true;
+}
+
+void LicenseActivationController::handleBindingSecretCompletion(bool success, const QString& message,
+                                                               const QByteArray& stdoutData, const QByteArray& stderrData)
+{
+    m_bindingSecretTimeoutTimer.stop();
+
+    if (!stderrData.isEmpty())
+        qCDebug(lcActivation) << "ensure-binding-secret stderr:" << QString::fromUtf8(stderrData);
+
+    if (!stdoutData.isEmpty())
+        m_bindingSecretStdout = stdoutData;
+    if (!stderrData.isEmpty())
+        m_bindingSecretStderr = stderrData;
+
+    std::unique_ptr<PendingActivation> pending = std::move(m_pendingActivation);
+
+    auto cleanup = [this]() {
+        cleanupBindingSecretJob();
+        m_bindingSecretAbortReason = BindingSecretAbortReason::None;
+    };
+
+    QString effectiveMessage = message;
+    if (m_bindingSecretAbortReason == BindingSecretAbortReason::TimedOut)
+        effectiveMessage = tr("Przekroczono limit czasu podczas zabezpieczania sekretu licencji.");
+    else if (m_bindingSecretAbortReason == BindingSecretAbortReason::Cancelled)
+        effectiveMessage = tr("Zabezpieczanie sekretu licencji zostało anulowane.");
+
+    auto failAndReport = [&](const QString& errorMessage) {
+        if (pending && pending->persist)
+            QFile::remove(resolveLicenseOutputPath());
+        cleanup();
+        handleBindingSecretFailure(errorMessage);
+    };
+
+    if (!success) {
+        failAndReport(!effectiveMessage.isEmpty() ? effectiveMessage
+                                                 : tr("Nie udało się zabezpieczyć sekretu licencji."));
+        return;
+    }
+
+    if (!stdoutData.isEmpty()) {
+        QJsonParseError parseError{};
+        const QJsonDocument doc = QJsonDocument::fromJson(stdoutData, &parseError);
+        if (parseError.error != QJsonParseError::NoError || !doc.isObject()) {
+            failAndReport(tr("ensure-binding-secret zwrócił niepoprawny JSON: %1").arg(parseError.errorString()));
+            return;
+        }
+        const QJsonObject root = doc.object();
+        const QString status = root.value(QStringLiteral("status")).toString();
+        if (status.compare(QStringLiteral("ok"), Qt::CaseInsensitive) != 0) {
+            const QString errorText = root.value(QStringLiteral("error")).toString();
+            const QString statusMessage = !errorText.isEmpty()
+                                              ? tr("ensure-binding-secret zgłosił błąd: %1").arg(errorText)
+                                              : tr("ensure-binding-secret zwrócił status: %1").arg(status);
+            failAndReport(statusMessage);
+            return;
+        }
+    }
+
+    cleanup();
+
+    if (pending) {
+        finalizeLicenseActivation(pending->info, pending->persist, pending->sourceDescription);
+        Q_EMIT bindingSecretPrimingFinished(true, QString());
+    } else {
+        Q_EMIT bindingSecretPrimingFinished(true, QString());
+    }
+}
+
+void LicenseActivationController::finalizeLicenseActivation(const LicenseInfo& info, bool persist,
+                                                            const QString& sourceDescription)
+{
+    const bool wasActive = m_licenseActive;
+    m_licenseActive = true;
+    m_licenseFingerprint = info.fingerprint;
+    m_licenseEdition = info.edition;
+    m_licenseLicenseId = info.licenseId;
+    m_licenseIssuedAt = info.issuedAtIso;
+    m_licenseMaintenanceUntil = info.maintenanceUntilIso;
+    m_licenseMaintenanceActive = info.maintenanceActive;
+    m_licenseHolderName = info.holderName;
+    m_licenseHolderEmail = info.holderEmail;
+    m_licenseSeats = info.seats;
+    m_licenseTrialActive = info.trialActive;
+    m_licenseTrialExpiresAt = info.trialExpiresIso;
+    m_licenseModules = info.modules;
+    m_licenseEnvironments = info.environments;
+    m_licenseRuntime = info.runtime;
+    m_lastDocument = info.document;
+
+    if (!wasActive)
+        Q_EMIT licenseActiveChanged();
+    Q_EMIT licenseDataChanged();
+
+    QStringList summaryParts;
+    summaryParts.append(tr("edycja %1").arg(info.edition.isEmpty() ? tr("nieznana") : info.edition));
+    if (!info.licenseId.isEmpty())
+        summaryParts.append(tr("ID %1").arg(info.licenseId));
+    if (!info.maintenanceUntilIso.isEmpty())
+        summaryParts.append(tr("utrzymanie do %1").arg(info.maintenanceUntilIso));
+    if (!info.fingerprint.isEmpty())
+        summaryParts.append(tr("HWID %1").arg(info.fingerprint));
+
+    QString summary = tr("Licencja aktywna (%1)").arg(summaryParts.join(QStringLiteral(", ")));
+    if (!sourceDescription.isEmpty())
+        summary += tr(" • źródło: %1").arg(sourceDescription);
+    setStatusMessage(summary, false);
+
+    if (persist)
+        Q_EMIT licensePersisted(resolveLicenseOutputPath());
+}
+
+void LicenseActivationController::cleanupBindingSecretJob()
+{
+    if (!m_bindingSecretJob)
+        return;
+    m_bindingSecretJob->disconnect(this);
+    m_bindingSecretJob->deleteLater();
+    m_bindingSecretJob = nullptr;
+    m_bindingSecretTimeoutTimer.stop();
+    m_bindingSecretStdout.clear();
+    m_bindingSecretStderr.clear();
+}
+
+void LicenseActivationController::handleBindingSecretFailure(const QString& message)
+{
+    QString finalMessage = message.isEmpty() ? tr("Nie udało się zabezpieczyć sekretu licencji.") : message;
+    setStatusMessage(finalMessage, true);
+    Q_EMIT bindingSecretPrimingFinished(false, finalMessage);
+}
+
+#include "LicenseActivationController.moc"

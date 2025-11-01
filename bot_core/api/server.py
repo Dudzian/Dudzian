@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import sys
 
+import base64
+import inspect
 import logging
 import os
 import subprocess
 import threading
 import time
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -17,7 +20,8 @@ from typing import Any, Callable, Dict, Iterable, Mapping, MutableMapping, Optio
 
 import grpc
 import pandas as pd
-from google.protobuf import timestamp_pb2
+from google.protobuf import empty_pb2, timestamp_pb2
+from google.protobuf.json_format import MessageToDict
 
 from bot_core.alerts import DefaultAlertRouter
 from bot_core.alerts.dispatcher import (
@@ -201,6 +205,16 @@ class _Emitter:
                 handler(**payload)
             except Exception:  # pragma: no cover - diagnostyczne logowanie
                 _LOGGER.exception("Emitter handler for %s failed", event)
+
+
+@dataclass(slots=True)
+class _StreamSubscription:
+    stream: Any
+    created_at: float = field(default_factory=time.monotonic)
+    last_access: float = field(default_factory=time.monotonic)
+    lock: threading.Lock = field(default_factory=threading.Lock)
+    exhausted: bool = False
+    timeout_mode: str = "none"
 
     def log(self, message: str, *args: Any, level: int = logging.INFO, **kwargs: Any) -> None:
         numeric_level: int
@@ -880,12 +894,20 @@ class _MarketDataServicer(trading_pb2_grpc.MarketDataServiceServicer):
         return trading_pb2.GetOhlcvHistoryResponse(candles=candles, has_more=False)
 
     def StreamOhlcv(self, request, context):  # noqa: N802
-        history = self.GetOhlcvHistory(request, context)
+        history_request = trading_pb2.GetOhlcvHistoryRequest()
+        history_request.instrument.CopyFrom(request.instrument)
+        if request.HasField("granularity"):
+            history_request.granularity.CopyFrom(request.granularity)
+        history = self.GetOhlcvHistory(history_request, context)
         if not history.candles:
             return
         snapshot = trading_pb2.StreamOhlcvSnapshot(candles=history.candles)
         update = trading_pb2.StreamOhlcvUpdate(snapshot=snapshot)
         yield update
+        # emit a short series of incremental updates for consumers exercising streaming APIs
+        for candle in history.candles[-3:]:
+            increment = trading_pb2.StreamOhlcvIncrement(candle=candle)
+            yield trading_pb2.StreamOhlcvUpdate(increment=increment)
 
     def ListTradableInstruments(self, request, context):  # noqa: N802
         requested_exchange = (request.exchange or "").strip().upper()
@@ -1144,6 +1166,439 @@ class _MarketplaceServicer(trading_pb2_grpc.MarketplaceServiceServicer):
         return trading_pb2.ActivateMarketplacePresetResponse(
             preset=self._build_summary(document)
         )
+
+
+def _serialize_timestamp(timestamp: timestamp_pb2.Timestamp) -> int:
+    return int(timestamp.seconds) * 1000 + int(timestamp.nanos) // 1_000_000
+
+
+def _serialize_candle(candle: trading_pb2.OhlcvCandle) -> Mapping[str, Any]:
+    return {
+        "timestamp_ms": _serialize_timestamp(candle.open_time),
+        "open": candle.open,
+        "high": candle.high,
+        "low": candle.low,
+        "close": candle.close,
+        "volume": candle.volume,
+        "sequence": candle.sequence,
+    }
+
+
+def _serialize_instrument_metadata(
+    entry: trading_pb2.TradableInstrumentMetadata,
+) -> Mapping[str, Any]:
+    instrument = entry.instrument
+    return {
+        "exchange": instrument.exchange,
+        "symbol": instrument.symbol,
+        "venue_symbol": instrument.venue_symbol,
+        "quote_currency": instrument.quote_currency,
+        "base_currency": instrument.base_currency,
+        "price_step": entry.price_step,
+        "amount_step": entry.amount_step,
+        "min_notional": entry.min_notional,
+        "min_amount": entry.min_amount,
+        "max_amount": entry.max_amount,
+        "min_price": entry.min_price,
+        "max_price": entry.max_price,
+    }
+
+
+def _serialize_risk_state(state: trading_pb2.RiskState) -> Mapping[str, Any]:
+    payload = MessageToDict(state, preserving_proto_field_name=True)
+    payload["generated_at_ms"] = _serialize_timestamp(state.generated_at)
+    return payload
+
+
+def _serialize_marketplace_summary(
+    summary: trading_pb2.MarketplacePresetSummary,
+) -> Mapping[str, Any]:
+    return MessageToDict(summary, preserving_proto_field_name=True)
+
+
+def _resolve_stream_timeout_mode(stream: Any) -> tuple[Callable[..., Any] | None, str]:
+    """Inspect iterator to determine how to request timed messages."""
+
+    next_with_timeout = getattr(stream, "next_with_timeout", None)
+    if callable(next_with_timeout):
+        return next_with_timeout, "keyword"
+
+    candidate = getattr(stream, "next", None)
+    if not callable(candidate):
+        return None, "none"
+
+    try:
+        signature = inspect.signature(candidate)
+    except (TypeError, ValueError):
+        return candidate, "none"
+
+    parameters = list(signature.parameters.values())
+    if not parameters:
+        return candidate, "none"
+
+    for parameter in parameters:
+        if parameter.kind == inspect.Parameter.KEYWORD_ONLY and parameter.name == "timeout":
+            return candidate, "keyword"
+        if parameter.kind == inspect.Parameter.VAR_KEYWORD:
+            return candidate, "keyword"
+
+    for parameter in parameters:
+        if parameter.kind in (
+            inspect.Parameter.POSITIONAL_ONLY,
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+        ):
+            return candidate, "positional"
+        if parameter.kind == inspect.Parameter.VAR_POSITIONAL:
+            return candidate, "positional"
+
+    return candidate, "none"
+
+
+def _start_market_stream(
+    service: Any,
+    request: trading_pb2.StreamOhlcvRequest,
+    *,
+    timeout_seconds: float | None,
+) -> Any:
+    """Invoke ``StreamOhlcv`` handling both local stubs and gRPC stubs."""
+
+    method = getattr(service, "StreamOhlcv")
+
+    attempts: list[Callable[[], Any]] = []
+    if timeout_seconds is not None:
+        attempts.extend(
+            [
+                lambda: method(request, timeout=timeout_seconds),
+                lambda: method(request, timeout_seconds),
+            ]
+        )
+    attempts.extend(
+        [
+            lambda: method(request, None),
+            lambda: method(request),
+        ]
+    )
+
+    last_error: TypeError | None = None
+    for attempt in attempts:
+        try:
+            return attempt()
+        except TypeError as exc:
+            last_error = exc
+            continue
+    if last_error is not None:
+        raise last_error
+    raise RuntimeError("Unable to start StreamOhlcv call")
+
+
+class LocalRuntimeGateway:
+    """Small dispatch layer used by the desktop shell JSON bridge."""
+
+    def __init__(self, context: LocalRuntimeContext) -> None:
+        self._context = context
+        self._market = _MarketDataServicer(context)
+        self._order = _OrderServicer(context)
+        self._metrics = _MetricsServicer(context)
+        self._health = _HealthServicer(context)
+        self._risk = _RiskServicer(context) if context.risk_store is not None else None
+        self._marketplace = (
+            _MarketplaceServicer(context)
+            if context.marketplace_repository is not None and context.marketplace_enabled
+            else None
+        )
+        self._subscriptions: dict[str, _StreamSubscription] = {}
+        self._subscriptions_lock = threading.Lock()
+
+    def dispatch(self, method: str, params: Mapping[str, Any]) -> Mapping[str, Any]:
+        handlers: Mapping[str, Callable[[Mapping[str, Any]], Mapping[str, Any]]] = {
+            "health.check": self._health_check,
+            "market_data.get_ohlcv_history": self._get_ohlcv_history,
+            "market_data.stream_ohlcv": self._stream_ohlcv,
+            "market_data.list_tradable_instruments": self._list_instruments,
+            "risk.get_state": self._get_risk_state,
+            "marketplace.list_presets": self._list_marketplace_presets,
+            "marketplace.import_preset": self._import_marketplace_preset,
+            "marketplace.export_preset": self._export_marketplace_preset,
+            "marketplace.remove_preset": self._remove_marketplace_preset,
+            "marketplace.activate_preset": self._activate_marketplace_preset,
+        }
+        handler = handlers.get(method)
+        if handler is None:
+            raise KeyError(f"Unsupported method: {method}")
+        return handler(params)
+
+    def _cleanup_subscription(self, subscription_id: str, *, cancel: bool = False) -> None:
+        with self._subscriptions_lock:
+            subscription = self._subscriptions.pop(subscription_id, None)
+        if subscription is None:
+            return
+        if cancel:
+            cancel_method = getattr(subscription.stream, "cancel", None)
+            if callable(cancel_method):
+                try:
+                    cancel_method()
+                except Exception:  # pragma: no cover - defensywny fallback
+                    _LOGGER.debug("Cancel stream for %s failed", subscription_id, exc_info=True)
+
+    def _consume_stream(
+        self,
+        subscription: _StreamSubscription,
+        *,
+        max_updates: int,
+        timeout_ms: int,
+    ) -> tuple[list[Mapping[str, Any]], list[Mapping[str, Any]], bool]:
+        snapshot: list[Mapping[str, Any]] = []
+        updates: list[Mapping[str, Any]] = []
+        exhausted = False
+        start = time.monotonic()
+        deadline = start + (timeout_ms / 1000.0) if timeout_ms > 0 else None
+        consumed = 0
+        stream = subscription.stream
+        timeout_callable, timeout_mode = _resolve_stream_timeout_mode(stream)
+        subscription.timeout_mode = timeout_mode
+
+        while True:
+            if snapshot and max_updates > 0 and consumed >= max_updates:
+                break
+            if deadline is not None:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+            else:
+                remaining = None
+            try:
+                if remaining is None or timeout_callable is None or timeout_mode == "none":
+                    message = next(stream)
+                else:
+                    arg = max(remaining, 0.0)
+                    try:
+                        if timeout_mode == "keyword":
+                            message = timeout_callable(timeout=arg)
+                        else:
+                            message = timeout_callable(arg)
+                    except TypeError:
+                        message = next(stream)
+                        timeout_callable = None
+                        timeout_mode = "none"
+                        subscription.timeout_mode = timeout_mode
+            except StopIteration:
+                exhausted = True
+                break
+            except grpc.RpcError as exc:
+                if exc.code() == grpc.StatusCode.DEADLINE_EXCEEDED:
+                    break
+                raise
+            subscription.last_access = time.monotonic()
+            if message.HasField("snapshot"):
+                snapshot = [_serialize_candle(c) for c in message.snapshot.candles]
+                if max_updates == 0 and deadline is None:
+                    break
+            if message.HasField("increment"):
+                updates.append(_serialize_candle(message.increment.candle))
+                consumed += 1
+        if not updates and not snapshot:
+            subscription.last_access = time.monotonic()
+        return snapshot, updates, exhausted
+
+    def _health_check(self, params: Mapping[str, Any]) -> Mapping[str, Any]:
+        del params
+        response = self._health.Check(empty_pb2.Empty(), None)
+        payload = MessageToDict(response, preserving_proto_field_name=True)
+        payload["started_at_ms"] = _serialize_timestamp(response.started_at)
+        return payload
+
+    def _get_ohlcv_history(self, params: Mapping[str, Any]) -> Mapping[str, Any]:
+        request = trading_pb2.GetOhlcvHistoryRequest()
+        instrument = request.instrument
+        symbol = str(params.get("symbol") or "").strip() or self._context.primary_symbol
+        instrument.symbol = symbol
+        instrument.venue_symbol = str(params.get("venue_symbol") or "")
+        instrument.exchange = str(params.get("exchange") or "")
+        if params.get("granularity"):
+            request.granularity.iso8601_duration = str(params.get("granularity"))
+        if params.get("limit"):
+            request.limit = int(params.get("limit"))
+        if params.get("start_ms"):
+            request.start_time.CopyFrom(
+                _timestamp_from_ms(int(params.get("start_ms")))
+            )
+        if params.get("end_ms"):
+            request.end_time.CopyFrom(
+                _timestamp_from_ms(int(params.get("end_ms")))
+            )
+        response = self._market.GetOhlcvHistory(request, None)
+        candles = [_serialize_candle(candle) for candle in response.candles]
+        return {"candles": candles, "has_more": response.has_more}
+
+    def _stream_ohlcv(self, params: Mapping[str, Any]) -> Mapping[str, Any]:
+        subscription_id = str(params.get("subscription_id") or "").strip()
+        cancel_requested = bool(params.get("cancel"))
+        timeout_ms = int(params.get("timeout_ms") or 250)
+        max_updates = int(params.get("max_updates") or 1)
+        if max_updates < 0:
+            max_updates = 0
+        if timeout_ms < 0:
+            timeout_ms = 0
+
+        if subscription_id:
+            with self._subscriptions_lock:
+                subscription = self._subscriptions.get(subscription_id)
+            if subscription is None:
+                if cancel_requested:
+                    return {
+                        "subscription_id": subscription_id,
+                        "snapshot": [],
+                        "updates": [],
+                        "has_more": False,
+                        "cancelled": True,
+                    }
+                raise KeyError(f"Unknown subscription_id: {subscription_id}")
+            if cancel_requested:
+                self._cleanup_subscription(subscription_id, cancel=True)
+                return {
+                    "subscription_id": subscription_id,
+                    "snapshot": [],
+                    "updates": [],
+                    "has_more": False,
+                    "cancelled": True,
+                }
+            with subscription.lock:
+                _, subscription.timeout_mode = _resolve_stream_timeout_mode(subscription.stream)
+                snapshot, updates, exhausted = self._consume_stream(
+                    subscription,
+                    max_updates=max_updates,
+                    timeout_ms=timeout_ms,
+                )
+                subscription.exhausted = exhausted
+            if exhausted:
+                self._cleanup_subscription(subscription_id)
+            return {
+                "subscription_id": subscription_id,
+                "snapshot": snapshot,
+                "updates": updates,
+                "has_more": not exhausted,
+            }
+
+        request = trading_pb2.StreamOhlcvRequest()
+        instrument = request.instrument
+        instrument.symbol = str(params.get("symbol") or "") or self._context.primary_symbol
+        stream = _start_market_stream(self._market, request, timeout_seconds=None)
+        _, timeout_mode = _resolve_stream_timeout_mode(stream)
+        if (
+            timeout_ms > 0
+            and timeout_mode == "none"
+            and not bool(params.get("continuous"))
+        ):
+            cancel_method = getattr(stream, "cancel", None)
+            if callable(cancel_method):
+                try:
+                    cancel_method()
+                except Exception:  # pragma: no cover - diagnostyczny fallback
+                    _LOGGER.debug("Stream cancel during retry failed", exc_info=True)
+            stream = _start_market_stream(
+                self._market,
+                request,
+                timeout_seconds=timeout_ms / 1000.0,
+            )
+            _, timeout_mode = _resolve_stream_timeout_mode(stream)
+        subscription = _StreamSubscription(stream=stream, timeout_mode=timeout_mode)
+        snapshot: list[Mapping[str, Any]]
+        updates: list[Mapping[str, Any]]
+        with subscription.lock:
+            snapshot, updates, exhausted = self._consume_stream(
+                subscription,
+                max_updates=max_updates,
+                timeout_ms=timeout_ms,
+            )
+            subscription.exhausted = exhausted
+
+        continuous = bool(params.get("continuous"))
+        response: dict[str, Any] = {
+            "snapshot": snapshot,
+            "updates": updates,
+            "has_more": continuous and not exhausted,
+        }
+        if continuous and not exhausted:
+            subscription_id = uuid.uuid4().hex
+            response["subscription_id"] = subscription_id
+            with self._subscriptions_lock:
+                self._subscriptions[subscription_id] = subscription
+        else:
+            cancel_method = getattr(subscription.stream, "cancel", None)
+            if callable(cancel_method):
+                try:
+                    cancel_method()
+                except Exception:  # pragma: no cover - diagnostyczne logowanie
+                    _LOGGER.debug("Stream cancel failed", exc_info=True)
+        return response
+
+    def _list_instruments(self, params: Mapping[str, Any]) -> Mapping[str, Any]:
+        request = trading_pb2.ListTradableInstrumentsRequest()
+        if params.get("exchange"):
+            request.exchange = str(params["exchange"])
+        response = self._market.ListTradableInstruments(request, None)
+        instruments = [_serialize_instrument_metadata(entry) for entry in response.instruments]
+        return {"instruments": instruments}
+
+    def _get_risk_state(self, params: Mapping[str, Any]) -> Mapping[str, Any]:
+        del params
+        if self._risk is None:
+            return {}
+        response = self._risk.GetRiskState(trading_pb2.RiskStateRequest(), None)
+        return _serialize_risk_state(response)
+
+    def _ensure_marketplace(self) -> _MarketplaceServicer:
+        if self._marketplace is None:
+            raise RuntimeError("Marketplace is disabled")
+        return self._marketplace
+
+    def _list_marketplace_presets(self, params: Mapping[str, Any]) -> Mapping[str, Any]:
+        del params
+        service = self._ensure_marketplace()
+        response = service.ListPresets(trading_pb2.ListMarketplacePresetsRequest(), None)
+        presets = [_serialize_marketplace_summary(entry) for entry in response.presets]
+        return {"presets": presets}
+
+    def _import_marketplace_preset(self, params: Mapping[str, Any]) -> Mapping[str, Any]:
+        service = self._ensure_marketplace()
+        request = trading_pb2.ImportMarketplacePresetRequest()
+        payload = params.get("payload", b"")
+        if isinstance(payload, str):
+            request.payload = base64.b64decode(payload.encode("ascii"))
+        else:
+            request.payload = payload or b""
+        if params.get("filename"):
+            request.filename = str(params["filename"])
+        response = service.ImportPreset(request, None)
+        return MessageToDict(response, preserving_proto_field_name=True)
+
+    def _export_marketplace_preset(self, params: Mapping[str, Any]) -> Mapping[str, Any]:
+        service = self._ensure_marketplace()
+        request = trading_pb2.ExportMarketplacePresetRequest()
+        request.preset_id = str(params.get("preset_id") or "")
+        if params.get("format"):
+            request.format = str(params["format"])
+        response = service.ExportPreset(request, None)
+        payload = base64.b64encode(response.payload).decode("ascii")
+        return {
+            "preset": MessageToDict(response.preset, preserving_proto_field_name=True),
+            "payload_base64": payload,
+            "filename": response.filename,
+        }
+
+    def _remove_marketplace_preset(self, params: Mapping[str, Any]) -> Mapping[str, Any]:
+        service = self._ensure_marketplace()
+        request = trading_pb2.RemoveMarketplacePresetRequest()
+        request.preset_id = str(params.get("preset_id") or "")
+        response = service.RemovePreset(request, None)
+        return MessageToDict(response, preserving_proto_field_name=True)
+
+    def _activate_marketplace_preset(self, params: Mapping[str, Any]) -> Mapping[str, Any]:
+        service = self._ensure_marketplace()
+        request = trading_pb2.ActivateMarketplacePresetRequest()
+        request.preset_id = str(params.get("preset_id") or "")
+        response = service.ActivatePreset(request, None)
+        return MessageToDict(response, preserving_proto_field_name=True)
 
 
 class LocalRuntimeServer:

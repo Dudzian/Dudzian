@@ -72,7 +72,7 @@ Wszystkie zgłoszenia muszą zostać zarejestrowane w narzędziu śledzenia incy
    - Przekaż klientowi plik licencji (`*.json`) podpisany Ed25519.
    - Na maszynie docelowej uruchom proces weryfikacji (np. `python -m bot_core.security.license_service` poprzez narzędzia instalatora) wskazując plik licencji.
    - Po poprawnej weryfikacji powstaje plik `var/security/license_status.json` zawierający możliwości licencji oraz podpis HMAC (`HMAC-SHA384`) powiązany z lokalnym fingerprintem sprzętowym.
-   - Lokalny sekret HMAC (`var/security/license_secret.key`) jest generowany automatycznie przy pierwszej aktywacji i zabezpieczony prawami `0600`.
+   - Lokalny sekret HMAC jest generowany automatycznie przy pierwszej aktywacji, zapisywany w natywnym keychainie (Keychain/DPAPI/libsecret), a dodatkowo utrwalany w zaszyfrowanym pliku `var/security/license_secret.key` powiązanym z fingerprintem urządzenia.
 
 2. **Ochrona przed rollbackiem**
    - Każde kolejne uruchomienie licencji porównuje monotoniczny stan (`sequence`, `issued_at`, `effective_date`).
@@ -80,7 +80,7 @@ Wszystkie zgłoszenia muszą zostać zarejestrowane w narzędziu śledzenia incy
    - Jeśli podpis statusu licencji został zmodyfikowany lub usunięty, zostanie zgłoszony `LicenseStateTamperedError`; wymagane jest ponowne wydanie licencji lub ręczna weryfikacja plików.
 
 3. **Odzyskiwanie po awarii / wymiana sprzętu**
-   - Zabezpiecz kopie `var/security/license_status.json`, `var/security/license_secret.key` oraz dziennika `logs/security_admin.log` przed przeniesieniem systemu.
+   - Zabezpiecz kopie `var/security/license_status.json`, zaszyfrowanego `var/security/license_secret.key` oraz dziennika `logs/security_admin.log` przed przeniesieniem systemu.
    - W razie wymiany sprzętu wystąp do zespołu licencyjnego o ponownie podpisany pakiet licencji z nowym fingerprintem.
    - Przy błędach podpisu usuń tylko plik statusu (pozostawiając `license_secret.key`), po czym wczytaj najnowszą licencję – system wygeneruje nowy snapshot i podpis.
 

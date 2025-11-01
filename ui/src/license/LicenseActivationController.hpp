@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QObject>
+#include <QByteArray>
 #include <QFileSystemWatcher>
 #include <QJsonDocument>
 #include <QString>
@@ -8,6 +9,8 @@
 #include <QTimer>
 #include <QUrl>
 #include <QVariantMap>
+#include <functional>
+#include <memory>
 
 class LicenseActivationController : public QObject {
     Q_OBJECT
@@ -34,12 +37,31 @@ class LicenseActivationController : public QObject {
     Q_PROPERTY(QString provisioningDirectory READ provisioningDirectory WRITE setProvisioningDirectory NOTIFY provisioningDirectoryChanged)
 
 public:
+    class BindingSecretJob : public QObject {
+        Q_OBJECT
+
+    public:
+        explicit BindingSecretJob(QObject* parent = nullptr)
+            : QObject(parent)
+        {
+        }
+
+        virtual void start(const QString& program, const QStringList& arguments) = 0;
+        virtual void cancel() = 0;
+
+    signals:
+        void started();
+        void completed(bool success, const QString& message, const QByteArray& stdoutData, const QByteArray& stderrData);
+    };
+
     explicit LicenseActivationController(QObject* parent = nullptr);
 
     void setConfigDirectory(const QString& path);
     void setLicenseStoragePath(const QString& path);
     void setFingerprintDocumentPath(const QString& path);
     Q_INVOKABLE void setProvisioningDirectory(const QString& path);
+    Q_INVOKABLE void setPythonExecutable(const QString& executable);
+    Q_INVOKABLE void setBindingSecretPath(const QString& path);
     void initialize();
 
     Q_INVOKABLE bool loadLicenseUrl(const QUrl& url);
@@ -49,6 +71,11 @@ public:
     Q_INVOKABLE bool saveExpectedFingerprint(const QString& fingerprint);
     Q_INVOKABLE void overrideExpectedFingerprint(const QString& fingerprint);
     Q_INVOKABLE bool autoProvision(const QVariantMap& fingerprintDocument = QVariantMap());
+    Q_INVOKABLE void cancelBindingSecretPriming();
+
+    void setBindingSecretJobFactory(const std::function<BindingSecretJob*(QObject*)>& factory);
+    BindingSecretJob* currentBindingSecretJob() const { return m_bindingSecretJob; }
+    void setBindingSecretTimeout(int timeoutMs);
 
     bool licenseActive() const { return m_licenseActive; }
     QString statusMessage() const { return m_statusMessage; }
@@ -82,6 +109,8 @@ signals:
     void licensePersisted(const QString& path);
     void provisioningInProgressChanged();
     void provisioningDirectoryChanged();
+    void bindingSecretPrimingStarted();
+    void bindingSecretPrimingFinished(bool success, const QString& message);
 
 private:
     struct LicenseInfo {
@@ -106,6 +135,7 @@ private:
     QString resolveLicenseOutputPath() const;
     QString resolveFingerprintDocumentPath() const;
     QString resolveProvisioningDirectory() const;
+    QString resolveBindingSecretPath() const;
     void refreshExpectedFingerprint();
     void loadPersistedLicense();
     bool activateFromDocument(const QJsonDocument& document, bool persist, const QString& sourceDescription);
@@ -152,6 +182,8 @@ private:
     QString m_fingerprintDocumentPath;
     QString m_expectedFingerprint;
     QString m_provisioningDirectory;
+    QString m_pythonExecutable;
+    QString m_bindingSecretPath;
 
     QFileSystemWatcher m_provisioningWatcher;
     QTimer m_provisioningScanTimer;
@@ -162,6 +194,25 @@ private:
     QTimer m_licenseReloadTimer;
     QTimer m_fingerprintReloadTimer;
 
+    std::function<BindingSecretJob*(QObject*)> m_bindingSecretJobFactory;
+    BindingSecretJob* m_bindingSecretJob = nullptr;
+    QTimer m_bindingSecretTimeoutTimer;
+    int m_bindingSecretTimeoutMs = 30000;
+    enum class BindingSecretAbortReason {
+        None,
+        Cancelled,
+        TimedOut,
+    };
+    BindingSecretAbortReason m_bindingSecretAbortReason = BindingSecretAbortReason::None;
+    QByteArray m_bindingSecretStdout;
+    QByteArray m_bindingSecretStderr;
+    struct PendingActivation {
+        LicenseInfo info;
+        QString sourceDescription;
+        bool persist = false;
+    };
+    std::unique_ptr<PendingActivation> m_pendingActivation;
+
     void setupLicenseWatcher();
     void setupFingerprintWatcher();
     void handleLicensePathEvent(const QString& path);
@@ -169,4 +220,10 @@ private:
     void scheduleLicenseReload(int delayMs = 0);
     void scheduleFingerprintReload(int delayMs = 0);
     void clearLicenseState();
+    bool primeBindingSecret(const QString& fingerprint);
+    void handleBindingSecretCompletion(bool success, const QString& message,
+                                       const QByteArray& stdoutData, const QByteArray& stderrData);
+    void finalizeLicenseActivation(const LicenseInfo& info, bool persist, const QString& sourceDescription);
+    void cleanupBindingSecretJob();
+    void handleBindingSecretFailure(const QString& message);
 };
