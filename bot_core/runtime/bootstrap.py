@@ -104,6 +104,7 @@ from bot_core.security.guards import (
     install_capability_guard,
     reset_capability_guard,
 )
+from bot_core.security.runtime_integrity import RuntimeIntegrityError, verify_bundle_integrity
 from bot_core.security.tokens import ServiceTokenValidator
 from bot_core.runtime.tco_reporting import RuntimeTCOReporter
 
@@ -667,6 +668,11 @@ def _load_callable_from_path(target: str) -> Callable[..., Any]:
 
 
 _LOGGER = logging.getLogger(__name__)
+
+try:  # pragma: no cover - w środowiskach developerskich manifest może nie istnieć
+    verify_bundle_integrity()
+except RuntimeIntegrityError:
+    _LOGGER.debug("Pomijam kontrolę integralności pakietu runtime.", exc_info=True)
 
 
 def _enforce_installation_hardware() -> None:

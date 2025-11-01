@@ -29,11 +29,15 @@ from bot_core.security.marketplace_validator import (  # noqa: E402
     MarketplaceVerificationError,
 )
 from bot_core.marketplace import (  # noqa: E402
+    ExchangePresetValidationResult,
+    generate_exchange_presets,
     PresetDocument,
     PresetSignatureVerification,
     load_private_key,
     serialize_preset_document,
     sign_preset_payload,
+    reconcile_exchange_presets,
+    validate_exchange_presets,
 )
 
 _MARKETPLACE_DIR = REPO_ROOT / "config" / "marketplace"
@@ -245,6 +249,126 @@ def _cmd_package(repo: MarketplaceRepository, args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_generate_exchange_presets(repo: MarketplaceRepository, args: argparse.Namespace) -> int:
+    del repo
+    exchanges_dir = Path(args.exchanges_dir).expanduser().resolve()
+    output_dir = Path(args.output_dir).expanduser().resolve()
+    private_key = Path(args.private_key).expanduser()
+    documents = generate_exchange_presets(
+        exchanges_dir=exchanges_dir,
+        output_dir=output_dir,
+        private_key=private_key,
+        key_id=args.key_id,
+        issuer=args.issuer,
+        version=args.version,
+        version_strategy=args.version_strategy,
+        selected_exchanges=args.exchange,
+    )
+
+    if not documents:
+        print("Nie znaleziono konfiguracji giełd do wygenerowania presetów.")
+        return 0
+
+    for document in documents:
+        status = "OK" if document.verification.verified else "FAILED"
+        location = document.path if document.path else output_dir
+        print(f"- {document.preset_id} [{status}] → {location}")
+
+    print(f"Wygenerowano {len(documents)} presetów do katalogu {output_dir}")
+    return 0
+
+
+def _cmd_check_exchange_presets(repo: MarketplaceRepository, args: argparse.Namespace) -> int:
+    del repo
+    exchanges_dir = Path(args.exchanges_dir).expanduser().resolve()
+    output_dir = Path(args.output_dir).expanduser().resolve()
+    signing_keys = _load_signing_keys(args.key) if args.key else None
+
+    results = validate_exchange_presets(
+        exchanges_dir=exchanges_dir,
+        output_dir=output_dir,
+        version=args.version,
+        signing_keys=signing_keys,
+        selected_exchanges=args.exchange,
+        version_strategy=args.version_strategy,
+    )
+
+    if not results:
+        print("Brak definicji giełd do walidacji.")
+        return 0
+
+    failures = 0
+    for result in results:
+        failures += _print_exchange_preset_status(result)
+
+    if args.fix:
+        if not args.private_key or not args.key_id:
+            print(
+                "Opcje --private-key oraz --key-id są wymagane podczas użycia --fix.",
+                file=sys.stderr,
+            )
+            return 2
+        if failures == 0:
+            print("Brak problemów do naprawienia.")
+            return 0
+
+        print("\nRozpoczynam naprawę presetów giełdowych...")
+        repaired_results = reconcile_exchange_presets(
+            exchanges_dir=exchanges_dir,
+            output_dir=output_dir,
+            private_key=Path(args.private_key).expanduser(),
+            key_id=args.key_id,
+            issuer=args.issuer,
+            version=args.version,
+            signing_keys=signing_keys,
+            remove_orphans=args.remove_orphans,
+            selected_exchanges=args.exchange,
+            version_strategy=args.version_strategy,
+        )
+
+        print("\nWynik po naprawie:")
+        failures = 0
+        for result in repaired_results:
+            failures += _print_exchange_preset_status(result)
+
+        if failures:
+            print(
+                "Nie udało się w pełni naprawić presetów giełdowych.",
+                file=sys.stderr,
+            )
+            return 1
+
+        print("Wszystkie presety giełdowe zostały naprawione i zweryfikowane.")
+        return 0
+
+    if failures:
+        print(f"Wykryto {failures} problemów z presetami giełdowymi.", file=sys.stderr)
+        return 1
+
+    print("Wszystkie presety giełdowe są aktualne i poprawnie podpisane.")
+    return 0
+
+
+def _print_exchange_preset_status(result: ExchangePresetValidationResult) -> int:
+    problems: list[str] = []
+    if not result.exists:
+        problems.append("brak pliku")
+    if not result.verified:
+        problems.append("niepoprawny podpis")
+    if not result.up_to_date:
+        problems.append("wymaga regeneracji")
+
+    status = "OK" if not problems else ", ".join(problems)
+    location = result.preset_path if result.exists else "(brak pliku)"
+    version_info = result.current_version or "brak"
+    print(
+        f"- {result.preset_id} → {location} | aktualna={version_info} | oczekiwana={result.expected_version} | {status}"
+    )
+    for issue in result.issues:
+        print(f"    - {issue}")
+    return 1 if problems else 0
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -309,6 +433,101 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Nie dołączaj klucza publicznego do podpisu.",
     )
     cmd_package.set_defaults(func=_cmd_package)
+
+    cmd_generate = sub.add_parser(
+        "generate-exchange-presets",
+        help="Generuje podpisane presety dla wszystkich giełd z config/exchanges.",
+    )
+    cmd_generate.add_argument(
+        "--exchanges-dir",
+        default="config/exchanges",
+        help="Katalog z plikami konfiguracji giełd (domyślnie config/exchanges).",
+    )
+    cmd_generate.add_argument(
+        "--output-dir",
+        default="config/marketplace/presets/exchanges",
+        help="Katalog docelowy wygenerowanych presetów.",
+    )
+    cmd_generate.add_argument("--key-id", required=True, help="Identyfikator klucza podpisu.")
+    cmd_generate.add_argument(
+        "--private-key",
+        required=True,
+        help="Klucz prywatny Ed25519 używany do podpisania presetów.",
+    )
+    cmd_generate.add_argument("--issuer", help="Opcjonalny identyfikator wydawcy podpisu.")
+    cmd_generate.add_argument("--version", default="1.0.0", help="Wersja generowanych presetów.")
+    cmd_generate.add_argument(
+        "--version-strategy",
+        choices=["static", "spec-hash"],
+        default="static",
+        help="Strategia nadawania wersji presetom (domyślnie static).",
+    )
+    cmd_generate.add_argument(
+        "--exchange",
+        "-e",
+        action="append",
+        help="Opcjonalnie ogranicz generowanie do wybranych giełd (powtarzalny parametr).",
+    )
+    cmd_generate.set_defaults(func=_cmd_generate_exchange_presets)
+
+    cmd_check = sub.add_parser(
+        "check-exchange-presets",
+        help="Waliduje istniejące presety giełdowe względem definicji YAML.",
+    )
+    cmd_check.add_argument(
+        "--exchanges-dir",
+        default="config/exchanges",
+        help="Katalog z plikami definicji giełd (domyślnie config/exchanges).",
+    )
+    cmd_check.add_argument(
+        "--output-dir",
+        default="config/marketplace/presets/exchanges",
+        help="Katalog z podpisanymi presetami giełdowymi.",
+    )
+    cmd_check.add_argument(
+        "--version",
+        help="Wymuszona wersja metadanych do porównania (domyślnie wartość z pliku).",
+    )
+    cmd_check.add_argument(
+        "--version-strategy",
+        choices=["static", "spec-hash"],
+        default="static",
+        help="Strategia wyliczania oczekiwanej wersji presetu (domyślnie static).",
+    )
+    cmd_check.add_argument(
+        "--key",
+        action="append",
+        help="Opcjonalne klucze weryfikacji podpisu KEY_ID:/ścieżka/do/klucza.",
+    )
+    cmd_check.add_argument(
+        "--fix",
+        action="store_true",
+        help="Automatycznie regeneruje brakujące lub przestarzałe presety.",
+    )
+    cmd_check.add_argument(
+        "--private-key",
+        help="Klucz prywatny Ed25519 używany do naprawy presetów.",
+    )
+    cmd_check.add_argument(
+        "--key-id",
+        help="Identyfikator klucza podpisu używany podczas naprawy.",
+    )
+    cmd_check.add_argument(
+        "--issuer",
+        help="Identyfikator wystawcy podpisu używany przy naprawie (opcjonalnie).",
+    )
+    cmd_check.add_argument(
+        "--remove-orphans",
+        action="store_true",
+        help="Usuwa osierocone pliki presetów z katalogu docelowego.",
+    )
+    cmd_check.add_argument(
+        "--exchange",
+        "-e",
+        action="append",
+        help="Waliduj jedynie wskazane giełdy (powtarzalny parametr).",
+    )
+    cmd_check.set_defaults(func=_cmd_check_exchange_presets)
 
     return parser
 

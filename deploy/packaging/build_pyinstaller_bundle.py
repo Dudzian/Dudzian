@@ -121,6 +121,34 @@ def _collect_artifact_metadata(artifacts: Iterable[ArtifactSpec]) -> list[Mappin
     return entries
 
 
+def _write_integrity_manifest(layout: BundleLayout) -> ArtifactSpec:
+    manifest_entries: list[Mapping[str, object]] = []
+    for path in sorted(layout.root.rglob("*")):
+        if not path.is_file():
+            continue
+        relative = path.relative_to(layout.root).as_posix()
+        if relative.endswith(".zip"):
+            continue
+        manifest_entries.append(
+            {
+                "path": relative,
+                "sha384": _hash_file(path),
+                "size": path.stat().st_size,
+            }
+        )
+
+    manifest_payload = {
+        "algorithm": "sha384",
+        "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "files": manifest_entries,
+    }
+
+    target = layout.extras_dir / "integrity_manifest.json"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(json.dumps(manifest_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    return ArtifactSpec(bundle_path=target.relative_to(layout.root), source_path=target)
+
+
 def _decode_secret(value: str) -> bytes:
     try:
         return base64.b64decode(value, validate=True)
@@ -1317,6 +1345,9 @@ def build_bundle(args: argparse.Namespace) -> Path:
         hmac_key=_parse_license_hmac_key(getattr(args, "license_hmac_key", None)),
     )
     artifacts.extend(license_artifacts)
+
+    integrity_manifest_spec = _write_integrity_manifest(layout)
+    artifacts.append(integrity_manifest_spec)
 
     metadata = _load_metadata_files(getattr(args, "metadata_file", None))
     url_headers = _parse_http_headers(
