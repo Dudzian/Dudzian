@@ -1432,6 +1432,69 @@ def append_fingerprint_audit(
 
 
 # ---------------------------------------------------------------------------
+# Raportowanie incydentów UI (blokada instancji)
+# ---------------------------------------------------------------------------
+
+
+def report_single_instance_event(
+    *,
+    lock_path: str | os.PathLike[str],
+    owner_pid: int | None = None,
+    owner_host: str | None = None,
+    owner_application: str | None = None,
+    fingerprint: str | None = None,
+    log_path: str | os.PathLike[str] | Path | None = None,
+) -> Path:
+    """Raportuje konflikt wielu instancji UI do logu licencjonowania."""
+
+    lock_candidate = Path(lock_path).expanduser()
+    try:
+        canonical_lock = lock_candidate.resolve()
+    except OSError:
+        canonical_lock = lock_candidate
+
+    metadata: dict[str, Any] = {"lock_path": str(canonical_lock)}
+    if owner_pid:
+        metadata["owner_pid"] = int(owner_pid)
+    host = (owner_host or "").strip()
+    if host:
+        metadata["owner_host"] = host
+    application = (owner_application or "").strip()
+    if application:
+        metadata["owner_application"] = application
+
+    normalized_fp: str | None = None
+    candidate = (fingerprint or "").strip()
+    if candidate:
+        try:
+            normalized_fp = _normalize_binding_fingerprint(candidate)
+        except Exception:  # pragma: no cover - defensywne
+            normalized_fp = candidate.strip().upper()
+    else:
+        try:
+            normalized_fp = _normalize_binding_fingerprint(get_local_fingerprint())
+        except FingerprintError as exc:
+            LOGGER.warning(
+                "Nie udało się pobrać lokalnego fingerprintu dla raportu konfliktu instancji.",
+                exc_info=exc,
+            )
+            normalized_fp = None
+        except Exception:  # pragma: no cover - defensywne
+            LOGGER.exception(
+                "Niespodziewany błąd podczas normalizacji fingerprintu konfliktu instancji.",
+            )
+            normalized_fp = None
+
+    return append_fingerprint_audit(
+        event="ui_single_instance_conflict",
+        fingerprint=normalized_fp,
+        status="denied",
+        metadata=metadata,
+        log_path=log_path,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Starsze API – OEM Device Fingerprint
 # ---------------------------------------------------------------------------
 
@@ -2116,7 +2179,7 @@ def _load_keys_from_args(args: list[str]) -> dict[str, bytes]:
     return result
 
 
-def cli(argv: list[str] | None = None) -> int:
+def _cli_generate(argv: list[str]) -> int:
     import argparse
 
     parser = argparse.ArgumentParser(description="Generuje odcisk sprzętowy hosta i podpisuje go HMAC.")
@@ -2171,6 +2234,45 @@ def cli(argv: list[str] | None = None) -> int:
     return 0
 
 
+def _cli_report_single_instance(argv: list[str]) -> int:
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Raportuje konflikt wielu instancji UI do logu licencjonowania."
+    )
+    parser.add_argument("--lock-path", required=True, help="Ścieżka pliku blokady instancji.")
+    parser.add_argument("--owner-pid", type=int, default=0, help="PID aktywnej instancji.")
+    parser.add_argument("--owner-host", help="Nazwa hosta, na którym działa aktywna instancja.")
+    parser.add_argument(
+        "--owner-application",
+        help="Identyfikator aplikacji zapisany w pliku blokady.",
+    )
+    parser.add_argument("--fingerprint", help="Odcisk urządzenia do wymuszenia w raporcie.")
+    parser.add_argument(
+        "--log-path",
+        help="Niestandardowa ścieżka logu bezpieczeństwa (domyślnie logs/security_admin.log).",
+    )
+
+    parsed = parser.parse_args(argv)
+
+    report_single_instance_event(
+        lock_path=parsed.lock_path,
+        owner_pid=parsed.owner_pid or None,
+        owner_host=parsed.owner_host,
+        owner_application=parsed.owner_application,
+        fingerprint=parsed.fingerprint,
+        log_path=parsed.log_path,
+    )
+    return 0
+
+
+def cli(argv: list[str] | None = None) -> int:
+    args = sys.argv[1:] if argv is None else argv
+    if args and args[0] == "report-single-instance":
+        return _cli_report_single_instance(args[1:])
+    return _cli_generate(args)
+
+
 if __name__ == "__main__":  # pragma: no cover - CLI
     raise SystemExit(cli())
 
@@ -2188,6 +2290,7 @@ __all__ = [
     "sign_license_payload",
     "verify_license_payload_signature",
     "append_fingerprint_audit",
+    "report_single_instance_event",
     "build_fingerprint_document",
     "get_local_fingerprint",
     "verify_document",
