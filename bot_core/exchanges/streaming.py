@@ -1,10 +1,13 @@
 """Wspólne narzędzia do lokalnego streamingu opartego o long-polle REST/gRPC."""
 from __future__ import annotations
 
+import asyncio
+import functools
 import gzip
 import json
 import logging
 import random
+import threading
 import time
 import zlib
 from collections import deque
@@ -206,6 +209,10 @@ class LocalLongPollStream(Iterable[StreamBatch]):
 
         self._buffer_size = max(1, int(buffer_size))
         self._pending: Deque[StreamBatch] = deque()
+        self._pending_lock = threading.Lock()
+        self._pending_condition = threading.Condition(self._pending_lock)
+        self._prefill_enabled = False
+        self._prefill_drained_once = False
         self._channel_param = (channel_param or "").strip()
         self._cursor_param = (cursor_param or "").strip()
         self._cursor: str | None = (
@@ -214,6 +221,9 @@ class LocalLongPollStream(Iterable[StreamBatch]):
         self._channel_serializer = channel_serializer
         self._closed = False
         self._last_poll = 0.0
+        self._stop_event = threading.Event()
+        self._worker_thread: threading.Thread | None = None
+        self._worker_error: Exception | None = None
         self._http_method = (http_method or "GET").upper()
         self._params_in_body = bool(params_in_body)
         self._channels_in_body = bool(channels_in_body)
@@ -246,14 +256,99 @@ class LocalLongPollStream(Iterable[StreamBatch]):
         )
         self._update_queue_metric()
 
+    def start(self) -> "LocalLongPollStream":
+        """Uruchamia wątek odpowiedzialny za polling long-pollowy."""
+
+        with self._pending_condition:
+            if self._closed:
+                return self
+            self._prefill_enabled = True
+        self._ensure_worker()
+        return self
+
+    def wait_prefill(self, *, min_batches: int = 1, timeout: float | None = None) -> bool:
+        """Oczekuje na wypełnienie bufora przez wątek prefetchujący.
+
+        Zwraca ``True`` jeśli w buforze pojawiła się wymagana liczba paczek
+        przed upływem limitu czasu. Jeśli limit czasu zostanie przekroczony,
+        metoda zwraca ``False``. Wszelkie błędy pracy wątku pobierającego są
+        propagowane poprzez ponowne zgłoszenie oryginalnego wyjątku.
+
+        Args:
+            min_batches: Minimalna liczba paczek, które powinny znaleźć się w
+                buforze zanim metoda zakończy działanie. Wartości mniejsze od 1
+                traktowane są jako brak wymagań (metoda zwraca ``True``).
+            timeout: Maksymalny czas oczekiwania w sekundach. ``None`` oznacza
+                oczekiwanie bez limitu czasowego.
+        """
+
+        if min_batches <= 0:
+            return True
+
+        self.start()
+
+        deadline: float | None = None
+        if timeout is not None:
+            try:
+                timeout_value = float(timeout)
+            except (TypeError, ValueError):
+                timeout_value = 0.0
+            if timeout_value < 0:
+                timeout_value = 0.0
+            deadline = time.monotonic() + timeout_value
+
+        with self._pending_condition:
+            while not self._closed:
+                if self._worker_error is not None:
+                    raise self._worker_error
+                if len(self._pending) >= min_batches:
+                    return True
+                if deadline is None:
+                    self._pending_condition.wait()
+                else:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        return False
+                    self._pending_condition.wait(remaining)
+
+            if self._worker_error is not None:
+                raise self._worker_error
+            return False
+
+    async def wait_prefill_async(
+        self, *, min_batches: int = 1, timeout: float | None = None
+    ) -> bool:
+        """Asynchroniczna wersja ``wait_prefill`` uruchamiana poza pętlą zdarzeń."""
+
+        loop = asyncio.get_running_loop()
+        func = functools.partial(self.wait_prefill, min_batches=min_batches, timeout=timeout)
+        return await loop.run_in_executor(None, func)
+
     def __iter__(self) -> "LocalLongPollStream":
+        self._ensure_worker()
         return self
 
     def __enter__(self) -> "LocalLongPollStream":
+        self._ensure_worker()
         return self
 
     def __exit__(self, exc_type, exc, tb) -> bool | None:  # noqa: D401
         self.close()
+        return None
+
+    async def __aenter__(self) -> "LocalLongPollStream":
+        """Zapewnia wsparcie dla asynchronicznych kontekstów."""
+
+        self.start()
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type,
+        exc,
+        tb,
+    ) -> bool | None:  # noqa: D401
+        await self.aclose()
         return None
 
     @property
@@ -263,14 +358,52 @@ class LocalLongPollStream(Iterable[StreamBatch]):
         return self._closed
 
     def __next__(self) -> StreamBatch:
-        while not self._closed:
-            if self._pending:
-                batch = self._pending.popleft()
-                self._update_queue_metric()
-                self._record_delivery_lag(batch)
-                return batch
-            self._poll_once()
-        raise StopIteration
+        if self._closed:
+            raise StopIteration
+
+        self._ensure_worker()
+        batch: StreamBatch | None = None
+        error: Exception | None = None
+
+        while batch is None and error is None:
+            with self._pending_condition:
+                if self._worker_error is not None:
+                    error = self._worker_error
+                    break
+                if self._pending:
+                    batch = self._pending.popleft()
+                    self._prefill_drained_once = True
+                    self._update_queue_metric_locked()
+                    self._pending_condition.notify_all()
+                    break
+                if self._closed:
+                    break
+                self._pending_condition.wait()
+
+        if error is not None:
+            raise error
+        if batch is None:
+            raise StopIteration
+
+        self._record_delivery_lag(batch)
+        return batch
+
+    def __aiter__(self) -> "LocalLongPollStream":
+        self._ensure_worker()
+        return self
+
+    async def __anext__(self) -> StreamBatch:
+        loop = asyncio.get_running_loop()
+        try:
+            return await loop.run_in_executor(None, self.__next__)
+        except StopIteration as exc:
+            raise StopAsyncIteration from exc
+
+    async def aclose(self) -> None:
+        """Asynchroniczna wersja zamykania strumienia."""
+
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, self.close)
 
     def close(self) -> None:
         """Zamyka iterator – kolejne próby pobrania danych zakończą się StopIteration."""
@@ -278,12 +411,69 @@ class LocalLongPollStream(Iterable[StreamBatch]):
         if self._closed:
             return
         self._closed = True
-        self._pending.clear()
-        self._update_queue_metric()
+        self._stop_event.set()
+        with self._pending_condition:
+            self._pending.clear()
+            self._update_queue_metric_locked()
+            self._pending_condition.notify_all()
+
+        worker = self._worker_thread
+        if worker and worker.is_alive() and worker is not threading.current_thread():
+            worker.join(timeout=1.0)
+        self._worker_thread = None
 
     # ------------------------------------------------------------------
     # Wewnętrzne operacje long-polla
     # ------------------------------------------------------------------
+    def _ensure_worker(self) -> None:
+        if self._closed:
+            return
+        with self._pending_condition:
+            worker = self._worker_thread
+            if worker and worker.is_alive():
+                return
+            if self._closed:
+                return
+            worker = threading.Thread(
+                target=self._poller_loop,
+                name=f"LocalLongPollStream[{self._adapter}:{self._scope}]",
+                daemon=True,
+            )
+            self._worker_thread = worker
+        worker.start()
+
+    def _poller_loop(self) -> None:
+        try:
+            while not self._stop_event.is_set() and not self._closed:
+                with self._pending_condition:
+                    while (
+                        not self._closed
+                        and not self._stop_event.is_set()
+                        and (
+                            len(self._pending)
+                            >= (
+                                self._buffer_size
+                                if self._prefill_enabled and self._prefill_drained_once
+                                else 1
+                            )
+                        )
+                    ):
+                        self._pending_condition.wait()
+                if self._stop_event.is_set() or self._closed:
+                    break
+                try:
+                    self._poll_once()
+                except Exception as exc:  # pragma: no cover - delegujemy do wątku głównego
+                    with self._pending_condition:
+                        self._worker_error = exc
+                        self._closed = True
+                        self._pending_condition.notify_all()
+                    self._stop_event.set()
+                    return
+        finally:
+            with self._pending_condition:
+                self._pending_condition.notify_all()
+
     def _poll_once(self) -> None:
         now = self._clock()
         elapsed = now - self._last_poll
@@ -631,7 +821,7 @@ class LocalLongPollStream(Iterable[StreamBatch]):
             batches_iterable = ()
 
         now = self._clock()
-        appended = False
+        prepared_batches: list[StreamBatch] = []
         for entry in batches_iterable:
             channel = str(entry.get("channel") or self._channels[0])
             events_raw = entry.get("events") or ()
@@ -652,22 +842,19 @@ class LocalLongPollStream(Iterable[StreamBatch]):
                 self._cursor = entry_cursor
 
             heartbeat_flag = bool(entry.get("heartbeat", False))
-            batch = StreamBatch(
-                channel=channel,
-                events=tuple(events),
-                cursor=self._cursor,
-                heartbeat=heartbeat_flag or not events,
-                received_at=now,
-                raw=dict(entry),
+            prepared_batches.append(
+                StreamBatch(
+                    channel=channel,
+                    events=tuple(events),
+                    cursor=self._cursor,
+                    heartbeat=heartbeat_flag or not events,
+                    received_at=now,
+                    raw=dict(entry),
+                )
             )
-            self._apply_backpressure()
-            self._pending.append(batch)
-            self._update_queue_metric()
-            appended = True
 
-        if not appended:
-            self._apply_backpressure()
-            self._pending.append(
+        if not prepared_batches:
+            prepared_batches.append(
                 StreamBatch(
                     channel="*",
                     events=(),
@@ -677,7 +864,13 @@ class LocalLongPollStream(Iterable[StreamBatch]):
                     raw={},
                 )
             )
-            self._update_queue_metric()
+
+        with self._pending_condition:
+            for batch in prepared_batches:
+                self._apply_backpressure_locked()
+                self._pending.append(batch)
+            self._update_queue_metric_locked()
+            self._pending_condition.notify_all()
 
         retry_after = self._coerce_positive_float(payload.get("retry_after"))
         if retry_after is not None:
@@ -860,7 +1053,7 @@ class LocalLongPollStream(Iterable[StreamBatch]):
             return
         params.append((str(key), value))
 
-    def _apply_backpressure(self) -> None:
+    def _apply_backpressure_locked(self) -> None:
         dropped = 0
         while len(self._pending) >= self._buffer_size:
             self._pending.popleft()
@@ -869,6 +1062,10 @@ class LocalLongPollStream(Iterable[StreamBatch]):
             self._metric_backpressure.inc(dropped, labels=self._metric_labels)
 
     def _update_queue_metric(self) -> None:
+        with self._pending_condition:
+            self._update_queue_metric_locked()
+
+    def _update_queue_metric_locked(self) -> None:
         self._metric_queue.set(float(len(self._pending)), labels=self._metric_labels)
 
     def _record_poll_latency(self, duration: float) -> None:

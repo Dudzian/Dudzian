@@ -1,5 +1,8 @@
+import asyncio
 import gzip
 import json
+import threading
+import time
 import zlib
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -46,6 +49,21 @@ class _FakeResponse:
         return self.payload
 
 
+class _SequenceClock:
+    def __init__(self, values: list[float]) -> None:
+        self._iterator = iter(values)
+        self._lock = threading.Lock()
+        self._last = 0.0
+
+    def __call__(self) -> float:
+        with self._lock:
+            try:
+                self._last = next(self._iterator)
+            except StopIteration:
+                pass
+            return self._last
+
+
 def _build_stream_settings() -> dict[str, Any]:
     return {
         "base_url": "http://127.0.0.1:9876",
@@ -84,12 +102,25 @@ def test_binance_spot_stream_long_poll(monkeypatch: pytest.MonkeyPatch) -> None:
             "retry_after": 0.0,
         },
     ]
+    fallback_response = {
+        "batches": [
+            {
+                "channel": "ticker",
+                "events": [],
+                "cursor": "cursor-1",
+                "heartbeat": True,
+            }
+        ],
+        "retry_after": 1.0,
+    }
 
     def fake_urlopen(request, timeout=0.0):  # noqa: D401
         captured_urls.append(request.full_url)  # type: ignore[attr-defined]
-        if not responses:
-            raise AssertionError("Żądano większej liczby pollingów niż oczekiwano")
-        payload = json.dumps(responses.pop(0)).encode("utf-8")
+        if responses:
+            payload_map = responses.pop(0)
+        else:
+            payload_map = fallback_response
+        payload = json.dumps(payload_map).encode("utf-8")
         return _FakeResponse(payload)
 
     monkeypatch.setattr("bot_core.exchanges.streaming.urlopen", fake_urlopen)
@@ -114,7 +145,7 @@ def test_binance_spot_stream_long_poll(monkeypatch: pytest.MonkeyPatch) -> None:
 
     stream.close()
 
-    assert len(captured_urls) == 2
+    assert len(captured_urls) >= 2
     query_first = parse_qs(urlparse(captured_urls[0]).query)
     assert query_first.get("channels") == ["ticker"]
     query_second = parse_qs(urlparse(captured_urls[1]).query)
@@ -209,7 +240,7 @@ def test_local_long_poll_stream_backpressure_metrics(monkeypatch: pytest.MonkeyP
             raise AssertionError("Nieoczekiwany dodatkowy polling")
         return _FakeResponse(responses.pop(0))
 
-    clock_values = iter([0.0, 0.0, 0.2, 0.2, 1.2, 1.4])
+    fake_clock = _SequenceClock([0.0, 0.0, 0.2, 0.2, 1.2, 1.4])
 
     stream = LocalLongPollStream(
         base_url="http://127.0.0.1",
@@ -224,7 +255,7 @@ def test_local_long_poll_stream_backpressure_metrics(monkeypatch: pytest.MonkeyP
         backoff_base=0.0,
         backoff_cap=0.0,
         jitter=(0.0, 0.0),
-        clock=lambda: next(clock_values),
+        clock=fake_clock,
         sleep=lambda _: None,
         buffer_size=2,
         metrics_registry=registry,
@@ -260,6 +291,222 @@ def test_local_long_poll_stream_backpressure_metrics(monkeypatch: pytest.MonkeyP
     lag_state = lag_metric.snapshot(labels=expected_labels)
     assert lag_state.count == 2
     assert lag_state.sum == pytest.approx(2.2, rel=1e-6)
+
+
+def test_local_long_poll_stream_prefetches_in_background(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    responses = [
+        {"batches": [{"channel": "ticker", "events": [{"seq": 1}]}], "retry_after": 0.0},
+        {"batches": [{"channel": "ticker", "events": [{"seq": 2}]}], "retry_after": 0.0},
+    ]
+    call_lock = threading.Lock()
+    call_index = 0
+    second_request_started = threading.Event()
+    release_second_response = threading.Event()
+
+    def fake_urlopen(request, timeout=0.0):  # noqa: D401
+        nonlocal call_index
+        with call_lock:
+            index = call_index
+            call_index += 1
+        payload_map = responses[index if index < len(responses) else len(responses) - 1]
+        if index == 1:
+            second_request_started.set()
+            if not release_second_response.wait(timeout=1.0):
+                raise AssertionError("Drugie zapytanie long-pollowe nie zostało odblokowane na czas")
+        payload = json.dumps(payload_map).encode("utf-8")
+        return _FakeResponse(payload)
+
+    monkeypatch.setattr("bot_core.exchanges.streaming.urlopen", fake_urlopen)
+
+    stream = LocalLongPollStream(
+        base_url="http://127.0.0.1",
+        path="/background",
+        channels=["ticker"],
+        adapter="test",
+        scope="public",
+        environment="test",
+        poll_interval=0.0,
+        timeout=0.1,
+        max_retries=1,
+        backoff_base=0.0,
+        backoff_cap=0.0,
+        jitter=(0.0, 0.0),
+    )
+
+    first = next(stream)
+    assert [event.get("seq") for event in first.events] == [1]
+
+    assert second_request_started.wait(timeout=1.0) is True
+    assert call_index >= 2
+
+    release_second_response.set()
+    second = next(stream)
+    assert [event.get("seq") for event in second.events] == [2]
+
+    stream.close()
+
+
+def test_local_long_poll_stream_prefills_buffer(monkeypatch: pytest.MonkeyPatch) -> None:
+    payloads = [
+        {"batches": [{"channel": "ticker", "events": [{"seq": 1}]}], "retry_after": 0.0},
+        {"batches": [{"channel": "ticker", "events": [{"seq": 2}]}], "retry_after": 0.0},
+        {"batches": [{"channel": "ticker", "events": [{"seq": 3}]}], "retry_after": 0.0},
+        {"batches": [], "retry_after": 1.0},
+    ]
+    call_lock = threading.Lock()
+    call_index = 0
+    call_events = [threading.Event() for _ in payloads]
+
+    def fake_urlopen(request, timeout=0.0):  # noqa: D401
+        nonlocal call_index
+        with call_lock:
+            index = call_index
+            call_index += 1
+        if index >= len(payloads):
+            index = len(payloads) - 1
+        call_events[index].set()
+        payload = json.dumps(payloads[index]).encode("utf-8")
+        return _FakeResponse(payload)
+
+    monkeypatch.setattr("bot_core.exchanges.streaming.urlopen", fake_urlopen)
+
+    stream = LocalLongPollStream(
+        base_url="http://127.0.0.1",
+        path="/prefill",
+        channels=["ticker"],
+        adapter="test",
+        scope="public",
+        environment="test",
+        poll_interval=0.0,
+        timeout=0.1,
+        max_retries=1,
+        backoff_base=0.0,
+        backoff_cap=0.0,
+        jitter=(0.0, 0.0),
+        buffer_size=2,
+        clock=_SequenceClock([0.0, 0.1, 0.2, 0.3, 0.4]),
+        sleep=lambda _: None,
+    ).start()
+
+    assert call_events[0].wait(timeout=1.0) is True
+    assert call_events[1].is_set() is False
+
+    first = next(stream)
+    assert [event.get("seq") for event in first.events] == [1]
+
+    assert call_events[1].wait(timeout=1.0) is True
+    assert call_events[2].wait(timeout=1.0) is True
+    second = next(stream)
+    assert [event.get("seq") for event in second.events] == [2]
+
+    third = next(stream)
+    assert [event.get("seq") for event in third.events] == [3]
+
+    stream.close()
+
+
+def test_local_long_poll_stream_async_iteration(monkeypatch: pytest.MonkeyPatch) -> None:
+    responses = [
+        {"batches": [{"channel": "ticker", "events": [{"seq": 10}]}], "retry_after": 0.0},
+        {"batches": [{"channel": "ticker", "events": [{"seq": 11}]}], "retry_after": 0.0},
+        {"batches": [], "retry_after": 0.0},
+    ]
+    call_lock = threading.Lock()
+    call_index = 0
+
+    def fake_urlopen(request, timeout=0.0):  # noqa: D401
+        nonlocal call_index
+        with call_lock:
+            if call_index < len(responses):
+                payload_map = responses[call_index]
+            else:
+                payload_map = responses[-1]
+            call_index += 1
+        payload = json.dumps(payload_map).encode("utf-8")
+        return _FakeResponse(payload)
+
+    monkeypatch.setattr("bot_core.exchanges.streaming.urlopen", fake_urlopen)
+
+    stream = LocalLongPollStream(
+        base_url="http://127.0.0.1",
+        path="/async",
+        channels=["ticker"],
+        adapter="test",
+        scope="public",
+        environment="test",
+        poll_interval=0.0,
+        timeout=0.1,
+        max_retries=1,
+        backoff_base=0.0,
+        backoff_cap=0.0,
+        jitter=(0.0, 0.0),
+    )
+
+    async def _consume() -> list[StreamBatch]:
+        batches: list[StreamBatch] = []
+        async for batch in stream:
+            batches.append(batch)
+            if len(batches) == 2:
+                break
+        return batches
+
+    batches = asyncio.run(_consume())
+    stream.close()
+
+    assert len(batches) == 2
+    assert [event.get("seq") for event in batches[0].events] == [10]
+    assert [event.get("seq") for event in batches[1].events] == [11]
+
+
+def test_local_long_poll_stream_async_context_manager(monkeypatch: pytest.MonkeyPatch) -> None:
+    responses = [
+        {"batches": [{"channel": "ticker", "events": [{"seq": 21}]}], "retry_after": 0.0},
+        {"batches": [{"channel": "ticker", "events": [{"seq": 22}]}], "retry_after": 0.0},
+        {"batches": [], "retry_after": 1.0},
+    ]
+    call_lock = threading.Lock()
+    call_index = 0
+
+    def fake_urlopen(request, timeout=0.0):  # noqa: D401
+        nonlocal call_index
+        with call_lock:
+            if call_index < len(responses):
+                payload_map = responses[call_index]
+            else:
+                payload_map = responses[-1]
+            call_index += 1
+        payload = json.dumps(payload_map).encode("utf-8")
+        return _FakeResponse(payload)
+
+    monkeypatch.setattr("bot_core.exchanges.streaming.urlopen", fake_urlopen)
+
+    async def _consume() -> list[list[int | None]]:
+        async with LocalLongPollStream(
+            base_url="http://127.0.0.1",
+            path="/async-context",
+            channels=["ticker"],
+            adapter="test",
+            scope="public",
+            environment="test",
+            poll_interval=0.0,
+            timeout=0.1,
+            max_retries=1,
+            backoff_base=0.0,
+            backoff_cap=0.0,
+            jitter=(0.0, 0.0),
+        ) as stream:
+            batches: list[list[int | None]] = []
+            async for batch in stream:
+                batches.append([event.get("seq") for event in batch.events])
+                if len(batches) >= 2:
+                    break
+            return batches
+
+    batches = asyncio.run(_consume())
+
+    assert batches == [[21], [22]]
 
 
 def test_binance_stream_respects_scope_buffer_size() -> None:
@@ -387,10 +634,26 @@ def test_stream_custom_channel_and_cursor_names(monkeypatch: pytest.MonkeyPatch)
             "retry_after": 0.0,
         },
     ]
+    fallback_response = {
+        "position": "cursor-2",
+        "batches": [
+            {
+                "channel": "ticker",
+                "events": [],
+                "position": "cursor-2",
+                "heartbeat": True,
+            }
+        ],
+        "retry_after": 1.0,
+    }
 
     def fake_urlopen(request, timeout=0.0):  # noqa: D401
         captured_urls.append(request.full_url)  # type: ignore[attr-defined]
-        payload = json.dumps(responses.pop(0)).encode("utf-8")
+        if responses:
+            payload_map = responses.pop(0)
+        else:
+            payload_map = fallback_response
+        payload = json.dumps(payload_map).encode("utf-8")
         return _FakeResponse(payload)
 
     monkeypatch.setattr("bot_core.exchanges.streaming.urlopen", fake_urlopen)
@@ -1470,5 +1733,229 @@ def test_local_long_poll_stream_form_encoder(monkeypatch: pytest.MonkeyPatch) ->
     assert parsed_body["environment"] == ["paper"]
     assert parsed_body["scope"] == ["public"]
 
+    stream.close()
+
+
+def test_local_long_poll_stream_wait_prefill_minimizes_latency(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    responses = [
+        {
+            "batches": [
+                {"channel": "ticker", "events": [{"sequence": 1}], "cursor": "c-1"},
+            ],
+            "retry_after": 0.0,
+        },
+        {
+            "batches": [
+                {"channel": "ticker", "events": [{"sequence": 2}], "cursor": "c-2"},
+            ],
+            "retry_after": 0.0,
+        },
+    ]
+    poll_delays = [0.02, 0.0]
+    call_count = 0
+
+    def fake_urlopen(request, timeout=0.0):  # noqa: D401
+        nonlocal call_count
+        delay = poll_delays[call_count] if call_count < len(poll_delays) else 0.0
+        if delay:
+            time.sleep(delay)
+        payload_map = responses[call_count] if call_count < len(responses) else responses[-1]
+        call_count += 1
+        return _FakeResponse(json.dumps(payload_map).encode("utf-8"))
+
+    monkeypatch.setattr("bot_core.exchanges.streaming.urlopen", fake_urlopen)
+
+    stream = LocalLongPollStream(
+        base_url="http://127.0.0.1:9100",
+        path="/perf",
+        channels=["ticker"],
+        adapter="test",
+        scope="public",
+        environment="paper",
+        poll_interval=0.0,
+        timeout=0.2,
+        max_retries=1,
+        backoff_base=0.0,
+        backoff_cap=0.0,
+        jitter=(0.0, 0.0),
+        buffer_size=4,
+    )
+
+    assert stream.wait_prefill(timeout=1.0) is True
+
+    start_first = time.perf_counter()
+    first = next(stream)
+    first_elapsed = time.perf_counter() - start_first
+    assert first_elapsed < 0.02
+    assert first.events and first.events[0]["sequence"] == 1
+
+    assert stream.wait_prefill(timeout=1.0) is True
+
+    start_second = time.perf_counter()
+    second = next(stream)
+    second_elapsed = time.perf_counter() - start_second
+    assert second_elapsed < 0.02
+    assert second.events and second.events[0]["sequence"] == 2
+
+    stream.close()
+    assert call_count >= 2
+
+
+def test_local_long_poll_stream_wait_prefill_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_urlopen(request, timeout=0.0):  # noqa: D401
+        time.sleep(0.05)
+        payload = json.dumps(
+            {
+                "batches": [
+                    {"channel": "ticker", "events": [{"sequence": 1}], "cursor": "c-1"},
+                ],
+                "retry_after": 0.0,
+            }
+        ).encode("utf-8")
+        return _FakeResponse(payload)
+
+    monkeypatch.setattr("bot_core.exchanges.streaming.urlopen", fake_urlopen)
+
+    stream = LocalLongPollStream(
+        base_url="http://127.0.0.1:9101",
+        path="/timeout",
+        channels=["ticker"],
+        adapter="test",
+        scope="public",
+        environment="paper",
+        poll_interval=0.0,
+        timeout=0.2,
+        max_retries=1,
+        backoff_base=0.0,
+        backoff_cap=0.0,
+        jitter=(0.0, 0.0),
+    )
+
+    result = stream.wait_prefill(timeout=0.01)
+    assert result is False
+
+    stream.close()
+
+
+def test_local_long_poll_stream_wait_prefill_propagates_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_urlopen(request, timeout=0.0):  # noqa: D401
+        raise HTTPError(request.full_url, 500, "err", hdrs=None, fp=None)
+
+    monkeypatch.setattr("bot_core.exchanges.streaming.urlopen", fake_urlopen)
+
+    stream = LocalLongPollStream(
+        base_url="http://127.0.0.1:9102",
+        path="/errors",
+        channels=["ticker"],
+        adapter="test",
+        scope="public",
+        environment="paper",
+        poll_interval=0.0,
+        timeout=0.1,
+        max_retries=1,
+        backoff_base=0.0,
+        backoff_cap=0.0,
+        jitter=(0.0, 0.0),
+    )
+
+    with pytest.raises(ExchangeNetworkError):
+        stream.wait_prefill(timeout=0.5)
+
+    stream.close()
+
+
+def test_local_long_poll_stream_wait_prefill_async(monkeypatch: pytest.MonkeyPatch) -> None:
+    responses = [
+        {
+            "batches": [
+                {"channel": "ticker", "events": [{"sequence": 41}], "cursor": "c-41"},
+            ],
+            "retry_after": 0.0,
+        },
+        {
+            "batches": [
+                {"channel": "ticker", "events": [{"sequence": 42}], "cursor": "c-42"},
+            ],
+            "retry_after": 0.0,
+        },
+    ]
+    call_index = 0
+
+    def fake_urlopen(request, timeout=0.0):  # noqa: D401
+        nonlocal call_index
+        if call_index < len(responses):
+            payload_map = responses[call_index]
+        else:
+            payload_map = responses[-1]
+        call_index += 1
+        payload = json.dumps(payload_map).encode("utf-8")
+        return _FakeResponse(payload)
+
+    monkeypatch.setattr("bot_core.exchanges.streaming.urlopen", fake_urlopen)
+
+    stream = LocalLongPollStream(
+        base_url="http://127.0.0.1:9103",
+        path="/prefill-async",
+        channels=["ticker"],
+        adapter="test",
+        scope="public",
+        environment="paper",
+        poll_interval=0.0,
+        timeout=0.2,
+        max_retries=1,
+        backoff_base=0.0,
+        backoff_cap=0.0,
+        jitter=(0.0, 0.0),
+    )
+
+    async def _consume() -> list[int]:
+        result = await stream.wait_prefill_async(timeout=1.0)
+        assert result is True
+
+        batches: list[StreamBatch] = []
+        async for batch in stream:
+            batches.append(batch)
+            if len(batches) >= 2:
+                break
+
+        await stream.aclose()
+        return [event.get("sequence") for batch in batches for event in batch.events]
+
+    sequences = asyncio.run(_consume())
+    assert sequences == [41, 42]
+
+
+def test_local_long_poll_stream_wait_prefill_async_propagates_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_urlopen(request, timeout=0.0):  # noqa: D401
+        raise HTTPError(request.full_url, 500, "err", hdrs=None, fp=None)
+
+    monkeypatch.setattr("bot_core.exchanges.streaming.urlopen", fake_urlopen)
+
+    stream = LocalLongPollStream(
+        base_url="http://127.0.0.1:9104",
+        path="/prefill-async-error",
+        channels=["ticker"],
+        adapter="test",
+        scope="public",
+        environment="paper",
+        poll_interval=0.0,
+        timeout=0.1,
+        max_retries=1,
+        backoff_base=0.0,
+        backoff_cap=0.0,
+        jitter=(0.0, 0.0),
+    )
+
+    async def _call() -> None:
+        with pytest.raises(ExchangeNetworkError):
+            await stream.wait_prefill_async(timeout=0.5)
+
+    asyncio.run(_call())
     stream.close()
 

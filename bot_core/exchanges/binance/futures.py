@@ -371,9 +371,7 @@ class BinanceFuturesAdapter(ExchangeAdapter):
         if buffer_size < 1:
             buffer_size = 1
 
-        self._ensure_network_access(base_url, check_source_ip=False)
-
-        return LocalLongPollStream(
+        stream = LocalLongPollStream(
             base_url=base_url,
             path=path,
             channels=channels,
@@ -401,6 +399,7 @@ class BinanceFuturesAdapter(ExchangeAdapter):
             buffer_size=buffer_size,
             metrics_registry=self._metrics,
         )
+        return stream.start()
 
     def configure_network(self, *, ip_allowlist: Optional[Sequence[str]] = None) -> None:
         if ip_allowlist is None:

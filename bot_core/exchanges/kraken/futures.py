@@ -232,7 +232,7 @@ class KrakenFuturesAdapter(ExchangeAdapter):
             body_encoder=body_encoder,
             buffer_size=buffer_size,
             metrics_registry=self._metrics,
-        )
+        ).start()
 
     # ------------------------------------------------------------------
     # Konfiguracja sieci
