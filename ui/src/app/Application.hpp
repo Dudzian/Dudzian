@@ -57,6 +57,7 @@ class HealthClientInterface;           // forward decl (grpc/HealthClient.hpp)
 class ConfigurationWizardController;   // forward decl (app/ConfigurationWizardController.hpp)
 class OfflineUpdateManager;            // forward decl (update/OfflineUpdateManager.hpp)
 class ResultsDashboardModel;           // forward decl (models/ResultsDashboardModel.hpp)
+class UserProfileController;           // forward decl (app/UserProfileController.hpp)
 
 class Application : public QObject {
     Q_OBJECT
@@ -86,6 +87,7 @@ class Application : public QObject {
     Q_PROPERTY(QObject*         configurationWizard READ configurationWizard CONSTANT)
     Q_PROPERTY(QObject*         updateManager READ updateManager CONSTANT)
     Q_PROPERTY(QObject*         resultsDashboard READ resultsDashboard CONSTANT)
+    Q_PROPERTY(QObject*         userProfiles READ userProfiles CONSTANT)
     Q_PROPERTY(QString          decisionLogPath READ decisionLogPath NOTIFY decisionLogPathChanged)
     Q_PROPERTY(int              telemetryPendingRetryCount READ telemetryPendingRetryCount NOTIFY telemetryPendingRetryCountChanged)
     Q_PROPERTY(QVariantMap      riskRefreshSchedule READ riskRefreshSchedule NOTIFY riskRefreshScheduleChanged)
@@ -148,6 +150,7 @@ public:
     QObject*         configurationWizard() const;
     QObject*         updateManager() const;
     QObject*         resultsDashboard() const;
+    QObject*         userProfiles() const;
     QObject*         runtimeService() const { return m_runtimeBridge.get(); }
     QObject*         alertsModel() const { return const_cast<AlertsModel*>(&m_alertsModel); }
     QObject*         alertsFilterModel() const { return const_cast<AlertsFilterProxyModel*>(&m_filteredAlertsModel); }
@@ -484,6 +487,7 @@ private:
     std::unique_ptr<ConfigurationWizardController> m_configurationWizard;
     std::unique_ptr<OfflineUpdateManager>      m_updateManager;
     std::unique_ptr<ResultsDashboardModel>     m_resultsDashboard;
+    std::unique_ptr<UserProfileController>     m_userProfiles;
     std::unique_ptr<UiModuleManager>           m_moduleManager;
     std::unique_ptr<UiModuleViewsModel>        m_moduleViewsModel;
     std::unique_ptr<RuntimeDecisionBridge>     m_runtimeBridge;

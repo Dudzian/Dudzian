@@ -2,21 +2,41 @@ pragma Singleton
 import QtQuick
 
 QtObject {
-    readonly property color backgroundPrimary: "#0E1320"
-    readonly property color backgroundOverlay: "#161C2A"
-    readonly property color surfaceStrong: "#1F2536"
-    readonly property color surfaceMuted: "#242B3D"
-    readonly property color surfaceSubtle: "#2C3448"
+    id: root
 
-    readonly property color textPrimary: "#F5F7FA"
-    readonly property color textSecondary: "#A4ACC4"
-    readonly property color textTertiary: "#7C86A4"
+    readonly property var defaultPalette: ({
+        backgroundPrimary: "#0E1320",
+        backgroundOverlay: "#161C2A",
+        surfaceStrong: "#1F2536",
+        surfaceMuted: "#242B3D",
+        surfaceSubtle: "#2C3448",
+        textPrimary: "#F5F7FA",
+        textSecondary: "#A4ACC4",
+        textTertiary: "#7C86A4",
+        accent: "#4FA3FF",
+        accentMuted: "#3577D4",
+        positive: "#3FD0A4",
+        negative: "#FF6B6B",
+        warning: "#F8C572"
+    })
 
-    readonly property color accent: "#4FA3FF"
-    readonly property color accentMuted: "#3577D4"
-    readonly property color positive: "#3FD0A4"
-    readonly property color negative: "#FF6B6B"
-    readonly property color warning: "#F8C572"
+    property var palette: defaultPalette
+
+    readonly property color backgroundPrimary: palette.backgroundPrimary
+    readonly property color backgroundOverlay: palette.backgroundOverlay
+    readonly property color surfaceStrong: palette.surfaceStrong
+    readonly property color surfaceMuted: palette.surfaceMuted
+    readonly property color surfaceSubtle: palette.surfaceSubtle
+
+    readonly property color textPrimary: palette.textPrimary
+    readonly property color textSecondary: palette.textSecondary
+    readonly property color textTertiary: palette.textTertiary
+
+    readonly property color accent: palette.accent
+    readonly property color accentMuted: palette.accentMuted
+    readonly property color positive: palette.positive
+    readonly property color negative: palette.negative
+    readonly property color warning: palette.warning
 
     readonly property int radiusSmall: 6
     readonly property int radiusMedium: 10
@@ -49,5 +69,18 @@ QtObject {
 
     function iconSource(name) {
         return "qrc:/icons/%1.svg".arg(name)
+    }
+
+    function applyPalette(overrides) {
+        var base = Object.assign({}, defaultPalette)
+        if (overrides) {
+            for (var key in overrides) {
+                if (!overrides.hasOwnProperty(key))
+                    continue
+                if (base.hasOwnProperty(key) && overrides[key])
+                    base[key] = overrides[key]
+            }
+        }
+        palette = base
     }
 }

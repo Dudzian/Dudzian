@@ -24,16 +24,20 @@
         <file>components/AlertToastOverlay.qml</file>
         <file>components/ResultsDashboard.qml</file>
         <file>components/UpdateManagerPanel.qml</file>
+        <file>components/ConfigurationWizardGallery.qml</file>
+        <file>components/UserProfileManagementPanel.qml</file>
         <file>components/workbench/StrategyWorkbench.qml</file>
         <file>components/workbench/StrategyWorkbenchViewModel.qml</file>
         <file>dashboard/RuntimeOverview.qml</file>
         <file>dashboard/RunbookPanel.qml</file>
         <file>dashboard/CompliancePanel.qml</file>
+        <file>dashboard/StrategyOverviewPanel.qml</file>
         <file>support/SupportCenter.qml</file>
         <file>support/TicketDialog.qml</file>
         <file>settings/DashboardSettings.qml</file>
         <file>settings/PrivacySettings.qml</file>
         <file>settings/UpdateDialog.qml</file>
+        <file>settings/ThemePersonalization.qml</file>
         <file>onboarding/LicenseWizard.qml</file>
         <file>onboarding/StrategySetupStep.qml</file>
         <file>views/MonitoringDashboard.qml</file>
@@ -43,5 +47,6 @@
         <file>views/PortfolioDashboard.qml</file>
         <file>views/LicenseAuditView.qml</file>
         <file>views/OperationsCenter.qml</file>
+        <file>views/StrategyExperience.qml</file>
     </qresource>
 </RCC>

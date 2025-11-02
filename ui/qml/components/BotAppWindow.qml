@@ -6,6 +6,7 @@ import Qt.labs.settings
 import "."
 import "workbench"
 import "../views" as Views
+import "../styles" as Styles
 
 ApplicationWindow {
     id: window
@@ -24,6 +25,28 @@ ApplicationWindow {
 
     color: Qt.darker(palette.window, 1.05)
     readonly property color accentColor: Qt.rgba(0.14, 0.58, 0.82, 1)
+
+    Component.onCompleted: {
+        if (typeof appController !== "undefined" && appController && appController.userProfiles)
+            Styles.AppTheme.applyPalette(appController.userProfiles.activeThemePalette)
+        else
+            Styles.AppTheme.applyPalette(null)
+    }
+
+    Connections {
+        target: (typeof appController !== "undefined" && appController) ? appController.userProfiles : null
+        ignoreUnknownSignals: true
+
+        function onThemePaletteChanged() {
+            if (appController && appController.userProfiles)
+                Styles.AppTheme.applyPalette(appController.userProfiles.activeThemePalette)
+        }
+
+        function onActiveProfileChanged() {
+            if (appController && appController.userProfiles)
+                Styles.AppTheme.applyPalette(appController.userProfiles.activeThemePalette)
+        }
+    }
 
     header: ToolBar {
         enabled: licenseController.licenseActive
@@ -322,6 +345,18 @@ ApplicationWindow {
 
                     PortfolioManagerView {
                         anchors.fill: parent
+                    }
+                }
+
+                Tab {
+                    title: qsTr("Strategie 360°")
+                    enabled: licenseController.licenseActive
+
+                    Views.StrategyExperience {
+                        anchors.fill: parent
+                        appController: appController
+                        configurationWizard: configurationWizard
+                        workbenchController: workbenchController
                     }
                 }
 
