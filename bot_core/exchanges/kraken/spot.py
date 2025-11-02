@@ -10,7 +10,7 @@ import random
 import time
 from dataclasses import dataclass
 from json import JSONDecodeError
-from typing import Any, Callable, Mapping, MutableMapping, Sequence
+from typing import TYPE_CHECKING, Any, Callable, Mapping, MutableMapping, Sequence
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request
@@ -29,6 +29,11 @@ from bot_core.exchanges.errors import (
     ExchangeNetworkError,
     ExchangeThrottlingError,
 )
+from bot_core.exchanges.network_guard import (
+    NetworkAccessGuard,
+    NetworkAccessViolation,
+    normalize_relative_api_path,
+)
 from bot_core.exchanges.error_mapping import raise_for_kraken_error
 from bot_core.exchanges.health import Watchdog
 from bot_core.exchanges.rate_limiter import (
@@ -39,6 +44,9 @@ from bot_core.exchanges.rate_limiter import (
 from bot_core.exchanges.streaming import LocalLongPollStream
 from bot_core.observability.metrics import MetricsRegistry, get_global_metrics_registry
 from bot_core.exchanges.http_client import urlopen
+
+if TYPE_CHECKING:  # pragma: no cover - wyłącznie adnotacje typów
+    from bot_core.alerts.base import AlertRouter
 
 
 _LOGGER = logging.getLogger(__name__)
@@ -87,6 +95,9 @@ def _to_float(value: object, default: float = 0.0) -> float:
 class _RequestContext:
     path: str
     params: Mapping[str, Any]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "path", normalize_relative_api_path(self.path))
 
 
 @dataclass(slots=True)
@@ -228,6 +239,8 @@ class KrakenSpotAdapter(ExchangeAdapter):
             "Łączna liczba poziomów orderbooka (bids+asks) zwracanych przez Kraken Spot.",
         )
         self._watchdog = watchdog or Watchdog()
+        self._network_guard = NetworkAccessGuard(logger=_LOGGER)
+        self._network_guard.attach_alert_router(None)
         self._rate_limiter = get_global_rate_limiter_registry().configure(
             f"{self.name}:{self._environment.value}",
             normalize_rate_limit_rules(
@@ -348,6 +361,8 @@ class KrakenSpotAdapter(ExchangeAdapter):
         if buffer_size < 1:
             buffer_size = 1
 
+        self._ensure_network_access(base_url, check_source_ip=False)
+
         return LocalLongPollStream(
             base_url=base_url,
             path=path,
@@ -382,6 +397,19 @@ class KrakenSpotAdapter(ExchangeAdapter):
     # ------------------------------------------------------------------
     def configure_network(self, *, ip_allowlist: Sequence[str] | None = None) -> None:  # type: ignore[override]
         self._ip_allowlist = tuple(ip_allowlist) if ip_allowlist else None
+        self._network_guard.configure(ip_allowlist=self._ip_allowlist or ())
+
+    def set_alert_router(self, alert_router: "AlertRouter | None") -> None:
+        self._network_guard.attach_alert_router(alert_router)
+
+    def _ensure_network_access(self, url: str, *, check_source_ip: bool = True) -> None:
+        try:
+            self._network_guard.ensure_allowed(url, check_source_ip=check_source_ip)
+        except NetworkAccessViolation as exc:  # pragma: no cover - logika zweryfikowana testami
+            raise ExchangeNetworkError(
+                message=f"Naruszenie konfiguracji sieci: {exc.reason}",
+                reason=exc,
+            ) from exc
 
     # ------------------------------------------------------------------
     # Dane konta i publiczne API
@@ -811,14 +839,16 @@ class KrakenSpotAdapter(ExchangeAdapter):
     # Wewnętrzne narzędzia HTTP/podpisy
     # ------------------------------------------------------------------
     def _public_request(self, path: str, params: Mapping[str, Any]) -> Mapping[str, Any]:
-        url = f"{self._base_url}{path}"
+        normalized_path = normalize_relative_api_path(path)
+        url = f"{self._base_url}{normalized_path}"
         if params:
             url = f"{url}?{urlencode(params)}"
+        self._ensure_network_access(url)
 
         def build_request() -> Request:
             return Request(url, headers=dict(_DEFAULT_HEADERS))
 
-        return self._perform_request(build_request, endpoint=path, signed=False)
+        return self._perform_request(build_request, endpoint=normalized_path, signed=False)
 
     def _private_request(self, context: _RequestContext) -> Mapping[str, Any]:
         if not self.credentials.secret:
@@ -847,7 +877,9 @@ class KrakenSpotAdapter(ExchangeAdapter):
                     "Content-Type": "application/x-www-form-urlencoded",
                 }
             )
-            return Request(f"{self._base_url}{context.path}", data=data, headers=headers)
+            url = f"{self._base_url}{context.path}"
+            self._ensure_network_access(url)
+            return Request(url, data=data, headers=headers)
 
         payload = self._perform_request(build_request, endpoint=context.path, signed=True)
         return payload

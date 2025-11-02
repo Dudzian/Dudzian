@@ -37,6 +37,8 @@ def test_coinbase_spot_rate_limit_and_retry(monkeypatch, rate_limiter_registry):
         client=client,
     )
 
+    adapter.configure_network(ip_allowlist=())
+
     symbols = adapter.fetch_symbols()
     snapshot = adapter.fetch_account_snapshot()
     candles = adapter.fetch_ohlcv("BTC/USDT", "1m", limit=1)

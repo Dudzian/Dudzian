@@ -81,6 +81,7 @@ def test_fetch_account_snapshot_parses_balances(monkeypatch: pytest.MonkeyPatch)
 
     registry = MetricsRegistry()
     adapter = BinanceFuturesAdapter(_build_credentials(), metrics_registry=registry)
+    adapter.configure_network()
 
     snapshot = adapter.fetch_account_snapshot()
 
@@ -114,6 +115,7 @@ def test_fetch_symbols_filters_non_trading(monkeypatch: pytest.MonkeyPatch) -> N
     monkeypatch.setattr("bot_core.exchanges.binance.futures.urlopen", fake_urlopen)
 
     adapter = BinanceFuturesAdapter(_build_credentials())
+    adapter.configure_network()
     symbols = adapter.fetch_symbols()
     assert list(symbols) == ["BTCUSDT", "ETHUSDT"]
 
@@ -131,6 +133,7 @@ def test_fetch_ohlcv_casts_values(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("bot_core.exchanges.binance.futures.urlopen", fake_urlopen)
 
     adapter = BinanceFuturesAdapter(_build_credentials())
+    adapter.configure_network()
     candles = adapter.fetch_ohlcv("BTCUSDT", "1h")
     assert candles == [
         [1.0, 100.0, 110.0, 90.0, 105.0, 1000.0],
@@ -163,6 +166,7 @@ def test_fetch_funding_rates_updates_metrics(monkeypatch: pytest.MonkeyPatch) ->
     monkeypatch.setattr("bot_core.exchanges.binance.futures.urlopen", fake_urlopen)
 
     adapter = BinanceFuturesAdapter(_build_credentials(), metrics_registry=registry)
+    adapter.configure_network()
     events = adapter.fetch_funding_rates(symbol="BTCUSDT", limit=2)
 
     assert isinstance(events, Sequence)
@@ -207,6 +211,7 @@ def test_place_order_builds_signed_payload(monkeypatch: pytest.MonkeyPatch) -> N
     monkeypatch.setattr("bot_core.exchanges.binance.futures.time.time", lambda: 1_700_000_001.0)
 
     adapter = BinanceFuturesAdapter(_build_credentials())
+    adapter.configure_network()
     request = OrderRequest(symbol="BTCUSDT", side="BUY", quantity=1.0, order_type="LIMIT", price=10.0)
     result = adapter.place_order(request)
 
@@ -221,6 +226,7 @@ def test_place_order_builds_signed_payload(monkeypatch: pytest.MonkeyPatch) -> N
 
 def test_cancel_order_requires_symbol() -> None:
     adapter = BinanceFuturesAdapter(_build_credentials())
+    adapter.configure_network()
     with pytest.raises(ValueError):
         adapter.cancel_order("1")
 
@@ -234,6 +240,7 @@ def test_cancel_order_accepts_success(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("bot_core.exchanges.binance.futures.time.time", lambda: 1_700_000_002.0)
 
     adapter = BinanceFuturesAdapter(_build_credentials())
+    adapter.configure_network()
     adapter.cancel_order("1", symbol="BTCUSDT")
 
 
@@ -249,6 +256,7 @@ def test_create_listen_key_validates_payload(monkeypatch: pytest.MonkeyPatch) ->
     monkeypatch.setattr("bot_core.exchanges.binance.futures.time.time", lambda: 1_700_000_010.0)
 
     adapter = BinanceFuturesAdapter(_build_credentials())
+    adapter.configure_network()
     listen_key = adapter.create_listen_key()
     assert listen_key == "abc"
     assert captured and (captured[0].method or "POST").upper() == "POST"
@@ -261,6 +269,7 @@ def test_create_listen_key_maps_api_error(monkeypatch: pytest.MonkeyPatch) -> No
     monkeypatch.setattr("bot_core.exchanges.binance.futures.urlopen", fake_urlopen)
 
     adapter = BinanceFuturesAdapter(_build_credentials())
+    adapter.configure_network()
 
     with pytest.raises(ExchangeAuthError):
         adapter.create_listen_key()
@@ -268,6 +277,7 @@ def test_create_listen_key_maps_api_error(monkeypatch: pytest.MonkeyPatch) -> No
 
 def test_keepalive_listen_key_requires_value() -> None:
     adapter = BinanceFuturesAdapter(_build_credentials())
+    adapter.configure_network()
     with pytest.raises(ValueError):
         adapter.keepalive_listen_key("")
 
@@ -280,6 +290,7 @@ def test_keepalive_listen_key_raises_on_unexpected_payload(monkeypatch: pytest.M
     monkeypatch.setattr("bot_core.exchanges.binance.futures.time.time", lambda: 1_700_000_011.0)
 
     adapter = BinanceFuturesAdapter(_build_credentials())
+    adapter.configure_network()
     with pytest.raises(RuntimeError):
         adapter.keepalive_listen_key("abc")
 
@@ -292,6 +303,7 @@ def test_close_listen_key_accepts_empty_payload(monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setattr("bot_core.exchanges.binance.futures.time.time", lambda: 1_700_000_012.0)
 
     adapter = BinanceFuturesAdapter(_build_credentials())
+    adapter.configure_network()
     adapter.close_listen_key("abc")
 
 
@@ -303,6 +315,7 @@ def test_close_listen_key_rejects_invalid_payload(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setattr("bot_core.exchanges.binance.futures.time.time", lambda: 1_700_000_013.0)
 
     adapter = BinanceFuturesAdapter(_build_credentials())
+    adapter.configure_network()
     with pytest.raises(RuntimeError):
         adapter.close_listen_key("abc")
 
@@ -345,6 +358,7 @@ def test_fetch_positions_parses_payload_and_updates_metrics(monkeypatch: pytest.
     monkeypatch.setattr("bot_core.exchanges.binance.futures.time.time", lambda: 1_700_000_014.0)
 
     adapter = BinanceFuturesAdapter(_build_credentials(), metrics_registry=registry)
+    adapter.configure_network()
     positions = adapter.fetch_positions()
 
     assert len(positions) == 2
@@ -427,6 +441,7 @@ def test_fetch_positions_resets_closed_metrics(monkeypatch: pytest.MonkeyPatch) 
 
     registry = MetricsRegistry()
     adapter = BinanceFuturesAdapter(_build_credentials(), metrics_registry=registry)
+    adapter.configure_network()
 
     adapter.fetch_positions()
     per_symbol_gauge = registry.gauge("binance_futures_position_notional", "")
@@ -451,6 +466,7 @@ def test_futures_account_snapshot_uses_watchdog(monkeypatch: pytest.MonkeyPatch)
     )
     watchdog = _RecordingWatchdog()
     adapter = BinanceFuturesAdapter(credentials, watchdog=watchdog)
+    adapter.configure_network()
 
     monkeypatch.setattr(
         adapter,
@@ -473,6 +489,7 @@ def test_futures_account_snapshot_uses_watchdog(monkeypatch: pytest.MonkeyPatch)
 def test_build_hedging_report_returns_summary(monkeypatch: pytest.MonkeyPatch) -> None:
     registry = MetricsRegistry()
     adapter = BinanceFuturesAdapter(_build_credentials(), metrics_registry=registry)
+    adapter.configure_network()
 
     positions = [
         FuturesPosition(
@@ -550,6 +567,7 @@ def test_execute_request_handles_throttling(monkeypatch: pytest.MonkeyPatch) -> 
     monkeypatch.setattr("bot_core.exchanges.binance.futures.random.uniform", lambda *_args, **_kwargs: 0.0)
 
     adapter = BinanceFuturesAdapter(_build_credentials())
+    adapter.configure_network()
 
     with pytest.raises(ExchangeThrottlingError) as exc:
         adapter.fetch_symbols()
@@ -570,6 +588,7 @@ def test_execute_request_converts_auth_error(monkeypatch: pytest.MonkeyPatch) ->
     monkeypatch.setattr("bot_core.exchanges.binance.futures.urlopen", fake_urlopen)
 
     adapter = BinanceFuturesAdapter(_build_credentials())
+    adapter.configure_network()
     with pytest.raises(ExchangeAuthError):
         adapter.fetch_symbols()
 
@@ -583,9 +602,26 @@ def test_execute_request_converts_network_errors(monkeypatch: pytest.MonkeyPatch
     monkeypatch.setattr("bot_core.exchanges.binance.futures.BinanceFuturesAdapter._sleep", lambda self, s: None)
 
     adapter = BinanceFuturesAdapter(_build_credentials())
+    adapter.configure_network()
 
     with pytest.raises(ExchangeNetworkError):
         adapter.fetch_symbols()
+
+
+def test_public_request_rejects_absolute_path() -> None:
+    adapter = BinanceFuturesAdapter(_build_credentials())
+    adapter.configure_network()
+
+    with pytest.raises(ValueError):
+        adapter._public_request("https://attacker.invalid/fapi/v1/time")
+
+
+def test_signed_request_rejects_unsupported_method() -> None:
+    adapter = BinanceFuturesAdapter(_build_credentials())
+    adapter.configure_network()
+
+    with pytest.raises(ValueError):
+        adapter._signed_request("/fapi/v1/order", method="TRACE")
 
 
 def test_metrics_recorded_for_public_requests(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -599,6 +635,7 @@ def test_metrics_recorded_for_public_requests(monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.setattr("bot_core.exchanges.binance.futures.time.perf_counter", lambda: 1.0)
 
     adapter = BinanceFuturesAdapter(_build_credentials(), metrics_registry=registry)
+    adapter.configure_network()
     adapter.fetch_symbols()
 
     gauge = registry.gauge(

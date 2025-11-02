@@ -8,7 +8,7 @@ import time
 from dataclasses import dataclass
 from hashlib import sha512
 import hmac
-from typing import Any, Callable, Iterable, Mapping, Optional, Sequence, TypeVar
+from typing import TYPE_CHECKING, Any, Callable, Iterable, Mapping, Optional, Sequence, TypeVar
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request
@@ -32,6 +32,15 @@ from bot_core.exchanges.health import Watchdog
 from bot_core.exchanges.streaming import LocalLongPollStream
 from bot_core.observability.metrics import MetricsRegistry, get_global_metrics_registry
 from bot_core.exchanges.http_client import urlopen
+from bot_core.exchanges.network_guard import (
+    NetworkAccessGuard,
+    NetworkAccessViolation,
+    normalize_http_method,
+    normalize_relative_api_path,
+)
+
+if TYPE_CHECKING:  # pragma: no cover - tylko do adnotacji
+    from bot_core.alerts.base import AlertRouter
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -299,6 +308,7 @@ class ZondaSpotAdapter(ExchangeAdapter):
         "_throttle_cooldown_reason",
         "_reconnect_backoff_until",
         "_reconnect_reason",
+        "_network_guard",
     )
     name: str = "zonda_spot"
 
@@ -366,6 +376,7 @@ class ZondaSpotAdapter(ExchangeAdapter):
             "Łączna liczba transakcji pobranych z API Zonda Spot.",
         )
         self._watchdog = watchdog or Watchdog()
+        self._network_guard = NetworkAccessGuard(logger=_LOGGER)
         self._backoff_grace_attempts = 0
         self._throttle_cooldown_until = 0.0
         self._throttle_cooldown_reason: str | None = None
@@ -481,6 +492,8 @@ class ZondaSpotAdapter(ExchangeAdapter):
             buffer_size = 64
         if buffer_size < 1:
             buffer_size = 1
+
+        self._ensure_network_access(base_url, check_source_ip=False)
 
         return LocalLongPollStream(
             base_url=base_url,
@@ -656,9 +669,13 @@ class ZondaSpotAdapter(ExchangeAdapter):
         params: Mapping[str, object] | None = None,
         method: str = "GET",
     ) -> dict[str, object] | list[object]:
+        normalized_path = normalize_relative_api_path(path)
+        http_method = normalize_http_method(method)
         query = f"?{urlencode(params or {})}" if params else ""
-        request = Request(self._build_url(path) + query, headers=dict(_DEFAULT_HEADERS), method=method)
-        return self._execute_request(request, signed=False, endpoint=path)
+        url = self._build_url(normalized_path) + query
+        self._ensure_network_access(url)
+        request = Request(url, headers=dict(_DEFAULT_HEADERS), method=http_method)
+        return self._execute_request(request, signed=False, endpoint=normalized_path)
 
     def _signed_request(
         self,
@@ -668,12 +685,14 @@ class ZondaSpotAdapter(ExchangeAdapter):
         params: Mapping[str, object] | None = None,
         data: Mapping[str, object] | None = None,
     ) -> dict[str, object] | list[object]:
+        normalized_path = normalize_relative_api_path(path)
+        http_method = normalize_http_method(method)
         if not self._credentials.secret:
             raise RuntimeError("Poświadczenia Zonda wymagają secret do podpisywania żądań prywatnych.")
 
         body = _json_body(data)
         timestamp = str(int(time.time() * 1000))
-        payload = f"{timestamp}{method.upper()}{path}{body}"
+        payload = f"{timestamp}{http_method}{normalized_path}{body}"
         signature = hmac.new(
             self._credentials.secret.encode("utf-8"),
             payload.encode("utf-8"),
@@ -695,13 +714,15 @@ class ZondaSpotAdapter(ExchangeAdapter):
             data_bytes = body.encode("utf-8")
             headers["Content-Type"] = "application/json"
 
+        url = self._build_url(normalized_path) + query
+        self._ensure_network_access(url)
         request = Request(
-            self._build_url(path) + query,
+            url,
             headers=headers,
             data=data_bytes,
-            method=method,
+            method=http_method,
         )
-        return self._execute_request(request, signed=True, endpoint=path)
+        return self._execute_request(request, signed=True, endpoint=normalized_path)
 
     def _update_rate_limit(self, headers: object) -> None:
         if not headers:
@@ -999,8 +1020,21 @@ class ZondaSpotAdapter(ExchangeAdapter):
 
     def configure_network(self, *, ip_allowlist: Optional[Sequence[str]] = None) -> None:  # type: ignore[override]
         self._ip_allowlist = tuple(ip_allowlist or ())
+        self._network_guard.configure(ip_allowlist=self._ip_allowlist)
         if self._ip_allowlist:
             _LOGGER.info("Zonda allowlist IP ustawiony na: %s", self._ip_allowlist)
+
+    def set_alert_router(self, alert_router: "AlertRouter | None") -> None:
+        self._network_guard.attach_alert_router(alert_router)
+
+    def _ensure_network_access(self, url: str, *, check_source_ip: bool = True) -> None:
+        try:
+            self._network_guard.ensure_allowed(url, check_source_ip=check_source_ip)
+        except NetworkAccessViolation as exc:  # pragma: no cover - ścieżka logowana w testach
+            raise ExchangeNetworkError(
+                message=f"Naruszenie konfiguracji sieci: {exc.reason}",
+                reason=exc,
+            ) from exc
 
     def fetch_symbols(self) -> Iterable[str]:  # type: ignore[override]
         def _call() -> Iterable[str]:

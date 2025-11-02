@@ -31,6 +31,7 @@ def test_fetch_account_snapshot_aggregates_trade_balance(monkeypatch: pytest.Mon
 
     adapter = KrakenMarginAdapter(_credentials(), environment=Environment.TESTNET, watchdog=_watchdog())
     snapshot = adapter.fetch_account_snapshot()
+    adapter.configure_network()
 
     assert isinstance(snapshot, AccountSnapshot)
     assert snapshot.balances["ZUSD"] == pytest.approx(1000.0)
@@ -62,6 +63,7 @@ def test_place_order_retries_on_throttling(monkeypatch: pytest.MonkeyPatch) -> N
     order = adapter.place_order(
         OrderRequest(symbol="BTC/USD", side="buy", quantity=0.1, order_type="market")
     )
+    adapter.configure_network()
 
     assert order.order_id == "OID-1"
     assert calls.count("/0/private/AddOrder") == 2
@@ -75,6 +77,7 @@ def test_place_order_maps_auth_error(monkeypatch: pytest.MonkeyPatch) -> None:
 
     adapter = KrakenMarginAdapter(_credentials(), environment=Environment.TESTNET, watchdog=_watchdog())
 
+    adapter.configure_network()
     with pytest.raises(ExchangeAuthError):
         adapter.place_order(
             OrderRequest(symbol="BTC/USD", side="sell", quantity=0.1, order_type="limit", price=20000.0)

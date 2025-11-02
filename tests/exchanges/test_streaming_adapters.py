@@ -12,12 +12,13 @@ from types import SimpleNamespace
 import pytest
 
 from bot_core.exchanges.base import Environment, ExchangeCredentials
-from bot_core.exchanges.errors import ExchangeAPIError
+from bot_core.exchanges.errors import ExchangeAPIError, ExchangeNetworkError
 from bot_core.exchanges.binance.futures import BinanceFuturesAdapter
 from bot_core.exchanges.binance.spot import BinanceSpotAdapter
 from bot_core.exchanges.kraken.spot import KrakenSpotAdapter
 from bot_core.exchanges.streaming import LocalLongPollStream, StreamBatch
 from bot_core.exchanges.zonda.spot import ZondaSpotAdapter
+from bot_core.exchanges.network_guard import NetworkAccessViolation
 from bot_core.observability.metrics import (
     CounterMetric,
     GaugeMetric,
@@ -100,6 +101,8 @@ def test_binance_spot_stream_long_poll(monkeypatch: pytest.MonkeyPatch) -> None:
         settings={"stream": _build_stream_settings()},
     )
 
+    adapter.configure_network()
+
     stream = adapter.stream_public_data(channels=["ticker"])
     first = next(stream)
     assert isinstance(first, StreamBatch)
@@ -121,9 +124,26 @@ def test_binance_spot_stream_long_poll(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_zonda_private_stream_requires_permissions() -> None:
     credentials = ExchangeCredentials(key_id="demo", environment=Environment.PAPER, permissions=())
     adapter = ZondaSpotAdapter(credentials, environment=Environment.PAPER)
+    adapter.configure_network()
 
     with pytest.raises(PermissionError):
         adapter.stream_private_data(channels=["orders"])
+
+
+def test_binance_stream_requires_network_configuration() -> None:
+    credentials = ExchangeCredentials(key_id="guard", permissions=("read",), environment=Environment.PAPER)
+    adapter = BinanceSpotAdapter(
+        credentials,
+        environment=Environment.PAPER,
+        settings={"stream": _build_stream_settings()},
+    )
+
+    with pytest.raises(ExchangeNetworkError) as excinfo:
+        adapter.stream_public_data(channels=["ticker"])
+
+    violation = excinfo.value.reason
+    assert isinstance(violation, NetworkAccessViolation)
+    assert violation.reason == "network_not_configured"
 
 
 def test_stream_retries_after_network_error(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -162,6 +182,8 @@ def test_stream_retries_after_network_error(monkeypatch: pytest.MonkeyPatch) -> 
             }
         },
     )
+
+    adapter.configure_network()
 
     stream = adapter.stream_public_data(channels=["ticker"])
     batch = next(stream)
@@ -254,6 +276,8 @@ def test_binance_stream_respects_scope_buffer_size() -> None:
         },
     )
 
+    adapter.configure_network()
+
     stream = adapter.stream_public_data(channels=["ticker"])
     try:
         assert stream._buffer_size == 3
@@ -270,6 +294,8 @@ def test_binance_stream_uses_adapter_metrics_registry() -> None:
         settings={"stream": _build_stream_settings()},
         metrics_registry=registry,
     )
+
+    adapter.configure_network()
 
     stream = adapter.stream_public_data(channels=["ticker"])
     try:
@@ -320,6 +346,8 @@ def test_kraken_stream_applies_scope_params(monkeypatch: pytest.MonkeyPatch) -> 
             }
         },
     )
+
+    adapter.configure_network()
 
     stream = adapter.stream_public_data(channels=["ticker", "depth"])
     batch = next(stream)
@@ -381,6 +409,8 @@ def test_stream_custom_channel_and_cursor_names(monkeypatch: pytest.MonkeyPatch)
         settings={"stream": stream_settings},
     )
 
+    adapter.configure_network()
+
     stream = adapter.stream_public_data(channels=["ticker", "depth"])
 
     first = next(stream)
@@ -434,6 +464,8 @@ def test_stream_channel_serializer_supports_mappings(monkeypatch: pytest.MonkeyP
         settings={"stream": stream_settings},
     )
 
+    adapter.configure_network()
+
     stream = adapter.stream_public_data(channels=["ticker", "depth"])
     batch = next(stream)
     assert batch.events and batch.events[0]["price"] == 33.0
@@ -484,6 +516,8 @@ def test_binance_futures_private_stream_includes_token(monkeypatch: pytest.Monke
             }
         },
     )
+
+    adapter.configure_network()
 
     stream = adapter.stream_private_data(channels=["userData"])
     batch = next(stream)
@@ -1344,6 +1378,8 @@ def test_binance_private_stream_posts_channels_in_body(
         environment=Environment.PAPER,
         settings={"stream": stream_settings},
     )
+
+    adapter.configure_network()
 
     stream = adapter.stream_private_data(channels=["orders"])
     batch = next(stream)

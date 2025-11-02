@@ -43,7 +43,9 @@ def _build_adapter() -> NowaGieldaSpotAdapter:
         secret="secret",
         environment=Environment.PAPER,
     )
-    return NowaGieldaSpotAdapter(credentials)
+    adapter = NowaGieldaSpotAdapter(credentials)
+    adapter.configure_network()
+    return adapter
 
 
 def _build_stream_adapter(
@@ -57,11 +59,13 @@ def _build_stream_adapter(
         environment=Environment.PAPER,
         permissions=permissions,
     )
-    return NowaGieldaSpotAdapter(
+    adapter = NowaGieldaSpotAdapter(
         credentials,
         environment=Environment.PAPER,
         settings={"stream": dict(stream_settings)},
     )
+    adapter.configure_network()
+    return adapter
 
 
 def test_stream_public_uses_metrics_registry(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -94,6 +98,8 @@ def test_stream_public_uses_metrics_registry(monkeypatch: pytest.MonkeyPatch) ->
         settings={"stream": {"base_url": "http://127.0.0.1:9999"}},
         metrics_registry=registry,
     )
+
+    adapter.configure_network()
 
     client = adapter.stream_public_data(channels=["ticker"])
 

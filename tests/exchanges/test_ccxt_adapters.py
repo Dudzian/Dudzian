@@ -103,6 +103,8 @@ def test_coinbase_adapter_basic_flow():
         client=client,
     )
 
+    adapter.configure_network(ip_allowlist=())
+
     symbols = adapter.fetch_symbols()
     assert set(symbols) == {"BTC/USDT", "ETH/USDT"}
 
@@ -132,6 +134,8 @@ def test_adapter_translates_network_errors():
         settings={"network_error_types": (_CustomNetworkError,)},
     )
 
+    adapter.configure_network(ip_allowlist=())
+
     with pytest.raises(ExchangeNetworkError):
         adapter.fetch_ohlcv("BTC/USDT", "1m", start=0, end=1, limit=1)
 
@@ -145,6 +149,8 @@ def test_okx_adapter_respects_offline_cancellation():
         client=client,
         settings={"cancel_order_params": {"simulate": True}},
     )
+
+    adapter.configure_network(ip_allowlist=())
 
     order = adapter.place_order(_build_request("ETH/USDT"))
     adapter.cancel_order(order.order_id, symbol="ETH/USDT")
@@ -167,6 +173,8 @@ def test_kucoin_adapter_merges_nested_settings():
         },
     )
 
+    adapter.configure_network(ip_allowlist=())
+
     assert adapter._settings["ccxt_config"]["timeout"] == 5000
     assert adapter._settings["ccxt_config"]["options"]["defaultType"] == "spot"
     assert adapter._settings["ccxt_config"]["options"]["adjust"] is True
@@ -183,6 +191,8 @@ def test_bybit_adapter_provides_spot_defaults():
         settings={"fetch_ohlcv_params": {"price": "mark"}},
     )
 
+    adapter.configure_network(ip_allowlist=())
+
     assert adapter._settings["fetch_ohlcv_params"]["category"] == "spot"
     assert adapter._settings["fetch_ohlcv_params"]["price"] == "mark"
     assert adapter._settings["cancel_order_params"]["category"] == "spot"
@@ -198,6 +208,8 @@ def test_bitstamp_adapter_uses_spot_defaults():
         client=client,
     )
 
+    adapter.configure_network(ip_allowlist=())
+
     assert adapter._settings["ccxt_config"]["options"]["defaultType"] == "spot"
     assert adapter._settings["ccxt_config"]["timeout"] == 20_000
 
@@ -210,6 +222,8 @@ def test_gateio_adapter_configures_spot_behaviour():
         environment=Environment.LIVE,
         client=client,
     )
+
+    adapter.configure_network(ip_allowlist=())
 
     assert adapter._settings["ccxt_config"]["options"]["defaultType"] == "spot"
     assert adapter._settings["fetch_ohlcv_params"]["type"] == "spot"
@@ -224,6 +238,8 @@ def test_bitget_adapter_configures_spot_category():
         environment=Environment.TESTNET,
         client=client,
     )
+
+    adapter.configure_network(ip_allowlist=())
 
     ccxt_config = adapter._settings["ccxt_config"]
     assert ccxt_config["options"]["defaultType"] == "spot"
@@ -240,6 +256,8 @@ def test_mexc_adapter_sets_spot_defaults():
         environment=Environment.PAPER,
         client=client,
     )
+
+    adapter.configure_network(ip_allowlist=())
 
     ccxt_config = adapter._settings["ccxt_config"]
     assert ccxt_config["options"]["defaultType"] == "spot"
@@ -258,6 +276,8 @@ def test_gemini_adapter_merges_settings():
         settings={"ccxt_config": {"timeout": 30_000}},
     )
 
+    adapter.configure_network(ip_allowlist=())
+
     assert adapter._settings["ccxt_config"]["timeout"] == 30_000
     assert adapter._settings["ccxt_config"]["options"]["defaultType"] == "spot"
 
@@ -270,6 +290,8 @@ def test_huobi_adapter_keeps_default_exchange_id():
         environment=Environment.PAPER,
         client=client,
     )
+
+    adapter.configure_network(ip_allowlist=())
 
     assert adapter._settings["ccxt_config"]["options"]["defaultType"] == "spot"
     assert adapter._exchange_id == "huobi"

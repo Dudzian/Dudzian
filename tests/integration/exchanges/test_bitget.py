@@ -32,6 +32,8 @@ def test_bitget_spot_rate_limit(monkeypatch, rate_limiter_registry):
         client=client,
     )
 
+    adapter.configure_network(ip_allowlist=())
+
     adapter.fetch_symbols()
     adapter.fetch_account_snapshot()
     adapter.fetch_ohlcv("BTC/USDT", "1m", limit=1)
