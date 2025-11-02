@@ -2,11 +2,17 @@
 from __future__ import annotations
 
 import logging
+import os
 from collections import Counter
 from dataclasses import dataclass, field
-from typing import Iterable
+from typing import Any, Iterable
 
 from bot_core.security.capabilities import LicenseCapabilities
+from bot_core.security.fingerprint import (
+    FingerprintError,
+    SecuritySignals,
+    collect_security_signals,
+)
 
 
 LOGGER = logging.getLogger(__name__)
@@ -190,10 +196,36 @@ def get_capability_guard() -> "CapabilityGuard | None":
     return _GLOBAL_GUARD
 
 
-def install_capability_guard(capabilities: LicenseCapabilities) -> CapabilityGuard:
+def build_capability_guard(
+    capabilities: LicenseCapabilities,
+    *,
+    signals: SecuritySignals | None = None,
+    **signal_kwargs: Any,
+) -> CapabilityGuard:
+    """Buduje strażnika i uruchamia heurystyki bezpieczeństwa."""
+
+    if signals is None:
+        skip_env = os.environ.get("DUDZIAN_SECURITY_SKIP", "").strip().lower()
+        if skip_env in {"1", "true", "yes", "on"}:
+            LOGGER.warning("Pominięto heurystyki bezpieczeństwa (DUDZIAN_SECURITY_SKIP).")
+            return CapabilityGuard(capabilities)
+        signals = collect_security_signals(**signal_kwargs)
+    if signals.should_block:
+        summary_items = signals.summary()
+        summary_text = "; ".join(summary_items) if summary_items else "nieokreślone sygnały"
+        LOGGER.error("Zablokowano utworzenie strażnika licencji: %s", summary_text)
+        raise FingerprintError(
+            "Wykryto podejrzane sygnały środowiska: " + summary_text
+        )
+    return CapabilityGuard(capabilities)
+
+
+def install_capability_guard(
+    capabilities: LicenseCapabilities, **signal_kwargs: Any
+) -> CapabilityGuard:
     """Buduje strażnika na podstawie capabilities i rejestruje go globalnie."""
 
-    guard = CapabilityGuard(capabilities)
+    guard = build_capability_guard(capabilities, **signal_kwargs)
     set_capability_guard(guard)
     return guard
 
@@ -201,6 +233,7 @@ def install_capability_guard(capabilities: LicenseCapabilities) -> CapabilityGua
 __all__ = [
     "CapabilityGuard",
     "LicenseCapabilityError",
+    "build_capability_guard",
     "get_capability_guard",
     "install_capability_guard",
     "reset_capability_guard",
