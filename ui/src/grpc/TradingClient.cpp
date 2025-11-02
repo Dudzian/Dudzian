@@ -18,6 +18,8 @@
 #include <QJsonObject>
 #include <QJsonParseError>
 #include <QJsonValue>
+#include <QVariant>
+#include <QVariantMap>
 
 #include <google/protobuf/timestamp.pb.h>
 #include <grpcpp/create_channel.h>
@@ -1516,20 +1518,84 @@ RiskSnapshotData TradingClient::convertRiskState(const RiskState& state) const {
     snapshot.currentDrawdown = state.current_drawdown();
     snapshot.maxDailyLoss = state.max_daily_loss();
     snapshot.usedLeverage = state.used_leverage();
+    snapshot.killSwitchEngaged = false;
+    snapshot.statistics = {};
+    snapshot.costBreakdown = {};
     if (state.has_generated_at()) {
         const auto ts = state.generated_at();
         snapshot.generatedAt = QDateTime::fromSecsSinceEpoch(ts.seconds(), Qt::UTC);
         snapshot.generatedAt = snapshot.generatedAt.addMSecs(ts.nanos() / 1000000);
     }
     snapshot.exposures.reserve(static_cast<int>(state.limits_size()));
+    QVariantMap limitMap;
+    QVariantMap statisticsMap;
+    QVariantMap costMap;
     for (const auto& limit : state.limits()) {
+        const QString code = QString::fromStdString(limit.code());
+        if (code == QStringLiteral("force_liquidation")) {
+            snapshot.killSwitchEngaged = limit.current_value() >= 0.5;
+            continue;
+        }
+
+        if (code.startsWith(QStringLiteral("stat:"))) {
+            const QString statKey = code.mid(5);
+            const double value = limit.current_value();
+            if (std::isfinite(value)) {
+                if (statKey == QStringLiteral("activePositions"))
+                    statisticsMap.insert(statKey, QVariant::fromValue<int>(static_cast<int>(std::llround(value))));
+                else
+                    statisticsMap.insert(statKey, value);
+            }
+            continue;
+        }
+
+        if (code.startsWith(QStringLiteral("cost:"))) {
+            const QString costKey = code.mid(5);
+            const double value = limit.current_value();
+            if (std::isfinite(value))
+                costMap.insert(costKey, value);
+            continue;
+        }
+
         RiskExposureData exposure;
-        exposure.code = QString::fromStdString(limit.code());
+        exposure.code = code;
         exposure.maxValue = limit.max_value();
         exposure.currentValue = limit.current_value();
         exposure.thresholdValue = limit.threshold_value();
         snapshot.exposures.append(exposure);
+
+        const double maximum = exposure.maxValue;
+        const double current = exposure.currentValue;
+
+        if (code == QStringLiteral("active_positions")) {
+            limitMap.insert(QStringLiteral("max_positions"), maximum);
+            statisticsMap.insert(QStringLiteral("activePositions"), QVariant::fromValue<int>(static_cast<int>(std::llround(current))));
+        } else if (code == QStringLiteral("portfolio_leverage")) {
+            limitMap.insert(QStringLiteral("max_leverage"), maximum);
+            statisticsMap.insert(QStringLiteral("usedLeverage"), current);
+        } else if (code == QStringLiteral("gross_notional")) {
+            statisticsMap.insert(QStringLiteral("grossNotional"), current);
+        } else if (code == QStringLiteral("daily_loss_pct")) {
+            limitMap.insert(QStringLiteral("daily_loss_limit"), maximum);
+            statisticsMap.insert(QStringLiteral("dailyLossPct"), current);
+        } else if (code == QStringLiteral("drawdown_pct")) {
+            limitMap.insert(QStringLiteral("drawdown_limit"), maximum);
+            statisticsMap.insert(QStringLiteral("drawdownPct"), current);
+        } else if (code == QStringLiteral("largest_position_pct")) {
+            limitMap.insert(QStringLiteral("max_position_pct"), maximum);
+        } else if (code == QStringLiteral("target_volatility")) {
+            limitMap.insert(QStringLiteral("target_volatility"), maximum);
+        } else if (code == QStringLiteral("stop_loss_atr_multiple")) {
+            limitMap.insert(QStringLiteral("stop_loss_atr_multiple"), maximum);
+        }
     }
+
+    if (!limitMap.contains(QStringLiteral("daily_loss_limit")) && snapshot.maxDailyLoss > 0.0)
+        limitMap.insert(QStringLiteral("daily_loss_limit"), snapshot.maxDailyLoss);
+
+    snapshot.limits = limitMap;
+    snapshot.statistics = statisticsMap;
+    snapshot.costBreakdown = costMap;
     return snapshot;
 }
 

@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from collections.abc import Mapping
 import hashlib
 import pytest
 import threading
@@ -93,6 +94,24 @@ def test_risk_snapshot_builder_generates_exposures() -> None:
     assert exposures["largest_position_pct"].current == pytest.approx(0.4)
     assert snapshot.metadata is not None
     assert snapshot.metadata["positions"]
+
+    statistics_meta = snapshot.metadata.get("statistics")
+    assert isinstance(statistics_meta, Mapping)
+    assert "dailyRealizedPnl" in statistics_meta
+
+    cost_meta = snapshot.metadata.get("cost_breakdown")
+    assert isinstance(cost_meta, Mapping)
+    assert "averageCostBps" in cost_meta
+
+    stat_exposures = {
+        exposure.code: exposure for exposure in snapshot.exposures if exposure.code.startswith("stat:")
+    }
+    assert "stat:dailyRealizedPnl" in stat_exposures
+
+    cost_exposures = {
+        exposure.code: exposure for exposure in snapshot.exposures if exposure.code.startswith("cost:")
+    }
+    assert "cost:totalCostBps" in cost_exposures
 
 
 def test_risk_snapshot_builder_includes_recent_decisions(tmp_path) -> None:

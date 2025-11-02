@@ -29,6 +29,8 @@
 #include "models/OhlcvListModel.hpp"
 #include "models/RiskStateModel.hpp"
 #include "models/RiskHistoryModel.hpp"
+#include "models/RiskLimitsModel.hpp"
+#include "models/RiskCostModel.hpp"
 #include "models/SignalListModel.hpp"
 #include "utils/PerformanceGuard.hpp"
 #include "utils/FrameRateMonitor.hpp"
@@ -67,6 +69,8 @@ class Application : public QObject {
     Q_PROPERTY(QString          instrumentLabel      READ instrumentLabel     NOTIFY instrumentChanged)
     Q_PROPERTY(QObject*         riskModel            READ riskModel           CONSTANT)
     Q_PROPERTY(QObject*         riskHistoryModel     READ riskHistoryModel    CONSTANT)
+    Q_PROPERTY(QObject*         riskLimitsModel      READ riskLimitsModel     CONSTANT)
+    Q_PROPERTY(QObject*         riskCostModel        READ riskCostModel       CONSTANT)
     Q_PROPERTY(QObject*         alertsModel         READ alertsModel         CONSTANT)
     Q_PROPERTY(QObject*         alertsFilterModel   READ alertsFilterModel   CONSTANT)
     Q_PROPERTY(QObject*         indicatorSeriesModel READ indicatorSeriesModel CONSTANT)
@@ -102,6 +106,7 @@ class Application : public QObject {
     Q_PROPERTY(bool             riskHistoryAutoExportUseLocalTime READ riskHistoryAutoExportUseLocalTime WRITE setRiskHistoryAutoExportUseLocalTime NOTIFY riskHistoryAutoExportUseLocalTimeChanged)
     Q_PROPERTY(QDateTime        riskHistoryLastAutoExportAt READ riskHistoryLastAutoExportAt NOTIFY riskHistoryLastAutoExportAtChanged)
     Q_PROPERTY(QUrl             riskHistoryLastAutoExportPath READ riskHistoryLastAutoExportPath NOTIFY riskHistoryLastAutoExportPathChanged)
+    Q_PROPERTY(bool             riskKillSwitchEngaged READ riskKillSwitchEngaged NOTIFY riskKillSwitchChanged)
     Q_PROPERTY(bool             offlineMode          READ offlineMode         CONSTANT)
     Q_PROPERTY(QString          offlineDaemonStatus  READ offlineDaemonStatus NOTIFY offlineDaemonStatusChanged)
     Q_PROPERTY(bool             offlineAutomationRunning READ offlineAutomationRunning NOTIFY offlineAutomationRunningChanged)
@@ -155,6 +160,8 @@ public:
     QObject*         alertsModel() const { return const_cast<AlertsModel*>(&m_alertsModel); }
     QObject*         alertsFilterModel() const { return const_cast<AlertsFilterProxyModel*>(&m_filteredAlertsModel); }
     QObject*         riskHistoryModel() const { return const_cast<RiskHistoryModel*>(&m_riskHistoryModel); }
+    QObject*         riskLimitsModel() const { return const_cast<RiskLimitsModel*>(&m_riskLimitsModel); }
+    QObject*         riskCostModel() const { return const_cast<RiskCostModel*>(&m_riskCostModel); }
     int              telemetryPendingRetryCount() const { return m_pendingRetryCount; }
     bool             riskHistoryExportLimitEnabled() const { return m_riskHistoryExportLimitEnabled; }
     int              riskHistoryExportLimitValue() const { return m_riskHistoryExportLimitValue; }
@@ -165,6 +172,7 @@ public:
     bool             riskHistoryAutoExportUseLocalTime() const { return m_riskHistoryAutoExportUseLocalTime; }
     QDateTime        riskHistoryLastAutoExportAt() const { return m_lastRiskHistoryAutoExportUtc; }
     QUrl             riskHistoryLastAutoExportPath() const { return m_lastRiskHistoryAutoExportPath; }
+    bool             riskKillSwitchEngaged() const { return m_riskKillSwitchEngaged; }
     bool             offlineMode() const { return m_offlineMode; }
     QString          offlineDaemonStatus() const { return m_offlineStatus; }
     bool             offlineAutomationRunning() const { return m_offlineAutomationRunning; }
@@ -212,6 +220,8 @@ public slots:
     Q_INVOKABLE bool setRiskHistoryAutoExportIntervalMinutes(int minutes);
     Q_INVOKABLE bool setRiskHistoryAutoExportBasename(const QString& basename);
     Q_INVOKABLE bool setRiskHistoryAutoExportUseLocalTime(bool useLocalTime);
+    Q_INVOKABLE bool updateRiskLimitValue(const QString& key, double value);
+    Q_INVOKABLE bool setRiskKillSwitchEngaged(bool engaged);
     Q_INVOKABLE bool setRegimeTimelineMaximumSnapshots(int maximumSnapshots);
     Q_INVOKABLE bool setUiTheme(const QString& theme);
     Q_INVOKABLE bool setUiLayoutMode(const QString& mode);
@@ -272,6 +282,7 @@ signals:
     void uiModulesReloaded(bool success, const QVariantMap& report);
     void riskHistoryLastAutoExportAtChanged();
     void riskHistoryLastAutoExportPathChanged();
+    void riskKillSwitchChanged();
     void regimeTimelineMaximumSnapshotsChanged();
     void offlineDaemonStatusChanged();
     void offlineAutomationRunningChanged(bool running);
@@ -431,6 +442,8 @@ private:
     MarketRegimeTimelineModel m_regimeTimelineModel;
     RiskStateModel         m_riskModel;
     RiskHistoryModel       m_riskHistoryModel;
+    RiskLimitsModel        m_riskLimitsModel;
+    RiskCostModel          m_riskCostModel;
     DecisionLogModel       m_decisionLogModel;
     DecisionLogFilterProxyModel m_decisionLogFilter;
     TradingClient          m_client;
@@ -547,6 +560,7 @@ private:
     bool                               m_riskHistoryAutoExportUseLocalTime = false;
     QDateTime                          m_lastRiskHistoryAutoExportUtc;
     QUrl                               m_lastRiskHistoryAutoExportPath;
+    bool                               m_riskKillSwitchEngaged = false;
     bool                               m_riskHistoryAutoExportDirectoryWarned = false;
     QTimer                             m_licenseRefreshTimer;
     int                                m_licenseRefreshIntervalSeconds = 600;

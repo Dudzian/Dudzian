@@ -3658,6 +3658,13 @@ void Application::handleCandle(const OhlcvPoint& candle) {
 void Application::handleRiskState(const RiskSnapshotData& snapshot) {
     m_riskModel.updateFromSnapshot(snapshot);
     m_riskHistoryModel.recordSnapshot(snapshot);
+    m_riskLimitsModel.updateFromSnapshot(snapshot);
+    m_riskCostModel.updateFromSnapshot(snapshot);
+    const bool killSwitchEngaged = snapshot.killSwitchEngaged;
+    if (m_riskKillSwitchEngaged != killSwitchEngaged) {
+        m_riskKillSwitchEngaged = killSwitchEngaged;
+        Q_EMIT riskKillSwitchChanged();
+    }
     m_alertsModel.updateFromRiskSnapshot(snapshot);
     if (snapshot.generatedAt.isValid())
         m_lastRiskUpdateUtc = snapshot.generatedAt.toUTC();
@@ -4463,6 +4470,32 @@ bool Application::setRiskHistoryAutoExportUseLocalTime(bool useLocalTime)
     m_riskHistoryAutoExportUseLocalTime = useLocalTime;
     Q_EMIT riskHistoryAutoExportUseLocalTimeChanged();
     scheduleUiSettingsPersist();
+    return true;
+}
+
+bool Application::updateRiskLimitValue(const QString& key, double value)
+{
+    if (key.isEmpty()) {
+        qCWarning(lcAppMetrics) << "Odmowa aktualizacji limitu ryzyka – pusty klucz";
+        return false;
+    }
+
+    const bool updated = m_riskLimitsModel.setLimitValue(key, value);
+    if (!updated) {
+        qCWarning(lcAppMetrics)
+            << "Nie udało się zaktualizować limitu ryzyka" << key << "na wartość" << value;
+        return false;
+    }
+    return true;
+}
+
+bool Application::setRiskKillSwitchEngaged(bool engaged)
+{
+    if (m_riskKillSwitchEngaged == engaged)
+        return true;
+
+    m_riskKillSwitchEngaged = engaged;
+    Q_EMIT riskKillSwitchChanged();
     return true;
 }
 

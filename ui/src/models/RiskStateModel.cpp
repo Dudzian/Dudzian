@@ -78,6 +78,10 @@ QVariantMap RiskStateModel::currentSnapshot() const
     map.insert(QStringLiteral("maxDailyLoss"), m_snapshot.maxDailyLoss);
     map.insert(QStringLiteral("usedLeverage"), m_snapshot.usedLeverage);
     map.insert(QStringLiteral("generatedAt"), m_snapshot.generatedAt.toString(Qt::ISODate));
+    map.insert(QStringLiteral("limits"), m_snapshot.limits);
+    map.insert(QStringLiteral("statistics"), m_snapshot.statistics);
+    map.insert(QStringLiteral("costBreakdown"), m_snapshot.costBreakdown);
+    map.insert(QStringLiteral("killSwitchEngaged"), m_snapshot.killSwitchEngaged);
 
     QVariantList exposures;
     exposures.reserve(m_snapshot.exposures.size());

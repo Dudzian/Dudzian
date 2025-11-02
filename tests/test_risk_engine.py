@@ -909,6 +909,20 @@ def test_snapshot_state_returns_enriched_metrics(manual_profile: ManualProfile) 
     assert limits["daily_loss_limit"] == manual_profile.daily_loss_limit()
     assert limits["max_position_pct"] == manual_profile.max_position_exposure()
 
+    statistics = snapshot.get("statistics")
+    assert isinstance(statistics, dict)
+    assert statistics["dailyRealizedPnl"] == pytest.approx(-50.0)
+    assert statistics["grossNotional"] == pytest.approx(6_000.0)
+    assert statistics["activePositions"] == 1
+    assert statistics["dailyLossPct"] == pytest.approx(snapshot["daily_loss_pct"])
+    assert statistics["drawdownPct"] == pytest.approx(snapshot["drawdown_pct"])
+    assert statistics["usedLeverage"] == pytest.approx(snapshot["used_leverage"])
+
+    cost_breakdown = snapshot.get("cost_breakdown")
+    assert isinstance(cost_breakdown, dict)
+    assert "averageCostBps" in cost_breakdown
+    assert "totalCostBps" in cost_breakdown
+
 
 def test_decision_orchestrator_metadata_when_candidate_passes(
     manual_profile: ManualProfile,

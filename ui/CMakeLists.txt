@@ -96,6 +96,8 @@ set(UI_SOURCES
     src/models/AlertsFilterProxyModel.cpp
     src/models/RiskHistoryModel.cpp
     src/models/RiskStateModel.cpp
+    src/models/RiskLimitsModel.cpp
+    src/models/RiskCostModel.cpp
     src/models/DecisionLogModel.cpp
     src/models/DecisionLogFilterProxyModel.cpp
     src/models/IndicatorSeriesModel.cpp
@@ -141,6 +143,8 @@ set(UI_HEADERS
     src/models/OhlcvListModel.hpp
     src/models/RiskHistoryModel.hpp
     src/models/RiskStateModel.hpp
+    src/models/RiskLimitsModel.hpp
+    src/models/RiskCostModel.hpp
     src/models/DecisionLogModel.hpp
     src/models/DecisionLogFilterProxyModel.hpp
     src/models/IndicatorSeriesModel.hpp

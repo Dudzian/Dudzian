@@ -6,6 +6,7 @@
 #include <QtGlobal>
 #include <QTextStream>
 #include <QTime>
+#include <QVariant>
 
 #include <algorithm>
 #include <cmath>
@@ -324,6 +325,32 @@ RiskSnapshotData OfflineRuntimeService::buildRiskSnapshot() const
     volatilityExposure.currentValue = std::min(0.20, std::max(volatility * std::sqrt(60.0), rangePct / 12.0));
 
     snapshot.exposures = {drawdownExposure, lossExposure, volatilityExposure};
+
+    QVariantMap limits;
+    limits.insert(QStringLiteral("max_positions"), 12);
+    limits.insert(QStringLiteral("max_leverage"), 3.5);
+    limits.insert(QStringLiteral("max_position_pct"), 0.25);
+    limits.insert(QStringLiteral("daily_loss_limit"), snapshot.maxDailyLoss);
+    limits.insert(QStringLiteral("drawdown_limit"), drawdownExposure.maxValue);
+    limits.insert(QStringLiteral("target_volatility"), std::min(0.25, std::max(0.08, volatility * 2.5)));
+    limits.insert(QStringLiteral("stop_loss_atr_multiple"), 3.2);
+    snapshot.limits = limits;
+
+    QVariantMap statistics;
+    statistics.insert(QStringLiteral("dailyRealizedPnl"), -snapshot.portfolioValue * std::min(0.02, lossExposure.currentValue));
+    statistics.insert(QStringLiteral("grossNotional"), snapshot.portfolioValue * (1.0 + snapshot.usedLeverage * 0.35));
+    statistics.insert(QStringLiteral("activePositions"), QVariant::fromValue<int>(std::max(1, static_cast<int>(std::round(snapshot.usedLeverage)))));
+    statistics.insert(QStringLiteral("dailyLossPct"), lossExposure.currentValue);
+    statistics.insert(QStringLiteral("drawdownPct"), snapshot.currentDrawdown);
+    snapshot.statistics = statistics;
+
+    QVariantMap costBreakdown;
+    costBreakdown.insert(QStringLiteral("averageCostBps"), 8.75);
+    costBreakdown.insert(QStringLiteral("totalCostBps"), 24.0);
+    snapshot.costBreakdown = costBreakdown;
+
+    snapshot.killSwitchEngaged = (snapshot.currentDrawdown >= limits.value(QStringLiteral("drawdown_limit")).toDouble())
+        || (lossExposure.currentValue >= limits.value(QStringLiteral("daily_loss_limit")).toDouble());
 
     return snapshot;
 }

@@ -72,12 +72,26 @@ Item {
                 SplitView.fillWidth: true
                 SplitView.preferredWidth: parent.width * 0.55
 
-                Views.PortfolioDashboard {
+                ColumnLayout {
                     anchors.fill: parent
-                    appController: root.appController
-                    riskModel: root.riskModel
-                    riskHistoryModel: root.riskHistoryModel
-                    alertsModel: root.alertsModel
+                    spacing: 12
+
+                    Views.PortfolioDashboard {
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        appController: root.appController
+                        riskModel: root.riskModel
+                        riskHistoryModel: root.riskHistoryModel
+                        alertsModel: root.alertsModel
+                    }
+
+                    Views.RiskControls {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: parent.height * 0.45
+                        appController: root.appController
+                        limitsModel: root.appController ? root.appController.riskLimitsModel : null
+                        costModel: root.appController ? root.appController.riskCostModel : null
+                    }
                 }
             }
 
