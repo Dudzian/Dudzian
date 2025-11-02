@@ -8,7 +8,7 @@ import logging
 import random
 import time
 from hashlib import sha256
-from typing import Iterable, Mapping, Optional, Sequence
+from typing import TYPE_CHECKING, Iterable, Mapping, Optional, Sequence
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request
@@ -33,6 +33,12 @@ from bot_core.exchanges.errors import (
     ExchangeNetworkError,
     ExchangeThrottlingError,
 )
+from bot_core.exchanges.network_guard import (
+    NetworkAccessGuard,
+    NetworkAccessViolation,
+    normalize_http_method,
+    normalize_relative_api_path,
+)
 from bot_core.exchanges.error_mapping import raise_for_binance_error
 from bot_core.exchanges.health import Watchdog
 from bot_core.exchanges.rate_limiter import (
@@ -42,6 +48,9 @@ from bot_core.exchanges.rate_limiter import (
 )
 from bot_core.exchanges.streaming import LocalLongPollStream
 from bot_core.observability.metrics import MetricsRegistry, get_global_metrics_registry
+
+if TYPE_CHECKING:  # pragma: no cover - tylko adnotacje typów
+    from bot_core.alerts.base import AlertRouter
 from bot_core.exchanges.http_client import urlopen
 
 _LOGGER = logging.getLogger(__name__)
@@ -166,6 +175,7 @@ class BinanceFuturesAdapter(ExchangeAdapter):
         "_metric_funding_rate",
         "_tracked_position_labels",
         "_watchdog",
+        "_network_guard",
     )
 
     name: str = "binance_futures"
@@ -178,6 +188,7 @@ class BinanceFuturesAdapter(ExchangeAdapter):
         settings: Mapping[str, object] | None = None,
         metrics_registry: MetricsRegistry | None = None,
         watchdog: Watchdog | None = None,
+        alert_router: "AlertRouter | None" = None,
     ) -> None:
         super().__init__(credentials)
         self._environment = environment or credentials.environment
@@ -238,6 +249,8 @@ class BinanceFuturesAdapter(ExchangeAdapter):
         )
         self._tracked_position_labels: set[tuple[str, str]] = set()
         self._watchdog = watchdog or Watchdog()
+        self._network_guard = NetworkAccessGuard(logger=_LOGGER)
+        self._network_guard.attach_alert_router(alert_router)
         self._rate_limiter = get_global_rate_limiter_registry().configure(
             f"{self.name}:{self._environment.value}",
             normalize_rate_limit_rules(
@@ -393,7 +406,20 @@ class BinanceFuturesAdapter(ExchangeAdapter):
             self._ip_allowlist = ()
         else:
             self._ip_allowlist = tuple(ip_allowlist)
+        self._network_guard.configure(ip_allowlist=self._ip_allowlist)
         _LOGGER.info("Ustawiono allowlistę IP dla Binance Futures: %s", self._ip_allowlist)
+
+    def set_alert_router(self, alert_router: "AlertRouter | None") -> None:
+        self._network_guard.attach_alert_router(alert_router)
+
+    def _ensure_network_access(self, url: str, *, check_source_ip: bool = True) -> None:
+        try:
+            self._network_guard.ensure_allowed(url, check_source_ip=check_source_ip)
+        except NetworkAccessViolation as exc:  # pragma: no cover - obsługa logowana w testach
+            raise ExchangeNetworkError(
+                message=f"Naruszenie konfiguracji sieci: {exc.reason}",
+                reason=exc,
+            ) from exc
 
     def _public_request(
         self,
@@ -402,15 +428,18 @@ class BinanceFuturesAdapter(ExchangeAdapter):
         *,
         method: str = "GET",
     ) -> dict[str, object] | list[object]:
+        normalized_path = normalize_relative_api_path(path)
+        http_method = normalize_http_method(method)
         query = f"?{urlencode(_stringify_params(params or {}))}" if params else ""
-        url = f"{self._public_base}{path}{query}"
+        url = f"{self._public_base}{normalized_path}{query}"
+        self._ensure_network_access(url)
         data = None
         headers = dict(_DEFAULT_HEADERS)
-        if method in {"POST", "PUT"} and params:
+        if http_method in {"POST", "PUT"} and params:
             data = urlencode(_stringify_params(params)).encode("utf-8")
             headers["Content-Type"] = "application/x-www-form-urlencoded"
-        request = Request(url, headers=headers, data=data, method=method)
-        return self._execute_request(request, signed=False, endpoint=path)
+        request = Request(url, headers=headers, data=data, method=http_method)
+        return self._execute_request(request, signed=False, endpoint=normalized_path)
 
     def _signed_request(
         self,
@@ -419,6 +448,8 @@ class BinanceFuturesAdapter(ExchangeAdapter):
         method: str = "GET",
         params: Optional[Mapping[str, object]] = None,
     ) -> dict[str, object] | list[object]:
+        normalized_path = normalize_relative_api_path(path)
+        http_method = normalize_http_method(method)
         if not self._credentials.secret:
             raise RuntimeError("Do podpisanych endpointów wymagany jest secret klucza API Binance.")
 
@@ -434,18 +465,21 @@ class BinanceFuturesAdapter(ExchangeAdapter):
         ).hexdigest()
         signed_query = f"{query_string}&signature={signature}"
 
-        url = f"{self._trading_base}{path}"
+        url = f"{self._trading_base}{normalized_path}"
         headers = dict(_DEFAULT_HEADERS)
         headers["X-MBX-APIKEY"] = self._credentials.key_id
 
-        if method in {"POST", "PUT"}:
+        if http_method in {"POST", "PUT"}:
             headers["Content-Type"] = "application/x-www-form-urlencoded"
             data = signed_query.encode("utf-8")
-            request = Request(url, headers=headers, data=data, method=method)
+            self._ensure_network_access(url)
+            request = Request(url, headers=headers, data=data, method=http_method)
         else:
             separator = "?" if "?" not in url else "&"
-            request = Request(f"{url}{separator}{signed_query}", headers=headers, method=method)
-        return self._execute_request(request, signed=True, endpoint=path)
+            full_url = f"{url}{separator}{signed_query}"
+            self._ensure_network_access(full_url)
+            request = Request(full_url, headers=headers, method=http_method)
+        return self._execute_request(request, signed=True, endpoint=normalized_path)
 
     def _execute_request(
         self,

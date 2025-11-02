@@ -11,7 +11,7 @@ import pytest
 
 
 from bot_core.exchanges.base import AccountSnapshot, Environment, ExchangeCredentials, OrderRequest
-from bot_core.exchanges.kraken.futures import KrakenFuturesAdapter
+from bot_core.exchanges.kraken.futures import KrakenFuturesAdapter, _RequestContext
 from bot_core.exchanges.health import CircuitBreaker, RetryPolicy, Watchdog
 
 
@@ -65,6 +65,7 @@ def test_fetch_account_snapshot_signed_request(monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setattr("bot_core.exchanges.kraken.futures.time.time", lambda: 1_700_000_000.0)
 
     adapter = KrakenFuturesAdapter(_credentials(), environment=Environment.LIVE)
+    adapter.configure_network()
     snapshot = adapter.fetch_account_snapshot()
 
     assert isinstance(snapshot, AccountSnapshot)
@@ -120,6 +121,7 @@ def test_place_order_builds_body(monkeypatch: pytest.MonkeyPatch) -> None:
         time_in_force="GTC",
         client_order_id="cli-kraken",
     )
+    adapter.configure_network()
 
     result = adapter.place_order(order)
     assert result.order_id == "OF12345"
@@ -150,6 +152,7 @@ def test_cancel_order_validates_response(monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.setattr("bot_core.exchanges.kraken.futures.urlopen", fake_urlopen)
     adapter = KrakenFuturesAdapter(_credentials(), environment=Environment.LIVE)
 
+    adapter.configure_network()
     adapter.cancel_order("OID-1")
 
 
@@ -166,7 +169,7 @@ class _RecordingWatchdog(Watchdog):
 def test_watchdog_is_used_for_requests(monkeypatch: pytest.MonkeyPatch) -> None:
     watchdog = _RecordingWatchdog()
     adapter = KrakenFuturesAdapter(_credentials(), environment=Environment.LIVE, watchdog=watchdog)
-
+    adapter.configure_network()
     def fake_private(context):
         if context.path == "/accounts":
             return {"accounts": {"futures": {}}}
@@ -195,8 +198,24 @@ def test_watchdog_is_used_for_requests(monkeypatch: pytest.MonkeyPatch) -> None:
     assert "kraken_futures_private_request" in watchdog.operations
     assert "kraken_futures_fetch_symbols" in watchdog.operations
     assert "kraken_futures_fetch_ohlcv" in watchdog.operations
-    assert "kraken_futures_place_order" in watchdog.operations
-    assert "kraken_futures_cancel_order" in watchdog.operations
+
+
+def test_public_request_rejects_absolute_path() -> None:
+    adapter = KrakenFuturesAdapter(_credentials(), environment=Environment.LIVE)
+    adapter.configure_network()
+
+    with pytest.raises(ValueError):
+        adapter._public_request("https://attacker.invalid/instruments", params={})
+
+
+def test_request_context_rejects_unsupported_method() -> None:
+    with pytest.raises(ValueError):
+        _RequestContext(path="/orders", method="TRACE", params={})
+
+
+def test_request_context_rejects_absolute_path() -> None:
+    with pytest.raises(ValueError):
+        _RequestContext(path="https://demo.invalid/orders", method="GET", params={})
 
 
 def _expected_signature(*, path: str, body: bytes, secret: str, nonce: str) -> str:

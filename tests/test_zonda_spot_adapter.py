@@ -61,6 +61,12 @@ class _FakeResponse:
         return self._status
 
 
+def _configured_adapter(*args, **kwargs) -> ZondaSpotAdapter:
+    adapter = ZondaSpotAdapter(*args, **kwargs)
+    adapter.configure_network()
+    return adapter
+
+
 def test_fetch_account_snapshot_builds_signature(monkeypatch: pytest.MonkeyPatch) -> None:
     captured: Request | None = None
 
@@ -88,7 +94,7 @@ def test_fetch_account_snapshot_builds_signature(monkeypatch: pytest.MonkeyPatch
         permissions=("read",),
         environment=Environment.LIVE,
     )
-    adapter = ZondaSpotAdapter(credentials, metrics_registry=metrics)
+    adapter = _configured_adapter(credentials, metrics_registry=metrics)
 
     snapshot = adapter.fetch_account_snapshot()
 
@@ -123,7 +129,7 @@ def test_fetch_account_snapshot_uses_watchdog(monkeypatch: pytest.MonkeyPatch) -
         permissions=("read",),
         environment=Environment.LIVE,
     )
-    adapter = ZondaSpotAdapter(credentials, watchdog=watchdog)
+    adapter = _configured_adapter(credentials, watchdog=watchdog)
 
     monkeypatch.setattr(adapter, "_signed_request", lambda *args, **kwargs: {"balances": []})
     monkeypatch.setattr(adapter, "_fetch_price_map", lambda: {})
@@ -135,7 +141,7 @@ def test_fetch_account_snapshot_uses_watchdog(monkeypatch: pytest.MonkeyPatch) -
 
 
 def test_fetch_ohlcv_maps_items(monkeypatch: pytest.MonkeyPatch) -> None:
-    adapter = ZondaSpotAdapter(ExchangeCredentials(key_id="public", environment=Environment.LIVE))
+    adapter = _configured_adapter(ExchangeCredentials(key_id="public", environment=Environment.LIVE))
 
     def fake_public_request(self, path: str, *, params=None, method="GET"):
         assert path == "/trading/candle/history/BTC-PLN/86400"
@@ -180,7 +186,7 @@ def test_place_order_uses_private_endpoint(monkeypatch: pytest.MonkeyPatch) -> N
         permissions=("trade",),
         environment=Environment.LIVE,
     )
-    adapter = ZondaSpotAdapter(credentials)
+    adapter = _configured_adapter(credentials)
 
     request = OrderRequest(
         symbol="BTC-PLN",
@@ -222,7 +228,7 @@ def test_cancel_order_accepts_cancelled_status(monkeypatch: pytest.MonkeyPatch) 
         permissions=("trade",),
         environment=Environment.LIVE,
     )
-    adapter = ZondaSpotAdapter(credentials)
+    adapter = _configured_adapter(credentials)
 
     adapter.cancel_order("XYZ")
 
@@ -230,7 +236,7 @@ def test_cancel_order_accepts_cancelled_status(monkeypatch: pytest.MonkeyPatch) 
 def test_fetch_ticker_updates_metrics(monkeypatch: pytest.MonkeyPatch) -> None:
     metrics = MetricsRegistry()
     credentials = ExchangeCredentials(key_id="public", environment=Environment.LIVE)
-    adapter = ZondaSpotAdapter(credentials, metrics_registry=metrics)
+    adapter = _configured_adapter(credentials, metrics_registry=metrics)
 
     def fake_public_request(self, path: str, *, params=None, method="GET"):
         assert path == "/trading/ticker"
@@ -271,7 +277,7 @@ def test_fetch_ticker_updates_metrics(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_fetch_ticker_maps_errors(monkeypatch: pytest.MonkeyPatch) -> None:
     credentials = ExchangeCredentials(key_id="public", environment=Environment.LIVE)
-    adapter = ZondaSpotAdapter(credentials)
+    adapter = _configured_adapter(credentials)
 
     def fake_public_request(self, path: str, *, params=None, method="GET"):
         assert path == "/trading/ticker"
@@ -288,7 +294,7 @@ def test_fetch_ticker_maps_errors(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_fetch_order_book_parses_levels(monkeypatch: pytest.MonkeyPatch) -> None:
     metrics = MetricsRegistry()
     credentials = ExchangeCredentials(key_id="public", environment=Environment.LIVE)
-    adapter = ZondaSpotAdapter(credentials, metrics_registry=metrics)
+    adapter = _configured_adapter(credentials, metrics_registry=metrics)
 
     def fake_public_request(self, path: str, *, params=None, method="GET"):
         assert path == "/trading/orderbook-limited/BTC-PLN/5"
@@ -317,7 +323,7 @@ def test_fetch_order_book_parses_levels(monkeypatch: pytest.MonkeyPatch) -> None
 def test_fetch_recent_trades_updates_metric(monkeypatch: pytest.MonkeyPatch) -> None:
     metrics = MetricsRegistry()
     credentials = ExchangeCredentials(key_id="public", environment=Environment.LIVE)
-    adapter = ZondaSpotAdapter(credentials, metrics_registry=metrics)
+    adapter = _configured_adapter(credentials, metrics_registry=metrics)
 
     def fake_public_request(self, path: str, *, params=None, method="GET"):
         assert path == "/trading/transactions/BTC-PLN"
@@ -348,7 +354,7 @@ def test_fetch_recent_trades_updates_metric(monkeypatch: pytest.MonkeyPatch) -> 
 def test_public_request_retries_throttling(monkeypatch: pytest.MonkeyPatch) -> None:
     credentials = ExchangeCredentials(key_id="public", environment=Environment.LIVE)
     metrics = MetricsRegistry()
-    adapter = ZondaSpotAdapter(credentials, metrics_registry=metrics)
+    adapter = _configured_adapter(credentials, metrics_registry=metrics)
     monkeypatch.setattr("bot_core.exchanges.zonda.spot.time.sleep", lambda _: None)
 
     calls: list[str] = []
@@ -393,7 +399,7 @@ def test_fetch_account_snapshot_maps_errors(monkeypatch: pytest.MonkeyPatch) -> 
         permissions=("read", "trade"),
         environment=Environment.LIVE,
     )
-    adapter = ZondaSpotAdapter(credentials)
+    adapter = _configured_adapter(credentials)
 
     def fake_signed_request(self, method: str, path: str, *, params=None, data=None):
         assert method == "POST"
@@ -443,7 +449,7 @@ def test_fetch_account_snapshot_converts_balances(monkeypatch: pytest.MonkeyPatc
         environment=Environment.LIVE,
     )
 
-    adapter = ZondaSpotAdapter(
+    adapter = _configured_adapter(
         credentials,
         settings={"valuation_asset": "EUR", "secondary_valuation_assets": ["PLN", "USDT"]},
     )
@@ -467,7 +473,7 @@ def test_signed_request_maps_auth_error(monkeypatch: pytest.MonkeyPatch) -> None
         environment=Environment.LIVE,
     )
     metrics = MetricsRegistry()
-    adapter = ZondaSpotAdapter(credentials, metrics_registry=metrics)
+    adapter = _configured_adapter(credentials, metrics_registry=metrics)
 
     def fake_urlopen(request: Request, timeout: int = 15):  # type: ignore[override]
         raise HTTPError(
@@ -492,7 +498,7 @@ def test_signed_request_maps_auth_error(monkeypatch: pytest.MonkeyPatch) -> None
 def test_public_request_raises_network_error(monkeypatch: pytest.MonkeyPatch) -> None:
     credentials = ExchangeCredentials(key_id="public", environment=Environment.LIVE)
     metrics = MetricsRegistry()
-    adapter = ZondaSpotAdapter(credentials, metrics_registry=metrics)
+    adapter = _configured_adapter(credentials, metrics_registry=metrics)
     monkeypatch.setattr("bot_core.exchanges.zonda.spot.time.sleep", lambda _: None)
 
     def fake_urlopen(request: Request, timeout: int = 15):  # type: ignore[override]
@@ -515,10 +521,30 @@ def test_public_request_raises_network_error(monkeypatch: pytest.MonkeyPatch) ->
     assert api_errors == pytest.approx(expected_api_errors)
 
 
+def test_public_request_rejects_absolute_path() -> None:
+    adapter = _configured_adapter(ExchangeCredentials(key_id="pub", environment=Environment.LIVE))
+
+    with pytest.raises(ValueError):
+        adapter._public_request("https://malicious.invalid/trading/ticker")
+
+
+def test_signed_request_rejects_invalid_method() -> None:
+    credentials = ExchangeCredentials(
+        key_id="key",
+        secret="secret",
+        permissions=("read",),
+        environment=Environment.LIVE,
+    )
+    adapter = _configured_adapter(credentials)
+
+    with pytest.raises(ValueError):
+        adapter._signed_request("TRACE", "/trading/balance")
+
+
 def test_public_request_raises_api_error(monkeypatch: pytest.MonkeyPatch) -> None:
     credentials = ExchangeCredentials(key_id="public", environment=Environment.LIVE)
     metrics = MetricsRegistry()
-    adapter = ZondaSpotAdapter(credentials, metrics_registry=metrics)
+    adapter = _configured_adapter(credentials, metrics_registry=metrics)
 
     def fake_urlopen(request: Request, timeout: int = 15):  # type: ignore[override]
         raise HTTPError(
@@ -541,7 +567,7 @@ def test_public_request_raises_api_error(monkeypatch: pytest.MonkeyPatch) -> Non
 
 
 def test_zonda_spot_adapter_global_throttle_failover(monkeypatch: pytest.MonkeyPatch) -> None:
-    adapter = ZondaSpotAdapter(ExchangeCredentials(key_id="k", secret="s", environment=Environment.LIVE))
+    adapter = _configured_adapter(ExchangeCredentials(key_id="k", secret="s", environment=Environment.LIVE))
 
     monotonic_now = [2_000.0]
 
@@ -583,7 +609,7 @@ def test_zonda_spot_adapter_global_throttle_failover(monkeypatch: pytest.MonkeyP
 
 
 def test_zonda_spot_adapter_reconnect_cooldown(monkeypatch: pytest.MonkeyPatch) -> None:
-    adapter = ZondaSpotAdapter(ExchangeCredentials(key_id="k", secret="s", environment=Environment.LIVE))
+    adapter = _configured_adapter(ExchangeCredentials(key_id="k", secret="s", environment=Environment.LIVE))
 
     monotonic_now = [4_000.0]
 

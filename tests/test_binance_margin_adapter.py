@@ -41,6 +41,7 @@ def test_fetch_account_snapshot_valuates_balances(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setattr(BinanceMarginAdapter, "_public_request", fake_public)
 
     adapter = BinanceMarginAdapter(_credentials(), watchdog=_watchdog())
+    adapter.configure_network()
     snapshot = adapter.fetch_account_snapshot()
 
     assert isinstance(snapshot, AccountSnapshot)
@@ -72,6 +73,7 @@ def test_place_order_retries_on_throttling(monkeypatch: pytest.MonkeyPatch) -> N
     monkeypatch.setattr(BinanceMarginAdapter, "_public_request", lambda *args, **kwargs: [])
 
     adapter = BinanceMarginAdapter(_credentials(), watchdog=_watchdog())
+    adapter.configure_network()
     order = adapter.place_order(
         OrderRequest(symbol="BTC-USDT", side="buy", quantity=0.1, order_type="limit", price=20000.0)
     )
@@ -88,6 +90,7 @@ def test_place_order_raises_auth_error(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(BinanceMarginAdapter, "_public_request", lambda *args, **kwargs: [])
 
     adapter = BinanceMarginAdapter(_credentials(), watchdog=_watchdog())
+    adapter.configure_network()
 
     with pytest.raises(ExchangeAuthError):
         adapter.place_order(

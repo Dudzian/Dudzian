@@ -18,7 +18,7 @@ import pytest
 
 from bot_core.exchanges.base import AccountSnapshot, Environment, ExchangeCredentials, OrderRequest
 from bot_core.exchanges.errors import ExchangeAPIError, ExchangeAuthError, ExchangeThrottlingError
-from bot_core.exchanges.kraken.spot import KrakenSpotAdapter
+from bot_core.exchanges.kraken.spot import KrakenSpotAdapter, _RequestContext
 from bot_core.observability.metrics import MetricsRegistry
 
 
@@ -76,6 +76,7 @@ def test_fetch_account_snapshot_uses_private_signed_calls(monkeypatch: pytest.Mo
         environment=Environment.LIVE,
         metrics_registry=registry,
     )
+    adapter.configure_network()
 
     snapshot = adapter.fetch_account_snapshot()
 
@@ -129,6 +130,7 @@ def test_fetch_account_snapshot_respects_custom_valuation_asset(
         settings={"valuation_asset": "eur"},
         metrics_registry=registry,
     )
+    adapter.configure_network()
 
     adapter.fetch_account_snapshot()
     assert len(captured_requests) == 2
@@ -154,6 +156,7 @@ def test_place_order_builds_payload_with_signature(monkeypatch: pytest.MonkeyPat
         environment=Environment.LIVE,
         metrics_registry=registry,
     )
+    adapter.configure_network()
 
     order = OrderRequest(
         symbol="XBTUSD",
@@ -198,6 +201,7 @@ def test_cancel_order_validates_response(monkeypatch: pytest.MonkeyPatch) -> Non
         environment=Environment.LIVE,
         metrics_registry=registry,
     )
+    adapter.configure_network()
 
     adapter.cancel_order("OID123")
 
@@ -216,6 +220,7 @@ def test_private_request_maps_auth_errors(monkeypatch: pytest.MonkeyPatch) -> No
         environment=Environment.LIVE,
         metrics_registry=registry,
     )
+    adapter.configure_network()
 
     with pytest.raises(ExchangeAuthError):
         adapter.fetch_account_snapshot()
@@ -268,6 +273,7 @@ def test_public_request_retries_on_throttle(monkeypatch: pytest.MonkeyPatch) -> 
         environment=Environment.LIVE,
         metrics_registry=registry,
     )
+    adapter.configure_network()
 
     symbols = adapter.fetch_symbols()
 
@@ -301,6 +307,7 @@ def test_public_request_raises_throttling_after_retries(monkeypatch: pytest.Monk
         environment=Environment.LIVE,
         metrics_registry=registry,
     )
+    adapter.configure_network()
 
     with pytest.raises(ExchangeThrottlingError):
         adapter.fetch_symbols()
@@ -334,6 +341,7 @@ def test_private_request_propagates_api_errors(monkeypatch: pytest.MonkeyPatch) 
         environment=Environment.LIVE,
         metrics_registry=registry,
     )
+    adapter.configure_network()
 
     with pytest.raises(ExchangeAPIError):
         adapter.cancel_order("OID123")
@@ -377,6 +385,7 @@ def test_fetch_open_orders_returns_sorted_orders_and_metrics(monkeypatch: pytest
         environment=Environment.LIVE,
         metrics_registry=registry,
     )
+    adapter.configure_network()
 
     orders = adapter.fetch_open_orders()
 
@@ -474,6 +483,7 @@ def test_fetch_trades_history_paginates_and_updates_counter(monkeypatch: pytest.
         environment=Environment.LIVE,
         metrics_registry=registry,
     )
+    adapter.configure_network()
 
     trades = adapter.fetch_trades_history(symbol="XBTUSD")
 
@@ -526,6 +536,7 @@ def test_fetch_ticker_parses_payload_and_updates_metrics(monkeypatch: pytest.Mon
         environment=Environment.LIVE,
         metrics_registry=registry,
     )
+    adapter.configure_network()
 
     ticker = adapter.fetch_ticker("XBTUSD")
 
@@ -588,6 +599,7 @@ def test_fetch_order_book_normalizes_levels_and_metrics(monkeypatch: pytest.Monk
         environment=Environment.LIVE,
         metrics_registry=registry,
     )
+    adapter.configure_network()
 
     order_book = adapter.fetch_order_book("XBTUSD", depth=10)
 
@@ -621,6 +633,7 @@ def test_fetch_account_snapshot_uses_watchdog(monkeypatch: pytest.MonkeyPatch) -
     watchdog = _RecordingWatchdog()
     adapter = KrakenSpotAdapter(credentials, environment=Environment.LIVE, watchdog=watchdog)
 
+    adapter.configure_network()
     def fake_private(context):
         if "TradeBalance" in context.path:
             return {"result": {"eb": "10", "mf": "3", "m": "1"}}
@@ -632,6 +645,20 @@ def test_fetch_account_snapshot_uses_watchdog(monkeypatch: pytest.MonkeyPatch) -
 
     assert snapshot.total_equity == pytest.approx(10.0)
     assert "kraken_spot_fetch_account" in watchdog.calls
+
+
+def test_public_request_rejects_absolute_path() -> None:
+    adapter = KrakenSpotAdapter(_build_credentials(), environment=Environment.LIVE)
+    adapter.configure_network()
+
+    with pytest.raises(ValueError):
+        adapter._public_request("https://example.invalid/0/public/AssetPairs", params={})
+
+
+def test_request_context_rejects_absolute_path() -> None:
+    with pytest.raises(ValueError):
+        _RequestContext(path="https://example.invalid/0/private/Balance", params={})
+
 
 def _expected_signature(*, path: str, params: dict[str, Any], secret: str) -> str:
     params = dict(params)

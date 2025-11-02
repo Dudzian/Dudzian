@@ -2505,6 +2505,12 @@ def bootstrap_environment(
         environment=environment,
         secret_manager=secret_manager,
     )
+    setter = getattr(adapter, "set_alert_router", None)
+    if callable(setter):
+        try:
+            setter(alert_router)
+        except Exception:  # pragma: no cover - konfiguracja alertów nie może zatrzymać bootstrapa
+            _LOGGER.exception("Nie udało się podpiąć AlertRouter do adaptera %s", adapter.name)
 
     decision_journal = _build_decision_journal(environment)
     portfolio_decision_log = _build_portfolio_decision_log(core_config, environment)

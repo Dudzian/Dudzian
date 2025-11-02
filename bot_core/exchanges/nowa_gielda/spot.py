@@ -7,7 +7,9 @@ import time
 from collections import deque
 from dataclasses import dataclass
 from hashlib import sha256
-from typing import Any, Callable, Deque, Iterable, Mapping, Optional, Protocol, Sequence
+from typing import TYPE_CHECKING, Any, Callable, Deque, Iterable, Mapping, Optional, Protocol, Sequence
+
+from urllib.parse import urlencode
 
 import httpx
 
@@ -26,9 +28,18 @@ from bot_core.exchanges.errors import (
     ExchangeThrottlingError,
 )
 from bot_core.exchanges.nowa_gielda import symbols
+from bot_core.exchanges.network_guard import (
+    NetworkAccessGuard,
+    NetworkAccessViolation,
+    normalize_http_method,
+    normalize_relative_api_path,
+)
 from bot_core.exchanges.streaming import LocalLongPollStream, StreamBatch
 from bot_core.observability.metrics import MetricsRegistry, get_global_metrics_registry
 from core.network import RateLimitedAsyncClient, get_rate_limited_client, run_sync
+
+if TYPE_CHECKING:  # pragma: no cover - tylko dla type checkerów
+    from bot_core.alerts.base import AlertRouter
 
 _PUBLIC_STREAM_CHANNEL_MAP: Mapping[str, str] = {
     "ticker": "ticker",
@@ -136,7 +147,7 @@ _ERROR_CODE_MAPPING: Mapping[str, type[ExchangeAPIError]] = {
 class NowaGieldaHTTPClient:
     """Klient HTTP odpowiadający za komunikację z REST API nowa_gielda."""
 
-    __slots__ = ("_base_url", "_client", "_rate_limiter", "_owns_client")
+    __slots__ = ("_base_url", "_client", "_rate_limiter", "_owns_client", "_network_guard")
 
     def __init__(
         self,
@@ -144,6 +155,7 @@ class NowaGieldaHTTPClient:
         *,
         client: RateLimitedAsyncClient | None = None,
         timeout: float = 10.0,
+        network_guard: NetworkAccessGuard | None = None,
     ) -> None:
         self._base_url = base_url.rstrip("/")
         self._rate_limiter = _RateLimiter(_RATE_LIMITS)
@@ -153,6 +165,7 @@ class NowaGieldaHTTPClient:
         else:
             self._client = client
             self._owns_client = False
+        self._network_guard = network_guard
 
     @property
     def rate_limiter(self) -> _RateLimiter:
@@ -168,8 +181,8 @@ class NowaGieldaHTTPClient:
         headers: Mapping[str, str] | None = None,
     ) -> Mapping[str, Any]:
         self._rate_limiter.consume(method, path)
-        query = _strip_none(params)
-        body = _strip_none(json_body)
+        query = dict(params or {})
+        body = dict(json_body or {})
         try:
             response = await self._client.request(
                 method,
@@ -183,6 +196,17 @@ class NowaGieldaHTTPClient:
 
         return self._parse_response(method, path, response)
 
+    def _ensure_network_access(self, url: str, *, check_source_ip: bool = True) -> None:
+        if self._network_guard is None:
+            return
+        try:
+            self._network_guard.ensure_allowed(url, check_source_ip=check_source_ip)
+        except NetworkAccessViolation as exc:  # pragma: no cover - zachowanie testowane wyżej
+            raise ExchangeNetworkError(
+                "Naruszenie konfiguracji sieci nowa_gielda.",
+                reason=exc,
+            ) from exc
+
     def _request(
         self,
         method: str,
@@ -192,12 +216,24 @@ class NowaGieldaHTTPClient:
         json_body: Mapping[str, Any] | None = None,
         headers: Mapping[str, str] | None = None,
     ) -> Mapping[str, Any]:
+        http_method = normalize_http_method(method)
+        normalized_path = normalize_relative_api_path(path)
+        query = _strip_none(params)
+        body = _strip_none(json_body)
+
+        encoded_query = urlencode(query, doseq=True) if query else ""
+        url = f"{self._base_url}{normalized_path}"
+        if encoded_query:
+            url = f"{url}?{encoded_query}"
+
+        self._ensure_network_access(url)
+
         return run_sync(
             self._request_async,
-            method,
-            path,
-            params=params,
-            json_body=json_body,
+            http_method,
+            normalized_path,
+            params=query or None,
+            json_body=body or None,
             headers=headers,
         )
 
@@ -798,6 +834,7 @@ class NowaGieldaSpotAdapter(ExchangeAdapter):
         "_http_client",
         "_settings",
         "_permission_set",
+        "_network_guard",
     )
 
     name: str = "nowa_gielda_spot"
@@ -814,7 +851,11 @@ class NowaGieldaSpotAdapter(ExchangeAdapter):
         self._environment = environment or credentials.environment
         self._ip_allowlist: tuple[str, ...] = ()
         self._metrics: MetricsRegistry = metrics_registry or get_global_metrics_registry()
-        self._http_client = NowaGieldaHTTPClient(self._determine_base_url(self._environment))
+        self._network_guard = NetworkAccessGuard(logger=_LOGGER)
+        self._http_client = NowaGieldaHTTPClient(
+            self._determine_base_url(self._environment),
+            network_guard=self._network_guard,
+        )
         self._settings = dict(settings or {})
         self._permission_set = frozenset(perm.lower() for perm in self.credentials.permissions)
 
@@ -832,6 +873,12 @@ class NowaGieldaSpotAdapter(ExchangeAdapter):
         self._ip_allowlist = tuple(ip_allowlist or ())
         if self._ip_allowlist:
             _LOGGER.debug("Skonfigurowano allowlistę IP: %s", self._ip_allowlist)
+        self._network_guard.configure(ip_allowlist=self._ip_allowlist)
+
+    def set_alert_router(self, alert_router: "AlertRouter | None") -> None:
+        """Pozwala podłączyć router alertów dla naruszeń allowlisty."""
+
+        self._network_guard.attach_alert_router(alert_router)
 
     # --- Streaming configuration -------------------------------------------
     def _stream_settings(self) -> Mapping[str, Any]:
@@ -956,6 +1003,14 @@ class NowaGieldaSpotAdapter(ExchangeAdapter):
                 f"{scope}_buffer_size", stream_settings.get("buffer_size", 64)
             )
         )
+
+        try:
+            self._network_guard.ensure_allowed(base_url, check_source_ip=False)
+        except NetworkAccessViolation as exc:
+            raise ExchangeNetworkError(
+                "Naruszenie konfiguracji sieci nowa_gielda.",
+                reason=exc,
+            ) from exc
 
         return LocalLongPollStream(
             base_url=base_url,

@@ -5,9 +5,10 @@ import base64
 import hashlib
 import hmac
 import json
+import logging
 import time
 from dataclasses import dataclass
-from typing import Any, Mapping, MutableMapping, Sequence
+from typing import TYPE_CHECKING, Any, Mapping, MutableMapping, Sequence
 from urllib.parse import urlencode
 from urllib.request import Request
 
@@ -20,10 +21,21 @@ from bot_core.exchanges.base import (
     OrderResult,
 )
 from bot_core.exchanges.error_mapping import raise_for_kraken_error
-from bot_core.exchanges.errors import ExchangeAPIError
+from bot_core.exchanges.errors import ExchangeAPIError, ExchangeNetworkError
 from bot_core.exchanges.health import Watchdog
 from bot_core.exchanges.streaming import LocalLongPollStream
 from bot_core.exchanges.http_client import urlopen
+from bot_core.exchanges.network_guard import (
+    NetworkAccessGuard,
+    NetworkAccessViolation,
+    normalize_http_method,
+    normalize_relative_api_path,
+)
+
+if TYPE_CHECKING:  # pragma: no cover - tylko adnotacje typów
+    from bot_core.alerts.base import AlertRouter
+
+_LOGGER = logging.getLogger(__name__)
 
 _API_PREFIX = "/derivatives/api/v3"
 _BASE_ORIGINS: Mapping[Environment, str] = {
@@ -49,6 +61,10 @@ class _RequestContext:
     params: Mapping[str, Any]
     body: Mapping[str, Any] | None = None
 
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "path", normalize_relative_api_path(self.path))
+        object.__setattr__(self, "method", normalize_http_method(self.method))
+
 
 class KrakenFuturesAdapter(ExchangeAdapter):
     """Obsługuje publiczne i prywatne endpointy Kraken Futures."""
@@ -70,10 +86,11 @@ class KrakenFuturesAdapter(ExchangeAdapter):
         except KeyError as exc:  # pragma: no cover - brak konfiguracji w testach
             raise ValueError(f"Nieobsługiwane środowisko Kraken Futures: {environment}") from exc
         self._permission_set = frozenset(str(perm).lower() for perm in credentials.permissions)
-        self._ip_allowlist: Sequence[str] | None = None
+        self._ip_allowlist: tuple[str, ...] = ()
         self._http_timeout = 20
         self._settings = dict(settings or {})
         self._watchdog = watchdog or Watchdog()
+        self._network_guard = NetworkAccessGuard(logger=_LOGGER)
 
     # ------------------------------------------------------------------
     # Konfiguracja streamingu long-pollowego
@@ -186,6 +203,8 @@ class KrakenFuturesAdapter(ExchangeAdapter):
         if buffer_size < 1:
             buffer_size = 1
 
+        self._ensure_network_access(base_url, check_source_ip=False)
+
         return LocalLongPollStream(
             base_url=base_url,
             path=path,
@@ -219,7 +238,20 @@ class KrakenFuturesAdapter(ExchangeAdapter):
     # Konfiguracja sieci
     # ------------------------------------------------------------------
     def configure_network(self, *, ip_allowlist: Sequence[str] | None = None) -> None:  # type: ignore[override]
-        self._ip_allowlist = tuple(ip_allowlist) if ip_allowlist else None
+        self._ip_allowlist = tuple(ip_allowlist) if ip_allowlist else ()
+        self._network_guard.configure(ip_allowlist=self._ip_allowlist)
+
+    def set_alert_router(self, alert_router: "AlertRouter | None") -> None:
+        self._network_guard.attach_alert_router(alert_router)
+
+    def _ensure_network_access(self, url: str, *, check_source_ip: bool = True) -> None:
+        try:
+            self._network_guard.ensure_allowed(url, check_source_ip=check_source_ip)
+        except NetworkAccessViolation as exc:  # pragma: no cover - ścieżka logowana osobno
+            raise ExchangeNetworkError(
+                message=f"Naruszenie konfiguracji sieci: {exc.reason}",
+                reason=exc,
+            ) from exc
 
     # ------------------------------------------------------------------
     # Dane konta i publiczne API
@@ -410,9 +442,11 @@ class KrakenFuturesAdapter(ExchangeAdapter):
     # Wewnętrzne narzędzia HTTP/podpisy
     # ------------------------------------------------------------------
     def _public_request(self, path: str, params: Mapping[str, Any]) -> Mapping[str, Any]:
-        url = f"{self._origin}{_API_PREFIX}{path}"
+        normalized_path = normalize_relative_api_path(path)
+        url = f"{self._origin}{_API_PREFIX}{normalized_path}"
         if params:
             url = f"{url}?{urlencode(params)}"
+        self._ensure_network_access(url)
         request = Request(url, headers={"User-Agent": "bot-core/kraken-futures"})
         with urlopen(request, timeout=self._http_timeout) as response:
             payload = json.loads(response.read().decode("utf-8"))
@@ -423,7 +457,7 @@ class KrakenFuturesAdapter(ExchangeAdapter):
         if not self.credentials.secret:
             raise PermissionError("Poświadczenia Kraken Futures wymagają sekretu do wywołań prywatnych.")
 
-        path = _normalize_path(context.path)
+        path = context.path
         query = f"?{urlencode(context.params)}" if context.params else ""
         url = f"{self._origin}{_API_PREFIX}{path}{query}"
         body_bytes = b""
@@ -448,18 +482,12 @@ class KrakenFuturesAdapter(ExchangeAdapter):
             "Authent": signature,
             "Nonce": nonce,
         }
+        self._ensure_network_access(url)
         request = Request(url, data=body_bytes if body_bytes else None, headers=headers, method=context.method)
         with urlopen(request, timeout=self._http_timeout) as response:
             payload = json.loads(response.read().decode("utf-8"))
         _ensure_success(payload)
         return payload
-
-
-def _normalize_path(path: str) -> str:
-    path = path.strip()
-    if not path.startswith("/"):
-        path = f"/{path}"
-    return path
 
 
 def _to_float(value: Any) -> float:

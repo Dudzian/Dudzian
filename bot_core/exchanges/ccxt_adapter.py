@@ -7,6 +7,7 @@ from collections.abc import Mapping
 from copy import deepcopy
 from typing import Any, Callable, Sequence
 
+from bot_core.alerts.base import AlertRouter
 from bot_core.exchanges.base import (
     AccountSnapshot,
     Environment,
@@ -21,13 +22,14 @@ from bot_core.exchanges.errors import (
     ExchangeNetworkError,
     ExchangeThrottlingError,
 )
-from bot_core.observability.metrics import MetricsRegistry, get_global_metrics_registry
 from bot_core.exchanges.health import RetryPolicy, Watchdog
+from bot_core.exchanges.network_guard import NetworkAccessGuard, NetworkAccessViolation
 from bot_core.exchanges.rate_limiter import (
     RateLimitRule,
     get_global_rate_limiter_registry,
     normalize_rate_limit_rules,
 )
+from bot_core.observability.metrics import MetricsRegistry, get_global_metrics_registry
 
 try:  # pragma: no cover - opcjonalny import CCXT
     import ccxt  # type: ignore
@@ -109,6 +111,7 @@ class CCXTSpotAdapter(ExchangeAdapter):
         "_auth_errors",
         "_rate_limit_errors",
         "_base_errors",
+        "_network_guard",
         "_rate_limiter",
         "_retry_policy",
         "_sleep",
@@ -164,6 +167,7 @@ class CCXTSpotAdapter(ExchangeAdapter):
         self._base_errors = self._resolve_error_types(
             "base_error_types", (_CCXTExchangeError,) if _CCXTExchangeError else ()
         )
+        self._network_guard = NetworkAccessGuard(logger=_LOGGER)
         self._client = client or self._build_client()
         default_rules = (
             RateLimitRule(rate=60, per=60.0),
@@ -190,6 +194,15 @@ class CCXTSpotAdapter(ExchangeAdapter):
         if configured:
             return tuple(type_ for type_ in configured if type_)
         return tuple(type_ for type_ in defaults if type_)
+
+    def _ensure_network_access(self) -> None:
+        try:
+            self._network_guard.ensure_configured()
+        except NetworkAccessViolation as exc:
+            raise ExchangeNetworkError(
+                message=f"Naruszenie konfiguracji sieci CCXT: {exc.reason}",
+                reason=exc,
+            ) from exc
 
     def _build_client(self) -> CCXTExchange:
         if ccxt is None:  # pragma: no cover - środowiska offline
@@ -224,6 +237,7 @@ class CCXTSpotAdapter(ExchangeAdapter):
     def _wrap_call(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
         last_exception: tuple[Exception, BaseException | None, bool] | None = None
         for attempt in range(1, self._retry_policy.max_attempts + 1):
+            self._ensure_network_access()
             self._rate_limiter.acquire()
             start = time.perf_counter()
             self._metric_requests.inc(labels=self._metric_labels)
@@ -275,6 +289,10 @@ class CCXTSpotAdapter(ExchangeAdapter):
 
     def configure_network(self, *, ip_allowlist: Sequence[str] | None = None) -> None:
         self._ip_allowlist = tuple(ip_allowlist or ())
+        self._network_guard.configure(ip_allowlist=self._ip_allowlist)
+
+    def set_alert_router(self, alert_router: "AlertRouter | None") -> None:
+        self._network_guard.attach_alert_router(alert_router)
 
     def fetch_account_snapshot(self) -> AccountSnapshot:
         balance: Mapping[str, Any] = self._call_client("fetch_balance") or {}

@@ -87,6 +87,8 @@ def test_fetch_account_snapshot_parses_balances(monkeypatch: pytest.MonkeyPatch)
         environment=Environment.LIVE,
     )
     adapter = BinanceSpotAdapter(credentials)
+    adapter.configure_network()
+    adapter.configure_network()
 
     snapshot = adapter.fetch_account_snapshot()
 
@@ -109,6 +111,7 @@ def test_fetch_account_snapshot_uses_watchdog(monkeypatch: pytest.MonkeyPatch) -
         key_id="watchdog", secret="secret", permissions=("read", "trade"), environment=Environment.LIVE
     )
     adapter = BinanceSpotAdapter(credentials, watchdog=watchdog)
+    adapter.configure_network()
 
     monkeypatch.setattr(
         adapter,
@@ -146,6 +149,8 @@ def test_fetch_account_snapshot_maps_api_error(monkeypatch: pytest.MonkeyPatch) 
         environment=Environment.LIVE,
     )
     adapter = BinanceSpotAdapter(credentials)
+    adapter.configure_network()
+    adapter.configure_network()
 
     with pytest.raises(ExchangeAuthError):
         adapter.fetch_account_snapshot()
@@ -185,6 +190,8 @@ def test_fetch_account_snapshot_values_mixed_portfolio(monkeypatch: pytest.Monke
         environment=Environment.LIVE,
     )
     adapter = BinanceSpotAdapter(credentials)
+    adapter.configure_network()
+    adapter.configure_network()
 
     snapshot = adapter.fetch_account_snapshot()
 
@@ -212,6 +219,7 @@ def test_fetch_ticker_maps_throttling(monkeypatch: pytest.MonkeyPatch) -> None:
         environment=Environment.LIVE,
     )
     adapter = BinanceSpotAdapter(credentials)
+    adapter.configure_network()
 
     with pytest.raises(ExchangeThrottlingError):
         adapter.fetch_ticker("BTC-USDT")
@@ -253,6 +261,7 @@ def test_fetch_account_snapshot_respects_custom_valuation_asset(
             "secondary_valuation_assets": ["USDT"],
         },
     )
+    adapter.configure_network()
 
     snapshot = adapter.fetch_account_snapshot()
 
@@ -284,6 +293,7 @@ def test_place_order_builds_signed_payload(monkeypatch: pytest.MonkeyPatch) -> N
         environment=Environment.LIVE,
     )
     adapter = BinanceSpotAdapter(credentials)
+    adapter.configure_network()
 
     order_request = OrderRequest(
         symbol="BTC/USDT",
@@ -330,6 +340,7 @@ def test_cancel_order_uses_delete_method(monkeypatch: pytest.MonkeyPatch) -> Non
         environment=Environment.LIVE,
     )
     adapter = BinanceSpotAdapter(credentials)
+    adapter.configure_network()
 
     adapter.cancel_order("123", symbol="BTC/USDT")
 
@@ -358,6 +369,7 @@ def test_execute_request_retries_on_rate_limit(monkeypatch: pytest.MonkeyPatch) 
 
     credentials = ExchangeCredentials(key_id="k", secret="s", environment=Environment.LIVE)
     adapter = BinanceSpotAdapter(credentials, metrics_registry=MetricsRegistry())
+    adapter.configure_network()
 
     request = Request("https://api.binance.com/api/v3/time")
     payload = adapter._execute_request(request, endpoint="/api/v3/time")
@@ -378,6 +390,7 @@ def test_execute_request_raises_throttling_error(monkeypatch: pytest.MonkeyPatch
     registry = MetricsRegistry()
     credentials = ExchangeCredentials(key_id="k", secret="s", environment=Environment.LIVE)
     adapter = BinanceSpotAdapter(credentials, metrics_registry=registry)
+    adapter.configure_network()
 
     request = Request("https://api.binance.com/api/v3/time")
 
@@ -405,6 +418,7 @@ def test_execute_request_raises_auth_error(monkeypatch: pytest.MonkeyPatch) -> N
 
     credentials = ExchangeCredentials(key_id="k", secret="s", environment=Environment.LIVE)
     adapter = BinanceSpotAdapter(credentials, metrics_registry=MetricsRegistry())
+    adapter.configure_network()
 
     request = Request("https://api.binance.com/api/v3/account")
 
@@ -423,6 +437,7 @@ def test_execute_request_raises_network_error(monkeypatch: pytest.MonkeyPatch) -
     registry = MetricsRegistry()
     credentials = ExchangeCredentials(key_id="k", secret="s", environment=Environment.LIVE)
     adapter = BinanceSpotAdapter(credentials, metrics_registry=registry)
+    adapter.configure_network()
 
     request = Request("https://api.binance.com/api/v3/time")
 
@@ -451,6 +466,7 @@ def test_execute_request_records_metrics(monkeypatch: pytest.MonkeyPatch) -> Non
     registry = MetricsRegistry()
     credentials = ExchangeCredentials(key_id="k", secret="s", environment=Environment.LIVE)
     adapter = BinanceSpotAdapter(credentials, metrics_registry=registry)
+    adapter.configure_network()
 
     request = Request("https://api.binance.com/api/v3/time")
     payload = adapter._execute_request(request, endpoint="/api/v3/time")
@@ -489,6 +505,7 @@ def test_signed_request_increments_metric(monkeypatch: pytest.MonkeyPatch) -> No
         environment=Environment.LIVE,
     )
     adapter = BinanceSpotAdapter(credentials, metrics_registry=registry)
+    adapter.configure_network()
 
     request = OrderRequest(
         symbol="BTC/USDT",
@@ -508,6 +525,7 @@ def test_signed_request_increments_metric(monkeypatch: pytest.MonkeyPatch) -> No
 def test_fetch_symbols_filters_universe(monkeypatch: pytest.MonkeyPatch) -> None:
     credentials = ExchangeCredentials(key_id="k", secret="s", environment=Environment.LIVE)
     adapter = BinanceSpotAdapter(credentials)
+    adapter.configure_network()
 
     fake_payload = {
         "symbols": [
@@ -531,6 +549,7 @@ def test_fetch_symbols_filters_universe(monkeypatch: pytest.MonkeyPatch) -> None
 def test_fetch_ohlcv_converts_symbol(monkeypatch: pytest.MonkeyPatch) -> None:
     credentials = ExchangeCredentials(key_id="k", secret="s", environment=Environment.LIVE)
     adapter = BinanceSpotAdapter(credentials)
+    adapter.configure_network()
 
     captured_params: dict[str, object] | None = None
 
@@ -566,6 +585,7 @@ def test_binance_spot_adapter_global_throttle_failover(monkeypatch: pytest.Monke
         key_id="key", secret="secret", permissions=("read",), environment=Environment.LIVE
     )
     adapter = BinanceSpotAdapter(credentials)
+    adapter.configure_network()
 
     monotonic_now = [1_000.0]
 
@@ -610,6 +630,7 @@ def test_binance_spot_adapter_global_throttle_failover(monkeypatch: pytest.Monke
 def test_binance_spot_adapter_reconnect_cooldown(monkeypatch: pytest.MonkeyPatch) -> None:
     credentials = ExchangeCredentials(key_id="key", environment=Environment.LIVE)
     adapter = BinanceSpotAdapter(credentials)
+    adapter.configure_network()
 
     monotonic_now = [5_000.0]
 
@@ -652,3 +673,73 @@ def test_binance_spot_adapter_reconnect_cooldown(monkeypatch: pytest.MonkeyPatch
     assert result == {"serverTime": 2}
     assert adapter.failover_status()["reconnect_required"] is False
     assert success_calls == 1
+
+
+def test_public_request_requires_configure_network(monkeypatch: pytest.MonkeyPatch) -> None:
+    credentials = ExchangeCredentials(key_id="key", environment=Environment.LIVE)
+    adapter = BinanceSpotAdapter(credentials)
+
+    def fail_urlopen(*_args: object, **_kwargs: object):  # pragma: no cover - powinno zostać zablokowane
+        raise AssertionError("urlopen should not be called when configure_network was skipped")
+
+    monkeypatch.setattr("bot_core.exchanges.binance.spot.urlopen", fail_urlopen)
+
+    with pytest.raises(ExchangeNetworkError):
+        adapter._public_request("/api/v3/time")
+
+
+def test_public_request_rejects_absolute_path() -> None:
+    credentials = ExchangeCredentials(key_id="key", environment=Environment.LIVE)
+    adapter = BinanceSpotAdapter(credentials)
+    adapter.configure_network()
+
+    with pytest.raises(ValueError):
+        adapter._public_request("https://evil.example/api/v3/time")
+
+
+def test_signed_request_rejects_unsupported_method() -> None:
+    credentials = ExchangeCredentials(
+        key_id="key",
+        secret="secret",
+        permissions=("trade",),
+        environment=Environment.LIVE,
+    )
+    adapter = BinanceSpotAdapter(credentials)
+    adapter.configure_network()
+
+    with pytest.raises(ValueError):
+        adapter._signed_request("/api/v3/order", method="TRACE")
+
+
+def test_allowlist_violation_sends_alert(monkeypatch: pytest.MonkeyPatch) -> None:
+    credentials = ExchangeCredentials(key_id="key", environment=Environment.LIVE)
+    adapter = BinanceSpotAdapter(credentials)
+    adapter.configure_network(ip_allowlist=("192.0.2.10",))
+
+    class _RecorderRouter:
+        def __init__(self) -> None:
+            self.messages: list[Any] = []
+
+        def dispatch(self, message: Any) -> None:
+            self.messages.append(message)
+
+    router = _RecorderRouter()
+    adapter.set_alert_router(router)
+
+    monkeypatch.setattr(
+        "bot_core.exchanges.network_guard.NetworkAccessGuard._determine_source_ip",
+        lambda self, url: "198.51.100.1",
+    )
+
+    def fail_urlopen(*_args: object, **_kwargs: object):  # pragma: no cover - guard powinien zatrzymać
+        raise AssertionError("urlopen should not be executed when allowlist is violated")
+
+    monkeypatch.setattr("bot_core.exchanges.binance.spot.urlopen", fail_urlopen)
+
+    with pytest.raises(ExchangeNetworkError):
+        adapter._public_request("/api/v3/time")
+
+    assert router.messages, "Alert router should receive notification about the violation"
+    message = router.messages[0]
+    assert getattr(message, "category", "") == "security"
+    assert message.context.get("source_ip") == "198.51.100.1"

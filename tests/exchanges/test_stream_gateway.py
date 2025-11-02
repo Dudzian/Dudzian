@@ -57,6 +57,9 @@ def _start_gateway(adapter: ExchangeAdapter) -> tuple[StreamGateway, object, obj
     credentials = getattr(adapter, "credentials", None)
     if isinstance(credentials, ExchangeCredentials):
         environment_value = credentials.environment.value
+    configure = getattr(adapter, "configure_network", None)
+    if callable(configure):
+        configure(ip_allowlist=None)
     gateway.register_adapter(adapter_name, environment=environment_value, adapter=adapter)
     server, thread = start_stream_gateway("127.0.0.1", 0, gateway=gateway)
     port = server.server_address[1]  # type: ignore[misc]
