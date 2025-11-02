@@ -18,6 +18,7 @@ if(BUILD_TESTING)
 
     set(QML_TEST_FILES
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/qml/tst_style_components.qml
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/qml/tst_strategy_personalization.qml
     )
 
     foreach(qml_test ${QML_TEST_FILES})
@@ -82,6 +83,7 @@ set(UI_SOURCES
     src/app/ConfigurationWizardController.cpp
     src/app/StrategyConfigController.cpp
     src/app/StrategyWorkbenchController.cpp
+    src/app/UserProfileController.cpp
     src/grpc/BotCoreLocalService.cpp
     src/grpc/TradingClient.cpp
     src/grpc/MetricsClient.cpp
@@ -125,6 +127,7 @@ set(UI_HEADERS
     src/app/ConfigurationWizardController.hpp
     src/app/StrategyConfigController.hpp
     src/app/StrategyWorkbenchController.hpp
+    src/app/UserProfileController.hpp
     src/grpc/BotCoreLocalService.hpp
     src/grpc/TradingClient.hpp
     src/grpc/MetricsClient.hpp
@@ -398,6 +401,18 @@ if(BUILD_TESTING)
             Qt6::Test
     )
     add_test(NAME runtime_decision_bridge_tests COMMAND runtime_decision_bridge_tests)
+
+    add_executable(user_profile_controller_tests
+        tests/UserProfileControllerTest.cpp
+        src/app/UserProfileController.cpp
+    )
+    target_include_directories(user_profile_controller_tests PRIVATE src)
+    target_link_libraries(user_profile_controller_tests
+        PRIVATE
+            Qt6::Core
+            Qt6::Test
+    )
+    add_test(NAME user_profile_controller_tests COMMAND user_profile_controller_tests)
 
     add_executable(application_risk_history_auto_export_tests
         tests/ApplicationRiskHistoryAutoExportTest.cpp

@@ -101,6 +101,7 @@ bool ConfigurationWizardController::start(const QString& profileId)
     m_completed = false;
     Q_EMIT currentStepIndexChanged();
     Q_EMIT completedChanged();
+    Q_EMIT wizardStarted(m_profileId);
 
     raiseWizardAlert(tr("Uruchomiono kreator konfiguracji profilu %1.").arg(m_profileId), AlertsModel::Info);
     return true;
@@ -125,6 +126,7 @@ bool ConfigurationWizardController::commitStep(const QVariantMap& payload)
     QVariantMap normalizedPayload = payload;
     normalizedPayload.insert(QStringLiteral("completedAt"), QDateTime::currentDateTimeUtc());
     m_collectedConfig.insert(stepId, normalizedPayload);
+    Q_EMIT wizardStepCompleted(m_profileId, stepId);
 
     if (m_currentStepIndex + 1 < m_steps.size()) {
         m_currentStepIndex += 1;
@@ -137,6 +139,7 @@ bool ConfigurationWizardController::commitStep(const QVariantMap& payload)
 
 void ConfigurationWizardController::reset()
 {
+    const QString profileId = m_profileId;
     m_steps.clear();
     m_collectedConfig.clear();
     m_currentStepIndex = -1;
@@ -145,6 +148,8 @@ void ConfigurationWizardController::reset()
     Q_EMIT stepsChanged();
     Q_EMIT currentStepIndexChanged();
     Q_EMIT completedChanged();
+    if (!profileId.isEmpty())
+        Q_EMIT wizardAborted(profileId, tr("Kreator został zresetowany"));
 }
 
 bool ConfigurationWizardController::finish()

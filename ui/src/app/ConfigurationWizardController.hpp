@@ -41,6 +41,8 @@ signals:
     void stepsChanged();
     void currentStepIndexChanged();
     void completedChanged();
+    void wizardStarted(const QString& profileId);
+    void wizardStepCompleted(const QString& profileId, const QString& stepId);
     void wizardCompleted(const QString& profileId);
     void wizardAborted(const QString& profileId, const QString& reason);
 

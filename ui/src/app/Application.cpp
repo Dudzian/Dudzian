@@ -55,6 +55,7 @@
 #include "app/StrategyWorkbenchController.hpp"
 #include "app/MarketplaceController.hpp"
 #include "app/PortfolioManagerController.hpp"
+#include "app/UserProfileController.hpp"
 #include "runtime/OfflineRuntimeBridge.hpp"
 #include "security/SecurityAdminController.hpp"
 #include "support/SupportBundleController.hpp"
@@ -512,6 +513,34 @@ Application::Application(QQmlApplicationEngine& engine, QObject* parent)
     m_configurationWizard->setMarketplaceController(m_marketplaceController.get());
     m_configurationWizard->setRiskModel(&m_riskModel);
     m_configurationWizard->setAlertsModel(&m_alertsModel);
+    connect(m_configurationWizard.get(),
+            &ConfigurationWizardController::wizardStarted,
+            this,
+            [this](const QString& profileId) {
+                if (m_userProfiles)
+                    m_userProfiles->resetWizardProgress(profileId);
+            });
+    connect(m_configurationWizard.get(),
+            &ConfigurationWizardController::wizardStepCompleted,
+            this,
+            [this](const QString& profileId, const QString& stepId) {
+                if (m_userProfiles)
+                    m_userProfiles->setWizardStepCompleted(profileId, stepId, true);
+            });
+    connect(m_configurationWizard.get(),
+            &ConfigurationWizardController::wizardCompleted,
+            this,
+            [this](const QString& profileId) {
+                if (m_userProfiles)
+                    m_userProfiles->markWizardCompleted(profileId, true);
+            });
+    connect(m_configurationWizard.get(),
+            &ConfigurationWizardController::wizardAborted,
+            this,
+            [this](const QString& profileId) {
+                if (m_userProfiles)
+                    m_userProfiles->markWizardCompleted(profileId, false);
+            });
 
     m_updateManager = std::make_unique<OfflineUpdateManager>(this);
     m_updateManager->setPackagesDirectory(QDir::current().absoluteFilePath(QStringLiteral("var/updates/packages")));
@@ -524,6 +553,15 @@ Application::Application(QQmlApplicationEngine& engine, QObject* parent)
     m_resultsDashboard->setRiskHistoryModel(&m_riskHistoryModel);
     m_resultsDashboard->setRiskStateModel(&m_riskModel);
     m_resultsDashboard->setDecisionLogModel(&m_decisionLogModel);
+
+    m_userProfiles = std::make_unique<UserProfileController>(this);
+    m_userProfiles->setProfilesPath(QDir::current().absoluteFilePath(QStringLiteral("config/ui_profiles.json")));
+    m_userProfiles->setStrategyCatalogController(m_workbenchController.get());
+    if (!m_userProfiles->load())
+        qCWarning(lcAppMetrics) << "Nie udało się załadować profili użytkowników";
+    connect(m_userProfiles.get(), &UserProfileController::themePaletteChanged, this, &Application::applyUiThemePalette);
+    connect(m_userProfiles.get(), &UserProfileController::activeProfileChanged, this, &Application::applyUiThemePalette);
+    applyUiThemePalette();
 
     connect(m_updateManager.get(),
             &OfflineUpdateManager::updateFailed,
@@ -3057,6 +3095,29 @@ void Application::applyUiThemePalette()
         palette.setColor(QPalette::Highlight, QColor(QStringLiteral("#2196f3")));
         palette.setColor(QPalette::HighlightedText, QColor(QStringLiteral("#ffffff")));
     }
+
+    if (m_userProfiles) {
+        const QVariantMap paletteOverrides = m_userProfiles->activeThemePalette();
+        auto toColor = [](const QVariant& value, const QColor& fallback) {
+            if (value.canConvert<QString>()) {
+                const QColor candidate(value.toString());
+                if (candidate.isValid())
+                    return candidate;
+            }
+            return fallback;
+        };
+        palette.setColor(QPalette::Window, toColor(paletteOverrides.value(QStringLiteral("backgroundPrimary")), palette.color(QPalette::Window)));
+        palette.setColor(QPalette::Base, toColor(paletteOverrides.value(QStringLiteral("backgroundOverlay")), palette.color(QPalette::Base)));
+        palette.setColor(QPalette::AlternateBase, toColor(paletteOverrides.value(QStringLiteral("surfaceMuted")), palette.color(QPalette::AlternateBase)));
+        palette.setColor(QPalette::ToolTipBase, toColor(paletteOverrides.value(QStringLiteral("surfaceSubtle")), palette.color(QPalette::ToolTipBase)));
+        palette.setColor(QPalette::ToolTipText, toColor(paletteOverrides.value(QStringLiteral("textPrimary")), palette.color(QPalette::ToolTipText)));
+        palette.setColor(QPalette::Text, toColor(paletteOverrides.value(QStringLiteral("textPrimary")), palette.color(QPalette::Text)));
+        palette.setColor(QPalette::WindowText, toColor(paletteOverrides.value(QStringLiteral("textPrimary")), palette.color(QPalette::WindowText)));
+        palette.setColor(QPalette::Button, toColor(paletteOverrides.value(QStringLiteral("surfaceStrong")), palette.color(QPalette::Button)));
+        palette.setColor(QPalette::ButtonText, toColor(paletteOverrides.value(QStringLiteral("textPrimary")), palette.color(QPalette::ButtonText)));
+        palette.setColor(QPalette::Highlight, toColor(paletteOverrides.value(QStringLiteral("accent")), palette.color(QPalette::Highlight)));
+        palette.setColor(QPalette::HighlightedText, toColor(paletteOverrides.value(QStringLiteral("textSecondary")), palette.color(QPalette::HighlightedText)));
+    }
     QGuiApplication::setPalette(palette);
 }
 
@@ -3787,6 +3848,7 @@ void Application::exposeToQml() {
     m_engine.rootContext()->setContextProperty(QStringLiteral("configurationWizard"), m_configurationWizard.get());
     m_engine.rootContext()->setContextProperty(QStringLiteral("updateManager"), m_updateManager.get());
     m_engine.rootContext()->setContextProperty(QStringLiteral("resultsDashboard"), m_resultsDashboard.get());
+    m_engine.rootContext()->setContextProperty(QStringLiteral("userProfiles"), m_userProfiles.get());
     m_engine.rootContext()->setContextProperty(QStringLiteral("runtimeService"), m_runtimeBridge.get());
 }
 
@@ -3858,6 +3920,11 @@ QObject* Application::updateManager() const
 QObject* Application::resultsDashboard() const
 {
     return m_resultsDashboard.get();
+}
+
+QObject* Application::userProfiles() const
+{
+    return m_userProfiles.get();
 }
 
 void Application::setModuleManagerForTesting(std::unique_ptr<UiModuleManager> manager)
