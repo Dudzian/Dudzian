@@ -14,6 +14,7 @@ import numpy as np
 import pandas as pd
 
 from .inference import DecisionModelInference, ModelRepository
+from .meta import build_meta_labeling_payload, train_meta_classifier
 from .models import ModelArtifact, ModelScore
 from .training import SimpleGradientBoostingModel
 
@@ -149,6 +150,8 @@ class TrainingEnsembleSpec:
     components: tuple[str, ...]
     aggregation: str = "mean"
     weights: tuple[float, ...] | None = None
+    regime_weights: Mapping[str, tuple[float, ...]] = field(default_factory=dict)
+    meta_weight_floor: float = 0.0
 
 
 @dataclass(slots=True)
@@ -397,12 +400,37 @@ def _parse_ensembles(profile_name: str, payload: Mapping[str, object]) -> tuple[
             entry.get("weights"),
             field_name=f"profiles.{profile_name}.ensembles[{index}].weights",
         )
+        regime_weights_raw = entry.get("regime_weights") or {}
+        if regime_weights_raw and not isinstance(regime_weights_raw, Mapping):
+            raise TypeError(
+                f"profiles.{profile_name}.ensembles[{index}].regime_weights musi być mapowaniem"
+            )
+        regime_weights: dict[str, tuple[float, ...]] = {}
+        if isinstance(regime_weights_raw, Mapping):
+            for regime_name, values in regime_weights_raw.items():
+                vector = _ensure_optional_sequence_of_float(
+                    values,
+                    field_name=(
+                        f"profiles.{profile_name}.ensembles[{index}].regime_weights.{regime_name}"
+                    ),
+                )
+                if vector is None:
+                    continue
+                if len(vector) != len(components):
+                    raise ValueError(
+                        "Długość wektora regime_weights musi odpowiadać liczbie komponentów"
+                    )
+                regime_weights[str(regime_name).lower()] = tuple(vector)
+        meta_weight_floor_raw = entry.get("meta_weight_floor", 0.0)
+        meta_weight_floor = float(meta_weight_floor_raw)
         ensembles.append(
             TrainingEnsembleSpec(
                 name=name,
                 components=components,
                 aggregation=aggregation,
                 weights=weights,
+                regime_weights=regime_weights,
+                meta_weight_floor=meta_weight_floor,
             )
         )
     return tuple(ensembles)
@@ -594,6 +622,8 @@ def register_profile_results(
                 ensemble.components,
                 aggregation=ensemble.aggregation,
                 weights=ensemble.weights,
+                regime_weights=ensemble.regime_weights,
+                meta_weight_floor=ensemble.meta_weight_floor,
                 override=True,
             )
 
@@ -746,6 +776,10 @@ def train_gradient_boosting_model(
         subset.name: _compute_metrics(model, subset.features, subset.targets)
         for subset in learning_sets
     }
+    subset_lookup = {subset.name: subset for subset in learning_sets}
+    subset_predictions: dict[str, Sequence[float]] = {"train": raw_predictions}
+    for subset in learning_sets[1:]:
+        subset_predictions[subset.name] = list(model.batch_predict(subset.features))
     train_rows = len(train_frame)
     validation_rows = len(validation_frame)
     test_rows = len(test_frame)
@@ -789,6 +823,15 @@ def train_gradient_boosting_model(
             mean_target = float(np.mean(target_array)) if target_array.size else 0.0
             scale = max(abs(mean_target) or 1.0, 1.0)
         target_scale = scale
+    classifier = train_meta_classifier(raw_predictions, train_targets)
+    validation_meta: tuple[Sequence[float], Sequence[float]] | None = None
+    test_meta: tuple[Sequence[float], Sequence[float]] | None = None
+    validation_subset = subset_lookup.get("validation")
+    if validation_subset is not None and "validation" in subset_predictions:
+        validation_meta = (subset_predictions["validation"], validation_subset.targets)
+    test_subset = subset_lookup.get("test")
+    if test_subset is not None and "test" in subset_predictions:
+        test_meta = (subset_predictions["test"], test_subset.targets)
     meta_payload = {
         "calibration": {
             "slope": calibration_slope,
@@ -819,6 +862,12 @@ def train_gradient_boosting_model(
             "max_mae": 20.0,
         },
     }
+    meta_payload["meta_labeling"] = build_meta_labeling_payload(
+        classifier,
+        train_data=(raw_predictions, train_targets),
+        validation_data=validation_meta,
+        test_data=test_meta,
+    )
     meta_payload.setdefault("model_name", model_name)
     if model_version:
         meta_payload.setdefault("model_version", model_version)

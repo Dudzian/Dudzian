@@ -25,6 +25,7 @@ from ._license import ensure_ai_signals_enabled
 from .backends import is_backend_available, require_backend
 from .feature_engineering import FeatureDataset
 from .inference import ModelRepository
+from .meta import MetaClassifierModel, build_meta_labeling_payload, train_meta_classifier
 from .models import ModelArtifact
 from .validation import (
     ModelQualityMonitor,
@@ -515,11 +516,13 @@ class ModelTrainer:
         slope, intercept = _linear_calibration(train_targets, train_predictions)
         metadata["calibration"] = {"slope": slope, "intercept": intercept}
         validation_metrics: Mapping[str, float] | None = None
+        validation_predictions: Sequence[float] | None = None
         if validation_matrix:
             validation_samples = self._rows_to_samples(validation_matrix, feature_names)
             validation_predictions = model.batch_predict(validation_samples)
             validation_metrics = self._compute_metrics(validation_targets, validation_predictions)
         test_metrics: Mapping[str, float] | None = None
+        test_predictions: Sequence[float] | None = None
         if test_matrix:
             test_samples = self._rows_to_samples(test_matrix, feature_names)
             test_predictions = model.batch_predict(test_samples)
@@ -530,6 +533,23 @@ class ModelTrainer:
             test_metrics,
             validation_rows=validation_rows,
             test_rows=test_rows,
+        )
+        classifier = train_meta_classifier(train_predictions, train_targets)
+        validation_data = (
+            (validation_predictions, validation_targets)
+            if validation_predictions is not None
+            else None
+        )
+        test_data = (
+            (test_predictions, test_targets)
+            if test_predictions is not None
+            else None
+        )
+        metadata["meta_labeling"] = build_meta_labeling_payload(
+            classifier,
+            train_data=(train_predictions, train_targets),
+            validation_data=validation_data,
+            test_data=test_data,
         )
         artifact = ModelArtifact(
             feature_names=tuple(model.feature_names),
@@ -585,11 +605,13 @@ class ModelTrainer:
         slope, intercept = _linear_calibration(train_targets, train_predictions)
         metadata["calibration"] = {"slope": slope, "intercept": intercept}
         validation_metrics: Mapping[str, float] | None = None
+        validation_predictions: Sequence[float] | None = None
         if validation_matrix:
             validation_samples = self._rows_to_samples(validation_matrix, feature_names)
             validation_predictions = list(model.batch_predict(validation_samples))
             validation_metrics = self._compute_metrics(validation_targets, validation_predictions)
         test_metrics: Mapping[str, float] | None = None
+        test_predictions: Sequence[float] | None = None
         if test_matrix:
             test_samples = self._rows_to_samples(test_matrix, feature_names)
             test_predictions = list(model.batch_predict(test_samples))
@@ -600,6 +622,23 @@ class ModelTrainer:
             test_metrics,
             validation_rows=validation_rows,
             test_rows=test_rows,
+        )
+        classifier = train_meta_classifier(train_predictions, train_targets)
+        validation_data = (
+            (validation_predictions, validation_targets)
+            if validation_predictions is not None
+            else None
+        )
+        test_data = (
+            (test_predictions, test_targets)
+            if test_predictions is not None
+            else None
+        )
+        metadata["meta_labeling"] = build_meta_labeling_payload(
+            classifier,
+            train_data=(train_predictions, train_targets),
+            validation_data=validation_data,
+            test_data=test_data,
         )
         if result.metrics:
             summary_block = metrics.setdefault("summary", {})
