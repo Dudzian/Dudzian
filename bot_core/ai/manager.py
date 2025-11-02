@@ -61,6 +61,7 @@ from .feature_engineering import FeatureDataset
 from .explainability import build_explainability_report, serialize_explainability
 from .health import ModelHealthMonitor, ModelHealthStatus
 from .inference import DecisionModelInference, ModelRepository
+from .meta import select_meta_confidence
 from .models import ModelArtifact, ModelScore
 from .validation import ModelArtifactValidationError, validate_model_artifact_schema
 from .regime import (
@@ -549,11 +550,46 @@ class EnsembleDefinition:
     components: Tuple[str, ...]
     aggregation: str = "mean"
     weights: Optional[Tuple[float, ...]] = None
+    regime_weights: Mapping[str, Tuple[float, ...]] = field(default_factory=dict)
+    meta_weight_floor: float = 0.0
 
     def require_weights(self) -> Tuple[float, ...]:
         if self.weights is None:
             raise ValueError("Definicja zespołu nie zawiera wag.")
         return self.weights
+
+    def resolve_weights(
+        self,
+        *,
+        regime: "MarketRegime | str | None" = None,
+        meta_confidence: Mapping[str, float] | None = None,
+    ) -> np.ndarray:
+        size = len(self.components)
+        base = np.ones(size, dtype=float)
+        if self.aggregation == "weighted" and self.weights is not None:
+            base = np.asarray(self.weights, dtype=float)
+        if regime is not None and self.regime_weights:
+            key = regime.value if hasattr(regime, "value") else str(regime)
+            candidate = self.regime_weights.get(str(key).lower())
+            if candidate is not None and len(candidate) == size:
+                base = np.asarray(candidate, dtype=float)
+        if meta_confidence:
+            adjusted: list[float] = []
+            for component, weight in zip(self.components, base):
+                normalized = str(component).lower()
+                confidence = meta_confidence.get(component)
+                if confidence is None:
+                    confidence = meta_confidence.get(normalized)
+                if confidence is None:
+                    confidence = 1.0
+                confidence = max(float(confidence), float(self.meta_weight_floor))
+                adjusted.append(float(weight) * confidence)
+            base = np.asarray(adjusted, dtype=float)
+        total = float(base.sum())
+        if not math.isfinite(total) or total <= 0.0:
+            base = np.ones(size, dtype=float)
+            total = float(size)
+        return base / total
 
 
 @dataclass(slots=True)
@@ -797,6 +833,7 @@ class AIManager:
         self._model_repository: ModelRepository | None = None
         self._repository_models: Dict[str, DecisionModelInference] = {}
         self._repository_paths: Dict[str, Path] = {}
+        self._meta_confidence_cache: Dict[str, float] = {}
         self._decision_inferences: Dict[str, DecisionModelInference] = {}
         self._decision_default_name: str | None = None
         self._decision_orchestrator: Any | None = None
@@ -1824,6 +1861,14 @@ class AIManager:
                 repository_key = self._model_key(inferred_symbol, normalized_model_type)
                 self._repository_models[repository_key] = inference
                 self._repository_paths[repository_key] = destination
+                artifact_obj = getattr(inference, "_artifact", None)
+                artifact_meta = getattr(artifact_obj, "metadata", {}) if artifact_obj is not None else {}
+                if isinstance(artifact_meta, Mapping):
+                    self._update_meta_confidence_cache(
+                        repository_key,
+                        inference=inference,
+                        metadata=artifact_meta,
+                    )
             self._mark_backend_ready(inference)
 
             performance_name = normalized_model_type
@@ -2046,6 +2091,11 @@ class AIManager:
             key = self._model_key(str(symbol), str(model_type))
             self._repository_models[key] = inference
             self._repository_paths[key] = artifact_path if isinstance(artifact_path, Path) else Path(artifact_path)
+            self._update_meta_confidence_cache(
+                key,
+                inference=inference,
+                metadata=metadata,
+            )
             self._mark_backend_ready(inference)
             loaded += 1
         return loaded
@@ -2148,6 +2198,8 @@ class AIManager:
         *,
         aggregation: str = "mean",
         weights: Optional[Iterable[float]] = None,
+        regime_weights: Mapping[str, Iterable[float]] | None = None,
+        meta_weight_floor: float = 0.0,
         override: bool = False,
     ) -> EnsembleDefinition:
         """Zarejestruj zespół modeli dostępny przy generowaniu predykcji."""
@@ -2174,6 +2226,21 @@ class AIManager:
         elif agg == "weighted":
             raise ValueError("Agregacja 'weighted' wymaga listy wag.")
 
+        regime_weight_map: Dict[str, Tuple[float, ...]] = {}
+        if regime_weights is not None:
+            if agg != "weighted":
+                raise ValueError("Regime weights są obsługiwane tylko dla agregacji 'weighted'.")
+            if not isinstance(regime_weights, Mapping):
+                raise TypeError("regime_weights musi być mapowaniem")
+            for regime_name, vector in regime_weights.items():
+                sequence = tuple(float(value) for value in vector)
+                if len(sequence) != len(comp_list):
+                    raise ValueError("Wektor regime_weights musi mieć tyle elementów co komponenty.")
+                regime_weight_map[str(regime_name).lower()] = sequence
+
+        if meta_weight_floor < 0.0:
+            raise ValueError("meta_weight_floor musi być nieujemny")
+
         if not override and normalized_name in self._ensembles:
             raise ValueError(f"Zespół {normalized_name!r} jest już zarejestrowany.")
 
@@ -2182,6 +2249,8 @@ class AIManager:
             components=tuple(comp_list),
             aggregation=agg,
             weights=weights_tuple,
+            regime_weights=regime_weight_map,
+            meta_weight_floor=float(meta_weight_floor),
         )
         self._ensembles[normalized_name] = definition
         return definition
@@ -2235,6 +2304,8 @@ class AIManager:
                 definition.components,
                 aggregation=definition.aggregation,
                 weights=definition.weights,
+                regime_weights=definition.regime_weights,
+                meta_weight_floor=definition.meta_weight_floor,
                 override=True,
             )
 
@@ -2248,6 +2319,9 @@ class AIManager:
         self,
         series_list: Iterable[pd.Series],
         definition: EnsembleDefinition,
+        *,
+        regime: "MarketRegime | str | None" = None,
+        meta_scores: Mapping[str, float] | None = None,
     ) -> pd.Series:
         frame = pd.concat(list(series_list), axis=1)
         if frame.empty:
@@ -2262,7 +2336,7 @@ class AIManager:
         elif agg == "min":
             combined = frame.min(axis=1)
         elif agg == "weighted":
-            weights = np.asarray(definition.require_weights(), dtype=float)
+            weights = definition.resolve_weights(regime=regime, meta_confidence=meta_scores)
             total = float(weights.sum())
             if total == 0.0:
                 raise ValueError("Suma wag zespołu nie może być zerowa.")
@@ -2272,6 +2346,71 @@ class AIManager:
         else:  # pragma: no cover - zabezpieczenie przed przyszłymi wartościami
             raise ValueError(f"Nieobsługiwana agregacja zespołu: {agg}")
         return combined if isinstance(combined, pd.Series) else pd.Series(combined, index=frame.index)
+
+    def _collect_meta_confidence(
+        self, symbol_key: str, components: Iterable[str]
+    ) -> Dict[str, float]:
+        scores: Dict[str, float] = {}
+        for component in components:
+            normalized = self._normalize_model_type(component)
+            confidence = self._resolve_meta_confidence(symbol_key, normalized)
+            if confidence is not None:
+                scores[normalized] = float(confidence)
+        return scores
+
+    def _update_meta_confidence_cache(
+        self,
+        key: str,
+        *,
+        inference: DecisionModelInference | None = None,
+        metadata: Mapping[str, object] | None = None,
+    ) -> None:
+        value: float | None = None
+        if inference is not None:
+            meta_conf = getattr(inference, "meta_labeling_confidence", None)
+            if meta_conf is None:
+                meta_payload = getattr(inference, "meta_labeling_payload", None)
+                if isinstance(meta_payload, Mapping):
+                    meta_conf = select_meta_confidence(meta_payload)
+            if meta_conf is not None:
+                value = float(meta_conf)
+        if value is None and metadata is not None:
+            meta_payload = metadata.get("meta_labeling") if isinstance(metadata, Mapping) else None
+            if isinstance(meta_payload, Mapping):
+                candidate = select_meta_confidence(meta_payload)
+                if candidate is not None:
+                    value = float(candidate)
+        if value is not None:
+            self._meta_confidence_cache[key] = value
+        else:
+            self._meta_confidence_cache.pop(key, None)
+
+    def _resolve_meta_confidence(self, symbol_key: str, component: str) -> float | None:
+        key = self._model_key(symbol_key, component)
+        cached = self._meta_confidence_cache.get(key)
+        if cached is not None:
+            return float(cached)
+        inference = self._repository_models.get(key)
+        if inference is not None:
+            self._update_meta_confidence_cache(key, inference=inference)
+            cached = self._meta_confidence_cache.get(key)
+            if cached is not None:
+                return float(cached)
+        path = self._repository_paths.get(key)
+        if path is not None and path.exists():
+            try:
+                with path.open("r", encoding="utf-8") as handle:
+                    payload = json.load(handle)
+            except Exception:  # pragma: no cover - pliki mogą być uszkodzone
+                logger.debug("Nie udało się odczytać artefaktu %s przy pobieraniu meta-confidence", path, exc_info=True)
+            else:
+                metadata = payload.get("metadata") if isinstance(payload, Mapping) else None
+                if isinstance(metadata, Mapping):
+                    self._update_meta_confidence_cache(key, metadata=metadata)
+                    cached = self._meta_confidence_cache.get(key)
+                    if cached is not None:
+                        return float(cached)
+        return None
 
     def _predict_series_from_inference(
         self,
@@ -2311,7 +2450,15 @@ class AIManager:
                     await self._predict_model_series(symbol_key, component, df, feats, cache, visited)
                     for component in ensemble.components
                 ]
-                combined = self._aggregate_ensemble_predictions(component_series, ensemble)
+                meta_scores = self._collect_meta_confidence(symbol_key, ensemble.components)
+                regime_assessment = self._latest_regimes.get(symbol_key)
+                regime = regime_assessment.regime if regime_assessment is not None else None
+                combined = self._aggregate_ensemble_predictions(
+                    component_series,
+                    ensemble,
+                    regime=regime,
+                    meta_scores=meta_scores if meta_scores else None,
+                )
                 cache[normalized_type] = combined
                 return combined
 
@@ -3472,6 +3619,10 @@ def _serialize_ensemble_definition(definition: EnsembleDefinition) -> Dict[str, 
         "components": list(definition.components),
         "aggregation": definition.aggregation,
         "weights": None if definition.weights is None else list(definition.weights),
+        "regime_weights": {
+            key: list(values) for key, values in definition.regime_weights.items()
+        },
+        "meta_weight_floor": float(definition.meta_weight_floor),
     }
 
 
@@ -3529,11 +3680,34 @@ def _deserialize_ensemble_definition(name: str, payload: Mapping[str, Any]) -> E
     elif agg == "weighted":
         raise ValueError("Agregacja 'weighted' wymaga podania wag")
 
+    regime_weight_map: Dict[str, Tuple[float, ...]] = {}
+    regime_weights_raw = payload.get("regime_weights")
+    if regime_weights_raw:
+        if not isinstance(regime_weights_raw, Mapping):
+            raise TypeError("regime_weights musi być mapowaniem")
+        for regime_name, values in regime_weights_raw.items():
+            if not isinstance(values, Iterable):
+                raise TypeError("Wartości regime_weights muszą być iterowalne")
+            vector = tuple(float(value) for value in values)
+            if len(vector) != len(components):
+                raise ValueError("Wektor regime_weights musi odpowiadać liczbie komponentów")
+            regime_weight_map[str(regime_name).lower()] = vector
+
+    meta_weight_floor_raw = payload.get("meta_weight_floor", 0.0)
+    try:
+        meta_weight_floor = float(meta_weight_floor_raw)
+    except (TypeError, ValueError):
+        meta_weight_floor = 0.0
+    if meta_weight_floor < 0.0:
+        meta_weight_floor = 0.0
+
     return EnsembleDefinition(
         name=normalized_name,
         components=tuple(components),
         aggregation=agg,
         weights=weights_tuple,
+        regime_weights=regime_weight_map,
+        meta_weight_floor=meta_weight_floor,
     )
 
 

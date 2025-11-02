@@ -21,6 +21,7 @@ from .data_monitoring import (
 )
 
 from ._license import ensure_ai_signals_enabled
+from .meta import MetaClassifierModel, select_meta_confidence
 from .models import ModelArtifact, ModelScore
 
 
@@ -579,6 +580,10 @@ class DecisionModelInference:
         self._last_data_quality_report: dict[str, Mapping[str, object]] | None = None
         self._enforce_data_alerts = True
         self._data_quality_enforcement: dict[str, bool] = {}
+        self._meta_classifier: MetaClassifierModel | None = None
+        self._meta_payload: Mapping[str, object] | None = None
+        self._meta_confidence: float | None = None
+        self._last_meta_probability: float | None = None
 
     @property
     def is_ready(self) -> bool:
@@ -620,6 +625,19 @@ class DecisionModelInference:
         self._last_data_quality_report = None
         self._enforce_data_alerts = True
         self._data_quality_enforcement = {}
+        meta_payload = metadata.get("meta_labeling")
+        if isinstance(meta_payload, Mapping):
+            classifier_payload = meta_payload.get("classifier")
+            self._meta_classifier = MetaClassifierModel.from_metadata(
+                classifier_payload if isinstance(classifier_payload, Mapping) else None
+            )
+            self._meta_payload = meta_payload
+            self._meta_confidence = select_meta_confidence(meta_payload)
+        else:
+            self._meta_classifier = None
+            self._meta_payload = None
+            self._meta_confidence = None
+        self._last_meta_probability = None
         drift_config = metadata.get("drift_monitor")
         if isinstance(drift_config, Mapping):
             self._drift_monitor.configure(
@@ -751,6 +769,11 @@ class DecisionModelInference:
             slope, intercept = self._calibration
             prediction = prediction * slope + intercept
         probability = self._to_probability(prediction)
+        meta_probability = None
+        if self._meta_classifier is not None:
+            meta_probability = self._meta_classifier.predict_probability(prediction)
+            probability = float((probability + meta_probability) / 2.0)
+        self._last_meta_probability = meta_probability
         return ModelScore(expected_return_bps=prediction, success_probability=probability)
 
     def explain(self, features: Mapping[str, float]) -> Mapping[str, float]:
@@ -822,6 +845,18 @@ class DecisionModelInference:
         slope = float(payload.get("slope", 1.0))
         intercept = float(payload.get("intercept", 0.0))
         return slope, intercept
+
+    @property
+    def meta_labeling_confidence(self) -> float | None:
+        return self._meta_confidence
+
+    @property
+    def meta_labeling_payload(self) -> Mapping[str, object] | None:
+        return self._meta_payload
+
+    @property
+    def last_meta_probability(self) -> float | None:
+        return self._last_meta_probability
 
 
 __all__ = ["DecisionModelInference", "ModelRepository"]
