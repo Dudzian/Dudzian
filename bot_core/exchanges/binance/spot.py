@@ -441,7 +441,7 @@ class BinanceSpotAdapter(ExchangeAdapter):
         if buffer_size < 1:
             buffer_size = 1
 
-        return LocalLongPollStream(
+        stream = LocalLongPollStream(
             base_url=base_url,
             path=path,
             channels=channels,
@@ -469,6 +469,7 @@ class BinanceSpotAdapter(ExchangeAdapter):
             buffer_size=buffer_size,
             metrics_registry=self._metrics,
         )
+        return stream.start()
 
     # ----------------------------------------------------------------------------------
     # Konfiguracja wyceny sald

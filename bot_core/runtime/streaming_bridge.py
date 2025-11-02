@@ -98,6 +98,37 @@ def stream_batches_to_frame(batches: Iterable[StreamBatch]) -> pd.DataFrame:
     return frame[columns]
 
 
+def _build_snapshot_stream(
+    *,
+    base_url: str,
+    path: str,
+    channels: Sequence[str],
+    adapter: str,
+    scope: str,
+    environment: str,
+    poll_interval: float,
+    timeout: float,
+    buffer_size: int,
+    metrics_registry: MetricsRegistry | None,
+) -> LocalLongPollStream:
+    return LocalLongPollStream(
+        base_url=base_url,
+        path=path,
+        channels=channels,
+        adapter=adapter,
+        scope=scope,
+        environment=environment,
+        poll_interval=poll_interval,
+        timeout=timeout,
+        max_retries=3,
+        backoff_base=0.0,
+        backoff_cap=0.0,
+        jitter=(0.0, 0.0),
+        buffer_size=buffer_size,
+        metrics_registry=metrics_registry,
+    )
+
+
 def capture_stream_snapshot(
     *,
     base_url: str,
@@ -122,7 +153,7 @@ def capture_stream_snapshot(
     else:
         buffer_size = max(1, limit_value)
 
-    stream = LocalLongPollStream(
+    stream = _build_snapshot_stream(
         base_url=base_url,
         path=path,
         channels=channels,
@@ -131,13 +162,19 @@ def capture_stream_snapshot(
         environment=environment,
         poll_interval=poll_interval,
         timeout=timeout,
-        max_retries=3,
-        backoff_base=0.0,
-        backoff_cap=0.0,
-        jitter=(0.0, 0.0),
         buffer_size=buffer_size,
         metrics_registry=metrics_registry,
     )
+    stream.start()
+
+    prefill_timeout = min(max(timeout, 0.0), 1.0)
+    if prefill_timeout > 0:
+        try:
+            stream.wait_prefill(timeout=prefill_timeout)
+        except Exception:
+            stream.close()
+            raise
+
     events: list[MutableMapping[str, Any]] = []
     try:
         for batch in stream:
@@ -148,6 +185,65 @@ def capture_stream_snapshot(
                     return events
     finally:
         stream.close()
+    return events
+
+
+async def capture_stream_snapshot_async(
+    *,
+    base_url: str,
+    path: str,
+    channels: Sequence[str],
+    adapter: str,
+    scope: str,
+    environment: str,
+    limit: int = 500,
+    poll_interval: float = 0.25,
+    timeout: float = 10.0,
+    metrics_registry: MetricsRegistry | None = None,
+) -> list[MutableMapping[str, Any]]:
+    """Asynchroniczny odpowiednik :func:`capture_stream_snapshot`."""
+
+    try:
+        limit_value = int(limit)
+    except (TypeError, ValueError):
+        limit_value = 0
+    if limit_value <= 0:
+        buffer_size = 512
+    else:
+        buffer_size = max(1, limit_value)
+
+    stream = _build_snapshot_stream(
+        base_url=base_url,
+        path=path,
+        channels=channels,
+        adapter=adapter,
+        scope=scope,
+        environment=environment,
+        poll_interval=poll_interval,
+        timeout=timeout,
+        buffer_size=buffer_size,
+        metrics_registry=metrics_registry,
+    )
+    stream.start()
+
+    prefill_timeout = min(max(timeout, 0.0), 1.0)
+    if prefill_timeout > 0:
+        try:
+            await stream.wait_prefill_async(timeout=prefill_timeout)
+        except Exception:
+            await stream.aclose()
+            raise
+
+    events: list[MutableMapping[str, Any]] = []
+    try:
+        async for batch in stream:
+            for event in batch.events:
+                events.append(_normalize_event(event, channel=batch.channel))
+                if limit and len(events) >= limit:
+                    await stream.aclose()
+                    return events
+    finally:
+        await stream.aclose()
     return events
 
 
@@ -191,6 +287,7 @@ def load_snapshot_from_file(path: str) -> list[MutableMapping[str, Any]]:
 
 __all__ = [
     "capture_stream_snapshot",
+    "capture_stream_snapshot_async",
     "history_to_stream_batches",
     "load_snapshot_from_file",
     "stream_batches_to_frame",

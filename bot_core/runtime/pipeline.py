@@ -1,6 +1,8 @@
 """Budowanie gotowych pipeline'ów strategii trend-following na podstawie konfiguracji."""
 from __future__ import annotations
 
+import asyncio
+import inspect
 import json
 import logging
 import math
@@ -11,7 +13,17 @@ from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
 import time
 from pathlib import Path
-from typing import Any, Callable, Iterable, Mapping, MutableMapping, Sequence
+from typing import (
+    Any,
+    AsyncIterable,
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Iterable,
+    Mapping,
+    MutableMapping,
+    Sequence,
+)
 
 from bot_core.alerts import DefaultAlertRouter
 from bot_core.config.models import (
@@ -658,6 +670,103 @@ def consume_stream(
                 _LOGGER.warning("Nie udało się zamknąć streamu long-pollowego", exc_info=True)
 
 
+async def consume_stream_async(
+    stream: AsyncIterable[StreamBatch] | LocalLongPollStream,
+    *,
+    handle_batch: Callable[[StreamBatch], Awaitable[None] | None],
+    heartbeat_interval: float = 15.0,
+    idle_timeout: float | None = 60.0,
+    on_heartbeat: Callable[[float], Awaitable[None] | None] | None = None,
+    stop_condition: Callable[[], Awaitable[bool] | bool] | None = None,
+    clock: Callable[[], float] | None = None,
+) -> None:
+    """Asynchroniczna wersja :func:`consume_stream`.
+
+    Funkcja oczekuje asynchronicznego iteratora (np. :class:`LocalLongPollStream`
+    używanego w trybie async) i zapewnia te same gwarancje dotyczące heartbeatów,
+    limitów bezczynności oraz finalizacji strumienia.
+    """
+
+    if isinstance(stream, AsyncIterator):
+        iterator: AsyncIterator[StreamBatch] = stream
+    else:
+        aiter = getattr(stream, "__aiter__", None)
+        if callable(aiter):
+            iterator = aiter()
+        else:
+            raise TypeError("consume_stream_async wymaga asynchronicznego strumienia")
+
+    closers: list[Callable[[], object]] = []
+    for target in (iterator, stream):
+        if target is None:
+            continue
+        closer = getattr(target, "aclose", None)
+        if not callable(closer):
+            closer = getattr(target, "close", None)
+        if callable(closer):
+            closers.append(closer)
+    if closers:
+        unique: dict[tuple[object | None, object], Callable[[], object]] = {}
+        for closer in closers:
+            key = (getattr(closer, "__self__", None), getattr(closer, "__func__", closer))
+            unique[key] = closer
+        closers = list(unique.values())
+
+    time_source = clock or time.monotonic
+    last_event_at = time_source()
+    last_heartbeat_at = last_event_at
+    heartbeat_interval = max(0.0, float(heartbeat_interval))
+    timeout_value = None if idle_timeout is None else max(0.0, float(idle_timeout))
+
+    async def _call_maybe_async(
+        func: Callable[..., object] | None, *args: object
+    ) -> object | None:
+        if func is None:
+            return None
+        result = func(*args)
+        if inspect.isawaitable(result):
+            return await result  # type: ignore[return-value]
+        return result
+
+    try:
+        while True:
+            if stop_condition is not None:
+                should_stop = await _call_maybe_async(stop_condition)
+                if bool(should_stop):
+                    break
+
+            try:
+                batch = await iterator.__anext__()
+            except StopAsyncIteration:
+                break
+
+            observed_at = float(getattr(batch, "received_at", time_source()))
+            if batch.events:
+                await _call_maybe_async(handle_batch, batch)
+                last_event_at = observed_at
+                last_heartbeat_at = observed_at
+            else:
+                if batch.heartbeat:
+                    await _call_maybe_async(on_heartbeat, observed_at)
+                    last_heartbeat_at = observed_at
+                elif on_heartbeat and (observed_at - last_heartbeat_at) >= heartbeat_interval:
+                    await _call_maybe_async(on_heartbeat, observed_at)
+                    last_heartbeat_at = observed_at
+
+            if timeout_value is not None and (observed_at - last_event_at) >= timeout_value:
+                raise TimeoutError(
+                    f"Brak nowych danych w streamie '{batch.channel}' przez {timeout_value:.1f} s"
+                )
+    finally:
+        for closer in closers:
+            try:
+                result = closer()
+                if inspect.isawaitable(result):
+                    await result  # type: ignore[func-returns-value]
+            except Exception:  # pragma: no cover - diagnostyka zamykania strumienia
+                _LOGGER.warning("Nie udało się zamknąć streamu long-pollowego", exc_info=True)
+
+
 # --------------------------------------------------------------------------------------
 # Funkcje pomocnicze
 # --------------------------------------------------------------------------------------
@@ -1107,14 +1216,49 @@ class MultiStrategyRuntime:
     portfolio_governor: PortfolioGovernor | None = None
     tco_reporter: RuntimeTCOReporter | None = None
     stream_feed: "StreamingStrategyFeed | None" = None
+    stream_feed_task: "asyncio.Task[None] | None" = None
     decision_sink: "DecisionAwareSignalSink | None" = None
     optimization_scheduler: OptimizationScheduler | None = None
 
     def shutdown(self) -> None:
         """Zatrzymuje komponenty dodatkowe (np. stream feed)."""
 
+        task = self.stream_feed_task
+        if task is not None and not task.done():
+            task.cancel()
         if self.stream_feed is not None:
             self.stream_feed.stop()
+        self.stream_feed_task = None
+        if self.optimization_scheduler is not None:
+            self.optimization_scheduler.stop()
+
+    def start_stream(self) -> None:
+        """Uruchamia strumień strategii w trybie synchronicznym."""
+
+        if self.stream_feed is None:
+            return
+        self.stream_feed.start()
+
+    def start_stream_async(
+        self,
+        *,
+        loop: asyncio.AbstractEventLoop | None = None,
+    ) -> asyncio.Task[None] | None:
+        """Uruchamia strumień strategii na aktywnej pętli asyncio."""
+
+        if self.stream_feed is None:
+            return None
+
+        task = self.stream_feed.start_async(loop=loop)
+        self.stream_feed_task = task
+        return task
+
+    async def shutdown_async(self) -> None:
+        """Asynchronicznie zatrzymuje komponenty runtime."""
+
+        if self.stream_feed is not None:
+            await self.stream_feed.stop_async()
+        self.stream_feed_task = None
         if self.optimization_scheduler is not None:
             self.optimization_scheduler.stop()
 
@@ -1314,6 +1458,7 @@ class StreamingStrategyFeed(StrategyDataFeed):
         self._lock = threading.RLock()
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
+        self._async_task: asyncio.Task[None] | None = None
         self._buffers: dict[str, deque[MarketSnapshot]] = {}
         self._known_symbols = {
             symbol
@@ -1325,6 +1470,8 @@ class StreamingStrategyFeed(StrategyDataFeed):
         self._last_event_at: float | None = None
 
     def start(self) -> None:
+        if self._async_task and not self._async_task.done():
+            raise RuntimeError("StreamingStrategyFeed jest już uruchomiony w trybie asynchronicznym.")
         if self._thread and self._thread.is_alive():
             return
         self._stop_event.clear()
@@ -1336,6 +1483,9 @@ class StreamingStrategyFeed(StrategyDataFeed):
         if self._thread and self._thread.is_alive():
             self._thread.join(timeout=5.0)
         self._thread = None
+        task = self._async_task
+        if task and not task.done():
+            task.cancel()
 
     def ingest_batch(self, batch: StreamBatch) -> None:
         """Przetwarza paczkę danych dostarczoną ze streamu."""
@@ -1361,6 +1511,45 @@ class StreamingStrategyFeed(StrategyDataFeed):
                 buffer = self._buffers.setdefault(snapshot.symbol, deque(maxlen=self._buffer_size))
                 buffer.append(snapshot)
             self._last_event_at = time.monotonic()
+
+    def start_async(
+        self,
+        *,
+        loop: asyncio.AbstractEventLoop | None = None,
+    ) -> asyncio.Task[None]:
+        """Uruchamia przetwarzanie streamu w pętli asynchronicznej."""
+
+        if self._thread and self._thread.is_alive():
+            raise RuntimeError("StreamingStrategyFeed jest już uruchomiony w trybie synchronicznym.")
+        if self._async_task and not self._async_task.done():
+            return self._async_task
+
+        if loop is None:
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:  # pragma: no cover - wywołanie spoza pętli zdarzeń
+                loop = asyncio.get_event_loop()
+
+        self._stop_event.clear()
+        self._async_task = loop.create_task(self._run_loop_async())
+        return self._async_task
+
+    async def stop_async(self) -> None:
+        """Zatrzymuje asynchroniczną pętlę konsumpcji streamu."""
+
+        self._stop_event.set()
+        if self._thread and self._thread.is_alive():
+            self.stop()
+
+        task = self._async_task
+        if task is None:
+            return
+        if not task.done():
+            task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:  # pragma: no cover - oczekiwany scenariusz anulowania
+            pass
 
     def load_history(self, strategy_name: str, bars: int) -> Sequence[MarketSnapshot]:
         return self._history_feed.load_history(strategy_name, bars)
@@ -1399,6 +1588,35 @@ class StreamingStrategyFeed(StrategyDataFeed):
             if self._stop_event.is_set():
                 break
             time.sleep(self._restart_delay)
+
+    async def _run_loop_async(self) -> None:
+        try:
+            while not self._stop_event.is_set():
+                try:
+                    stream = self._stream_factory()
+                    await consume_stream_async(
+                        stream,
+                        handle_batch=self.ingest_batch,
+                        heartbeat_interval=self._heartbeat_interval,
+                        idle_timeout=self._idle_timeout,
+                        on_heartbeat=self._handle_heartbeat,
+                        stop_condition=self._stop_event.is_set,
+                    )
+                except asyncio.CancelledError:
+                    raise
+                except TimeoutError:
+                    self._logger.warning("Brak nowych danych w streamie strategii przez dłuższy czas")
+                except Exception:  # pragma: no cover - logowanie dla diagnostyki
+                    self._logger.exception("Błąd podczas przetwarzania streamu strategii")
+
+                if self._stop_event.is_set():
+                    break
+                if self._restart_delay > 0:
+                    await asyncio.sleep(self._restart_delay)
+        except asyncio.CancelledError:
+            raise
+        finally:
+            self._async_task = None
 
     def _handle_heartbeat(self, timestamp: float) -> None:
         if self._last_event_at is None:
@@ -1656,7 +1874,7 @@ def _build_streaming_feed(
             body_encoder=body_encoder,
             buffer_size=stream_buffer_size,
             metrics_registry=adapter_metrics,
-        )
+        ).start()
 
     heartbeat_interval = float(stream_settings.get("heartbeat_interval", 15.0))
     idle_timeout_raw = stream_settings.get("idle_timeout")
@@ -3306,6 +3524,9 @@ def build_multi_strategy_runtime(
     adapter_factories: Mapping[str, ExchangeAdapterFactory] | None = None,
     telemetry_emitter: Callable[[str, Mapping[str, float]], None] | None = None,
     runtime_config: RuntimeAppConfig | None = None,
+    start_stream: bool = True,
+    stream_async: bool = False,
+    async_loop: asyncio.AbstractEventLoop | None = None,
 ) -> MultiStrategyRuntime:
     bootstrap_ctx = bootstrap_environment(
         environment_name,
@@ -3370,8 +3591,18 @@ def build_multi_strategy_runtime(
         base_feed=base_feed,
         symbols_map=symbols_map,
     )
+    stream_task: asyncio.Task[None] | None = None
     if stream_feed is not None:
-        stream_feed.start()
+        if start_stream:
+            if stream_async:
+                try:
+                    stream_task = stream_feed.start_async(loop=async_loop)
+                except RuntimeError as exc:
+                    raise RuntimeError(
+                        "Asynchroniczne uruchomienie streamu wymaga aktywnej pętli asyncio."
+                    ) from exc
+            else:
+                stream_feed.start()
         data_feed: StrategyDataFeed = stream_feed
     else:
         data_feed = base_feed
@@ -3637,6 +3868,7 @@ def build_multi_strategy_runtime(
         portfolio_governor=portfolio_governor,
         tco_reporter=bootstrap_ctx.tco_reporter,
         stream_feed=stream_feed,
+        stream_feed_task=stream_task,
         decision_sink=decision_sink,
     )
 
@@ -4435,6 +4667,7 @@ __all__ = [
     "build_multi_portfolio_scheduler_from_config",
     "describe_multi_portfolio_state",
     "consume_stream",
+    "consume_stream_async",
     "OHLCVStrategyFeed",
     "InMemoryStrategySignalSink",
     "StreamingStrategyFeed",
