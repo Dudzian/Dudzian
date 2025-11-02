@@ -8,7 +8,7 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
-find_package(Qt6 6.5 COMPONENTS Quick QuickControls2 Charts REQUIRED)
+find_package(Qt6 6.5 COMPONENTS Quick QuickControls2 Charts Widgets REQUIRED)
 
 # --- Testing toggle ---
 include(CTest)
@@ -106,6 +106,7 @@ set(UI_SOURCES
     src/models/SignalListModel.cpp
     src/models/ResultsDashboardModel.cpp
     src/utils/PerformanceGuard.cpp
+    src/utils/RuntimeUtils.cpp
     src/utils/FrameRateMonitor.cpp
     src/utils/PathUtils.cpp
     src/telemetry/PerformanceTelemetryController.cpp
@@ -157,6 +158,7 @@ set(UI_HEADERS
     src/utils/PerformanceGuard.hpp
     src/utils/FrameRateMonitor.hpp
     src/utils/PathUtils.hpp
+    src/utils/RuntimeUtils.hpp
     src/telemetry/TelemetryReporter.hpp
     src/telemetry/PerformanceTelemetryController.hpp
     src/telemetry/UiTelemetryReporter.hpp
@@ -180,6 +182,7 @@ target_link_libraries(bot_trading_shell
         Qt6::Quick
         Qt6::QuickControls2
         Qt6::Charts
+        Qt6::Widgets
         trading_proto
 )
 if(LibArchive_FOUND)
