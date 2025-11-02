@@ -4,13 +4,13 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 from dataclasses import dataclass, field
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timezone, timedelta
 from time import perf_counter
 from typing import Any, Callable, Dict, Iterable, Mapping, MutableMapping, Sequence
 
 from bot_core.exchanges.base import AccountSnapshot, OrderRequest
 from bot_core.risk.base import RiskCheckResult, RiskEngine, RiskProfile, RiskRepository
-from bot_core.risk.events import RiskDecisionLog
+from bot_core.risk.events import RiskDecisionLog, RiskAlertLog
 from bot_core.risk.simulation import (
     DEFAULT_PROFILES,
     RiskSimulationSuite,
@@ -87,12 +87,17 @@ class RiskState:
 
     profile: str
     current_day: date
+    start_of_week: date | None = None
     start_of_day_equity: float = 0.0
     last_equity: float = 0.0
     daily_realized_pnl: float = 0.0
+    weekly_realized_pnl: float = 0.0
     peak_equity: float = 0.0
     force_liquidation: bool = False
     positions: Dict[str, PositionState] = field(default_factory=dict)
+    start_of_week_equity: float = 0.0
+    rolling_profit_30d: float = 0.0
+    rolling_costs_30d: float = 0.0
 
     def gross_notional(self) -> float:
         return sum(position.notional for position in self.positions.values())
@@ -104,18 +109,29 @@ class RiskState:
         return {
             "profile": self.profile,
             "current_day": self.current_day.isoformat(),
+            "start_of_week": self.start_of_week.isoformat() if self.start_of_week else None,
             "start_of_day_equity": self.start_of_day_equity,
             "daily_realized_pnl": self.daily_realized_pnl,
+            "weekly_realized_pnl": self.weekly_realized_pnl,
             "peak_equity": self.peak_equity,
             "force_liquidation": self.force_liquidation,
             "last_equity": self.last_equity,
             "positions": {symbol: position.to_mapping() for symbol, position in self.positions.items()},
+            "start_of_week_equity": self.start_of_week_equity,
+            "rolling_profit_30d": self.rolling_profit_30d,
+            "rolling_costs_30d": self.rolling_costs_30d,
         }
 
     @classmethod
     def from_mapping(cls, profile: str, data: Mapping[str, object]) -> "RiskState":
         day_str = str(data.get("current_day", date.today().isoformat()))
         parsed_day = datetime.fromisoformat(day_str).date()
+        start_of_week_str = data.get("start_of_week")
+        start_of_week = (
+            datetime.fromisoformat(str(start_of_week_str)).date()
+            if start_of_week_str
+            else None
+        )
         positions_raw = data.get("positions", {})
         positions: Dict[str, PositionState] = {}
         if isinstance(positions_raw, Mapping):
@@ -125,12 +141,17 @@ class RiskState:
         return cls(
             profile=profile,
             current_day=parsed_day,
+            start_of_week=start_of_week,
             start_of_day_equity=float(data.get("start_of_day_equity", 0.0)),
             daily_realized_pnl=float(data.get("daily_realized_pnl", 0.0)),
+            weekly_realized_pnl=float(data.get("weekly_realized_pnl", 0.0)),
             peak_equity=float(data.get("peak_equity", 0.0)),
             force_liquidation=bool(data.get("force_liquidation", False)),
             last_equity=float(data.get("last_equity", 0.0)),
             positions=positions,
+            start_of_week_equity=float(data.get("start_of_week_equity", 0.0)),
+            rolling_profit_30d=float(data.get("rolling_profit_30d", 0.0)),
+            rolling_costs_30d=float(data.get("rolling_costs_30d", 0.0)),
         )
 
     def reset_for_new_day(self, *, equity: float, day: date) -> None:
@@ -139,6 +160,16 @@ class RiskState:
         self.daily_realized_pnl = 0.0
         self.force_liquidation = False
         self.last_equity = equity
+
+    def reset_for_new_week(self, *, equity: float, week_start: date) -> None:
+        self.start_of_week = week_start
+        self.start_of_week_equity = equity
+        self.weekly_realized_pnl = 0.0
+
+    def ensure_week_alignment(self, *, day: date, equity: float) -> None:
+        week_start = day - timedelta(days=day.weekday())
+        if self.start_of_week is None or self.start_of_week != week_start:
+            self.reset_for_new_week(equity=equity, week_start=week_start)
 
     def update_peak_equity(self, equity: float) -> None:
         self.peak_equity = max(self.peak_equity, equity)
@@ -187,6 +218,7 @@ class ThresholdRiskEngine(RiskEngine):
         *,
         clock: Callable[[], datetime] | None = None,
         decision_log: RiskDecisionLog | None = None,
+        alert_log: RiskAlertLog | None = None,
         decision_orchestrator: Any | None = None,
     ) -> None:
         self._repository = repository or InMemoryRiskRepository()
@@ -194,6 +226,7 @@ class ThresholdRiskEngine(RiskEngine):
         self._profiles: Dict[str, RiskProfile] = {}
         self._states: Dict[str, RiskState] = {}
         self._decision_log = decision_log
+        self._alert_log = alert_log or RiskAlertLog()
         self._decision_orchestrator: Any | None = decision_orchestrator
         self._decision_model_outcomes: MutableMapping[str, MutableMapping[str, int]] = {}
         self._decision_model_rejections: MutableMapping[
@@ -220,10 +253,17 @@ class ThresholdRiskEngine(RiskEngine):
         state = self._repository.load(profile.name)
         if state is None:
             today = self._clock().date()
-            self._states[profile.name] = RiskState(profile=profile.name, current_day=today)
-            self._repository.store(profile.name, self._states[profile.name].to_mapping())
+            new_state = RiskState(profile=profile.name, current_day=today)
+            new_state.ensure_week_alignment(day=today, equity=0.0)
+            self._states[profile.name] = new_state
+            self._repository.store(profile.name, new_state.to_mapping())
         else:
-            self._states[profile.name] = RiskState.from_mapping(profile.name, state)
+            restored_state = RiskState.from_mapping(profile.name, state)
+            restored_state.ensure_week_alignment(
+                day=restored_state.current_day,
+                equity=restored_state.start_of_day_equity or restored_state.last_equity,
+            )
+            self._states[profile.name] = restored_state
         _LOGGER.info("Zarejestrowano profil ryzyka %s", profile.name)
         if self._default_profile is None:
             self._default_profile = profile.name
@@ -322,10 +362,26 @@ class ThresholdRiskEngine(RiskEngine):
             state.reset_for_new_day(equity=account.total_equity, day=current_day)
             _LOGGER.info("Reset dziennego licznika PnL dla profilu %s", profile_name)
 
+        state.ensure_week_alignment(day=current_day, equity=account.total_equity)
+
         state.update_peak_equity(account.total_equity)
 
         drawdown = state.drawdown_pct(account.total_equity)
         daily_loss = state.daily_loss_pct()
+        start_equity = state.start_of_day_equity or account.total_equity
+        min_trade_risk_pct, max_trade_risk_pct = profile.trade_risk_pct_range()
+        max_trade_risk_pct = max(max_trade_risk_pct, min_trade_risk_pct, 0.0)
+        weekly_equity = state.start_of_week_equity or account.total_equity
+        weekly_loss_value = -min(0.0, state.weekly_realized_pnl)
+        weekly_loss_pct = (
+            weekly_loss_value / weekly_equity if weekly_equity > 0 else 0.0
+        )
+        cost_ratio_limit = profile.max_cost_to_profit_ratio()
+        cost_ratio = 0.0
+        if state.rolling_profit_30d > 0:
+            cost_ratio = state.rolling_costs_30d / max(state.rolling_profit_30d, 1e-12)
+        elif state.rolling_costs_30d > 0:
+            cost_ratio = float("inf")
 
         force_reason: str | None = None
         if profile.drawdown_limit() > 0 and drawdown >= profile.drawdown_limit():
@@ -335,6 +391,59 @@ class ThresholdRiskEngine(RiskEngine):
         if profile.daily_loss_limit() > 0 and daily_loss >= profile.daily_loss_limit():
             state.force_liquidation = True
             force_reason = "Przekroczono dzienny limit straty."
+
+        kill_switch_reason: str | None = None
+        kill_r_multiple = profile.daily_kill_switch_r_multiple()
+        if (
+            kill_r_multiple > 0
+            and max_trade_risk_pct > 0
+            and start_equity > 0
+            and state.daily_realized_pnl <= -kill_r_multiple * max_trade_risk_pct * start_equity
+        ):
+            kill_switch_reason = "Aktywowano dzienny kill-switch (-2R)."
+
+        daily_kill_pct = profile.daily_kill_switch_loss_pct()
+        if daily_kill_pct > 0 and daily_loss >= daily_kill_pct:
+            kill_switch_reason = "Aktywowano dzienny kill-switch (-4%)."
+
+        weekly_kill_pct = profile.weekly_kill_switch_loss_pct()
+        if weekly_kill_pct > 0 and weekly_loss_pct >= weekly_kill_pct:
+            kill_switch_reason = "Aktywowano tygodniowy kill-switch."
+
+        if kill_switch_reason:
+            state.force_liquidation = True
+            force_reason = kill_switch_reason
+            self._alert_log.record(
+                profile=profile_name,
+                limit="kill_switch",
+                value=-float(state.daily_realized_pnl),
+                threshold=max_trade_risk_pct * start_equity,
+                severity="critical",
+                context={
+                    "daily_realized_pnl": state.daily_realized_pnl,
+                    "weekly_realized_pnl": state.weekly_realized_pnl,
+                    "daily_loss_pct": daily_loss,
+                    "weekly_loss_pct": weekly_loss_pct,
+                    "trigger": kill_switch_reason,
+                },
+            )
+
+        if cost_ratio_limit > 0 and cost_ratio > cost_ratio_limit + 1e-9:
+            state.force_liquidation = True
+            force_reason = "Koszty transakcyjne przekraczają dopuszczalny udział w zysku (30 dni)."
+            self._alert_log.record(
+                profile=profile_name,
+                limit="cost_to_profit_ratio",
+                value=cost_ratio,
+                threshold=cost_ratio_limit,
+                severity="critical",
+                context={
+                    "rolling_profit_30d": state.rolling_profit_30d,
+                    "rolling_costs_30d": state.rolling_costs_30d,
+                },
+            )
+
+        force_block_message: str | None = None
 
         def deny(
             reason: str,
@@ -356,6 +465,9 @@ class ThresholdRiskEngine(RiskEngine):
                 result=result,
                 state=state,
             )
+
+        if force_block_message:
+            return deny(force_block_message)
 
         price = request.price
         if price is None or price <= 0:
@@ -402,11 +514,19 @@ class ThresholdRiskEngine(RiskEngine):
 
         is_new_position = current_notional == 0.0 and new_notional > 0.0 and not is_reducing
 
+        current_quantity = current_notional / price if price > 0 else 0.0
+        new_quantity = new_notional / price if price > 0 else 0.0
+        incremental_quantity = max(0.0, new_quantity - current_quantity)
+
         if state.force_liquidation and not is_reducing:
-            message = (
+            force_block_message = (
                 force_reason + " Dozwolone są wyłącznie transakcje redukujące ekspozycję."
             ) if force_reason else "Profil w trybie awaryjnym – dozwolone są wyłącznie transakcje redukujące ekspozycję."
-            return deny(message)
+
+        if force_block_message:
+            return deny(force_block_message)
+
+        stop_distance: float | None = None
 
         if not is_reducing:
             atr_value = _coerce_float(metadata.get("atr")) if metadata else None
@@ -448,8 +568,6 @@ class ThresholdRiskEngine(RiskEngine):
                     return deny("Kapitał lub target volatility profilu uniemożliwia otwarcie pozycji.")
 
                 allowed_total_quantity = max_risk_capital / max(stop_distance, 1e-12)
-                current_quantity = current_notional / price
-                new_quantity = new_notional / price if price > 0 else 0.0
 
                 if allowed_total_quantity <= 0:
                     return deny(
@@ -462,6 +580,44 @@ class ThresholdRiskEngine(RiskEngine):
                         "Zlecenie przekracza limit wynikający z target volatility profilu ryzyka.",
                         adjustments={"max_quantity": max(0.0, allowed_increment)},
                     )
+
+                if (
+                    stop_distance > 0
+                    and account.total_equity > 0
+                    and max_trade_risk_pct > 0
+                    and incremental_quantity > 0
+                ):
+                    max_risk_capital = max_trade_risk_pct * account.total_equity
+                    risk_capital = stop_distance * incremental_quantity
+                    if risk_capital > max_risk_capital + 1e-9:
+                        allowed_increment = max_risk_capital / max(stop_distance, 1e-12)
+                        return deny(
+                            "Zlecenie przekracza limit ryzyka na pojedynczą transakcję.",
+                            adjustments={"max_quantity": max(0.0, allowed_increment)},
+                            metadata={
+                                "risk_capital": risk_capital,
+                                "max_risk_capital": max_risk_capital,
+                                "incremental_quantity": incremental_quantity,
+                            },
+                        )
+
+                    if (
+                        min_trade_risk_pct > 0
+                        and risk_capital < (min_trade_risk_pct * account.total_equity) - 1e-9
+                    ):
+                        self._alert_log.record(
+                            profile=profile_name,
+                            limit="trade_risk_floor",
+                            value=risk_capital / account.total_equity,
+                            threshold=min_trade_risk_pct,
+                            severity="notice",
+                            context={
+                                "symbol": symbol,
+                                "risk_capital": risk_capital,
+                                "equity": account.total_equity,
+                                "incremental_quantity": incremental_quantity,
+                            },
+                        )
 
         if is_new_position:
             if state.active_positions() >= profile.max_positions():
@@ -484,18 +640,30 @@ class ThresholdRiskEngine(RiskEngine):
                     adjustments={"max_quantity": max(0.0, allowed_quantity)},
                 )
 
-        max_position_pct = profile.max_position_exposure()
-        if not is_reducing and max_position_pct > 0:
-            max_notional = max_position_pct * account.total_equity
-            if max_notional <= 0:
-                return deny("Kapitał konta jest zbyt niski do otwierania nowych pozycji.")
-            if new_notional > max_notional:
-                allowed_notional = max_notional
-                allowed_quantity = max(0.0, allowed_notional - current_notional) / price
-                return deny(
-                    "Wielkość zlecenia przekracza limit ekspozycji na instrument.",
-                    adjustments={"max_quantity": max(0.0, allowed_quantity)},
+        instrument_alert_pct = profile.instrument_alert_pct()
+        instrument_limit_pct = profile.instrument_limit_pct() or profile.max_position_exposure()
+        if not is_reducing and account.total_equity > 0:
+            instrument_exposure = new_notional / account.total_equity
+            if instrument_alert_pct > 0 and instrument_exposure >= instrument_alert_pct:
+                self._alert_log.record(
+                    profile=profile_name,
+                    limit="instrument_exposure_alert",
+                    value=instrument_exposure,
+                    threshold=instrument_alert_pct,
+                    severity="warning",
+                    context={"symbol": symbol},
                 )
+            if instrument_limit_pct > 0:
+                max_notional = instrument_limit_pct * account.total_equity
+                if max_notional <= 0:
+                    return deny("Kapitał konta jest zbyt niski do otwierania nowych pozycji.")
+                if instrument_exposure > instrument_limit_pct + 1e-9:
+                    allowed_notional = max_notional
+                    allowed_quantity = max(0.0, allowed_notional - current_notional) / price
+                    return deny(
+                        "Wielkość zlecenia przekracza limit ekspozycji na instrument.",
+                        adjustments={"max_quantity": max(0.0, allowed_quantity)},
+                    )
 
         max_leverage = profile.max_leverage()
         if not is_reducing and max_leverage > 0:
@@ -504,6 +672,26 @@ class ThresholdRiskEngine(RiskEngine):
             if max_total_notional <= 0:
                 return deny("Kapitał konta nie pozwala na otwieranie pozycji przy zadanej dźwigni.")
             new_gross = gross_without_symbol + new_notional
+            if account.total_equity > 0:
+                portfolio_alert_pct = profile.portfolio_alert_pct()
+                portfolio_limit_pct = profile.portfolio_limit_pct()
+                portfolio_exposure = new_gross / account.total_equity
+                if portfolio_alert_pct > 0 and portfolio_exposure >= portfolio_alert_pct:
+                    self._alert_log.record(
+                        profile=profile_name,
+                        limit="portfolio_exposure_alert",
+                        value=portfolio_exposure,
+                        threshold=portfolio_alert_pct,
+                        severity="warning",
+                        context={"symbol": symbol},
+                    )
+                if portfolio_limit_pct > 0 and portfolio_exposure > portfolio_limit_pct + 1e-9:
+                    remaining_notional = max(0.0, portfolio_limit_pct * account.total_equity - gross_without_symbol)
+                    allowed_quantity = remaining_notional / price
+                    return deny(
+                        "Przekroczono maksymalną ekspozycję portfela.",
+                        adjustments={"max_quantity": max(0.0, allowed_quantity)},
+                    )
             if new_gross > max_total_notional:
                 remaining_notional = max(0.0, max_total_notional - gross_without_symbol)
                 allowed_quantity = remaining_notional / price
@@ -668,7 +856,9 @@ class ThresholdRiskEngine(RiskEngine):
         if state.current_day != current_day:
             state.reset_for_new_day(equity=state.last_equity, day=current_day)
 
+        state.ensure_week_alignment(day=current_day, equity=state.last_equity)
         state.daily_realized_pnl += pnl
+        state.weekly_realized_pnl += pnl
         normalized_side = _normalize_position_side(side, default="long")
         state.update_position(symbol, side=normalized_side, notional=max(0.0, position_value))
         self._persist_state(profile_name)
@@ -696,6 +886,7 @@ class ThresholdRiskEngine(RiskEngine):
         if state.current_day != current_day:
             state.reset_for_new_day(equity=equity, day=current_day)
 
+        state.ensure_week_alignment(day=current_day, equity=equity)
         state.update_peak_equity(equity)
         state.last_equity = equity
 
@@ -714,6 +905,26 @@ class ThresholdRiskEngine(RiskEngine):
                 )
             for symbol in known_symbols - incoming_symbols:
                 state.positions.pop(symbol, None)
+
+        if metadata:
+            weekly_realized = metadata.get("weekly_realized_pnl") if isinstance(metadata, Mapping) else None
+            if weekly_realized is not None:
+                try:
+                    state.weekly_realized_pnl = float(weekly_realized)
+                except (TypeError, ValueError):  # pragma: no cover - defensywnie
+                    _LOGGER.debug("Nie można sparsować weekly_realized_pnl z metadanych", exc_info=True)
+            rolling_profit = metadata.get("rolling_profit_30d") if isinstance(metadata, Mapping) else None
+            if rolling_profit is not None:
+                try:
+                    state.rolling_profit_30d = float(rolling_profit)
+                except (TypeError, ValueError):  # pragma: no cover - defensywnie
+                    _LOGGER.debug("Nie można sparsować rolling_profit_30d z metadanych", exc_info=True)
+            rolling_costs = metadata.get("rolling_costs_30d") if isinstance(metadata, Mapping) else None
+            if rolling_costs is not None:
+                try:
+                    state.rolling_costs_30d = float(rolling_costs)
+                except (TypeError, ValueError):  # pragma: no cover - defensywnie
+                    _LOGGER.debug("Nie można sparsować rolling_costs_30d z metadanych", exc_info=True)
 
         drawdown = state.drawdown_pct(equity)
         daily_loss = state.daily_loss_pct()
@@ -738,6 +949,18 @@ class ThresholdRiskEngine(RiskEngine):
         snapshot["daily_loss_pct"] = state.daily_loss_pct()
         current_equity = state.last_equity or state.start_of_day_equity
         snapshot["drawdown_pct"] = state.drawdown_pct(current_equity)
+        if state.start_of_week:
+            snapshot["start_of_week"] = state.start_of_week.isoformat()
+        snapshot["start_of_week_equity"] = state.start_of_week_equity
+        snapshot["weekly_realized_pnl"] = state.weekly_realized_pnl
+        snapshot["rolling_profit_30d"] = state.rolling_profit_30d
+        snapshot["rolling_costs_30d"] = state.rolling_costs_30d
+        weekly_equity = state.start_of_week_equity or current_equity
+        snapshot["weekly_loss_pct"] = (
+            (-min(0.0, state.weekly_realized_pnl) / weekly_equity)
+            if weekly_equity > 0
+            else 0.0
+        )
 
         profile = self._profiles.get(profile_name)
         if profile is not None:
@@ -749,6 +972,15 @@ class ThresholdRiskEngine(RiskEngine):
                 "max_position_pct": profile.max_position_exposure(),
                 "target_volatility": profile.target_volatility(),
                 "stop_loss_atr_multiple": profile.stop_loss_atr_multiple(),
+                "trade_risk_pct_range": profile.trade_risk_pct_range(),
+                "instrument_alert_pct": profile.instrument_alert_pct(),
+                "instrument_limit_pct": profile.instrument_limit_pct(),
+                "portfolio_alert_pct": profile.portfolio_alert_pct(),
+                "portfolio_limit_pct": profile.portfolio_limit_pct(),
+                "daily_kill_switch_r_multiple": profile.daily_kill_switch_r_multiple(),
+                "daily_kill_switch_loss_pct": profile.daily_kill_switch_loss_pct(),
+                "weekly_kill_switch_loss_pct": profile.weekly_kill_switch_loss_pct(),
+                "max_cost_to_profit_ratio": profile.max_cost_to_profit_ratio(),
             }
 
         return snapshot
@@ -768,6 +1000,14 @@ class ThresholdRiskEngine(RiskEngine):
         if self._decision_log is None:
             return ()
         return self._decision_log.tail(profile=profile_name, limit=limit)
+
+    def recent_alerts(
+        self,
+        *,
+        profile_name: str | None = None,
+        limit: int = 20,
+    ) -> Sequence[Mapping[str, object]]:
+        return self._alert_log.tail(profile=profile_name, limit=limit)
 
     def decision_orchestrator_activity(
         self, *, reset: bool = False
@@ -894,6 +1134,38 @@ class ThresholdRiskEngine(RiskEngine):
                 timestamp = None
         elif isinstance(ts_value, (int, float)):
             timestamp = datetime.fromtimestamp(float(ts_value), tz=timezone.utc)
+        metadata_payload: dict[str, object] = {}
+        mode_value = payload.get("mode")
+        if isinstance(mode_value, str) and mode_value:
+            metadata_payload["mode"] = mode_value
+
+        key_aliases: Mapping[str, tuple[str, ...]] = {
+            "weekly_realized_pnl": ("weekly_realized_pnl", "weeklyRealizedPnl"),
+            "rolling_profit_30d": (
+                "rolling_profit_30d",
+                "rollingProfit30d",
+                "profitRolling30d",
+            ),
+            "rolling_costs_30d": (
+                "rolling_costs_30d",
+                "rollingCosts30d",
+                "costsRolling30d",
+            ),
+        }
+
+        def _extract_metadata_value(keys: tuple[str, ...]) -> object | None:
+            for key in keys:
+                if isinstance(snapshot_payload, Mapping) and key in snapshot_payload:
+                    return snapshot_payload[key]
+                if key in payload:
+                    return payload[key]
+            return None
+
+        for target_key, aliases in key_aliases.items():
+            value = _extract_metadata_value(aliases)
+            if value is not None:
+                metadata_payload[target_key] = value
+
         try:
             self.on_mark_to_market(
                 profile_name=profile_name,
@@ -901,7 +1173,7 @@ class ThresholdRiskEngine(RiskEngine):
                 positions=positions_payload if isinstance(positions_payload, (Mapping, Sequence)) else None,
                 realized_pnl=realized_pnl,
                 timestamp=timestamp,
-                metadata={"mode": payload.get("mode")} if payload.get("mode") else None,
+                metadata=metadata_payload or None,
             )
         except Exception:  # pragma: no cover - log diagnostyczny
             _LOGGER.exception("Nie udało się zaktualizować stanu ryzyka po mark-to-market")
