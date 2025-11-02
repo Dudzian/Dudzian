@@ -13,6 +13,9 @@ import pytest
 from scripts import generate_trading_stubs
 
 
+os.environ.setdefault("DUDZIAN_SECURITY_SKIP", "1")
+
+
 if "nacl" not in sys.modules:
     nacl_module = ModuleType("nacl")
     nacl_exceptions = ModuleType("nacl.exceptions")

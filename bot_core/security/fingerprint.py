@@ -18,7 +18,8 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Iterable, Mapping, MutableMapping, Optional, Sequence
+from types import MappingProxyType
+from typing import Any, Callable, Iterable, Mapping, MutableMapping, Optional, Sequence, cast
 
 from bot_core.security.fingerprint_crypto import (
     current_hwid_digest as crypto_current_hwid_digest,
@@ -59,6 +60,1071 @@ LOGGER = logging.getLogger(__name__)
 
 class FingerprintError(RuntimeError):
     """Wyjątek zgłaszany przy problemach z generowaniem/podpisywaniem fingerprintu."""
+
+
+# ---------------------------------------------------------------------------
+# Heurystyki bezpieczeństwa środowiska uruchomieniowego
+# ---------------------------------------------------------------------------
+
+_MISSING = object()
+
+_VM_CPU_PATTERNS: tuple[tuple[str, str], ...] = (
+    ("kvm", "KVM"),
+    ("qemu", "QEMU"),
+    ("virtualbox", "VirtualBox"),
+    ("vmware", "VMware"),
+    ("hyper-v", "Hyper-V"),
+    ("microsoft corporation hyper-v", "Hyper-V"),
+    ("parallels", "Parallels"),
+    ("xen", "Xen"),
+    ("bhyve", "Bhyve"),
+)
+
+_VM_DMI_PATTERNS: tuple[tuple[str, str], ...] = (
+    ("vmware", "VMware"),
+    ("virtualbox", "VirtualBox"),
+    ("innotek", "VirtualBox"),
+    ("qemu", "QEMU"),
+    ("kvm", "KVM"),
+    ("microsoft corporation", "Hyper-V"),
+    ("hyper-v", "Hyper-V"),
+    ("parallels", "Parallels"),
+    ("xen", "Xen"),
+    ("bhyve", "Bhyve"),
+    ("amazon", "Amazon EC2"),
+    ("google", "Google Cloud"),
+    ("digitalocean", "DigitalOcean"),
+    ("linode", "Linode"),
+    ("ovh", "OVH"),
+)
+
+_DMIDECODE_RELEVANT_FIELDS: tuple[str, ...] = (
+    "manufacturer",
+    "product_name",
+    "product_version",
+    "family",
+    "version",
+)
+
+_VM_MAC_PREFIXES: Mapping[str, str] = MappingProxyType(
+    {
+        "000569": "VMware",
+        "000C29": "VMware",
+        "005056": "VMware",
+        "080027": "VirtualBox",
+        "00155D": "Microsoft Hyper-V",
+        "001C14": "Microsoft Hyper-V",
+        "001C42": "Parallels",
+        "525400": "QEMU",  # często używany przez libvirt
+        "1AB4D5": "Virtualizor",
+    }
+)
+
+_VM_PROCESS_PATTERNS: tuple[tuple[str, str], ...] = (
+    ("vboxservice", "VirtualBox Tools"),
+    ("vboxtray", "VirtualBox Tools"),
+    ("vmtoolsd", "VMware Tools"),
+    ("vmware", "VMware"),
+    ("qemu-ga", "QEMU guest agent"),
+    ("qemu-guest-agent", "QEMU guest agent"),
+    ("hyperv", "Hyper-V"),
+    ("hyper-v", "Hyper-V"),
+    ("xenstore", "Xen tools"),
+    ("xenstored", "Xen tools"),
+    ("prl_tools", "Parallels Tools"),
+    ("prlcc", "Parallels Tools"),
+)
+
+_VM_FILESYSTEM_MARKERS: tuple[tuple[Path, str], ...] = (
+    (Path("/dev/vboxguest"), "Wykryto urządzenie VirtualBox Guest Additions."),
+    (Path("/dev/vmmemctl"), "Wykryto urządzenie VMware Memory Control."),
+    (Path("/dev/vmci"), "Wykryto urządzenie VMware Communication Interface."),
+    (Path("/dev/prl_tg"), "Wykryto urządzenie Parallels Tools."),
+    (Path("/proc/xen"), "Wykryto interfejs /proc/xen (Xen)."),
+    (Path("/sys/hypervisor/type"), "Wykryto interfejs sysfs hypervisora."),
+    (Path("/sys/bus/vmbus/devices"), "Wykryto magistralę Hyper-V (VMBus)."),
+)
+
+_VM_KERNEL_MODULE_PATTERNS: tuple[tuple[str, str], ...] = (
+    ("vboxguest", "Wykryto moduł VirtualBox Guest Additions."),
+    ("vboxsf", "Wykryto moduł VirtualBox Shared Folders."),
+    ("vmw_balloon", "Wykryto moduł VMware Balloon."),
+    ("vmhgfs", "Wykryto moduł VMware Shared Folders."),
+    ("vmmemctl", "Wykryto moduł VMware Memory Control."),
+    ("hv_vmbus", "Wykryto moduł Hyper-V VMBus."),
+    ("hv_utils", "Wykryto moduł narzędzi Hyper-V."),
+    ("xenfs", "Wykryto moduł XenFS."),
+    ("xen_platform_pci", "Wykryto moduł Xen platform PCI."),
+    ("prl_fs", "Wykryto moduł Parallels Shared Folders."),
+)
+
+_CONTAINER_FILESYSTEM_MARKERS: tuple[tuple[Path, str], ...] = (
+    (Path("/.dockerenv"), "Wykryto marker kontenera Docker (/.dockerenv)."),
+    (Path("/run/.containerenv"), "Wykryto marker środowiska kontenera (.containerenv)."),
+)
+
+_CONTAINER_ENV_KEYS: Mapping[str, str] = MappingProxyType(
+    {
+        "container": "systemd",  # ustawiane przez systemd-detect-virt
+        "DOCKER_CONTAINER": "Docker",
+        "KUBERNETES_SERVICE_HOST": "Kubernetes",
+        "OPENSHIFT_BUILD_NAME": "OpenShift",
+        "PODMAN_MACHINE": "Podman",
+    }
+)
+
+_CONTAINER_CGROUP_PATTERNS: tuple[tuple[str, str], ...] = (
+    ("/docker/", "Cgroup PID 1 wskazuje na kontener Docker."),
+    ("docker-", "Cgroup PID 1 wskazuje na kontener Docker."),
+    ("kubepods", "Cgroup PID 1 wskazuje na Kubernetes."),
+    ("containerd", "Cgroup PID 1 wskazuje na runtime containerd."),
+    ("libpod", "Cgroup PID 1 wskazuje na Podman."),
+    ("podman", "Cgroup PID 1 wskazuje na Podman."),
+    ("lxc", "Cgroup PID 1 wskazuje na kontener LXC."),
+)
+
+_DEBUGGER_ENV_KEYS: Mapping[str, str] = MappingProxyType(
+    {
+        "PYCHARM_HOSTED": "PyCharm debugger",
+        "PYDEVD_LOAD_VALUES_ASYNC": "pydevd",
+        "PYDEVD_USE_FRAME_EVAL": "pydevd",
+        "PYDEV_DEBUGGER": "pydevd",
+        "DEBUGPY_LAUNCHER_PORT": "debugpy",
+        "VSCODE_PID": "VSCode debugger",
+    }
+)
+
+_SYSTEMD_VM_LABELS: Mapping[str, str] = MappingProxyType(
+    {
+        "kvm": "KVM",
+        "qemu": "QEMU",
+        "vmware": "VMware",
+        "microsoft": "Hyper-V",
+        "hyperv": "Hyper-V",
+        "oracle": "VirtualBox",
+        "xen": "Xen",
+        "bochs": "Bochs",
+        "uml": "User Mode Linux",
+        "zvm": "IBM z/VM",
+        "bhyve": "Bhyve",
+        "parallels": "Parallels",
+        "apple": "Apple Hypervisor",
+        "wsl": "Windows Subsystem for Linux",
+    }
+)
+
+_SYSTEMD_CONTAINER_LABELS: Mapping[str, str] = MappingProxyType(
+    {
+        "docker": "Docker",
+        "podman": "Podman",
+        "lxc": "LXC",
+        "lxc-libvirt": "LXC (libvirt)",
+        "systemd-nspawn": "systemd-nspawn",
+        "container-other": "inne środowisko kontenerowe",
+        "chroot": "chroot",
+        "openvz": "OpenVZ",
+        "proot": "proot",
+        "jail": "FreeBSD Jail",
+    }
+)
+
+_HOSTNAMECTL_VM_LABELS: Mapping[str, str] = MappingProxyType(dict(_SYSTEMD_VM_LABELS))
+_HOSTNAMECTL_CONTAINER_LABELS: Mapping[str, str] = MappingProxyType(
+    dict(_SYSTEMD_CONTAINER_LABELS)
+)
+
+_LSCPU_VENDOR_LABELS: Mapping[str, str] = MappingProxyType(
+    {
+        "kvm": "KVM",
+        "qemu": "QEMU",
+        "vmware": "VMware",
+        "microsoft": "Hyper-V",
+        "hyper-v": "Hyper-V",
+        "hyperv": "Hyper-V",
+        "oracle": "VirtualBox",
+        "xen": "Xen",
+        "bhyve": "Bhyve",
+        "parallels": "Parallels",
+        "apple": "Apple Hypervisor",
+        "bochs": "Bochs",
+        "uml": "User Mode Linux",
+        "wsl": "Windows Subsystem for Linux",
+    }
+)
+
+_VIRTWHAT_VM_LABELS: Mapping[str, str] = MappingProxyType(
+    {
+        "kvm": "KVM",
+        "qemu": "QEMU",
+        "xen": "Xen",
+        "xen-hvm": "Xen",
+        "xen-dom0": "Xen",
+        "xen-domu": "Xen",
+        "vmware": "VMware",
+        "microsoft": "Hyper-V",
+        "hyperv": "Hyper-V",
+        "hyper-v": "Hyper-V",
+        "oracle": "VirtualBox",
+        "virtualbox": "VirtualBox",
+        "ovirt": "oVirt",
+        "rhev": "Red Hat Virtualization",
+        "wsl": "Windows Subsystem for Linux",
+        "parallels": "Parallels",
+        "bhyve": "Bhyve",
+        "ibm_systemz": "IBM System z",
+        "ldom": "Oracle LDom",
+        "powervm": "IBM PowerVM",
+        "zvm": "IBM z/VM",
+        "uml": "User Mode Linux",
+    }
+)
+
+_VIRTWHAT_CONTAINER_LABELS: Mapping[str, str] = MappingProxyType(
+    {
+        "docker": "Docker",
+        "podman": "Podman",
+        "lxc": "LXC",
+        "lxc-libvirt": "LXC (libvirt)",
+        "openvz": "OpenVZ",
+        "systemd-nspawn": "systemd-nspawn",
+        "vserver": "Linux-VServer",
+        "linux_vserver": "Linux-VServer",
+        "uml": "User Mode Linux",
+        "proot": "proot",
+        "flatpak": "Flatpak",
+        "snap": "Snap",
+        "jail": "FreeBSD Jail",
+        "container-other": "inne środowisko kontenerowe",
+    }
+)
+
+
+@dataclass(frozen=True, slots=True)
+class SecuritySignals:
+    """Zebrane heurystyki bezpieczeństwa uruchomienia."""
+
+    vm_indicators: Mapping[str, tuple[str, ...]]
+    debugger_indicators: tuple[str, ...]
+
+    @property
+    def vm_reasons(self) -> tuple[str, ...]:
+        reasons: list[str] = []
+        for bucket in self.vm_indicators.values():
+            reasons.extend(bucket)
+        return tuple(reasons)
+
+    @property
+    def debugger_reasons(self) -> tuple[str, ...]:
+        return self.debugger_indicators
+
+    @property
+    def vm_categories(self) -> tuple[str, ...]:
+        return tuple(key for key, values in self.vm_indicators.items() if values)
+
+    @property
+    def should_block_vm(self) -> bool:
+        if not self.vm_reasons:
+            return False
+        if (
+            self.vm_indicators.get("process")
+            or self.vm_indicators.get("mac_vendor")
+            or self.vm_indicators.get("dmi")
+            or self.vm_indicators.get("dmidecode")
+            or self.vm_indicators.get("wmic")
+            or self.vm_indicators.get("filesystem")
+            or self.vm_indicators.get("kernel_module")
+            or self.vm_indicators.get("lscpu")
+            or self.vm_indicators.get("container")
+            or self.vm_indicators.get("hostnamectl")
+            or self.vm_indicators.get("systemd")
+            or self.vm_indicators.get("virt_what")
+        ):
+            return True
+        return len(self.vm_categories) >= 2
+
+    @property
+    def should_block(self) -> bool:
+        return self.should_block_vm or bool(self.debugger_indicators)
+
+    def summary(self) -> tuple[str, ...]:
+        return self.vm_reasons + self.debugger_reasons
+
+
+def _read_cpu_flags() -> tuple[str, ...]:
+    cpuinfo_path = Path("/proc/cpuinfo")
+    try:
+        with cpuinfo_path.open("r", encoding="utf-8", errors="ignore") as handle:
+            for line in handle:
+                lowered = line.lower()
+                if lowered.startswith("flags") or lowered.startswith("features"):
+                    _, _, value = line.partition(":")
+                    tokens = [token.strip() for token in value.split() if token.strip()]
+                    if tokens:
+                        # usuń duplikaty przy zachowaniu kolejności
+                        unique = tuple(dict.fromkeys(tokens))
+                        return unique
+    except (FileNotFoundError, OSError):
+        return ()
+    return ()
+
+
+def _detect_vm_cpu_signals(cpu_info: str | None, cpu_flags: Sequence[str]) -> list[str]:
+    signals: list[str] = []
+    if cpu_info:
+        normalized = cpu_info.lower()
+        for pattern, label in _VM_CPU_PATTERNS:
+            if pattern in normalized:
+                signals.append(
+                    f"Identyfikator CPU wskazuje na środowisko wirtualne ({label})."
+                )
+    if any(flag == "hypervisor" for flag in cpu_flags):
+        signals.append("Flagi CPU zawierają znacznik 'hypervisor'.")
+    return signals
+
+
+def _detect_vm_mac_signals(mac_addresses: Sequence[str]) -> list[str]:
+    signals: list[str] = []
+    for entry in mac_addresses:
+        normalized = _HEX_RE.sub("", entry.lower())
+        if len(normalized) < 12:
+            continue
+        prefix = normalized[:6].upper()
+        vendor = _VM_MAC_PREFIXES.get(prefix)
+        if vendor:
+            formatted = ":".join(normalized[i : i + 2] for i in range(0, 12, 2))
+            signals.append(f"Adres MAC {formatted} należy do środowiska {vendor}.")
+    return signals
+
+
+def _list_process_names() -> tuple[str, ...]:
+    commands = (
+        ["ps", "-eo", "comm="],
+        ["ps", "-A", "-o", "comm="],
+    )
+    for command in commands:
+        output = _run_command(command)
+        if not output:
+            continue
+        names = [line.strip() for line in output.splitlines() if line.strip()]
+        if names:
+            return tuple(dict.fromkeys(names))
+    system = platform.system().lower()
+    if system == "windows":
+        try:
+            completed = subprocess.run(
+                ["tasklist", "/fo", "csv", "/nh"],
+                check=False,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                text=True,
+                encoding="utf-8",
+            )
+        except OSError:
+            return ()
+        names: list[str] = []
+        for line in completed.stdout.splitlines():
+            parts = [part.strip('"') for part in line.split(",")]
+            if parts and parts[0]:
+                names.append(parts[0])
+        if names:
+            return tuple(dict.fromkeys(names))
+    return ()
+
+
+def _detect_vm_process_signals(processes: Sequence[str]) -> list[str]:
+    signals: list[str] = []
+    for process in processes:
+        lowered = process.strip().lower()
+        if not lowered:
+            continue
+        for pattern, description in _VM_PROCESS_PATTERNS:
+            if pattern in lowered:
+                signals.append(f"Wykryto proces narzędzi hypervisora ({process.strip()}).")
+                break
+    return signals
+
+
+def _detect_vm_filesystem_signals(*, path_exists: Callable[[Path], bool]) -> list[str]:
+    signals: list[str] = []
+    for marker, description in _VM_FILESYSTEM_MARKERS:
+        try:
+            if path_exists(marker):
+                signals.append(description)
+        except OSError:
+            continue
+    if signals:
+        signals = list(dict.fromkeys(signals))
+    return signals
+
+
+def _detect_vm_kernel_module_signals(modules: Sequence[str]) -> list[str]:
+    signals: list[str] = []
+    for module in modules:
+        lowered = module.strip().lower()
+        if not lowered:
+            continue
+        for pattern, description in _VM_KERNEL_MODULE_PATTERNS:
+            if pattern in lowered:
+                signals.append(description)
+                break
+    if signals:
+        signals = list(dict.fromkeys(signals))
+    return signals
+
+
+def _detect_vm_dmi_signals(entries: Sequence[str]) -> list[str]:
+    signals: list[str] = []
+    for entry in entries:
+        lowered = entry.strip().lower()
+        if not lowered:
+            continue
+        for pattern, label in _VM_DMI_PATTERNS:
+            if pattern in lowered:
+                signals.append(
+                    "Identyfikatory sprzętu (DMI) wskazują na środowisko "
+                    f"wirtualne ({label})."
+                )
+                break
+    if signals:
+        # usuń duplikaty zachowując kolejność i zapewniając krótszą listę powodów
+        signals = list(dict.fromkeys(signals))
+    return signals
+
+
+def _probe_dmidecode_info() -> Mapping[str, str]:
+    output = _run_command(["dmidecode", "-t", "system"])
+    if not output:
+        return {}
+
+    info: dict[str, str] = {}
+    for raw_line in output.splitlines():
+        line = raw_line.strip()
+        if not line or ":" not in line:
+            continue
+        key, value = line.split(":", 1)
+        normalized_key = key.strip().lower().replace(" ", "_")
+        sanitized_value = value.strip()
+        if not sanitized_value or normalized_key not in _DMIDECODE_RELEVANT_FIELDS:
+            continue
+        info.setdefault(normalized_key, sanitized_value)
+    return info
+
+
+def _detect_dmidecode_signals(info: Mapping[str, str]) -> list[str]:
+    if not info:
+        return []
+
+    signals: list[str] = []
+    for field in _DMIDECODE_RELEVANT_FIELDS:
+        value = info.get(field)
+        if not value:
+            continue
+        lowered = value.strip().lower()
+        if not lowered:
+            continue
+        for pattern, label in _VM_DMI_PATTERNS:
+            if pattern in lowered:
+                signals.append(
+                    f"dmidecode ({field}) wskazuje na środowisko wirtualne ({label})."
+                )
+                break
+    if signals:
+        signals = list(dict.fromkeys(signals))
+    return signals
+
+
+def _probe_wmic_system_info() -> Mapping[str, str]:
+    system = platform.system().lower()
+    if system != "windows":
+        return {}
+
+    # WMI często pozwala na format list, co ułatwia parsowanie.
+    output = _run_command(
+        [
+            "wmic",
+            "computersystem",
+            "get",
+            "manufacturer,model,systemtype",
+            "/format:list",
+        ]
+    )
+    if not output:
+        return {}
+
+    info: dict[str, str] = {}
+    for raw_line in output.splitlines():
+        if "=" not in raw_line:
+            continue
+        key, value = raw_line.split("=", 1)
+        normalized_key = key.strip().lower().replace(" ", "_")
+        sanitized_value = value.strip()
+        if not normalized_key or not sanitized_value:
+            continue
+        info.setdefault(normalized_key, sanitized_value)
+    return info
+
+
+def _detect_wmic_signals(info: Mapping[str, str]) -> list[str]:
+    if not info:
+        return []
+
+    signals: list[str] = []
+    for key, value in info.items():
+        if not value:
+            continue
+        lowered = value.strip().lower()
+        if not lowered:
+            continue
+        for pattern, label in _VM_DMI_PATTERNS:
+            if pattern in lowered:
+                signals.append(
+                    f"WMIC ({key}) wskazuje na środowisko wirtualne ({label})."
+                )
+                break
+    if signals:
+        signals = list(dict.fromkeys(signals))
+    return signals
+
+
+def _detect_container_filesystem_signals(*, path_exists: Callable[[Path], bool]) -> list[str]:
+    signals: list[str] = []
+    for marker, description in _CONTAINER_FILESYSTEM_MARKERS:
+        try:
+            if path_exists(marker):
+                signals.append(description)
+        except OSError:
+            continue
+    if signals:
+        signals = list(dict.fromkeys(signals))
+    return signals
+
+
+def _detect_container_env_signals(env: Mapping[str, str]) -> list[str]:
+    signals: list[str] = []
+    for key, label in _CONTAINER_ENV_KEYS.items():
+        value = env.get(key)
+        if value:
+            signals.append(
+                f"Zmienna środowiskowa {key} wskazuje na uruchomienie w kontenerze ({label})."
+            )
+    return signals
+
+
+def _detect_container_cgroup_signals(entries: Sequence[str]) -> list[str]:
+    signals: list[str] = []
+    for entry in entries:
+        lowered = entry.strip().lower()
+        if not lowered:
+            continue
+        for pattern, description in _CONTAINER_CGROUP_PATTERNS:
+            if pattern in lowered:
+                signals.append(description)
+                break
+    if signals:
+        signals = list(dict.fromkeys(signals))
+    return signals
+
+
+def _probe_systemd_virtualization() -> str | None:
+    output = _run_command(["systemd-detect-virt"])
+    if not output:
+        return None
+    normalized = output.strip().lower()
+    if not normalized or normalized == "none":
+        return None
+    return normalized
+
+
+def _probe_hostnamectl_virtualization() -> str | None:
+    output = _run_command(["hostnamectl"])
+    if not output:
+        return None
+
+    for line in output.splitlines():
+        if not line:
+            continue
+        if "virtualization" not in line.lower():
+            continue
+        _, _, value = line.partition(":")
+        candidate = value.strip().lower()
+        if not candidate or candidate in {"n/a", "na", "none"}:
+            return None
+        return candidate
+
+    return None
+
+
+def _detect_systemd_virtualization_signals(value: str | None) -> tuple[list[str], list[str]]:
+    if not value:
+        return ([], [])
+
+    vm_signals: list[str] = []
+    container_signals: list[str] = []
+
+    vm_label = _SYSTEMD_VM_LABELS.get(value)
+    container_label = _SYSTEMD_CONTAINER_LABELS.get(value)
+
+    if vm_label:
+        vm_signals.append(
+            "systemd-detect-virt zgłasza uruchomienie w środowisku wirtualnym "
+            f"({vm_label})."
+        )
+    elif container_label:
+        container_signals.append(
+            "systemd-detect-virt zgłasza uruchomienie w kontenerze "
+            f"({container_label})."
+        )
+    else:
+        vm_signals.append(
+            "systemd-detect-virt zwrócił nierozpoznany typ środowiska: "
+            f"{value}."
+        )
+
+    return (vm_signals, container_signals)
+
+
+def _detect_hostnamectl_virtualization_signals(
+    value: str | None,
+) -> tuple[list[str], list[str]]:
+    if not value:
+        return ([], [])
+
+    vm_signals: list[str] = []
+    container_signals: list[str] = []
+
+    vm_label = _HOSTNAMECTL_VM_LABELS.get(value)
+    container_label = _HOSTNAMECTL_CONTAINER_LABELS.get(value)
+
+    if vm_label:
+        vm_signals.append(
+            "hostnamectl raportuje uruchomienie w środowisku wirtualnym "
+            f"({vm_label})."
+        )
+    elif container_label:
+        container_signals.append(
+            "hostnamectl raportuje uruchomienie w kontenerze "
+            f"({container_label})."
+        )
+    else:
+        vm_signals.append(
+            "hostnamectl zwrócił nierozpoznany typ wirtualizacji: "
+            f"{value}."
+        )
+
+    return (vm_signals, container_signals)
+
+
+def _probe_lscpu_info() -> Mapping[str, str]:
+    output = _run_command(["lscpu"])
+    if not output:
+        return {}
+
+    info: dict[str, str] = {}
+    for raw_line in output.splitlines():
+        if not raw_line or "::" in raw_line:
+            continue
+        if ':' not in raw_line:
+            continue
+        key, value = raw_line.split(':', 1)
+        normalized_key = key.strip().lower()
+        if not normalized_key:
+            continue
+        sanitized_value = value.strip()
+        if not sanitized_value:
+            continue
+        if normalized_key == "hypervisor vendor":
+            info["hypervisor_vendor"] = sanitized_value
+        elif normalized_key == "virtualization type":
+            info["virtualization_type"] = sanitized_value
+    return info
+
+
+def _detect_lscpu_signals(info: Mapping[str, str]) -> tuple[list[str], list[str]]:
+    if not info:
+        return ([], [])
+
+    vm_signals: list[str] = []
+    container_signals: list[str] = []
+
+    vendor = info.get("hypervisor_vendor")
+    if vendor:
+        label = _LSCPU_VENDOR_LABELS.get(vendor.strip().lower(), vendor.strip())
+        vm_signals.append(
+            "lscpu raportuje dostawcę hypervisora: " f"{label}."
+        )
+
+    virtualization = info.get("virtualization_type")
+    if virtualization:
+        normalized = virtualization.strip().lower()
+        if normalized in {"container", "lxc", "podman", "docker"}:
+            container_signals.append(
+                "lscpu wskazuje na uruchomienie w kontenerze "
+                f"(virtualization type={virtualization})."
+            )
+        elif normalized not in {"none", "host"}:
+            vm_signals.append(
+                "lscpu wskazuje typ wirtualizacji: "
+                f"{virtualization}."
+            )
+
+    if vm_signals:
+        vm_signals = list(dict.fromkeys(vm_signals))
+    if container_signals:
+        container_signals = list(dict.fromkeys(container_signals))
+
+    return (vm_signals, container_signals)
+
+
+def _probe_virt_what() -> tuple[str, ...]:
+    output = _run_command(["virt-what"])
+    if not output:
+        return ()
+    entries = [line.strip().lower() for line in output.splitlines() if line.strip()]
+    if not entries:
+        return ()
+    return tuple(dict.fromkeys(entries))
+
+
+def _detect_virt_what_signals(entries: Sequence[str]) -> tuple[list[str], list[str]]:
+    if not entries:
+        return ([], [])
+
+    vm_signals: list[str] = []
+    container_signals: list[str] = []
+
+    for entry in entries:
+        lowered = entry.strip().lower()
+        if not lowered:
+            continue
+        vm_label = _VIRTWHAT_VM_LABELS.get(lowered)
+        container_label = _VIRTWHAT_CONTAINER_LABELS.get(lowered)
+        if vm_label:
+            vm_signals.append(
+                "virt-what zgłasza uruchomienie w środowisku wirtualnym "
+                f"({vm_label})."
+            )
+        elif container_label:
+            container_signals.append(
+                "virt-what zgłasza uruchomienie w kontenerze "
+                f"({container_label})."
+            )
+        else:
+            vm_signals.append(
+                f"virt-what zwrócił nierozpoznany sygnał wirtualizacji: {lowered}."
+            )
+
+    if vm_signals:
+        vm_signals = list(dict.fromkeys(vm_signals))
+    if container_signals:
+        container_signals = list(dict.fromkeys(container_signals))
+
+    return (vm_signals, container_signals)
+
+
+def _read_tracer_pid() -> int | None:
+    status_path = Path("/proc/self/status")
+    try:
+        with status_path.open("r", encoding="utf-8", errors="ignore") as handle:
+            for line in handle:
+                if line.startswith("TracerPid"):
+                    _, _, value = line.partition(":")
+                    text = value.strip()
+                    if not text:
+                        return None
+                    try:
+                        number = int(text)
+                    except ValueError:
+                        return None
+                    return number if number > 0 else None
+    except (FileNotFoundError, OSError):
+        return None
+    return None
+
+
+def _collect_kernel_modules() -> tuple[str, ...]:
+    modules_path = Path("/proc/modules")
+    try:
+        with modules_path.open("r", encoding="utf-8", errors="ignore") as handle:
+            names: list[str] = []
+            for line in handle:
+                parts = line.split()
+                if parts and parts[0]:
+                    names.append(parts[0])
+    except (FileNotFoundError, OSError):
+        return ()
+    if not names:
+        return ()
+    return tuple(dict.fromkeys(names))
+
+
+def _read_cgroup_lines() -> tuple[str, ...]:
+    cgroup_path = Path("/proc/1/cgroup")
+    try:
+        with cgroup_path.open("r", encoding="utf-8", errors="ignore") as handle:
+            lines = [line.strip() for line in handle if line.strip()]
+    except (FileNotFoundError, OSError):
+        return ()
+    return tuple(lines)
+
+
+def _detect_debugger_signals(
+    *,
+    trace: object | None,
+    tracer_pid: int | None,
+    env: Mapping[str, str],
+) -> list[str]:
+    signals: list[str] = []
+    if trace is not None:
+        signals.append("sys.gettrace() wskazuje na aktywny debugger.")
+    if tracer_pid:
+        signals.append(f"Proces jest śledzony (TracerPid={tracer_pid}).")
+    for key, description in _DEBUGGER_ENV_KEYS.items():
+        if env.get(key):
+            signals.append(f"Zmienna środowiskowa {key} sugeruje debugger ({description}).")
+    return signals
+
+
+def collect_security_signals(
+    *,
+    env: Mapping[str, str] | None = None,
+    cpu_info: str | None = None,
+    cpu_flags: Sequence[str] | None = None,
+    mac_addresses: Sequence[str] | None = None,
+    dmi_strings: Sequence[str] | None = None,
+    processes: Sequence[str] | None = None,
+    kernel_modules: Sequence[str] | None = None,
+    filesystem_entries: Iterable[str | Path] | None = None,
+    path_exists: Callable[[Path], bool] | None = None,
+    lscpu_info: object = _MISSING,
+    dmidecode_info: object = _MISSING,
+    wmic_info: object = _MISSING,
+    cgroup_lines: Sequence[str] | None = None,
+    tracer_pid: object = _MISSING,
+    trace: object = _MISSING,
+    hostname_virtualization: object = _MISSING,
+    systemd_virtualization: object = _MISSING,
+    virt_what: object = _MISSING,
+) -> SecuritySignals:
+    """Zbiera heurystyki bezpieczeństwa środowiska."""
+
+    env_mapping = env if env is not None else os.environ
+    info = cpu_info if cpu_info is not None else _probe_cpu_info()
+    flags = tuple(cpu_flags) if cpu_flags is not None else _read_cpu_flags()
+    macs = (
+        tuple(mac_addresses)
+        if mac_addresses is not None
+        else tuple(_collect_mac_addresses(env_mapping))
+    )
+    dmi_values = (
+        tuple(dmi_strings)
+        if dmi_strings is not None
+        else tuple(_collect_dmi_strings())
+    )
+    proc_snapshot = tuple(processes) if processes is not None else _list_process_names()
+    module_snapshot = (
+        tuple(kernel_modules) if kernel_modules is not None else _collect_kernel_modules()
+    )
+    if cgroup_lines is not None:
+        cgroup_snapshot = tuple(cgroup_lines)
+    else:
+        cgroup_snapshot = _read_cgroup_lines()
+
+    if filesystem_entries is not None:
+        entries_set = {Path(entry) for entry in filesystem_entries}
+
+        def _fake_exists(path: Path) -> bool:
+            return path in entries_set
+
+        path_exists_fn: Callable[[Path], bool] = _fake_exists
+    elif path_exists is not None:
+        path_exists_fn = path_exists
+    else:
+        def _default_exists(path: Path) -> bool:
+            try:
+                return path.exists()
+            except OSError:
+                return False
+
+        path_exists_fn = _default_exists
+
+    if lscpu_info is _MISSING:
+        lscpu_mapping: Mapping[str, str] = _probe_lscpu_info()
+    else:
+        extracted: dict[str, str] = {}
+        if lscpu_info is None:
+            pass
+        elif isinstance(lscpu_info, Mapping):
+            for key, value in lscpu_info.items():
+                if isinstance(key, str) and isinstance(value, str) and value.strip():
+                    extracted[key] = value
+        elif isinstance(lscpu_info, Iterable) and not isinstance(lscpu_info, (str, bytes)):
+            for entry in lscpu_info:
+                if (
+                    isinstance(entry, tuple)
+                    and len(entry) == 2
+                    and isinstance(entry[0], str)
+                    and isinstance(entry[1], str)
+                    and entry[1].strip()
+                ):
+                    extracted[entry[0]] = entry[1]
+        lscpu_mapping = extracted
+
+    if dmidecode_info is _MISSING:
+        dmidecode_mapping: Mapping[str, str] = _probe_dmidecode_info()
+    else:
+        dmidecode_extracted: dict[str, str] = {}
+        if dmidecode_info is None:
+            pass
+        elif isinstance(dmidecode_info, Mapping):
+            for key, value in dmidecode_info.items():
+                if isinstance(key, str) and isinstance(value, str) and value.strip():
+                    dmidecode_extracted[key] = value
+        elif isinstance(dmidecode_info, Iterable) and not isinstance(dmidecode_info, (str, bytes)):
+            for entry in dmidecode_info:
+                if (
+                    isinstance(entry, tuple)
+                    and len(entry) == 2
+                    and isinstance(entry[0], str)
+                    and isinstance(entry[1], str)
+                    and entry[1].strip()
+                ):
+                    dmidecode_extracted[entry[0]] = entry[1]
+        dmidecode_mapping = dmidecode_extracted
+
+    if wmic_info is _MISSING:
+        wmic_mapping: Mapping[str, str] = _probe_wmic_system_info()
+    else:
+        wmic_extracted: dict[str, str] = {}
+        if wmic_info is None:
+            pass
+        elif isinstance(wmic_info, Mapping):
+            for key, value in wmic_info.items():
+                if isinstance(key, str) and isinstance(value, str) and value.strip():
+                    wmic_extracted[key] = value
+        elif isinstance(wmic_info, Iterable) and not isinstance(wmic_info, (str, bytes)):
+            for entry in wmic_info:
+                if (
+                    isinstance(entry, tuple)
+                    and len(entry) == 2
+                    and isinstance(entry[0], str)
+                    and isinstance(entry[1], str)
+                    and entry[1].strip()
+                ):
+                    wmic_extracted[entry[0]] = entry[1]
+        else:
+            LOGGER.debug("Nieobsługiwany typ wejścia wmic_info: %r", type(wmic_info))
+        wmic_mapping = wmic_extracted
+
+    if tracer_pid is _MISSING:
+        tracer_pid_value: int | None = _read_tracer_pid()
+    else:
+        tracer_pid_value = cast(Optional[int], tracer_pid)
+
+    if trace is _MISSING:
+        trace_value: object | None = sys.gettrace()
+    else:
+        trace_value = cast(Optional[object], trace)
+
+    if hostname_virtualization is _MISSING:
+        hostname_value = _probe_hostnamectl_virtualization()
+    else:
+        hostname_value = cast(Optional[str], hostname_virtualization)
+
+    if systemd_virtualization is _MISSING:
+        systemd_value = _probe_systemd_virtualization()
+    else:
+        systemd_value = cast(Optional[str], systemd_virtualization)
+
+    if virt_what is _MISSING:
+        virt_what_entries = _probe_virt_what()
+    else:
+        if virt_what is None:
+            virt_what_entries = ()
+        elif isinstance(virt_what, str):
+            virt_what_entries = (virt_what,)
+        else:
+            virt_what_entries = tuple(virt_what)
+
+    cpu_signals = _detect_vm_cpu_signals(info, flags)
+    mac_signals = _detect_vm_mac_signals(macs)
+    process_signals = _detect_vm_process_signals(proc_snapshot)
+    dmi_signals = _detect_vm_dmi_signals(dmi_values)
+    dmidecode_signals = _detect_dmidecode_signals(dmidecode_mapping)
+    wmic_signals = _detect_wmic_signals(wmic_mapping)
+    filesystem_signals = _detect_vm_filesystem_signals(path_exists=path_exists_fn)
+    module_signals = _detect_vm_kernel_module_signals(module_snapshot)
+    container_env_signals = _detect_container_env_signals(env_mapping)
+    container_filesystem_signals = _detect_container_filesystem_signals(
+        path_exists=path_exists_fn
+    )
+    container_cgroup_signals = _detect_container_cgroup_signals(cgroup_snapshot)
+    hostname_vm_signals, hostname_container_signals = (
+        _detect_hostnamectl_virtualization_signals(hostname_value)
+    )
+    systemd_vm_signals, systemd_container_signals = _detect_systemd_virtualization_signals(
+        systemd_value
+    )
+    lscpu_vm_signals, lscpu_container_signals = _detect_lscpu_signals(lscpu_mapping)
+    virt_what_vm_signals, virt_what_container_signals = _detect_virt_what_signals(
+        virt_what_entries
+    )
+    debugger_signals = _detect_debugger_signals(
+        trace=trace_value,
+        tracer_pid=tracer_pid_value,
+        env=env_mapping,
+    )
+
+    container_signals = list(
+        dict.fromkeys(
+            (
+                *container_env_signals,
+                *container_filesystem_signals,
+                *container_cgroup_signals,
+                *hostname_container_signals,
+                *systemd_container_signals,
+                *lscpu_container_signals,
+                *virt_what_container_signals,
+            )
+        )
+    )
+
+    hostname_bucket = tuple(
+        dict.fromkeys((*hostname_vm_signals, *hostname_container_signals))
+    )
+
+    systemd_bucket = tuple(
+        dict.fromkeys((*systemd_vm_signals, *systemd_container_signals))
+    )
+
+    virt_what_bucket = tuple(
+        dict.fromkeys((*virt_what_vm_signals, *virt_what_container_signals))
+    )
+
+    lscpu_bucket = tuple(
+        dict.fromkeys((*lscpu_vm_signals, *lscpu_container_signals))
+    )
+
+    vm_map = {
+        "cpu": tuple(cpu_signals),
+        "mac_vendor": tuple(mac_signals),
+        "process": tuple(process_signals),
+        "dmi": tuple(dmi_signals),
+        "dmidecode": tuple(dmidecode_signals),
+        "wmic": tuple(wmic_signals),
+        "filesystem": tuple(filesystem_signals),
+        "kernel_module": tuple(module_signals),
+        "lscpu": lscpu_bucket,
+        "hostnamectl": hostname_bucket,
+        "systemd": systemd_bucket,
+        "container": tuple(container_signals),
+        "virt_what": virt_what_bucket,
+    }
+
+    signals = SecuritySignals(
+        vm_indicators=MappingProxyType(dict(vm_map)),
+        debugger_indicators=tuple(debugger_signals),
+    )
+    return signals
 
 
 # ---------------------------------------------------------------------------
@@ -395,7 +1461,7 @@ def _read_first_line(path: Path) -> Optional[str]:
     try:
         with path.open("r", encoding="utf-8", errors="ignore") as handle:
             line = handle.readline().strip()
-    except FileNotFoundError:
+    except (FileNotFoundError, OSError):
         return None
     return line or None
 
@@ -518,6 +1584,34 @@ def _collect_mac_addresses(env: Mapping[str, str]) -> list[str]:
             addresses.add(hashlib.sha256(hostname).hexdigest()[:12])
 
     return sorted(addresses)
+
+
+def _collect_dmi_strings() -> tuple[str, ...]:
+    base = Path("/sys/devices/virtual/dmi/id")
+    if not base.exists():
+        return ()
+
+    candidates = (
+        base / "product_name",
+        base / "sys_vendor",
+        base / "board_vendor",
+        base / "bios_vendor",
+        base / "bios_version",
+        base / "product_version",
+    )
+
+    values: list[str] = []
+    for path in candidates:
+        candidate = _read_first_line(path)
+        if candidate:
+            values.append(candidate)
+
+    if not values:
+        return ()
+
+    # usuń duplikaty przy zachowaniu kolejności oraz pomiń bardzo krótkie wpisy
+    unique = [value for value in dict.fromkeys(values) if len(value.strip()) > 2]
+    return tuple(unique)
 
 
 def _collect_hostname(env: Mapping[str, str]) -> Optional[str]:
@@ -1103,4 +2197,6 @@ __all__ = [
     "RotatingHmacKeyProvider",
     "build_key_provider",
     "decode_secret",
+    "SecuritySignals",
+    "collect_security_signals",
 ]
