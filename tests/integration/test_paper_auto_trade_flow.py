@@ -8,7 +8,7 @@ from typing import Any, Mapping
 
 import pandas as pd
 
-from bot_core.auto_trader.app import AutoTrader, AutoTraderDecisionScheduler
+from bot_core.auto_trader import AutoTrader, AutoTraderDecisionScheduler
 from bot_core.ai.regime import MarketRegime, MarketRegimeAssessment
 from bot_core.config.models import DecisionEngineConfig, DecisionOrchestratorThresholds
 from bot_core.decision.orchestrator import DecisionOrchestrator

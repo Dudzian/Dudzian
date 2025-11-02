@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import pandas as pd
 
 from bot_core.ai.regime import MarketRegime, MarketRegimeAssessment, RiskLevel
-from bot_core.auto_trader.app import AutoTrader, RiskDecision
+from bot_core.auto_trader import AutoTrader, RiskDecision
 from bot_core.observability import metrics as metrics_module
 
 
@@ -194,14 +194,8 @@ def test_auto_trader_lifecycle_with_guardrails_and_recalibrations() -> None:
     guardrail_metric = registry.get("auto_trader_guardrail_blocks_total")
     guardrail_names = {trigger.name for trigger in trader._last_guardrail_triggers}
     assert trader._last_guardrail_reasons, f"guardrail reasons missing (names={guardrail_names})"
-    assert guardrail_metric.value(
-        labels={
-            "environment": "paper",
-            "portfolio": "autotrader",
-            "risk_profile": "paper",
-            "guardrail": "effective_risk",
-        }
-    ) == 1.0
+    expected_labels = trader._metric_label_payload(guardrail="effective_risk")
+    assert guardrail_metric.value(labels=expected_labels) == 1.0
 
     recalibration_metric = registry.get("auto_trader_recalibrations_triggered_total")
     assert recalibration_metric.value(

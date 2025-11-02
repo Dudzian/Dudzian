@@ -1618,7 +1618,7 @@ def build_local_runtime_context(
     except Exception as exc:  # pragma: no cover - inne błędy importu
         _LOGGER.warning("Import trading.engine zgłosił wyjątek: %s", exc)
     try:
-        from bot_core.auto_trader.app import AutoTrader as _AutoTraderCls
+        from bot_core.auto_trader import AutoTrader as _AutoTraderCls
     except Exception as exc:  # pragma: no cover - środowiska bez pełnego modułu trading
         _LOGGER.warning("Nie udało się załadować AutoTradera – używam implementacji zastępczej: %s", exc)
         _AutoTraderCls = _AutoTraderStub

@@ -28,14 +28,16 @@ from collections import Counter, OrderedDict
 from pathlib import Path
 from collections.abc import Iterable
 from contextlib import contextmanager
-from dataclasses import asdict, dataclass, field, is_dataclass
+from dataclasses import asdict, is_dataclass
 from typing import Any, Callable, Dict, Mapping, Optional, Protocol, Sequence, cast
 
 import pandas as pd
 
 from bot_core.alerts.base import AlertMessage, AlertRouter
 from bot_core.auto_trader.audit import DecisionAuditLog
+from bot_core.auto_trader.decision_scheduler import AutoTraderDecisionScheduler
 from bot_core.auto_trader.performance import build_cycle_equity_summary
+from bot_core.auto_trader.risk_bridge import GuardrailTrigger, RiskDecision
 from bot_core.auto_trader.schedule import (
     ScheduleOverride,
     ScheduleState,
@@ -216,68 +218,6 @@ def _serialize_schedule_state(state: ScheduleState) -> dict[str, Any]:
         payload["time_until_next_override_s"] = next_override_delay
     payload["override_active"] = state.override_active
     return payload
-
-
-@dataclass(slots=True)
-class RiskDecision:
-    """Serializable snapshot describing the outcome of a risk engine check."""
-
-    should_trade: bool
-    fraction: float
-    state: str
-    reason: Optional[str] = None
-    details: Dict[str, Any] = field(default_factory=dict)
-    stop_loss_pct: Optional[float] = None
-    take_profit_pct: Optional[float] = None
-    mode: str = "demo"
-    cooldown_active: bool = False
-    cooldown_remaining_s: Optional[float] = None
-    cooldown_reason: Optional[str] = None
-
-    def to_dict(self) -> Dict[str, Any]:
-        payload: Dict[str, Any] = {
-            "should_trade": self.should_trade,
-            "fraction": float(self.fraction),
-            "state": self.state,
-            "reason": self.reason,
-            "details": dict(self.details),
-            "mode": self.mode,
-        }
-        if self.stop_loss_pct is not None:
-            payload["stop_loss_pct"] = float(self.stop_loss_pct)
-        if self.take_profit_pct is not None:
-            payload["take_profit_pct"] = float(self.take_profit_pct)
-        payload["cooldown_active"] = self.cooldown_active
-        if self.cooldown_remaining_s is not None:
-            payload["cooldown_remaining_s"] = float(self.cooldown_remaining_s)
-        if self.cooldown_reason is not None:
-            payload["cooldown_reason"] = self.cooldown_reason
-        return payload
-
-
-@dataclass(slots=True)
-class GuardrailTrigger:
-    """Structured details about a guardrail that forced a HOLD signal."""
-
-    name: str
-    label: str
-    comparator: str
-    threshold: float
-    unit: Optional[str] = None
-    value: Optional[float] = None
-
-    def to_dict(self) -> Dict[str, Any]:
-        payload: Dict[str, Any] = {
-            "name": self.name,
-            "label": self.label,
-            "comparator": self.comparator,
-            "threshold": float(self.threshold),
-        }
-        if self.unit is not None:
-            payload["unit"] = self.unit
-        if self.value is not None:
-            payload["value"] = float(self.value)
-        return payload
 
 
 class AutoTrader:
@@ -1250,6 +1190,32 @@ class AutoTrader:
             self._stop.set()
             self._cancel_auto_trade_thread_locked()
             self._log("AutoTrader stopped.")
+
+    def is_running(self) -> bool:
+        """Zwraca informację, czy główna pętla AutoTradera została uruchomiona."""
+
+        with self._lock:
+            return bool(self._started)
+
+    def set_enable_auto_trade(self, flag: bool) -> None:
+        """Włącza lub wyłącza tryb auto-trade z zachowaniem stanu wątku pętli."""
+
+        enable = bool(flag)
+        with self._lock:
+            if self.enable_auto_trade == enable:
+                return
+            self.enable_auto_trade = enable
+            if not enable:
+                self._auto_trade_user_confirmed = False
+                self._cancel_auto_trade_thread_locked()
+                return
+            if not self._started:
+                self._log("Auto-trade awaiting explicit activation")
+                return
+            if self._auto_trade_user_confirmed:
+                self._start_auto_trade_thread_locked()
+            else:
+                self._log("Auto-trade awaiting explicit activation")
 
     def configure_controller_runner(
         self,
@@ -13271,94 +13237,6 @@ class AutoTrader:
             history=history_size,
         )
         return normalized
-
-
-@dataclass(slots=True)
-class AutoTraderDecisionScheduler:
-    """Asynchronous scheduler driving :class:`AutoTrader` decision cycles."""
-
-    trader: "AutoTrader"
-    interval_s: float = 30.0
-    loop: asyncio.AbstractEventLoop | None = None
-    _task: asyncio.Task[None] | None = field(init=False, default=None, repr=False)
-    _stop_event: asyncio.Event | None = field(init=False, default=None, repr=False)
-    _thread: threading.Thread | None = field(init=False, default=None, repr=False)
-    _thread_stop: threading.Event | None = field(init=False, default=None, repr=False)
-
-    async def start(self) -> None:
-        """Start the scheduler inside an asyncio event loop."""
-
-        if self._task is not None and not self._task.done():
-            return
-        loop = self.loop or asyncio.get_running_loop()
-        self._stop_event = asyncio.Event()
-        self._task = loop.create_task(self._run_async())
-
-    async def stop(self) -> None:
-        """Request shutdown of the asynchronous scheduler and await completion."""
-
-        task = self._task
-        stop_event = self._stop_event
-        if task is None or stop_event is None:
-            return
-        stop_event.set()
-        try:
-            await task
-        finally:
-            self._task = None
-            self._stop_event = None
-
-    def start_in_background(self) -> None:
-        """Spawn a lightweight background thread executing decision cycles."""
-
-        if self._thread is not None and self._thread.is_alive():
-            return
-
-        stop_event = threading.Event()
-        self._thread_stop = stop_event
-
-        def _worker() -> None:
-            while not stop_event.is_set():
-                try:
-                    self.trader.run_cycle_once()
-                except Exception:  # pragma: no cover - defensive guard
-                    LOGGER.exception("AutoTraderDecisionScheduler cycle failed")
-                if stop_event.wait(max(0.0, float(self.interval_s))):
-                    break
-
-        thread = threading.Thread(
-            target=_worker,
-            name="AutoTraderDecisionScheduler",
-            daemon=True,
-        )
-        self._thread = thread
-        thread.start()
-
-    def stop_background(self) -> None:
-        """Stop the background thread variant of the scheduler."""
-
-        stop_event = self._thread_stop
-        if stop_event is not None:
-            stop_event.set()
-        thread = self._thread
-        if thread is not None and thread.is_alive():
-            thread.join(timeout=max(1.0, float(self.interval_s)))
-        self._thread = None
-        self._thread_stop = None
-
-    async def _run_async(self) -> None:
-        assert self._stop_event is not None
-        stop_event = self._stop_event
-        interval = max(0.0, float(self.interval_s))
-        while not stop_event.is_set():
-            try:
-                await asyncio.to_thread(self.trader.run_cycle_once)
-            except Exception:  # pragma: no cover - defensive guard
-                LOGGER.exception("AutoTraderDecisionScheduler async cycle failed")
-            try:
-                await asyncio.wait_for(stop_event.wait(), timeout=interval)
-            except asyncio.TimeoutError:
-                continue
 
 
 __all__ = [
