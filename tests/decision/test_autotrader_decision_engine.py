@@ -9,7 +9,7 @@ import pandas as pd
 import pytest
 
 from bot_core.ai.pipeline import register_model_artifact, train_gradient_boosting_model
-from bot_core.auto_trader.app import AutoTrader
+from bot_core.auto_trader import AutoTrader
 from bot_core.config.models import DecisionEngineConfig, DecisionOrchestratorThresholds
 from bot_core.decision import DecisionOrchestrator
 from bot_core.ai.regime import MarketRegime, MarketRegimeAssessment

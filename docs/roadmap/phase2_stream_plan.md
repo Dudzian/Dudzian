@@ -32,6 +32,24 @@ Faza druga rozwoju strumienia decyzyjnego koncentruje się na przygotowaniu i op
 - [x] Zabezpieczyć harmonogram audytów dryfu/danych i checklist compliance, tak aby zatwierdzone podpisy były wymagane przed aktywacją modeli w autotraderze.
 - [x] Przygotować procedurę rollbacku modelu wraz z checklistą akceptacji dla incydentów dryfu danych.
 
+### Status wdrożenia artefaktów i monitoringu
+
+- Automatyzacja audytu modeli działa w `bot_core/ai/audit.py`, `bot_core/ai/monitoring.py` oraz `bot_core/ai/scheduler.py`,
+  rejestrując raporty walk-forward, dryfu i jakości danych oraz walidując je w CI.
+- `AIManager` zapisuje raporty dryfu i jakości do `audit/ai_decision/`, a helpery `list_audit_reports` i `load_latest_*`
+  zapewniają szybki dostęp do artefaktów kontrolnych.
+- Scheduler retreningu (`RetrainingScheduler`) utrwala stan w `audit/ai_decision/scheduler.json`, co potwierdzają testy
+  integracyjne w `tests/decision/test_scheduler.py`.
+- Monitorowanie kompletności, dryfu PSI/KS i odchyleń cech w `bot_core/ai/monitoring.py` zasila raporty `data_quality` oraz `drift`
+  wykorzystywane przez `AIManager`.
+
+### Integracja inference ↔️ DecisionOrchestrator
+
+- `bot_core/auto_trader` uporządkowano, przenosząc most ryzyka (`RiskDecision`, `GuardrailTrigger`) do
+  `bot_core/auto_trader/risk_bridge.py` oraz scheduler do `bot_core/auto_trader/decision_scheduler.py`, co upraszcza interfejs.
+- Testy `tests/integration/test_auto_trader_risk_bridge.py` i `tests/e2e/test_decision_autotrader_integration.py`
+  przechodzą ścieżkę DecisionOrchestrator → AutoTrader, weryfikując wybór strategii i limity ryzyka.
+
 ## Harmonogram sprintów
 
 | Sprint | Zakres | Kamień | Uwaga |

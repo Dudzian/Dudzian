@@ -5,7 +5,7 @@ from importlib import import_module
 from typing import Any, Callable
 
 from bot_core.alerts import emit_alert as _core_emit_alert
-from bot_core.auto_trader.app import AutoTrader, RiskDecision
+from bot_core.auto_trader import AutoTrader, RiskDecision
 
 __all__ = ["AutoTrader", "RiskDecision", "_emit_alert"]
 
