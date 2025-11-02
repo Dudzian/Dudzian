@@ -14,6 +14,10 @@ class RiskStateModel : public QAbstractListModel {
     Q_PROPERTY(double maxDailyLoss READ maxDailyLoss NOTIFY riskStateChanged)
     Q_PROPERTY(double usedLeverage READ usedLeverage NOTIFY riskStateChanged)
     Q_PROPERTY(QDateTime generatedAt READ generatedAt NOTIFY riskStateChanged)
+    Q_PROPERTY(QVariantMap limits READ limits NOTIFY riskStateChanged)
+    Q_PROPERTY(QVariantMap statistics READ statistics NOTIFY riskStateChanged)
+    Q_PROPERTY(QVariantMap costBreakdown READ costBreakdown NOTIFY riskStateChanged)
+    Q_PROPERTY(bool killSwitchEngaged READ killSwitchEngaged NOTIFY riskStateChanged)
 
 public:
     enum Roles {
@@ -37,6 +41,10 @@ public:
     double maxDailyLoss() const { return m_snapshot.maxDailyLoss; }
     double usedLeverage() const { return m_snapshot.usedLeverage; }
     QDateTime generatedAt() const { return m_snapshot.generatedAt; }
+    QVariantMap limits() const { return m_snapshot.limits; }
+    QVariantMap statistics() const { return m_snapshot.statistics; }
+    QVariantMap costBreakdown() const { return m_snapshot.costBreakdown; }
+    bool killSwitchEngaged() const { return m_snapshot.killSwitchEngaged; }
     QVariantMap currentSnapshot() const;
 
 public slots:

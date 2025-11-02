@@ -4,6 +4,7 @@
 #include <QList>
 #include <QMetaType>
 #include <QString>
+#include <QVariantMap>
 
 struct RiskExposureData {
     QString code;
@@ -23,6 +24,10 @@ struct RiskSnapshotData {
     double usedLeverage = 0.0;
     QDateTime generatedAt;
     QList<RiskExposureData> exposures;
+    QVariantMap limits;
+    QVariantMap statistics;
+    QVariantMap costBreakdown;
+    bool killSwitchEngaged = false;
     bool hasData = false;
 };
 

@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 import hmac
 import logging
+import math
 import threading
 from queue import Empty, SimpleQueue
 from typing import Any, Callable, Iterable, Mapping, MutableMapping, Sequence
@@ -174,6 +175,27 @@ class RiskSnapshotBuilder:
         if isinstance(limits_raw, Mapping):
             limits = {str(key): _safe_float(value) for key, value in limits_raw.items()}
 
+        statistics_raw = state.get("statistics", {}) if isinstance(state, Mapping) else {}
+        statistics: dict[str, object] = {}
+        if isinstance(statistics_raw, Mapping):
+            for key, value in statistics_raw.items():
+                name = str(key)
+                numeric = _safe_float(value)
+                if not math.isfinite(numeric):
+                    continue
+                if name in {"activePositions", "active_positions"}:
+                    statistics[name] = int(round(numeric))
+                else:
+                    statistics[name] = numeric
+
+        cost_raw = state.get("cost_breakdown", {}) if isinstance(state, Mapping) else {}
+        cost_breakdown: dict[str, float] = {}
+        if isinstance(cost_raw, Mapping):
+            for key, value in cost_raw.items():
+                numeric = _safe_float(value)
+                if math.isfinite(numeric):
+                    cost_breakdown[str(key)] = numeric
+
         equity = _safe_float(state.get("last_equity"), _safe_float(state.get("start_of_day_equity")))
         gross_notional = _safe_float(state.get("gross_notional"))
         used_leverage = gross_notional / equity if equity > 0 else 0.0
@@ -251,6 +273,33 @@ class RiskSnapshotBuilder:
             )
         )
 
+        # Zakoduj dodatkowe metryki w dedykowanych limitach, aby klienci gRPC mieli do nich dostęp.
+        skipped_statistics = {
+            "activePositions",
+            "active_positions",
+            "usedLeverage",
+            "grossNotional",
+            "dailyLossPct",
+            "drawdownPct",
+        }
+        for key, value in statistics.items():
+            if key in skipped_statistics:
+                continue
+            exposures.append(
+                RiskExposure(
+                    code=f"stat:{key}",
+                    current=float(_safe_float(value)),
+                )
+            )
+
+        for key, value in cost_breakdown.items():
+            exposures.append(
+                RiskExposure(
+                    code=f"cost:{key}",
+                    current=float(value),
+                )
+            )
+
         metadata: dict[str, object] = {
             "force_liquidation": force_liquidation,
             "limits": dict(limits),
@@ -258,6 +307,10 @@ class RiskSnapshotBuilder:
             "gross_notional": gross_notional,
             "active_positions": active_positions,
         }
+        if statistics:
+            metadata["statistics"] = dict(statistics)
+        if cost_breakdown:
+            metadata["cost_breakdown"] = dict(cost_breakdown)
 
         recent_decisions: Sequence[Mapping[str, object]] | None = None
         decisions_provider = getattr(self._risk_engine, "recent_decisions", None)

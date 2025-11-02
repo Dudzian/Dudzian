@@ -751,7 +751,76 @@ class ThresholdRiskEngine(RiskEngine):
                 "stop_loss_atr_multiple": profile.stop_loss_atr_multiple(),
             }
 
+        gross_notional = float(snapshot.get("gross_notional", 0.0) or 0.0)
+        equity = float(current_equity or 0.0)
+        used_leverage = gross_notional / equity if equity > 0 else 0.0
+        snapshot["used_leverage"] = used_leverage
+
+        statistics_payload: dict[str, object] = {
+            "dailyRealizedPnl": float(state.daily_realized_pnl),
+            "grossNotional": gross_notional,
+            "activePositions": int(snapshot.get("active_positions", 0)),
+            "dailyLossPct": float(snapshot.get("daily_loss_pct", 0.0) or 0.0),
+            "drawdownPct": float(snapshot.get("drawdown_pct", 0.0) or 0.0),
+            "usedLeverage": used_leverage,
+        }
+        snapshot["statistics"] = statistics_payload
+
+        snapshot["cost_breakdown"] = self._build_cost_breakdown(
+            state, gross_notional, equity
+        )
+
         return snapshot
+
+    def _build_cost_breakdown(
+        self,
+        state: RiskState,
+        gross_notional: float,
+        equity: float,
+    ) -> Mapping[str, float]:
+        breakdown: dict[str, float] = {
+            "averageCostBps": 0.0,
+            "totalCostBps": 0.0,
+        }
+
+        total_cost_sum = 0.0
+        total_cost_count = 0
+        for counters in self._decision_model_metrics.values():
+            total_cost_sum += float(counters.get("cost_bps_sum", 0.0) or 0.0)
+            total_cost_count += int(counters.get("cost_bps_count", 0))
+
+        if total_cost_count > 0:
+            breakdown["averageCostBps"] = (
+                total_cost_sum / total_cost_count if total_cost_count else 0.0
+            )
+            breakdown["totalCostBps"] = total_cost_sum
+            return breakdown
+
+        approx_cost = self._approximate_cost_bps(state, gross_notional, equity)
+        if approx_cost is not None:
+            breakdown["averageCostBps"] = approx_cost
+            breakdown["totalCostBps"] = approx_cost
+        return breakdown
+
+    @staticmethod
+    def _approximate_cost_bps(
+        state: RiskState, gross_notional: float, equity: float
+    ) -> float | None:
+        base_notional = float(gross_notional or 0.0)
+        if base_notional <= 0.0:
+            base_notional = float(state.last_equity or 0.0)
+        if base_notional <= 0.0:
+            base_notional = float(state.start_of_day_equity or 0.0)
+        if base_notional <= 0.0:
+            base_notional = float(equity or 0.0)
+        if base_notional <= 0.0:
+            return None
+
+        realized_pnl = float(state.daily_realized_pnl)
+        if realized_pnl >= 0.0:
+            return None
+
+        return abs(realized_pnl) / base_notional * 10_000.0
 
     def should_liquidate(self, *, profile_name: str) -> bool:
         state = self._states.get(profile_name)
