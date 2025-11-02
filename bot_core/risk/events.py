@@ -176,4 +176,85 @@ class RiskDecisionLog:
             return len(self._buffer)
 
 
-__all__ = ["RiskDecisionEvent", "RiskDecisionLog"]
+@dataclass(slots=True)
+class RiskLimitAlert:
+    """Alert wygenerowany w wyniku przekroczenia progów ryzyka."""
+
+    profile: str
+    limit: str
+    value: float
+    threshold: float
+    severity: str
+    timestamp: datetime
+    context: Mapping[str, object] | None = None
+
+    def to_mapping(self) -> MutableMapping[str, object]:
+        payload: MutableMapping[str, object] = {
+            "profile": self.profile,
+            "limit": self.limit,
+            "value": float(self.value),
+            "threshold": float(self.threshold),
+            "severity": self.severity,
+            "timestamp": self.timestamp.astimezone(timezone.utc).isoformat(),
+        }
+        if self.context:
+            payload["context"] = {str(key): value for key, value in self.context.items()}
+        return payload
+
+
+class RiskAlertLog:
+    """Bufor alertów limitów ryzyka."""
+
+    def __init__(self, *, max_entries: int = 200, clock: Callable[[], datetime] = _utc_now) -> None:
+        self._buffer: deque[RiskLimitAlert] = deque(maxlen=max(1, int(max_entries)))
+        self._lock = threading.Lock()
+        self._clock = clock
+
+    def record(
+        self,
+        *,
+        profile: str,
+        limit: str,
+        value: float,
+        threshold: float,
+        severity: str,
+        context: Mapping[str, object] | None = None,
+    ) -> RiskLimitAlert:
+        alert = RiskLimitAlert(
+            profile=profile,
+            limit=limit,
+            value=float(value),
+            threshold=float(threshold),
+            severity=severity,
+            timestamp=self._clock(),
+            context=context,
+        )
+        with self._lock:
+            self._buffer.append(alert)
+        return alert
+
+    def tail(self, *, limit: int = 50, profile: str | None = None) -> Sequence[Mapping[str, object]]:
+        if limit <= 0:
+            return ()
+        normalized_profile = profile.strip().lower() if isinstance(profile, str) else None
+        with self._lock:
+            items: list[Mapping[str, object]] = []
+            for alert in reversed(self._buffer):
+                if normalized_profile and alert.profile.lower() != normalized_profile:
+                    continue
+                items.append(alert.to_mapping())
+                if len(items) >= limit:
+                    break
+        return tuple(reversed(items))
+
+    def __len__(self) -> int:
+        with self._lock:
+            return len(self._buffer)
+
+
+__all__ = [
+    "RiskDecisionEvent",
+    "RiskDecisionLog",
+    "RiskLimitAlert",
+    "RiskAlertLog",
+]

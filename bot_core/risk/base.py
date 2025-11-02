@@ -52,6 +52,42 @@ class RiskProfile(abc.ABC):
     def stop_loss_atr_multiple(self) -> float:
         ...
 
+    @abc.abstractmethod
+    def trade_risk_pct_range(self) -> tuple[float, float]:
+        """Zwraca dopuszczalny zakres ryzyka na pojedynczą transakcję."""
+
+    @abc.abstractmethod
+    def instrument_alert_pct(self) -> float:
+        """Próg ekspozycji na instrument wywołujący alert."""
+
+    @abc.abstractmethod
+    def instrument_limit_pct(self) -> float:
+        """Maksymalna ekspozycja na pojedynczy instrument."""
+
+    @abc.abstractmethod
+    def portfolio_alert_pct(self) -> float:
+        """Próg ekspozycji portfela wywołujący alert."""
+
+    @abc.abstractmethod
+    def portfolio_limit_pct(self) -> float:
+        """Maksymalna ekspozycja portfela względem kapitału."""
+
+    @abc.abstractmethod
+    def daily_kill_switch_r_multiple(self) -> float:
+        """Liczba jednostek ryzyka (R) uruchamiająca dzienny kill switch."""
+
+    @abc.abstractmethod
+    def daily_kill_switch_loss_pct(self) -> float:
+        """Procentowy próg dziennej straty uruchamiający kill switch."""
+
+    @abc.abstractmethod
+    def weekly_kill_switch_loss_pct(self) -> float:
+        """Procentowy próg tygodniowej straty wymuszający blokadę."""
+
+    @abc.abstractmethod
+    def max_cost_to_profit_ratio(self) -> float:
+        """Maksymalny udział kosztów transakcyjnych w zysku (okno 30-dniowe)."""
+
 
 class StaticRiskProfile(RiskProfile):
     """Profil ryzyka zdefiniowany stałymi parametrami.
@@ -70,6 +106,15 @@ class StaticRiskProfile(RiskProfile):
     _max_position_pct: float
     _target_volatility: float
     _stop_loss_atr_multiple: float
+    _trade_risk_pct_range: tuple[float, float]
+    _instrument_alert_pct: float
+    _instrument_limit_pct: float
+    _portfolio_alert_pct: float
+    _portfolio_limit_pct: float
+    _daily_kill_switch_r_multiple: float
+    _daily_kill_switch_loss_pct: float
+    _weekly_kill_switch_loss_pct: float
+    _max_cost_to_profit_ratio: float
 
     def max_positions(self) -> int:
         return self._max_positions
@@ -91,6 +136,33 @@ class StaticRiskProfile(RiskProfile):
 
     def stop_loss_atr_multiple(self) -> float:
         return self._stop_loss_atr_multiple
+
+    def trade_risk_pct_range(self) -> tuple[float, float]:
+        return self._trade_risk_pct_range
+
+    def instrument_alert_pct(self) -> float:
+        return self._instrument_alert_pct
+
+    def instrument_limit_pct(self) -> float:
+        return self._instrument_limit_pct
+
+    def portfolio_alert_pct(self) -> float:
+        return self._portfolio_alert_pct
+
+    def portfolio_limit_pct(self) -> float:
+        return self._portfolio_limit_pct
+
+    def daily_kill_switch_r_multiple(self) -> float:
+        return self._daily_kill_switch_r_multiple
+
+    def daily_kill_switch_loss_pct(self) -> float:
+        return self._daily_kill_switch_loss_pct
+
+    def weekly_kill_switch_loss_pct(self) -> float:
+        return self._weekly_kill_switch_loss_pct
+
+    def max_cost_to_profit_ratio(self) -> float:
+        return self._max_cost_to_profit_ratio
 
 
 class RiskEngine(abc.ABC):
