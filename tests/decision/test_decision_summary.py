@@ -73,6 +73,9 @@ def _build_full_evaluations() -> list[dict[str, object]]:
                 "latency_ms": 42.0,
                 "metadata": {"generated_at": "2024-04-01T00:00:00Z"},
             },
+            "recommended_modes": ("live", "balanced"),
+            "recommended_position_size": 1_400.0,
+            "recommended_risk_score": 0.75,
         },
         {
             "accepted": False,
@@ -103,6 +106,9 @@ def _build_full_evaluations() -> list[dict[str, object]]:
                 "metadata": {"generated_at": "2024-05-01T00:00:00Z"},
             },
             "model_selection": {"selected": "gbm_v2", "score": 0.62},
+            "recommended_modes": ("shadow", "defensive"),
+            "recommended_position_size": 600.0,
+            "recommended_risk_score": 0.35,
         },
     ]
 
@@ -226,6 +232,9 @@ def test_summarize_evaluation_payloads_counts_and_latest_fields() -> None:
     assert summary["latest_candidate"]["symbol"] == "ETH/USDT"
     assert summary["latest_candidate"]["expected_value_bps"] == pytest.approx(2.2)
     assert summary["latest_generated_at"] == "2024-05-01T00:00:00Z"
+    assert summary["latest_recommended_modes"] == ["shadow", "defensive"]
+    assert summary["latest_recommended_position_size"] == pytest.approx(600.0)
+    assert summary["latest_recommended_risk_score"] == pytest.approx(0.35)
     assert summary["latest_expected_value_bps"] == pytest.approx(2.2)
     assert summary["latest_expected_value_minus_cost_bps"] == pytest.approx(-0.3)
     assert summary["latest_net_edge_bps"] == pytest.approx(1.0)
@@ -259,6 +268,14 @@ def test_summarize_evaluation_payloads_counts_and_latest_fields() -> None:
     assert summary["sum_expected_value_bps"] == pytest.approx(9.2)
     assert summary["avg_expected_value_minus_cost_bps"] == pytest.approx(2.85)
     assert summary["sum_expected_value_minus_cost_bps"] == pytest.approx(5.7)
+    assert summary["sum_recommended_position_size"] == pytest.approx(2_000.0)
+    assert summary["avg_recommended_position_size"] == pytest.approx(1_000.0)
+    assert summary["accepted_sum_recommended_position_size"] == pytest.approx(1_400.0)
+    assert summary["rejected_sum_recommended_position_size"] == pytest.approx(600.0)
+    assert summary["sum_recommended_risk_score"] == pytest.approx(1.1)
+    assert summary["avg_recommended_risk_score"] == pytest.approx(0.55)
+    assert summary["accepted_sum_recommended_risk_score"] == pytest.approx(0.75)
+    assert summary["rejected_sum_recommended_risk_score"] == pytest.approx(0.35)
     assert summary["probability_threshold_margin_count"] == 2
     assert summary["avg_probability_threshold_margin"] == pytest.approx(0.025)
     assert summary["sum_probability_threshold_margin"] == pytest.approx(0.05)
