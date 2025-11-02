@@ -6,9 +6,15 @@ from pathlib import Path
 from typing import Dict, Iterable, Iterator, List, Mapping, MutableMapping, Sequence
 
 import csv
+import logging
 
 import pandas as pd
 import yaml
+
+from bot_core.observability.pandas_warnings import capture_pandas_warnings
+
+
+_LOGGER = logging.getLogger(__name__)
 
 
 class DatasetNotFoundError(FileNotFoundError):
@@ -163,14 +169,19 @@ class BacktestDatasetLibrary:
         """Ładuje dataset jako :class:`pandas.DataFrame` wraz z konwersją typów."""
 
         rows = self.load_typed_rows(name)
-        frame = pd.DataFrame(rows)
-        datetime_columns = datetime_columns or {}
-        for column, unit in datetime_columns.items():
-            if column in frame.columns:
-                frame[column] = pd.to_datetime(frame[column], unit=unit, errors="coerce")
+        with capture_pandas_warnings(
+            _LOGGER, component="data.backtest_library.load_dataframe"
+        ):
+            frame = pd.DataFrame(rows)
+            datetime_columns = datetime_columns or {}
+            for column, unit in datetime_columns.items():
+                if column in frame.columns:
+                    frame[column] = pd.to_datetime(
+                        frame[column], unit=unit, errors="coerce"
+                    )
 
-        if index_column and index_column in frame.columns:
-            frame = frame.set_index(index_column)
+            if index_column and index_column in frame.columns:
+                frame = frame.set_index(index_column)
 
         return frame
 

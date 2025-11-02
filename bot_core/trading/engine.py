@@ -18,25 +18,34 @@ from __future__ import annotations
 import hashlib
 import logging
 import re
-import warnings
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field, replace
-from itertools import product
 from enum import Enum
 from functools import lru_cache
-from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Dict, Iterable, List, Mapping, Optional, Protocol, Tuple, Union
+from itertools import product
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Callable,
+    Dict,
+    Iterable,
+    List,
+    Mapping,
+    Optional,
+    Protocol,
+    Tuple,
+    Union,
+)
 
+from bot_core.observability.pandas_warnings import (
+    capture_pandas_warnings as _capture_pandas_warnings,
+)
 from bot_core.trading.exit_reasons import ExitReason
 from bot_core.trading.strategies import StrategyCatalog
 
 import numpy as np
 import pandas as pd
 from numpy.typing import NDArray
-
-# Suppress warnings for cleaner output
-warnings.filterwarnings('ignore', category=pd.errors.PerformanceWarning)
-warnings.filterwarnings('ignore', category=FutureWarning)
 
 if TYPE_CHECKING:  # pragma: no cover - tylko dla typowania
     from bot_core.strategies.public import StrategyDescriptor
@@ -476,33 +485,34 @@ class DataValidationService:
             except Exception as e:
                 raise DataValidationError(f"Cannot convert index to DatetimeIndex: {e}")
         
-        # Clean and validate data
-        cleaned_data = data.copy()
-        
-        # Remove duplicates and sort
-        initial_length = len(cleaned_data)
-        cleaned_data = cleaned_data[~cleaned_data.index.duplicated(keep='last')].sort_index()
-        
-        if len(cleaned_data) < initial_length:
-            self._logger.warning(f"Removed {initial_length - len(cleaned_data)} duplicate timestamps")
-        
-        # Validate and correct OHLC relationships
-        cleaned_data = self._fix_ohlc_relationships(cleaned_data)
-        
-        # Handle missing values with forward/backward fill
-        null_counts = cleaned_data[list(required_columns)].isnull().sum()
-        if null_counts.any():
-            self._logger.warning(f"Found null values: {null_counts.to_dict()}")
-            cleaned_data[list(required_columns)] = cleaned_data[list(required_columns)].ffill().bfill()
-        
-        # Validate volume
-        if (cleaned_data['volume'] < 0).any():
-            self._logger.warning("Found negative volume values, taking absolute values")
-            cleaned_data['volume'] = cleaned_data['volume'].abs()
-        
-        # Detect and handle price anomalies
-        cleaned_data = self._detect_price_anomalies(cleaned_data)
-        
+        with _capture_pandas_warnings(self._logger, component="trading_engine.data_validation"):
+            # Clean and validate data
+            cleaned_data = data.copy()
+
+            # Remove duplicates and sort
+            initial_length = len(cleaned_data)
+            cleaned_data = cleaned_data[~cleaned_data.index.duplicated(keep='last')].sort_index()
+
+            if len(cleaned_data) < initial_length:
+                self._logger.warning(f"Removed {initial_length - len(cleaned_data)} duplicate timestamps")
+
+            # Validate and correct OHLC relationships
+            cleaned_data = self._fix_ohlc_relationships(cleaned_data)
+
+            # Handle missing values with forward/backward fill
+            null_counts = cleaned_data[list(required_columns)].isnull().sum()
+            if null_counts.any():
+                self._logger.warning(f"Found null values: {null_counts.to_dict()}")
+                cleaned_data[list(required_columns)] = cleaned_data[list(required_columns)].ffill().bfill()
+
+            # Validate volume
+            if (cleaned_data['volume'] < 0).any():
+                self._logger.warning("Found negative volume values, taking absolute values")
+                cleaned_data['volume'] = cleaned_data['volume'].abs()
+
+            # Detect and handle price anomalies
+            cleaned_data = self._detect_price_anomalies(cleaned_data)
+
         return cleaned_data
     
     def _fix_ohlc_relationships(self, data: pd.DataFrame) -> pd.DataFrame:
@@ -575,34 +585,35 @@ class TechnicalIndicatorsService:
                 return self._cache[cache_key]
         
         try:
-            close = data['close']
-            high = data['high']
-            low = data['low']
-            
-            # Calculate all indicators using vectorized operations
-            indicators = TechnicalIndicators(
-                rsi=self._calculate_rsi_optimized(close, params.rsi_period),
-                ema_fast=self._calculate_ema_optimized(close, params.ema_fast_period),
-                ema_slow=self._calculate_ema_optimized(close, params.ema_slow_period),
-                sma_trend=self._calculate_sma_optimized(close, params.sma_trend_period),
-                atr=self._calculate_atr_optimized(high, low, close, params.atr_period),
-                **self._calculate_bollinger_bands_optimized(close, params.bb_period, params.bb_std_mult),
-                **self._calculate_macd_optimized(close, params.ema_fast_period, 
-                                               params.ema_slow_period, params.macd_signal_period),
-                **self._calculate_stochastic_optimized(high, low, close, 
-                                                     params.stoch_k_period, params.stoch_d_period)
-            )
-            
-            # Cache if enabled
-            if self._config.cache_indicators:
-                self._cache[cache_key] = indicators
-                # Limit cache size
-                if len(self._cache) > 50:
-                    oldest_key = next(iter(self._cache))
-                    del self._cache[oldest_key]
-            
+            with _capture_pandas_warnings(self._logger, component="trading_engine.indicators"):
+                close = data['close']
+                high = data['high']
+                low = data['low']
+
+                # Calculate all indicators using vectorized operations
+                indicators = TechnicalIndicators(
+                    rsi=self._calculate_rsi_optimized(close, params.rsi_period),
+                    ema_fast=self._calculate_ema_optimized(close, params.ema_fast_period),
+                    ema_slow=self._calculate_ema_optimized(close, params.ema_slow_period),
+                    sma_trend=self._calculate_sma_optimized(close, params.sma_trend_period),
+                    atr=self._calculate_atr_optimized(high, low, close, params.atr_period),
+                    **self._calculate_bollinger_bands_optimized(close, params.bb_period, params.bb_std_mult),
+                    **self._calculate_macd_optimized(close, params.ema_fast_period,
+                                                   params.ema_slow_period, params.macd_signal_period),
+                    **self._calculate_stochastic_optimized(high, low, close,
+                                                         params.stoch_k_period, params.stoch_d_period)
+                )
+
+                # Cache if enabled
+                if self._config.cache_indicators:
+                    self._cache[cache_key] = indicators
+                    # Limit cache size
+                    if len(self._cache) > 50:
+                        oldest_key = next(iter(self._cache))
+                        del self._cache[oldest_key]
+
             return indicators
-            
+
         except Exception as e:
             raise IndicatorComputationError(f"Failed to calculate indicators: {e}") from e
     
@@ -742,42 +753,55 @@ class TradingSignalService:
     def generate_signals(self, indicators: TechnicalIndicators, params: TradingParameters) -> pd.Series:
         """Generate ensemble signals from the configured plugin catalog."""
 
-        available_signals: Dict[str, pd.Series] = {}
-        active_weights: Dict[str, float] = {}
-        for name, weight in params.ensemble_weights.items():
-            if weight <= 0:
-                continue
-            plugin = self._catalog.create(name)
-            if plugin is None:
-                self._logger.warning("Strategy plugin '%s' is not registered", name)
-                continue
-            try:
-                signal = plugin.generate(indicators, params)
-            except Exception as exc:  # pragma: no cover - defensive logging
-                self._logger.exception("Strategy plugin '%s' failed: %s", name, exc)
-                continue
-            available_signals[name] = signal
-            active_weights[name] = float(weight)
+        with _capture_pandas_warnings(
+            self._logger, component="trading_engine.signals"
+        ):
+            available_signals: Dict[str, pd.Series] = {}
+            active_weights: Dict[str, float] = {}
+            for name, weight in params.ensemble_weights.items():
+                if weight <= 0:
+                    continue
+                plugin = self._catalog.create(name)
+                if plugin is None:
+                    self._logger.warning("Strategy plugin '%s' is not registered", name)
+                    continue
+                try:
+                    signal = plugin.generate(indicators, params)
+                except Exception as exc:  # pragma: no cover - defensive logging
+                    self._logger.exception("Strategy plugin '%s' failed: %s", name, exc)
+                    continue
+                available_signals[name] = signal
+                active_weights[name] = float(weight)
 
-        if not available_signals:
-            return pd.Series(SignalType.FLAT.value, index=indicators.rsi.index, dtype=int)
+            if not available_signals:
+                return pd.Series(
+                    SignalType.FLAT.value, index=indicators.rsi.index, dtype=int
+                )
 
-        weight_sum = sum(active_weights.values())
-        if weight_sum <= 0:
-            weight_sum = float(len(active_weights))
-            active_weights = {key: 1.0 for key in active_weights}
+            weight_sum = sum(active_weights.values())
+            if weight_sum <= 0:
+                weight_sum = float(len(active_weights))
+                active_weights = {key: 1.0 for key in active_weights}
 
-        ensemble_signal = pd.Series(0.0, index=indicators.rsi.index, dtype=float)
-        for name, signal in available_signals.items():
-            normalized_weight = active_weights[name] / weight_sum
-            ensemble_signal = ensemble_signal.add(signal * normalized_weight, fill_value=0.0)
+            ensemble_signal = pd.Series(0.0, index=indicators.rsi.index, dtype=float)
+            for name, signal in available_signals.items():
+                normalized_weight = active_weights[name] / weight_sum
+                ensemble_signal = ensemble_signal.add(
+                    signal * normalized_weight, fill_value=0.0
+                )
 
-        final_signals = pd.Series(SignalType.FLAT.value, index=ensemble_signal.index, dtype=int)
-        final_signals[ensemble_signal > params.signal_threshold] = SignalType.LONG.value
-        final_signals[ensemble_signal < -params.signal_threshold] = SignalType.SHORT.value
+            final_signals = pd.Series(
+                SignalType.FLAT.value, index=ensemble_signal.index, dtype=int
+            )
+            final_signals[ensemble_signal > params.signal_threshold] = (
+                SignalType.LONG.value
+            )
+            final_signals[ensemble_signal < -params.signal_threshold] = (
+                SignalType.SHORT.value
+            )
 
-        final_signals = self._smooth_signals(final_signals)
-        return final_signals
+            final_signals = self._smooth_signals(final_signals)
+            return final_signals
     
     def _smooth_signals(self, signals: pd.Series, window: int = 3) -> pd.Series:
         """Smooth signals to reduce noise and whipsaws."""
@@ -809,85 +833,97 @@ class RiskManagementService:
         Returns a DataFrame with directional signal and position sizing that can be
         consumed by vectorized components without additional transformation.
         """
+        with _capture_pandas_warnings(
+            self._logger, component="trading_engine.risk_management"
+        ):
+            managed_direction = pd.Series(0, index=signals.index, dtype=int)
+            position_sizes = pd.Series(0.0, index=signals.index, dtype=float)
+            exit_reasons = pd.Series(pd.NA, index=signals.index, dtype='string')
 
-        managed_direction = pd.Series(0, index=signals.index, dtype=int)
-        position_sizes = pd.Series(0.0, index=signals.index, dtype=float)
-        exit_reasons = pd.Series(pd.NA, index=signals.index, dtype='string')
+            current_position = 0
+            current_size = 0.0
+            entry_price = 0.0
+            entry_time = None
 
-        current_position = 0
-        current_size = 0.0
-        entry_price = 0.0
-        entry_time = None
-
-        for i in range(len(signals)):
-            timestamp = signals.index[i]
-            current_signal = int(np.sign(signals.iloc[i])) if not pd.isna(signals.iloc[i]) else 0
-            current_price = data.loc[timestamp, 'close']
-            current_atr = indicators.atr.iloc[i]
-
-            # Check for position exit conditions first
-            if current_position != 0 and entry_price > 0:
-                exit_signal = self._check_exit_conditions(
-                    current_position, entry_price, current_price, current_atr, params
+            for i in range(len(signals)):
+                timestamp = signals.index[i]
+                current_signal = (
+                    int(np.sign(signals.iloc[i])) if not pd.isna(signals.iloc[i]) else 0
                 )
+                current_price = data.loc[timestamp, 'close']
+                current_atr = indicators.atr.iloc[i]
 
-                if exit_signal:
-                    managed_direction.iloc[i] = 0
-                    position_sizes.iloc[i] = 0.0
-                    exit_reasons.iloc[i] = exit_signal
-                    self._logger.debug(f"Risk management exit at {timestamp}: {exit_signal}")
+                # Check for position exit conditions first
+                if current_position != 0 and entry_price > 0:
+                    exit_signal = self._check_exit_conditions(
+                        current_position,
+                        entry_price,
+                        current_price,
+                        current_atr,
+                        params,
+                    )
+
+                    if exit_signal:
+                        managed_direction.iloc[i] = 0
+                        position_sizes.iloc[i] = 0.0
+                        exit_reasons.iloc[i] = exit_signal
+                        self._logger.debug(
+                            f"Risk management exit at {timestamp}: {exit_signal}"
+                        )
+                        current_position = 0
+                        current_size = 0.0
+                        entry_price = 0.0
+                        entry_time = None
+                        continue
+
+                # Handle new position entries
+                if current_signal != 0 and current_position == 0:
+                    # Apply position sizing
+                    position_size = self._calculate_position_size(
+                        current_price, current_atr, params
+                    )
+
+                    if position_size > 0:
+                        current_position = current_signal
+                        current_size = position_size
+                        entry_price = current_price
+                        entry_time = timestamp
+                        managed_direction.iloc[i] = current_position
+                        position_sizes.iloc[i] = current_size
+                    else:
+                        managed_direction.iloc[i] = 0
+                        position_sizes.iloc[i] = 0.0
+
+                elif current_signal == 0 and current_position != 0:
+                    # Natural signal exit
                     current_position = 0
                     current_size = 0.0
                     entry_price = 0.0
                     entry_time = None
-                    continue
+                    managed_direction.iloc[i] = 0
+                    position_sizes.iloc[i] = 0.0
+                    exit_reasons.iloc[i] = ExitReason.SIGNAL
 
-            # Handle new position entries
-            if current_signal != 0 and current_position == 0:
-                # Apply position sizing
-                position_size = self._calculate_position_size(
-                    current_price, current_atr, params
-                )
-
-                if position_size > 0:
-                    current_position = current_signal
-                    current_size = position_size
-                    entry_price = current_price
-                    entry_time = timestamp
+                elif current_position != 0:
+                    # Maintain current position and size
                     managed_direction.iloc[i] = current_position
                     position_sizes.iloc[i] = current_size
                 else:
+                    # No position, no signal
                     managed_direction.iloc[i] = 0
                     position_sizes.iloc[i] = 0.0
 
-            elif current_signal == 0 and current_position != 0:
-                # Natural signal exit
-                current_position = 0
-                current_size = 0.0
-                entry_price = 0.0
-                entry_time = None
-                managed_direction.iloc[i] = 0
-                position_sizes.iloc[i] = 0.0
-                exit_reasons.iloc[i] = ExitReason.SIGNAL
+            managed_frame = pd.DataFrame(
+                {
+                    'direction': managed_direction.astype(int),
+                    'size': position_sizes.astype(float),
+                }
+            )
 
-            elif current_position != 0:
-                # Maintain current position and size
-                managed_direction.iloc[i] = current_position
-                position_sizes.iloc[i] = current_size
-            else:
-                # No position, no signal
-                managed_direction.iloc[i] = 0
-                position_sizes.iloc[i] = 0.0
+            if exit_reasons.notna().any():
+                managed_frame['exit_reason'] = exit_reasons
 
-        managed_frame = pd.DataFrame({
-            'direction': managed_direction.astype(int),
-            'size': position_sizes.astype(float),
-        })
-
-        if exit_reasons.notna().any():
-            managed_frame['exit_reason'] = exit_reasons
-
-        return managed_frame
+            return managed_frame
     
     def _check_exit_conditions(self, position: int, entry_price: float, 
                              current_price: float, atr: float, params: TradingParameters) -> Optional[str]:
@@ -979,28 +1015,29 @@ class VectorizedBacktestEngine:
             BacktestExecutionError: If backtest execution fails
         """
         try:
-            # Align data and signals
-            aligned_data = data.reindex(positions.index, method='ffill')
+            with _capture_pandas_warnings(self._logger, component="trading_engine.backtest"):
+                # Align data and signals
+                aligned_data = data.reindex(positions.index, method='ffill')
 
-            # Calculate returns and equity curve
-            returns = self._calculate_returns_vectorized(aligned_data, positions, params, fee_bps)
-            equity_curve = (1 + returns).cumprod() * initial_capital
+                # Calculate returns and equity curve
+                returns = self._calculate_returns_vectorized(aligned_data, positions, params, fee_bps)
+                equity_curve = (1 + returns).cumprod() * initial_capital
 
-            # Generate comprehensive trades DataFrame
-            trades_df = self._generate_trades_dataframe_vectorized(aligned_data, positions, params)
-            
-            # Calculate all performance metrics
-            metrics = self.summarize_backtest(
-                equity_curve, trades_df, returns, config.risk_free_rate
-            )
-            
+                # Generate comprehensive trades DataFrame
+                trades_df = self._generate_trades_dataframe_vectorized(aligned_data, positions, params)
+
+                # Calculate all performance metrics
+                metrics = self.summarize_backtest(
+                    equity_curve, trades_df, returns, config.risk_free_rate
+                )
+
             return BacktestResult(
                 equity_curve=equity_curve,
                 trades=trades_df,
                 daily_returns=returns,
                 **metrics
             )
-            
+
         except Exception as e:
             raise BacktestExecutionError(f"Backtest execution failed: {e}") from e
     
@@ -1375,32 +1412,33 @@ class TradingEngine:
             self._logger.info("Starting enhanced trading strategy execution")
             start_time = pd.Timestamp.now()
 
-            validated_data = self._validator.validate_ohlcv(data)
-            self._logger.info(f"Validated {len(validated_data)} data points")
+            with _capture_pandas_warnings(self._logger, component="trading_engine.pipeline"):
+                validated_data = self._validator.validate_ohlcv(data)
+                self._logger.info(f"Validated {len(validated_data)} data points")
 
-            indicators = self._indicator_calculator.calculate_indicators(validated_data, params)
-            self._logger.info("Calculated technical indicators")
+                indicators = self._indicator_calculator.calculate_indicators(validated_data, params)
+                self._logger.info("Calculated technical indicators")
 
-            raw_signals = self._signal_generator.generate_signals(indicators, params)
-            self._logger.info(f"Generated {(raw_signals != 0).sum()} raw trading signals")
+                raw_signals = self._signal_generator.generate_signals(indicators, params)
+                self._logger.info(f"Generated {(raw_signals != 0).sum()} raw trading signals")
 
-            managed_positions = self._risk_manager.apply_risk_management(
-                validated_data, raw_signals, indicators, params
-            )
-            if not {'direction', 'size'}.issubset(managed_positions.columns):
-                raise TradingEngineError("Risk manager must return 'direction' and 'size' columns")
+                managed_positions = self._risk_manager.apply_risk_management(
+                    validated_data, raw_signals, indicators, params
+                )
+                if not {'direction', 'size'}.issubset(managed_positions.columns):
+                    raise TradingEngineError("Risk manager must return 'direction' and 'size' columns")
 
-            risk_filtered = (managed_positions['direction'] != raw_signals).sum()
-            self._logger.info(f"Risk management filtered {risk_filtered} signals")
+                risk_filtered = (managed_positions['direction'] != raw_signals).sum()
+                self._logger.info(f"Risk management filtered {risk_filtered} signals")
 
-            result = self._backtest_engine.run_backtest(
-                validated_data,
-                managed_positions,
-                params,
-                self._config,
-                initial_capital,
-                fee_bps,
-            )
+                result = self._backtest_engine.run_backtest(
+                    validated_data,
+                    managed_positions,
+                    params,
+                    self._config,
+                    initial_capital,
+                    fee_bps,
+                )
 
             self._performance_monitor.monitor_drawdown(
                 result.equity_curve, self._config.max_drawdown_threshold
@@ -1460,37 +1498,42 @@ class TradingEngine:
                 fee_bps,
             )
 
-        returns_df = pd.DataFrame({sym: res.daily_returns for sym, res in session_results.items()})
-        returns_df = returns_df.sort_index().fillna(0.0)
-        weight_series = pd.Series(weights).reindex(returns_df.columns).fillna(0.0)
-        weighted_returns = returns_df.mul(weight_series, axis=1).sum(axis=1)
-        weighted_returns.name = 'portfolio_returns'
-
-        combined_equity = (1 + weighted_returns).cumprod() * initial_capital
-
-        trades_frames: List[pd.DataFrame] = []
-        for symbol, res in session_results.items():
-            trades_df = res.trades.copy()
-            if trades_df.empty:
-                continue
-            trades_frames.append(trades_df.assign(symbol=symbol))
-
-        if trades_frames:
-            combined_trades = pd.concat(trades_frames, ignore_index=True)
-        else:
-            combined_trades = pd.DataFrame(
-                columns=[
-                    'entry_time', 'exit_time', 'entry_price', 'exit_price', 'position',
-                    'quantity', 'pnl', 'pnl_pct', 'duration', 'exit_reason', 'commission', 'symbol'
-                ]
+        with _capture_pandas_warnings(
+            self._logger, component="trading_engine.multi_session"
+        ):
+            returns_df = pd.DataFrame(
+                {sym: res.daily_returns for sym, res in session_results.items()}
             )
+            returns_df = returns_df.sort_index().fillna(0.0)
+            weight_series = pd.Series(weights).reindex(returns_df.columns).fillna(0.0)
+            weighted_returns = returns_df.mul(weight_series, axis=1).sum(axis=1)
+            weighted_returns.name = 'portfolio_returns'
 
-        metrics = self._backtest_engine.summarize_backtest(
-            combined_equity,
-            combined_trades.drop(columns=['symbol'], errors='ignore'),
-            weighted_returns,
-            self._config.risk_free_rate,
-        )
+            combined_equity = (1 + weighted_returns).cumprod() * initial_capital
+
+            trades_frames: List[pd.DataFrame] = []
+            for symbol, res in session_results.items():
+                trades_df = res.trades.copy()
+                if trades_df.empty:
+                    continue
+                trades_frames.append(trades_df.assign(symbol=symbol))
+
+            if trades_frames:
+                combined_trades = pd.concat(trades_frames, ignore_index=True)
+            else:
+                combined_trades = pd.DataFrame(
+                    columns=[
+                        'entry_time', 'exit_time', 'entry_price', 'exit_price', 'position',
+                        'quantity', 'pnl', 'pnl_pct', 'duration', 'exit_reason', 'commission', 'symbol'
+                    ]
+                )
+
+            metrics = self._backtest_engine.summarize_backtest(
+                combined_equity,
+                combined_trades.drop(columns=['symbol'], errors='ignore'),
+                weighted_returns,
+                self._config.risk_free_rate,
+            )
 
         aggregate_result = BacktestResult(
             equity_curve=combined_equity,
@@ -2446,7 +2489,7 @@ class StrategyTester:
         self._engine = engine
         self._logger = engine._logger
     
-    def walk_forward_analysis(self, data: pd.DataFrame, 
+    def walk_forward_analysis(self, data: pd.DataFrame,
                             params: TradingParameters,
                             train_ratio: float = 0.7,
                             step_ratio: float = 0.1,
@@ -2464,49 +2507,54 @@ class StrategyTester:
         Returns:
             DataFrame with walk-forward results
         """
-        results = []
-        data_length = len(data)
-        
-        train_size = max(int(data_length * train_ratio), min_train_periods)
-        step_size = max(int(data_length * step_ratio), 30)
-        
-        for start_idx in range(0, data_length - train_size - step_size, step_size):
-            train_end = start_idx + train_size
-            test_end = min(train_end + step_size, data_length)
-            
-            if test_end - train_end < 30:  # Ensure minimum test period
-                continue
-            
-            train_data = data.iloc[start_idx:train_end]
-            test_data = data.iloc[train_end:test_end]
-            
-            try:
-                # In practice, optimize parameters on train_data
-                # For now, use provided parameters
-                result = self._engine.run_strategy(test_data, params)
-                
-                results.append({
-                    'period_start': test_data.index[0],
-                    'period_end': test_data.index[-1],
-                    'train_periods': len(train_data),
-                    'test_periods': len(test_data),
-                    'total_return': result.total_return,
-                    'annualized_return': result.annualized_return,
-                    'sharpe_ratio': result.sharpe_ratio,
-                    'sortino_ratio': result.sortino_ratio,
-                    'max_drawdown': result.max_drawdown,
-                    'volatility': result.volatility,
-                    'total_trades': result.total_trades,
-                    'win_rate': result.win_rate,
-                    'profit_factor': result.profit_factor
-                })
-                
-            except Exception as e:
-                self._logger.error(f"Walk-forward test failed for period {start_idx}: {e}")
-        
+        results: list[dict[str, Any]] = []
+        with _capture_pandas_warnings(
+            self._logger, component="trading_engine.walk_forward"
+        ):
+            data_length = len(data)
+
+            train_size = max(int(data_length * train_ratio), min_train_periods)
+            step_size = max(int(data_length * step_ratio), 30)
+
+            for start_idx in range(0, data_length - train_size - step_size, step_size):
+                train_end = start_idx + train_size
+                test_end = min(train_end + step_size, data_length)
+
+                if test_end - train_end < 30:  # Ensure minimum test period
+                    continue
+
+                train_data = data.iloc[start_idx:train_end]
+                test_data = data.iloc[train_end:test_end]
+
+                try:
+                    # In practice, optimize parameters on train_data
+                    # For now, use provided parameters
+                    result = self._engine.run_strategy(test_data, params)
+
+                    results.append({
+                        'period_start': test_data.index[0],
+                        'period_end': test_data.index[-1],
+                        'train_periods': len(train_data),
+                        'test_periods': len(test_data),
+                        'total_return': result.total_return,
+                        'annualized_return': result.annualized_return,
+                        'sharpe_ratio': result.sharpe_ratio,
+                        'sortino_ratio': result.sortino_ratio,
+                        'max_drawdown': result.max_drawdown,
+                        'volatility': result.volatility,
+                        'total_trades': result.total_trades,
+                        'win_rate': result.win_rate,
+                        'profit_factor': result.profit_factor
+                    })
+
+                except Exception as e:
+                    self._logger.error(
+                        "Walk-forward test failed for period %s: %s", start_idx, e
+                    )
+
         return pd.DataFrame(results)
-    
-    def monte_carlo_simulation(self, data: pd.DataFrame, 
+
+    def monte_carlo_simulation(self, data: pd.DataFrame,
                               params: TradingParameters,
                               n_simulations: int = 1000,
                               block_length: int = 30) -> Dict[str, np.ndarray]:
@@ -2522,36 +2570,45 @@ class StrategyTester:
         Returns:
             Dictionary of simulation results
         """
-        results = {
-            'returns': [], 
-            'sharpe_ratios': [], 
+        results: dict[str, list[float | int]] = {
+            'returns': [],
+            'sharpe_ratios': [],
             'max_drawdowns': [],
             'volatilities': [],
             'win_rates': [],
             'total_trades': []
         }
-        
-        # Calculate returns for block bootstrap
-        returns = data['close'].pct_change().dropna()
-        
-        for i in range(n_simulations):
-            try:
-                # Generate synthetic data using block bootstrap
-                synthetic_returns = self._block_bootstrap(returns, len(data), block_length)
-                synthetic_data = self._returns_to_ohlcv(synthetic_returns, data.iloc[0])
-                
-                result = self._engine.run_strategy(synthetic_data, params)
-                
-                results['returns'].append(result.total_return)
-                results['sharpe_ratios'].append(result.sharpe_ratio)
-                results['max_drawdowns'].append(result.max_drawdown)
-                results['volatilities'].append(result.volatility)
-                results['win_rates'].append(result.win_rate)
-                results['total_trades'].append(result.total_trades)
-                
-            except Exception as e:
-                self._logger.warning(f"Monte Carlo simulation {i} failed: {e}")
-        
+
+        with _capture_pandas_warnings(
+            self._logger, component="trading_engine.monte_carlo"
+        ):
+            # Calculate returns for block bootstrap
+            returns = data['close'].pct_change().dropna()
+
+            for i in range(n_simulations):
+                try:
+                    # Generate synthetic data using block bootstrap
+                    synthetic_returns = self._block_bootstrap(
+                        returns, len(data), block_length
+                    )
+                    synthetic_data = self._returns_to_ohlcv(
+                        synthetic_returns, data.iloc[0]
+                    )
+
+                    result = self._engine.run_strategy(synthetic_data, params)
+
+                    results['returns'].append(result.total_return)
+                    results['sharpe_ratios'].append(result.sharpe_ratio)
+                    results['max_drawdowns'].append(result.max_drawdown)
+                    results['volatilities'].append(result.volatility)
+                    results['win_rates'].append(result.win_rate)
+                    results['total_trades'].append(result.total_trades)
+
+                except Exception as e:
+                    self._logger.warning(
+                        "Monte Carlo simulation %s failed: %s", i, e
+                    )
+
         return {k: np.array(v) for k, v in results.items()}
     
     def _block_bootstrap(self, returns: pd.Series, target_length: int, block_length: int) -> pd.Series:
@@ -2930,25 +2987,32 @@ class TradingStrategies:
             else:
                 # Uzyskaj wewnętrzne komponenty, policz wskaźniki i surowe sygnały, wstrzyknij fuzję AI, potem risk+backtest.
                 # (Zachowuje semantykę engine.run_strategy, ale z fuzją.)
-                validated_data = engine._validator.validate_ohlcv(data)  # używa istniejących serwisów
-                indicators = engine._indicator_calculator.calculate_indicators(validated_data, params)
-                raw_signals = engine._signal_generator.generate_signals(indicators, params)
-                bridge = AITradingBridge(ai_model, weight_ai=float(ai_weight), threshold_bps=float(ai_threshold_bps))
-                fused_signals = bridge.integrate(validated_data, raw_signals)
-                managed_positions = engine._risk_manager.apply_risk_management(
-                    validated_data,
-                    fused_signals,
-                    indicators,
-                    params,
-                )
-                result = engine._backtest_engine.run_backtest(
-                    validated_data,
-                    managed_positions,
-                    params,
-                    engine._config,
-                    initial_capital,
-                    fee_bps,
-                )
+                with _capture_pandas_warnings(
+                    engine._logger, component="trading_engine.pipeline"
+                ):
+                    validated_data = engine._validator.validate_ohlcv(data)  # używa istniejących serwisów
+                    indicators = engine._indicator_calculator.calculate_indicators(validated_data, params)
+                    raw_signals = engine._signal_generator.generate_signals(indicators, params)
+                    bridge = AITradingBridge(
+                        ai_model,
+                        weight_ai=float(ai_weight),
+                        threshold_bps=float(ai_threshold_bps),
+                    )
+                    fused_signals = bridge.integrate(validated_data, raw_signals)
+                    managed_positions = engine._risk_manager.apply_risk_management(
+                        validated_data,
+                        fused_signals,
+                        indicators,
+                        params,
+                    )
+                    result = engine._backtest_engine.run_backtest(
+                        validated_data,
+                        managed_positions,
+                        params,
+                        engine._config,
+                        initial_capital,
+                        fee_bps,
+                    )
 
         # 5) Konwersja wyników do formatu GUI
         metrics = {

@@ -12,6 +12,7 @@ import numpy as np
 import pandas as pd
 
 from bot_core.alerts import AlertSeverity, emit_alert
+from bot_core.observability.pandas_warnings import capture_pandas_warnings
 
 __all__ = [
     "RiskLevel",
@@ -115,34 +116,44 @@ class VolatilityEstimator:
         self, returns: pd.Series, lambda_param: float = 0.94
     ) -> float:
         try:
-            if returns is None or len(returns) < 2:
-                return 0.02
-            if len(returns) < 10:
-                return float(returns.std()) if len(returns) > 1 else 0.02
+            with capture_pandas_warnings(
+                self.logger, component="risk.volatility.ewma"
+            ):
+                if returns is None or len(returns) < 2:
+                    return 0.02
+                if len(returns) < 10:
+                    return float(returns.std()) if len(returns) > 1 else 0.02
 
-            weights = np.array(
-                [(1 - lambda_param) * (lambda_param**i) for i in range(len(returns))]
-            )[::-1]
-            weights = weights / weights.sum()
-            weighted_variance = np.sum(weights * (returns**2))
-            return float(np.sqrt(weighted_variance * 252))
+                weights = np.array(
+                    [(1 - lambda_param) * (lambda_param**i) for i in range(len(returns))]
+                )[::-1]
+                weights = weights / weights.sum()
+                weighted_variance = np.sum(weights * (returns**2))
+                return float(np.sqrt(weighted_variance * 252))
         except Exception as exc:  # pragma: no cover - log i fallback
             self.logger.error("Error calculating EWMA volatility: %s", exc)
             return 0.02
 
     def garch_volatility(self, returns: pd.Series) -> float:
         try:
-            if returns is None or len(returns) < 50:
-                empty = returns if returns is not None else pd.Series([], dtype=float)
-                return self.ewma_volatility(empty)
+            with capture_pandas_warnings(
+                self.logger, component="risk.volatility.garch"
+            ):
+                if returns is None or len(returns) < 50:
+                    empty = returns if returns is not None else pd.Series([], dtype=float)
+                    return self.ewma_volatility(empty)
 
-            omega, alpha, beta = 1e-6, 0.1, 0.85
-            variances = [float(returns.var())]
-            limit = min(len(returns), 100)
-            for idx in range(1, limit):
-                new_var = omega + alpha * (returns.iloc[idx - 1] ** 2) + beta * variances[-1]
-                variances.append(float(new_var))
-            return float(np.sqrt(variances[-1] * 252))
+                omega, alpha, beta = 1e-6, 0.1, 0.85
+                variances = [float(returns.var())]
+                limit = min(len(returns), 100)
+                for idx in range(1, limit):
+                    new_var = (
+                        omega
+                        + alpha * (returns.iloc[idx - 1] ** 2)
+                        + beta * variances[-1]
+                    )
+                    variances.append(float(new_var))
+                return float(np.sqrt(variances[-1] * 252))
         except Exception as exc:  # pragma: no cover - log i fallback
             self.logger.error("Error calculating GARCH volatility: %s", exc)
             empty = returns if returns is not None else pd.Series([], dtype=float)
@@ -150,9 +161,12 @@ class VolatilityEstimator:
 
     def realized_volatility(self, returns: pd.Series) -> float:
         try:
-            if returns is None or len(returns) == 0:
-                return 0.02
-            return float(returns.std() * np.sqrt(252))
+            with capture_pandas_warnings(
+                self.logger, component="risk.volatility.realized"
+            ):
+                if returns is None or len(returns) == 0:
+                    return 0.02
+                return float(returns.std() * np.sqrt(252))
         except Exception:  # pragma: no cover - fallback
             return 0.02
 
@@ -168,16 +182,19 @@ class CorrelationAnalyzer:
         self, returns1: pd.Series, returns2: pd.Series, window: int = 60
     ) -> float:
         try:
-            if returns1 is None or returns2 is None:
-                return 0.0
-            if len(returns1) < window or len(returns2) < window:
-                return 0.0
-            aligned = pd.concat([returns1, returns2], axis=1).dropna()
-            if len(aligned) < window:
-                return 0.0
-            rolling_corr = aligned.iloc[:, 0].rolling(window).corr(aligned.iloc[:, 1])
-            value = rolling_corr.iloc[-1]
-            return float(value) if not pd.isna(value) else 0.0
+            with capture_pandas_warnings(
+                self.logger, component="risk.correlation.dynamic"
+            ):
+                if returns1 is None or returns2 is None:
+                    return 0.0
+                if len(returns1) < window or len(returns2) < window:
+                    return 0.0
+                aligned = pd.concat([returns1, returns2], axis=1).dropna()
+                if len(aligned) < window:
+                    return 0.0
+                rolling_corr = aligned.iloc[:, 0].rolling(window).corr(aligned.iloc[:, 1])
+                value = rolling_corr.iloc[-1]
+                return float(value) if not pd.isna(value) else 0.0
         except Exception as exc:  # pragma: no cover - log i fallback
             self.logger.error("Error calculating dynamic correlation: %s", exc)
             return 0.0
@@ -186,20 +203,23 @@ class CorrelationAnalyzer:
         self, returns_dict: Mapping[str, pd.Series]
     ) -> float:
         try:
-            symbols = list(returns_dict.keys())
-            if len(symbols) < 2:
-                return 0.0
+            with capture_pandas_warnings(
+                self.logger, component="risk.correlation.portfolio"
+            ):
+                symbols = list(returns_dict.keys())
+                if len(symbols) < 2:
+                    return 0.0
 
-            correlations: List[float] = []
-            for idx, sym_a in enumerate(symbols):
-                for sym_b in symbols[idx + 1 :]:
-                    corr = self.calculate_dynamic_correlation(
-                        returns_dict[sym_a], returns_dict[sym_b]
-                    )
-                    correlations.append(abs(float(corr)))
+                correlations: List[float] = []
+                for idx, sym_a in enumerate(symbols):
+                    for sym_b in symbols[idx + 1 :]:
+                        corr = self.calculate_dynamic_correlation(
+                            returns_dict[sym_a], returns_dict[sym_b]
+                        )
+                        correlations.append(abs(float(corr)))
 
-            avg_corr = float(np.mean(correlations)) if correlations else 0.0
-            return min(1.0, max(0.0, avg_corr))
+                avg_corr = float(np.mean(correlations)) if correlations else 0.0
+                return min(1.0, max(0.0, avg_corr))
         except Exception as exc:  # pragma: no cover - log i fallback
             self.logger.error("Error calculating portfolio correlation risk: %s", exc)
             return 0.5
@@ -272,88 +292,98 @@ class RiskManagement:
         current_portfolio: Mapping[str, Mapping[str, Any]],
     ) -> PositionSizing:
         try:
-            signal_strength = float(signal_data.get("strength", 0.5))
-            signal_confidence = float(signal_data.get("confidence", 0.5))
+            with capture_pandas_warnings(
+                self.logger, component="risk.position_sizing"
+            ):
+                signal_strength = float(signal_data.get("strength", 0.5))
+                signal_confidence = float(signal_data.get("confidence", 0.5))
 
-            returns = (
-                market_data["close"].pct_change().dropna()
-                if "close" in market_data
-                else pd.Series([], dtype=float)
-            )
-
-            kelly_size = self._calculate_kelly_criterion(returns, signal_confidence)
-            volatility = self.volatility_estimator.ewma_volatility(returns)
-            vol_adjusted_size = self._volatility_adjusted_size(
-                volatility, signal_strength
-            )
-            risk_parity_size = self._risk_parity_sizing(current_portfolio, volatility)
-            portfolio_heat = self._calculate_portfolio_heat(current_portfolio)
-            heat_adjusted_size = self._heat_adjusted_sizing(portfolio_heat)
-
-            if portfolio_heat > 0.8:
-                self._emit_alert(
-                    f"Wysokie 'portfolio heat' ({portfolio_heat:.2%}) – ograniczam ekspozycję.",
-                    severity=AlertSeverity.WARNING,
-                    context={
-                        "portfolio_heat": float(portfolio_heat),
-                        "symbol": symbol,
-                    },
+                returns = (
+                    market_data["close"].pct_change().dropna()
+                    if "close" in market_data
+                    else pd.Series([], dtype=float)
                 )
 
-            correlation_adjustment = self._correlation_adjustment(
-                symbol, current_portfolio
-            )
+                kelly_size = self._calculate_kelly_criterion(returns, signal_confidence)
+                volatility = self.volatility_estimator.ewma_volatility(returns)
+                vol_adjusted_size = self._volatility_adjusted_size(
+                    volatility, signal_strength
+                )
+                risk_parity_size = self._risk_parity_sizing(current_portfolio, volatility)
+                portfolio_heat = self._calculate_portfolio_heat(current_portfolio)
+                heat_adjusted_size = self._heat_adjusted_sizing(portfolio_heat)
 
-            sizes = [kelly_size, vol_adjusted_size, risk_parity_size, heat_adjusted_size]
-            weights = [0.3, 0.3, 0.2, 0.2]
-            combined_size = float(sum(s * w for s, w in zip(sizes, weights)))
-            final_size = combined_size * float(correlation_adjustment)
+                if portfolio_heat > 0.8:
+                    self._emit_alert(
+                        "Wysokie 'portfolio heat' "
+                        f"({portfolio_heat:.2%}) – ograniczam ekspozycję.",
+                        severity=AlertSeverity.WARNING,
+                        context={
+                            "portfolio_heat": float(portfolio_heat),
+                            "symbol": symbol,
+                        },
+                    )
 
-            max_allowed = float(self._calculate_max_position_size(current_portfolio))
-            recommended_size = float(max(0.0, min(final_size, max_allowed)))
-
-            if recommended_size == 0.0:
-                self._emit_alert(
-                    f"Rekomendacja risk engine: brak nowej pozycji na {symbol} (0%).",
-                    severity=AlertSeverity.WARNING,
-                    context={
-                        "symbol": symbol,
-                        "portfolio_heat": float(portfolio_heat),
-                        "max_allowed": max_allowed,
-                        "correlation_adjustment": float(correlation_adjustment),
-                    },
+                correlation_adjustment = self._correlation_adjustment(
+                    symbol, current_portfolio
                 )
 
-            size_variance = float(np.var(sizes))
-            confidence = float(max(0.1, 1.0 - size_variance))
-            if confidence < 0.2:
-                self._emit_alert(
-                    f"Bardzo niska pewność sizingu dla {symbol} ({confidence:.2f}).",
-                    severity=AlertSeverity.INFO,
-                    context={
-                        "symbol": symbol,
-                        "confidence": confidence,
-                        "size_variance": size_variance,
-                    },
+                sizes = [
+                    kelly_size,
+                    vol_adjusted_size,
+                    risk_parity_size,
+                    heat_adjusted_size,
+                ]
+                weights = [0.3, 0.3, 0.2, 0.2]
+                combined_size = float(sum(s * w for s, w in zip(sizes, weights)))
+                final_size = combined_size * float(correlation_adjustment)
+
+                max_allowed = float(self._calculate_max_position_size(current_portfolio))
+                recommended_size = float(max(0.0, min(final_size, max_allowed)))
+
+                if recommended_size == 0.0:
+                    self._emit_alert(
+                        "Rekomendacja risk engine: brak nowej pozycji "
+                        f"na {symbol} (0%).",
+                        severity=AlertSeverity.WARNING,
+                        context={
+                            "symbol": symbol,
+                            "portfolio_heat": float(portfolio_heat),
+                            "max_allowed": max_allowed,
+                            "correlation_adjustment": float(correlation_adjustment),
+                        },
+                    )
+
+                size_variance = float(np.var(sizes))
+                confidence = float(max(0.1, 1.0 - size_variance))
+                if confidence < 0.2:
+                    self._emit_alert(
+                        f"Bardzo niska pewność sizingu dla {symbol} ({confidence:.2f}).",
+                        severity=AlertSeverity.INFO,
+                        context={
+                            "symbol": symbol,
+                            "confidence": confidence,
+                            "size_variance": size_variance,
+                        },
+                    )
+
+                reasoning = self._generate_sizing_reasoning(
+                    kelly_size,
+                    vol_adjusted_size,
+                    risk_parity_size,
+                    heat_adjusted_size,
+                    float(correlation_adjustment),
+                    float(portfolio_heat),
                 )
 
-            reasoning = self._generate_sizing_reasoning(
-                kelly_size,
-                vol_adjusted_size,
-                risk_parity_size,
-                heat_adjusted_size,
-                float(correlation_adjustment),
-                float(portfolio_heat),
-            )
-
-            return PositionSizing(
-                recommended_size=recommended_size,
-                max_allowed_size=max_allowed,
-                kelly_size=kelly_size,
-                risk_adjusted_size=final_size,
-                confidence_level=confidence,
-                reasoning=reasoning,
-            )
+                return PositionSizing(
+                    recommended_size=recommended_size,
+                    max_allowed_size=max_allowed,
+                    kelly_size=kelly_size,
+                    risk_adjusted_size=final_size,
+                    confidence_level=confidence,
+                    reasoning=reasoning,
+                )
         except Exception as exc:  # pragma: no cover - log i fallback
             self.logger.error("Error calculating position size: %s", exc)
             self._emit_alert(
@@ -505,61 +535,66 @@ class RiskManagement:
         market_data: Mapping[str, pd.DataFrame],
     ) -> RiskMetrics:
         try:
-            var_95 = float(self._calculate_var(portfolio_data, market_data, confidence=0.95))
-            expected_shortfall = float(
-                self._calculate_expected_shortfall(portfolio_data, market_data)
-            )
-            max_dd_risk = float(self._calculate_drawdown_risk(portfolio_data))
-            correlation_risk = float(
-                self._calculate_correlation_risk(portfolio_data, market_data)
-            )
-            liquidity_risk = float(self._calculate_liquidity_risk(portfolio_data, market_data))
-
-            overall_score = (
-                var_95 * 0.3
-                + expected_shortfall * 0.25
-                + max_dd_risk * 0.2
-                + correlation_risk * 0.15
-                + liquidity_risk * 0.1
-            )
-            overall_score = float(min(1.0, max(0.0, overall_score)))
-
-            if overall_score < 0.2:
-                level = RiskLevel.VERY_LOW
-            elif overall_score < 0.4:
-                level = RiskLevel.LOW
-            elif overall_score < 0.6:
-                level = RiskLevel.MEDIUM
-            elif overall_score < 0.8:
-                level = RiskLevel.HIGH
-            else:
-                level = RiskLevel.VERY_HIGH
-
-            if level.value >= RiskLevel.HIGH.value:
-                self._emit_alert(
-                    "Podwyższone ryzyko portfela",
-                    severity=(
-                        AlertSeverity.WARNING
-                        if level == RiskLevel.HIGH
-                        else AlertSeverity.CRITICAL
-                    ),
-                    context={
-                        "overall_risk_score": overall_score,
-                        "risk_level": level.name,
-                        "var_95": var_95,
-                        "expected_shortfall": expected_shortfall,
-                    },
+            with capture_pandas_warnings(self.logger, component="risk.metrics"):
+                var_95 = float(
+                    self._calculate_var(portfolio_data, market_data, confidence=0.95)
+                )
+                expected_shortfall = float(
+                    self._calculate_expected_shortfall(portfolio_data, market_data)
+                )
+                max_dd_risk = float(self._calculate_drawdown_risk(portfolio_data))
+                correlation_risk = float(
+                    self._calculate_correlation_risk(portfolio_data, market_data)
+                )
+                liquidity_risk = float(
+                    self._calculate_liquidity_risk(portfolio_data, market_data)
                 )
 
-            return RiskMetrics(
-                var_95=var_95,
-                expected_shortfall=expected_shortfall,
-                max_drawdown_risk=max_dd_risk,
-                correlation_risk=correlation_risk,
-                liquidity_risk=liquidity_risk,
-                overall_risk_score=overall_score,
-                risk_level=level,
-            )
+                overall_score = (
+                    var_95 * 0.3
+                    + expected_shortfall * 0.25
+                    + max_dd_risk * 0.2
+                    + correlation_risk * 0.15
+                    + liquidity_risk * 0.1
+                )
+                overall_score = float(min(1.0, max(0.0, overall_score)))
+
+                if overall_score < 0.2:
+                    level = RiskLevel.VERY_LOW
+                elif overall_score < 0.4:
+                    level = RiskLevel.LOW
+                elif overall_score < 0.6:
+                    level = RiskLevel.MEDIUM
+                elif overall_score < 0.8:
+                    level = RiskLevel.HIGH
+                else:
+                    level = RiskLevel.VERY_HIGH
+
+                if level.value >= RiskLevel.HIGH.value:
+                    self._emit_alert(
+                        "Podwyższone ryzyko portfela",
+                        severity=(
+                            AlertSeverity.WARNING
+                            if level == RiskLevel.HIGH
+                            else AlertSeverity.CRITICAL
+                        ),
+                        context={
+                            "overall_risk_score": overall_score,
+                            "risk_level": level.name,
+                            "var_95": var_95,
+                            "expected_shortfall": expected_shortfall,
+                        },
+                    )
+
+                return RiskMetrics(
+                    var_95=var_95,
+                    expected_shortfall=expected_shortfall,
+                    max_drawdown_risk=max_dd_risk,
+                    correlation_risk=correlation_risk,
+                    liquidity_risk=liquidity_risk,
+                    overall_risk_score=overall_score,
+                    risk_level=level,
+                )
         except Exception as exc:  # pragma: no cover - log i fallback
             self.logger.error("Error calculating risk metrics: %s", exc)
         return RiskMetrics(
@@ -1106,23 +1141,26 @@ class MultiAccountRiskManager:
         market_returns: Mapping[str, pd.Series],
     ) -> None:
         try:
-            self.portfolio_value_history.append(float(portfolio_value))
-            if len(self.portfolio_value_history) > 252:
-                self.portfolio_value_history = self.portfolio_value_history[-252:]
+            with capture_pandas_warnings(
+                self.logger, component="risk.portfolio_state"
+            ):
+                self.portfolio_value_history.append(float(portfolio_value))
+                if len(self.portfolio_value_history) > 252:
+                    self.portfolio_value_history = self.portfolio_value_history[-252:]
 
-            self.current_positions = dict(positions) if positions else {}
+                self.current_positions = dict(positions) if positions else {}
 
-            for symbol, returns in (market_returns or {}).items():
-                if symbol not in self.historical_returns:
-                    self.historical_returns[symbol] = returns
-                else:
-                    combined = pd.concat([self.historical_returns[symbol], returns]).dropna()
-                    self.historical_returns[symbol] = combined.tail(252)
-            self.logger.debug(
-                "Updated portfolio state: value=%.2f, positions=%d",
-                portfolio_value,
-                len(self.current_positions),
-            )
+                for symbol, returns in (market_returns or {}).items():
+                    if symbol not in self.historical_returns:
+                        self.historical_returns[symbol] = returns
+                    else:
+                        combined = pd.concat([self.historical_returns[symbol], returns]).dropna()
+                        self.historical_returns[symbol] = combined.tail(252)
+                self.logger.debug(
+                    "Updated portfolio state: value=%.2f, positions=%d",
+                    portfolio_value,
+                    len(self.current_positions),
+                )
         except Exception as exc:  # pragma: no cover - log i fallback
             self.logger.error("Error updating portfolio state: %s", exc)
 
@@ -1157,62 +1195,67 @@ def backtest_risk_strategy(
     signals: Sequence[Mapping[str, Any]],
 ) -> Dict[str, Any]:
     try:
-        results: Dict[str, Any] = {
-            "total_trades": 0,
-            "risk_adjusted_trades": 0,
-            "rejected_trades": 0,
-            "max_portfolio_heat": 0.0,
-            "risk_events": [],
-        }
-        portfolio: Dict[str, Dict[str, Any]] = {}
+        with capture_pandas_warnings(_LOGGER, component="risk.backtest"):
+            results: Dict[str, Any] = {
+                "total_trades": 0,
+                "risk_adjusted_trades": 0,
+                "rejected_trades": 0,
+                "max_portfolio_heat": 0.0,
+                "risk_events": [],
+            }
+            portfolio: Dict[str, Dict[str, Any]] = {}
 
-        for signal in signals or []:
-            symbol = str(signal.get("symbol", "UNKNOWN"))
-            md = historical_data.get(symbol)
-            if not isinstance(md, pd.DataFrame):
-                continue
+            for signal in signals or []:
+                symbol = str(signal.get("symbol", "UNKNOWN"))
+                md = historical_data.get(symbol)
+                if not isinstance(md, pd.DataFrame):
+                    continue
 
-            sizing = risk_manager.calculate_position_size(symbol, signal, md, portfolio)
-            can_trade, reason = risk_manager.check_position_limits(
-                {
-                    "symbol": symbol,
-                    "size": sizing.recommended_size,
-                    "volatility": 0.2,
-                },
-                portfolio,
-            )
-            results["total_trades"] += 1
-            if can_trade and sizing.recommended_size > 0.005:
-                entry_price = (
-                    signal.get("price")
-                    if "price" in signal
-                    else float(md["close"].iloc[-1]) if "close" in md and len(md) else 0.0
+                sizing = risk_manager.calculate_position_size(
+                    symbol, signal, md, portfolio
                 )
-                portfolio[symbol] = {
-                    "size": sizing.recommended_size,
-                    "entry_price": float(entry_price),
-                    "volatility": 0.2,
-                }
-                results["risk_adjusted_trades"] += 1
-            else:
-                results["rejected_trades"] += 1
-                results["risk_events"].append(
+                can_trade, reason = risk_manager.check_position_limits(
                     {
                         "symbol": symbol,
-                        "reason": reason,
-                        "suggested_size": sizing.recommended_size,
+                        "size": sizing.recommended_size,
+                        "volatility": 0.2,
+                    },
+                    portfolio,
+                )
+                results["total_trades"] += 1
+                if can_trade and sizing.recommended_size > 0.005:
+                    entry_price = (
+                        signal.get("price")
+                        if "price" in signal
+                        else float(md["close"].iloc[-1]) if "close" in md and len(md) else 0.0
+                    )
+                    portfolio[symbol] = {
+                        "size": sizing.recommended_size,
+                        "entry_price": float(entry_price),
+                        "volatility": 0.2,
                     }
+                    results["risk_adjusted_trades"] += 1
+                else:
+                    results["rejected_trades"] += 1
+                    results["risk_events"].append(
+                        {
+                            "symbol": symbol,
+                            "reason": reason,
+                            "suggested_size": sizing.recommended_size,
+                        }
+                    )
+
+                heat = risk_manager._calculate_portfolio_heat(portfolio)
+                results["max_portfolio_heat"] = max(
+                    results["max_portfolio_heat"], float(heat)
                 )
 
-            heat = risk_manager._calculate_portfolio_heat(portfolio)
-            results["max_portfolio_heat"] = max(results["max_portfolio_heat"], float(heat))
-
-        results["risk_adjusted_ratio"] = (
-            results["risk_adjusted_trades"] / results["total_trades"]
-            if results["total_trades"] > 0
-            else 0.0
-        )
-        return results
+            results["risk_adjusted_ratio"] = (
+                results["risk_adjusted_trades"] / results["total_trades"]
+                if results["total_trades"] > 0
+                else 0.0
+            )
+            return results
     except Exception as exc:  # pragma: no cover - log i fallback
         _LOGGER.exception("backtest_risk_strategy failed")
         return {"error": str(exc), "total_trades": 0}
@@ -1222,12 +1265,13 @@ def calculate_optimal_leverage(
     returns: pd.Series, target_volatility: float = 0.15
 ) -> float:
     try:
-        if returns is None or len(returns) < 20:
-            return 1.0
-        port_vol = float(returns.std() * np.sqrt(252))
-        if port_vol <= 0:
-            return 1.0
-        lev = float(target_volatility / port_vol)
-        return float(max(0.1, min(lev, 3.0)))
+        with capture_pandas_warnings(_LOGGER, component="risk.leverage"):
+            if returns is None or len(returns) < 20:
+                return 1.0
+            port_vol = float(returns.std() * np.sqrt(252))
+            if port_vol <= 0:
+                return 1.0
+            lev = float(target_volatility / port_vol)
+            return float(max(0.1, min(lev, 3.0)))
     except Exception:  # pragma: no cover - fallback
         return 1.0

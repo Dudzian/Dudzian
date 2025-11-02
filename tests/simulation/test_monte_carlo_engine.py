@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import logging
+import warnings
+from unittest.mock import patch
 
 import numpy as np
 import pandas as pd
@@ -76,3 +79,33 @@ def test_report_builder_produces_summary_frame() -> None:
     as_dict = report.to_dict()
     assert "summary" in as_dict and "metadata" in as_dict
     assert as_dict["metadata"]["model"] == ModelType.GBM.value
+
+
+def test_monte_carlo_strategy_pandas_warning_tracked(caplog) -> None:
+    prices = pd.Series([100.0, 101.0, 102.0, 103.0], name="close")
+    scenario = MonteCarloScenario(model=ModelType.GBM, volatility=VolatilityConfig())
+    risk = RiskParameters(horizon_days=3, confidence_level=0.95, num_paths=4, seed=11)
+    engine = MonteCarloEngine(scenario, risk)
+
+    class WarningStrategy:
+        name = "warning"
+
+        def evaluate_path(self, series: pd.Series) -> float:
+            warnings.warn("vectorized fallback", pd.errors.PerformanceWarning)
+            return float(series.iloc[-1] / series.iloc[0] - 1.0)
+
+    with (
+        patch("bot_core.observability.pandas_warnings.observe_pandas_warning") as observe_warning,
+        caplog.at_level(logging.WARNING, logger="bot_core.simulation.monte_carlo.engine"),
+    ):
+        engine.run([WarningStrategy()], prices)
+
+    assert observe_warning.call_count >= 1
+    kwargs = observe_warning.call_args_list[0].kwargs
+    assert kwargs["component"] == "backtest.monte_carlo.strategy"
+    assert kwargs["category"] == "PerformanceWarning"
+    assert kwargs["message"] == "vectorized fallback"
+    assert any(
+        "Pandas warning captured in backtest.monte_carlo.strategy" in message
+        for message in caplog.messages
+    )
