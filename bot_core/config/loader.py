@@ -4449,12 +4449,34 @@ def load_runtime_app_config(path: str | Path) -> RuntimeAppConfig:
             latency_histogram_buckets=tuple(latency_buckets),
         )
 
+    def _normalize_execution_profiles(section: object) -> dict[str, dict[str, Any]]:
+        if not isinstance(section, Mapping):
+            return {}
+        profiles: dict[str, dict[str, Any]] = {}
+        for name, payload in section.items():
+            if not isinstance(payload, Mapping):
+                continue
+            normalized: dict[str, Any] = {}
+            for key, value in payload.items():
+                if isinstance(value, Mapping):
+                    normalized[str(key)] = dict(value)
+                elif isinstance(value, (list, tuple)):
+                    normalized[str(key)] = tuple(value)
+                else:
+                    normalized[str(key)] = value
+            profiles[str(name)] = normalized
+        return profiles
+
     mode_raw = _as_optional_str(execution_section.get("default_mode")) or "paper"
+    paper_profiles = _normalize_execution_profiles(execution_section.get("paper_profiles"))
+    trading_profiles = _normalize_execution_profiles(execution_section.get("trading_profiles"))
     execution_settings = RuntimeExecutionSettings(
         default_mode=mode_raw,
         force_paper_when_offline=bool(execution_section.get("force_paper_when_offline", True)),
         auth_token=_as_optional_str(execution_section.get("auth_token")),
         live=live_settings,
+        paper_profiles=paper_profiles,
+        trading_profiles=trading_profiles,
     )
 
     risk_section = raw.get("risk") or {}
