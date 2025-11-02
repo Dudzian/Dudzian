@@ -482,6 +482,8 @@ class DecisionSummaryAggregator:
             "model_expected_return_bps": _StatAccumulator(),
             "model_expected_value_bps": _StatAccumulator(),
             "model_expected_value_minus_cost_bps": _StatAccumulator(),
+            "recommended_position_size": _StatAccumulator(),
+            "recommended_risk_score": _StatAccumulator(),
         }
         metrics_without_p95 = {"expected_probability", "model_success_probability"}
 
@@ -706,6 +708,18 @@ class DecisionSummaryAggregator:
                 else:
                     entry["rejected"] += 1
 
+            recommended_modes = list(_iter_strings(payload.get("recommended_modes")))
+            recommended_position = _coerce_float(payload.get("recommended_position_size"))
+            recommended_risk = _coerce_float(payload.get("recommended_risk_score"))
+            if recommended_position is not None:
+                metric_accumulators["recommended_position_size"].add(
+                    recommended_position, accepted=accepted
+                )
+            if recommended_risk is not None:
+                metric_accumulators["recommended_risk_score"].add(
+                    recommended_risk, accepted=accepted
+                )
+
             latest_payload = payload
             candidate_summary = dict(candidate)
             if expected_value is not None:
@@ -727,6 +741,9 @@ class DecisionSummaryAggregator:
                     "latest_reasons": reasons or None,
                     "latest_risk_flags": risk_flags or None,
                     "latest_stress_failures": stress_failures or None,
+                    "latest_recommended_modes": recommended_modes or None,
+                    "latest_recommended_position_size": recommended_position,
+                    "latest_recommended_risk_score": recommended_risk,
                     "latest_model_selection": model_selection_value,
                     "latest_candidate": candidate_summary or None,
                     "latest_generated_at": generated_at,
@@ -904,6 +921,9 @@ class DecisionSummaryAggregator:
             summary.setdefault("latest_reasons", None)
             summary.setdefault("latest_risk_flags", None)
             summary.setdefault("latest_stress_failures", None)
+            summary.setdefault("latest_recommended_modes", None)
+            summary.setdefault("latest_recommended_position_size", None)
+            summary.setdefault("latest_recommended_risk_score", None)
             summary.setdefault("latest_model_selection", None)
             summary.setdefault("latest_candidate", None)
             summary.setdefault("latest_generated_at", None)

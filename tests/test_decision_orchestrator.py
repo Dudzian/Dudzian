@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from typing import Mapping
 
 
 import pytest
 
+from bot_core.ai import ModelScore
 from bot_core.config.models import (
     DecisionEngineConfig,
     DecisionOrchestratorThresholds,
@@ -259,3 +261,82 @@ def test_evaluate_candidates_handles_missing_snapshot() -> None:
     evaluations = orchestrator.evaluate_candidates([candidate], risk_snapshots={})
     assert evaluations[0].accepted is False
     assert any("snapshot" in reason for reason in evaluations[0].reasons)
+    assert evaluations[0].recommended_risk_score is None
+
+
+def test_evaluation_includes_bandit_recommendations() -> None:
+    orchestrator = DecisionOrchestrator(_make_config())
+    candidate = DecisionCandidate(
+        strategy="mean_reversion_alpha",
+        action="enter",
+        risk_profile="balanced",
+        symbol="ADAUSDT",
+        notional=5_000.0,
+        expected_return_bps=12.0,
+        expected_probability=0.82,
+        cost_bps_override=2.0,
+        latency_ms=150.0,
+        metadata={
+            "market_regime": "trend",
+            "meta_label": 0.85,
+            "model_confidence": 0.9,
+        },
+    )
+
+    evaluation = orchestrator.evaluate_candidate(candidate, _snapshot())
+
+    assert evaluation.recommended_modes != ()
+    assert evaluation.recommended_modes[0] in {"live", "shadow", "disabled"}
+    assert evaluation.recommended_position_size is not None
+    assert evaluation.recommended_position_size > 0.0
+    assert evaluation.recommended_risk_score is not None
+    assert 0.0 <= evaluation.recommended_risk_score <= 1.0
+
+
+def test_model_selection_metadata_receives_recommendations() -> None:
+    class _DummyInference:
+        def __init__(self, score: ModelScore) -> None:
+            self._score = score
+            self.is_ready = True
+
+        def score(self, features: Mapping[str, float]) -> ModelScore:  # type: ignore[override]
+            assert features  # zapewnia, że bandyta przekazuje cechy
+            return self._score
+
+    orchestrator = DecisionOrchestrator(_make_config())
+    inference = _DummyInference(ModelScore(expected_return_bps=18.0, success_probability=0.78))
+    orchestrator.attach_named_inference("alpha", inference, set_default=True)
+    orchestrator.update_model_performance(
+        "alpha",
+        {"mae": 6.0, "directional_accuracy": 0.68},
+        strategy="mean_reversion_alpha",
+        risk_profile="balanced",
+    )
+
+    candidate = DecisionCandidate(
+        strategy="mean_reversion_alpha",
+        action="enter",
+        risk_profile="balanced",
+        symbol="ADAUSDT",
+        notional=6_000.0,
+        expected_return_bps=14.0,
+        expected_probability=0.8,
+        latency_ms=180.0,
+        metadata={
+            "market_regime": "trend",
+            "meta_label": 0.7,
+            "model_features": {"f1": 1.0, "f2": 0.5},
+        },
+    )
+
+    evaluation = orchestrator.evaluate_candidate(candidate, _snapshot())
+
+    assert evaluation.model_selection is not None
+    assert evaluation.model_selection.recommended_modes != ()
+    assert evaluation.model_selection.recommended_position_size is not None
+    assert evaluation.recommended_modes == evaluation.model_selection.recommended_modes
+    assert evaluation.model_selection.recommended_risk_score is not None
+    assert evaluation.recommended_risk_score is not None
+    assert evaluation.model_selection.recommended_risk_score == pytest.approx(
+        evaluation.recommended_risk_score
+    )

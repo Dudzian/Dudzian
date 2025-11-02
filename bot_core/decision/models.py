@@ -166,6 +166,9 @@ class DecisionEvaluation:
     model_name: str | None = None
     model_selection: "ModelSelectionMetadata | None" = None
     thresholds_snapshot: Mapping[str, float | None] | None = None
+    recommended_modes: Sequence[str] = field(default_factory=tuple)
+    recommended_position_size: float | None = None
+    recommended_risk_score: float | None = None
 
     def to_mapping(self) -> Mapping[str, object]:
         payload: MutableMapping[str, object] = {
@@ -179,6 +182,9 @@ class DecisionEvaluation:
             "model_expected_return_bps": self.model_expected_return_bps,
             "model_success_probability": self.model_success_probability,
             "model_name": self.model_name,
+            "recommended_modes": list(self.recommended_modes),
+            "recommended_position_size": self.recommended_position_size,
+            "recommended_risk_score": self.recommended_risk_score,
         }
         if self.model_selection is not None:
             payload["model_selection"] = self.model_selection.to_mapping()
@@ -324,11 +330,17 @@ class ModelSelectionMetadata:
 
     selected: str | None
     candidates: Sequence[ModelSelectionDetail] = field(default_factory=tuple)
+    recommended_modes: Sequence[str] = field(default_factory=tuple)
+    recommended_position_size: float | None = None
+    recommended_risk_score: float | None = None
 
     def to_mapping(self) -> Mapping[str, object]:
         return {
             "selected": self.selected,
             "candidates": [detail.to_mapping() for detail in self.candidates],
+            "recommended_modes": list(self.recommended_modes),
+            "recommended_position_size": self.recommended_position_size,
+            "recommended_risk_score": self.recommended_risk_score,
         }
 
     def find(self, name: str) -> ModelSelectionDetail | None:

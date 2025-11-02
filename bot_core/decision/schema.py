@@ -59,6 +59,9 @@ class DecisionEngineSummary(BaseModel):
     latest_reasons: Sequence[str] | None = None
     latest_candidate: Mapping[str, object] | None = None
     latest_model_selection: Mapping[str, object] | None = None
+    latest_recommended_modes: Sequence[str] | None = None
+    latest_recommended_position_size: float | None = None
+    latest_recommended_risk_score: float | None = None
 
     model_config = ConfigDict(extra="allow")
 
