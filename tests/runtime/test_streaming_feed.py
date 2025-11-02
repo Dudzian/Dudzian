@@ -1,7 +1,10 @@
 from datetime import datetime, timezone
 import json
+import asyncio
 import time
 from types import SimpleNamespace
+from contextlib import suppress
+from typing import Sequence
 
 import pytest
 
@@ -42,6 +45,63 @@ class _DummyJournal:
         return tuple(event.as_dict() for event in self.events)
 
 
+class _AsyncBatchStream:
+    def __init__(self, batches):
+        self._batches = list(batches)
+        self._index = 0
+        self.aclose_calls = 0
+        self.next_calls = 0
+
+    def __aiter__(self):
+        self._index = 0
+        return self
+
+    async def __anext__(self):
+        if self._index >= len(self._batches):
+            raise StopAsyncIteration
+        batch = self._batches[self._index]
+        self._index += 1
+        self.next_calls += 1
+        return batch
+
+    async def aclose(self) -> None:
+        self.aclose_calls += 1
+
+
+class _StubAsyncStreamFeed:
+    def __init__(self) -> None:
+        self.start_async_calls = 0
+        self.start_calls = 0
+        self.stop_async_calls = 0
+        self.stop_calls = 0
+        self._task: asyncio.Task[None] | None = None
+
+    def start(self) -> None:  # pragma: no cover - wykorzystywane w ścieżce synchronicznej
+        self.start_calls += 1
+
+    def start_async(self, *, loop: asyncio.AbstractEventLoop | None = None) -> asyncio.Task[None]:
+        self.start_async_calls += 1
+        coro = asyncio.sleep(3600)
+        task = asyncio.create_task(coro)
+        self._task = task
+        return task
+
+    def stop(self) -> None:
+        self.stop_calls += 1
+        task = self._task
+        if task is not None:
+            task.cancel()
+
+    async def stop_async(self) -> None:
+        self.stop_async_calls += 1
+        task = self._task
+        if task is None:
+            return
+        task.cancel()
+        with suppress(asyncio.CancelledError):
+            await task
+
+
 def test_build_streaming_feed_uses_adapter_metrics_registry(monkeypatch: pytest.MonkeyPatch) -> None:
     registry = MetricsRegistry()
 
@@ -71,6 +131,11 @@ def test_build_streaming_feed_uses_adapter_metrics_registry(monkeypatch: pytest.
     class _StubStream:
         def __init__(self, *_, **kwargs) -> None:
             captured["metrics"] = kwargs.get("metrics_registry")
+            captured["start_called"] = False
+
+        def start(self):  # noqa: D401 - fluent API
+            captured["start_called"] = True
+            return self
 
         def __iter__(self):  # pragma: no cover - nie używane
             return iter(())
@@ -90,6 +155,7 @@ def test_build_streaming_feed_uses_adapter_metrics_registry(monkeypatch: pytest.
     assert feed is not None
     feed._stream_factory()
     assert captured["metrics"] is registry
+    assert captured.get("start_called") is True
 
 
 def test_streaming_strategy_feed_converts_events() -> None:
@@ -125,6 +191,180 @@ def test_streaming_strategy_feed_converts_events() -> None:
     assert snapshots[0].symbol == "BTC/USDT"
     assert snapshots[0].close == pytest.approx(101.0)
     assert "best_bid" in snapshots[0].indicators
+
+
+def test_streaming_strategy_feed_start_async_consumes() -> None:
+    history = _DummyHistoryFeed()
+    batches = [
+        StreamBatch(
+            channel="ticker",
+            events=(
+                {
+                    "symbol": "BTC/USDT",
+                    "last_price": 102.5,
+                    "open_price": 101.0,
+                    "high_24h": 103.0,
+                    "low_24h": 99.5,
+                    "volume_24h_base": 15.0,
+                    "timestamp": time.time(),
+                },
+            ),
+            received_at=time.monotonic(),
+        )
+    ]
+
+    streams: list[_AsyncBatchStream] = []
+
+    def _factory() -> _AsyncBatchStream:
+        stream = _AsyncBatchStream(batches)
+        streams.append(stream)
+        return stream
+
+    feed = StreamingStrategyFeed(
+        history_feed=history,
+        stream_factory=_factory,
+        symbols_map={"daily": ("BTC/USDT",)},
+        buffer_size=4,
+        restart_delay=0.01,
+    )
+
+    async def _run() -> None:
+        task = feed.start_async()
+        assert isinstance(task, asyncio.Task)
+
+        async def _wait_for_data() -> Sequence[MarketSnapshot]:
+            for _ in range(20):
+                snapshots = feed.fetch_latest("daily")
+                if snapshots:
+                    return snapshots
+                await asyncio.sleep(0.01)
+            return ()
+
+        snapshots = await _wait_for_data()
+        await feed.stop_async()
+
+        assert snapshots and snapshots[0].symbol == "BTC/USDT"
+        assert streams and streams[0].aclose_calls >= 1
+
+    asyncio.run(_run())
+
+
+def test_streaming_strategy_feed_start_async_idempotent() -> None:
+    history = _DummyHistoryFeed()
+
+    def _factory() -> _AsyncBatchStream:
+        return _AsyncBatchStream(
+            [
+                StreamBatch(
+                    channel="ticker",
+                    events=(
+                        {
+                            "symbol": "BTC/USDT",
+                            "last_price": 100.0,
+                            "open_price": 100.0,
+                            "high_24h": 101.0,
+                            "low_24h": 99.0,
+                            "volume_24h_base": 10.0,
+                            "timestamp": time.time(),
+                        },
+                    ),
+                    received_at=time.monotonic(),
+                )
+            ]
+        )
+
+    feed = StreamingStrategyFeed(
+        history_feed=history,
+        stream_factory=_factory,
+        symbols_map={"daily": ("BTC/USDT",)},
+        buffer_size=2,
+        restart_delay=0.01,
+    )
+
+    async def _run() -> None:
+        task_one = feed.start_async()
+        task_two = feed.start_async()
+        assert task_one is task_two
+
+        await asyncio.sleep(0.02)
+        await feed.stop_async()
+        assert feed._async_task is None
+
+    asyncio.run(_run())
+
+
+def test_multi_strategy_runtime_start_stream_async_and_shutdown() -> None:
+    stream = _StubAsyncStreamFeed()
+
+    async def _run() -> None:
+        runtime = pipeline_module.MultiStrategyRuntime(
+            bootstrap=SimpleNamespace(),
+            scheduler=SimpleNamespace(),
+            data_feed=SimpleNamespace(),
+            signal_sink=SimpleNamespace(),
+            strategies={},
+            schedules=(),
+            capital_policy=SimpleNamespace(),
+            stream_feed=stream,
+        )
+
+        task = runtime.start_stream_async()
+
+        assert isinstance(task, asyncio.Task)
+        assert runtime.stream_feed_task is task
+        assert stream.start_async_calls == 1
+
+        await runtime.shutdown_async()
+
+        assert stream.stop_async_calls == 1
+        assert runtime.stream_feed_task is None
+
+    asyncio.run(_run())
+
+
+def test_multi_strategy_runtime_shutdown_cancels_task_and_stops_scheduler() -> None:
+    stream = _StubAsyncStreamFeed()
+
+    class _StubScheduler:
+        def __init__(self) -> None:
+            self.stop_calls = 0
+
+        def stop(self) -> None:
+            self.stop_calls += 1
+
+    scheduler = _StubScheduler()
+
+    runtime = pipeline_module.MultiStrategyRuntime(
+        bootstrap=SimpleNamespace(),
+        scheduler=SimpleNamespace(),
+        data_feed=SimpleNamespace(),
+        signal_sink=SimpleNamespace(),
+        strategies={},
+        schedules=(),
+        capital_policy=SimpleNamespace(),
+        stream_feed=stream,
+        optimization_scheduler=scheduler,  # type: ignore[arg-type]
+    )
+
+    class _StubTask:
+        def __init__(self) -> None:
+            self.cancelled = False
+
+        def cancel(self) -> None:
+            self.cancelled = True
+
+        def done(self) -> bool:
+            return False
+
+    task = _StubTask()
+    runtime.stream_feed_task = task  # type: ignore[assignment]
+
+    runtime.shutdown()
+
+    assert task.cancelled is True
+    assert stream.stop_calls == 1
+    assert scheduler.stop_calls == 1
+    assert runtime.stream_feed_task is None
 
 
 def test_decision_aware_sink_filters_signals() -> None:
@@ -1083,3 +1323,133 @@ def test_decision_aware_sink_exposes_history_and_summary() -> None:
     assert eth_metrics["expected_value_minus_cost_bps"]["total_sum"] == pytest.approx(8.1)
     btc_metrics = symbol_breakdown["BTC/USDT"]["metrics"]
     assert btc_metrics["expected_value_minus_cost_bps"]["accepted_sum"] == pytest.approx(6.6)
+
+
+def test_consume_stream_async_processes_batches_and_closes() -> None:
+    batches = [
+        StreamBatch(
+            channel="ticker",
+            events=(
+                {
+                    "symbol": "BTC/USDT",
+                    "close": 101.0,
+                    "timestamp": time.time(),
+                },
+            ),
+            received_at=1.0,
+        ),
+        StreamBatch(channel="ticker", events=(), heartbeat=True, received_at=2.0),
+    ]
+    stream = _AsyncBatchStream(batches)
+    handled: list[StreamBatch] = []
+    heartbeats: list[float] = []
+
+    async def _handle(batch: StreamBatch) -> None:
+        handled.append(batch)
+
+    async def _heartbeat(timestamp: float) -> None:
+        heartbeats.append(timestamp)
+
+    async def _run() -> None:
+        await pipeline_module.consume_stream_async(
+            stream,
+            handle_batch=_handle,
+            on_heartbeat=_heartbeat,
+            heartbeat_interval=0.5,
+            idle_timeout=5.0,
+            clock=lambda: 0.0,
+        )
+
+    asyncio.run(_run())
+
+    assert [batch.channel for batch in handled] == ["ticker"]
+    assert heartbeats == [2.0]
+    assert stream.aclose_calls == 1
+    assert stream.next_calls == 2
+
+
+def test_consume_stream_async_raises_timeout_on_idle() -> None:
+    batches = [
+        StreamBatch(
+            channel="ticker",
+            events=(
+                {
+                    "symbol": "BTC/USDT",
+                    "close": 100.0,
+                    "timestamp": time.time(),
+                },
+            ),
+            received_at=0.0,
+        ),
+        StreamBatch(channel="ticker", events=(), heartbeat=True, received_at=5.0),
+    ]
+    stream = _AsyncBatchStream(batches)
+
+    async def _run() -> None:
+        await pipeline_module.consume_stream_async(
+            stream,
+            handle_batch=lambda batch: None,
+            heartbeat_interval=0.5,
+            idle_timeout=1.0,
+            clock=lambda: 0.0,
+        )
+
+    with pytest.raises(TimeoutError, match="Brak nowych danych"):
+        asyncio.run(_run())
+
+    assert stream.aclose_calls == 1
+    assert stream.next_calls == 2
+
+
+def test_consume_stream_async_respects_async_stop_condition() -> None:
+    batches = [
+        StreamBatch(
+            channel="ticker",
+            events=(
+                {
+                    "symbol": "BTC/USDT",
+                    "close": 100.0,
+                    "timestamp": time.time(),
+                },
+            ),
+            received_at=1.0,
+        ),
+        StreamBatch(
+            channel="ticker",
+            events=(
+                {
+                    "symbol": "BTC/USDT",
+                    "close": 102.0,
+                    "timestamp": time.time(),
+                },
+            ),
+            received_at=2.0,
+        ),
+    ]
+    stream = _AsyncBatchStream(batches)
+    processed: list[StreamBatch] = []
+    should_stop = {"value": False}
+
+    async def _handle(batch: StreamBatch) -> None:
+        processed.append(batch)
+        should_stop["value"] = True
+
+    async def _stop_condition() -> bool:
+        await asyncio.sleep(0)
+        return should_stop["value"]
+
+    async def _run() -> None:
+        await pipeline_module.consume_stream_async(
+            stream,
+            handle_batch=_handle,
+            stop_condition=_stop_condition,
+            idle_timeout=None,
+            clock=lambda: 0.0,
+        )
+
+    asyncio.run(_run())
+
+    assert len(processed) == 1
+    assert processed[0].events[0]["close"] == pytest.approx(100.0)
+    assert stream.aclose_calls == 1
+    assert stream.next_calls == 1
