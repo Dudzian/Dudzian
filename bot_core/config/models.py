@@ -1513,6 +1513,8 @@ class RuntimeExecutionSettings:
     force_paper_when_offline: bool = True
     auth_token: str | None = None
     live: RuntimeExecutionLiveSettings | None = None
+    paper_profiles: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
+    trading_profiles: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
