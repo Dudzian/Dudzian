@@ -1,7 +1,10 @@
 from pathlib import Path
 from textwrap import dedent
+from unittest.mock import patch
 
+import pandas as pd
 import pytest
+import warnings
 
 from bot_core.data.backtest_library import (
     BacktestDatasetLibrary,
@@ -39,6 +42,39 @@ def test_loading_typed_rows_respects_schema(library: BacktestDatasetLibrary) -> 
     assert len(rows) == 6
     assert isinstance(rows[0]["timestamp"], int)
     assert rows[0]["target_volatility"] == pytest.approx(0.2)
+
+
+def test_load_dataframe_captures_pandas_warning(
+    library: BacktestDatasetLibrary, caplog: pytest.LogCaptureFixture
+) -> None:
+    original_dataframe = pd.DataFrame
+
+    def dataframe_with_warning(*args, **kwargs):
+        warnings.warn("vectorized fallback", pd.errors.PerformanceWarning)
+        return original_dataframe(*args, **kwargs)
+
+    with patch(
+        "bot_core.data.backtest_library.pd.DataFrame",
+        side_effect=dataframe_with_warning,
+    ):
+        with patch(
+            "bot_core.observability.pandas_warnings.observe_pandas_warning"
+        ) as observe_warning:
+            with caplog.at_level(
+                "WARNING", logger="bot_core.data.backtest_library"
+            ):
+                frame = library.load_dataframe("volatility_target")
+
+    assert isinstance(frame, pd.DataFrame)
+    assert observe_warning.call_count == 1
+    kwargs = observe_warning.call_args.kwargs
+    assert kwargs["component"] == "data.backtest_library.load_dataframe"
+    assert kwargs["category"] == "PerformanceWarning"
+    assert kwargs["message"] == "vectorized fallback"
+    assert any(
+        "Pandas warning captured in data.backtest_library.load_dataframe" in record.message
+        for record in caplog.records
+    )
 
 
 def test_interval_conversion(library: BacktestDatasetLibrary) -> None:

@@ -2,8 +2,13 @@
 
 from __future__ import annotations
 
+import logging
+import sys
 import tempfile
+import types
 import unittest
+import warnings
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -22,6 +27,8 @@ from bot_core.trading.engine import (
     TradingParameters,
     TradingSignalService,
     VectorizedBacktestEngine,
+    StrategyTester,
+    TradingStrategies,
 )
 from bot_core.data.backtest_library import BacktestDatasetLibrary
 
@@ -54,6 +61,66 @@ class TestNativeTradingEngine(unittest.TestCase):
         frame["high"] = frame[["open", "high", "low", "close"]].max(axis=1)
         frame["low"] = frame[["open", "high", "low", "close"]].min(axis=1)
         return frame
+
+    def _make_constant_indicators(self, index: pd.Index) -> TechnicalIndicators:
+        base = pd.Series(1.0, index=index)
+        atr = pd.Series(1.0, index=index)
+        return TechnicalIndicators(
+            rsi=base,
+            ema_fast=base,
+            ema_slow=base,
+            sma_trend=base,
+            atr=atr,
+            bollinger_upper=base,
+            bollinger_lower=base,
+            bollinger_middle=base,
+            macd=base,
+            macd_signal=base,
+            stochastic_k=base,
+            stochastic_d=base,
+        )
+
+    def _make_backtest_result(self, index: pd.Index) -> BacktestResult:
+        equity = pd.Series(1.0, index=index)
+        trades = pd.DataFrame(
+            columns=[
+                "entry_time",
+                "exit_time",
+                "entry_price",
+                "exit_price",
+                "position",
+                "quantity",
+                "pnl",
+                "pnl_pct",
+                "duration",
+                "exit_reason",
+                "commission",
+            ]
+        )
+        returns = pd.Series(0.0, index=index, dtype=float)
+        return BacktestResult(
+            equity_curve=equity,
+            trades=trades,
+            daily_returns=returns,
+            total_return=0.0,
+            annualized_return=0.0,
+            volatility=0.0,
+            sharpe_ratio=0.0,
+            sortino_ratio=0.0,
+            calmar_ratio=0.0,
+            omega_ratio=0.0,
+            max_drawdown=0.0,
+            max_drawdown_duration=pd.Timedelta(0),
+            win_rate=0.0,
+            profit_factor=0.0,
+            tail_ratio=0.0,
+            var_95=0.0,
+            expected_shortfall_95=0.0,
+            total_trades=0,
+            avg_trade_duration=pd.Timedelta(0),
+            largest_win=0.0,
+            largest_loss=0.0,
+        )
 
     def test_indicator_pipeline(self) -> None:
         validator = TechnicalIndicatorsService(MagicMock(), self.config)
@@ -129,6 +196,64 @@ class TestNativeTradingEngine(unittest.TestCase):
 
         self.assertEqual(len(trades), 2)
         self.assertListEqual(trades["exit_reason"].tolist(), ["stop_loss", "signal"])
+
+    def test_strategy_tester_walk_forward_captures_pandas_warnings(self) -> None:
+        tester = StrategyTester(self.engine)
+        params = self.params
+        data = self.data
+
+        def _warning_run_strategy(test_data: pd.DataFrame, _params: TradingParameters, *args, **kwargs):
+            warnings.warn("walk-forward drift", pd.errors.PerformanceWarning)
+            return self._make_backtest_result(test_data.index)
+
+        with (
+            patch("bot_core.observability.pandas_warnings.observe_pandas_warning") as observe_warning,
+            patch.object(
+                self.engine, "run_strategy", side_effect=_warning_run_strategy
+            ),
+        ):
+            result_frame = tester.walk_forward_analysis(
+                data,
+                params,
+                train_ratio=0.6,
+                step_ratio=0.25,
+                min_train_periods=60,
+            )
+
+        self.assertIsInstance(result_frame, pd.DataFrame)
+        observe_warning.assert_called()
+        warned_kwargs = observe_warning.call_args.kwargs
+        self.assertEqual(warned_kwargs["component"], "trading_engine.walk_forward")
+        self.assertIn("walk-forward drift", warned_kwargs["message"])
+
+    def test_strategy_tester_monte_carlo_captures_pandas_warnings(self) -> None:
+        tester = StrategyTester(self.engine)
+        params = self.params
+        data = self.data
+
+        def _warning_run_strategy(synthetic_data: pd.DataFrame, _params: TradingParameters, *args, **kwargs):
+            warnings.warn("monte carlo drift", pd.errors.PerformanceWarning)
+            return self._make_backtest_result(synthetic_data.index)
+
+        with (
+            patch("bot_core.observability.pandas_warnings.observe_pandas_warning") as observe_warning,
+            patch.object(
+                self.engine, "run_strategy", side_effect=_warning_run_strategy
+            ),
+        ):
+            results = tester.monte_carlo_simulation(
+                data,
+                params,
+                n_simulations=3,
+                block_length=10,
+            )
+
+        self.assertIsInstance(results, dict)
+        self.assertIn("returns", results)
+        observe_warning.assert_called()
+        warned_kwargs = observe_warning.call_args.kwargs
+        self.assertEqual(warned_kwargs["component"], "trading_engine.monte_carlo")
+        self.assertIn("monte carlo drift", warned_kwargs["message"])
 
     def test_trade_generation_handles_sparse_exit_metadata(self) -> None:
         dates = pd.date_range("2022-02-01", periods=6, freq="D")
@@ -851,6 +976,313 @@ class TestNativeTradingEngine(unittest.TestCase):
         self.assertIsInstance(portfolio, MultiSessionBacktestResult)
         self.assertEqual(portfolio.aggregate.total_trades, 2)
         self.assertEqual(set(portfolio.sessions.keys()), {"ASSET_A", "ASSET_B"})
+
+    def test_trading_pipeline_records_pandas_warnings(self) -> None:
+        index = self.data.index
+        dummy_indicators = self._make_constant_indicators(index)
+        dummy_positions = pd.DataFrame(
+            {
+                "direction": np.zeros(len(index), dtype=int),
+                "size": np.zeros(len(index), dtype=float),
+            },
+            index=index,
+        )
+        dummy_result = self._make_backtest_result(index)
+
+        def emit_warning(frame: pd.DataFrame) -> pd.DataFrame:
+            warnings.warn("vectorized fallback", pd.errors.PerformanceWarning)
+            return frame
+
+        with (
+            patch("bot_core.observability.pandas_warnings.observe_pandas_warning") as observe_warning,
+            patch.object(self.engine._validator, "validate_ohlcv", side_effect=emit_warning),
+            patch.object(
+                self.engine._indicator_calculator,
+                "calculate_indicators",
+                return_value=dummy_indicators,
+            ),
+            patch.object(
+                self.engine._signal_generator,
+                "generate_signals",
+                return_value=pd.Series(0, index=index, dtype=int),
+            ),
+            patch.object(self.engine._risk_manager, "apply_risk_management", return_value=dummy_positions),
+            patch.object(self.engine._backtest_engine, "run_backtest", return_value=dummy_result),
+        ):
+            self.engine._logger.setLevel(logging.WARNING)
+            with self.assertLogs(self.engine._logger.name, level="WARNING") as log_cm:
+                result = self.engine._run_single_strategy(
+                    self.data,
+                    self.params,
+                    initial_capital=10_000.0,
+                    fee_bps=5.0,
+                )
+
+        self.assertIsInstance(result, BacktestResult)
+        self.assertEqual(observe_warning.call_count, 1)
+        _, kwargs = observe_warning.call_args
+        self.assertEqual(kwargs["component"], "trading_engine.pipeline")
+        self.assertEqual(kwargs["category"], "PerformanceWarning")
+        self.assertEqual(kwargs["message"], "vectorized fallback")
+        self.assertTrue(
+            any(
+                "Pandas warning captured in trading_engine.pipeline" in message
+                for message in log_cm.output
+            ),
+            "Captured pandas warning should be logged with component context.",
+        )
+
+    def test_capture_pandas_warnings_filters_categories(self) -> None:
+        import bot_core.trading.engine as engine_module
+
+        logger = logging.getLogger("bot_core.trading.engine.test.capture")
+        logger.setLevel(logging.WARNING)
+
+        with patch("bot_core.observability.pandas_warnings.observe_pandas_warning") as observe_warning:
+            with self.assertLogs(logger, level="WARNING") as log_cm:
+                with engine_module._capture_pandas_warnings(
+                    logger, component="unit.test.component"
+                ):
+                    warnings.warn("vectorized fallback", pd.errors.PerformanceWarning)
+                    warnings.warn("pandas will change", FutureWarning)
+                    warnings.warn("generic future", FutureWarning)
+
+        self.assertEqual(observe_warning.call_count, 2)
+        categories = {call.kwargs["category"] for call in observe_warning.call_args_list}
+        self.assertIn("PerformanceWarning", categories)
+        self.assertIn("FutureWarning", categories)
+        self.assertTrue(
+            any(
+                "Pandas warning captured in unit.test.component" in message
+                for message in log_cm.output
+            ),
+            "Relevant pandas warnings should emit a log entry.",
+        )
+
+    def test_signal_service_records_pandas_warnings(self) -> None:
+        logger = logging.getLogger("bot_core.trading.engine.test.signals")
+        logger.setLevel(logging.WARNING)
+
+        index = self.data.index[:10]
+        indicators = self._make_constant_indicators(index)
+        params = TradingParameters(ensemble_weights={"dummy": 1.0})
+
+        class DummyPlugin:
+            def generate(self, *_: object, **__: object) -> pd.Series:
+                warnings.warn("vectorized fallback", pd.errors.PerformanceWarning)
+                return pd.Series(0.0, index=index, dtype=float)
+
+        class DummyCatalog:
+            def __init__(self) -> None:
+                self._plugin = DummyPlugin()
+
+            def create(self, name: str) -> DummyPlugin | None:
+                return self._plugin if name == "dummy" else None
+
+            def register(self, _: object) -> None:  # pragma: no cover - unused in test
+                return None
+
+        service = TradingSignalService(logger, catalog=DummyCatalog())
+
+        with patch("bot_core.observability.pandas_warnings.observe_pandas_warning") as observe_warning:
+            with self.assertLogs(logger, level="WARNING") as log_cm:
+                signals = service.generate_signals(indicators, params)
+
+        self.assertIsInstance(signals, pd.Series)
+        self.assertEqual(observe_warning.call_count, 1)
+        kwargs = observe_warning.call_args.kwargs
+        self.assertEqual(kwargs["component"], "trading_engine.signals")
+        self.assertEqual(kwargs["category"], "PerformanceWarning")
+        self.assertEqual(kwargs["message"], "vectorized fallback")
+        self.assertTrue(
+            any(
+                "Pandas warning captured in trading_engine.signals" in message
+                for message in log_cm.output
+            ),
+            "Signal service should emit warning log entries.",
+        )
+
+    def test_risk_manager_records_pandas_warnings(self) -> None:
+        logger = logging.getLogger("bot_core.trading.engine.test.risk")
+        logger.setLevel(logging.WARNING)
+
+        index = self.data.index[:5]
+        data = self.data.iloc[:5]
+        signals = pd.Series([1, 1, 0, 0, 0], index=index, dtype=int)
+        indicators = self._make_constant_indicators(index)
+
+        service = RiskManagementService(logger)
+
+        def warn_position_size(*_: object, **__: object) -> float:
+            warnings.warn("vectorized fallback", pd.errors.PerformanceWarning)
+            return 1.0
+
+        with patch("bot_core.observability.pandas_warnings.observe_pandas_warning") as observe_warning:
+            with patch.object(service, "_calculate_position_size", side_effect=warn_position_size):
+                with self.assertLogs(logger, level="WARNING") as log_cm:
+                    managed = service.apply_risk_management(data, signals, indicators, self.params)
+
+        self.assertIsInstance(managed, pd.DataFrame)
+        self.assertEqual(observe_warning.call_count, 1)
+        kwargs = observe_warning.call_args.kwargs
+        self.assertEqual(kwargs["component"], "trading_engine.risk_management")
+        self.assertEqual(kwargs["category"], "PerformanceWarning")
+        self.assertEqual(kwargs["message"], "vectorized fallback")
+        self.assertTrue(
+            any(
+                "Pandas warning captured in trading_engine.risk_management" in message
+                for message in log_cm.output
+            ),
+            "Risk manager should emit warning log entries.",
+        )
+
+    def test_multi_session_aggregation_records_pandas_warnings(self) -> None:
+        engine = TradingEngine(config=self.config)
+        engine._logger.setLevel(logging.WARNING)
+
+        class SummaryOnlyEngine:
+            def __init__(self) -> None:
+                self.calls: list[tuple[pd.Series, pd.DataFrame, pd.Series, float]] = []
+
+            def summarize_backtest(
+                self,
+                equity_curve: pd.Series,
+                trades: pd.DataFrame,
+                returns: pd.Series,
+                risk_free_rate: float,
+            ) -> dict[str, object]:
+                self.calls.append((equity_curve, trades, returns, risk_free_rate))
+                return {
+                    "total_return": 0.0,
+                    "annualized_return": 0.0,
+                    "volatility": 0.0,
+                    "sharpe_ratio": 0.0,
+                    "sortino_ratio": 0.0,
+                    "calmar_ratio": 0.0,
+                    "omega_ratio": 0.0,
+                    "max_drawdown": 0.0,
+                    "max_drawdown_duration": pd.Timedelta(0),
+                    "win_rate": 0.0,
+                    "profit_factor": 0.0,
+                    "tail_ratio": 0.0,
+                    "var_95": 0.0,
+                    "expected_shortfall_95": 0.0,
+                    "total_trades": int(trades.shape[0]),
+                    "avg_trade_duration": pd.Timedelta(0),
+                    "largest_win": 0.0,
+                    "largest_loss": 0.0,
+                }
+
+        engine._backtest_engine = SummaryOnlyEngine()  # type: ignore[assignment]
+
+        index = pd.date_range("2022-01-01", periods=5, freq="D")
+        base_result = self._make_backtest_result(index)
+        result_a = replace(
+            base_result,
+            daily_returns=pd.Series([0.01, 0.0, -0.005, 0.002, 0.003], index=index, dtype=float),
+        )
+        result_b = replace(
+            base_result,
+            daily_returns=pd.Series([0.0, 0.004, -0.002, 0.001, 0.0], index=index, dtype=float),
+        )
+
+        engine._run_single_strategy = MagicMock(  # type: ignore[assignment]
+            side_effect=[result_a, result_b]
+        )
+
+        sessions = {
+            "AAA": self.data.iloc[: len(index)].copy(),
+            "BBB": self.data.iloc[: len(index)].copy(),
+        }
+        params_map = {symbol: self.params for symbol in sessions}
+
+        original_sort_index = pd.DataFrame.sort_index
+
+        def warn_sort(self: pd.DataFrame, *args: object, **kwargs: object) -> pd.DataFrame:
+            warnings.warn("portfolio realign", pd.errors.PerformanceWarning)
+            return original_sort_index(self, *args, **kwargs)
+
+        with (
+            patch.object(pd.DataFrame, "sort_index", new=warn_sort),
+            patch("bot_core.observability.pandas_warnings.observe_pandas_warning") as observe_warning,
+            self.assertLogs(engine._logger, level="WARNING") as log_cm,
+        ):
+            result = engine._run_multi_symbol_strategy(
+                sessions,
+                params_map,
+                initial_capital=10_000.0,
+                fee_bps=5.0,
+            )
+
+        self.assertIsInstance(result, MultiSessionBacktestResult)
+        self.assertEqual(observe_warning.call_count, 1)
+        kwargs = observe_warning.call_args.kwargs
+        self.assertEqual(kwargs["component"], "trading_engine.multi_session")
+        self.assertEqual(kwargs["category"], "PerformanceWarning")
+        self.assertEqual(kwargs["message"], "portfolio realign")
+        self.assertTrue(
+            any(
+                "Pandas warning captured in trading_engine.multi_session" in message
+                for message in log_cm.output
+            ),
+            "Multi-session aggregation should emit warning log entries.",
+        )
+
+    def test_trading_strategies_ai_bridge_records_pandas_warnings(self) -> None:
+        shim = TradingStrategies(engine=self.engine, logger=self.engine._logger)
+        self.engine._logger.setLevel(logging.WARNING)
+
+        class DummyBridge:
+            def __init__(self, *_: object, **__: object) -> None:
+                return None
+
+            def integrate(
+                self,
+                validated_data: pd.DataFrame,
+                raw_signals: pd.Series,
+            ) -> pd.Series:
+                warnings.warn("legacy fusion drift", pd.errors.PerformanceWarning)
+                return raw_signals
+
+        bridges_pkg = types.ModuleType("bridges")
+        bridge_module = types.ModuleType("bridges.ai_trading_bridge")
+        bridge_module.AITradingBridge = DummyBridge
+        bridges_pkg.ai_trading_bridge = bridge_module  # type: ignore[attr-defined]
+
+        with (
+            patch.dict(
+                sys.modules,
+                {
+                    "bridges": bridges_pkg,
+                    "bridges.ai_trading_bridge": bridge_module,
+                },
+            ),
+            patch("bot_core.observability.pandas_warnings.observe_pandas_warning") as observe_warning,
+            self.assertLogs(self.engine._logger, level="WARNING") as log_cm,
+        ):
+            metrics, trades, equity = shim.backtest(
+                self.data,
+                initial_capital=10_000.0,
+                allow_short=True,
+                ai_model=object(),
+                ai_weight=0.5,
+            )
+
+        self.assertIsInstance(metrics, dict)
+        self.assertIsInstance(trades, pd.DataFrame)
+        self.assertIsInstance(equity, pd.Series)
+        self.assertEqual(observe_warning.call_count, 1)
+        kwargs = observe_warning.call_args.kwargs
+        self.assertEqual(kwargs["component"], "trading_engine.pipeline")
+        self.assertEqual(kwargs["category"], "PerformanceWarning")
+        self.assertEqual(kwargs["message"], "legacy fusion drift")
+        self.assertTrue(
+            any(
+                "Pandas warning captured in trading_engine.pipeline" in message
+                for message in log_cm.output
+            ),
+            "Legacy shim should surface pandas warnings through pipeline observability.",
+        )
 
 
 if __name__ == "__main__":  # pragma: no cover

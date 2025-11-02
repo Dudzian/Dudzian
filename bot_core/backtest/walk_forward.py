@@ -1,6 +1,7 @@
 """Walk-forward backtester obsługujący wiele instrumentów i koszty transakcyjne."""
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Iterable, Mapping, MutableMapping, Sequence
@@ -9,6 +10,10 @@ import pandas as pd
 
 from bot_core.strategies.base import MarketSnapshot
 from bot_core.strategies.catalog import StrategyCatalog, StrategyDefinition
+from bot_core.observability.pandas_warnings import capture_pandas_warnings
+
+
+_LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -180,93 +185,98 @@ class WalkForwardBacktester:
         *,
         capital: float,
     ) -> Mapping[str, Any] | None:
-        train = frame.loc[segment.train_start:segment.train_end]
-        test = frame.loc[segment.test_start:segment.test_end]
-        if test.empty:
-            return None
+        with capture_pandas_warnings(
+            _LOGGER, component="backtest.walk_forward.segment"
+        ):
+            train = frame.loc[segment.train_start:segment.train_end]
+            test = frame.loc[segment.test_start:segment.test_end]
+            if test.empty:
+                return None
 
-        engine = self._catalog.create(definition)
-        train_snapshots = list(_frame_to_snapshots(train, symbol))
-        if train_snapshots:
-            engine.warm_up(train_snapshots)
+            engine = self._catalog.create(definition)
+            train_snapshots = list(_frame_to_snapshots(train, symbol))
+            if train_snapshots:
+                engine.warm_up(train_snapshots)
 
-        cash = float(capital)
-        position_units = 0.0
-        equity_curve: list[tuple[datetime, float]] = []
-        trades = 0
-        total_notional = 0.0
-        total_fees = 0.0
-        total_slippage = 0.0
+            cash = float(capital)
+            position_units = 0.0
+            equity_curve: list[tuple[datetime, float]] = []
+            trades = 0
+            total_notional = 0.0
+            total_fees = 0.0
+            total_slippage = 0.0
 
-        for snapshot in _frame_to_snapshots(test, symbol):
-            price = snapshot.close
-            if price <= 0:
-                continue
-
-            signals = engine.on_data(snapshot)
-            equity = cash + position_units * price
-            current_notional = position_units * price
-            target_ratio = current_notional / equity if equity > 0 else 0.0
-
-            for signal in signals:
-                side = signal.side.lower()
-                if side not in {"buy", "sell"}:
-                    continue
-                confidence = max(0.0, min(1.0, float(signal.confidence)))
-                if side == "buy":
-                    target_ratio = min(1.0, target_ratio + confidence)
-                else:
-                    target_ratio = max(0.0, target_ratio - confidence)
-
-                desired_notional = target_ratio * equity
-                trade_notional = desired_notional - current_notional
-                if trade_notional > 0:
-                    trade_notional = min(trade_notional, cash)
-                if abs(trade_notional) < 1e-9:
+            for snapshot in _frame_to_snapshots(test, symbol):
+                price = snapshot.close
+                if price <= 0:
                     continue
 
-                trade_units = trade_notional / price
-                fee, slippage = self._cost_model.estimate(price, trade_units)
-                cash -= trade_notional
-                cash -= fee + slippage
-                position_units += trade_units
+                signals = engine.on_data(snapshot)
+                equity = cash + position_units * price
                 current_notional = position_units * price
-                equity = cash + current_notional
-                trades += 1
-                total_notional += abs(trade_notional)
-                total_fees += fee
-                total_slippage += slippage
+                target_ratio = current_notional / equity if equity > 0 else 0.0
 
-            equity_curve.append((
-                datetime.fromtimestamp(snapshot.timestamp / 1000.0),
-                cash + position_units * price,
-            ))
+                for signal in signals:
+                    side = signal.side.lower()
+                    if side not in {"buy", "sell"}:
+                        continue
+                    confidence = max(0.0, min(1.0, float(signal.confidence)))
+                    if side == "buy":
+                        target_ratio = min(1.0, target_ratio + confidence)
+                    else:
+                        target_ratio = max(0.0, target_ratio - confidence)
 
-        if not equity_curve:
-            return None
+                    desired_notional = target_ratio * equity
+                    trade_notional = desired_notional - current_notional
+                    if trade_notional > 0:
+                        trade_notional = min(trade_notional, cash)
+                    if abs(trade_notional) < 1e-9:
+                        continue
 
-        equity_values = [value for _, value in equity_curve]
-        start_equity = equity_values[0] if equity_values else capital
-        end_equity = equity_values[-1] if equity_values else capital
-        return_pct = ((end_equity / start_equity) - 1.0) * 100.0 if start_equity else 0.0
-        max_drawdown_pct = _max_drawdown(equity_values)
+                    trade_units = trade_notional / price
+                    fee, slippage = self._cost_model.estimate(price, trade_units)
+                    cash -= trade_notional
+                    cash -= fee + slippage
+                    position_units += trade_units
+                    current_notional = position_units * price
+                    equity = cash + current_notional
+                    trades += 1
+                    total_notional += abs(trade_notional)
+                    total_fees += fee
+                    total_slippage += slippage
 
-        cost_breakdown = TransactionCostBreakdown(
-            symbol=symbol,
-            trades=trades,
-            notional=total_notional,
-            fees_paid=total_fees,
-            slippage_paid=total_slippage,
-        )
+                equity_curve.append(
+                    (
+                        datetime.fromtimestamp(snapshot.timestamp / 1000.0),
+                        cash + position_units * price,
+                    )
+                )
 
-        return {
-            "start_equity": start_equity,
-            "end_equity": end_equity,
-            "return_pct": return_pct,
-            "max_drawdown_pct": max_drawdown_pct,
-            "equity_curve": equity_curve,
-            "costs": cost_breakdown,
-        }
+            if not equity_curve:
+                return None
+
+            equity_values = [value for _, value in equity_curve]
+            start_equity = equity_values[0] if equity_values else capital
+            end_equity = equity_values[-1] if equity_values else capital
+            return_pct = ((end_equity / start_equity) - 1.0) * 100.0 if start_equity else 0.0
+            max_drawdown_pct = _max_drawdown(equity_values)
+
+            cost_breakdown = TransactionCostBreakdown(
+                symbol=symbol,
+                trades=trades,
+                notional=total_notional,
+                fees_paid=total_fees,
+                slippage_paid=total_slippage,
+            )
+
+            return {
+                "start_equity": start_equity,
+                "end_equity": end_equity,
+                "return_pct": return_pct,
+                "max_drawdown_pct": max_drawdown_pct,
+                "equity_curve": equity_curve,
+                "costs": cost_breakdown,
+            }
 
 
 def _frame_to_snapshots(frame: pd.DataFrame, symbol: str) -> Iterable[MarketSnapshot]:

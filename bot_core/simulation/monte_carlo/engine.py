@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Callable, Dict, List, Mapping, Optional, Protocol, Sequence, runtime_checkable
 
@@ -10,6 +11,10 @@ import pandas as pd
 
 from .distributions import HistoricalPriceSeries, resample_returns
 from .scenarios import ModelType, MonteCarloScenario
+from bot_core.observability.pandas_warnings import capture_pandas_warnings
+
+
+_LOGGER = logging.getLogger(__name__)
 
 
 @runtime_checkable
@@ -217,9 +222,12 @@ class MonteCarloEngine:
         drawdown_probability: float,
     ) -> StrategyResult:
         pnl = np.empty(price_paths.shape[0], dtype=float)
-        for idx, path in enumerate(price_paths):
-            price_series = pd.Series(path, name="price")
-            pnl[idx] = float(strategy.evaluate_path(price_series))
+        with capture_pandas_warnings(
+            _LOGGER, component="backtest.monte_carlo.strategy"
+        ):
+            for idx, path in enumerate(price_paths):
+                price_series = pd.Series(path, name="price")
+                pnl[idx] = float(strategy.evaluate_path(price_series))
         metrics = self._calculate_metrics(pnl, drawdown_probability)
         return StrategyResult(pnl_distribution=pnl, metrics=metrics)
 

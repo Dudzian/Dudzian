@@ -6,7 +6,7 @@ import math
 import threading
 from collections import defaultdict
 from dataclasses import dataclass, field
-from typing import Dict, Iterable, Mapping, MutableMapping, Sequence, Tuple
+from typing import Dict, Iterable, Mapping, MutableMapping, Optional, Sequence, Tuple
 
 from bot_core.alerts.dispatcher import AlertSeverity, emit_alert
 
@@ -351,11 +351,34 @@ class SecurityMetricSet:
             self._failures.inc(labels={"source": source, "event": event})
 
 
+@dataclass(slots=True)
+class PandasWarningMetricSet:
+    """Metryki monitorujące ostrzeżenia generowane przez pandas."""
+
+    registry: MetricsRegistry
+    _warnings: CounterMetric = field(init=False)
+
+    def __post_init__(self) -> None:
+        self._warnings = self.registry.counter(
+            "bot_pandas_warnings_total",
+            "Liczba ostrzeżeń generowanych przez pandas w krytycznych komponentach",
+        )
+
+    def observe(self, *, component: str, category: str) -> None:
+        labels = {"component": component, "category": category}
+        self._warnings.inc(labels=labels)
+
+
 _exchange_sets: Dict[str, ExchangeMetricSet] = {}
 _strategy_sets: Dict[str, StrategyMetricSet] = {}
 _security_sets: Dict[str, SecurityMetricSet] = {}
+_pandas_metrics: Optional[PandasWarningMetricSet] = None
 _metrics_lock = threading.Lock()
 _exchange_error_streak: dict[str, int] = defaultdict(int)
+_pandas_warning_streak: dict[str, int] = defaultdict(int)
+_pandas_warning_alerted: set[str] = set()
+_pandas_warning_examples: dict[str, str] = {}
+_PANDAS_WARNING_ALERT_THRESHOLD = 3
 
 
 def _resolve_severity(levelno: int) -> str:
@@ -408,6 +431,14 @@ def _get_security_metrics(source: str, registry: MetricsRegistry | None = None) 
         if source not in _security_sets:
             _security_sets[source] = SecurityMetricSet(registry or get_global_metrics_registry())
         return _security_sets[source]
+
+
+def _get_pandas_warning_metrics(registry: MetricsRegistry | None = None) -> PandasWarningMetricSet:
+    global _pandas_metrics
+    with _metrics_lock:
+        if _pandas_metrics is None:
+            _pandas_metrics = PandasWarningMetricSet(registry or get_global_metrics_registry())
+        return _pandas_metrics
 
 
 def observe_exchange_log_record(
@@ -551,6 +582,40 @@ def observe_security_log_record(
         )
 
 
+def observe_pandas_warning(
+    *,
+    component: str,
+    category: str,
+    message: str | None = None,
+    registry: MetricsRegistry | None = None,
+) -> None:
+    """Zarejestruj ostrzeżenie pandas i potencjalnie wyślij alert."""
+
+    metrics = _get_pandas_warning_metrics(registry)
+    metrics.observe(component=component, category=category)
+
+    key = f"{component}:{category}"
+    _pandas_warning_streak[key] += 1
+    if message:
+        _pandas_warning_examples[key] = message
+
+    if _pandas_warning_streak[key] >= _PANDAS_WARNING_ALERT_THRESHOLD and key not in _pandas_warning_alerted:
+        alert_context: dict[str, str] = {
+            "category": category,
+            "count": str(_pandas_warning_streak[key]),
+        }
+        if example := _pandas_warning_examples.get(key):
+            alert_context["example"] = example[:200]
+
+        _dispatch_metric_alert(
+            message=f"Ostrzeżenia pandas w komponencie {component}",
+            severity=AlertSeverity.WARNING,
+            source=f"pandas_warning:{component}",
+            context=alert_context,
+        )
+        _pandas_warning_alerted.add(key)
+
+
 def get_global_metrics_registry() -> MetricsRegistry:
     """Zwraca singleton rejestru metryk dla całej aplikacji."""
 
@@ -562,10 +627,25 @@ def get_global_metrics_registry() -> MetricsRegistry:
     return _GLOBAL_REGISTRY
 
 
+def reset_pandas_warning_tracking() -> None:
+    """Wyzeruj stan monitorowania ostrzeżeń pandas (tylko do testów)."""
+
+    global _pandas_metrics
+
+    with _metrics_lock:
+        _pandas_metrics = None
+
+    _pandas_warning_streak.clear()
+    _pandas_warning_alerted.clear()
+    _pandas_warning_examples.clear()
+
+
 __all__ = [
     "MetricsRegistry",
     "CounterMetric",
     "GaugeMetric",
     "HistogramMetric",
     "get_global_metrics_registry",
+    "observe_pandas_warning",
+    "reset_pandas_warning_tracking",
 ]
