@@ -1,0 +1,2 @@
+"""Pakiet testów AI."""
+

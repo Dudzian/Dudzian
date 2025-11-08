@@ -2,25 +2,48 @@
 from __future__ import annotations
 
 from collections import deque
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Mapping
+from typing import Any
 
 
-def canonical_alias_map(alias_map: Mapping[str, str] | None) -> dict[str, str]:
+def canonical_alias_map(alias_map: Mapping[str, Any] | None) -> dict[str, str]:
     """Return canonical alias mapping with normalised keys and values."""
 
     if not alias_map:
         return {}
 
+    def _iter_alias_values(value: object) -> Iterable[str]:
+        if isinstance(value, str):
+            yield value
+            return
+        if isinstance(value, Mapping):
+            for nested in value.values():
+                yield from _iter_alias_values(nested)
+            return
+        if isinstance(value, Iterable):
+            for item in value:
+                yield from _iter_alias_values(item)
+
     canonical: dict[str, str] = {}
     for raw_key, raw_target in alias_map.items():
         key = str(raw_key or "").strip()
-        target = str(raw_target or "").strip()
-        if not key or not target:
+        if not key:
             continue
-        canonical[key] = target
+        if isinstance(raw_target, str):
+            target = raw_target.strip()
+            if target:
+                canonical[key] = target
+            continue
+        for alias in _iter_alias_values(raw_target):
+            alias_key = str(alias or "").strip()
+            if not alias_key:
+                continue
+            canonical[alias_key] = key
+        # Ensure canonical key maps to itself if nested aliases were provided.
+        if key not in canonical:
+            canonical[key] = key
     return canonical
 
 
