@@ -110,6 +110,7 @@ def test_verify_update_success(tmp_path: Path, license_result: LicenseValidation
 
     assert result.is_successful
     assert result.signature_valid
+    assert result.signature_checked is True
     assert result.license_ok
     assert result.errors == []
 

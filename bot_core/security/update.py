@@ -8,9 +8,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable, Mapping, Sequence
 
+from bot_core.security.hwid import HwIdProvider
 from bot_core.security.license import LicenseValidationResult
 from bot_core.security.guards import CapabilityGuard, LicenseCapabilityError
 from bot_core.security.signing import verify_hmac_signature
+from bot_core.update.differential import DeltaManifestValidation, DifferentialUpdateManager
 
 LOGGER = logging.getLogger(__name__)
 
@@ -160,6 +162,7 @@ class UpdateVerificationResult:
 
     manifest: UpdateManifest
     signature_valid: bool
+    signature_checked: bool
     license_ok: bool
     artifact_checks: list[str]
     errors: list[str]
@@ -167,11 +170,28 @@ class UpdateVerificationResult:
 
     @property
     def is_successful(self) -> bool:
-        return self.signature_valid and self.license_ok and not self.errors
+        return (self.signature_valid or not self.signature_checked) and self.license_ok and not self.errors
 
 
 class UpdateVerificationError(RuntimeError):
     """Raised when update verification cannot be completed."""
+
+
+@dataclass(slots=True)
+class DifferentialUpdateReport:
+    """Combined status of differential manifest and update verification."""
+
+    delta_manifest: DeltaManifestValidation
+    update: UpdateVerificationResult
+
+    @property
+    def is_successful(self) -> bool:
+        return (
+            self.delta_manifest.signature_valid is not False
+            and self.delta_manifest.fingerprint_ok
+            and not self.delta_manifest.issues
+            and self.update.is_successful
+        )
 
 
 def _hash_file_sha384(path: Path) -> str:
@@ -234,8 +254,10 @@ def verify_update_bundle(
 
     manifest = _load_manifest(manifest_path)
 
-    signature_valid = False
+    signature_valid = True
+    signature_checked = False
     signature_payload: Mapping[str, object] | None = None
+    signature_required = hmac_key is not None
     if signature_path is not None:
         signature_payload = json.loads(signature_path.read_text(encoding="utf-8"))
         if not isinstance(signature_payload, Mapping):
@@ -243,23 +265,40 @@ def verify_update_bundle(
     elif manifest.signature is not None:
         signature_payload = manifest.signature
 
-    if signature_payload is not None:
-        if manifest.raw_payload is None:
-            raise UpdateVerificationError("Manifest aktualizacji nie zawiera surowych danych do weryfikacji")
-        signature_valid = verify_hmac_signature(
-            payload=manifest.raw_payload,
-            signature=signature_payload,
-            key=hmac_key,
-        )
-        if not signature_valid:
-            LOGGER.warning("Podpis manifestu aktualizacji jest niepoprawny")
-    else:
-        LOGGER.info("Pominięto weryfikację podpisu manifestu aktualizacji")
+    errors: list[str] = []
+    warnings: list[str] = []
 
-    audit, errors = _verify_artifacts(manifest, base_dir)
+    if signature_required:
+        if signature_payload is None:
+            signature_valid = False
+            signature_checked = True
+            errors.append(
+                "Manifest aktualizacji nie zawiera podpisu, mimo że oczekiwano go w konfiguracji."
+            )
+        else:
+            if manifest.raw_payload is None:
+                raise UpdateVerificationError(
+                    "Manifest aktualizacji nie zawiera surowych danych do weryfikacji"
+                )
+            signature_checked = True
+            signature_valid = verify_hmac_signature(
+                payload=manifest.raw_payload,
+                signature=signature_payload,
+                key=hmac_key,
+            )
+            if not signature_valid:
+                LOGGER.warning("Podpis manifestu aktualizacji jest niepoprawny")
+                errors.append("Podpis manifestu aktualizacji jest niepoprawny.")
+    else:
+        if signature_payload is not None:
+            warnings.append(
+                "Podpis manifestu aktualizacji nie został zweryfikowany (brak klucza HMAC)."
+            )
+
+    audit, artifact_errors = _verify_artifacts(manifest, base_dir)
+    errors.extend(artifact_errors)
 
     license_ok = True
-    warnings: list[str] = []
     if license_result is not None:
         if manifest.allowed_profiles:
             allowed = {profile.lower() for profile in manifest.allowed_profiles}
@@ -341,12 +380,39 @@ def verify_update_bundle(
 
     return UpdateVerificationResult(
         manifest=manifest,
-        signature_valid=signature_valid if signature_path else True,
+        signature_valid=signature_valid,
+        signature_checked=signature_checked,
         license_ok=license_ok,
         artifact_checks=audit,
         errors=errors,
         warnings=warnings,
     )
+
+
+def verify_differential_update(
+    *,
+    manifest_path: Path,
+    package_dir: Path,
+    delta_signature_path: Path | None = None,
+    manifest_key: bytes | None = None,
+    package_key: bytes | None = None,
+    license_result: LicenseValidationResult | None = None,
+    hwid_provider: HwIdProvider | None = None,
+) -> DifferentialUpdateReport:
+    """Validate delta manifest and package integrity in a single step."""
+
+    manager = DifferentialUpdateManager(
+        storage_dir=package_dir.parent,
+        manifest_key=manifest_key,
+        package_key=package_key,
+        hwid_provider=hwid_provider,
+    )
+    manifest_validation = manager.validate_manifest(manifest_path, signature_path=delta_signature_path)
+    update_result = manager.verify_package(
+        package_dir,
+        license_result=license_result,
+    )
+    return DifferentialUpdateReport(delta_manifest=manifest_validation, update=update_result)
 
 
 __all__ = [
@@ -355,4 +421,6 @@ __all__ = [
     "UpdateVerificationResult",
     "UpdateVerificationError",
     "verify_update_bundle",
+    "DifferentialUpdateReport",
+    "verify_differential_update",
 ]
