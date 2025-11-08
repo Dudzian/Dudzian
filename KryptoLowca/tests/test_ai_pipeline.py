@@ -8,7 +8,7 @@ from KryptoLowca.ai_manager import AIManager
 
 
 def _build_dataframe(rows: int) -> pd.DataFrame:
-    index = pd.date_range("2024-01-01", periods=rows, freq="H")
+    index = pd.date_range("2024-01-01", periods=rows, freq="h")
     base = np.linspace(10000, 10500, rows) + np.random.randn(rows) * 10
     df = pd.DataFrame(
         {

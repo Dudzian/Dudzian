@@ -4,7 +4,7 @@ from typing import Any, List, Optional, Tuple
 
 import pytest
 
-from bot_core.auto_trader.app import AutoTrader
+from bot_core.auto_trader import AutoTrader
 
 
 class StubEmitter:

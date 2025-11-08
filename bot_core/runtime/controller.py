@@ -447,6 +447,41 @@ class TradingController:
         except Exception:  # pragma: no cover - błąd w dzienniku nie powinien zatrzymać handlu
             _LOGGER.exception("Nie udało się zapisać zdarzenia audytu decyzji: %s", event_type)
 
+    def _resolve_signal_mode(self, signal: StrategySignal) -> str:
+        """Wyznacza tryb sygnału na podstawie atrybutów i metadanych."""
+
+        metadata = getattr(signal, "metadata", None)
+        candidate: str | None = None
+        if isinstance(metadata, Mapping):
+            metadata = dict(metadata)
+        else:
+            metadata = {}
+
+        for key in ("mode", "signal_mode", "source", "origin", "strategy_type"):
+            value = getattr(signal, key, None)
+            if isinstance(value, str) and value.strip():
+                candidate = value.strip().lower()
+                break
+            meta_value = metadata.get(key)
+            if isinstance(meta_value, str) and meta_value.strip():
+                candidate = meta_value.strip().lower()
+                break
+
+        if candidate:
+            if candidate in self._signal_mode_priorities:
+                return candidate
+            if candidate in self._ai_signal_modes:
+                return candidate
+            if candidate in self._rules_signal_modes:
+                return candidate
+
+        if metadata:
+            indicator_keys = {"probability", "model_name", "prediction", "threshold"}
+            if indicator_keys & set(metadata):
+                return self._ai_signal_modes[0] if self._ai_signal_modes else "ai"
+
+        return candidate or "default"
+
     def _record_tco_execution(
         self,
         *,
@@ -1064,6 +1099,21 @@ class TradingController:
         except Exception:
             return {}
         return {str(k): v for k, v in candidate.items()}
+
+    def _inject_explainability_metadata(
+        self, metadata: MutableMapping[str, object] | None
+    ) -> None:
+        if not metadata:
+            return
+        report = metadata.get("explainability")
+        if report is None:
+            return
+        try:
+            flattened = flatten_explainability(report)
+        except Exception:  # pragma: no cover - zależy od struktury raportu
+            return
+        for key, value in flattened.items():
+            metadata.setdefault(str(key), value)
 
     def _normalize_signal_metadata(self, signal: StrategySignal) -> Mapping[str, object]:
         raw_metadata = getattr(signal, "metadata", None)

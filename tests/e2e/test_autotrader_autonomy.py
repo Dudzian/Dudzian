@@ -5,7 +5,7 @@ from dataclasses import dataclass
 import pandas as pd
 
 from bot_core.ai.regime import MarketRegime, MarketRegimeAssessment
-from bot_core.auto_trader.app import AutoTrader
+from bot_core.auto_trader import AutoTrader
 from bot_core.auto_trader.audit import DecisionAuditLog
 from bot_core.execution import ExecutionService
 from bot_core.runtime.journal import InMemoryTradingDecisionJournal

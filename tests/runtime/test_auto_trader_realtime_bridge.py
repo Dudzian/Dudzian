@@ -13,7 +13,7 @@ import pytest
 from bot_core.alerts import DefaultAlertRouter
 from bot_core.alerts.audit import InMemoryAlertAuditLog
 from bot_core.alerts.base import AlertChannel, AlertMessage
-from bot_core.auto_trader.app import AutoTrader
+from bot_core.auto_trader import AutoTrader
 from bot_core.config.models import (
     ControllerRuntimeConfig,
     CoreConfig,

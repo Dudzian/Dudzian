@@ -28,14 +28,19 @@ from collections import Counter, OrderedDict
 from pathlib import Path
 from collections.abc import Iterable
 from contextlib import contextmanager
-from dataclasses import asdict, dataclass, field, is_dataclass
 from typing import Any, Callable, Dict, Mapping, Optional, Protocol, Sequence, cast
 
 import pandas as pd
 
 from bot_core.alerts.base import AlertMessage, AlertRouter
 from bot_core.auto_trader.audit import DecisionAuditLog
+from bot_core.auto_trader.decision_scheduler import AutoTraderDecisionScheduler
 from bot_core.auto_trader.performance import build_cycle_equity_summary
+from bot_core.auto_trader.risk_bridge import (
+    GuardrailTrigger,
+    RiskDecision,
+    normalize_guardrail_triggers,
+)
 from bot_core.auto_trader.schedule import (
     ScheduleOverride,
     ScheduleState,
@@ -216,68 +221,6 @@ def _serialize_schedule_state(state: ScheduleState) -> dict[str, Any]:
         payload["time_until_next_override_s"] = next_override_delay
     payload["override_active"] = state.override_active
     return payload
-
-
-@dataclass(slots=True)
-class RiskDecision:
-    """Serializable snapshot describing the outcome of a risk engine check."""
-
-    should_trade: bool
-    fraction: float
-    state: str
-    reason: Optional[str] = None
-    details: Dict[str, Any] = field(default_factory=dict)
-    stop_loss_pct: Optional[float] = None
-    take_profit_pct: Optional[float] = None
-    mode: str = "demo"
-    cooldown_active: bool = False
-    cooldown_remaining_s: Optional[float] = None
-    cooldown_reason: Optional[str] = None
-
-    def to_dict(self) -> Dict[str, Any]:
-        payload: Dict[str, Any] = {
-            "should_trade": self.should_trade,
-            "fraction": float(self.fraction),
-            "state": self.state,
-            "reason": self.reason,
-            "details": dict(self.details),
-            "mode": self.mode,
-        }
-        if self.stop_loss_pct is not None:
-            payload["stop_loss_pct"] = float(self.stop_loss_pct)
-        if self.take_profit_pct is not None:
-            payload["take_profit_pct"] = float(self.take_profit_pct)
-        payload["cooldown_active"] = self.cooldown_active
-        if self.cooldown_remaining_s is not None:
-            payload["cooldown_remaining_s"] = float(self.cooldown_remaining_s)
-        if self.cooldown_reason is not None:
-            payload["cooldown_reason"] = self.cooldown_reason
-        return payload
-
-
-@dataclass(slots=True)
-class GuardrailTrigger:
-    """Structured details about a guardrail that forced a HOLD signal."""
-
-    name: str
-    label: str
-    comparator: str
-    threshold: float
-    unit: Optional[str] = None
-    value: Optional[float] = None
-
-    def to_dict(self) -> Dict[str, Any]:
-        payload: Dict[str, Any] = {
-            "name": self.name,
-            "label": self.label,
-            "comparator": self.comparator,
-            "threshold": float(self.threshold),
-        }
-        if self.unit is not None:
-            payload["unit"] = self.unit
-        if self.value is not None:
-            payload["value"] = float(self.value)
-        return payload
 
 
 class AutoTrader:
@@ -1250,6 +1193,32 @@ class AutoTrader:
             self._stop.set()
             self._cancel_auto_trade_thread_locked()
             self._log("AutoTrader stopped.")
+
+    def is_running(self) -> bool:
+        """Zwraca informację, czy główna pętla AutoTradera została uruchomiona."""
+
+        with self._lock:
+            return bool(self._started)
+
+    def set_enable_auto_trade(self, flag: bool) -> None:
+        """Włącza lub wyłącza tryb auto-trade z zachowaniem stanu wątku pętli."""
+
+        enable = bool(flag)
+        with self._lock:
+            if self.enable_auto_trade == enable:
+                return
+            self.enable_auto_trade = enable
+            if not enable:
+                self._auto_trade_user_confirmed = False
+                self._cancel_auto_trade_thread_locked()
+                return
+            if not self._started:
+                self._log("Auto-trade awaiting explicit activation")
+                return
+            if self._auto_trade_user_confirmed:
+                self._start_auto_trade_thread_locked()
+            else:
+                self._log("Auto-trade awaiting explicit activation")
 
     def configure_controller_runner(
         self,
@@ -6674,6 +6643,22 @@ class AutoTrader:
             "normalized": normalized_value,
             "decision": decision.to_dict(),
         }
+
+        decision_details = getattr(decision, "details", None)
+        (
+            guardrail_reasons,
+            guardrail_triggers,
+            guardrail_tokens,
+        ) = self._compute_guardrail_dimensions(
+            decision_details if isinstance(decision_details, Mapping) else None
+        )
+        if guardrail_reasons or guardrail_triggers:
+            entry["guardrail_dimensions"] = {
+                "reasons": guardrail_reasons,
+                "triggers": tuple(copy.deepcopy(trigger) for trigger in guardrail_triggers),
+                "tokens": tuple(copy.deepcopy(token) for token in guardrail_tokens),
+            }
+
         entry["decision_id"] = active_decision_id
         feature_metadata = self._feature_column_metadata()
         if feature_metadata:
@@ -7197,7 +7182,12 @@ class AutoTrader:
         )
 
         guardrail_records: list[
-            tuple[dict[str, Any], tuple[str, ...], tuple[dict[str, Any], ...]]
+            tuple[
+                dict[str, Any],
+                tuple[str, ...],
+                tuple[dict[str, Any], ...],
+                tuple[dict[str, Any], ...],
+            ]
         ] = []
 
         for entry in filtered_records:
@@ -7226,7 +7216,7 @@ class AutoTrader:
             ):
                 continue
 
-            guardrail_records.append((entry, reasons, triggers))
+            guardrail_records.append((entry, reasons, triggers, tuple(trigger_tokens)))
 
         return (
             guardrail_records,
@@ -7236,17 +7226,12 @@ class AutoTrader:
             filtered_records,
         )
 
-    def _extract_guardrail_dimensions(
-        self, entry: Mapping[str, Any]
-    ) -> tuple[tuple[str, ...], tuple[dict[str, Any], ...], list[dict[str, Any]]]:
-        decision_payload = entry.get("decision") if isinstance(entry, Mapping) else None
-        details: Mapping[str, Any] | None = None
-        if isinstance(decision_payload, Mapping):
-            details = decision_payload.get("details")
-        if not isinstance(details, Mapping):
-            details = {}
+    def _compute_guardrail_dimensions(
+        self, details: Mapping[str, Any] | None
+    ) -> tuple[tuple[str, ...], tuple[dict[str, Any], ...], tuple[dict[str, Any], ...]]:
+        details_map = details if isinstance(details, Mapping) else {}
 
-        raw_reasons = details.get("guardrail_reasons") or ()
+        raw_reasons = details_map.get("guardrail_reasons") or ()
         reasons: list[str] = []
         for reason in raw_reasons:
             if reason is None:
@@ -7255,20 +7240,13 @@ class AutoTrader:
             if token:
                 reasons.append(token)
 
-        raw_triggers = details.get("guardrail_triggers") or ()
+        raw_triggers = details_map.get("guardrail_triggers") or ()
         export_triggers: list[dict[str, Any]] = []
         trigger_tokens: list[dict[str, Any]] = []
 
-        for raw_trigger in raw_triggers:
-            if hasattr(raw_trigger, "to_dict") and callable(raw_trigger.to_dict):
-                trigger_payload = raw_trigger.to_dict()
-            elif is_dataclass(raw_trigger):
-                trigger_payload = asdict(raw_trigger)
-            elif isinstance(raw_trigger, Mapping):
-                trigger_payload = dict(raw_trigger)
-            else:
-                trigger_payload = {"name": raw_trigger}
+        normalized_triggers = normalize_guardrail_triggers(raw_triggers)
 
+        for trigger_obj, trigger_payload in normalized_triggers:
             name_raw = trigger_payload.get("name")
             label_raw = trigger_payload.get("label")
             comparator_raw = trigger_payload.get("comparator")
@@ -7291,36 +7269,110 @@ class AutoTrader:
                 export_entry["value"] = value_raw
             export_triggers.append(export_entry)
 
-            normalized_threshold = self._coerce_float(threshold_raw)
-            normalized_value = self._coerce_float(value_raw)
+            name_token = (
+                trigger_obj.name.strip()
+                if isinstance(trigger_obj.name, str) and trigger_obj.name.strip()
+                else _UNKNOWN_SERVICE
+            )
+            label_token = (
+                trigger_obj.label.strip()
+                if (
+                    isinstance(label_raw, str)
+                    and label_raw.strip()
+                    and isinstance(trigger_obj.label, str)
+                    and trigger_obj.label.strip()
+                )
+                else _MISSING_GUARDRAIL_LABEL
+            )
+            comparator_token = (
+                trigger_obj.comparator.strip()
+                if (
+                    isinstance(comparator_raw, str)
+                    and comparator_raw.strip()
+                    and isinstance(trigger_obj.comparator, str)
+                    and trigger_obj.comparator.strip()
+                )
+                else _MISSING_GUARDRAIL_COMPARATOR
+            )
+            unit_token = (
+                trigger_obj.unit.strip()
+                if (
+                    isinstance(unit_raw, str)
+                    and unit_raw.strip()
+                    and isinstance(trigger_obj.unit, str)
+                    and trigger_obj.unit.strip()
+                )
+                else _MISSING_GUARDRAIL_UNIT
+            )
+            normalized_threshold = (
+                self._coerce_float(threshold_raw)
+                if threshold_raw is not None
+                else None
+            )
+            normalized_value = (
+                self._coerce_float(value_raw)
+                if value_raw is not None
+                else None
+            )
             trigger_tokens.append(
                 {
-                    "name": (
-                        str(name_raw).strip()
-                        if name_raw is not None and str(name_raw).strip()
-                        else _UNKNOWN_SERVICE
-                    ),
-                    "label": (
-                        str(label_raw).strip()
-                        if label_raw is not None and str(label_raw).strip()
-                        else _MISSING_GUARDRAIL_LABEL
-                    ),
-                    "comparator": (
-                        str(comparator_raw).strip()
-                        if comparator_raw is not None and str(comparator_raw).strip()
-                        else _MISSING_GUARDRAIL_COMPARATOR
-                    ),
-                    "unit": (
-                        str(unit_raw).strip()
-                        if unit_raw is not None and str(unit_raw).strip()
-                        else _MISSING_GUARDRAIL_UNIT
-                    ),
+                    "name": name_token,
+                    "label": label_token,
+                    "comparator": comparator_token,
+                    "unit": unit_token,
                     "threshold": normalized_threshold,
                     "value": normalized_value,
                 }
             )
 
-        return tuple(reasons), tuple(export_triggers), trigger_tokens
+        return tuple(reasons), tuple(export_triggers), tuple(trigger_tokens)
+
+    def _extract_guardrail_dimensions(
+        self, entry: Mapping[str, Any]
+    ) -> tuple[tuple[str, ...], tuple[dict[str, Any], ...], list[dict[str, Any]]]:
+        cache_payload: Mapping[str, Any] | None = None
+        if isinstance(entry, Mapping):
+            cache_payload = entry.get("guardrail_dimensions")  # type: ignore[index]
+
+        if isinstance(cache_payload, Mapping):
+            cached_reasons = cache_payload.get("reasons") or ()
+            cached_triggers = cache_payload.get("triggers") or ()
+            cached_tokens = cache_payload.get("tokens") or ()
+
+            reasons_tuple = tuple(
+                str(reason).strip()
+                for reason in cached_reasons
+                if reason is not None and str(reason).strip()
+            )
+            triggers_tuple = tuple(
+                dict(trigger)
+                for trigger in cached_triggers
+                if isinstance(trigger, Mapping)
+            )
+            tokens_list = [
+                dict(token)
+                for token in cached_tokens
+                if isinstance(token, Mapping)
+            ]
+            if reasons_tuple or triggers_tuple:
+                return reasons_tuple, triggers_tuple, tokens_list
+
+        decision_payload = entry.get("decision") if isinstance(entry, Mapping) else None
+        details: Mapping[str, Any] | None = None
+        if isinstance(decision_payload, Mapping):
+            details = decision_payload.get("details")
+
+        reasons, triggers, trigger_tokens = self._compute_guardrail_dimensions(details)
+        trigger_token_list = [dict(token) for token in trigger_tokens]
+
+        if isinstance(entry, dict) and (reasons or triggers):
+            entry["guardrail_dimensions"] = {
+                "reasons": reasons,
+                "triggers": tuple(copy.deepcopy(trigger) for trigger in triggers),
+                "tokens": tuple(copy.deepcopy(token) for token in trigger_tokens),
+            }
+
+        return reasons, triggers, trigger_token_list
 
     def _guardrail_trigger_matches(
         self,
@@ -8217,7 +8269,7 @@ class AutoTrader:
         trigger_buckets: dict[str, dict[str, Any]] = {}
 
         if apply_guardrail_filters:
-            service_source = [entry for entry, _, _ in guardrail_records]
+            service_source = [entry for entry, _, _, _ in guardrail_records]
         else:
             service_source = filtered_records
 
@@ -8235,7 +8287,7 @@ class AutoTrader:
             )
             service_buckets[service_name]["total"] += 1
 
-        for entry, reasons, triggers in guardrail_records:
+        for entry, reasons, triggers, _trigger_tokens in guardrail_records:
             service_key = entry.get("service") or _UNKNOWN_SERVICE
             service_name = str(service_key)
             service_bucket = service_buckets.setdefault(
@@ -9174,6 +9226,7 @@ class AutoTrader:
         entry: Mapping[str, Any],
         reasons: Sequence[str],
         triggers: Sequence[Mapping[str, Any]],
+        trigger_tokens: Sequence[Mapping[str, Any]],
         *,
         include_decision: bool,
         include_service: bool,
@@ -9201,12 +9254,19 @@ class AutoTrader:
         if include_error:
             record["error"] = copy.deepcopy(entry.get("error"))
         if include_guardrail_dimensions:
-            record["guardrail_reasons"] = tuple(reasons)
-            record["guardrail_triggers"] = tuple(
+            normalized_reasons = tuple(reasons)
+            normalized_triggers = tuple(
                 copy.deepcopy(trigger) for trigger in triggers
             )
+            record["guardrail_reasons"] = normalized_reasons
+            record["guardrail_triggers"] = normalized_triggers
             record["guardrail_reason_count"] = len(reasons)
             record["guardrail_trigger_count"] = len(triggers)
+            record["guardrail_dimensions"] = {
+                "reasons": normalized_reasons,
+                "triggers": normalized_triggers,
+                "tokens": tuple(copy.deepcopy(token) for token in trigger_tokens),
+            }
         if include_decision:
             record["decision"] = copy.deepcopy(entry.get("decision"))
 
@@ -9344,11 +9404,12 @@ class AutoTrader:
                 records_sequence = records_sequence[-normalized_limit:]
 
         output: list[dict[str, Any]] = []
-        for entry, reasons, triggers in records_sequence:
+        for entry, reasons, triggers, trigger_tokens in records_sequence:
             record = self._build_guardrail_event_record(
                 entry,
                 reasons,
                 triggers,
+                trigger_tokens,
                 include_decision=include_decision,
                 include_service=include_service,
                 include_response=include_response,
@@ -9554,11 +9615,12 @@ class AutoTrader:
             iterable = guardrail_records
             if reverse:
                 iterable = list(reversed(guardrail_records))
-            for entry, reasons, triggers in iterable:
+            for entry, reasons, triggers, trigger_tokens in iterable:
                 record = self._build_guardrail_event_record(
                     entry,
                     reasons,
                     triggers,
+                    trigger_tokens,
                     include_decision=include_decision,
                     include_service=include_service,
                     include_response=include_response,
@@ -9910,8 +9972,8 @@ class AutoTrader:
         )
 
         guardrail_records = [
-            (entry, reasons, triggers)
-            for entry, reasons, triggers in guardrail_records
+            (entry, reasons, triggers, trigger_tokens)
+            for entry, reasons, triggers, trigger_tokens in guardrail_records
             if self._normalize_decision_id(entry.get("decision_id")) == normalized_id
         ]
 
@@ -9931,11 +9993,14 @@ class AutoTrader:
         previous_timestamp = first_timestamp
 
         timeline: list[Mapping[str, Any]] = []
-        for index, (entry, reasons, triggers) in enumerate(guardrail_records):
+        for index, (entry, reasons, triggers, trigger_tokens) in enumerate(
+            guardrail_records
+        ):
             record = self._build_guardrail_event_record(
                 entry,
                 reasons,
                 triggers,
+                trigger_tokens,
                 include_decision=include_decision,
                 include_service=include_service,
                 include_response=include_response,
@@ -10082,7 +10147,7 @@ class AutoTrader:
         )
 
         grouped: OrderedDict[str | None, list[dict[str, Any]]] = OrderedDict()
-        for entry, reasons, triggers in guardrail_records:
+        for entry, reasons, triggers, _trigger_tokens in guardrail_records:
             normalized_decision_id = self._normalize_decision_id(entry.get("decision_id"))
             if normalized_decision_id is None and not include_unidentified:
                 continue
@@ -10095,6 +10160,7 @@ class AutoTrader:
                 entry,
                 reasons,
                 triggers,
+                trigger_tokens,
                 include_decision=include_decision,
                 include_service=include_service,
                 include_response=include_response,
@@ -10344,7 +10410,7 @@ class AutoTrader:
                     )
                     service_totals["evaluations"] += 1
 
-        for entry, reasons, triggers in guardrail_records:
+        for entry, reasons, triggers, _trigger_tokens in guardrail_records:
             timestamp_value = self._normalize_time_bound(entry.get("timestamp"))
             bucket_payload = resolve_bucket(timestamp_value)
             bucket_payload["guardrail_events"] += 1
@@ -13086,6 +13152,59 @@ class AutoTrader:
             elif metadata_payload is not None:
                 record["metadata"] = copy.deepcopy(metadata_payload)
 
+            guardrail_reasons_cache: tuple[str, ...] = ()
+            guardrail_triggers_cache: tuple[dict[str, Any], ...] = ()
+            guardrail_tokens_cache: tuple[dict[str, Any], ...] = ()
+
+            guardrail_dimensions_payload = entry.get("guardrail_dimensions")
+            if isinstance(guardrail_dimensions_payload, Mapping):
+                guardrail_reasons_cache = tuple(
+                    str(reason).strip()
+                    for reason in guardrail_dimensions_payload.get("reasons", ())
+                    if reason is not None and str(reason).strip()
+                )
+                guardrail_triggers_cache = tuple(
+                    dict(trigger)
+                    for trigger in guardrail_dimensions_payload.get("triggers", ())
+                    if isinstance(trigger, Mapping)
+                )
+                guardrail_tokens_cache = tuple(
+                    dict(token)
+                    for token in guardrail_dimensions_payload.get("tokens", ())
+                    if isinstance(token, Mapping)
+                )
+            else:
+                decision_details = None
+                if isinstance(decision_payload, Mapping):
+                    decision_details = decision_payload.get("details")
+                (
+                    guardrail_reasons_cache,
+                    guardrail_triggers_cache,
+                    guardrail_tokens_cache,
+                ) = self._compute_guardrail_dimensions(decision_details)
+                if not guardrail_reasons_cache and not guardrail_triggers_cache:
+                    if "guardrail_reasons" in entry or "guardrail_triggers" in entry:
+                        synthetic_details = {
+                            "guardrail_reasons": entry.get("guardrail_reasons"),
+                            "guardrail_triggers": entry.get("guardrail_triggers"),
+                        }
+                        (
+                            guardrail_reasons_cache,
+                            guardrail_triggers_cache,
+                            guardrail_tokens_cache,
+                        ) = self._compute_guardrail_dimensions(synthetic_details)
+
+            if guardrail_reasons_cache or guardrail_triggers_cache:
+                record["guardrail_dimensions"] = {
+                    "reasons": guardrail_reasons_cache,
+                    "triggers": tuple(
+                        copy.deepcopy(trigger) for trigger in guardrail_triggers_cache
+                    ),
+                    "tokens": tuple(
+                        copy.deepcopy(token) for token in guardrail_tokens_cache
+                    ),
+                }
+
             records.append(record)
 
         records.sort(key=lambda item: float(item.get("timestamp", 0.0)))
@@ -13271,94 +13390,6 @@ class AutoTrader:
             history=history_size,
         )
         return normalized
-
-
-@dataclass(slots=True)
-class AutoTraderDecisionScheduler:
-    """Asynchronous scheduler driving :class:`AutoTrader` decision cycles."""
-
-    trader: "AutoTrader"
-    interval_s: float = 30.0
-    loop: asyncio.AbstractEventLoop | None = None
-    _task: asyncio.Task[None] | None = field(init=False, default=None, repr=False)
-    _stop_event: asyncio.Event | None = field(init=False, default=None, repr=False)
-    _thread: threading.Thread | None = field(init=False, default=None, repr=False)
-    _thread_stop: threading.Event | None = field(init=False, default=None, repr=False)
-
-    async def start(self) -> None:
-        """Start the scheduler inside an asyncio event loop."""
-
-        if self._task is not None and not self._task.done():
-            return
-        loop = self.loop or asyncio.get_running_loop()
-        self._stop_event = asyncio.Event()
-        self._task = loop.create_task(self._run_async())
-
-    async def stop(self) -> None:
-        """Request shutdown of the asynchronous scheduler and await completion."""
-
-        task = self._task
-        stop_event = self._stop_event
-        if task is None or stop_event is None:
-            return
-        stop_event.set()
-        try:
-            await task
-        finally:
-            self._task = None
-            self._stop_event = None
-
-    def start_in_background(self) -> None:
-        """Spawn a lightweight background thread executing decision cycles."""
-
-        if self._thread is not None and self._thread.is_alive():
-            return
-
-        stop_event = threading.Event()
-        self._thread_stop = stop_event
-
-        def _worker() -> None:
-            while not stop_event.is_set():
-                try:
-                    self.trader.run_cycle_once()
-                except Exception:  # pragma: no cover - defensive guard
-                    LOGGER.exception("AutoTraderDecisionScheduler cycle failed")
-                if stop_event.wait(max(0.0, float(self.interval_s))):
-                    break
-
-        thread = threading.Thread(
-            target=_worker,
-            name="AutoTraderDecisionScheduler",
-            daemon=True,
-        )
-        self._thread = thread
-        thread.start()
-
-    def stop_background(self) -> None:
-        """Stop the background thread variant of the scheduler."""
-
-        stop_event = self._thread_stop
-        if stop_event is not None:
-            stop_event.set()
-        thread = self._thread
-        if thread is not None and thread.is_alive():
-            thread.join(timeout=max(1.0, float(self.interval_s)))
-        self._thread = None
-        self._thread_stop = None
-
-    async def _run_async(self) -> None:
-        assert self._stop_event is not None
-        stop_event = self._stop_event
-        interval = max(0.0, float(self.interval_s))
-        while not stop_event.is_set():
-            try:
-                await asyncio.to_thread(self.trader.run_cycle_once)
-            except Exception:  # pragma: no cover - defensive guard
-                LOGGER.exception("AutoTraderDecisionScheduler async cycle failed")
-            try:
-                await asyncio.wait_for(stop_event.wait(), timeout=interval)
-            except asyncio.TimeoutError:
-                continue
 
 
 __all__ = [
