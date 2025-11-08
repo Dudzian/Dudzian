@@ -80,6 +80,16 @@ from .scheduler import (
 )
 from .training import ModelTrainer
 
+from bot_core.observability.dashboard_sync import save_dashboard_annotations
+from bot_core.observability.metrics import MetricsRegistry
+
+from .sandbox.scenario_runner import (
+    SandboxScenarioResult,
+    SandboxScenarioRunner,
+    load_sandbox_config,
+)
+from .sandbox.stream_ingest import SandboxStreamEvent
+
 if TYPE_CHECKING:  # pragma: no cover - tylko dla typowania
     from .monitoring import DataQualityAssessment, FeatureDriftAssessment
 
@@ -2189,6 +2199,107 @@ class AIManager:
             "candidate": candidate_payload,
             "ai": ai_payload,
         }
+
+    def run_sandbox_scenario(
+        self,
+        scenario: str,
+        *,
+        dataset: str | Path | None = None,
+        model_name: str | None = None,
+        dashboard_output: str | Path | None = None,
+        metrics_registry: "MetricsRegistry | None" = None,
+        feature_builder: Callable[["SandboxStreamEvent"], Mapping[str, float]] | None = None,
+        decision_journal: TradingDecisionJournal | None = None,
+        instruments: Sequence[str] | None = None,
+        event_types: Sequence[str] | None = None,
+    ) -> "SandboxScenarioResult":
+        """Uruchom scenariusz sandboxowy Decision Engine i zapisz wyniki."""
+
+        scenario_name = str(scenario).strip()
+        if not scenario_name:
+            raise ValueError("scenario must be a non-empty string")
+        inference = self._resolve_decision_inference(model_name)
+        config = load_sandbox_config()
+        if dashboard_output is not None:
+            destination = Path(dashboard_output)
+            if not destination.is_absolute():
+                destination = Path(__file__).resolve().parents[2] / destination
+            config = config.copy_with(dashboard_output=destination.resolve())
+        runner = SandboxScenarioRunner(config=config, metrics_registry=metrics_registry)
+        result = runner.run(
+            scenario_name,
+            inference=inference,
+            dataset=dataset,
+            feature_builder=feature_builder,
+            instruments=instruments,
+            event_types=event_types,
+        )
+        save_dashboard_annotations(
+            result.to_dashboard_payload(),
+            output_path=config.dashboard_output,
+            pretty=config.dashboard_pretty,
+        )
+        journal = decision_journal or self._decision_journal
+        if journal is not None:
+            base_context = dict(self._decision_journal_context or {})
+            environment = str(base_context.get("environment", "sandbox"))
+            portfolio = str(base_context.get("portfolio", "sandbox"))
+            risk_profile = str(base_context.get("risk_profile", "SANDBOX"))
+            strategy_context = base_context.get("strategy")
+            telemetry_namespace = str(base_context.get("telemetry_namespace", "ai_sandbox"))
+            extra_context = {
+                key: str(value)
+                for key, value in base_context.items()
+                if key
+                not in {
+                    "environment",
+                    "portfolio",
+                    "risk_profile",
+                    "strategy",
+                    "telemetry_namespace",
+                }
+            }
+
+            def _format_value(value: object) -> str:
+                if value is None:
+                    return "null"
+                try:
+                    number = float(value)
+                except (TypeError, ValueError):
+                    return str(value)
+                formatted = f"{number:.10f}".rstrip("0").rstrip(".")
+                return formatted or "0"
+
+            for record in result.decisions:
+                metadata: Dict[str, str] = dict(extra_context)
+                metadata.update(
+                    {
+                        "scenario": scenario_name,
+                        "dataset": str(result.dataset),
+                        "event_type": record.event.event_type,
+                        "sequence": str(record.event.sequence),
+                        "instrument_exchange": record.event.instrument.exchange,
+                    }
+                )
+                for feature_name, feature_value in record.features.items():
+                    metadata[f"feature_{feature_name}"] = _format_value(feature_value)
+                for metric_name, metric_value in record.score.items():
+                    metadata[metric_name] = _format_value(metric_value)
+                strategy_value = strategy_context if strategy_context is not None else scenario_name
+                journal_event = TradingDecisionEvent(
+                    event_type="sandbox_decision",
+                    timestamp=record.event.timestamp,
+                    environment=environment,
+                    portfolio=portfolio,
+                    risk_profile=risk_profile,
+                    symbol=record.event.instrument.symbol,
+                    strategy=str(strategy_value) if strategy_value is not None else None,
+                    telemetry_namespace=telemetry_namespace,
+                    primary_exchange=record.event.instrument.exchange,
+                    metadata=metadata,
+                )
+                journal.record(journal_event)
+        return result
 
     # --------------------------- Zespoły modeli ---------------------------
     def register_ensemble(
