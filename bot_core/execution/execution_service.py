@@ -92,6 +92,41 @@ def _load_decision_log_key(
     return None
 
 
+def _normalize_signer_entry(config: Mapping[str, Any], *, base: str | None = None) -> dict[str, Any]:
+    normalized: dict[str, Any] = {str(key): value for key, value in config.items()}
+    key_path = normalized.get("key_path")
+    if isinstance(key_path, (str, os.PathLike)):
+        path = Path(key_path).expanduser()
+        if base:
+            base_path = Path(base).expanduser()
+            if not path.is_absolute():
+                path = base_path / path
+        normalized["key_path"] = str(path)
+    return normalized
+
+
+def _normalize_signer_config(config: Mapping[str, Any], *, base: str | None = None) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    default_cfg = config.get("default")
+    if isinstance(default_cfg, Mapping):
+        result["default"] = _normalize_signer_entry(default_cfg, base=base)
+    accounts_cfg = config.get("accounts")
+    if isinstance(accounts_cfg, Mapping):
+        result["accounts"] = {
+            str(account_id): _normalize_signer_entry(account_cfg, base=base)
+            for account_id, account_cfg in accounts_cfg.items()
+            if isinstance(account_cfg, Mapping)
+        }
+    for key, value in config.items():
+        if key in {"default", "accounts"}:
+            continue
+        if isinstance(value, Mapping):
+            result[str(key)] = _normalize_signer_entry(value, base=base)
+        else:
+            result[str(key)] = value
+    return result
+
+
 def _collect_adapters(bootstrap_ctx: Any) -> MutableMapping[str, ExchangeAdapter]:
     adapters: MutableMapping[str, ExchangeAdapter] = {}
     primary = getattr(bootstrap_ctx, "adapter", None)
