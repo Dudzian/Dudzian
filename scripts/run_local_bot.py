@@ -11,7 +11,7 @@ import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Mapping, Optional
+from typing import Any, Mapping, Optional, Sequence
 
 from bot_core.api.server import build_local_runtime_context, LocalRuntimeServer
 from bot_core.exchanges.base import Environment as ExchangeEnvironment

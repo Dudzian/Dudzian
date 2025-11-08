@@ -71,7 +71,50 @@ def _build_context_stub() -> SimpleNamespace:
         }
     )
     observability_cfg = SimpleNamespace(enable_log_metrics=False)
-    execution_cfg = SimpleNamespace(default_mode="paper")
+    execution_cfg = SimpleNamespace(
+        default_mode="paper",
+        paper_profiles={
+            "kraken_paper": {
+                "entrypoint": "kraken_desktop_paper",
+                "metrics": {
+                    "rate_limit": "bot_exchange_rate_limited_total",
+                    "network_errors": "bot_exchange_errors_total",
+                    "health": "bot_exchange_health_status",
+                    "thresholds": {
+                        "rate_limit_max": 0,
+                        "network_errors_max": 0,
+                        "health_min": 1,
+                    },
+                },
+            },
+            "okx_paper": {
+                "entrypoint": "okx_desktop_paper",
+                "metrics": {
+                    "rate_limit": "bot_exchange_rate_limited_total",
+                    "network_errors": "bot_exchange_errors_total",
+                    "health": "bot_exchange_health_status",
+                    "thresholds": {
+                        "rate_limit_max": 0,
+                        "network_errors_max": 1,
+                        "health_min": 1,
+                    },
+                },
+            },
+            "bybit_paper": {
+                "entrypoint": "bybit_desktop_paper",
+                "metrics": {
+                    "rate_limit": "bot_exchange_rate_limited_total",
+                    "network_errors": "bot_exchange_errors_total",
+                    "health": "bot_exchange_health_status",
+                    "thresholds": {
+                        "rate_limit_max": 0,
+                        "network_errors_max": 0,
+                        "health_min": 1,
+                    },
+                },
+            },
+        },
+    )
     config = SimpleNamespace(trading=trading_cfg, observability=observability_cfg, execution=execution_cfg)
 
     def _load_credentials(*args, **kwargs):  # pragma: no cover - stub
