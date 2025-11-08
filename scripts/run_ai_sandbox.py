@@ -83,49 +83,6 @@ def main() -> None:
                         soft=summary.threshold_breaches,
                     )
                 )
-    quantile_specs = list(result.score_quantiles)
-
-    def _format_score_summary(summary: dict[str, float | int]) -> str:
-        mean = float(summary.get("mean", 0.0))
-        count = int(float(summary.get("count", 0.0)))
-        minimum = summary.get("min")
-        maximum = summary.get("max")
-        stddev = float(summary.get("stddev", 0.0))
-        sample_stddev = float(summary.get("sample_stddev", 0.0))
-        skewness = summary.get("skewness")
-        kurtosis_excess = summary.get("kurtosis_excess")
-        quantile_fields = []
-        for name, _ in quantile_specs:
-            value = summary.get(name)
-            if value is not None:
-                quantile_fields.append(f"{name}={float(value):.4f}")
-        quantiles = ", ".join(quantile_fields) if quantile_fields else "none"
-        return (
-            "mean={mean:.4f}, stddev={stddev:.4f}, sample_stddev={sample_stddev:.4f}, "
-            "skewness={skewness}, kurtosis_excess={kurtosis}, count={count}, "
-            "min={min_value}, max={max_value}, quantiles=[{quantiles}]"
-        ).format(
-            mean=mean,
-            stddev=stddev,
-            sample_stddev=sample_stddev,
-            skewness=f"{float(skewness):.4f}" if skewness is not None else "n/a",
-            kurtosis=f"{float(kurtosis_excess):.4f}" if kurtosis_excess is not None else "n/a",
-            count=count,
-            min_value=f"{minimum:.4f}" if minimum is not None else "n/a",
-            max_value=f"{maximum:.4f}" if maximum is not None else "n/a",
-            quantiles=quantiles,
-        )
-
-    if result.decision_score_summary:
-        print("Decision score summary:")
-        for metric, summary in sorted(result.decision_score_summary.items()):
-            print(f"  {metric}: {_format_score_summary(summary)}")
-    if result.decision_score_summary_by_instrument:
-        print("Decision score summary by instrument:")
-        for instrument, metrics in sorted(result.decision_score_summary_by_instrument.items()):
-            print(f"  {instrument}:")
-            for metric, summary in sorted(metrics.items()):
-                print(f"    {metric}: {_format_score_summary(summary)}")
 
 
 if __name__ == "__main__":

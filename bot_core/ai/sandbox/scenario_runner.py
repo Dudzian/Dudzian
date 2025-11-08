@@ -25,44 +25,6 @@ from .stream_ingest import SandboxStreamEvent, TradingStubStreamIngestor
 _ROOT = Path(__file__).resolve().parents[3]
 _CONFIG_PATH = _ROOT / "config" / "ai" / "sandbox.yaml"
 _DEFAULT_DASHBOARD_PATH = _ROOT / "var" / "observability" / "sandbox_annotations.json"
-_DEFAULT_SCORE_QUANTILES: tuple[tuple[str, float], ...] = (
-    ("p25", 0.25),
-    ("p50", 0.50),
-    ("p75", 0.75),
-    ("p90", 0.90),
-    ("p95", 0.95),
-    ("p99", 0.99),
-)
-
-
-def _normalize_score_quantiles(
-    values: Mapping[str, object] | Sequence[tuple[str, object]] | None,
-) -> tuple[tuple[str, float], ...]:
-    if values is None:
-        return _DEFAULT_SCORE_QUANTILES
-    if isinstance(values, Mapping):
-        items = list(values.items())
-    elif isinstance(values, Sequence):
-        items = list(values)
-    else:
-        raise ValueError("score_quantiles musi być mapowaniem lub sekwencją par (nazwa, wartość)")
-    normalized: list[tuple[str, float]] = []
-    for raw_name, raw_fraction in items:
-        name = str(raw_name)
-        try:
-            fraction = float(raw_fraction)
-        except (TypeError, ValueError) as exc:
-            raise ValueError(
-                f"Wartość kwantyla '{raw_name}' musi być liczbą zmiennoprzecinkową"
-            ) from exc
-        if not 0.0 <= fraction <= 1.0:
-            raise ValueError(
-                f"Kwantyl '{name}' ma niedozwolony ułamek {fraction}; oczekiwany zakres <0, 1>"
-            )
-        normalized.append((name, fraction))
-    if not normalized:
-        return _DEFAULT_SCORE_QUANTILES
-    return tuple(normalized)
 
 
 @dataclass(slots=True)
@@ -76,9 +38,6 @@ class SandboxScenarioConfig:
     dashboard_pretty: bool = False
     default_dataset: str = "multi_asset_performance"
     metric_labels: Mapping[str, str] = field(default_factory=dict)
-    score_quantiles: tuple[tuple[str, float], ...] = field(
-        default_factory=lambda: _DEFAULT_SCORE_QUANTILES
-    )
 
     def copy_with(
         self,
@@ -86,7 +45,6 @@ class SandboxScenarioConfig:
         dashboard_output: Path | None = None,
         dashboard_pretty: bool | None = None,
         metric_labels: Mapping[str, str] | None = None,
-        score_quantiles: Mapping[str, object] | Sequence[tuple[str, object]] | None = None,
     ) -> "SandboxScenarioConfig":
         return SandboxScenarioConfig(
             budgets=self.budgets,
@@ -96,7 +54,6 @@ class SandboxScenarioConfig:
             dashboard_pretty=self.dashboard_pretty if dashboard_pretty is None else dashboard_pretty,
             default_dataset=self.default_dataset,
             metric_labels=dict(metric_labels or self.metric_labels),
-            score_quantiles=_normalize_score_quantiles(score_quantiles) if score_quantiles is not None else self.score_quantiles,
         )
 
 
@@ -232,7 +189,6 @@ def load_sandbox_config(path: str | Path | None = None) -> SandboxScenarioConfig
     metric_labels = defaults_section.get("metric_labels", {})
     if metric_labels and not isinstance(metric_labels, Mapping):
         raise ValueError("Sekcja defaults.metric_labels musi być mapowaniem")
-    score_quantiles = _normalize_score_quantiles(defaults_section.get("score_quantiles"))
 
     return SandboxScenarioConfig(
         budgets=budgets,
@@ -242,7 +198,6 @@ def load_sandbox_config(path: str | Path | None = None) -> SandboxScenarioConfig
         dashboard_pretty=dashboard_pretty,
         default_dataset=default_dataset,
         metric_labels=dict({str(key): str(value) for key, value in (metric_labels or {}).items()}),
-        score_quantiles=score_quantiles,
     )
 
 
@@ -264,13 +219,6 @@ class SandboxScenarioResult:
     resource_statistics: Mapping[str, float]
     event_type_counts: Mapping[str, int]
     risk_limit_summary: Mapping[str, Sequence["RiskLimitSummary"]] = field(default_factory=dict)
-    decision_score_summary: Mapping[str, Mapping[str, float]] = field(default_factory=dict)
-    decision_score_summary_by_instrument: Mapping[
-        str, Mapping[str, Mapping[str, float]]
-    ] = field(default_factory=dict)
-    score_quantiles: tuple[tuple[str, float], ...] = field(
-        default_factory=lambda: _DEFAULT_SCORE_QUANTILES
-    )
 
     def to_dashboard_payload(self) -> Mapping[str, object]:
         return {
@@ -295,21 +243,6 @@ class SandboxScenarioResult:
                 instrument: [summary.to_payload() for summary in summaries]
                 for instrument, summaries in self.risk_limit_summary.items()
             },
-            "decision_score_summary": {
-                metric: dict(summary)
-                for metric, summary in self.decision_score_summary.items()
-            },
-            "decision_score_summary_by_instrument": {
-                instrument: {
-                    metric: dict(summary)
-                    for metric, summary in metrics.items()
-                }
-                for instrument, metrics in self.decision_score_summary_by_instrument.items()
-            },
-            "score_quantiles": [
-                {"name": name, "fraction": fraction}
-                for name, fraction in self.score_quantiles
-            ],
         }
 
 
@@ -450,101 +383,6 @@ class RiskLimitSummary:
         return payload
 
 
-@dataclass(slots=True)
-class _ScoreAccumulator:
-    count: int = 0
-    mean: float = 0.0
-    m2: float = 0.0
-    minimum: float | None = None
-    maximum: float | None = None
-    _values: list[float] = field(default_factory=list, repr=False)
-    quantiles: tuple[tuple[str, float], ...] = field(
-        default_factory=lambda: _DEFAULT_SCORE_QUANTILES,
-        repr=False,
-    )
-
-    def observe(self, value: float) -> None:
-        if not math.isfinite(value):
-            return
-        self.count += 1
-        delta = value - self.mean
-        self.mean += delta / self.count
-        delta2 = value - self.mean
-        self.m2 += delta * delta2
-        self.minimum = value if self.minimum is None else min(self.minimum, value)
-        self.maximum = value if self.maximum is None else max(self.maximum, value)
-        self._values.append(value)
-
-    def snapshot(self) -> Mapping[str, float]:
-        if self.count == 0:
-            return {}
-        population_variance = self.m2 / self.count if self.count else 0.0
-        sample_variance = self.m2 / (self.count - 1) if self.count > 1 else 0.0
-        summary: MutableMapping[str, float] = {
-            "count": float(self.count),
-            "mean": self.mean,
-            "variance": population_variance,
-            "stddev": math.sqrt(population_variance) if population_variance > 0.0 else 0.0,
-            "sample_variance": sample_variance,
-            "sample_stddev": math.sqrt(sample_variance) if sample_variance > 0.0 else 0.0,
-        }
-        if self.minimum is not None:
-            summary["min"] = self.minimum
-        if self.maximum is not None:
-            summary["max"] = self.maximum
-        sorted_values: list[float] | None = None
-        if self._values:
-            sorted_values = sorted(self._values)
-
-        if sorted_values:
-            n = len(sorted_values)
-            centered = [value - self.mean for value in sorted_values]
-            if n > 1:
-                sample_variance = sum(diff * diff for diff in centered) / (n - 1)
-            else:
-                sample_variance = 0.0
-            summary.setdefault("skewness", 0.0)
-            summary.setdefault("kurtosis_excess", 0.0)
-            if sample_variance > 0.0:
-                sample_stddev = math.sqrt(sample_variance)
-                if n > 2:
-                    skew_factor = n / ((n - 1) * (n - 2))
-                    skewness = skew_factor * sum(
-                        (diff / sample_stddev) ** 3 for diff in centered
-                    )
-                    summary["skewness"] = skewness
-                if n > 3:
-                    kurtosis_factor = (
-                        (n * (n + 1)) / ((n - 1) * (n - 2) * (n - 3))
-                    )
-                    excess_adjustment = (3 * (n - 1) ** 2) / (
-                        (n - 2) * (n - 3)
-                    )
-                    kurtosis_excess = kurtosis_factor * sum(
-                        (diff / sample_stddev) ** 4 for diff in centered
-                    ) - excess_adjustment
-                    summary["kurtosis_excess"] = kurtosis_excess
-
-        if sorted_values and self.quantiles:
-
-            def _compute_quantile(fraction: float) -> float:
-                if len(sorted_values) == 1:
-                    return sorted_values[0]
-                position = (len(sorted_values) - 1) * fraction
-                lower_index = math.floor(position)
-                upper_index = math.ceil(position)
-                lower = sorted_values[lower_index]
-                upper = sorted_values[upper_index]
-                if lower_index == upper_index:
-                    return lower
-                weight = position - lower_index
-                return lower + (upper - lower) * weight
-
-            for key, fraction in self.quantiles:
-                summary[key] = _compute_quantile(fraction)
-        return summary
-
-
 class SandboxScenarioRunner:
     """Wykonuje scenariusz sandboxowy używając DecisionModelInference."""
 
@@ -612,9 +450,6 @@ class SandboxScenarioRunner:
         started_at = datetime.now(timezone.utc)
         processed_events = 0
         risk_limit_track: dict[str, dict[str, RiskLimitSummary]] = {}
-        score_accumulators: dict[str, _ScoreAccumulator] = {}
-        score_accumulators_by_instrument: dict[str, dict[str, _ScoreAccumulator]] = {}
-        score_quantiles = self._config.score_quantiles
         with guard:
             for event in ingestor.iter_events(
                 instruments=instruments,
@@ -743,51 +578,21 @@ class SandboxScenarioRunner:
                 if not features:
                     continue
                 score = inference.score(features, context={"instrument": event.instrument.symbol})
-                score_payload = {
-                    "expected_return_bps": float(getattr(score, "expected_return_bps", 0.0)),
-                    "success_probability": float(getattr(score, "success_probability", 0.0)),
-                }
                 decisions.append(
                     SandboxDecisionRecord(
                         event=event,
                         features=dict(features),
-                        score=dict(score_payload),
+                        score={
+                            "expected_return_bps": float(getattr(score, "expected_return_bps", 0.0)),
+                            "success_probability": float(getattr(score, "success_probability", 0.0)),
+                        },
                     )
                 )
-                for metric_name, metric_value in score_payload.items():
-                    accumulator = score_accumulators.get(metric_name)
-                    if accumulator is None:
-                        accumulator = _ScoreAccumulator(quantiles=score_quantiles)
-                        score_accumulators[metric_name] = accumulator
-                    accumulator.observe(metric_value)
-                    instrument_accumulators = score_accumulators_by_instrument.setdefault(
-                        event.instrument.symbol,
-                        {},
-                    )
-                    instrument_accumulator = instrument_accumulators.get(metric_name)
-                    if instrument_accumulator is None:
-                        instrument_accumulator = _ScoreAccumulator(quantiles=score_quantiles)
-                        instrument_accumulators[metric_name] = instrument_accumulator
-                    instrument_accumulator.observe(metric_value)
                 if decisions_counter_metric is not None:
                     decision_labels = dict(guard_labels)
                     decision_labels["event_type"] = event.event_type
                     decisions_counter_metric.inc(labels=decision_labels)
         completed_at = datetime.now(timezone.utc)
-        decision_score_summary: dict[str, Mapping[str, float]] = {}
-        for metric_name, accumulator in score_accumulators.items():
-            snapshot = accumulator.snapshot()
-            if snapshot:
-                decision_score_summary[metric_name] = dict(snapshot)
-        decision_score_summary_by_instrument: dict[str, Mapping[str, Mapping[str, float]]] = {}
-        for instrument, metric_map in score_accumulators_by_instrument.items():
-            instrument_summary: dict[str, Mapping[str, float]] = {}
-            for metric_name, accumulator in metric_map.items():
-                snapshot = accumulator.snapshot()
-                if snapshot:
-                    instrument_summary[metric_name] = dict(snapshot)
-            if instrument_summary:
-                decision_score_summary_by_instrument[instrument] = instrument_summary
         return SandboxScenarioResult(
             scenario=scenario,
             dataset=ingestor.dataset_path,
@@ -801,9 +606,6 @@ class SandboxScenarioRunner:
                 instrument: tuple(summaries.values())
                 for instrument, summaries in risk_limit_track.items()
             },
-            decision_score_summary=decision_score_summary,
-            decision_score_summary_by_instrument=decision_score_summary_by_instrument,
-            score_quantiles=score_quantiles,
         )
 
 

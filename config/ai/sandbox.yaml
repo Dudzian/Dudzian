@@ -37,10 +37,3 @@ defaults:
   dataset: multi_asset_performance
   metric_labels:
     environment: sandbox
-  score_quantiles:
-    p25: 0.25
-    p50: 0.5
-    p75: 0.75
-    p90: 0.9
-    p95: 0.95
-    p99: 0.99
