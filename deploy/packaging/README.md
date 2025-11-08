@@ -46,6 +46,52 @@ Parametry `--daemon` i `--ui` można podać wielokrotnie (pliki lub katalogi). K
 2. Fingerprint urządzenia może być przekazany jako `OEM_FINGERPRINT` lub dostarczony przez moduł `bot_core.security.fingerprint` (po wdrożeniu sprintu 2).
 3. Skrypt `bootstrap/verify_fingerprint.py` porównuje fingerprint i podpis z bundla; w przypadku rozbieżności instalacja kończy się błędem.
 
+## Pipeline rozszerzeń (notaryzacja, delty, walidacja fingerprintu)
+
+Skrypt `deploy/packaging/build_core_bundle.py` potrafi uruchomić dodatkowe kroki
+po zbudowaniu bundla. Konfiguracja przekazywana jest przez opcję
+`--pipeline-config <plik.{json,yaml}>` i umożliwia:
+
+* **notaryzację** archiwum przy pomocy `xcrun notarytool` (w trybie online lub
+  `dry-run` z raportem),
+* **generowanie aktualizacji delta** na podstawie wcześniej wydanych manifestów
+  (`manifest.json` lub całych archiwów `.zip`/`.tar.gz`),
+* **walidację hardware fingerprintu** w osadzonym dokumencie
+  `config/fingerprint.expected.json` z opcjonalną weryfikacją podpisu HMAC oraz
+  porównaniem z lokalnym fingerprintem odczytanym z modułu `bot_core.security.fingerprint`.
+
+Przykładowa konfiguracja (YAML):
+
+```yaml
+notarization:
+  bundle_id: com.example.core
+  apple_id: operator@example.com
+  password: env:APPLE_NOTARY_PASSWORD
+  team_id: Z123456789
+  dry_run: true
+  log_path: var/dist/notary/core-macos.json
+delta_updates:
+  bases:
+    - var/dist/core-oem-2024.05-macos
+    - var/dist/releases/core-oem-2024.04-macos.tar.gz
+  output_dir: var/dist/delta
+  compression: zip
+fingerprint_validation:
+  expected: OEM-FP-PLACEHOLDER
+  hmac_key: env:OEM_BUNDLE_HMAC_KEY
+  verify_local: true
+```
+
+Ścieżki w konfiguracji są rozwiązywane względem katalogu z plikiem konfiguracyjnym.
+Wartości `env:` i `file:` pozwalają wczytać sekrety z odpowiednio zmiennych
+środowiskowych lub plików.
+
+> **Raportowanie post-processingu:** przekazanie argumentu
+> `--pipeline-report var/dist/core-oem-<wersja>-pipeline.json` powoduje zapisanie
+> raportu JSON z wynikami weryfikacji fingerprintu, listą paczek delta oraz
+> metadanymi notaryzacji. Raport umożliwia późniejsze audytowanie przebiegu
+> pipeline'u na środowiskach offline.
+
 ## Integracja CI
 W katalogu `deploy/ci/github_actions_oem_packaging.yml` znajduje się pipeline GitHub Actions uruchamiający proces bundlowania dla Linux/macOS/Windows na self-hosted runnerach offline. Pipeline publikuje artefakty z katalogu `var/dist`.
 
