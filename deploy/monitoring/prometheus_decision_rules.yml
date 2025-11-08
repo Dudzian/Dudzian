@@ -1,0 +1,23 @@
+---
+name: decision-observability
+interval: 1m
+rules:
+  - record: decision:evaluations:rate5m
+    expr: sum by (strategy, profile, result) (rate(decision_candidate_evaluations_total[5m]))
+  - record: decision:risk_flags:rate5m
+    expr: sum by (profile, flag) (rate(decision_candidate_risk_flags_total[5m]))
+  - record: decision:rejections:rate5m
+    expr: sum by (strategy, profile, intent, reason) (rate(decision_candidate_rejection_reasons_total[5m]))
+  - record: risk:guardrail:hedge_mode
+    expr: risk_guardrail_hedge_mode
+  - alert: DecisionGuardrailActivated
+    expr: increase(risk_guardrail_hedge_transitions_total[10m]) > 0
+    for: 2m
+    labels:
+      severity: warning
+      team: trading-ops
+    annotations:
+      summary: "Profil {{ $labels.profile }} przełączony w tryb hedge"
+      description: |
+        Guardrail aktywował tryb hedge dla profilu {{ $labels.profile }}.
+        Sprawdź przyczynę w Decision Engine Dashboard i rozważ rollback.

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from .plugins import (
+    AdaptiveMarketMakingPlugin,
     ArbitrageStrategy,
     CrossExchangeHedgeStrategy,
     DayTradingStrategy,
@@ -14,10 +15,12 @@ from .plugins import (
     StrategyCatalog,
     StrategyPlugin,
     TrendFollowingStrategy,
+    TriangularArbitragePlugin,
     VolatilityTargetStrategy,
 )
 
 __all__ = [
+    "AdaptiveMarketMakingPlugin",
     "ArbitrageStrategy",
     "CrossExchangeHedgeStrategy",
     "DayTradingStrategy",
@@ -30,5 +33,6 @@ __all__ = [
     "StrategyCatalog",
     "StrategyPlugin",
     "TrendFollowingStrategy",
+    "TriangularArbitragePlugin",
     "VolatilityTargetStrategy",
 ]

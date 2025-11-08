@@ -13,7 +13,7 @@ from pathlib import Path
 from sqlalchemy import select
 
 from KryptoLowca.database_manager import DatabaseManager, DBOptions
-from bot_core.auto_trader.app import RiskDecision
+from bot_core.auto_trader import RiskDecision
 from bot_core.database import CURRENT_SCHEMA_VERSION, RiskAuditLog
 
 

@@ -98,11 +98,6 @@ execution:
       metrics:
         rate_limit: bot_exchange_rate_limited_total
         network_errors: bot_exchange_errors_total
-        health: bot_exchange_health_status
-        thresholds:
-          rate_limit_max: 0
-          network_errors_max: 0
-          health_min: 1.0
     okx_paper:
       entrypoint: okx_desktop_paper
       exchange: okx
@@ -111,11 +106,6 @@ execution:
       metrics:
         rate_limit: bot_exchange_rate_limited_total
         network_errors: bot_exchange_errors_total
-        health: bot_exchange_health_status
-        thresholds:
-          rate_limit_max: 0
-          network_errors_max: 1
-          health_min: 1.0
     bybit_paper:
       entrypoint: bybit_desktop_paper
       exchange: bybit
@@ -124,11 +114,6 @@ execution:
       metrics:
         rate_limit: bot_exchange_rate_limited_total
         network_errors: bot_exchange_errors_total
-        health: bot_exchange_health_status
-        thresholds:
-          rate_limit_max: 0
-          network_errors_max: 0
-          health_min: 1.0
   trading_profiles:
     kraken_desktop:
       entrypoint: kraken_desktop_paper

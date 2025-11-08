@@ -72,6 +72,10 @@ from bot_core.strategies.futures_spread import (
     FuturesSpreadStrategy,
 )
 from bot_core.strategies.grid import GridTradingSettings, GridTradingStrategy
+from bot_core.strategies.adaptive_market_making import (
+    AdaptiveMarketMakingSettings,
+    AdaptiveMarketMakingStrategy,
+)
 from bot_core.strategies.market_making import (
     MarketMakingSettings,
     MarketMakingStrategy,
@@ -87,6 +91,10 @@ from bot_core.strategies.testing import (
     ParameterTestResult,
     StrategyParameterTestReport,
     StrategyParameterTester,
+)
+from bot_core.strategies.triangular_arbitrage import (
+    TriangularArbitrageSettings,
+    TriangularArbitrageStrategy,
 )
 from bot_core.strategies.public import StrategyDescriptor, list_available_strategies
 from bot_core.strategies.volatility_target import (
@@ -147,6 +155,8 @@ __all__ = [
     "DEFAULT_STRATEGY_CATALOG",
     "GridTradingSettings",
     "GridTradingStrategy",
+    "AdaptiveMarketMakingSettings",
+    "AdaptiveMarketMakingStrategy",
     "MarketMakingSettings",
     "MarketMakingStrategy",
     "MeanReversionSettings",
@@ -157,6 +167,8 @@ __all__ = [
     "ScalpingStrategy",
     "StatisticalArbitrageSettings",
     "StatisticalArbitrageStrategy",
+    "TriangularArbitrageSettings",
+    "TriangularArbitrageStrategy",
     "VolatilityTargetSettings",
     "VolatilityTargetStrategy",
     "CrossExchangeArbitrageSettings",

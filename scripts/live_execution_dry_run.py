@@ -18,7 +18,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 
-from bot_core.auto_trader.app import AutoTrader  # noqa: E402
+from bot_core.auto_trader import AutoTrader  # noqa: E402
 from bot_core.config.loader import load_core_config  # noqa: E402
 from bot_core.config.models import CoreConfig, EnvironmentConfig  # noqa: E402
 from bot_core.execution.base import ExecutionContext  # noqa: E402

@@ -17,3 +17,6 @@ core/generated/*
 !core/generated/.gitkeep
 data/risk/*.parquet
 tests/utils/.libgl-cache/
+ui/desktop/node_modules/
+ui/desktop/dist/
+ui/desktop/test-results/

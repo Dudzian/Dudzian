@@ -7,7 +7,7 @@ from KryptoLowca.services.wfo import WalkForwardOptimizer
 
 
 def _build_df(rows: int) -> pd.DataFrame:
-    index = pd.date_range("2024-01-01", periods=rows, freq="H")
+    index = pd.date_range("2024-01-01", periods=rows, freq="h")
     base = np.linspace(25000, 26000, rows) + np.random.randn(rows) * 15
     return pd.DataFrame(
         {

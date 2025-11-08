@@ -11,6 +11,11 @@ from typing import Any, Callable, Dict, Iterable, Mapping, MutableMapping, Seque
 from bot_core.exchanges.base import AccountSnapshot, OrderRequest
 from bot_core.risk.base import RiskCheckResult, RiskEngine, RiskProfile, RiskRepository
 from bot_core.risk.events import RiskDecisionLog, RiskAlertLog
+from bot_core.risk.guardrails import (
+    LossGuardrailConfig,
+    LossGuardrailDecision,
+    RiskGuardrailMetricSet,
+)
 from bot_core.risk.simulation import (
     DEFAULT_PROFILES,
     RiskSimulationSuite,
@@ -98,6 +103,10 @@ class RiskState:
     start_of_week_equity: float = 0.0
     rolling_profit_30d: float = 0.0
     rolling_costs_30d: float = 0.0
+    hedge_mode: bool = False
+    hedge_reason: str | None = None
+    hedge_activated_at: datetime | None = None
+    hedge_cooldown_until: datetime | None = None
 
     def gross_notional(self) -> float:
         return sum(position.notional for position in self.positions.values())
@@ -120,6 +129,10 @@ class RiskState:
             "start_of_week_equity": self.start_of_week_equity,
             "rolling_profit_30d": self.rolling_profit_30d,
             "rolling_costs_30d": self.rolling_costs_30d,
+            "hedge_mode": self.hedge_mode,
+            "hedge_reason": self.hedge_reason,
+            "hedge_activated_at": self.hedge_activated_at.isoformat() if self.hedge_activated_at else None,
+            "hedge_cooldown_until": self.hedge_cooldown_until.isoformat() if self.hedge_cooldown_until else None,
         }
 
     @classmethod
@@ -138,6 +151,22 @@ class RiskState:
             for symbol, raw in positions_raw.items():
                 if isinstance(raw, Mapping):
                     positions[str(symbol)] = PositionState.from_mapping(raw)
+        hedge_activated_at_raw = data.get("hedge_activated_at")
+        hedge_activated_at: datetime | None = None
+        if hedge_activated_at_raw:
+            try:
+                hedge_activated_at = datetime.fromisoformat(str(hedge_activated_at_raw))
+            except ValueError:
+                hedge_activated_at = None
+
+        hedge_cooldown_raw = data.get("hedge_cooldown_until")
+        hedge_cooldown_until: datetime | None = None
+        if hedge_cooldown_raw:
+            try:
+                hedge_cooldown_until = datetime.fromisoformat(str(hedge_cooldown_raw))
+            except ValueError:
+                hedge_cooldown_until = None
+
         return cls(
             profile=profile,
             current_day=parsed_day,
@@ -152,6 +181,10 @@ class RiskState:
             start_of_week_equity=float(data.get("start_of_week_equity", 0.0)),
             rolling_profit_30d=float(data.get("rolling_profit_30d", 0.0)),
             rolling_costs_30d=float(data.get("rolling_costs_30d", 0.0)),
+            hedge_mode=bool(data.get("hedge_mode", False)),
+            hedge_reason=str(data.get("hedge_reason")) if data.get("hedge_reason") not in (None, "") else None,
+            hedge_activated_at=hedge_activated_at,
+            hedge_cooldown_until=hedge_cooldown_until,
         )
 
     def reset_for_new_day(self, *, equity: float, day: date) -> None:
@@ -195,6 +228,23 @@ class RiskState:
             return
         self.positions[symbol] = PositionState(side=side, notional=notional)
 
+    def activate_hedge(
+        self,
+        *,
+        reason: str | None,
+        timestamp: datetime,
+        cooldown_until: datetime | None,
+    ) -> None:
+        self.hedge_mode = True
+        self.hedge_reason = reason
+        self.hedge_activated_at = timestamp
+        self.hedge_cooldown_until = cooldown_until
+
+    def deactivate_hedge(self) -> None:
+        self.hedge_mode = False
+        self.hedge_reason = None
+        self.hedge_cooldown_until = None
+
 
 class InMemoryRiskRepository(RiskRepository):
     """Najprostsze repozytorium używane do testów i trybu offline."""
@@ -220,6 +270,8 @@ class ThresholdRiskEngine(RiskEngine):
         decision_log: RiskDecisionLog | None = None,
         alert_log: RiskAlertLog | None = None,
         decision_orchestrator: Any | None = None,
+        guardrail_config: LossGuardrailConfig | None = None,
+        guardrail_metrics: RiskGuardrailMetricSet | None = None,
     ) -> None:
         self._repository = repository or InMemoryRiskRepository()
         self._clock = clock or datetime.utcnow
@@ -247,6 +299,10 @@ class ThresholdRiskEngine(RiskEngine):
         self._exchange_profile_hint: str | None = None
         self._profile_resolver: Callable[[Mapping[str, Any]], str | None] | None = None
         self._default_profile: str | None = None
+        self._loss_guardrails = guardrail_config
+        self._guardrail_metrics = guardrail_metrics
+        if self._loss_guardrails is not None and self._guardrail_metrics is None:
+            self._guardrail_metrics = RiskGuardrailMetricSet()
 
     def register_profile(self, profile: RiskProfile) -> None:
         self._profiles[profile.name] = profile
@@ -267,6 +323,9 @@ class ThresholdRiskEngine(RiskEngine):
         _LOGGER.info("Zarejestrowano profil ryzyka %s", profile.name)
         if self._default_profile is None:
             self._default_profile = profile.name
+        if self._guardrail_metrics is not None:
+            stored_state = self._states[profile.name]
+            self._guardrail_metrics.record_state(profile.name, active=stored_state.hedge_mode)
 
     def attach_exchange_manager(
         self,
@@ -382,6 +441,60 @@ class ThresholdRiskEngine(RiskEngine):
             cost_ratio = state.rolling_costs_30d / max(state.rolling_profit_30d, 1e-12)
         elif state.rolling_costs_30d > 0:
             cost_ratio = float("inf")
+
+        guardrail_decision: LossGuardrailDecision | None = None
+        if self._loss_guardrails is not None:
+            guardrail_decision = self._loss_guardrails.evaluate(
+                state=state,
+                drawdown_pct=drawdown,
+                daily_loss_pct=daily_loss,
+                weekly_loss_pct=weekly_loss_pct,
+                now=now,
+            )
+            if guardrail_decision.activate:
+                state.activate_hedge(
+                    reason=guardrail_decision.reason,
+                    timestamp=now,
+                    cooldown_until=guardrail_decision.cooldown_until,
+                )
+                _LOGGER.warning(
+                    "Guardrail hedge mode enabled for profile %s metric=%s value=%.4f threshold=%.4f",
+                    profile_name,
+                    guardrail_decision.metric or "unknown",
+                    guardrail_decision.value or 0.0,
+                    guardrail_decision.threshold or 0.0,
+                )
+                if self._guardrail_metrics is not None:
+                    self._guardrail_metrics.record_activation(
+                        profile_name,
+                        reason=guardrail_decision.metric,
+                    )
+                try:
+                    self._alert_log.record(
+                        profile=profile_name,
+                        limit=f"loss_guardrail_{guardrail_decision.metric or 'unknown'}",
+                        value=float(guardrail_decision.value or 0.0),
+                        threshold=float(guardrail_decision.threshold or 0.0),
+                        severity="warning",
+                        context={
+                            "reason": guardrail_decision.reason,
+                            "hedge_mode": True,
+                            "cooldown_until": guardrail_decision.cooldown_until.isoformat()
+                            if guardrail_decision.cooldown_until
+                            else None,
+                        },
+                    )
+                except Exception:  # pragma: no cover - alert log jest opcjonalny
+                    _LOGGER.exception("Failed to record guardrail alert", exc_info=True)
+                self._persist_state(profile_name)
+            elif guardrail_decision.deactivate and state.hedge_mode:
+                state.deactivate_hedge()
+                _LOGGER.info("Guardrail hedge mode cleared for profile %s", profile_name)
+                if self._guardrail_metrics is not None:
+                    self._guardrail_metrics.record_state(profile_name, active=False)
+                self._persist_state(profile_name)
+            elif self._guardrail_metrics is not None:
+                self._guardrail_metrics.record_state(profile_name, active=state.hedge_mode)
 
         force_reason: str | None = None
         if profile.drawdown_limit() > 0 and drawdown >= profile.drawdown_limit():
@@ -513,6 +626,23 @@ class ThresholdRiskEngine(RiskEngine):
         is_reducing = new_notional < current_notional
 
         is_new_position = current_notional == 0.0 and new_notional > 0.0 and not is_reducing
+
+        if (
+            self._loss_guardrails is not None
+            and state.hedge_mode
+            and not is_reducing
+            and not self._loss_guardrails.is_allowed_intent(metadata)
+        ):
+            return deny(
+                "Profil działa w trybie hedge – dopuszczalne są jedynie zlecenia redukujące lub oznaczone jako hedge.",
+                metadata={
+                    "hedge_mode": True,
+                    "hedge_reason": state.hedge_reason,
+                    "hedge_activated_at": state.hedge_activated_at.isoformat()
+                    if state.hedge_activated_at
+                    else None,
+                },
+            )
 
         current_quantity = current_notional / price if price > 0 else 0.0
         new_quantity = new_notional / price if price > 0 else 0.0
