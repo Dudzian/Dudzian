@@ -19,6 +19,33 @@ trading:
       tags: [desktop, paper]
       bootstrap: true
       trusted_auto_confirm: false
+    kraken_desktop_paper:
+      environment: kraken_paper
+      description: Desktop GUI paper trading pipeline for Kraken
+      controller: stage6.desktop
+      strategy: multi_strategy_default
+      risk_profile: balanced
+      tags: [desktop, paper, kraken]
+      bootstrap: true
+      trusted_auto_confirm: false
+    okx_desktop_paper:
+      environment: okx_paper
+      description: Desktop GUI paper trading pipeline for OKX
+      controller: stage6.desktop
+      strategy: multi_strategy_default
+      risk_profile: balanced
+      tags: [desktop, paper, okx]
+      bootstrap: true
+      trusted_auto_confirm: false
+    bybit_desktop_paper:
+      environment: bybit_paper
+      description: Desktop GUI paper trading pipeline for Bybit
+      controller: stage6.desktop
+      strategy: multi_strategy_default
+      risk_profile: balanced
+      tags: [desktop, paper, bybit]
+      bootstrap: true
+      trusted_auto_confirm: false
   auto_start: false
   enable_paper_mode: true
   enable_live_mode: false
@@ -62,6 +89,59 @@ execution:
   default_mode: paper
   force_paper_when_offline: true
   auth_token: null
+  paper_profiles:
+    kraken_paper:
+      entrypoint: kraken_desktop_paper
+      exchange: kraken
+      environment: kraken_paper
+      io_queue: kraken_spot
+      metrics:
+        rate_limit: bot_exchange_rate_limited_total
+        network_errors: bot_exchange_errors_total
+        health: bot_exchange_health_status
+        thresholds:
+          rate_limit_max: 0
+          network_errors_max: 0
+          health_min: 1.0
+    okx_paper:
+      entrypoint: okx_desktop_paper
+      exchange: okx
+      environment: okx_paper
+      io_queue: okx_spot
+      metrics:
+        rate_limit: bot_exchange_rate_limited_total
+        network_errors: bot_exchange_errors_total
+        health: bot_exchange_health_status
+        thresholds:
+          rate_limit_max: 0
+          network_errors_max: 1
+          health_min: 1.0
+    bybit_paper:
+      entrypoint: bybit_desktop_paper
+      exchange: bybit
+      environment: bybit_paper
+      io_queue: bybit_spot
+      metrics:
+        rate_limit: bot_exchange_rate_limited_total
+        network_errors: bot_exchange_errors_total
+        health: bot_exchange_health_status
+        thresholds:
+          rate_limit_max: 0
+          network_errors_max: 0
+          health_min: 1.0
+  trading_profiles:
+    kraken_desktop:
+      entrypoint: kraken_desktop_paper
+      tags: [desktop, paper, kraken]
+      guardrails: [paper_exchange_metrics, io_queue]
+    okx_desktop:
+      entrypoint: okx_desktop_paper
+      tags: [desktop, paper, okx]
+      guardrails: [paper_exchange_metrics, io_queue]
+    bybit_desktop:
+      entrypoint: bybit_desktop_paper
+      tags: [desktop, paper, bybit]
+      guardrails: [paper_exchange_metrics, io_queue]
   live:
     enabled: false
     default_route: []
@@ -78,6 +158,15 @@ io_queue:
       burst: 8
     nowa_gielda_spot:
       max_concurrency: 2
+      burst: 6
+    kraken_spot:
+      max_concurrency: 3
+      burst: 6
+    okx_spot:
+      max_concurrency: 3
+      burst: 6
+    bybit_spot:
+      max_concurrency: 3
       burst: 6
 
 risk:
