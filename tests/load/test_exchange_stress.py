@@ -1,7 +1,6 @@
+import asyncio
 import json
 from pathlib import Path
-
-import pytest
 
 import tests._pathbootstrap  # noqa: F401  # pylint: disable=unused-import
 
@@ -15,8 +14,7 @@ from scripts.loadtests.exchange_stress import (
 )
 
 
-@pytest.mark.asyncio
-async def test_run_exchange_stress_collects_success_metrics() -> None:
+def test_run_exchange_stress_collects_success_metrics() -> None:
     config = ExchangeStressConfig(
         queue_defaults=QueueDefaults(max_concurrency=2, burst=4),
         scenarios=[
@@ -30,7 +28,7 @@ async def test_run_exchange_stress_collects_success_metrics() -> None:
             )
         ],
     )
-    result = await run_exchange_stress(config, seed=123)
+    result = asyncio.run(run_exchange_stress(config, seed=123))
     metrics = result.metrics["binance_spot"]
     assert metrics.total_requests == 5
     assert metrics.successes == 5
@@ -39,10 +37,12 @@ async def test_run_exchange_stress_collects_success_metrics() -> None:
     summary = metrics.latency_summary()
     assert summary["max_ms"] >= summary["min_ms"]
     assert summary["p95_ms"] >= summary["avg_ms"]
+    queue_summary = metrics.queue_wait_summary()
+    assert queue_summary["max_ms"] >= queue_summary["min_ms"]
+    assert queue_summary["p95_ms"] >= queue_summary["avg_ms"]
 
 
-@pytest.mark.asyncio
-async def test_run_exchange_stress_counts_throttling() -> None:
+def test_run_exchange_stress_counts_throttling() -> None:
     config = ExchangeStressConfig(
         queue_defaults=QueueDefaults(max_concurrency=1, burst=2),
         scenarios=[
@@ -56,7 +56,7 @@ async def test_run_exchange_stress_counts_throttling() -> None:
             )
         ],
     )
-    result = await run_exchange_stress(config, seed=5)
+    result = asyncio.run(run_exchange_stress(config, seed=5))
     metrics = result.metrics["kraken_spot"]
     assert metrics.total_requests == 3
     assert metrics.successes == 0

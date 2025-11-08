@@ -1,0 +1,18 @@
+{
+  "total": 2,
+  "passed": 2,
+  "failed": 0,
+  "generated_at": "2025-02-15T00:00:00Z",
+  "scenarios": [
+    {
+      "name": "adaptive_mm_liquidity_cycle",
+      "engine": "adaptive_market_making",
+      "passed": true
+    },
+    {
+      "name": "triangular_arbitrage_multi_venue",
+      "engine": "triangular_arbitrage",
+      "passed": true
+    }
+  ]
+}

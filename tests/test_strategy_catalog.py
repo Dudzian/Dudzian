@@ -10,6 +10,7 @@ from bot_core.strategies.catalog import DEFAULT_STRATEGY_CATALOG
 from bot_core.strategies.public import StrategyDescriptor, list_available_strategies
 from bot_core.trading.engine import TechnicalIndicators, TradingParameters
 from bot_core.trading.strategies import (
+    AdaptiveMarketMakingPlugin,
     ArbitrageStrategy,
     CrossExchangeHedgeStrategy,
     DayTradingStrategy,
@@ -22,6 +23,7 @@ from bot_core.trading.strategies import (
     StrategyCatalog,
     StrategyPlugin,
     TrendFollowingStrategy,
+    TriangularArbitragePlugin,
     VolatilityTargetStrategy,
 )
 
@@ -59,6 +61,8 @@ def _dummy_market_data(index: pd.Index) -> pd.DataFrame:
             "spot_basis": pd.Series(np.linspace(-0.009, 0.011, len(index)), index=index),
             "inventory_skew": pd.Series(np.linspace(-0.35, 0.42, len(index)), index=index),
             "latency_ms": pd.Series(85.0, index=index),
+            "triangular_edge_bps": pd.Series(np.linspace(4.5, 9.0, len(index)), index=index),
+            "triangular_reverse_edge_bps": pd.Series(np.linspace(3.0, 7.0, len(index)), index=index),
         }
     )
 
@@ -66,6 +70,7 @@ def _dummy_market_data(index: pd.Index) -> pd.DataFrame:
 def test_default_catalog_contains_builtin_strategies() -> None:
     catalog = StrategyCatalog.default()
     assert catalog.available() == (
+        "adaptive_market_making",
         "arbitrage",
         "cross_exchange_hedge",
         "day_trading",
@@ -76,6 +81,7 @@ def test_default_catalog_contains_builtin_strategies() -> None:
         "scalping",
         "statistical_arbitrage",
         "trend_following",
+        "triangular_arbitrage",
         "volatility_target",
     )
 
@@ -91,6 +97,7 @@ def test_describe_exposes_metadata() -> None:
 def test_plugin_metadata_matches_strategy_catalog() -> None:
     catalog = StrategyCatalog.default()
     mapping = {
+        "adaptive_market_making": "adaptive_market_making",
         "trend_following": "daily_trend_momentum",
         "day_trading": "day_trading",
         "mean_reversion": "mean_reversion",
@@ -102,6 +109,7 @@ def test_plugin_metadata_matches_strategy_catalog() -> None:
         "statistical_arbitrage": "statistical_arbitrage",
         "futures_spread": "futures_spread",
         "cross_exchange_hedge": "cross_exchange_hedge",
+        "triangular_arbitrage": "triangular_arbitrage",
     }
 
     for plugin_name, engine in mapping.items():
@@ -122,6 +130,7 @@ def test_plugins_generate_series_with_matching_index() -> None:
     market_data = _dummy_market_data(indicators.rsi.index)
 
     for plugin_cls in (
+        AdaptiveMarketMakingPlugin,
         TrendFollowingStrategy,
         DayTradingStrategy,
         MeanReversionStrategy,
@@ -133,6 +142,7 @@ def test_plugins_generate_series_with_matching_index() -> None:
         StatisticalArbitrageStrategy,
         FuturesSpreadStrategy,
         CrossExchangeHedgeStrategy,
+        TriangularArbitragePlugin,
     ):
         plugin = plugin_cls()
         signal = plugin.generate(indicators, params, market_data=market_data)

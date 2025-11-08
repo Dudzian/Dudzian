@@ -20,3 +20,42 @@ presets:
       algorithm: "ed25519"
       key_id: "demo-publisher"
       public_key: "CwpbBQKoGYQ80Cyukhg1Y0QmZOv64QCVE5HlbEaey8k="
+  - id: "adaptive_mm_enterprise"
+    name: "Adaptive Market Making Enterprise"
+    version: "1.0.0"
+    author:
+      name: "Marketplace Labs"
+      email: "marketplace@example.com"
+    summary: "Preset adaptacyjnego market makingu z kontrolą inventory i zmienności."
+    required_exchanges:
+      - "BINANCE"
+      - "BITGET"
+    tags:
+      - "market-making"
+      - "liquidity"
+    license_tier: "enterprise"
+    artifact: "presets/adaptive_market_making_enterprise.json"
+    signature:
+      algorithm: "ed25519"
+      key_id: "demo-publisher"
+      public_key: "CwpbBQKoGYQ80Cyukhg1Y0QmZOv64QCVE5HlbEaey8k="
+  - id: "triangular_arbitrage_pro"
+    name: "Triangular Arbitrage Pro"
+    version: "1.0.0"
+    author:
+      name: "Marketplace Labs"
+      email: "marketplace@example.com"
+    summary: "Strategia arbitrażu trójkątnego dla wielu giełd spot."
+    required_exchanges:
+      - "BINANCE"
+      - "KRAKEN"
+      - "OKX"
+    tags:
+      - "arbitrage"
+      - "multi-venue"
+    license_tier: "enterprise"
+    artifact: "presets/triangular_arbitrage_pro.json"
+    signature:
+      algorithm: "ed25519"
+      key_id: "demo-publisher"
+      public_key: "CwpbBQKoGYQ80Cyukhg1Y0QmZOv64QCVE5HlbEaey8k="

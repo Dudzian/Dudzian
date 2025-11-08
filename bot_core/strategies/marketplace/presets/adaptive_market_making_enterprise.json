@@ -1,0 +1,46 @@
+{
+  "preset": {
+    "name": "Adaptive Market Making Enterprise",
+    "metadata": {
+      "id": "adaptive_mm_enterprise",
+      "version": "1.0.0",
+      "author": {
+        "name": "Marketplace Labs",
+        "email": "marketplace@example.com"
+      },
+      "required_exchanges": ["BINANCE", "BITGET"],
+      "tags": ["market-making", "liquidity"],
+      "profile": "market_making",
+      "summary": "Adaptacyjny market making z kontrolą inventory i zmienności"
+    },
+    "strategies": [
+      {
+        "name": "adaptive_mm_core",
+        "engine": "adaptive_market_making",
+        "parameters": {
+          "base_spread_bps": 10.0,
+          "volatility_sensitivity": 1.5,
+          "inventory_skew_strength": 0.6,
+          "max_inventory": 7.5,
+          "target_inventory": 0.0,
+          "cooldown_fraction": 0.25,
+          "min_confidence": 0.15
+        },
+        "license_tier": "enterprise",
+        "risk_classes": ["market_making", "liquidity", "volatility_control"],
+        "required_data": ["order_book", "ohlcv", "realized_volatility"],
+        "tags": ["market-making", "volatility", "inventory"],
+        "metadata": {
+          "description": "Preset adaptacyjnego market makingu",
+          "capability": "adaptive_mm"
+        }
+      }
+    ]
+  },
+  "signature": {
+    "algorithm": "ed25519",
+    "key_id": "demo-publisher",
+    "public_key": "CwpbBQKoGYQ80Cyukhg1Y0QmZOv64QCVE5HlbEaey8k=",
+    "value": "dGVzdF9zaWduYXR1cmVfYWRhcHRpdmVfbW0="
+  }
+}
