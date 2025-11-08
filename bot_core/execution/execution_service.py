@@ -1,6 +1,7 @@
 """Narzędzia do wyboru i budowy usług egzekucji na potrzeby runtime."""
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 from typing import Any, Mapping, MutableMapping
@@ -9,6 +10,10 @@ from bot_core.config.models import RuntimeExecutionLiveSettings, RuntimeExecutio
 from bot_core.execution.base import ExecutionService
 from bot_core.execution.live_router import LiveExecutionRouter
 from bot_core.exchanges.base import Environment as ExchangeEnvironment, ExchangeAdapter
+from bot_core.security.signing import build_transaction_signer_selector
+
+
+_LOGGER = logging.getLogger(__name__)
 
 def resolve_execution_mode(
     settings: RuntimeExecutionSettings | None,
@@ -87,6 +92,41 @@ def _load_decision_log_key(
         if content:
             return content
     return None
+
+
+def _normalize_signer_entry(config: Mapping[str, Any], *, base: str | None = None) -> dict[str, Any]:
+    normalized: dict[str, Any] = {str(key): value for key, value in config.items()}
+    key_path = normalized.get("key_path")
+    if isinstance(key_path, (str, os.PathLike)):
+        path = Path(key_path).expanduser()
+        if base:
+            base_path = Path(base).expanduser()
+            if not path.is_absolute():
+                path = base_path / path
+        normalized["key_path"] = str(path)
+    return normalized
+
+
+def _normalize_signer_config(config: Mapping[str, Any], *, base: str | None = None) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    default_cfg = config.get("default")
+    if isinstance(default_cfg, Mapping):
+        result["default"] = _normalize_signer_entry(default_cfg, base=base)
+    accounts_cfg = config.get("accounts")
+    if isinstance(accounts_cfg, Mapping):
+        result["accounts"] = {
+            str(account_id): _normalize_signer_entry(account_cfg, base=base)
+            for account_id, account_cfg in accounts_cfg.items()
+            if isinstance(account_cfg, Mapping)
+        }
+    for key, value in config.items():
+        if key in {"default", "accounts"}:
+            continue
+        if isinstance(value, Mapping):
+            result[str(key)] = _normalize_signer_entry(value, base=base)
+        else:
+            result[str(key)] = value
+    return result
 
 
 def _collect_adapters(bootstrap_ctx: Any) -> MutableMapping[str, ExchangeAdapter]:
@@ -169,6 +209,63 @@ def build_live_execution_service(
     metrics_registry = getattr(bootstrap_ctx, "metrics_registry", None)
     if metrics_registry is not None:
         router_kwargs["metrics_registry"] = metrics_registry
+
+    signer_selector = None
+    signer_config = getattr(live_cfg, "signers", None)
+    if isinstance(signer_config, Mapping):
+        normalized_signers = _normalize_signer_config(signer_config, base=data_root)
+        signer_selector = build_transaction_signer_selector(normalized_signers)
+        if signer_selector is not None:
+            router_kwargs["transaction_signers"] = signer_selector
+            if _LOGGER.isEnabledFor(logging.DEBUG):
+                audit_bundle = signer_selector.describe_audit_bundle()
+
+                signers_info = audit_bundle.get("signers", {})
+                for account_id, info in signers_info.items():
+                    label = account_id if account_id is not None else "default"
+                    _LOGGER.debug("Skonfigurowany podpisujący %s: %s", label, dict(info))
+
+                key_index_summary = audit_bundle.get("key_index", {})
+                for key_id, summary in key_index_summary.items():
+                    _LOGGER.debug("Indeks key_id %s: %s", key_id, dict(summary))
+
+                hardware_summary = audit_bundle.get("hardware_requirements", {})
+                if hardware_summary:
+                    _LOGGER.debug(
+                        "Podsumowanie wymagań sprzętowych: %s",
+                        dict(hardware_summary),
+                    )
+
+                issues = tuple(audit_bundle.get("issues", ()))
+                if issues:
+                    _LOGGER.debug(
+                        "Wykryte problemy konfiguracji podpisów: %s",
+                        [dict(issue) for issue in issues],
+                    )
+                else:
+                    _LOGGER.debug("Konfiguracja podpisów nie zgłasza problemów audytowych.")
+
+    license_capabilities = getattr(bootstrap_ctx, "license_capabilities", None)
+    requires_hw_wallet = bool(
+        getattr(license_capabilities, "require_hardware_wallet_for_outgoing", False)
+    )
+    if requires_hw_wallet:
+        router_kwargs["require_hardware_wallet_for_withdrawals"] = True
+        if signer_selector is None:
+            raise RuntimeError(
+                "Licencja wymaga portfela sprzętowego dla wypłat, ale w konfiguracji runtime.execution.live.signers "
+                "nie zdefiniowano podpisującego."
+            )
+        missing_hw: list[str] = []
+        for account_id, signer in signer_selector.iter_signers():
+            if not getattr(signer, "requires_hardware", False):
+                label = account_id if account_id is not None else "default"
+                missing_hw.append(str(label))
+        if missing_hw:
+            raise RuntimeError(
+                "Licencja wymaga portfela sprzętowego dla wypłat, jednak podpisy dla kont "
+                f"{', '.join(sorted(missing_hw))} nie korzystają z urządzeń."
+            )
 
     return LiveExecutionRouter(**router_kwargs)
 

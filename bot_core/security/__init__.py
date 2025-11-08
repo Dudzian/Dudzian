@@ -42,7 +42,14 @@ from bot_core.security.rotation_report import (
     write_rotation_summary,
 )
 from bot_core.security.messages import ValidationMessage, make_error, make_warning
-from bot_core.security.signing import build_hmac_signature, canonical_json_bytes
+from bot_core.security.hardware_wallets import LedgerSigner, TrezorSigner
+from bot_core.security.signing import (
+    HmacTransactionSigner,
+    TransactionSignerSelector,
+    build_hmac_signature,
+    build_transaction_signer_selector,
+    canonical_json_bytes,
+)
 from bot_core.security.profiles import (
     UserProfile,
     load_profiles,
@@ -172,6 +179,11 @@ __all__ = [
     "write_fingerprint_lock",
     "canonical_json_bytes",
     "build_hmac_signature",
+    "build_transaction_signer_selector",
+    "TransactionSignerSelector",
+    "HmacTransactionSigner",
+    "LedgerSigner",
+    "TrezorSigner",
     "UserProfile",
     "load_profiles",
     "save_profiles",

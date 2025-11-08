@@ -132,6 +132,7 @@ class LicenseCapabilities:
     license_id: str | None
     hwid: str | None
     raw_payload: Mapping[str, Any]
+    require_hardware_wallet_for_outgoing: bool
 
     def is_module_enabled(self, name: str) -> bool:
         return bool(self.modules.get(name))
@@ -189,6 +190,12 @@ def build_capabilities_from_payload(
 
     holder = _mapping_proxy(payload.get("holder"))
     metadata = _mapping_proxy(payload.get("metadata"))
+    security_raw = payload.get("security")
+    security_section = security_raw if isinstance(security_raw, Mapping) else {}
+    require_hw_wallet = bool(
+        security_section.get("require_hardware_wallet_for_outgoing")
+        or security_section.get("require_hardware_wallet")
+    )
 
     return LicenseCapabilities(
         edition=edition,
@@ -209,6 +216,7 @@ def build_capabilities_from_payload(
         license_id=str(payload.get("license_id") or payload.get("licenseId") or "") or None,
         hwid=str(payload.get("hwid") or "").strip() or None,
         raw_payload=_mapping_proxy(payload),
+        require_hardware_wallet_for_outgoing=require_hw_wallet,
     )
 
 

@@ -10,10 +10,11 @@ import os
 import random
 import threading
 import time
+from datetime import datetime, timezone
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Iterable, Mapping, MutableMapping, Sequence
+from typing import Any, Callable, Iterable, Mapping, MutableMapping, Sequence
 
 from bot_core.execution.base import ExecutionContext, ExecutionService
 from bot_core.exchanges.base import ExchangeAdapter, OrderRequest, OrderResult
@@ -77,7 +78,11 @@ except Exception:  # pragma: no cover
 
 # --- Podpisywanie decision logu (opcjonalne, z fallbackiem)
 try:  # pragma: no cover
-    from bot_core.security.signing import build_hmac_signature as _build_hmac_signature  # type: ignore
+    from bot_core.security.signing import (  # type: ignore
+        build_hmac_signature as _build_hmac_signature,
+        TransactionSigner,
+        TransactionSignerSelector,
+    )
 except Exception:  # pragma: no cover
     def _build_hmac_signature(
         payload: Mapping[str, object],
@@ -99,6 +104,30 @@ except Exception:  # pragma: no cover
         if key_id is not None:
             out["key_id"] = key_id
         return out
+
+    class TransactionSigner:  # type: ignore[too-many-ancestors]
+        algorithm = "HMAC-SHA256"
+        key_id: str | None = None
+        requires_hardware = False
+
+        def sign(self, payload: Mapping[str, object]) -> Mapping[str, str]:  # pragma: no cover - fallback
+            raise NotImplementedError
+
+        def describe(self) -> Mapping[str, object]:  # pragma: no cover - fallback
+            data: dict[str, object] = {
+                "algorithm": self.algorithm,
+                "requires_hardware": getattr(self, "requires_hardware", False),
+            }
+            if self.key_id is not None:
+                data["key_id"] = self.key_id
+            return data
+
+    class TransactionSignerSelector:  # type: ignore[too-many-ancestors]
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            self._default: TransactionSigner | None = None
+
+        def resolve(self, _account_id: str | None) -> TransactionSigner | None:  # pragma: no cover - fallback
+            return self._default
 
 
 _LOGGER = logging.getLogger(__name__)
@@ -236,6 +265,8 @@ class LiveExecutionRouter(ExecutionService):
         # --- breaker / bindings ---
         circuit_breaker_factory: Callable[[], CircuitBreaker] | None = None,
         bindings_capacity: int = 10_000,
+        transaction_signers: TransactionSignerSelector | Mapping[str, TransactionSigner] | None = None,
+        require_hardware_wallet_for_withdrawals: bool = False,
     ) -> None:
         if not adapters:
             raise ValueError("LiveExecutionRouter wymaga co najmniej jednego adaptera giełdowego")
@@ -332,6 +363,16 @@ class LiveExecutionRouter(ExecutionService):
         self._bindings: OrderedDict[str, str] = OrderedDict()
         self._bindings_lock = threading.Lock()
 
+        self._transaction_signers: TransactionSignerSelector | None
+        if isinstance(transaction_signers, TransactionSignerSelector):
+            self._transaction_signers = transaction_signers
+        elif isinstance(transaction_signers, Mapping):
+            overrides = {str(key): value for key, value in transaction_signers.items()}
+            self._transaction_signers = TransactionSignerSelector(overrides=overrides or None)
+        else:
+            self._transaction_signers = None
+        self._require_hardware_wallet = bool(require_hardware_wallet_for_withdrawals)
+
     # --- Publiczne pomocnicze API -------------------------------------------
 
     def list_adapters(self) -> tuple[str, ...]:
@@ -345,6 +386,155 @@ class LiveExecutionRouter(ExecutionService):
     def binding_for_order(self, order_id: str) -> str | None:
         with self._bindings_lock:
             return self._bindings.get(order_id)
+
+    def _resolve_account_identifier(
+        self,
+        request: OrderRequest,
+        context: ExecutionContext,
+        exchange_name: str,
+    ) -> str | None:
+        metadata = request.metadata if isinstance(request.metadata, Mapping) else {}
+        for key in ("account", "account_id", "exchange_account"):
+            value = metadata.get(key)
+            if value not in (None, ""):
+                return str(value)
+        context_meta = context.metadata if isinstance(context.metadata, Mapping) else {}
+        for key in ("account", "account_id", "exchange_account"):
+            value = context_meta.get(key)
+            if value not in (None, ""):
+                return str(value)
+        if exchange_name:
+            return str(exchange_name)
+        return None
+
+    def _maybe_prepare_withdrawal_signature(
+        self,
+        request: OrderRequest,
+        context: ExecutionContext,
+        exchange_name: str,
+    ) -> None:
+        metadata = request.metadata if isinstance(request.metadata, Mapping) else {}
+        normalized = dict(metadata)
+        existing_signature = normalized.get("hardware_wallet_signature")
+        existing_timestamp = normalized.get("hardware_wallet_signed_at")
+        existing_account_raw = normalized.get("hardware_wallet_account")
+        existing_algorithm = normalized.get("hardware_wallet_algorithm")
+        existing_key_id = normalized.get("hardware_wallet_key_id")
+        normalized.pop("hardware_wallet_signature", None)
+        normalized.pop("hardware_wallet_algorithm", None)
+        normalized.pop("hardware_wallet_key_id", None)
+        normalized.pop("hardware_wallet_signed_at", None)
+        normalized.pop("hardware_wallet_account", None)
+
+        context_meta = context.metadata if isinstance(context.metadata, Mapping) else {}
+        operation = str(normalized.get("operation") or context_meta.get("operation") or "").lower()
+        requires_hw = bool(normalized.get("requires_hardware_wallet") or context_meta.get("requires_hardware_wallet"))
+        if operation in {"withdrawal", "payout"}:
+            requires_hw = True
+
+        if not requires_hw:
+            if normalized != metadata:
+                request.metadata = normalized
+            return
+
+        if self._transaction_signers is None:
+            if self._require_hardware_wallet:
+                raise RuntimeError(
+                    "Licencja wymaga portfela sprzętowego dla wypłat, ale nie skonfigurowano podpisującego."
+                )
+            if normalized != metadata:
+                request.metadata = normalized
+            return
+
+        account_id = self._resolve_account_identifier(request, context, exchange_name)
+        signer = self._transaction_signers.resolve(account_id)
+        if signer is None:
+            raise RuntimeError(
+                f"Brak podpisującego transakcje dla konta '{account_id or 'default'}' wymagającego portfela sprzętowego."
+            )
+        if self._require_hardware_wallet and not getattr(signer, "requires_hardware", False):
+            raise RuntimeError(
+                "Licencja wymaga podpisu z portfela sprzętowego dla wypłat, jednak wybrany podpisujący nie korzysta z urządzenia."
+            )
+
+        existing_account = str(existing_account_raw or account_id or "") or None
+
+        if (
+            isinstance(existing_signature, Mapping)
+            and isinstance(existing_timestamp, str)
+            and existing_timestamp.strip()
+        ):
+            timestamp = existing_timestamp.strip()
+            signature_for_verification: Mapping[str, Any]
+            if (
+                existing_key_id
+                and "key_id" not in existing_signature
+                and isinstance(existing_key_id, str)
+                and existing_key_id.strip()
+            ):
+                signature_copy = dict(existing_signature)
+                signature_copy.setdefault("key_id", existing_key_id.strip())
+                signature_for_verification = signature_copy
+            else:
+                signature_for_verification = existing_signature
+            payload: dict[str, object] = {
+                "exchange": exchange_name,
+                "account": existing_account or account_id,
+                "portfolio": context.portfolio_id,
+                "risk_profile": context.risk_profile,
+                "symbol": request.symbol,
+                "side": request.side,
+                "quantity": request.quantity,
+                "operation": operation or "withdrawal",
+                "timestamp": timestamp,
+            }
+            if request.client_order_id:
+                payload["client_order_id"] = request.client_order_id
+            if self._transaction_signers.verify(
+                existing_account or account_id,
+                payload,
+                signature_for_verification,
+            ):
+                normalized_signature = dict(signature_for_verification)
+                normalized["operation"] = operation or "withdrawal"
+                normalized["requires_hardware_wallet"] = True
+                normalized.setdefault("hardware_wallet_account", existing_account or account_id)
+                normalized["hardware_wallet_signature"] = normalized_signature
+                algorithm_value = existing_algorithm or normalized_signature.get("algorithm")
+                if algorithm_value:
+                    normalized["hardware_wallet_algorithm"] = str(algorithm_value)
+                key_id_value = normalized_signature.get("key_id") or existing_key_id
+                if key_id_value:
+                    normalized["hardware_wallet_key_id"] = str(key_id_value)
+                normalized["hardware_wallet_signed_at"] = timestamp
+                request.metadata = normalized
+                return
+
+        timestamp = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        payload: dict[str, object] = {
+            "exchange": exchange_name,
+            "account": account_id,
+            "portfolio": context.portfolio_id,
+            "risk_profile": context.risk_profile,
+            "symbol": request.symbol,
+            "side": request.side,
+            "quantity": request.quantity,
+            "operation": operation or "withdrawal",
+            "timestamp": timestamp,
+        }
+        if request.client_order_id:
+            payload["client_order_id"] = request.client_order_id
+        signature = signer.sign(payload)
+
+        normalized["operation"] = operation or "withdrawal"
+        normalized["requires_hardware_wallet"] = True
+        normalized["hardware_wallet_signature"] = dict(signature)
+        normalized["hardware_wallet_algorithm"] = getattr(signer, "algorithm", "unknown")
+        if getattr(signer, "key_id", None):
+            normalized["hardware_wallet_key_id"] = signer.key_id  # type: ignore[attr-defined]
+        normalized["hardware_wallet_signed_at"] = timestamp
+        normalized["hardware_wallet_account"] = account_id
+        request.metadata = normalized
 
     # --- ExecutionService API ------------------------------------------------
 
@@ -406,6 +596,7 @@ class LiveExecutionRouter(ExecutionService):
                 }
                 attempts_counter += 1
                 try:
+                    self._maybe_prepare_withdrawal_signature(request, context, exchange_name)
                     result = adapter.place_order(request)
                 except (ExchangeNetworkError, ExchangeThrottlingError) as exc:
                     current_time = self._time()

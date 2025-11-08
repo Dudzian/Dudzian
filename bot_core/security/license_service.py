@@ -64,6 +64,7 @@ class LicenseSnapshot:
     capabilities: LicenseCapabilities
     effective_date: date
     local_hwid: str | None
+    requires_hardware_wallet: bool
 
     def __init__(
         self,
@@ -76,6 +77,7 @@ class LicenseSnapshot:
         effective_date: date,
         local_hwid: str | None,
         payload_sha256: str | None = None,
+        requires_hardware_wallet: bool | None = None,
     ) -> None:
         self.bundle_path = bundle_path
         self.payload = payload
@@ -84,6 +86,9 @@ class LicenseSnapshot:
         self.capabilities = capabilities
         self.effective_date = effective_date
         self.local_hwid = local_hwid
+        self.requires_hardware_wallet = bool(
+            requires_hardware_wallet if requires_hardware_wallet is not None else capabilities.require_hardware_wallet_for_outgoing
+        )
         digest = payload_sha256 or hashlib.sha256(payload_bytes).hexdigest()
         self.payload_sha256 = digest.lower()
 
@@ -95,6 +100,7 @@ class _MonotonicState:
     issued_at: datetime | None
     effective_date: date | None
     payload_sha256: str | None
+    requires_hardware_wallet: bool | None
 
 
 class LicenseService:
@@ -203,6 +209,7 @@ class LicenseService:
             capabilities=capabilities,
             effective_date=effective_date,
             local_hwid=local_hwid,
+            requires_hardware_wallet=capabilities.require_hardware_wallet_for_outgoing,
         )
 
         self._enforce_rollback_protection(snapshot, fingerprint=reference_hwid)
@@ -301,6 +308,9 @@ class LicenseService:
             "local_hwid": snapshot.local_hwid,
             "payload_sha256": snapshot.payload_sha256,
             "bundle_path": str(snapshot.bundle_path),
+            "security": {
+                "requires_hardware_wallet_for_outgoing": snapshot.requires_hardware_wallet,
+            },
         }
 
         monotonic_payload = self._build_monotonic_payload(snapshot)
@@ -359,6 +369,7 @@ class LicenseService:
             "effective_date": snapshot.effective_date.isoformat(),
             "payload_sha256": snapshot.payload_sha256,
             "recorded_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            "requires_hardware_wallet_for_outgoing": snapshot.requires_hardware_wallet,
         }
 
         issued_at = snapshot.capabilities.issued_at
@@ -433,6 +444,14 @@ class LicenseService:
         effective_date = self._parse_iso_date(payload.get("effective_date"))
         raw_digest = str(payload.get("payload_sha256") or "").strip()
         payload_sha = raw_digest.lower() or None
+        requires_value = payload.get("requires_hardware_wallet_for_outgoing")
+        requires_hw: bool | None
+        if isinstance(requires_value, bool):
+            requires_hw = requires_value
+        elif isinstance(requires_value, str) and requires_value.strip():
+            requires_hw = requires_value.strip().lower() in {"1", "true", "yes", "on"}
+        else:
+            requires_hw = None
 
         return _MonotonicState(
             license_id=license_id,
@@ -440,6 +459,7 @@ class LicenseService:
             issued_at=issued_at,
             effective_date=effective_date,
             payload_sha256=payload_sha,
+            requires_hardware_wallet=requires_hw,
         )
 
     @staticmethod
@@ -550,6 +570,7 @@ class LicenseService:
             "local_hwid_hash": local_hwid_hash,
             "activation_count": (previous_activations + 1) if local_hwid_hash else 1,
             "repeat_activation": previous_activations > 0,
+            "requires_hardware_wallet": snapshot.requires_hardware_wallet,
         }
 
         self._audit_log_path.parent.mkdir(parents=True, exist_ok=True)

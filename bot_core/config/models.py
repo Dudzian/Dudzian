@@ -1503,6 +1503,7 @@ class RuntimeExecutionLiveSettings:
     decision_log_rotate_bytes: int = 8 * 1024 * 1024
     decision_log_keep: int = 3
     latency_histogram_buckets: Sequence[float] = field(default_factory=tuple)
+    signers: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
