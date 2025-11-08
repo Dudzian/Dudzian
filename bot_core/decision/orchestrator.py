@@ -27,6 +27,7 @@ from bot_core.decision.models import (
     ModelSelectionMetadata,
     RiskSnapshot,
 )
+from bot_core.decision.metrics import DecisionMetricSet
 
 try:
     from bot_core.tco.models import ProfileCostSummary, StrategyCostSummary, TCOReport
@@ -408,6 +409,7 @@ class DecisionOrchestrator:
         performance_history_limit: int = 100,
         clock: Callable[[], datetime] | None = None,
         strategy_advisor: StrategyAdvisor | None = None,
+        metrics: DecisionMetricSet | None = None,
     ) -> None:
         self._config = config
         self._cost_index = _CostIndex(lookup={}, default_cost=None)
@@ -428,6 +430,7 @@ class DecisionOrchestrator:
         self._strategy_performance: MutableMapping[str, StrategyPerformanceSummary] = {}
         self._strategy_schedules: MutableMapping[str, StrategyRecalibrationSchedule] = {}
         self._strategy_advisor: StrategyAdvisor = strategy_advisor or _StrategyBanditAdvisor()
+        self._metrics = metrics or DecisionMetricSet()
         if inference is not None:
             self.attach_named_inference("__default__", inference, set_default=True)
 
@@ -779,6 +782,10 @@ class DecisionOrchestrator:
                 thresholds_snapshot,
             )
         self._strategy_advisor.observe(candidate, evaluation)
+        try:
+            self._metrics.observe_evaluation(evaluation)
+        except Exception:  # pragma: no cover - metryki nie powinny blokować decyzji
+            _LOGGER.exception("Failed to record decision metrics", exc_info=True)
         return evaluation
 
     def evaluate_candidates(
@@ -790,17 +797,20 @@ class DecisionOrchestrator:
         for candidate in candidates:
             snapshot_raw = risk_snapshots.get(candidate.risk_profile)
             if snapshot_raw is None:
-                evaluations.append(
-                    DecisionEvaluation(
-                        candidate=candidate,
-                        accepted=False,
-                        cost_bps=None,
-                        net_edge_bps=None,
-                        reasons=("brak snapshotu ryzyka dla profilu",),
-                        risk_flags=(),
-                        stress_failures=(),
-                    )
+                evaluation = DecisionEvaluation(
+                    candidate=candidate,
+                    accepted=False,
+                    cost_bps=None,
+                    net_edge_bps=None,
+                    reasons=("brak snapshotu ryzyka dla profilu",),
+                    risk_flags=(),
+                    stress_failures=(),
                 )
+                evaluations.append(evaluation)
+                try:
+                    self._metrics.observe_evaluation(evaluation)
+                except Exception:  # pragma: no cover - metryki nie mogą zatrzymać orkiestracji
+                    _LOGGER.exception("Failed to record decision metrics", exc_info=True)
                 continue
             evaluations.append(self.evaluate_candidate(candidate, snapshot_raw))
         return evaluations

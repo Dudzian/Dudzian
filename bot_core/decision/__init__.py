@@ -38,6 +38,7 @@ else:
         "DecisionEvaluation": (".models", "DecisionEvaluation"),
         "RiskSnapshot": (".models", "RiskSnapshot"),
         "DecisionOrchestrator": (".orchestrator", "DecisionOrchestrator"),
+        "DecisionMetricSet": (".metrics", "DecisionMetricSet"),
         "AIManagerDecisionConnector": (".ai_connector", "AIManagerDecisionConnector"),
     }
 

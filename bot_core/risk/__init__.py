@@ -11,7 +11,11 @@ from __future__ import annotations
 # --- Bazowe interfejsy / repo / silniki --------------------------------------
 from bot_core.risk.base import RiskCheckResult, RiskEngine, RiskProfile, RiskRepository
 from bot_core.risk.engine import InMemoryRiskRepository, ThresholdRiskEngine
-from bot_core.risk.guardrails import evaluate_backtest_guardrails
+from bot_core.risk.guardrails import (
+    evaluate_backtest_guardrails,
+    LossGuardrailConfig,
+    RiskGuardrailMetricSet,
+)
 from bot_core.risk.portfolio import (
     CorrelationAnalyzer,
     PositionSizing,
@@ -120,6 +124,8 @@ __all__ = [
     "RiskRepository",
     "ThresholdRiskEngine",
     "evaluate_backtest_guardrails",
+    "LossGuardrailConfig",
+    "RiskGuardrailMetricSet",
     # zdarzenia/log
     "RiskDecisionEvent",
     "RiskDecisionLog",
