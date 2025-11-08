@@ -4,10 +4,19 @@ from __future__ import annotations
 import math
 from collections import Counter
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 from typing import Any, Dict, Iterable, Mapping, Sequence
 
 from bot_core.backtest.engine import BacktestReport
 from bot_core.risk.base import RiskCheckResult, RiskProfile
+from bot_core.observability.metrics import (
+    CounterMetric,
+    GaugeMetric,
+    MetricsRegistry,
+    get_global_metrics_registry,
+)
+
+_DEFAULT_ALLOWED_INTENTS = ("hedge", "neutral", "rebalance", "rebalance_delta")
 
 
 def _maybe_percentage(value: Any) -> float | None:
@@ -472,4 +481,168 @@ def summarize_guardrail_results(
     )
 
 
-__all__ = ["evaluate_backtest_guardrails", "GuardrailSummary", "summarize_guardrail_results"]
+__all__ = [
+    "evaluate_backtest_guardrails",
+    "GuardrailSummary",
+    "summarize_guardrail_results",
+    "LossGuardrailConfig",
+    "LossGuardrailDecision",
+    "RiskGuardrailMetricSet",
+]
+@dataclass(slots=True)
+class LossGuardrailDecision:
+    """Represents the outcome of evaluating loss-based guardrails."""
+
+    activate: bool = False
+    deactivate: bool = False
+    reason: str | None = None
+    metric: str | None = None
+    value: float | None = None
+    threshold: float | None = None
+    cooldown_until: datetime | None = None
+
+
+@dataclass(slots=True)
+class LossGuardrailConfig:
+    """Configuration for automatic loss guardrails driving hedge mode."""
+
+    drawdown_pct: float | None = None
+    daily_loss_pct: float | None = None
+    weekly_loss_pct: float | None = None
+    cooldown_minutes: float = 0.0
+    recovery_factor: float = 0.5
+    allowed_intents: Sequence[str] = _DEFAULT_ALLOWED_INTENTS
+
+    def evaluate(
+        self,
+        *,
+        state: "RiskState",
+        drawdown_pct: float,
+        daily_loss_pct: float,
+        weekly_loss_pct: float,
+        now: datetime,
+    ) -> LossGuardrailDecision:
+        decision = LossGuardrailDecision()
+        if state.hedge_mode:
+            if self._should_deactivate(
+                drawdown_pct=drawdown_pct,
+                daily_loss_pct=daily_loss_pct,
+                weekly_loss_pct=weekly_loss_pct,
+                now=now,
+                state=state,
+            ):
+                decision.deactivate = True
+                decision.reason = "Metryki strat wróciły poniżej progów guardraili."
+                return decision
+            return decision
+
+        candidates: list[tuple[str, float, float, str]] = []
+        if self.drawdown_pct is not None and drawdown_pct >= self.drawdown_pct:
+            candidates.append(
+                (
+                    "drawdown_pct",
+                    drawdown_pct,
+                    self.drawdown_pct,
+                    "Obsunięcie kapitału przekroczyło próg aktywujący hedge mode.",
+                )
+            )
+        if self.daily_loss_pct is not None and daily_loss_pct >= self.daily_loss_pct:
+            candidates.append(
+                (
+                    "daily_loss_pct",
+                    daily_loss_pct,
+                    self.daily_loss_pct,
+                    "Dzienna strata przekroczyła limit bezpieczeństwa guardraili.",
+                )
+            )
+        if self.weekly_loss_pct is not None and weekly_loss_pct >= self.weekly_loss_pct:
+            candidates.append(
+                (
+                    "weekly_loss_pct",
+                    weekly_loss_pct,
+                    self.weekly_loss_pct,
+                    "Tygodniowa strata przekroczyła limit bezpieczeństwa guardraili.",
+                )
+            )
+
+        if not candidates:
+            return decision
+
+        metric, value, threshold, reason = max(candidates, key=lambda item: item[1] - item[2])
+        decision.activate = True
+        decision.metric = metric
+        decision.threshold = threshold
+        decision.value = value
+        decision.reason = reason
+        decision.cooldown_until = self._cooldown_deadline(now)
+        return decision
+
+    def _cooldown_deadline(self, now: datetime) -> datetime | None:
+        if self.cooldown_minutes <= 0:
+            return None
+        return now + timedelta(minutes=float(self.cooldown_minutes))
+
+    def _should_deactivate(
+        self,
+        *,
+        drawdown_pct: float,
+        daily_loss_pct: float,
+        weekly_loss_pct: float,
+        now: datetime,
+        state: "RiskState",
+    ) -> bool:
+        if not state.hedge_mode:
+            return False
+        if state.hedge_cooldown_until is not None and now < state.hedge_cooldown_until:
+            return False
+
+        def _below(value: float, threshold: float | None) -> bool:
+            if threshold is None:
+                return True
+            return value <= max(threshold * max(self.recovery_factor, 0.0), 0.0)
+
+        return (
+            _below(drawdown_pct, self.drawdown_pct)
+            and _below(daily_loss_pct, self.daily_loss_pct)
+            and _below(weekly_loss_pct, self.weekly_loss_pct)
+        )
+
+    def is_allowed_intent(self, metadata: Mapping[str, object] | None) -> bool:
+        if not metadata:
+            return False
+        allowed = {str(value).strip().lower() for value in self.allowed_intents if value}
+        for key in ("intent", "signal_intent", "strategy_intent", "execution_intent"):
+            raw = metadata.get(key)
+            if raw is None:
+                continue
+            text = str(raw).strip().lower()
+            if text in allowed:
+                return True
+        return False
+
+
+@dataclass(slots=True)
+class RiskGuardrailMetricSet:
+    """Metrics describing runtime guardrail state."""
+
+    registry: MetricsRegistry = field(default_factory=get_global_metrics_registry)
+    _hedge_transitions_total: CounterMetric = field(init=False, repr=False)
+    _hedge_mode: GaugeMetric = field(init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        self._hedge_transitions_total = self.registry.counter(
+            "risk_guardrail_hedge_transitions_total",
+            "Liczba przełączeń profilu w tryb hedge z powodu guardraili strat.",
+        )
+        self._hedge_mode = self.registry.gauge(
+            "risk_guardrail_hedge_mode",
+            "Aktualny status trybu hedge wymuszonego przez guardraile (1=aktywny).",
+        )
+
+    def record_activation(self, profile: str, *, reason: str | None = None) -> None:
+        labels = {"profile": profile, "reason": (reason or "unknown").strip() or "unknown"}
+        self._hedge_transitions_total.inc(labels=labels)
+        self._hedge_mode.set(1, labels={"profile": profile})
+
+    def record_state(self, profile: str, *, active: bool) -> None:
+        self._hedge_mode.set(1 if active else 0, labels={"profile": profile})
