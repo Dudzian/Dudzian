@@ -985,6 +985,7 @@ class _CCXTPrivateBackend(_CCXTPublicFeed):
 
         if client_order_id:
             params["newClientOrderId"] = client_order_id
+            params.setdefault("clientOrderId", client_order_id)
 
         if type == OrderType.MARKET:
             ticker = self.fetch_ticker(symbol) or {}
@@ -1004,26 +1005,103 @@ class _CCXTPrivateBackend(_CCXTPublicFeed):
         ccxt_type = "market" if type == OrderType.MARKET else "limit"
         ccxt_side = side.value.lower()
         response = self.client.create_order(symbol, ccxt_type, ccxt_side, qty, px, params)
-        order_id = response.get("id") or response.get("orderId")
-        status = response.get("status", "open").upper()
-        if status == "CLOSED":
-            status = "FILLED"
+        order_id = response.get("id") or response.get("orderId") or response.get("clientOrderId")
+        client_id = response.get("clientOrderId") or response.get("client_order_id")
+        if not client_id:
+            client_id = (response.get("info") or {}).get("clientOrderId")
+        filled = response.get("filled")
+        if filled is None:
+            filled = response.get("amount_filled")
+        remaining = response.get("remaining")
+        amount_total = response.get("amount")
+        try:
+            amount_value = float(amount_total) if amount_total is not None else float(qty)
+        except (TypeError, ValueError):
+            amount_value = float(qty)
+
+        try:
+            filled_value = float(filled) if filled is not None else 0.0
+        except (TypeError, ValueError):
+            try:
+                remaining_val = float(remaining) if remaining is not None else 0.0
+            except (TypeError, ValueError):
+                filled_value = 0.0
+            else:
+                filled_value = max(0.0, amount_value - remaining_val)
+        else:
+            if remaining is not None:
+                try:
+                    remaining_val = float(remaining)
+                except (TypeError, ValueError):
+                    remaining_val = None
+                else:
+                    filled_value = max(0.0, amount_value - remaining_val)
+            else:
+                remaining_val = None
+
+        if remaining is None:
+            remaining_value = max(0.0, amount_value - filled_value)
+        else:
+            try:
+                remaining_value = float(remaining)
+            except (TypeError, ValueError):
+                remaining_value = max(0.0, amount_value - filled_value)
+
+        average_price = response.get("average")
+        if average_price is None:
+            average_price = response.get("price")
+        try:
+            avg_price_value = float(average_price) if average_price is not None else None
+        except (TypeError, ValueError):
+            avg_price_value = None
+
+        raw_status = response.get("status", "open")
+        status_enum = _map_order_status(raw_status)
+        if status_enum in {OrderStatus.OPEN, OrderStatus.PARTIALLY_FILLED}:
+            if remaining_value <= 1e-12:
+                status_enum = OrderStatus.FILLED
+            elif 0.0 < filled_value < amount_value:
+                status_enum = OrderStatus.PARTIALLY_FILLED
+        resolved_price = px if px is not None else avg_price_value
+
+        try:
+            parsed_id = int(order_id) if isinstance(order_id, str) and order_id.isdigit() else order_id
+        except Exception:  # pragma: no cover - defensywne rzutowanie
+            parsed_id = order_id
 
         return OrderDTO(
-            id=int(order_id) if isinstance(order_id, str) and order_id.isdigit() else order_id,
-            client_order_id=client_order_id,
+            id=parsed_id,
+            client_order_id=client_order_id or client_id,
             symbol=symbol,
             side=side,
             type=type,
             quantity=qty,
-            price=px,
-            status=OrderStatus(status),
+            price=resolved_price,
+            status=status_enum,
             mode=self.mode,
+            extra={
+                "order_id": order_id,
+                "client_order_id": client_id or client_order_id,
+                "filled_quantity": filled_value,
+                "remaining_quantity": remaining_value,
+                "avg_price": avg_price_value,
+                "raw_response": dict(response),
+            },
         )
 
-    def cancel_order(self, order_id: Any, symbol: str) -> bool:
+    def cancel_order(self, order_id: Any, symbol: Optional[str] = None) -> bool:
         try:
-            self.client.cancel_order(order_id, symbol)
+            if symbol is None:
+                try:
+                    self.client.cancel_order(order_id, params={})
+                except TypeError:
+                    self.client.cancel_order(order_id)
+            else:
+                try:
+                    self.client.cancel_order(order_id, symbol, params={})
+                except TypeError:
+                    # część klientów CCXT nie przyjmuje argumentu ``params``
+                    self.client.cancel_order(order_id, symbol)
             return True
         except Exception as exc:
             log.error("cancel_order failed: %s", exc)
@@ -1042,13 +1120,48 @@ class _CCXTPrivateBackend(_CCXTPublicFeed):
 
         out: List[OrderDTO] = []
         for entry in orders:
-            status = (entry.get("status") or "open").upper()
-            if status == "CLOSED":
-                status = "FILLED"
+            raw_status = entry.get("status") or "open"
+            amount_total = entry.get("amount")
+            filled_value = entry.get("filled")
+            remaining_value = entry.get("remaining")
+            try:
+                amount_float = float(amount_total) if amount_total is not None else 0.0
+            except (TypeError, ValueError):
+                amount_float = 0.0
+            try:
+                filled_float = float(filled_value) if filled_value is not None else 0.0
+            except (TypeError, ValueError):
+                filled_float = 0.0
+            try:
+                remaining_float = (
+                    float(remaining_value)
+                    if remaining_value is not None
+                    else max(0.0, amount_float - filled_float)
+                )
+            except (TypeError, ValueError):
+                remaining_float = max(0.0, amount_float - filled_float)
+
+            status = _map_order_status(raw_status)
+            if status in {OrderStatus.OPEN, OrderStatus.PARTIALLY_FILLED}:
+                if remaining_float <= 1e-12:
+                    status = OrderStatus.FILLED
+                elif 0.0 < filled_float < amount_float:
+                    status = OrderStatus.PARTIALLY_FILLED
+
+            try:
+                avg_extra = (
+                    float(entry.get("average"))
+                    if entry.get("average") not in (None, "")
+                    else None
+                )
+            except (TypeError, ValueError):
+                avg_extra = None
+
             out.append(
                 OrderDTO(
                     id=entry.get("id") or entry.get("orderId"),
                     client_order_id=entry.get("clientOrderId")
+                    or entry.get("client_order_id")
                     or entry.get("info", {}).get("clientOrderId"),
                     symbol=entry.get("symbol"),
                     side=OrderSide.BUY
@@ -1057,10 +1170,18 @@ class _CCXTPrivateBackend(_CCXTPublicFeed):
                     type=OrderType.MARKET
                     if (entry.get("type", "").lower() == "market")
                     else OrderType.LIMIT,
-                    quantity=float(entry.get("amount") or entry.get("filled") or 0.0),
-                    price=float(entry.get("price") or 0.0) if entry.get("price") else None,
-                    status=OrderStatus(status),
+                    quantity=amount_float or filled_float,
+                    price=float(entry.get("price") or entry.get("average") or 0.0)
+                    if entry.get("price") or entry.get("average")
+                    else None,
+                    status=status,
                     mode=self.mode,
+                    extra={
+                        "raw_response": dict(entry),
+                        "filled_quantity": filled_float,
+                        "remaining_quantity": remaining_float,
+                        "avg_price": avg_extra,
+                    },
                 )
             )
         return out
@@ -1074,19 +1195,126 @@ class _CCXTPrivateBackend(_CCXTPublicFeed):
             log.error("fetch_positions failed: %s", exc)
             return []
 
+        def _coerce_float(value: Any, *, allow_zero: bool = False) -> float | None:
+            if value in (None, ""):
+                return None
+            try:
+                number = float(value)
+            except (TypeError, ValueError):
+                return None
+            if not allow_zero and abs(number) <= 1e-12:
+                return None
+            return number
+
+        def _extract_number(entry: Mapping[str, Any], keys: Sequence[str], *, allow_zero: bool = False) -> float | None:
+            for key in keys:
+                if not key:
+                    continue
+                candidate = _coerce_float(entry.get(key), allow_zero=allow_zero)
+                if candidate is not None:
+                    return candidate
+            raw_info = entry.get("info")
+            if isinstance(raw_info, Mapping):
+                for key in keys:
+                    if not key:
+                        continue
+                    candidate = _coerce_float(raw_info.get(key), allow_zero=allow_zero)
+                    if candidate is not None:
+                        return candidate
+            return None
+
         out: List[PositionDTO] = []
-        for position in positions or []:
-            amount = float(position.get("contracts") or position.get("amount") or 0.0)
-            if abs(amount) < 1e-12:
+        for raw_position in positions or []:
+            if not isinstance(raw_position, Mapping):
                 continue
-            side = "LONG" if amount > 0 else "SHORT"
+
+            position: Mapping[str, Any] = raw_position
+            amount = _extract_number(
+                position,
+                (
+                    "contracts",
+                    "amount",
+                    "positionAmt",
+                    "size",
+                    "netSize",
+                ),
+            )
+            abs_amount = _extract_number(
+                position,
+                (
+                    "contractsAbs",
+                    "amountAbs",
+                    "positionAmtAbs",
+                    "sizeAbs",
+                ),
+            )
+            if amount is None:
+                amount = abs_amount
+            if amount is None:
+                continue
+
+            quantity = abs(amount)
+            if quantity <= 0 and abs_amount is not None:
+                quantity = abs(abs_amount)
+            if quantity <= 0:
+                continue
+
+            side_hint = str(
+                position.get("side")
+                or position.get("direction")
+                or position.get("positionSide")
+                or ""
+            ).upper()
+            if amount < 0:
+                side = "SHORT"
+            elif amount > 0:
+                side = "LONG"
+            else:
+                side = "LONG"
+            if side_hint in {"SHORT", "SELL"}:
+                side = "SHORT"
+            elif side_hint in {"LONG", "BUY"} and side != "SHORT":
+                side = "LONG"
+
+            position_symbol = str(position.get("symbol") or "")
+            if symbol:
+                normalized = symbol.replace("/", "")
+                position_normalized = position_symbol.replace("/", "")
+                if symbol != position_symbol and normalized != position_normalized:
+                    continue
+
+            avg_price = _extract_number(
+                position,
+                (
+                    "entryPrice",
+                    "entry_price",
+                    "avgEntryPrice",
+                    "avg_price",
+                    "avgCost",
+                    "markPrice",
+                ),
+                allow_zero=True,
+            )
+            unrealized = _extract_number(
+                position,
+                (
+                    "unrealizedPnl",
+                    "unrealizedProfit",
+                    "pnl",
+                    "upnl",
+                    "unrealized",
+                    "floatingPnl",
+                ),
+                allow_zero=True,
+            )
+
             out.append(
                 PositionDTO(
-                    symbol=position.get("symbol"),
+                    symbol=position_symbol or symbol or "",
                     side=side,
-                    quantity=abs(amount),
-                    avg_price=float(position.get("entryPrice") or 0.0),
-                    unrealized_pnl=float(position.get("unrealizedPnl") or 0.0),
+                    quantity=quantity,
+                    avg_price=float(avg_price or 0.0),
+                    unrealized_pnl=float(unrealized or 0.0),
                     mode=Mode.FUTURES,
                 )
             )
@@ -2175,9 +2403,13 @@ class ExchangeManager:
         backend = self._ensure_private()
         return backend.create_order(symbol, side_enum, type_enum, quantity, price, client_order_id)
 
-    def cancel_order(self, order_id: Any, symbol: str) -> bool:
+    def cancel_order(self, order_id: Any, symbol: Optional[str] = None) -> bool:
         if self.mode == Mode.PAPER:
-            return False
+            try:
+                return self._ensure_paper().cancel_order(order_id, symbol)
+            except Exception as exc:
+                log.error("cancel_order failed (paper): %s", exc)
+                return False
         if self.mode in {Mode.MARGIN, Mode.FUTURES}:
             try:
                 adapter = self._ensure_native_adapter()

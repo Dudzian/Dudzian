@@ -195,7 +195,7 @@ class BaseBackend:
     ) -> OrderDTO:
         raise NotImplementedError
 
-    def cancel_order(self, order_id: Any, symbol: str) -> bool:
+    def cancel_order(self, order_id: Any, symbol: Optional[str] = None) -> bool:
         raise NotImplementedError
 
     def fetch_open_orders(self, symbol: Optional[str] = None) -> List[OrderDTO]:
@@ -353,6 +353,12 @@ class PaperBackend(BaseBackend):
             status=OrderStatus.OPEN,
             client_order_id=client_order_id,
             created_at=now,
+            extra={
+                "raw_response": {"source": "paper"},
+                "filled_quantity": 0.0,
+                "remaining_quantity": float(qty),
+                "avg_price": limit_price,
+            },
         )
 
         if type == OrderType.MARKET:
@@ -363,14 +369,22 @@ class PaperBackend(BaseBackend):
         self._update_order_status(order, OrderStatus.OPEN)
         return self._to_order_dto(order)
 
-    def cancel_order(self, order_id: Any, symbol: str) -> bool:
-        state = self._orders.get(int(order_id))
-        if state is None or state.symbol != symbol:
+    def cancel_order(self, order_id: Any, symbol: Optional[str] = None) -> bool:
+        try:
+            key = int(order_id)
+        except (TypeError, ValueError):
+            return False
+
+        state = self._orders.get(key)
+        if state is None:
+            return False
+        if symbol is not None and state.symbol != symbol:
             return False
         if state.status == OrderStatus.FILLED:
             return False
         state.status = OrderStatus.CANCELED
         state.remaining = 0.0
+        state.extra["remaining_quantity"] = 0.0
         self._update_order_status(state, OrderStatus.CANCELED)
         self._orders.pop(state.id, None)
         return True
@@ -510,6 +524,18 @@ class PaperBackend(BaseBackend):
         order.status = OrderStatus.FILLED
         self._update_order_status(order, OrderStatus.FILLED)
         self._orders.pop(order.id, None)
+
+        order.extra.update(
+            {
+                "filled_quantity": float(order.quantity),
+                "remaining_quantity": 0.0,
+                "avg_price": float(price),
+                "raw_response": {
+                    "source": "paper",
+                    "filled_at": timestamp.isoformat(),
+                },
+            }
+        )
 
         dto = self._to_order_dto(order)
         dto.status = OrderStatus.FILLED
@@ -658,6 +684,7 @@ class PaperBackend(BaseBackend):
             status=order.status,
             mode=Mode.PAPER,
             ts=order.created_at.timestamp(),
+            extra=dict(order.extra),
         )
 
     def __del__(self) -> None:  # pragma: no cover - best effort cleanup

@@ -10,7 +10,7 @@ import pytest
 from bot_core.execution.base import ExecutionContext
 from bot_core.execution.live_router import LiveExecutionRouter, RouteDefinition
 from bot_core.exchanges.base import Environment, OrderRequest, OrderResult
-from bot_core.exchanges.errors import ExchangeNetworkError
+from bot_core.exchanges.errors import ExchangeAPIError, ExchangeNetworkError
 from bot_core.observability import MetricsRegistry
 
 from tests._exchange_adapter_helpers import StubExchangeAdapter
@@ -115,6 +115,44 @@ def test_live_router_uses_fallback(tmp_path: Path) -> None:
     assert entries[0]["payload"]["fallback_used"] is True
 
 
+def test_live_router_blocks_disallowed_fallback(tmp_path: Path) -> None:
+    registry = MetricsRegistry()
+    clock = FakeClock()
+    adapters = {
+        "primary": StubExchangeAdapter.from_name(
+            "primary",
+            environment=Environment.LIVE,
+            responses=[ExchangeNetworkError("fail", None)],
+        ),
+        "secondary": StubExchangeAdapter.from_name(
+            "secondary",
+            environment=Environment.LIVE,
+            responses=[
+                OrderResult(order_id="2", status="FILLED", filled_quantity=1.0, avg_price=99.5, raw_response={})
+            ],
+        ),
+    }
+    router = LiveExecutionRouter(
+        adapters=adapters,
+        routes=[RouteDefinition(name="balanced", exchanges=("primary", "secondary"))],
+        decision_log_path=tmp_path / "blocked.jsonl",
+        decision_log_hmac_key=b"F" * 48,
+        metrics=registry,
+        time_source=clock,
+    )
+
+    ctx = build_context("balanced")
+    ctx.metadata = {"execution_route": "balanced", "risk_allow_fallback_categories": "throttling"}
+
+    with pytest.raises(ExchangeNetworkError):
+        router.execute(build_request(), ctx)
+
+    log_path = tmp_path / "blocked.jsonl"
+    if log_path.exists():
+        entries = read_decision_entries(log_path)
+        assert entries[0]["payload"].get("fallback_used") is False
+
+
 def test_live_router_raises_when_all_fail(tmp_path: Path) -> None:
     registry = MetricsRegistry()
     clock = FakeClock()
@@ -173,4 +211,28 @@ def test_cancel_uses_recorded_exchange(tmp_path: Path) -> None:
     router.cancel("abc", build_context())
 
     assert adapters["primary"].cancelled == ["abc"]
+
+
+def test_router_validates_adapter_result(tmp_path: Path) -> None:
+    registry = MetricsRegistry()
+    clock = FakeClock()
+    bad_result = OrderResult(order_id="", status="rejected", filled_quantity=-1.0, avg_price=None, raw_response={})
+    adapters = {
+        "primary": StubExchangeAdapter.from_name(
+            "primary",
+            environment=Environment.LIVE,
+            responses=[bad_result],
+        ),
+    }
+    router = LiveExecutionRouter(
+        adapters=adapters,
+        routes=[RouteDefinition(name="default", exchanges=("primary",))],
+        decision_log_path=tmp_path / "invalid.jsonl",
+        decision_log_hmac_key=b"G" * 48,
+        metrics=registry,
+        time_source=clock,
+    )
+
+    with pytest.raises(ExchangeAPIError):
+        router.execute(build_request(), build_context())
 

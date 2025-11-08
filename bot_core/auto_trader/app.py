@@ -31,6 +31,7 @@ from pathlib import Path
 from collections.abc import Iterable
 from contextlib import contextmanager
 from dataclasses import asdict, is_dataclass
+from types import SimpleNamespace
 from typing import Any, Callable, Dict, Mapping, Optional, Protocol, Sequence, cast
 
 from concurrent.futures import ThreadPoolExecutor
@@ -168,6 +169,101 @@ _NORMALIZED_UNKNOWN = "<unknown-normalization>"
 _CONTROLLER_HISTORY_DEFAULT_LIMIT = 32
 _SCHEDULE_SYMBOL = "<schedule>"
 
+
+
+_GUARDRAIL_TRIGGER_FIELDS = ("name", "label", "comparator", "threshold", "unit", "value")
+_GUARDRAIL_TRIGGER_FIELD_SET = set(_GUARDRAIL_TRIGGER_FIELDS)
+
+
+def _as_iterable_guardrail_payload(raw_triggers: object) -> list[Any]:
+    if raw_triggers is None:
+        return []
+    if isinstance(raw_triggers, GuardrailTrigger):
+        return [raw_triggers]
+    if isinstance(raw_triggers, Mapping):
+        keys = set(raw_triggers.keys())
+        if keys & _GUARDRAIL_TRIGGER_FIELD_SET:
+            return [raw_triggers]
+        entries: list[Any] = []
+        for name, payload in raw_triggers.items():
+            if payload is None:
+                continue
+            if isinstance(payload, Mapping):
+                candidate = dict(payload)
+                candidate.setdefault("name", name)
+                entries.append(candidate)
+            elif isinstance(payload, GuardrailTrigger):
+                if getattr(payload, "name", None):
+                    entries.append(payload)
+                else:  # pragma: no cover - defensive guard
+                    mapped = payload.to_dict()
+                    mapped.setdefault("name", name)
+                    entries.append(mapped)
+            else:
+                entries.append({"name": name, "value": payload})
+        return entries
+    if isinstance(raw_triggers, Iterable) and not isinstance(raw_triggers, (str, bytes)):
+        return list(raw_triggers)
+    return []
+
+
+def _build_guardrail_trigger_payload(entry: Mapping[str, Any]) -> dict[str, Any]:
+    payload: dict[str, Any] = {}
+    for key in _GUARDRAIL_TRIGGER_FIELDS:
+        if key in entry:
+            value = entry[key]
+            if key in {"name", "label", "comparator", "unit"} and value is not None and not isinstance(value, str):
+                payload[key] = str(value)
+            else:
+                payload[key] = value
+    return payload
+
+
+def _guardrail_namespace_from_payload(payload: Mapping[str, Any]) -> SimpleNamespace:
+    return SimpleNamespace(
+        name=payload.get("name"),
+        label=payload.get("label"),
+        comparator=payload.get("comparator"),
+        threshold=payload.get("threshold"),
+        unit=payload.get("unit"),
+        value=payload.get("value"),
+    )
+
+
+def normalize_guardrail_triggers(
+    raw_triggers: object,
+) -> list[tuple[Any, dict[str, Any]]]:
+    """Normalizes guardrail trigger payloads for downstream consumption."""
+
+    normalized: list[tuple[Any, dict[str, Any]]] = []
+    for entry in _as_iterable_guardrail_payload(raw_triggers):
+        if entry is None:
+            continue
+        if isinstance(entry, GuardrailTrigger):
+            payload = entry.to_dict()
+            normalized.append((entry, payload))
+            continue
+        if isinstance(entry, Mapping):
+            payload = _build_guardrail_trigger_payload(entry)
+            namespace = _guardrail_namespace_from_payload(payload)
+            normalized.append((namespace, payload))
+            continue
+        if isinstance(entry, (tuple, list)) and len(entry) == 2 and isinstance(entry[1], Mapping):
+            trigger_obj, payload_mapping = entry
+            payload = _build_guardrail_trigger_payload(payload_mapping)
+            if isinstance(trigger_obj, GuardrailTrigger):
+                normalized.append((trigger_obj, payload))
+            elif isinstance(trigger_obj, Mapping):
+                namespace = _guardrail_namespace_from_payload(trigger_obj)
+                normalized.append((namespace, payload))
+            else:
+                namespace = _guardrail_namespace_from_payload(payload)
+                normalized.append((namespace, payload))
+            continue
+        fallback_payload = {"name": str(entry)}
+        namespace = _guardrail_namespace_from_payload(fallback_payload)
+        normalized.append((namespace, fallback_payload))
+    return normalized
 
 class GuardrailTimelineRecords(list):
     """Lista kubełków timeline'u guardrail wraz z metadanymi podsumowania."""
@@ -10320,7 +10416,7 @@ class AutoTrader:
         )
 
         grouped: OrderedDict[str | None, list[dict[str, Any]]] = OrderedDict()
-        for entry, reasons, triggers, _trigger_tokens in guardrail_records:
+        for entry, reasons, triggers, trigger_tokens in guardrail_records:
             normalized_decision_id = self._normalize_decision_id(entry.get("decision_id"))
             if normalized_decision_id is None and not include_unidentified:
                 continue

@@ -53,6 +53,32 @@ testnet:
     api_key: ${TESTNET_API_KEY}
     secret: ${TESTNET_SECRET}
 
+spot_testnet:
+  description: Spot CCXT testnet for end-to-end validation.
+  exchange_manager:
+    mode: spot
+    testnet: true
+    watchdog:
+      retry_policy:
+        max_attempts: 5
+        base_delay: 0.5
+  credentials:
+    api_key: ${SPOT_TESTNET_API_KEY}
+    secret: ${SPOT_TESTNET_SECRET}
+
+futures_testnet:
+  description: Futures CCXT testnet with synthetic fills enabled.
+  exchange_manager:
+    mode: futures
+    testnet: true
+    watchdog:
+      retry_policy:
+        max_attempts: 5
+        base_delay: 0.5
+  credentials:
+    api_key: ${FUTURES_TESTNET_API_KEY}
+    secret: ${FUTURES_TESTNET_SECRET}
+
 live:
   description: Production configuration with native adapters.
   exchange_manager:

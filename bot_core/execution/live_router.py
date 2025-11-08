@@ -6,6 +6,7 @@ import hashlib
 import hmac
 import json
 import logging
+import math
 import os
 import random
 import threading
@@ -102,6 +103,20 @@ except Exception:  # pragma: no cover
 
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _build_api_error(message: str, *, status: int = 422, payload: Mapping[str, object] | None = None) -> ExchangeAPIError:
+    """Tworzy instancję ``ExchangeAPIError`` niezależnie od wersji modułu błędów."""
+
+    try:
+        return ExchangeAPIError(message=message, status_code=status, payload=payload)
+    except TypeError:  # pragma: no cover - fallback dla prostszej implementacji
+        error = ExchangeAPIError(message)  # type: ignore[arg-type]
+        setattr(error, "status_code", status)
+        setattr(error, "message", message)
+        if payload is not None:
+            setattr(error, "payload", payload)
+        return error
 
 
 # === Backoff & CircuitBreaker =================================================
@@ -374,6 +389,7 @@ class LiveExecutionRouter(ExecutionService):
         fallback_used = False
         start = self._time()
         last_error: Exception | None = None
+        allowed_fallback_categories = self._resolve_allowed_fallback_categories(context)
 
         for exchange_name, max_retries in exchanges_and_retries:
             breaker_now = self._time()
@@ -407,6 +423,7 @@ class LiveExecutionRouter(ExecutionService):
                 attempts_counter += 1
                 try:
                     result = adapter.place_order(request)
+                    self._validate_adapter_result(result, exchange_name, request)
                 except (ExchangeNetworkError, ExchangeThrottlingError) as exc:
                     current_time = self._time()
                     elapsed = max(0.0, current_time - start)
@@ -418,6 +435,9 @@ class LiveExecutionRouter(ExecutionService):
                     last_error = exc
                     if breaker:
                         breaker.record_failure(current_time)
+                    category = "network" if isinstance(exc, ExchangeNetworkError) else "throttling"
+                    if not self._is_fallback_allowed(category, allowed_fallback_categories):
+                        raise
                     # retry jeśli dostępny
                     if attempt < max_retries:
                         time.sleep(_exp_backoff_with_jitter(attempt))
@@ -455,6 +475,8 @@ class LiveExecutionRouter(ExecutionService):
                     last_error = exc
                     if breaker:
                         breaker.record_failure(current_time)
+                    if not self._is_fallback_allowed("unknown", allowed_fallback_categories):
+                        raise
                     if attempt < max_retries:
                         time.sleep(_exp_backoff_with_jitter(attempt))
                         continue
@@ -563,6 +585,69 @@ class LiveExecutionRouter(ExecutionService):
         except Exception:
             # jeśli gauge nie istnieje w danej implementacji, ignorujemy
             pass
+
+    @staticmethod
+    def _resolve_allowed_fallback_categories(context: ExecutionContext) -> set[str] | None:
+        metadata = getattr(context, "metadata", {}) or {}
+        raw = metadata.get("risk_allow_fallback_categories")
+        if raw is None:
+            return None
+        if isinstance(raw, str):
+            parts = [part.strip().lower() for part in raw.split(",")]
+            allowed = {part for part in parts if part}
+            return allowed or set()
+        try:
+            iterator = iter(raw)  # type: ignore[arg-type]
+        except TypeError:
+            return None
+        allowed_set: set[str] = set()
+        for entry in iterator:
+            if entry is None:
+                continue
+            allowed_set.add(str(entry).strip().lower())
+        return allowed_set
+
+    @staticmethod
+    def _is_fallback_allowed(category: str, allowed: set[str] | None) -> bool:
+        if allowed is None:
+            return True
+        if not allowed:
+            return False
+        return category.lower() in allowed
+
+    def _validate_adapter_result(
+        self, result: OrderResult, exchange: str, request: OrderRequest
+    ) -> None:
+        status = str(getattr(result, "status", ""))
+        normalized_status = status.upper()
+        if normalized_status in {"REJECTED", "CANCELLED", "CANCELED", "ERROR"}:
+            message = f"Adapter {exchange} odrzucił zlecenie (status={normalized_status})."
+            raise _build_api_error(message, status=422, payload={"exchange": exchange, "status": status})
+
+        if not getattr(result, "order_id", ""):
+            message = f"Adapter {exchange} nie zwrócił identyfikatora zlecenia."
+            raise _build_api_error(message, status=500, payload={"exchange": exchange})
+
+        filled_quantity = getattr(result, "filled_quantity", 0.0)
+        try:
+            filled_value = float(filled_quantity)
+        except (TypeError, ValueError):
+            raise _build_api_error(
+                f"Adapter {exchange} zwrócił nieprawidłowe wypełnienie.",
+                status=500,
+                payload={"exchange": exchange, "filled_quantity": filled_quantity},
+            ) from None
+
+        if math.isnan(filled_value) or filled_value < 0.0:
+            raise _build_api_error(
+                f"Adapter {exchange} zwrócił ujemne wypełnienie.",
+                status=500,
+                payload={
+                    "exchange": exchange,
+                    "filled_quantity": filled_value,
+                    "symbol": request.symbol,
+                },
+            )
 
     # --- Tryb "routes": wybór trasy -----------------------------------------
 
