@@ -1,0 +1,46 @@
+# Konfiguracja sandboxa AI wykorzystywanego w testach i symulacjach.
+budgets:
+  wall_time_seconds: 30.0
+  cpu_utilization_percent: 90.0
+  gpu_utilization_percent: 90.0
+metrics:
+  cpu_counter:
+    name: bot_ai_sandbox_cpu_percent_total
+    description: "Suma procentowego wykorzystania CPU w scenariuszach sandboxowych"
+  gpu_counter:
+    name: bot_ai_sandbox_gpu_percent_total
+    description: "Suma procentowego wykorzystania GPU w scenariuszach sandboxowych"
+  wall_time_histogram:
+    name: bot_ai_sandbox_wall_time_seconds
+    description: "Rozkład czasu wykonania scenariuszy sandboxowych"
+    buckets: [0.1, 0.5, 1, 2, 5, 10, 30, 60]
+  events_counter:
+    name: bot_ai_sandbox_events_total
+    description: "Łączna liczba zdarzeń przetworzonych w scenariuszach sandboxowych"
+  decisions_counter:
+    name: bot_ai_sandbox_decisions_total
+    description: "Łączna liczba decyzji wygenerowanych w scenariuszach sandboxowych"
+  risk_limit_utilization_gauge:
+    name: bot_ai_sandbox_risk_limit_gauge
+    description: "Bieżące wartości oraz wykorzystanie limitów ryzyka w sandboxie AI"
+  risk_limit_breach_counter:
+    name: bot_ai_sandbox_risk_limit_breaches_total
+    description: "Liczba naruszeń limitów ryzyka obserwowanych w sandboxie AI"
+alerts:
+  source: ai.sandbox
+  severity: warning
+  enabled: true
+output:
+  dashboard_annotations: var/observability/sandbox_annotations.json
+  pretty: true
+defaults:
+  dataset: multi_asset_performance
+  metric_labels:
+    environment: sandbox
+  score_quantiles:
+    p25: 0.25
+    p50: 0.5
+    p75: 0.75
+    p90: 0.9
+    p95: 0.95
+    p99: 0.99
