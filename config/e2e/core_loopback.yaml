@@ -1,0 +1,99 @@
+risk_profiles:
+  balanced:
+    max_daily_loss_pct: 0.02
+    max_position_pct: 0.1
+    target_volatility: 0.15
+    max_leverage: 3.0
+    stop_loss_atr_multiple: 1.5
+    max_open_positions: 3
+    hard_drawdown_pct: 0.2
+
+strategies:
+  loopback_trend:
+    engine: daily_trend_momentum
+    parameters:
+      fast_ma: 3
+      slow_ma: 8
+      breakout_lookback: 5
+      momentum_window: 4
+      atr_window: 5
+      atr_multiplier: 1.8
+      min_trend_strength: 0.0
+      min_momentum: 0.0
+
+runtime:
+  controllers:
+    loopback_controller:
+      tick_seconds: 60
+      interval: "1h"
+
+instrument_universes:
+  loopback_universe:
+    description: Minimal universe dla testów e2e
+    instruments:
+      BTC_USDT:
+        base_asset: BTC
+        quote_asset: USDT
+        categories: [core]
+        exchanges:
+          loopback_spot: BTCUSDT
+        backfill:
+          - interval: "1h"
+            lookback_days: 5
+
+environments:
+  loopback_paper:
+    exchange: loopback_spot
+    environment: paper
+    keychain_key: loopback_paper_key
+    data_cache_path: ./var/data/loopback_paper
+    risk_profile: balanced
+    default_strategy: loopback_trend
+    default_controller: loopback_controller
+    instrument_universe: loopback_universe
+    adapter_settings:
+      paper_trading:
+        valuation_asset: USDT
+        portfolio_id: loopback-paper
+        position_size: 0.2
+        initial_balances:
+          USDT: 50000.0
+        maker_fee: 0.0004
+        taker_fee: 0.0006
+        default_market:
+          min_notional: 10.0
+          step_size: 0.0001
+          tick_size: 0.01
+      live_trading:
+        base_url: http://127.0.0.1:39765
+        account_endpoint: /account
+        symbols_endpoint: /symbols
+        ohlcv_endpoint: /ohlcv
+        orders_endpoint: /orders
+        stream_public_endpoint: /stream/public
+        stream_private_endpoint: /stream/private
+
+  loopback_testnet:
+    exchange: loopback_spot
+    environment: testnet
+    keychain_key: loopback_testnet_key
+    data_cache_path: ./var/data/loopback_testnet
+    risk_profile: balanced
+    default_strategy: loopback_trend
+    default_controller: loopback_controller
+    instrument_universe: loopback_universe
+    alert_channels: []
+    adapter_settings:
+      live_trading:
+        base_url: http://127.0.0.1:39765
+        account_endpoint: /account
+        symbols_endpoint: /symbols
+        ohlcv_endpoint: /ohlcv
+        orders_endpoint: /orders
+        stream_public_endpoint: /stream/public
+        stream_private_endpoint: /stream/private
+    ip_allowlist: []
+    required_permissions: [read, trade]
+    forbidden_permissions: [withdraw]
+
+alerts: {}

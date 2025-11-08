@@ -51,7 +51,7 @@ def resolve_execution_mode(
         return "live"
 
     # tryb auto
-    if env_enum is ExchangeEnvironment.LIVE and settings.live and settings.live.enabled:
+    if env_enum in {ExchangeEnvironment.LIVE, ExchangeEnvironment.TESTNET} and settings.live and settings.live.enabled:
         return "live"
     return "paper"
 
