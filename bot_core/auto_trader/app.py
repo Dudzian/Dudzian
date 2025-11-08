@@ -6816,6 +6816,22 @@ class AutoTrader:
             "normalized": normalized_value,
             "decision": decision.to_dict(),
         }
+
+        decision_details = getattr(decision, "details", None)
+        (
+            guardrail_reasons,
+            guardrail_triggers,
+            guardrail_tokens,
+        ) = self._compute_guardrail_dimensions(
+            decision_details if isinstance(decision_details, Mapping) else None
+        )
+        if guardrail_reasons or guardrail_triggers:
+            entry["guardrail_dimensions"] = {
+                "reasons": guardrail_reasons,
+                "triggers": tuple(copy.deepcopy(trigger) for trigger in guardrail_triggers),
+                "tokens": tuple(copy.deepcopy(token) for token in guardrail_tokens),
+            }
+
         entry["decision_id"] = active_decision_id
         feature_metadata = self._feature_column_metadata()
         if feature_metadata:
@@ -7339,7 +7355,12 @@ class AutoTrader:
         )
 
         guardrail_records: list[
-            tuple[dict[str, Any], tuple[str, ...], tuple[dict[str, Any], ...]]
+            tuple[
+                dict[str, Any],
+                tuple[str, ...],
+                tuple[dict[str, Any], ...],
+                tuple[dict[str, Any], ...],
+            ]
         ] = []
 
         for entry in filtered_records:
@@ -7368,7 +7389,7 @@ class AutoTrader:
             ):
                 continue
 
-            guardrail_records.append((entry, reasons, triggers))
+            guardrail_records.append((entry, reasons, triggers, tuple(trigger_tokens)))
 
         return (
             guardrail_records,
@@ -7378,17 +7399,12 @@ class AutoTrader:
             filtered_records,
         )
 
-    def _extract_guardrail_dimensions(
-        self, entry: Mapping[str, Any]
-    ) -> tuple[tuple[str, ...], tuple[dict[str, Any], ...], list[dict[str, Any]]]:
-        decision_payload = entry.get("decision") if isinstance(entry, Mapping) else None
-        details: Mapping[str, Any] | None = None
-        if isinstance(decision_payload, Mapping):
-            details = decision_payload.get("details")
-        if not isinstance(details, Mapping):
-            details = {}
+    def _compute_guardrail_dimensions(
+        self, details: Mapping[str, Any] | None
+    ) -> tuple[tuple[str, ...], tuple[dict[str, Any], ...], tuple[dict[str, Any], ...]]:
+        details_map = details if isinstance(details, Mapping) else {}
 
-        raw_reasons = details.get("guardrail_reasons") or ()
+        raw_reasons = details_map.get("guardrail_reasons") or ()
         reasons: list[str] = []
         for reason in raw_reasons:
             if reason is None:
@@ -7397,20 +7413,13 @@ class AutoTrader:
             if token:
                 reasons.append(token)
 
-        raw_triggers = details.get("guardrail_triggers") or ()
+        raw_triggers = details_map.get("guardrail_triggers") or ()
         export_triggers: list[dict[str, Any]] = []
         trigger_tokens: list[dict[str, Any]] = []
 
-        for raw_trigger in raw_triggers:
-            if hasattr(raw_trigger, "to_dict") and callable(raw_trigger.to_dict):
-                trigger_payload = raw_trigger.to_dict()
-            elif is_dataclass(raw_trigger):
-                trigger_payload = asdict(raw_trigger)
-            elif isinstance(raw_trigger, Mapping):
-                trigger_payload = dict(raw_trigger)
-            else:
-                trigger_payload = {"name": raw_trigger}
+        normalized_triggers = normalize_guardrail_triggers(raw_triggers)
 
+        for trigger_obj, trigger_payload in normalized_triggers:
             name_raw = trigger_payload.get("name")
             label_raw = trigger_payload.get("label")
             comparator_raw = trigger_payload.get("comparator")
@@ -7433,36 +7442,110 @@ class AutoTrader:
                 export_entry["value"] = value_raw
             export_triggers.append(export_entry)
 
-            normalized_threshold = self._coerce_float(threshold_raw)
-            normalized_value = self._coerce_float(value_raw)
+            name_token = (
+                trigger_obj.name.strip()
+                if isinstance(trigger_obj.name, str) and trigger_obj.name.strip()
+                else _UNKNOWN_SERVICE
+            )
+            label_token = (
+                trigger_obj.label.strip()
+                if (
+                    isinstance(label_raw, str)
+                    and label_raw.strip()
+                    and isinstance(trigger_obj.label, str)
+                    and trigger_obj.label.strip()
+                )
+                else _MISSING_GUARDRAIL_LABEL
+            )
+            comparator_token = (
+                trigger_obj.comparator.strip()
+                if (
+                    isinstance(comparator_raw, str)
+                    and comparator_raw.strip()
+                    and isinstance(trigger_obj.comparator, str)
+                    and trigger_obj.comparator.strip()
+                )
+                else _MISSING_GUARDRAIL_COMPARATOR
+            )
+            unit_token = (
+                trigger_obj.unit.strip()
+                if (
+                    isinstance(unit_raw, str)
+                    and unit_raw.strip()
+                    and isinstance(trigger_obj.unit, str)
+                    and trigger_obj.unit.strip()
+                )
+                else _MISSING_GUARDRAIL_UNIT
+            )
+            normalized_threshold = (
+                self._coerce_float(threshold_raw)
+                if threshold_raw is not None
+                else None
+            )
+            normalized_value = (
+                self._coerce_float(value_raw)
+                if value_raw is not None
+                else None
+            )
             trigger_tokens.append(
                 {
-                    "name": (
-                        str(name_raw).strip()
-                        if name_raw is not None and str(name_raw).strip()
-                        else _UNKNOWN_SERVICE
-                    ),
-                    "label": (
-                        str(label_raw).strip()
-                        if label_raw is not None and str(label_raw).strip()
-                        else _MISSING_GUARDRAIL_LABEL
-                    ),
-                    "comparator": (
-                        str(comparator_raw).strip()
-                        if comparator_raw is not None and str(comparator_raw).strip()
-                        else _MISSING_GUARDRAIL_COMPARATOR
-                    ),
-                    "unit": (
-                        str(unit_raw).strip()
-                        if unit_raw is not None and str(unit_raw).strip()
-                        else _MISSING_GUARDRAIL_UNIT
-                    ),
+                    "name": name_token,
+                    "label": label_token,
+                    "comparator": comparator_token,
+                    "unit": unit_token,
                     "threshold": normalized_threshold,
                     "value": normalized_value,
                 }
             )
 
-        return tuple(reasons), tuple(export_triggers), trigger_tokens
+        return tuple(reasons), tuple(export_triggers), tuple(trigger_tokens)
+
+    def _extract_guardrail_dimensions(
+        self, entry: Mapping[str, Any]
+    ) -> tuple[tuple[str, ...], tuple[dict[str, Any], ...], list[dict[str, Any]]]:
+        cache_payload: Mapping[str, Any] | None = None
+        if isinstance(entry, Mapping):
+            cache_payload = entry.get("guardrail_dimensions")  # type: ignore[index]
+
+        if isinstance(cache_payload, Mapping):
+            cached_reasons = cache_payload.get("reasons") or ()
+            cached_triggers = cache_payload.get("triggers") or ()
+            cached_tokens = cache_payload.get("tokens") or ()
+
+            reasons_tuple = tuple(
+                str(reason).strip()
+                for reason in cached_reasons
+                if reason is not None and str(reason).strip()
+            )
+            triggers_tuple = tuple(
+                dict(trigger)
+                for trigger in cached_triggers
+                if isinstance(trigger, Mapping)
+            )
+            tokens_list = [
+                dict(token)
+                for token in cached_tokens
+                if isinstance(token, Mapping)
+            ]
+            if reasons_tuple or triggers_tuple:
+                return reasons_tuple, triggers_tuple, tokens_list
+
+        decision_payload = entry.get("decision") if isinstance(entry, Mapping) else None
+        details: Mapping[str, Any] | None = None
+        if isinstance(decision_payload, Mapping):
+            details = decision_payload.get("details")
+
+        reasons, triggers, trigger_tokens = self._compute_guardrail_dimensions(details)
+        trigger_token_list = [dict(token) for token in trigger_tokens]
+
+        if isinstance(entry, dict) and (reasons or triggers):
+            entry["guardrail_dimensions"] = {
+                "reasons": reasons,
+                "triggers": tuple(copy.deepcopy(trigger) for trigger in triggers),
+                "tokens": tuple(copy.deepcopy(token) for token in trigger_tokens),
+            }
+
+        return reasons, triggers, trigger_token_list
 
     def _guardrail_trigger_matches(
         self,
@@ -8359,7 +8442,7 @@ class AutoTrader:
         trigger_buckets: dict[str, dict[str, Any]] = {}
 
         if apply_guardrail_filters:
-            service_source = [entry for entry, _, _ in guardrail_records]
+            service_source = [entry for entry, _, _, _ in guardrail_records]
         else:
             service_source = filtered_records
 
@@ -8377,7 +8460,7 @@ class AutoTrader:
             )
             service_buckets[service_name]["total"] += 1
 
-        for entry, reasons, triggers in guardrail_records:
+        for entry, reasons, triggers, _trigger_tokens in guardrail_records:
             service_key = entry.get("service") or _UNKNOWN_SERVICE
             service_name = str(service_key)
             service_bucket = service_buckets.setdefault(
@@ -9316,6 +9399,7 @@ class AutoTrader:
         entry: Mapping[str, Any],
         reasons: Sequence[str],
         triggers: Sequence[Mapping[str, Any]],
+        trigger_tokens: Sequence[Mapping[str, Any]],
         *,
         include_decision: bool,
         include_service: bool,
@@ -9343,12 +9427,19 @@ class AutoTrader:
         if include_error:
             record["error"] = copy.deepcopy(entry.get("error"))
         if include_guardrail_dimensions:
-            record["guardrail_reasons"] = tuple(reasons)
-            record["guardrail_triggers"] = tuple(
+            normalized_reasons = tuple(reasons)
+            normalized_triggers = tuple(
                 copy.deepcopy(trigger) for trigger in triggers
             )
+            record["guardrail_reasons"] = normalized_reasons
+            record["guardrail_triggers"] = normalized_triggers
             record["guardrail_reason_count"] = len(reasons)
             record["guardrail_trigger_count"] = len(triggers)
+            record["guardrail_dimensions"] = {
+                "reasons": normalized_reasons,
+                "triggers": normalized_triggers,
+                "tokens": tuple(copy.deepcopy(token) for token in trigger_tokens),
+            }
         if include_decision:
             record["decision"] = copy.deepcopy(entry.get("decision"))
 
@@ -9486,11 +9577,12 @@ class AutoTrader:
                 records_sequence = records_sequence[-normalized_limit:]
 
         output: list[dict[str, Any]] = []
-        for entry, reasons, triggers in records_sequence:
+        for entry, reasons, triggers, trigger_tokens in records_sequence:
             record = self._build_guardrail_event_record(
                 entry,
                 reasons,
                 triggers,
+                trigger_tokens,
                 include_decision=include_decision,
                 include_service=include_service,
                 include_response=include_response,
@@ -9696,11 +9788,12 @@ class AutoTrader:
             iterable = guardrail_records
             if reverse:
                 iterable = list(reversed(guardrail_records))
-            for entry, reasons, triggers in iterable:
+            for entry, reasons, triggers, trigger_tokens in iterable:
                 record = self._build_guardrail_event_record(
                     entry,
                     reasons,
                     triggers,
+                    trigger_tokens,
                     include_decision=include_decision,
                     include_service=include_service,
                     include_response=include_response,
@@ -10052,8 +10145,8 @@ class AutoTrader:
         )
 
         guardrail_records = [
-            (entry, reasons, triggers)
-            for entry, reasons, triggers in guardrail_records
+            (entry, reasons, triggers, trigger_tokens)
+            for entry, reasons, triggers, trigger_tokens in guardrail_records
             if self._normalize_decision_id(entry.get("decision_id")) == normalized_id
         ]
 
@@ -10073,11 +10166,14 @@ class AutoTrader:
         previous_timestamp = first_timestamp
 
         timeline: list[Mapping[str, Any]] = []
-        for index, (entry, reasons, triggers) in enumerate(guardrail_records):
+        for index, (entry, reasons, triggers, trigger_tokens) in enumerate(
+            guardrail_records
+        ):
             record = self._build_guardrail_event_record(
                 entry,
                 reasons,
                 triggers,
+                trigger_tokens,
                 include_decision=include_decision,
                 include_service=include_service,
                 include_response=include_response,
@@ -10224,7 +10320,7 @@ class AutoTrader:
         )
 
         grouped: OrderedDict[str | None, list[dict[str, Any]]] = OrderedDict()
-        for entry, reasons, triggers in guardrail_records:
+        for entry, reasons, triggers, _trigger_tokens in guardrail_records:
             normalized_decision_id = self._normalize_decision_id(entry.get("decision_id"))
             if normalized_decision_id is None and not include_unidentified:
                 continue
@@ -10237,6 +10333,7 @@ class AutoTrader:
                 entry,
                 reasons,
                 triggers,
+                trigger_tokens,
                 include_decision=include_decision,
                 include_service=include_service,
                 include_response=include_response,
@@ -10486,7 +10583,7 @@ class AutoTrader:
                     )
                     service_totals["evaluations"] += 1
 
-        for entry, reasons, triggers in guardrail_records:
+        for entry, reasons, triggers, _trigger_tokens in guardrail_records:
             timestamp_value = self._normalize_time_bound(entry.get("timestamp"))
             bucket_payload = resolve_bucket(timestamp_value)
             bucket_payload["guardrail_events"] += 1
@@ -13248,6 +13345,59 @@ class AutoTrader:
                 }
             elif metadata_payload is not None:
                 record["metadata"] = copy.deepcopy(metadata_payload)
+
+            guardrail_reasons_cache: tuple[str, ...] = ()
+            guardrail_triggers_cache: tuple[dict[str, Any], ...] = ()
+            guardrail_tokens_cache: tuple[dict[str, Any], ...] = ()
+
+            guardrail_dimensions_payload = entry.get("guardrail_dimensions")
+            if isinstance(guardrail_dimensions_payload, Mapping):
+                guardrail_reasons_cache = tuple(
+                    str(reason).strip()
+                    for reason in guardrail_dimensions_payload.get("reasons", ())
+                    if reason is not None and str(reason).strip()
+                )
+                guardrail_triggers_cache = tuple(
+                    dict(trigger)
+                    for trigger in guardrail_dimensions_payload.get("triggers", ())
+                    if isinstance(trigger, Mapping)
+                )
+                guardrail_tokens_cache = tuple(
+                    dict(token)
+                    for token in guardrail_dimensions_payload.get("tokens", ())
+                    if isinstance(token, Mapping)
+                )
+            else:
+                decision_details = None
+                if isinstance(decision_payload, Mapping):
+                    decision_details = decision_payload.get("details")
+                (
+                    guardrail_reasons_cache,
+                    guardrail_triggers_cache,
+                    guardrail_tokens_cache,
+                ) = self._compute_guardrail_dimensions(decision_details)
+                if not guardrail_reasons_cache and not guardrail_triggers_cache:
+                    if "guardrail_reasons" in entry or "guardrail_triggers" in entry:
+                        synthetic_details = {
+                            "guardrail_reasons": entry.get("guardrail_reasons"),
+                            "guardrail_triggers": entry.get("guardrail_triggers"),
+                        }
+                        (
+                            guardrail_reasons_cache,
+                            guardrail_triggers_cache,
+                            guardrail_tokens_cache,
+                        ) = self._compute_guardrail_dimensions(synthetic_details)
+
+            if guardrail_reasons_cache or guardrail_triggers_cache:
+                record["guardrail_dimensions"] = {
+                    "reasons": guardrail_reasons_cache,
+                    "triggers": tuple(
+                        copy.deepcopy(trigger) for trigger in guardrail_triggers_cache
+                    ),
+                    "tokens": tuple(
+                        copy.deepcopy(token) for token in guardrail_tokens_cache
+                    ),
+                }
 
             records.append(record)
 

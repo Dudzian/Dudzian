@@ -2720,6 +2720,61 @@ def test_auto_trader_records_risk_evaluation_history() -> None:
     assert fresh[0]["approved"] is True
 
 
+def test_auto_trader_risk_evaluation_caches_guardrail_dimensions() -> None:
+    emitter = _Emitter()
+    gui = _GUI()
+    trader = AutoTrader(
+        emitter,
+        gui,
+        symbol_getter=lambda: "BTCUSDT",
+        enable_auto_trade=False,
+    )
+
+    decision = RiskDecision(
+        should_trade=False,
+        fraction=0.0,
+        state="blocked",
+        reason="guardrail",
+        details={
+            "guardrail_reasons": ["volatility spike"],
+            "guardrail_triggers": [
+                {
+                    "name": "volatility_guard",
+                    "label": "Volatility guard",
+                    "comparator": ">=",
+                    "threshold": "0.8",
+                    "unit": "ratio",
+                    "value": "0.95",
+                }
+            ],
+        },
+    )
+
+    trader._record_risk_evaluation(
+        decision,
+        approved=False,
+        normalized=False,
+        response=None,
+        service=None,
+        error=None,
+    )
+
+    evaluations = trader.get_risk_evaluations()
+    assert len(evaluations) == 1
+    guardrail_dimensions = evaluations[0].get("guardrail_dimensions")
+    assert guardrail_dimensions
+    assert guardrail_dimensions["reasons"] == ("volatility spike",)
+    triggers = guardrail_dimensions["triggers"]
+    assert isinstance(triggers, tuple)
+    assert triggers and triggers[0]["name"] == "volatility_guard"
+    assert triggers[0]["threshold"] == "0.8"
+    tokens = guardrail_dimensions["tokens"]
+    assert isinstance(tokens, tuple)
+    assert tokens and tokens[0]["name"] == "volatility_guard"
+    assert tokens[0]["threshold"] == pytest.approx(0.8)
+    assert tokens[0]["value"] == pytest.approx(0.95)
+
+
 def test_auto_trader_traces_risk_evaluations_by_decision(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -4532,6 +4587,11 @@ def test_auto_trader_guardrail_summary(monkeypatch: pytest.MonkeyPatch) -> None:
     assert records[2]["guardrail_triggers"][0]["unit"] == "score"
     assert records[0]["decision"]["details"]["guardrail_reasons"][0] == "effective risk cap"
     assert records[0]["guardrail_triggers"][0]["unit"] == "ratio"
+    assert "guardrail_dimensions" in records[0]
+    dimensions = records[0]["guardrail_dimensions"]
+    assert dimensions["reasons"] == records[0]["guardrail_reasons"]
+    assert dimensions["triggers"][0]["name"] == records[0]["guardrail_triggers"][0]["name"]
+    assert dimensions["tokens"] and dimensions["tokens"][0]["name"]
 
     alpha_only_records = trader.guardrail_events_to_records(service="_ServiceAlpha")
     assert len(alpha_only_records) == 2
@@ -5360,6 +5420,73 @@ def test_guardrail_filters_support_missing_label_and_comparator(
     assert df_bps_unit.loc[0, "guardrail_triggers"][0]["unit"] == "bps"
 
 
+def test_extract_guardrail_dimensions_prefers_cache(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    emitter = _Emitter()
+    gui = _GUI()
+    trader = AutoTrader(
+        emitter,
+        gui,
+        symbol_getter=lambda: "BTCUSDT",
+        enable_auto_trade=False,
+    )
+
+    entry: dict[str, Any] = {
+        "guardrail_dimensions": {
+            "reasons": ("cached reason",),
+            "triggers": (
+                {
+                    "name": "cached_guard",
+                    "label": None,
+                    "comparator": None,
+                    "unit": None,
+                },
+            ),
+            "tokens": (
+                {
+                    "name": "cached_guard",
+                    "label": "<no-label>",
+                    "comparator": "<no-comparator>",
+                    "unit": "<no-unit>",
+                    "threshold": None,
+                    "value": None,
+                },
+            ),
+        },
+        "decision": {"details": {"guardrail_triggers": [{"name": "should_not_be_used"}]}},
+    }
+
+    calls: list[Any] = []
+
+    def _patched(payload: object) -> list[tuple[Any, dict[str, Any]]]:
+        calls.append(payload)
+        return []
+
+    monkeypatch.setattr(
+        "bot_core.auto_trader.app.normalize_guardrail_triggers",
+        _patched,
+    )
+
+    reasons, triggers, tokens = trader._extract_guardrail_dimensions(entry)
+
+    assert reasons == ("cached reason",)
+    assert triggers == (
+        {"name": "cached_guard", "label": None, "comparator": None, "unit": None},
+    )
+    assert tokens == [
+        {
+            "name": "cached_guard",
+            "label": "<no-label>",
+            "comparator": "<no-comparator>",
+            "unit": "<no-unit>",
+            "threshold": None,
+            "value": None,
+        }
+    ]
+    assert calls == []
+
+
 def test_guardrail_events_export_roundtrip(monkeypatch: pytest.MonkeyPatch) -> None:
     trader = _prepare_guardrail_history(monkeypatch)
 
@@ -5380,6 +5507,11 @@ def test_guardrail_events_export_roundtrip(monkeypatch: pytest.MonkeyPatch) -> N
         "guardrail-alpha-2",
         "guardrail-unknown-1",
     }
+    first_entry = payload["entries"][0]
+    assert "guardrail_dimensions" in first_entry
+    dimensions_snapshot = first_entry["guardrail_dimensions"]
+    assert dimensions_snapshot["reasons"]
+    assert dimensions_snapshot["tokens"] and dimensions_snapshot["tokens"][0]["name"]
 
     fresh = AutoTrader(
         _Emitter(),
@@ -5401,6 +5533,15 @@ def test_guardrail_events_export_roundtrip(monkeypatch: pytest.MonkeyPatch) -> N
         "guardrail-alpha-2",
         "guardrail-unknown-1",
     }
+    restored_dimensions = records[0]["guardrail_dimensions"]
+    assert restored_dimensions["tokens"] and restored_dimensions["tokens"][0]["name"]
+
+    restored_entries = fresh.get_risk_evaluations()
+    assert restored_entries
+    snapshot = restored_entries[0]["guardrail_dimensions"]
+    assert snapshot["reasons"]
+    assert isinstance(snapshot["tokens"], tuple)
+    assert snapshot["tokens"] and snapshot["tokens"][0]["name"]
 
 
 def test_guardrail_events_dump_and_import(
@@ -5445,6 +5586,7 @@ def test_guardrail_event_trace(monkeypatch: pytest.MonkeyPatch) -> None:
     assert first["elapsed_since_first_s"] == pytest.approx(0.0)
     assert first["elapsed_since_previous_s"] == pytest.approx(0.0)
     assert isinstance(first["timestamp"], datetime)
+    assert "guardrail_dimensions" not in first
 
     missing = trader.get_guardrail_event_trace("non-existent")
     assert missing == ()
@@ -5466,6 +5608,10 @@ def test_guardrail_event_grouping(monkeypatch: pytest.MonkeyPatch) -> None:
         "guardrail-alpha-2",
         "guardrail-unknown-1",
     }
+
+    sample_group = grouped["guardrail-alpha-1"]
+    assert sample_group
+    assert "guardrail_dimensions" not in sample_group[0]
 
     alpha_records = grouped["guardrail-alpha-1"]
     assert len(alpha_records) == 1

@@ -2525,10 +2525,34 @@ class AIManager:
                 feats,
                 prefer_thread=True,
             )
-            if not isinstance(preds, pd.Series):
-                preds = pd.Series(np.asarray(preds, dtype=float), index=df.index)
-            cache[normalized_type] = preds
-            return preds
+
+            if isinstance(preds, pd.Series):
+                if preds.index.equals(df.index):
+                    preds_series = preds
+                else:
+                    try:
+                        preds_series = preds.reindex(df.index)
+                    except Exception:
+                        raw = preds.to_numpy(dtype=float)
+                        if raw.size > len(df):
+                            raw = raw[-len(df) :]
+                        preds_series = pd.Series(raw, index=df.index[: raw.size])
+                        preds_series = preds_series.reindex(df.index)
+            else:
+                raw = np.asarray(preds, dtype=float).reshape(-1)
+                if raw.size > len(df):
+                    raw = raw[-len(df) :]
+                preds_series = pd.Series(raw, index=df.index[: raw.size])
+                if raw.size < len(df):
+                    preds_series = preds_series.reindex(df.index)
+                else:
+                    preds_series.index = df.index
+
+            if not preds_series.index.equals(df.index):
+                preds_series = preds_series.reindex(df.index)
+
+            cache[normalized_type] = preds_series
+            return preds_series
         finally:
             visited.remove(normalized_type)
 

@@ -122,9 +122,9 @@ def test_auto_trader_lifecycle_with_guardrails_and_recalibrations() -> None:
     metrics_module._GLOBAL_REGISTRY = metrics_module.MetricsRegistry()
 
     frames = [
-        pd.DataFrame({"close": [100, 101, 102, 103, 104]}, index=pd.date_range("2024-01-01", periods=5, freq="H")),
-        pd.DataFrame({"close": [105, 104, 103, 102, 101]}, index=pd.date_range("2024-01-02", periods=5, freq="H")),
-        pd.DataFrame({"close": [100, 101, 100, 99, 98]}, index=pd.date_range("2024-01-03", periods=5, freq="H")),
+        pd.DataFrame({"close": [100, 101, 102, 103, 104]}, index=pd.date_range("2024-01-01", periods=5, freq="h")),
+        pd.DataFrame({"close": [105, 104, 103, 102, 101]}, index=pd.date_range("2024-01-02", periods=5, freq="h")),
+        pd.DataFrame({"close": [100, 101, 100, 99, 98]}, index=pd.date_range("2024-01-03", periods=5, freq="h")),
     ]
 
     scenarios = [

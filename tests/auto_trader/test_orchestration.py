@@ -76,7 +76,7 @@ class SummaryStub:
 
 
 def _build_market_data() -> pd.DataFrame:
-    index = pd.date_range("2024-01-01", periods=5, freq="H")
+    index = pd.date_range("2024-01-01", periods=5, freq="h")
     return pd.DataFrame(
         {
             "open": [100, 101, 102, 103, 104],
