@@ -1,0 +1,12 @@
+version: "3.9"
+
+services:
+  loopback-tests:
+    image: python:3.11-slim
+    working_dir: /workspace
+    volumes:
+      - ../..:/workspace
+    environment:
+      PIP_NO_CACHE_DIR: "1"
+    command: >-
+      bash -lc "pip install --no-cache-dir '.[dev]' && pytest tests/test_runtime_pipeline_offline.py::test_live_pipeline_uses_loopback_adapter tests/e2e/test_run_local_bot_loopback.py"

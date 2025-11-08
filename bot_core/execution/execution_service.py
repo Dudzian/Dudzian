@@ -7,11 +7,9 @@ from pathlib import Path
 from typing import Any, Mapping, MutableMapping
 
 from bot_core.config.models import RuntimeExecutionLiveSettings, RuntimeExecutionSettings
-from bot_core.execution.base import ExecutionService
-from bot_core.execution.live_router import LiveExecutionRouter
-from bot_core.exchanges.base import Environment as ExchangeEnvironment, ExchangeAdapter
-from bot_core.security.signing import build_transaction_signer_selector
-
+from bot_core.execution.base import ExecutionContext, ExecutionService
+from bot_core.execution.live_router import LiveExecutionRouter, QoSConfig
+from bot_core.exchanges.base import Environment as ExchangeEnvironment, ExchangeAdapter, OrderRequest
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -53,7 +51,7 @@ def resolve_execution_mode(
         return "live"
 
     # tryb auto
-    if env_enum is ExchangeEnvironment.LIVE and settings.live and settings.live.enabled:
+    if env_enum in {ExchangeEnvironment.LIVE, ExchangeEnvironment.TESTNET} and settings.live and settings.live.enabled:
         return "live"
     return "paper"
 
@@ -210,62 +208,46 @@ def build_live_execution_service(
     if metrics_registry is not None:
         router_kwargs["metrics_registry"] = metrics_registry
 
-    signer_selector = None
-    signer_config = getattr(live_cfg, "signers", None)
-    if isinstance(signer_config, Mapping):
-        normalized_signers = _normalize_signer_config(signer_config, base=data_root)
-        signer_selector = build_transaction_signer_selector(normalized_signers)
-        if signer_selector is not None:
-            router_kwargs["transaction_signers"] = signer_selector
-            if _LOGGER.isEnabledFor(logging.DEBUG):
-                audit_bundle = signer_selector.describe_audit_bundle()
+    qos_cfg = getattr(live_cfg, "qos", None)
+    if qos_cfg is not None:
+        per_exchange = {str(name): int(value) for name, value in qos_cfg.per_exchange_concurrency.items()}
 
-                signers_info = audit_bundle.get("signers", {})
-                for account_id, info in signers_info.items():
-                    label = account_id if account_id is not None else "default"
-                    _LOGGER.debug("Skonfigurowany podpisujący %s: %s", label, dict(info))
+        priority_key = qos_cfg.priority_metadata_key
 
-                key_index_summary = audit_bundle.get("key_index", {})
-                for key_id, summary in key_index_summary.items():
-                    _LOGGER.debug("Indeks key_id %s: %s", key_id, dict(summary))
+        def _priority_resolver(request: OrderRequest, context: ExecutionContext) -> int:
+            if priority_key:
+                metadata_value = None
+                if context.metadata:
+                    metadata_value = context.metadata.get(priority_key)
+                if metadata_value is None and getattr(request, "metadata", None):
+                    metadata_value = request.metadata.get(priority_key)  # type: ignore[attr-defined]
+                if metadata_value is not None:
+                    try:
+                        return int(metadata_value)
+                    except (TypeError, ValueError):
+                        _LOGGER.debug(
+                            "Nie udało się sparsować priorytetu kolejki %s=%s",
+                            priority_key,
+                            metadata_value,
+                            exc_info=True,
+                        )
+            return 0
 
-                hardware_summary = audit_bundle.get("hardware_requirements", {})
-                if hardware_summary:
-                    _LOGGER.debug(
-                        "Podsumowanie wymagań sprzętowych: %s",
-                        dict(hardware_summary),
-                    )
+        router_kwargs["qos"] = QoSConfig(
+            max_queue_size=int(qos_cfg.max_queue_size),
+            worker_concurrency=int(qos_cfg.worker_concurrency),
+            per_exchange_concurrency=per_exchange,
+            priority_resolver=_priority_resolver if priority_key else None,
+            max_queue_wait_seconds=(
+                float(qos_cfg.max_queue_wait_seconds)
+                if qos_cfg.max_queue_wait_seconds is not None
+                else None
+            ),
+        )
 
-                issues = tuple(audit_bundle.get("issues", ()))
-                if issues:
-                    _LOGGER.debug(
-                        "Wykryte problemy konfiguracji podpisów: %s",
-                        [dict(issue) for issue in issues],
-                    )
-                else:
-                    _LOGGER.debug("Konfiguracja podpisów nie zgłasza problemów audytowych.")
-
-    license_capabilities = getattr(bootstrap_ctx, "license_capabilities", None)
-    requires_hw_wallet = bool(
-        getattr(license_capabilities, "require_hardware_wallet_for_outgoing", False)
-    )
-    if requires_hw_wallet:
-        router_kwargs["require_hardware_wallet_for_withdrawals"] = True
-        if signer_selector is None:
-            raise RuntimeError(
-                "Licencja wymaga portfela sprzętowego dla wypłat, ale w konfiguracji runtime.execution.live.signers "
-                "nie zdefiniowano podpisującego."
-            )
-        missing_hw: list[str] = []
-        for account_id, signer in signer_selector.iter_signers():
-            if not getattr(signer, "requires_hardware", False):
-                label = account_id if account_id is not None else "default"
-                missing_hw.append(str(label))
-        if missing_hw:
-            raise RuntimeError(
-                "Licencja wymaga portfela sprzętowego dla wypłat, jednak podpisy dla kont "
-                f"{', '.join(sorted(missing_hw))} nie korzystają z urządzeń."
-            )
+    io_dispatcher = getattr(bootstrap_ctx, "io_dispatcher", None)
+    if io_dispatcher is not None:
+        router_kwargs["io_dispatcher"] = io_dispatcher
 
     return LiveExecutionRouter(**router_kwargs)
 

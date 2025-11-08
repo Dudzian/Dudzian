@@ -1,0 +1,39 @@
+core:
+  path: core_loopback.yaml
+
+trading:
+  default_entrypoint: loopback_paper
+  auto_start: false
+  enable_paper_mode: true
+  enable_live_mode: true
+  entrypoints:
+    loopback_paper:
+      environment: loopback_paper
+      description: "Minimalny scenariusz paper z adapterem loopback"
+      controller: loopback_controller
+      strategy: loopback_trend
+      risk_profile: balanced
+      bootstrap: true
+      tags: [paper, loopback]
+    loopback_testnet:
+      environment: loopback_testnet
+      description: "Scenariusz testnet korzystający z LiveExecutionRouter"
+      controller: loopback_controller
+      strategy: loopback_trend
+      risk_profile: balanced
+      bootstrap: true
+      tags: [testnet, loopback]
+
+execution:
+  default_mode: auto
+  force_paper_when_offline: false
+  live:
+    enabled: true
+    default_route: ["loopback_spot"]
+
+io_queue:
+  max_concurrency: 4
+  burst: 8
+
+observability:
+  enable_log_metrics: true
