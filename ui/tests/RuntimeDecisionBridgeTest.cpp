@@ -12,6 +12,9 @@ class RuntimeDecisionBridgeTest : public QObject {
 private slots:
     void loadsDecisionsFromJsonl();
     void reportsErrorsWhenFileMissing();
+    void savePresetWithoutBridgeReturnsError();
+    void listPresetsWithoutBridgeIsEmpty();
+    void deletePresetWithoutBridgeReturnsError();
 };
 
 void RuntimeDecisionBridgeTest::loadsDecisionsFromJsonl()
@@ -76,6 +79,34 @@ void RuntimeDecisionBridgeTest::reportsErrorsWhenFileMissing()
     QVERIFY(result.isEmpty());
     QVERIFY(errorSpy.count() >= 1);
     QVERIFY(!bridge.errorMessage().isEmpty());
+}
+
+void RuntimeDecisionBridgeTest::savePresetWithoutBridgeReturnsError()
+{
+    RuntimeDecisionBridge bridge;
+    const QVariantMap response = bridge.saveStrategyPreset({{QStringLiteral("blocks"), QVariantList{}}});
+    QVERIFY(!response.value(QStringLiteral("ok")).toBool());
+    QVERIFY(response.value(QStringLiteral("error")).toString().contains(QStringLiteral("runtime"))
+            || response.value(QStringLiteral("error")).toString().contains(QStringLiteral("Mostek")));
+}
+
+void RuntimeDecisionBridgeTest::listPresetsWithoutBridgeIsEmpty()
+{
+    RuntimeDecisionBridge bridge;
+    QVERIFY(bridge.listStrategyPresets().isEmpty());
+    const QVariantMap response = bridge.loadStrategyPreset({});
+    QVERIFY(!response.value(QStringLiteral("ok")).toBool());
+    QVERIFY(response.value(QStringLiteral("error")).toString().contains(QStringLiteral("runtime"))
+            || response.value(QStringLiteral("error")).toString().contains(QStringLiteral("Mostek")));
+}
+
+void RuntimeDecisionBridgeTest::deletePresetWithoutBridgeReturnsError()
+{
+    RuntimeDecisionBridge bridge;
+    const QVariantMap response = bridge.deleteStrategyPreset({{QStringLiteral("slug"), QStringLiteral("demo")}});
+    QVERIFY(!response.value(QStringLiteral("ok")).toBool());
+    QVERIFY(response.value(QStringLiteral("error")).toString().contains(QStringLiteral("runtime"))
+            || response.value(QStringLiteral("error")).toString().contains(QStringLiteral("Mostek")));
 }
 
 QTEST_MAIN(RuntimeDecisionBridgeTest)

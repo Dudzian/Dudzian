@@ -672,5 +672,361 @@
       <source>Wyeksportowano do: %1</source>
       <translation>Wyeksportowano do: %1</translation>
     </message>
+</context>
+
+  <context>
+    <name>StrategyBuilder</name>
+    <message>
+      <source>Nowy preset</source>
+      <translation>Nowy preset</translation>
+    </message>
+    <message>
+      <source>Strumień danych</source>
+      <translation>Strumień danych</translation>
+    </message>
+    <message>
+      <source>Wczytaj sygnały rynkowe z sandboxa</source>
+      <translation>Wczytaj sygnały rynkowe z sandboxa</translation>
+    </message>
+    <message>
+      <source>Filtr ryzyka</source>
+      <translation>Filtr ryzyka</translation>
+    </message>
+    <message>
+      <source>Zastosuj filtr ekspozycji / drawdown</source>
+      <translation>Zastosuj filtr ekspozycji / drawdown</translation>
+    </message>
+    <message>
+      <source>Generator sygnałów</source>
+      <translation>Generator sygnałów</translation>
+    </message>
+    <message>
+      <source>Konfiguruj logikę wejścia/wyjścia</source>
+      <translation>Konfiguruj logikę wejścia/wyjścia</translation>
+    </message>
+    <message>
+      <source>Alokator</source>
+      <translation>Alokator</translation>
+    </message>
+    <message>
+      <source>Skaluj pozycję według profilu</source>
+      <translation>Skaluj pozycję według profilu</translation>
+    </message>
+    <message>
+      <source>Egzekucja</source>
+      <translation>Egzekucja</translation>
+    </message>
+    <message>
+      <source>Wyślij zlecenia przez Bot Core</source>
+      <translation>Wyślij zlecenia przez Bot Core</translation>
+    </message>
+    <message>
+      <source>Preset bez nazwy</source>
+      <translation>Preset bez nazwy</translation>
+    </message>
+    <message>
+      <source>Kreator strategii</source>
+      <translation>Kreator strategii</translation>
+    </message>
+    <message>
+      <source>Nazwa presetu</source>
+      <translation>Nazwa presetu</translation>
+    </message>
+    <message>
+      <source>Zapisz preset</source>
+      <translation>Zapisz preset</translation>
+    </message>
+    <message>
+      <source>Zapisano preset strategii (%1)</source>
+      <translation>Zapisano preset strategii (%1)</translation>
+    </message>
+    <message>
+      <source>Mostek runtime nie jest dostępny</source>
+      <translation>Mostek runtime nie jest dostępny</translation>
+    </message>
+    <message>
+      <source>Nie udało się zapisać presetu</source>
+      <translation>Nie udało się zapisać presetu</translation>
+    </message>
+    <message>
+      <source>Bloki dostępne</source>
+      <translation>Bloki dostępne</translation>
+    </message>
+    <message>
+      <source>Przepływ strategii</source>
+      <translation>Przepływ strategii</translation>
+    </message>
+    <message>
+      <source>Zapisane presety</source>
+      <translation>Zapisane presety</translation>
+    </message>
+    <message>
+      <source>Brak zapisanych presetów</source>
+      <translation>Brak zapisanych presetów</translation>
+    </message>
+    <message>
+      <source>Wczytaj preset</source>
+      <translation>Wczytaj preset</translation>
+    </message>
+    <message>
+      <source>Usuń preset</source>
+      <translation>Usuń preset</translation>
+    </message>
+    <message>
+      <source>Wyczyść płótno</source>
+      <translation>Wyczyść płótno</translation>
+    </message>
+    <message>
+      <source>Wyczyszczono płótno</source>
+      <translation>Wyczyszczono płótno</translation>
+    </message>
+    <message>
+      <source>Nie udało się wczytać presetu</source>
+      <translation>Nie udało się wczytać presetu</translation>
+    </message>
+    <message>
+      <source>Wczytano preset: %1</source>
+      <translation>Wczytano preset: %1</translation>
+    </message>
+    <message>
+      <source>Nie wybrano presetu do usunięcia</source>
+      <translation>Nie wybrano presetu do usunięcia</translation>
+    </message>
+    <message>
+      <source>Usunięto preset: %1</source>
+      <translation>Usunięto preset: %1</translation>
+    </message>
+    <message>
+      <source>Nie udało się usunąć presetu</source>
+      <translation>Nie udało się usunąć presetu</translation>
+    </message>
+    <message>
+      <source>Symbol instrumentu</source>
+      <translation>Symbol instrumentu</translation>
+    </message>
+    <message>
+      <source>Interwał</source>
+      <translation>Interwał</translation>
+    </message>
+    <message>
+      <source>Źródło danych</source>
+      <translation>Źródło danych</translation>
+    </message>
+    <message>
+      <source>Limit ryzyka (%)</source>
+      <translation>Limit ryzyka (%)</translation>
+    </message>
+    <message>
+      <source>Okno (dni)</source>
+      <translation>Okno (dni)</translation>
+    </message>
+    <message>
+      <source>Próg sygnału</source>
+      <translation>Próg sygnału</translation>
+    </message>
+    <message>
+      <source>Alokacja (%)</source>
+      <translation>Alokacja (%)</translation>
+    </message>
+    <message>
+      <source>Maks. liczba pozycji</source>
+      <translation>Maks. liczba pozycji</translation>
+    </message>
+    <message>
+      <source>Giełda</source>
+      <translation>Giełda</translation>
+    </message>
+    <message>
+      <source>Konto</source>
+      <translation>Konto</translation>
+    </message>
+    <message>
+      <source>Poślizg (%)</source>
+      <translation>Poślizg (%)</translation>
+    </message>
+    <message>
+      <source>Wielkość pozycji</source>
+      <translation>Wielkość pozycji</translation>
+    </message>
+    <message>
+      <source>Aktywny</source>
+      <translation>Aktywny</translation>
+    </message>
+    <message>
+      <source>Konfiguruj blok</source>
+      <translation>Konfiguruj blok</translation>
+    </message>
+    <message>
+      <source>Brak parametrów</source>
+      <translation>Brak parametrów</translation>
+    </message>
+    <message>
+      <source>Parametry bloku</source>
+      <translation>Parametry bloku</translation>
+    </message>
+    <message>
+      <source>Etykieta bloku</source>
+      <translation>Etykieta bloku</translation>
+    </message>
+    <message>
+      <source>Tak</source>
+      <translation>Tak</translation>
+    </message>
+    <message>
+      <source>Nie</source>
+      <translation>Nie</translation>
+    </message>
+    <message>
+      <source>Zaktualizowano parametry bloku (%1)</source>
+      <translation>Zaktualizowano parametry bloku (%1)</translation>
+    </message>
+    <message>
+      <source>Sandbox</source>
+      <translation>Sandbox</translation>
+    </message>
+    <message>
+      <source>Rynek live</source>
+      <translation>Rynek live</translation>
+    </message>
+    <message>
+      <source>1 minuta</source>
+      <translation>1 minuta</translation>
+    </message>
+    <message>
+      <source>5 minut</source>
+      <translation>5 minut</translation>
+    </message>
+    <message>
+      <source>1 godzina</source>
+      <translation>1 godzina</translation>
+    </message>
+    <message>
+      <source>4 godziny</source>
+      <translation>4 godziny</translation>
+    </message>
+    <message>
+      <source>1 dzień</source>
+      <translation>1 dzień</translation>
+    </message>
+  </context>
+
+  <context>
+    <name>RuntimeDecisionBridge</name>
+    <message>
+      <source>Mostek runtime odrzucił zapis presetu</source>
+      <translation>Mostek runtime odrzucił zapis presetu</translation>
+    </message>
+    <message>
+      <source>Mostek offline nie obsługuje zapisu presetów</source>
+      <translation>Mostek offline nie obsługuje zapisu presetów</translation>
+    </message>
+    <message>
+      <source>Brak aktywnego mostka runtime</source>
+      <translation>Brak aktywnego mostka runtime</translation>
+    </message>
+    <message>
+      <source>Mostek runtime odrzucił odczyt presetu</source>
+      <translation>Mostek runtime odrzucił odczyt presetu</translation>
+    </message>
+    <message>
+      <source>Mostek runtime odrzucił usunięcie presetu</source>
+      <translation>Mostek runtime odrzucił usunięcie presetu</translation>
+    </message>
+    <message>
+      <source>Mostek offline nie obsługuje presetów</source>
+      <translation>Mostek offline nie obsługuje presetów</translation>
+    </message>
+    <message>
+      <source>Nie można otworzyć pliku dziennika decyzji: %1</source>
+      <translation>Nie można otworzyć pliku dziennika decyzji: %1</translation>
+    </message>
+  </context>
+
+  <context>
+    <name>AnalyticsDashboard</name>
+    <message>
+      <source>Zwrot skumulowany</source>
+      <translation>Zwrot skumulowany</translation>
+    </message>
+    <message>
+      <source>Maks. obsunięcie</source>
+      <translation>Maks. obsunięcie</translation>
+    </message>
+    <message>
+      <source>Sharpe</source>
+      <translation>Sharpe</translation>
+    </message>
+    <message>
+      <source>Volatility</source>
+      <translation>Volatility</translation>
+    </message>
+    <message>
+      <source>Krzywa P&amp;L</source>
+      <translation>Krzywa P&amp;L</translation>
+    </message>
+    <message>
+      <source>Heatmapa sandbox</source>
+      <translation>Heatmapa sandbox</translation>
+    </message>
+    <message>
+      <source>N/D</source>
+      <translation>N/D</translation>
+    </message>
+    <message>
+      <source>Brak daty</source>
+      <translation>Brak daty</translation>
+    </message>
+    <message>
+      <source>Brak danych sandbox</source>
+      <translation>Brak danych sandbox</translation>
+    </message>
+    <message>
+      <source>Decyzje sandbox</source>
+      <translation>Decyzje sandbox</translation>
+    </message>
+    <message>
+      <source>Ostatnia aktualizacja</source>
+      <translation>Ostatnia aktualizacja</translation>
+    </message>
+    <message>
+      <source>Najlepsze instrumenty</source>
+      <translation>Najlepsze instrumenty</translation>
+    </message>
+    <message>
+      <source>Najsłabsze instrumenty</source>
+      <translation>Najsłabsze instrumenty</translation>
+    </message>
+    <message>
+      <source>Brak wyników</source>
+      <translation>Brak wyników</translation>
+    </message>
+    <message>
+      <source>Brak danych</source>
+      <translation>Brak danych</translation>
+    </message>
+    <message>
+      <source>Ostatnie %1 decyzji</source>
+      <translation>Ostatnie %1 decyzji</translation>
+    </message>
+    <message>
+      <source>Zakres sandbox</source>
+      <translation>Zakres sandbox</translation>
+    </message>
+    <message>
+      <source>Odśwież dane</source>
+      <translation>Odśwież dane</translation>
+    </message>
+  </context>
+
+  <context>
+    <name>BotAppWindow</name>
+    <message>
+      <source>Analityka P&amp;L</source>
+      <translation>Analityka P&amp;L</translation>
+    </message>
+    <message>
+      <source>Strategie – kreator</source>
+      <translation>Strategie – kreator</translation>
+    </message>
   </context>
 </TS>

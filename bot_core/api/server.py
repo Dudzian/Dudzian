@@ -3,8 +3,10 @@ from __future__ import annotations
 import sys
 
 import base64
+import json
 import logging
 import os
+import re
 import subprocess
 import threading
 import time
@@ -527,6 +529,7 @@ class LocalRuntimeContext:
     risk_builder: RiskSnapshotBuilder | None = None
     risk_publisher: RiskSnapshotPublisher | None = None
     metrics_registry: Any | None = None
+    strategy_presets_dir: Path = field(default_factory=lambda: Path("var/runtime/presets"))
     version: str = field(default_factory=_detect_version)
     git_commit: str | None = field(default_factory=_detect_git_commit)
     started_at: datetime = field(default_factory=_now_utc)
@@ -770,6 +773,212 @@ class LocalRuntimeContext:
             normalised = {}
         self.auto_mode_alerts = normalised
         return dict(self.auto_mode_alerts)
+
+    def save_strategy_preset(self, payload: Mapping[str, Any]) -> Mapping[str, Any]:
+        """Persist a lightweight strategy preset JSON emitted by the UI builder."""
+
+        directory = self.strategy_presets_dir.expanduser().resolve()
+        try:
+            directory.mkdir(parents=True, exist_ok=True)
+        except Exception as exc:
+            raise RuntimeError(f"Nie udało się utworzyć katalogu presetów: {directory!s}") from exc
+
+        preset = dict(payload or {})
+        blocks = preset.get("blocks")
+        if not isinstance(blocks, Sequence) or not blocks:
+            raise ValueError("Preset musi zawierać co najmniej jeden blok strategii")
+
+        sanitised_blocks: list[dict[str, Any]] = []
+        for entry in blocks:
+            if not isinstance(entry, Mapping):
+                continue
+            block = {
+                "type": str(entry.get("type") or "block"),
+                "label": str(entry.get("label") or entry.get("type") or ""),
+                "params": dict(entry.get("params") or {}),
+            }
+            sanitised_blocks.append(block)
+
+        if not sanitised_blocks:
+            raise ValueError("Nie udało się znormalizować bloków strategii")
+
+        name = str(preset.get("name") or "preset").strip()
+        if not name:
+            name = "preset"
+        slug = re.sub(r"[^a-z0-9_-]+", "-", name.lower()).strip("-")
+        if not slug:
+            slug = "preset"
+
+        created_at = str(preset.get("created_at") or _now_utc().isoformat())
+        metadata = preset.get("metadata") if isinstance(preset.get("metadata"), Mapping) else {}
+        preset_record: dict[str, Any] = {
+            "id": str(preset.get("id") or uuid.uuid4()),
+            "name": name,
+            "slug": slug,
+            "created_at": created_at,
+            "saved_at": _now_utc().isoformat(),
+            "runtime_version": self.version,
+            "runtime_commit": self.git_commit,
+            "blocks": sanitised_blocks,
+            "metadata": dict(metadata),
+        }
+
+        target = directory / f"{slug}.json"
+        counter = 1
+        while target.exists():
+            target = directory / f"{slug}-{counter:02d}.json"
+            counter += 1
+
+        preset_record["slug"] = target.stem
+
+        target.write_text(json.dumps(preset_record, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        return {"ok": True, "path": str(target), "name": name}
+
+    def list_strategy_presets(self) -> list[Mapping[str, Any]]:
+        directory = self.strategy_presets_dir.expanduser().resolve()
+        if not directory.exists():
+            return []
+
+        presets: list[dict[str, Any]] = []
+        try:
+            files = sorted(directory.glob("*.json"))
+        except Exception:  # pragma: no cover - błędy systemu plików
+            _LOGGER.debug("Nie udało się odczytać listy presetów runtime", exc_info=True)
+            return []
+
+        for path in files:
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+            except FileNotFoundError:
+                continue
+            except Exception:  # pragma: no cover - diagnostyka uszkodzonych presetów
+                _LOGGER.debug("Nie udało się zdekodować presetu strategii %s", path, exc_info=True)
+                continue
+
+            blocks = payload.get("blocks") if isinstance(payload, Mapping) else None
+            block_count = len(blocks) if isinstance(blocks, Sequence) else 0
+            metadata = payload.get("metadata") if isinstance(payload.get("metadata"), Mapping) else {}
+            saved_at = payload.get("saved_at") or payload.get("created_at") or ""
+            if not saved_at:
+                try:
+                    saved_at = datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc).isoformat()
+                except OSError:  # pragma: no cover - brak dostępu do pliku
+                    saved_at = ""
+
+            presets.append(
+                {
+                    "id": str(payload.get("id") or payload.get("slug") or path.stem),
+                    "name": str(payload.get("name") or path.stem),
+                    "slug": str(payload.get("slug") or path.stem),
+                    "path": str(path),
+                    "created_at": str(payload.get("created_at") or ""),
+                    "saved_at": str(saved_at),
+                    "block_count": block_count,
+                    "metadata": dict(metadata) if isinstance(metadata, Mapping) else {},
+                }
+            )
+
+        presets.sort(key=lambda entry: (entry.get("saved_at") or "", entry.get("name") or ""), reverse=True)
+        return presets
+
+    def load_strategy_preset(self, selector: Mapping[str, Any]) -> Mapping[str, Any]:
+        directory = self.strategy_presets_dir.expanduser().resolve()
+        if not directory.exists():
+            raise FileNotFoundError("Katalog presetów strategii nie istnieje")
+
+        selector_map = dict(selector) if isinstance(selector, Mapping) else {}
+        path_value = selector_map.get("path")
+        candidate: Path | None = None
+        if path_value:
+            try:
+                candidate = Path(path_value).expanduser().resolve()
+            except Exception:  # pragma: no cover - błędna ścieżka
+                candidate = None
+        slug_value = str(
+            selector_map.get("slug")
+            or selector_map.get("id")
+            or selector_map.get("name")
+            or ""
+        ).strip()
+
+        def _normalise(value: str) -> str:
+            return re.sub(r"[^a-z0-9_-]+", "-", value.lower()).strip("-") if value else ""
+
+        normalised_slug = _normalise(slug_value)
+
+        if candidate is None or not candidate.exists():
+            for entry in self.list_strategy_presets():
+                entry_path = Path(entry.get("path") or "")
+                if not entry_path.exists():
+                    continue
+                entry_slug = _normalise(str(entry.get("slug") or ""))
+                entry_id = _normalise(str(entry.get("id") or ""))
+                if normalised_slug and normalised_slug not in {entry_slug, entry_id}:
+                    continue
+                candidate = entry_path
+                break
+
+        if candidate is None or not candidate.exists():
+            raise FileNotFoundError("Preset strategii nie został znaleziony")
+
+        try:
+            payload = json.loads(candidate.read_text(encoding="utf-8"))
+        except Exception as exc:
+            raise RuntimeError(f"Nie udało się wczytać presetu: {candidate!s}") from exc
+
+        payload.setdefault("path", str(candidate))
+        payload.setdefault("slug", candidate.stem)
+        return payload
+
+    def delete_strategy_preset(self, selector: Mapping[str, Any]) -> Mapping[str, Any]:
+        directory = self.strategy_presets_dir.expanduser().resolve()
+        if not directory.exists():
+            raise FileNotFoundError("Katalog presetów strategii nie istnieje")
+
+        selector_map = dict(selector) if isinstance(selector, Mapping) else {}
+        path_value = selector_map.get("path")
+        candidate: Path | None = None
+        if path_value:
+            try:
+                candidate = Path(path_value).expanduser().resolve()
+            except Exception:  # pragma: no cover - błędna ścieżka
+                candidate = None
+
+        slug_value = str(
+            selector_map.get("slug")
+            or selector_map.get("id")
+            or selector_map.get("name")
+            or ""
+        ).strip()
+
+        def _normalise(value: str) -> str:
+            return re.sub(r"[^a-z0-9_-]+", "-", value.lower()).strip("-") if value else ""
+
+        normalised_slug = _normalise(slug_value)
+
+        if candidate is None or not candidate.exists():
+            for entry in self.list_strategy_presets():
+                entry_path = Path(entry.get("path") or "")
+                if not entry_path.exists():
+                    continue
+                entry_slug = _normalise(str(entry.get("slug") or ""))
+                entry_id = _normalise(str(entry.get("id") or ""))
+                if normalised_slug and normalised_slug not in {entry_slug, entry_id}:
+                    continue
+                candidate = entry_path
+                break
+
+        if candidate is None or not candidate.exists():
+            raise FileNotFoundError("Preset strategii nie został znaleziony")
+
+        try:
+            candidate.unlink()
+        except FileNotFoundError as exc:
+            raise FileNotFoundError("Preset strategii nie został znaleziony") from exc
+        except Exception as exc:  # pragma: no cover - błędy systemu plików
+            raise RuntimeError(f"Nie udało się usunąć presetu: {candidate!s}") from exc
+
+        return {"ok": True, "path": str(candidate)}
 
     @property
     def execution_context(self) -> ExecutionContext:
@@ -1259,6 +1468,10 @@ class LocalRuntimeGateway:
             "autotrader.get_auto_mode_snapshot": self._get_auto_mode_snapshot,
             "autotrader.toggle_auto_mode": self._toggle_auto_mode,
             "autotrader.update_alert_preferences": self._update_auto_mode_alerts,
+            "autotrader.save_strategy_preset": self._save_strategy_preset,
+            "autotrader.list_strategy_presets": self._list_strategy_presets,
+            "autotrader.load_strategy_preset": self._load_strategy_preset,
+            "autotrader.delete_strategy_preset": self._delete_strategy_preset,
         }
         handler = handlers.get(method)
         if handler is None:
@@ -1468,6 +1681,37 @@ class LocalRuntimeGateway:
             preferences = params
         stored = self._context.update_auto_mode_alerts(preferences if isinstance(preferences, Mapping) else {})
         return {"alerts": stored}
+
+    def _save_strategy_preset(self, params: Mapping[str, Any]) -> Mapping[str, Any]:
+        preset = params.get("preset") if isinstance(params, Mapping) else params
+        if not isinstance(preset, Mapping):
+            raise ValueError("Parametr 'preset' musi być obiektem JSON")
+        return self._context.save_strategy_preset(preset)
+
+    def _list_strategy_presets(self, params: Mapping[str, Any]) -> Mapping[str, Any]:
+        del params
+        presets = [dict(entry) for entry in self._context.list_strategy_presets()]
+        return {"presets": presets}
+
+    def _load_strategy_preset(self, params: Mapping[str, Any]) -> Mapping[str, Any]:
+        selector = params if isinstance(params, Mapping) else {}
+        try:
+            payload = self._context.load_strategy_preset(selector)
+        except FileNotFoundError as exc:
+            raise ValueError(str(exc)) from exc
+        except RuntimeError:
+            raise
+        return dict(payload)
+
+    def _delete_strategy_preset(self, params: Mapping[str, Any]) -> Mapping[str, Any]:
+        selector = params if isinstance(params, Mapping) else {}
+        try:
+            result = self._context.delete_strategy_preset(selector)
+        except FileNotFoundError as exc:
+            raise ValueError(str(exc)) from exc
+        except RuntimeError:
+            raise
+        return dict(result)
 
     def _import_marketplace_preset(self, params: Mapping[str, Any]) -> Mapping[str, Any]:
         service = self._ensure_marketplace()
@@ -1801,6 +2045,12 @@ def build_local_runtime_context(
                     "Nie udało się wczytać presetów Marketplace przy inicjalizacji",
                     exc_info=True,
                 )
+    presets_root_env = os.environ.get("BOTCORE_STRATEGY_PRESETS_DIR")
+    if presets_root_env:
+        strategy_presets_dir = Path(presets_root_env).expanduser().resolve()
+    else:
+        strategy_presets_dir = (config_file.parent / "runtime_presets").resolve()
+
     context = LocalRuntimeContext(
         config=runtime_config,
         entrypoint=entrypoint_cfg,
@@ -1822,6 +2072,7 @@ def build_local_runtime_context(
         marketplace_signing_keys=marketplace_signing_keys,
         marketplace_allow_unsigned=marketplace_allow_unsigned,
         marketplace_enabled=marketplace_enabled,
+        strategy_presets_dir=strategy_presets_dir,
     )
     if marketplace_repository is not None and marketplace_enabled:
         try:
