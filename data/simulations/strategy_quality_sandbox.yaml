@@ -1,0 +1,47 @@
+scenarios:
+  - name: adaptive_mm_liquidity_cycle
+    engine: adaptive_market_making
+    parameters:
+      base_spread_bps: 9.5
+      volatility_sensitivity: 1.4
+      inventory_skew_strength: 0.55
+      max_inventory: 8.0
+      cooldown_fraction: 0.2
+    calibration_metrics:
+      sharpe: 1.46
+      max_drawdown: 0.09
+      hit_ratio: 0.58
+      avg_daily_pnl: 0.72
+    acceptance_criteria:
+      sharpe:
+        min: 1.2
+      max_drawdown:
+        max: 0.12
+      hit_ratio:
+        min: 0.55
+    notes:
+      - "Backtest: Binance BTC/USDT, 2024-01-01 .. 2024-03-31"
+      - "Symulacja obejmuje dynamiczny feed zmienności 1h"
+
+  - name: triangular_arbitrage_multi_venue
+    engine: triangular_arbitrage
+    parameters:
+      min_edge_bps: 4.2
+      max_leg_latency_ms: 220
+      cooldown_ms: 2500
+      notional_cap: 30000.0
+    calibration_metrics:
+      sharpe: 1.81
+      edge_capture: 0.68
+      max_leg_latency_ms: 205
+      avg_daily_trades: 42
+    acceptance_criteria:
+      sharpe:
+        min: 1.4
+      edge_capture:
+        min: 0.6
+      max_leg_latency_ms:
+        max: 230
+    notes:
+      - "Triangulacja na Binance/Kraken/OKX"
+      - "Oczekiwane użycie stablecoinów USDT/BUSD/EUR"

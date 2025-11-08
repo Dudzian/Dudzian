@@ -1,0 +1,7 @@
+{
+  "preset_id": "adaptive_mm_enterprise",
+  "version": "1.0.0",
+  "allowed_fingerprints": ["OEM-TEST-*"],
+  "expires_at": "2030-01-01T00:00:00Z",
+  "notes": "Licencja demonstracyjna dla adaptacyjnego market makingu"
+}

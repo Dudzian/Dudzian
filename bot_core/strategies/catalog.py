@@ -41,6 +41,10 @@ from .daily_trend import DailyTrendMomentumSettings, DailyTrendMomentumStrategy
 from .dca import DollarCostAveragingSettings, DollarCostAveragingStrategy
 from .futures_spread import FuturesSpreadSettings, FuturesSpreadStrategy
 from .grid import GridTradingSettings, GridTradingStrategy
+from .adaptive_market_making import (
+    AdaptiveMarketMakingSettings,
+    AdaptiveMarketMakingStrategy,
+)
 from .market_making import MarketMakingSettings, MarketMakingStrategy
 from .mean_reversion import MeanReversionSettings, MeanReversionStrategy
 from .options import OptionsIncomeSettings, OptionsIncomeStrategy
@@ -48,6 +52,10 @@ from .scalping import ScalpingSettings, ScalpingStrategy
 from .statistical_arbitrage import (
     StatisticalArbitrageSettings,
     StatisticalArbitrageStrategy,
+)
+from .triangular_arbitrage import (
+    TriangularArbitrageSettings,
+    TriangularArbitrageStrategy,
 )
 from .volatility_target import VolatilityTargetSettings, VolatilityTargetStrategy
 
@@ -1281,6 +1289,21 @@ def _build_market_making_strategy(
     return MarketMakingStrategy(settings)
 
 
+def _build_adaptive_market_making_strategy(
+    *, name: str, parameters: Mapping[str, Any], metadata: Mapping[str, Any] | None = None
+) -> StrategyEngine:
+    settings = AdaptiveMarketMakingSettings(
+        base_spread_bps=float(parameters.get("base_spread_bps", 10.0)),
+        volatility_sensitivity=float(parameters.get("volatility_sensitivity", 1.6)),
+        inventory_skew_strength=float(parameters.get("inventory_skew_strength", 0.6)),
+        max_inventory=float(parameters.get("max_inventory", 7.5)),
+        target_inventory=float(parameters.get("target_inventory", 0.0)),
+        cooldown_fraction=float(parameters.get("cooldown_fraction", 0.25)),
+        min_confidence=float(parameters.get("min_confidence", 0.15)),
+    )
+    return AdaptiveMarketMakingStrategy(settings)
+
+
 def _build_options_income_strategy(
     *, name: str, parameters: Mapping[str, Any], metadata: Mapping[str, Any] | None = None
 ) -> StrategyEngine:
@@ -1311,6 +1334,18 @@ def _build_cross_exchange_hedge_strategy(
         max_hedge_ratio=float(parameters.get("max_hedge_ratio", 0.9)),
     )
     return CrossExchangeHedgeStrategy(settings)
+
+
+def _build_triangular_arbitrage_strategy(
+    *, name: str, parameters: Mapping[str, Any], metadata: Mapping[str, Any] | None = None
+) -> StrategyEngine:
+    settings = TriangularArbitrageSettings(
+        min_edge_bps=float(parameters.get("min_edge_bps", 4.0)),
+        max_leg_latency_ms=float(parameters.get("max_leg_latency_ms", 250.0)),
+        cooldown_ms=int(parameters.get("cooldown_ms", 3_000)),
+        notional_cap=float(parameters.get("notional_cap", 25_000.0)),
+    )
+    return TriangularArbitrageStrategy(settings)
 
 
 def _build_statistical_arbitrage_strategy(
@@ -1419,6 +1454,17 @@ def build_default_catalog() -> StrategyCatalog:
     )
     catalog.register(
         StrategyEngineSpec(
+            key="adaptive_market_making",
+            factory=_build_adaptive_market_making_strategy,
+            license_tier="enterprise",
+            risk_classes=("market_making", "liquidity", "volatility_control"),
+            required_data=("order_book", "ohlcv", "realized_volatility"),
+            capability="adaptive_mm",
+            default_tags=("market_making", "volatility", "inventory"),
+        )
+    )
+    catalog.register(
+        StrategyEngineSpec(
             key="options_income",
             factory=_build_options_income_strategy,
             license_tier="enterprise",
@@ -1470,6 +1516,17 @@ def build_default_catalog() -> StrategyCatalog:
             required_data=("spot_basis", "inventory_skew", "latency_metrics"),
             capability="cross_exchange_hedge",
             default_tags=("hedge", "multi_venue", "delta"),
+        )
+    )
+    catalog.register(
+        StrategyEngineSpec(
+            key="triangular_arbitrage",
+            factory=_build_triangular_arbitrage_strategy,
+            license_tier="enterprise",
+            risk_classes=("arbitrage", "multi_leg"),
+            required_data=("order_book", "latency_monitoring", "market_paths"),
+            capability="triangular_arbitrage",
+            default_tags=("arbitrage", "triangular", "multi_leg"),
         )
     )
     return catalog

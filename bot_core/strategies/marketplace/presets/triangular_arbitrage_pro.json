@@ -1,0 +1,43 @@
+{
+  "preset": {
+    "name": "Triangular Arbitrage Pro",
+    "metadata": {
+      "id": "triangular_arbitrage_pro",
+      "version": "1.0.0",
+      "author": {
+        "name": "Marketplace Labs",
+        "email": "marketplace@example.com"
+      },
+      "required_exchanges": ["BINANCE", "KRAKEN", "OKX"],
+      "tags": ["arbitrage", "multi-venue"],
+      "profile": "arbitrage",
+      "summary": "Konfiguracja arbitrażu trójkątnego dla rynków spot"
+    },
+    "strategies": [
+      {
+        "name": "triangular_edge_capture",
+        "engine": "triangular_arbitrage",
+        "parameters": {
+          "min_edge_bps": 4.0,
+          "max_leg_latency_ms": 250,
+          "cooldown_ms": 3000,
+          "notional_cap": 25000.0
+        },
+        "license_tier": "enterprise",
+        "risk_classes": ["arbitrage", "multi_leg"],
+        "required_data": ["order_book", "latency_monitoring", "market_paths"],
+        "tags": ["arbitrage", "triangular", "multi-leg"],
+        "metadata": {
+          "description": "Preset arbitrażu trójkątnego",
+          "capability": "triangular_arbitrage"
+        }
+      }
+    ]
+  },
+  "signature": {
+    "algorithm": "ed25519",
+    "key_id": "demo-publisher",
+    "public_key": "CwpbBQKoGYQ80Cyukhg1Y0QmZOv64QCVE5HlbEaey8k=",
+    "value": "dGVzdF9zaWduYXR1cmVfdHJpYW5ndWxhcl9hcmI="
+  }
+}
