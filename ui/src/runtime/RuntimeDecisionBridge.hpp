@@ -32,6 +32,10 @@ public:
     Q_INVOKABLE void startAutomation();
     Q_INVOKABLE void stopAutomation();
     Q_INVOKABLE void updateAlertPreferences(const QVariantMap& preferences);
+    Q_INVOKABLE QVariantMap saveStrategyPreset(const QVariantMap& preset);
+    Q_INVOKABLE QVariantList listStrategyPresets();
+    Q_INVOKABLE QVariantMap loadStrategyPreset(const QVariantMap& selector);
+    Q_INVOKABLE QVariantMap deleteStrategyPreset(const QVariantMap& selector);
 
 signals:
     void decisionsChanged();

@@ -3665,6 +3665,15 @@ def build_multi_strategy_runtime(
                 max_concurrency=limits.max_concurrency,
                 burst=limits.burst,
             )
+        try:
+            bootstrap_ctx.io_dispatcher = io_dispatcher
+        except Exception:  # pragma: no cover - kontekst może blokować zapisy
+            _LOGGER.debug("Nie udało się zarejestrować io_dispatcher w BootstrapContext", exc_info=True)
+    else:
+        try:
+            bootstrap_ctx.io_dispatcher = None
+        except Exception:
+            pass
 
     scheduler = MultiStrategyScheduler(
         environment=environment_name,

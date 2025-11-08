@@ -39,6 +39,10 @@ public:
     [[nodiscard]] QVariantMap fetchAutoModeSnapshot(int timeoutMs = 800);
     [[nodiscard]] QVariantMap toggleAutoMode(bool enabled, int timeoutMs = 800);
     [[nodiscard]] QVariantMap updateAutoModeAlerts(const QVariantMap& preferences, int timeoutMs = 800);
+    [[nodiscard]] QVariantMap saveStrategyPreset(const QVariantMap& preset, int timeoutMs = 800);
+    [[nodiscard]] QVariantList listStrategyPresets(int timeoutMs = 800);
+    [[nodiscard]] QVariantMap loadStrategyPreset(const QVariantMap& selector, int timeoutMs = 800);
+    [[nodiscard]] QVariantMap deleteStrategyPreset(const QVariantMap& selector, int timeoutMs = 800);
 
 signals:
     void ohlcvSnapshotReady(const QVariantList& snapshot, const QString& subscriptionId);

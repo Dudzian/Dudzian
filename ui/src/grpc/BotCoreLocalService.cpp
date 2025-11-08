@@ -350,6 +350,51 @@ QVariantMap BotCoreLocalService::updateAutoModeAlerts(const QVariantMap& prefere
     return response.toVariantMap();
 }
 
+QVariantMap BotCoreLocalService::saveStrategyPreset(const QVariantMap& preset, int timeoutMs)
+{
+    QJsonObject params;
+    params.insert(QStringLiteral("preset"), QJsonObject::fromVariantMap(preset));
+    bool ok = false;
+    const QJsonObject response = invokeRpc(QStringLiteral("autotrader.save_strategy_preset"), params, timeoutMs, &ok);
+    if (!ok)
+        return {};
+    return response.toVariantMap();
+}
+
+QVariantList BotCoreLocalService::listStrategyPresets(int timeoutMs)
+{
+    bool ok = false;
+    const QJsonObject response = invokeRpc(QStringLiteral("autotrader.list_strategy_presets"), QJsonObject(), timeoutMs, &ok);
+    if (!ok)
+        return {};
+    const QJsonArray array = response.value(QStringLiteral("presets")).toArray();
+    QVariantList presets;
+    presets.reserve(array.size());
+    for (const QJsonValue& value : array)
+        presets.append(value.toObject().toVariantMap());
+    return presets;
+}
+
+QVariantMap BotCoreLocalService::loadStrategyPreset(const QVariantMap& selector, int timeoutMs)
+{
+    const QJsonObject params = QJsonObject::fromVariantMap(selector);
+    bool ok = false;
+    const QJsonObject response = invokeRpc(QStringLiteral("autotrader.load_strategy_preset"), params, timeoutMs, &ok);
+    if (!ok)
+        return {};
+    return response.toVariantMap();
+}
+
+QVariantMap BotCoreLocalService::deleteStrategyPreset(const QVariantMap& selector, int timeoutMs)
+{
+    const QJsonObject params = QJsonObject::fromVariantMap(selector);
+    bool ok = false;
+    const QJsonObject response = invokeRpc(QStringLiteral("autotrader.delete_strategy_preset"), params, timeoutMs, &ok);
+    if (!ok)
+        return {};
+    return response.toVariantMap();
+}
+
 QJsonObject BotCoreLocalService::invokeRpc(const QString& method, const QJsonObject& params, int timeoutMs, bool* ok)
 {
     if (ok)

@@ -1,7 +1,17 @@
 from __future__ import annotations
 
+import contextlib
+import json
+import socket
+import threading
+import time
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from typing import Any
+
+from urllib.parse import parse_qs, urlparse
 
 import pytest
 import yaml
@@ -9,7 +19,17 @@ import yaml
 from bot_core.data.base import OHLCVRequest
 from bot_core.data.ohlcv.cache import OfflineOnlyDataSource
 from bot_core.runtime.pipeline import build_daily_trend_pipeline, build_multi_strategy_runtime
-from bot_core.exchanges.base import AccountSnapshot, Environment, ExchangeAdapter, ExchangeCredentials
+from bot_core.execution.live_router import LiveExecutionRouter
+from bot_core.exchanges.base import (
+    AccountSnapshot,
+    Environment,
+    ExchangeAdapter,
+    ExchangeCredentials,
+    OrderRequest,
+)
+from bot_core.observability.metrics import MetricsRegistry, summarize_live_execution_metrics
+from bot_core.config.loader import load_runtime_app_config
+from bot_core.exchanges.testing.loopback import LoopbackExchangeAdapter
 
 from tests.test_runtime_bootstrap import _BASE_CONFIG, _prepare_manager
 
@@ -202,6 +222,196 @@ class _StubMarketIntelAggregator:
         self.storage = storage
 
 
+@dataclass(slots=True)
+class _LoopbackExchangeState:
+    port: int
+    symbols: tuple[str, ...]
+    ohlcv: dict[str, list[list[float]]]
+    account: dict[str, Any]
+    orders: list[dict[str, Any]] = field(default_factory=list)
+    cancellations: list[dict[str, Any]] = field(default_factory=list)
+    streams: list[dict[str, Any]] = field(default_factory=list)
+    requests: list[dict[str, Any]] = field(default_factory=list)
+
+
+class _LoopbackHTTPServer(ThreadingHTTPServer):
+    allow_reuse_address = True
+
+    def __init__(self, server_address, RequestHandlerClass, state: _LoopbackExchangeState):
+        super().__init__(server_address, RequestHandlerClass)
+        self.state = state
+
+
+class _LoopbackRequestHandler(BaseHTTPRequestHandler):
+    server: _LoopbackHTTPServer  # type: ignore[assignment]
+    protocol_version = "HTTP/1.1"
+
+    def log_message(self, format: str, *args: object) -> None:  # noqa: A003
+        return None
+
+    def _read_json_body(self) -> dict[str, Any]:
+        length = int(self.headers.get("Content-Length", "0"))
+        if length <= 0:
+            return {}
+        payload = self.rfile.read(length)
+        try:
+            return json.loads(payload.decode("utf-8"))
+        except json.JSONDecodeError:
+            return {}
+
+    def _send_json(self, payload: dict[str, Any], status: int = 200) -> None:
+        body = json.dumps(payload).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_GET(self) -> None:  # noqa: N802
+        parsed = urlparse(self.path)
+        state = self.server.state
+        state.requests.append({"method": "GET", "path": parsed.path, "query": parsed.query})
+        if parsed.path == "/account":
+            self._send_json(state.account)
+            return
+        if parsed.path == "/symbols":
+            self._send_json({"symbols": list(state.symbols)})
+            return
+        if parsed.path == "/ohlcv":
+            params = parse_qs(parsed.query)
+            symbol = params.get("symbol", [state.symbols[0]])[0]
+            rows = state.ohlcv.get(symbol, [])
+            self._send_json({"rows": rows})
+            return
+        self._send_json({"error": "not_found"}, status=404)
+
+    def do_POST(self) -> None:  # noqa: N802
+        parsed = urlparse(self.path)
+        state = self.server.state
+        payload = self._read_json_body()
+        state.requests.append({"method": "POST", "path": parsed.path, "payload": payload})
+        if parsed.path == "/orders":
+            order = {
+                "symbol": payload.get("symbol"),
+                "side": payload.get("side"),
+                "quantity": payload.get("quantity"),
+                "price": payload.get("price"),
+            }
+            state.orders.append(order)
+            order_id = f"loop-{len(state.orders)}"
+            response = {
+                "order_id": order_id,
+                "status": "filled",
+                "filled_quantity": payload.get("quantity", 0.0),
+                "avg_price": payload.get("price", 100.0),
+            }
+            self._send_json(response)
+            return
+        if parsed.path in {"/stream/public", "/stream/private"}:
+            entry = {"endpoint": parsed.path, **payload}
+            state.streams.append(entry)
+            self._send_json({"status": "ok"})
+            return
+        self._send_json({"error": "not_found"}, status=404)
+
+    def do_DELETE(self) -> None:  # noqa: N802
+        parsed = urlparse(self.path)
+        state = self.server.state
+        state.requests.append({"method": "DELETE", "path": parsed.path})
+        if parsed.path.startswith("/orders/"):
+            order_id = parsed.path.split("/", 2)[-1]
+            payload = self._read_json_body()
+            state.cancellations.append({"order_id": order_id, **payload})
+            self._send_json({"status": "cancelled"})
+            return
+        self._send_json({"error": "not_found"}, status=404)
+
+
+def _wait_for_loopback(port: int, *, timeout: float = 5.0) -> None:
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            with contextlib.closing(
+                socket.create_connection(("127.0.0.1", port), timeout=0.2)
+            ):
+                return
+        except OSError:
+            time.sleep(0.05)
+    raise TimeoutError(f"Serwer loopback nie nasłuchuje na porcie {port} w zadanym czasie")
+
+
+@pytest.fixture()
+def loopback_exchange_server() -> _LoopbackExchangeState:
+    state = _LoopbackExchangeState(
+        port=0,
+        symbols=("BTCUSDT",),
+        ohlcv={
+            "BTCUSDT": [
+                [1_700_000_000_000.0, 10.0, 11.0, 9.5, 10.5, 42.0],
+                [1_700_003_600_000.0, 10.5, 11.5, 10.0, 11.2, 39.0],
+            ]
+        },
+        account={
+            "balances": {"USDT": 50_000.0},
+            "total_equity": 50_000.0,
+            "available_margin": 50_000.0,
+            "maintenance_margin": 0.0,
+        },
+    )
+    server = _LoopbackHTTPServer(("127.0.0.1", 0), _LoopbackRequestHandler, state)
+    state.port = int(server.server_address[1])
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        _wait_for_loopback(state.port)
+        yield state
+    finally:
+        server.shutdown()
+        thread.join(timeout=5.0)
+
+
+def test_summarize_live_execution_metrics_filters_by_labels() -> None:
+    registry = MetricsRegistry()
+
+    success = registry.counter("live_orders_success_total", "desc")
+    success.inc(labels={"exchange": "loopback_spot", "route": "primary"})
+    success.inc(labels={"exchange": "loopback_spot", "route": "fallback"})
+    success.inc(labels={"exchange": "other", "route": "primary"})
+    success.inc()  # brak etykiet powinien być ignorowany przy filtrach
+
+    failed = registry.counter("live_orders_failed_total", "desc")
+    failed.inc(labels={"exchange": "other", "route": "primary"})
+
+    routed = registry.counter("live_orders_total", "desc")
+    routed.inc(labels={"exchange": "loopback_spot", "route": "primary"})
+    routed.inc(labels={"exchange": "loopback_spot", "route": "fallback"})
+    routed.inc(labels={"exchange": "other", "route": "primary"})
+    routed.inc()
+
+    summary_filtered = summarize_live_execution_metrics(
+        registry,
+        exchange="loopback_spot",
+        route="primary",
+    )
+    assert summary_filtered["orders_success_total"] == 1
+    assert summary_filtered["orders_failed_total"] == 0
+    assert summary_filtered["orders_total"] == 1
+    assert summary_filtered["orders_routed_total"] == 1
+
+    summary_route_all = summarize_live_execution_metrics(
+        registry,
+        exchange="loopback_spot",
+    )
+    assert summary_route_all["orders_success_total"] == 2
+    assert summary_route_all["orders_total"] == 2
+
+    summary_all = summarize_live_execution_metrics(registry)
+    assert summary_all["orders_success_total"] == 4
+    assert summary_all["orders_failed_total"] == 1
+    assert summary_all["orders_total"] == 5
+    assert summary_all["orders_routed_total"] == 4
+
+
 def _write_sample_cache(storage, rows):
     key = "BTC/USDT::1d"
     storage.write(
@@ -353,3 +563,109 @@ def test_multi_strategy_runtime_applies_initial_signal_limits(
     assert profile_entry.get("active") is True
     expires_at = profile_entry.get("expires_at")
     assert isinstance(expires_at, str)
+
+
+def _materialize_loopback_configs(tmp_path: Path, *, port: int) -> tuple[Path, Path]:
+    core_template = Path("config/e2e/core_loopback.yaml")
+    runtime_template = Path("config/e2e/live_loopback.yaml")
+    data = yaml.safe_load(core_template.read_text(encoding="utf-8"))
+    environments = data.get("environments", {})
+    for env_cfg in environments.values():
+        env_cfg["data_cache_path"] = str(tmp_path / env_cfg.get("environment", "loopback"))
+        adapter_settings = env_cfg.setdefault("adapter_settings", {})
+        live_settings = adapter_settings.get("live_trading", {})
+        live_settings["base_url"] = f"http://127.0.0.1:{port}"
+        adapter_settings["live_trading"] = live_settings
+    core_path = tmp_path / "core_loopback.yaml"
+    core_path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+
+    runtime_data = yaml.safe_load(runtime_template.read_text(encoding="utf-8"))
+    runtime_data.setdefault("core", {})["path"] = core_path.name
+    runtime_path = tmp_path / "runtime_loopback.yaml"
+    runtime_path.write_text(yaml.safe_dump(runtime_data, sort_keys=False), encoding="utf-8")
+    return core_path, runtime_path
+
+
+def test_live_pipeline_uses_loopback_adapter(
+    tmp_path: Path,
+    loopback_exchange_server: _LoopbackExchangeState,
+) -> None:
+    core_path, runtime_path = _materialize_loopback_configs(tmp_path, port=loopback_exchange_server.port)
+    _, secret_manager = _prepare_manager()
+    runtime_cfg = load_runtime_app_config(runtime_path)
+
+    pipeline = build_daily_trend_pipeline(
+        environment_name="loopback_testnet",
+        strategy_name=None,
+        controller_name=None,
+        config_path=core_path,
+        secret_manager=secret_manager,
+        runtime_config=runtime_cfg,
+    )
+
+    adapter = pipeline.bootstrap.adapter
+    assert isinstance(adapter, LoopbackExchangeAdapter)
+    assert isinstance(pipeline.execution_service, LiveExecutionRouter)
+
+    stream = adapter.stream_public_data(channels=["ticker"])
+    stream.close()
+    assert any(entry.get("action") == "open" for entry in loopback_exchange_server.streams)
+
+    request = OrderRequest(
+        symbol="BTCUSDT",
+        side="buy",
+        order_type="market",
+        quantity=0.1,
+        price=10.5,
+    )
+    execution_context = pipeline.controller.execution_context
+    result = pipeline.execution_service.execute(request, execution_context)
+    assert result.order_id.startswith("loop-")
+    assert loopback_exchange_server.orders
+
+    metrics = summarize_live_execution_metrics(
+        pipeline.execution_service._metrics,  # type: ignore[attr-defined]
+        exchange="loopback_spot",
+        symbol="BTCUSDT",
+        portfolio=execution_context.portfolio_id,
+    )
+    assert metrics["fill_ratio_avg"] == pytest.approx(1.0)
+    assert metrics["fill_ratio_count"] == 1
+    assert metrics["fill_ratio_sum"] == pytest.approx(1.0)
+    assert metrics["fill_ratio_p50"] == pytest.approx(1.0)
+    assert metrics["fill_ratio_p95"] == pytest.approx(1.0)
+    assert metrics["fill_ratio_min"] == pytest.approx(1.0)
+    assert metrics["fill_ratio_max"] == pytest.approx(1.0)
+    assert metrics["fill_ratio_stddev"] == pytest.approx(0.0)
+    assert metrics["errors_total"] == 0
+    assert metrics["latency_count"] == 1
+    assert metrics["latency_sum"] >= 0.0
+    assert metrics["latency_avg"] is not None
+    assert metrics["latency_p50"] is not None
+    assert metrics["latency_p95"] is not None
+    assert metrics["latency_p99"] is not None
+    assert metrics["latency_p99"] >= metrics["latency_p95"] >= metrics["latency_p50"] >= 0.0
+    assert metrics["latency_min"] is not None
+    assert metrics["latency_max"] is not None
+    assert metrics["latency_max"] >= metrics["latency_min"] >= 0.0
+    assert metrics["latency_stddev"] is not None
+    assert metrics["latency_stddev"] >= 0.0
+    assert metrics["orders_success_total"] == 1
+    assert metrics["orders_failed_total"] == 0
+    assert metrics["orders_total"] == 1
+    assert metrics["orders_routed_total"] == 1
+    assert metrics["orders_attempts_total"] == 1
+    assert metrics["orders_attempts_success"] == 1
+    assert metrics["orders_attempts_error"] == 0
+    assert metrics["orders_attempts_api_error"] == 0
+    assert metrics["orders_attempts_auth_error"] == 0
+    assert metrics["orders_attempts_exception"] == 0
+    assert metrics["orders_attempts_success_rate"] == pytest.approx(1.0)
+    assert metrics["orders_attempts_error_rate"] == pytest.approx(0.0)
+    assert metrics["orders_attempts_api_error_rate"] == pytest.approx(0.0)
+    assert metrics["orders_attempts_auth_error_rate"] == pytest.approx(0.0)
+    assert metrics["orders_attempts_exception_rate"] == pytest.approx(0.0)
+    assert metrics["orders_fallback_total"] == 0
+    assert metrics["orders_success_rate"] == pytest.approx(1.0)
+    assert metrics["orders_failure_rate"] == pytest.approx(0.0)
+    assert metrics["orders_fallback_rate"] == pytest.approx(0.0)

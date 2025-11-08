@@ -112,6 +112,24 @@ def test_license_snapshot_is_signed_and_blocks_rollback(
         service.load_from_file(older_path)
 
 
+def test_license_snapshot_requires_hardware_wallet_flag(
+    license_service: tuple[LicenseService, Path, SigningKey, Path, str],
+    tmp_path: Path,
+) -> None:
+    service, status_path, signing_key, _, _ = license_service
+    payload = _sample_payload(sequence=8, issued_at="2025-09-01T00:00:00Z")
+    payload["security"] = {"require_hardware_wallet_for_outgoing": True}
+    bundle_path = tmp_path / "hw.json"
+    _write_license_bundle(bundle_path, payload, signing_key)
+
+    snapshot = service.load_from_file(bundle_path)
+    assert snapshot.requires_hardware_wallet is True
+    assert snapshot.capabilities.require_hardware_wallet_for_outgoing is True
+
+    status_document = json.loads(status_path.read_text(encoding="utf-8"))
+    assert status_document["security"]["requires_hardware_wallet_for_outgoing"] is True
+
+
 def test_tampering_with_status_file_is_detected(
     license_service: tuple[LicenseService, Path, SigningKey, Path, str],
     tmp_path: Path,

@@ -21,7 +21,7 @@ from KryptoLowca.exchanges import interfaces as exchange_interfaces
 from KryptoLowca.exchanges import streaming as exchange_streaming
 
 
-def _build_stub_context():
+def _build_stub_context(*, preset_dir: Path | None = None):
     markets = {
         "BTC/USDT": MarketMetadata(
             base_asset="BTC",
@@ -95,6 +95,8 @@ def _build_stub_context():
         auto_trader=_DummyAutoTrader(),
         secret_manager=SimpleNamespace(),
     )
+    if preset_dir is not None:
+        context.strategy_presets_dir = preset_dir
     context.metrics_registry = None
     context.risk_store = None
     context.risk_builder = None
@@ -122,6 +124,84 @@ def test_local_runtime_gateway_serves_market_data() -> None:
     )
     assert len(response["candles"]) == 3
     assert response["candles"][0]["close"] > 0
+
+
+def test_local_runtime_gateway_saves_strategy_preset(tmp_path: Path) -> None:
+    context = _build_stub_context(preset_dir=tmp_path)
+    gateway = LocalRuntimeGateway(context)
+    response = gateway.dispatch(
+        "autotrader.save_strategy_preset",
+        {
+            "preset": {
+                "name": "Alpha Momentum",
+                "blocks": [
+                    {"type": "data_feed", "label": "Feed", "params": {"symbol": "BTC/USDT"}},
+                    {"type": "allocator", "label": "Fixed", "params": {"fraction": 0.1}},
+                ],
+            }
+        },
+    )
+    assert response["ok"] is True
+    path = Path(response["path"])
+    assert path.exists()
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    assert payload["name"] == "Alpha Momentum"
+    assert payload["blocks"][0]["type"] == "data_feed"
+
+
+def test_local_runtime_gateway_lists_and_loads_strategy_presets(tmp_path: Path) -> None:
+    context = _build_stub_context(preset_dir=tmp_path)
+    gateway = LocalRuntimeGateway(context)
+
+    gateway.dispatch(
+        "autotrader.save_strategy_preset",
+        {
+            "preset": {
+                "name": "Beta Trend",
+                "blocks": [
+                    {"type": "data_feed", "label": "Feed", "params": {"symbol": "ETH/USDT"}},
+                    {"type": "signal", "label": "Signal", "params": {"window": 14}},
+                ],
+            }
+        },
+    )
+
+    gateway.dispatch(
+        "autotrader.save_strategy_preset",
+        {
+            "preset": {
+                "name": "Gamma Mean Reversion",
+                "blocks": [
+                    {"type": "data_feed", "label": "Feed", "params": {"symbol": "BTC/USDT"}},
+                    {"type": "filter", "label": "Risk", "params": {"max_drawdown": 0.1}},
+                ],
+            }
+        },
+    )
+
+    listing = gateway.dispatch("autotrader.list_strategy_presets", {})
+    presets = listing["presets"]
+    assert len(presets) == 2
+    assert all(entry["block_count"] >= 2 for entry in presets)
+
+    first = presets[0]
+    loaded = gateway.dispatch("autotrader.load_strategy_preset", {"slug": first["slug"]})
+    assert loaded["name"]
+    assert len(loaded["blocks"]) == first["block_count"]
+
+    second = presets[1]
+    loaded_by_path = gateway.dispatch("autotrader.load_strategy_preset", {"path": second["path"]})
+    assert loaded_by_path["path"].endswith(".json")
+    assert loaded_by_path["blocks"][0]["type"] in {"data_feed", "filter", "signal"}
+
+    removed = gateway.dispatch("autotrader.delete_strategy_preset", {"slug": first["slug"]})
+    assert removed["ok"] is True
+    removed_path = Path(removed["path"])
+    assert not removed_path.exists()
+
+    listing_after = gateway.dispatch("autotrader.list_strategy_presets", {})
+    assert len(listing_after["presets"]) == 1
+    assert listing_after["presets"][0]["slug"] == second["slug"]
 
 
 def test_ui_transport_configuration_defaults_to_grpc() -> None:

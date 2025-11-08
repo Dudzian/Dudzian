@@ -362,6 +362,7 @@ def cmd_verify_update(args: argparse.Namespace, environments: Mapping[str, Envir
                 "allowed_profiles": result.manifest.allowed_profiles,
             },
             "signature_valid": result.signature_valid,
+            "signature_checked": result.signature_checked,
             "license_ok": result.license_ok,
             "artifact_checks": result.artifact_checks,
             "errors": result.errors,

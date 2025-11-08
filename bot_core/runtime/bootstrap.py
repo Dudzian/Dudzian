@@ -75,6 +75,7 @@ from bot_core.exchanges.kraken import KrakenFuturesAdapter, KrakenSpotAdapter
 from bot_core.exchanges.nowa_gielda import NowaGieldaSpotAdapter
 from bot_core.exchanges.kucoin import KuCoinSpotAdapter
 from bot_core.exchanges.okx import OKXFuturesAdapter, OKXMarginAdapter, OKXSpotAdapter
+from bot_core.exchanges.testing.loopback import LoopbackExchangeAdapter
 from bot_core.exchanges.health import HealthCheckResult, HealthMonitor, HealthStatus
 from bot_core.exchanges.health_checks import build_standard_health_checks
 from bot_core.exchanges.zonda import ZondaSpotAdapter
@@ -326,6 +327,7 @@ _DEFAULT_ADAPTERS: dict[str, ExchangeAdapterFactory] = {
     "bybit_margin": BybitMarginAdapter,
     "bybit_futures": BybitFuturesAdapter,
     "kucoin_spot": KuCoinSpotAdapter,
+    "loopback_spot": LoopbackExchangeAdapter,
 }
 
 _MISSING = object()

@@ -1,0 +1,34 @@
+# Domyślna konfiguracja metod kosztowych dla raportów podatkowych.
+# Każda jurysdykcja wskazuje metodę rozliczania: fifo, lifo lub average_cost.
+
+default_method: fifo
+default_long_term_days: 365
+default_tax_rates:
+  short_term: 0.19
+  long_term: 0.19
+quote_currencies:
+  - USDT
+  - USD
+  - EUR
+  - PLN
+  - BTC
+  - ETH
+jurisdictions:
+  pl:
+    method: fifo
+    long_term_days: 365
+    tax_rates:
+      short_term: 0.19
+      long_term: 0.19
+  usa:
+    method: lifo
+    long_term_days: 365
+    tax_rates:
+      short_term: 0.37
+      long_term: 0.20
+  uk:
+    method: average_cost
+    long_term_days: 365
+    tax_rates:
+      short_term: 0.20
+      long_term: 0.10
