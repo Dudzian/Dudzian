@@ -10,6 +10,8 @@ docs/support/
 ├── articles/                # treści prezentowane w UI
 │   ├── getting_started.md
 │   └── troubleshooting_network.md
+├── runbook_offline_support.md # procedury wsparcia offline (L1/L2)
+├── faq.md                     # pytania i odpowiedzi dla operatorów OEM
 └── translations/            # (opcjonalnie) dodatkowe zasoby językowe
 ```
 
@@ -72,3 +74,10 @@ Automatyczne testy kontrolują parser oraz komponent QML:
 - `tests/ui/test_support_center.py` – sprawdza poprawne ładowanie UI (test jest pomijany, jeżeli w środowisku nie ma bibliotek Qt).
 
 Utrzymuj strukturę katalogu i format front matter, aby zachować kompatybilność z aplikacją desktopową.
+
+## Runbooki i FAQ
+
+- [runbook_offline_support.md](runbook_offline_support.md) – kroki dla zespołów
+  wsparcia przy aktualizacjach offline, odzyskiwaniu licencji i eskalacji.
+- [faq.md](faq.md) – najczęściej zadawane pytania dotyczące notarizacji,
+  fingerprintu i paczek delta.
