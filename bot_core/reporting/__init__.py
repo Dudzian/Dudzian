@@ -22,6 +22,7 @@ from bot_core.reporting.tco import (
     write_summary_json,
     write_summary_signature,
 )
+from bot_core.reporting.tax import TaxReportExporter
 from . import ui_bridge
 
 __all__ = [
@@ -41,5 +42,6 @@ __all__ = [
     "write_summary_csv",
     "write_summary_json",
     "write_summary_signature",
+    "TaxReportExporter",
     "ui_bridge",
 ]
