@@ -114,8 +114,9 @@ na podstawie podpisanego manifestu oraz profilu licencji OEM. Kluczowe funkcje:
   HMAC i sprawdza, czy profil licencji (`security.license.profile`) znajduje się
   na liście `allowed_profiles` manifestu.
 * Wynik (`UpdateVerificationResult`) udostępnia pola `signature_valid`,
-  `license_ok` oraz listę błędów/warningów. W przypadku niepowodzenia weryfikacji
-  należy zablokować aktualizację.
+  `signature_checked`, `license_ok` oraz listę błędów/warningów. W przypadku
+  niepowodzenia weryfikacji (lub wymuszonej kontroli podpisu bez odpowiedniego
+  klucza) należy zablokować aktualizację.
 
 ### Weryfikacja paczki aktualizacyjnej
 

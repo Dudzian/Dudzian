@@ -8,11 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from deploy.packaging.pipeline import (
-    HardwareFingerprintValidator,
-    PackagingContext,
-    build_pipeline_from_mapping,
-)
+from deploy.packaging.pipeline import HardwareFingerprintValidator, PackagingContext, build_pipeline_from_mapping
 from bot_core.security.signing import build_hmac_signature
 
 
@@ -58,6 +54,24 @@ def test_pipeline_executes_all_steps(tmp_path: Path, monkeypatch: pytest.MonkeyP
         "delta_updates": {
             "bases": [base_manifest_dir.name],
             "output_dir": "delta",
+            "manifest_dir": "delta/manifests",
+            "manifest_signing_key": "env:OEM_PIPELINE_DELTA_KEY",
+            "manifest_signing_key_id": "delta-key",
+            "embed_hwid": True,
+        },
+        "update_package": {
+            "output_dir": "packages",
+            "package_id": "core-oem",
+            "runtime": "python311",
+            "signing_key": "env:OEM_PIPELINE_PACKAGE_KEY",
+            "signing_key_id": "pkg-key",
+            "embed_hwid": True,
+            "metadata": {"channel": "stable"},
+        },
+        "code_signing": {
+            "command": ["codesign", "--sign", "OEM-Signer", "{target}"],
+            "targets": ["archive", "update_manifests"],
+            "dry_run": True,
         },
         "notarization": {
             "bundle_id": "com.example.core",
@@ -69,6 +83,9 @@ def test_pipeline_executes_all_steps(tmp_path: Path, monkeypatch: pytest.MonkeyP
 
     hmac_key = b"pipeline-secret-key"
     monkeypatch.setenv("OEM_PIPELINE_HMAC", base64.b64encode(hmac_key).decode("ascii"))
+    monkeypatch.setenv("OEM_PIPELINE_DELTA_KEY", base64.b64encode(b"delta-secret").decode("ascii"))
+    monkeypatch.setenv("OEM_PIPELINE_PACKAGE_KEY", base64.b64encode(b"package-secret").decode("ascii"))
+    monkeypatch.setattr("bot_core.security.hwid.get_local_fingerprint", lambda: "OEM-FP-001")
 
     pipeline = build_pipeline_from_mapping(pipeline_config, base_dir=tmp_path)
 
@@ -112,6 +129,14 @@ def test_pipeline_executes_all_steps(tmp_path: Path, monkeypatch: pytest.MonkeyP
         assert "delta.json" in archive.namelist()
         assert "daemon/app.bin" in archive.namelist()
 
+    assert report.delta_manifests, "Delta manifest nie został wygenerowany"
+    delta_manifest = report.delta_manifests[0]
+    manifest_payload = json.loads(delta_manifest.manifest_path.read_text(encoding="utf-8"))
+    assert manifest_payload["bundle"] == "core-oem"
+    assert manifest_payload["fingerprint"] == "OEM-FP-001"
+    assert delta_manifest.signature_path is not None
+    assert delta_manifest.signature_path.exists()
+
     assert report.notarization is not None
     assert report.notarization.dry_run is True
     assert report.notarization.command[0] == "xcrun"
@@ -121,4 +146,19 @@ def test_pipeline_executes_all_steps(tmp_path: Path, monkeypatch: pytest.MonkeyP
     assert log_path.exists()
     payload = json.loads(log_path.read_text(encoding="utf-8"))
     assert payload["mode"] == "dry-run"
+
+    assert report.update_packages, "Oczekiwano wygenerowania pakietu aktualizacji"
+    package_result = report.update_packages[0]
+    assert package_result.package_path.exists()
+    package_manifest = json.loads(package_result.manifest_path.read_text(encoding="utf-8"))
+    assert package_manifest["metadata"]["fingerprint"] == "OEM-FP-001"
+    assert package_manifest["metadata"]["channel"] == "stable"
+    assert any(artifact["type"] == "diff" for artifact in package_manifest["artifacts"])
+    manifest_sig_path = package_result.manifest_path.parent / "manifest.sig"
+    assert manifest_sig_path.exists()
+
+    assert report.code_signatures, "Oczekiwano uruchomienia podpisywania kodu"
+    for signature in report.code_signatures:
+        assert signature.dry_run is True
+        assert signature.return_code == 0
 

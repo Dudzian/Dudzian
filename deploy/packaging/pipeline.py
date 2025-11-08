@@ -7,15 +7,17 @@ import hmac
 import json
 import logging
 import os
+import shutil
 import subprocess
 import tarfile
 import tempfile
 import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Mapping, MutableMapping, Sequence
+from typing import Iterable, Mapping, MutableMapping, Sequence
 
-from bot_core.security.signing import canonical_json_bytes, validate_hmac_signature
+from bot_core.security.hwid import HwIdProvider, HwIdProviderError
+from bot_core.security.signing import build_hmac_signature, canonical_json_bytes, validate_hmac_signature
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -167,13 +169,88 @@ class DeltaUpdateResult:
     archive_path: Path
     changed_files: list[str]
     removed_files: list[str]
+    metadata: Mapping[str, object]
+    manifest_path: Path | None = None
+    signature_path: Path | None = None
 
     def to_mapping(self) -> Mapping[str, object]:
-        return {
+        payload: dict[str, object] = {
             "base_version": self.base_version,
             "archive_path": str(self.archive_path),
             "changed_files": list(self.changed_files),
             "removed_files": list(self.removed_files),
+            "metadata": dict(self.metadata),
+        }
+        if self.manifest_path is not None:
+            payload["manifest_path"] = str(self.manifest_path)
+        if self.signature_path is not None:
+            payload["signature_path"] = str(self.signature_path)
+        return payload
+
+
+@dataclass(slots=True)
+class DeltaManifestResult:
+    """Result of exporting a delta manifest."""
+
+    base_version: str
+    manifest_path: Path
+    signature_path: Path | None
+    metadata: Mapping[str, object]
+
+    def to_mapping(self) -> Mapping[str, object]:
+        payload: dict[str, object] = {
+            "base_version": self.base_version,
+            "manifest_path": str(self.manifest_path),
+            "metadata": dict(self.metadata),
+        }
+        if self.signature_path is not None:
+            payload["signature_path"] = str(self.signature_path)
+        return payload
+
+
+@dataclass(slots=True)
+class UpdatePackageResult:
+    """Metadata describing an update package produced by the pipeline."""
+
+    package_id: str
+    version: str
+    package_path: Path
+    manifest_path: Path
+    signature_path: Path | None
+    artifacts: list[str]
+
+    def to_mapping(self) -> Mapping[str, object]:
+        payload: dict[str, object] = {
+            "package_id": self.package_id,
+            "version": self.version,
+            "package_path": str(self.package_path),
+            "manifest_path": str(self.manifest_path),
+            "artifacts": list(self.artifacts),
+        }
+        if self.signature_path is not None:
+            payload["signature_path"] = str(self.signature_path)
+        return payload
+
+
+@dataclass(slots=True)
+class CodeSigningResult:
+    """Outcome of a code signing attempt for a specific target."""
+
+    target: Path
+    command: list[str]
+    return_code: int | None
+    stdout: str | None
+    stderr: str | None
+    dry_run: bool
+
+    def to_mapping(self) -> Mapping[str, object]:
+        return {
+            "target": str(self.target),
+            "command": list(self.command),
+            "return_code": self.return_code,
+            "stdout": self.stdout,
+            "stderr": self.stderr,
+            "dry_run": self.dry_run,
         }
 
 
@@ -267,7 +344,317 @@ class DeltaUpdateBuilder:
             archive_path=delta_path,
             changed_files=metadata["changed_files"],
             removed_files=removed,
+            metadata=dict(metadata),
         )
+
+
+class DeltaManifestPublisher:
+    """Exports generated delta metadata to standalone JSON manifests."""
+
+    def __init__(
+        self,
+        *,
+        output_dir: Path,
+        signing_key: bytes | None = None,
+        signing_key_id: str | None = None,
+        embed_hwid: bool = False,
+    ) -> None:
+        self._output_dir = output_dir.expanduser()
+        self._signing_key = signing_key
+        self._signing_key_id = signing_key_id
+        self._embed_hwid = embed_hwid
+        self._hwid_provider: HwIdProvider | None = HwIdProvider() if embed_hwid else None
+
+    def publish(
+        self,
+        context: PackagingContext,
+        deltas: Sequence[DeltaUpdateResult],
+    ) -> list[DeltaManifestResult]:
+        if not deltas:
+            return []
+        self._output_dir.mkdir(parents=True, exist_ok=True)
+        results: list[DeltaManifestResult] = []
+        fingerprint: str | None = None
+        if self._hwid_provider is not None:
+            try:
+                fingerprint = self._hwid_provider.read()
+            except HwIdProviderError as exc:  # pragma: no cover - defensywne logowanie
+                _LOGGER.warning("Unable to read hardware fingerprint for delta manifest: %s", exc)
+        for delta in deltas:
+            metadata = dict(delta.metadata)
+            if fingerprint and "fingerprint" not in metadata:
+                metadata["fingerprint"] = fingerprint
+            manifest_name = _delta_manifest_name(context, delta.base_version)
+            manifest_path = self._output_dir / manifest_name
+            manifest_path.write_text(
+                json.dumps(metadata, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+
+            signature_path: Path | None = None
+            if self._signing_key is not None:
+                signature = build_hmac_signature(metadata, key=self._signing_key, key_id=self._signing_key_id)
+                signature_path = manifest_path.with_suffix(manifest_path.suffix + ".sig")
+                signature_payload = {"signature": signature}
+                signature_path.write_text(
+                    json.dumps(signature_payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+                    encoding="utf-8",
+                )
+
+            delta.manifest_path = manifest_path
+            delta.signature_path = signature_path
+
+            results.append(
+                DeltaManifestResult(
+                    base_version=delta.base_version,
+                    manifest_path=manifest_path,
+                    signature_path=signature_path,
+                    metadata=metadata,
+                )
+            )
+        return results
+
+
+class UpdatePackageBuilder:
+    """Creates offline update packages with optional differential patches."""
+
+    def __init__(
+        self,
+        *,
+        output_dir: Path,
+        package_id: str,
+        runtime: str,
+        signing_key: bytes | None = None,
+        signing_key_id: str | None = None,
+        embed_hwid: bool = False,
+        extra_metadata: Mapping[str, object] | None = None,
+    ) -> None:
+        self._output_dir = output_dir.expanduser()
+        self._package_id = package_id
+        self._runtime = runtime
+        self._signing_key = signing_key
+        self._signing_key_id = signing_key_id
+        self._embed_hwid = embed_hwid
+        self._extra_metadata = dict(extra_metadata or {})
+        self._hwid_provider: HwIdProvider | None = HwIdProvider() if embed_hwid else None
+
+    def build(
+        self,
+        context: PackagingContext,
+        deltas: Sequence[DeltaUpdateResult],
+        delta_manifests: Sequence[DeltaManifestResult],
+    ) -> list[UpdatePackageResult]:
+        self._output_dir.mkdir(parents=True, exist_ok=True)
+        package_root = self._output_dir / f"{self._package_id}-{context.version}"
+        if package_root.exists():
+            shutil.rmtree(package_root)
+        package_root.mkdir(parents=True, exist_ok=True)
+
+        payload_name = f"{self._package_id}-{context.version}.tar.gz"
+        payload_path = package_root / payload_name
+        with tarfile.open(payload_path, mode="w:gz") as archive:
+            for entry in sorted(context.staging_root.rglob("*")):
+                if entry.is_file():
+                    archive.add(entry, arcname=entry.relative_to(context.staging_root).as_posix())
+
+        payload_sha384 = _hash_file(payload_path, "sha384")
+        payload_sha256 = _hash_file(payload_path, "sha256")
+
+        metadata: MutableMapping[str, object] = {
+            "bundle": context.bundle_name,
+            "platform": context.platform,
+        }
+        metadata.update(self._extra_metadata)
+
+        fingerprint: str | None = None
+        if self._hwid_provider is not None:
+            try:
+                fingerprint = self._hwid_provider.read()
+            except HwIdProviderError as exc:  # pragma: no cover - defensywne logowanie
+                _LOGGER.warning("Unable to read hardware fingerprint for update package: %s", exc)
+        if fingerprint:
+            metadata.setdefault("fingerprint", fingerprint)
+
+        artifacts: list[MutableMapping[str, object]] = [
+            {
+                "path": payload_name,
+                "sha384": payload_sha384,
+                "sha256": payload_sha256,
+                "size": payload_path.stat().st_size,
+                "type": "full",
+            }
+        ]
+
+        delta_dir = package_root / "delta"
+        delta_dir.mkdir(exist_ok=True)
+        manifest_map = {manifest.base_version: manifest for manifest in delta_manifests}
+        for delta in deltas:
+            target_path = delta_dir / delta.archive_path.name
+            shutil.copy2(delta.archive_path, target_path)
+            sha384 = _hash_file(target_path, "sha384")
+            sha256 = _hash_file(target_path, "sha256")
+            artifacts.append(
+                {
+                    "path": str(Path("delta") / target_path.name),
+                    "sha384": sha384,
+                    "sha256": sha256,
+                    "size": target_path.stat().st_size,
+                    "type": "diff",
+                    "base_id": delta.base_version,
+                }
+            )
+            manifest_entry = manifest_map.get(delta.base_version)
+            if manifest_entry is not None:
+                manifest_target = delta_dir / manifest_entry.manifest_path.name
+                shutil.copy2(manifest_entry.manifest_path, manifest_target)
+                metadata.setdefault("delta_manifests", []).append(
+                    {
+                        "base_version": delta.base_version,
+                        "path": str(Path("delta") / manifest_target.name),
+                    }
+                )
+                if manifest_entry.signature_path is not None:
+                    signature_target = delta_dir / manifest_entry.signature_path.name
+                    shutil.copy2(manifest_entry.signature_path, signature_target)
+                    metadata.setdefault("delta_signatures", []).append(
+                        {
+                            "base_version": delta.base_version,
+                            "path": str(Path("delta") / signature_target.name),
+                        }
+                    )
+
+        manifest_payload: MutableMapping[str, object] = {
+            "id": self._package_id,
+            "version": context.version,
+            "platform": context.platform,
+            "runtime": self._runtime,
+            "artifacts": artifacts,
+            "metadata": metadata,
+        }
+
+        manifest_path = package_root / "manifest.json"
+        signature_path: Path | None = None
+        manifest_payload_with_signature: MutableMapping[str, object]
+        if self._signing_key is not None:
+            signature = build_hmac_signature(manifest_payload, key=self._signing_key, key_id=self._signing_key_id)
+            manifest_payload_with_signature = dict(manifest_payload)
+            manifest_payload_with_signature["signature"] = signature
+            signature_path = package_root / "manifest.sig"
+            signature_path.write_text(
+                json.dumps({"signature": signature}, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+        else:
+            manifest_payload_with_signature = manifest_payload
+
+        manifest_path.write_text(
+            json.dumps(manifest_payload_with_signature, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+
+        return [
+            UpdatePackageResult(
+                package_id=self._package_id,
+                version=context.version,
+                package_path=payload_path,
+                manifest_path=manifest_path,
+                signature_path=signature_path,
+                artifacts=[artifact["path"] for artifact in artifacts],
+            )
+        ]
+
+
+class CodeSigningService:
+    """Runs external signing tools (codesign/signtool) for produced artifacts."""
+
+    def __init__(
+        self,
+        *,
+        command: Sequence[str],
+        targets: Sequence[str],
+        environment: Mapping[str, str] | None = None,
+        dry_run: bool = False,
+        timeout_seconds: int | None = None,
+    ) -> None:
+        if not command:
+            raise ValueError("Code signing requires a command template")
+        self._command_template = list(command)
+        self._targets = list(targets)
+        self._env = {**os.environ, **dict(environment)} if environment else None
+        self._dry_run = dry_run
+        self._timeout = timeout_seconds
+
+    def sign(self, context: PackagingContext, report: "PackagingPipelineReport") -> list[CodeSigningResult]:
+        targets = self._resolve_targets(context, report)
+        results: list[CodeSigningResult] = []
+        for target in targets:
+            command = [part.format(target=str(target)) for part in self._command_template]
+            if self._dry_run:
+                results.append(
+                    CodeSigningResult(
+                        target=target,
+                        command=command,
+                        return_code=0,
+                        stdout=None,
+                        stderr=None,
+                        dry_run=True,
+                    )
+                )
+                continue
+
+            _LOGGER.info("Signing %s using %s", target, " ".join(command))
+            completed = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                check=False,
+                env=self._env,
+                timeout=self._timeout,
+            )
+            results.append(
+                CodeSigningResult(
+                    target=target,
+                    command=command,
+                    return_code=completed.returncode,
+                    stdout=completed.stdout,
+                    stderr=completed.stderr,
+                    dry_run=False,
+                )
+            )
+            if completed.returncode != 0:
+                raise RuntimeError(
+                    "Code signing command failed for {}: {}".format(target, completed.stderr.strip())
+                )
+        return results
+
+    def _resolve_targets(self, context: PackagingContext, report: "PackagingPipelineReport") -> list[Path]:
+        resolved: list[Path] = []
+        for selector in self._targets:
+            normalized = selector.lower()
+            if normalized == "archive":
+                resolved.append(context.archive_path)
+            elif normalized == "delta_archives":
+                resolved.extend(delta.archive_path for delta in report.delta_updates)
+            elif normalized == "delta_manifests":
+                resolved.extend(entry.manifest_path for entry in report.delta_manifests)
+            elif normalized == "update_packages":
+                resolved.extend(package.package_path for package in report.update_packages)
+            elif normalized == "update_manifests":
+                resolved.extend(package.manifest_path for package in report.update_packages)
+            else:
+                resolved.append(Path(selector.format(
+                    bundle=context.bundle_name,
+                    version=context.version,
+                    platform=context.platform,
+                )))
+        unique: list[Path] = []
+        seen: set[Path] = set()
+        for path in resolved:
+            candidate = path.expanduser()
+            if candidate not in seen:
+                seen.add(candidate)
+                unique.append(candidate)
+        return unique
 
 
 def _load_manifest(path: Path) -> Mapping[str, object]:
@@ -311,6 +698,23 @@ def _delta_archive_name(context: PackagingContext, base_version: str, compressio
     bundle = context.bundle_name or "bundle"
     platform = context.platform or "any"
     return f"{bundle}-{platform}-{base_version}-to-{context.version}.delta{suffix}"
+
+
+def _delta_manifest_name(context: PackagingContext, base_version: str) -> str:
+    bundle = context.bundle_name or "bundle"
+    platform = context.platform or "any"
+    return f"{bundle}-{platform}-{base_version}-to-{context.version}.delta.json"
+
+
+def _hash_file(path: Path, algorithm: str) -> str:
+    normalized = algorithm.lower()
+    if normalized not in {"sha256", "sha384"}:
+        raise ValueError(f"Unsupported hash algorithm: {algorithm}")
+    digest = hashlib.new(normalized)
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(65536), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _verify_hmac_signature(
@@ -480,6 +884,9 @@ class PackagingPipelineReport:
 
     fingerprint: HardwareFingerprintReport | None = None
     delta_updates: list[DeltaUpdateResult] = field(default_factory=list)
+    delta_manifests: list[DeltaManifestResult] = field(default_factory=list)
+    update_packages: list[UpdatePackageResult] = field(default_factory=list)
+    code_signatures: list[CodeSigningResult] = field(default_factory=list)
     notarization: NotarizationResult | None = None
 
     def to_mapping(self) -> Mapping[str, object]:
@@ -488,6 +895,12 @@ class PackagingPipelineReport:
             payload["fingerprint"] = self.fingerprint.to_mapping()
         if self.delta_updates:
             payload["delta_updates"] = [entry.to_mapping() for entry in self.delta_updates]
+        if self.delta_manifests:
+            payload["delta_manifests"] = [entry.to_mapping() for entry in self.delta_manifests]
+        if self.update_packages:
+            payload["update_packages"] = [entry.to_mapping() for entry in self.update_packages]
+        if self.code_signatures:
+            payload["code_signatures"] = [entry.to_mapping() for entry in self.code_signatures]
         if self.notarization is not None:
             payload["notarization"] = self.notarization.to_mapping()
         return payload
@@ -501,11 +914,17 @@ class PackagingPipeline:
         *,
         fingerprint_validator: HardwareFingerprintValidator | None = None,
         delta_builder: DeltaUpdateBuilder | None = None,
+        delta_manifest_publisher: DeltaManifestPublisher | None = None,
+        update_package_builder: UpdatePackageBuilder | None = None,
+        code_signing_service: CodeSigningService | None = None,
         notarization_service: NotarizationService | None = None,
         logger: logging.Logger | None = None,
     ) -> None:
         self._fingerprint_validator = fingerprint_validator
         self._delta_builder = delta_builder
+        self._delta_manifest_publisher = delta_manifest_publisher
+        self._update_package_builder = update_package_builder
+        self._code_signing_service = code_signing_service
         self._notarization_service = notarization_service
         self._logger = logger or _LOGGER
 
@@ -531,6 +950,22 @@ class PackagingPipeline:
                     len(delta.removed_files),
                 )
 
+        if self._delta_manifest_publisher and report.delta_updates:
+            self._logger.debug("Exporting delta manifests")
+            report.delta_manifests = self._delta_manifest_publisher.publish(context, report.delta_updates)
+            for manifest in report.delta_manifests:
+                self._logger.info("Wrote delta manifest %s", manifest.manifest_path)
+
+        if self._update_package_builder:
+            self._logger.debug("Building offline update package")
+            report.update_packages = self._update_package_builder.build(
+                context,
+                report.delta_updates,
+                report.delta_manifests,
+            )
+            for package in report.update_packages:
+                self._logger.info("Update package generated: %s", package.package_path)
+
         if self._notarization_service:
             self._logger.debug("Submitting archive for notarization")
             report.notarization = self._notarization_service.notarize(context)
@@ -538,6 +973,12 @@ class PackagingPipeline:
                 self._logger.info("Notarization dry-run completed for %s", context.archive_path)
             else:
                 self._logger.info("Archive notarized successfully: %s", context.archive_path)
+
+        if self._code_signing_service:
+            self._logger.debug("Running code signing commands")
+            report.code_signatures = self._code_signing_service.sign(context, report)
+            for signature in report.code_signatures:
+                self._logger.info("Code signing completed for %s", signature.target)
 
         return report
 
@@ -559,6 +1000,7 @@ def build_pipeline_from_mapping(config: Mapping[str, object], *, base_dir: Path 
         )
 
     delta_builder = None
+    delta_manifest_publisher = None
     delta_cfg = config.get("delta_updates")
     if isinstance(delta_cfg, Mapping):
         base_entries = delta_cfg.get("bases")
@@ -571,6 +1013,58 @@ def build_pipeline_from_mapping(config: Mapping[str, object], *, base_dir: Path 
             output_dir = _resolve_path(str(output_dir_entry), base_dir=base_dir)
             compression = str(delta_cfg.get("compression", "zip"))
             delta_builder = DeltaUpdateBuilder(base_manifests=base_paths, output_dir=output_dir, compression=compression)
+        manifest_dir_entry = delta_cfg.get("manifest_dir")
+        if manifest_dir_entry:
+            manifest_dir = _resolve_path(str(manifest_dir_entry), base_dir=base_dir)
+            signing_key = _get_secret(delta_cfg.get("manifest_signing_key"), base_dir=base_dir)
+            signing_key_id = _get_str(delta_cfg, "manifest_signing_key_id")
+            embed_hwid = _get_bool(delta_cfg, "embed_hwid")
+            delta_manifest_publisher = DeltaManifestPublisher(
+                output_dir=manifest_dir,
+                signing_key=signing_key,
+                signing_key_id=signing_key_id,
+                embed_hwid=embed_hwid,
+            )
+
+    update_package_builder = None
+    update_package_cfg = config.get("update_package")
+    if isinstance(update_package_cfg, Mapping):
+        package_output = update_package_cfg.get("output_dir")
+        package_id = _get_str(update_package_cfg, "package_id")
+        runtime = _get_str(update_package_cfg, "runtime")
+        if package_output and package_id and runtime:
+            metadata_cfg = update_package_cfg.get("metadata")
+            metadata = metadata_cfg if isinstance(metadata_cfg, Mapping) else {}
+            update_package_builder = UpdatePackageBuilder(
+                output_dir=_resolve_path(str(package_output), base_dir=base_dir),
+                package_id=package_id,
+                runtime=runtime,
+                signing_key=_get_secret(update_package_cfg.get("signing_key"), base_dir=base_dir),
+                signing_key_id=_get_str(update_package_cfg, "signing_key_id"),
+                embed_hwid=_get_bool(update_package_cfg, "embed_hwid"),
+                extra_metadata=metadata,
+            )
+
+    code_signing_service = None
+    code_signing_cfg = config.get("code_signing")
+    if isinstance(code_signing_cfg, Mapping):
+        command_entries = code_signing_cfg.get("command")
+        if isinstance(command_entries, Sequence) and command_entries:
+            command = [str(part) for part in command_entries]
+            targets_raw = code_signing_cfg.get("targets")
+            if isinstance(targets_raw, Sequence) and targets_raw:
+                targets = [str(target) for target in targets_raw]
+            else:
+                targets = ["archive"]
+            env_cfg = code_signing_cfg.get("env")
+            environment = {str(k): str(v) for k, v in env_cfg.items()} if isinstance(env_cfg, Mapping) else None
+            code_signing_service = CodeSigningService(
+                command=command,
+                targets=targets,
+                environment=environment,
+                dry_run=_get_bool(code_signing_cfg, "dry_run"),
+                timeout_seconds=_get_int(code_signing_cfg, "timeout_seconds"),
+            )
 
     notarization_service = None
     notarization_cfg = config.get("notarization")
@@ -593,6 +1087,9 @@ def build_pipeline_from_mapping(config: Mapping[str, object], *, base_dir: Path 
     return PackagingPipeline(
         fingerprint_validator=fingerprint_validator,
         delta_builder=delta_builder,
+        delta_manifest_publisher=delta_manifest_publisher,
+        update_package_builder=update_package_builder,
+        code_signing_service=code_signing_service,
         notarization_service=notarization_service,
     )
 
@@ -650,12 +1147,28 @@ def _get_int(mapping: Mapping[str, object], key: str) -> int | None:
     return int(value)
 
 
+def _get_bool(mapping: Mapping[str, object], key: str, default: bool = False) -> bool:
+    value = mapping.get(key)
+    if value in (None, ""):
+        return default
+    if isinstance(value, bool):
+        return value
+    text = str(value).strip().lower()
+    return text not in {"0", "false", "no", "off"}
+
+
 __all__ = [
     "PackagingContext",
     "HardwareFingerprintValidator",
     "HardwareFingerprintReport",
     "DeltaUpdateBuilder",
     "DeltaUpdateResult",
+    "DeltaManifestResult",
+    "UpdatePackageResult",
+    "CodeSigningResult",
+    "DeltaManifestPublisher",
+    "UpdatePackageBuilder",
+    "CodeSigningService",
     "NotarizationService",
     "NotarizationResult",
     "PackagingPipeline",

@@ -66,6 +66,7 @@ def main(argv: list[str] | None = None) -> int:
     output = {
         "status": "ok" if result.is_successful else "failed",
         "signature_valid": result.signature_valid,
+        "signature_checked": result.signature_checked,
         "license_ok": result.license_ok,
         "audit": result.artifact_checks,
         "errors": result.errors,
