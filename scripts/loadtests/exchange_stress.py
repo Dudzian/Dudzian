@@ -18,7 +18,7 @@ from typing import Any, Iterable, Mapping
 import httpx
 import yaml
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
@@ -58,11 +58,28 @@ class ExchangeMetrics:
     errors: int
     throttled: int
     latencies_ms: list[float] = field(default_factory=list)
+    queue_wait_ms: list[float] = field(default_factory=list)
 
     def latency_summary(self) -> Mapping[str, float]:
         if not self.latencies_ms:
             return {"min_ms": 0.0, "max_ms": 0.0, "avg_ms": 0.0, "p95_ms": 0.0}
         ordered = sorted(self.latencies_ms)
+        minimum = ordered[0]
+        maximum = ordered[-1]
+        average = statistics.fmean(ordered)
+        index = max(0, min(len(ordered) - 1, math.ceil(0.95 * len(ordered)) - 1))
+        percentile = ordered[index]
+        return {
+            "min_ms": round(minimum, 3),
+            "max_ms": round(maximum, 3),
+            "avg_ms": round(average, 3),
+            "p95_ms": round(percentile, 3),
+        }
+
+    def queue_wait_summary(self) -> Mapping[str, float]:
+        if not self.queue_wait_ms:
+            return {"min_ms": 0.0, "max_ms": 0.0, "avg_ms": 0.0, "p95_ms": 0.0}
+        ordered = sorted(self.queue_wait_ms)
         minimum = ordered[0]
         maximum = ordered[-1]
         average = statistics.fmean(ordered)
@@ -82,6 +99,7 @@ class ExchangeMetrics:
             "errors": self.errors,
             "throttled": self.throttled,
             "latency_ms": self.latency_summary(),
+            "queue_wait_ms": self.queue_wait_summary(),
         }
 
 
@@ -97,6 +115,7 @@ class ExchangeStressConfig:
 class RequestOutcome:
     status_code: int | None
     latency_ms: float
+    queue_wait_ms: float
     error: str | None = None
 
 
@@ -224,8 +243,10 @@ async def _execute_request(
     client: httpx.AsyncClient,
     scenario: ExchangeScenario,
     index: int,
+    enqueued_at: float,
 ) -> RequestOutcome:
     start = time.perf_counter()
+    queue_wait_ms = max((start - enqueued_at) * 1000.0, 0.0)
     try:
         response = await client.get(f"/{scenario.name}", headers={"X-Request-Index": str(index)})
         status_code = response.status_code
@@ -234,7 +255,12 @@ async def _execute_request(
         status_code = None
         error = str(exc)
     latency_ms = (time.perf_counter() - start) * 1000.0
-    return RequestOutcome(status_code=status_code, latency_ms=latency_ms, error=error)
+    return RequestOutcome(
+        status_code=status_code,
+        latency_ms=latency_ms,
+        queue_wait_ms=queue_wait_ms,
+        error=error,
+    )
 
 
 async def _run_scenario(
@@ -242,14 +268,25 @@ async def _run_scenario(
     client: httpx.AsyncClient,
     scenario: ExchangeScenario,
 ) -> ExchangeMetrics:
-    tasks = [
-        queue.submit(scenario.name, lambda index=index: _execute_request(client, scenario, index))
-        for index in range(scenario.request_count)
-    ]
+    tasks = []
+    for index in range(scenario.request_count):
+        enqueued_at = time.perf_counter()
+        tasks.append(
+            queue.submit(
+                scenario.name,
+                lambda index=index, enqueued_at=enqueued_at: _execute_request(
+                    client,
+                    scenario,
+                    index,
+                    enqueued_at=enqueued_at,
+                ),
+            )
+        )
     outcomes = await asyncio.gather(*tasks)
     metrics = ExchangeMetrics(total_requests=len(outcomes), successes=0, errors=0, throttled=0)
     for outcome in outcomes:
         metrics.latencies_ms.append(outcome.latency_ms)
+        metrics.queue_wait_ms.append(outcome.queue_wait_ms)
         if outcome.status_code == 200:
             metrics.successes += 1
         elif outcome.status_code == 429:
