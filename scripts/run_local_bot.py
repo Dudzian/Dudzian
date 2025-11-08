@@ -14,10 +14,12 @@ from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
 
 from bot_core.api.server import build_local_runtime_context, LocalRuntimeServer
+from bot_core.execution.live_router import LiveExecutionRouter
 from bot_core.exchanges.base import Environment as ExchangeEnvironment
 from bot_core.logging.config import install_metrics_logging_handler
 from bot_core.runtime.state_manager import RuntimeStateError, RuntimeStateManager
 from bot_core.security.base import SecretStorageError
+from bot_core.observability.metrics import CounterMetric, summarize_live_execution_metrics
 from core.reporting import DemoPaperReport, GuardrailReport
 
 _LOGGER = logging.getLogger(__name__)
@@ -177,15 +179,85 @@ def _collect_paper_exchange_metrics(context: Any) -> dict[str, Any]:
     return summary
 
 
+def _collect_live_execution_metrics(context: Any) -> dict[str, Any]:
+    pipeline = getattr(context, "pipeline", None)
+    registry = getattr(context, "metrics_registry", None)
+    if pipeline is None or registry is None:
+        return {}
+
+    execution_service = getattr(pipeline, "execution_service", None)
+    if not isinstance(execution_service, LiveExecutionRouter):
+        return {}
+
+    controller = getattr(pipeline, "controller", None)
+    execution_context = getattr(controller, "execution_context", None)
+    portfolio_id = getattr(execution_context, "portfolio_id", None)
+    symbols: Sequence[str] = tuple(getattr(controller, "symbols", ()) or ())
+
+    try:
+        exchanges: Sequence[str] = execution_service.list_adapters()
+    except Exception:  # pragma: no cover - defensywne
+        exchanges = ()
+
+    symbols_candidates: Sequence[str | None] = symbols or (None,)
+    exchange_candidates: Sequence[str | None] = exchanges or (None,)
+
+    route_values: set[str] = set()
+    try:
+        routed_metric = registry.get("live_orders_total")
+    except KeyError:
+        routed_metric = None
+    if isinstance(routed_metric, CounterMetric):
+        for labels, _ in routed_metric.samples():
+            route_label = dict(labels).get("route")
+            if route_label:
+                route_values.add(str(route_label))
+
+    route_candidates: tuple[str | None, ...]
+    if route_values:
+        route_candidates = tuple(sorted(route_values)) + (None,)
+    else:
+        route_candidates = (None,)
+
+    entries: list[dict[str, Any]] = []
+    for symbol in symbols_candidates:
+        for exchange in exchange_candidates:
+            for route in route_candidates:
+                summary = summarize_live_execution_metrics(
+                    registry,
+                    exchange=exchange,
+                    symbol=symbol,
+                    portfolio=portfolio_id,
+                    route=route,
+                )
+                entries.append(
+                    {
+                        "exchange": exchange,
+                        "symbol": symbol,
+                        "portfolio": portfolio_id,
+                        "route": route,
+                        "metrics": summary,
+                    }
+                )
+
+    return {
+        "portfolio": portfolio_id,
+        "symbols": list(symbols),
+        "entries": entries,
+    }
+
+
 def _write_report(report_dir: str | Path, payload: Mapping[str, Any]) -> Path:
-    report_path = Path(report_dir).expanduser()
+    report_path = Path(report_dir).expanduser().resolve()
     report_path.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
     filename = f"run_local_bot_{payload.get('mode', 'unknown')}_{timestamp}.json"
     destination = report_path / filename
     sanitized = json.loads(json.dumps(payload, ensure_ascii=False, default=str))
+    resolved_destination = destination.resolve()
+    sanitized["report_json"] = str(resolved_destination)
     destination.write_text(json.dumps(sanitized, ensure_ascii=False, indent=2), encoding="utf-8")
-    return destination
+    return resolved_destination
 
 
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
@@ -227,6 +299,12 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         action="store_true",
         help="Nie aktywuj automatycznie auto-tradingu (wymaga ręcznego potwierdzenia w UI)",
     )
+    parser.add_argument(
+        "--max-runtime",
+        type=float,
+        default=0.0,
+        help="Maksymalny czas działania runtime w sekundach (0 = bez limitu).",
+    )
     return parser.parse_args(argv)
 
 
@@ -240,6 +318,8 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     state_manager = RuntimeStateManager(args.state_dir)
+    report_root = Path(args.report_dir).expanduser().resolve()
+    report_markdown_dir = Path(args.report_markdown_dir).expanduser().resolve()
     report_payload: dict[str, Any] = {
         "mode": args.mode,
         "config_path": str(config_path),
@@ -255,6 +335,7 @@ def main(argv: list[str] | None = None) -> int:
     checkpoint = None
     decision_events: tuple[Mapping[str, Any], ...] = ()
     paper_metrics_summary: dict[str, Any] | None = None
+    live_metrics_summary: dict[str, Any] | None = None
 
     try:
         context = build_local_runtime_context(
@@ -316,6 +397,7 @@ def main(argv: list[str] | None = None) -> int:
             )
 
             stop_event = threading.Event()
+            deadline = time.monotonic() + args.max_runtime if args.max_runtime > 0 else None
 
             def _handle_signal(signum, frame):  # noqa: D401, ANN001
                 del signum, frame
@@ -326,6 +408,9 @@ def main(argv: list[str] | None = None) -> int:
 
             try:
                 while not stop_event.is_set():
+                    if deadline is not None and time.monotonic() >= deadline:
+                        stop_event.set()
+                        break
                     time.sleep(0.5)
             except KeyboardInterrupt:  # pragma: no cover - alternatywna obsługa sygnałów
                 stop_event.set()
@@ -358,6 +443,15 @@ def main(argv: list[str] | None = None) -> int:
                 )
                 paper_metrics_summary = {}
 
+        if live_metrics_summary is None and context is not None:
+            try:
+                live_metrics_summary = _collect_live_execution_metrics(context)
+            except Exception:  # pragma: no cover - defensywne
+                _LOGGER.debug(
+                    "Nie udało się zebrać metryk egzekucji live", exc_info=True
+                )
+                live_metrics_summary = {}
+
         if server is not None:
             try:
                 server.stop(0.5)
@@ -389,8 +483,8 @@ def main(argv: list[str] | None = None) -> int:
         guardrail_payload: dict[str, Any] | None = None
         try:
             demo_report = DemoPaperReport.from_payload(report_payload, decision_events=decision_events)
-            markdown_path = demo_report.write_markdown(args.report_markdown_dir)
-            report_payload["report_markdown"] = str(markdown_path)
+            markdown_path = demo_report.write_markdown(report_markdown_dir)
+            report_payload["report_markdown"] = str(markdown_path.resolve())
         except Exception:  # pragma: no cover - defensywne
             _LOGGER.debug("Nie udało się wygenerować raportu Markdown", exc_info=True)
         try:
@@ -399,7 +493,8 @@ def main(argv: list[str] | None = None) -> int:
             log_directory = getattr(io_queue_cfg, "log_directory", None) if io_queue_cfg is not None else None
             if not log_directory:
                 log_directory = "logs/guardrails"
-            validation_details = report_payload.get("validation", {}) if isinstance(report_payload.get("validation"), Mapping) else {}
+            raw_validation = report_payload.get("validation")
+            validation_details = raw_validation if isinstance(raw_validation, Mapping) else {}
             environment_hint = (
                 str(validation_details.get("expected_environment") or validation_details.get("environment") or "")
             )
@@ -408,12 +503,12 @@ def main(argv: list[str] | None = None) -> int:
                 log_directory=log_directory,
                 environment_hint=environment_hint or None,
             )
-            guardrail_dir = Path("reports/guardrails")
+            guardrail_dir = report_root / "guardrails"
             guardrail_path = guardrail_report.write_markdown(guardrail_dir)
             guardrail_payload = {
-                "report_markdown": str(guardrail_path),
+                "report_markdown": str(guardrail_path.resolve()),
                 "summary": guardrail_report.to_dict(),
-                "log_directory": str(Path(log_directory).expanduser()),
+                "log_directory": str(Path(log_directory).expanduser().resolve()),
             }
         except Exception:  # pragma: no cover - defensywne
             _LOGGER.debug("Nie udało się wygenerować raportu guardrail", exc_info=True)
@@ -421,8 +516,10 @@ def main(argv: list[str] | None = None) -> int:
             report_payload["guardrails"] = guardrail_payload
         if paper_metrics_summary is not None:
             report_payload["paper_exchange_metrics"] = paper_metrics_summary
+        if live_metrics_summary:
+            report_payload["live_execution_metrics"] = live_metrics_summary
         try:
-            report_json = _write_report(args.report_dir, report_payload)
+            report_json = _write_report(report_root, report_payload)
             report_payload["report_json"] = str(report_json)
         except Exception:  # pragma: no cover - defensywne
             _LOGGER.debug("Nie udało się zapisać raportu E2E", exc_info=True)

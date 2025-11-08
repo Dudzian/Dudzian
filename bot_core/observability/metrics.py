@@ -29,6 +29,10 @@ def _format_labels(labels: LabelTuple) -> str:
     return "{" + ",".join(parts) + "}"
 
 
+def _labels_to_dict(labels: LabelTuple) -> dict[str, str]:
+    return {key: value for key, value in labels}
+
+
 @dataclass(slots=True)
 class Metric:
     """Bazowy typ metryki przechowujący opis i nazwę."""
@@ -58,6 +62,10 @@ class CounterMetric(Metric):
         key = _normalize_labels(labels)
         with self._lock:
             return self._values.get(key, 0.0)
+
+    def samples(self) -> list[tuple[LabelTuple, float]]:
+        with self._lock:
+            return [(tuple(labels), value) for labels, value in self._values.items()]
 
     def render(self) -> Iterable[str]:
         lines = [f"# HELP {self.name} {self.description}", f"# TYPE {self.name} counter"]
@@ -105,6 +113,9 @@ class HistogramState:
     counts: MutableMapping[float, int] = field(default_factory=dict)
     sum: float = 0.0
     count: int = 0
+    minimum: float | None = None
+    maximum: float | None = None
+    sum_of_squares: float = 0.0
 
 
 @dataclass(slots=True)
@@ -138,6 +149,11 @@ class HistogramMetric(Metric):
                 self._values[key] = state
             state.count += 1
             state.sum += value
+            state.sum_of_squares += value * value
+            if state.minimum is None or value < state.minimum:
+                state.minimum = value
+            if state.maximum is None or value > state.maximum:
+                state.maximum = value
             for boundary in self.buckets:
                 if value <= boundary:
                     state.counts[boundary] += 1
@@ -153,7 +169,33 @@ class HistogramMetric(Metric):
                 return HistogramState(counts=counts)
             # Tworzymy kopię, by uniknąć modyfikacji przez odbiorcę.
             counts_copy = dict(state.counts)
-            return HistogramState(counts=counts_copy, sum=state.sum, count=state.count)
+            return HistogramState(
+                counts=counts_copy,
+                sum=state.sum,
+                count=state.count,
+                minimum=state.minimum,
+                maximum=state.maximum,
+                sum_of_squares=state.sum_of_squares,
+            )
+
+    def samples(self) -> list[tuple[LabelTuple, HistogramState]]:
+        with self._lock:
+            results: list[tuple[LabelTuple, HistogramState]] = []
+            for labels, state in self._values.items():
+                results.append(
+                    (
+                        tuple(labels),
+                        HistogramState(
+                            counts=dict(state.counts),
+                            sum=state.sum,
+                            count=state.count,
+                            minimum=state.minimum,
+                            maximum=state.maximum,
+                            sum_of_squares=state.sum_of_squares,
+                        ),
+                    )
+                )
+            return results
 
     def render(self) -> Iterable[str]:
         lines = [f"# HELP {self.name} {self.description}", f"# TYPE {self.name} histogram"]
@@ -172,6 +214,265 @@ class HistogramMetric(Metric):
                 lines.append(f"{self.name}_sum{_format_labels(labels)} {state.sum}")
                 lines.append(f"{self.name}_count{_format_labels(labels)} {state.count}")
         return lines
+
+
+def _quantile_from_histogram(state: HistogramState, quantile: float) -> float | None:
+    if state.count == 0:
+        return None
+    if not 0.0 < quantile <= 1.0:
+        raise ValueError("Quantyl musi należeć do zakresu (0, 1].")
+    target = max(1, math.ceil(state.count * quantile))
+    cumulative = 0
+    for boundary in sorted(state.counts, key=lambda value: (math.inf if math.isinf(value) else value)):
+        if math.isinf(boundary):
+            return None
+        cumulative += state.counts.get(boundary, 0)
+        if cumulative >= target:
+            return float(boundary)
+    return None
+
+
+def summarize_live_execution_metrics(
+    registry: "MetricsRegistry",
+    *,
+    exchange: str | None = None,
+    symbol: str | None = None,
+    portfolio: str | None = None,
+    route: str | None = None,
+) -> dict[str, float | int | None]:
+    """Zwraca zagregowane metryki egzekucji live na potrzeby regresji."""
+
+    labels = {
+        k: v
+        for k, v in (
+            ("exchange", exchange),
+            ("symbol", symbol),
+            ("portfolio", portfolio),
+            ("route", route),
+        )
+        if v
+    }
+    normalized_labels = {key: str(value) for key, value in labels.items()}
+
+    summary: dict[str, float | int | None] = {
+        "fill_ratio_avg": None,
+        "fill_ratio_count": 0,
+        "fill_ratio_sum": 0.0,
+        "fill_ratio_p50": None,
+        "fill_ratio_p95": None,
+        "fill_ratio_min": None,
+        "fill_ratio_max": None,
+        "fill_ratio_stddev": None,
+        "latency_avg": None,
+        "latency_p95": None,
+        "latency_p50": None,
+        "latency_p99": None,
+        "latency_min": None,
+        "latency_max": None,
+        "latency_count": 0,
+        "latency_sum": 0.0,
+        "latency_stddev": None,
+        "errors_total": 0,
+        "orders_attempts_total": 0,
+        "orders_attempts_success": 0,
+        "orders_attempts_error": 0,
+        "orders_attempts_api_error": 0,
+        "orders_attempts_auth_error": 0,
+        "orders_attempts_exception": 0,
+        "orders_attempts_success_rate": None,
+        "orders_attempts_error_rate": None,
+        "orders_attempts_api_error_rate": None,
+        "orders_attempts_auth_error_rate": None,
+        "orders_attempts_exception_rate": None,
+        "orders_routed_total": 0,
+        "orders_success_total": 0,
+        "orders_failed_total": 0,
+        "orders_total": 0,
+        "orders_fallback_total": 0,
+        "orders_success_rate": None,
+        "orders_failure_rate": None,
+        "orders_fallback_rate": None,
+    }
+
+    def _counter_total(
+        metric: CounterMetric,
+        *,
+        extra: Mapping[str, str] | None = None,
+    ) -> float:
+        filters = dict(normalized_labels)
+        if extra:
+            filters.update({k: str(v) for k, v in extra.items()})
+
+        total = 0.0
+        for labels_tuple, value in metric.samples():
+            label_map = _labels_to_dict(labels_tuple)
+            match = True
+            for key, expected in filters.items():
+                actual = label_map.get(key)
+                if actual is None or actual != expected:
+                    match = False
+                    break
+            if match:
+                total += value
+        return total
+
+    def _histogram_total(
+        metric: HistogramMetric,
+        *,
+        extra: Mapping[str, str] | None = None,
+    ) -> HistogramState:
+        filters = dict(normalized_labels)
+        if extra:
+            filters.update({k: str(v) for k, v in extra.items()})
+
+        aggregated: HistogramState | None = None
+        for labels_tuple, state in metric.samples():
+            label_map = _labels_to_dict(labels_tuple)
+            match = True
+            for key, expected in filters.items():
+                actual = label_map.get(key)
+                if actual is None or actual != expected:
+                    match = False
+                    break
+            if not match:
+                continue
+
+            if aggregated is None:
+                counts = {boundary: 0 for boundary in metric.buckets}
+                counts[math.inf] = 0
+                aggregated = HistogramState(counts=counts)
+
+            aggregated.count += state.count
+            aggregated.sum += state.sum
+            aggregated.sum_of_squares += state.sum_of_squares
+            for boundary, value in state.counts.items():
+                aggregated.counts[boundary] = aggregated.counts.get(boundary, 0) + value
+            if state.minimum is not None:
+                if aggregated.minimum is None or state.minimum < aggregated.minimum:
+                    aggregated.minimum = state.minimum
+            if state.maximum is not None:
+                if aggregated.maximum is None or state.maximum > aggregated.maximum:
+                    aggregated.maximum = state.maximum
+
+        if aggregated is None:
+            counts = {boundary: 0 for boundary in metric.buckets}
+            counts[math.inf] = 0
+            return HistogramState(counts=counts)
+
+        return aggregated
+
+    try:
+        fill_metric = registry.get("live_orders_fill_ratio")
+    except KeyError:
+        fill_metric = None
+    if isinstance(fill_metric, HistogramMetric):
+        fill_state = _histogram_total(fill_metric)
+        if fill_state.count:
+            summary["fill_ratio_sum"] = fill_state.sum
+            summary["fill_ratio_count"] = fill_state.count
+            summary["fill_ratio_avg"] = fill_state.sum / fill_state.count
+            summary["fill_ratio_p50"] = _quantile_from_histogram(fill_state, 0.5)
+            summary["fill_ratio_p95"] = _quantile_from_histogram(fill_state, 0.95)
+            summary["fill_ratio_min"] = fill_state.minimum
+            summary["fill_ratio_max"] = fill_state.maximum
+            variance = (fill_state.sum_of_squares / fill_state.count) - (
+                summary["fill_ratio_avg"] ** 2
+            )
+            if variance < 0:
+                variance = 0.0
+            summary["fill_ratio_stddev"] = math.sqrt(variance)
+
+    try:
+        latency_metric = registry.get("live_execution_latency_seconds")
+    except KeyError:
+        latency_metric = None
+    if isinstance(latency_metric, HistogramMetric):
+        latency_state = _histogram_total(latency_metric, extra={"result": "success"})
+        if latency_state.count:
+            summary["latency_count"] = latency_state.count
+            summary["latency_sum"] = latency_state.sum
+            summary["latency_avg"] = latency_state.sum / latency_state.count
+            summary["latency_p50"] = _quantile_from_histogram(latency_state, 0.5)
+            summary["latency_p95"] = _quantile_from_histogram(latency_state, 0.95)
+            summary["latency_p99"] = _quantile_from_histogram(latency_state, 0.99)
+            summary["latency_min"] = latency_state.minimum
+            summary["latency_max"] = latency_state.maximum
+            variance = (latency_state.sum_of_squares / latency_state.count) - (
+                summary["latency_avg"] ** 2
+            )
+            if variance < 0:
+                variance = 0.0
+            summary["latency_stddev"] = math.sqrt(variance)
+
+    try:
+        errors_metric = registry.get("live_orders_errors_total")
+    except KeyError:
+        errors_metric = None
+    if isinstance(errors_metric, CounterMetric):
+        summary["errors_total"] = int(round(_counter_total(errors_metric)))
+
+    try:
+        attempts_metric = registry.get("live_orders_attempts_total")
+    except KeyError:
+        attempts_metric = None
+    if isinstance(attempts_metric, CounterMetric):
+        attempts_by_result = {
+            "success": "orders_attempts_success",
+            "error": "orders_attempts_error",
+            "api_error": "orders_attempts_api_error",
+            "auth_error": "orders_attempts_auth_error",
+            "exception": "orders_attempts_exception",
+        }
+        attempts_total = 0.0
+        for result, field in attempts_by_result.items():
+            count = _counter_total(attempts_metric, extra={"result": result})
+            summary[field] = int(round(count))
+            attempts_total += count
+        summary["orders_attempts_total"] = int(round(attempts_total))
+        if attempts_total > 0:
+            summary["orders_attempts_success_rate"] = summary["orders_attempts_success"] / attempts_total
+            summary["orders_attempts_error_rate"] = summary["orders_attempts_error"] / attempts_total
+            summary["orders_attempts_api_error_rate"] = summary["orders_attempts_api_error"] / attempts_total
+            summary["orders_attempts_auth_error_rate"] = summary["orders_attempts_auth_error"] / attempts_total
+            summary["orders_attempts_exception_rate"] = summary["orders_attempts_exception"] / attempts_total
+
+    try:
+        routed_metric = registry.get("live_orders_total")
+    except KeyError:
+        routed_metric = None
+    if isinstance(routed_metric, CounterMetric):
+        summary["orders_routed_total"] = int(round(_counter_total(routed_metric)))
+
+    try:
+        success_metric = registry.get("live_orders_success_total")
+    except KeyError:
+        success_metric = None
+    if isinstance(success_metric, CounterMetric):
+        summary["orders_success_total"] = int(round(_counter_total(success_metric)))
+
+    try:
+        failed_metric = registry.get("live_orders_failed_total")
+    except KeyError:
+        failed_metric = None
+    if isinstance(failed_metric, CounterMetric):
+        summary["orders_failed_total"] = int(round(_counter_total(failed_metric)))
+
+    try:
+        fallback_metric = registry.get("live_orders_fallback_total")
+    except KeyError:
+        fallback_metric = None
+    if isinstance(fallback_metric, CounterMetric):
+        summary["orders_fallback_total"] = int(round(_counter_total(fallback_metric)))
+
+    orders_total = summary["orders_success_total"] + summary["orders_failed_total"]
+    summary["orders_total"] = orders_total
+    if orders_total > 0:
+        summary["orders_success_rate"] = summary["orders_success_total"] / orders_total
+        summary["orders_failure_rate"] = summary["orders_failed_total"] / orders_total
+    if summary["orders_success_total"] > 0:
+        summary["orders_fallback_rate"] = summary["orders_fallback_total"] / summary["orders_success_total"]
+
+    return summary
 
 
 class MetricsRegistry:
