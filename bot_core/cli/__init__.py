@@ -85,7 +85,9 @@ try:  # pragma: no cover - PyYAML jest wymagany tylko dla konfiguracji środowis
 except ModuleNotFoundError:  # pragma: no cover - opcjonalna zależność
     yaml = None  # type: ignore[assignment]
 
+from bot_core.compliance.tax import StaticFXRateProvider, TaxReportGenerator
 from bot_core.config.loader import load_core_config
+from bot_core.database.manager import DatabaseManager
 from bot_core.exchanges.core import Mode
 from bot_core.exchanges.health import HealthCheck, HealthMonitor, HealthStatus
 from bot_core.exchanges.manager import ExchangeManager
@@ -94,6 +96,7 @@ from bot_core.runtime.pipeline import (
     describe_strategy_definitions,
 )
 from bot_core.strategies.catalog import DEFAULT_STRATEGY_CATALOG
+from bot_core.reporting.tax import TaxReportExporter
 
 
 DEFAULT_CREDENTIALS_PATH = Path("secrets/desktop.toml")
@@ -454,6 +457,87 @@ def create_parser() -> argparse.ArgumentParser:
         help="Pomija sekcję definicji strategii w raporcie JSON.",
     )
     plan.set_defaults(include_definitions=True)
+
+    compliance = subparsers.add_parser(
+        "compliance",
+        help="Operacje związane z raportami zgodności.",
+    )
+    compliance_sub = compliance.add_subparsers(dest="compliance_command", required=True)
+    tax_report = compliance_sub.add_parser(
+        "tax-report",
+        help="Generuje raport podatkowy na podstawie wpisów ledger i magazynu zleceń.",
+    )
+    tax_report.add_argument(
+        "--jurisdiction",
+        required=True,
+        help="Identyfikator jurysdykcji (np. pl, usa, uk).",
+    )
+    tax_report.add_argument(
+        "--output",
+        required=True,
+        help="Ścieżka docelowego raportu.",
+    )
+    tax_report.add_argument(
+        "--format",
+        choices=("json", "csv", "pdf"),
+        default="json",
+        help="Format raportu (domyślnie json).",
+    )
+    tax_report.add_argument(
+        "--ledger-dir",
+        help="Katalog z plikami dziennika ledger (JSONL). Jeśli brak, użyty zostanie audit/ledger gdy istnieje.",
+    )
+    tax_report.add_argument(
+        "--orders-db",
+        help="Adres URL bazy lokalnego magazynu zleceń (np. sqlite+aiosqlite:///trading.db).",
+    )
+    tax_report.add_argument(
+        "--config",
+        help="Ścieżka do pliku YAML opisującego metody podatkowe dla jurysdykcji.",
+    )
+    tax_report.add_argument(
+        "--schema",
+        help="Opcjonalna ścieżka do schematu JSON używanego przy walidacji raportu.",
+    )
+    tax_report.add_argument(
+        "--hmac-key",
+        help="Klucz HMAC w formie tekstowej.",
+    )
+    tax_report.add_argument(
+        "--hmac-key-file",
+        help="Ścieżka do pliku z kluczem HMAC (tekstowym).",
+    )
+    tax_report.add_argument(
+        "--symbol",
+        action="append",
+        help="Filtruje dane do wskazanego symbolu lub aktywa (można podać wielokrotnie).",
+    )
+    tax_report.add_argument(
+        "--start",
+        help="Początek zakresu czasowego (ISO 8601, np. 2024-01-01T00:00:00Z).",
+    )
+    tax_report.add_argument(
+        "--end",
+        help="Koniec zakresu czasowego (ISO 8601).",
+    )
+    tax_report.add_argument(
+        "--base-currency",
+        help="Waluta bazowa raportu (np. PLN, USD).",
+    )
+    tax_report.add_argument(
+        "--fx-rate",
+        action="append",
+        help=(
+            "Stały kurs walutowy w formacie WALUTA=KURS (np. USDT=4.0). "
+            "Argument można podać wielokrotnie."
+        ),
+    )
+    tax_report.add_argument(
+        "--fx-rates-file",
+        help=(
+            "Ścieżka do pliku JSON zawierającego mapę kursów walutowych, np. {\"USDT\": 4.0}."
+        ),
+    )
 
     compliance = subparsers.add_parser(
         "ai-compliance",
@@ -8227,6 +8311,140 @@ def show_scheduler_plan(args: argparse.Namespace) -> int:
 
     return 0
 
+
+def _parse_iso_datetime(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        dt_value = datetime.fromisoformat(value)
+    except ValueError as exc:
+        raise CLIUsageError(f"Niepoprawny format daty: {value}") from exc
+    if dt_value.tzinfo is None:
+        return dt_value.replace(tzinfo=timezone.utc)
+    return dt_value.astimezone(timezone.utc)
+
+
+def _resolve_hmac_key(args: argparse.Namespace) -> str:
+    if getattr(args, "hmac_key", None) and getattr(args, "hmac_key_file", None):
+        raise CLIUsageError("Użyj tylko jednej formy przekazania klucza HMAC")
+    if getattr(args, "hmac_key", None):
+        key = str(args.hmac_key).strip()
+        if not key:
+            raise CLIUsageError("Klucz HMAC nie może być pusty")
+        return key
+    if getattr(args, "hmac_key_file", None):
+        path = Path(args.hmac_key_file)
+        if not path.exists():
+            raise CLIUsageError(f"Nie znaleziono pliku z kluczem HMAC: {path}")
+        key = path.read_text(encoding="utf-8").strip()
+        if not key:
+            raise CLIUsageError("Plik z kluczem HMAC jest pusty")
+        return key
+    raise CLIUsageError("Podaj klucz HMAC (--hmac-key lub --hmac-key-file)")
+
+
+def _parse_fx_rate_entry(value: str) -> tuple[str, float]:
+    if "=" not in value:
+        raise CLIUsageError(
+            "Kurs walutowy powinien być podany w formacie WALUTA=KURS (np. USDT=4.0)"
+        )
+    currency_part, rate_part = value.split("=", 1)
+    currency = currency_part.strip().upper()
+    if not currency:
+        raise CLIUsageError("Symbol waluty w definicji kursu nie może być pusty")
+    try:
+        rate = float(rate_part)
+    except ValueError as exc:
+        raise CLIUsageError(f"Niepoprawna wartość kursu walutowego: {rate_part}") from exc
+    return currency, rate
+
+
+def _configure_fx_provider(
+    generator: TaxReportGenerator, args: argparse.Namespace
+) -> None:
+    base_currency = getattr(args, "base_currency", None)
+    if base_currency:
+        generator.set_base_currency(base_currency)
+    rates: dict[str, float] = {}
+    fx_rates_file = getattr(args, "fx_rates_file", None)
+    if fx_rates_file:
+        path = Path(fx_rates_file)
+        if not path.exists():
+            raise CLIUsageError(f"Nie znaleziono pliku z kursami walut: {path}")
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            raise CLIUsageError(f"Nie udało się odczytać pliku z kursami walut: {exc}") from exc
+        if not isinstance(data, Mapping):
+            raise CLIUsageError("Plik z kursami walut powinien zawierać obiekt JSON")
+        for key, value in data.items():
+            currency = str(key).strip().upper()
+            if not currency:
+                continue
+            try:
+                rate = float(value)
+            except (TypeError, ValueError) as exc:
+                raise CLIUsageError(
+                    f"Niepoprawna wartość kursu dla waluty {key}: {value}"
+                ) from exc
+            rates[currency] = rate
+    for entry in getattr(args, "fx_rate", []) or []:
+        currency, rate = _parse_fx_rate_entry(str(entry))
+        rates[currency] = rate
+    if rates:
+        generator.set_fx_rate_provider(
+            StaticFXRateProvider(rates, base_currency=generator.base_currency)
+        )
+
+
+def run_tax_report(args: argparse.Namespace) -> int:
+    start = _parse_iso_datetime(getattr(args, "start", None))
+    end = _parse_iso_datetime(getattr(args, "end", None))
+    generator = TaxReportGenerator(config_path=getattr(args, "config", None))
+    _configure_fx_provider(generator, args)
+    ledger_dir = getattr(args, "ledger_dir", None)
+    if ledger_dir:
+        generator.ingest_ledger_directory(ledger_dir)
+    else:
+        default_ledger = Path("audit/ledger")
+        if default_ledger.exists():
+            generator.ingest_ledger_directory(default_ledger)
+    since = start
+    orders_db = getattr(args, "orders_db", None)
+    if orders_db:
+        try:
+            store = DatabaseManager(orders_db)
+            store.sync.init_db(create=False)
+        except Exception as exc:  # pragma: no cover - zależne od środowiska
+            raise CLIUsageError(f"Nie można zainicjalizować bazy zleceń: {exc}") from exc
+        try:
+            generator.ingest_local_order_store(store, symbols=getattr(args, "symbol", None), since=since)
+        except Exception as exc:
+            raise CLIUsageError(f"Nie udało się pobrać transakcji z bazy: {exc}") from exc
+    report = generator.generate_report(
+        getattr(args, "jurisdiction"),
+        symbols=getattr(args, "symbol", None),
+        start=start,
+        end=end,
+    )
+    exporter = TaxReportExporter()
+    key = _resolve_hmac_key(args)
+    schema_arg = getattr(args, "schema", None)
+    schema = Path(schema_arg) if schema_arg else None
+    output_path = Path(getattr(args, "output"))
+    exporter.export(
+        report,
+        path=output_path,
+        fmt=getattr(args, "format", "json"),
+        hmac_key=key,
+        schema=schema,
+    )
+    print(
+        f"Raport podatkowy zapisany w {output_path} (jurysdykcja: {report.jurisdiction}, metoda: {report.method})."
+    )
+    return 0
+
+
 def main(
     argv: Sequence[str] | None = None,
     *,
@@ -8247,6 +8465,10 @@ def main(
             return show_strategy_catalog(args)
         if args.command == "scheduler-plan":
             return show_scheduler_plan(args)
+        if args.command == "compliance":
+            if getattr(args, "compliance_command", None) == "tax-report":
+                return run_tax_report(args)
+            raise CLIUsageError(f"Nieznana podkomenda compliance: {getattr(args, 'compliance_command', '?')}")
         raise CLIUsageError(f"Nieznana komenda: {args.command}")
     except CLIUsageError as exc:
         print(f"Błąd: {exc}", file=sys.stderr)
@@ -8263,4 +8485,5 @@ __all__ = [
     "show_ai_compliance",
     "show_strategy_catalog",
     "show_scheduler_plan",
+    "run_tax_report",
 ]

@@ -1,0 +1,308 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "TaxReport",
+  "type": "object",
+  "required": [
+    "jurisdiction",
+    "method",
+    "generated_at",
+    "events",
+    "open_lots",
+    "totals",
+    "asset_breakdown",
+    "venue_breakdown",
+    "period_breakdown"
+  ],
+  "properties": {
+    "jurisdiction": {"type": "string"},
+    "method": {"type": "string"},
+    "generated_at": {"type": "string", "format": "date-time"},
+    "base_currency": {"type": ["string", "null"]},
+    "events": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "event_id",
+          "asset",
+          "disposal_time",
+          "quantity",
+          "proceeds",
+          "fee",
+          "matched_lots",
+          "cost_basis",
+          "realized_gain",
+          "short_term_gain",
+          "long_term_gain",
+          "short_term_quantity",
+          "long_term_quantity",
+          "average_holding_period_days",
+          "short_term_tax",
+          "long_term_tax",
+          "total_tax_liability"
+        ],
+        "properties": {
+          "event_id": {"type": "string"},
+          "asset": {"type": "string"},
+          "disposal_time": {"type": "string", "format": "date-time"},
+          "quantity": {"type": "number"},
+          "proceeds": {"type": "number"},
+          "fee": {"type": "number"},
+          "venue": {"type": ["string", "null"]},
+          "source": {"type": ["string", "null"]},
+          "cost_basis": {"type": "number"},
+          "realized_gain": {"type": "number"},
+          "short_term_gain": {"type": "number"},
+          "long_term_gain": {"type": "number"},
+          "short_term_quantity": {"type": "number"},
+          "long_term_quantity": {"type": "number"},
+          "average_holding_period_days": {"type": "number", "minimum": 0},
+          "short_term_tax": {"type": "number", "minimum": 0},
+          "long_term_tax": {"type": "number", "minimum": 0},
+          "total_tax_liability": {"type": "number", "minimum": 0},
+          "matched_lots": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "lot_id",
+                "acquisition_time",
+                "quantity",
+                "cost_basis",
+                "fee",
+                "holding_period_days"
+              ],
+              "properties": {
+                "lot_id": {"type": "string"},
+                "acquisition_time": {"type": "string", "format": "date-time"},
+                "quantity": {"type": "number"},
+                "cost_basis": {"type": "number"},
+                "fee": {"type": "number"},
+                "venue": {"type": ["string", "null"]},
+                "source": {"type": ["string", "null"]},
+                "holding_period_days": {"type": "number", "minimum": 0}
+              }
+            }
+          }
+        }
+      }
+    },
+    "open_lots": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "lot_id",
+          "asset",
+          "acquisition_time",
+          "quantity",
+          "cost_basis",
+          "fee",
+          "holding_period_days"
+        ],
+        "properties": {
+          "lot_id": {"type": "string"},
+          "asset": {"type": "string"},
+          "acquisition_time": {"type": "string", "format": "date-time"},
+          "quantity": {"type": "number"},
+          "cost_basis": {"type": "number"},
+          "fee": {"type": "number"},
+          "venue": {"type": ["string", "null"]},
+          "source": {"type": ["string", "null"]},
+          "holding_period_days": {"type": "number", "minimum": 0}
+        }
+      }
+    },
+    "totals": {
+      "type": "object",
+      "required": [
+        "proceeds",
+        "cost_basis",
+        "fees",
+        "realized_gain",
+        "short_term_gain",
+        "long_term_gain",
+        "unrealized_cost_basis",
+        "unrealized_quantity",
+        "short_term_quantity",
+        "long_term_quantity",
+        "average_holding_period_days",
+        "unrealized_short_term_cost_basis",
+        "unrealized_long_term_cost_basis",
+        "unrealized_short_term_quantity",
+        "unrealized_long_term_quantity",
+        "average_open_holding_period_days",
+        "short_term_tax",
+        "long_term_tax",
+        "total_tax_liability"
+      ],
+      "properties": {
+        "proceeds": {"type": "number"},
+        "cost_basis": {"type": "number"},
+        "fees": {"type": "number"},
+        "realized_gain": {"type": "number"},
+        "short_term_gain": {"type": "number"},
+        "long_term_gain": {"type": "number"},
+        "unrealized_cost_basis": {"type": "number"},
+        "unrealized_quantity": {"type": "number"},
+        "short_term_quantity": {"type": "number"},
+        "long_term_quantity": {"type": "number"},
+        "average_holding_period_days": {"type": "number", "minimum": 0},
+        "unrealized_short_term_cost_basis": {"type": "number"},
+        "unrealized_long_term_cost_basis": {"type": "number"},
+        "unrealized_short_term_quantity": {"type": "number"},
+        "unrealized_long_term_quantity": {"type": "number"},
+        "average_open_holding_period_days": {"type": "number", "minimum": 0},
+        "short_term_tax": {"type": "number", "minimum": 0},
+        "long_term_tax": {"type": "number", "minimum": 0},
+        "total_tax_liability": {"type": "number", "minimum": 0}
+      }
+    },
+    "asset_breakdown": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "asset",
+          "proceeds",
+          "cost_basis",
+          "fees",
+          "realized_gain",
+          "disposed_quantity",
+          "open_quantity",
+          "open_cost_basis",
+          "short_term_gain",
+          "long_term_gain",
+          "short_term_quantity",
+          "long_term_quantity",
+          "average_holding_period_days",
+          "open_short_term_quantity",
+          "open_long_term_quantity",
+          "open_short_term_cost_basis",
+          "open_long_term_cost_basis",
+          "open_average_holding_period_days",
+          "short_term_tax",
+          "long_term_tax",
+          "total_tax_liability"
+        ],
+        "properties": {
+          "asset": {"type": "string"},
+          "proceeds": {"type": "number"},
+          "cost_basis": {"type": "number"},
+          "fees": {"type": "number"},
+          "realized_gain": {"type": "number"},
+          "disposed_quantity": {"type": "number"},
+          "open_quantity": {"type": "number"},
+          "open_cost_basis": {"type": "number"},
+          "short_term_gain": {"type": "number"},
+          "long_term_gain": {"type": "number"},
+          "short_term_quantity": {"type": "number"},
+          "long_term_quantity": {"type": "number"},
+          "average_holding_period_days": {"type": "number", "minimum": 0},
+          "open_short_term_quantity": {"type": "number"},
+          "open_long_term_quantity": {"type": "number"},
+          "open_short_term_cost_basis": {"type": "number"},
+          "open_long_term_cost_basis": {"type": "number"},
+          "open_average_holding_period_days": {"type": "number", "minimum": 0},
+          "short_term_tax": {"type": "number", "minimum": 0},
+          "long_term_tax": {"type": "number", "minimum": 0},
+          "total_tax_liability": {"type": "number", "minimum": 0}
+        }
+      }
+    },
+    "venue_breakdown": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "venue",
+          "proceeds",
+          "cost_basis",
+          "fees",
+          "realized_gain",
+          "disposed_quantity",
+          "open_quantity",
+          "open_cost_basis",
+          "short_term_gain",
+          "long_term_gain",
+          "short_term_quantity",
+          "long_term_quantity",
+          "average_holding_period_days",
+          "open_short_term_quantity",
+          "open_long_term_quantity",
+          "open_short_term_cost_basis",
+          "open_long_term_cost_basis",
+          "open_average_holding_period_days",
+          "short_term_tax",
+          "long_term_tax",
+          "total_tax_liability"
+        ],
+        "properties": {
+          "venue": {"type": ["string", "null"]},
+          "proceeds": {"type": "number"},
+          "cost_basis": {"type": "number"},
+          "fees": {"type": "number"},
+          "realized_gain": {"type": "number"},
+          "disposed_quantity": {"type": "number"},
+          "open_quantity": {"type": "number"},
+          "open_cost_basis": {"type": "number"},
+          "short_term_gain": {"type": "number"},
+          "long_term_gain": {"type": "number"},
+          "short_term_quantity": {"type": "number"},
+          "long_term_quantity": {"type": "number"},
+          "average_holding_period_days": {"type": "number", "minimum": 0},
+          "open_short_term_quantity": {"type": "number"},
+          "open_long_term_quantity": {"type": "number"},
+          "open_short_term_cost_basis": {"type": "number"},
+          "open_long_term_cost_basis": {"type": "number"},
+          "open_average_holding_period_days": {"type": "number", "minimum": 0},
+          "short_term_tax": {"type": "number", "minimum": 0},
+          "long_term_tax": {"type": "number", "minimum": 0},
+          "total_tax_liability": {"type": "number", "minimum": 0}
+        }
+      }
+    },
+    "period_breakdown": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "period",
+          "period_start",
+          "period_end",
+          "proceeds",
+          "cost_basis",
+          "fees",
+          "realized_gain",
+          "disposed_quantity",
+          "short_term_gain",
+          "long_term_gain",
+          "short_term_quantity",
+          "long_term_quantity",
+          "average_holding_period_days",
+          "short_term_tax",
+          "long_term_tax",
+          "total_tax_liability"
+        ],
+        "properties": {
+          "period": {"type": "string"},
+          "period_start": {"type": "string", "format": "date-time"},
+          "period_end": {"type": "string", "format": "date-time"},
+          "proceeds": {"type": "number"},
+          "cost_basis": {"type": "number"},
+          "fees": {"type": "number"},
+          "realized_gain": {"type": "number"},
+          "disposed_quantity": {"type": "number"},
+          "short_term_gain": {"type": "number"},
+          "long_term_gain": {"type": "number"},
+          "short_term_quantity": {"type": "number"},
+          "long_term_quantity": {"type": "number"},
+          "average_holding_period_days": {"type": "number", "minimum": 0},
+          "short_term_tax": {"type": "number", "minimum": 0},
+          "long_term_tax": {"type": "number", "minimum": 0},
+          "total_tax_liability": {"type": "number", "minimum": 0}
+        }
+      }
+    }
+  }
+}
