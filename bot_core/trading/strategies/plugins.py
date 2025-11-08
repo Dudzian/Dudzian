@@ -254,6 +254,7 @@ class StrategyCatalog:
 
         return cls(
             plugins=(
+                AdaptiveMarketMakingPlugin,
                 TrendFollowingStrategy,
                 DayTradingStrategy,
                 MeanReversionStrategy,
@@ -261,12 +262,69 @@ class StrategyCatalog:
                 GridTradingStrategy,
                 VolatilityTargetStrategy,
                 ScalpingStrategy,
+                TriangularArbitragePlugin,
                 OptionsIncomeStrategy,
                 StatisticalArbitrageStrategy,
                 FuturesSpreadStrategy,
                 CrossExchangeHedgeStrategy,
             ),
         )
+
+
+class AdaptiveMarketMakingPlugin(StrategyPlugin):
+    """Reaguje na inventory i zmienność, aby skalować ekspozycję MM."""
+
+    engine_key = "adaptive_market_making"
+    name = "adaptive_market_making"
+    description = "Inventory-aware market making sygnalizujący ekspozycję względem zmienności."
+
+    def generate(
+        self,
+        indicators: "TechnicalIndicators",
+        params: "TradingParameters",
+        *,
+        market_data: Optional[pd.DataFrame] = None,
+    ) -> pd.Series:
+        price_index = indicators.ema_fast.index
+
+        volatility_series: Optional[pd.Series] = None
+        inventory_series: Optional[pd.Series] = None
+
+        if market_data is not None:
+            if "realized_volatility" in market_data:
+                volatility_series = market_data["realized_volatility"]
+            if "inventory_skew" in market_data:
+                inventory_series = market_data["inventory_skew"]
+
+        if volatility_series is None:
+            atr = indicators.atr.replace(0.0, np.nan)
+            volatility_series = (atr / (indicators.ema_fast.abs() + 1e-12)).rolling(window=5, min_periods=1).mean()
+
+        if inventory_series is None:
+            inventory_series = (indicators.stochastic_k - 50.0) / 50.0
+
+        volatility_series = volatility_series.reindex(price_index)
+        volatility_default = float(volatility_series.mean(skipna=True))
+        if not np.isfinite(volatility_default):
+            volatility_default = 0.0
+        volatility_series = volatility_series.ffill().fillna(volatility_default)
+
+        inventory_series = inventory_series.reindex(price_index)
+        inventory_series = inventory_series.ffill().fillna(0.0)
+
+        target_inventory = float(getattr(params, "adaptive_mm_target_inventory", 0.0) or 0.0)
+        inventory_scale = max(float(getattr(params, "adaptive_mm_inventory_scale", 0.75) or 0.75), 1e-6)
+        volatility_target = max(float(getattr(params, "adaptive_mm_target_volatility", 0.18) or 0.18), 1e-6)
+        volatility_sensitivity = float(getattr(params, "adaptive_mm_volatility_sensitivity", 1.6) or 1.6)
+
+        inventory_bias = (inventory_series - target_inventory) / inventory_scale
+        inventory_component = -np.tanh(inventory_bias)
+
+        volatility_gap = (volatility_target - volatility_series) / volatility_target
+        volatility_component = np.tanh(volatility_gap * volatility_sensitivity)
+
+        combined = inventory_component * 0.6 + volatility_component * 0.4
+        return pd.Series(combined.clip(-1.0, 1.0), index=price_index)
 
 
 class TrendFollowingStrategy(StrategyPlugin):
@@ -507,6 +565,61 @@ class OptionsIncomeStrategy(StrategyPlugin):
             config=config,
         )
         return self.ensure_index(series, indicators.ema_fast.index)
+
+
+class TriangularArbitragePlugin(StrategyPlugin):
+    """Ocena przewagi arbitrażowej dla uproszczonych sygnałów portfelowych."""
+
+    engine_key = "triangular_arbitrage"
+    name = "triangular_arbitrage"
+    description = "Wykrywa sygnały arbitrażu trójkątnego po korekcie o latency."
+
+    def generate(
+        self,
+        indicators: "TechnicalIndicators",
+        params: "TradingParameters",
+        *,
+        market_data: Optional[pd.DataFrame] = None,
+    ) -> pd.Series:
+        index = indicators.ema_fast.index
+
+        if market_data is None:
+            forward_edge = None
+            reverse_edge = None
+            latency_ms = None
+        else:
+            forward_edge = market_data.get("triangular_edge_bps")
+            reverse_edge = market_data.get("triangular_reverse_edge_bps")
+            latency_ms = market_data.get("latency_ms")
+
+        if forward_edge is None:
+            forward_edge = pd.Series(0.0, index=index)
+        if reverse_edge is None:
+            reverse_edge = pd.Series(0.0, index=index)
+        if latency_ms is None:
+            latency_ms = pd.Series(0.0, index=index)
+
+        forward_edge = forward_edge.reindex(index).ffill().fillna(0.0)
+        reverse_edge = reverse_edge.reindex(index).ffill().fillna(0.0)
+        latency_ms = latency_ms.reindex(index).ffill().fillna(0.0)
+
+        min_edge = max(float(getattr(params, "triangular_min_edge_bps", 4.0) or 4.0), 1e-6)
+        latency_penalty = float(getattr(params, "triangular_latency_penalty", 0.0015) or 0.0015)
+
+        best_edge = forward_edge.copy()
+        direction = pd.Series(1.0, index=index)
+        better_mask = reverse_edge > best_edge
+        best_edge[better_mask] = reverse_edge[better_mask]
+        direction[better_mask] = -1.0
+
+        normalized = (best_edge - min_edge) / min_edge
+        latency_adjustment = latency_penalty * (latency_ms / 100.0)
+        edge_signal = normalized - latency_adjustment
+        edge_signal = np.maximum(edge_signal, 0.0)
+
+        activation = np.tanh(edge_signal * 2.0)
+        series = direction * activation
+        return pd.Series(series.clip(-1.0, 1.0), index=index)
 
 
 class StatisticalArbitrageStrategy(StrategyPlugin):

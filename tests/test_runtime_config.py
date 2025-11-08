@@ -33,3 +33,8 @@ def test_load_runtime_app_config_sample(tmp_path: Path) -> None:
     assert config.marketplace.enabled is True
     assert config.marketplace.presets_path.endswith("config/marketplace/presets")
     assert isinstance(config.marketplace.signing_keys, dict)
+    assert "kraken_paper" in config.execution.paper_profiles
+    assert config.execution.paper_profiles["kraken_paper"]["entrypoint"] == "kraken_desktop_paper"
+    assert "okx_paper" in config.execution.paper_profiles
+    assert config.execution.paper_profiles["okx_paper"]["io_queue"] == "okx_spot"
+    assert config.execution.trading_profiles["bybit_desktop"]["entrypoint"] == "bybit_desktop_paper"

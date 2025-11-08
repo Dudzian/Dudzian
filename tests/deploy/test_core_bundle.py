@@ -468,6 +468,76 @@ def test_build_from_cli_dry_run_detects_existing_bundle(tmp_path):
     assert existing.exists()
 
 
+def test_build_from_cli_writes_pipeline_report(tmp_path):
+    env = _create_basic_cli_environment(tmp_path)
+    config_file = tmp_path / "core.yaml"
+    config_file.write_text("risk: balanced", encoding="utf-8")
+
+    base_dir = tmp_path / "pipeline"
+    base_dir.mkdir()
+    base_manifest_dir = base_dir / "base"
+    base_manifest_dir.mkdir()
+    base_manifest_dir.joinpath("manifest.json").write_text(
+        json.dumps(
+            {
+                "bundle": "core-oem",
+                "platform": "linux",
+                "version": "0.9.0",
+                "files": [
+                    {"path": "daemon/botd", "sha384": "old"},
+                    {"path": "config/fingerprint.expected.json", "sha384": "old-fp"},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    signing_key_bytes = env["signing_key_path"].read_bytes()
+    pipeline_config = {
+        "fingerprint_validation": {
+            "expected": "OEM-FP-CLI",
+            "hmac_key": f"base64:{base64.b64encode(signing_key_bytes).decode('ascii')}",
+        },
+        "delta_updates": {
+            "bases": ["base"],
+            "output_dir": "delta",
+        },
+    }
+    pipeline_config_path = base_dir / "pipeline.json"
+    pipeline_config_path.write_text(json.dumps(pipeline_config), encoding="utf-8")
+
+    report_path = tmp_path / "out" / "pipeline-report.json"
+
+    args = _base_cli_args(env) + [
+        "--config",
+        f"core.yaml={config_file}",
+        "--fingerprint-placeholder",
+        "OEM-FP-CLI",
+        "--pipeline-config",
+        str(pipeline_config_path),
+        "--pipeline-report",
+        str(report_path),
+    ]
+
+    archive_path = build_from_cli(args)
+    assert archive_path.exists()
+
+    assert report_path.exists()
+    payload = json.loads(report_path.read_text(encoding="utf-8"))
+    assert payload["archive_path"] == str(archive_path)
+    assert payload["version"] == "1.0.0"
+    assert payload["platform"] == "linux"
+    pipeline = payload["pipeline"]
+    assert pipeline is not None
+    fingerprint = pipeline["fingerprint"]
+    assert fingerprint["issues"] == []
+    assert fingerprint["signature_valid"] is True
+    deltas = pipeline["delta_updates"]
+    assert deltas, "Pipeline powinien zwrócić chociaż jedną paczkę delta"
+    delta_entry = deltas[0]
+    assert Path(delta_entry["archive_path"]).exists()
+
+
 def test_build_from_cli_rejects_symlink_signing_key(tmp_path):
     env = _create_basic_cli_environment(tmp_path)
     real_key = _write_signing_key(tmp_path / "keys" / "real.key")

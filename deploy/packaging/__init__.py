@@ -15,6 +15,14 @@ from .desktop_installer import (  # noqa: F401
     DesktopInstallerBuilder,
     build_from_cli as build_desktop_installer_from_cli,
 )
+from .pipeline import (  # noqa: F401
+    DeltaUpdateBuilder,
+    HardwareFingerprintValidator,
+    NotarizationService,
+    PackagingPipeline,
+    PackagingPipelineReport,
+    build_pipeline_from_mapping,
+)
 
 # Backwards compatibility: expose ``build_from_cli`` used by legacy tests.
 build_from_cli = build_core_bundle_from_cli
@@ -24,10 +32,16 @@ __all__ = [
     "CoreBundleBuilder",
     "SignatureManager",
     "StrategyBundleBuilder",
+    "DeltaUpdateBuilder",
+    "HardwareFingerprintValidator",
+    "NotarizationService",
+    "PackagingPipeline",
+    "PackagingPipelineReport",
     "build_pyinstaller_bundle",
     "build_core_bundle_from_cli",
     "build_strategy_bundle_from_cli",
     "DesktopInstallerBuilder",
     "build_desktop_installer_from_cli",
+    "build_pipeline_from_mapping",
     "build_from_cli",
 ]

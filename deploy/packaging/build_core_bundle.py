@@ -24,11 +24,32 @@ from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Any, Dict, Iterable, List, Mapping, Optional
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+try:  # pragma: no cover - optional dependency
+    import yaml
+except Exception:  # pragma: no cover - optional dependency
+    yaml = None
+
+_PACKAGE_ROOT = Path(__file__).resolve().parent
+REPO_ROOT = _PACKAGE_ROOT.parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from bot_core.security.signing import canonical_json_bytes
+
+if __package__ in (None, ""):
+    from deploy.packaging.pipeline import (  # type: ignore
+        PackagingContext,
+        PackagingPipeline,
+        PackagingPipelineReport,
+        build_pipeline_from_mapping,
+    )
+else:
+    from .pipeline import (
+        PackagingContext,
+        PackagingPipeline,
+        PackagingPipelineReport,
+        build_pipeline_from_mapping,
+    )
 
 BUNDLE_NAME = "core-oem"
 SUPPORTED_PLATFORMS = {"linux", "macos", "windows"}
@@ -70,6 +91,55 @@ _WINDOWS_DEVICE_NAMES = {
 _WINDOWS_INVALID_CHARS = set("<>:\\|?*")
 _ALLOWED_VERSION_CHARS = set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-")
 _ALLOWED_FINGERPRINT_PLACEHOLDER_CHARS = set("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-")
+
+
+def _load_pipeline_config(path: Path) -> Mapping[str, object]:
+    """Load a pipeline configuration from JSON or YAML."""
+
+    path = path.expanduser()
+    if not path.exists():
+        raise FileNotFoundError(path)
+    payload = path.read_text(encoding="utf-8")
+    data: Any
+    if path.suffix.lower() in {".yaml", ".yml"}:
+        if yaml is None:
+            raise RuntimeError("PyYAML is required to parse YAML pipeline configuration files")
+        data = yaml.safe_load(payload)
+    else:
+        try:
+            data = json.loads(payload)
+        except json.JSONDecodeError:
+            if yaml is None:
+                raise
+            data = yaml.safe_load(payload)
+    if not isinstance(data, Mapping):
+        raise ValueError("Pipeline configuration must be a mapping")
+    return data
+
+
+def _write_pipeline_report(
+    builder: "CoreBundleBuilder",
+    *,
+    report_path: Path,
+    archive_path: Path,
+) -> None:
+    """Zapisz raport pipeline'u do pliku JSON."""
+
+    report = builder.last_pipeline_report
+    payload: dict[str, object] = {
+        "bundle": BUNDLE_NAME,
+        "platform": builder.platform,
+        "version": builder.version,
+        "archive_path": str(archive_path),
+        "pipeline": report.to_mapping() if report is not None else None,
+    }
+
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    builder.logger.info("Pipeline report zapisany do %s", report_path)
 
 
 def _casefold_path(value: str) -> str:
@@ -277,6 +347,7 @@ class CoreBundleBuilder:
         inputs: BundleInputs,
         logger: Optional[logging.Logger] = None,
         ensure_output_dir: bool = True,
+        pipeline: PackagingPipeline | None = None,
     ) -> None:
         if platform not in SUPPORTED_PLATFORMS:
             raise ValueError(f"Unsupported platform: {platform}")
@@ -302,11 +373,19 @@ class CoreBundleBuilder:
             fingerprint_placeholder=_validate_fingerprint_placeholder(inputs.fingerprint_placeholder),
         )
         self.logger = logger or logging.getLogger(__name__)
+        self._pipeline = pipeline
+        self._last_pipeline_report = None
 
     def expected_archive_path(self) -> Path:
         """Return the destination path for the bundle archive."""
 
         return self.output_dir / self._expected_archive_name()
+
+    @property
+    def last_pipeline_report(self) -> Optional[PackagingPipelineReport]:
+        """Return the last pipeline report produced by :meth:`build`."""
+
+        return self._last_pipeline_report
 
     def build(self) -> Path:
         destination = self.expected_archive_path()
@@ -314,6 +393,7 @@ class CoreBundleBuilder:
         if destination.exists():
             raise FileExistsError(f"Bundle archive already exists: {destination}")
 
+        self._last_pipeline_report = None
         with tempfile.TemporaryDirectory(prefix="core_oem_") as temp_dir:
             staging_root = Path(temp_dir) / "core_oem_staging"
             staging_root.mkdir(parents=True)
@@ -331,6 +411,13 @@ class CoreBundleBuilder:
                 raise RuntimeError("Archive name mismatch between expected and generated bundle")
             self.logger.info("Bundle created at %s", archive_path)
             shutil.copy2(archive_path, destination)
+            if self._pipeline is not None:
+                context = PackagingContext(
+                    staging_root=staging_root,
+                    archive_path=destination,
+                    manifest=manifest,
+                )
+                self._last_pipeline_report = self._pipeline.execute(context)
             return destination
 
     def _expected_archive_name(self) -> str:
@@ -889,6 +976,18 @@ def build_from_cli(argv: Optional[List[str]] = None) -> Path:
         help="Destination directory for bundle archives",
     )
     parser.add_argument(
+        "--pipeline-config",
+        dest="pipeline_config",
+        default=None,
+        help="Path to JSON/YAML configuration enabling notarization, delta updates and fingerprint validation",
+    )
+    parser.add_argument(
+        "--pipeline-report",
+        dest="pipeline_report",
+        default=None,
+        help="Optional path to JSON file capturing results of pipeline kroków (notaryzacja, delty, fingerprint)",
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Validate inputs without creating bundle archives. When other arguments are omitted, sample artifacts from deploy/packaging/samples/ are used",
@@ -1001,6 +1100,12 @@ def build_from_cli(argv: Optional[List[str]] = None) -> Path:
 
     output_dir = raw_output_dir.resolve()
 
+    pipeline: PackagingPipeline | None = None
+    if args.pipeline_config:
+        config_path = Path(args.pipeline_config).expanduser()
+        pipeline_mapping = _load_pipeline_config(config_path)
+        pipeline = build_pipeline_from_mapping(pipeline_mapping, base_dir=config_path.parent)
+
     builder = CoreBundleBuilder(
         platform=args.platform,
         version=version,
@@ -1008,6 +1113,7 @@ def build_from_cli(argv: Optional[List[str]] = None) -> Path:
         output_dir=output_dir,
         inputs=inputs,
         ensure_output_dir=not args.dry_run,
+        pipeline=pipeline,
     )
     if args.dry_run:
         destination = builder.expected_archive_path()
@@ -1015,7 +1121,16 @@ def build_from_cli(argv: Optional[List[str]] = None) -> Path:
             raise FileExistsError(f"Bundle archive already exists: {destination}")
         builder.logger.info("Dry run: validations completed. Bundle would be created at %s", destination)
         return destination
-    return builder.build()
+
+    destination = builder.build()
+    if args.pipeline_report:
+        report_path = Path(args.pipeline_report).expanduser()
+        _write_pipeline_report(
+            builder,
+            report_path=report_path,
+            archive_path=destination,
+        )
+    return destination
 
 
 def main(argv: Optional[List[str]] = None) -> int:
