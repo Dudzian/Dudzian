@@ -7,6 +7,8 @@
 #include <QTextStream>
 #include <QQmlApplicationEngine>
 #include <QtQml>
+#include <QLocale>
+#include <QTranslator>
 
 #include "app/Application.hpp"
 #include "utils/PerformanceGuard.hpp"
@@ -17,6 +19,25 @@ int main(int argc, char* argv[]) {
     QGuiApplication::setOrganizationName(QStringLiteral("bot_core"));
     QGuiApplication::setApplicationName(QStringLiteral("Bot Trading Shell"));
     QGuiApplication::setApplicationVersion(QStringLiteral("0.1.0"));
+
+    QTranslator translator;
+    const QLocale systemLocale = QLocale::system();
+    const QStringList translationCandidates = {
+        systemLocale.name(),
+        systemLocale.bcp47Name(),
+        systemLocale.name().left(2),
+        QStringLiteral("en_US"),
+        QStringLiteral("en")
+    };
+    for (const QString& candidate : translationCandidates) {
+        if (candidate.isEmpty())
+            continue;
+        const QString resourcePath = QStringLiteral(":/i18n/bot_trading_shell_%1.qm").arg(candidate);
+        if (translator.load(resourcePath)) {
+            app.installTranslator(&translator);
+            break;
+        }
+    }
 
     const QString platform = QGuiApplication::platformName();
     const bool showDialog = platform.compare(QStringLiteral("offscreen"), Qt::CaseInsensitive) != 0;

@@ -330,6 +330,17 @@ ApplicationWindow {
                 }
 
                 Tab {
+                    title: qsTr("Analityka P&L")
+                    enabled: licenseController.licenseActive
+
+                    Views.AnalyticsDashboard {
+                        anchors.fill: parent
+                        resultsModel: resultsDashboard
+                        runtimeService: runtimeService
+                    }
+                }
+
+                Tab {
                     title: qsTr("Moduły")
                     enabled: licenseController.licenseActive
 
@@ -357,6 +368,16 @@ ApplicationWindow {
                         appController: appController
                         configurationWizard: configurationWizard
                         workbenchController: workbenchController
+                    }
+                }
+
+                Tab {
+                    title: qsTr("Strategie – kreator")
+                    enabled: licenseController.licenseActive
+
+                    Views.StrategyBuilder {
+                        anchors.fill: parent
+                        runtimeService: runtimeService
                     }
                 }
 

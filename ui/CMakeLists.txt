@@ -10,6 +10,16 @@ set(CMAKE_AUTOUIC ON)
 
 find_package(Qt6 6.5 COMPONENTS Quick QuickControls2 Charts Widgets REQUIRED)
 
+set(UI_TRANSLATIONS
+    ${CMAKE_CURRENT_SOURCE_DIR}/i18n/bot_trading_shell_en.ts
+    ${CMAKE_CURRENT_SOURCE_DIR}/i18n/bot_trading_shell_pl.ts
+)
+
+qt_add_translations(UI_TRANSLATION_QM
+    TS_FILES ${UI_TRANSLATIONS}
+    LUPDATE_OPTIONS -no-obsolete
+)
+
 # --- Testing toggle ---
 include(CTest)
 if(BUILD_TESTING)
@@ -174,6 +184,11 @@ qt_add_executable(bot_trading_shell
     ${UI_SOURCES}
     ${UI_HEADERS}
     qml/qml.qrc
+)
+
+qt_add_resources(bot_trading_shell translations
+    PREFIX "/i18n"
+    FILES ${UI_TRANSLATION_QM}
 )
 
 target_include_directories(bot_trading_shell PRIVATE src ${GENERATED_DIR})
@@ -538,6 +553,16 @@ if(BUILD_TESTING)
     target_include_directories(frame_rate_monitor_tests PRIVATE src)
     target_link_libraries(frame_rate_monitor_tests PRIVATE Qt6::Core Qt6::Test)
     add_test(NAME frame_rate_monitor_tests COMMAND frame_rate_monitor_tests)
+
+    add_executable(translation_loader_tests
+        tests/TranslationLoaderTest.cpp
+    )
+    qt_add_resources(translation_loader_tests translations_test
+        PREFIX "/i18n"
+        FILES ${UI_TRANSLATION_QM}
+    )
+    target_link_libraries(translation_loader_tests PRIVATE Qt6::Core Qt6::Test)
+    add_test(NAME translation_loader_tests COMMAND translation_loader_tests)
 
     add_executable(performance_telemetry_controller_tests
         tests/PerformanceTelemetryControllerTest.cpp

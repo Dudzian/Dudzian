@@ -1,6 +1,8 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import "../design-system" as DesignSystem
+import "../design-system/components" as DesignComponents
 
 Item {
     id: root
@@ -123,7 +125,6 @@ Item {
 
         var descriptor = viewsModel.findById(selectedViewId);
         if (descriptorMatchesSelection(descriptor)) {
-            // ensure currentIndex matches
             for (var i = 0; i < viewList.count; ++i) {
                 var candidate = viewsModel.viewAt(i);
                 if (descriptorMatchesSelection(candidate)) {
@@ -174,237 +175,301 @@ Item {
         ensureSelectionValid();
     }
 
-    ColumnLayout {
+    Rectangle {
         anchors.fill: parent
-        spacing: 12
+        color: DesignSystem.Palette.background
+        radius: 12
 
-        RowLayout {
-            Layout.fillWidth: true
-            spacing: 12
+        ColumnLayout {
+            anchors.fill: parent
+            anchors.margins: 16
+            spacing: 16
 
-            Label {
-                text: qsTr("Widoki modułów")
-                font.pixelSize: 20
-                font.bold: true
+            RowLayout {
                 Layout.fillWidth: true
-            }
+                spacing: 12
 
-            ComboBox {
-                id: categoryCombo
-                Layout.preferredWidth: 220
-                textRole: "label"
-                valueRole: "value"
-                model: categoryOptions
-                onActivated: selectedCategory = categoryCombo.currentValue
-                Component.onCompleted: refreshCategories()
-                Connections {
-                    target: root
-                    function onSelectedCategoryChanged() {
-                        var modelIndex = -1
-                        for (var i = 0; i < categoryOptions.length; ++i) {
-                            if (categoryOptions[i].value === root.selectedCategory) {
-                                modelIndex = i
-                                break
-                            }
-                        }
-                        if (modelIndex >= 0 && categoryCombo.currentIndex !== modelIndex)
-                            categoryCombo.currentIndex = modelIndex
-                        else if (modelIndex < 0 && categoryCombo.currentIndex !== 0)
-                            categoryCombo.currentIndex = 0
-                    }
+                Label {
+                    text: qsTr("Widoki modułów")
+                    color: DesignSystem.Palette.textPrimary
+                    font.pixelSize: DesignSystem.Typography.headlineMedium
+                    font.bold: true
+                    Layout.fillWidth: true
                 }
-            }
-        }
 
-        SplitView {
-            Layout.fillWidth: true
-            Layout.fillHeight: true
-
-            ScrollView {
-                id: listScroll
-                SplitView.preferredWidth: 320
-                Layout.fillHeight: true
-                ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
-
-                ListView {
-                    id: viewList
-                    anchors.fill: parent
-                    model: viewsModel
-                    clip: true
-                    delegate: ItemDelegate {
-                        width: ListView.view ? ListView.view.width : 0
-                        highlighted: root.selectedViewId === model.id
-                        onClicked: root.selectIndex(index)
-                        padding: 12
-
-                        contentItem: ColumnLayout {
-                            anchors.fill: parent
-                            spacing: 4
-
-                            Label {
-                                text: model.name && model.name.length ? model.name : model.id
-                                font.bold: true
-                                Layout.fillWidth: true
-                                elide: Text.ElideRight
+                ComboBox {
+                    id: categoryCombo
+                    Layout.preferredWidth: 220
+                    palette.window: DesignSystem.Palette.surface
+                    palette.button: DesignSystem.Palette.surface
+                    palette.windowText: DesignSystem.Palette.textPrimary
+                    palette.buttonText: DesignSystem.Palette.textPrimary
+                    textRole: "label"
+                    valueRole: "value"
+                    model: categoryOptions
+                    onActivated: selectedCategory = categoryCombo.currentValue
+                    Component.onCompleted: refreshCategories()
+                    Connections {
+                        target: root
+                        function onSelectedCategoryChanged() {
+                            var modelIndex = -1
+                            for (var i = 0; i < categoryOptions.length; ++i) {
+                                if (categoryOptions[i].value === root.selectedCategory) {
+                                    modelIndex = i
+                                    break;
+                                }
                             }
-
-                            Label {
-                                text: model.moduleId
-                                color: Qt.rgba(1, 1, 1, 0.65)
-                                font.pointSize: 9
-                                Layout.fillWidth: true
-                                elide: Text.ElideRight
-                            }
-
-                            Label {
-                                text: model.category && model.category.length
-                                      ? qsTr("Kategoria: %1").arg(model.category)
-                                      : qsTr("Brak kategorii")
-                                color: Qt.rgba(1, 1, 1, 0.55)
-                                font.pointSize: 9
-                                Layout.fillWidth: true
-                                elide: Text.ElideRight
-                            }
+                            if (modelIndex >= 0 && categoryCombo.currentIndex !== modelIndex)
+                                categoryCombo.currentIndex = modelIndex
+                            else if (modelIndex < 0 && categoryCombo.currentIndex !== 0)
+                                categoryCombo.currentIndex = 0
                         }
                     }
-
-                    footer: Label {
-                        visible: viewList.count === 0
-                        text: qsTr("Brak zarejestrowanych widoków modułów")
-                        padding: 16
-                        horizontalAlignment: Text.AlignHCenter
-                        wrapMode: Text.WordWrap
-                        width: ListView.view ? ListView.view.width : 0
-                    }
                 }
             }
 
-            Rectangle {
-                width: 1
-                color: Qt.rgba(1, 1, 1, 0.08)
-            }
-
-            Pane {
-                id: detailPane
+            SplitView {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
-                padding: 16
-                background: Rectangle {
-                    color: Qt.darker(detailPane.palette.window, 1.05)
-                    radius: 8
+
+                ScrollView {
+                    id: listScroll
+                    SplitView.preferredWidth: 320
+                    Layout.fillHeight: true
+                    ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+
+                    ListView {
+                        id: viewList
+                        anchors.fill: parent
+                        model: viewsModel
+                        clip: true
+                        delegate: ItemDelegate {
+                            id: control
+                            width: ListView.view ? ListView.view.width : 0
+                            highlighted: root.selectedViewId === model.id
+                            padding: 12
+                            onClicked: root.selectIndex(index)
+
+                            background: Rectangle {
+                                radius: 8
+                                color: control.highlighted
+                                       ? Qt.rgba(0.18, 0.36, 0.55, 0.6)
+                                       : Qt.rgba(0.15, 0.19, 0.27, control.hovered ? 0.6 : 0.4)
+                                border.color: DesignSystem.Palette.border
+                            }
+
+                            contentItem: ColumnLayout {
+                                anchors.fill: parent
+                                spacing: 4
+
+                                Label {
+                                    text: model.name && model.name.length ? model.name : model.id
+                                    color: DesignSystem.Palette.textPrimary
+                                    font.bold: true
+                                    Layout.fillWidth: true
+                                    elide: Text.ElideRight
+                                }
+
+                                Label {
+                                    text: model.moduleId
+                                    color: DesignSystem.Palette.textSecondary
+                                    font.pointSize: 9
+                                    Layout.fillWidth: true
+                                    elide: Text.ElideRight
+                                }
+
+                                Label {
+                                    text: model.category && model.category.length
+                                          ? qsTr("Kategoria: %1").arg(model.category)
+                                          : qsTr("Brak kategorii")
+                                    color: DesignSystem.Palette.textSecondary
+                                    font.pointSize: 9
+                                    Layout.fillWidth: true
+                                    elide: Text.ElideRight
+                                }
+                            }
+                        }
+
+                        footer: Label {
+                            visible: viewList.count === 0
+                            text: qsTr("Brak zarejestrowanych widoków modułów")
+                            color: DesignSystem.Palette.textSecondary
+                            padding: 16
+                            horizontalAlignment: Text.AlignHCenter
+                            wrapMode: Text.WordWrap
+                            width: ListView.view ? ListView.view.width : 0
+                        }
+                    }
                 }
 
-                ColumnLayout {
-                    anchors.fill: parent
-                    spacing: 12
+                Rectangle {
+                    width: 1
+                    color: DesignSystem.Palette.border
+                }
 
-                    Label {
-                        id: selectedTitle
-                        text: selectedViewName.length ? selectedViewName : qsTr("Wybierz widok modułu")
-                        font.pixelSize: 20
-                        font.bold: true
-                        Layout.fillWidth: true
-                        wrapMode: Text.WordWrap
-                    }
+                DesignComponents.Card {
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    padding: 20
+                    background.radius: 16
+                    background.color: DesignSystem.Palette.elevated
 
-                    RowLayout {
-                        Layout.fillWidth: true
-                        visible: selectedModuleId.length > 0 || selectedCategoryLabel.length > 0
-                        spacing: 8
+                    ColumnLayout {
+                        anchors.fill: parent
+                        spacing: 12
 
                         Label {
-                            text: selectedModuleId.length ? qsTr("Moduł: %1").arg(selectedModuleId) : ""
-                            visible: selectedModuleId.length > 0
+                            id: selectedTitle
+                            text: selectedViewName.length ? selectedViewName : qsTr("Wybierz widok modułu")
+                            color: DesignSystem.Palette.textPrimary
+                            font.pixelSize: DesignSystem.Typography.headlineMedium
+                            font.bold: true
                             Layout.fillWidth: true
+                            wrapMode: Text.WordWrap
                         }
 
-                        Rectangle {
-                            id: categoryChip
-                            visible: selectedCategoryLabel.length > 0
-                            radius: 12
-                            color: Qt.rgba(0.14, 0.58, 0.82, 0.25)
-                            border.color: Qt.rgba(0.14, 0.58, 0.82, 0.6)
-                            Layout.alignment: Qt.AlignVCenter
+                        RowLayout {
+                            Layout.fillWidth: true
+                            visible: selectedModuleId.length > 0 || selectedCategoryLabel.length > 0
+                            spacing: 8
+
+                            Label {
+                                text: selectedModuleId.length ? qsTr("Moduł: %1").arg(selectedModuleId) : ""
+                                visible: selectedModuleId.length > 0
+                                color: DesignSystem.Palette.textSecondary
+                                Layout.fillWidth: true
+                            }
+
+                            Label {
+                                text: selectedCategoryLabel.length ? qsTr("Kategoria: %1").arg(selectedCategoryLabel) : ""
+                                visible: selectedCategoryLabel.length > 0
+                                color: DesignSystem.Palette.textSecondary
+                                Layout.fillWidth: true
+                            }
+                        }
+
+                        Rectangle { height: 1; color: DesignSystem.Palette.border; Layout.fillWidth: true }
+
+                        Label {
+                            text: qsTr("Źródło: %1").arg(selectedSource)
+                            color: DesignSystem.Palette.textSecondary
+                            Layout.fillWidth: true
+                            wrapMode: Text.WordWrap
+                        }
+
+                        DesignComponents.Card {
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: 240
+                            visible: selectedSource && String(selectedSource).length > 0
+                            background.color: Qt.rgba(0.12, 0.16, 0.22, 0.6)
+
+                            Loader {
+                                id: viewLoader
+                                anchors.fill: parent
+                                anchors.margins: 8
+                                active: selectedSource && String(selectedSource).length > 0
+                                source: selectedSource
+                            }
 
                             Label {
                                 anchors.centerIn: parent
-                                padding: 6
-                                text: selectedCategoryLabel
-                                color: Qt.rgba(0.14, 0.58, 0.82, 0.9)
+                                width: parent.width * 0.8
+                                horizontalAlignment: Text.AlignHCenter
+                                wrapMode: Text.WordWrap
+                                color: DesignSystem.Palette.textSecondary
+                                visible: {
+                                    if (!selectedSource || String(selectedSource).length === 0)
+                                        return true
+                                    return viewLoader.status !== Loader.Ready
+                                }
+                                text: {
+                                    if (!selectedSource || String(selectedSource).length === 0)
+                                        return qsTr("Wybierz widok po lewej stronie, aby go załadować")
+                                    if (viewLoader.status === Loader.Loading)
+                                        return qsTr("Ładowanie widoku modułu…")
+                                    if (viewLoader.status === Loader.Error)
+                                        return qsTr("Nie udało się wczytać widoku modułu")
+                                    return ""
+                                }
                             }
-                        }
-                    }
-
-                    Frame {
-                        Layout.fillWidth: true
-                        Layout.fillHeight: true
-
-                        Loader {
-                            id: viewLoader
-                            anchors.fill: parent
-                            active: selectedSource && String(selectedSource).length > 0
-                            source: selectedSource
                         }
 
                         Label {
-                            anchors.centerIn: parent
-                            width: parent.width * 0.8
-                            horizontalAlignment: Text.AlignHCenter
-                            wrapMode: Text.WordWrap
-                            visible: {
-                                if (!selectedSource || String(selectedSource).length === 0)
-                                    return true;
-                                return viewLoader.status !== Loader.Ready;
-                            }
-                            text: {
-                                if (!selectedSource || String(selectedSource).length === 0)
-                                    return qsTr("Wybierz widok po lewej stronie, aby go załadować");
-                                if (viewLoader.status === Loader.Loading)
-                                    return qsTr("Ładowanie widoku modułu…");
-                                if (viewLoader.status === Loader.Error)
-                                    return qsTr("Nie udało się wczytać widoku modułu");
-                                return "";
+                            text: qsTr("Opis")
+                            color: DesignSystem.Palette.textPrimary
+                            font.pixelSize: DesignSystem.Typography.title
+                            font.bold: true
+                        }
+
+                        TextArea {
+                            Layout.fillWidth: true
+                            Layout.fillHeight: true
+                            text: viewsModel && viewsModel.descriptionForId
+                                      ? viewsModel.descriptionForId(selectedViewId)
+                                      : ""
+                            wrapMode: TextEdit.WordWrap
+                            readOnly: true
+                            color: DesignSystem.Palette.textPrimary
+                            selectionColor: Qt.rgba(0.29, 0.52, 0.8, 0.5)
+                            background: Rectangle {
+                                color: Qt.rgba(0, 0, 0, 0.18)
+                                radius: 8
+                                border.color: DesignSystem.Palette.border
                             }
                         }
-                    }
 
-                    GroupBox {
-                        title: qsTr("Metadane")
-                        Layout.fillWidth: true
-                        visible: metadataModel.count > 0
+                        DesignComponents.Card {
+                            Layout.fillWidth: true
+                            Layout.fillHeight: true
+                            visible: metadataModel.count > 0
+                            padding: 12
+                            background.color: Qt.rgba(0.11, 0.15, 0.22, 0.9)
 
-                        ScrollView {
-                            implicitHeight: Math.min(metadataView.contentHeight, 160)
-                            ListView {
-                                id: metadataView
-                                width: parent.width
-                                model: metadataModel
-                                delegate: RowLayout {
-                                    width: ListView.view ? ListView.view.width : 0
-                                    spacing: 12
+                            ColumnLayout {
+                                anchors.fill: parent
+                                spacing: 12
 
-                                    Label {
-                                        text: model.key
-                                        font.bold: true
-                                        Layout.preferredWidth: 160
-                                        wrapMode: Text.WordWrap
-                                    }
+                                Label {
+                                    text: qsTr("Metadane")
+                                    color: DesignSystem.Palette.textPrimary
+                                    font.pixelSize: DesignSystem.Typography.title
+                                    font.bold: true
+                                }
 
-                                    Label {
-                                        text: model.value
-                                        Layout.fillWidth: true
-                                        wrapMode: Text.WordWrap
+                                ListView {
+                                    Layout.fillWidth: true
+                                    Layout.fillHeight: true
+                                    model: metadataModel
+                                    clip: true
+                                    spacing: 6
+
+                                    delegate: RowLayout {
+                                        width: parent.width
+                                        spacing: 12
+
+                                        Label {
+                                            Layout.preferredWidth: 160
+                                            text: model.key
+                                            color: DesignSystem.Palette.textPrimary
+                                            font.bold: true
+                                        }
+
+                                        TextArea {
+                                            Layout.fillWidth: true
+                                            text: model.value
+                                            readOnly: true
+                                            wrapMode: TextEdit.WordWrap
+                                            color: DesignSystem.Palette.textSecondary
+                                            background: Rectangle {
+                                                color: Qt.rgba(0, 0, 0, 0.15)
+                                                radius: 6
+                                                border.color: DesignSystem.Palette.border
+                                            }
+                                        }
                                     }
                                 }
                             }
                         }
-                    }
-
-                    Label {
-                        Layout.fillWidth: true
-                        visible: metadataModel.count === 0 && selectedViewId.length > 0
-                        text: qsTr("Brak metadanych dla wybranego widoku")
-                        color: Qt.rgba(1, 1, 1, 0.6)
                     }
                 }
             }

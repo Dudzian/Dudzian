@@ -212,6 +212,97 @@ void RuntimeDecisionBridge::updateAlertPreferences(const QVariantMap& preference
     qCWarning(lcRuntimeBridge) << "updateAlertPreferences called without offline bridge";
 }
 
+QVariantMap RuntimeDecisionBridge::saveStrategyPreset(const QVariantMap& preset)
+{
+    if (!m_localService.isNull()) {
+        const QVariantMap response = m_localService->saveStrategyPreset(preset);
+        if (!response.isEmpty())
+            return response;
+        return {
+            {QStringLiteral("ok"), false},
+            {QStringLiteral("error"), tr("Mostek runtime odrzucił zapis presetu")}
+        };
+    }
+    if (!m_offlineBridge.isNull()) {
+        qCWarning(lcRuntimeBridge) << "saveStrategyPreset not supported by offline bridge";
+        return {
+            {QStringLiteral("ok"), false},
+            {QStringLiteral("error"), tr("Mostek offline nie obsługuje zapisu presetów")}
+        };
+    }
+
+    qCWarning(lcRuntimeBridge) << "saveStrategyPreset called without runtime bridge";
+    return {
+        {QStringLiteral("ok"), false},
+        {QStringLiteral("error"), tr("Brak aktywnego mostka runtime")}
+    };
+}
+
+QVariantList RuntimeDecisionBridge::listStrategyPresets()
+{
+    if (!m_localService.isNull())
+        return m_localService->listStrategyPresets();
+    if (!m_offlineBridge.isNull()) {
+        qCWarning(lcRuntimeBridge) << "listStrategyPresets not supported by offline bridge";
+        return {};
+    }
+
+    qCWarning(lcRuntimeBridge) << "listStrategyPresets called without runtime bridge";
+    return {};
+}
+
+QVariantMap RuntimeDecisionBridge::loadStrategyPreset(const QVariantMap& selector)
+{
+    if (!m_localService.isNull()) {
+        const QVariantMap response = m_localService->loadStrategyPreset(selector);
+        if (!response.isEmpty())
+            return response;
+        return {
+            {QStringLiteral("ok"), false},
+            {QStringLiteral("error"), tr("Mostek runtime odrzucił odczyt presetu")}
+        };
+    }
+    if (!m_offlineBridge.isNull()) {
+        qCWarning(lcRuntimeBridge) << "loadStrategyPreset not supported by offline bridge";
+        return {
+            {QStringLiteral("ok"), false},
+            {QStringLiteral("error"), tr("Mostek offline nie obsługuje presetów")}
+        };
+    }
+
+    qCWarning(lcRuntimeBridge) << "loadStrategyPreset called without runtime bridge";
+    return {
+        {QStringLiteral("ok"), false},
+        {QStringLiteral("error"), tr("Brak aktywnego mostka runtime")}
+    };
+}
+
+QVariantMap RuntimeDecisionBridge::deleteStrategyPreset(const QVariantMap& selector)
+{
+    if (!m_localService.isNull()) {
+        const QVariantMap response = m_localService->deleteStrategyPreset(selector);
+        if (!response.isEmpty())
+            return response;
+        return {
+            {QStringLiteral("ok"), false},
+            {QStringLiteral("error"), tr("Mostek runtime odrzucił usunięcie presetu")}
+        };
+    }
+    if (!m_offlineBridge.isNull()) {
+        qCWarning(lcRuntimeBridge) << "deleteStrategyPreset not supported by offline bridge";
+        return {
+            {QStringLiteral("ok"), false},
+            {QStringLiteral("error"), tr("Mostek offline nie obsługuje presetów")}
+        };
+    }
+
+    qCWarning(lcRuntimeBridge) << "deleteStrategyPreset called without runtime bridge";
+    return {
+        {QStringLiteral("ok"), false},
+        {QStringLiteral("error"), tr("Brak aktywnego mostka runtime")}
+    };
+}
+
 QVariantList RuntimeDecisionBridge::readDecisions(int limit, QString* error) const
 {
     if (error)
