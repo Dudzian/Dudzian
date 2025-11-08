@@ -6,12 +6,19 @@ from bot_core.execution.base import ExecutionContext, ExecutionService, PriceRes
 # jak i RouteDefinition (starsza nazwa) z live_router.
 try:
     # nowsza gałąź
-    from bot_core.execution.live_router import LiveExecutionRouter, RoutingPlan  # noqa: F401
+    from bot_core.execution.live_router import (  # noqa: F401
+        LiveExecutionRouter,
+        QoSConfig,
+        RouterRuntimeStats,
+        RoutingPlan,
+    )
     RouteDefinition = RoutingPlan  # alias dla kompatybilności
 except ImportError:
     # starsza gałąź
     from bot_core.execution.live_router import LiveExecutionRouter, RouteDefinition  # type: ignore  # noqa: F401
+    QoSConfig = object  # type: ignore  # noqa: N816 - brak w starszych gałęziach
     RoutingPlan = RouteDefinition  # alias ujednolicający API
+    RouterRuntimeStats = object  # type: ignore
 
 from bot_core.execution.bridge import (  # noqa: F401 - eksport publiczny
     ExchangeAdapterExecutionService,
@@ -37,6 +44,8 @@ __all__ = [
     "LiveExecutionRouter",
     "RoutingPlan",
     "RouteDefinition",
+    "QoSConfig",
+    "RouterRuntimeStats",
     "PaperTradingExecutionService",
     "MarketMetadata",
     "LedgerEntry",

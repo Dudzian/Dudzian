@@ -1489,6 +1489,17 @@ class RuntimeUISettings:
 
 
 @dataclass(slots=True)
+class RuntimeExecutionLiveQoSSettings:
+    """Konfiguracja QoS kolejki LiveExecutionRouter."""
+
+    max_queue_size: int = 1024
+    worker_concurrency: int = 4
+    per_exchange_concurrency: Mapping[str, int] = field(default_factory=dict)
+    priority_metadata_key: str | None = None
+    max_queue_wait_seconds: float | None = None
+
+
+@dataclass(slots=True)
 class RuntimeExecutionLiveSettings:
     """Parametry trybu live wykorzystywane przez lokalny runtime."""
 
@@ -1503,6 +1514,7 @@ class RuntimeExecutionLiveSettings:
     decision_log_rotate_bytes: int = 8 * 1024 * 1024
     decision_log_keep: int = 3
     latency_histogram_buckets: Sequence[float] = field(default_factory=tuple)
+    qos: "RuntimeExecutionLiveQoSSettings | None" = None
 
 
 @dataclass(slots=True)
