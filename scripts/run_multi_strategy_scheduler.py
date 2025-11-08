@@ -21,6 +21,11 @@ from bot_core.runtime.pipeline import (
 from bot_core.security import SecretManager, create_default_secret_storage
 from bot_core.security.guards import LicenseCapabilityError
 from bot_core.security.license import LicenseValidationError
+from scripts.runtime import (
+    RuntimeResourceManager,
+    parse_feed_throttle_specs,
+    parse_strategy_affinity_specs,
+)
 
 
 LOGGER = logging.getLogger(__name__)
@@ -776,6 +781,26 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         action="store_true",
         help="Uruchom scheduler po wykonaniu operacji zarządzania zawieszeniami",
     )
+    parser.add_argument(
+        "--strategy-affinity",
+        dest="strategy_affinity",
+        action="append",
+        metavar="STRATEGY=CORES",
+        help=(
+            "Przypnij wątki/procesy strategii do rdzeni CPU (np. trend=0,1). "
+            "Opcję można powtarzać."
+        ),
+    )
+    parser.add_argument(
+        "--feed-throttle",
+        dest="feed_throttle",
+        action="append",
+        metavar="FEED=RATE[:BURST]",
+        help=(
+            "Ogranicz szybkość feedów danych do RATE zdarzeń na sekundę z opcjonalnym BURST. "
+            "Opcję można powtarzać."
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -805,6 +830,15 @@ def run(argv: Sequence[str] | None = None) -> int:
         return 2
 
     runtime: MultiStrategyRuntime | None = getattr(scheduler, "_runtime", None)
+
+    resource_manager = RuntimeResourceManager()
+    strategy_pins = parse_strategy_affinity_specs(getattr(args, "strategy_affinity", None))
+    feed_policies = parse_feed_throttle_specs(getattr(args, "feed_throttle", None))
+    if runtime is not None:
+        if strategy_pins:
+            resource_manager.pin_strategies(runtime, strategy_pins)
+        if feed_policies:
+            resource_manager.apply_feed_throttling(runtime, feed_policies)
 
     try:
         management_performed = _perform_management_actions(scheduler, args)

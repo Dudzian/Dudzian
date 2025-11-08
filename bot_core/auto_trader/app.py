@@ -14,11 +14,13 @@ structure for compatibility with code that serialises decisions.
 from __future__ import annotations
 
 import asyncio
+import atexit
 import copy
 import enum
 import json
 import logging
 import math
+import os
 import threading
 import time
 import uuid
@@ -31,7 +33,11 @@ from contextlib import contextmanager
 from dataclasses import asdict, is_dataclass
 from typing import Any, Callable, Dict, Mapping, Optional, Protocol, Sequence, cast
 
+from concurrent.futures import ThreadPoolExecutor
+
 import pandas as pd
+
+from core.perf import ProfileReport, profile_block
 
 from bot_core.alerts.base import AlertMessage, AlertRouter
 from bot_core.auto_trader.audit import DecisionAuditLog
@@ -76,6 +82,72 @@ from bot_core.runtime.journal import (
 
 
 LOGGER = logging.getLogger(__name__)
+
+
+_PERFORMANCE_EXECUTOR: ThreadPoolExecutor | None = None
+_PERFORMANCE_EXECUTOR_LOCK = threading.Lock()
+
+
+def _get_performance_executor() -> ThreadPoolExecutor:
+    global _PERFORMANCE_EXECUTOR  # pylint: disable=global-statement
+    with _PERFORMANCE_EXECUTOR_LOCK:
+        if _PERFORMANCE_EXECUTOR is None:
+            max_workers = max(1, min((os.cpu_count() or 2), 8))
+            _PERFORMANCE_EXECUTOR = ThreadPoolExecutor(
+                max_workers=max_workers,
+                thread_name_prefix="AutoTraderPerf",
+            )
+        return _PERFORMANCE_EXECUTOR
+
+
+def _shutdown_performance_executor() -> None:
+    global _PERFORMANCE_EXECUTOR  # pylint: disable=global-statement
+    with _PERFORMANCE_EXECUTOR_LOCK:
+        if _PERFORMANCE_EXECUTOR is not None:
+            try:
+                _PERFORMANCE_EXECUTOR.shutdown(wait=False, cancel_futures=True)
+            except TypeError:  # pragma: no cover - Python < 3.9 compatibility
+                _PERFORMANCE_EXECUTOR.shutdown(wait=False)
+            _PERFORMANCE_EXECUTOR = None
+
+
+atexit.register(_shutdown_performance_executor)
+
+
+def _compute_decision_statistics(
+    journal: TradingDecisionJournal,
+    *,
+    start: datetime | None,
+    end: datetime | None,
+) -> dict[str, Any]:
+    try:
+        if start is not None or end is not None:
+            payload = aggregate_decision_statistics(journal, start=start, end=end)
+        else:
+            payload = aggregate_decision_statistics(journal)
+    except Exception:  # pragma: no cover - defensive guard for background thread
+        LOGGER.debug("aggregate_decision_statistics failed", exc_info=True)
+        return {}
+    if isinstance(payload, Mapping):
+        return dict(payload)
+    return {}
+
+
+def _compute_equity_summary(
+    history: Sequence[Mapping[str, Any]] | None,
+    *,
+    tz: tzinfo | None,
+    now: datetime,
+    base_equity: float,
+    window_hours: float | None,
+) -> tuple[list[dict[str, Any]], dict[str, Any], dict[str, Any]]:
+    return build_cycle_equity_summary(
+        history,
+        tz=tz,
+        now=now,
+        base_equity=base_equity,
+        window_hours=window_hours,
+    )
 
 
 _NO_FILTER = object()
@@ -251,6 +323,84 @@ class AutoTrader:
             cls._ALIAS_RESOLVER = resolver
         return resolver
 
+    def _profile_section(self, name: str):
+        return profile_block(
+            f"auto_trader.{name}",
+            enabled=self._profiling_enabled,
+            limit=self._profiling_top_stats,
+        )
+
+    def _store_profile(self, session: ProfileReport | None) -> None:
+        if session is None:
+            return
+        bucket = self._profiling_reports.setdefault(session.name, [])
+        bucket.append(session)
+
+    def get_profile_reports(self) -> Mapping[str, tuple[ProfileReport, ...]]:
+        """Return collected profiling reports for the current instance."""
+
+        return {
+            name: tuple(reports)
+            for name, reports in self._profiling_reports.items()
+        }
+
+    def summarize_hotspots(self, limit: int = 10) -> list[dict[str, object]]:
+        """Aggregate CPU hot spot statistics across collected profile reports.
+
+        The helper consolidates structured stats captured by ``ProfileReport``
+        instances and returns the most expensive call sites sorted by
+        cumulative time.  It is intended for lightweight inspection in tests
+        and diagnostic tooling.
+        """
+
+        try:
+            limit_value = max(1, int(limit))
+        except (TypeError, ValueError):  # pragma: no cover - defensive guard
+            limit_value = 10
+        aggregated: dict[str, dict[str, object]] = {}
+        for report_list in self._profiling_reports.values():
+            for report in report_list:
+                top_entries = getattr(report, "cpu_top", None)
+                if not top_entries:
+                    continue
+                for entry in top_entries:
+                    function = entry.get("function")
+                    if not function:
+                        continue
+                    bucket = aggregated.setdefault(
+                        function,
+                        {
+                            "function": function,
+                            "primitive_calls": 0,
+                            "total_calls": 0,
+                            "total_time": 0.0,
+                            "cumulative_time": 0.0,
+                        },
+                    )
+                    bucket["primitive_calls"] = bucket.get("primitive_calls", 0) + int(
+                        entry.get("primitive_calls", 0)
+                    )
+                    bucket["total_calls"] = bucket.get("total_calls", 0) + int(
+                        entry.get("total_calls", 0)
+                    )
+                    bucket["total_time"] = bucket.get("total_time", 0.0) + float(
+                        entry.get("total_time", 0.0)
+                    )
+                    bucket["cumulative_time"] = bucket.get("cumulative_time", 0.0) + float(
+                        entry.get("cumulative_time", 0.0)
+                    )
+
+        ranked = sorted(
+            aggregated.values(),
+            key=lambda item: (item.get("cumulative_time", 0.0), item.get("total_time", 0.0)),
+            reverse=True,
+        )
+        for bucket in ranked:
+            total_calls = int(bucket.get("total_calls", 0)) or 1
+            bucket["avg_total_time"] = bucket.get("total_time", 0.0) / total_calls
+            bucket["avg_cumulative_time"] = bucket.get("cumulative_time", 0.0) / total_calls
+        return ranked[:limit_value]
+
     def __init__(
         self,
         emitter: EmitterLike,
@@ -292,6 +442,8 @@ class AutoTrader:
         strategy_catalog: StrategyCatalog | None = None,
         strategy_alias_map: Mapping[str, str] | None = None,
         strategy_alias_suffixes: Iterable[str] | None = None,
+        enable_profiling: bool = False,
+        profiling_top_stats: int = 25,
     ) -> None:
         self.emitter = emitter
         self.gui = gui
@@ -321,6 +473,13 @@ class AutoTrader:
 
         self.enable_auto_trade = bool(enable_auto_trade)
         self.auto_trade_interval_s = float(auto_trade_interval_s)
+
+        profiling_env = str(os.getenv("AUTO_TRADER_PROFILING", "")).strip().lower()
+        self._profiling_enabled = bool(
+            enable_profiling or profiling_env in {"1", "true", "yes"}
+        )
+        self._profiling_top_stats = max(1, int(profiling_top_stats))
+        self._profiling_reports: dict[str, list[ProfileReport]] = {}
 
         self.signal_service = signal_service
         self._ai_feature_column_names: tuple[str, ...] | None = None
@@ -4514,7 +4673,13 @@ class AutoTrader:
             return None
         snapshot = self._build_risk_snapshot(candidate.risk_profile)
         try:
-            evaluation = orchestrator.evaluate_candidate(candidate, snapshot)
+            if self._profiling_enabled:
+                with self._profile_section("decision.evaluate") as profiler:
+                    evaluation = orchestrator.evaluate_candidate(candidate, snapshot)
+                if profiler is not None:
+                    self._store_profile(profiler.report)
+            else:
+                evaluation = orchestrator.evaluate_candidate(candidate, snapshot)
         except Exception as exc:  # pragma: no cover - defensywne logowanie
             self._log(
                 f"DecisionOrchestrator evaluation failed: {exc!r}",
@@ -6459,7 +6624,10 @@ class AutoTrader:
         DecisionOrchestrator integration – is exercised deterministically.
         """
 
-        self._auto_trade_loop()
+        with self._profile_section("cycle") as profiler:
+            self._auto_trade_loop()
+        if profiler is not None:
+            self._store_profile(profiler.report)
 
     def _resolve_risk_service(self) -> Any | None:
         risk_service = getattr(self, "risk_service", None)
@@ -6469,10 +6637,18 @@ class AutoTrader:
 
     def _invoke_risk_service(self, service: Any, decision: "RiskDecision") -> Any:
         if hasattr(service, "evaluate_decision"):
-            return service.evaluate_decision(decision)
-        if callable(service):  # pragma: no branch - simple delegation
-            return service(decision)
-        raise TypeError("Configured risk service is not callable")
+            evaluator = service.evaluate_decision
+        elif callable(service):  # pragma: no branch - simple delegation
+            evaluator = service
+        else:
+            raise TypeError("Configured risk service is not callable")
+        if self._profiling_enabled:
+            with self._profile_section("risk.evaluate") as profiler:
+                result = evaluator(decision)
+            if profiler is not None:
+                self._store_profile(profiler.report)
+            return result
+        return evaluator(decision)
 
     def _apply_risk_evaluation_limit_locked(
         self, limit: int | None
@@ -12202,23 +12378,29 @@ class AutoTrader:
         performance_summary: dict[str, Any] = {}
         performance_window: dict[str, Any] = {}
         journal = getattr(self, "_decision_journal", None)
+        now_utc = datetime.now(timezone.utc)
+        window_start = now_utc - timedelta(hours=24)
         if journal is not None:
-            try:
-                performance_summary = dict(aggregate_decision_statistics(journal))
-            except Exception:
-                LOGGER.debug("aggregate_decision_statistics failed", exc_info=True)
-            now_utc = datetime.now(timezone.utc)
-            window_start = now_utc - timedelta(hours=24)
-            try:
-                window_payload = aggregate_decision_statistics(
+            executor = _get_performance_executor()
+            futures = {
+                "summary": executor.submit(
+                    _compute_decision_statistics,
+                    journal,
+                    start=None,
+                    end=None,
+                ),
+                "window": executor.submit(
+                    _compute_decision_statistics,
                     journal,
                     start=window_start,
                     end=now_utc,
-                )
-            except Exception:
-                LOGGER.debug("aggregate_decision_statistics window failed", exc_info=True)
-                window_payload = {}
-            if isinstance(window_payload, Mapping):
+                ),
+            }
+            summary_payload = futures["summary"].result()
+            if summary_payload:
+                performance_summary = dict(summary_payload)
+            window_payload = futures["window"].result()
+            if window_payload:
                 performance_window = dict(window_payload)
                 performance_window.setdefault(
                     "window",
@@ -12298,13 +12480,28 @@ class AutoTrader:
             )
             if history:
                 now_reference = datetime.now(tz or timezone.utc)
-                points, derived_metrics, derived_window = build_cycle_equity_summary(
-                    history,
-                    tz=tz,
-                    now=now_reference,
-                    base_equity=100_000.0,
-                    window_hours=24.0,
-                )
+                if self._profiling_enabled:
+                    with self._profile_section("performance.equity") as profiler:
+                        points, derived_metrics, derived_window = _compute_equity_summary(
+                            history,
+                            tz=tz,
+                            now=now_reference,
+                            base_equity=100_000.0,
+                            window_hours=24.0,
+                        )
+                    if profiler is not None:
+                        self._store_profile(profiler.report)
+                else:
+                    executor = _get_performance_executor()
+                    future = executor.submit(
+                        _compute_equity_summary,
+                        history,
+                        tz=tz,
+                        now=now_reference,
+                        base_equity=100_000.0,
+                        window_hours=24.0,
+                    )
+                    points, derived_metrics, derived_window = future.result()
                 if points:
                     result["equity_curve"] = points
                 if derived_metrics:
