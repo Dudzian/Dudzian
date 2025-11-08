@@ -79,13 +79,21 @@ def test_router_uses_fallback_on_network_error() -> None:
         metrics_registry=metrics,
     )
 
-    result = router.execute(_request(), _context())
+    try:
+        result = router.execute(_request(), _context())
 
-    assert result.order_id.startswith("secondary")
-    assert primary.executed == []
-    assert len(secondary.executed) == 1
-    fallback_counter = metrics.get("live_router_fallbacks_total")
-    assert fallback_counter.value(labels={"exchange": "secondary", "symbol": "BTCUSDT", "portfolio": "P1"}) == 1.0
+        assert result.order_id.startswith("secondary")
+        assert primary.executed == []
+        assert len(secondary.executed) == 1
+        fallback_counter = metrics.get("live_router_fallbacks_total")
+        assert (
+            fallback_counter.value(
+                labels={"exchange": "secondary", "symbol": "BTCUSDT", "portfolio": "P1"}
+            )
+            == 1.0
+        )
+    finally:
+        router.close()
 
 
 def test_router_records_failure_metric_when_all_exchanges_fail() -> None:
@@ -94,23 +102,33 @@ def test_router_records_failure_metric_when_all_exchanges_fail() -> None:
         "secondary": _DummyAdapter("secondary", should_fail=True),
     }
     metrics = MetricsRegistry()
-    router = LiveExecutionRouter(adapters=adapters, default_route=("primary", "secondary"), metrics_registry=metrics)
+    router = LiveExecutionRouter(
+        adapters=adapters,
+        default_route=("primary", "secondary"),
+        metrics_registry=metrics,
+    )
 
-    with pytest.raises(ExchangeNetworkError):
-        router.execute(_request(), _context())
+    try:
+        with pytest.raises(ExchangeNetworkError):
+            router.execute(_request(), _context())
 
-    failures = metrics.get("live_router_failures_total")
-    assert failures.value(labels={"symbol": "BTCUSDT", "portfolio": "P1"}) == 1.0
+        failures = metrics.get("live_router_failures_total")
+        assert failures.value(labels={"symbol": "BTCUSDT", "portfolio": "P1"}) == 1.0
+    finally:
+        router.close()
 
 
 def test_router_cancel_delegates_to_origin_adapter() -> None:
     primary = _DummyAdapter("primary", should_fail=False)
     router = LiveExecutionRouter(adapters={"primary": primary}, default_route=("primary",))
 
-    result = router.execute(_request(), _context())
-    router.cancel(result.order_id, _context())
+    try:
+        result = router.execute(_request(), _context())
+        router.cancel(result.order_id, _context())
 
-    assert primary.cancelled == [result.order_id]
+        assert primary.cancelled == [result.order_id]
+    finally:
+        router.close()
 
 
 def test_router_uses_overrides_when_available() -> None:
@@ -124,5 +142,8 @@ def test_router_uses_overrides_when_available() -> None:
         route_overrides={"ETHUSDT": ("b",)},
     )
 
-    result = router.execute(_request(symbol="ETHUSDT"), _context())
-    assert result.order_id.startswith("b")
+    try:
+        result = router.execute(_request(symbol="ETHUSDT"), _context())
+        assert result.order_id.startswith("b")
+    finally:
+        router.close()

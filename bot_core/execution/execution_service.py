@@ -1,14 +1,17 @@
 """Narzędzia do wyboru i budowy usług egzekucji na potrzeby runtime."""
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 from typing import Any, Mapping, MutableMapping
 
 from bot_core.config.models import RuntimeExecutionLiveSettings, RuntimeExecutionSettings
-from bot_core.execution.base import ExecutionService
-from bot_core.execution.live_router import LiveExecutionRouter
-from bot_core.exchanges.base import Environment as ExchangeEnvironment, ExchangeAdapter
+from bot_core.execution.base import ExecutionContext, ExecutionService
+from bot_core.execution.live_router import LiveExecutionRouter, QoSConfig
+from bot_core.exchanges.base import Environment as ExchangeEnvironment, ExchangeAdapter, OrderRequest
+
+_LOGGER = logging.getLogger(__name__)
 
 def resolve_execution_mode(
     settings: RuntimeExecutionSettings | None,
@@ -169,6 +172,47 @@ def build_live_execution_service(
     metrics_registry = getattr(bootstrap_ctx, "metrics_registry", None)
     if metrics_registry is not None:
         router_kwargs["metrics_registry"] = metrics_registry
+
+    qos_cfg = getattr(live_cfg, "qos", None)
+    if qos_cfg is not None:
+        per_exchange = {str(name): int(value) for name, value in qos_cfg.per_exchange_concurrency.items()}
+
+        priority_key = qos_cfg.priority_metadata_key
+
+        def _priority_resolver(request: OrderRequest, context: ExecutionContext) -> int:
+            if priority_key:
+                metadata_value = None
+                if context.metadata:
+                    metadata_value = context.metadata.get(priority_key)
+                if metadata_value is None and getattr(request, "metadata", None):
+                    metadata_value = request.metadata.get(priority_key)  # type: ignore[attr-defined]
+                if metadata_value is not None:
+                    try:
+                        return int(metadata_value)
+                    except (TypeError, ValueError):
+                        _LOGGER.debug(
+                            "Nie udało się sparsować priorytetu kolejki %s=%s",
+                            priority_key,
+                            metadata_value,
+                            exc_info=True,
+                        )
+            return 0
+
+        router_kwargs["qos"] = QoSConfig(
+            max_queue_size=int(qos_cfg.max_queue_size),
+            worker_concurrency=int(qos_cfg.worker_concurrency),
+            per_exchange_concurrency=per_exchange,
+            priority_resolver=_priority_resolver if priority_key else None,
+            max_queue_wait_seconds=(
+                float(qos_cfg.max_queue_wait_seconds)
+                if qos_cfg.max_queue_wait_seconds is not None
+                else None
+            ),
+        )
+
+    io_dispatcher = getattr(bootstrap_ctx, "io_dispatcher", None)
+    if io_dispatcher is not None:
+        router_kwargs["io_dispatcher"] = io_dispatcher
 
     return LiveExecutionRouter(**router_kwargs)
 
