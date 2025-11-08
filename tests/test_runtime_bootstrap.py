@@ -512,6 +512,10 @@ def _prepare_manager() -> tuple[_MemorySecretStorage, SecretManager]:
     storage.set_secret("tests:zonda_paper_key:trading", json.dumps(credentials_payload))
     storage.set_secret("tests:nowa_gielda_paper_key:trading", json.dumps(credentials_payload))
     storage.set_secret("tests:coinbase_offline_key:trading", json.dumps(credentials_payload))
+    storage.set_secret("tests:loopback_paper_key:trading", json.dumps(credentials_payload))
+    testnet_payload = dict(credentials_payload)
+    testnet_payload["environment"] = Environment.TESTNET.value
+    storage.set_secret("tests:loopback_testnet_key:trading", json.dumps(testnet_payload))
     manager.store_secret_value("telegram_token", "telegram-secret", purpose="alerts:telegram")
     manager.store_secret_value(
         "smtp_credentials",

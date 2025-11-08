@@ -95,6 +95,22 @@ jobs:
           name: bot-core-pytest-results
           path: test-results/pytest.xml
 
+  loopback-e2e:
+    name: Loopback E2E
+    runs-on: ubuntu-latest
+    needs: bot-core-fast-tests
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Run loopback tests via Docker Compose
+        run: docker compose -f deploy/compose/loopback-tests.yml up --abort-on-container-exit
+
+      - name: Tear down compose
+        if: always()
+        run: docker compose -f deploy/compose/loopback-tests.yml down -v
+
   coverage-monitoring:
     name: Coverage Monitoring Smoke
     runs-on: ubuntu-latest

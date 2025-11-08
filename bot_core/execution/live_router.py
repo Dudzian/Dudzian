@@ -318,6 +318,15 @@ class LiveExecutionRouter(ExecutionService):
             "live_router_failures_total",
             "Liczba zleceń zakończonych niepowodzeniem (metryka kompatybilności).",
         )
+        self._m_fill_ratio = self._metrics.histogram(
+            "live_orders_fill_ratio",
+            "Rozkład wypełnienia zleceń live (0-1).",
+            buckets=(0.25, 0.5, 0.75, 1.0),
+        )
+        self._m_errors = self._metrics.counter(
+            "live_orders_errors_total",
+            "Liczba błędów podczas obsługi zleceń live.",
+        )
         self._g_breaker_open = getattr(self._metrics, "gauge", self._metrics.counter)(
             "live_breaker_open", "Stan breakerów (1=open, 0=closed)."
         )
@@ -374,6 +383,7 @@ class LiveExecutionRouter(ExecutionService):
         fallback_used = False
         start = self._time()
         last_error: Exception | None = None
+        route_label = route_name or "default"
 
         for exchange_name, max_retries in exchanges_and_retries:
             breaker_now = self._time()
@@ -403,6 +413,7 @@ class LiveExecutionRouter(ExecutionService):
                     "exchange": exchange_name,
                     "symbol": request.symbol,
                     "portfolio": context.portfolio_id,
+                    "route": route_label,
                 }
                 attempts_counter += 1
                 try:
@@ -412,6 +423,7 @@ class LiveExecutionRouter(ExecutionService):
                     elapsed = max(0.0, current_time - start)
                     self._m_latency.observe(elapsed, labels={**labels, "result": "error"})
                     self._m_attempts.inc(labels={**labels, "result": "error"})
+                    self._m_errors.inc(labels=labels)
                     attempts_rec.append(
                         {"exchange": exchange_name, "attempt": str(attempt), "status": "error", "error": repr(exc)}
                     )
@@ -432,6 +444,7 @@ class LiveExecutionRouter(ExecutionService):
                     raise
                 except ExchangeAPIError as exc:
                     self._m_attempts.inc(labels={**labels, "result": "api_error"})
+                    self._m_errors.inc(labels=labels)
                     attempts_rec.append({"exchange": exchange_name, "attempt": str(attempt), "status": "api_error"})
                     last_error = exc
                     if breaker:
@@ -449,6 +462,7 @@ class LiveExecutionRouter(ExecutionService):
                     elapsed = max(0.0, current_time - start)
                     self._m_latency.observe(elapsed, labels={**labels, "result": "exception"})
                     self._m_attempts.inc(labels={**labels, "result": "exception"})
+                    self._m_errors.inc(labels=labels)
                     attempts_rec.append(
                         {"exchange": exchange_name, "attempt": str(attempt), "status": "exception", "error": repr(exc)}
                     )
@@ -465,25 +479,26 @@ class LiveExecutionRouter(ExecutionService):
                 elapsed = max(0.0, current_time - start)
                 self._m_latency.observe(elapsed, labels={**labels, "result": "success"})
                 self._m_attempts.inc(labels={**labels, "result": "success"})
-                self._m_success.inc(labels={"symbol": request.symbol, "portfolio": context.portfolio_id})
-                self._m_orders_total.inc(
-                    labels={
-                        "exchange": exchange_name,
-                        "route": route_name or "default",
-                    }
-                )
+                common_labels = {
+                    "exchange": exchange_name,
+                    "symbol": request.symbol,
+                    "portfolio": context.portfolio_id,
+                    "route": route_label,
+                }
+                self._m_success.inc(labels=common_labels)
+                self._m_orders_total.inc(labels=common_labels)
+                filled_qty = float(result.filled_quantity or 0.0)
+                requested_qty = float(request.quantity or 0.0)
+                ratio = 0.0
+                if requested_qty > 0:
+                    ratio = max(0.0, min(1.0, filled_qty / requested_qty))
+                self._m_fill_ratio.observe(ratio, labels=common_labels)
                 if breaker:
                     breaker.record_success()
                     self._set_breaker_metric(exchange_name, open_=False)
                 if attempts_counter > 1:
-                    self._m_fallbacks.inc(labels={"route": route_name or "default"})
-                    self._m_router_fallbacks.inc(
-                        labels={
-                            "exchange": exchange_name,
-                            "symbol": request.symbol,
-                            "portfolio": context.portfolio_id,
-                        }
-                    )
+                    self._m_fallbacks.inc(labels=common_labels)
+                    self._m_router_fallbacks.inc(labels=common_labels)
                     fallback_used = True
 
                 self._remember_binding(result.order_id, exchange_name)
@@ -503,9 +518,32 @@ class LiveExecutionRouter(ExecutionService):
         # brak sukcesu
         elapsed = max(0.0, self._time() - start)
         attempts_rec.append({"status": "failed", "latency_s": f"{elapsed:.6f}"})
-        self._m_failures.inc(labels={"route": route_name or "default"})
-        self._m_router_failures.inc(
-            labels={"symbol": request.symbol, "portfolio": context.portfolio_id}
+        failure_exchange = None
+        for attempt in reversed(attempts_rec):
+            exchange = attempt.get("exchange")
+            if exchange:
+                failure_exchange = str(exchange)
+                break
+        if failure_exchange is None and exchanges_and_retries:
+            failure_exchange = str(exchanges_and_retries[0][0])
+
+        failure_labels = {
+            "route": route_label,
+            "symbol": request.symbol,
+            "portfolio": context.portfolio_id,
+        }
+        if failure_exchange is not None:
+            failure_labels["exchange"] = failure_exchange
+
+        self._m_failures.inc(labels=failure_labels)
+        self._m_router_failures.inc(labels=failure_labels)
+        self._m_errors.inc(
+            labels={
+                "exchange": exchanges_and_retries[0][0] if exchanges_and_retries else "unknown",
+                "symbol": request.symbol,
+                "portfolio": context.portfolio_id,
+                "route": route_label,
+            }
         )
         self._maybe_write_decision_log(
             route_name=(route_name or "default"),
