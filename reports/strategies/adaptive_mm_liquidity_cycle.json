@@ -1,0 +1,40 @@
+{
+  "scenario": {
+    "name": "adaptive_mm_liquidity_cycle",
+    "engine": "adaptive_market_making",
+    "parameters": {
+      "base_spread_bps": 9.5,
+      "volatility_sensitivity": 1.4,
+      "inventory_skew_strength": 0.55,
+      "max_inventory": 8.0,
+      "cooldown_fraction": 0.2
+    },
+    "notes": [
+      "Backtest: Binance BTC/USDT, 2024-01-01 .. 2024-03-31",
+      "Symulacja obejmuje dynamiczny feed zmienności 1h"
+    ],
+    "source_path": "data/simulations/strategy_quality_sandbox.yaml"
+  },
+  "passed": true,
+  "findings": {
+    "calibration_metrics": {
+      "sharpe": 1.46,
+      "max_drawdown": 0.09,
+      "hit_ratio": 0.58,
+      "avg_daily_pnl": 0.72
+    },
+    "acceptance_criteria": {
+      "sharpe": {
+        "min": 1.2
+      },
+      "max_drawdown": {
+        "max": 0.12
+      },
+      "hit_ratio": {
+        "min": 0.55
+      }
+    },
+    "status": "accepted",
+    "scenario_name": "adaptive_mm_liquidity_cycle"
+  }
+}

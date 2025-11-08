@@ -1,0 +1,39 @@
+{
+  "scenario": {
+    "name": "triangular_arbitrage_multi_venue",
+    "engine": "triangular_arbitrage",
+    "parameters": {
+      "min_edge_bps": 4.2,
+      "max_leg_latency_ms": 220,
+      "cooldown_ms": 2500,
+      "notional_cap": 30000.0
+    },
+    "notes": [
+      "Triangulacja na Binance/Kraken/OKX",
+      "Oczekiwane użycie stablecoinów USDT/BUSD/EUR"
+    ],
+    "source_path": "data/simulations/strategy_quality_sandbox.yaml"
+  },
+  "passed": true,
+  "findings": {
+    "calibration_metrics": {
+      "sharpe": 1.81,
+      "edge_capture": 0.68,
+      "max_leg_latency_ms": 205,
+      "avg_daily_trades": 42
+    },
+    "acceptance_criteria": {
+      "sharpe": {
+        "min": 1.4
+      },
+      "edge_capture": {
+        "min": 0.6
+      },
+      "max_leg_latency_ms": {
+        "max": 230
+      }
+    },
+    "status": "accepted",
+    "scenario_name": "triangular_arbitrage_multi_venue"
+  }
+}
