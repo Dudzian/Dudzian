@@ -2,7 +2,7 @@
 
 ## Przegląd systemu
 
-`bot_core` to modularna platforma do budowania i uruchamiania strategii krypto zgodna z etapem "foundation" opisanym w `docs/architecture/phase1_foundation.md`. Cały pipeline operacyjny działa **obowiązkowo w trybie demo/paper** do momentu przejścia pełnego cyklu bezpieczeństwa i zgodności. Dopiero po pozytywnym audycie kodu, potwierdzeniu kontroli ryzyka i podpisaniu akceptacji przez compliance możliwe jest przejście do środowiska LIVE.  Legacy pakiet `KryptoLowca` został usunięty – wszystkie moduły i integracje korzystają z przestrzeni nazw `bot_core.*` (np. `bot_core.ai.legacy_models`).
+`bot_core` to modularna platforma do budowania i uruchamiania strategii krypto zgodna z etapem "foundation" opisanym w `docs/architecture/phase1_foundation.md`. Cały pipeline operacyjny działa **obowiązkowo w trybie demo/paper** do momentu przejścia pełnego cyklu bezpieczeństwa i zgodności. Dopiero po pozytywnym audycie kodu, potwierdzeniu kontroli ryzyka i podpisaniu akceptacji przez compliance możliwe jest przejście do środowiska LIVE.  Legacy pakiet `KryptoLowca` został usunięty – wszystkie moduły i integracje korzystają z przestrzeni nazw `bot_core.*` (np. `bot_core.ai.models`).
 
 Przepływ danych przebiega następująco:
 

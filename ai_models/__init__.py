@@ -12,7 +12,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Final
 
-from bot_core.ai.models import AIModels as _AIModels
+from bot_core.ai.models import AIModels as _BuiltinAIModels
 
 __all__ = ["AIModels", "OEM_MODEL_REPOSITORY"]
 
@@ -32,6 +32,7 @@ def _detect_packaged_repository() -> Path | None:
 OEM_MODEL_REPOSITORY: Final[Path | None] = _detect_packaged_repository()
 
 
-AIModels = _AIModels
+class AIModels(_BuiltinAIModels):
+    """Alias zachowujący kompatybilność ze starszym API importującym ``ai_models``."""
 
 

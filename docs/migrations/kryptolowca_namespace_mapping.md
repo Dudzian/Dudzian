@@ -20,3 +20,8 @@ skrypty lub środowiska testowe zależne od dawnych ścieżek.
 Jeśli brakuje tu modułu, który był używany w starszym środowisku,
 zgłoś to w wątku `#migration-support` – sukcesywnie będziemy uzupełniać
 tabelę, aby uniknąć powrotu do usuniętego pakietu `KryptoLowca`.
+
+> **Status archiwum:** Katalog `archive/legacy_bot` został trwale usunięty.
+> Repozytorium nie zawiera już shimów przekierowujących do `bot_core`, dlatego
+> wszelkie integracje muszą importować nowe moduły bezpośrednio z przestrzeni
+> `bot_core.*`.

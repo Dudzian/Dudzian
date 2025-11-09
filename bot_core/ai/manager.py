@@ -715,8 +715,14 @@ def _validate_packaged_model_repository(base_path: Path) -> None:
     logger.debug("Packaged OEM model repository at %s validated successfully", base_path)
 
 if not _attempt_load_ai_models_module("ai_models"):
-    _DefaultAIModels = AIModels
-    _FALLBACK_ACTIVE = True
+    try:  # lokalna implementacja modeli AI
+        from bot_core.ai.models import AIModels as _DefaultAIModels  # type: ignore
+    except Exception as exc:  # pragma: no cover - środowiska minimalne
+        _import_failures.append(exc)
+        _DefaultAIModels = _build_fallback_ai_models()
+        _FALLBACK_ACTIVE = True
+    else:
+        _FALLBACK_ACTIVE = False
 else:
     _FALLBACK_ACTIVE = False
 
@@ -2704,12 +2710,15 @@ class AIManager:
                     del self._ensembles[name]
 
         for name, definition in desired.items():
+            regime_weights = definition.regime_weights
+            if not regime_weights or definition.aggregation != "weighted":
+                regime_weights = None
             self.register_ensemble(
                 name,
                 definition.components,
                 aggregation=definition.aggregation,
                 weights=definition.weights,
-                regime_weights=definition.regime_weights,
+                regime_weights=regime_weights,
                 meta_weight_floor=definition.meta_weight_floor,
                 override=True,
             )

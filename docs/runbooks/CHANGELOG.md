@@ -1,5 +1,11 @@
 # Changelog runbooków operacyjnych
 
+## 2025-10-25 – Usunięcie archiwalnego pakietu legacy
+- **Zakres**: `archive/` (czyszczenie), dokumentacja migracyjna oraz README.
+- **Zmiana**: skasowano katalog `archive/legacy_bot` i zaktualizowano materiały, aby jasno wskazywały brak shimów legacy.
+- **Działanie dla zespołów**: wszystkie odwołania do dawnych namespace'ów muszą korzystać z `bot_core.*`; repozytorium nie
+  zawiera już kopii modułów `KryptoLowca` nawet w trybie archiwalnym.
+
 ## 2025-10-23 – Aktualizacja komendy Paper Labs
 - **Zakres**: `docs/runbooks/PAPER_LABS_CHECKLIST.md`
 - **Zmiana**: doprecyzowano wywołanie `python scripts/run_risk_simulation_lab.py` wraz z obowiązkowymi flagami `--config config/core.yaml` i `--output-dir reports/paper_labs`.

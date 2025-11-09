@@ -29,6 +29,7 @@ Szczegółowe instrukcje znajdują się w dokumentacji:
 - Nowe wersje dystrybuujemy w formie podpisanych instalatorów. Procedura: [docs/deployment/oem_installation.md](docs/deployment/oem_installation.md).
 - Zanim zainstalujesz aktualizację, wykonaj kopię `config/`, `secrets/` i `var/`.
 - Komponenty runtime, dokumentacja i runbooki korzystają wyłącznie z przestrzeni `bot_core.*`; legacy pakiet `KryptoLowca` został usunięty. Mapowanie najczęściej używanych modułów znajdziesz w [docs/migrations/kryptolowca_namespace_mapping.md](docs/migrations/kryptolowca_namespace_mapping.md).
+- Katalog `archive/legacy_bot` został zlikwidowany – w repozytorium nie ma już shimów ani kodu wykonywalnego z poprzedniej warstwy.
 
 ## Kontrybucje
 Zobacz [CONTRIBUTING.md](CONTRIBUTING.md) w celu poznania zasad współpracy. Przed zgłoszeniem zmian uruchom testy jednostkowe i integracyjne.
