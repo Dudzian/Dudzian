@@ -3,7 +3,8 @@
 Ten moduł wprowadza obsługę licencji offline podpisanych kluczem Ed25519. Pakiet
 licencyjny (`.lic`) zawiera dwa pola: `payload_b64` oraz `signature_b64`. Po
 zdekodowaniu i weryfikacji podpisu generowane są *capabilities* opisujące dostępne
-funkcje, limity i moduły w ramach aplikacji bot_core oraz launcherów KryptoŁowca.
+funkcje, limity i moduły w ramach aplikacji bot_core oraz towarzyszących launcherów
+CLI.
 
 ## Kluczowe komponenty
 
@@ -63,8 +64,8 @@ licencji, zgodnie z wymaganiami OEM.
 
 ## Launcher AutoTrader (headless)
 
-`bot_core.auto_trader.app` stanowi kanoniczny runtime, a shim
-`KryptoLowca.auto_trader.paper.PaperAutoTradeApp` ładuje `LicenseCapabilities`
+`bot_core.auto_trader.app` stanowi kanoniczny runtime, a
+`bot_core.auto_trader.paper_app.PaperAutoTradeApp` ładuje `LicenseCapabilities`
 przy uruchomieniu. Strażnik licencji blokuje start, gdy brakuje modułu
 `auto_trader`, odpowiedniego środowiska (`paper/demo` lub `live`) albo
 przekroczono limity instancji. Wymagane zachowania:
@@ -76,11 +77,11 @@ przekroczono limity instancji. Wymagane zachowania:
   oraz `bot`; przekroczenie limitów skutkuje `LicenseCapabilityError` i alertem
   `license_restriction`.
 
-CLI (`python -m KryptoLowca.auto_trader`) kończy działanie kodem wyjścia różnym od
-zera przy naruszeniu restrykcji, a logi zawierają komunikat o blokadzie
-licencyjnej. Wywołanie deleguje do runtime `bot_core.auto_trader.app`, dlatego
-scenariusze licencyjne należy testować również na importerach korzystających
-bezpośrednio z pakietu `bot_core`.
+Launcher CLI (wykorzystujący `PaperAutoTradeApp.main()`) kończy działanie kodem
+wyjścia różnym od zera przy naruszeniu restrykcji, a logi zawierają komunikat o
+blokadzie licencyjnej. Wywołanie deleguje do runtime `bot_core.auto_trader.app`,
+dlatego scenariusze licencyjne należy testować również na importerach
+korzystających bezpośrednio z pakietu `bot_core`.
 
 ## Generator licencji
 
