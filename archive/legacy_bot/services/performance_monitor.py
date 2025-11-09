@@ -3,4 +3,4 @@ from __future__ import annotations
 
 from archive.legacy_bot._compat import proxy_globals
 
-proxy_globals(globals(), "KryptoLowca.services.performance_monitor", "services/performance_monitor.py")
+proxy_globals(globals(), "bot_core.services.performance_monitor", "services/performance_monitor.py")
