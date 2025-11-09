@@ -3,4 +3,4 @@ from __future__ import annotations
 
 from archive.legacy_bot._compat import proxy_globals
 
-proxy_globals(globals(), "KryptoLowca.services.stop_tp", "services/stop_tp.py")
+proxy_globals(globals(), "bot_core.services.stop_tp", "services/stop_tp.py")

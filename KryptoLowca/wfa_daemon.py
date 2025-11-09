@@ -37,7 +37,7 @@ if __package__ in {None, ""}:
         )
 
 from KryptoLowca.event_emitter_adapter import Event, EventBus, EventType
-from KryptoLowca.services.walkforward_service import (
+from bot_core.services.walkforward_service import (
     ObjectiveWeights,
     WFOServiceConfig,
     WalkForwardService,
