@@ -8,6 +8,7 @@ try:
     # nowsza gałąź
     from bot_core.execution.live_router import (  # noqa: F401
         LiveExecutionRouter,
+        AcknowledgementEvent,
         QoSConfig,
         RouterRuntimeStats,
         RoutingPlan,
@@ -46,6 +47,7 @@ __all__ = [
     "RouteDefinition",
     "QoSConfig",
     "RouterRuntimeStats",
+    "AcknowledgementEvent",
     "PaperTradingExecutionService",
     "MarketMetadata",
     "LedgerEntry",

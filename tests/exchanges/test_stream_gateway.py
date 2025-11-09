@@ -425,6 +425,93 @@ def test_stream_gateway_binance_spot_orders(
         _stop_gateway(gateway, server, thread)
 
 
+def test_stream_gateway_binance_spot_fills(
+    binance_spot_credentials: ExchangeCredentials, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    adapter = BinanceSpotAdapter(
+        binance_spot_credentials,
+        environment=Environment.PAPER,
+        settings={
+            "stream": {
+                "poll_interval": 0.0,
+                "timeout": 0.5,
+                "max_retries": 1,
+                "backoff_base": 0.0,
+                "backoff_cap": 0.0,
+                "jitter": (0.0, 0.0),
+                "private_params": {"symbol": "BTC/USDT"},
+            }
+        },
+    )
+
+    trade_payloads = [
+        [
+            {
+                "id": 11,
+                "orderId": 101,
+                "symbol": "BTCUSDT",
+                "price": "30050.10",
+                "qty": "0.005",
+                "quoteQty": "150.2505",
+                "commission": "0.000005",
+                "commissionAsset": "BTC",
+                "time": 1_700_000_500_000,
+                "isBuyer": True,
+                "isMaker": False,
+                "isBestMatch": True,
+            }
+        ],
+        [
+            {
+                "id": 12,
+                "orderId": 102,
+                "symbol": "BTCUSDT",
+                "price": "30080.00",
+                "qty": "0.010",
+                "quoteQty": "300.80",
+                "commission": "0.30",
+                "commissionAsset": "USDT",
+                "time": 1_700_000_600_000,
+                "isBuyer": False,
+                "isMaker": True,
+                "isBestMatch": True,
+            }
+        ],
+    ]
+    call_state = {"count": 0}
+
+    def fake_signed_request(self, path: str, *, method: str = "GET", params=None):
+        del method
+        assert path == "/api/v3/myTrades"
+        assert params is not None and params.get("symbol") == "BTCUSDT"
+        index = min(call_state["count"], len(trade_payloads) - 1)
+        call_state["count"] += 1
+        return trade_payloads[index]
+
+    monkeypatch.setattr(
+        adapter,
+        "_signed_request",
+        types.MethodType(fake_signed_request, adapter),
+    )
+
+    gateway, server, thread, port = _start_gateway(adapter)
+    adapter._settings.setdefault("stream", {})["base_url"] = f"http://127.0.0.1:{port}"
+
+    try:
+        stream = adapter.stream_private_data(channels=["fills"])
+        first_batch = next(stream)
+        assert first_batch.events[0]["side"] == "buy"
+        assert first_batch.events[0]["is_maker"] is False
+
+        second_batch = next(stream)
+        assert second_batch.cursor != first_batch.cursor
+        assert second_batch.events[0]["side"] == "sell"
+        assert second_batch.events[0]["is_maker"] is True
+    finally:
+        stream.close()
+        _stop_gateway(gateway, server, thread)
+
+
 def test_stream_gateway_binance_futures_public_channels(
     binance_futures_credentials: ExchangeCredentials, monkeypatch: pytest.MonkeyPatch
 ) -> None:

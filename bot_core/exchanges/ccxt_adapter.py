@@ -5,7 +5,7 @@ import logging
 import time
 from collections.abc import Mapping
 from copy import deepcopy
-from typing import Any, Callable, Sequence
+from typing import Any, Callable, Mapping, Sequence
 
 from bot_core.alerts.base import AlertRouter
 from bot_core.exchanges.base import (
@@ -30,6 +30,7 @@ from bot_core.exchanges.rate_limiter import (
     normalize_rate_limit_rules,
 )
 from bot_core.observability.metrics import MetricsRegistry, get_global_metrics_registry
+from bot_core.exchanges.streaming import LocalLongPollStream
 
 try:  # pragma: no cover - opcjonalny import CCXT
     import ccxt  # type: ignore
@@ -292,6 +293,26 @@ class CCXTSpotAdapter(ExchangeAdapter):
         method = getattr(self._client, method_name)
         return self._wrap_call(method, *args, **kwargs)
 
+    @staticmethod
+    def _to_float(value: object) -> float | None:
+        try:
+            numeric = float(value)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            return None
+        return numeric
+
+    @staticmethod
+    def _to_timestamp(value: object) -> float | None:
+        try:
+            numeric = float(value)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            return None
+        if numeric > 10_000_000_000:  # timestamp w ms
+            numeric /= 1000.0
+        if numeric <= 0:
+            return None
+        return numeric
+
     # --- Implementacja interfejsu ExchangeAdapter -------------------------
 
     def configure_network(self, *, ip_allowlist: Sequence[str] | None = None) -> None:
@@ -400,15 +421,162 @@ class CCXTSpotAdapter(ExchangeAdapter):
         params = dict(self._settings.get("cancel_order_params", {}))
         self._call_client("cancel_order", order_id, symbol, params=params or None)
 
-    def stream_public_data(self, *, channels: Sequence[str]):
-        raise NotImplementedError(
-            "Adapter CCXT wspiera wyłącznie snapshoty REST – brak kanałów streamingowych."
+    def _stream_settings(self) -> Mapping[str, object]:
+        raw = self._settings.get("stream")
+        if isinstance(raw, Mapping):
+            return raw
+        return {}
+
+    def _build_stream(self, scope: str, channels: Sequence[str]) -> LocalLongPollStream:
+        stream_settings = dict(self._stream_settings())
+        base_url = str(stream_settings.get("base_url", "http://127.0.0.1:8765"))
+        default_path = f"/stream/{self.name}/{scope}"
+        path = str(stream_settings.get(f"{scope}_path", stream_settings.get("path", default_path)) or default_path)
+        poll_interval = float(stream_settings.get("poll_interval", 0.5))
+        timeout = float(stream_settings.get("timeout", 10.0))
+        max_retries = int(stream_settings.get("max_retries", 3))
+        backoff_base = float(stream_settings.get("backoff_base", 0.25))
+        backoff_cap = float(stream_settings.get("backoff_cap", 2.0))
+        jitter = stream_settings.get("jitter", (0.05, 0.30))
+        channel_param = stream_settings.get(f"{scope}_channel_param", stream_settings.get("channel_param", "channels"))
+        cursor_param = stream_settings.get(f"{scope}_cursor_param", stream_settings.get("cursor_param", "cursor"))
+        initial_cursor = stream_settings.get(f"{scope}_initial_cursor", stream_settings.get("initial_cursor"))
+        channel_serializer = stream_settings.get(f"{scope}_channel_serializer") or stream_settings.get("channel_serializer")
+        if not callable(channel_serializer):
+            separator = stream_settings.get(f"{scope}_channel_separator", stream_settings.get("channel_separator", ","))
+            if isinstance(separator, str):
+                channel_serializer = lambda values, sep=separator: sep.join(values)  # noqa: E731
+            else:
+                channel_serializer = None
+        headers_raw = stream_settings.get("headers")
+        headers = dict(headers_raw) if isinstance(headers_raw, Mapping) else None
+        params: dict[str, object] = {}
+        base_params = stream_settings.get("params")
+        if isinstance(base_params, Mapping):
+            params.update(base_params)
+        scope_params = stream_settings.get(f"{scope}_params")
+        if isinstance(scope_params, Mapping):
+            params.update(scope_params)
+        token_key = f"{scope}_token"
+        token_value = stream_settings.get(token_key, stream_settings.get("auth_token"))
+        if isinstance(token_value, str):
+            params.setdefault("token", token_value)
+        http_method = stream_settings.get(f"{scope}_method", stream_settings.get("method", "GET"))
+        params_in_body = bool(stream_settings.get(f"{scope}_params_in_body", stream_settings.get("params_in_body", False)))
+        channels_in_body = bool(stream_settings.get(f"{scope}_channels_in_body", stream_settings.get("channels_in_body", False)))
+        cursor_in_body = bool(stream_settings.get(f"{scope}_cursor_in_body", stream_settings.get("cursor_in_body", False)))
+        body_params: dict[str, object] = {}
+        base_body = stream_settings.get("body_params")
+        if isinstance(base_body, Mapping):
+            body_params.update(base_body)
+        scope_body = stream_settings.get(f"{scope}_body_params")
+        if isinstance(scope_body, Mapping):
+            body_params.update(scope_body)
+        body_encoder = stream_settings.get(f"{scope}_body_encoder", stream_settings.get("body_encoder"))
+        buffer_size = int(stream_settings.get("buffer_size", 64))
+
+        self._ensure_network_access()
+
+        return LocalLongPollStream(
+            base_url=base_url,
+            path=path,
+            channels=channels,
+            adapter=self.name,
+            scope=scope,
+            environment=self._environment.value,
+            params=params,
+            headers=headers,
+            poll_interval=poll_interval,
+            timeout=timeout,
+            max_retries=max_retries,
+            backoff_base=backoff_base,
+            backoff_cap=backoff_cap,
+            jitter=jitter if isinstance(jitter, Sequence) else (0.05, 0.30),
+            channel_param=str(channel_param) if channel_param not in (None, "") else "",
+            cursor_param=str(cursor_param) if cursor_param not in (None, "") else "",
+            initial_cursor=str(initial_cursor) if initial_cursor not in (None, "") else None,
+            channel_serializer=channel_serializer if callable(channel_serializer) else None,
+            http_method=str(http_method or "GET"),
+            params_in_body=params_in_body,
+            channels_in_body=channels_in_body,
+            cursor_in_body=cursor_in_body,
+            body_params=body_params or None,
+            body_encoder=body_encoder,
+            buffer_size=max(1, buffer_size),
+            metrics_registry=self._metrics,
         )
 
+    def stream_public_data(self, *, channels: Sequence[str]):
+        return self._build_stream("public", channels)
+
     def stream_private_data(self, *, channels: Sequence[str]):
-        raise NotImplementedError(
-            "Adapter CCXT wspiera wyłącznie snapshoty REST – brak kanałów streamingowych."
+        permissions = {perm.lower() for perm in self.credentials.permissions}
+        if not ({"trade", "read"} & permissions):
+            raise PermissionError("Poświadczenia CCXT nie pozwalają na strumienie prywatne.")
+        return self._build_stream("private", channels)
+
+    def fetch_recent_fills(
+        self,
+        symbol: str | None = None,
+        *,
+        limit: int = 50,
+        since: int | None = None,
+    ) -> Sequence[Mapping[str, Any]]:
+        permissions = {perm.lower() for perm in self.credentials.permissions}
+        if not ({"trade", "read"} & permissions):
+            raise PermissionError("Poświadczenia CCXT nie zezwalają na odczyt transakcji prywatnych.")
+
+        params = dict(self._settings.get("fetch_my_trades_params", {}))
+        result = self._call_client(
+            "fetch_my_trades",
+            symbol,
+            since=since,
+            limit=limit,
+            params=params or None,
         )
+
+        fills: list[dict[str, Any]] = []
+        if isinstance(result, Sequence):
+            for entry in result:
+                if not isinstance(entry, Mapping):
+                    continue
+                trade_id = entry.get("id")
+                order_id = entry.get("order") or entry.get("orderId")
+                symbol_value = entry.get("symbol") or symbol or ""
+                price = self._to_float(entry.get("price"))
+                amount = self._to_float(entry.get("amount")) or self._to_float(entry.get("quantity"))
+                cost = self._to_float(entry.get("cost"))
+                fee_info = entry.get("fee") if isinstance(entry.get("fee"), Mapping) else None
+                fee_cost = self._to_float(entry.get("fee")) if fee_info is None else self._to_float(fee_info.get("cost"))
+                fee_currency = None
+                if isinstance(fee_info, Mapping):
+                    currency = fee_info.get("currency")
+                    if currency not in (None, ""):
+                        fee_currency = str(currency)
+                maker_flag = entry.get("takerOrMaker")
+                if isinstance(maker_flag, str):
+                    maker = maker_flag.lower() == "maker"
+                else:
+                    maker = bool(entry.get("maker"))
+                timestamp = self._to_timestamp(entry.get("timestamp"))
+                normalized = {
+                    "trade_id": str(trade_id) if trade_id not in (None, "") else "",
+                    "order_id": str(order_id) if order_id not in (None, "") else None,
+                    "symbol": str(symbol_value),
+                    "side": str(entry.get("side") or ""),
+                    "price": price,
+                    "quantity": amount,
+                    "cost": cost,
+                    "fee": fee_cost,
+                    "fee_asset": fee_currency,
+                    "maker": maker,
+                    "timestamp": timestamp,
+                }
+                fills.append(normalized)
+
+        fills.sort(key=lambda item: item.get("timestamp") or 0.0)
+        return tuple(fills)
+
 
 
 class WatchdogCCXTAdapter(CCXTSpotAdapter):
