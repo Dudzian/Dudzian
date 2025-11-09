@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 import importlib
+from pathlib import Path
 
-from bot_core.ai.models import ModelArtifact, ModelMetrics
+import numpy as np
+import pandas as pd
+
+from bot_core.ai.models import AIModels, ModelArtifact, ModelMetrics
 
 
 def _sample_metrics_payload() -> dict[str, dict[str, float]]:
@@ -63,3 +67,33 @@ def test_model_metrics_accepts_flat_summary() -> None:
     assert metrics.summary()["mae"] == 2.0
     assert metrics["directional_accuracy"] == 0.75
     assert set(metrics.splits().keys()) == {"summary", "train", "validation", "test"}
+
+
+def test_ai_models_train_predict_save(tmp_path: Path) -> None:
+    rng = np.random.default_rng(42)
+    samples = 32
+    seq_len = 4
+    features = 3
+    X = rng.normal(size=(samples, seq_len, features)).astype(np.float32)
+    y = rng.normal(loc=0.0, scale=0.5, size=(samples,)).astype(np.float32)
+
+    model = AIModels(input_size=features, seq_len=seq_len, model_type="gb")
+    artifact = model.train(X, y)
+
+    assert artifact.feature_names
+    preds = model.predict(X)
+    assert preds.shape == (samples,)
+
+    frame = pd.DataFrame(
+        rng.normal(size=(samples + seq_len, features)),
+        columns=[f"f{i}" for i in range(features)],
+    )
+    series = model.predict_series(frame, list(frame.columns))
+    assert len(series) == len(frame)
+
+    path = tmp_path / "model.json"
+    model.save_model(path)
+
+    loaded = AIModels.load_model(path)
+    loaded_preds = loaded.predict(X)
+    assert loaded_preds.shape == preds.shape

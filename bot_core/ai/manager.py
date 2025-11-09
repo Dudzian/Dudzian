@@ -80,7 +80,13 @@ from .explainability import build_explainability_report, serialize_explainabilit
 from .health import ModelHealthMonitor, ModelHealthStatus
 from .inference import DecisionModelInference, ModelRepository
 from .meta import select_meta_confidence
-from .models import ModelArtifact, ModelArtifactIntegrityError, ModelScore, load_model_artifact_bundle
+from .models import (
+    AIModels,
+    ModelArtifact,
+    ModelArtifactIntegrityError,
+    ModelScore,
+    load_model_artifact_bundle,
+)
 from .validation import ModelArtifactValidationError
 from .regime import (
     MarketRegimeAssessment,
@@ -721,7 +727,7 @@ else:
     _FALLBACK_ACTIVE = False
 
 if _DefaultAIModels is None:
-    _DefaultAIModels = _build_fallback_ai_models()
+    _DefaultAIModels = AIModels
     _FALLBACK_ACTIVE = True
 
 if _import_failures:

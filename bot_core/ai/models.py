@@ -25,9 +25,10 @@ import numpy as np
 import pandas as pd
 
 from bot_core.security.signing import build_hmac_signature, validate_hmac_signature
+from .feature_engineering import FeatureDataset, FeatureVector
 
 if TYPE_CHECKING:
-    from .training import SupportsInference
+    from .training import ModelTrainer, SupportsInference
 
 
 logger = logging.getLogger(__name__)
@@ -261,26 +262,6 @@ class ModelMetrics(_MetricsView):
 
     def splits(self) -> Mapping[str, Mapping[str, float]]:
         return self._structured
-
-    def __eq__(self, other: object) -> bool:  # pragma: no cover - prosty operator
-        if isinstance(other, Mapping):
-            if not other:
-                return all(
-                    not isinstance(block, Mapping) or not block
-                    for block in self._base.values()
-                )
-            return dict(self.items()) == dict(other.items())
-        return dict(self.items()) == other
-
-    def __eq__(self, other: object) -> bool:  # pragma: no cover - prosty operator
-        if isinstance(other, Mapping):
-            if not other:
-                return all(
-                    not isinstance(block, Mapping) or not block
-                    for block in self._base.values()
-                )
-            return dict(self.items()) == dict(other.items())
-        return dict(self.items()) == other
 
     def __eq__(self, other: object) -> bool:  # pragma: no cover - prosty operator
         if isinstance(other, Mapping):
@@ -1036,7 +1017,292 @@ def generate_model_artifact_bundle(
     )
 
 
+_DEFAULT_SYMBOL = "fallback"
+_TRAINING_METADATA_SOURCE = "bot_core.ai.models.AIModels"
+
+
+class AIModels:
+    """Minimal high-level wrapper compatible with legacy API built on ``ModelArtifact``.
+
+    The class translates numpy-style training arrays into :class:`FeatureDataset`
+    instances, delegates learning to :class:`bot_core.ai.training.ModelTrainer`
+    and keeps the resulting :class:`ModelArtifact` as the single source of
+    truth.  Predictions are executed by rebuilding the inference model from the
+    stored artifact, which keeps the implementation aligned with the modern AI
+    pipeline.
+    """
+
+    def __init__(
+        self,
+        input_size: int,
+        seq_len: int,
+        model_type: str = "gb",
+        *,
+        model_dir: str | Path | None = None,
+        trainer: "ModelTrainer" | None = None,
+    ) -> None:
+        if input_size <= 0 or seq_len <= 0:
+            raise ValueError("input_size and seq_len must be positive integers")
+        self.input_size = int(input_size)
+        self.seq_len = int(seq_len)
+        self.model_type = str(model_type or "gb").strip().lower()
+        self._requested_type = self.model_type
+        self.model_dir = Path(model_dir).expanduser().resolve() if model_dir else None
+        self._trainer: "ModelTrainer" = trainer or self._build_trainer(self.model_type)
+        self._artifact: ModelArtifact | None = None
+        self._inference_model: "SupportsInference" | None = None
+        self._feature_template: tuple[str, ...] = ()
+        self._symbol: str = _DEFAULT_SYMBOL
+
+    # ------------------------------------------------------------------ helpers --
+    def _build_trainer(self, model_type: str) -> "ModelTrainer":
+        from .training import ModelTrainer
+
+        backend = self._resolve_backend(model_type)
+        return ModelTrainer(backend=backend)
+
+    @staticmethod
+    def _resolve_backend(model_type: str) -> str:
+        normalized = str(model_type or "").strip().lower()
+        if normalized in {"sequential", "sequential_td"}:
+            logger.warning(
+                "Sequential backend is not available in the lightweight AIModels wrapper;"
+                " using builtin gradient boosting instead",
+            )
+        return "builtin"
+
+    def _flatten_training_matrix(
+        self, X: np.ndarray | Sequence[Sequence[float]]
+    ) -> tuple[list[list[float]], tuple[str, ...]]:
+        arr = np.asarray(X, dtype=float)
+        if arr.ndim == 3:
+            samples, seq_len, width = arr.shape
+            if samples == 0:
+                return [], ()
+            seq_len = max(int(seq_len), 1)
+            width = max(int(width), 1)
+            feature_names = tuple(
+                f"lag_{seq_len - step}_{feature}"
+                for step in range(seq_len, 0, -1)
+                for feature in range(width)
+            )
+            flattened = arr.reshape(samples, seq_len * width)
+            self.seq_len = seq_len
+            self.input_size = width
+        elif arr.ndim == 2:
+            samples, width = arr.shape
+            if samples == 0:
+                return [], ()
+            width = max(int(width), 1)
+            feature_names = tuple(f"f_{idx}" for idx in range(width))
+            flattened = arr
+            self.seq_len = 1
+            self.input_size = width
+        elif arr.ndim == 1:
+            flattened = arr.reshape(-1, 1)
+            samples, width = flattened.shape
+            if samples == 0:
+                return [], ()
+            feature_names = ("f_0",)
+            self.seq_len = 1
+            self.input_size = 1
+        else:
+            raise ValueError("Unsupported tensor shape for training data")
+        matrix = flattened.astype(float, copy=False)
+        rows: list[list[float]] = matrix.tolist()
+        return rows, feature_names
+
+    def _normalize_targets(self, y: np.ndarray | Sequence[float]) -> list[float]:
+        arr = np.asarray(y, dtype=float).reshape(-1)
+        return arr.astype(float, copy=False).tolist()
+
+    def _build_dataset(self, X: np.ndarray, y: np.ndarray) -> FeatureDataset:
+        matrix, feature_names = self._flatten_training_matrix(X)
+        targets = self._normalize_targets(y)
+        if len(matrix) != len(targets):
+            raise ValueError("X and y must contain the same number of samples")
+        self._feature_template = feature_names
+        vectors: list[FeatureVector] = []
+        for idx, (row, target) in enumerate(zip(matrix, targets)):
+            features = {name: float(value) for name, value in zip(feature_names, row)}
+            vectors.append(
+                FeatureVector(
+                    timestamp=float(idx),
+                    symbol=self._symbol,
+                    features=features,
+                    target_bps=float(target),
+                )
+            )
+        metadata: dict[str, object] = {
+            "source": _TRAINING_METADATA_SOURCE,
+            "model_type": self.model_type,
+            "requested_model_type": self._requested_type,
+            "input_size": self.input_size,
+            "seq_len": self.seq_len,
+        }
+        return FeatureDataset(vectors=tuple(vectors), metadata=metadata)
+
+    def _ensure_inference(self) -> "SupportsInference":
+        if self._artifact is None:
+            raise RuntimeError("Model has not been trained yet")
+        if self._inference_model is None:
+            self._inference_model = self._artifact.build_model()
+        return self._inference_model
+
+    def _vectorize_samples(
+        self, X: np.ndarray | Sequence[Sequence[float]]
+    ) -> list[Mapping[str, float]]:
+        if not self._feature_template:
+            raise RuntimeError("Model is not initialized with feature names")
+        arr = np.asarray(X, dtype=float)
+        if arr.ndim == 3:
+            matrix = arr.reshape(arr.shape[0], -1)
+        elif arr.ndim == 2:
+            matrix = arr
+        elif arr.ndim == 1:
+            matrix = arr.reshape(-1, len(self._feature_template))
+        else:
+            raise ValueError("Unsupported tensor shape for prediction")
+        width = len(self._feature_template)
+        if matrix.shape[1] != width:
+            if matrix.shape[1] < width:
+                padded = np.zeros((matrix.shape[0], width), dtype=float)
+                padded[:, : matrix.shape[1]] = matrix
+                matrix = padded
+            else:
+                matrix = matrix[:, :width]
+        samples: list[Mapping[str, float]] = []
+        for row in matrix:
+            samples.append({name: float(value) for name, value in zip(self._feature_template, row)})
+        return samples
+
+    # ------------------------------------------------------------------- API ----
+    @property
+    def trainer(self) -> "ModelTrainer":
+        return self._trainer
+
+    @property
+    def artifact(self) -> ModelArtifact | None:
+        return self._artifact
+
+    @property
+    def is_trained(self) -> bool:
+        return self._artifact is not None
+
+    def train(
+        self,
+        X: np.ndarray,
+        y: np.ndarray,
+        *,
+        epochs: int = 1,
+        batch_size: int = 32,
+        progress_callback: Callable[..., None] | None = None,
+        model_out: str | Path | None = None,
+        verbose: bool = False,
+    ) -> ModelArtifact:
+        if progress_callback is not None:
+            logger.debug("progress_callback is ignored by AIModels fallback trainer")
+        dataset = self._build_dataset(X, y)
+        artifact = self._trainer.train(dataset)
+        self._artifact = artifact
+        self._feature_template = tuple(artifact.feature_names) or self._feature_template
+        self._inference_model = artifact.build_model()
+        if model_out:
+            self.save_model(model_out)
+        return artifact
+
+    def predict(self, X: np.ndarray) -> np.ndarray:
+        if not self.is_trained:
+            raise RuntimeError("Model has not been trained")
+        samples = self._vectorize_samples(X)
+        model = self._ensure_inference()
+        predictions = model.batch_predict(samples)
+        return np.asarray(predictions, dtype=float)
+
+    def predict_series(
+        self,
+        df: pd.DataFrame,
+        feature_cols: Sequence[str] | None,
+    ) -> pd.Series:
+        if df is None or df.empty:
+            return pd.Series(dtype=float)
+        columns: Sequence[str]
+        if feature_cols:
+            columns = [col for col in feature_cols if col in df.columns]
+            if not columns:
+                columns = tuple(str(col) for col in df.columns)
+        else:
+            columns = tuple(str(col) for col in df.columns)
+        values = df.loc[:, list(columns)].to_numpy(dtype=float, copy=False)
+        seq_len = max(int(self.seq_len), 1)
+        if len(values) < seq_len:
+            return pd.Series(np.zeros(len(df), dtype=float), index=df.index)
+        windows: list[np.ndarray] = []
+        for idx in range(seq_len, len(values) + 1):
+            window = values[idx - seq_len : idx]
+            windows.append(window.reshape(-1))
+        samples = self._vectorize_samples(np.asarray(windows, dtype=float))
+        if not samples:
+            return pd.Series(np.zeros(len(df), dtype=float), index=df.index)
+        model = self._ensure_inference()
+        predictions = np.asarray(model.batch_predict(samples), dtype=float)
+        if predictions.size == 0:
+            return pd.Series(np.zeros(len(df), dtype=float), index=df.index)
+        if seq_len > 1:
+            lead = np.repeat(predictions[0], seq_len - 1)
+            full = np.concatenate([lead, predictions])
+        else:
+            full = predictions
+        if len(full) < len(df):
+            padding = np.repeat(full[-1], len(df) - len(full))
+            full = np.concatenate([full, padding])
+        elif len(full) > len(df):
+            full = full[-len(df) :]
+        return pd.Series(full, index=df.index, dtype=float)
+
+    def save_model(self, path: str | Path) -> None:
+        if not self.is_trained or self._artifact is None:
+            raise RuntimeError("Cannot save model before training")
+        destination = Path(path)
+        if destination.suffix not in {".json", ".artifact", ".model"}:
+            destination = destination.with_suffix(".json")
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "artifact": self._artifact.to_dict(),
+            "input_size": self.input_size,
+            "seq_len": self.seq_len,
+            "model_type": self.model_type,
+        }
+        destination.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+
+    @classmethod
+    def load_model(cls, path: str | Path) -> "AIModels":
+        source = Path(path)
+        if not source.exists():
+            raise FileNotFoundError(f"Model file {source} does not exist")
+        with source.open("r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+        if not isinstance(payload, Mapping):
+            raise ValueError("Model file does not contain a valid payload")
+        artifact_payload = payload.get("artifact")
+        if not isinstance(artifact_payload, Mapping):
+            raise ValueError("Model file does not contain serialized artifact")
+        artifact = ModelArtifact.from_dict(artifact_payload)
+        input_size = int(payload.get("input_size", len(artifact.feature_names) or 1))
+        seq_len = int(payload.get("seq_len", 1))
+        model_type = str(payload.get("model_type", artifact.backend or "gb"))
+        instance = cls(input_size=input_size, seq_len=seq_len, model_type=model_type)
+        instance._artifact = artifact
+        instance._feature_template = tuple(artifact.feature_names)
+        instance._inference_model = artifact.build_model()
+        return instance
+
+
 __all__ = [
+    "AIModels",
     "ModelArtifact",
     "ModelArtifactBundle",
     "ModelArtifactIntegrityError",
