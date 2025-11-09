@@ -1,10 +1,9 @@
 from __future__ import annotations
 
 import importlib
+import json
 import sys
 import types
-import importlib
-import sys
 from pathlib import Path
 
 import pandas as pd
@@ -211,3 +210,33 @@ def test_ai_manager_clears_fallback_degradation_when_backend_ready(
     assert manager.degradation_exception_types == ()
     assert manager.degradation_exceptions == ()
     assert manager.degradation_exception_diagnostics == ()
+
+
+def test_ai_manager_detects_invalid_packaged_repository(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    class _StubModels:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            pass
+
+    packaged_root = tmp_path / "packaged"
+    packaged_root.mkdir()
+    manifest_payload = {"versions": {"1.0": {"file": "bundle/model.json"}}}
+    (packaged_root / "manifest.json").write_text(
+        json.dumps(manifest_payload, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    bundle_dir = packaged_root / "bundle"
+    bundle_dir.mkdir()
+    (bundle_dir / "model.json").write_text("{}", encoding="utf-8")
+
+    monkeypatch.setattr(manager_module, "_AIModels", _StubModels)
+    monkeypatch.setattr(manager_module, "_DefaultAIModels", _StubModels)
+    monkeypatch.setattr(manager_module, "_AI_IMPORT_ERROR", None)
+    monkeypatch.setattr(manager_module, "_FALLBACK_ACTIVE", False)
+    monkeypatch.setattr(manager_module, "_PACKAGED_MODEL_REPOSITORY", packaged_root)
+
+    manager = manager_module.AIManager(model_dir=tmp_path / "runtime")
+    assert manager.is_degraded is True
+    assert manager.degradation_reason is not None
+    assert manager.degradation_reason.startswith("backend_validation_failed")

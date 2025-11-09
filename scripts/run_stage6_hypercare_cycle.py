@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import os
 import sys
 from datetime import timedelta, timezone, datetime
@@ -30,6 +31,7 @@ from bot_core.observability import (  # noqa: E402
 )
 from bot_core.observability.bundle import AssetSource  # noqa: E402
 from bot_core.portfolio import (  # noqa: E402
+    PortfolioAllocationExportError,
     PortfolioCycleConfig,
     PortfolioCycleInputs,
     PortfolioCycleOutputConfig,
@@ -37,6 +39,7 @@ from bot_core.portfolio import (  # noqa: E402
     PortfolioGovernor,
     resolve_decision_log_config,
 )
+from bot_core.portfolio.allocation_exporter import export_allocations_for_governor_config
 from bot_core.resilience.hypercare import (  # noqa: E402
     AuditConfig,
     BundleConfig as ResilienceBundleConfig,
@@ -52,6 +55,9 @@ from bot_core.runtime.stage6_hypercare import (  # noqa: E402
 )
 from scripts._cli_common import default_decision_log_path, timestamp_slug
 from scripts._market_intel_paths import resolve_market_intel_path as _resolve_market_intel_path
+
+
+LOGGER = logging.getLogger("stage6.hypercare.cli")
 
 
 def _load_text_config(path: Path) -> Mapping[str, Any]:
@@ -354,6 +360,25 @@ def _parse_portfolio(config: Mapping[str, Any] | None) -> tuple[PortfolioCycleCo
     fallback_dirs = tuple(
         _expand_path(item) for item in inputs_cfg.get("fallback_dirs", ()) if item
     )
+
+    try:
+        export_allocations_for_governor_config(
+            governor_cfg,
+            allocations,
+            governor_name=governor_name,
+            environment=environment,
+        )
+    except PortfolioAllocationExportError as exc:
+        raise ValueError(
+            f"Nie udało się wygenerować pliku alokacji dla PortfolioGovernora {governor_name}: {exc}"
+        ) from exc
+    else:
+        LOGGER.info(
+            "[stage6.hypercare] alokacje zapisane w %s (governor=%s, environment=%s)",
+            allocations,
+            governor_name,
+            environment,
+        )
 
     market_intel_path = _resolve_market_intel_path(
         market_intel,

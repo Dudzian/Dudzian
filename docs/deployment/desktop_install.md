@@ -30,6 +30,21 @@ Ten runbook opisuje, jak przygotować, zainstalować oraz zaktualizować aplikac
 3. W katalogu `resources/license/` znajduje się zaszyfrowany magazyn licencji (`license_store.json`) oraz raport integralności. Nie wymaga on dodatkowej konfiguracji – licencja jest powiązana z fingerprintem wskazanym przy budowie pakietu.
 4. Uruchom aplikację (`runtime/.../start.sh` lub odpowiedni binarny wrapper) i zweryfikuj, że interfejs UI poprawnie odczytuje stan licencji w zakładce „Licencja”.
 
+### Wymagane komponenty Observability
+
+Aby router egzekucji live oraz moduł paper trading mogły rejestrować metryki,
+pakiet instalacyjny musi zawierać komplet komponentów observability:
+
+* moduł `bot_core.observability.metrics` (rejestr singletona, definicje Counter/Gauge/Histogram),
+* serwis eksportu metryk (`bot_core.observability.server`, `scripts/run_metrics_service.py`),
+* integrację alertów telemetrii UI (`bot_core.runtime.metrics_alerts`, zależne zasoby w `var/metrics/`),
+* konfigurację Prometheusa i alertów (`deploy/prometheus/`, w tym `deploy/prometheus/rules`).
+
+Brak któregokolwiek z powyższych elementów przerwie uruchomienie routera
+oraz symulatora paper trading – podczas budowania paczki zweryfikuj, że
+`bot_core/observability/**` znalazł się w archiwum, a skrypty CI kopiują katalogi
+`deploy/prometheus` wraz z podkatalogiem `rules` do katalogu `resources/` bundla.
+
 ## 3. Budowa pakietu aktualizacji
 
 1. Przygotuj katalogi zawierające poprzednią oraz nową wersję instalacji (po wypakowaniu archiwów z sekcji 1).

@@ -15,27 +15,14 @@ from typing import Callable, Dict, Iterable, List, Mapping, MutableMapping, Opti
 from bot_core.execution.base import ExecutionContext, ExecutionService, PriceResolver
 from bot_core.exchanges.base import OrderRequest, OrderResult
 
-# --- Observability (optional, no-op fallback) --------------------------------
-try:  # pragma: no cover - metrics are optional
-    from bot_core.observability.metrics import MetricsRegistry, get_global_metrics_registry  # type: ignore
-except Exception:  # pragma: no cover
-    class _NoopCounter:
-        def inc(self, value: float = 1.0, *, labels: Optional[Mapping[str, str]] = None) -> None:
-            return None
-
-    class _NoopHistogram:
-        def observe(self, value: float, *, labels: Optional[Mapping[str, str]] = None) -> None:
-            return None
-
-    class MetricsRegistry:  # type: ignore[override]
-        def counter(self, *_args, **_kwargs) -> _NoopCounter:
-            return _NoopCounter()
-
-        def histogram(self, *_args, **_kwargs) -> _NoopHistogram:
-            return _NoopHistogram()
-
-    def get_global_metrics_registry() -> MetricsRegistry:  # type: ignore[override]
-        return MetricsRegistry()
+# --- Observability (wymagana dla zgodności metryk) ---------------------------
+try:  # pragma: no cover - w testach import może zostać zamockowany
+    from bot_core.observability.metrics import MetricsRegistry, get_global_metrics_registry
+except Exception as exc:  # pragma: no cover
+    raise RuntimeError(
+        "Moduł 'bot_core.observability.metrics' jest wymagany przez PaperTradingExecutionService. "
+        "Dołącz komponenty observability do środowiska runtime lub zainstaluj extras 'observability'."
+    ) from exc
 
 
 _LOGGER = logging.getLogger(__name__)

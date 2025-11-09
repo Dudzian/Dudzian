@@ -53,38 +53,14 @@ except Exception:  # pragma: no cover - fallback gdy moduł nie istnieje
         pass
 
 
-# --- Observability (różne nazwy modułów w gałęziach)
+# --- Observability (wymagana w buildach produkcyjnych)
 try:  # pragma: no cover
     from bot_core.observability.metrics import MetricsRegistry, get_global_metrics_registry
-except Exception:  # pragma: no cover
-    try:
-        from bot_core.observability import MetricsRegistry, get_global_metrics_registry  # type: ignore
-    except Exception:  # pragma: no cover
-        class _NoopMetric:
-            def inc(self, *_args, **_kwargs) -> None:  # noqa: D401
-                return None
-
-            def observe(self, *_args, **_kwargs) -> None:
-                return None
-
-            def set(self, *_args, **_kwargs) -> None:
-                return None
-
-            def dec(self, *_args, **_kwargs) -> None:
-                return None
-
-        class MetricsRegistry:  # type: ignore
-            def counter(self, *_args, **_kwargs) -> _NoopMetric:
-                return _NoopMetric()
-
-            def histogram(self, *_args, **_kwargs) -> _NoopMetric:
-                return _NoopMetric()
-
-            def gauge(self, *_args, **_kwargs) -> _NoopMetric:
-                return _NoopMetric()
-
-        def get_global_metrics_registry() -> MetricsRegistry:  # type: ignore
-            return MetricsRegistry()
+except Exception as exc:  # pragma: no cover
+    raise RuntimeError(
+        "Moduł 'bot_core.observability.metrics' jest wymagany przez LiveExecutionRouter. "
+        "Upewnij się, że komponenty observability zostały uwzględnione w pakiecie instalacyjnym"
+    ) from exc
 
 
 # --- Podpisywanie decision logu (opcjonalne, z fallbackiem)

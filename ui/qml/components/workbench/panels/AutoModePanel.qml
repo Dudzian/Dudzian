@@ -409,6 +409,14 @@ Frame {
         if (!root.runtimeService)
             return
         if (enabled) {
+            if (root.runtimeService.attachToLiveDecisionLog !== undefined) {
+                var profileHint = ""
+                if (automation && automation.profile)
+                    profileHint = automation.profile
+                else if (portfolio && portfolio.name)
+                    profileHint = portfolio.name
+                root.runtimeService.attachToLiveDecisionLog(profileHint)
+            }
             if (root.runtimeService.startAutomation)
                 root.runtimeService.startAutomation()
         } else {

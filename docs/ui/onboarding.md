@@ -14,6 +14,11 @@ Nowy kreator **LicenseWizard** zapewnia operatorom prowadzenie krok po kroku prz
 - `OnboardingService` udostępnia strategiom dane z `bot_core.strategies.public.list_available_strategies`, przechowuje wybrany wariant i zapisuje klucze API przez `core.security.secret_store.SecretStore`.
 - `LicenseVerifier` oraz `SecretStore` mapują komunikaty na identyfikatory tłumaczeń, aby w UI można było prezentować lokalizowane treści.
 
+## Decision log autotradera
+- `RuntimeService` automatycznie przełącza się na realny decision log po aktywowaniu trybu auto, dlatego przed startem należy upewnić się, że ścieżka `portfolio_decision_log.path` w `config/core.yaml` wskazuje na plik JSONL dostępny lokalnie.
+- Ścieżka do `core.yaml` może być nadpisana zmienną `BOT_CORE_UI_CORE_CONFIG_PATH` (lub `DUDZIAN_CORE_CONFIG`); podczas onboardingu kreator powinien zapisać tę wartość, jeżeli plik znajduje się poza katalogiem domyślnym.
+- Brak pliku decision logu spowoduje komunikat o błędzie w karcie „Decyzje AI”; po uruchomieniu autotradera plik tworzy się automatycznie i UI przeładowuje wpisy bez potrzeby restartu.
+
 ## Testy automatyczne
 - Scenariusz `tests/ui/test_license_wizard.py` wykorzystuje PySide6 (pytest-qt) do uruchomienia QML-a, symulując poprawną i błędną weryfikację licencji.
 - Test `tests/ui/test_onboarding_strategy.py` waliduje przepływ wyboru strategii oraz zapis kluczy API (z wykorzystaniem atrap `SecretStore`), dzięki czemu integracja QML ↔ backend pozostaje pokryta regresją.

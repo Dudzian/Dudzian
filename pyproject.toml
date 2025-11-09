@@ -130,4 +130,4 @@ py-modules = [
 ]
 
 [tool.setuptools.packages.find]
-include = ["bot_core*", "core*", "scripts*"]
+include = ["bot_core*", "core*", "scripts*", "stage6_samples*"]

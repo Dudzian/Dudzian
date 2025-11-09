@@ -1,12 +1,22 @@
 """Serwis runtime dostarczający dane dziennika decyzji do QML."""
 from __future__ import annotations
 
+import json
+import logging
+import os
+from collections.abc import Iterable, Mapping, MutableMapping
 from dataclasses import dataclass
-from typing import Callable, Iterable, Mapping, MutableMapping
+from pathlib import Path
+from typing import Callable
 
 from PySide6.QtCore import QObject, Property, Signal, Slot
 
+from bot_core.config import load_core_config
+from bot_core.portfolio import resolve_decision_log_config
 from bot_core.runtime.journal import TradingDecisionJournal
+from .demo_data import load_demo_decisions
+
+_LOGGER = logging.getLogger(__name__)
 
 DecisionRecord = Mapping[str, str]
 DecisionLoader = Callable[[int], Iterable[DecisionRecord]]
@@ -55,7 +65,15 @@ class _RuntimeDecisionEntry:
 
 
 def _default_loader(limit: int) -> Iterable[DecisionRecord]:
-    raise RuntimeError("Brak skonfigurowanego źródła TradingDecisionJournal")
+    """Zapewnia dane demonstracyjne przy pierwszym uruchomieniu."""
+
+    entries = list(load_demo_decisions())
+    if not entries:
+        return []
+    if limit > 0:
+        entries = entries[-limit:]
+    # Zwracamy w kolejności od najnowszych do najstarszych, aby zachować spójność z dziennikiem
+    return reversed(entries)
 
 
 def _load_from_journal(journal: TradingDecisionJournal, limit: int) -> Iterable[DecisionRecord]:
@@ -190,6 +208,7 @@ class RuntimeService(QObject):
 
     decisionsChanged = Signal()
     errorMessageChanged = Signal()
+    liveSourceChanged = Signal()
 
     def __init__(
         self,
@@ -198,6 +217,7 @@ class RuntimeService(QObject):
         decision_loader: DecisionLoader | None = None,
         parent: QObject | None = None,
         default_limit: int = 20,
+        core_config_path: str | os.PathLike[str] | None = None,
     ) -> None:
         super().__init__(parent)
         if decision_loader is not None:
@@ -209,6 +229,10 @@ class RuntimeService(QObject):
         self._default_limit = max(1, int(default_limit))
         self._decisions: list[dict[str, object]] = []
         self._error_message = ""
+        self._core_config_path = Path(core_config_path).expanduser() if core_config_path else None
+        self._cached_core_config = None
+        self._active_profile: str | None = None
+        self._active_log_path: Path | None = None
 
     # ------------------------------------------------------------------
     @Property("QVariantList", notify=decisionsChanged)
@@ -245,6 +269,127 @@ class RuntimeService(QObject):
         self._decisions = parsed
         self.decisionsChanged.emit()
         return list(self._decisions)
+
+    # ------------------------------------------------------------------
+    @Property(str, notify=liveSourceChanged)
+    def activeDecisionLogPath(self) -> str:  # type: ignore[override]
+        if self._active_log_path is None:
+            return ""
+        return str(self._active_log_path)
+
+    @Slot(str, result=bool)
+    def attachToLiveDecisionLog(self, profile: str = "") -> bool:  # type: ignore[override]
+        """Przełącza loader na rzeczywisty decision log skonfigurowany w core.yaml."""
+
+        try:
+            loader, log_path = self._build_live_loader(profile.strip() or None)
+        except Exception as exc:  # pragma: no cover - diagnostyka
+            _LOGGER.debug("attachToLiveDecisionLog failed", exc_info=True)
+            self._error_message = str(exc)
+            self.errorMessageChanged.emit()
+            return False
+
+        self._loader = loader
+        self._active_profile = profile.strip() or None
+        self._active_log_path = log_path
+        self._error_message = ""
+        self.errorMessageChanged.emit()
+        self.liveSourceChanged.emit()
+        self.loadRecentDecisions(self._default_limit)
+        return True
+
+    # ------------------------------------------------------------------
+    def _build_live_loader(
+        self, profile: str | None
+    ) -> tuple[DecisionLoader, Path]:
+        core_config = self._load_core_config()
+        configured_path, _kwargs = resolve_decision_log_config(core_config)
+        if configured_path is None:
+            raise FileNotFoundError(
+                "Decision log portfela nie jest skonfigurowany w pliku core.yaml"
+            )
+
+        log_path = Path(configured_path)
+        if not log_path.is_absolute():
+            config_path = self._resolve_core_config_path()
+            if config_path is not None:
+                log_path = (config_path.parent / log_path).resolve()
+            else:
+                log_path = log_path.expanduser().resolve()
+
+        if not log_path.exists():
+            raise FileNotFoundError(
+                f"Decision log '{log_path}' nie istnieje – uruchom autotradera, aby utworzyć plik"
+            )
+        if not log_path.is_file():
+            raise IsADirectoryError(
+                f"Decision log '{log_path}' wskazuje na katalog – oczekiwany plik JSONL"
+            )
+
+        loader = self._build_jsonl_loader(log_path)
+        return loader, log_path
+
+    def _build_jsonl_loader(self, log_path: Path) -> DecisionLoader:
+        def _loader(limit: int) -> Iterable[DecisionRecord]:
+            entries: list[DecisionRecord] = []
+            try:
+                with log_path.open("r", encoding="utf-8") as handle:
+                    for line in handle:
+                        payload = line.strip()
+                        if not payload:
+                            continue
+                        try:
+                            data = json.loads(payload)
+                        except json.JSONDecodeError:
+                            _LOGGER.warning(
+                                "Pominięto uszkodzony wpis decision logu %s", log_path, exc_info=True
+                            )
+                            continue
+                        if isinstance(data, Mapping):
+                            entries.append(data)
+            except FileNotFoundError:
+                raise
+            except OSError as exc:
+                raise RuntimeError(
+                    f"Nie udało się odczytać decision logu '{log_path}': {exc}"
+                ) from exc
+
+            if limit > 0:
+                entries = entries[-limit:]
+            return entries
+
+        return _loader
+
+    def _load_core_config(self):
+        if self._cached_core_config is not None:
+            return self._cached_core_config
+        config_path = self._resolve_core_config_path()
+        if config_path is None:
+            raise FileNotFoundError(
+                "Nie znaleziono ścieżki do core.yaml – ustaw zmienną BOT_CORE_UI_CORE_CONFIG_PATH"
+            )
+        self._cached_core_config = load_core_config(config_path)
+        return self._cached_core_config
+
+    def _resolve_core_config_path(self) -> Path | None:
+        if self._core_config_path is not None:
+            return self._core_config_path
+
+        candidates = (
+            os.environ.get("BOT_CORE_UI_CORE_CONFIG_PATH"),
+            os.environ.get("BOT_CORE_CORE_CONFIG"),
+            os.environ.get("BOT_CORE_CONFIG"),
+            os.environ.get("DUDZIAN_CORE_CONFIG"),
+        )
+        for candidate in candidates:
+            if candidate:
+                path = Path(candidate).expanduser()
+                self._core_config_path = path
+                return path
+
+        default = Path("config/core.yaml")
+        self._core_config_path = default
+        return default
 
 
 __all__ = ["RuntimeService"]

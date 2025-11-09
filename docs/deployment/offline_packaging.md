@@ -44,8 +44,8 @@ artefaktów).
    * `--platform` – platforma docelowa (`linux`, `windows`, `mac`).
    * `--datasets` – lista katalogów z danymi do spakowania (domyślnie `data/trading_stub/datasets`).
    * `--docs` – dodatkowa dokumentacja operatorska (domyślnie `docs/deployment/*`).
-   * `--extra` – dowolne dodatkowe pliki (np. manifest licencyjny, notatki L2).
-   * `--signing-key` – HMAC (hex/tekst), którym podpisywany jest updater.
+ * `--extra` – dowolne dodatkowe pliki (np. manifest licencyjny, notatki L2).
+  * `--signing-key` – HMAC (hex/tekst), którym podpisywany jest updater.
 
 3. W katalogu `var/dist/offline/` powstanie struktura:
 
@@ -62,8 +62,23 @@ artefaktów).
      └─ offline_bundle.tar.gz     # finalny pakiet do dystrybucji offline
    ```
 
-   Plik `MANIFEST.json` opisuje zawartość archiwum i ułatwia weryfikację integralności
-   podczas odbioru pakietu na stanowisku docelowym.
+  Plik `MANIFEST.json` opisuje zawartość archiwum i ułatwia weryfikację integralności
+  podczas odbioru pakietu na stanowisku docelowym.
+
+### Dołączanie artefaktów modeli AI
+
+* Modele Decision Engine muszą zostać zbudowane przed pakietowaniem i umieszczone
+  w katalogu `ai_models/packaged/` (dystrybucja barebone) lub `KryptoLowca/ai_models_packaged/`
+  (wariant OEM). Katalog musi zawierać `manifest.json` z listą wersji oraz
+  podkatalogi z plikami `*.json`, `*.metadata.json`, `checksums.sha256` i opcjonalnym
+  podpisem `*.sig` wygenerowanymi przez `bot_core.ai.models.generate_model_artifact_bundle`.
+* Integralność pakietu jest weryfikowana przez nowy krok testów
+  `pytest tests/ai/test_model_artifact_bundle.py`. Testy muszą przechodzić w pipeline,
+  dzięki czemu brak artefaktów lub rozbieżne sumy kontrolne blokują wydanie.
+* Po skopiowaniu artefaktów warto lokalnie uruchomić
+  `pytest tests/ai/test_ai_manager_degradation.py::test_ai_manager_detects_invalid_packaged_repository`
+  – test potwierdza, że pakiet zawiera kompletne modele i menedżer AI nie przełącza
+  się w tryb degradacji.
 
 ### Walidacja pakietu
 

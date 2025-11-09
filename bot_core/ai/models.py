@@ -4,16 +4,20 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from types import MappingProxyType
 from typing import Iterator, Mapping, MutableMapping, Sequence, TYPE_CHECKING
 
-from bot_core.security.signing import build_hmac_signature
+from bot_core.security.signing import build_hmac_signature, validate_hmac_signature
 
 if TYPE_CHECKING:
     from .training import SupportsInference
+
+
+logger = logging.getLogger(__name__)
 
 
 def _parse_trained_at(value: object) -> datetime:
@@ -490,6 +494,191 @@ class ModelArtifactBundle:
     checksums: Mapping[str, str]
 
 
+class ModelArtifactIntegrityError(RuntimeError):
+    """Wyjątek sygnalizujący naruszenie integralności pakietu modelu."""
+
+
+def _read_checksums(path: Path) -> Mapping[str, str]:
+    if not path.exists():
+        raise ModelArtifactIntegrityError(f"Brak pliku sum kontrolnych: {path}")
+    checksums: dict[str, str] = {}
+    with path.open("r", encoding="utf-8") as handle:
+        for line in handle:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                digest, filename = line.split(None, 1)
+            except ValueError as exc:  # pragma: no cover - ścieżki diagnostyczne
+                raise ModelArtifactIntegrityError(
+                    f"Niepoprawny wpis w checksums.sha256: {line!r}"
+                ) from exc
+            checksums[filename.strip()] = digest.strip()
+    return MappingProxyType(checksums)
+
+
+def _verify_checksums(base_dir: Path, checksums: Mapping[str, str]) -> None:
+    missing: list[str] = []
+    mismatched: list[str] = []
+    for filename, expected_digest in checksums.items():
+        target = base_dir / filename
+        if not target.exists():
+            missing.append(filename)
+            continue
+        actual_digest = _hash_file(target)
+        if actual_digest != expected_digest:
+            mismatched.append(filename)
+    if missing:
+        raise ModelArtifactIntegrityError(
+            "Brak plików pakietu modeli: " + ", ".join(sorted(missing))
+        )
+    if mismatched:
+        raise ModelArtifactIntegrityError(
+            "Niezgodne sumy kontrolne plików: " + ", ".join(sorted(mismatched))
+        )
+
+
+def load_model_artifact_bundle(
+    bundle_dir: str | Path,
+    *,
+    expected_artifact: str | None = None,
+    signing_key: bytes | None = None,
+    signing_keys: Mapping[str, bytes] | None = None,
+) -> ModelArtifactBundle:
+    """Ładuje pakiet artefaktu modelu i weryfikuje integralność plików."""
+
+    base_dir = Path(bundle_dir).expanduser().resolve()
+    if not base_dir.exists():
+        raise ModelArtifactIntegrityError(f"Katalog pakietu modeli nie istnieje: {base_dir}")
+
+    checksums_path = base_dir / "checksums.sha256"
+    checksums = _read_checksums(checksums_path)
+    _verify_checksums(base_dir, checksums)
+
+    artifact_path: Path | None = None
+    metadata_path: Path | None = None
+    signature_path: Path | None = None
+
+    for candidate in base_dir.glob("*.json"):
+        if candidate.name.endswith(".metadata.json"):
+            metadata_path = candidate
+        else:
+            artifact_path = candidate
+
+    if expected_artifact is not None:
+        artifact_candidate = base_dir / expected_artifact
+        if artifact_candidate.exists():
+            artifact_path = artifact_candidate
+
+    if artifact_path is None or not artifact_path.exists():
+        raise ModelArtifactIntegrityError("Brak pliku artefaktu modelu w pakiecie")
+    if metadata_path is None or not metadata_path.exists():
+        raise ModelArtifactIntegrityError("Brak pliku metadanych artefaktu modelu")
+
+    possible_signatures = list(base_dir.glob("*.sig"))
+    if possible_signatures:
+        signature_path = possible_signatures[0]
+
+    artifact_payload = json.loads(artifact_path.read_text(encoding="utf-8"))
+    metadata_payload = json.loads(metadata_path.read_text(encoding="utf-8"))
+
+    artifact = ModelArtifact.from_dict(artifact_payload)
+
+    version = metadata_payload.get("model_version") or artifact.metadata.get("model_version")
+    if not isinstance(version, str) or not version.strip():
+        raise ModelArtifactIntegrityError(
+            f"Artefakt {artifact_path.name} nie zawiera metadanej 'model_version'"
+        )
+
+    if signature_path is not None:
+        signature_doc = json.loads(signature_path.read_text(encoding="utf-8"))
+        signature_section = signature_doc.get("signature")
+        key_identifier: str | None = None
+        if isinstance(signature_section, Mapping):
+            key_identifier_obj = signature_section.get("key_id")
+            if key_identifier_obj is not None:
+                key_identifier = str(key_identifier_obj)
+
+        key_material: bytes | None = signing_key
+        resolved_key_id: str | None = None
+
+        if signing_keys:
+            if key_identifier is None:
+                if len(signing_keys) == 1:
+                    resolved_key_id, key_material = next(iter(signing_keys.items()))
+                else:
+                    logger.error(
+                        "Podpis pakietu modeli %s nie zawiera identyfikatora klucza, "
+                        "a dostępnych jest %d zaufanych kluczy",
+                        artifact_path.name,
+                        len(signing_keys),
+                    )
+                    raise ModelArtifactIntegrityError(
+                        "Podpis pakietu modeli nie zawiera identyfikatora klucza"
+                    )
+            else:
+                resolved_key_id = key_identifier
+                key_material = signing_keys.get(key_identifier)
+                if key_material is None:
+                    logger.error(
+                        "Brak zaufanego klucza HMAC %s dla pakietu modeli %s",
+                        key_identifier,
+                        artifact_path.name,
+                    )
+                    raise ModelArtifactIntegrityError(
+                        f"Brak zaufanego klucza HMAC {key_identifier!r} do weryfikacji podpisu"
+                    )
+        elif key_identifier is not None and signing_key is None:
+            logger.error(
+                "Podpis pakietu modeli %s wymaga klucza %s, ale nie dostarczono magazynu kluczy",
+                artifact_path.name,
+                key_identifier,
+            )
+            raise ModelArtifactIntegrityError(
+                "Brak zaufanego klucza HMAC do weryfikacji podpisu pakietu modeli"
+            )
+
+        if key_material is None and signature_section is not None:
+            logger.error(
+                "Nie można zweryfikować podpisu pakietu modeli %s – brak klucza HMAC",
+                artifact_path.name,
+            )
+            raise ModelArtifactIntegrityError(
+                "Brak klucza HMAC do weryfikacji podpisu pakietu modeli"
+            )
+
+        if key_material is not None:
+            errors = validate_hmac_signature(
+                artifact_payload,
+                signature_doc,
+                key=key_material,
+            )
+            if errors:
+                logger.error(
+                    "Niepoprawny podpis pakietu modeli %s (klucz: %s): %s",
+                    artifact_path.name,
+                    resolved_key_id or key_identifier or "<domyślny>",
+                    "; ".join(errors),
+                )
+                raise ModelArtifactIntegrityError(
+                    "Niepoprawny podpis HMAC pakietu modeli: " + "; ".join(errors)
+                )
+
+    from .validation import validate_model_artifact_schema  # import lokalny, aby uniknąć cyklu
+
+    validate_model_artifact_schema(artifact)
+
+    return ModelArtifactBundle(
+        artifact=artifact,
+        artifact_path=artifact_path,
+        metadata_path=metadata_path,
+        checksums_path=checksums_path,
+        signature_path=signature_path,
+        metadata_payload=MappingProxyType(dict(metadata_payload)),
+        checksums=checksums,
+    )
+
+
 def _bundle_base_name(name: str | Path | None) -> str:
     if name is None:
         return "model-artifact"
@@ -621,7 +810,9 @@ def generate_model_artifact_bundle(
 __all__ = [
     "ModelArtifact",
     "ModelArtifactBundle",
+    "ModelArtifactIntegrityError",
     "ModelMetrics",
     "ModelScore",
     "generate_model_artifact_bundle",
+    "load_model_artifact_bundle",
 ]

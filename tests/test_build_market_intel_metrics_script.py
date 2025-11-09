@@ -147,3 +147,46 @@ def test_build_market_intel_metrics_cli(tmp_path: Path, sqlite_dataset: Path, mo
     assert manifest_path.exists()
     manifest = json.loads(manifest_path.read_text())
     assert manifest["count"] == 2
+
+
+@pytest.mark.smoke
+def test_build_market_intel_metrics_populate_sqlite(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    sqlite_path = tmp_path / "market_metrics.sqlite"
+    output_dir = tmp_path / "metrics"
+    manifest_path = tmp_path / "manifest.json"
+
+    argv = [
+        "--mode",
+        "sqlite",
+        "--config",
+        "config/core.yaml",
+        "--sqlite-path",
+        str(sqlite_path),
+        "--output-dir",
+        str(output_dir),
+        "--manifest",
+        str(manifest_path),
+        "--required-symbol",
+        "BTCUSDT",
+        "--required-symbol",
+        "ETHUSDT",
+        "--required-symbol",
+        "SOLUSDT",
+        "--populate-sqlite",
+        "--sqlite-provider",
+        "stage6_samples.market_intel:build_provider",
+    ]
+
+    monkeypatch.setenv("MARKET_INTEL_SQLITE_PROVIDER", "stage6_samples.market_intel:build_provider")
+    exit_code = build_metrics(argv)
+
+    assert exit_code == 0
+    assert sqlite_path.exists()
+    for symbol in ("BTCUSDT", "ETHUSDT", "SOLUSDT"):
+        path = output_dir / f"{symbol.lower()}.json"
+        assert path.exists(), f"Brak pliku metryk dla {symbol}"
+        payload = json.loads(path.read_text())
+        assert "baseline" in payload
+
+    manifest = json.loads(manifest_path.read_text())
+    assert manifest["count"] == 3

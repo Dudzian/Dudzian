@@ -29,6 +29,12 @@ from bot_core.portfolio.hypercare import (
     PortfolioCycleResult,
     PortfolioHypercareCycle,
 )
+from bot_core.portfolio.allocation_exporter import (
+    PortfolioAllocationDocument,
+    PortfolioAllocationExportError,
+    export_allocations_for_governor_config,
+    export_allocations_from_core_config,
+)
 from bot_core.portfolio.io import (
     load_allocations_file,
     load_json_or_yaml,
@@ -94,6 +100,10 @@ __all__ = [
     "RebalanceInstruction",
     "SchedulerEvent",
     "StrategyHealthMonitor",
+    "PortfolioAllocationDocument",
+    "PortfolioAllocationExportError",
+    "export_allocations_for_governor_config",
+    "export_allocations_from_core_config",
     "load_allocations_file",
     "load_json_or_yaml",
     "load_market_intel_report",

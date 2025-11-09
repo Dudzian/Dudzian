@@ -51,6 +51,10 @@ on:
   schedule:
     - cron: '15 2 * * 2'
 
+permissions:
+  contents: read
+  actions: read
+
 jobs:
   build:
     name: Buduj bundel desktopowy (${{ matrix.platform }})
@@ -90,6 +94,7 @@ jobs:
       BRIEFCASE_OUTPUT_VAR: ${{ vars.DESKTOP_BRIEFCASE_OUTPUT }}
       VERBOSE_INPUT: ${{ inputs.verbose }}
       VERBOSE_VAR: ${{ vars.DESKTOP_PACKAGING_VERBOSE }}
+      STAGE6_HYPERCARE_HMAC_KEY: ${{ secrets.STAGE6_HYPERCARE_HMAC_KEY }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -112,6 +117,208 @@ jobs:
           python -m pip install --upgrade pip
           pip install '.[desktop]'
         shell: pwsh
+
+      - name: Pobierz artefakty Stage6 hypercare
+        id: stage6_artifacts
+        shell: python
+        env:
+          ARTIFACT_TARGET: var/stage6-hypercare
+        run: |
+          import io
+          import json
+          import os
+          import sys
+          import urllib.request
+          import zipfile
+          from pathlib import Path
+
+          token = os.environ.get("GITHUB_TOKEN")
+          if not token:
+              raise SystemExit("Brak GITHUB_TOKEN – nie można pobrać artefaktów Stage6 hypercare")
+
+          repo = os.environ.get("GITHUB_REPOSITORY")
+          if not repo:
+              raise SystemExit("Brak identyfikatora repozytorium do pobrania artefaktów Stage6")
+
+          api_url = f"https://api.github.com/repos/{repo}/actions/artifacts?per_page=100"
+          request = urllib.request.Request(
+              api_url,
+              headers={
+                  "Authorization": f"Bearer {token}",
+                  "Accept": "application/vnd.github+json",
+                  "X-GitHub-Api-Version": "2022-11-28",
+              },
+          )
+
+          with urllib.request.urlopen(request) as response:
+              payload = json.load(response)
+
+          artifacts = payload.get("artifacts", [])
+          candidates = [
+              item
+              for item in artifacts
+              if item.get("name", "").startswith("stage6-hypercare")
+              and not item.get("expired", False)
+          ]
+          if not candidates:
+              raise SystemExit("Nie znaleziono aktywnych artefaktów Stage6 hypercare w Actions API")
+
+          candidates.sort(key=lambda item: item.get("created_at", ""))
+          latest = candidates[-1]
+          download_url = latest.get("archive_download_url")
+          if not download_url:
+              raise SystemExit("Brak URL pobierania dla artefaktu Stage6 hypercare")
+
+          download_request = urllib.request.Request(
+              download_url,
+              headers={
+                  "Authorization": f"Bearer {token}",
+                  "Accept": "application/vnd.github+json",
+                  "X-GitHub-Api-Version": "2022-11-28",
+              },
+          )
+
+          with urllib.request.urlopen(download_request) as response:
+              archive_bytes = response.read()
+
+          target_dir = Path(os.environ.get("ARTIFACT_TARGET", "var/stage6-hypercare"))
+          target_dir.mkdir(parents=True, exist_ok=True)
+          with zipfile.ZipFile(io.BytesIO(archive_bytes)) as archive:
+              archive.extractall(target_dir)
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as handle:
+              handle.write(f"artifact_name={latest.get('name', '')}\n")
+              handle.write(f"artifact_id={latest.get('id', '')}\n")
+              handle.write(f"artifact_created_at={latest.get('created_at', '')}\n")
+
+          print(
+              "Pobrano artefakt Stage6 hypercare:",
+              latest.get("name", "(bez nazwy)"),
+          )
+
+      - name: Zweryfikuj raport Stage6 hypercare
+        id: stage6_verification
+        shell: python
+        env:
+          ARTIFACT_TARGET: var/stage6-hypercare
+          HMAC_ENV: STAGE6_HYPERCARE_HMAC_KEY
+        run: |
+          import contextlib
+          import io
+          import json
+          import os
+          import sys
+          from pathlib import Path
+
+          from scripts import verify_stage6_hypercare_summary as stage6_verify
+
+          artifact_dir = Path(os.environ.get("ARTIFACT_TARGET", "var/stage6-hypercare"))
+          if not artifact_dir.exists():
+              raise SystemExit(
+                  f"Katalog artefaktów Stage6 nie istnieje: {artifact_dir}"
+              )
+
+          candidates = sorted(artifact_dir.glob("stage6_hypercare_summary*.json"))
+          if not candidates:
+              raise SystemExit(
+                  "Brak pliku stage6_hypercare_summary*.json w artefaktach Stage6"
+              )
+
+          summary_path = candidates[-1]
+          signature_path = summary_path.with_suffix(summary_path.suffix + ".sig")
+          if not signature_path.exists():
+              alt_signature = summary_path.with_suffix(summary_path.suffix + ".hmac")
+              if alt_signature.exists():
+                  signature_path = alt_signature
+          if not signature_path.exists():
+              raise SystemExit(
+                  f"Brak podpisu HMAC dla raportu Stage6: {signature_path}"
+              )
+
+          hmac_env = os.environ.get("HMAC_ENV", "STAGE6_HYPERCARE_HMAC_KEY")
+          hmac_value = os.environ.get(hmac_env)
+          if not hmac_value:
+              raise SystemExit(
+                  "Zmienna środowiskowa ze Stage6 HMAC jest pusta – ustaw secret STAGE6_HYPERCARE_HMAC_KEY"
+              )
+
+          buffer = io.StringIO()
+          with contextlib.redirect_stdout(buffer):
+              exit_code = stage6_verify.run(
+                  [
+                      summary_path.as_posix(),
+                      "--signature",
+                      signature_path.as_posix(),
+                      "--require-signature",
+                      "--hmac-key-env",
+                      hmac_env,
+                  ]
+              )
+
+          output = buffer.getvalue()
+          if exit_code != 0:
+              sys.stdout.write(output)
+              raise SystemExit(exit_code)
+
+          try:
+              payload = json.loads(output)
+          except json.JSONDecodeError as exc:  # pragma: no cover - defensywne
+              raise SystemExit(f"Niepoprawny JSON w wyniku weryfikacji Stage6: {exc}") from exc
+
+          components = payload.get("components", {})
+          if isinstance(components, dict):
+              failing = [
+                  name
+                  for name, status in components.items()
+                  if str(status).lower() == "fail"
+              ]
+          else:
+              failing = []
+
+          if failing:
+              raise SystemExit(
+                  "Niektóre komponenty Stage6 zakończyły się statusem 'fail': "
+                  + ", ".join(sorted(failing))
+              )
+
+          overall_status = str(payload.get("overall_status", "unknown")).lower()
+          if overall_status == "fail":
+              raise SystemExit("Raport Stage6 hypercare posiada status 'fail'")
+
+          if not payload.get("signature_valid", False):
+              raise SystemExit("Podpis HMAC Stage6 nie został poprawnie zweryfikowany")
+
+          status_icons = {
+              "ok": "✅",
+              "warn": "⚠️",
+              "warning": "⚠️",
+              "fail": "❌",
+              "skipped": "⏭️",
+          }
+
+          summary_lines = [
+              "### Stage6 hypercare",
+              f"* Raport: `{summary_path.name}`",
+              f"* Podpis: `{signature_path.name}`",
+              f"* Status ogólny: {status_icons.get(overall_status, 'ℹ️')} {overall_status}",
+              "* Komponenty:",
+          ]
+          if isinstance(components, dict) and components:
+              for name, status in sorted(components.items()):
+                  summary_lines.append(
+                      f"  * {status_icons.get(str(status).lower(), 'ℹ️')} {name}: {status}"
+                  )
+          else:
+              summary_lines.append("  * brak danych o komponentach")
+
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as handle:
+              handle.write("\n".join(summary_lines) + "\n")
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as handle:
+              handle.write(f"stage6_summary={summary_path.as_posix()}\n")
+              handle.write(f"stage6_signature={signature_path.as_posix()}\n")
+              handle.write(f"stage6_overall_status={overall_status}\n")
+
 
       - name: Rozwiąż konfigurację bundlera
         id: config

@@ -16,7 +16,7 @@ def test_core_config_includes_stress_lab_section() -> None:
     assert "BTCUSDT" in stress.datasets
     btc_dataset = stress.datasets["BTCUSDT"]
     assert Path(btc_dataset.metrics_path).name == "btcusdt.json"
-    assert btc_dataset.allow_synthetic is True
+    assert btc_dataset.allow_synthetic is False
 
     scenario_names = {scenario.name for scenario in stress.scenarios}
     assert "cross_market_liquidity_crunch" in scenario_names

@@ -13,8 +13,10 @@ from __future__ import annotations
 
 import argparse
 import csv
+import importlib
 import json
 import logging
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable, Mapping
@@ -46,6 +48,15 @@ except Exception:
     MarketIntelConfig = None  # type: ignore
     MarketIntelSqliteConfig = None  # type: ignore
     SqliteAggregator = None  # type: ignore
+
+try:
+    from bot_core.market_intel import MarketIntelSqliteBuilder  # type: ignore[attr-defined]
+    from bot_core.market_intel import MarketIntelDataProvider  # type: ignore[attr-defined]
+    _HAS_SQLITE_BUILDER = True
+except Exception:  # pragma: no cover - gałęzie bez buildera
+    MarketIntelSqliteBuilder = None  # type: ignore[assignment]
+    MarketIntelDataProvider = None  # type: ignore[assignment]
+    _HAS_SQLITE_BUILDER = False
 
 _LOGGER = logging.getLogger("stage6.market_intel.cli")
 # ---------------------------- wspólne utility ----------------------------
@@ -118,6 +129,27 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--required-symbol", action="append", dest="required_symbols",
                    help="[SQLite] Wymagany symbol (można podać wielokrotnie)")
     p.add_argument("--default-weight", type=float, help="[SQLite] Domyślna waga gdy brak kolumny weight")
+    p.add_argument(
+        "--populate-sqlite",
+        action="store_true",
+        help="[SQLite] Zbuduj bazę market_metrics.sqlite przed eksportem JSON",
+    )
+    p.add_argument(
+        "--sqlite-provider",
+        help="[SQLite] Ścieżka module:callable zwracająca MarketIntelDataProvider (domyślnie env MARKET_INTEL_SQLITE_PROVIDER)",
+    )
+    p.add_argument(
+        "--builder-depth",
+        type=int,
+        default=50,
+        help="[SQLite] Liczba poziomów orderbooka wykorzystana do agregacji (domyślnie 50)",
+    )
+    p.add_argument(
+        "--builder-lookback",
+        type=int,
+        default=240,
+        help="[SQLite] Liczba świec OHLCV używana do liczenia zmienności (domyślnie 240)",
+    )
 
     return p
 
@@ -241,6 +273,46 @@ def _apply_overrides_sqlite(config: MarketIntelConfig, args: argparse.Namespace)
     )
 
 
+def _load_sqlite_provider(spec: str):
+    if not _HAS_SQLITE_BUILDER or MarketIntelSqliteBuilder is None:
+        raise SystemExit("Brak wsparcia buildera SQLite w tej gałęzi bot_core.market_intel.")
+    if not spec:
+        raise SystemExit(
+            "Opcja --populate-sqlite wymaga wskazania providera przez --sqlite-provider lub MARKET_INTEL_SQLITE_PROVIDER"
+        )
+
+    module_name, sep, attr = spec.partition(":")
+    if not module_name or not attr or sep != ":":
+        raise SystemExit("Ścieżka providera musi mieć format module:callable")
+
+    module = importlib.import_module(module_name)
+    factory = getattr(module, attr, None)
+    if factory is None:
+        raise SystemExit(f"Moduł {module_name!r} nie posiada obiektu {attr!r}")
+
+    provider = factory() if callable(factory) else factory
+    for required in ("fetch_order_book", "fetch_funding", "fetch_sentiment", "fetch_ohlcv"):
+        if not hasattr(provider, required):
+            raise SystemExit(f"Provider Market Intel nie implementuje metody {required}")
+    return provider
+
+
+def _populate_sqlite_dataset(config: MarketIntelConfig, args: argparse.Namespace) -> None:
+    provider_spec = args.sqlite_provider or os.getenv("MARKET_INTEL_SQLITE_PROVIDER", "")
+    provider = _load_sqlite_provider(provider_spec)
+
+    builder = MarketIntelSqliteBuilder(  # type: ignore[misc]
+        config,
+        provider=provider,
+        depth_levels=max(1, int(args.builder_depth)),
+        volatility_lookback=max(2, int(args.builder_lookback)),
+    )
+    baselines = builder.collect()
+    builder.write_database(baselines)
+    builder.validate_checksums(baselines)
+    _LOGGER.info("Przygotowano market_metrics.sqlite z %d rekordami", len(baselines))
+
+
 def _run_sqlite(args: argparse.Namespace) -> int:
     if not (_HAS_SQLITE_TYPES and SqliteAggregator is not None):
         raise SystemExit("Tryb SQLite nieobsługiwany w tej gałęzi (brak MarketIntelConfig/aggregatora SQLite). Użyj --mode ohlcv.")
@@ -252,6 +324,8 @@ def _run_sqlite(args: argparse.Namespace) -> int:
         return 0
 
     effective_config = _apply_overrides_sqlite(market_config, args)
+    if args.populate_sqlite:
+        _populate_sqlite_dataset(effective_config, args)
     # Sprawdzamy, czy importowany aggregator ma API SQLite (write_outputs)
     if not hasattr(SqliteAggregator, "write_outputs"):
         raise SystemExit("W tej gałęzi MarketIntelAggregator nie wspiera write_outputs (SQLite). Użyj --mode ohlcv.")

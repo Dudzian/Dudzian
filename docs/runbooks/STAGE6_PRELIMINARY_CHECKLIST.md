@@ -15,6 +15,10 @@ oraz punkty kontrolne dla skryptów `scripts/run_stage6_*.py` i szablonów w `co
 - [ ] Potwierdzono możliwość generowania raportów Market Intel (`python
       scripts/build_market_intel_metrics.py`) do lokalizacji wskazanych w
       `config/stage6/hypercare.yaml` i `scripts/run_stage6_portfolio_cycle.py`.
+- [ ] Dostępny jest provider danych (`module:callable`) współpracujący z
+      `scripts/build_market_intel_metrics.py --populate-sqlite`, który zasila
+      bazę `market_metrics.sqlite` oraz przechodzi weryfikację sum kontrolnych
+      (HMAC/staging) przed eksportem JSON.
 - [ ] Zapewniono katalog `var/metrics/` z metrykami Stage6 (`stage6_measurements.json`) –
       jeśli plik pochodzi z innego repozytorium, użyj
       `python scripts/sync_stage6_metrics.py --source <plik> --output var/metrics/stage6_measurements.json`,
@@ -32,6 +36,10 @@ oraz punkty kontrolne dla skryptów `scripts/run_stage6_*.py` i szablonów w `co
       (`resolve_decision_log_config`, `default_decision_log_path`).
 - [ ] Zweryfikowano ścieżki wejściowe portfela (alokacje, Market Intel, raporty SLO/Stress Lab)
       zgodnie z sekcją `portfolio` w `config/stage6/hypercare.yaml`.
+- [ ] Przetestowano automatyczne generowanie pliku alokacji (`python
+      scripts/export_portfolio_allocations.py --governor <nazwa> --environment <env>`),
+      aby `var/audit/portfolio/allocations_<governor>.yaml` był aktualizowany przed
+      uruchomieniem hypercare oraz integracją z `run_stage6_hypercare_cycle.py`.
 - [ ] Potwierdzono, że wartości `inputs.*` i `output.*` w `config/stage6/hypercare.yaml`
       odpowiadają parametrom CLI (`--allocations`, `--market-intel`, `--portfolio-value`,
       `--summary`, `--summary-signature`, `--summary-csv`) w `scripts/run_stage6_portfolio_cycle.py`
@@ -138,6 +146,10 @@ oraz punkty kontrolne dla skryptów `scripts/run_stage6_*.py` i szablonów w `co
       `run_stage6_resilience_cycle.py`, `run_stage6_portfolio_cycle.py`).
 - [ ] Skonfigurowano weryfikację zbiorczego raportu (`python
       scripts/verify_stage6_hypercare_summary.py --require-signature`).
+- [ ] Potwierdzono, że workflow "Desktop packaging" pobiera najnowszy artefakt Stage6
+      hypercare i uruchamia `python scripts/verify_stage6_hypercare_summary.py --require-signature
+      --hmac-key-env STAGE6_HYPERCARE_HMAC_KEY`, zatrzymując bundler w razie braku podpisu lub
+      statusu `fail` któregokolwiek komponentu.
 - [ ] Zaplanowano integrację z pełną checklistą hypercare (`FULL_HYPERCARE_CHECKLIST.md`) oraz
       pipeline'em CI (połączenie Stage5/Stage6).
 - [ ] Przygotowano wpisy decision logu dokumentujące wykonanie cyklu hypercare i podpisy HMAC.

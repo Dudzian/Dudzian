@@ -21,6 +21,7 @@ import csv
 import json
 import logging
 import hashlib
+import os
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -688,6 +689,15 @@ def write_report_signature(
 
 _LOGGER = logging.getLogger(__name__)
 
+
+def _is_synthetic_override_enabled() -> bool:
+    """Sprawdź, czy wymuszono syntetyczne baseline'y poprzez zmienną środowiskową."""
+
+    flag = os.getenv("STRESS_LAB_ALLOW_SYNTHETIC_FALLBACK")
+    if not flag:
+        return False
+    return flag.strip().lower() in {"1", "true", "yes", "y", "on"}
+
 _SEVERITY_FACTORS: Mapping[str, float] = {
     "low": 0.4,
     "medium": 0.7,
@@ -1000,15 +1010,28 @@ class StressLab:
                     f"Nie udało się odczytać pliku metryk Stress Lab {metrics_path}: {exc}"
                 ) from exc
         else:
-            if not dataset.allow_synthetic:
+            override_enabled = _is_synthetic_override_enabled()
+            if not dataset.allow_synthetic and not override_enabled:
+                _LOGGER.error(
+                    "Stress Lab: brak metryk Stage6 dla rynku %s – oczekiwano pliku %s",
+                    dataset.symbol,
+                    metrics_path,
+                )
                 raise FileNotFoundError(
                     f"Dataset Stress Lab {metrics_path} nie istnieje, a allow_synthetic jest False"
                 )
-            _LOGGER.warning(
-                "Stress Lab: używam syntetycznych danych dla rynku %s (plik %s)",
-                dataset.symbol,
-                metrics_path,
-            )
+            if dataset.allow_synthetic:
+                _LOGGER.warning(
+                    "Stress Lab: używam syntetycznych danych dla rynku %s (plik %s)",
+                    dataset.symbol,
+                    metrics_path,
+                )
+            else:
+                _LOGGER.warning(
+                    "Stress Lab: brak metryk Stage6 dla rynku %s – STRESS_LAB_ALLOW_SYNTHETIC_FALLBACK"
+                    " aktywny, generuję syntetyczne baseline",
+                    dataset.symbol,
+                )
             data = self._build_synthetic_payload(dataset.symbol)
 
         baseline_payload = data.get("baseline", data)

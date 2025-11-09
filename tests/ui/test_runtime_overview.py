@@ -1,3 +1,4 @@
+import json
 import os
 from datetime import datetime, timezone
 from pathlib import Path
@@ -23,6 +24,7 @@ from core.monitoring.metrics_api import (
     RetrainingTelemetry,
     RuntimeTelemetrySnapshot,
 )
+from ui.backend import runtime_service as runtime_service_module
 from ui.backend.runtime_service import RuntimeService
 from ui.backend.telemetry_provider import TelemetryProvider
 
@@ -217,3 +219,45 @@ def test_telemetry_provider_reports_errors() -> None:
     assert result is False
     assert provider.errorMessage == "registry unreachable"
     assert len(calls) == 1
+
+
+def test_runtime_service_attaches_to_live_decision_log(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    log_file = tmp_path / "audit" / "decision_logs" / "live_execution.jsonl"
+    log_file.parent.mkdir(parents=True, exist_ok=True)
+    log_file.write_text(json.dumps(_sample_decisions()[0]) + "\n", encoding="utf-8")
+
+    config_path = tmp_path / "config" / "core.yaml"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text("{}", encoding="utf-8")
+
+    dummy_config = object()
+
+    monkeypatch.setenv("BOT_CORE_UI_CORE_CONFIG_PATH", str(config_path))
+    monkeypatch.setattr(runtime_service_module, "load_core_config", lambda path: dummy_config)
+    monkeypatch.setattr(runtime_service_module, "resolve_decision_log_config", lambda _cfg: (log_file, {}))
+
+    service = RuntimeService()
+    assert service.attachToLiveDecisionLog("alpha") is True
+
+    decisions = service.loadRecentDecisions(5)
+    assert len(decisions) == 1
+    assert decisions[0]["portfolio"] == "alpha"
+    assert service.errorMessage == ""
+    assert Path(service.activeDecisionLogPath) == log_file
+
+
+def test_runtime_service_attach_reports_missing_log(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    config_path = tmp_path / "config" / "core.yaml"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text("{}", encoding="utf-8")
+
+    dummy_config = object()
+    missing = tmp_path / "audit" / "decision_logs" / "missing.jsonl"
+
+    monkeypatch.setenv("BOT_CORE_UI_CORE_CONFIG_PATH", str(config_path))
+    monkeypatch.setattr(runtime_service_module, "load_core_config", lambda path: dummy_config)
+    monkeypatch.setattr(runtime_service_module, "resolve_decision_log_config", lambda _cfg: (missing, {}))
+
+    service = RuntimeService()
+    assert service.attachToLiveDecisionLog("stage6") is False
+    assert "nie istnieje" in service.errorMessage.lower()

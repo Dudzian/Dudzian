@@ -37,6 +37,7 @@ public slots:
     void refreshRiskNow();
     void startAutomation();
     void stopAutomation();
+    bool attachToLiveDecisionLog(const QString& profile = QString());
 
     Q_INVOKABLE QVariantMap previewPreset(const QVariantMap& selector);
 

@@ -45,6 +45,7 @@
         <file>settings/UpdateDialog.qml</file>
         <file>settings/ThemePersonalization.qml</file>
         <file>onboarding/LicenseWizard.qml</file>
+        <file>onboarding/DecisionLogSetupStep.qml</file>
         <file>onboarding/StrategySetupStep.qml</file>
         <file>views/MonitoringDashboard.qml</file>
         <file>views/Marketplace.qml</file>

@@ -456,12 +456,11 @@ stress_lab:
       symbol: BTCUSDT
       metrics_path: var/audit/stage6/market_intel/btcusdt.json
       weight: 1.0
-      allow_synthetic: true
+      allow_synthetic: false
     ETHUSDT:
       symbol: ETHUSDT
       metrics_path: var/audit/stage6/market_intel/ethusdt.json
       weight: 0.8
-      allow_synthetic: false
   scenarios:
     - name: cross_market_liquidity_crunch
       severity: high
