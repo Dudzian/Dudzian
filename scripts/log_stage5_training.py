@@ -25,8 +25,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-# --- konfiguracja logowania przed importami modułów repo ---
-logging.getLogger("KryptoLowca.ai_models").disabled = True
+# --- konfiguracja logowania bot_core przed importami modułów repo ---
+logging.getLogger("bot_core.ai.manager").disabled = True
 
 # --- HEAD branch API (pojedynczy raport + podpis Base64) ---
 from bot_core.compliance.training import TrainingSession, write_training_log
