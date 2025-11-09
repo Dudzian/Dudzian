@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -18,6 +19,9 @@ from bot_core.resilience.hypercare import (
     ResilienceCycleConfig,
     ResilienceCycleResult,
     ResilienceHypercareCycle,
+)
+from bot_core.runtime.telemetry_risk_profiles import (
+    get_observability_composite_expectations,
 )
 from bot_core.security.signing import build_hmac_signature, verify_hmac_signature
 
@@ -232,6 +236,111 @@ class Stage6HypercareCycle:
             "bundle_signature": _path_or_none(result.bundle_signature_path),
         }
 
+        slo_payload: Mapping[str, Any] | None = None
+        composite_results: dict[str, Mapping[str, Any]] = {}
+        slo_signature_valid: bool | None = None
+        if result.slo_report_path:
+            try:
+                payload_raw = json.loads(result.slo_report_path.read_text(encoding="utf-8"))
+            except Exception as exc:  # noqa: BLE001 - raport do operatora
+                issues.append(f"Nie udało się odczytać raportu SLO: {exc}")
+            else:
+                if isinstance(payload_raw, Mapping):
+                    slo_payload = payload_raw
+                else:
+                    issues.append("Raport SLO powinien być obiektem JSON")
+        else:
+            warnings.append("Brak wygenerowanego raportu SLO")
+
+        if slo_payload is not None:
+            slo_section: MutableMapping[str, Any] = {
+                "generated_at": slo_payload.get("generated_at"),
+                "summary": dict(slo_payload.get("summary", {})),
+            }
+            results_section = slo_payload.get("results")
+            if isinstance(results_section, Mapping):
+                slo_section["results"] = {
+                    str(name): dict(entry)
+                    for name, entry in results_section.items()
+                    if isinstance(entry, Mapping)
+                }
+            summary["slo"] = slo_section
+
+            composites_section = slo_payload.get("composites")
+            if isinstance(composites_section, Mapping):
+                raw_results = composites_section.get("results")
+                if isinstance(raw_results, Mapping):
+                    for name, entry in raw_results.items():
+                        if isinstance(entry, Mapping):
+                            composite_results[str(name)] = dict(entry)
+                if composite_results:
+                    status_counts: MutableMapping[str, int] = {}
+                    for entry in composite_results.values():
+                        status_value = str(entry.get("status", "unknown")).lower()
+                        status_counts[status_value] = status_counts.get(status_value, 0) + 1
+                    slo2_section: MutableMapping[str, Any] = {
+                        "results": composite_results,
+                        "status_counts": dict(status_counts),
+                        "evaluated": len(composite_results),
+                    }
+                    breached = [
+                        name
+                        for name, entry in composite_results.items()
+                        if str(entry.get("status", "ok")).lower() not in {"ok", "success"}
+                    ]
+                    if breached:
+                        slo2_section["breached"] = breached
+                        warnings.append("SLO2 naruszone: " + ", ".join(breached))
+                    summary["slo2"] = slo2_section
+                else:
+                    warnings.append("Raport SLO nie zawiera wyników SLO2")
+
+            signing_key = None
+            if self._config.observability:
+                signing_key = self._config.observability.signing_key
+            if result.slo_signature_path and signing_key:
+                try:
+                    signature_doc = json.loads(
+                        result.slo_signature_path.read_text(encoding="utf-8")
+                    )
+                    slo_signature_valid = bool(
+                        verify_hmac_signature(slo_payload, signature_doc, key=signing_key)
+                    )
+                except Exception as exc:  # noqa: BLE001 - weryfikacja podpisu
+                    issues.append(f"Nie udało się zweryfikować podpisu raportu SLO: {exc}")
+                    slo_signature_valid = None
+                else:
+                    if slo_signature_valid is False:
+                        warnings.append("Podpis raportu SLO nie został zweryfikowany")
+                summary.setdefault("slo", {})["signature_valid"] = slo_signature_valid
+            elif signing_key:
+                warnings.append(
+                    "Brak podpisu raportu SLO mimo skonfigurowanego klucza HMAC"
+                )
+
+            profile_name: str | None = None
+            if isinstance(self._config.metadata, Mapping):
+                metadata_profile = self._config.metadata.get("observability_profile")
+                profile_name = str(metadata_profile) if metadata_profile else None
+                if not profile_name and self._config.metadata.get("risk_profile"):
+                    profile_name = str(self._config.metadata.get("risk_profile"))
+            if profile_name:
+                try:
+                    expectations = get_observability_composite_expectations(profile_name)
+                except Exception as exc:  # noqa: BLE001 - raportujemy w ostrzeżeniach
+                    warnings.append(
+                        f"Nie udało się pobrać oczekiwań SLO2 dla profilu {profile_name}: {exc}"
+                    )
+                else:
+                    summary.setdefault("slo2", {})["expected"] = expectations
+                    expected = set(expectations.get("composites", ()))
+                    missing_expected = sorted(expected - set(composite_results))
+                    if missing_expected:
+                        warnings.append(
+                            "Brak wyników SLO2 dla profilu "
+                            f"{profile_name}: " + ", ".join(missing_expected)
+                        )
+
         if self._config.observability and self._config.observability.overrides and not result.overrides_path:
             warnings.append("Brak wygenerowanych override'ów alertów")
         if self._config.observability and self._config.observability.bundle:
@@ -283,7 +392,9 @@ class Stage6HypercareCycle:
 
         failover_status = result.failover_summary.status
         summary["failover_status"] = failover_status
-        if failover_status != "ok":
+        if failover_status == "critical":
+            issues.append("Failover drill zakończył się statusem critical")
+        elif failover_status != "ok":
             warnings.append(f"Failover drill zakończył się statusem {failover_status}")
 
         if result.verification:
@@ -291,7 +402,9 @@ class Stage6HypercareCycle:
             if result.verification.get("signature_verified") is False:
                 warnings.append("Podpis paczki odpornościowej nie został zweryfikowany")
 
-        if warnings:
+        if issues:
+            summary["status"] = "fail"
+        elif warnings:
             summary["status"] = "warn"
 
         summary["__warnings__"] = tuple(warnings)

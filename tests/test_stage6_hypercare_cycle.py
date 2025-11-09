@@ -14,7 +14,7 @@ from bot_core.portfolio.hypercare import (
 )
 from bot_core.resilience.hypercare import AuditConfig, BundleConfig, FailoverConfig, ResilienceCycleConfig
 from bot_core.runtime.stage6_hypercare import Stage6HypercareConfig, Stage6HypercareCycle
-from bot_core.security.signing import verify_hmac_signature
+from bot_core.security.signing import build_hmac_signature, verify_hmac_signature
 
 
 class _StubObservabilityCycle:
@@ -152,3 +152,101 @@ def test_stage6_hypercare_collects_component_failures(tmp_path: Path) -> None:
     assert any("audit failure" in issue for issue in payload["issues"])
     assert payload["components"]["portfolio"]["status"] == "warn"
     assert any("rebalance" in warning.lower() for warning in payload["warnings"])
+
+
+def test_stage6_hypercare_collects_slo2_expectations(tmp_path: Path, monkeypatch) -> None:
+    from bot_core.runtime import stage6_hypercare as stage6_module
+
+    slo_payload = {
+        "generated_at": "2024-05-20T12:00:00Z",
+        "summary": {"overall_status": "warn"},
+        "results": {
+            "latency": {"status": "fail"},
+            "uptime": {"status": "ok"},
+        },
+        "composites": {
+            "results": {
+                "exchange.latency": {"status": "fail"},
+                "exchange.uptime": {"status": "ok"},
+            }
+        },
+    }
+
+    class _ObservabilityWithSlo:
+        def __init__(self, config: ObservabilityCycleConfig) -> None:
+            self.config = config
+
+        def run(self) -> ObservabilityCycleResult:
+            output_dir = self.config.slo.json_path.parent
+            output_dir.mkdir(parents=True, exist_ok=True)
+            self.config.slo.json_path.write_text(
+                json.dumps(slo_payload, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            signature_path = self.config.slo.json_path.with_suffix(".sig")
+            signature_path.write_text(
+                json.dumps(
+                    build_hmac_signature(
+                        slo_payload,
+                        key=self.config.signing_key or b"obs",
+                        key_id=self.config.signing_key_id,
+                    ),
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                ),
+                encoding="utf-8",
+            )
+            return ObservabilityCycleResult(
+                slo_report_path=self.config.slo.json_path,
+                slo_signature_path=signature_path,
+                slo_csv_path=None,
+                overrides_path=None,
+                overrides_signature_path=None,
+                dashboard_annotations_path=None,
+                dashboard_signature_path=None,
+                bundle_path=None,
+                bundle_manifest_path=None,
+                bundle_signature_path=None,
+                bundle_verification=None,
+            )
+
+    monkeypatch.setattr(
+        stage6_module,
+        "get_observability_composite_expectations",
+        lambda profile: {
+            "composites": ["exchange.latency", "exchange.uptime", "orderbook.depth"]
+        },
+    )
+
+    config = Stage6HypercareConfig(
+        output_path=tmp_path / "stage6.json",
+        metadata={"observability_profile": "prod"},
+        observability=ObservabilityCycleConfig(
+            definitions_path=tmp_path / "defs.yaml",
+            metrics_path=tmp_path / "metrics.json",
+            slo=SLOOutputConfig(json_path=tmp_path / "observability" / "slo.json"),
+            signing_key=b"obs-key",
+            signing_key_id="obs",
+        ),
+    )
+
+    cycle = Stage6HypercareCycle(
+        config,
+        observability_factory=lambda cfg: _ObservabilityWithSlo(cfg),
+    )
+
+    result = cycle.run()
+    payload = result.payload
+    observability_summary = payload["components"]["observability"]
+
+    assert observability_summary["status"] == "warn"
+    assert observability_summary["slo"]["signature_valid"] is True
+    assert observability_summary["slo2"]["status_counts"]["fail"] == 1
+    assert observability_summary["slo2"]["breached"] == ["exchange.latency"]
+    assert observability_summary["slo2"]["expected"]["composites"] == [
+        "exchange.latency",
+        "exchange.uptime",
+        "orderbook.depth",
+    ]
+    assert any("SLO2 naruszone" in warning for warning in payload["warnings"])
+    assert any("Brak wyników SLO2" in warning for warning in payload["warnings"])

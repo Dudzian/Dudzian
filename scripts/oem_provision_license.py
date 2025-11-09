@@ -127,8 +127,18 @@ def verify_fingerprint_signature(
     except KeyError as exc:
         raise ProvisioningError(f"Brak klucza HMAC '{key_id}' do weryfikacji fingerprintu.") from exc
 
-    expected = build_hmac_signature(payload, key=key, key_id=key_id)
-    if expected["value"] != signature.get("value"):
+    algorithm = str(signature.get("algorithm") or "HMAC-SHA384").upper()
+    import hashlib, hmac  # lokalny import, aby uniknąć globalnych zależności
+
+    if algorithm == "HMAC-SHA256":
+        digest = hmac.new(key, canonical_json_bytes(payload), hashlib.sha256).digest()
+    elif algorithm == "HMAC-SHA384":
+        digest = hmac.new(key, canonical_json_bytes(payload), hashlib.sha384).digest()
+    else:
+        raise ProvisioningError(f"Nieobsługiwany algorytm podpisu fingerprintu: {algorithm}")
+
+    expected_value = base64.b64encode(digest).decode("ascii")
+    if expected_value != signature.get("value"):
         raise ProvisioningError("Sygnatura fingerprintu niezgodna z oczekiwanym HMAC.")
 
 
@@ -383,8 +393,11 @@ def validate_registry(
             errors.append(f"Linia {index}: brak klucza licencji '{key_id}'.")
             continue
 
-        expected = build_hmac_signature(payload, key=license_keys[key_id], key_id=key_id)
-        if expected["value"] != signature.get("value"):
+        import hashlib, hmac  # lokalny import na potrzeby walidacji
+
+        digest = hmac.new(license_keys[key_id], canonical_json_bytes(payload), hashlib.sha384).digest()
+        expected_value = base64.b64encode(digest).decode("ascii")
+        if expected_value != signature.get("value"):
             errors.append(f"Linia {index}: podpis licencji niezgodny z HMAC.")
 
         if fingerprint_keys:
@@ -393,9 +406,13 @@ def validate_registry(
             if isinstance(fp_sig, Mapping) and isinstance(fp_payload, Mapping):
                 fp_key = fp_sig.get("key_id")
                 if isinstance(fp_key, str) and fp_key in fingerprint_keys:
-                    expected_fp = build_hmac_signature(fp_payload, key=fingerprint_keys[fp_key], key_id=fp_key)
-                    if expected_fp["value"] != fp_sig.get("value"):
-                        errors.append(f"Linia {index}: podpis fingerprintu niepoprawny.")
+                    try:
+                        verify_fingerprint_signature(
+                            {"payload": fp_payload, "signature": fp_sig},
+                            {fp_key: fingerprint_keys[fp_key]},
+                        )
+                    except ProvisioningError as exc:
+                        errors.append(f"Linia {index}: podpis fingerprintu niepoprawny ({exc}).")
                 else:
                     errors.append(f"Linia {index}: brak klucza fingerprintu '{fp_key}'.")
     return errors
@@ -590,6 +607,11 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         dest="usb_target",
         help="Plik lub katalog docelowy na artefakt licencji (USB)",
     )
+    parser.add_argument(
+        "--verify",
+        action="store_true",
+        help="Nie wystawiaj licencji, tylko zweryfikuj fingerprint i/lub rejestr podpisów.",
+    )
     # tryb walidacji rejestru
     parser.add_argument("--validate-registry", action="store_true", help="Waliduj rejestr i zakończ.")
 
@@ -621,6 +643,52 @@ def _run_validation(args: argparse.Namespace) -> int:
             print(msg, file=sys.stderr)
         return 1
     print(f"Rejestr {args.output} – wszystkie podpisy prawidłowe.")
+    return 0
+
+
+def _run_verify(args: argparse.Namespace) -> int:
+    verified_any = False
+
+    if args.fingerprint:
+        source = load_fingerprint_maybe_json(args.fingerprint)
+        if not isinstance(source, Mapping):
+            raise ProvisioningError(
+                "Tryb --verify wymaga fingerprintu w formacie JSON (payload+signature).",
+            )
+        fingerprint_keys = _parse_key_entries(args.fingerprint_keys)
+        if not fingerprint_keys:
+            raise ProvisioningError(
+                "Do weryfikacji fingerprintu podaj co najmniej jeden klucz (--fingerprint-key).",
+            )
+        verify_fingerprint_signature(source, fingerprint_keys)
+        policy = evaluate_policy(source.get("payload", {}), args.mode, OemPolicy())
+        if policy["errors"]:
+            raise ProvisioningError("Fingerprint nie przechodzi polityki OEM: " + "; ".join(policy["errors"]))
+        if policy["warnings"]:
+            for warning in policy["warnings"]:
+                print(f"[WARN] {warning}")
+        print("Fingerprint – podpis HMAC i polityka OEM zweryfikowane poprawnie.")
+        verified_any = True
+
+    license_keys = _parse_key_entries(args.license_keys)
+    if license_keys:
+        fingerprint_keys = _parse_key_entries(args.fingerprint_keys)
+        registry_path = Path(args.output)
+        if not registry_path.exists():
+            raise ProvisioningError(f"Rejestr licencji nie istnieje: {registry_path}")
+        errors = validate_registry(registry_path, license_keys, fingerprint_keys or None)
+        if errors:
+            for msg in errors:
+                print(msg, file=sys.stderr)
+            return 1
+        print(f"Rejestr {registry_path} – wszystkie podpisy HMAC poprawne.")
+        verified_any = True
+
+    if not verified_any:
+        raise ProvisioningError(
+            "Tryb --verify nie otrzymał artefaktów do sprawdzenia. Podaj --fingerprint i/lub --license-key.",
+        )
+
     return 0
 
 
@@ -712,6 +780,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         # Walidacja rejestru – krótsza ścieżka
         if args.validate_registry:
             return _run_validation(args)
+
+        if args.verify:
+            return _run_verify(args)
 
         return _run_provision(args)
 

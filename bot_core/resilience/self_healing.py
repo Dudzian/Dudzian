@@ -13,6 +13,11 @@ from typing import Callable, Mapping, MutableMapping, Protocol, Sequence
 
 from bot_core.security.signing import build_hmac_signature
 
+try:  # pragma: no cover - opcjonalne importy w trakcie runtime UI
+    from scripts import disable_multi_strategy as _disable_multi_strategy  # type: ignore
+except Exception:  # pragma: no cover - środowiska bez modułów CLI
+    _disable_multi_strategy = None
+
 from .drill import FailoverDrillSummary
 
 
@@ -452,6 +457,127 @@ class SubprocessSelfHealingExecutor:
         )
 
 
+class CompositeSelfHealingExecutor:
+    """Deleguje wykonanie akcji do zarejestrowanych handlerów lub subprocessu."""
+
+    def __init__(
+        self,
+        *,
+        handlers: Mapping[str, Callable[[SelfHealingAction], SelfHealingExecution]] | None = None,
+        subprocess_executor: SelfHealingExecutor | None = None,
+    ) -> None:
+        self._handlers: dict[str, Callable[[SelfHealingAction], SelfHealingExecution]] = {}
+        if handlers:
+            self._handlers.update({key: value for key, value in handlers.items() if key})
+        self._subprocess_executor = (
+            subprocess_executor if subprocess_executor else SubprocessSelfHealingExecutor()
+        )
+
+    def register(
+        self, module: str, handler: Callable[[SelfHealingAction], SelfHealingExecution]
+    ) -> None:
+        if not module:
+            raise ValueError("Nazwa modułu nie może być pusta")
+        self._handlers[module] = handler
+
+    def __call__(self, action: SelfHealingAction) -> SelfHealingExecution:
+        handler = self._handlers.get(action.module)
+        if handler is not None:
+            try:
+                return handler(action)
+            except Exception as exc:  # noqa: BLE001 - raportujemy w raporcie self-healing
+                return SelfHealingExecution(
+                    action=action,
+                    status="error",
+                    started_at=_timestamp(),
+                    completed_at=_timestamp(),
+                    exit_code=None,
+                    output=None,
+                    error=str(exc),
+                    notes="handler_exception",
+                )
+        return self._subprocess_executor(action)
+
+
+def _handle_disable_multi_strategy(action: SelfHealingAction) -> SelfHealingExecution:
+    started_at = _timestamp()
+    if _disable_multi_strategy is None:
+        return SelfHealingExecution(
+            action=action,
+            status="error",
+            started_at=started_at,
+            completed_at=_timestamp(),
+            exit_code=None,
+            output=None,
+            error="Moduł disable_multi_strategy niedostępny",
+            notes="module_not_found",
+        )
+
+    metadata = dict(action.metadata)
+    component = str(metadata.get("scope") or metadata.get("component") or "multi_strategy")
+    reason = str(metadata.get("reason") or action.reason or "stage6_self_heal").strip()
+    if not reason:
+        reason = "stage6_self_heal"
+    if len(reason) > 240:
+        reason = reason[:240]
+    requested_by = metadata.get("requested_by") or "self_healing"
+    ticket = metadata.get("ticket") or metadata.get("ticket_template")
+    duration = metadata.get("duration_minutes")
+    output_dir = metadata.get("output_dir")
+
+    args = ["--component", component, "--reason", reason]
+    if requested_by:
+        args.extend(["--requested-by", str(requested_by)])
+    if ticket:
+        args.extend(["--ticket", str(ticket)])
+    if duration is not None:
+        try:
+            duration_minutes = int(duration)
+        except (TypeError, ValueError):  # noqa: BLE001 - walidacja metadanych
+            duration_minutes = None
+        if duration_minutes and duration_minutes > 0:
+            args.extend(["--duration-minutes", str(duration_minutes)])
+    if output_dir:
+        args.extend(["--output-dir", str(output_dir)])
+
+    try:
+        exit_code = _disable_multi_strategy.run(args)  # type: ignore[call-arg]
+    except Exception as exc:  # noqa: BLE001 - propagujemy błąd do raportu
+        return SelfHealingExecution(
+            action=action,
+            status="error",
+            started_at=started_at,
+            completed_at=_timestamp(),
+            exit_code=None,
+            output=None,
+            error=str(exc),
+            notes="handler_exception",
+        )
+
+    status = "success" if exit_code == 0 else "failed"
+    error_message = None if status == "success" else f"exit_code={exit_code}"
+    notes = None if status == "success" else "non_zero_exit"
+    return SelfHealingExecution(
+        action=action,
+        status=status,
+        started_at=started_at,
+        completed_at=_timestamp(),
+        exit_code=exit_code,
+        output=f"component={component}",
+        error=error_message,
+        notes=notes,
+    )
+
+
+def default_self_healing_executor() -> CompositeSelfHealingExecutor:
+    """Buduje domyślnego wykonawcę obsługującego akcje Stage6."""
+
+    handlers: dict[str, Callable[[SelfHealingAction], SelfHealingExecution]] = {
+        "scripts.disable_multi_strategy": _handle_disable_multi_strategy,
+    }
+    return CompositeSelfHealingExecutor(handlers=handlers)
+
+
 def execute_self_healing_plan(
     plan: SelfHealingPlan,
     executor: SelfHealingExecutor,
@@ -534,6 +660,8 @@ __all__ = [
     "SelfHealingReport",
     "summarize_self_healing_plan",
     "SubprocessSelfHealingExecutor",
+    "CompositeSelfHealingExecutor",
+    "default_self_healing_executor",
     "execute_self_healing_plan",
     "write_self_healing_report",
     "write_self_healing_signature",

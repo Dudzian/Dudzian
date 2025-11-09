@@ -41,6 +41,8 @@ def test_cli_builds_summary(tmp_path: Path) -> None:
     output_path = tmp_path / "full.json"
     signature_path = tmp_path / "full.sig"
 
+    archive_dir = tmp_path / "archive"
+
     exit_code = run_full_hypercare_summary.run(
         [
             "--stage5-summary",
@@ -63,6 +65,8 @@ def test_cli_builds_summary(tmp_path: Path) -> None:
             "full",
             "--require-stage5-signature",
             "--require-stage6-signature",
+            "--archive-dir",
+            archive_dir.as_posix(),
         ]
     )
 
@@ -70,7 +74,11 @@ def test_cli_builds_summary(tmp_path: Path) -> None:
     assert output_path.exists()
     data = json.loads(output_path.read_text(encoding="utf-8"))
     assert data["type"] == "full_hypercare_summary"
+    assert "archive_path" in data
     assert signature_path.exists()
+    assert archive_dir.exists()
+    archived = list(archive_dir.iterdir())
+    assert archived, "Brak wygenerowanych artefaktów archiwum"
 
 
 def test_cli_reports_missing_key(tmp_path: Path) -> None:

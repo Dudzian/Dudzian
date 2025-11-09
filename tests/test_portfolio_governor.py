@@ -6,6 +6,15 @@ from pathlib import Path
 
 import pytest
 
+from bot_core.runtime.journal import InMemoryTradingDecisionJournal
+
+try:
+    from bot_core.runtime.multi_strategy_scheduler import MultiStrategyScheduler  # type: ignore[attr-defined]
+    _HAVE_MULTI_SCHEDULER = True
+except Exception:  # pragma: no cover
+    MultiStrategyScheduler = None  # type: ignore[assignment]
+    _HAVE_MULTI_SCHEDULER = False
+
 # ============================================================
 #   Importy warunkowe – wspieramy dwa różne warianty API
 #   1) Wariant "asset-based" z evaluate(), SLO, stress overrides
@@ -503,3 +512,80 @@ def test_portfolio_governor_uses_cost_report_updates() -> None:
     assert decision.cost_components["trend"] == pytest.approx(1.0)
     assert decision.cost_components["mean_reversion"] == pytest.approx(8.0)
     assert decision.weights["trend"] > decision.weights["mean_reversion"]
+
+
+def test_portfolio_governor_scheduler_journals_decision() -> None:
+    if not (_supports_scoring_api() and _HAVE_MULTI_SCHEDULER):
+        pytest.skip("Scoring PortfolioGovernor or scheduler not available")
+
+    governor = _build_governor_scoring(default_cost_bps=0.0)
+    timestamp = datetime(2024, 1, 2, tzinfo=timezone.utc)
+    payload = {"alpha_score": 1.8, "slo_violation_rate": 0.0, "risk_penalty": 0.0}
+    governor.observe_strategy_metrics("trend", payload, timestamp=timestamp)  # type: ignore[attr-defined]
+    governor.observe_strategy_metrics("mean_reversion", payload, timestamp=timestamp)  # type: ignore[attr-defined]
+    decision = governor.maybe_rebalance(timestamp=timestamp, force=True)  # type: ignore[attr-defined]
+    assert decision is not None
+
+    class _Engine:
+        def warm_up(self, history):
+            return None
+
+        def on_data(self, snapshot):
+            return ()
+
+    class _Feed:
+        def load_history(self, strategy_name: str, bars: int):
+            return ()
+
+        def fetch_latest(self, strategy_name: str):
+            return ()
+
+    class _Sink:
+        def submit(self, **kwargs):
+            return None
+
+    journal = InMemoryTradingDecisionJournal()
+    scheduler = MultiStrategyScheduler(  # type: ignore[misc]
+        environment="paper",
+        portfolio="core",
+        clock=lambda: timestamp,
+        decision_journal=journal,
+        portfolio_governor=governor,
+    )
+
+    scheduler.register_schedule(  # type: ignore[attr-defined]
+        name="trend_schedule",
+        strategy_name="trend",
+        strategy=_Engine(),
+        feed=_Feed(),
+        sink=_Sink(),
+        cadence_seconds=60,
+        max_drift_seconds=10,
+        warmup_bars=0,
+        risk_profile="balanced",
+        max_signals=4,
+    )
+    scheduler.register_schedule(  # type: ignore[attr-defined]
+        name="mean_schedule",
+        strategy_name="mean_reversion",
+        strategy=_Engine(),
+        feed=_Feed(),
+        sink=_Sink(),
+        cadence_seconds=60,
+        max_drift_seconds=10,
+        warmup_bars=0,
+        risk_profile="balanced",
+        max_signals=3,
+    )
+
+    captured: list[object] = []
+    scheduler.add_portfolio_decision_listener(captured.append)  # type: ignore[attr-defined]
+    scheduler._apply_portfolio_decision(decision)  # pylint: disable=protected-access
+
+    assert captured and captured[0] is decision
+    exported = list(journal.export())
+    assert exported
+    last_event = exported[-1]
+    assert last_event["event"] == "portfolio_review"
+    assert json.loads(last_event["weights"])  # ensures weights are logged as JSON payload
+    assert last_event["rebalance_required"] == "0"

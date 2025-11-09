@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import math
 from collections import defaultdict, deque
@@ -22,6 +23,7 @@ from threading import RLock
 
 if TYPE_CHECKING:
     from bot_core.backtest.walk_forward import WalkForwardReport
+    from bot_core.portfolio import PortfolioDecision
     from bot_core.runtime.portfolio_coordinator import PortfolioRuntimeCoordinator
 
 from bot_core.runtime.capital_policies import (
@@ -380,6 +382,7 @@ class MultiStrategyScheduler:
         self._portfolio_coordinator: "PortfolioRuntimeCoordinator" | None = None
         self._portfolio_lock: asyncio.Lock | None = None
         self._last_portfolio_decision: "PortfolioRebalanceDecision | None" = None
+        self._portfolio_decision_listeners: list[Callable[["PortfolioDecision"], None]] = []
         self._capital_policy = capital_policy or EqualWeightAllocation()
         self._allocation_lock = asyncio.Lock()
         self._allocation_rebalance_seconds = (
@@ -1037,6 +1040,12 @@ class MultiStrategyScheduler:
         self._portfolio_coordinator = coordinator
         self._portfolio_lock = asyncio.Lock()
 
+    def add_portfolio_decision_listener(
+        self, listener: Callable[["PortfolioDecision"], None]
+    ) -> None:
+        if listener not in self._portfolio_decision_listeners:
+            self._portfolio_decision_listeners.append(listener)
+
     async def run_forever(self) -> None:
         if self._tasks:
             raise RuntimeError("Scheduler został już uruchomiony")
@@ -1399,6 +1408,55 @@ class MultiStrategyScheduler:
                 for sched in self._schedules
             },
         )
+        if self._decision_journal is not None:
+            adjustments = getattr(decision, "adjustments", ()) or ()
+            advisories = getattr(decision, "advisories", ()) or ()
+            metadata: dict[str, object] = {
+                "rebalance_required": "1" if getattr(decision, "rebalance_required", False) else "0",
+                "portfolio_value": str(getattr(decision, "portfolio_value", 0.0)),
+                "adjustment_count": str(len(adjustments)),
+                "advisory_count": str(len(advisories)),
+                "weights": json.dumps({name: round(weight, 6) for name, weight in allocation_map.items()}),
+            }
+            adjustment_payload: list[dict[str, object]] = []
+            for adjustment in adjustments:
+                adjustment_payload.append(
+                    {
+                        "symbol": getattr(adjustment, "symbol", ""),
+                        "proposed_weight": getattr(adjustment, "proposed_weight", None),
+                        "current_weight": getattr(adjustment, "current_weight", None),
+                        "severity": getattr(adjustment, "severity", ""),
+                        "reason": getattr(adjustment, "reason", ""),
+                    }
+                )
+            if adjustment_payload:
+                metadata["adjustments_json"] = json.dumps(adjustment_payload)
+            event = TradingDecisionEvent(
+                event_type="portfolio_rebalance"
+                if getattr(decision, "rebalance_required", False)
+                else "portfolio_review",
+                timestamp=getattr(decision, "timestamp", self._clock()),
+                environment=self._environment,
+                portfolio=self._portfolio,
+                risk_profile="portfolio",
+                schedule="portfolio_governor",
+                strategy="portfolio_governor",
+                metadata={str(key): str(value) for key, value in metadata.items()},
+            )
+            try:
+                self._decision_journal.record(event)
+            except Exception:  # pragma: no cover - journaling nie może blokować schedulera
+                _LOGGER.exception(
+                    "Nie udało się zapisać decyzji portfelowej w TradingDecisionJournal"
+                )
+        if self._portfolio_decision_listeners:
+            for listener in tuple(self._portfolio_decision_listeners):
+                try:
+                    listener(decision)
+                except Exception:  # pragma: no cover - diagnostyka listenerów
+                    _LOGGER.exception(
+                        "PortfolioGovernor: błąd wywołania listenera decyzji portfelowej"
+                    )
 
     async def _maybe_rebalance_allocation(
         self,

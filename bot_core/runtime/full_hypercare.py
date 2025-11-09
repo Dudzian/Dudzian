@@ -16,6 +16,7 @@ from bot_core.runtime.stage6_hypercare import (
     Stage6HypercareVerificationResult,
     verify_stage6_hypercare_summary,
 )
+from bot_core.runtime.hypercare_archive import archive_hypercare_reports
 from bot_core.security.signing import build_hmac_signature, verify_hmac_signature
 
 
@@ -89,6 +90,9 @@ class FullHypercareSummaryConfig:
     signing_key: bytes | None = None
     signing_key_id: str | None = None
     metadata: Mapping[str, Any] | None = None
+    archive_dir: Path | None = None
+    archive_timestamp: datetime | None = None
+    archive_extra_files: tuple[Path, ...] = ()
 
 
 @dataclass(slots=True)
@@ -100,6 +104,7 @@ class FullHypercareSummaryResult:
     signature_path: Path | None
     stage5: Stage5HypercareVerificationResult
     stage6: Stage6HypercareVerificationResult
+    archive_path: Path | None
 
 
 @dataclass(slots=True)
@@ -203,12 +208,27 @@ class FullHypercareSummaryBuilder:
                 handle.write("\n")
             signature_path = target_path
 
+        archive_path: Path | None = None
+        if self._config.archive_dir:
+            archive_path = archive_hypercare_reports(
+                archive_dir=self._config.archive_dir,
+                stage5_summary=self._config.stage5_summary_path,
+                stage6_summary=self._config.stage6_summary_path,
+                stage5_signature=self._config.stage5_signature_path,
+                stage6_signature=self._config.stage6_signature_path,
+                full_summary=output_path,
+                extra_files=self._config.archive_extra_files,
+                timestamp=self._config.archive_timestamp,
+            )
+            payload["archive_path"] = archive_path.as_posix()
+
         return FullHypercareSummaryResult(
             payload=dict(payload),
             output_path=output_path,
             signature_path=signature_path,
             stage5=stage5_result,
             stage6=stage6_result,
+            archive_path=archive_path,
         )
 
 

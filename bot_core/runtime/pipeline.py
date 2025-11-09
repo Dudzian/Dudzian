@@ -71,8 +71,10 @@ from bot_core.portfolio import (
     PortfolioGovernor,
     StrategyHealthMonitor,
     StrategyPortfolioGovernor,
+    load_market_intel_report,
 )
 from bot_core.runtime.bootstrap import BootstrapContext, bootstrap_environment
+from bot_core.risk import StressOverrideRecommendation
 from bot_core.security.guards import (
     LicenseCapabilityError,
     get_capability_guard,
@@ -103,6 +105,7 @@ from bot_core.runtime.portfolio_coordinator import PortfolioRuntimeCoordinator
 from bot_core.runtime.portfolio_inputs import (
     build_slo_status_provider,
     build_stress_override_provider,
+    load_stress_overrides,
 )
 from bot_core.runtime.tco_reporting import RuntimeTCOReporter
 from bot_core.runtime.controller import DailyTrendController
@@ -145,6 +148,137 @@ _DEFAULT_OHLCV_COLUMNS: tuple[str, ...] = (
     "volume",
 )
 _LOGGER = logging.getLogger(__name__)
+
+
+def _to_path(value: object | None) -> Path | None:
+    if value in (None, "", False):
+        return None
+    try:
+        path = Path(str(value)).expanduser()
+    except Exception:
+        return None
+    return path
+
+
+def _unique_paths(paths: Iterable[Path | None]) -> tuple[Path, ...]:
+    seen: set[str] = set()
+    result: list[Path] = []
+    for candidate in paths:
+        if candidate is None:
+            continue
+        normalized = candidate.expanduser()
+        key = str(normalized)
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        result.append(normalized)
+    return tuple(result)
+
+
+def _resolve_latest_report(
+    directories: Sequence[Path | None], *, prefix: str, suffix: str = ".json"
+) -> Path | None:
+    latest_path: Path | None = None
+    latest_mtime = float("-inf")
+    for base in directories:
+        if base is None:
+            continue
+        directory = base.expanduser()
+        if not directory.exists() or not directory.is_dir():
+            continue
+        try:
+            candidates = list(directory.glob(f"{prefix}*{suffix}"))
+        except Exception:  # pragma: no cover - glob errors should not break runtime
+            _LOGGER.debug("Nie udało się przeszukać katalogu %s", directory, exc_info=True)
+            continue
+        for candidate in candidates:
+            try:
+                mtime = candidate.stat().st_mtime
+            except OSError:
+                continue
+            if mtime > latest_mtime:
+                latest_path = candidate
+                latest_mtime = mtime
+    return latest_path
+
+
+def _load_market_intel_snapshots_from_reports(
+    governor_name: str,
+    config: object | None,
+    directories: Sequence[Path],
+) -> Mapping[str, MarketIntelSnapshot]:
+    search_dirs: list[Path | None] = list(directories)
+    output_dir = _to_path(getattr(config, "output_directory", None)) if config else None
+    if output_dir is not None:
+        search_dirs.insert(0, output_dir)
+    normalized_dirs = _unique_paths(search_dirs)
+    if not normalized_dirs:
+        return {}
+
+    name_slug = governor_name.strip().lower().replace(" ", "_") or "portfolio"
+    prefixes = (
+        f"market_intel_{name_slug}_",
+        f"marketintel_{name_slug}_",
+        "market_intel_",
+    )
+
+    for prefix in prefixes:
+        report_path = _resolve_latest_report(normalized_dirs, prefix=prefix)
+        if report_path is None:
+            continue
+        try:
+            snapshots, _ = load_market_intel_report(report_path)
+        except Exception:  # pragma: no cover - diagnostyka raportów
+            _LOGGER.exception(
+                "PortfolioGovernor: błąd wczytania raportu Market Intel %s", report_path
+            )
+            continue
+        if snapshots:
+            _LOGGER.debug(
+                "PortfolioGovernor: użyto fallbackowego raportu Market Intel %s",
+                report_path,
+            )
+            return snapshots
+    return {}
+
+
+def _resolve_latest_stress_report(
+    governor_name: str, directories: Sequence[Path]
+) -> Path | None:
+    name_slug = governor_name.strip().lower().replace(" ", "_") or "portfolio"
+    prefixes = (
+        f"stress_lab_{name_slug}_",
+        "stress_lab_",
+    )
+    normalized_dirs = _unique_paths(directories)
+    for prefix in prefixes:
+        report_path = _resolve_latest_report(normalized_dirs, prefix=prefix)
+        if report_path is not None:
+            return report_path
+    return None
+
+
+def _load_stress_overrides_from_reports(
+    governor_name: str,
+    directories: Sequence[Path],
+    *,
+    max_age: timedelta | None = None,
+) -> tuple[StressOverrideRecommendation, ...]:
+    report_path = _resolve_latest_stress_report(governor_name, directories)
+    if report_path is None:
+        return ()
+    try:
+        overrides = load_stress_overrides(report_path, max_age=max_age)
+    except Exception:  # pragma: no cover - diagnostyka raportów
+        _LOGGER.exception(
+            "PortfolioGovernor: błąd wczytania raportu Stress Lab %s", report_path
+        )
+        return ()
+    if overrides:
+        _LOGGER.debug(
+            "PortfolioGovernor: użyto fallbackowego raportu Stress Lab %s", report_path
+        )
+    return overrides
 
 
 def _ensure_local_market_data_availability(
@@ -3711,14 +3845,23 @@ def build_multi_strategy_runtime(
         lookback = int(getattr(governor_cfg, "market_intel_lookback_bars", 168) or 168)
         inputs_cfg = getattr(scheduler_cfg, "portfolio_inputs", None)
         data_cache_root = Path(environment.data_cache_path).expanduser()
-        fallback_candidates = (
+        fallback_candidates: tuple[Path | None, ...] = (
             data_cache_root,
             data_cache_root.parent,
         )
-        fallback_directories = tuple(dict.fromkeys(candidate for candidate in fallback_candidates if str(candidate)))
+        market_intel_cfg = getattr(core_config, "market_intel", None)
+        stress_lab_cfg = getattr(core_config, "stress_lab", None)
+        stage6_dirs: list[Path | None] = []
+        if market_intel_cfg is not None:
+            stage6_dirs.append(_to_path(getattr(market_intel_cfg, "output_directory", None)))
+        if stress_lab_cfg is not None:
+            stage6_dirs.append(_to_path(getattr(stress_lab_cfg, "report_directory", None)))
+        fallback_directories = _unique_paths((*fallback_candidates, *stage6_dirs))
 
         slo_provider = None
         stress_provider = None
+        slo_age: timedelta | None = None
+        stress_age: timedelta | None = _minutes_to_timedelta(None, default_minutes=240.0)
         if inputs_cfg is not None:
             slo_age = _minutes_to_timedelta(
                 getattr(inputs_cfg, "slo_max_age_minutes", None),
@@ -3742,6 +3885,19 @@ def build_multi_strategy_runtime(
                     fallback_directories=fallback_directories,
                     max_age=stress_age,
                 )
+        if stress_provider is None:
+            overrides = _load_stress_overrides_from_reports(
+                governor_name,
+                fallback_directories,
+                max_age=stress_age,
+            )
+            if overrides:
+                cached_overrides = tuple(overrides)
+
+                def _fallback_stress_provider() -> Sequence[StressOverrideRecommendation]:
+                    return cached_overrides
+
+                stress_provider = _fallback_stress_provider
 
         def _market_data_provider() -> Mapping[str, MarketIntelSnapshot]:
             if not asset_symbols:
@@ -3750,19 +3906,52 @@ def build_multi_strategy_runtime(
                 MarketIntelQuery(symbol=symbol, interval=interval, lookback_bars=lookback)
                 for symbol in asset_symbols
             ]
+            snapshots: dict[str, MarketIntelSnapshot] = {}
+            fallback_snapshots: Mapping[str, MarketIntelSnapshot] | None = None
             try:
-                return market_intel.build_many(queries)
+                snapshots.update(market_intel.build_many(queries))
             except Exception:  # pragma: no cover - diagnostyka danych
                 _LOGGER.exception("PortfolioGovernor: błąd budowania metryk Market Intel")
-                snapshots: dict[str, MarketIntelSnapshot] = {}
+            missing_symbols = [query.symbol for query in queries if query.symbol not in snapshots]
+            if missing_symbols and market_intel_cfg is not None:
+                fallback_snapshots = _load_market_intel_snapshots_from_reports(
+                    governor_name,
+                    market_intel_cfg,
+                    fallback_directories,
+                )
+                for symbol in missing_symbols:
+                    if fallback_snapshots and symbol in fallback_snapshots:
+                        snapshots[symbol] = fallback_snapshots[symbol]
+            if len(snapshots) < len(queries):
                 for query in queries:
+                    if query.symbol in snapshots:
+                        continue
                     try:
                         snapshots[query.symbol] = market_intel.build_snapshot(query)
+                        continue
                     except Exception:
                         _LOGGER.debug(
                             "Brak metryk Market Intel dla %s", query.symbol, exc_info=True
                         )
+                    if fallback_snapshots is None and market_intel_cfg is not None:
+                        fallback_snapshots = _load_market_intel_snapshots_from_reports(
+                            governor_name,
+                            market_intel_cfg,
+                            fallback_directories,
+                        )
+                    if fallback_snapshots and query.symbol in fallback_snapshots:
+                        snapshots[query.symbol] = fallback_snapshots[query.symbol]
+            if snapshots:
                 return snapshots
+            if market_intel_cfg is not None:
+                fallback_snapshots = _load_market_intel_snapshots_from_reports(
+                    governor_name,
+                    market_intel_cfg,
+                    fallback_directories,
+                )
+                if fallback_snapshots:
+                    return fallback_snapshots
+            return {}
 
         def _allocation_provider() -> tuple[float, Mapping[str, float]]:
             latest: dict[str, float] = {symbol: 0.0 for symbol in asset_symbols}
@@ -3882,12 +4071,27 @@ def build_multi_strategy_runtime(
     )
 
     optimization_cfg = getattr(runtime_config, "optimization", None) if runtime_config else None
-    _configure_optimization_scheduler(
+    optimization_scheduler = _configure_optimization_scheduler(
         runtime_instance,
         core_config=core_config,
         optimization_cfg=optimization_cfg,
         catalog=DEFAULT_STRATEGY_CATALOG,
     )
+    if optimization_scheduler is not None and hasattr(
+        scheduler, "add_portfolio_decision_listener"
+    ):
+
+        def _trigger_after_portfolio(decision: PortfolioDecision) -> None:
+            if not getattr(decision, "rebalance_required", False):
+                return
+            try:
+                optimization_scheduler.trigger()
+            except Exception:  # pragma: no cover - diagnostyka schedulerów optymalizacji
+                _LOGGER.exception(
+                    "PortfolioGovernor: błąd wyzwolenia optymalizacji po decyzji portfelowej"
+                )
+
+        scheduler.add_portfolio_decision_listener(_trigger_after_portfolio)
 
     return runtime_instance
 

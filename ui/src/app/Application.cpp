@@ -55,6 +55,7 @@
 #include "app/StrategyWorkbenchController.hpp"
 #include "app/MarketplaceController.hpp"
 #include "app/PortfolioManagerController.hpp"
+#include "app/HypercareController.hpp"
 #include "app/UserProfileController.hpp"
 #include "runtime/OfflineRuntimeBridge.hpp"
 #include "security/SecurityAdminController.hpp"
@@ -183,6 +184,18 @@ public:
         portfolio.metadata = portfolioMeta;
         manager.registerView(moduleId(), portfolio);
 
+        UiModuleManager::ViewDescriptor hypercare;
+        hypercare.id = QStringLiteral("monitoring.hypercare");
+        hypercare.name = QObject::tr("Hypercare Stage6");
+        hypercare.source = QUrl(QStringLiteral("qrc:/qml/views/HypercareDashboard.qml"));
+        hypercare.category = QObject::tr("Monitoring");
+        QVariantMap hypercareMeta;
+        hypercareMeta.insert(QStringLiteral("description"),
+                             QObject::tr("Monitoruj status hypercare oraz wymuszaj akcje self-healing Stage6."));
+        hypercareMeta.insert(QStringLiteral("requiresLicense"), true);
+        hypercare.metadata = hypercareMeta;
+        manager.registerView(moduleId(), hypercare);
+
         UiModuleManager::ServiceDescriptor alertsService;
         alertsService.id = QStringLiteral("monitoring.alertsModel");
         alertsService.name = QStringLiteral("AlertsModel");
@@ -200,6 +213,15 @@ public:
             return m_app ? m_app->alertsFilterModel() : nullptr;
         };
         manager.registerService(moduleId(), alertsFilterService);
+
+        UiModuleManager::ServiceDescriptor hypercareService;
+        hypercareService.id = QStringLiteral("monitoring.hypercareController");
+        hypercareService.name = QStringLiteral("HypercareController");
+        hypercareService.singleton = true;
+        hypercareService.factory = [this](QObject*) -> QObject* {
+            return m_app ? m_app->hypercareController() : nullptr;
+        };
+        manager.registerService(moduleId(), hypercareService);
 
         UiModuleManager::ServiceDescriptor decisionService;
         decisionService.id = QStringLiteral("monitoring.decisionLogModel");
@@ -507,6 +529,16 @@ Application::Application(QQmlApplicationEngine& engine, QObject* parent)
     m_portfolioController = std::make_unique<PortfolioManagerController>(this);
     m_portfolioController->setBridgeScriptPath(QDir::current().absoluteFilePath(QStringLiteral("scripts/ui_portfolio_bridge.py")));
     m_portfolioController->setStorePath(QDir::current().absoluteFilePath(QStringLiteral("var/portfolio_links.json")));
+
+    m_hypercareController = std::make_unique<HypercareController>(this);
+    const QDir cwd = QDir::current();
+    m_hypercareController->setCycleScript(cwd.absoluteFilePath(QStringLiteral("scripts/run_stage6_resilience_cycle.py")));
+    m_hypercareController->setBundleSource(cwd.absoluteFilePath(QStringLiteral("var/audit/resilience")));
+    m_hypercareController->setBundleOutputDir(cwd.absoluteFilePath(QStringLiteral("var/resilience")));
+    m_hypercareController->setFailoverPlanPath(cwd.absoluteFilePath(QStringLiteral("data/stage6/resilience/failover_plan.json")));
+    m_hypercareController->setSelfHealRulesPath(cwd.absoluteFilePath(QStringLiteral("config/stage6/resilience_self_heal.json")));
+    m_hypercareController->setSelfHealOutputPath(cwd.absoluteFilePath(QStringLiteral("var/audit/resilience/self_healing_report.json")));
+    m_hypercareController->setStage6SummaryPath(cwd.absoluteFilePath(QStringLiteral("var/audit/stage6/stage6_hypercare_summary.json")));
 
     m_configurationWizard = std::make_unique<ConfigurationWizardController>(this);
     m_configurationWizard->setStrategyConfigController(m_strategyController.get());
@@ -3852,6 +3884,7 @@ void Application::exposeToQml() {
     m_engine.rootContext()->setContextProperty(QStringLiteral("moduleViewsModel"), m_moduleViewsModel.get());
     m_engine.rootContext()->setContextProperty(QStringLiteral("marketplaceController"), m_marketplaceController.get());
     m_engine.rootContext()->setContextProperty(QStringLiteral("portfolioController"), m_portfolioController.get());
+    m_engine.rootContext()->setContextProperty(QStringLiteral("hypercareController"), m_hypercareController.get());
     m_engine.rootContext()->setContextProperty(QStringLiteral("configurationWizard"), m_configurationWizard.get());
     m_engine.rootContext()->setContextProperty(QStringLiteral("updateManager"), m_updateManager.get());
     m_engine.rootContext()->setContextProperty(QStringLiteral("resultsDashboard"), m_resultsDashboard.get());
@@ -3912,6 +3945,11 @@ QObject* Application::marketplaceController() const
 QObject* Application::portfolioController() const
 {
     return m_portfolioController.get();
+}
+
+QObject* Application::hypercareController() const
+{
+    return m_hypercareController.get();
 }
 
 QObject* Application::configurationWizard() const

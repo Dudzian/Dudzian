@@ -11,10 +11,13 @@ from bot_core.config.models import (
     ResilienceDrillThresholdsConfig,
 )
 from bot_core.resilience.failover import (
+    FailoverDrillPlan,
     FailoverDrillMetrics,
     FailoverDrillReport,
     FailoverDrillResult,
+    FailoverServicePlan,
     ResilienceFailoverDrill,
+    evaluate_failover_drill,
 )
 
 
@@ -57,6 +60,7 @@ def test_resilience_failover_pass(tmp_path: Path) -> None:
     mapping = report.to_mapping()
     assert mapping["failure_count"] == 0
     assert mapping["drills"][0]["status"] == "passed"
+    assert mapping["drills"][0]["counts"]["critical"] == 0
 
 
 def test_resilience_failover_fail(tmp_path: Path) -> None:
@@ -85,6 +89,32 @@ def test_resilience_failover_fail(tmp_path: Path) -> None:
     result = report.drills[0]
     assert result.has_failures()
     assert "max_latency_ms" in result.failures[0]
+
+
+def test_resilience_failover_summary_marks_critical_when_threshold_exceeded() -> None:
+    plan = FailoverDrillPlan(
+        drill_name="demo",
+        executed_at=None,
+        services=(
+            FailoverServicePlan(
+                name="core_router",
+                max_rto_minutes=10.0,
+                max_rpo_minutes=4.0,
+                observed_rto_minutes=25.0,
+                observed_rpo_minutes=6.0,
+                required_artifacts=("runbooks/core_router.md",),
+                metadata={},
+            ),
+        ),
+        metadata={},
+    )
+    manifest = {"files": ["runbooks/core_router.md"]}
+
+    summary = evaluate_failover_drill(plan, manifest)
+
+    assert summary.status == "critical"
+    assert summary.counts["critical"] == 1
+    assert summary.services[0].status == "critical"
 
 
 def test_resilience_failover_extract_metrics_normalizes_inputs(tmp_path: Path) -> None:

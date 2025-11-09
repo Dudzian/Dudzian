@@ -426,8 +426,8 @@ portfolio_governor:
 
 market_intel:
   enabled: true
-  output_directory: ../data/stage6/metrics
-  manifest_path: ../var/audit/stage6/market_intel/manifest.json
+  output_directory: var/audit/stage6/market_intel
+  manifest_path: var/audit/stage6/market_intel/manifest.json
   default_weight: 1.15
   required_symbols:
     - BTCUSDT
@@ -454,12 +454,12 @@ stress_lab:
   datasets:
     BTCUSDT:
       symbol: BTCUSDT
-      metrics_path: ../data/stage6/metrics/btcusdt.json
+      metrics_path: var/audit/stage6/market_intel/btcusdt.json
       weight: 1.0
       allow_synthetic: true
     ETHUSDT:
       symbol: ETHUSDT
-      metrics_path: ../data/stage6/metrics/ethusdt.json
+      metrics_path: var/audit/stage6/market_intel/ethusdt.json
       weight: 0.8
       allow_synthetic: false
   scenarios:

@@ -16,6 +16,7 @@ except ModuleNotFoundError:  # pragma: no cover - środowiska <3.11
     import tomli as tomllib  # type: ignore[no-redef]
 
 from deploy.packaging import build_pyinstaller_bundle
+from scripts import oem_provision_license
 
 
 @dataclass(slots=True)
@@ -246,6 +247,23 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser.add_argument("--skip-pyinstaller", action="store_true", help="Pomiń etap budowania PyInstaller")
     parser.add_argument("--skip-briefcase", action="store_true", help="Pomiń etap Briefcase")
     parser.add_argument("--metadata-out", help="Ścieżka alternatywnego pliku metadanych")
+    parser.add_argument("--verify-fingerprint", help="Plik fingerprint.expected.json do weryfikacji po buildzie")
+    parser.add_argument(
+        "--verify-fingerprint-key",
+        action="append",
+        dest="verify_fingerprint_keys",
+        help="Klucz HMAC fingerprintu (key_id=sekret) przekazywany do --verify",
+    )
+    parser.add_argument(
+        "--verify-license-key",
+        action="append",
+        dest="verify_license_keys",
+        help="Klucz HMAC licencji (key_id=sekret) przekazywany do --verify",
+    )
+    parser.add_argument(
+        "--verify-registry",
+        help="Ścieżka rejestru licencji JSONL do weryfikacji (domyślnie var/licenses/registry.jsonl)",
+    )
     return parser.parse_args(list(argv) if argv is not None else None)
 
 
@@ -309,6 +327,32 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     _write_metadata(metadata_path, payload)
     print(f"Zapisano metadane bundla w {metadata_path}")
+
+    verify_args: list[str] = []
+    if args.verify_fingerprint or args.verify_fingerprint_keys or args.verify_license_keys:
+        if args.verify_fingerprint and not args.verify_fingerprint_keys:
+            raise SystemExit(
+                "Weryfikacja fingerprintu wymaga co najmniej jednego klucza (--verify-fingerprint-key).",
+            )
+        if args.verify_license_keys and not (args.verify_registry or Path("var/licenses/registry.jsonl").exists()):
+            raise SystemExit(
+                "Podaj --verify-registry lub utwórz var/licenses/registry.jsonl przed weryfikacją podpisów licencji.",
+            )
+        verify_args.append("--verify")
+        if args.verify_fingerprint:
+            verify_args.extend(["--fingerprint", str(Path(args.verify_fingerprint).expanduser().resolve())])
+        registry_path = args.verify_registry or str(Path("var/licenses/registry.jsonl").resolve())
+        if args.verify_license_keys:
+            verify_args.extend(["--output", registry_path])
+            for entry in args.verify_license_keys:
+                verify_args.extend(["--license-key", entry])
+        if args.verify_fingerprint_keys:
+            for entry in args.verify_fingerprint_keys:
+                verify_args.extend(["--fingerprint-key", entry])
+        exit_code = oem_provision_license.main(verify_args)
+        if exit_code != 0:
+            raise SystemExit(f"Weryfikacja fingerprintu/licencji nie powiodła się (kod {exit_code}).")
+        print("Automatyczna weryfikacja fingerprintu/licencji zakończona powodzeniem.")
     return 0
 
 

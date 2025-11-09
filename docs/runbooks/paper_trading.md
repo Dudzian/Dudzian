@@ -105,7 +105,7 @@ Jeśli potrzebujesz analizować dynamikę guardrail w czasie (np. ile blokad poj
 
 ## 3. Uruchomienie pipeline’u paper trading
 1. Aktywuj wirtualne środowisko Pythona: `py -3.11 -m venv .venv && .venv\Scripts\activate` (Windows) lub `python3 -m venv .venv && source .venv/bin/activate` (macOS).
-2. Zainstaluj zależności: `pip install -e .[dev,desktop,compression]` (wykonaj przy pierwszym uruchomieniu oraz po każdej aktualizacji repozytorium; extras `compression` doinstaluje `brotli` lub `brotlicffi` oraz `zstandard` zależnie od platformy).
+2. Zainstaluj zależności: `pip install -e .[dev,desktop,compression]` (wykonaj przy pierwszym uruchomieniu oraz po każdej aktualizacji repozytorium; polecenie zapewnia dostępność pakietów `bot_core`, `core`, a extras `compression` doinstaluje `brotli` lub `brotlicffi` oraz `zstandard` zależnie od platformy).
 3. Jeśli łączność z API Binance jest ograniczona, w pierwszej kolejności odtwórz cache poleceniem `PYTHONPATH=. python scripts/seed_paper_cache.py --environment binance_paper --days 60 --start-date 2024-01-01`. Następnie wykonaj smoke test środowiska paper (sprawdzenie backfillu + egzekucji na krótkim oknie):
    ```bash
    PYTHONPATH=. python scripts/run_daily_trend.py \

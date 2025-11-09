@@ -1,6 +1,7 @@
 #include "PortfolioManagerController.hpp"
 
 #include <QDir>
+#include <QFile>
 #include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -32,6 +33,7 @@ QVariant toVariant(const QJsonValue& value)
 PortfolioManagerController::PortfolioManagerController(QObject* parent)
     : QObject(parent)
 {
+    m_portfolioDecisionLogPath = normalizePath(QStringLiteral("logs/portfolio_decisions.jsonl"));
 }
 
 PortfolioManagerController::~PortfolioManagerController() = default;
@@ -58,6 +60,14 @@ void PortfolioManagerController::setStorePath(const QString& path)
     if (normalized == m_storePath)
         return;
     m_storePath = normalized;
+}
+
+void PortfolioManagerController::setPortfolioDecisionLogPath(const QString& path)
+{
+    const QString normalized = normalizePath(path);
+    if (normalized == m_portfolioDecisionLogPath)
+        return;
+    m_portfolioDecisionLogPath = normalized;
 }
 
 PortfolioManagerController::BridgeResult PortfolioManagerController::runBridge(const QStringList& arguments, const QByteArray& stdinData)
@@ -199,6 +209,81 @@ bool PortfolioManagerController::applyPortfolio(const QVariantMap& payload)
     m_busy = false;
     emit busyChanged();
     return refreshPortfolios();
+}
+
+bool PortfolioManagerController::refreshGovernorDecisions(int limit)
+{
+    if (m_busy)
+        return false;
+
+    if (limit <= 0)
+        limit = 10;
+
+    m_busy = true;
+    emit busyChanged();
+
+    if (m_portfolioDecisionLogPath.isEmpty()) {
+        m_busy = false;
+        emit busyChanged();
+        if (!m_governorDecisions.isEmpty()) {
+            m_governorDecisions.clear();
+            emit governorDecisionsChanged();
+        }
+        return true;
+    }
+
+    QFile file(m_portfolioDecisionLogPath);
+    if (!file.exists()) {
+        m_busy = false;
+        emit busyChanged();
+        if (!m_governorDecisions.isEmpty()) {
+            m_governorDecisions.clear();
+            emit governorDecisionsChanged();
+        }
+        return true;
+    }
+
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        m_busy = false;
+        emit busyChanged();
+        const QString message = tr("Nie udało się otworzyć dziennika decyzji portfela (%1)").arg(file.errorString());
+        if (m_lastError != message) {
+            m_lastError = message;
+            emit lastErrorChanged();
+        }
+        return false;
+    }
+
+    QList<QByteArray> buffer;
+    while (!file.atEnd()) {
+        const QByteArray line = file.readLine();
+        if (line.trimmed().isEmpty())
+            continue;
+        buffer.append(line);
+        if (buffer.size() > limit)
+            buffer.pop_front();
+    }
+    file.close();
+
+    m_busy = false;
+    emit busyChanged();
+
+    QVariantList entries;
+    entries.reserve(buffer.size());
+    for (const QByteArray& raw : buffer) {
+        const QJsonDocument document = QJsonDocument::fromJson(raw);
+        if (!document.isObject())
+            continue;
+        entries.append(document.object().toVariantMap());
+    }
+
+    m_governorDecisions = entries;
+    emit governorDecisionsChanged();
+    if (!m_lastError.isEmpty()) {
+        m_lastError.clear();
+        emit lastErrorChanged();
+    }
+    return true;
 }
 
 bool PortfolioManagerController::removePortfolio(const QString& portfolioId)
