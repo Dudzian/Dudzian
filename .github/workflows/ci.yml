@@ -20,6 +20,8 @@ jobs:
           python-version: "3.11"
 
       - name: Lint repository paths
+        env:
+          LINT_PATHS_ALLOW_LEGACY: "1"
         run: python scripts/lint_paths.py
 
       - name: Install dependencies
@@ -58,6 +60,39 @@ jobs:
         with:
           name: coverage-report
           path: coverage.xml
+
+  release-quality-gates:
+    name: Release Quality Gates
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install .[dev]
+
+      - name: Lint repository paths
+        run: python scripts/lint_paths.py
+
+      - name: Type check with mypy
+        run: mypy
+
+      - name: Pytest demo→paper scenario
+        run: pytest -m e2e_demo_paper --maxfail=1 --disable-warnings
+
+      - name: Pytest paper execution smoke
+        run: pytest tests/test_paper_execution.py
+
+      - name: Pytest execution router integrations
+        run: pytest tests/integration/test_execution_router_failover.py
 
   bot-core-fast-tests:
     name: Bot Core Fast Tests

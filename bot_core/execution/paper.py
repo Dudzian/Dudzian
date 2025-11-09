@@ -228,7 +228,8 @@ class PaperTradingExecutionService(ExecutionService):
             self._process_sell(symbol, market, request.quantity, fill_price, fee, leverage, context.risk_profile)
 
         position_value = self._position_value(symbol, market, fill_price)
-        ledger_leverage = self._short_positions.get(symbol).leverage if symbol in self._short_positions else 1.0
+        short_position = self._short_positions.get(symbol)
+        ledger_leverage = short_position.leverage if short_position is not None else 1.0
 
         order_id = f"paper-{next(self._order_counter)}"
         result = OrderResult(
@@ -524,7 +525,8 @@ class PaperTradingExecutionService(ExecutionService):
 
     def _position_value(self, symbol: str, market: MarketMetadata, price: float) -> float:
         base_quantity = self._balances.get(market.base_asset, 0.0)
-        short_quantity = self._short_positions.get(symbol).quantity if symbol in self._short_positions else 0.0
+        short_position = self._short_positions.get(symbol)
+        short_quantity = short_position.quantity if short_position is not None else 0.0
         return (base_quantity + short_quantity) * price
 
     def _persist_ledger_entry(self, entry: LedgerEntry) -> None:
