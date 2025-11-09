@@ -9,7 +9,6 @@ import sys
 # Paths are relative to repository root.
 _BANNED_ROOTS = {
     pathlib.Path("KryptoLowca"),
-    pathlib.Path("archive"),
 }
 BANNED_PATHS = sorted(_BANNED_ROOTS)
 

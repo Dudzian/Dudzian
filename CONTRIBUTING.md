@@ -1,6 +1,6 @@
-# Wkład w projekt KryptoLowca
+# Wkład w projekt bot_core
 
-Dziękujemy za chęć współtworzenia KryptoLowca! Poniżej znajdziesz minimalny
+Dziękujemy za chęć współtworzenia bot_core! Poniżej znajdziesz minimalny
 proces kontrybucji obowiązujący w repozytorium.
 
 ## Proces review
@@ -30,12 +30,12 @@ Przed otwarciem PR uruchom wszystkie poniższe polecenia:
 
 ```bash
 ruff check \
-  KryptoLowca/core/services \
-  KryptoLowca/strategies/base \
-  KryptoLowca/config_manager.py \
-  KryptoLowca/strategies/marketplace.py
+  bot_core/trading/engine.py \
+  bot_core/strategies/base \
+  bot_core/config/loader.py \
+  bot_core/strategies/catalog.py
 mypy
-pytest KryptoLowca/tests/strategies/test_registry.py
+pytest tests/test_pipeline_paper.py
 ```
 
 Jeżeli dodajesz dodatkowe testy jednostkowe/integracyjne, dopisz je do sekcji

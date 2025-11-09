@@ -1,7 +1,7 @@
 # Sprint 1 – "Pakiet modeli OEM gotowy do inference"
 
 ## Cel sprintu
-Dostarczyć komplet artefaktów modeli AI (manifesty, sumy kontrolne, podpisy), zintegrowanych z `ai_models/` i `KryptoLowca.ai_models`, aby domyślna instalacja bota wykonywała inference na produkcyjnych modelach, a nie w trybie fallback.
+Dostarczyć komplet artefaktów modeli AI (manifesty, sumy kontrolne, podpisy), zintegrowanych z `ai_models/` i `bot_core.ai_models`, aby domyślna instalacja bota wykonywała inference na produkcyjnych modelach, a nie w trybie fallback.
 
 ## Założenia wstępne
 - Modele OEM są trenowane poza repozytorium (pipeline MLOps out-of-tree) i publikowane jako spakowane bundla `.tar.zst`.

@@ -44,7 +44,7 @@ class EmailAlertSink:
     sender: str
     recipients: Sequence[str]
     use_tls: bool = True
-    subject_prefix: str = "[KryptoLowca]"
+    subject_prefix: str = "[bot_core]"
     timeout: float = 10.0
 
     def send(self, event: AlertEvent) -> None:
@@ -223,7 +223,7 @@ class AlertManager:
                         sender=str(entry.get("sender")),
                         recipients=[str(r) for r in recipients],
                         use_tls=bool(entry.get("use_tls", True)),
-                        subject_prefix=str(entry.get("subject_prefix", "[KryptoLowca]")),
+                        subject_prefix=str(entry.get("subject_prefix", "[bot_core]")),
                         timeout=float(entry.get("timeout", 10.0)),
                     )
                 )

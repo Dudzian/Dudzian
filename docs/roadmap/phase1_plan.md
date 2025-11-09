@@ -9,7 +9,7 @@ konkretnych testów (backtest → paper), zanim przejdziemy do kolejnych prac.
 
 - Architektura modułowa w pakiecie `bot_core` – interfejsy adapterów, warstwa danych,
   strategie, risk engine, execution i alerty.
-- Brak zmian w monolicie `KryptoLowca` poza krytycznymi poprawkami; nowy rozwój to `bot_core`.
+- Cały rozwój odbywa się w modułach `bot_core`; historyczny monolit `KryptoLowca` został wygaszony.
 - Sekrety przechowywane w natywnych keychainach (Windows Credential Manager, macOS Keychain,
   GNOME Keyring/age dla środowisk headless).
 - Testy przeprowadzamy w kolejności: **backtest** → **paper trading** na Binance Testnet →

@@ -68,7 +68,7 @@ artefaktów).
 ### Dołączanie artefaktów modeli AI
 
 * Modele Decision Engine muszą zostać zbudowane przed pakietowaniem i umieszczone
-  w katalogu `ai_models/packaged/` (dystrybucja barebone) lub `KryptoLowca/ai_models_packaged/`
+  w katalogu `ai_models/packaged/` (dystrybucja barebone) lub `bot_core/ai_models_packaged/`
   (wariant OEM). Katalog musi zawierać `manifest.json` z listą wersji oraz
   podkatalogi z plikami `*.json`, `*.metadata.json`, `checksums.sha256` i opcjonalnym
   podpisem `*.sig` wygenerowanymi przez `bot_core.ai.models.generate_model_artifact_bundle`.
