@@ -6,12 +6,13 @@ import datetime as dt
 import json
 import logging
 import os
+import time
 from dataclasses import dataclass, field
 from collections.abc import Iterable, Iterator, MutableMapping
-from collections import Counter
+from collections import Counter, deque
 from importlib import import_module
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Mapping, MutableMapping, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Mapping, MutableMapping, Optional, Sequence, Tuple, cast
 
 from datetime import datetime, timezone
 
@@ -41,13 +42,23 @@ from bot_core.exchanges.base import (
 )
 from bot_core.exchanges.health import (
     CircuitBreaker,
+    CircuitOpenError,
     HealthCheck,
+    HealthCheckResult,
     HealthMonitor,
     RetryPolicy,
     Watchdog,
 )
+from bot_core.exchanges.errors import ExchangeError, ExchangeNetworkError, ExchangeThrottlingError
 from bot_core.exchanges.paper_simulator import PaperFuturesSimulator, PaperMarginSimulator
 from bot_core.strategies.catalog import StrategyCatalog, StrategyPresetDescriptor
+from bot_core.observability.metrics import get_global_metrics_registry
+from bot_core.exchanges.rate_limiter import RateLimitRule, normalize_rate_limit_rules
+from bot_core.exchanges.signal_quality import (
+    DEGRADATION_EVENT,
+    DEGRADATION_RECOVERED_EVENT,
+    SignalQualityReporter,
+)
 
 try:  # pragma: no cover
     import ccxt  # type: ignore
@@ -55,11 +66,25 @@ except Exception:  # pragma: no cover
     ccxt = None
 
 
+_CCXT_INSTALL_HINT = (
+    "Biblioteka 'ccxt' nie jest dostępna – zainstaluj zależność 'ccxt>=4.0.0' w swoim "
+    "środowisku (np. `pip install ccxt`)."
+)
+
+
 log = logging.getLogger(__name__)
 
 
 ORDER_FILLED_EVENT = "ORDER_FILLED"
 ACCOUNT_MARK_EVENT = "ACCOUNT_MARK"
+
+
+_FAILOVER_EXCEPTIONS = (
+    ExchangeError,
+    ExchangeNetworkError,
+    ExchangeThrottlingError,
+    CircuitOpenError,
+)
 
 
 def _enable_sandbox_mode(client: Any) -> bool:
@@ -785,7 +810,7 @@ class _CCXTPublicFeed(BaseBackend):
     ) -> None:
         super().__init__(event_bus=EventBus())
         if ccxt is None:
-            raise RuntimeError("CCXT nie jest zainstalowane.")
+            raise RuntimeError(_CCXT_INSTALL_HINT)
         self.exchange_id = exchange_id
         self.testnet = bool(testnet)
         normalized_type = (market_type or ("future" if futures else "spot")).strip().lower()
@@ -933,7 +958,7 @@ class _CCXTPrivateBackend(_CCXTPublicFeed):
             error_handler=error_handler,
         )
         if ccxt is None:
-            raise RuntimeError("CCXT nie jest zainstalowane.")
+            raise RuntimeError(_CCXT_INSTALL_HINT)
         options: Dict[str, Any] = {
             "enableRateLimit": True,
             "apiKey": api_key or "",
@@ -1362,6 +1387,32 @@ class ExchangeManager:
         self._native_adapter = None
         self._native_adapter_settings: Dict[tuple[Mode, str], Dict[str, object]] = {}
         self._watchdog: Watchdog | None = None
+        self._watchdog_config: Dict[str, Any] = {}
+        self._shared_rate_limit_rules: tuple[RateLimitRule, ...] | None = None
+        self._signal_reporter = SignalQualityReporter(
+            exchange_id=self.exchange_id,
+            event_bus=self._event_bus,
+        )
+        self._failover_enabled: bool = False
+        self._failover_threshold: int = 2
+        self._failover_cooldown: float = 60.0
+        self._active_backend: str = "native"
+        self._native_failure_streak: int = 0
+        self._failover_restore_at: float = 0.0
+        self._failover_auto_enabled: bool = False
+        metrics = get_global_metrics_registry()
+        self._failover_metric_labels = {"exchange": self.exchange_id}
+        self._failover_state_gauge = metrics.gauge(
+            "exchange_failover_state",
+            "Czy aktywny jest fallback CCXT (1=tak, 0=nie).",
+        )
+        self._failover_switch_counter = metrics.counter(
+            "exchange_failover_switch_total",
+            "Liczba przełączeń backendu giełdowego.",
+        )
+        self._failover_state_gauge.set(0.0, labels=self._failover_metric_labels)
+        self._event_bus.subscribe(DEGRADATION_EVENT, self._handle_signal_quality_event)
+        self._event_bus.subscribe(DEGRADATION_RECOVERED_EVENT, self._handle_signal_quality_event)
         default_margin_type = os.getenv("BINANCE_MARGIN_TYPE")
         if self.exchange_id == "binance" and default_margin_type:
             self._native_adapter_settings[(Mode.MARGIN, self.exchange_id)] = {
@@ -1376,6 +1427,8 @@ class ExchangeManager:
         self._strategy_catalog: StrategyCatalog | None = None
         self._strategy_contexts: Dict[str, _StrategyContextSnapshot] = {}
         self._strategy_assignments: Dict[str, _StrategyBinding] = {}
+        self._weight_history: dict[tuple[Mode, str], deque[float]] = {}
+        self._weight_snapshots: dict[tuple[Mode, str], dict[str, object]] = {}
 
     @property
     def event_bus(self) -> EventBus:
@@ -1508,6 +1561,7 @@ class ExchangeManager:
         if watchdog is not None and not isinstance(watchdog, Watchdog):
             raise TypeError("Watchdog musi być instancją klasy bot_core.exchanges.health.Watchdog")
         self._watchdog = watchdog
+        self._watchdog_config = {}
         self._native_adapter = None
 
     def configure_watchdog(
@@ -1538,7 +1592,136 @@ class ExchangeManager:
                 normalized.append(exc)
             kwargs["retry_exceptions"] = tuple(normalized)
         self._watchdog = Watchdog(**kwargs)
+        stored_cfg: Dict[str, Any] = {}
+        if retry_policy is not None:
+            stored_cfg["retry_policy"] = dict(retry_policy)
+        if circuit_breaker is not None:
+            stored_cfg["circuit_breaker"] = dict(circuit_breaker)
+        if retry_exceptions is not None:
+            stored_cfg["retry_exceptions"] = tuple(retry_exceptions)
+        self._watchdog_config = stored_cfg
         self._native_adapter = None
+
+    def configure_rate_limits(
+        self,
+        rules: Sequence[RateLimitRule | Mapping[str, Any]] | None,
+    ) -> None:
+        """Aktualizuje współdzieloną konfigurację limiterów dla natywnych adapterów."""
+
+        if rules is None:
+            self._shared_rate_limit_rules = None
+        else:
+            normalized = normalize_rate_limit_rules(rules, default=())
+            self._shared_rate_limit_rules = normalized if normalized else None
+        self._native_adapter = None
+
+    def configure_failover(
+        self,
+        *,
+        enabled: bool,
+        failure_threshold: int = 2,
+        cooldown_seconds: float = 60.0,
+    ) -> None:
+        """Konfiguruje automatyczne przełączanie między adapterem natywnym a CCXT."""
+
+        self._failover_enabled = bool(enabled)
+        self._failover_threshold = max(1, int(failure_threshold))
+        self._failover_cooldown = max(0.0, float(cooldown_seconds))
+        if not self._failover_enabled:
+            self._active_backend = "native"
+            self._native_failure_streak = 0
+            self._failover_restore_at = 0.0
+        self._update_failover_metrics()
+
+    def _update_failover_metrics(self) -> None:
+        try:
+            if self._failover_enabled and self._active_backend == "ccxt":
+                self._failover_state_gauge.set(1.0, labels=self._failover_metric_labels)
+            else:
+                self._failover_state_gauge.set(0.0, labels=self._failover_metric_labels)
+        except Exception:  # pragma: no cover - metryki nie powinny blokować logiki
+            log.debug("Aktualizacja metryk failover nie powiodła się", exc_info=True)
+
+    def describe_signal_quality(self) -> Mapping[str, object]:
+        """Zwraca agregowane statystyki jakości sygnałów."""
+
+        return self._signal_reporter.summarize()
+
+    def describe_weighting(
+        self,
+        *,
+        mode: Mode | None = None,
+        segment: str | None = None,
+    ) -> Mapping[str, object]:
+        """Buduje rekomendację wagową na podstawie jakości sygnałów."""
+
+        active_mode = mode or self.mode
+        segment_key = (segment or active_mode.value or "default").strip().lower()
+        summary = self.describe_signal_quality()
+
+        try:
+            fill_ratio = float(summary.get("fill_ratio", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            fill_ratio = 0.0
+
+        total = int(summary.get("total", 0) or 0)
+        failures = int(summary.get("failures", 0) or 0)
+        success_rate = 1.0
+        if total > 0:
+            success_rate = max(0.0, min(1.0, (total - failures) / total))
+
+        try:
+            slippage_bps = float(summary.get("slippage_bps", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            slippage_bps = 0.0
+
+        degradation_payload = summary.get("degradation")
+        if isinstance(degradation_payload, Mapping):
+            try:
+                degradation_score = float(degradation_payload.get("rolling_score", 0.0) or 0.0)
+            except (TypeError, ValueError):
+                degradation_score = 0.0
+        else:
+            degradation_payload = {}
+            degradation_score = 0.0
+
+        degradation_penalty = max(0.0, 1.0 - min(degradation_score, 1.0))
+        slippage_penalty = 1.0
+        if slippage_bps > 0:
+            slippage_penalty = max(0.0, 1.0 - min(slippage_bps / 100.0, 1.0))
+
+        base_weight = (
+            fill_ratio * 0.5
+            + success_rate * 0.3
+            + degradation_penalty * 0.2
+        )
+        base_weight *= slippage_penalty
+        if total < 5:
+            base_weight *= max(0.0, min(1.0, total / 5.0))
+
+        weight = max(0.0, min(base_weight, 1.0))
+        key = (active_mode, segment_key)
+        history = self._weight_history.setdefault(key, deque(maxlen=50))
+        history.append(weight)
+        rolling_weight = sum(history) / len(history) if history else weight
+
+        snapshot: dict[str, object] = {
+            "exchange": self.exchange_id,
+            "mode": active_mode.value,
+            "segment": segment_key,
+            "weight": weight,
+            "rolling_weight": rolling_weight,
+            "fill_ratio": fill_ratio,
+            "success_rate": success_rate,
+            "slippage_bps": slippage_bps,
+            "sample_size": total,
+            "failures": failures,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "degradation": dict(degradation_payload),
+            "history": list(history),
+        }
+        self._weight_snapshots[key] = snapshot
+        return dict(snapshot)
 
     # ------------------------------------------------------------------
     # Environment profiles
@@ -1772,6 +1955,15 @@ class ExchangeManager:
         if isinstance(simulator_cfg, Mapping) and simulator_cfg:
             self.configure_paper_simulator(**{key: value for key, value in simulator_cfg.items() if value is not None})
 
+        if "rate_limit_rules" in config:
+            rate_limit_cfg = config.get("rate_limit_rules")
+            if rate_limit_cfg is None:
+                self.configure_rate_limits(None)
+            elif isinstance(rate_limit_cfg, Sequence):
+                self.configure_rate_limits(rate_limit_cfg)
+            else:
+                raise TypeError("rate_limit_rules musi być sekwencją reguł limitera")
+
         native_cfg = config.get("native_adapter")
         if isinstance(native_cfg, Mapping):
             settings = native_cfg.get("settings")
@@ -1808,6 +2000,17 @@ class ExchangeManager:
             if kwargs:
                 self.configure_watchdog(**kwargs)
 
+        if "failover" in config:
+            failover_cfg = config.get("failover")
+            if isinstance(failover_cfg, Mapping):
+                self.configure_failover(
+                    enabled=bool(failover_cfg.get("enabled", True)),
+                    failure_threshold=int(failover_cfg.get("failure_threshold", self._failover_threshold)),
+                    cooldown_seconds=float(failover_cfg.get("cooldown_seconds", self._failover_cooldown)),
+                )
+            else:
+                self.configure_failover(enabled=bool(failover_cfg))
+
     def create_health_monitor(self, checks: Iterable[HealthCheck]) -> HealthMonitor:
         """Buduje `HealthMonitor` współdzielący strażnika z adapterami."""
 
@@ -1820,7 +2023,25 @@ class ExchangeManager:
                 raise TypeError("checks musi zawierać instancje HealthCheck")
             normalized.append(check)
 
-        return HealthMonitor(normalized, watchdog=self._ensure_watchdog())
+        labels = {"exchange": self.exchange_id, "mode": self.mode.value}
+        reporter = self._signal_reporter
+        manager = self
+
+        class _ReporterHealthMonitor(HealthMonitor):
+            def run(self) -> list[HealthCheckResult]:  # type: ignore[override]
+                results = super().run()
+                try:
+                    reporter.record_watchdog_results(results, backend=manager._active_backend)
+                except Exception:  # pragma: no cover - korelacja nie powinna blokować health-checku
+                    log.debug("Watchdog correlation failed", exc_info=True)
+                return results
+
+        return _ReporterHealthMonitor(
+            normalized,
+            watchdog=self._ensure_watchdog(),
+            metrics_registry=get_global_metrics_registry(),
+            metric_labels=labels,
+        )
 
     def _ensure_public(self) -> _CCXTPublicFeed:
         if self._public is None:
@@ -1872,7 +2093,140 @@ class ExchangeManager:
         return Environment.TESTNET if self._testnet else Environment.LIVE
 
     def _get_adapter_settings(self) -> Dict[str, object]:
-        return dict(self._native_adapter_settings.get((self.mode, self.exchange_id), {}))
+        settings = dict(self._native_adapter_settings.get((self.mode, self.exchange_id), {}))
+        if self._shared_rate_limit_rules and "rate_limit_rules" not in settings:
+            settings["rate_limit_rules"] = self._shared_rate_limit_rules
+        return settings
+
+    def _should_use_native_backend(self) -> bool:
+        if not self._failover_enabled:
+            return True
+        if self._active_backend != "ccxt":
+            return True
+        if self._failover_restore_at and time.monotonic() >= self._failover_restore_at:
+            self._active_backend = "native"
+            self._native_failure_streak = 0
+            self._failover_restore_at = 0.0
+            return True
+        return False
+
+    def _handle_native_success(self) -> None:
+        self._native_failure_streak = 0
+        if self._failover_enabled:
+            self._active_backend = "native"
+            self._failover_restore_at = 0.0
+            self._update_failover_metrics()
+
+    def _handle_native_failure(self, exc: Exception) -> None:
+        if not self._failover_enabled:
+            return
+        self._native_failure_streak += 1
+        self._failover_restore_at = time.monotonic() + self._failover_cooldown
+        if self._native_failure_streak >= self._failover_threshold:
+            self._active_backend = "ccxt"
+            self._update_failover_metrics()
+
+    def _run_fallback(self, fallback_call: Callable[[], Any], backend_name: str) -> tuple[Any, str]:
+        self._active_backend = backend_name
+        if self._failover_enabled:
+            self._failover_restore_at = time.monotonic() + self._failover_cooldown
+        self._update_failover_metrics()
+        result = fallback_call()
+        return result, backend_name
+
+    def _execute_with_failover(
+        self,
+        operation: str,
+        native_call: Callable[[], Any],
+        *,
+        fallback_call: Callable[[], Any] | None = None,
+        fallback_backend: str = "ccxt",
+    ) -> tuple[Any, str]:
+        if fallback_call is None or not self._failover_enabled:
+            result = native_call()
+            self._handle_native_success()
+            return result, "native"
+
+        if self._should_use_native_backend():
+            try:
+                result = native_call()
+            except _FAILOVER_EXCEPTIONS as exc:
+                self._handle_native_failure(exc)
+                log.warning("%s failed on native backend: %s", operation, exc)
+                return self._run_fallback(fallback_call, fallback_backend)
+            else:
+                self._handle_native_success()
+                return result, "native"
+
+        return self._run_fallback(fallback_call, fallback_backend)
+
+    def _handle_signal_quality_event(self, event: Event) -> None:
+        payload = dict(event.payload)
+        exchange = payload.get("exchange")
+        if exchange and str(exchange) != self.exchange_id:
+            return
+
+        if event.type == DEGRADATION_EVENT:
+            self._handle_signal_quality_degraded(payload)
+        elif event.type == DEGRADATION_RECOVERED_EVENT:
+            self._handle_signal_quality_recovered(payload)
+
+    def _handle_signal_quality_degraded(self, payload: Mapping[str, Any]) -> None:
+        backend = str(payload.get("backend") or self._active_backend)
+        if not self._failover_enabled:
+            self.configure_failover(
+                enabled=True,
+                failure_threshold=self._failover_threshold,
+                cooldown_seconds=self._failover_cooldown,
+            )
+            self._failover_auto_enabled = True
+        if backend == "native":
+            self._engage_failover(payload)
+
+    def _handle_signal_quality_recovered(self, payload: Mapping[str, Any]) -> None:
+        if self._active_backend == "ccxt":
+            self._active_backend = "native"
+            self._failover_restore_at = 0.0
+            self._native_failure_streak = 0
+            self._update_failover_metrics()
+            try:
+                self._failover_switch_counter.inc(
+                    labels={**self._failover_metric_labels, "backend": "native"}
+                )
+            except Exception:  # pragma: no cover - metryki opcjonalne
+                log.debug("Nie udało się zaktualizować licznika powrotu z failover", exc_info=True)
+            self.publish_event("exchange.failover.recovered", payload)
+        if self._failover_auto_enabled and self._failover_enabled:
+            self._failover_auto_enabled = False
+            self.configure_failover(
+                enabled=False,
+                failure_threshold=self._failover_threshold,
+                cooldown_seconds=self._failover_cooldown,
+            )
+
+    def _engage_failover(self, payload: Mapping[str, Any]) -> None:
+        if self._active_backend == "ccxt":
+            return
+        try:
+            self._ensure_private()
+        except Exception:
+            log.warning("Nie udało się przygotować backendu CCXT dla failoveru", exc_info=True)
+            return
+        previous_backend = self._active_backend
+        self._active_backend = "ccxt"
+        self._failover_restore_at = time.monotonic() + self._failover_cooldown
+        self._native_failure_streak = self._failover_threshold
+        self._update_failover_metrics()
+        try:
+            self._failover_switch_counter.inc(
+                labels={**self._failover_metric_labels, "backend": "ccxt"}
+            )
+        except Exception:  # pragma: no cover - metryki opcjonalne
+            log.debug("Nie udało się zaktualizować licznika przełączeń failover", exc_info=True)
+        enriched_payload = dict(payload)
+        enriched_payload.setdefault("backend", "ccxt")
+        enriched_payload["previous_backend"] = previous_backend
+        self.publish_event("exchange.failover.engaged", enriched_payload)
 
     def _ensure_watchdog(self) -> Watchdog:
         if self._watchdog is None:
@@ -2026,15 +2380,29 @@ class ExchangeManager:
         timestamp = dt.datetime.utcnow().replace(tzinfo=dt.timezone.utc)
         if self.mode == Mode.PAPER:
             backend = self._ensure_paper()
+            if not hasattr(backend, "fetch_account_snapshot"):
+                raise RuntimeError("Wybrany backend nie udostępnia fetch_account_snapshot")
+            snapshot = backend.fetch_account_snapshot()  # type: ignore[call-arg]
         elif self.mode in {Mode.MARGIN, Mode.FUTURES}:
-            backend = self._ensure_native_adapter()
+            def _native_call() -> tuple[AccountSnapshot, Any]:
+                adapter = self._ensure_native_adapter()
+                return adapter.fetch_account_snapshot(), adapter
+
+            fallback_call = None
+            if self._failover_enabled:
+                fallback_call = lambda: (self._ensure_private().fetch_account_snapshot(), self._ensure_private())
+
+            payload, _backend_used = self._execute_with_failover(
+                "fetch_account_snapshot",
+                _native_call,
+                fallback_call=fallback_call,
+            )
+            snapshot, backend = payload
         else:
             backend = self._ensure_private()
-
-        if not hasattr(backend, "fetch_account_snapshot"):
-            raise RuntimeError("Wybrany backend nie udostępnia fetch_account_snapshot")
-
-        snapshot: AccountSnapshot = backend.fetch_account_snapshot()  # type: ignore[call-arg]
+            if not hasattr(backend, "fetch_account_snapshot"):
+                raise RuntimeError("Wybrany backend nie udostępnia fetch_account_snapshot")
+            snapshot = backend.fetch_account_snapshot()
 
         positions: Sequence[PositionDTO] = ()
         fetch_positions = getattr(backend, "fetch_positions", None)
@@ -2356,7 +2724,6 @@ class ExchangeManager:
                     f"Notional {notional:.8f} < minNotional {min_notional:.8f} dla {symbol}"
                 )
 
-            adapter = self._ensure_native_adapter()
             request = OrderRequest(
                 symbol=symbol,
                 side=side_enum.value,
@@ -2365,43 +2732,126 @@ class ExchangeManager:
                 price=price_value,
                 client_order_id=client_order_id,
             )
-            result = adapter.place_order(request)
-            raw_payload = result.raw_response if isinstance(result.raw_response, Mapping) else {}
-            resolved_client_id = client_order_id
-            if not resolved_client_id and isinstance(raw_payload, Mapping):
-                candidate = (
-                    raw_payload.get("clientOrderId")
-                    or raw_payload.get("client_order_id")
-                    or raw_payload.get("userref")
-                )
-                if isinstance(candidate, str) and candidate:
-                    resolved_client_id = candidate
-            order_identifier = result.order_id
-            try:
-                parsed_id = int(order_identifier) if order_identifier is not None else None
-            except (TypeError, ValueError):
-                parsed_id = None
+            fallback_backend = self._ensure_private() if self._failover_enabled else None
 
-            return OrderDTO(
-                id=parsed_id,
-                client_order_id=resolved_client_id,
-                symbol=symbol,
-                side=side_enum,
-                type=type_enum,
-                quantity=qty,
-                price=price_value,
-                status=_map_order_status(result.status),
-                mode=self.mode,
-                extra={
-                    "order_id": order_identifier,
-                    "filled_quantity": result.filled_quantity,
-                    "avg_price": result.avg_price,
-                    "raw_response": raw_payload,
-                },
-            )
+            def _native_call() -> OrderResult:
+                adapter = self._ensure_native_adapter()
+                return adapter.place_order(request)
+
+            fallback_call: Callable[[], OrderDTO] | None = None
+            if fallback_backend is not None:
+                fallback_call = lambda: fallback_backend.create_order(  # type: ignore[assignment]
+                    symbol,
+                    side_enum,
+                    type_enum,
+                    qty,
+                    price_value,
+                    client_order_id,
+                )
+
+            started = time.monotonic()
+            try:
+                response, backend_used = self._execute_with_failover(
+                    "place_order",
+                    _native_call,
+                    fallback_call=fallback_call,
+                    fallback_backend="ccxt",
+                )
+                latency = time.monotonic() - started
+                if backend_used == "native":
+                    order_result = cast(OrderResult, response)
+                    dto = self._build_order_dto_from_native(
+                        result=order_result,
+                        request=request,
+                        side=side_enum,
+                        order_type=type_enum,
+                        quantity=qty,
+                        price_value=price_value,
+                        symbol=symbol,
+                    )
+                    filled_qty = float(order_result.filled_quantity or 0.0)
+                    exec_price = order_result.avg_price
+                else:
+                    dto = cast(OrderDTO, response)
+                    filled_qty = float(dto.extra.get("filled_quantity") or dto.quantity or 0.0)
+                    exec_raw = dto.extra.get("avg_price")
+                    exec_price = float(exec_raw) if exec_raw is not None else dto.price
+                self._signal_reporter.record_success(
+                    backend=backend_used,
+                    symbol=symbol,
+                    side=side_enum.value,
+                    order_type=type_enum.value,
+                    requested_quantity=qty,
+                    requested_price=price_value,
+                    filled_quantity=filled_qty,
+                    executed_price=float(exec_price) if exec_price is not None else None,
+                    latency=latency,
+                    extra={
+                        "mode": self.mode.value,
+                        "client_order_id": dto.client_order_id or client_order_id,
+                    },
+                )
+                return dto
+            except Exception as exc:
+                backend_name = "ccxt" if self._failover_enabled and self._active_backend == "ccxt" else "native"
+                self._signal_reporter.record_failure(
+                    backend=backend_name,
+                    symbol=symbol,
+                    side=side_enum.value,
+                    order_type=type_enum.value,
+                    requested_quantity=qty,
+                    requested_price=price_value,
+                    error=exc,
+                )
+                raise
 
         backend = self._ensure_private()
         return backend.create_order(symbol, side_enum, type_enum, quantity, price, client_order_id)
+
+    def _build_order_dto_from_native(
+        self,
+        *,
+        result: OrderResult,
+        request: OrderRequest,
+        side: OrderSide,
+        order_type: OrderType,
+        quantity: float,
+        price_value: float | None,
+        symbol: str,
+    ) -> OrderDTO:
+        raw_payload = result.raw_response if isinstance(result.raw_response, Mapping) else {}
+        resolved_client_id = request.client_order_id
+        if not resolved_client_id and isinstance(raw_payload, Mapping):
+            candidate = (
+                raw_payload.get("clientOrderId")
+                or raw_payload.get("client_order_id")
+                or raw_payload.get("userref")
+            )
+            if isinstance(candidate, str) and candidate:
+                resolved_client_id = candidate
+        order_identifier = result.order_id
+        try:
+            parsed_id = int(order_identifier) if order_identifier is not None else None
+        except (TypeError, ValueError):
+            parsed_id = None
+
+        return OrderDTO(
+            id=parsed_id,
+            client_order_id=resolved_client_id,
+            symbol=symbol,
+            side=side,
+            type=order_type,
+            quantity=quantity,
+            price=price_value,
+            status=_map_order_status(result.status),
+            mode=self.mode,
+            extra={
+                "order_id": order_identifier,
+                "filled_quantity": result.filled_quantity,
+                "avg_price": result.avg_price,
+                "raw_response": raw_payload,
+            },
+        )
 
     def cancel_order(self, order_id: Any, symbol: Optional[str] = None) -> bool:
         if self.mode == Mode.PAPER:
@@ -2411,12 +2861,24 @@ class ExchangeManager:
                 log.error("cancel_order failed (paper): %s", exc)
                 return False
         if self.mode in {Mode.MARGIN, Mode.FUTURES}:
-            try:
+            def _native_call() -> bool:
                 adapter = self._ensure_native_adapter()
                 adapter.cancel_order(str(order_id), symbol=symbol)
                 return True
+
+            fallback_call = None
+            if self._failover_enabled:
+                fallback_call = lambda: self._ensure_private().cancel_order(order_id, symbol)
+
+            try:
+                result, _backend = self._execute_with_failover(
+                    "cancel_order",
+                    _native_call,
+                    fallback_call=fallback_call,
+                )
+                return bool(result)
             except Exception as exc:
-                log.error("cancel_order failed (native): %s", exc)
+                log.error("cancel_order failed: %s", exc)
                 return False
         return self._ensure_private().cancel_order(order_id, symbol)
 
@@ -2424,50 +2886,65 @@ class ExchangeManager:
         if self.mode == Mode.PAPER:
             return []
         if self.mode in {Mode.MARGIN, Mode.FUTURES}:
-            try:
+            def _native_call() -> Sequence[Any]:
                 adapter = self._ensure_native_adapter()
-                native_orders = adapter.fetch_open_orders()
+                return tuple(adapter.fetch_open_orders() or ())
+
+            fallback_call = None
+            if self._failover_enabled:
+                fallback_call = lambda: tuple(self._ensure_private().fetch_open_orders(symbol))
+
+            try:
+                payload, backend_used = self._execute_with_failover(
+                    "fetch_open_orders",
+                    _native_call,
+                    fallback_call=fallback_call,
+                )
             except Exception as exc:
-                log.error("fetch_open_orders failed (native): %s", exc)
+                log.error("fetch_open_orders failed: %s", exc)
                 return []
 
-            result: List[OrderDTO] = []
-            for entry in native_orders or []:
-                raw_symbol = getattr(entry, "symbol", symbol or "")
-                order_symbol = raw_symbol if isinstance(raw_symbol, str) else symbol or ""
-                price_value = getattr(entry, "price", None)
-                if price_value in (None, ""):
-                    resolved_price = None
-                else:
-                    try:
-                        resolved_price = float(price_value)
-                    except Exception:
+            if backend_used == "native":
+                native_orders = payload
+                result: List[OrderDTO] = []
+                for entry in native_orders or []:
+                    raw_symbol = getattr(entry, "symbol", symbol or "")
+                    order_symbol = raw_symbol if isinstance(raw_symbol, str) else symbol or ""
+                    price_value = getattr(entry, "price", None)
+                    if price_value in (None, ""):
                         resolved_price = None
-                quantity_value = getattr(entry, "orig_quantity", getattr(entry, "quantity", 0.0))
-                try:
-                    resolved_quantity = float(quantity_value)
-                except Exception:
-                    resolved_quantity = 0.0
-                order_identifier = getattr(entry, "order_id", None)
-                try:
-                    parsed_id = int(order_identifier) if order_identifier is not None else None
-                except (TypeError, ValueError):
-                    parsed_id = None
-                result.append(
-                    OrderDTO(
-                        id=parsed_id,
-                        client_order_id=getattr(entry, "client_order_id", None),
-                        symbol=order_symbol,
-                        side=_map_order_side(getattr(entry, "side", "BUY")),
-                        type=_map_order_type(getattr(entry, "order_type", "LIMIT")),
-                        quantity=resolved_quantity,
-                        price=resolved_price,
-                        status=_map_order_status(getattr(entry, "status", "OPEN")),
-                        mode=self.mode,
-                        extra={"order_id": order_identifier},
+                    else:
+                        try:
+                            resolved_price = float(price_value)
+                        except Exception:
+                            resolved_price = None
+                    quantity_value = getattr(entry, "orig_quantity", getattr(entry, "quantity", 0.0))
+                    try:
+                        resolved_quantity = float(quantity_value)
+                    except Exception:
+                        resolved_quantity = 0.0
+                    order_identifier = getattr(entry, "order_id", None)
+                    try:
+                        parsed_id = int(order_identifier) if order_identifier is not None else None
+                    except (TypeError, ValueError):
+                        parsed_id = None
+                    result.append(
+                        OrderDTO(
+                            id=parsed_id,
+                            client_order_id=getattr(entry, "client_order_id", None),
+                            symbol=order_symbol,
+                            side=_map_order_side(getattr(entry, "side", "BUY")),
+                            type=_map_order_type(getattr(entry, "order_type", "LIMIT")),
+                            quantity=resolved_quantity,
+                            price=resolved_price,
+                            status=_map_order_status(getattr(entry, "status", "OPEN")),
+                            mode=self.mode,
+                            extra={"order_id": order_identifier},
+                        )
                     )
-                )
-            return result
+                return result
+
+            return list(cast(Sequence[OrderDTO], payload))
         return self._ensure_private().fetch_open_orders(symbol)
 
     def fetch_positions(self, symbol: Optional[str] = None) -> List[PositionDTO]:

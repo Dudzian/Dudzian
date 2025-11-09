@@ -182,3 +182,24 @@ python scripts/local_orchestrator.py verify-update demo \
 * Dla każdej paczki odnotuj fingerprint urządzenia (moduł
   `bot_core.security.fingerprint`) oraz identyfikator licencji w rejestrze
   decision log (`docs/runbooks/OEM_LICENSE_PROVISIONING.md`).
+
+## Checklista QA dla klientów OEM
+
+1. **Walidacja licencji i fingerprintu** – uruchom hook HWID z bundla
+   (`hooks/validate_hwid.py`) i potwierdź, że log instalacji zawiera odczytany
+   fingerprint. Następnie aktywuj licencję OEM i sprawdź, czy `var/licenses`
+   zawiera zakodowany sekret oraz wpis audytowy.
+2. **Sprawdzenie zasobów champion/challenger** – po rozpakowaniu bundla
+   upewnij się, że katalog `var/models/quality/` zawiera pliki `champion.json`
+   oraz `challengers.json` dla każdego modelu dostarczonego klientowi.
+   Zweryfikuj, że UI (panel Strategy Management) widzi aktualnego championa.
+3. **Raporty jakości i historia decyzji** – potwierdź obecność katalogu
+   `reports/` i przejrzyj przykładowe raporty (`reports/champion_overview.json`).
+   W panelu raportowym UI sprawdź możliwość archiwizacji i otwierania raportów.
+4. **Zależności offline** – w katalogu `wheels/` powinny znajdować się paczki
+   `ccxt`, `aiohttp/aiodns/pycares` oraz biblioteki AI (`lightgbm`, `numpy`).
+   Uruchom skrypt rozruchowy bundla w trybie offline i upewnij się, że importy
+   bibliotek przebiegają bez błędów.
+5. **Testy funkcjonalne** – wykonaj scenariusz smoke-test (`pytest -m smoke` lub
+   odpowiedni zestaw Qt Quick Test) na docelowym środowisku klienta i załącz
+   raport do dokumentacji QA.

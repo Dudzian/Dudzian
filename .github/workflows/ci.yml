@@ -95,6 +95,23 @@ jobs:
           name: bot-core-pytest-results
           path: test-results/pytest.xml
 
+      - name: Generate champion diff audit report
+        if: always()
+        run: >-
+          python -m scripts.audit.champion_diff
+          --lhs deploy/packaging/samples/var/models/quality
+          --rhs var/models/quality
+          --output-dir audit/champion_diffs_ci
+          --tag ci
+
+      - name: Upload champion diff audit report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: champion-quality-diff
+          path: audit/champion_diffs_ci
+          if-no-files-found: warn
+
   loopback-e2e:
     name: Loopback E2E
     runs-on: ubuntu-latest

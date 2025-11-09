@@ -233,6 +233,16 @@ auto_trader:
     risk_score: 0.75
     return_threshold: 0.001
   adjust_strategy_parameters:
+    journal_window: 120
+    journal_min_trades: 12
+    journal_negative_avg_pnl: 0.0
+    journal_negative_rolling_pnl: 0.0
+    journal_defensive_drawdown_pct: 0.08
+    journal_critical_drawdown_pct: 0.16
+    journal_defensive_win_rate: 0.48
+    journal_accuracy_floor: 0.5
+    journal_recovery_win_rate: 0.6
+    journal_recovery_drawdown_pct: 0.04
     high_risk: 0.75
     trend_low_risk: 0.4
     mean_reversion_low_risk: 0.4
@@ -340,6 +350,11 @@ auto_trader:
     stress_projection: 0.6
     confidence_resilience: 0.4
     liquidity_trend: 0.6
+    signal_quality_degradation:
+      rolling_score: 0.6
+      kill_switch: 0.85
+      release: 0.35
+      max_leverage: 0.35
   cooldown:
     severity_weights:
       cooldown_score: 1.0

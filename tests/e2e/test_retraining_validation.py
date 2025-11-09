@@ -97,11 +97,19 @@ chaos:
     assert report_payload["backend"] == "reference"
     assert report_payload["kpi"]["fallback_count"] >= 1
     assert "validation_log_path" in report_payload["kpi"]
+    promotion_payload = report_payload.get("promotion")
+    assert promotion_payload is not None
+    assert promotion_payload["status"] == "skipped"
+    assert promotion_payload["reason"] in {"alerts", "fallback"}
+    details = promotion_payload.get("details", {})
+    if "fallback_count" in details:
+        assert details["fallback_count"] >= 1
 
     json_report = next(report_dir.glob("retraining_*.json"))
     report_data = json.loads(json_report.read_text(encoding="utf-8"))
     assert report_data["backend"] == "reference"
     assert report_data["kpi"]["fallback_count"] >= 1
+    assert report_data["promotion"]["status"] == "skipped"
 
     markdown_report = next(report_dir.glob("retraining_*.md"))
     assert "Raport cyklu retreningu" in markdown_report.read_text(encoding="utf-8")
@@ -117,6 +125,7 @@ chaos:
     assert log_data["kpi_snapshot"] == str(snapshot_file)
     assert log_data["report_json"] == str(json_report)
     assert log_data["report_markdown"] == str(markdown_report)
+    assert log_data["promotion"]["status"] == "skipped"
 
     fallback_files = list(fallback_dir.glob("fallback_*.json"))
     assert fallback_files, "Powinien powstać log fallbacku backendu"

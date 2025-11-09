@@ -9,8 +9,8 @@ from dataclasses import MISSING as _MISSING, dataclass
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
-from types import SimpleNamespace
-from typing import Any
+from types import MethodType, SimpleNamespace
+from typing import Any, Mapping
 
 import numpy as np
 import pandas as pd
@@ -31,6 +31,7 @@ from bot_core.auto_trader.app import (
     GuardrailTrigger,
     RiskDecision,
 )
+from bot_core.runtime.journal_analysis import JournalAnalytics
 from tests.sample_data_loader import load_summary_for_regime
 
 
@@ -159,8 +160,269 @@ def test_auto_trader_configure_aliases_updates_candidates() -> None:
     assert "_legacy" in suffixes
 
 
+def test_auto_mode_snapshot_includes_guardrail_trace_and_failover() -> None:
+    emitter = _Emitter()
+    gui = _GUI()
+    trader = AutoTrader(emitter, gui, lambda: "BTCUSDT")
+
+    trader._exchange_degradation_guardrail_active = True
+    trader._exchange_degradation_kill_switch = False
+    trader._exchange_degradation_payload = {"rolling_score": 0.72}
+    trader._exchange_degradation_score = 0.72
+
+    guardrail_events = [
+        {
+            "timestamp": "2024-01-01T00:00:00Z",
+            "reason": "exchange degradation",
+            "decision_id": "dec-123",
+        }
+    ]
+
+    def _fake_lifecycle(self, **_kwargs: object) -> dict[str, object]:
+        return {
+            "timestamp": "2024-01-01T00:00:00Z",
+            "symbol": "BTCUSDT",
+            "environment": "paper",
+            "portfolio": "autotrader",
+            "risk_profile": "balanced",
+            "schedule": {},
+            "strategy": {},
+            "metrics": {},
+            "controller": {
+                "auto_trade": {
+                    "active": True,
+                    "user_confirmed": True,
+                    "trusted_auto_confirm": False,
+                    "started": True,
+                },
+                "history": [],
+            },
+            "cooldown": {},
+            "guardrails": {
+                "summary": {"status": "warning"},
+                "last_reasons": ["exchange degradation"],
+                "last_triggers": [
+                    {
+                        "name": "exchange_degradation",
+                        "comparator": ">=",
+                        "threshold": 0.6,
+                        "value": 0.72,
+                        "label": "exchange degradation",
+                    }
+                ],
+            },
+            "risk_decisions": {
+                "summary": {},
+                "last_decision": {
+                    "decision_id": "dec-123",
+                    "decision_reason": "guardrail hold",
+                    "decision_mode": "auto",
+                    "approved": False,
+                    "timestamp": "2024-01-01T00:00:00Z",
+                },
+            },
+        }
+
+    trader.build_lifecycle_snapshot = MethodType(_fake_lifecycle, trader)
+
+    trader.get_guardrail_event_trace = MethodType(
+        lambda self, decision_id, **_kwargs: guardrail_events,
+        trader,
+    )
+
+    class _Journal:
+        def export(self) -> list[dict[str, object]]:
+            return [
+                {
+                    "timestamp": "2024-01-01T00:00:00Z",
+                    "decision_id": "dec-123",
+                    "approved": False,
+                    "event": "decision",
+                }
+            ]
+
+    trader._decision_journal = _Journal()  # type: ignore[attr-defined]
+
+    trader.set_signal_quality_provider(
+        lambda: {
+            "total": 3,
+            "failures": 1,
+            "records": [
+                {
+                    "timestamp": "2024-01-01T00:00:00Z",
+                    "backend": "ccxt",
+                    "symbol": "BTC/USDT",
+                    "side": "buy",
+                    "order_type": "limit",
+                    "requested_quantity": 1.0,
+                    "filled_quantity": 1.0,
+                    "requested_price": 100.0,
+                    "executed_price": 100.0,
+                    "slippage_bps": 0.0,
+                    "latency": 0.5,
+                    "status": "filled",
+                }
+            ],
+            "watchdog": {
+                "alerts": [
+                    {
+                        "check": "private_api",
+                        "status": "degraded",
+                        "observed_at": "2024-01-01T00:00:00Z",
+                    }
+                ],
+                "recent": [],
+                "last_status": {},
+            },
+            "degradation": {"rolling_score": 0.72},
+        }
+    )
+
+    snapshot = trader.build_auto_mode_snapshot(include_history=False)
+
+    assert snapshot["guardrail_state"]["active"] is True
+    assert snapshot["guardrail_state"]["triggers"][0]["name"] == "exchange_degradation"
+    assert snapshot["guardrail_trace"] == guardrail_events
+    assert snapshot["decision_history"]
+    assert snapshot["failover"]["active_backend"].lower() == "ccxt"
+    assert snapshot["risk_alerts"]
+    assert snapshot["journal_performance"]["mode"] == "baseline"
+    assert "retraining_cycles" in snapshot
+
+
+def test_auto_trader_reallocates_exchange_on_degradation() -> None:
+    emitter = _Emitter()
+    gui = _GUI()
+    trader = AutoTrader(emitter, gui, lambda: "BTCUSDT")
+
+    trader.configure_exchange_preferences({"binance": 2.0, "kraken": 1.0})
+
+    class _WeightProvider:
+        def __init__(self, exchange: str, weight: float, degradation: float = 0.0) -> None:
+            self.exchange = exchange
+            self.weight = weight
+            self.degradation = degradation
+
+        def __call__(self) -> Mapping[str, object]:
+            return {
+                "exchange": self.exchange,
+                "segment": "futures",
+                "weight": self.weight,
+                "rolling_weight": self.weight,
+                "fill_ratio": 0.95,
+                "success_rate": 0.98,
+                "degradation": {"rolling_score": self.degradation},
+            }
+
+    primary = _WeightProvider("binance", 0.9, 0.1)
+    secondary = _WeightProvider("kraken", 0.4, 0.1)
+
+    trader.register_exchange_weight_provider("binance", primary, segment="futures")
+    trader.register_exchange_weight_provider("kraken", secondary, segment="futures")
+
+    assessment = MarketRegimeAssessment(
+        regime=MarketRegime.TREND,
+        confidence=0.85,
+        risk_score=0.2,
+        metrics={},
+    )
+
+    decision = trader._build_risk_decision(
+        "BTCUSDT",
+        "buy",
+        assessment,
+        effective_risk=0.2,
+    )
+
+    selected = decision.details.get("exchange_allocation", {}).get("selected", {})
+    assert selected.get("exchange") == "binance"
+
+    primary.weight = 0.1
+    primary.degradation = 0.95
+    secondary.weight = 0.8
+    trader.invalidate_exchange_weight_cache()
+
+    decision_after = trader._build_risk_decision(
+        "BTCUSDT",
+        "buy",
+        assessment,
+        effective_risk=0.2,
+    )
+
+    after_payload = decision_after.details.get("exchange_allocation", {})
+    after_selected = after_payload.get("selected", {})
+    allocations = after_payload.get("allocations", [])
+    assert after_selected.get("exchange") == "kraken"
+    weights = {entry.get("exchange"): entry.get("allocation") for entry in allocations}
+    assert weights.get("kraken", 0.0) > weights.get("binance", 0.0)
+    assert decision_after.details.get("execution_exchange") == "kraken"
+
+    snapshot = trader.build_auto_mode_snapshot(include_history=False, tz=None)
+    exchange_indicators = snapshot["performance_indicators"]["exchange"]
+    assert exchange_indicators["selected"]["exchange"] == "kraken"
+    assert any(entry.get("exchange") == "kraken" for entry in exchange_indicators.get("allocations", []))
+
+
 class _RiskServiceStub:
     ...
+
+
+def test_adjust_strategy_parameters_enters_defensive_mode(monkeypatch: pytest.MonkeyPatch) -> None:
+    emitter = _Emitter()
+    gui = _GUI()
+    trader = AutoTrader(
+        emitter,
+        gui,
+        symbol_getter=lambda: "BTCUSDT",
+        auto_trade_interval_s=0.0,
+        enable_auto_trade=False,
+    )
+
+    trader.current_strategy = "trend_following"
+    trader.current_leverage = 1.5
+    trader.current_stop_loss_pct = 0.03
+    trader.current_take_profit_pct = 0.06
+
+    analytics = JournalAnalytics(
+        trade_count=24,
+        wins=8,
+        losses=16,
+        rolling_pnl=-180.0,
+        average_pnl=-7.5,
+        cumulative_pnl=-180.0,
+        max_drawdown=180.0,
+        max_drawdown_pct=0.12,
+        signal_accuracy=0.4,
+        approvals_total=24,
+        approvals_success=10,
+        window=120,
+        last_timestamp=datetime.now(timezone.utc),
+    )
+
+    monkeypatch.setattr(trader, "_resolve_journal_analytics", lambda: analytics)
+
+    assessment = MarketRegimeAssessment(
+        regime=MarketRegime.TREND,
+        confidence=0.8,
+        risk_score=0.35,
+        metrics={},
+    )
+
+    trader._adjust_strategy_parameters(assessment, aggregated_risk=0.35, summary=None)
+
+    assert trader._journal_performance_state == "defensive"
+    assert trader.current_leverage <= 0.5
+    assert trader.current_stop_loss_pct <= 0.03
+    assert trader.current_strategy == "capital_preservation" or trader.current_strategy.endswith("_defensive")
+
+    snapshot = trader.build_auto_mode_snapshot(include_history=False, tz=None)
+    indicators = snapshot["performance_indicators"]
+    assert indicators["strategy"]["state"] == "defensive"
+    history = indicators["strategy"]["history"]
+    assert isinstance(history, list) and history
+    recent_event = history[0]
+    assert recent_event["state"] in {"defensive", "critical"}
+    assert recent_event["reason"] in {"journal_defensive", "journal_defensive_adjustment"}
 def _prepare_guardrail_history(monkeypatch: pytest.MonkeyPatch) -> AutoTrader:
     emitter = _Emitter()
     gui = _GUI()

@@ -1,0 +1,17 @@
+{
+  "model_name": "sample_model",
+  "updated_at": "2024-02-10T12:00:00Z",
+  "entries": [
+    {
+      "decided_at": "2024-02-08T11:00:00Z",
+      "reason": "Zastąpiony przez nowszy model",
+      "report": {
+        "metrics": {
+          "accuracy": 0.72,
+          "expected_pnl": 0.08
+        },
+        "status": "challenger"
+      }
+    }
+  ]
+}

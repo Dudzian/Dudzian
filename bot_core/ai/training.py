@@ -28,9 +28,11 @@ from .inference import ModelRepository
 from .meta import MetaClassifierModel, build_meta_labeling_payload, train_meta_classifier
 from .models import ModelArtifact
 from .validation import (
+    ChampionDecision,
     ModelQualityMonitor,
     ModelQualityReport,
     record_model_quality_report,
+    validate_model_artifact_schema,
 )
 
 
@@ -1373,6 +1375,7 @@ class TrainingRunOutcome:
     report: ModelQualityReport
     validation: "WalkForwardResult | None"
     trigger: str
+    champion_decision: ChampionDecision | None = None
 
 
 @dataclass(slots=True)
@@ -1441,6 +1444,7 @@ class WalkForwardTrainingCoordinator:
 
         trainer = self.trainer_factory()
         artifact = trainer.train(dataset)
+        validate_model_artifact_schema(artifact)
 
         version = self._resolve_version(artifact)
         filename = f"{self.job_name}-{version}.json"
@@ -1476,10 +1480,22 @@ class WalkForwardTrainingCoordinator:
             validation=validation_payload,
         )
 
-        record_model_quality_report(
+        champion_decision = record_model_quality_report(
             report,
             history_root=self.quality_monitor.history_root,
         )
+        if champion_decision.decision == "champion":
+            _LOGGER.info(
+                "Model %s awansował na champion (powód: %s)",
+                self.job_name,
+                champion_decision.reason,
+            )
+        else:
+            _LOGGER.info(
+                "Model %s zarejestrowany jako challenger (powód: %s)",
+                self.job_name,
+                champion_decision.reason,
+            )
 
         return TrainingRunOutcome(
             artifact=artifact,
@@ -1488,6 +1504,7 @@ class WalkForwardTrainingCoordinator:
             report=report,
             validation=validation_result,
             trigger=reason,
+            champion_decision=champion_decision,
         )
 
     def _should_run(

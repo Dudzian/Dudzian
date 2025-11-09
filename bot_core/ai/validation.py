@@ -13,8 +13,10 @@ import jsonschema
 from .models import ModelArtifact
 from bot_core.reporting.model_quality import (
     DEFAULT_QUALITY_DIR,
+    ChampionDecision,
     load_latest_quality_payload,
     persist_quality_report,
+    update_champion_registry,
 )
 
 _SCHEMA_PATH = Path(__file__).resolve().parents[2] / "docs" / "schemas" / "model_artifact.schema.json"
@@ -180,16 +182,22 @@ def record_model_quality_report(
     report: ModelQualityReport,
     *,
     history_root: Path | str | None = None,
-) -> Path:
-    """Zapisuje raport jakości modelu do archiwum."""
+) -> ChampionDecision:
+    """Zapisuje raport jakości modelu do archiwum i aktualizuje rejestr champion."""
 
     base_dir = Path(history_root) if history_root is not None else DEFAULT_QUALITY_DIR
-    return persist_quality_report(
+    report_path = persist_quality_report(
         report.to_dict(),
         model_name=report.model_name,
         version=report.version,
         evaluated_at=report.evaluated_at,
         base_dir=base_dir,
+    )
+    return update_champion_registry(
+        report.to_dict(),
+        model_name=report.model_name,
+        base_dir=base_dir,
+        report_path=report_path,
     )
 
 
@@ -321,6 +329,7 @@ class ModelQualityMonitor:
 
 
 __all__ = [
+    "ChampionDecision",
     "ModelArtifactValidationError",
     "ModelQualityMonitor",
     "ModelQualityReport",

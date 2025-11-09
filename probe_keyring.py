@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import runpy
 import sys
 from pathlib import Path
@@ -126,6 +127,12 @@ def install_hook_main(expected_hwid_path: str | None = None) -> str:
                 raise HwidValidationError(
                     f"Nie udało się odczytać pliku fingerprintu {path}: {exc}"
                 ) from exc
+
+    fake_fingerprint = os.environ.get("KBOT_FAKE_FINGERPRINT")
+    if fake_fingerprint is not None:
+        fake_value = fake_fingerprint.strip()
+        if fake_value:
+            return validate_hwid(fingerprint_expected, fingerprint_reader=lambda: fake_value)
 
     return validate_hwid(fingerprint_expected)
 

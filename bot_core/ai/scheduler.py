@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import json
 import os
+import logging
 from dataclasses import InitVar, dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from tempfile import NamedTemporaryFile
-from typing import Callable, ClassVar, Final, Iterable, Mapping, MutableMapping, Sequence
+from typing import Any, Callable, ClassVar, Final, Iterable, Mapping, MutableMapping, Protocol, Sequence
 
 from bot_core.runtime.journal import TradingDecisionEvent, TradingDecisionJournal
 
@@ -22,6 +23,17 @@ from .audit import DEFAULT_AUDIT_ROOT, save_walk_forward_report
 
 DEFAULT_JOURNAL_ENVIRONMENT: Final[str] = "ai-training"
 DEFAULT_JOURNAL_RISK_PROFILE: Final[str] = "ai-research"
+RETRAINING_PROMOTION_EVENT: Final[str] = "ai.retraining.champion_promoted"
+
+
+_LOGGER = logging.getLogger(__name__)
+
+
+class RetrainingEventEmitter(Protocol):
+    """Minimalny protokół emitera zdarzeń obsługującego publikacje retreningu."""
+
+    def emit(self, event: str, **payload: Any) -> None:
+        ...
 
 
 @dataclass(slots=True)
@@ -40,6 +52,7 @@ class RetrainingScheduler:
     paused_until: datetime | None = None
     paused_reason: str | None = None
     persistence_path: str | Path | None = None
+    event_emitter: RetrainingEventEmitter | None = None
     _persistence_enabled: bool = field(init=False, repr=False, default=False)
     _configured_interval_seconds: float = field(init=False, repr=False, default=0.0)
 
@@ -63,6 +76,18 @@ class RetrainingScheduler:
         if self.paused_until is not None:
             self.paused_until = self._ensure_utc(self.paused_until)
         self._load_state()
+
+    def emit_promotion_event(self, payload: Mapping[str, object]) -> None:
+        """Publikuje informację o promocji championa do magistrali UI."""
+
+        emitter = self.event_emitter
+        if emitter is None:
+            return
+        try:
+            normalized = {str(key): value for key, value in payload.items()}
+            emitter.emit(RETRAINING_PROMOTION_EVENT, **normalized)
+        except Exception:  # pragma: no cover - zdarzenia nie mogą blokować retreningu
+            _LOGGER.exception("Nie udało się wyemitować zdarzenia promocji championa")
 
     def should_retrain(self, now: datetime | None = None) -> bool:
         now = self._ensure_utc(now)
@@ -753,7 +778,35 @@ class ScheduledTrainingJob:
                 )
         if self.on_completed is not None:
             self.on_completed(artifact, validation_result)
+        self._emit_retraining_publication(artifact)
         return artifact
+
+    def _emit_retraining_publication(self, artifact: ModelArtifact) -> None:
+        emitter_scheduler = getattr(self.scheduler, "emit_promotion_event", None)
+        if not callable(emitter_scheduler):
+            return
+        metadata = getattr(artifact, "metadata", {})
+        model_name = None
+        if isinstance(metadata, Mapping):
+            model_name = metadata.get("model_name") or metadata.get("model") or metadata.get("job_name")
+        if not model_name:
+            model_name = self.name
+        payload: dict[str, object] = {
+            "model": str(model_name),
+            "job": self.name,
+            "trained_at": artifact.trained_at.astimezone(timezone.utc).isoformat(),
+        }
+        if isinstance(metadata, Mapping):
+            version = metadata.get("model_version") or metadata.get("version")
+            if version:
+                payload["version"] = str(version)
+            reason = metadata.get("promotion_reason") or metadata.get("decision_reason")
+            if reason:
+                payload["reason"] = str(reason)
+        try:
+            emitter_scheduler(payload)
+        except Exception:  # pragma: no cover - zdarzenie nie powinno zatrzymać treningu
+            _LOGGER.debug("Nie udało się przesłać zdarzenia publikacji retreningu", exc_info=True)
 
     def _record_walk_forward_journal(
         self,
@@ -960,6 +1013,7 @@ class TrainingScheduler:
 __all__ = [
     "DEFAULT_JOURNAL_ENVIRONMENT",
     "DEFAULT_JOURNAL_RISK_PROFILE",
+    "RETRAINING_PROMOTION_EVENT",
     "RetrainingScheduler",
     "ScheduledTrainingJob",
     "TrainingRunRecord",

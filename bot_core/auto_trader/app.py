@@ -26,11 +26,11 @@ import time
 import uuid
 from bisect import bisect_right
 from datetime import datetime, timedelta, timezone, tzinfo
-from collections import Counter, OrderedDict
+from collections import Counter, OrderedDict, deque
 from pathlib import Path
 from collections.abc import Iterable
 from contextlib import contextmanager
-from dataclasses import asdict, is_dataclass
+from dataclasses import asdict, dataclass, is_dataclass
 from types import SimpleNamespace
 from typing import Any, Callable, Dict, Mapping, Optional, Protocol, Sequence, cast
 
@@ -50,6 +50,7 @@ from bot_core.auto_trader.schedule import (
     ScheduleState,
     TradingSchedule,
 )
+from bot_core.ai.inference import ModelRepository
 from bot_core.ai.regime import (
     MarketRegime,
     MarketRegimeAssessment,
@@ -75,10 +76,19 @@ from bot_core.trading.strategy_aliasing import (
     canonical_alias_map,
     normalise_suffixes,
 )
+from bot_core.reporting.model_quality import (
+    DEFAULT_QUALITY_DIR,
+    load_champion_overview,
+)
 from bot_core.runtime.journal import (
     TradingDecisionJournal,
     aggregate_decision_statistics,
     log_decision_event,
+    log_model_change_event,
+)
+from bot_core.runtime.journal_analysis import (
+    JournalAnalytics,
+    analyse_decision_journal,
 )
 
 
@@ -388,6 +398,32 @@ def _serialize_schedule_state(state: ScheduleState) -> dict[str, Any]:
     return payload
 
 
+@dataclass(slots=True)
+class _ChampionCacheEntry:
+    version: str
+    source: str
+    decided_at: str | None
+    fallback: bool
+    fallback_reason: str | None
+    champion_version: str | None
+    payload: Mapping[str, object] | None
+    metrics: Mapping[str, float]
+    retraining_id: str | None = None
+
+
+@dataclass(slots=True)
+class _ChampionSnapshot:
+    model_name: str
+    version: str
+    source: str
+    payload: Mapping[str, object]
+    champion_version: str | None
+    decided_at: str | None
+    fallback: bool
+    fallback_reason: str | None
+    challengers: tuple[Mapping[str, object], ...]
+
+
 class AutoTrader:
     """Small cooperative wrapper around an auto-trading loop.
 
@@ -403,6 +439,7 @@ class AutoTrader:
         "intraday_breakout": "day_trading",
     }
     _ALIAS_RESOLVER: StrategyAliasResolver | None = None
+    _DEFAULT_CHAMPION_KEY = "__default__"
 
     @classmethod
     def _alias_resolver(cls) -> StrategyAliasResolver:
@@ -540,11 +577,32 @@ class AutoTrader:
         strategy_alias_suffixes: Iterable[str] | None = None,
         enable_profiling: bool = False,
         profiling_top_stats: int = 25,
+        model_quality_dir: Path | str | None = None,
+        champion_repository_root: Path | str | None = None,
+        champion_model_map: Mapping[str, str] | None = None,
     ) -> None:
         self.emitter = emitter
         self.gui = gui
         self.symbol_getter = symbol_getter
         self.market_data_provider = market_data_provider
+        self.bootstrap_context = bootstrap_context
+        self._retraining_listener_tag = f"auto_trader_retraining::{id(self)}"
+        listener = getattr(emitter, "on", None)
+        if callable(listener):
+            try:
+                listener(
+                    "ai.retraining.champion_promoted",
+                    self._handle_retraining_promotion_event,
+                    tag=self._retraining_listener_tag,
+                )
+            except TypeError:
+                try:
+                    listener(
+                        "ai.retraining.champion_promoted",
+                        self._handle_retraining_promotion_event,
+                    )
+                except Exception:  # pragma: no cover - defensywnie na egzotyczne emitery
+                    LOGGER.debug("Nie udało się zarejestrować listenera promocji championa", exc_info=True)
 
         alias_override = canonical_alias_map(strategy_alias_map)
         suffix_override = (
@@ -576,6 +634,41 @@ class AutoTrader:
         )
         self._profiling_top_stats = max(1, int(profiling_top_stats))
         self._profiling_reports: dict[str, list[ProfileReport]] = {}
+        self._champion_registry_dir = (
+            Path(model_quality_dir).expanduser()
+            if model_quality_dir is not None
+            else DEFAULT_QUALITY_DIR.expanduser()
+        )
+        self._champion_repository_root = self._resolve_champion_repository_root(
+            champion_repository_root
+        )
+        self._champion_model_map = self._initialise_champion_model_map(
+            champion_model_map, bootstrap_context
+        )
+        self._model_repositories: dict[str, ModelRepository] = {}
+        self._champion_cache: dict[str, _ChampionCacheEntry] = {}
+        self._model_change_queue: deque[dict[str, Any]] = deque()
+        self._model_change_log: deque[dict[str, Any]] = deque(maxlen=128)
+        self._retraining_cycle_log: deque[dict[str, Any]] = deque(maxlen=64)
+        self._strategy_adaptation_log: deque[dict[str, Any]] = deque(maxlen=64)
+        self._signal_quality_provider: Callable[[], Mapping[str, object] | None] | None = None
+        self._signal_quality_cache: tuple[float, Mapping[str, object]] | None = None
+        self._exchange_degradation_score: float = 0.0
+        self._exchange_degradation_payload: Mapping[str, object] = {}
+        self._exchange_degradation_guardrail_active = False
+        self._exchange_degradation_kill_switch = False
+        self._exchange_degradation_alert_active = False
+        self._exchange_weight_providers: dict[
+            tuple[str, str], Callable[[], Mapping[str, object] | None]
+        ] = {}
+        self._exchange_key_registry: dict[tuple[str, str], tuple[str, str]] = {}
+        self._exchange_weight_cache: tuple[
+            float, dict[tuple[str, str], dict[str, Any]]
+        ] | None = None
+        self._exchange_preference_weights: dict[tuple[str, str], float] = {}
+        self._exchange_preference_defaults: dict[str, float] = {}
+        self._exchange_selection_log: deque[dict[str, Any]] = deque(maxlen=64)
+        self._last_exchange_selection: dict[str, Any] | None = None
 
         self.signal_service = signal_service
         self._ai_feature_column_names: tuple[str, ...] | None = None
@@ -587,7 +680,6 @@ class AutoTrader:
         self.risk_service = risk_service
         self.execution_service = execution_service
         self.data_provider = data_provider
-        self.bootstrap_context = bootstrap_context
         self.portfolio_manager = (
             portfolio_manager
             or getattr(gui, "portfolio_manager", None)
@@ -670,6 +762,9 @@ class AutoTrader:
         if journal_instance is not None and not hasattr(journal_instance, "record"):
             journal_instance = None
         self._decision_journal: TradingDecisionJournal | None = journal_instance
+        self._journal_analytics_cache: tuple[float, JournalAnalytics | None] | None = None
+        self._last_journal_analytics: JournalAnalytics | None = None
+        self._journal_performance_state: str = "baseline"
 
         context_source: Mapping[str, object] | None = decision_journal_context
         if context_source is None and bootstrap_context is not None:
@@ -727,6 +822,30 @@ class AutoTrader:
         self._metric_recalibration_total = self._metrics.counter(
             "auto_trader_recalibrations_triggered_total",
             "Liczba zleconych rekalkibracji strategii.",
+        )
+        self._metric_model_change_total = self._metrics.counter(
+            "auto_trader_model_changes_total",
+            "Licznik zmian aktywnego modelu decision engine.",
+        )
+        self._metric_model_change_guardrail_total = self._metrics.counter(
+            "auto_trader_model_change_guardrail_blocks_total",
+            "Zmiany modelu wykonane przy aktywnych blokadach guardrail.",
+        )
+        self._metric_model_change_timestamp = self._metrics.gauge(
+            "auto_trader_model_change_timestamp_seconds",
+            "Znacznik czasu ostatniej zmiany modelu decision engine.",
+        )
+        self._metric_retraining_cycle_total = self._metrics.counter(
+            "auto_trader_retraining_cycles_total",
+            "Liczba cykli retrainingu odnotowanych przez AutoTradera.",
+        )
+        self._metric_retraining_guardrail_total = self._metrics.counter(
+            "auto_trader_retraining_guardrail_blocks_total",
+            "Cykle retrainingu zakończone przy aktywnych guardrailach lub kill switchu.",
+        )
+        self._metric_retraining_timestamp = self._metrics.gauge(
+            "auto_trader_retraining_timestamp_seconds",
+            "Znacznik czasu ostatniego cyklu retrainingu obsłużonego przez AutoTradera.",
         )
         self._metric_schedule_closed_seconds = self._metrics.histogram(
             "auto_trader_schedule_block_duration_seconds",
@@ -1672,6 +1791,947 @@ class AutoTrader:
                 self._log(
                     "Emitter failed to publish controller cycle telemetry",
                     level=logging.DEBUG,
+                )
+
+    # ------------------------------------------------------------------
+    # Champion synchronisation helpers --------------------------------
+    # ------------------------------------------------------------------
+    def _resolve_champion_repository_root(
+        self, override: Path | str | None
+    ) -> Path:
+        if override is not None:
+            candidate = Path(override).expanduser()
+        else:
+            candidate = None
+            context = getattr(self, "bootstrap_context", None)
+            if context is not None:
+                manager_candidate = getattr(context, "ai_manager", None)
+                candidate_dir = getattr(manager_candidate, "model_dir", None)
+                if candidate_dir:
+                    candidate = Path(candidate_dir).expanduser()
+            if candidate is None:
+                candidate = Path("var/models").expanduser()
+        try:
+            candidate.mkdir(parents=True, exist_ok=True)
+        except Exception:  # pragma: no cover - środowiska testowe mogą blokować zapis
+            LOGGER.debug(
+                "Nie udało się utworzyć katalogu repozytorium modeli %s",
+                candidate,
+                exc_info=True,
+            )
+        return candidate
+
+    def _initialise_champion_model_map(
+        self,
+        mapping: Mapping[str, str] | None,
+        bootstrap_context: Any | None,
+    ) -> dict[str, str]:
+        result: dict[str, str] = {}
+        if isinstance(mapping, Mapping):
+            for key, value in mapping.items():
+                normalized_key = self._normalize_symbol_key(key)
+                token = str(value).strip() if value is not None else ""
+                if token:
+                    result[normalized_key] = token
+        if bootstrap_context is not None:
+            bindings = getattr(bootstrap_context, "ai_model_bindings", None)
+            if bindings:
+                for binding in bindings:
+                    symbol = getattr(binding, "symbol", None)
+                    model_type = getattr(binding, "model_type", None)
+                    if not symbol or not model_type:
+                        continue
+                    normalized_key = self._normalize_symbol_key(symbol)
+                    token = str(model_type).strip()
+                    if token and normalized_key not in result:
+                        result[normalized_key] = token
+        if not result:
+            result[self._DEFAULT_CHAMPION_KEY] = "decision_engine"
+        return result
+
+    def _normalize_symbol_key(self, symbol: object) -> str:
+        if symbol is None:
+            return self._DEFAULT_CHAMPION_KEY
+        token = str(symbol).strip()
+        if not token or token == "*":
+            return self._DEFAULT_CHAMPION_KEY
+        return token.upper()
+
+    def _resolve_champion_model_name(self, symbol: str | None) -> str | None:
+        mapping = getattr(self, "_champion_model_map", {})
+        if not mapping:
+            return None
+        key = self._normalize_symbol_key(symbol)
+        if key in mapping:
+            return mapping[key]
+        return mapping.get(self._DEFAULT_CHAMPION_KEY)
+
+    @staticmethod
+    def _score_quality_payload(payload: Mapping[str, object] | None) -> tuple[float, float, float]:
+        if not isinstance(payload, Mapping):
+            return (0.0, -math.inf, 0.0)
+        metrics_raw = payload.get("metrics")
+        if isinstance(metrics_raw, Mapping):
+            summary_raw = metrics_raw.get("summary")
+            metrics = summary_raw if isinstance(summary_raw, Mapping) else metrics_raw
+        else:
+            metrics = {}
+
+        directional = 0.0
+        mae = math.inf
+        expected_pnl = 0.0
+
+        for key in (
+            "validation_directional_accuracy",
+            "test_directional_accuracy",
+            "directional_accuracy",
+        ):
+            try:
+                directional = max(directional, float(metrics.get(key)))
+            except (TypeError, ValueError):
+                continue
+
+        for key in ("validation_mae", "test_mae", "mae"):
+            try:
+                candidate = float(metrics.get(key))
+            except (TypeError, ValueError):
+                continue
+            mae = min(mae, candidate)
+
+        for key in (
+            "validation_expected_pnl",
+            "test_expected_pnl",
+            "expected_pnl",
+        ):
+            try:
+                expected_pnl = max(expected_pnl, float(metrics.get(key)))
+            except (TypeError, ValueError):
+                continue
+
+        if not math.isfinite(mae):
+            mae = math.inf
+        return (directional, -mae, expected_pnl)
+
+    def _best_challenger_payload(
+        self, challengers: Sequence[Mapping[str, object]]
+    ) -> tuple[Mapping[str, object] | None, tuple[float, float, float] | None]:
+        best_payload: Mapping[str, object] | None = None
+        best_score: tuple[float, float, float] | None = None
+        for candidate in challengers:
+            if not isinstance(candidate, Mapping):
+                continue
+            version = str(candidate.get("version", "")).strip()
+            if not version:
+                continue
+            score = self._score_quality_payload(candidate)
+            if best_payload is None or best_score is None or score > best_score:
+                best_payload = candidate
+                best_score = score
+        return best_payload, best_score
+
+    @staticmethod
+    def _extract_quality_metrics(payload: Mapping[str, object] | None) -> dict[str, float]:
+        if not isinstance(payload, Mapping):
+            return {}
+        metrics_raw = payload.get("metrics")
+        metrics_source: Mapping[str, object]
+        if isinstance(metrics_raw, Mapping):
+            summary_raw = metrics_raw.get("summary")
+            metrics_source = summary_raw if isinstance(summary_raw, Mapping) else metrics_raw
+        else:
+            metrics_source = {}
+        result: dict[str, float] = {}
+        for key, value in metrics_source.items():
+            try:
+                result[str(key)] = float(value)  # type: ignore[arg-type]
+            except (TypeError, ValueError):
+                continue
+        return result
+
+    @staticmethod
+    def _normalize_metric_map(payload: object) -> dict[str, float]:
+        if not isinstance(payload, Mapping):
+            return {}
+        result: dict[str, float] = {}
+        for key, value in payload.items():
+            try:
+                result[str(key)] = float(value)  # type: ignore[arg-type]
+            except (TypeError, ValueError):
+                continue
+        return result
+
+    @staticmethod
+    def _compute_metric_deltas(
+        previous: Mapping[str, float] | None,
+        current: Mapping[str, float] | None,
+    ) -> dict[str, float]:
+        deltas: dict[str, float] = {}
+        previous = previous or {}
+        current = current or {}
+        for key in set(previous) & set(current):
+            try:
+                deltas[key] = float(current[key]) - float(previous[key])
+            except (TypeError, ValueError):
+                continue
+        return deltas
+
+    def _load_champion_snapshot(self, model_name: str) -> _ChampionSnapshot | None:
+        try:
+            overview = load_champion_overview(model_name, base_dir=self._champion_registry_dir)
+        except Exception:  # pragma: no cover - diagnostyka I/O
+            LOGGER.debug(
+                "Nie udało się odczytać rejestru champion dla %s",
+                model_name,
+                exc_info=True,
+            )
+            return None
+        if not overview:
+            return None
+
+        champion_report = overview.get("champion")
+        if not isinstance(champion_report, Mapping):
+            champion_report = {}
+
+        challengers_raw = overview.get("challengers") or ()
+        challengers: list[Mapping[str, object]] = []
+        for entry in challengers_raw:
+            report = entry.get("report") if isinstance(entry, Mapping) else None
+            if isinstance(report, Mapping):
+                challengers.append(report)
+
+        champion_version_raw = champion_report.get("version")
+        champion_version = str(champion_version_raw).strip() if champion_version_raw else None
+        champion_status = str(champion_report.get("status", "")).strip().lower()
+        champion_score = (
+            self._score_quality_payload(champion_report)
+            if champion_report and champion_version
+            else None
+        )
+        best_challenger, challenger_score = self._best_challenger_payload(challengers)
+
+        fallback = False
+        fallback_reason: str | None = None
+        selected_payload: Mapping[str, object] | None = champion_report if champion_report else None
+        selected_source = "champion"
+
+        if champion_status == "degraded":
+            fallback = True
+            fallback_reason = "champion_degraded"
+            selected_payload = best_challenger
+            selected_source = "challenger"
+        elif not champion_version:
+            fallback = True
+            fallback_reason = "champion_missing"
+            selected_payload = best_challenger
+            selected_source = "challenger"
+        elif (
+            best_challenger is not None
+            and challenger_score is not None
+            and champion_score is not None
+            and challenger_score > champion_score
+        ):
+            fallback = True
+            fallback_reason = "challenger_outperformed"
+            selected_payload = best_challenger
+            selected_source = "challenger"
+
+        if selected_payload is None:
+            return None
+        version_raw = selected_payload.get("version")
+        version = str(version_raw).strip() if version_raw else ""
+        if not version:
+            return None
+
+        metadata = overview.get("champion_metadata") if isinstance(overview, Mapping) else None
+        decided_at: str | None = None
+        if isinstance(metadata, Mapping):
+            decided_raw = metadata.get("decided_at")
+            if decided_raw:
+                decided_at = str(decided_raw).strip()
+
+        return _ChampionSnapshot(
+            model_name=model_name,
+            version=version,
+            source=selected_source,
+            payload=selected_payload,
+            champion_version=champion_version,
+            decided_at=decided_at,
+            fallback=fallback,
+            fallback_reason=fallback_reason,
+            challengers=tuple(challengers),
+        )
+
+    def _derive_retraining_id(
+        self,
+        model_name: str,
+        context: Mapping[str, Any] | None,
+        snapshot: _ChampionSnapshot | None,
+    ) -> str | None:
+        if not model_name:
+            return None
+        mapping = context if isinstance(context, Mapping) else {}
+        for key in ("retraining_id", "cycle_id", "run_id", "job_run_id"):
+            value = mapping.get(key)
+            if value is None:
+                continue
+            text = str(value).strip()
+            if text:
+                return text
+        trained_at = mapping.get("trained_at") if isinstance(mapping, Mapping) else None
+        if trained_at is not None:
+            try:
+                normalized = self._normalize_timestamp_for_export(trained_at, coerce=True)
+            except Exception:  # pragma: no cover - zabezpieczenie na niestandardowe typy
+                normalized = str(trained_at)
+            if normalized:
+                return f"{model_name}:{normalized}"
+        version = mapping.get("version") if isinstance(mapping, Mapping) else None
+        if not version and snapshot is not None:
+            version = snapshot.version
+        if version:
+            return f"{model_name}:{version}"
+        if snapshot is not None and snapshot.decided_at:
+            return f"{model_name}:{snapshot.decided_at}"
+        return None
+
+    def _repository_for_model(self, model_name: str) -> ModelRepository:
+        repository = self._model_repositories.get(model_name)
+        if repository is None:
+            base = self._champion_repository_root / model_name
+            try:
+                base.mkdir(parents=True, exist_ok=True)
+            except Exception:  # pragma: no cover - brak dostępu nie powinien zatrzymać cyklu
+                LOGGER.debug(
+                    "Nie udało się utworzyć katalogu modeli %s",
+                    base,
+                    exc_info=True,
+                )
+            repository = ModelRepository(base)
+            self._model_repositories[model_name] = repository
+        return repository
+
+    def _resolve_model_artifact_path(self, model_name: str, version: str) -> Path | None:
+        repository = self._repository_for_model(model_name)
+        try:
+            path = repository.resolve(version)
+        except Exception:
+            entry = repository.get_version_entry(version)
+            if isinstance(entry, Mapping):
+                file_ref = entry.get("file")
+                if isinstance(file_ref, str) and file_ref.strip():
+                    candidate = repository.base_path / file_ref
+                    if candidate.exists():
+                        return candidate
+            return None
+        else:
+            return Path(path)
+
+    def _queue_model_change_event(self, payload: Mapping[str, Any]) -> None:
+        normalized = self._normalise_model_change_payload(payload)
+        retraining_entry = self._build_retraining_cycle_entry(normalized)
+        with self._lock:
+            self._model_change_queue.append(dict(normalized))
+            self._model_change_log.append(dict(normalized))
+            if retraining_entry is not None:
+                self._retraining_cycle_log.append(retraining_entry)
+        self._log_model_change_event(normalized)
+        self._update_model_change_metrics(normalized)
+        self._update_retraining_cycle_metrics(normalized, retraining_entry)
+
+    def poll_model_change_event(self) -> Mapping[str, Any] | None:
+        with self._lock:
+            if not self._model_change_queue:
+                return None
+            payload = self._model_change_queue.popleft()
+        return dict(payload)
+
+    @staticmethod
+    def _normalise_model_change_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
+        normalized: dict[str, Any] = {}
+        for key, value in payload.items():
+            if key == "metrics" and isinstance(value, Mapping):
+                normalized[key] = {
+                    "current": dict(value.get("current") or {}),
+                    "previous": dict(value.get("previous") or {}),
+                    "delta": dict(value.get("delta") or {}),
+                }
+            elif key == "decision_impact" and isinstance(value, Mapping):
+                impact = dict(value)
+                last_cycle = impact.get("last_cycle")
+                if isinstance(last_cycle, Mapping):
+                    impact["last_cycle"] = dict(last_cycle)
+                last_labels = impact.get("last_decision_labels")
+                if isinstance(last_labels, Mapping):
+                    impact["last_decision_labels"] = dict(last_labels)
+                normalized[key] = impact
+            elif isinstance(value, Mapping):
+                normalized[key] = dict(value)
+            elif isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+                normalized[key] = [copy.deepcopy(item) for item in value]
+            else:
+                normalized[key] = copy.deepcopy(value)
+        return normalized
+
+    @staticmethod
+    def _build_retraining_cycle_entry(payload: Mapping[str, Any]) -> dict[str, Any] | None:
+        retraining_id = payload.get("retraining_id")
+        if not retraining_id:
+            return None
+        entry: dict[str, Any] = {
+            "retraining_id": retraining_id,
+            "model_name": payload.get("model_name"),
+            "version": payload.get("version"),
+            "decided_at": payload.get("decided_at"),
+            "source": payload.get("source"),
+        }
+        metrics = payload.get("metrics")
+        if isinstance(metrics, Mapping):
+            entry["metrics"] = {
+                "current": dict(metrics.get("current") or {}),
+                "previous": dict(metrics.get("previous") or {}),
+                "delta": dict(metrics.get("delta") or {}),
+            }
+        impact = payload.get("decision_impact")
+        if isinstance(impact, Mapping):
+            entry["decision_impact"] = dict(impact)
+        return entry
+
+    @staticmethod
+    def _parse_iso_timestamp(value: Any) -> datetime | None:
+        if isinstance(value, datetime):
+            if value.tzinfo is None:
+                return value.replace(tzinfo=timezone.utc)
+            return value.astimezone(timezone.utc)
+        if isinstance(value, (int, float)):
+            try:
+                return datetime.fromtimestamp(float(value), timezone.utc)
+            except (OSError, OverflowError, ValueError):
+                return None
+        if isinstance(value, str):
+            text = value.strip()
+            if not text:
+                return None
+            if text.endswith("Z"):
+                text = text[:-1] + "+00:00"
+            try:
+                parsed = datetime.fromisoformat(text)
+            except ValueError:
+                return None
+            if parsed.tzinfo is None:
+                return parsed.replace(tzinfo=timezone.utc)
+            return parsed.astimezone(timezone.utc)
+        return None
+
+    def _prepare_decision_journal_records(
+        self,
+        *,
+        limit: int = 1024,
+    ) -> list[tuple[datetime, Mapping[str, Any]]]:
+        journal = getattr(self, "_decision_journal", None)
+        if journal is None:
+            return []
+        try:
+            exported = journal.export()
+        except Exception:
+            return []
+
+        records: list[tuple[datetime, Mapping[str, Any]]] = []
+        for entry in exported:
+            if not isinstance(entry, Mapping):
+                continue
+            timestamp = self._parse_iso_timestamp(entry.get("timestamp"))
+            if timestamp is None:
+                continue
+            records.append((timestamp, dict(entry)))
+
+        if not records:
+            return []
+
+        records.sort(key=lambda item: item[0])
+        if len(records) > limit:
+            records = records[-limit:]
+        return records
+
+    def _summarize_decision_records(
+        self,
+        records: Sequence[tuple[datetime, Mapping[str, Any]]],
+        *,
+        start: datetime,
+        end: datetime | None,
+    ) -> dict[str, Any] | None:
+        if not records:
+            return None
+
+        total_events = 0
+        event_counter: Counter[str] = Counter()
+        status_counter: Counter[str] = Counter()
+        approval_counter: Counter[str] = Counter()
+        guardrail_events = 0
+
+        for timestamp, payload in records:
+            if timestamp < start:
+                continue
+            if end is not None and timestamp >= end:
+                break
+
+            event_name = str(payload.get("event") or "").strip()
+            if not event_name:
+                continue
+            if event_name == "model_change":
+                continue
+
+            total_events += 1
+            event_counter[event_name] += 1
+
+            status_value = str(payload.get("status") or "").strip().lower()
+            if status_value:
+                status_counter[status_value] += 1
+
+            if event_name == "decision_guardrail":
+                guardrail_events += 1
+
+            if "approved" in payload:
+                approval_state = self._normalize_approval_flag(payload.get("approved"))
+                if approval_state == _APPROVAL_APPROVED:
+                    approval_counter[_APPROVAL_APPROVED] += 1
+                elif approval_state == _APPROVAL_DENIED:
+                    approval_counter[_APPROVAL_DENIED] += 1
+
+        if total_events == 0 and guardrail_events == 0:
+            return None
+
+        summary: dict[str, Any] = {
+            "total_events": total_events,
+            "by_event": {key: int(value) for key, value in event_counter.items()},
+            "by_status": {key: int(value) for key, value in status_counter.items()},
+        }
+
+        if approval_counter:
+            summary["approvals"] = {
+                key: int(value) for key, value in approval_counter.items()
+            }
+        if guardrail_events:
+            summary["guardrail_events"] = guardrail_events
+
+        summary["window_start"] = start.isoformat()
+        if end is not None:
+            summary["window_end"] = end.isoformat()
+            summary["window_seconds"] = max(0, int((end - start).total_seconds()))
+        else:
+            summary["window_end"] = None
+            summary["window_seconds"] = None
+        return summary
+
+    def _enrich_retraining_cycles_with_decisions(
+        self,
+        entries: Sequence[Mapping[str, Any]],
+    ) -> list[dict[str, Any]]:
+        if not entries:
+            return []
+
+        records = self._prepare_decision_journal_records()
+        snapshot_time = datetime.now(timezone.utc)
+
+        parsed_decisions: list[datetime | None] = [
+            self._parse_iso_timestamp(entry.get("decided_at")) for entry in entries
+        ]
+
+        enriched: list[dict[str, Any]] = []
+        for index, entry in enumerate(entries):
+            decided_at = parsed_decisions[index]
+            next_timestamp: datetime | None = None
+            for offset in range(index + 1, len(entries)):
+                candidate = parsed_decisions[offset]
+                if candidate is not None:
+                    next_timestamp = candidate
+                    break
+
+            record = dict(entry)
+            if decided_at is not None:
+                summary = self._summarize_decision_records(
+                    records,
+                    start=decided_at,
+                    end=next_timestamp,
+                )
+                if summary is None:
+                    summary = {
+                        "total_events": 0,
+                        "by_event": {},
+                        "by_status": {},
+                        "window_start": decided_at.isoformat(),
+                        "window_end": next_timestamp.isoformat() if next_timestamp else None,
+                        "window_seconds": max(
+                            0,
+                            int(
+                                ((next_timestamp or snapshot_time) - decided_at).total_seconds()
+                            ),
+                        ),
+                    }
+                else:
+                    summary.setdefault("window_start", decided_at.isoformat())
+                    if summary.get("window_end") is None and next_timestamp is not None:
+                        summary["window_end"] = next_timestamp.isoformat()
+                    if summary.get("window_seconds") is None:
+                        summary["window_seconds"] = max(
+                            0,
+                            int(
+                                ((next_timestamp or snapshot_time) - decided_at).total_seconds()
+                            ),
+                        )
+                record["decision_summary"] = summary
+            enriched.append(record)
+        return enriched
+
+    def _build_model_change_decision_impact(self) -> dict[str, Any]:
+        impact: dict[str, Any] = {
+            "guardrail_active": bool(self._exchange_degradation_guardrail_active),
+            "kill_switch": bool(self._exchange_degradation_kill_switch),
+            "auto_trade_enabled": bool(self.enable_auto_trade),
+            "auto_trade_confirmed": bool(self._auto_trade_user_confirmed),
+        }
+        try:
+            history = self.get_controller_cycle_history(limit=1, reverse=True)
+        except Exception:  # pragma: no cover - defensywna ochrona przed błędami historii
+            history = []
+        if history:
+            impact["last_cycle"] = history[0]
+        last_labels = getattr(self, "_last_decision_metric_labels", None)
+        if isinstance(last_labels, Mapping) and last_labels:
+            impact["last_decision_labels"] = dict(last_labels)
+        return impact
+
+    def _log_model_change_event(self, payload: Mapping[str, Any]) -> None:
+        journal = getattr(self, "_decision_journal", None)
+        if journal is None:
+            return
+        model_name = payload.get("model_name")
+        version = payload.get("version")
+        if not model_name or not version:
+            return
+        try:
+            context = getattr(self, "_decision_journal_context", None)
+            environment = self._environment_name
+            portfolio = self._portfolio_id
+            risk_profile = self._risk_profile_name
+            if isinstance(context, Mapping):
+                environment = str(context.get("environment", environment))
+                portfolio = str(context.get("portfolio", portfolio))
+                risk_profile = str(context.get("risk_profile", risk_profile))
+            metrics_section = payload.get("metrics")
+            metrics_current = self._normalize_metric_map(
+                metrics_section.get("current") if isinstance(metrics_section, Mapping) else None
+            )
+            metrics_previous = self._normalize_metric_map(
+                metrics_section.get("previous") if isinstance(metrics_section, Mapping) else None
+            )
+            metrics_delta = self._normalize_metric_map(
+                metrics_section.get("delta") if isinstance(metrics_section, Mapping) else None
+            )
+            metadata_payload: dict[str, object] = {}
+            promotion_reason = payload.get("promotion_reason")
+            if promotion_reason:
+                metadata_payload["promotion_reason"] = promotion_reason
+            impact = payload.get("decision_impact")
+            if isinstance(impact, Mapping):
+                metadata_payload["guardrail_active"] = str(
+                    int(bool(impact.get("guardrail_active")))
+                )
+                metadata_payload["kill_switch"] = str(int(bool(impact.get("kill_switch"))))
+                last_cycle = impact.get("last_cycle")
+                if isinstance(last_cycle, Mapping) and last_cycle.get("sequence") is not None:
+                    metadata_payload["last_cycle_sequence"] = last_cycle.get("sequence")
+            challengers = payload.get("challenger_versions")
+            if isinstance(challengers, Sequence):
+                metadata_payload["challenger_versions"] = ",".join(str(item) for item in challengers if item)
+            if payload.get("source"):
+                metadata_payload["source"] = payload.get("source")
+            log_model_change_event(
+                journal,
+                environment=environment,
+                portfolio=portfolio,
+                risk_profile=risk_profile,
+                model_name=str(model_name),
+                new_version=str(version),
+                previous_version=str(payload.get("previous_version"))
+                if payload.get("previous_version")
+                else None,
+                source=str(payload.get("source")) if payload.get("source") else None,
+                fallback=bool(payload.get("fallback")) if "fallback" in payload else None,
+                fallback_reason=str(payload.get("fallback_reason"))
+                if payload.get("fallback_reason")
+                else None,
+                decided_at=payload.get("decided_at"),
+                retraining_id=str(payload.get("retraining_id"))
+                if payload.get("retraining_id")
+                else None,
+                metrics_current=metrics_current,
+                metrics_previous=metrics_previous,
+                metrics_delta=metrics_delta,
+                metadata=metadata_payload,
+            )
+        except Exception:  # pragma: no cover - zapis do journal nie powinien zatrzymać cyklu
+            LOGGER.debug("Nie udało się zapisać zdarzenia model_change do journalu", exc_info=True)
+
+    def _update_model_change_metrics(self, payload: Mapping[str, Any]) -> None:
+        model_name = str(payload.get("model_name") or payload.get("model") or "").strip()
+        if not model_name:
+            model_name = "unknown"
+        source = str(payload.get("source") or "champion").strip() or "champion"
+        fallback_label = "1" if payload.get("fallback") else "0"
+        base_labels = self._metric_label_payload(
+            model=model_name,
+            source=source,
+            fallback=fallback_label,
+        )
+        self._metric_model_change_total.inc(labels=base_labels)
+        timestamp = time.time()
+        self._metric_model_change_timestamp.set(
+            timestamp,
+            labels=self._metric_label_payload(model=model_name),
+        )
+        impact = payload.get("decision_impact")
+        guardrail_state = "inactive"
+        if isinstance(impact, Mapping):
+            if impact.get("kill_switch"):
+                guardrail_state = "kill_switch"
+            elif impact.get("guardrail_active"):
+                guardrail_state = "active"
+        if guardrail_state != "inactive":
+            guardrail_labels = self._metric_label_payload(
+                model=model_name,
+                state=guardrail_state,
+            )
+            self._metric_model_change_guardrail_total.inc(labels=guardrail_labels)
+
+    def _update_retraining_cycle_metrics(
+        self,
+        payload: Mapping[str, Any],
+        retraining_entry: Mapping[str, Any] | None,
+    ) -> None:
+        retraining_id = payload.get("retraining_id")
+        if not retraining_id:
+            return
+
+        model_name = str(payload.get("model_name") or payload.get("model") or "").strip()
+        if not model_name:
+            model_name = "unknown"
+        source = str(payload.get("source") or "champion").strip() or "champion"
+
+        base_labels = self._metric_label_payload(model=model_name, source=source)
+        self._metric_retraining_cycle_total.inc(labels=base_labels)
+
+        timestamp_value = self._parse_iso_timestamp(payload.get("decided_at"))
+        if timestamp_value is not None:
+            self._metric_retraining_timestamp.set(
+                timestamp_value.timestamp(),
+                labels=self._metric_label_payload(model=model_name),
+            )
+
+        impact_payload: Mapping[str, Any] | None = None
+        if retraining_entry and isinstance(retraining_entry.get("decision_impact"), Mapping):
+            impact_payload = cast(Mapping[str, Any], retraining_entry["decision_impact"])
+        elif isinstance(payload.get("decision_impact"), Mapping):
+            impact_payload = cast(Mapping[str, Any], payload["decision_impact"])
+
+        guardrail_active = False
+        kill_switch_active = False
+        if impact_payload:
+            guardrail_active = bool(impact_payload.get("guardrail_active"))
+            kill_switch_active = bool(impact_payload.get("kill_switch"))
+
+        if guardrail_active or kill_switch_active:
+            state = "kill_switch" if kill_switch_active else "guardrail"
+            guardrail_labels = self._metric_label_payload(
+                model=model_name,
+                source=source,
+                state=state,
+            )
+            self._metric_retraining_guardrail_total.inc(labels=guardrail_labels)
+
+    def _synchronise_champion_model(
+        self,
+        ai_manager: Any,
+        symbol: str | None,
+        *,
+        promotion_context: Mapping[str, Any] | None = None,
+    ) -> None:
+        mapping = getattr(self, "_champion_model_map", {})
+        if not mapping:
+            return
+        loader = getattr(ai_manager, "load_decision_artifact", None)
+        if not callable(loader):
+            return
+        model_name = self._resolve_champion_model_name(symbol)
+        if not model_name:
+            return
+        snapshot = self._load_champion_snapshot(model_name)
+        if snapshot is None:
+            return
+        with self._lock:
+            cache_entry = self._champion_cache.get(model_name)
+        if cache_entry and (
+            cache_entry.version == snapshot.version
+            and cache_entry.source == snapshot.source
+            and cache_entry.fallback == snapshot.fallback
+            and cache_entry.fallback_reason == snapshot.fallback_reason
+        ):
+            return
+        artifact_path = self._resolve_model_artifact_path(model_name, snapshot.version)
+        if artifact_path is None:
+            self._log(
+                "Brak artefaktu modelu champion",
+                level=logging.DEBUG,
+                model=model_name,
+                version=snapshot.version,
+            )
+            return
+        repository = self._repository_for_model(model_name)
+        load_kwargs: dict[str, Any] = {
+            "artifact": artifact_path,
+            "repository_root": repository.base_path,
+            "set_default": True,
+        }
+        try:
+            loader(model_name, **load_kwargs)
+        except TypeError:
+            load_kwargs.pop("repository_root", None)
+            try:
+                loader(model_name, **load_kwargs)
+            except Exception as exc:
+                self._log(
+                    "Nie udało się załadować modelu champion",
+                    level=logging.ERROR,
+                    model=model_name,
+                    version=snapshot.version,
+                    error=repr(exc),
+                )
+                return
+        except Exception as exc:
+            self._log(
+                "Nie udało się załadować modelu champion",
+                level=logging.ERROR,
+                model=model_name,
+                version=snapshot.version,
+                error=repr(exc),
+            )
+            return
+
+        set_active = getattr(ai_manager, "set_active_model", None)
+        if callable(set_active) and symbol:
+            try:
+                set_active(symbol, model_name)
+            except Exception:  # pragma: no cover - staby testowe mogą nie wspierać metody
+                LOGGER.debug(
+                    "Nie udało się zaktualizować aktywnego modelu dla %s",
+                    symbol,
+                    exc_info=True,
+                )
+
+        previous_entry = cache_entry
+        previous_payload = getattr(previous_entry, "payload", None) if previous_entry else None
+        previous_metrics = (
+            self._extract_quality_metrics(previous_payload)
+            if isinstance(previous_payload, Mapping)
+            else {}
+        )
+        current_metrics = self._extract_quality_metrics(snapshot.payload)
+        metric_delta = self._compute_metric_deltas(previous_metrics, current_metrics)
+        retraining_id = self._derive_retraining_id(model_name, promotion_context, snapshot)
+        if retraining_id is None and previous_entry is not None:
+            retraining_id = getattr(previous_entry, "retraining_id", None)
+        decision_impact = self._build_model_change_decision_impact()
+
+        new_entry = _ChampionCacheEntry(
+            version=snapshot.version,
+            source=snapshot.source,
+            decided_at=snapshot.decided_at,
+            fallback=snapshot.fallback,
+            fallback_reason=snapshot.fallback_reason,
+            champion_version=snapshot.champion_version,
+            payload=copy.deepcopy(snapshot.payload),
+            metrics=dict(current_metrics),
+            retraining_id=retraining_id,
+        )
+        with self._lock:
+            self._champion_cache[model_name] = new_entry
+
+        challenger_versions = [
+            str(report.get("version"))
+            for report in snapshot.challengers
+            if isinstance(report, Mapping) and str(report.get("version", "")).strip()
+        ]
+        event_payload: dict[str, Any] = {
+            "model_name": model_name,
+            "version": snapshot.version,
+            "source": snapshot.source,
+            "fallback": snapshot.fallback,
+            "decided_at": snapshot.decided_at,
+            "champion_version": snapshot.champion_version,
+            "challenger_versions": challenger_versions,
+        }
+        if snapshot.fallback_reason:
+            event_payload["fallback_reason"] = snapshot.fallback_reason
+        if previous_entry is not None:
+            event_payload["previous_version"] = previous_entry.version
+            event_payload["previous_source"] = previous_entry.source
+        event_payload["metrics"] = {
+            "current": dict(current_metrics),
+            "previous": dict(previous_metrics),
+            "delta": dict(metric_delta),
+        }
+        event_payload["decision_impact"] = decision_impact
+        if retraining_id:
+            event_payload["retraining_id"] = retraining_id
+        if isinstance(promotion_context, Mapping):
+            reason_token = promotion_context.get("reason") or promotion_context.get("promotion_reason")
+            if reason_token:
+                event_payload["promotion_reason"] = str(reason_token)
+            if promotion_context.get("trained_at") and "trained_at" not in event_payload:
+                event_payload["trained_at"] = str(promotion_context.get("trained_at"))
+        self._queue_model_change_event(event_payload)
+
+        self._log(
+            "Załadowano model champion",
+            level=logging.INFO,
+            model=model_name,
+            version=snapshot.version,
+            fallback=snapshot.fallback,
+            reason=snapshot.fallback_reason,
+        )
+
+    def _handle_retraining_promotion_event(self, **payload: Any) -> None:
+        model_token = (
+            payload.get("model")
+            or payload.get("model_name")
+            or payload.get("job")
+        )
+        model_name = str(model_token).strip() if model_token else ""
+        if not model_name:
+            return
+        ai_manager = getattr(self, "ai_manager", None)
+        if ai_manager is None:
+            return
+        mapping = getattr(self, "_champion_model_map", {}) or {}
+        target_symbols: list[str | None] = []
+        for key, value in mapping.items():
+            if value != model_name:
+                continue
+            target_symbols.append(None if key == self._DEFAULT_CHAMPION_KEY else key)
+        if not target_symbols and mapping.get(self._DEFAULT_CHAMPION_KEY) == model_name:
+            target_symbols.append(None)
+        if not target_symbols:
+            return
+        for symbol in target_symbols:
+            try:
+                self._synchronise_champion_model(
+                    ai_manager,
+                    symbol,
+                    promotion_context=payload,
+                )
+            except Exception:  # pragma: no cover - defensywnie na niestandardowe implementacje
+                LOGGER.debug(
+                    "Nie udało się zsynchronizować championa po promocji retreningu",
+                    exc_info=True,
                 )
 
     # ------------------------------------------------------------------
@@ -5443,9 +6503,299 @@ class AutoTrader:
                 else:
                     self.current_strategy = f"{self.current_strategy}_probing"
 
+        analytics = self._resolve_journal_analytics()
+        if analytics is not None:
+            self._apply_journal_performance_adjustments(
+                analytics,
+                risk=risk,
+                assessment=assessment,
+                summary=summary,
+            )
+
         self.current_leverage = float(max(self.current_leverage, 0.0))
         self.current_stop_loss_pct = float(max(self.current_stop_loss_pct, 0.005))
         self.current_take_profit_pct = float(max(self.current_take_profit_pct, self.current_stop_loss_pct * 1.2))
+        self._update_strategy_metrics(self.current_strategy)
+
+    def set_signal_quality_provider(
+        self,
+        provider: Callable[[], Mapping[str, object] | None] | None,
+    ) -> None:
+        """Rejestruje dostawcę snapshotów jakości sygnałów giełdowych."""
+
+        if provider is not None and not callable(provider):
+            raise TypeError("provider musi być wywoływalny")
+        self._signal_quality_provider = provider
+        self._signal_quality_cache = None
+
+    @staticmethod
+    def _normalize_exchange_id(exchange_id: str) -> str:
+        value = str(exchange_id or "").strip().lower()
+        if not value:
+            raise ValueError("exchange_id nie może być pusty")
+        return value
+
+    @staticmethod
+    def _normalize_segment(segment: str | None) -> str:
+        if segment is None:
+            return "default"
+        value = str(segment or "").strip().lower()
+        return value or "default"
+
+    def register_exchange_weight_provider(
+        self,
+        exchange_id: str,
+        provider: Callable[[], Mapping[str, object] | None],
+        *,
+        segment: str | None = None,
+    ) -> None:
+        """Rejestruje dostawcę wag giełdowych wykorzystywanych przy alokacji."""
+
+        if not callable(provider):
+            raise TypeError("provider musi być wywoływalny")
+        normalized_exchange = self._normalize_exchange_id(exchange_id)
+        normalized_segment = self._normalize_segment(segment)
+        key = (normalized_exchange, normalized_segment)
+        canonical_segment = segment or normalized_segment
+        with self._lock:
+            self._exchange_weight_providers[key] = provider
+            self._exchange_key_registry[key] = (exchange_id, canonical_segment)
+            self._exchange_weight_cache = None
+
+    def configure_exchange_preferences(
+        self,
+        preferences: Mapping[str | tuple[str, str], float] | None,
+    ) -> None:
+        """Konfiguruje ręczne preferencje wag giełdowych."""
+
+        with self._lock:
+            self._exchange_preference_weights = {}
+            self._exchange_preference_defaults = {}
+            self._exchange_weight_cache = None
+            if not preferences:
+                return
+
+            for raw_key, raw_value in preferences.items():
+                try:
+                    numeric = float(raw_value)
+                except (TypeError, ValueError):
+                    continue
+                if numeric <= 0:
+                    continue
+
+                if isinstance(raw_key, tuple) and len(raw_key) == 2:
+                    exchange_part, segment_part = raw_key
+                else:
+                    key_str = str(raw_key)
+                    if ":" in key_str:
+                        exchange_part, segment_part = key_str.split(":", 1)
+                    else:
+                        exchange_part, segment_part = key_str, None
+
+                normalized_exchange = self._normalize_exchange_id(exchange_part)
+                if segment_part is None or segment_part == "*":
+                    self._exchange_preference_defaults[normalized_exchange] = numeric
+                    continue
+
+                normalized_segment = self._normalize_segment(segment_part)
+                key = (normalized_exchange, normalized_segment)
+                self._exchange_preference_weights[key] = numeric
+
+    def invalidate_exchange_weight_cache(self) -> None:
+        with self._lock:
+            self._exchange_weight_cache = None
+
+    def _resolve_exchange_allocations(
+        self,
+        *,
+        force_refresh: bool = False,
+    ) -> dict[tuple[str, str], dict[str, Any]]:
+        with self._lock:
+            providers = dict(self._exchange_weight_providers)
+            key_registry = dict(self._exchange_key_registry)
+            preference_weights = dict(self._exchange_preference_weights)
+            preference_defaults = dict(self._exchange_preference_defaults)
+            cache = self._exchange_weight_cache
+
+        if not providers:
+            return {}
+
+        now = time.monotonic()
+        if (
+            not force_refresh
+            and cache is not None
+            and now - cache[0] <= 5.0
+        ):
+            return {key: dict(value) for key, value in cache[1].items()}
+
+        snapshots: dict[tuple[str, str], dict[str, Any]] = {}
+        for key, provider in providers.items():
+            try:
+                snapshot = provider()
+            except Exception:
+                LOGGER.debug(
+                    "Nie udało się pobrać wag giełdowych od dostawcy %s", key,
+                    exc_info=True,
+                )
+                continue
+            if not isinstance(snapshot, Mapping):
+                continue
+
+            entry = dict(snapshot)
+            raw_exchange, raw_segment = key_registry.get(key, key)
+            entry.setdefault("exchange", raw_exchange)
+            entry.setdefault("segment", raw_segment)
+            weight_value = entry.get("rolling_weight")
+            if weight_value is None:
+                weight_value = entry.get("weight")
+            try:
+                numeric_weight = float(weight_value)
+            except (TypeError, ValueError):
+                numeric_weight = 0.0
+            entry["weight"] = max(0.0, numeric_weight)
+            snapshots[key] = entry
+
+        if not snapshots:
+            return {}
+
+        combined_scores: dict[tuple[str, str], float] = {}
+        for key, entry in snapshots.items():
+            exchange_key, segment_key = key
+            base_weight = float(entry.get("weight", 0.0))
+            preference = preference_weights.get(key)
+            if preference is None:
+                preference = preference_defaults.get(exchange_key, 1.0)
+            try:
+                preference_value = float(preference)
+            except (TypeError, ValueError):
+                preference_value = 1.0
+            if preference_value <= 0:
+                preference_value = 0.0
+
+            degradation_payload = entry.get("degradation")
+            if isinstance(degradation_payload, Mapping):
+                try:
+                    degradation_score = float(
+                        degradation_payload.get("rolling_score", 0.0) or 0.0
+                    )
+                except (TypeError, ValueError):
+                    degradation_score = 0.0
+            else:
+                degradation_score = 0.0
+
+            adjusted = base_weight * preference_value
+            adjusted *= max(0.0, 1.0 - min(degradation_score, 1.0))
+            entry["preference"] = preference_value
+            entry.setdefault("degradation", {})
+            combined_scores[key] = adjusted
+
+        total_score = sum(combined_scores.values())
+        if total_score <= 0.0:
+            count = len(snapshots)
+            allocations = {
+                key: 1.0 / count
+                for key in snapshots
+            } if count else {}
+        else:
+            allocations = {
+                key: value / total_score
+                for key, value in combined_scores.items()
+            }
+
+        for key, allocation in allocations.items():
+            snapshots[key]["allocation"] = allocation
+
+        cached_payload = {key: dict(value) for key, value in snapshots.items()}
+        with self._lock:
+            self._exchange_weight_cache = (time.monotonic(), cached_payload)
+        return cached_payload
+
+    def _select_exchange_target(
+        self,
+        symbol: str,
+        *,
+        force_refresh: bool = False,
+    ) -> tuple[tuple[str, str] | None, dict[tuple[str, str], dict[str, Any]]]:
+        allocations = self._resolve_exchange_allocations(force_refresh=force_refresh)
+        if not allocations:
+            with self._lock:
+                self._execution_metadata.pop("exchange", None)
+                self._execution_metadata.pop("exchange_segment", None)
+                self._last_exchange_selection = None
+            return None, {}
+
+        selected_key, selected_entry = max(
+            allocations.items(),
+            key=lambda item: (
+                float(item[1].get("allocation", 0.0)),
+                float(item[1].get("weight", 0.0)),
+            ),
+        )
+
+        selection_record = {
+            "symbol": symbol,
+            "exchange": selected_entry.get("exchange"),
+            "segment": selected_entry.get("segment"),
+            "allocation": float(selected_entry.get("allocation", 0.0)),
+            "weight": float(selected_entry.get("weight", 0.0)),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+
+        with self._lock:
+            self._execution_metadata["exchange"] = selection_record["exchange"]
+            self._execution_metadata["exchange_segment"] = selection_record["segment"]
+            self._last_exchange_selection = dict(selection_record)
+            self._exchange_selection_log.append(dict(selection_record))
+
+        return selected_key, allocations
+
+    def _resolve_signal_quality_degradation(self) -> tuple[float, Mapping[str, object]]:
+        provider = self._signal_quality_provider
+        if provider is None:
+            self._exchange_degradation_score = 0.0
+            self._exchange_degradation_payload = {}
+            return 0.0, {}
+
+        now = time.monotonic()
+        cache = self._signal_quality_cache
+        snapshot: Mapping[str, object] | None = None
+        if cache is not None:
+            cached_at, cached_payload = cache
+            if now - cached_at <= 15.0:
+                snapshot = cached_payload
+
+        if snapshot is None:
+            try:
+                fetched = provider()
+            except Exception:  # pragma: no cover - defensywne logowanie
+                LOGGER.debug("Nie udało się pobrać snapshotu jakości sygnałów", exc_info=True)
+                fetched = None
+            snapshot = fetched if isinstance(fetched, Mapping) else {}
+            self._signal_quality_cache = (now, dict(snapshot))
+        else:
+            snapshot = dict(snapshot)
+
+        degradation_raw = snapshot.get("degradation") if isinstance(snapshot, Mapping) else None
+        degradation_payload = (
+            dict(degradation_raw)
+            if isinstance(degradation_raw, Mapping)
+            else {}
+        )
+
+        score = 0.0
+        for key in ("rolling_score", "last_score", "max_score"):
+            value = degradation_payload.get(key)
+            if value is None:
+                continue
+            try:
+                candidate = float(value)
+            except (TypeError, ValueError):
+                continue
+            score = max(score, min(candidate, 1.0))
+
+        self._exchange_degradation_score = score
+        self._exchange_degradation_payload = degradation_payload
+        return score, degradation_payload
 
     def _apply_signal_guardrails(
         self,
@@ -5465,6 +6815,114 @@ class AutoTrader:
             return _finalise(signal)
 
         guardrails = self._thresholds["auto_trader"].get("signal_guardrails", {})
+
+        def _coerce_float(value: object, default: float) -> float:
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                return default
+
+        degradation_score, degradation_payload = self._resolve_signal_quality_degradation()
+        degradation_cfg = (
+            guardrails.get("signal_quality_degradation")
+            if isinstance(guardrails, Mapping)
+            else {}
+        )
+        if isinstance(degradation_cfg, Mapping):
+            degrade_threshold = _coerce_float(degradation_cfg.get("rolling_score"), 0.6)
+            degrade_kill = _coerce_float(degradation_cfg.get("kill_switch"), 0.85)
+            degrade_release = _coerce_float(
+                degradation_cfg.get("release"),
+                min(0.5, max(0.0, degrade_threshold * 0.5)),
+            )
+            degrade_max_leverage = max(0.0, _coerce_float(degradation_cfg.get("max_leverage"), 0.35))
+        else:
+            degrade_threshold = 0.6
+            degrade_kill = 0.85
+            degrade_release = 0.3
+            degrade_max_leverage = 0.35
+
+        degradation_active = self._exchange_degradation_guardrail_active
+        degradation_triggered = degradation_score >= degrade_threshold
+        degradation_hold = degradation_triggered or (
+            degradation_active and degradation_score > degrade_release
+        )
+
+        if degradation_hold:
+            label = "exchange degradation"
+            comparator_threshold = (
+                degrade_threshold if degradation_triggered else degrade_release
+            )
+            comparator = ">=" if degradation_triggered else ">"
+            reason = (
+                f"{label} {comparator} {comparator_threshold:.3f}"
+                f" (value={degradation_score:.3f})"
+            )
+            reasons.append(reason)
+            trigger = GuardrailTrigger(
+                name="exchange_degradation",
+                label=label,
+                comparator=comparator,
+                threshold=float(comparator_threshold),
+                unit="score",
+                value=float(degradation_score),
+            )
+            triggers.append(trigger)
+            self._exchange_degradation_guardrail_active = True
+            self.current_leverage = min(self.current_leverage, degrade_max_leverage)
+            context: dict[str, object] = {
+                "rolling_score": float(degradation_score),
+                "threshold": float(comparator_threshold),
+            }
+            recent = degradation_payload.get("recent") if isinstance(degradation_payload, Mapping) else None
+            if isinstance(recent, Sequence) and recent:
+                latest = recent[-1]
+                if isinstance(latest, Mapping):
+                    context.update({
+                        "check": latest.get("check"),
+                        "backend": latest.get("backend"),
+                        "status": latest.get("status"),
+                    })
+            severity = "warning" if degradation_triggered else "info"
+            if degradation_score >= degrade_kill:
+                self._exchange_degradation_kill_switch = True
+                self.current_leverage = 0.0
+                severity = "critical"
+                context["kill_switch"] = True
+            else:
+                self._exchange_degradation_kill_switch = False
+            should_emit_alert = False
+            if severity == "critical":
+                should_emit_alert = True
+            elif severity == "warning" and not self._exchange_degradation_alert_active:
+                should_emit_alert = True
+            elif severity == "info" and not degradation_active:
+                should_emit_alert = True
+            if should_emit_alert:
+                self._emit_alert(
+                    "auto_trader.guardrail",
+                    "Degradacja giełdy wymusiła blokadę",
+                    reason,
+                    severity=severity,
+                    context=context,
+                )
+            self._exchange_degradation_alert_active = True
+            return _finalise("hold")
+
+        if getattr(self, "_exchange_degradation_alert_active", False) and degradation_score <= degrade_release:
+            self._exchange_degradation_guardrail_active = False
+            self._exchange_degradation_kill_switch = False
+            self._exchange_degradation_alert_active = False
+            self._emit_alert(
+                "auto_trader.guardrail",
+                "Degradacja giełdy ustąpiła",
+                "exchange degradation back within safe range",
+                severity="info",
+                context={
+                    "rolling_score": float(degradation_score),
+                    "release": float(degrade_release),
+                },
+            )
 
         def _label(name: str) -> str:
             return name.replace("_", " ")
@@ -5559,6 +7017,318 @@ class AutoTrader:
                 return _finalise("hold")
 
         return _finalise(signal)
+
+    def _resolve_journal_analytics(
+        self,
+        *,
+        force_refresh: bool = False,
+    ) -> JournalAnalytics | None:
+        journal = getattr(self, "_decision_journal", None)
+        if journal is None:
+            self._journal_analytics_cache = None
+            self._last_journal_analytics = None
+            return None
+
+        config = (
+            self._thresholds.get("auto_trader", {})
+            if isinstance(self._thresholds, Mapping)
+            else {}
+        )
+        adjust_cfg = (
+            config.get("adjust_strategy_parameters", {})
+            if isinstance(config, Mapping)
+            else {}
+        )
+        try:
+            window = int(adjust_cfg.get("journal_window", 120))
+        except (TypeError, ValueError):
+            window = 120
+        window = max(1, window)
+
+        cache = self._journal_analytics_cache
+        now = time.monotonic()
+        if (
+            not force_refresh
+            and cache is not None
+            and now - cache[0] <= 15.0
+        ):
+            analytics = cache[1]
+        else:
+            try:
+                analytics = analyse_decision_journal(journal, window=window)
+            except Exception:  # pragma: no cover - defensywne logowanie
+                LOGGER.debug("analyse_decision_journal failed", exc_info=True)
+                analytics = None
+            self._journal_analytics_cache = (now, analytics)
+
+        self._last_journal_analytics = analytics
+        return analytics
+
+    def _record_strategy_adaptation_event(
+        self,
+        *,
+        reason: str,
+        analytics: JournalAnalytics,
+        risk: float,
+        previous_state: str,
+        previous_strategy: str,
+    ) -> tuple[str, str]:
+        """Zapisuje zdarzenie adaptacji strategii, jeśli zaszła zmiana."""
+
+        current_state = self._journal_performance_state
+        current_strategy = self.current_strategy
+        if (
+            current_state == previous_state
+            and current_strategy == previous_strategy
+        ):
+            return previous_state, previous_strategy
+
+        entry = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "reason": reason,
+            "state": current_state,
+            "previous_state": previous_state,
+            "strategy": current_strategy,
+            "previous_strategy": previous_strategy,
+            "leverage": float(self.current_leverage),
+            "stop_loss_pct": float(self.current_stop_loss_pct),
+            "take_profit_pct": float(self.current_take_profit_pct),
+            "rolling_pnl": round(analytics.rolling_pnl, 8),
+            "average_pnl": round(analytics.average_pnl, 8),
+            "cumulative_pnl": round(analytics.cumulative_pnl, 8),
+            "max_drawdown_pct": round(analytics.max_drawdown_pct, 6),
+            "signal_accuracy": round(analytics.signal_accuracy, 6),
+            "win_rate": round(analytics.win_rate, 6),
+            "trade_count": int(analytics.trade_count),
+            "window": int(analytics.window),
+            "risk": float(risk),
+        }
+
+        with self._lock:
+            self._strategy_adaptation_log.append(entry)
+
+        return current_state, current_strategy
+
+    def _apply_journal_performance_adjustments(
+        self,
+        analytics: JournalAnalytics,
+        *,
+        risk: float,
+        assessment: MarketRegimeAssessment,
+        summary: RegimeSummary | None,
+    ) -> None:
+        config = self._thresholds.get("auto_trader", {})
+        adjust_cfg = (
+            config.get("adjust_strategy_parameters", {})
+            if isinstance(config, Mapping)
+            else {}
+        )
+        try:
+            window = max(1, int(adjust_cfg.get("journal_window", analytics.window)))
+        except (TypeError, ValueError):
+            window = max(analytics.window, 1)
+        try:
+            min_trades = int(adjust_cfg.get("journal_min_trades", max(5, min(window, 12))))
+        except (TypeError, ValueError):
+            min_trades = max(5, min(window, 12))
+        min_trades = max(1, min_trades)
+        previous_state = self._journal_performance_state
+        previous_strategy = self.current_strategy
+        if analytics.trade_count < min_trades:
+            if analytics.trade_count == 0:
+                self._journal_performance_state = "baseline"
+            previous_state, previous_strategy = self._record_strategy_adaptation_event(
+                reason="insufficient_trades",
+                analytics=analytics,
+                risk=risk,
+                previous_state=previous_state,
+                previous_strategy=previous_strategy,
+            )
+            return
+
+        def _cfg_float(name: str, default: float) -> float:
+            value = adjust_cfg.get(name, default)
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                return default
+
+        defensive_drawdown = _cfg_float("journal_defensive_drawdown_pct", 0.08)
+        critical_drawdown = _cfg_float(
+            "journal_critical_drawdown_pct",
+            max(defensive_drawdown * 1.5, 0.12),
+        )
+        defensive_win_rate = _cfg_float("journal_defensive_win_rate", 0.48)
+        recovery_win_rate = _cfg_float("journal_recovery_win_rate", 0.6)
+        recovery_drawdown = _cfg_float(
+            "journal_recovery_drawdown_pct", defensive_drawdown * 0.5
+        )
+        accuracy_floor = _cfg_float("journal_accuracy_floor", 0.5)
+        negative_avg_pnl = _cfg_float("journal_negative_avg_pnl", 0.0)
+        negative_rolling_pnl = _cfg_float("journal_negative_rolling_pnl", 0.0)
+
+        win_rate = analytics.win_rate
+        accuracy = analytics.signal_accuracy
+        drawdown_pct = analytics.max_drawdown_pct
+        negative_trend = (
+            analytics.average_pnl <= negative_avg_pnl
+            or analytics.rolling_pnl <= negative_rolling_pnl
+        )
+
+        degrade = (
+            drawdown_pct >= defensive_drawdown
+            or win_rate <= defensive_win_rate
+            or accuracy <= accuracy_floor
+            or negative_trend
+        )
+        critical = (
+            drawdown_pct >= critical_drawdown
+            or accuracy <= max(0.0, accuracy_floor * 0.75)
+        )
+        if (
+            summary is not None
+            and getattr(summary, "risk_level", None) is RiskLevel.CRITICAL
+        ):
+            critical = True
+
+        def _add_suffix(name: str, suffix: str) -> str:
+            return name if name.endswith(suffix) else f"{name}{suffix}"
+
+        def _strip_suffix(name: str, suffix: str) -> str:
+            return name[: -len(suffix)] if name.endswith(suffix) else name
+
+        if critical:
+            if self.current_strategy != "capital_preservation":
+                self._log(
+                    "Journal analytics triggered capital preservation",
+                    level=logging.WARNING,
+                    win_rate=f"{win_rate:.3f}",
+                    drawdown_pct=f"{drawdown_pct:.3f}",
+                    accuracy=f"{accuracy:.3f}",
+                    rolling_pnl=f"{analytics.rolling_pnl:.4f}",
+                )
+            self.current_strategy = "capital_preservation"
+            self.current_leverage = 0.0
+            self.current_stop_loss_pct = 0.01
+            self.current_take_profit_pct = 0.02
+            self._journal_performance_state = "critical"
+            previous_state, previous_strategy = self._record_strategy_adaptation_event(
+                reason="journal_critical",
+                analytics=analytics,
+                risk=risk,
+                previous_state=previous_state,
+                previous_strategy=previous_strategy,
+            )
+            return
+
+        if degrade:
+            if self._journal_performance_state != "defensive":
+                self._log(
+                    "Journal analytics enforcing defensive mode",
+                    level=logging.INFO,
+                    win_rate=f"{win_rate:.3f}",
+                    drawdown_pct=f"{drawdown_pct:.3f}",
+                    accuracy=f"{accuracy:.3f}",
+                    rolling_pnl=f"{analytics.rolling_pnl:.4f}",
+                )
+            if self.current_strategy not in {"capital_preservation"}:
+                self.current_strategy = _add_suffix(self.current_strategy, "_defensive")
+            self.current_leverage = min(
+                self.current_leverage,
+                0.35 if risk >= _cfg_float("high_risk", 0.75) * 0.6 else 0.5,
+            )
+            self.current_stop_loss_pct = max(self.current_stop_loss_pct * 0.8, 0.008)
+            self.current_take_profit_pct = max(
+                self.current_take_profit_pct * 0.9,
+                self.current_stop_loss_pct * 1.25,
+            )
+            self._journal_performance_state = "defensive"
+            previous_state, previous_strategy = self._record_strategy_adaptation_event(
+                reason="journal_defensive",
+                analytics=analytics,
+                risk=risk,
+                previous_state=previous_state,
+                previous_strategy=previous_strategy,
+            )
+            return
+
+        if self._journal_performance_state in {"defensive", "critical"}:
+            recovered = (
+                win_rate >= recovery_win_rate
+                and drawdown_pct <= recovery_drawdown
+                and analytics.rolling_pnl > negative_rolling_pnl
+                and accuracy >= max(accuracy_floor, 0.5)
+            )
+            if recovered:
+                previous = self.current_strategy
+                base_strategy = _strip_suffix(previous, "_defensive")
+                if (
+                    base_strategy == "capital_preservation"
+                    and assessment.regime is MarketRegime.TREND
+                    and risk < _cfg_float("trend_low_risk", 0.4)
+                ):
+                    base_strategy = "trend_following"
+                self.current_strategy = base_strategy
+                self.current_leverage = max(
+                    self.current_leverage,
+                    0.6 if assessment.regime is MarketRegime.TREND else 0.4,
+                )
+                self.current_take_profit_pct = min(
+                    self.current_take_profit_pct * 1.05,
+                    0.1,
+                )
+                self._journal_performance_state = "recovered"
+                self._log(
+                    "Journal analytics recovered to baseline",
+                    level=logging.INFO,
+                    win_rate=f"{win_rate:.3f}",
+                    drawdown_pct=f"{drawdown_pct:.3f}",
+                    accuracy=f"{accuracy:.3f}",
+                    rolling_pnl=f"{analytics.rolling_pnl:.4f}",
+                    previous_strategy=previous,
+                    restored_strategy=self.current_strategy,
+                )
+                previous_state, previous_strategy = self._record_strategy_adaptation_event(
+                    reason="journal_recovered",
+                    analytics=analytics,
+                    risk=risk,
+                    previous_state=previous_state,
+                    previous_strategy=previous_strategy,
+                )
+            else:
+                self._journal_performance_state = "defensive"
+                self.current_leverage = min(self.current_leverage, 0.45)
+                self.current_stop_loss_pct = max(self.current_stop_loss_pct, 0.01)
+                self.current_take_profit_pct = max(
+                    self.current_take_profit_pct,
+                    self.current_stop_loss_pct * 1.3,
+                )
+                previous_state, previous_strategy = self._record_strategy_adaptation_event(
+                    reason="journal_defensive_adjustment",
+                    analytics=analytics,
+                    risk=risk,
+                    previous_state=previous_state,
+                    previous_strategy=previous_strategy,
+                )
+            return
+
+        if (
+            win_rate >= max(recovery_win_rate, 0.62)
+            and drawdown_pct <= recovery_drawdown * 0.75
+            and analytics.rolling_pnl > 0.0
+        ):
+            self.current_leverage = min(self.current_leverage * 1.02, 3.25)
+            self.current_take_profit_pct = min(self.current_take_profit_pct * 1.03, 0.1)
+
+        if self._journal_performance_state != "baseline":
+            self._journal_performance_state = "baseline"
+            previous_state, previous_strategy = self._record_strategy_adaptation_event(
+                reason="journal_baseline",
+                analytics=analytics,
+                risk=risk,
+                previous_state=previous_state,
+                previous_strategy=previous_strategy,
+            )
 
     def _handle_guardrail_trigger(
         self,
@@ -5901,6 +7671,74 @@ class AutoTrader:
                 should_trade = False
                 state = "halted"
                 reason = "AI backend degraded"
+
+        selected_exchange_key: tuple[str, str] | None = None
+        allocation_snapshot: dict[tuple[str, str], dict[str, Any]] = {}
+        try:
+            selected_exchange_key, allocation_snapshot = self._select_exchange_target(
+                symbol,
+                force_refresh=True,
+            )
+        except Exception:  # pragma: no cover - defensywne logowanie
+            LOGGER.debug("Nie udało się określić alokacji giełdowej", exc_info=True)
+            selected_exchange_key = None
+            allocation_snapshot = {}
+
+        if allocation_snapshot:
+            allocations_payload: list[dict[str, Any]] = []
+            for entry in allocation_snapshot.values():
+                if not isinstance(entry, Mapping):
+                    continue
+                try:
+                    allocation_value = float(entry.get("allocation", 0.0))
+                except (TypeError, ValueError):
+                    allocation_value = 0.0
+                try:
+                    weight_value = float(entry.get("weight", 0.0))
+                except (TypeError, ValueError):
+                    weight_value = 0.0
+                try:
+                    preference_value = float(entry.get("preference", 0.0))
+                except (TypeError, ValueError):
+                    preference_value = 0.0
+                allocations_payload.append(
+                    {
+                        "exchange": entry.get("exchange"),
+                        "segment": entry.get("segment"),
+                        "allocation": allocation_value,
+                        "weight": weight_value,
+                        "preference": preference_value,
+                        "degradation": (
+                            dict(entry.get("degradation", {}))
+                            if isinstance(entry.get("degradation"), Mapping)
+                            else {}
+                        ),
+                    }
+                )
+            allocations_payload.sort(
+                key=lambda item: item.get("allocation", 0.0),
+                reverse=True,
+            )
+            selected_payload: dict[str, Any] | None = None
+            if selected_exchange_key is not None:
+                selected_entry = allocation_snapshot.get(selected_exchange_key)
+                if isinstance(selected_entry, Mapping):
+                    selected_payload = {
+                        "exchange": selected_entry.get("exchange"),
+                        "segment": selected_entry.get("segment"),
+                        "allocation": float(selected_entry.get("allocation", 0.0) or 0.0),
+                        "weight": float(selected_entry.get("weight", 0.0) or 0.0),
+                    }
+            if selected_payload is None and allocations_payload:
+                selected_payload = dict(allocations_payload[0])
+            details["exchange_allocation"] = {
+                "selected": selected_payload,
+                "allocations": allocations_payload,
+            }
+            if selected_payload is not None:
+                details["execution_exchange"] = selected_payload.get("exchange")
+                details["execution_segment"] = selected_payload.get("segment")
+
         fraction = self.current_leverage if should_trade else 0.0
         return RiskDecision(
             should_trade=should_trade,
@@ -5965,6 +7803,10 @@ class AutoTrader:
 
         ai_manager = self._resolve_ai_manager()
         if ai_manager is not None:
+            try:
+                self._synchronise_champion_model(ai_manager, symbol)
+            except Exception:  # pragma: no cover - synchronizacja nie może zatrzymać cyklu
+                LOGGER.debug("Synchronizacja modelu champion nie powiodła się", exc_info=True)
             self._run_ai_manager_maintenance(ai_manager)
         self._ai_degraded = bool(getattr(ai_manager, "is_degraded", False)) if ai_manager else False
         if self._ai_degraded:
@@ -12558,6 +14400,39 @@ class AutoTrader:
             else {}
         )
 
+        guardrail_state: dict[str, Any] = {
+            "active": bool(self._exchange_degradation_guardrail_active),
+            "kill_switch": bool(self._exchange_degradation_kill_switch),
+        }
+        guardrail_reasons_raw = guardrails.get("last_reasons") if isinstance(guardrails, Mapping) else None
+        if isinstance(guardrail_reasons_raw, Sequence):
+            guardrail_state["reasons"] = [str(reason) for reason in guardrail_reasons_raw if reason]
+        degradation_payload: dict[str, Any] = {}
+        if isinstance(self._exchange_degradation_payload, Mapping):
+            degradation_payload = {
+                str(key): copy.deepcopy(value)
+                for key, value in self._exchange_degradation_payload.items()
+            }
+        guardrail_state["exchange_degradation"] = {
+            "score": float(getattr(self, "_exchange_degradation_score", 0.0)),
+            "payload": degradation_payload,
+        }
+        normalized_triggers = normalize_guardrail_triggers(
+            guardrails.get("last_triggers") if isinstance(guardrails, Mapping) else ()
+        )
+        guardrail_triggers: list[dict[str, Any]] = []
+        for trigger_obj, payload in normalized_triggers:
+            entry = dict(payload)
+            for attr in ("label", "comparator", "unit"):
+                value = getattr(trigger_obj, attr, None)
+                if value is not None and attr not in entry:
+                    entry[attr] = value
+            guardrail_triggers.append(entry)
+        if guardrail_triggers:
+            guardrail_state["triggers"] = guardrail_triggers
+        else:
+            guardrail_state["triggers"] = []
+
         strategy_snapshot = dict(strategy) if isinstance(strategy, Mapping) else {}
         metrics_snapshot = dict(metrics) if isinstance(metrics, Mapping) else {}
 
@@ -12570,6 +14445,7 @@ class AutoTrader:
 
         performance_summary: dict[str, Any] = {}
         performance_window: dict[str, Any] = {}
+        decision_history: list[dict[str, Any]] = []
         journal = getattr(self, "_decision_journal", None)
         now_utc = datetime.now(timezone.utc)
         window_start = now_utc - timedelta(hours=24)
@@ -12604,6 +14480,19 @@ class AutoTrader:
                     },
                 )
                 performance_window.setdefault("label", "last-24h")
+            try:
+                exported_records = list(journal.export())
+            except Exception:  # pragma: no cover - defensywne logowanie
+                LOGGER.debug("Nie udało się wyeksportować historii dziennika decyzji", exc_info=True)
+            else:
+                for record in exported_records[-64:]:
+                    if isinstance(record, Mapping):
+                        decision_history.append(dict(record))
+                if decision_history:
+                    decision_history.sort(
+                        key=lambda entry: entry.get("timestamp") or "",
+                        reverse=True,
+                    )
 
         result: dict[str, Any] = {
             "timestamp": lifecycle.get("timestamp"),
@@ -12619,6 +14508,278 @@ class AutoTrader:
             "guardrail_summary": guardrail_summary,
             "reasons": reasons,
         }
+
+        analytics_snapshot: dict[str, Any] = {"mode": self._journal_performance_state}
+        if isinstance(self._last_journal_analytics, JournalAnalytics):
+            analytics_snapshot.update(
+                self._last_journal_analytics.to_mapping()
+            )
+        result["journal_performance"] = analytics_snapshot
+
+        if decision_history:
+            result["decision_history"] = decision_history
+        else:
+            result["decision_history"] = []
+        guardrail_trace: list[dict[str, Any]] = []
+        decision_id = (
+            last_decision.get("decision_id")
+            if isinstance(last_decision, Mapping)
+            else None
+        )
+        if decision_id:
+            try:
+                trace_records = self.get_guardrail_event_trace(
+                    decision_id,
+                    include_guardrail_dimensions=True,
+                    include_decision=True,
+                    include_service=True,
+                    include_error=True,
+                    coerce_timestamps=True,
+                    tz=tz or timezone.utc,
+                )
+            except Exception:  # pragma: no cover - defensywne logowanie
+                LOGGER.debug(
+                    "Nie udało się pobrać śladu guardrail dla snapshotu auto-mode",
+                    exc_info=True,
+                )
+            else:
+                guardrail_trace = [
+                    dict(entry)
+                    for entry in trace_records
+                    if isinstance(entry, Mapping)
+                ]
+        guardrail_state["last_decision_id"] = decision_id
+
+        risk_alerts: list[dict[str, Any]] = []
+        severity_base = (
+            "critical"
+            if guardrail_state.get("kill_switch")
+            else "warning"
+            if guardrail_state.get("active")
+            else None
+        )
+        for trigger_entry in guardrail_triggers:
+            label = trigger_entry.get("label") or trigger_entry.get("name") or "guardrail"
+            comparator = trigger_entry.get("comparator")
+            threshold = trigger_entry.get("threshold")
+            value = trigger_entry.get("value")
+            message_parts = [str(label)]
+            if comparator and threshold is not None:
+                message_parts.append(f"{comparator} {threshold}")
+            if value is not None:
+                try:
+                    message_parts.append(f"(value={float(value):.3f})")
+                except (TypeError, ValueError):
+                    message_parts.append(f"(value={value})")
+            risk_alerts.append(
+                {
+                    "code": trigger_entry.get("name"),
+                    "message": " ".join(message_parts),
+                    "severity": severity_base or "info",
+                    "threshold": threshold,
+                    "value": value,
+                }
+            )
+
+        provider = self._signal_quality_provider
+        signal_quality_snapshot: dict[str, Any] = {}
+        if callable(provider):
+            try:
+                quality_snapshot = provider()
+            except Exception:  # pragma: no cover - defensywne logowanie
+                LOGGER.debug(
+                    "Nie udało się pobrać snapshotu jakości sygnałów dla automatyzacji",
+                    exc_info=True,
+                )
+                quality_snapshot = None
+            if isinstance(quality_snapshot, Mapping):
+                signal_quality_snapshot = dict(quality_snapshot)
+                records_raw = signal_quality_snapshot.get("records")
+                if isinstance(records_raw, Sequence):
+                    signal_quality_snapshot["records"] = [
+                        dict(entry)
+                        for entry in records_raw[-10:]
+                        if isinstance(entry, Mapping)
+                    ]
+                watchdog_raw = signal_quality_snapshot.get("watchdog")
+                if isinstance(watchdog_raw, Mapping):
+                    last_status_raw = watchdog_raw.get("last_status")
+                    last_status: dict[str, Any] = {}
+                    if isinstance(last_status_raw, Mapping):
+                        for key, value in last_status_raw.items():
+                            if isinstance(value, Mapping):
+                                last_status[str(key)] = dict(value)
+                    signal_quality_snapshot["watchdog"] = {
+                        "alerts": [
+                            dict(entry)
+                            for entry in watchdog_raw.get("alerts", [])
+                            if isinstance(entry, Mapping)
+                        ],
+                        "recent": [
+                            dict(entry)
+                            for entry in watchdog_raw.get("recent", [])
+                            if isinstance(entry, Mapping)
+                        ],
+                        "last_status": last_status,
+                    }
+                degradation_raw = signal_quality_snapshot.get("degradation")
+                if isinstance(degradation_raw, Mapping):
+                    signal_quality_snapshot["degradation"] = dict(degradation_raw)
+
+        active_backend: str | None = None
+        last_execution: Mapping[str, Any] | None = None
+        records_snapshot = signal_quality_snapshot.get("records")
+        if isinstance(records_snapshot, Sequence):
+            for record in reversed(records_snapshot):
+                if isinstance(record, Mapping) and record.get("backend"):
+                    active_backend = str(record.get("backend"))
+                    last_execution = record
+                    break
+        failover_snapshot: dict[str, Any] = {
+            "active_backend": (active_backend or "native"),
+            "state": "failover" if (active_backend or "").lower() == "ccxt" else "native",
+            "guardrail_active": bool(self._exchange_degradation_guardrail_active),
+            "kill_switch": bool(self._exchange_degradation_kill_switch),
+            "degradation_score": float(getattr(self, "_exchange_degradation_score", 0.0)),
+        }
+        if degradation_payload:
+            failover_snapshot["degradation"] = dict(
+                signal_quality_snapshot.get("degradation", degradation_payload)
+            )
+        elif signal_quality_snapshot.get("degradation"):
+            failover_snapshot["degradation"] = dict(signal_quality_snapshot["degradation"])
+        if signal_quality_snapshot.get("watchdog"):
+            failover_snapshot["watchdog"] = dict(signal_quality_snapshot["watchdog"])
+        if isinstance(last_execution, Mapping):
+            failover_snapshot["last_execution"] = dict(last_execution)
+        failover_snapshot["total_signals"] = signal_quality_snapshot.get("total")
+        failover_snapshot["failures"] = signal_quality_snapshot.get("failures")
+        failover_snapshot.setdefault("degradation", {})
+        failover_snapshot.setdefault("watchdog", {})
+        failover_snapshot.setdefault("last_execution", {})
+
+        with self._lock:
+            model_events = [dict(entry) for entry in getattr(self, "_model_change_log", tuple())]
+            retraining_cycles_raw = [
+                dict(entry)
+                for entry in getattr(self, "_retraining_cycle_log", tuple())
+            ]
+        retraining_cycles = self._enrich_retraining_cycles_with_decisions(retraining_cycles_raw)
+        result["model_events"] = model_events
+        result["retraining_cycles"] = retraining_cycles
+
+        result["guardrail_state"] = guardrail_state
+        result["guardrail_trace"] = guardrail_trace
+        result["risk_alerts"] = risk_alerts
+        result["signal_quality"] = signal_quality_snapshot
+        result["failover"] = failover_snapshot
+
+        allocation_snapshot = self._resolve_exchange_allocations()
+        if allocation_snapshot:
+            allocations_payload: list[dict[str, Any]] = []
+            for entry in allocation_snapshot.values():
+                if not isinstance(entry, Mapping):
+                    continue
+                try:
+                    allocation_value = float(entry.get("allocation", 0.0))
+                except (TypeError, ValueError):
+                    allocation_value = 0.0
+                try:
+                    weight_value = float(entry.get("weight", 0.0))
+                except (TypeError, ValueError):
+                    weight_value = 0.0
+                try:
+                    preference_value = float(entry.get("preference", 0.0))
+                except (TypeError, ValueError):
+                    preference_value = 0.0
+                allocations_payload.append(
+                    {
+                        "exchange": entry.get("exchange"),
+                        "segment": entry.get("segment"),
+                        "allocation": allocation_value,
+                        "weight": weight_value,
+                        "preference": preference_value,
+                        "degradation": (
+                            dict(entry.get("degradation", {}))
+                            if isinstance(entry.get("degradation"), Mapping)
+                            else {}
+                        ),
+                    }
+                )
+            allocations_payload.sort(
+                key=lambda item: item.get("allocation", 0.0),
+                reverse=True,
+            )
+            with self._lock:
+                last_selection = (
+                    dict(self._last_exchange_selection)
+                    if isinstance(self._last_exchange_selection, Mapping)
+                    else None
+                )
+                selection_history = [
+                    dict(entry)
+                    for entry in self._exchange_selection_log
+                    if isinstance(entry, Mapping)
+                ]
+            if last_selection is None and allocations_payload:
+                last_selection = dict(allocations_payload[0])
+            result["exchange_allocation"] = {
+                "selected": last_selection,
+                "allocations": allocations_payload,
+                "history": selection_history,
+            }
+        else:
+            result["exchange_allocation"] = {
+                "selected": None,
+                "allocations": [],
+                "history": [],
+            }
+
+        with self._lock:
+            adaptation_history = [
+                dict(entry)
+                for entry in self._strategy_adaptation_log
+                if isinstance(entry, Mapping)
+            ]
+        if adaptation_history:
+            adaptation_history.sort(
+                key=lambda entry: entry.get("timestamp") or "",
+                reverse=True,
+            )
+
+        strategy_indicator = {
+            "current": self.current_strategy,
+            "state": self._journal_performance_state,
+            "leverage": float(self.current_leverage),
+            "stop_loss_pct": float(self.current_stop_loss_pct),
+            "take_profit_pct": float(self.current_take_profit_pct),
+            "history": adaptation_history,
+        }
+
+        exchange_indicator: Mapping[str, Any] | None
+        exchange_section = result.get("exchange_allocation")
+        if isinstance(exchange_section, Mapping):
+            exchange_indicator = {
+                str(key): copy.deepcopy(value)
+                for key, value in exchange_section.items()
+            }
+        else:
+            exchange_indicator = {
+                "selected": None,
+                "allocations": [],
+                "history": [],
+            }
+
+        performance_indicators = {
+            "rolling_pnl": analytics_snapshot.get("rolling_pnl"),
+            "max_drawdown_pct": analytics_snapshot.get("max_drawdown_pct"),
+            "win_rate": analytics_snapshot.get("win_rate"),
+            "journal": dict(analytics_snapshot),
+            "strategy": strategy_indicator,
+            "exchange": exchange_indicator,
+        }
+
+        result["performance_indicators"] = performance_indicators
 
         if controller_history is not None:
             result["controller_history"] = controller_history

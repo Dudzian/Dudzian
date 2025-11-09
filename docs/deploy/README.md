@@ -6,6 +6,7 @@ modelach wdrożeniowych. Najważniejsze dokumenty:
 - `desktop_installer.md` – proces budowy instalatora desktopowego.
 - `offline_updates.md` – format paczek aktualizacji offline.
 - `release_process.md` – kanały wydań i wymagane testy.
+- `installer_build.md` – szczegóły walidacji hooka HWID (`--verify-hook`).
 
 ## OEM release
 
@@ -26,5 +27,7 @@ Szablony raportów (licencje, compliance, testy) znajdują się w
 `docs/deploy/templates/` i mogą być renderowane za pomocą poleceń
 `generate-license-report`, `generate-compliance-report` oraz
 `generate-test-report`. Wszystkie wygenerowane dokumenty przechowuj w katalogu
-`reports/oem/<wersja>/` obok raportów automatycznych (audyt licencji, smoke). Dzięki
-temu partner otrzymuje spójny pakiet OEM.
+`reports/oem/<wersja>/` obok raportów automatycznych (audyt licencji, smoke).
+Zanim przekażesz pakiet partnerowi, uruchom `deploy/packaging/desktop_installer.py`
+z opcją `--verify-hook`, aby potwierdzić poprawną integrację hooka HWID i
+keyringu. Dzięki temu partner otrzymuje spójny pakiet OEM.

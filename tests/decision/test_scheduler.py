@@ -28,9 +28,11 @@ from bot_core.ai.audit import (
     summarize_walk_forward_reports,
 )
 from bot_core.ai.feature_engineering import FeatureVector
+from bot_core.ai.models import ModelArtifact
 from bot_core.ai.scheduler import (
     DEFAULT_JOURNAL_ENVIRONMENT,
     DEFAULT_JOURNAL_RISK_PROFILE,
+    RETRAINING_PROMOTION_EVENT,
     ScheduledTrainingJob,
     WalkForwardResult,
 )
@@ -166,6 +168,72 @@ def test_training_scheduler_executes_external_backend(tmp_path) -> None:
     assert record.dataset_rows == len(dataset.vectors)
     assert record.metrics
     assert record.metrics == dict(artifact.metrics.summary())
+
+
+def test_training_job_emits_retraining_event(tmp_path) -> None:
+    class _Emitter:
+        def __init__(self) -> None:
+            self.events: List[tuple[str, Mapping[str, object]]] = []
+
+        def emit(self, event: str, **payload: object) -> None:
+            self.events.append((event, dict(payload)))
+
+    dataset = FeatureDataset(
+        vectors=(
+            FeatureVector(
+                timestamp=1_700_500_000,
+                symbol="BTCUSDT",
+                features={"momentum": 1.0, "volume": 2.0},
+                target_bps=0.25,
+            ),
+        ),
+        metadata={"symbols": ["BTCUSDT"]},
+    )
+
+    emitter = _Emitter()
+    scheduler = RetrainingScheduler(
+        interval=timedelta(minutes=15),
+        persistence_path=tmp_path / "scheduler.json",
+    )
+    scheduler.event_emitter = emitter
+
+    class _Trainer:
+        def train(self, dataset: FeatureDataset) -> ModelArtifact:
+            del dataset
+            return ModelArtifact(
+                feature_names=("f1",),
+                model_state={"weights": [0.1]},
+                trained_at=datetime.now(timezone.utc),
+                metrics={
+                    "summary": {"mae": 0.5, "directional_accuracy": 0.6},
+                    "train": {},
+                    "validation": {},
+                    "test": {},
+                },
+                metadata={"model_name": "btc-decision", "model_version": "v1"},
+                target_scale=1.0,
+                training_rows=1,
+                validation_rows=0,
+                test_rows=0,
+                feature_scalers={"f1": (0.0, 1.0)},
+                decision_journal_entry_id=None,
+                backend="builtin",
+            )
+
+    job = ScheduledTrainingJob(
+        name="btc-decision",
+        scheduler=scheduler,
+        trainer_factory=_Trainer,
+        dataset_provider=lambda: dataset,
+    )
+
+    job.run(now=datetime(2024, 7, 1, 12, tzinfo=timezone.utc))
+
+    assert emitter.events, "Retraining scheduler powinien wyemitować zdarzenie do UI"
+    event_name, payload = emitter.events[-1]
+    assert event_name == RETRAINING_PROMOTION_EVENT
+    assert payload["model"] == "btc-decision"
+    assert "trained_at" in payload
 
 
 def test_scheduled_job_persists_state_and_records_journal(tmp_path) -> None:

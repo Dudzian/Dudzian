@@ -12,6 +12,11 @@ paper:
       maintenance_margin_ratio: 0.1
       funding_rate: 0.0001
       funding_interval_seconds: 28800
+    rate_limit_rules:
+      - rate: 30
+        per: 1
+      - rate: 300
+        per: 60
   credentials:
     api_key: null
     secret: null
@@ -25,6 +30,15 @@ testnet:
       retry_policy:
         max_attempts: 5
         base_delay: 0.75
+    rate_limit_rules:
+      - rate: 30
+        per: 1
+      - rate: 300
+        per: 60
+    failover:
+      enabled: true
+      failure_threshold: 2
+      cooldown_seconds: 40
   credentials:
     api_key: ${OKX_TESTNET_KEY}
     secret: ${OKX_TESTNET_SECRET}
@@ -45,6 +59,15 @@ live:
     native_adapter:
       settings:
         account_mode: "futures"
+    rate_limit_rules:
+      - rate: 30
+        per: 1
+      - rate: 300
+        per: 60
+    failover:
+      enabled: true
+      failure_threshold: 3
+      cooldown_seconds: 60
   credentials:
     api_key: ${OKX_LIVE_KEY}
     secret: ${OKX_LIVE_SECRET}
