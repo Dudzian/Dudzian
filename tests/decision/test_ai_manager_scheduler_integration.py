@@ -15,6 +15,7 @@ from bot_core.ai import (
     RetrainingScheduler,
 )
 from bot_core.ai.scheduler import ScheduledTrainingJob
+from bot_core.alerts.dispatcher import AlertSeverity
 from bot_core.config.models import DecisionEngineConfig, DecisionOrchestratorThresholds
 from bot_core.decision.orchestrator import DecisionOrchestrator
 
@@ -191,3 +192,79 @@ def test_training_job_updates_strategy_performance(tmp_path: Path) -> None:
     assert metrics["directional_accuracy"] >= 0.0
     assert "cv_mae_mean" in metrics
     assert "cv_directional_accuracy_mean" in metrics
+
+
+def test_schedule_walk_forward_retraining_persists_quality_thresholds(tmp_path: Path) -> None:
+    cache_dir = tmp_path / "cache"
+    ai_manager = AIManager(model_dir=cache_dir)
+    dataset = _dataset("ADAUSDT")
+
+    ai_manager.schedule_walk_forward_retraining(
+        "ada-quality",
+        interval=timedelta(minutes=20),
+        dataset_provider=lambda: dataset,
+        trainer_factory=lambda: ModelTrainer(n_estimators=4),
+        quality_thresholds={
+            "min_directional_accuracy": 0.7,
+            "max_mae": 5.5,
+        },
+        repository_base=tmp_path / "quality_repo",
+        model_type="trend_following",
+        symbol="ADAUSDT",
+    )
+
+    now = datetime(2024, 8, 1, 12, tzinfo=timezone.utc)
+    results = ai_manager.run_due_training_jobs(now)
+    assert results, "zadanie retrainingu powinno zostać wykonane"
+
+    artifact_path = ai_manager.get_last_trained_artifact_path("ada-quality")
+    assert artifact_path is not None and artifact_path.exists()
+
+    metadata = json.loads(artifact_path.read_text(encoding="utf-8"))["metadata"]
+    thresholds = metadata.get("quality_thresholds")
+    assert thresholds is not None
+    assert thresholds["min_directional_accuracy"] == pytest.approx(0.7)
+    assert thresholds["max_mae"] == pytest.approx(5.5)
+
+
+def test_schedule_walk_forward_retraining_emits_quality_alert(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cache_dir = tmp_path / "cache"
+    ai_manager = AIManager(model_dir=cache_dir)
+    dataset = _dataset("SOLUSDT")
+    captured: list[tuple[str, AlertSeverity, str, dict[str, str]]] = []
+
+    def _capture(
+        message: str,
+        *,
+        severity: AlertSeverity,
+        source: str,
+        context: Mapping[str, str],
+        exception: object | None = None,
+    ) -> None:
+        captured.append((message, severity, source, dict(context)))
+
+    monkeypatch.setattr("bot_core.ai.manager.emit_alert", _capture)
+
+    ai_manager.schedule_walk_forward_retraining(
+        "sol-quality",
+        interval=timedelta(minutes=10),
+        dataset_provider=lambda: dataset,
+        trainer_factory=lambda: ModelTrainer(n_estimators=3),
+        quality_thresholds={
+            "min_directional_accuracy": 0.99,
+            "max_mae": 0.001,
+        },
+        repository_base=tmp_path / "alert_repo",
+        model_type="momentum",
+        symbol="SOLUSDT",
+    )
+
+    now = datetime(2024, 9, 1, 9, tzinfo=timezone.utc)
+    results = ai_manager.run_due_training_jobs(now)
+    assert results, "zadanie retrainingu powinno zostać wykonane"
+
+    error_events = [event for event in captured if event[1] is AlertSeverity.ERROR]
+    assert error_events, "powinien zostać wygenerowany alert degradacji jakości"
+    assert any(event[3].get("model") == "momentum" for event in error_events)

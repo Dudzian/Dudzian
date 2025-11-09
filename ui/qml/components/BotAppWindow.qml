@@ -254,6 +254,11 @@ ApplicationWindow {
                         riskModel: riskModel
                         riskHistoryModel: riskHistoryModel
                         alertsModel: alertsModel
+                        alertsFilterModel: alertsFilterModel
+                        strategyController: strategyController
+                        decisionLogModel: decisionLogModel
+                        decisionFilterModel: decisionFilterModel
+                        runtimeService: runtimeService
                     }
                 }
 
