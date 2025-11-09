@@ -9,6 +9,7 @@ import shlex
 import signal
 import threading
 from contextlib import suppress
+import sys
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from importlib import import_module
@@ -23,9 +24,12 @@ from bot_core.events import (
     wire_gui_logs_to_adapter,
 )
 
-try:  # pragma: no cover - opcjonalne zależności GUI
-    _risk_helpers = import_module("KryptoLowca.ui.trading.risk_helpers")
-except ModuleNotFoundError:  # pragma: no cover - fallback dla środowisk testowych
+try:  # pragma: no cover - moduł risk helpers może być niedostępny w buildach headless
+    from bot_core.ui.trading.risk_helpers import (  # type: ignore[attr-defined]
+        apply_runtime_risk_context,
+        refresh_runtime_risk_context,
+    )
+except Exception:  # pragma: no cover - fallback dla środowisk testowych
 
     def apply_runtime_risk_context(*_args: object, **_kwargs: object) -> None:
         return None
@@ -35,23 +39,7 @@ except ModuleNotFoundError:  # pragma: no cover - fallback dla środowisk testow
         return None
 
 
-else:
-    apply_runtime_risk_context = _risk_helpers.apply_runtime_risk_context
-    refresh_runtime_risk_context = _risk_helpers.refresh_runtime_risk_context
-
-
-try:
-    _runtime_bootstrap = import_module("KryptoLowca.runtime.bootstrap")
-except ModuleNotFoundError as error:  # pragma: no cover - wymagane w środowiskach produkcyjnych
-
-    def bootstrap_frontend_services(*_args: object, **_kwargs: object) -> object:
-        raise ModuleNotFoundError(
-            "Pakiet KryptoLowca.runtime.bootstrap jest wymagany do uruchomienia GUI"
-        ) from error
-
-
-else:
-    bootstrap_frontend_services = _runtime_bootstrap.bootstrap_frontend_services
+from bot_core.runtime.frontend import bootstrap_frontend_services
 
 from .app import AutoTrader
 from bot_core.alerts import AlertSeverity, emit_alert
@@ -1093,7 +1081,10 @@ class PaperAutoTradeApp:
             try:
                 import tkinter as tk
 
-                TradingGUI = import_module("KryptoLowca.ui.trading").TradingGUI
+                trading_pkg = import_module("bot_core.ui.trading")
+                TradingGUI = getattr(trading_pkg, "TradingGUI", None)
+                if TradingGUI is None:
+                    raise ImportError("bot_core.ui.trading missing TradingGUI")
 
                 root = tk.Tk()
                 gui = TradingGUI(root, frontend_services=self.frontend_services)
@@ -1103,7 +1094,7 @@ class PaperAutoTradeApp:
                     register_listener(self._handle_gui_risk_reload)
                     self._gui_risk_listener_active = True
                 try:
-                    root.wm_title("KryptoLowca AutoTrader (paper)")
+                    root.wm_title("bot_core AutoTrader (paper)")
                 except Exception:  # pragma: no cover - brak wsparcia tytułów
                     pass
 
@@ -1124,7 +1115,9 @@ class PaperAutoTradeApp:
                     root.protocol("WM_DELETE_WINDOW", self.stop)
                 return gui, getter
             except Exception:  # pragma: no cover - środowiska bez wyświetlacza
-                logger.exception("Nie udało się uruchomić Trading GUI – przełączam na tryb headless")
+                logger.exception(
+                    "Nie udało się uruchomić modułu GUI bot_core.ui.trading – przełączam na tryb headless"
+                )
                 self.enable_gui = False
 
         stub = provided_stub or HeadlessTradingStub(symbol=self.symbol, paper_balance=self.paper_balance)
@@ -1616,7 +1609,7 @@ def parse_cli_args(argv: Iterable[str]) -> PaperAutoTradeOptions:
             continue
         if key in {"-h", "--help"}:
             print(
-                "Usage: python -m KryptoLowca.run_autotrade_paper [--nogui] [--no-feed] "
+                "Usage: python -m bot_core.auto_trader.paper_app [--nogui] [--no-feed] "
                 "[--symbol=PAIR] [--paper-balance=N] [--core-config PATH] [--risk-profile=NAME]"
             )
             raise SystemExit(0)
@@ -1668,3 +1661,7 @@ __all__ = [
     "parse_cli_args",
     "main",
 ]
+
+
+if __name__ == "__main__":  # pragma: no cover - moduł uruchamiany jako skrypt
+    main(sys.argv[1:])

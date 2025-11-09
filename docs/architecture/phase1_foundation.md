@@ -7,7 +7,7 @@ zewnętrznych, z jasnym podziałem na warstwy i środowiska.
 > **Zasada etapu 1:** wszystkie nowe moduły aplikacji korzystają wyłącznie z
 > przestrzeni nazw `bot_core`. Wcześniejszy mostek `legacy_bridge/` został
 > zarchiwizowany – zgodność wsteczna zapewniana jest bezpośrednio przez pakiet
-> `KryptoLowca` oraz adaptery publikowane w `bot_core`.
+> Warstwa wykonawcza koncentruje się na modułach `bot_core`.
 
 ## Podział na moduły
 

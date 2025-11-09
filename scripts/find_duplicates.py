@@ -7,11 +7,9 @@ the repository, normalises the Python AST (removing docstrings and comments)
 and reports groups of duplicated files as well as duplicated class/function
 definitions.
 
-The script focuses on the directories that matter for the new runtime
-implementation (``bot_core/``, ``core/``, ``scripts/``, ``tests/``) and compares
-them with historycznymi źródłami w pakiecie ``KryptoLowca/``.
-Whenever the same implementation appears in several locations the script
-marks the preferred (canonical) location using a deterministic priority order.
+The script focuses on the directories that matter for the runtime
+implementation (``bot_core/``, ``core/``, ``scripts/``, ``tests/``) and marks
+preferred (canonical) locations using a deterministic priority order.
 
 The output is a JSON object containing two sections:
 
@@ -55,12 +53,10 @@ CANONICAL_ROOTS = [
     REPO_ROOT / "tests",
 ]
 
-# Locations that may still contain historical sources copied z legacy namespace.
-LEGACY_ROOTS = [
-    REPO_ROOT / "KryptoLowca",
-]
+# Legacy sources have been removed – we only analyse canonical roots.
+LEGACY_ROOTS: list[Path] = []
 
-SCAN_ROOTS = CANONICAL_ROOTS + LEGACY_ROOTS
+SCAN_ROOTS = CANONICAL_ROOTS
 
 
 class _DocstringStripper(ast.NodeTransformer):

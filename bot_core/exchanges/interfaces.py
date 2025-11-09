@@ -1,7 +1,7 @@
 """Wspólne interfejsy warstwy wymiany używane przez testy integracyjne.
 
-Moduł ten zapewnia lekki zestaw abstrakcji kompatybilny z poprzednim
-pakietem ``KryptoLowca.exchanges``. Dzięki temu testy oraz narzędzia, które
+Moduł ten zapewnia lekki zestaw abstrakcji kompatybilny z poprzednią warstwą
+``KryptoLowca.exchanges``. Dzięki temu testy oraz narzędzia, które
 oczekują istnienia obiektów takich jak ``MarketSubscription`` czy
 ``MarketStreamHandle``, mogą korzystać bezpośrednio z przestrzeni
 ``bot_core`` bez sięgania po warstwę legacy.

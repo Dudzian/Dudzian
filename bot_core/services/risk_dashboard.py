@@ -27,7 +27,7 @@ class RiskAuditRecord(BaseModel):
 def create_app(db_manager: Any) -> FastAPI:
     """Zbuduj aplikację FastAPI udostępniającą logi audytu ryzyka."""
 
-    app = FastAPI(title="KryptoLowca Risk Dashboard", version="1.0.0")
+    app = FastAPI(title="bot_core Risk Dashboard", version="1.0.0")
 
     async def _get_db() -> Any:
         return db_manager
