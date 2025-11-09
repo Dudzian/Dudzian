@@ -65,6 +65,12 @@ except Exception:  # pragma: no cover - środowiska bez CCXT
         ...
 
 
+_CCXT_INSTALL_HINT = (
+    "Biblioteka 'ccxt' nie jest dostępna – zainstaluj zależność 'ccxt>=4.0.0' w swoim "
+    "środowisku (np. `pip install ccxt`)."
+)
+
+
 _LOGGER = logging.getLogger(__name__)
 
 _DEFAULT_LATENCY_BUCKETS: tuple[float, ...] = (
@@ -207,7 +213,8 @@ class CCXTSpotAdapter(ExchangeAdapter):
     def _build_client(self) -> CCXTExchange:
         if ccxt is None:  # pragma: no cover - środowiska offline
             raise RuntimeError(
-                "Biblioteka ccxt nie jest dostępna – wstrzyknij klienta testowego poprzez argument 'client'."
+                f"{_CCXT_INSTALL_HINT} Jeżeli uruchamiasz testy bez dostępu do ccxt, "
+                "przekaż gotowy klient poprzez argument 'client'."
             )
         try:
             constructor: Callable[..., CCXTExchange] = getattr(ccxt, self._exchange_id)

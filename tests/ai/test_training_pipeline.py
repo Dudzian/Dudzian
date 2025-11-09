@@ -74,6 +74,8 @@ def test_walk_forward_coordinator_runs_and_publishes(tmp_path: Path, dataset: Fe
     outcome_first = coordinator.tick()
     assert outcome_first is not None
     assert outcome_first.report.status in {"ok", "improved"}
+    assert outcome_first.champion_decision is not None
+    assert outcome_first.champion_decision.decision == "champion"
 
     manifest = coordinator.repository.get_manifest()
     assert manifest.get("active") == outcome_first.version
@@ -107,7 +109,8 @@ def test_walk_forward_coordinator_runs_and_publishes(tmp_path: Path, dataset: Fe
         baseline_version=outcome_first.version,
         delta={"mae": 1.0, "directional_accuracy": -0.5},
     )
-    record_model_quality_report(degraded_report, history_root=tmp_path / "quality")
+    decision = record_model_quality_report(degraded_report, history_root=tmp_path / "quality")
+    assert decision.decision == "challenger"
 
     orchestrator = DecisionOrchestrator(
         DecisionEngineConfig(

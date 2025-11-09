@@ -1,23 +1,44 @@
 #include "runtime/OfflineRuntimeService.hpp"
 
 #include <QDate>
+#include <QDir>
 #include <QFile>
+#include <QFileInfo>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonArray>
+#include <QJsonParseError>
 #include <QLoggingCategory>
+#include <QProcess>
 #include <QtGlobal>
 #include <QTextStream>
 #include <QTime>
 #include <QVariant>
+#include <QHash>
+#include <QSet>
 
 #include <algorithm>
 #include <cmath>
 #include <random>
+#include <limits>
 
 #include "utils/PathUtils.hpp"
+#include "utils/RuntimeUtils.hpp"
 
 Q_LOGGING_CATEGORY(lcOfflineService, "bot.shell.offline.service")
 
 namespace {
 constexpr auto kDefaultDatasetPath = "data/sample_ohlcv/trend.csv";
+
+constexpr auto kPresetDirectoryEnv = "BOT_CORE_UI_PRESETS_DIR";
+
+QVariantMap buildPresetError(const QString& message)
+{
+    QVariantMap error;
+    error.insert(QStringLiteral("ok"), false);
+    error.insert(QStringLiteral("error"), message);
+    return error;
+}
 
 QVariantMap windowDescriptor(qint64 startMs, qint64 endMs)
 {
@@ -31,6 +52,54 @@ QVariantMap windowDescriptor(qint64 startMs, qint64 endMs)
     window.insert(QStringLiteral("duration_s"), qMax<qint64>(0, (endMs - startMs) / 1000));
     return window;
 }
+QVariantMap normaliseValidation(const QVariantMap& validation)
+{
+    QVariantMap payload;
+    for (auto it = validation.constBegin(); it != validation.constEnd(); ++it) {
+        payload.insert(it.key(), it.value());
+    }
+    return payload;
+}
+
+QVariantMap championRiskProfile(const QVariantMap& snapshot)
+{
+    const QVariantMap riskProfile = snapshot.value(QStringLiteral("risk_profile")).toMap();
+    QVariantMap normalised = riskProfile;
+    if (!riskProfile.contains(QStringLiteral("hard_drawdown_pct")) && riskProfile.contains(QStringLiteral("drawdown_pct")))
+        normalised.insert(QStringLiteral("hard_drawdown_pct"), riskProfile.value(QStringLiteral("drawdown_pct")));
+    if (!riskProfile.contains(QStringLiteral("max_leverage")) && riskProfile.contains(QStringLiteral("used_leverage")))
+        normalised.insert(QStringLiteral("max_leverage"), riskProfile.value(QStringLiteral("used_leverage")));
+    return normalised;
+}
+
+double extractNumber(const QVariant& value)
+{
+    bool ok = false;
+    const double numeric = value.toDouble(&ok);
+    return ok ? numeric : std::numeric_limits<double>::quiet_NaN();
+}
+
+QVariantMap describeDiffEntry(const QString& key,
+                              const QString& label,
+                              const QVariant& presetValue,
+                              const QVariant& championValue,
+                              bool isPercent)
+{
+    QVariantMap entry;
+    entry.insert(QStringLiteral("parameter"), key);
+    entry.insert(QStringLiteral("label"), label);
+    entry.insert(QStringLiteral("preset_value"), presetValue);
+    entry.insert(QStringLiteral("champion_value"), championValue);
+    entry.insert(QStringLiteral("is_percent"), isPercent);
+
+    const double presetNumeric = extractNumber(presetValue);
+    const double championNumeric = extractNumber(championValue);
+    if (!std::isnan(presetNumeric) && !std::isnan(championNumeric))
+        entry.insert(QStringLiteral("delta"), presetNumeric - championNumeric);
+
+    return entry;
+}
+
 } // namespace
 
 OfflineRuntimeService::OfflineRuntimeService(QObject* parent)
@@ -103,11 +172,14 @@ QVariantMap OfflineRuntimeService::buildAutoModeSnapshot() const
     automation.insert(QStringLiteral("running"), m_automationRunning);
     snapshot.insert(QStringLiteral("automation"), automation);
     snapshot.insert(QStringLiteral("strategy"), m_strategyConfig);
-    snapshot.insert(QStringLiteral("metrics"), buildAutomationMetrics());
+    const RiskSnapshotData risk = buildRiskSnapshot();
+    const QVariantMap metrics = buildAutomationMetrics(risk);
+    snapshot.insert(QStringLiteral("metrics"), metrics);
     snapshot.insert(QStringLiteral("equity_curve"), buildEquityCurveSeries());
-    snapshot.insert(QStringLiteral("risk_heatmap"), buildRiskHeatmapCells());
+    snapshot.insert(QStringLiteral("risk_heatmap"), buildRiskHeatmapCells(risk));
     snapshot.insert(QStringLiteral("performance"), buildPerformanceSummary());
     snapshot.insert(QStringLiteral("performance_window"), buildRecentPerformanceSummary());
+    snapshot.insert(QStringLiteral("performance_guard"), performanceGuardToMap(buildPerformanceGuard()));
     snapshot.insert(QStringLiteral("alerts"), m_alertPreferences);
     QVariantMap schedule;
     schedule.insert(QStringLiteral("mode"), m_autoRunEnabled ? QStringLiteral("auto") : QStringLiteral("manual"));
@@ -117,7 +189,97 @@ QVariantMap OfflineRuntimeService::buildAutoModeSnapshot() const
     snapshot.insert(QStringLiteral("controller_history"), QVariantList());
     snapshot.insert(QStringLiteral("decision_summary"), QVariantMap());
     snapshot.insert(QStringLiteral("guardrail_summary"), QVariantMap());
+    snapshot.insert(QStringLiteral("recommendations"), buildAutomationRecommendations(metrics, risk));
+    snapshot.insert(QStringLiteral("risk_alerts"), buildRiskAlerts(risk));
+    QVariantMap riskProfile;
+    riskProfile.insert(QStringLiteral("drawdown_pct"), risk.currentDrawdown);
+    riskProfile.insert(QStringLiteral("max_daily_loss_pct"), risk.maxDailyLoss);
+    riskProfile.insert(QStringLiteral("used_leverage"), risk.usedLeverage);
+    snapshot.insert(QStringLiteral("risk_profile"), riskProfile);
+
+    const QVariantMap backendSnapshot = loadDecisionSnapshotFromBackend();
+    if (!backendSnapshot.isEmpty()) {
+        const QVariantMap decision = backendSnapshot.value(QStringLiteral("decision_summary")).toMap();
+        if (!decision.isEmpty())
+            snapshot.insert(QStringLiteral("decision_summary"), decision);
+
+        const QVariantList history = backendSnapshot.value(QStringLiteral("controller_history")).toList();
+        if (!history.isEmpty())
+            snapshot.insert(QStringLiteral("controller_history"), history);
+
+        const QVariantMap guardrail = backendSnapshot.value(QStringLiteral("guardrail_summary")).toMap();
+        if (!guardrail.isEmpty())
+            snapshot.insert(QStringLiteral("guardrail_summary"), guardrail);
+
+        const QVariantList backendRecommendations = backendSnapshot.value(QStringLiteral("recommendations")).toList();
+        if (!backendRecommendations.isEmpty())
+            snapshot.insert(QStringLiteral("recommendations"), backendRecommendations);
+
+        const QVariantMap performance = backendSnapshot.value(QStringLiteral("performance_summary")).toMap();
+        if (!performance.isEmpty())
+            snapshot.insert(QStringLiteral("performance"), performance);
+    }
     return snapshot;
+}
+
+QVariantMap OfflineRuntimeService::previewPreset(const QVariantMap& selector)
+{
+    ensureDatasetLoaded();
+
+    const QString path = resolvePresetPath(selector);
+    if (path.isEmpty())
+        return buildPresetError(tr("Nie znaleziono presetu strategii"));
+
+    QFile file(path);
+    if (!file.exists())
+        return buildPresetError(tr("Plik presetu nie istnieje"));
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text))
+        return buildPresetError(tr("Nie udało się otworzyć pliku presetu (%1)").arg(path));
+
+    const QByteArray payload = file.readAll();
+    file.close();
+
+    QJsonParseError parseError{};
+    const QJsonDocument document = QJsonDocument::fromJson(payload, &parseError);
+    if (document.isNull() || !document.isObject())
+        return buildPresetError(tr("Uszkodzony plik presetu (%1)").arg(parseError.errorString()));
+
+    QVariantMap presetPayload = document.object().toVariantMap();
+    presetPayload.insert(QStringLiteral("path"), path);
+
+    QVariantMap presetSummary;
+    presetSummary.insert(QStringLiteral("path"), path);
+    presetSummary.insert(QStringLiteral("name"), presetPayload.value(QStringLiteral("name")));
+    presetSummary.insert(QStringLiteral("slug"), presetPayload.value(QStringLiteral("slug")));
+    presetSummary.insert(QStringLiteral("saved_at"), presetPayload.value(QStringLiteral("saved_at")));
+    presetSummary.insert(QStringLiteral("created_at"), presetPayload.value(QStringLiteral("created_at")));
+
+    const QJsonArray blocksArray = document.object().value(QStringLiteral("blocks")).toArray();
+    presetSummary.insert(QStringLiteral("block_count"), blocksArray.size());
+
+    const QVariantMap presetRisk = presetPayload.value(QStringLiteral("risk")).toMap();
+
+    const QVariantMap snapshot = buildAutoModeSnapshot();
+    const QVariantMap championDecision = snapshot.value(QStringLiteral("decision_summary")).toMap();
+    const QVariantMap championValidation = normaliseValidation(championDecision.value(QStringLiteral("validation")).toMap());
+    const QVariantMap championRisk = championRiskProfile(snapshot);
+
+    QVariantMap simulation = buildPerformanceSummaryFor(m_history);
+    if (!simulation.contains(QStringLiteral("source")))
+        simulation.insert(QStringLiteral("source"), QStringLiteral("offline_history"));
+
+    QVariantMap response;
+    response.insert(QStringLiteral("ok"), true);
+    response.insert(QStringLiteral("preset"), presetSummary);
+    response.insert(QStringLiteral("preset_payload"), presetPayload);
+    response.insert(QStringLiteral("preset_risk"), presetRisk);
+    response.insert(QStringLiteral("champion"), championDecision);
+    response.insert(QStringLiteral("validation"), championValidation);
+    response.insert(QStringLiteral("champion_risk"), championRisk);
+    response.insert(QStringLiteral("simulation"), simulation);
+    response.insert(QStringLiteral("diff"), buildRiskDiff(presetRisk, championRisk));
+
+    return response;
 }
 
 void OfflineRuntimeService::start()
@@ -436,11 +598,10 @@ QVariantList OfflineRuntimeService::buildEquityCurveSeries() const
     return points;
 }
 
-QVariantList OfflineRuntimeService::buildRiskHeatmapCells() const
+QVariantList OfflineRuntimeService::buildRiskHeatmapCells(const RiskSnapshotData& risk) const
 {
     QVariantList cells;
-    const RiskSnapshotData snapshot = buildRiskSnapshot();
-    for (const RiskExposureData& exposure : snapshot.exposures) {
+    for (const RiskExposureData& exposure : risk.exposures) {
         QVariantMap cell;
         cell.insert(QStringLiteral("asset"), exposure.code);
         cell.insert(QStringLiteral("label"), exposure.code);
@@ -462,15 +623,129 @@ QVariantList OfflineRuntimeService::buildRiskHeatmapCells() const
     return cells;
 }
 
-QVariantMap OfflineRuntimeService::buildAutomationMetrics() const
+QVariantMap OfflineRuntimeService::buildAutomationMetrics(const RiskSnapshotData& risk) const
 {
     QVariantMap metrics;
     metrics.insert(QStringLiteral("history_size"), m_history.size());
     metrics.insert(QStringLiteral("auto_enabled"), m_autoRunEnabled);
     metrics.insert(QStringLiteral("automation_running"), m_automationRunning);
-    if (!m_history.isEmpty())
+    if (!m_history.isEmpty()) {
         metrics.insert(QStringLiteral("last_close"), m_history.constLast().close);
+        const double firstClose = m_history.constFirst().close;
+        if (firstClose > 0.0)
+            metrics.insert(QStringLiteral("trend_bias"), (m_history.constLast().close - firstClose) / firstClose);
+    }
+    metrics.insert(QStringLiteral("drawdown_pct"), risk.currentDrawdown);
+    metrics.insert(QStringLiteral("max_daily_loss_pct"), risk.maxDailyLoss);
+    metrics.insert(QStringLiteral("kill_switch"), risk.killSwitchEngaged);
+    for (const RiskExposureData& exposure : risk.exposures) {
+        if (exposure.code == QStringLiteral("volatility")) {
+            metrics.insert(QStringLiteral("volatility_pct"), exposure.currentValue);
+            metrics.insert(QStringLiteral("volatility_threshold"), exposure.thresholdValue);
+        }
+    }
     return metrics;
+}
+
+QVariantList OfflineRuntimeService::buildAutomationRecommendations(const QVariantMap& metrics, const RiskSnapshotData& risk) const
+{
+    QVariantList recommendations;
+
+    const double drawdown = metrics.value(QStringLiteral("drawdown_pct")).toDouble();
+    const double trendBias = metrics.value(QStringLiteral("trend_bias")).toDouble();
+    const double volatility = metrics.value(QStringLiteral("volatility_pct")).toDouble();
+    const bool automationRunning = metrics.value(QStringLiteral("automation_running")).toBool();
+    const bool autoEnabled = metrics.value(QStringLiteral("auto_enabled")).toBool();
+
+    QVariantMap primary;
+    if (drawdown > 0.08) {
+        primary.insert(QStringLiteral("mode"), QStringLiteral("capital_preservation"));
+        primary.insert(QStringLiteral("confidence"), 0.9);
+        primary.insert(
+            QStringLiteral("reason"),
+            tr("Bieżący drawdown %.1f%% przekracza próg bezpieczeństwa 8%%.")
+                .arg(drawdown * 100.0, 0, 'f', 1)
+        );
+        QVariantList actions;
+        actions.append(tr("Zmniejsz ekspozycję do %.0f%% portfela").arg(qMax(10.0, (1.0 - drawdown) * 100.0), 0, 'f', 0));
+        actions.append(tr("Przełącz tryb strategii na konserwatywny"));
+        primary.insert(QStringLiteral("suggested_actions"), actions);
+    } else if (trendBias > 0.03 && volatility < 0.12) {
+        primary.insert(QStringLiteral("mode"), QStringLiteral("momentum_long"));
+        primary.insert(QStringLiteral("confidence"), 0.75);
+        primary.insert(
+            QStringLiteral("reason"),
+            tr("Trend rynku jest dodatni (%.1f%%), a zmienność ograniczona – preferowany tryb momentum.")
+                .arg(trendBias * 100.0, 0, 'f', 1)
+        );
+        primary.insert(QStringLiteral("suggested_actions"), QVariantList{tr("Utrzymaj automatyczne wejścia na sygnały momentum")});
+    } else if (trendBias < -0.02) {
+        primary.insert(QStringLiteral("mode"), QStringLiteral("mean_reversion"));
+        primary.insert(QStringLiteral("confidence"), 0.7);
+        primary.insert(QStringLiteral("reason"), tr("Rynek znajduje się pod presją spadkową – zwiększ wagę mean-reversion."));
+        primary.insert(QStringLiteral("suggested_actions"), QVariantList{tr("Aktywuj presety hedgingowe lub neutralne")});
+    } else {
+        primary.insert(QStringLiteral("mode"), QStringLiteral("balanced"));
+        primary.insert(QStringLiteral("confidence"), 0.6);
+        primary.insert(QStringLiteral("reason"), tr("Metryki mieszczą się w normie – rekomendowany profil zbalansowany."));
+        primary.insert(QStringLiteral("suggested_actions"), QVariantList{tr("Monitoruj wskaźniki i utrzymaj bieżące presetowanie")});
+    }
+    recommendations.append(primary);
+
+    QVariantMap automation;
+    automation.insert(QStringLiteral("mode"), autoEnabled ? QStringLiteral("auto") : QStringLiteral("manual"));
+    automation.insert(QStringLiteral("confidence"), autoEnabled ? 0.55 : 0.65);
+    if (autoEnabled) {
+        QString message;
+        if (automationRunning)
+            message = tr("Automatyzacja aktywna – monitoruj alerty ryzyka w czasie rzeczywistym.");
+        else
+            message = tr("Automatyzacja włączona, ale zatrzymana – rozważ wznowienie po przeglądzie presetów.");
+        automation.insert(QStringLiteral("reason"), message);
+    } else {
+        automation.insert(QStringLiteral("reason"), tr("Automatyzacja jest wyłączona – po walidacji modeli możesz uruchomić tryb auto."));
+    }
+    if (risk.killSwitchEngaged)
+        automation.insert(QStringLiteral("blocked"), true);
+    recommendations.append(automation);
+
+    return recommendations;
+}
+
+QVariantList OfflineRuntimeService::buildRiskAlerts(const RiskSnapshotData& risk) const
+{
+    QVariantList alerts;
+    for (const RiskExposureData& exposure : risk.exposures) {
+        if (exposure.thresholdValue <= 0.0)
+            continue;
+        const double ratio = exposure.thresholdValue > 0.0 ? exposure.currentValue / exposure.thresholdValue : 0.0;
+        if (ratio < 0.85)
+            continue;
+        const QString severity = ratio >= 1.0 ? QStringLiteral("critical") : QStringLiteral("warning");
+        QVariantMap alert;
+        alert.insert(QStringLiteral("code"), exposure.code);
+        alert.insert(QStringLiteral("value"), exposure.currentValue);
+        alert.insert(QStringLiteral("threshold"), exposure.thresholdValue);
+        alert.insert(QStringLiteral("severity"), severity);
+        if (exposure.code == QStringLiteral("drawdown")) {
+            alert.insert(QStringLiteral("message"), tr("Drawdown osiągnął %.1f%% (limit %.1f%%)").arg(exposure.currentValue * 100.0, 0, 'f', 1).arg(exposure.thresholdValue * 100.0, 0, 'f', 1));
+        } else if (exposure.code == QStringLiteral("volatility")) {
+            alert.insert(QStringLiteral("message"), tr("Zmienność %.1f%% zbliża się do progu %.1f%%").arg(exposure.currentValue * 100.0, 0, 'f', 1).arg(exposure.thresholdValue * 100.0, 0, 'f', 1));
+        } else {
+            alert.insert(QStringLiteral("message"), tr("Wskaźnik %1 osiągnął %.1f%%").arg(exposure.code).arg(exposure.currentValue * 100.0, 0, 'f', 1));
+        }
+        alerts.append(alert);
+    }
+
+    if (risk.killSwitchEngaged) {
+        QVariantMap killSwitch;
+        killSwitch.insert(QStringLiteral("code"), QStringLiteral("kill_switch"));
+        killSwitch.insert(QStringLiteral("severity"), QStringLiteral("critical"));
+        killSwitch.insert(QStringLiteral("message"), tr("Aktywowano kill-switch profilu ryzyka – automatyczne transakcje wstrzymane."));
+        alerts.append(killSwitch);
+    }
+
+    return alerts;
 }
 
 QVariantMap OfflineRuntimeService::buildPerformanceSummary() const
@@ -562,4 +837,186 @@ QVariantMap OfflineRuntimeService::buildPerformanceSummaryFor(const QList<OhlcvP
         summary.insert(QStringLiteral("window"), window);
 
     return summary;
+}
+
+QVariantMap OfflineRuntimeService::loadDecisionSnapshotFromBackend() const
+{
+    QString python = bot::shell::utils::detectSecurityPythonExecutable().trimmed();
+    if (python.isEmpty()) {
+        qCWarning(lcOfflineService) << "Brak interpretera Pythona dla modułu snapshotu AI";
+        return {};
+    }
+
+    QString modelName = m_strategyConfig.value(QStringLiteral("model_name")).toString().trimmed();
+    if (modelName.isEmpty())
+        modelName = QStringLiteral("decision_engine");
+
+    QString repositoryPath = m_strategyConfig.value(QStringLiteral("model_repository")).toString().trimmed();
+    const QString envRepository = QString::fromUtf8(qgetenv("BOT_CORE_UI_MODEL_REPOSITORY")).trimmed();
+    if (!envRepository.isEmpty())
+        repositoryPath = envRepository;
+
+    QString qualityDir = m_strategyConfig.value(QStringLiteral("model_quality_dir")).toString().trimmed();
+    const QString envQuality = QString::fromUtf8(qgetenv("BOT_CORE_UI_MODEL_QUALITY_DIR")).trimmed();
+    if (!envQuality.isEmpty())
+        qualityDir = envQuality;
+
+    QStringList args;
+    args << QStringLiteral("-m") << QStringLiteral("bot_core.runtime.ui_bridge")
+         << QStringLiteral("auto-mode-snapshot") << QStringLiteral("--model") << modelName;
+
+    if (!repositoryPath.isEmpty())
+        args << QStringLiteral("--repository") << bot::shell::utils::expandPath(repositoryPath);
+    if (!qualityDir.isEmpty())
+        args << QStringLiteral("--quality-dir") << bot::shell::utils::expandPath(qualityDir);
+
+    QProcess process;
+    process.setProgram(python);
+    process.setArguments(args);
+    process.start();
+
+    if (!process.waitForStarted(1500)) {
+        qCWarning(lcOfflineService)
+            << "Nie udało się uruchomić modułu snapshotu AI" << python << process.errorString();
+        return {};
+    }
+
+    if (!process.waitForFinished(4000)) {
+        qCWarning(lcOfflineService) << "Moduł snapshotu AI przekroczył limit czasu";
+        process.kill();
+        process.waitForFinished(500);
+        return {};
+    }
+
+    const QByteArray stdoutData = process.readAllStandardOutput();
+    const QByteArray stderrData = process.readAllStandardError();
+
+    if (process.exitStatus() != QProcess::NormalExit || process.exitCode() != 0) {
+        qCWarning(lcOfflineService)
+            << "Moduł snapshotu AI zakończył się kodem" << process.exitCode()
+            << QString::fromUtf8(stderrData).trimmed();
+        return {};
+    }
+
+    if (!stderrData.isEmpty())
+        qCWarning(lcOfflineService)
+            << "Stderr modułu snapshotu AI:" << QString::fromUtf8(stderrData).trimmed();
+
+    QJsonParseError parseError{};
+    const QJsonDocument document = QJsonDocument::fromJson(stdoutData, &parseError);
+    if (parseError.error != QJsonParseError::NoError || !document.isObject()) {
+        qCWarning(lcOfflineService)
+            << "Nie udało się sparsować wyników snapshotu AI" << parseError.errorString();
+        return {};
+    }
+
+    return document.object().toVariantMap();
+}
+
+QString OfflineRuntimeService::resolvePresetPath(const QVariantMap& selector) const
+{
+    const QString rawPath = selector.value(QStringLiteral("path")).toString().trimmed();
+    if (!rawPath.isEmpty()) {
+        const QString expanded = bot::shell::utils::expandPath(rawPath);
+        if (QFileInfo::exists(expanded))
+            return expanded;
+    }
+
+    const QString slugValue = selector.value(QStringLiteral("slug")).toString();
+    const QString idValue = selector.value(QStringLiteral("id")).toString();
+    const QString nameValue = selector.value(QStringLiteral("name")).toString();
+
+    const QString normalisedSlug = normalisePresetKey(slugValue);
+    const QString normalisedId = normalisePresetKey(idValue);
+    const QString normalisedName = normalisePresetKey(nameValue);
+
+    const QString directoryPath = presetsDirectory();
+    QDir directory(directoryPath);
+    if (!directory.exists())
+        return QString();
+
+    const QStringList files = directory.entryList(QStringList() << QStringLiteral("*.json"), QDir::Files | QDir::Readable);
+    for (const QString& fileName : files) {
+        const QString filePath = directory.filePath(fileName);
+        const QString baseName = QFileInfo(fileName).completeBaseName();
+        const QString normalisedBase = normalisePresetKey(baseName);
+        if (!normalisedSlug.isEmpty() && normalisedSlug != normalisedBase)
+            continue;
+        if (!normalisedId.isEmpty() && normalisedId != normalisedBase)
+            continue;
+        if (!normalisedName.isEmpty() && normalisedName != normalisedBase)
+            continue;
+        return filePath;
+    }
+
+    return QString();
+}
+
+QString OfflineRuntimeService::presetsDirectory()
+{
+    const QByteArray override = qgetenv(kPresetDirectoryEnv);
+    if (!override.isEmpty())
+        return bot::shell::utils::expandPath(QString::fromUtf8(override));
+    return bot::shell::utils::expandPath(QStringLiteral("var/runtime/presets"));
+}
+
+QString OfflineRuntimeService::normalisePresetKey(const QString& value)
+{
+    QString trimmed = value.trimmed().toLower();
+    if (trimmed.isEmpty())
+        return QString();
+    QString normalised;
+    normalised.reserve(trimmed.size());
+    for (QChar ch : trimmed) {
+        if (ch.isLetterOrNumber() || ch == QLatin1Char('-') || ch == QLatin1Char('_')) {
+            normalised.append(ch);
+            continue;
+        }
+        if (ch.isSpace()) {
+            if (!normalised.endsWith(QLatin1Char('-')))
+                normalised.append(QLatin1Char('-'));
+        }
+    }
+    while (normalised.endsWith(QLatin1Char('-')))
+        normalised.chop(1);
+    return normalised;
+}
+
+QVariantList OfflineRuntimeService::buildRiskDiff(const QVariantMap& presetRisk,
+                                                  const QVariantMap& championRisk) const
+{
+    QVariantList diff;
+    if (presetRisk.isEmpty() && championRisk.isEmpty())
+        return diff;
+
+    const QHash<QString, QString> labels = {
+        {QStringLiteral("max_daily_loss_pct"), tr("Limit dziennej straty")},
+        {QStringLiteral("risk_per_trade"), tr("Ryzyko na transakcję")},
+        {QStringLiteral("portfolio_risk"), tr("Docelowe ryzyko portfela")},
+        {QStringLiteral("max_leverage"), tr("Maksymalna dźwignia")},
+        {QStringLiteral("stop_loss_atr_multiple"), tr("Stop loss (ATR)")},
+        {QStringLiteral("max_open_positions"), tr("Maksymalna liczba pozycji")},
+        {QStringLiteral("hard_drawdown_pct"), tr("Twarde obsunięcie kapitału")},
+    };
+
+    const QSet<QString> percentKeys = {
+        QStringLiteral("max_daily_loss_pct"),
+        QStringLiteral("risk_per_trade"),
+        QStringLiteral("portfolio_risk"),
+        QStringLiteral("hard_drawdown_pct"),
+    };
+
+    QSet<QString> keys;
+    for (auto it = presetRisk.constBegin(); it != presetRisk.constEnd(); ++it)
+        keys.insert(it.key());
+    for (auto it = championRisk.constBegin(); it != championRisk.constEnd(); ++it)
+        keys.insert(it.key());
+
+    for (const QString& key : keys) {
+        const QString label = labels.value(key, key);
+        const bool isPercent = percentKeys.contains(key);
+        diff.append(describeDiffEntry(key, label, presetRisk.value(key), championRisk.value(key), isPercent));
+    }
+
+    return diff;
 }

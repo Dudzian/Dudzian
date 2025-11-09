@@ -9,9 +9,18 @@ import sys
 import tarfile
 import zipfile
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterable, Mapping, MutableMapping, Sequence
+
+from bot_core.reporting.model_quality import (
+    CHALLENGERS_FILENAME,
+    CHAMPION_FILENAME,
+    DEFAULT_QUALITY_DIR,
+    load_champion_overview,
+    list_tracked_models,
+    promote_challenger,
+)
 
 
 @dataclass(slots=True)
@@ -108,6 +117,115 @@ def _calculate_deletion_stats(target: Path) -> tuple[int, int, int]:
         return 1, 0, stat.st_size
 
     return 0, 0, 0
+
+
+def _cleanup_signal_quality_reports(
+    *,
+    directory: Path,
+    retention_days: int,
+    cutoff: datetime | None,
+    dry_run: bool,
+) -> Mapping[str, object]:
+    payload: dict[str, object] = {
+        "directory": str(directory),
+        "retention_days": retention_days,
+        "cutoff": cutoff.isoformat() if cutoff else None,
+        "matched": 0,
+        "removed": 0,
+        "removed_size": 0,
+        "targets": [],
+    }
+
+    if retention_days <= 0 and cutoff is None:
+        payload["status"] = "skipped"
+        payload["reason"] = "retention_disabled"
+        return payload
+
+    effective_cutoff = cutoff
+    if retention_days > 0:
+        retention_cutoff = datetime.now(timezone.utc) - timedelta(days=retention_days)
+        if effective_cutoff is None or retention_cutoff < effective_cutoff:
+            effective_cutoff = retention_cutoff
+
+    if effective_cutoff is None:
+        payload["status"] = "skipped"
+        payload["reason"] = "no_cutoff"
+        return payload
+
+    payload["cutoff"] = effective_cutoff.isoformat()
+
+    if not directory.exists():
+        payload["status"] = "missing"
+        return payload
+
+    candidates: list[tuple[Path, int, datetime]] = []
+    for path in sorted(directory.glob("*.json")):
+        try:
+            stat = path.stat()
+        except OSError:
+            continue
+        modified_at = datetime.fromtimestamp(stat.st_mtime, timezone.utc)
+        if modified_at <= effective_cutoff:
+            candidates.append((path, stat.st_size, modified_at))
+
+    payload["matched"] = len(candidates)
+    if not candidates:
+        payload["status"] = "empty"
+        return payload
+
+    if dry_run:
+        payload["status"] = "preview"
+        payload["dry_run"] = True
+        payload["removed"] = len(candidates)
+        payload["removed_size"] = sum(size for _, size, _ in candidates)
+        payload["targets"] = [
+            {
+                "path": str(path.resolve(strict=False)),
+                "size": int(size),
+                "modified_at": modified.isoformat(),
+                "status": "preview",
+            }
+            for path, size, modified in candidates
+        ]
+        return payload
+
+    removed_count = 0
+    removed_size = 0
+    targets: list[dict[str, object]] = []
+    errors: list[dict[str, object]] = []
+
+    for path, size, modified in candidates:
+        entry: dict[str, object] = {
+            "path": str(path.resolve(strict=False)),
+            "size": int(size),
+            "modified_at": modified.isoformat(),
+        }
+        try:
+            path.unlink()
+        except OSError as exc:
+            entry["status"] = "error"
+            entry["error"] = str(exc)
+            errors.append(entry)
+        else:
+            entry["status"] = "deleted"
+            removed_count += 1
+            removed_size += size
+        targets.append(entry)
+
+    payload["targets"] = targets
+    payload["removed"] = removed_count
+    payload["removed_size"] = removed_size
+
+    if errors and removed_count == 0:
+        payload["status"] = "error"
+        payload["errors"] = errors
+    elif errors:
+        payload["status"] = "partial_failure"
+        payload["errors"] = errors
+    else:
+        payload["status"] = "completed"
+
+    return payload
 
 
 def list_reports(*, root: str | Path | None = None) -> Mapping[str, object]:
@@ -1146,6 +1264,112 @@ def cmd_overview(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_champion(args: argparse.Namespace) -> int:
+    base = Path(args.base_dir).expanduser() if args.base_dir else DEFAULT_QUALITY_DIR
+    requested = [value.strip() for value in (args.models or []) if value and value.strip()]
+    if requested:
+        models = tuple(dict.fromkeys(requested))
+    else:
+        models = list_tracked_models(base_dir=base)
+
+    summaries = []
+    for model_name in models:
+        overview = load_champion_overview(model_name, base_dir=base)
+        if overview:
+            summaries.append(overview)
+
+    payload = {
+        "status": "ok",
+        "base_directory": str(base),
+        "models": summaries,
+    }
+    if requested and len(summaries) != len(models):
+        missing = sorted(set(models) - {entry["model_name"] for entry in summaries})
+        payload["missing_models"] = missing
+
+    print(json.dumps(payload, ensure_ascii=False))
+    return 0
+
+
+def cmd_promote(args: argparse.Namespace) -> int:
+    model = str(getattr(args, "model", "")).strip()
+    version = str(getattr(args, "version", "")).strip()
+    if not model:
+        print("Parametr --model jest wymagany", file=sys.stderr)
+        return 2
+    if not version:
+        print("Parametr --version jest wymagany", file=sys.stderr)
+        return 2
+
+    quality_dir = Path(args.quality_dir).expanduser() if getattr(args, "quality_dir", None) else DEFAULT_QUALITY_DIR
+    quality_dir = quality_dir.resolve()
+    audit_root = Path(args.audit_dir).expanduser() if getattr(args, "audit_dir", None) else Path("audit/champion_promotions")
+    audit_root = audit_root.resolve()
+    reason = str(getattr(args, "reason", "")).strip() or None
+
+    try:
+        decision = promote_challenger(model, version, base_dir=quality_dir, reason=reason)
+    except (KeyError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+
+    decided_at = decision.decided_at.astimezone(timezone.utc)
+    timestamp_label = decided_at.strftime("%Y%m%dT%H%M%S")
+    audit_dir = audit_root / model / f"{timestamp_label}_{version}"
+    audit_dir.mkdir(parents=True, exist_ok=True)
+
+    candidate_payload = json.loads(json.dumps(decision.candidate))
+    previous_payload = json.loads(json.dumps(decision.previous_champion)) if decision.previous_champion else None
+    challengers_payload = [json.loads(json.dumps(entry)) for entry in decision.challengers]
+
+    summary_payload: dict[str, object] = {
+        "status": "promoted",
+        "model_name": decision.model_name,
+        "version": candidate_payload.get("version", version),
+        "decided_at": decided_at.isoformat(),
+        "reason": decision.reason,
+        "requested_version": version,
+        "requested_reason": reason or "",
+        "previous_champion": previous_payload,
+        "candidate": candidate_payload,
+        "challengers": challengers_payload,
+        "audit_generated_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+    summary_path = audit_dir / "summary.json"
+    summary_path.write_text(json.dumps(summary_payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+    summary_size = summary_path.stat().st_size
+    report_entry = ReportEntry(
+        identifier=str(Path(model) / f"{timestamp_label}_{version}"),
+        category=model,
+        summary_path=str(summary_path.resolve()),
+        summary=summary_payload,
+        exports=[],
+        updated_at=decided_at,
+        total_size=summary_size,
+        export_count=0,
+        created_at=decided_at,
+    )
+
+    champion_path = (quality_dir / model / CHAMPION_FILENAME).resolve()
+    challengers_path = (quality_dir / model / CHALLENGERS_FILENAME).resolve()
+
+    payload = {
+        "status": "ok",
+        "model": model,
+        "version": version,
+        "reason": decision.reason,
+        "champion_path": str(champion_path),
+        "challengers_path": str(challengers_path),
+        "audit_directory": str(audit_dir),
+        "audit_entry": _serialize(report_entry),
+    }
+
+    print(json.dumps(payload, ensure_ascii=False))
+    return 0
+
+
 def cmd_delete(args: argparse.Namespace) -> int:
     raw_path = (args.path or "").strip()
     if not raw_path:
@@ -1300,8 +1524,23 @@ def cmd_purge(args: argparse.Namespace) -> int:
     if dry_run:
         payload["dry_run"] = True
 
+    retention_days = int(getattr(args, "signal_quality_retention_days", 0) or 0)
+    signal_quality_dir_raw = getattr(args, "signal_quality_dir", None)
+    if signal_quality_dir_raw:
+        quality_dir = Path(signal_quality_dir_raw).expanduser()
+    else:
+        quality_dir = Path("reports/exchanges/signal_quality")
+    quality_dir = quality_dir.resolve(strict=False)
+    cleanup_payload = _cleanup_signal_quality_reports(
+        directory=quality_dir,
+        retention_days=retention_days,
+        cutoff=until,
+        dry_run=dry_run,
+    )
+
     if not paginated_entries:
         payload["status"] = "empty"
+        payload["signal_quality_cleanup"] = cleanup_payload
         print(json.dumps(payload, ensure_ascii=False))
         return 0
 
@@ -1394,6 +1633,8 @@ def cmd_purge(args: argparse.Namespace) -> int:
         payload["errors"] = errors
     else:
         payload["status"] = "completed"
+
+    payload["signal_quality_cleanup"] = cleanup_payload
 
     print(json.dumps(payload, ensure_ascii=False))
     return 0
@@ -1733,6 +1974,21 @@ def build_parser() -> argparse.ArgumentParser:
         help="Filtruj raporty posiadające eksporty lub ich pozbawione",
     )
 
+    promote_parser = subparsers.add_parser(
+        "promote",
+        help="Promuj challengera do championa i zapisz wpis audytowy",
+    )
+    promote_parser.add_argument("--model", required=True, help="Nazwa modelu decision engine")
+    promote_parser.add_argument("--version", required=True, help="Wersja challengera do awansu")
+    promote_parser.add_argument("--quality-dir", dest="quality_dir", default=None, help="Katalog z rejestrem champion")
+    promote_parser.add_argument(
+        "--audit-dir",
+        dest="audit_dir",
+        default=None,
+        help="Katalog docelowy wpisów audytowych (domyślnie audit/champion_promotions)",
+    )
+    promote_parser.add_argument("--reason", dest="reason", default=None, help="Uzasadnienie ręcznej promocji")
+
     delete_parser = subparsers.add_parser("delete", help="Usuń raport lub katalog eksportów")
     delete_parser.add_argument("path", help="Ścieżka (względna) raportu do usunięcia")
     delete_parser.add_argument("--base-dir", "--root", dest="base_dir", default=None)
@@ -1796,9 +2052,35 @@ def build_parser() -> argparse.ArgumentParser:
         help="Filtruj raporty po obecności eksportów",
     )
     purge_parser.add_argument(
+        "--signal-quality-dir",
+        dest="signal_quality_dir",
+        default=None,
+        help="Katalog raportów jakości sygnałów (domyślnie reports/exchanges/signal_quality).",
+    )
+    purge_parser.add_argument(
+        "--signal-quality-retention-days",
+        dest="signal_quality_retention_days",
+        type=int,
+        default=30,
+        help="Minimalny okres przechowywania raportów jakości sygnałów w dniach (<=0 wyłącza czyszczenie).",
+    )
+    purge_parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Pokaż podgląd usuwania bez dotykania plików",
+    )
+
+    champion_parser = subparsers.add_parser(
+        "champion",
+        help="Wyświetl status champion/challenger dla modeli AI",
+    )
+    champion_parser.add_argument("--base-dir", dest="base_dir", default=None)
+    champion_parser.add_argument(
+        "--model",
+        dest="models",
+        action="append",
+        default=None,
+        help="Nazwa modelu do odpytywania (można podać wielokrotnie)",
     )
 
     archive_parser = subparsers.add_parser(
@@ -1881,6 +2163,10 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.command == "overview":
         return cmd_overview(args)
+    if args.command == "champion":
+        return cmd_champion(args)
+    if args.command == "promote":
+        return cmd_promote(args)
     if args.command == "delete":
         return cmd_delete(args)
     if args.command == "purge":

@@ -1,0 +1,7 @@
+{
+  "metrics": {
+    "accuracy": 0.78,
+    "expected_pnl": 0.12
+  },
+  "status": "active"
+}

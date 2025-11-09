@@ -52,3 +52,15 @@ PerformanceGuard performanceGuardFromMap(const QVariantMap& map) {
 
     return guard;
 }
+
+QVariantMap performanceGuardToMap(const PerformanceGuard& guard)
+{
+    QVariantMap map;
+    map.insert(QStringLiteral("fps_target"), guard.fpsTarget);
+    map.insert(QStringLiteral("reduce_motion_after_seconds"), guard.reduceMotionAfterSeconds);
+    map.insert(QStringLiteral("jank_threshold_ms"), guard.jankThresholdMs);
+    map.insert(QStringLiteral("max_overlay_count"), guard.maxOverlayCount);
+    map.insert(QStringLiteral("disable_secondary_when_fps_below"), guard.disableSecondaryWhenFpsBelow);
+
+    return map;
+}

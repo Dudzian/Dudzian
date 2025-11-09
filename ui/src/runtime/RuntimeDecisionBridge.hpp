@@ -36,6 +36,7 @@ public:
     Q_INVOKABLE QVariantList listStrategyPresets();
     Q_INVOKABLE QVariantMap loadStrategyPreset(const QVariantMap& selector);
     Q_INVOKABLE QVariantMap deleteStrategyPreset(const QVariantMap& selector);
+    Q_INVOKABLE QVariantMap previewStrategyPreset(const QVariantMap& selector);
 
 signals:
     void decisionsChanged();
@@ -56,5 +57,7 @@ private:
     QString m_logPath;
     QPointer<OfflineRuntimeBridge> m_offlineBridge;
     QPointer<BotCoreLocalService> m_localService;
+    mutable bool m_presetCacheValid = false;
+    mutable QVariantList m_cachedPresets;
 };
 

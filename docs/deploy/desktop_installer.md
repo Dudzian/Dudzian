@@ -10,7 +10,8 @@ python deploy/packaging/desktop_installer.py \
   --version 1.2.3 \
   --platform linux \
   --profiles-dir deploy/packaging/profiles \
-  --hook-source probe_keyring.py
+  --hook-source probe_keyring.py \
+  --verify-hook
 ```
 
 * `--version` – numer wersji umieszczany w nazwie archiwum oraz metadanych.
@@ -18,6 +19,8 @@ python deploy/packaging/desktop_installer.py \
 * `--profiles-dir` – katalog z profilami TOML opisującymi layout instalatora.
 * `--hook-source` – ścieżka do skryptu `probe_keyring.py`, który zostanie
   skopiowany do pakietu i wykorzystany do walidacji HWID.
+* `--verify-hook` – uruchamia automatyczną walidację hooka HWID w osobnym
+  procesie Pythona (wykorzystuje zmienną `KBOT_FAKE_FINGERPRINT`).
 
 Narzędzie korzysta z sekcji `[bundle]` profilu, kopiując wskazane katalogi do
 tymczasowego stagingu, dodając dystrybucję Qt (jeśli zdefiniowana) oraz generując
@@ -37,6 +40,8 @@ W każdym archiwum znajdują się pliki:
   2. Wywołuje `probe_keyring.install_hook_main`, zgłaszając błąd przy braku
      fingerprintu lub rozbieżności.
   3. Opcjonalnie zapisuje log walidacji do `KBOT_INSTALL_LOG`.
+  4. W środowisku testowym może korzystać z `KBOT_FAKE_FINGERPRINT`, aby
+     zasymulować fingerprint bez dostępu do TPM.
 
 Tym samym instalator może uruchomić `python hooks/validate_hwid.py` jako krok
 preinstalacyjny – niepowodzenie kończy instalację błędem, sukces umożliwia
@@ -52,6 +57,8 @@ integrację hooków HWID.
 ## Testy automatyczne
 
 `tests/packaging/test_installer.py` buduje przykładową paczkę, po czym weryfikuje
-obecność hooków HWID, manifestu oraz spójność metadanych. Test korzysta z
-próbkowych zasobów w `deploy/packaging/samples`, co umożliwia szybkie, offline’owe
-sprawdzenie konfiguracji.
+obecność hooków HWID, manifestu oraz spójność metadanych. Dodatkowy test
+uruchamia `hooks/validate_hwid.py` z ustawionymi `KBOT_FAKE_FINGERPRINT` i
+`KBOT_INSTALL_LOG`, potwierdzając integrację z `keyring` i poprawne logowanie.
+Test korzysta z próbkowych zasobów w `deploy/packaging/samples`, co umożliwia
+szybkie, offline’owe sprawdzenie konfiguracji.

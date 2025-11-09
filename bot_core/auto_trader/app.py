@@ -26,11 +26,11 @@ import time
 import uuid
 from bisect import bisect_right
 from datetime import datetime, timedelta, timezone, tzinfo
-from collections import Counter, OrderedDict
+from collections import Counter, OrderedDict, deque
 from pathlib import Path
 from collections.abc import Iterable
 from contextlib import contextmanager
-from dataclasses import asdict, is_dataclass
+from dataclasses import asdict, dataclass, is_dataclass
 from types import SimpleNamespace
 from typing import Any, Callable, Dict, Mapping, Optional, Protocol, Sequence, cast
 
@@ -50,6 +50,7 @@ from bot_core.auto_trader.schedule import (
     ScheduleState,
     TradingSchedule,
 )
+from bot_core.ai.inference import ModelRepository
 from bot_core.ai.regime import (
     MarketRegime,
     MarketRegimeAssessment,
@@ -74,6 +75,10 @@ from bot_core.trading.strategy_aliasing import (
     StrategyAliasResolver,
     canonical_alias_map,
     normalise_suffixes,
+)
+from bot_core.reporting.model_quality import (
+    DEFAULT_QUALITY_DIR,
+    load_champion_overview,
 )
 from bot_core.runtime.journal import (
     TradingDecisionJournal,
@@ -388,6 +393,29 @@ def _serialize_schedule_state(state: ScheduleState) -> dict[str, Any]:
     return payload
 
 
+@dataclass(slots=True)
+class _ChampionCacheEntry:
+    version: str
+    source: str
+    decided_at: str | None
+    fallback: bool
+    fallback_reason: str | None
+    champion_version: str | None
+
+
+@dataclass(slots=True)
+class _ChampionSnapshot:
+    model_name: str
+    version: str
+    source: str
+    payload: Mapping[str, object]
+    champion_version: str | None
+    decided_at: str | None
+    fallback: bool
+    fallback_reason: str | None
+    challengers: tuple[Mapping[str, object], ...]
+
+
 class AutoTrader:
     """Small cooperative wrapper around an auto-trading loop.
 
@@ -403,6 +431,7 @@ class AutoTrader:
         "intraday_breakout": "day_trading",
     }
     _ALIAS_RESOLVER: StrategyAliasResolver | None = None
+    _DEFAULT_CHAMPION_KEY = "__default__"
 
     @classmethod
     def _alias_resolver(cls) -> StrategyAliasResolver:
@@ -540,11 +569,15 @@ class AutoTrader:
         strategy_alias_suffixes: Iterable[str] | None = None,
         enable_profiling: bool = False,
         profiling_top_stats: int = 25,
+        model_quality_dir: Path | str | None = None,
+        champion_repository_root: Path | str | None = None,
+        champion_model_map: Mapping[str, str] | None = None,
     ) -> None:
         self.emitter = emitter
         self.gui = gui
         self.symbol_getter = symbol_getter
         self.market_data_provider = market_data_provider
+        self.bootstrap_context = bootstrap_context
 
         alias_override = canonical_alias_map(strategy_alias_map)
         suffix_override = (
@@ -576,6 +609,20 @@ class AutoTrader:
         )
         self._profiling_top_stats = max(1, int(profiling_top_stats))
         self._profiling_reports: dict[str, list[ProfileReport]] = {}
+        self._champion_registry_dir = (
+            Path(model_quality_dir).expanduser()
+            if model_quality_dir is not None
+            else DEFAULT_QUALITY_DIR.expanduser()
+        )
+        self._champion_repository_root = self._resolve_champion_repository_root(
+            champion_repository_root
+        )
+        self._champion_model_map = self._initialise_champion_model_map(
+            champion_model_map, bootstrap_context
+        )
+        self._model_repositories: dict[str, ModelRepository] = {}
+        self._champion_cache: dict[str, _ChampionCacheEntry] = {}
+        self._model_change_queue: deque[dict[str, Any]] = deque()
 
         self.signal_service = signal_service
         self._ai_feature_column_names: tuple[str, ...] | None = None
@@ -587,7 +634,6 @@ class AutoTrader:
         self.risk_service = risk_service
         self.execution_service = execution_service
         self.data_provider = data_provider
-        self.bootstrap_context = bootstrap_context
         self.portfolio_manager = (
             portfolio_manager
             or getattr(gui, "portfolio_manager", None)
@@ -1673,6 +1719,386 @@ class AutoTrader:
                     "Emitter failed to publish controller cycle telemetry",
                     level=logging.DEBUG,
                 )
+
+    # ------------------------------------------------------------------
+    # Champion synchronisation helpers --------------------------------
+    # ------------------------------------------------------------------
+    def _resolve_champion_repository_root(
+        self, override: Path | str | None
+    ) -> Path:
+        if override is not None:
+            candidate = Path(override).expanduser()
+        else:
+            candidate = None
+            context = getattr(self, "bootstrap_context", None)
+            if context is not None:
+                manager_candidate = getattr(context, "ai_manager", None)
+                candidate_dir = getattr(manager_candidate, "model_dir", None)
+                if candidate_dir:
+                    candidate = Path(candidate_dir).expanduser()
+            if candidate is None:
+                candidate = Path("var/models").expanduser()
+        try:
+            candidate.mkdir(parents=True, exist_ok=True)
+        except Exception:  # pragma: no cover - środowiska testowe mogą blokować zapis
+            LOGGER.debug(
+                "Nie udało się utworzyć katalogu repozytorium modeli %s",
+                candidate,
+                exc_info=True,
+            )
+        return candidate
+
+    def _initialise_champion_model_map(
+        self,
+        mapping: Mapping[str, str] | None,
+        bootstrap_context: Any | None,
+    ) -> dict[str, str]:
+        result: dict[str, str] = {}
+        if isinstance(mapping, Mapping):
+            for key, value in mapping.items():
+                normalized_key = self._normalize_symbol_key(key)
+                token = str(value).strip() if value is not None else ""
+                if token:
+                    result[normalized_key] = token
+        if bootstrap_context is not None:
+            bindings = getattr(bootstrap_context, "ai_model_bindings", None)
+            if bindings:
+                for binding in bindings:
+                    symbol = getattr(binding, "symbol", None)
+                    model_type = getattr(binding, "model_type", None)
+                    if not symbol or not model_type:
+                        continue
+                    normalized_key = self._normalize_symbol_key(symbol)
+                    token = str(model_type).strip()
+                    if token and normalized_key not in result:
+                        result[normalized_key] = token
+        if not result:
+            result[self._DEFAULT_CHAMPION_KEY] = "decision_engine"
+        return result
+
+    def _normalize_symbol_key(self, symbol: object) -> str:
+        if symbol is None:
+            return self._DEFAULT_CHAMPION_KEY
+        token = str(symbol).strip()
+        if not token or token == "*":
+            return self._DEFAULT_CHAMPION_KEY
+        return token.upper()
+
+    def _resolve_champion_model_name(self, symbol: str | None) -> str | None:
+        mapping = getattr(self, "_champion_model_map", {})
+        if not mapping:
+            return None
+        key = self._normalize_symbol_key(symbol)
+        if key in mapping:
+            return mapping[key]
+        return mapping.get(self._DEFAULT_CHAMPION_KEY)
+
+    @staticmethod
+    def _score_quality_payload(payload: Mapping[str, object] | None) -> tuple[float, float, float]:
+        if not isinstance(payload, Mapping):
+            return (0.0, -math.inf, 0.0)
+        metrics_raw = payload.get("metrics")
+        if isinstance(metrics_raw, Mapping):
+            summary_raw = metrics_raw.get("summary")
+            metrics = summary_raw if isinstance(summary_raw, Mapping) else metrics_raw
+        else:
+            metrics = {}
+
+        directional = 0.0
+        mae = math.inf
+        expected_pnl = 0.0
+
+        for key in (
+            "validation_directional_accuracy",
+            "test_directional_accuracy",
+            "directional_accuracy",
+        ):
+            try:
+                directional = max(directional, float(metrics.get(key)))
+            except (TypeError, ValueError):
+                continue
+
+        for key in ("validation_mae", "test_mae", "mae"):
+            try:
+                candidate = float(metrics.get(key))
+            except (TypeError, ValueError):
+                continue
+            mae = min(mae, candidate)
+
+        for key in (
+            "validation_expected_pnl",
+            "test_expected_pnl",
+            "expected_pnl",
+        ):
+            try:
+                expected_pnl = max(expected_pnl, float(metrics.get(key)))
+            except (TypeError, ValueError):
+                continue
+
+        if not math.isfinite(mae):
+            mae = math.inf
+        return (directional, -mae, expected_pnl)
+
+    def _best_challenger_payload(
+        self, challengers: Sequence[Mapping[str, object]]
+    ) -> tuple[Mapping[str, object] | None, tuple[float, float, float] | None]:
+        best_payload: Mapping[str, object] | None = None
+        best_score: tuple[float, float, float] | None = None
+        for candidate in challengers:
+            if not isinstance(candidate, Mapping):
+                continue
+            version = str(candidate.get("version", "")).strip()
+            if not version:
+                continue
+            score = self._score_quality_payload(candidate)
+            if best_payload is None or best_score is None or score > best_score:
+                best_payload = candidate
+                best_score = score
+        return best_payload, best_score
+
+    def _load_champion_snapshot(self, model_name: str) -> _ChampionSnapshot | None:
+        try:
+            overview = load_champion_overview(model_name, base_dir=self._champion_registry_dir)
+        except Exception:  # pragma: no cover - diagnostyka I/O
+            LOGGER.debug(
+                "Nie udało się odczytać rejestru champion dla %s",
+                model_name,
+                exc_info=True,
+            )
+            return None
+        if not overview:
+            return None
+
+        champion_report = overview.get("champion")
+        if not isinstance(champion_report, Mapping):
+            champion_report = {}
+
+        challengers_raw = overview.get("challengers") or ()
+        challengers: list[Mapping[str, object]] = []
+        for entry in challengers_raw:
+            report = entry.get("report") if isinstance(entry, Mapping) else None
+            if isinstance(report, Mapping):
+                challengers.append(report)
+
+        champion_version_raw = champion_report.get("version")
+        champion_version = str(champion_version_raw).strip() if champion_version_raw else None
+        champion_status = str(champion_report.get("status", "")).strip().lower()
+        champion_score = (
+            self._score_quality_payload(champion_report)
+            if champion_report and champion_version
+            else None
+        )
+        best_challenger, challenger_score = self._best_challenger_payload(challengers)
+
+        fallback = False
+        fallback_reason: str | None = None
+        selected_payload: Mapping[str, object] | None = champion_report if champion_report else None
+        selected_source = "champion"
+
+        if champion_status == "degraded":
+            fallback = True
+            fallback_reason = "champion_degraded"
+            selected_payload = best_challenger
+            selected_source = "challenger"
+        elif not champion_version:
+            fallback = True
+            fallback_reason = "champion_missing"
+            selected_payload = best_challenger
+            selected_source = "challenger"
+        elif (
+            best_challenger is not None
+            and challenger_score is not None
+            and champion_score is not None
+            and challenger_score > champion_score
+        ):
+            fallback = True
+            fallback_reason = "challenger_outperformed"
+            selected_payload = best_challenger
+            selected_source = "challenger"
+
+        if selected_payload is None:
+            return None
+        version_raw = selected_payload.get("version")
+        version = str(version_raw).strip() if version_raw else ""
+        if not version:
+            return None
+
+        metadata = overview.get("champion_metadata") if isinstance(overview, Mapping) else None
+        decided_at: str | None = None
+        if isinstance(metadata, Mapping):
+            decided_raw = metadata.get("decided_at")
+            if decided_raw:
+                decided_at = str(decided_raw).strip()
+
+        return _ChampionSnapshot(
+            model_name=model_name,
+            version=version,
+            source=selected_source,
+            payload=selected_payload,
+            champion_version=champion_version,
+            decided_at=decided_at,
+            fallback=fallback,
+            fallback_reason=fallback_reason,
+            challengers=tuple(challengers),
+        )
+
+    def _repository_for_model(self, model_name: str) -> ModelRepository:
+        repository = self._model_repositories.get(model_name)
+        if repository is None:
+            base = self._champion_repository_root / model_name
+            try:
+                base.mkdir(parents=True, exist_ok=True)
+            except Exception:  # pragma: no cover - brak dostępu nie powinien zatrzymać cyklu
+                LOGGER.debug(
+                    "Nie udało się utworzyć katalogu modeli %s",
+                    base,
+                    exc_info=True,
+                )
+            repository = ModelRepository(base)
+            self._model_repositories[model_name] = repository
+        return repository
+
+    def _resolve_model_artifact_path(self, model_name: str, version: str) -> Path | None:
+        repository = self._repository_for_model(model_name)
+        try:
+            path = repository.resolve(version)
+        except Exception:
+            entry = repository.get_version_entry(version)
+            if isinstance(entry, Mapping):
+                file_ref = entry.get("file")
+                if isinstance(file_ref, str) and file_ref.strip():
+                    candidate = repository.base_path / file_ref
+                    if candidate.exists():
+                        return candidate
+            return None
+        else:
+            return Path(path)
+
+    def _queue_model_change_event(self, payload: Mapping[str, Any]) -> None:
+        with self._lock:
+            self._model_change_queue.append(dict(payload))
+
+    def poll_model_change_event(self) -> Mapping[str, Any] | None:
+        with self._lock:
+            if not self._model_change_queue:
+                return None
+            payload = self._model_change_queue.popleft()
+        return dict(payload)
+
+    def _synchronise_champion_model(self, ai_manager: Any, symbol: str | None) -> None:
+        mapping = getattr(self, "_champion_model_map", {})
+        if not mapping:
+            return
+        loader = getattr(ai_manager, "load_decision_artifact", None)
+        if not callable(loader):
+            return
+        model_name = self._resolve_champion_model_name(symbol)
+        if not model_name:
+            return
+        snapshot = self._load_champion_snapshot(model_name)
+        if snapshot is None:
+            return
+        with self._lock:
+            cache_entry = self._champion_cache.get(model_name)
+        if cache_entry and (
+            cache_entry.version == snapshot.version
+            and cache_entry.source == snapshot.source
+            and cache_entry.fallback == snapshot.fallback
+            and cache_entry.fallback_reason == snapshot.fallback_reason
+        ):
+            return
+        artifact_path = self._resolve_model_artifact_path(model_name, snapshot.version)
+        if artifact_path is None:
+            self._log(
+                "Brak artefaktu modelu champion",
+                level=logging.DEBUG,
+                model=model_name,
+                version=snapshot.version,
+            )
+            return
+        repository = self._repository_for_model(model_name)
+        load_kwargs: dict[str, Any] = {
+            "artifact": artifact_path,
+            "repository_root": repository.base_path,
+            "set_default": True,
+        }
+        try:
+            loader(model_name, **load_kwargs)
+        except TypeError:
+            load_kwargs.pop("repository_root", None)
+            try:
+                loader(model_name, **load_kwargs)
+            except Exception as exc:
+                self._log(
+                    "Nie udało się załadować modelu champion",
+                    level=logging.ERROR,
+                    model=model_name,
+                    version=snapshot.version,
+                    error=repr(exc),
+                )
+                return
+        except Exception as exc:
+            self._log(
+                "Nie udało się załadować modelu champion",
+                level=logging.ERROR,
+                model=model_name,
+                version=snapshot.version,
+                error=repr(exc),
+            )
+            return
+
+        set_active = getattr(ai_manager, "set_active_model", None)
+        if callable(set_active) and symbol:
+            try:
+                set_active(symbol, model_name)
+            except Exception:  # pragma: no cover - staby testowe mogą nie wspierać metody
+                LOGGER.debug(
+                    "Nie udało się zaktualizować aktywnego modelu dla %s",
+                    symbol,
+                    exc_info=True,
+                )
+
+        previous_entry = cache_entry
+        new_entry = _ChampionCacheEntry(
+            version=snapshot.version,
+            source=snapshot.source,
+            decided_at=snapshot.decided_at,
+            fallback=snapshot.fallback,
+            fallback_reason=snapshot.fallback_reason,
+            champion_version=snapshot.champion_version,
+        )
+        with self._lock:
+            self._champion_cache[model_name] = new_entry
+
+        challenger_versions = [
+            str(report.get("version"))
+            for report in snapshot.challengers
+            if isinstance(report, Mapping) and str(report.get("version", "")).strip()
+        ]
+        event_payload: dict[str, Any] = {
+            "model_name": model_name,
+            "version": snapshot.version,
+            "source": snapshot.source,
+            "fallback": snapshot.fallback,
+            "decided_at": snapshot.decided_at,
+            "champion_version": snapshot.champion_version,
+            "challenger_versions": challenger_versions,
+        }
+        if snapshot.fallback_reason:
+            event_payload["fallback_reason"] = snapshot.fallback_reason
+        if previous_entry is not None:
+            event_payload["previous_version"] = previous_entry.version
+            event_payload["previous_source"] = previous_entry.source
+        self._queue_model_change_event(event_payload)
+
+        self._log(
+            "Załadowano model champion",
+            level=logging.INFO,
+            model=model_name,
+            version=snapshot.version,
+            fallback=snapshot.fallback,
+            reason=snapshot.fallback_reason,
+        )
 
     # ------------------------------------------------------------------
     # Market intelligence helpers -------------------------------------
@@ -5965,6 +6391,10 @@ class AutoTrader:
 
         ai_manager = self._resolve_ai_manager()
         if ai_manager is not None:
+            try:
+                self._synchronise_champion_model(ai_manager, symbol)
+            except Exception:  # pragma: no cover - synchronizacja nie może zatrzymać cyklu
+                LOGGER.debug("Synchronizacja modelu champion nie powiodła się", exc_info=True)
             self._run_ai_manager_maintenance(ai_manager)
         self._ai_degraded = bool(getattr(ai_manager, "is_degraded", False)) if ai_manager else False
         if self._ai_degraded:

@@ -54,6 +54,7 @@
         <file>views/LicenseAuditView.qml</file>
         <file>views/OperationsCenter.qml</file>
         <file>views/StrategyExperience.qml</file>
+        <file>views/StrategyManagement.qml</file>
         <file>views/AnalyticsDashboard.qml</file>
         <file>views/AnalyticsUtils.js</file>
         <file>views/StrategyBuilderUtils.js</file>
