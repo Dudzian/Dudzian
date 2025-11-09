@@ -9,7 +9,7 @@ import os
 import time
 from dataclasses import dataclass, field
 from collections.abc import Iterable, Iterator, MutableMapping
-from collections import Counter
+from collections import Counter, deque
 from importlib import import_module
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, MutableMapping, Optional, Sequence, Tuple, cast
@@ -1406,6 +1406,8 @@ class ExchangeManager:
         self._strategy_catalog: StrategyCatalog | None = None
         self._strategy_contexts: Dict[str, _StrategyContextSnapshot] = {}
         self._strategy_assignments: Dict[str, _StrategyBinding] = {}
+        self._weight_history: dict[tuple[Mode, str], deque[float]] = {}
+        self._weight_snapshots: dict[tuple[Mode, str], dict[str, object]] = {}
 
     @property
     def event_bus(self) -> EventBus:

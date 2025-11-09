@@ -24,6 +24,7 @@ Frame {
     property var reasons: []
     property var performanceSummary: ({})
     property var recentPerformanceSummary: ({})
+    property var performanceIndicators: ({})
     property var controllerHistory: []
     property var recalibrations: []
     property var riskProfile: ({})
@@ -33,6 +34,12 @@ Frame {
     property var alertDraft: ({ severity: "warning", maxDrawdown: 0.07, notifyOnSwitch: true })
     property var severityOptions: ["info", "warning", "error", "critical"]
     property int historyPreviewLimit: 6
+    property var guardrailState: ({})
+    property var guardrailTrace: []
+    property var decisionHistory: []
+    property var modelEvents: []
+    property var signalQuality: ({})
+    property var failoverStatus: ({})
 
     signal snapshotRefreshed()
 
@@ -80,6 +87,7 @@ Frame {
         performanceSummary = payload.performance ? cloneObject(payload.performance) : {}
         recentPerformanceSummary = payload.performanceWindow ? cloneObject(payload.performanceWindow) :
                                    (payload.performance_window ? cloneObject(payload.performance_window) : {})
+        performanceIndicators = cloneObject(payload.performanceIndicators || payload.performance_indicators || {})
         riskProfile = payload.riskProfile || payload.risk_profile || null
         portfolio = payload.portfolio ? cloneObject(payload.portfolio) : null
         if (payload.environment !== undefined && payload.environment !== null)

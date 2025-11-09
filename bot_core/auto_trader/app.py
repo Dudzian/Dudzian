@@ -84,6 +84,11 @@ from bot_core.runtime.journal import (
     TradingDecisionJournal,
     aggregate_decision_statistics,
     log_decision_event,
+    log_model_change_event,
+)
+from bot_core.runtime.journal_analysis import (
+    JournalAnalytics,
+    analyse_decision_journal,
 )
 
 
@@ -716,6 +721,9 @@ class AutoTrader:
         if journal_instance is not None and not hasattr(journal_instance, "record"):
             journal_instance = None
         self._decision_journal: TradingDecisionJournal | None = journal_instance
+        self._journal_analytics_cache: tuple[float, JournalAnalytics | None] | None = None
+        self._last_journal_analytics: JournalAnalytics | None = None
+        self._journal_performance_state: str = "baseline"
 
         context_source: Mapping[str, object] | None = decision_journal_context
         if context_source is None and bootstrap_context is not None:
@@ -773,6 +781,30 @@ class AutoTrader:
         self._metric_recalibration_total = self._metrics.counter(
             "auto_trader_recalibrations_triggered_total",
             "Liczba zleconych rekalkibracji strategii.",
+        )
+        self._metric_model_change_total = self._metrics.counter(
+            "auto_trader_model_changes_total",
+            "Licznik zmian aktywnego modelu decision engine.",
+        )
+        self._metric_model_change_guardrail_total = self._metrics.counter(
+            "auto_trader_model_change_guardrail_blocks_total",
+            "Zmiany modelu wykonane przy aktywnych blokadach guardrail.",
+        )
+        self._metric_model_change_timestamp = self._metrics.gauge(
+            "auto_trader_model_change_timestamp_seconds",
+            "Znacznik czasu ostatniej zmiany modelu decision engine.",
+        )
+        self._metric_retraining_cycle_total = self._metrics.counter(
+            "auto_trader_retraining_cycles_total",
+            "Liczba cykli retrainingu odnotowanych przez AutoTradera.",
+        )
+        self._metric_retraining_guardrail_total = self._metrics.counter(
+            "auto_trader_retraining_guardrail_blocks_total",
+            "Cykle retrainingu zakończone przy aktywnych guardrailach lub kill switchu.",
+        )
+        self._metric_retraining_timestamp = self._metrics.gauge(
+            "auto_trader_retraining_timestamp_seconds",
+            "Znacznik czasu ostatniego cyklu retrainingu obsłużonego przez AutoTradera.",
         )
         self._metric_schedule_closed_seconds = self._metrics.histogram(
             "auto_trader_schedule_block_duration_seconds",
@@ -5869,9 +5901,299 @@ class AutoTrader:
                 else:
                     self.current_strategy = f"{self.current_strategy}_probing"
 
+        analytics = self._resolve_journal_analytics()
+        if analytics is not None:
+            self._apply_journal_performance_adjustments(
+                analytics,
+                risk=risk,
+                assessment=assessment,
+                summary=summary,
+            )
+
         self.current_leverage = float(max(self.current_leverage, 0.0))
         self.current_stop_loss_pct = float(max(self.current_stop_loss_pct, 0.005))
         self.current_take_profit_pct = float(max(self.current_take_profit_pct, self.current_stop_loss_pct * 1.2))
+        self._update_strategy_metrics(self.current_strategy)
+
+    def set_signal_quality_provider(
+        self,
+        provider: Callable[[], Mapping[str, object] | None] | None,
+    ) -> None:
+        """Rejestruje dostawcę snapshotów jakości sygnałów giełdowych."""
+
+        if provider is not None and not callable(provider):
+            raise TypeError("provider musi być wywoływalny")
+        self._signal_quality_provider = provider
+        self._signal_quality_cache = None
+
+    @staticmethod
+    def _normalize_exchange_id(exchange_id: str) -> str:
+        value = str(exchange_id or "").strip().lower()
+        if not value:
+            raise ValueError("exchange_id nie może być pusty")
+        return value
+
+    @staticmethod
+    def _normalize_segment(segment: str | None) -> str:
+        if segment is None:
+            return "default"
+        value = str(segment or "").strip().lower()
+        return value or "default"
+
+    def register_exchange_weight_provider(
+        self,
+        exchange_id: str,
+        provider: Callable[[], Mapping[str, object] | None],
+        *,
+        segment: str | None = None,
+    ) -> None:
+        """Rejestruje dostawcę wag giełdowych wykorzystywanych przy alokacji."""
+
+        if not callable(provider):
+            raise TypeError("provider musi być wywoływalny")
+        normalized_exchange = self._normalize_exchange_id(exchange_id)
+        normalized_segment = self._normalize_segment(segment)
+        key = (normalized_exchange, normalized_segment)
+        canonical_segment = segment or normalized_segment
+        with self._lock:
+            self._exchange_weight_providers[key] = provider
+            self._exchange_key_registry[key] = (exchange_id, canonical_segment)
+            self._exchange_weight_cache = None
+
+    def configure_exchange_preferences(
+        self,
+        preferences: Mapping[str | tuple[str, str], float] | None,
+    ) -> None:
+        """Konfiguruje ręczne preferencje wag giełdowych."""
+
+        with self._lock:
+            self._exchange_preference_weights = {}
+            self._exchange_preference_defaults = {}
+            self._exchange_weight_cache = None
+            if not preferences:
+                return
+
+            for raw_key, raw_value in preferences.items():
+                try:
+                    numeric = float(raw_value)
+                except (TypeError, ValueError):
+                    continue
+                if numeric <= 0:
+                    continue
+
+                if isinstance(raw_key, tuple) and len(raw_key) == 2:
+                    exchange_part, segment_part = raw_key
+                else:
+                    key_str = str(raw_key)
+                    if ":" in key_str:
+                        exchange_part, segment_part = key_str.split(":", 1)
+                    else:
+                        exchange_part, segment_part = key_str, None
+
+                normalized_exchange = self._normalize_exchange_id(exchange_part)
+                if segment_part is None or segment_part == "*":
+                    self._exchange_preference_defaults[normalized_exchange] = numeric
+                    continue
+
+                normalized_segment = self._normalize_segment(segment_part)
+                key = (normalized_exchange, normalized_segment)
+                self._exchange_preference_weights[key] = numeric
+
+    def invalidate_exchange_weight_cache(self) -> None:
+        with self._lock:
+            self._exchange_weight_cache = None
+
+    def _resolve_exchange_allocations(
+        self,
+        *,
+        force_refresh: bool = False,
+    ) -> dict[tuple[str, str], dict[str, Any]]:
+        with self._lock:
+            providers = dict(self._exchange_weight_providers)
+            key_registry = dict(self._exchange_key_registry)
+            preference_weights = dict(self._exchange_preference_weights)
+            preference_defaults = dict(self._exchange_preference_defaults)
+            cache = self._exchange_weight_cache
+
+        if not providers:
+            return {}
+
+        now = time.monotonic()
+        if (
+            not force_refresh
+            and cache is not None
+            and now - cache[0] <= 5.0
+        ):
+            return {key: dict(value) for key, value in cache[1].items()}
+
+        snapshots: dict[tuple[str, str], dict[str, Any]] = {}
+        for key, provider in providers.items():
+            try:
+                snapshot = provider()
+            except Exception:
+                LOGGER.debug(
+                    "Nie udało się pobrać wag giełdowych od dostawcy %s", key,
+                    exc_info=True,
+                )
+                continue
+            if not isinstance(snapshot, Mapping):
+                continue
+
+            entry = dict(snapshot)
+            raw_exchange, raw_segment = key_registry.get(key, key)
+            entry.setdefault("exchange", raw_exchange)
+            entry.setdefault("segment", raw_segment)
+            weight_value = entry.get("rolling_weight")
+            if weight_value is None:
+                weight_value = entry.get("weight")
+            try:
+                numeric_weight = float(weight_value)
+            except (TypeError, ValueError):
+                numeric_weight = 0.0
+            entry["weight"] = max(0.0, numeric_weight)
+            snapshots[key] = entry
+
+        if not snapshots:
+            return {}
+
+        combined_scores: dict[tuple[str, str], float] = {}
+        for key, entry in snapshots.items():
+            exchange_key, segment_key = key
+            base_weight = float(entry.get("weight", 0.0))
+            preference = preference_weights.get(key)
+            if preference is None:
+                preference = preference_defaults.get(exchange_key, 1.0)
+            try:
+                preference_value = float(preference)
+            except (TypeError, ValueError):
+                preference_value = 1.0
+            if preference_value <= 0:
+                preference_value = 0.0
+
+            degradation_payload = entry.get("degradation")
+            if isinstance(degradation_payload, Mapping):
+                try:
+                    degradation_score = float(
+                        degradation_payload.get("rolling_score", 0.0) or 0.0
+                    )
+                except (TypeError, ValueError):
+                    degradation_score = 0.0
+            else:
+                degradation_score = 0.0
+
+            adjusted = base_weight * preference_value
+            adjusted *= max(0.0, 1.0 - min(degradation_score, 1.0))
+            entry["preference"] = preference_value
+            entry.setdefault("degradation", {})
+            combined_scores[key] = adjusted
+
+        total_score = sum(combined_scores.values())
+        if total_score <= 0.0:
+            count = len(snapshots)
+            allocations = {
+                key: 1.0 / count
+                for key in snapshots
+            } if count else {}
+        else:
+            allocations = {
+                key: value / total_score
+                for key, value in combined_scores.items()
+            }
+
+        for key, allocation in allocations.items():
+            snapshots[key]["allocation"] = allocation
+
+        cached_payload = {key: dict(value) for key, value in snapshots.items()}
+        with self._lock:
+            self._exchange_weight_cache = (time.monotonic(), cached_payload)
+        return cached_payload
+
+    def _select_exchange_target(
+        self,
+        symbol: str,
+        *,
+        force_refresh: bool = False,
+    ) -> tuple[tuple[str, str] | None, dict[tuple[str, str], dict[str, Any]]]:
+        allocations = self._resolve_exchange_allocations(force_refresh=force_refresh)
+        if not allocations:
+            with self._lock:
+                self._execution_metadata.pop("exchange", None)
+                self._execution_metadata.pop("exchange_segment", None)
+                self._last_exchange_selection = None
+            return None, {}
+
+        selected_key, selected_entry = max(
+            allocations.items(),
+            key=lambda item: (
+                float(item[1].get("allocation", 0.0)),
+                float(item[1].get("weight", 0.0)),
+            ),
+        )
+
+        selection_record = {
+            "symbol": symbol,
+            "exchange": selected_entry.get("exchange"),
+            "segment": selected_entry.get("segment"),
+            "allocation": float(selected_entry.get("allocation", 0.0)),
+            "weight": float(selected_entry.get("weight", 0.0)),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+
+        with self._lock:
+            self._execution_metadata["exchange"] = selection_record["exchange"]
+            self._execution_metadata["exchange_segment"] = selection_record["segment"]
+            self._last_exchange_selection = dict(selection_record)
+            self._exchange_selection_log.append(dict(selection_record))
+
+        return selected_key, allocations
+
+    def _resolve_signal_quality_degradation(self) -> tuple[float, Mapping[str, object]]:
+        provider = self._signal_quality_provider
+        if provider is None:
+            self._exchange_degradation_score = 0.0
+            self._exchange_degradation_payload = {}
+            return 0.0, {}
+
+        now = time.monotonic()
+        cache = self._signal_quality_cache
+        snapshot: Mapping[str, object] | None = None
+        if cache is not None:
+            cached_at, cached_payload = cache
+            if now - cached_at <= 15.0:
+                snapshot = cached_payload
+
+        if snapshot is None:
+            try:
+                fetched = provider()
+            except Exception:  # pragma: no cover - defensywne logowanie
+                LOGGER.debug("Nie udało się pobrać snapshotu jakości sygnałów", exc_info=True)
+                fetched = None
+            snapshot = fetched if isinstance(fetched, Mapping) else {}
+            self._signal_quality_cache = (now, dict(snapshot))
+        else:
+            snapshot = dict(snapshot)
+
+        degradation_raw = snapshot.get("degradation") if isinstance(snapshot, Mapping) else None
+        degradation_payload = (
+            dict(degradation_raw)
+            if isinstance(degradation_raw, Mapping)
+            else {}
+        )
+
+        score = 0.0
+        for key in ("rolling_score", "last_score", "max_score"):
+            value = degradation_payload.get(key)
+            if value is None:
+                continue
+            try:
+                candidate = float(value)
+            except (TypeError, ValueError):
+                continue
+            score = max(score, min(candidate, 1.0))
+
+        self._exchange_degradation_score = score
+        self._exchange_degradation_payload = degradation_payload
+        return score, degradation_payload
 
     def _apply_signal_guardrails(
         self,
@@ -5891,6 +6213,114 @@ class AutoTrader:
             return _finalise(signal)
 
         guardrails = self._thresholds["auto_trader"].get("signal_guardrails", {})
+
+        def _coerce_float(value: object, default: float) -> float:
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                return default
+
+        degradation_score, degradation_payload = self._resolve_signal_quality_degradation()
+        degradation_cfg = (
+            guardrails.get("signal_quality_degradation")
+            if isinstance(guardrails, Mapping)
+            else {}
+        )
+        if isinstance(degradation_cfg, Mapping):
+            degrade_threshold = _coerce_float(degradation_cfg.get("rolling_score"), 0.6)
+            degrade_kill = _coerce_float(degradation_cfg.get("kill_switch"), 0.85)
+            degrade_release = _coerce_float(
+                degradation_cfg.get("release"),
+                min(0.5, max(0.0, degrade_threshold * 0.5)),
+            )
+            degrade_max_leverage = max(0.0, _coerce_float(degradation_cfg.get("max_leverage"), 0.35))
+        else:
+            degrade_threshold = 0.6
+            degrade_kill = 0.85
+            degrade_release = 0.3
+            degrade_max_leverage = 0.35
+
+        degradation_active = self._exchange_degradation_guardrail_active
+        degradation_triggered = degradation_score >= degrade_threshold
+        degradation_hold = degradation_triggered or (
+            degradation_active and degradation_score > degrade_release
+        )
+
+        if degradation_hold:
+            label = "exchange degradation"
+            comparator_threshold = (
+                degrade_threshold if degradation_triggered else degrade_release
+            )
+            comparator = ">=" if degradation_triggered else ">"
+            reason = (
+                f"{label} {comparator} {comparator_threshold:.3f}"
+                f" (value={degradation_score:.3f})"
+            )
+            reasons.append(reason)
+            trigger = GuardrailTrigger(
+                name="exchange_degradation",
+                label=label,
+                comparator=comparator,
+                threshold=float(comparator_threshold),
+                unit="score",
+                value=float(degradation_score),
+            )
+            triggers.append(trigger)
+            self._exchange_degradation_guardrail_active = True
+            self.current_leverage = min(self.current_leverage, degrade_max_leverage)
+            context: dict[str, object] = {
+                "rolling_score": float(degradation_score),
+                "threshold": float(comparator_threshold),
+            }
+            recent = degradation_payload.get("recent") if isinstance(degradation_payload, Mapping) else None
+            if isinstance(recent, Sequence) and recent:
+                latest = recent[-1]
+                if isinstance(latest, Mapping):
+                    context.update({
+                        "check": latest.get("check"),
+                        "backend": latest.get("backend"),
+                        "status": latest.get("status"),
+                    })
+            severity = "warning" if degradation_triggered else "info"
+            if degradation_score >= degrade_kill:
+                self._exchange_degradation_kill_switch = True
+                self.current_leverage = 0.0
+                severity = "critical"
+                context["kill_switch"] = True
+            else:
+                self._exchange_degradation_kill_switch = False
+            should_emit_alert = False
+            if severity == "critical":
+                should_emit_alert = True
+            elif severity == "warning" and not self._exchange_degradation_alert_active:
+                should_emit_alert = True
+            elif severity == "info" and not degradation_active:
+                should_emit_alert = True
+            if should_emit_alert:
+                self._emit_alert(
+                    "auto_trader.guardrail",
+                    "Degradacja giełdy wymusiła blokadę",
+                    reason,
+                    severity=severity,
+                    context=context,
+                )
+            self._exchange_degradation_alert_active = True
+            return _finalise("hold")
+
+        if getattr(self, "_exchange_degradation_alert_active", False) and degradation_score <= degrade_release:
+            self._exchange_degradation_guardrail_active = False
+            self._exchange_degradation_kill_switch = False
+            self._exchange_degradation_alert_active = False
+            self._emit_alert(
+                "auto_trader.guardrail",
+                "Degradacja giełdy ustąpiła",
+                "exchange degradation back within safe range",
+                severity="info",
+                context={
+                    "rolling_score": float(degradation_score),
+                    "release": float(degrade_release),
+                },
+            )
 
         def _label(name: str) -> str:
             return name.replace("_", " ")
@@ -5985,6 +6415,318 @@ class AutoTrader:
                 return _finalise("hold")
 
         return _finalise(signal)
+
+    def _resolve_journal_analytics(
+        self,
+        *,
+        force_refresh: bool = False,
+    ) -> JournalAnalytics | None:
+        journal = getattr(self, "_decision_journal", None)
+        if journal is None:
+            self._journal_analytics_cache = None
+            self._last_journal_analytics = None
+            return None
+
+        config = (
+            self._thresholds.get("auto_trader", {})
+            if isinstance(self._thresholds, Mapping)
+            else {}
+        )
+        adjust_cfg = (
+            config.get("adjust_strategy_parameters", {})
+            if isinstance(config, Mapping)
+            else {}
+        )
+        try:
+            window = int(adjust_cfg.get("journal_window", 120))
+        except (TypeError, ValueError):
+            window = 120
+        window = max(1, window)
+
+        cache = self._journal_analytics_cache
+        now = time.monotonic()
+        if (
+            not force_refresh
+            and cache is not None
+            and now - cache[0] <= 15.0
+        ):
+            analytics = cache[1]
+        else:
+            try:
+                analytics = analyse_decision_journal(journal, window=window)
+            except Exception:  # pragma: no cover - defensywne logowanie
+                LOGGER.debug("analyse_decision_journal failed", exc_info=True)
+                analytics = None
+            self._journal_analytics_cache = (now, analytics)
+
+        self._last_journal_analytics = analytics
+        return analytics
+
+    def _record_strategy_adaptation_event(
+        self,
+        *,
+        reason: str,
+        analytics: JournalAnalytics,
+        risk: float,
+        previous_state: str,
+        previous_strategy: str,
+    ) -> tuple[str, str]:
+        """Zapisuje zdarzenie adaptacji strategii, jeśli zaszła zmiana."""
+
+        current_state = self._journal_performance_state
+        current_strategy = self.current_strategy
+        if (
+            current_state == previous_state
+            and current_strategy == previous_strategy
+        ):
+            return previous_state, previous_strategy
+
+        entry = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "reason": reason,
+            "state": current_state,
+            "previous_state": previous_state,
+            "strategy": current_strategy,
+            "previous_strategy": previous_strategy,
+            "leverage": float(self.current_leverage),
+            "stop_loss_pct": float(self.current_stop_loss_pct),
+            "take_profit_pct": float(self.current_take_profit_pct),
+            "rolling_pnl": round(analytics.rolling_pnl, 8),
+            "average_pnl": round(analytics.average_pnl, 8),
+            "cumulative_pnl": round(analytics.cumulative_pnl, 8),
+            "max_drawdown_pct": round(analytics.max_drawdown_pct, 6),
+            "signal_accuracy": round(analytics.signal_accuracy, 6),
+            "win_rate": round(analytics.win_rate, 6),
+            "trade_count": int(analytics.trade_count),
+            "window": int(analytics.window),
+            "risk": float(risk),
+        }
+
+        with self._lock:
+            self._strategy_adaptation_log.append(entry)
+
+        return current_state, current_strategy
+
+    def _apply_journal_performance_adjustments(
+        self,
+        analytics: JournalAnalytics,
+        *,
+        risk: float,
+        assessment: MarketRegimeAssessment,
+        summary: RegimeSummary | None,
+    ) -> None:
+        config = self._thresholds.get("auto_trader", {})
+        adjust_cfg = (
+            config.get("adjust_strategy_parameters", {})
+            if isinstance(config, Mapping)
+            else {}
+        )
+        try:
+            window = max(1, int(adjust_cfg.get("journal_window", analytics.window)))
+        except (TypeError, ValueError):
+            window = max(analytics.window, 1)
+        try:
+            min_trades = int(adjust_cfg.get("journal_min_trades", max(5, min(window, 12))))
+        except (TypeError, ValueError):
+            min_trades = max(5, min(window, 12))
+        min_trades = max(1, min_trades)
+        previous_state = self._journal_performance_state
+        previous_strategy = self.current_strategy
+        if analytics.trade_count < min_trades:
+            if analytics.trade_count == 0:
+                self._journal_performance_state = "baseline"
+            previous_state, previous_strategy = self._record_strategy_adaptation_event(
+                reason="insufficient_trades",
+                analytics=analytics,
+                risk=risk,
+                previous_state=previous_state,
+                previous_strategy=previous_strategy,
+            )
+            return
+
+        def _cfg_float(name: str, default: float) -> float:
+            value = adjust_cfg.get(name, default)
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                return default
+
+        defensive_drawdown = _cfg_float("journal_defensive_drawdown_pct", 0.08)
+        critical_drawdown = _cfg_float(
+            "journal_critical_drawdown_pct",
+            max(defensive_drawdown * 1.5, 0.12),
+        )
+        defensive_win_rate = _cfg_float("journal_defensive_win_rate", 0.48)
+        recovery_win_rate = _cfg_float("journal_recovery_win_rate", 0.6)
+        recovery_drawdown = _cfg_float(
+            "journal_recovery_drawdown_pct", defensive_drawdown * 0.5
+        )
+        accuracy_floor = _cfg_float("journal_accuracy_floor", 0.5)
+        negative_avg_pnl = _cfg_float("journal_negative_avg_pnl", 0.0)
+        negative_rolling_pnl = _cfg_float("journal_negative_rolling_pnl", 0.0)
+
+        win_rate = analytics.win_rate
+        accuracy = analytics.signal_accuracy
+        drawdown_pct = analytics.max_drawdown_pct
+        negative_trend = (
+            analytics.average_pnl <= negative_avg_pnl
+            or analytics.rolling_pnl <= negative_rolling_pnl
+        )
+
+        degrade = (
+            drawdown_pct >= defensive_drawdown
+            or win_rate <= defensive_win_rate
+            or accuracy <= accuracy_floor
+            or negative_trend
+        )
+        critical = (
+            drawdown_pct >= critical_drawdown
+            or accuracy <= max(0.0, accuracy_floor * 0.75)
+        )
+        if (
+            summary is not None
+            and getattr(summary, "risk_level", None) is RiskLevel.CRITICAL
+        ):
+            critical = True
+
+        def _add_suffix(name: str, suffix: str) -> str:
+            return name if name.endswith(suffix) else f"{name}{suffix}"
+
+        def _strip_suffix(name: str, suffix: str) -> str:
+            return name[: -len(suffix)] if name.endswith(suffix) else name
+
+        if critical:
+            if self.current_strategy != "capital_preservation":
+                self._log(
+                    "Journal analytics triggered capital preservation",
+                    level=logging.WARNING,
+                    win_rate=f"{win_rate:.3f}",
+                    drawdown_pct=f"{drawdown_pct:.3f}",
+                    accuracy=f"{accuracy:.3f}",
+                    rolling_pnl=f"{analytics.rolling_pnl:.4f}",
+                )
+            self.current_strategy = "capital_preservation"
+            self.current_leverage = 0.0
+            self.current_stop_loss_pct = 0.01
+            self.current_take_profit_pct = 0.02
+            self._journal_performance_state = "critical"
+            previous_state, previous_strategy = self._record_strategy_adaptation_event(
+                reason="journal_critical",
+                analytics=analytics,
+                risk=risk,
+                previous_state=previous_state,
+                previous_strategy=previous_strategy,
+            )
+            return
+
+        if degrade:
+            if self._journal_performance_state != "defensive":
+                self._log(
+                    "Journal analytics enforcing defensive mode",
+                    level=logging.INFO,
+                    win_rate=f"{win_rate:.3f}",
+                    drawdown_pct=f"{drawdown_pct:.3f}",
+                    accuracy=f"{accuracy:.3f}",
+                    rolling_pnl=f"{analytics.rolling_pnl:.4f}",
+                )
+            if self.current_strategy not in {"capital_preservation"}:
+                self.current_strategy = _add_suffix(self.current_strategy, "_defensive")
+            self.current_leverage = min(
+                self.current_leverage,
+                0.35 if risk >= _cfg_float("high_risk", 0.75) * 0.6 else 0.5,
+            )
+            self.current_stop_loss_pct = max(self.current_stop_loss_pct * 0.8, 0.008)
+            self.current_take_profit_pct = max(
+                self.current_take_profit_pct * 0.9,
+                self.current_stop_loss_pct * 1.25,
+            )
+            self._journal_performance_state = "defensive"
+            previous_state, previous_strategy = self._record_strategy_adaptation_event(
+                reason="journal_defensive",
+                analytics=analytics,
+                risk=risk,
+                previous_state=previous_state,
+                previous_strategy=previous_strategy,
+            )
+            return
+
+        if self._journal_performance_state in {"defensive", "critical"}:
+            recovered = (
+                win_rate >= recovery_win_rate
+                and drawdown_pct <= recovery_drawdown
+                and analytics.rolling_pnl > negative_rolling_pnl
+                and accuracy >= max(accuracy_floor, 0.5)
+            )
+            if recovered:
+                previous = self.current_strategy
+                base_strategy = _strip_suffix(previous, "_defensive")
+                if (
+                    base_strategy == "capital_preservation"
+                    and assessment.regime is MarketRegime.TREND
+                    and risk < _cfg_float("trend_low_risk", 0.4)
+                ):
+                    base_strategy = "trend_following"
+                self.current_strategy = base_strategy
+                self.current_leverage = max(
+                    self.current_leverage,
+                    0.6 if assessment.regime is MarketRegime.TREND else 0.4,
+                )
+                self.current_take_profit_pct = min(
+                    self.current_take_profit_pct * 1.05,
+                    0.1,
+                )
+                self._journal_performance_state = "recovered"
+                self._log(
+                    "Journal analytics recovered to baseline",
+                    level=logging.INFO,
+                    win_rate=f"{win_rate:.3f}",
+                    drawdown_pct=f"{drawdown_pct:.3f}",
+                    accuracy=f"{accuracy:.3f}",
+                    rolling_pnl=f"{analytics.rolling_pnl:.4f}",
+                    previous_strategy=previous,
+                    restored_strategy=self.current_strategy,
+                )
+                previous_state, previous_strategy = self._record_strategy_adaptation_event(
+                    reason="journal_recovered",
+                    analytics=analytics,
+                    risk=risk,
+                    previous_state=previous_state,
+                    previous_strategy=previous_strategy,
+                )
+            else:
+                self._journal_performance_state = "defensive"
+                self.current_leverage = min(self.current_leverage, 0.45)
+                self.current_stop_loss_pct = max(self.current_stop_loss_pct, 0.01)
+                self.current_take_profit_pct = max(
+                    self.current_take_profit_pct,
+                    self.current_stop_loss_pct * 1.3,
+                )
+                previous_state, previous_strategy = self._record_strategy_adaptation_event(
+                    reason="journal_defensive_adjustment",
+                    analytics=analytics,
+                    risk=risk,
+                    previous_state=previous_state,
+                    previous_strategy=previous_strategy,
+                )
+            return
+
+        if (
+            win_rate >= max(recovery_win_rate, 0.62)
+            and drawdown_pct <= recovery_drawdown * 0.75
+            and analytics.rolling_pnl > 0.0
+        ):
+            self.current_leverage = min(self.current_leverage * 1.02, 3.25)
+            self.current_take_profit_pct = min(self.current_take_profit_pct * 1.03, 0.1)
+
+        if self._journal_performance_state != "baseline":
+            self._journal_performance_state = "baseline"
+            previous_state, previous_strategy = self._record_strategy_adaptation_event(
+                reason="journal_baseline",
+                analytics=analytics,
+                risk=risk,
+                previous_state=previous_state,
+                previous_strategy=previous_strategy,
+            )
 
     def _handle_guardrail_trigger(
         self,
@@ -6327,6 +7069,74 @@ class AutoTrader:
                 should_trade = False
                 state = "halted"
                 reason = "AI backend degraded"
+
+        selected_exchange_key: tuple[str, str] | None = None
+        allocation_snapshot: dict[tuple[str, str], dict[str, Any]] = {}
+        try:
+            selected_exchange_key, allocation_snapshot = self._select_exchange_target(
+                symbol,
+                force_refresh=True,
+            )
+        except Exception:  # pragma: no cover - defensywne logowanie
+            LOGGER.debug("Nie udało się określić alokacji giełdowej", exc_info=True)
+            selected_exchange_key = None
+            allocation_snapshot = {}
+
+        if allocation_snapshot:
+            allocations_payload: list[dict[str, Any]] = []
+            for entry in allocation_snapshot.values():
+                if not isinstance(entry, Mapping):
+                    continue
+                try:
+                    allocation_value = float(entry.get("allocation", 0.0))
+                except (TypeError, ValueError):
+                    allocation_value = 0.0
+                try:
+                    weight_value = float(entry.get("weight", 0.0))
+                except (TypeError, ValueError):
+                    weight_value = 0.0
+                try:
+                    preference_value = float(entry.get("preference", 0.0))
+                except (TypeError, ValueError):
+                    preference_value = 0.0
+                allocations_payload.append(
+                    {
+                        "exchange": entry.get("exchange"),
+                        "segment": entry.get("segment"),
+                        "allocation": allocation_value,
+                        "weight": weight_value,
+                        "preference": preference_value,
+                        "degradation": (
+                            dict(entry.get("degradation", {}))
+                            if isinstance(entry.get("degradation"), Mapping)
+                            else {}
+                        ),
+                    }
+                )
+            allocations_payload.sort(
+                key=lambda item: item.get("allocation", 0.0),
+                reverse=True,
+            )
+            selected_payload: dict[str, Any] | None = None
+            if selected_exchange_key is not None:
+                selected_entry = allocation_snapshot.get(selected_exchange_key)
+                if isinstance(selected_entry, Mapping):
+                    selected_payload = {
+                        "exchange": selected_entry.get("exchange"),
+                        "segment": selected_entry.get("segment"),
+                        "allocation": float(selected_entry.get("allocation", 0.0) or 0.0),
+                        "weight": float(selected_entry.get("weight", 0.0) or 0.0),
+                    }
+            if selected_payload is None and allocations_payload:
+                selected_payload = dict(allocations_payload[0])
+            details["exchange_allocation"] = {
+                "selected": selected_payload,
+                "allocations": allocations_payload,
+            }
+            if selected_payload is not None:
+                details["execution_exchange"] = selected_payload.get("exchange")
+                details["execution_segment"] = selected_payload.get("segment")
+
         fraction = self.current_leverage if should_trade else 0.0
         return RiskDecision(
             should_trade=should_trade,
@@ -12988,6 +13798,39 @@ class AutoTrader:
             else {}
         )
 
+        guardrail_state: dict[str, Any] = {
+            "active": bool(self._exchange_degradation_guardrail_active),
+            "kill_switch": bool(self._exchange_degradation_kill_switch),
+        }
+        guardrail_reasons_raw = guardrails.get("last_reasons") if isinstance(guardrails, Mapping) else None
+        if isinstance(guardrail_reasons_raw, Sequence):
+            guardrail_state["reasons"] = [str(reason) for reason in guardrail_reasons_raw if reason]
+        degradation_payload: dict[str, Any] = {}
+        if isinstance(self._exchange_degradation_payload, Mapping):
+            degradation_payload = {
+                str(key): copy.deepcopy(value)
+                for key, value in self._exchange_degradation_payload.items()
+            }
+        guardrail_state["exchange_degradation"] = {
+            "score": float(getattr(self, "_exchange_degradation_score", 0.0)),
+            "payload": degradation_payload,
+        }
+        normalized_triggers = normalize_guardrail_triggers(
+            guardrails.get("last_triggers") if isinstance(guardrails, Mapping) else ()
+        )
+        guardrail_triggers: list[dict[str, Any]] = []
+        for trigger_obj, payload in normalized_triggers:
+            entry = dict(payload)
+            for attr in ("label", "comparator", "unit"):
+                value = getattr(trigger_obj, attr, None)
+                if value is not None and attr not in entry:
+                    entry[attr] = value
+            guardrail_triggers.append(entry)
+        if guardrail_triggers:
+            guardrail_state["triggers"] = guardrail_triggers
+        else:
+            guardrail_state["triggers"] = []
+
         strategy_snapshot = dict(strategy) if isinstance(strategy, Mapping) else {}
         metrics_snapshot = dict(metrics) if isinstance(metrics, Mapping) else {}
 
@@ -13000,6 +13843,7 @@ class AutoTrader:
 
         performance_summary: dict[str, Any] = {}
         performance_window: dict[str, Any] = {}
+        decision_history: list[dict[str, Any]] = []
         journal = getattr(self, "_decision_journal", None)
         now_utc = datetime.now(timezone.utc)
         window_start = now_utc - timedelta(hours=24)
@@ -13034,6 +13878,19 @@ class AutoTrader:
                     },
                 )
                 performance_window.setdefault("label", "last-24h")
+            try:
+                exported_records = list(journal.export())
+            except Exception:  # pragma: no cover - defensywne logowanie
+                LOGGER.debug("Nie udało się wyeksportować historii dziennika decyzji", exc_info=True)
+            else:
+                for record in exported_records[-64:]:
+                    if isinstance(record, Mapping):
+                        decision_history.append(dict(record))
+                if decision_history:
+                    decision_history.sort(
+                        key=lambda entry: entry.get("timestamp") or "",
+                        reverse=True,
+                    )
 
         result: dict[str, Any] = {
             "timestamp": lifecycle.get("timestamp"),
@@ -13049,6 +13906,278 @@ class AutoTrader:
             "guardrail_summary": guardrail_summary,
             "reasons": reasons,
         }
+
+        analytics_snapshot: dict[str, Any] = {"mode": self._journal_performance_state}
+        if isinstance(self._last_journal_analytics, JournalAnalytics):
+            analytics_snapshot.update(
+                self._last_journal_analytics.to_mapping()
+            )
+        result["journal_performance"] = analytics_snapshot
+
+        if decision_history:
+            result["decision_history"] = decision_history
+        else:
+            result["decision_history"] = []
+        guardrail_trace: list[dict[str, Any]] = []
+        decision_id = (
+            last_decision.get("decision_id")
+            if isinstance(last_decision, Mapping)
+            else None
+        )
+        if decision_id:
+            try:
+                trace_records = self.get_guardrail_event_trace(
+                    decision_id,
+                    include_guardrail_dimensions=True,
+                    include_decision=True,
+                    include_service=True,
+                    include_error=True,
+                    coerce_timestamps=True,
+                    tz=tz or timezone.utc,
+                )
+            except Exception:  # pragma: no cover - defensywne logowanie
+                LOGGER.debug(
+                    "Nie udało się pobrać śladu guardrail dla snapshotu auto-mode",
+                    exc_info=True,
+                )
+            else:
+                guardrail_trace = [
+                    dict(entry)
+                    for entry in trace_records
+                    if isinstance(entry, Mapping)
+                ]
+        guardrail_state["last_decision_id"] = decision_id
+
+        risk_alerts: list[dict[str, Any]] = []
+        severity_base = (
+            "critical"
+            if guardrail_state.get("kill_switch")
+            else "warning"
+            if guardrail_state.get("active")
+            else None
+        )
+        for trigger_entry in guardrail_triggers:
+            label = trigger_entry.get("label") or trigger_entry.get("name") or "guardrail"
+            comparator = trigger_entry.get("comparator")
+            threshold = trigger_entry.get("threshold")
+            value = trigger_entry.get("value")
+            message_parts = [str(label)]
+            if comparator and threshold is not None:
+                message_parts.append(f"{comparator} {threshold}")
+            if value is not None:
+                try:
+                    message_parts.append(f"(value={float(value):.3f})")
+                except (TypeError, ValueError):
+                    message_parts.append(f"(value={value})")
+            risk_alerts.append(
+                {
+                    "code": trigger_entry.get("name"),
+                    "message": " ".join(message_parts),
+                    "severity": severity_base or "info",
+                    "threshold": threshold,
+                    "value": value,
+                }
+            )
+
+        provider = self._signal_quality_provider
+        signal_quality_snapshot: dict[str, Any] = {}
+        if callable(provider):
+            try:
+                quality_snapshot = provider()
+            except Exception:  # pragma: no cover - defensywne logowanie
+                LOGGER.debug(
+                    "Nie udało się pobrać snapshotu jakości sygnałów dla automatyzacji",
+                    exc_info=True,
+                )
+                quality_snapshot = None
+            if isinstance(quality_snapshot, Mapping):
+                signal_quality_snapshot = dict(quality_snapshot)
+                records_raw = signal_quality_snapshot.get("records")
+                if isinstance(records_raw, Sequence):
+                    signal_quality_snapshot["records"] = [
+                        dict(entry)
+                        for entry in records_raw[-10:]
+                        if isinstance(entry, Mapping)
+                    ]
+                watchdog_raw = signal_quality_snapshot.get("watchdog")
+                if isinstance(watchdog_raw, Mapping):
+                    last_status_raw = watchdog_raw.get("last_status")
+                    last_status: dict[str, Any] = {}
+                    if isinstance(last_status_raw, Mapping):
+                        for key, value in last_status_raw.items():
+                            if isinstance(value, Mapping):
+                                last_status[str(key)] = dict(value)
+                    signal_quality_snapshot["watchdog"] = {
+                        "alerts": [
+                            dict(entry)
+                            for entry in watchdog_raw.get("alerts", [])
+                            if isinstance(entry, Mapping)
+                        ],
+                        "recent": [
+                            dict(entry)
+                            for entry in watchdog_raw.get("recent", [])
+                            if isinstance(entry, Mapping)
+                        ],
+                        "last_status": last_status,
+                    }
+                degradation_raw = signal_quality_snapshot.get("degradation")
+                if isinstance(degradation_raw, Mapping):
+                    signal_quality_snapshot["degradation"] = dict(degradation_raw)
+
+        active_backend: str | None = None
+        last_execution: Mapping[str, Any] | None = None
+        records_snapshot = signal_quality_snapshot.get("records")
+        if isinstance(records_snapshot, Sequence):
+            for record in reversed(records_snapshot):
+                if isinstance(record, Mapping) and record.get("backend"):
+                    active_backend = str(record.get("backend"))
+                    last_execution = record
+                    break
+        failover_snapshot: dict[str, Any] = {
+            "active_backend": (active_backend or "native"),
+            "state": "failover" if (active_backend or "").lower() == "ccxt" else "native",
+            "guardrail_active": bool(self._exchange_degradation_guardrail_active),
+            "kill_switch": bool(self._exchange_degradation_kill_switch),
+            "degradation_score": float(getattr(self, "_exchange_degradation_score", 0.0)),
+        }
+        if degradation_payload:
+            failover_snapshot["degradation"] = dict(
+                signal_quality_snapshot.get("degradation", degradation_payload)
+            )
+        elif signal_quality_snapshot.get("degradation"):
+            failover_snapshot["degradation"] = dict(signal_quality_snapshot["degradation"])
+        if signal_quality_snapshot.get("watchdog"):
+            failover_snapshot["watchdog"] = dict(signal_quality_snapshot["watchdog"])
+        if isinstance(last_execution, Mapping):
+            failover_snapshot["last_execution"] = dict(last_execution)
+        failover_snapshot["total_signals"] = signal_quality_snapshot.get("total")
+        failover_snapshot["failures"] = signal_quality_snapshot.get("failures")
+        failover_snapshot.setdefault("degradation", {})
+        failover_snapshot.setdefault("watchdog", {})
+        failover_snapshot.setdefault("last_execution", {})
+
+        with self._lock:
+            model_events = [dict(entry) for entry in getattr(self, "_model_change_log", tuple())]
+            retraining_cycles_raw = [
+                dict(entry)
+                for entry in getattr(self, "_retraining_cycle_log", tuple())
+            ]
+        retraining_cycles = self._enrich_retraining_cycles_with_decisions(retraining_cycles_raw)
+        result["model_events"] = model_events
+        result["retraining_cycles"] = retraining_cycles
+
+        result["guardrail_state"] = guardrail_state
+        result["guardrail_trace"] = guardrail_trace
+        result["risk_alerts"] = risk_alerts
+        result["signal_quality"] = signal_quality_snapshot
+        result["failover"] = failover_snapshot
+
+        allocation_snapshot = self._resolve_exchange_allocations()
+        if allocation_snapshot:
+            allocations_payload: list[dict[str, Any]] = []
+            for entry in allocation_snapshot.values():
+                if not isinstance(entry, Mapping):
+                    continue
+                try:
+                    allocation_value = float(entry.get("allocation", 0.0))
+                except (TypeError, ValueError):
+                    allocation_value = 0.0
+                try:
+                    weight_value = float(entry.get("weight", 0.0))
+                except (TypeError, ValueError):
+                    weight_value = 0.0
+                try:
+                    preference_value = float(entry.get("preference", 0.0))
+                except (TypeError, ValueError):
+                    preference_value = 0.0
+                allocations_payload.append(
+                    {
+                        "exchange": entry.get("exchange"),
+                        "segment": entry.get("segment"),
+                        "allocation": allocation_value,
+                        "weight": weight_value,
+                        "preference": preference_value,
+                        "degradation": (
+                            dict(entry.get("degradation", {}))
+                            if isinstance(entry.get("degradation"), Mapping)
+                            else {}
+                        ),
+                    }
+                )
+            allocations_payload.sort(
+                key=lambda item: item.get("allocation", 0.0),
+                reverse=True,
+            )
+            with self._lock:
+                last_selection = (
+                    dict(self._last_exchange_selection)
+                    if isinstance(self._last_exchange_selection, Mapping)
+                    else None
+                )
+                selection_history = [
+                    dict(entry)
+                    for entry in self._exchange_selection_log
+                    if isinstance(entry, Mapping)
+                ]
+            if last_selection is None and allocations_payload:
+                last_selection = dict(allocations_payload[0])
+            result["exchange_allocation"] = {
+                "selected": last_selection,
+                "allocations": allocations_payload,
+                "history": selection_history,
+            }
+        else:
+            result["exchange_allocation"] = {
+                "selected": None,
+                "allocations": [],
+                "history": [],
+            }
+
+        with self._lock:
+            adaptation_history = [
+                dict(entry)
+                for entry in self._strategy_adaptation_log
+                if isinstance(entry, Mapping)
+            ]
+        if adaptation_history:
+            adaptation_history.sort(
+                key=lambda entry: entry.get("timestamp") or "",
+                reverse=True,
+            )
+
+        strategy_indicator = {
+            "current": self.current_strategy,
+            "state": self._journal_performance_state,
+            "leverage": float(self.current_leverage),
+            "stop_loss_pct": float(self.current_stop_loss_pct),
+            "take_profit_pct": float(self.current_take_profit_pct),
+            "history": adaptation_history,
+        }
+
+        exchange_indicator: Mapping[str, Any] | None
+        exchange_section = result.get("exchange_allocation")
+        if isinstance(exchange_section, Mapping):
+            exchange_indicator = {
+                str(key): copy.deepcopy(value)
+                for key, value in exchange_section.items()
+            }
+        else:
+            exchange_indicator = {
+                "selected": None,
+                "allocations": [],
+                "history": [],
+            }
+
+        performance_indicators = {
+            "rolling_pnl": analytics_snapshot.get("rolling_pnl"),
+            "max_drawdown_pct": analytics_snapshot.get("max_drawdown_pct"),
+            "win_rate": analytics_snapshot.get("win_rate"),
+            "journal": dict(analytics_snapshot),
+            "strategy": strategy_indicator,
+            "exchange": exchange_indicator,
+        }
+
+        result["performance_indicators"] = performance_indicators
 
         if controller_history is not None:
             result["controller_history"] = controller_history

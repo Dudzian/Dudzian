@@ -258,6 +258,98 @@ def log_decision_event(
     journal.record(event_obj)
 
 
+def log_model_change_event(
+    journal: TradingDecisionJournal | None,
+    *,
+    environment: str,
+    portfolio: str,
+    risk_profile: str,
+    model_name: str,
+    new_version: str,
+    previous_version: str | None = None,
+    source: str | None = None,
+    fallback: bool | None = None,
+    fallback_reason: str | None = None,
+    decided_at: object | None = None,
+    retraining_id: str | None = None,
+    metrics_current: Mapping[str, float] | None = None,
+    metrics_previous: Mapping[str, float] | None = None,
+    metrics_delta: Mapping[str, float] | None = None,
+    metadata: Mapping[str, object] | None = None,
+) -> None:
+    """Rejestruje zmianę modelu decision engine w dzienniku decyzji."""
+
+    if journal is None:
+        return
+
+    model_name = str(model_name).strip()
+    new_version = str(new_version).strip()
+    if not model_name or not new_version:
+        return
+
+    timestamp = _parse_timestamp(decided_at) or datetime.now(timezone.utc)
+
+    meta: MutableMapping[str, str] = {
+        "model_name": model_name,
+        "model_version": new_version,
+    }
+    if previous_version:
+        meta["model_previous_version"] = str(previous_version)
+    if source:
+        meta["model_source"] = str(source)
+    if fallback is not None:
+        meta["model_fallback"] = "true" if fallback else "false"
+    if fallback_reason:
+        meta["model_fallback_reason"] = str(fallback_reason)
+    if retraining_id:
+        meta["retraining_id"] = str(retraining_id)
+
+    for key, value in (metadata or {}).items():
+        if value is None:
+            continue
+        meta[str(key)] = str(value)
+
+    metrics_json: dict[str, dict[str, float]] = {}
+
+    def _append_metrics(prefix: str, values: Mapping[str, float] | None) -> None:
+        if not isinstance(values, Mapping):
+            return
+        serialized: dict[str, float] = {}
+        for metric, metric_value in values.items():
+            formatted = _format_float(metric_value)
+            if formatted is None:
+                continue
+            meta[f"metric_{metric}_{prefix}"] = formatted
+            try:
+                serialized[str(metric)] = float(metric_value)
+            except (TypeError, ValueError):
+                continue
+        if serialized:
+            metrics_json[prefix] = serialized
+
+    _append_metrics("current", metrics_current)
+    _append_metrics("previous", metrics_previous)
+    _append_metrics("delta", metrics_delta)
+
+    for prefix, values in metrics_json.items():
+        meta[f"metrics_{prefix}_json"] = json.dumps(
+            values,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+
+    event_obj = TradingDecisionEvent(
+        event_type="model_change",
+        timestamp=_ensure_utc(timestamp),
+        environment=str(environment),
+        portfolio=str(portfolio),
+        risk_profile=str(risk_profile),
+        strategy=model_name,
+        metadata=meta,
+    )
+    journal.record(event_obj)
+
+
 def _parse_timestamp(value: object) -> datetime | None:
     if isinstance(value, datetime):
         return _ensure_utc(value)
@@ -378,6 +470,7 @@ __all__ = [
     "InMemoryTradingDecisionJournal",
     "JsonlTradingDecisionJournal",
     "log_decision_event",
+    "log_model_change_event",
     "aggregate_decision_statistics",
 ]
 

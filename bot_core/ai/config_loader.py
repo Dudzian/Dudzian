@@ -111,6 +111,16 @@ def _validate_thresholds(thresholds: Mapping[str, Any]) -> None:
     if not isinstance(adjust_cfg, Mapping):
         raise ValueError("auto_trader.adjust_strategy_parameters section must be a mapping")
     numeric_keys = (
+        "journal_window",
+        "journal_min_trades",
+        "journal_negative_avg_pnl",
+        "journal_negative_rolling_pnl",
+        "journal_defensive_drawdown_pct",
+        "journal_critical_drawdown_pct",
+        "journal_defensive_win_rate",
+        "journal_accuracy_floor",
+        "journal_recovery_win_rate",
+        "journal_recovery_drawdown_pct",
         "high_risk",
         "trend_low_risk",
         "mean_reversion_low_risk",
@@ -232,6 +242,19 @@ def _validate_thresholds(thresholds: Mapping[str, Any]) -> None:
         value = guardrails_cfg.get(key)
         if value is not None and not isinstance(value, (int, float)):
             raise ValueError(f"Invalid signal guardrail threshold {key}: {value!r}")
+
+    degradation_cfg = guardrails_cfg.get("signal_quality_degradation")
+    if degradation_cfg is not None and not isinstance(degradation_cfg, Mapping):
+        raise ValueError(
+            "auto_trader.signal_guardrails.signal_quality_degradation must be a mapping",
+        )
+    if isinstance(degradation_cfg, Mapping):
+        for key in ("rolling_score", "kill_switch", "release", "max_leverage"):
+            value = degradation_cfg.get(key)
+            if value is not None and not isinstance(value, (int, float)):
+                raise ValueError(
+                    f"Invalid exchange degradation guardrail {key}: {value!r}"
+                )
 
     cooldown_cfg = auto_trader.get("cooldown", {})
     if not isinstance(cooldown_cfg, Mapping):
