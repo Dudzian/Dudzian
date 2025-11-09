@@ -5,13 +5,12 @@ from typing import Any, Sequence
 import pytest
 
 import bot_core.exchanges.manager as manager_module
-from bot_core.auto_trader.app import AutoTrader
 from bot_core.exchanges.manager import ExchangeManager, register_native_adapter, unregister_native_adapter
 from bot_core.exchanges.base import AccountSnapshot, OrderRequest, OrderResult
 from bot_core.exchanges.core import Mode, OrderDTO, OrderSide, OrderStatus, OrderType
 from bot_core.exchanges.errors import ExchangeNetworkError
 from bot_core.exchanges.signal_quality import SignalQualityReporter as BaseSignalQualityReporter
-from bot_core.exchanges.health import HealthCheck, HealthCheckResult, HealthStatus
+from bot_core.exchanges.health import HealthCheck, HealthStatus
 
 
 class _StaticPublicFeed:
@@ -153,8 +152,8 @@ def test_paper_profiles_cover_major_exchanges(exchange_id: str, profile: str, ex
     monkeypatch.setattr(manager_module, "_CCXTPublicFeed", _StaticPublicFeed)
 
     class ReporterProxy(BaseSignalQualityReporter):
-        def __init__(self, *, exchange_id: str, **kwargs: Any) -> None:
-            super().__init__(exchange_id=exchange_id, report_dir=tmp_path, **kwargs)
+        def __init__(self, *, exchange_id: str) -> None:
+            super().__init__(exchange_id=exchange_id, report_dir=tmp_path)
 
     monkeypatch.setattr(manager_module, "SignalQualityReporter", ReporterProxy)
 
@@ -177,8 +176,8 @@ def test_failover_switches_to_ccxt_and_emits_signal_report(monkeypatch, tmp_path
     monkeypatch.setattr(manager_module, "_CCXTPrivateBackend", _CCXTFallback)
 
     class ReporterProxy(BaseSignalQualityReporter):
-        def __init__(self, *, exchange_id: str, **kwargs: Any) -> None:
-            super().__init__(exchange_id=exchange_id, report_dir=tmp_path, **kwargs)
+        def __init__(self, *, exchange_id: str) -> None:
+            super().__init__(exchange_id=exchange_id, report_dir=tmp_path)
 
     monkeypatch.setattr(manager_module, "SignalQualityReporter", ReporterProxy)
 
@@ -231,192 +230,8 @@ def test_failover_switches_to_ccxt_and_emits_signal_report(monkeypatch, tmp_path
     assert matching_alerts[0].get("status") == "degraded"
     assert matching_alerts[0].get("backend") == "ccxt"
 
-    degradation = updated_summary.get("degradation", {})
-    assert degradation.get("rolling_score", 0.0) >= 0.6
-
     private_backend = manager._private
     assert private_backend is not None
     assert private_backend.cancel_calls == 1
     assert private_backend.fetch_open_orders_calls == 1
 
-
-def test_watchdog_degradation_blocks_trading(monkeypatch, tmp_path, request):
-    monkeypatch.setattr(manager_module, "_CCXTPublicFeed", _StaticPublicFeed)
-    monkeypatch.setattr(manager_module, "_CCXTPrivateBackend", _CCXTFallback)
-
-    class ReporterProxy(BaseSignalQualityReporter):
-        def __init__(self, *, exchange_id: str, **kwargs: Any) -> None:
-            super().__init__(exchange_id=exchange_id, report_dir=tmp_path, **kwargs)
-
-    monkeypatch.setattr(manager_module, "SignalQualityReporter", ReporterProxy)
-
-    register_native_adapter(
-        exchange_id="binance",
-        mode=Mode.FUTURES,
-        factory=_FailingFuturesAdapter,
-        default_settings={},
-        supports_testnet=True,
-    )
-    request.addfinalizer(lambda: unregister_native_adapter(exchange_id="binance", mode=Mode.FUTURES))
-
-    manager = ExchangeManager(exchange_id="binance")
-    manager.configure_failover(enabled=True, failure_threshold=1, cooldown_seconds=0.0)
-    manager.apply_environment_profile("testnet", exchange="binance")
-    manager.set_credentials("key", "secret")
-    manager.set_mode(futures=True, testnet=True)
-
-    manager.create_order("BTC/USDT", "buy", "limit", 1.0, price=101.0)
-
-    def _degraded_private_api() -> None:
-        raise ExchangeNetworkError("ccxt degraded")
-
-    monitor = manager.create_health_monitor(
-        [HealthCheck(name="private_api", check=_degraded_private_api, critical=False)]
-    )
-    monitor.run()
-
-    summary = manager.describe_signal_quality()
-    degradation = summary.get("degradation", {})
-    assert degradation.get("rolling_score", 0.0) >= 0.6
-
-    class _Emitter:
-        def __init__(self) -> None:
-            self.events: list[tuple[str, dict[str, Any]]] = []
-
-        def log(self, *_args: Any, **_kwargs: Any) -> None:
-            return
-
-        def emit(self, event: str, **payload: Any) -> None:
-            self.events.append((event, payload))
-
-    class _Var:
-        def __init__(self, value: str) -> None:
-            self._value = value
-
-        def get(self) -> str:
-            return self._value
-
-    class _GUI:
-        def __init__(self) -> None:
-            self.timeframe_var = _Var("1h")
-            self.ai_mgr = None
-
-        def is_demo_mode_active(self) -> bool:
-            return True
-
-    emitter = _Emitter()
-    gui = _GUI()
-    trader = AutoTrader(emitter, gui, lambda: "BTCUSDT")
-    guardrails_cfg = trader._thresholds["auto_trader"].setdefault("signal_guardrails", {})
-    guardrails_cfg["signal_quality_degradation"] = {
-        "rolling_score": 0.2,
-        "kill_switch": 0.5,
-        "release": 0.1,
-        "max_leverage": 0.25,
-    }
-    trader.set_signal_quality_provider(manager.describe_signal_quality)
-    trader.current_leverage = 1.2
-
-    result_signal = trader._apply_signal_guardrails("buy", 0.2, None)
-
-    assert result_signal == "hold"
-    assert trader.current_leverage == 0.0
-    assert trader._exchange_degradation_kill_switch is True
-    assert trader._last_guardrail_triggers
-    assert any(trigger.name == "exchange_degradation" for trigger in trader._last_guardrail_triggers)
-
-
-def test_degradation_event_triggers_failover_switch(monkeypatch, tmp_path, request):
-    monkeypatch.setattr(manager_module, "_CCXTPublicFeed", _StaticPublicFeed)
-    monkeypatch.setattr(manager_module, "_CCXTPrivateBackend", _CCXTFallback)
-
-    class ReporterProxy(BaseSignalQualityReporter):
-        def __init__(self, *, exchange_id: str, **kwargs: Any) -> None:
-            super().__init__(exchange_id=exchange_id, report_dir=tmp_path, **kwargs)
-
-    monkeypatch.setattr(manager_module, "SignalQualityReporter", ReporterProxy)
-
-    register_native_adapter(
-        exchange_id="binance",
-        mode=Mode.FUTURES,
-        factory=_FailingFuturesAdapter,
-        default_settings={},
-        supports_testnet=True,
-    )
-    request.addfinalizer(lambda: unregister_native_adapter(exchange_id="binance", mode=Mode.FUTURES))
-
-    manager = ExchangeManager(exchange_id="binance")
-    manager.set_credentials("key", "secret")
-    manager.set_mode(futures=True, testnet=True)
-
-    engaged_events: list[dict[str, Any]] = []
-
-    def _capture(event) -> None:
-        engaged_events.append(event.payload)
-
-    manager.event_bus.subscribe("exchange.failover.engaged", _capture)
-
-    def _degraded_native() -> None:
-        raise ExchangeNetworkError("native backend degraded")
-
-    monitor = manager.create_health_monitor(
-        [HealthCheck(name="native_private_api", check=_degraded_native, critical=False)]
-    )
-
-    assert manager._failover_enabled is False
-    assert manager._active_backend == "native"
-
-    monitor.run()
-
-    assert manager._failover_enabled is True
-    assert manager._active_backend == "ccxt"
-    assert manager._failover_auto_enabled is True
-    assert engaged_events, "Powinno pojawić się zdarzenie failover engaged"
-    assert engaged_events[-1].get("previous_backend") == "native"
-
-
-def test_exchange_weighting_tracks_signal_quality(monkeypatch, tmp_path):
-    monkeypatch.setattr(manager_module, "_CCXTPublicFeed", _StaticPublicFeed)
-    monkeypatch.setattr(manager_module, "_CCXTPrivateBackend", _CCXTFallback)
-
-    class ReporterProxy(BaseSignalQualityReporter):
-        def __init__(self, *, exchange_id: str, **kwargs: Any) -> None:
-            super().__init__(exchange_id=exchange_id, report_dir=tmp_path, **kwargs)
-
-    monkeypatch.setattr(manager_module, "SignalQualityReporter", ReporterProxy)
-
-    manager = ExchangeManager(exchange_id="binance")
-    reporter = manager._signal_reporter
-
-    for _ in range(6):
-        reporter.record_success(
-            backend="native",
-            symbol="BTC/USDT",
-            side="buy",
-            order_type="market",
-            requested_quantity=1.0,
-            requested_price=100.0,
-            filled_quantity=1.0,
-            executed_price=100.0,
-            latency=0.05,
-        )
-
-    baseline = manager.describe_weighting()
-    assert baseline["weight"] > 0.0
-    assert baseline["rolling_weight"] >= baseline["weight"] * 0.8
-
-    reporter.record_watchdog_results(
-        [
-            HealthCheckResult(
-                name="private_api",
-                status=HealthStatus.DEGRADED,
-                latency=0.5,
-                details={"degradation_score": 0.9},
-            )
-        ],
-        backend="native",
-    )
-
-    degraded = manager.describe_weighting()
-    assert degraded["weight"] < baseline["weight"]
-    assert degraded["degradation"]["rolling_score"] >= 0.9

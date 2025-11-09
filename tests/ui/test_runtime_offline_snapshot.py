@@ -101,20 +101,6 @@ def test_offline_snapshot_matches_champion_registry(tmp_path: Path) -> None:
     assert guard["fps_target"] == 60
     assert "reduce_motion_after_seconds" in guard
 
-    assert snapshot["guardrail_state"] == {}
-    assert snapshot["guardrail_trace"] == []
-    assert snapshot["risk_alerts"] == []
-    assert snapshot["decision_history"] == []
-    assert snapshot["model_events"] == []
-    assert snapshot["signal_quality"] == {}
-    assert snapshot["failover"] == {}
-    assert snapshot["retraining_cycles"] == []
-    assert snapshot["journal_performance"]["mode"] == "baseline"
-    indicators = snapshot["performance_indicators"]
-    assert indicators["journal"]["mode"] == "baseline"
-    assert indicators["strategy"]["history"] == []
-    assert indicators["exchange"]["allocations"] == []
-
     command = [
         sys.executable,
         "-m",
@@ -131,16 +117,3 @@ def test_offline_snapshot_matches_champion_registry(tmp_path: Path) -> None:
     parsed = json.loads(result.stdout)
     assert parsed["decision_summary"]["version"] == champion["version"]
     assert parsed["controller_history"][0]["event"] == "champion"
-    assert parsed["guardrail_state"] == {}
-    assert parsed["guardrail_trace"] == []
-    assert parsed["risk_alerts"] == []
-    assert parsed["decision_history"] == []
-    assert parsed["model_events"] == []
-    assert parsed["signal_quality"] == {}
-    assert parsed["failover"] == {}
-    assert parsed["retraining_cycles"] == []
-    assert parsed["journal_performance"]["mode"] == "baseline"
-    parsed_indicators = parsed["performance_indicators"]
-    assert parsed_indicators["journal"]["mode"] == "baseline"
-    assert parsed_indicators["strategy"]["history"] == []
-    assert parsed_indicators["exchange"]["allocations"] == []

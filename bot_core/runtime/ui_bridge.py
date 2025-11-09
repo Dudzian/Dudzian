@@ -85,39 +85,6 @@ def build_auto_mode_snapshot(
             "controller_history": [],
             "recommendations": [],
             "performance_guard": dict(DEFAULT_PERFORMANCE_GUARD),
-            "guardrail_state": {},
-            "guardrail_trace": [],
-            "risk_alerts": [],
-            "decision_history": [],
-            "model_events": [],
-            "signal_quality": {},
-            "failover": {},
-            "retraining_cycles": [],
-            "journal_performance": {"mode": "baseline"},
-            "exchange_allocation": {
-                "selected": None,
-                "allocations": [],
-                "history": [],
-            },
-            "performance_indicators": {
-                "rolling_pnl": None,
-                "max_drawdown_pct": None,
-                "win_rate": None,
-                "journal": {"mode": "baseline"},
-                "strategy": {
-                    "current": "neutral",
-                    "state": "baseline",
-                    "leverage": 1.0,
-                    "stop_loss_pct": 0.02,
-                    "take_profit_pct": 0.04,
-                    "history": [],
-                },
-                "exchange": {
-                    "selected": None,
-                    "allocations": [],
-                    "history": [],
-                },
-            },
         }
 
     champion_report = _ensure_dict(overview.get("champion"))
@@ -231,39 +198,6 @@ def build_auto_mode_snapshot(
         "champion": champion_report,
         "challengers": challengers,
         "performance_guard": dict(DEFAULT_PERFORMANCE_GUARD),
-        "guardrail_state": {},
-        "guardrail_trace": [],
-        "risk_alerts": [],
-        "decision_history": [],
-        "model_events": [],
-        "signal_quality": {},
-        "failover": {},
-        "retraining_cycles": [],
-        "journal_performance": {"mode": "baseline"},
-        "exchange_allocation": {
-            "selected": None,
-            "allocations": [],
-            "history": [],
-        },
-        "performance_indicators": {
-            "rolling_pnl": None,
-            "max_drawdown_pct": None,
-            "win_rate": None,
-            "journal": {"mode": "baseline"},
-            "strategy": {
-                "current": "neutral",
-                "state": "baseline",
-                "leverage": 1.0,
-                "stop_loss_pct": 0.02,
-                "take_profit_pct": 0.04,
-                "history": [],
-            },
-            "exchange": {
-                "selected": None,
-                "allocations": [],
-                "history": [],
-            },
-        },
     }
 
 

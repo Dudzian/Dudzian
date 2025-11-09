@@ -406,9 +406,6 @@ class _ChampionCacheEntry:
     fallback: bool
     fallback_reason: str | None
     champion_version: str | None
-    payload: Mapping[str, object] | None
-    metrics: Mapping[str, float]
-    retraining_id: str | None = None
 
 
 @dataclass(slots=True)
@@ -586,23 +583,6 @@ class AutoTrader:
         self.symbol_getter = symbol_getter
         self.market_data_provider = market_data_provider
         self.bootstrap_context = bootstrap_context
-        self._retraining_listener_tag = f"auto_trader_retraining::{id(self)}"
-        listener = getattr(emitter, "on", None)
-        if callable(listener):
-            try:
-                listener(
-                    "ai.retraining.champion_promoted",
-                    self._handle_retraining_promotion_event,
-                    tag=self._retraining_listener_tag,
-                )
-            except TypeError:
-                try:
-                    listener(
-                        "ai.retraining.champion_promoted",
-                        self._handle_retraining_promotion_event,
-                    )
-                except Exception:  # pragma: no cover - defensywnie na egzotyczne emitery
-                    LOGGER.debug("Nie udało się zarejestrować listenera promocji championa", exc_info=True)
 
         alias_override = canonical_alias_map(strategy_alias_map)
         suffix_override = (
@@ -648,27 +628,6 @@ class AutoTrader:
         self._model_repositories: dict[str, ModelRepository] = {}
         self._champion_cache: dict[str, _ChampionCacheEntry] = {}
         self._model_change_queue: deque[dict[str, Any]] = deque()
-        self._model_change_log: deque[dict[str, Any]] = deque(maxlen=128)
-        self._retraining_cycle_log: deque[dict[str, Any]] = deque(maxlen=64)
-        self._strategy_adaptation_log: deque[dict[str, Any]] = deque(maxlen=64)
-        self._signal_quality_provider: Callable[[], Mapping[str, object] | None] | None = None
-        self._signal_quality_cache: tuple[float, Mapping[str, object]] | None = None
-        self._exchange_degradation_score: float = 0.0
-        self._exchange_degradation_payload: Mapping[str, object] = {}
-        self._exchange_degradation_guardrail_active = False
-        self._exchange_degradation_kill_switch = False
-        self._exchange_degradation_alert_active = False
-        self._exchange_weight_providers: dict[
-            tuple[str, str], Callable[[], Mapping[str, object] | None]
-        ] = {}
-        self._exchange_key_registry: dict[tuple[str, str], tuple[str, str]] = {}
-        self._exchange_weight_cache: tuple[
-            float, dict[tuple[str, str], dict[str, Any]]
-        ] | None = None
-        self._exchange_preference_weights: dict[tuple[str, str], float] = {}
-        self._exchange_preference_defaults: dict[str, float] = {}
-        self._exchange_selection_log: deque[dict[str, Any]] = deque(maxlen=64)
-        self._last_exchange_selection: dict[str, Any] | None = None
 
         self.signal_service = signal_service
         self._ai_feature_column_names: tuple[str, ...] | None = None
@@ -1929,52 +1888,6 @@ class AutoTrader:
                 best_score = score
         return best_payload, best_score
 
-    @staticmethod
-    def _extract_quality_metrics(payload: Mapping[str, object] | None) -> dict[str, float]:
-        if not isinstance(payload, Mapping):
-            return {}
-        metrics_raw = payload.get("metrics")
-        metrics_source: Mapping[str, object]
-        if isinstance(metrics_raw, Mapping):
-            summary_raw = metrics_raw.get("summary")
-            metrics_source = summary_raw if isinstance(summary_raw, Mapping) else metrics_raw
-        else:
-            metrics_source = {}
-        result: dict[str, float] = {}
-        for key, value in metrics_source.items():
-            try:
-                result[str(key)] = float(value)  # type: ignore[arg-type]
-            except (TypeError, ValueError):
-                continue
-        return result
-
-    @staticmethod
-    def _normalize_metric_map(payload: object) -> dict[str, float]:
-        if not isinstance(payload, Mapping):
-            return {}
-        result: dict[str, float] = {}
-        for key, value in payload.items():
-            try:
-                result[str(key)] = float(value)  # type: ignore[arg-type]
-            except (TypeError, ValueError):
-                continue
-        return result
-
-    @staticmethod
-    def _compute_metric_deltas(
-        previous: Mapping[str, float] | None,
-        current: Mapping[str, float] | None,
-    ) -> dict[str, float]:
-        deltas: dict[str, float] = {}
-        previous = previous or {}
-        current = current or {}
-        for key in set(previous) & set(current):
-            try:
-                deltas[key] = float(current[key]) - float(previous[key])
-            except (TypeError, ValueError):
-                continue
-        return deltas
-
     def _load_champion_snapshot(self, model_name: str) -> _ChampionSnapshot | None:
         try:
             overview = load_champion_overview(model_name, base_dir=self._champion_registry_dir)
@@ -2061,39 +1974,6 @@ class AutoTrader:
             challengers=tuple(challengers),
         )
 
-    def _derive_retraining_id(
-        self,
-        model_name: str,
-        context: Mapping[str, Any] | None,
-        snapshot: _ChampionSnapshot | None,
-    ) -> str | None:
-        if not model_name:
-            return None
-        mapping = context if isinstance(context, Mapping) else {}
-        for key in ("retraining_id", "cycle_id", "run_id", "job_run_id"):
-            value = mapping.get(key)
-            if value is None:
-                continue
-            text = str(value).strip()
-            if text:
-                return text
-        trained_at = mapping.get("trained_at") if isinstance(mapping, Mapping) else None
-        if trained_at is not None:
-            try:
-                normalized = self._normalize_timestamp_for_export(trained_at, coerce=True)
-            except Exception:  # pragma: no cover - zabezpieczenie na niestandardowe typy
-                normalized = str(trained_at)
-            if normalized:
-                return f"{model_name}:{normalized}"
-        version = mapping.get("version") if isinstance(mapping, Mapping) else None
-        if not version and snapshot is not None:
-            version = snapshot.version
-        if version:
-            return f"{model_name}:{version}"
-        if snapshot is not None and snapshot.decided_at:
-            return f"{model_name}:{snapshot.decided_at}"
-        return None
-
     def _repository_for_model(self, model_name: str) -> ModelRepository:
         repository = self._model_repositories.get(model_name)
         if repository is None:
@@ -2127,16 +2007,8 @@ class AutoTrader:
             return Path(path)
 
     def _queue_model_change_event(self, payload: Mapping[str, Any]) -> None:
-        normalized = self._normalise_model_change_payload(payload)
-        retraining_entry = self._build_retraining_cycle_entry(normalized)
         with self._lock:
-            self._model_change_queue.append(dict(normalized))
-            self._model_change_log.append(dict(normalized))
-            if retraining_entry is not None:
-                self._retraining_cycle_log.append(retraining_entry)
-        self._log_model_change_event(normalized)
-        self._update_model_change_metrics(normalized)
-        self._update_retraining_cycle_metrics(normalized, retraining_entry)
+            self._model_change_queue.append(dict(payload))
 
     def poll_model_change_event(self) -> Mapping[str, Any] | None:
         with self._lock:
@@ -2145,416 +2017,7 @@ class AutoTrader:
             payload = self._model_change_queue.popleft()
         return dict(payload)
 
-    @staticmethod
-    def _normalise_model_change_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
-        normalized: dict[str, Any] = {}
-        for key, value in payload.items():
-            if key == "metrics" and isinstance(value, Mapping):
-                normalized[key] = {
-                    "current": dict(value.get("current") or {}),
-                    "previous": dict(value.get("previous") or {}),
-                    "delta": dict(value.get("delta") or {}),
-                }
-            elif key == "decision_impact" and isinstance(value, Mapping):
-                impact = dict(value)
-                last_cycle = impact.get("last_cycle")
-                if isinstance(last_cycle, Mapping):
-                    impact["last_cycle"] = dict(last_cycle)
-                last_labels = impact.get("last_decision_labels")
-                if isinstance(last_labels, Mapping):
-                    impact["last_decision_labels"] = dict(last_labels)
-                normalized[key] = impact
-            elif isinstance(value, Mapping):
-                normalized[key] = dict(value)
-            elif isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
-                normalized[key] = [copy.deepcopy(item) for item in value]
-            else:
-                normalized[key] = copy.deepcopy(value)
-        return normalized
-
-    @staticmethod
-    def _build_retraining_cycle_entry(payload: Mapping[str, Any]) -> dict[str, Any] | None:
-        retraining_id = payload.get("retraining_id")
-        if not retraining_id:
-            return None
-        entry: dict[str, Any] = {
-            "retraining_id": retraining_id,
-            "model_name": payload.get("model_name"),
-            "version": payload.get("version"),
-            "decided_at": payload.get("decided_at"),
-            "source": payload.get("source"),
-        }
-        metrics = payload.get("metrics")
-        if isinstance(metrics, Mapping):
-            entry["metrics"] = {
-                "current": dict(metrics.get("current") or {}),
-                "previous": dict(metrics.get("previous") or {}),
-                "delta": dict(metrics.get("delta") or {}),
-            }
-        impact = payload.get("decision_impact")
-        if isinstance(impact, Mapping):
-            entry["decision_impact"] = dict(impact)
-        return entry
-
-    @staticmethod
-    def _parse_iso_timestamp(value: Any) -> datetime | None:
-        if isinstance(value, datetime):
-            if value.tzinfo is None:
-                return value.replace(tzinfo=timezone.utc)
-            return value.astimezone(timezone.utc)
-        if isinstance(value, (int, float)):
-            try:
-                return datetime.fromtimestamp(float(value), timezone.utc)
-            except (OSError, OverflowError, ValueError):
-                return None
-        if isinstance(value, str):
-            text = value.strip()
-            if not text:
-                return None
-            if text.endswith("Z"):
-                text = text[:-1] + "+00:00"
-            try:
-                parsed = datetime.fromisoformat(text)
-            except ValueError:
-                return None
-            if parsed.tzinfo is None:
-                return parsed.replace(tzinfo=timezone.utc)
-            return parsed.astimezone(timezone.utc)
-        return None
-
-    def _prepare_decision_journal_records(
-        self,
-        *,
-        limit: int = 1024,
-    ) -> list[tuple[datetime, Mapping[str, Any]]]:
-        journal = getattr(self, "_decision_journal", None)
-        if journal is None:
-            return []
-        try:
-            exported = journal.export()
-        except Exception:
-            return []
-
-        records: list[tuple[datetime, Mapping[str, Any]]] = []
-        for entry in exported:
-            if not isinstance(entry, Mapping):
-                continue
-            timestamp = self._parse_iso_timestamp(entry.get("timestamp"))
-            if timestamp is None:
-                continue
-            records.append((timestamp, dict(entry)))
-
-        if not records:
-            return []
-
-        records.sort(key=lambda item: item[0])
-        if len(records) > limit:
-            records = records[-limit:]
-        return records
-
-    def _summarize_decision_records(
-        self,
-        records: Sequence[tuple[datetime, Mapping[str, Any]]],
-        *,
-        start: datetime,
-        end: datetime | None,
-    ) -> dict[str, Any] | None:
-        if not records:
-            return None
-
-        total_events = 0
-        event_counter: Counter[str] = Counter()
-        status_counter: Counter[str] = Counter()
-        approval_counter: Counter[str] = Counter()
-        guardrail_events = 0
-
-        for timestamp, payload in records:
-            if timestamp < start:
-                continue
-            if end is not None and timestamp >= end:
-                break
-
-            event_name = str(payload.get("event") or "").strip()
-            if not event_name:
-                continue
-            if event_name == "model_change":
-                continue
-
-            total_events += 1
-            event_counter[event_name] += 1
-
-            status_value = str(payload.get("status") or "").strip().lower()
-            if status_value:
-                status_counter[status_value] += 1
-
-            if event_name == "decision_guardrail":
-                guardrail_events += 1
-
-            if "approved" in payload:
-                approval_state = self._normalize_approval_flag(payload.get("approved"))
-                if approval_state == _APPROVAL_APPROVED:
-                    approval_counter[_APPROVAL_APPROVED] += 1
-                elif approval_state == _APPROVAL_DENIED:
-                    approval_counter[_APPROVAL_DENIED] += 1
-
-        if total_events == 0 and guardrail_events == 0:
-            return None
-
-        summary: dict[str, Any] = {
-            "total_events": total_events,
-            "by_event": {key: int(value) for key, value in event_counter.items()},
-            "by_status": {key: int(value) for key, value in status_counter.items()},
-        }
-
-        if approval_counter:
-            summary["approvals"] = {
-                key: int(value) for key, value in approval_counter.items()
-            }
-        if guardrail_events:
-            summary["guardrail_events"] = guardrail_events
-
-        summary["window_start"] = start.isoformat()
-        if end is not None:
-            summary["window_end"] = end.isoformat()
-            summary["window_seconds"] = max(0, int((end - start).total_seconds()))
-        else:
-            summary["window_end"] = None
-            summary["window_seconds"] = None
-        return summary
-
-    def _enrich_retraining_cycles_with_decisions(
-        self,
-        entries: Sequence[Mapping[str, Any]],
-    ) -> list[dict[str, Any]]:
-        if not entries:
-            return []
-
-        records = self._prepare_decision_journal_records()
-        snapshot_time = datetime.now(timezone.utc)
-
-        parsed_decisions: list[datetime | None] = [
-            self._parse_iso_timestamp(entry.get("decided_at")) for entry in entries
-        ]
-
-        enriched: list[dict[str, Any]] = []
-        for index, entry in enumerate(entries):
-            decided_at = parsed_decisions[index]
-            next_timestamp: datetime | None = None
-            for offset in range(index + 1, len(entries)):
-                candidate = parsed_decisions[offset]
-                if candidate is not None:
-                    next_timestamp = candidate
-                    break
-
-            record = dict(entry)
-            if decided_at is not None:
-                summary = self._summarize_decision_records(
-                    records,
-                    start=decided_at,
-                    end=next_timestamp,
-                )
-                if summary is None:
-                    summary = {
-                        "total_events": 0,
-                        "by_event": {},
-                        "by_status": {},
-                        "window_start": decided_at.isoformat(),
-                        "window_end": next_timestamp.isoformat() if next_timestamp else None,
-                        "window_seconds": max(
-                            0,
-                            int(
-                                ((next_timestamp or snapshot_time) - decided_at).total_seconds()
-                            ),
-                        ),
-                    }
-                else:
-                    summary.setdefault("window_start", decided_at.isoformat())
-                    if summary.get("window_end") is None and next_timestamp is not None:
-                        summary["window_end"] = next_timestamp.isoformat()
-                    if summary.get("window_seconds") is None:
-                        summary["window_seconds"] = max(
-                            0,
-                            int(
-                                ((next_timestamp or snapshot_time) - decided_at).total_seconds()
-                            ),
-                        )
-                record["decision_summary"] = summary
-            enriched.append(record)
-        return enriched
-
-    def _build_model_change_decision_impact(self) -> dict[str, Any]:
-        impact: dict[str, Any] = {
-            "guardrail_active": bool(self._exchange_degradation_guardrail_active),
-            "kill_switch": bool(self._exchange_degradation_kill_switch),
-            "auto_trade_enabled": bool(self.enable_auto_trade),
-            "auto_trade_confirmed": bool(self._auto_trade_user_confirmed),
-        }
-        try:
-            history = self.get_controller_cycle_history(limit=1, reverse=True)
-        except Exception:  # pragma: no cover - defensywna ochrona przed błędami historii
-            history = []
-        if history:
-            impact["last_cycle"] = history[0]
-        last_labels = getattr(self, "_last_decision_metric_labels", None)
-        if isinstance(last_labels, Mapping) and last_labels:
-            impact["last_decision_labels"] = dict(last_labels)
-        return impact
-
-    def _log_model_change_event(self, payload: Mapping[str, Any]) -> None:
-        journal = getattr(self, "_decision_journal", None)
-        if journal is None:
-            return
-        model_name = payload.get("model_name")
-        version = payload.get("version")
-        if not model_name or not version:
-            return
-        try:
-            context = getattr(self, "_decision_journal_context", None)
-            environment = self._environment_name
-            portfolio = self._portfolio_id
-            risk_profile = self._risk_profile_name
-            if isinstance(context, Mapping):
-                environment = str(context.get("environment", environment))
-                portfolio = str(context.get("portfolio", portfolio))
-                risk_profile = str(context.get("risk_profile", risk_profile))
-            metrics_section = payload.get("metrics")
-            metrics_current = self._normalize_metric_map(
-                metrics_section.get("current") if isinstance(metrics_section, Mapping) else None
-            )
-            metrics_previous = self._normalize_metric_map(
-                metrics_section.get("previous") if isinstance(metrics_section, Mapping) else None
-            )
-            metrics_delta = self._normalize_metric_map(
-                metrics_section.get("delta") if isinstance(metrics_section, Mapping) else None
-            )
-            metadata_payload: dict[str, object] = {}
-            promotion_reason = payload.get("promotion_reason")
-            if promotion_reason:
-                metadata_payload["promotion_reason"] = promotion_reason
-            impact = payload.get("decision_impact")
-            if isinstance(impact, Mapping):
-                metadata_payload["guardrail_active"] = str(
-                    int(bool(impact.get("guardrail_active")))
-                )
-                metadata_payload["kill_switch"] = str(int(bool(impact.get("kill_switch"))))
-                last_cycle = impact.get("last_cycle")
-                if isinstance(last_cycle, Mapping) and last_cycle.get("sequence") is not None:
-                    metadata_payload["last_cycle_sequence"] = last_cycle.get("sequence")
-            challengers = payload.get("challenger_versions")
-            if isinstance(challengers, Sequence):
-                metadata_payload["challenger_versions"] = ",".join(str(item) for item in challengers if item)
-            if payload.get("source"):
-                metadata_payload["source"] = payload.get("source")
-            log_model_change_event(
-                journal,
-                environment=environment,
-                portfolio=portfolio,
-                risk_profile=risk_profile,
-                model_name=str(model_name),
-                new_version=str(version),
-                previous_version=str(payload.get("previous_version"))
-                if payload.get("previous_version")
-                else None,
-                source=str(payload.get("source")) if payload.get("source") else None,
-                fallback=bool(payload.get("fallback")) if "fallback" in payload else None,
-                fallback_reason=str(payload.get("fallback_reason"))
-                if payload.get("fallback_reason")
-                else None,
-                decided_at=payload.get("decided_at"),
-                retraining_id=str(payload.get("retraining_id"))
-                if payload.get("retraining_id")
-                else None,
-                metrics_current=metrics_current,
-                metrics_previous=metrics_previous,
-                metrics_delta=metrics_delta,
-                metadata=metadata_payload,
-            )
-        except Exception:  # pragma: no cover - zapis do journal nie powinien zatrzymać cyklu
-            LOGGER.debug("Nie udało się zapisać zdarzenia model_change do journalu", exc_info=True)
-
-    def _update_model_change_metrics(self, payload: Mapping[str, Any]) -> None:
-        model_name = str(payload.get("model_name") or payload.get("model") or "").strip()
-        if not model_name:
-            model_name = "unknown"
-        source = str(payload.get("source") or "champion").strip() or "champion"
-        fallback_label = "1" if payload.get("fallback") else "0"
-        base_labels = self._metric_label_payload(
-            model=model_name,
-            source=source,
-            fallback=fallback_label,
-        )
-        self._metric_model_change_total.inc(labels=base_labels)
-        timestamp = time.time()
-        self._metric_model_change_timestamp.set(
-            timestamp,
-            labels=self._metric_label_payload(model=model_name),
-        )
-        impact = payload.get("decision_impact")
-        guardrail_state = "inactive"
-        if isinstance(impact, Mapping):
-            if impact.get("kill_switch"):
-                guardrail_state = "kill_switch"
-            elif impact.get("guardrail_active"):
-                guardrail_state = "active"
-        if guardrail_state != "inactive":
-            guardrail_labels = self._metric_label_payload(
-                model=model_name,
-                state=guardrail_state,
-            )
-            self._metric_model_change_guardrail_total.inc(labels=guardrail_labels)
-
-    def _update_retraining_cycle_metrics(
-        self,
-        payload: Mapping[str, Any],
-        retraining_entry: Mapping[str, Any] | None,
-    ) -> None:
-        retraining_id = payload.get("retraining_id")
-        if not retraining_id:
-            return
-
-        model_name = str(payload.get("model_name") or payload.get("model") or "").strip()
-        if not model_name:
-            model_name = "unknown"
-        source = str(payload.get("source") or "champion").strip() or "champion"
-
-        base_labels = self._metric_label_payload(model=model_name, source=source)
-        self._metric_retraining_cycle_total.inc(labels=base_labels)
-
-        timestamp_value = self._parse_iso_timestamp(payload.get("decided_at"))
-        if timestamp_value is not None:
-            self._metric_retraining_timestamp.set(
-                timestamp_value.timestamp(),
-                labels=self._metric_label_payload(model=model_name),
-            )
-
-        impact_payload: Mapping[str, Any] | None = None
-        if retraining_entry and isinstance(retraining_entry.get("decision_impact"), Mapping):
-            impact_payload = cast(Mapping[str, Any], retraining_entry["decision_impact"])
-        elif isinstance(payload.get("decision_impact"), Mapping):
-            impact_payload = cast(Mapping[str, Any], payload["decision_impact"])
-
-        guardrail_active = False
-        kill_switch_active = False
-        if impact_payload:
-            guardrail_active = bool(impact_payload.get("guardrail_active"))
-            kill_switch_active = bool(impact_payload.get("kill_switch"))
-
-        if guardrail_active or kill_switch_active:
-            state = "kill_switch" if kill_switch_active else "guardrail"
-            guardrail_labels = self._metric_label_payload(
-                model=model_name,
-                source=source,
-                state=state,
-            )
-            self._metric_retraining_guardrail_total.inc(labels=guardrail_labels)
-
-    def _synchronise_champion_model(
-        self,
-        ai_manager: Any,
-        symbol: str | None,
-        *,
-        promotion_context: Mapping[str, Any] | None = None,
-    ) -> None:
+    def _synchronise_champion_model(self, ai_manager: Any, symbol: str | None) -> None:
         mapping = getattr(self, "_champion_model_map", {})
         if not mapping:
             return
@@ -2628,19 +2091,6 @@ class AutoTrader:
                 )
 
         previous_entry = cache_entry
-        previous_payload = getattr(previous_entry, "payload", None) if previous_entry else None
-        previous_metrics = (
-            self._extract_quality_metrics(previous_payload)
-            if isinstance(previous_payload, Mapping)
-            else {}
-        )
-        current_metrics = self._extract_quality_metrics(snapshot.payload)
-        metric_delta = self._compute_metric_deltas(previous_metrics, current_metrics)
-        retraining_id = self._derive_retraining_id(model_name, promotion_context, snapshot)
-        if retraining_id is None and previous_entry is not None:
-            retraining_id = getattr(previous_entry, "retraining_id", None)
-        decision_impact = self._build_model_change_decision_impact()
-
         new_entry = _ChampionCacheEntry(
             version=snapshot.version,
             source=snapshot.source,
@@ -2648,9 +2098,6 @@ class AutoTrader:
             fallback=snapshot.fallback,
             fallback_reason=snapshot.fallback_reason,
             champion_version=snapshot.champion_version,
-            payload=copy.deepcopy(snapshot.payload),
-            metrics=dict(current_metrics),
-            retraining_id=retraining_id,
         )
         with self._lock:
             self._champion_cache[model_name] = new_entry
@@ -2674,20 +2121,6 @@ class AutoTrader:
         if previous_entry is not None:
             event_payload["previous_version"] = previous_entry.version
             event_payload["previous_source"] = previous_entry.source
-        event_payload["metrics"] = {
-            "current": dict(current_metrics),
-            "previous": dict(previous_metrics),
-            "delta": dict(metric_delta),
-        }
-        event_payload["decision_impact"] = decision_impact
-        if retraining_id:
-            event_payload["retraining_id"] = retraining_id
-        if isinstance(promotion_context, Mapping):
-            reason_token = promotion_context.get("reason") or promotion_context.get("promotion_reason")
-            if reason_token:
-                event_payload["promotion_reason"] = str(reason_token)
-            if promotion_context.get("trained_at") and "trained_at" not in event_payload:
-                event_payload["trained_at"] = str(promotion_context.get("trained_at"))
         self._queue_model_change_event(event_payload)
 
         self._log(
@@ -2698,41 +2131,6 @@ class AutoTrader:
             fallback=snapshot.fallback,
             reason=snapshot.fallback_reason,
         )
-
-    def _handle_retraining_promotion_event(self, **payload: Any) -> None:
-        model_token = (
-            payload.get("model")
-            or payload.get("model_name")
-            or payload.get("job")
-        )
-        model_name = str(model_token).strip() if model_token else ""
-        if not model_name:
-            return
-        ai_manager = getattr(self, "ai_manager", None)
-        if ai_manager is None:
-            return
-        mapping = getattr(self, "_champion_model_map", {}) or {}
-        target_symbols: list[str | None] = []
-        for key, value in mapping.items():
-            if value != model_name:
-                continue
-            target_symbols.append(None if key == self._DEFAULT_CHAMPION_KEY else key)
-        if not target_symbols and mapping.get(self._DEFAULT_CHAMPION_KEY) == model_name:
-            target_symbols.append(None)
-        if not target_symbols:
-            return
-        for symbol in target_symbols:
-            try:
-                self._synchronise_champion_model(
-                    ai_manager,
-                    symbol,
-                    promotion_context=payload,
-                )
-            except Exception:  # pragma: no cover - defensywnie na niestandardowe implementacje
-                LOGGER.debug(
-                    "Nie udało się zsynchronizować championa po promocji retreningu",
-                    exc_info=True,
-                )
 
     # ------------------------------------------------------------------
     # Market intelligence helpers -------------------------------------

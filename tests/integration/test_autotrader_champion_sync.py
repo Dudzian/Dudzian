@@ -59,19 +59,12 @@ class _Emitter:
     def __init__(self) -> None:
         self.events: list[tuple[str, dict[str, object]]] = []
         self.logs: list[tuple[str, dict[str, object]]] = []
-        self._callbacks: dict[str, list] = {}
 
     def emit(self, event: str, **payload: object) -> None:
         self.events.append((event, dict(payload)))
-        for callback in list(self._callbacks.get(event, [])):
-            callback(**payload)
 
     def log(self, message: str, *_, **kwargs: object) -> None:
         self.logs.append((message, dict(kwargs)))
-
-    def on(self, event: str, callback, *, tag: str | None = None) -> None:  # type: ignore[override]
-        del tag
-        self._callbacks.setdefault(event, []).append(callback)
 
 
 class _Var:
@@ -246,13 +239,6 @@ def test_autotrader_synchronises_champion_and_fallback(tmp_path: Path) -> None:
     assert fallback_event["fallback"] is True
     assert fallback_event.get("fallback_reason") == "champion_degraded"
     assert "v2" in fallback_event.get("challenger_versions", [])
-    metrics_payload = fallback_event.get("metrics")
-    assert isinstance(metrics_payload, dict)
-    assert metrics_payload["current"]["mae"] == 18.0
-    assert metrics_payload["previous"]["mae"] == 14.0
-    decision_impact = fallback_event.get("decision_impact")
-    assert isinstance(decision_impact, dict)
-    assert decision_impact["auto_trade_enabled"] is True
     assert "v2" in manager.loaded[-1][1].name
 
     _publish(repository, "v3")
@@ -270,32 +256,3 @@ def test_autotrader_synchronises_champion_and_fallback(tmp_path: Path) -> None:
     assert champion_event.get("previous_version") == "v2"
     assert champion_event["fallback"] is False
     assert "v3" in manager.loaded[-1][1].name
-
-    _publish(repository, "v4")
-    record_model_quality_report(
-        _build_report("v4", directional=0.74, mae=10.0, status="improved"),
-        history_root=quality_root,
-    )
-
-    emitter.emit("ai.retraining.champion_promoted", model="decision_engine", version="v4")
-    scheduler._drain_model_change_events()
-
-    events = _model_events(emitter)
-    promotion_event = events[-1]
-    assert promotion_event["version"] == "v4"
-    assert promotion_event.get("previous_version") == "v3"
-    assert promotion_event["fallback"] is False
-    assert promotion_event.get("retraining_id") == "decision_engine:v4"
-    assert "v4" in manager.loaded[-1][1].name
-
-    snapshot = trader.build_auto_mode_snapshot(include_history=False)
-    cycles = snapshot.get("retraining_cycles")
-    assert isinstance(cycles, list)
-    assert cycles
-    assert cycles[-1]["retraining_id"].endswith("v4")
-    assert cycles[-1]["decision_impact"]["auto_trade_enabled"] is True
-    summary_payload = cycles[-1].get("decision_summary")
-    assert isinstance(summary_payload, dict)
-    assert "total_events" in summary_payload
-    assert "by_event" in summary_payload and isinstance(summary_payload["by_event"], dict)
-    assert "window_start" in summary_payload

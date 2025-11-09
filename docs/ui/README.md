@@ -41,8 +41,6 @@
 * Widok **Raporty i automatyzacja jakości** prezentuje listę raportów championów budowaną przez `python -m bot_core.reporting.ui_bridge overview`. Każdy wpis zawiera skrócone metryki (score, skuteczność kierunkowa, MAE, Sharpe/Sortino) oraz przycisk „Otwórz lokalizację” (wykorzystuje `ReportCenterController::openReportLocation`).
 * Przyciski „Podgląd archiwizacji” i „Archiwizuj” wywołują odpowiednio `previewArchiveReports()` i `archiveReports()` (delegowane do `ui_bridge archive`). Dzięki temu operator może najpierw wykonać dry-run, a następnie zarchiwizować raporty championów bez opuszczania panelu.
 * Panel monitoruje sygnały `ReportCenterController` (`reportsChanged`, `archivePreviewReady`, `archiveFinished`, `lastNotificationChanged`) i prezentuje status operacji w pasku komunikatów widoku.
-* Górna sekcja **Wskaźniki automatyzacji i alokacji** wykonuje polling migawki `autoModeSnapshot()` i prezentuje rolling P&L, stan strategii (wraz z trybem defensywnym/critical), aktualne parametry SL/TP oraz bieżącą alokację giełd. Historia adaptacji strategii oraz przełączeń backendów pochodzi bezpośrednio z nowego pola `performance_indicators` i odświeża się co 5 s.
-* Dzięki strumieniowi `performance_indicators` operator może śledzić w czasie rzeczywistym jak AutoTrader reaguje na degradację modeli, kiedy przełącza się pomiędzy giełdami oraz które zdarzenia wymusiły defensywny tryb działania.
 
 ## Testy
 

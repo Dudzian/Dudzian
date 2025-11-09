@@ -9,7 +9,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Deque, Mapping, MutableMapping, Sequence
 
-from bot_core.exchanges.core import Event, EventBus
 from bot_core.exchanges.health import HealthCheckResult, HealthStatus
 from bot_core.observability.metrics import MetricsRegistry, get_global_metrics_registry
 
@@ -80,30 +79,6 @@ class WatchdogEvent:
         return payload
 
 
-@dataclass(slots=True)
-class _DegradationSample:
-    timestamp: datetime
-    check: str
-    backend: str | None
-    score: float
-    status: HealthStatus
-
-    def as_dict(self) -> MutableMapping[str, object]:
-        payload: MutableMapping[str, object] = {
-            "timestamp": self.timestamp.astimezone(timezone.utc).isoformat(),
-            "check": self.check,
-            "score": float(self.score),
-            "status": self.status.value,
-        }
-        if self.backend:
-            payload["backend"] = self.backend
-        return payload
-
-
-DEGRADATION_EVENT = "exchange.signal_quality.degraded"
-DEGRADATION_RECOVERED_EVENT = "exchange.signal_quality.recovered"
-
-
 class SignalQualityReporter:
     """Rejestruje wyniki egzekucji sygnałów i generuje raporty jakości."""
 
@@ -115,9 +90,6 @@ class SignalQualityReporter:
         report_dir: str | os.PathLike[str] | None = None,
         metrics_registry: MetricsRegistry | None = None,
         watchdog_history_limit: int | None = None,
-        event_bus: EventBus | None = None,
-        degradation_event_threshold: float = 0.6,
-        degradation_release_threshold: float | None = None,
     ) -> None:
         if history_limit <= 0:
             raise ValueError("history_limit musi być dodatni")
@@ -161,21 +133,6 @@ class SignalQualityReporter:
             "exchange_watchdog_degradation_total",
             "Liczba zdarzeń degradacji lub niedostępności backendu giełdowego.",
         )
-        self._watchdog_degradation_gauge = self._metrics.gauge(
-            "exchange_signal_degradation_score",
-            "Ruchomy wskaźnik degradacji wyznaczony na podstawie wyników watchdogów.",
-        )
-        self._degradation_samples: Deque[_DegradationSample] = deque(maxlen=watchdog_limit)
-        self._event_bus = event_bus
-        self._degradation_event_threshold = float(max(0.0, degradation_event_threshold))
-        release = (
-            degradation_release_threshold
-            if degradation_release_threshold is not None
-            else self._degradation_event_threshold * 0.5
-        )
-        self._degradation_release_threshold = float(max(0.0, release))
-        self._degradation_active = False
-        self._last_degradation_payload: MutableMapping[str, object] | None = None
 
     @property
     def records(self) -> tuple[SignalExecutionRecord, ...]:
@@ -299,18 +256,6 @@ class SignalQualityReporter:
             self._watchdog_status_gauge.set(status_value, labels=labels)
             if status_value > 0.0:
                 self._watchdog_alert_counter.inc(labels=labels)
-            sample_score = self._score_degradation(result)
-            if sample_score > 0.0 or result.status is HealthStatus.HEALTHY:
-                self._append_degradation_sample(
-                    _DegradationSample(
-                        timestamp=timestamp,
-                        check=result.name,
-                        backend=backend,
-                        score=sample_score,
-                        status=result.status,
-                    )
-                )
-                self._watchdog_degradation_gauge.set(sample_score, labels=labels)
 
         self._persist()
         return tuple(events)
@@ -350,7 +295,6 @@ class SignalQualityReporter:
             }
 
         payload["watchdog"] = self._summarize_watchdog_events()
-        payload["degradation"] = self._summarize_degradation()
         return payload
 
     def _append_record(self, record: SignalExecutionRecord) -> None:
@@ -358,10 +302,6 @@ class SignalQualityReporter:
 
     def _append_watchdog_event(self, event: WatchdogEvent) -> None:
         self._watchdog_events.append(event)
-
-    def _append_degradation_sample(self, sample: _DegradationSample) -> None:
-        self._degradation_samples.append(sample)
-        self._evaluate_degradation_state(sample)
 
     def _summarize_watchdog_events(self) -> Mapping[str, object]:
         if not self._watchdog_events:
@@ -405,83 +345,6 @@ class SignalQualityReporter:
         alerts.reverse()
         return {"recent": recent, "alerts": alerts, "last_status": last_status}
 
-    def _score_degradation(self, result: HealthCheckResult) -> float:
-        details = result.details if isinstance(result.details, Mapping) else {}
-        for key in ("degradation_score", "score", "severity", "rolling_score"):
-            value = details.get(key)
-            if value is None:
-                continue
-            try:
-                numeric = float(value)
-            except (TypeError, ValueError):
-                continue
-            if numeric >= 0.0:
-                return min(numeric, 1.0)
-        if result.status is HealthStatus.UNAVAILABLE:
-            return 1.0
-        if result.status is HealthStatus.DEGRADED:
-            return 0.7
-        return 0.0
-
-    def _summarize_degradation(self) -> Mapping[str, object]:
-        if not self._degradation_samples:
-            return {
-                "rolling_score": 0.0,
-                "window": 0,
-                "max_score": 0.0,
-                "last_score": 0.0,
-                "recent": [],
-            }
-
-        samples = list(self._degradation_samples)
-        scores = [sample.score for sample in samples]
-        rolling = sum(scores) / len(scores) if scores else 0.0
-        last = samples[-1]
-        payload: dict[str, object] = {
-            "rolling_score": float(rolling),
-            "window": len(samples),
-            "max_score": float(max(scores)),
-            "last_score": float(last.score),
-            "last_observed_at": last.timestamp.astimezone(timezone.utc).isoformat(),
-            "recent": [sample.as_dict() for sample in samples[-10:]],
-        }
-        return payload
-
-    def _evaluate_degradation_state(self, sample: _DegradationSample) -> None:
-        if self._event_bus is None:
-            return
-
-        samples = list(self._degradation_samples)
-        if not samples:
-            return
-
-        rolling = sum(entry.score for entry in samples) / len(samples)
-        payload: MutableMapping[str, object] = {
-            "exchange": self._exchange_id,
-            "rolling_score": float(rolling),
-            "sample": sample.as_dict(),
-        }
-        if sample.backend:
-            payload["backend"] = sample.backend
-
-        if not self._degradation_active and rolling >= self._degradation_event_threshold:
-            self._degradation_active = True
-            self._last_degradation_payload = dict(payload)
-            self._event_bus.publish(Event(type=DEGRADATION_EVENT, payload=dict(payload)))
-            return
-
-        if self._degradation_active and rolling <= self._degradation_release_threshold:
-            recovered_payload: MutableMapping[str, object] = dict(payload)
-            if self._last_degradation_payload:
-                recovered_payload["previous"] = dict(self._last_degradation_payload)
-            self._degradation_active = False
-            self._last_degradation_payload = None
-            self._event_bus.publish(Event(type=DEGRADATION_RECOVERED_EVENT, payload=recovered_payload))
-            return
-
-        if self._degradation_active:
-            self._last_degradation_payload = dict(payload)
-
     def _persist(self) -> None:
         summary = self.summarize()
         path = self._report_dir / f"{self._exchange_id}.json"
@@ -491,10 +354,4 @@ class SignalQualityReporter:
         tmp_path.replace(path)
 
 
-__all__ = [
-    "SignalExecutionRecord",
-    "SignalQualityReporter",
-    "WatchdogEvent",
-    "DEGRADATION_EVENT",
-    "DEGRADATION_RECOVERED_EVENT",
-]
+__all__ = ["SignalExecutionRecord", "SignalQualityReporter", "WatchdogEvent"]

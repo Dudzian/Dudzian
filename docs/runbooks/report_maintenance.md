@@ -113,26 +113,6 @@ Raporty podlegają tym samym zasadom retencji co inne katalogi w `var/reports`. 
 
 Komenda `python -m bot_core.reporting.ui_bridge purge` automatycznie czyści katalog jakości sygnałów na podstawie progu retencji (domyślnie 30 dni). W razie potrzeby możesz wskazać alternatywną lokalizację (`--signal-quality-dir`) lub zmodyfikować okres przechowywania (`--signal-quality-retention-days`). Wynik polecenia zawiera sekcję `signal_quality_cleanup` z liczbą usuniętych plików oraz ewentualnymi błędami, co ułatwia logowanie operacji w runbooku.
 
-### 8.1. Monitorowanie i historia failoveru CCXT
-
-Reporter jakości sygnałów publikuje teraz zdarzenia degradacji na magistrali `exchange.signal_quality.*`. Menedżer giełdy reaguje na nie, automatycznie włączając failover CCXT i emituje zdarzenia operacyjne:
-
-* `exchange.failover.engaged` – fallback został aktywowany (`payload.previous_backend == "native"`).
-* `exchange.failover.recovered` – powrót do backendu natywnego po ustąpieniu degradacji.
-
-W telemetryce Prometheusa pojawiły się nowe metryki:
-
-| Metryka | Opis |
-| --- | --- |
-| `exchange_failover_state{exchange="binance"}` | 0 – aktywny backend natywny, 1 – wymuszony fallback CCXT. |
-| `exchange_failover_switch_total{exchange="binance",backend="ccxt|native"}` | Licznik przełączeń backendu, pomocny przy audycie incydentów. |
-
-Procedura kontroli failoveru:
-
-1. Sprawdź aktualny stan: `curl localhost:9000/metrics | grep exchange_failover_state`.
-2. W runbooku incydentu zapisz wynik licznika `exchange_failover_switch_total` przed i po działaniach.
-3. Zweryfikuj zdarzenia w logach (`logs/exchange_manager.log`) – powinny zawierać wpisy `exchange.failover.engaged` oraz `exchange.failover.recovered` z kontekstem `previous_backend`.
-
 ## 9. Eksport champion/challenger i reakcja na degradację modeli
 
 ### 9.1. Generowanie raportu porównawczego championów
@@ -149,12 +129,6 @@ Procedura kontroli failoveru:
 3. Zwołaj komitet operacyjny i przygotuj promocję najlepszego challengera: `python -m bot_core.reporting.ui_bridge promote --model <nazwa> --version <challenger_version> --reason "Degradacja championa"`.
 4. Po promocji zweryfikuj w panelu Strategy Management, że nowy champion jest aktywny, a wpis audytowy pojawił się w `audit/champion_promotions/<model>/`.
 5. Uzupełnij dziennik operacyjny (`docs/audit/paper_trading_log.md`) o decyzję, dołącz raport `champion_diff` i snapshot rekomendacji, aby zachować pełny kontekst eskalacji.
-
-### 9.3. Korelacja retreningów z blokadami guardrail
-
-Nowy dashboard Grafany **Stage7 – Retraining vs Guardrail Correlation** (`deploy/grafana/provisioning/dashboards/stage7_retraining_guardrails.json`) zestawia liczbę zmian championa z aktywnością guardrail w horyzoncie 15/60 minut. Panel statystyczny „Udział zmian z guardrailem” pokazuje, jak duża część auto-promocji przebiegła przy wymuszonej blokadzie ryzyka – wartości >30 % wymagają przeglądu w `reports/exchanges/signal_quality`. Tabela „Ostatnie zmiany modelu” korzysta z metryki `auto_trader_model_change_timestamp_seconds` i pozwala szybko skorelować wpisy decision journala (`event=model_change`) z alertami guardrail. Przed zatwierdzeniem promocji championa przejrzyj dashboard i upewnij się, że wskaźnik guardrail nie utrzymuje się w strefie czerwonej – w przeciwnym razie rozważ pauzę automatyzacji (`ui_bridge promote --dry-run`) i dodatkową walidację challengera.
-
-Uzupełniający dashboard **Stage8 – Retraining Guardrail Impact** (`deploy/grafana/provisioning/dashboards/stage8_retraining_guardrail_impact.json`) zestawia liczbę zakończonych cykli retrainingu (`auto_trader_retraining_cycles_total`) z histogramem blokad guardrail (`auto_trader_retraining_guardrail_blocks_total`) oraz globalnym licznikiem `auto_trader_guardrail_blocks_total`. Panel statystyczny „Udział retrainingu z guardrail” na horyzoncie 2 godzin wskazuje procent cykli wykonanych w stanie awaryjnym – wartości powyżej 20 % powinny uruchomić przegląd decyzji w journali i panelu AutoMode (sekcja „Ostatnie zdarzenia model_changed”). Tabela z metryką `auto_trader_retraining_timestamp_seconds` pozwala szybciej zweryfikować, czy najnowszy retrening nastąpił podczas blokady ryzyka. Dashboard jest referencją przy analizie wpływu retreningu na automatyczną blokadę handlu w kolejnych sprintach.
 
 ## 10. Materiały uzupełniające
 

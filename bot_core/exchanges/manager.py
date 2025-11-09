@@ -54,11 +54,7 @@ from bot_core.exchanges.paper_simulator import PaperFuturesSimulator, PaperMargi
 from bot_core.strategies.catalog import StrategyCatalog, StrategyPresetDescriptor
 from bot_core.observability.metrics import get_global_metrics_registry
 from bot_core.exchanges.rate_limiter import RateLimitRule, normalize_rate_limit_rules
-from bot_core.exchanges.signal_quality import (
-    DEGRADATION_EVENT,
-    DEGRADATION_RECOVERED_EVENT,
-    SignalQualityReporter,
-)
+from bot_core.exchanges.signal_quality import SignalQualityReporter
 
 try:  # pragma: no cover
     import ccxt  # type: ignore
@@ -1389,30 +1385,13 @@ class ExchangeManager:
         self._watchdog: Watchdog | None = None
         self._watchdog_config: Dict[str, Any] = {}
         self._shared_rate_limit_rules: tuple[RateLimitRule, ...] | None = None
-        self._signal_reporter = SignalQualityReporter(
-            exchange_id=self.exchange_id,
-            event_bus=self._event_bus,
-        )
+        self._signal_reporter = SignalQualityReporter(exchange_id=self.exchange_id)
         self._failover_enabled: bool = False
         self._failover_threshold: int = 2
         self._failover_cooldown: float = 60.0
         self._active_backend: str = "native"
         self._native_failure_streak: int = 0
         self._failover_restore_at: float = 0.0
-        self._failover_auto_enabled: bool = False
-        metrics = get_global_metrics_registry()
-        self._failover_metric_labels = {"exchange": self.exchange_id}
-        self._failover_state_gauge = metrics.gauge(
-            "exchange_failover_state",
-            "Czy aktywny jest fallback CCXT (1=tak, 0=nie).",
-        )
-        self._failover_switch_counter = metrics.counter(
-            "exchange_failover_switch_total",
-            "Liczba przełączeń backendu giełdowego.",
-        )
-        self._failover_state_gauge.set(0.0, labels=self._failover_metric_labels)
-        self._event_bus.subscribe(DEGRADATION_EVENT, self._handle_signal_quality_event)
-        self._event_bus.subscribe(DEGRADATION_RECOVERED_EVENT, self._handle_signal_quality_event)
         default_margin_type = os.getenv("BINANCE_MARGIN_TYPE")
         if self.exchange_id == "binance" and default_margin_type:
             self._native_adapter_settings[(Mode.MARGIN, self.exchange_id)] = {
@@ -1631,97 +1610,11 @@ class ExchangeManager:
             self._active_backend = "native"
             self._native_failure_streak = 0
             self._failover_restore_at = 0.0
-        self._update_failover_metrics()
-
-    def _update_failover_metrics(self) -> None:
-        try:
-            if self._failover_enabled and self._active_backend == "ccxt":
-                self._failover_state_gauge.set(1.0, labels=self._failover_metric_labels)
-            else:
-                self._failover_state_gauge.set(0.0, labels=self._failover_metric_labels)
-        except Exception:  # pragma: no cover - metryki nie powinny blokować logiki
-            log.debug("Aktualizacja metryk failover nie powiodła się", exc_info=True)
 
     def describe_signal_quality(self) -> Mapping[str, object]:
         """Zwraca agregowane statystyki jakości sygnałów."""
 
         return self._signal_reporter.summarize()
-
-    def describe_weighting(
-        self,
-        *,
-        mode: Mode | None = None,
-        segment: str | None = None,
-    ) -> Mapping[str, object]:
-        """Buduje rekomendację wagową na podstawie jakości sygnałów."""
-
-        active_mode = mode or self.mode
-        segment_key = (segment or active_mode.value or "default").strip().lower()
-        summary = self.describe_signal_quality()
-
-        try:
-            fill_ratio = float(summary.get("fill_ratio", 0.0) or 0.0)
-        except (TypeError, ValueError):
-            fill_ratio = 0.0
-
-        total = int(summary.get("total", 0) or 0)
-        failures = int(summary.get("failures", 0) or 0)
-        success_rate = 1.0
-        if total > 0:
-            success_rate = max(0.0, min(1.0, (total - failures) / total))
-
-        try:
-            slippage_bps = float(summary.get("slippage_bps", 0.0) or 0.0)
-        except (TypeError, ValueError):
-            slippage_bps = 0.0
-
-        degradation_payload = summary.get("degradation")
-        if isinstance(degradation_payload, Mapping):
-            try:
-                degradation_score = float(degradation_payload.get("rolling_score", 0.0) or 0.0)
-            except (TypeError, ValueError):
-                degradation_score = 0.0
-        else:
-            degradation_payload = {}
-            degradation_score = 0.0
-
-        degradation_penalty = max(0.0, 1.0 - min(degradation_score, 1.0))
-        slippage_penalty = 1.0
-        if slippage_bps > 0:
-            slippage_penalty = max(0.0, 1.0 - min(slippage_bps / 100.0, 1.0))
-
-        base_weight = (
-            fill_ratio * 0.5
-            + success_rate * 0.3
-            + degradation_penalty * 0.2
-        )
-        base_weight *= slippage_penalty
-        if total < 5:
-            base_weight *= max(0.0, min(1.0, total / 5.0))
-
-        weight = max(0.0, min(base_weight, 1.0))
-        key = (active_mode, segment_key)
-        history = self._weight_history.setdefault(key, deque(maxlen=50))
-        history.append(weight)
-        rolling_weight = sum(history) / len(history) if history else weight
-
-        snapshot: dict[str, object] = {
-            "exchange": self.exchange_id,
-            "mode": active_mode.value,
-            "segment": segment_key,
-            "weight": weight,
-            "rolling_weight": rolling_weight,
-            "fill_ratio": fill_ratio,
-            "success_rate": success_rate,
-            "slippage_bps": slippage_bps,
-            "sample_size": total,
-            "failures": failures,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "degradation": dict(degradation_payload),
-            "history": list(history),
-        }
-        self._weight_snapshots[key] = snapshot
-        return dict(snapshot)
 
     # ------------------------------------------------------------------
     # Environment profiles
@@ -2115,7 +2008,6 @@ class ExchangeManager:
         if self._failover_enabled:
             self._active_backend = "native"
             self._failover_restore_at = 0.0
-            self._update_failover_metrics()
 
     def _handle_native_failure(self, exc: Exception) -> None:
         if not self._failover_enabled:
@@ -2124,13 +2016,11 @@ class ExchangeManager:
         self._failover_restore_at = time.monotonic() + self._failover_cooldown
         if self._native_failure_streak >= self._failover_threshold:
             self._active_backend = "ccxt"
-            self._update_failover_metrics()
 
     def _run_fallback(self, fallback_call: Callable[[], Any], backend_name: str) -> tuple[Any, str]:
         self._active_backend = backend_name
         if self._failover_enabled:
             self._failover_restore_at = time.monotonic() + self._failover_cooldown
-        self._update_failover_metrics()
         result = fallback_call()
         return result, backend_name
 
@@ -2159,74 +2049,6 @@ class ExchangeManager:
                 return result, "native"
 
         return self._run_fallback(fallback_call, fallback_backend)
-
-    def _handle_signal_quality_event(self, event: Event) -> None:
-        payload = dict(event.payload)
-        exchange = payload.get("exchange")
-        if exchange and str(exchange) != self.exchange_id:
-            return
-
-        if event.type == DEGRADATION_EVENT:
-            self._handle_signal_quality_degraded(payload)
-        elif event.type == DEGRADATION_RECOVERED_EVENT:
-            self._handle_signal_quality_recovered(payload)
-
-    def _handle_signal_quality_degraded(self, payload: Mapping[str, Any]) -> None:
-        backend = str(payload.get("backend") or self._active_backend)
-        if not self._failover_enabled:
-            self.configure_failover(
-                enabled=True,
-                failure_threshold=self._failover_threshold,
-                cooldown_seconds=self._failover_cooldown,
-            )
-            self._failover_auto_enabled = True
-        if backend == "native":
-            self._engage_failover(payload)
-
-    def _handle_signal_quality_recovered(self, payload: Mapping[str, Any]) -> None:
-        if self._active_backend == "ccxt":
-            self._active_backend = "native"
-            self._failover_restore_at = 0.0
-            self._native_failure_streak = 0
-            self._update_failover_metrics()
-            try:
-                self._failover_switch_counter.inc(
-                    labels={**self._failover_metric_labels, "backend": "native"}
-                )
-            except Exception:  # pragma: no cover - metryki opcjonalne
-                log.debug("Nie udało się zaktualizować licznika powrotu z failover", exc_info=True)
-            self.publish_event("exchange.failover.recovered", payload)
-        if self._failover_auto_enabled and self._failover_enabled:
-            self._failover_auto_enabled = False
-            self.configure_failover(
-                enabled=False,
-                failure_threshold=self._failover_threshold,
-                cooldown_seconds=self._failover_cooldown,
-            )
-
-    def _engage_failover(self, payload: Mapping[str, Any]) -> None:
-        if self._active_backend == "ccxt":
-            return
-        try:
-            self._ensure_private()
-        except Exception:
-            log.warning("Nie udało się przygotować backendu CCXT dla failoveru", exc_info=True)
-            return
-        previous_backend = self._active_backend
-        self._active_backend = "ccxt"
-        self._failover_restore_at = time.monotonic() + self._failover_cooldown
-        self._native_failure_streak = self._failover_threshold
-        self._update_failover_metrics()
-        try:
-            self._failover_switch_counter.inc(
-                labels={**self._failover_metric_labels, "backend": "ccxt"}
-            )
-        except Exception:  # pragma: no cover - metryki opcjonalne
-            log.debug("Nie udało się zaktualizować licznika przełączeń failover", exc_info=True)
-        enriched_payload = dict(payload)
-        enriched_payload.setdefault("backend", "ccxt")
-        enriched_payload["previous_backend"] = previous_backend
-        self.publish_event("exchange.failover.engaged", enriched_payload)
 
     def _ensure_watchdog(self) -> Watchdog:
         if self._watchdog is None:

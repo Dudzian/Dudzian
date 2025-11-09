@@ -191,12 +191,6 @@ QVariantMap OfflineRuntimeService::buildAutoModeSnapshot() const
     snapshot.insert(QStringLiteral("guardrail_summary"), QVariantMap());
     snapshot.insert(QStringLiteral("recommendations"), buildAutomationRecommendations(metrics, risk));
     snapshot.insert(QStringLiteral("risk_alerts"), buildRiskAlerts(risk));
-    snapshot.insert(QStringLiteral("guardrail_state"), QVariantMap());
-    snapshot.insert(QStringLiteral("guardrail_trace"), QVariantList());
-    snapshot.insert(QStringLiteral("decision_history"), QVariantList());
-    snapshot.insert(QStringLiteral("model_events"), QVariantList());
-    snapshot.insert(QStringLiteral("signal_quality"), QVariantMap());
-    snapshot.insert(QStringLiteral("failover"), QVariantMap());
     QVariantMap riskProfile;
     riskProfile.insert(QStringLiteral("drawdown_pct"), risk.currentDrawdown);
     riskProfile.insert(QStringLiteral("max_daily_loss_pct"), risk.maxDailyLoss);
@@ -224,83 +218,6 @@ QVariantMap OfflineRuntimeService::buildAutoModeSnapshot() const
         const QVariantMap performance = backendSnapshot.value(QStringLiteral("performance_summary")).toMap();
         if (!performance.isEmpty())
             snapshot.insert(QStringLiteral("performance"), performance);
-
-        const QVariantMap backendGuardrailState = backendSnapshot.value(QStringLiteral("guardrail_state")).toMap();
-        if (!backendGuardrailState.isEmpty())
-            snapshot.insert(QStringLiteral("guardrail_state"), backendGuardrailState);
-
-        const QVariantList backendGuardrailTrace = backendSnapshot.value(QStringLiteral("guardrail_trace")).toList();
-        if (!backendGuardrailTrace.isEmpty())
-            snapshot.insert(QStringLiteral("guardrail_trace"), backendGuardrailTrace);
-
-        const QVariantList backendAlerts = backendSnapshot.value(QStringLiteral("risk_alerts")).toList();
-        if (!backendAlerts.isEmpty())
-            snapshot.insert(QStringLiteral("risk_alerts"), backendAlerts);
-
-        const QVariantList backendDecisionHistory = backendSnapshot.value(QStringLiteral("decision_history")).toList();
-        if (!backendDecisionHistory.isEmpty())
-            snapshot.insert(QStringLiteral("decision_history"), backendDecisionHistory);
-
-        const QVariantList backendModelEvents = backendSnapshot.value(QStringLiteral("model_events")).toList();
-        if (!backendModelEvents.isEmpty())
-            snapshot.insert(QStringLiteral("model_events"), backendModelEvents);
-
-        const QVariantMap backendSignalQuality = backendSnapshot.value(QStringLiteral("signal_quality")).toMap();
-        if (!backendSignalQuality.isEmpty())
-            snapshot.insert(QStringLiteral("signal_quality"), backendSignalQuality);
-
-        const QVariantMap backendFailover = backendSnapshot.value(QStringLiteral("failover")).toMap();
-        if (!backendFailover.isEmpty())
-            snapshot.insert(QStringLiteral("failover"), backendFailover);
-
-        const QVariantMap backendJournal = backendSnapshot.value(QStringLiteral("journal_performance")).toMap();
-        if (!backendJournal.isEmpty())
-            snapshot.insert(QStringLiteral("journal_performance"), backendJournal);
-
-        const QVariantMap backendAllocation = backendSnapshot.value(QStringLiteral("exchange_allocation")).toMap();
-        if (!backendAllocation.isEmpty())
-            snapshot.insert(QStringLiteral("exchange_allocation"), backendAllocation);
-
-        const QVariantMap backendIndicators = backendSnapshot.value(QStringLiteral("performance_indicators")).toMap();
-        if (!backendIndicators.isEmpty())
-            snapshot.insert(QStringLiteral("performance_indicators"), backendIndicators);
-    }
-
-    if (!snapshot.contains(QStringLiteral("journal_performance"))) {
-        QVariantMap journal;
-        journal.insert(QStringLiteral("mode"), QStringLiteral("baseline"));
-        snapshot.insert(QStringLiteral("journal_performance"), journal);
-    }
-
-    if (!snapshot.contains(QStringLiteral("exchange_allocation"))) {
-        QVariantMap allocation;
-        allocation.insert(QStringLiteral("selected"), QVariant());
-        allocation.insert(QStringLiteral("allocations"), QVariantList());
-        allocation.insert(QStringLiteral("history"), QVariantList());
-        snapshot.insert(QStringLiteral("exchange_allocation"), allocation);
-    }
-
-    if (!snapshot.contains(QStringLiteral("performance_indicators"))) {
-        const QVariantMap journal = snapshot.value(QStringLiteral("journal_performance")).toMap();
-        const QVariantMap strategy = snapshot.value(QStringLiteral("strategy")).toMap();
-        QVariantMap indicators;
-        indicators.insert(QStringLiteral("rolling_pnl"), QVariant());
-        indicators.insert(QStringLiteral("max_drawdown_pct"), QVariant());
-        indicators.insert(QStringLiteral("win_rate"), QVariant());
-        indicators.insert(QStringLiteral("journal"), journal);
-
-        QVariantMap strategyIndicators;
-        strategyIndicators.insert(QStringLiteral("current"), strategy.value(QStringLiteral("current")));
-        strategyIndicators.insert(QStringLiteral("state"), journal.value(QStringLiteral("mode"), QStringLiteral("baseline")));
-        strategyIndicators.insert(QStringLiteral("leverage"), strategy.value(QStringLiteral("leverage")));
-        strategyIndicators.insert(QStringLiteral("stop_loss_pct"), strategy.value(QStringLiteral("stop_loss_pct")));
-        strategyIndicators.insert(QStringLiteral("take_profit_pct"), strategy.value(QStringLiteral("take_profit_pct")));
-        strategyIndicators.insert(QStringLiteral("history"), QVariantList());
-        indicators.insert(QStringLiteral("strategy"), strategyIndicators);
-
-        indicators.insert(QStringLiteral("exchange"), snapshot.value(QStringLiteral("exchange_allocation")).toMap());
-
-        snapshot.insert(QStringLiteral("performance_indicators"), indicators);
     }
     return snapshot;
 }
