@@ -16,9 +16,9 @@ Dokument opisuje proces przygotowania kompletu artefaktów OEM dla środowisk
   zasobami QML (`build/ui/Release` lub analogiczny).
 * Pakiety rdzeniowe (`bot_core`, `core`) z zainstalowanymi komponentami AI (`pip install -e .[dev,desktop,compression]`,
   gdzie extras `compression` doinstaluje `brotli` lub `brotlicffi` oraz `zstandard` w zależności od platformy), aby
-  moduły `bot_core.ai.legacy_models` oraz `core.*` były dostępne na ścieżce importu.  Wydanie
-  pakiet jest dostarczany wyłącznie w przestrzeni nazw `bot_core.ai_models`,
-  jednak nowy kod powinien odwoływać się bezpośrednio do modułów w `bot_core` i `core`.
+  moduły `bot_core.ai.models` oraz `core.*` były dostępne na ścieżce importu.  Wydanie pakietu
+  dystrybuuje klasę `AIModels` również poprzez przestrzeń nazw `bot_core.ai_models`,
+  jednak produkcyjny kod powinien importować implementację z `bot_core.ai.models`.
 * Plik konfiguracyjny `config/core.yaml` oraz tajemnice potrzebne do walidacji
   licencji OEM.
 * Klucz HMAC (BASE64 lub plaintext) używany do podpisywania manifestów.
