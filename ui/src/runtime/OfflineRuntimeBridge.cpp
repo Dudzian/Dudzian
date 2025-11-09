@@ -133,6 +133,17 @@ void OfflineRuntimeBridge::stopAutomation()
     m_service->stopAutomation();
 }
 
+QVariantMap OfflineRuntimeBridge::previewPreset(const QVariantMap& selector)
+{
+    ensureService();
+    if (!m_service)
+        return {
+            {QStringLiteral("ok"), false},
+            {QStringLiteral("error"), tr("Offline runtime jest niedostępny")},
+        };
+    return m_service->previewPreset(selector);
+}
+
 void OfflineRuntimeBridge::ensureService()
 {
     if (m_service)

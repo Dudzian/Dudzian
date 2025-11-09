@@ -6,12 +6,16 @@ import argparse
 import json
 import os
 import shutil
+import subprocess
+import sys
+import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Sequence
 
 import tomllib
+import zipfile
 
 
 def _normalize_path(raw: str, base_dir: Path) -> Path:
@@ -47,6 +51,7 @@ class BundleConfig:
     work_dir: Path
     qt_dist: Path | None
     includes: tuple[IncludeSpec, ...]
+    wheels: tuple[Path, ...]
     metadata_path: Path
     raw_profile: dict[str, object]
 
@@ -61,11 +66,13 @@ class DesktopInstallerBuilder:
         profiles_dir: Path,
         hwid_hook_source: Path | None = None,
         clean: bool = True,
+        verify_hook: bool = False,
     ) -> None:
         self._version = version
         self._profiles_dir = profiles_dir
         self._hwid_hook_source = (hwid_hook_source or Path("probe_keyring.py")).resolve()
         self._clean = clean
+        self._verify_hook = verify_hook
 
     # ------------------------------------------------------------------
     def build(self, platform: str) -> Path:
@@ -83,6 +90,22 @@ class DesktopInstallerBuilder:
                 shutil.copytree(include.source, destination, dirs_exist_ok=True)
             else:
                 shutil.copy2(include.source, destination)
+
+        if config.wheels:
+            wheels_dir = stage_dir / "wheels"
+            wheels_dir.mkdir(parents=True, exist_ok=True)
+            for wheel in config.wheels:
+                if not wheel.exists():
+                    raise FileNotFoundError(
+                        f"Zadeklarowany pakiet wheel nie istnieje: {wheel}"
+                    )
+                if wheel.is_dir():
+                    destination = wheels_dir / wheel.name
+                    if destination.exists():
+                        shutil.rmtree(destination)
+                    shutil.copytree(wheel, destination, dirs_exist_ok=True)
+                else:
+                    shutil.copy2(wheel, wheels_dir / wheel.name)
 
         if config.qt_dist and config.qt_dist.exists():
             qt_dest = stage_dir / "qt"
@@ -106,7 +129,66 @@ class DesktopInstallerBuilder:
         manifest["archive"] = archive_path.name
         config.metadata_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
 
+        if self._verify_hook:
+            self._verify_archive(archive_path)
+
         return archive_path
+
+    # ------------------------------------------------------------------
+    def _verify_archive(self, archive_path: Path) -> None:
+        with tempfile.TemporaryDirectory(prefix="installer-verify-") as temp_dir:
+            temp_path = Path(temp_dir)
+            with zipfile.ZipFile(archive_path) as zf:
+                zf.extractall(temp_path)
+
+            hook_path = temp_path / "hooks" / "validate_hwid.py"
+            if not hook_path.exists():
+                raise RuntimeError("Pakiet nie zawiera hooka validate_hwid.py")
+
+            fingerprint = f"TEST-FINGERPRINT-{self._version}"
+            expected_path = temp_path / "fingerprint.expected.json"
+            expected_path.write_text(
+                json.dumps({"fingerprint": fingerprint}, ensure_ascii=False),
+                encoding="utf-8",
+            )
+
+            log_path = temp_path / "hwid_verify.log"
+
+            env = os.environ.copy()
+            env.update(
+                {
+                    "KBOT_EXPECTED_HWID_FILE": str(expected_path),
+                    "KBOT_INSTALL_LOG": str(log_path),
+                    "KBOT_FAKE_FINGERPRINT": fingerprint,
+                }
+            )
+
+            repo_root = Path.cwd()
+            python_path = env.get("PYTHONPATH")
+            env["PYTHONPATH"] = (
+                os.pathsep.join([str(repo_root), python_path]) if python_path else str(repo_root)
+            )
+
+            result = subprocess.run(
+                [sys.executable, str(hook_path)],
+                check=False,
+                env=env,
+                capture_output=True,
+                text=True,
+            )
+
+            if result.returncode != 0:
+                raise RuntimeError(
+                    "Walidacja hooka HWID nie powiodła się: "
+                    + (result.stderr or result.stdout or str(result.returncode))
+                )
+
+            if not log_path.exists():
+                raise RuntimeError("Hook HWID nie zapisał logu walidacji")
+
+            log_text = log_path.read_text(encoding="utf-8").strip()
+            if fingerprint not in log_text:
+                raise RuntimeError("Log walidacji HWID nie zawiera odczytanego fingerprintu")
 
     # ------------------------------------------------------------------
     def _load_profile(self, platform: str) -> BundleConfig:
@@ -131,6 +213,14 @@ class DesktopInstallerBuilder:
             source = _normalize_path(raw_path.strip(), base_dir)
             include_specs.append(IncludeSpec(name=name, source=source))
 
+        wheels: list[Path] = []
+        for entry in bundle_section.get("wheels_extra", []) or []:
+            if not isinstance(entry, str) or not entry.strip():
+                raise SystemExit(
+                    "Element listy wheels_extra musi być niepustym stringiem wskazującym plik lub katalog"
+                )
+            wheels.append(_normalize_path(entry.strip(), base_dir))
+
         qt_dist = bundle_section.get("qt_dist")
         qt_path = _normalize_path(qt_dist, base_dir) if isinstance(qt_dist, str) else None
 
@@ -146,6 +236,7 @@ class DesktopInstallerBuilder:
             work_dir=work_dir,
             qt_dist=qt_path,
             includes=tuple(include_specs),
+            wheels=tuple(wheels),
             metadata_path=metadata_path,
             raw_profile=raw,
         )
@@ -185,7 +276,7 @@ def main() -> None:
     if log_target:
         target = Path(log_target).expanduser()
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(f"HWID validation successful for fingerprint: {fingerprint}\n", encoding="utf-8")
+        target.write_text(f"HWID validation successful for fingerprint: {fingerprint}\\n", encoding="utf-8")
 
 
 if __name__ == "__main__":  # pragma: no cover
@@ -259,6 +350,7 @@ def build_from_cli(args: Sequence[str] | None = None) -> None:
         help="Źródłowy skrypt walidacji HWID kopiowany do instalatora",
     )
     parser.add_argument("--no-clean", action="store_true", help="Nie usuwaj wcześniejszych buildów w katalogu roboczym")
+    parser.add_argument("--verify-hook", action="store_true", help="Uruchom walidację hooka HWID na zbudowanym archiwum")
 
     parsed = parser.parse_args(args=args)
     builder = DesktopInstallerBuilder(
@@ -266,6 +358,7 @@ def build_from_cli(args: Sequence[str] | None = None) -> None:
         profiles_dir=parsed.profiles_dir.resolve(),
         hwid_hook_source=parsed.hook_source.resolve(),
         clean=not parsed.no_clean,
+        verify_hook=parsed.verify_hook,
     )
 
     platforms = ("linux", "windows", "macos") if parsed.platform == "all" else (parsed.platform,)

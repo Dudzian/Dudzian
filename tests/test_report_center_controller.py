@@ -11,6 +11,7 @@ import pytest
         "void archivePreviewReady(const QString& destination, bool overwrite, const QString& format, const QVariantMap& result);",
         "using BridgeCallback = std::function<void(const BridgeResult&)>;",
         "void runBridge(const QStringList& arguments, BridgeCallback&& callback);",
+        "Q_INVOKABLE bool openReportLocation(const QString& relativePath);",
     ],
 )
 def test_controller_header_contains_async_api(snippet: str) -> None:

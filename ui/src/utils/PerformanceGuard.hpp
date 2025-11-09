@@ -22,3 +22,4 @@ public:
 Q_DECLARE_METATYPE(PerformanceGuard)
 
 PerformanceGuard performanceGuardFromMap(const QVariantMap& map);
+QVariantMap performanceGuardToMap(const PerformanceGuard& guard);

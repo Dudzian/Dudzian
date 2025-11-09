@@ -89,6 +89,9 @@ void ReportCenterController::setLastErrorMessage(const QString& message)
         return;
     m_lastError = message;
     Q_EMIT lastErrorChanged();
+    if (!message.trimmed().isEmpty())
+        appendOperationalLog(QStringLiteral("error"), message,
+                             {{QStringLiteral("source"), QStringLiteral("report-center")}});
 }
 
 void ReportCenterController::clearLastErrorMessage()
@@ -109,6 +112,9 @@ void ReportCenterController::setLastNotificationMessage(const QString& message)
         return;
     m_lastNotification = message;
     Q_EMIT lastNotificationChanged();
+    if (!message.trimmed().isEmpty())
+        appendOperationalLog(QStringLiteral("info"), message,
+                             {{QStringLiteral("source"), QStringLiteral("report-center")}});
 }
 
 void ReportCenterController::clearLastNotificationMessage()
@@ -117,6 +123,65 @@ void ReportCenterController::clearLastNotificationMessage()
         return;
     m_lastNotification.clear();
     Q_EMIT lastNotificationChanged();
+}
+
+void ReportCenterController::logOperationalAlert(const QString& source, const QVariantMap& payload)
+{
+    QString severity = payload.value(QStringLiteral("severity")).toString().trimmed();
+    if (severity.isEmpty())
+        severity = QStringLiteral("alert");
+
+    QString message = payload.value(QStringLiteral("message")).toString();
+    if (message.trimmed().isEmpty())
+        message = payload.value(QStringLiteral("title")).toString();
+    if (message.trimmed().isEmpty()) {
+        if (!source.trimmed().isEmpty())
+            message = tr("Alert runtime (%1)").arg(source);
+        else
+            message = tr("Alert runtime");
+    }
+
+    QVariantMap context = payload;
+    if (!source.trimmed().isEmpty())
+        context.insert(QStringLiteral("source"), source.trimmed());
+
+    appendOperationalLog(severity.toLower(), message, context);
+}
+
+void ReportCenterController::appendOperationalLog(const QString& level,
+                                                  const QString& message,
+                                                  const QVariantMap& details) const
+{
+    const QString normalizedMessage = message.trimmed();
+    if (normalizedMessage.isEmpty())
+        return;
+
+    const QString baseDir = resolveReportsDirectory();
+    if (baseDir.trimmed().isEmpty())
+        return;
+
+    QDir base(baseDir);
+    if (!base.exists() && !base.mkpath(QStringLiteral(".")))
+        return;
+
+    if (!base.mkpath(QStringLiteral("logs")))
+        return;
+
+    const QString logFilePath = base.filePath(QStringLiteral("logs/operations.log"));
+    QFile file(logFilePath);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Append | QIODevice::Text))
+        return;
+
+    QJsonObject entry;
+    entry.insert(QStringLiteral("timestamp"), QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs));
+    entry.insert(QStringLiteral("level"), level);
+    entry.insert(QStringLiteral("message"), normalizedMessage);
+    if (!details.isEmpty())
+        entry.insert(QStringLiteral("details"), QJsonObject::fromVariantMap(details));
+
+    const QJsonDocument document(entry);
+    file.write(document.toJson(QJsonDocument::Compact));
+    file.write("\n");
 }
 
 void ReportCenterController::setPythonExecutable(const QString& executable)
@@ -407,6 +472,48 @@ bool ReportCenterController::refresh()
     return true;
 }
 
+bool ReportCenterController::refreshChampionOverview()
+{
+    clearLastErrorMessage();
+
+    QStringList args;
+    args << QStringLiteral("-m")
+         << QStringLiteral("bot_core.reporting.ui_bridge")
+         << QStringLiteral("champion");
+
+    beginTask();
+
+    runBridge(args, [this](const BridgeResult& bridgeResult) {
+        if (!bridgeResult.stderrData.isEmpty())
+            qCWarning(lcReportCenter) << "champion bridge stderr:" << QString::fromUtf8(bridgeResult.stderrData);
+
+        bool result = false;
+        if (bridgeResult.success)
+            result = loadChampionOverviewPayload(bridgeResult.stdoutData);
+
+        if (!result) {
+            if (!bridgeResult.success) {
+                const QString message = bridgeResult.errorMessage.trimmed();
+                if (!message.isEmpty()) {
+                    setLastErrorMessage(message);
+                } else if (m_lastError.isEmpty()) {
+                    const QString stderrMessage = QString::fromUtf8(bridgeResult.stderrData).trimmed();
+                    if (!stderrMessage.isEmpty())
+                        setLastErrorMessage(stderrMessage);
+                    else
+                        setLastErrorMessage(tr("Nie udało się pobrać statusu champion/challenger"));
+                }
+            } else if (m_lastError.isEmpty()) {
+                setLastErrorMessage(tr("Nie udało się pobrać statusu champion/challenger"));
+            }
+        }
+
+        endTask();
+    });
+
+    return true;
+}
+
 QVariantMap ReportCenterController::findReport(const QString& relativePath) const
 {
     const QString normalized = relativePath.trimmed();
@@ -509,6 +616,11 @@ bool ReportCenterController::revealReport(const QString& relativePath)
     clearLastErrorMessage();
 
     return true;
+}
+
+bool ReportCenterController::openReportLocation(const QString& relativePath)
+{
+    return revealReport(relativePath);
 }
 
 bool ReportCenterController::openExport(const QString& relativePath)
@@ -1057,6 +1169,79 @@ QString ReportCenterController::defaultArchiveDestination() const
     return cleanPath(baseDirectory.filePath(baseName + QStringLiteral("_archives")));
 }
 
+bool ReportCenterController::promoteChampion(const QString& modelName, const QString& version, const QString& reason)
+{
+    const QString normalizedModel = modelName.trimmed();
+    const QString normalizedVersion = version.trimmed();
+    const QString normalizedReason = reason.trimmed();
+
+    if (normalizedModel.isEmpty() || normalizedVersion.isEmpty()) {
+        setLastErrorMessage(tr("Nazwa modelu i wersja challengera są wymagane"));
+        return false;
+    }
+
+    QStringList args;
+    args << QStringLiteral("-m")
+         << QStringLiteral("bot_core.reporting.ui_bridge")
+         << QStringLiteral("promote")
+         << QStringLiteral("--model")
+         << normalizedModel
+         << QStringLiteral("--version")
+         << normalizedVersion;
+    if (!normalizedReason.isEmpty())
+        args << QStringLiteral("--reason") << normalizedReason;
+
+    clearLastErrorMessage();
+    beginTask();
+
+    runBridge(args, [this, normalizedModel, normalizedVersion](const BridgeResult& bridgeResult) {
+        if (!bridgeResult.stderrData.isEmpty())
+            qCWarning(lcReportCenter) << "champion promote stderr:" << QString::fromUtf8(bridgeResult.stderrData);
+
+        bool success = false;
+        QString feedback;
+
+        if (bridgeResult.success) {
+            QJsonParseError parseError{};
+            const QJsonDocument doc = QJsonDocument::fromJson(bridgeResult.stdoutData, &parseError);
+            if (parseError.error == QJsonParseError::NoError && doc.isObject()) {
+                const QJsonObject root = doc.object();
+                if (root.value(QStringLiteral("status")).toString() == QStringLiteral("ok")) {
+                    success = true;
+                    const QString reasonField = root.value(QStringLiteral("reason")).toString();
+                    if (!reasonField.isEmpty())
+                        feedback = tr("Awansowano %1/%2: %3").arg(normalizedModel, normalizedVersion, reasonField);
+                    else
+                        feedback = tr("Awansowano model %1 do championa %2").arg(normalizedModel, normalizedVersion);
+                } else {
+                    feedback = root.value(QStringLiteral("error")).toString();
+                }
+            } else {
+                feedback = tr("Niepoprawna odpowiedź polecenia promote: %1").arg(parseError.errorString());
+            }
+        } else {
+            feedback = bridgeResult.errorMessage.trimmed();
+            if (feedback.isEmpty())
+                feedback = QString::fromUtf8(bridgeResult.stderrData).trimmed();
+        }
+
+        if (success) {
+            if (feedback.isEmpty())
+                feedback = tr("Awansowano model %1 do championa %2").arg(normalizedModel, normalizedVersion);
+            setLastNotificationMessage(feedback);
+            endTask();
+            refreshChampionOverview();
+        } else {
+            if (feedback.isEmpty())
+                feedback = tr("Nie udało się awansować challengera %1/%2").arg(normalizedModel, normalizedVersion);
+            setLastErrorMessage(feedback);
+            endTask();
+        }
+    });
+
+    return true;
+}
+
 void ReportCenterController::runBridge(const QStringList& arguments, BridgeCallback&& callback)
 {
     auto sharedCallback = std::make_shared<BridgeCallback>(std::move(callback));
@@ -1367,6 +1552,22 @@ bool ReportCenterController::loadOverview(const QByteArray& data)
     rebuildWatcher(baseDirectory, reports);
 
     clearLastErrorMessage();
+    return true;
+}
+
+bool ReportCenterController::loadChampionOverviewPayload(const QByteArray& data)
+{
+    QJsonParseError parseError{};
+    const QJsonDocument doc = QJsonDocument::fromJson(data, &parseError);
+    if (parseError.error != QJsonParseError::NoError || !doc.isObject()) {
+        setLastErrorMessage(tr("Niepoprawna odpowiedź modułu champion: %1").arg(parseError.errorString()));
+        return false;
+    }
+
+    m_championOverview = doc.object().toVariantMap();
+    if (!m_championOverview.contains(QStringLiteral("models")))
+        m_championOverview.insert(QStringLiteral("models"), QVariantList());
+    Q_EMIT championOverviewChanged();
     return true;
 }
 

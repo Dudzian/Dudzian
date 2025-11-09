@@ -41,7 +41,11 @@ tasks:
             --version ci \
             --platform linux \
             --profiles-dir deploy/packaging/profiles \
-            --hook-source probe_keyring.py
+            --hook-source probe_keyring.py \
+            --verify-hook
+      - name: Przetestuj hook HWID i integrację keyring
+        run: |
+          pytest tests/packaging/test_installer.py --maxfail=1 --disable-warnings
       - name: Wylistuj artefakty instalatora
         run: |
           find var/dist/installers -maxdepth 2 -type f -print || true

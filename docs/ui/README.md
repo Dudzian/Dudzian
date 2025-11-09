@@ -34,6 +34,14 @@
 * Preferencje motywu (`dark`, `light`, `midnight`), układu (`classic`, `compact`, `advanced`) i powiadomień są budowane przez `Application::buildPersonalizationPayload()` i przechowywane w `config/ui_prefs.json`.
 * Migracja ze starej ścieżki `var/state/ui_settings.json` wykonywana jest w `Application::loadUiSettings()` – testy `tests/ui/test_setup_wizard.py` pokrywają scenariusz zapisu/odczytu podstawowych ustawień.
 
+## Panel Strategy Management
+
+* Lokalizacja: `ui/qml/views/StrategyManagement.qml`, dostępny z zakładki **Strategy Workbench**.
+* Sekcja **Biblioteka presetów** umożliwia podgląd różnic względem championa, symulację wyników (`previewStrategyPreset`) oraz zapis duplikatu presetów wprost z UI. Mostek offline (`OfflineRuntimeService.previewPreset`) dostarcza metryki P&L oraz status walidacji.
+* Widok **Raporty i automatyzacja jakości** prezentuje listę raportów championów budowaną przez `python -m bot_core.reporting.ui_bridge overview`. Każdy wpis zawiera skrócone metryki (score, skuteczność kierunkowa, MAE, Sharpe/Sortino) oraz przycisk „Otwórz lokalizację” (wykorzystuje `ReportCenterController::openReportLocation`).
+* Przyciski „Podgląd archiwizacji” i „Archiwizuj” wywołują odpowiednio `previewArchiveReports()` i `archiveReports()` (delegowane do `ui_bridge archive`). Dzięki temu operator może najpierw wykonać dry-run, a następnie zarchiwizować raporty championów bez opuszczania panelu.
+* Panel monitoruje sygnały `ReportCenterController` (`reportsChanged`, `archivePreviewReady`, `archiveFinished`, `lastNotificationChanged`) i prezentuje status operacji w pasku komunikatów widoku.
+
 ## Testy
 
 * `tests/ui/test_setup_wizard.py` – weryfikuje kroki kreatora, aktualizację list giełd/instrumentów i zapis preferencji UI.

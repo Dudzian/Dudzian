@@ -14,9 +14,13 @@ Frame {
     property var scheduleInfo: ({})
     property var guardrailSummary: ({})
     property var decisionSummary: ({})
+    property var performanceGuard: ({})
+    property var riskAlertCache: ({})
     property var presets: []
     property var equityPoints: []
     property var heatmapCells: []
+    property var recommendations: []
+    property var riskAlerts: []
     property var reasons: []
     property var performanceSummary: ({})
     property var recentPerformanceSummary: ({})
@@ -40,6 +44,12 @@ Frame {
         radius: 8
     }
 
+    ListModel {
+        id: bannerModel
+        dynamicRoles: true
+        onCountChanged: bannerTrimTimer.running = bannerModel.count > 0
+    }
+
     function cloneObject(value) {
         try {
             return JSON.parse(JSON.stringify(value))
@@ -58,9 +68,12 @@ Frame {
         scheduleInfo = cloneObject(payload.schedule || payload.scheduleInfo || {})
         guardrailSummary = cloneObject(payload.guardrailSummary || payload.guardrail_summary || {})
         decisionSummary = cloneObject(payload.decisionSummary || payload.decision_summary || {})
+        performanceGuard = normalizeGuard(payload.performanceGuard || payload.performance_guard || {})
         presets = payload.presets || []
         equityPoints = payload.equityCurve || payload.equity_curve || []
         heatmapCells = payload.riskHeatmap || payload.risk_heatmap || []
+        recommendations = payload.recommendations || payload.recommendation || []
+        riskAlerts = payload.riskAlerts || payload.risk_alerts || []
         reasons = payload.reasons || []
         controllerHistory = cloneObject(payload.controllerHistory || payload.controller_history || [])
         recalibrations = cloneObject(payload.recalibrations || [])
@@ -75,6 +88,7 @@ Frame {
             symbol = payload.symbol
         if (payload.alerts)
             alertDraft = cloneObject(payload.alerts)
+        syncRiskAlertBanners(riskAlerts)
         snapshotRefreshed()
     }
 
@@ -137,6 +151,196 @@ Frame {
             }
         }
         return value
+    }
+
+    function normalizeGuard(map) {
+        var guard = cloneObject(map || {})
+        if (guard.fpsTarget === undefined && guard.fps_target !== undefined)
+            guard.fpsTarget = guard.fps_target
+        if (guard.reduceMotionAfter === undefined && guard.reduce_motion_after_seconds !== undefined)
+            guard.reduceMotionAfter = guard.reduce_motion_after_seconds
+        if (guard.jankThresholdMs === undefined && guard.jank_threshold_ms !== undefined)
+            guard.jankThresholdMs = guard.jank_threshold_ms
+        if (guard.maxOverlayCount === undefined && guard.max_overlay_count !== undefined)
+            guard.maxOverlayCount = guard.max_overlay_count
+        if (guard.disableSecondaryWhenBelow === undefined && guard.disable_secondary_when_fps_below !== undefined)
+            guard.disableSecondaryWhenBelow = guard.disable_secondary_when_fps_below
+        return guard
+    }
+
+    function guardValue(key) {
+        if (!performanceGuard)
+            return undefined
+        if (performanceGuard[key] !== undefined)
+            return performanceGuard[key]
+        var snake = key.replace(/([A-Z])/g, function(match) { return "_" + match.toLowerCase() })
+        if (performanceGuard[snake] !== undefined)
+            return performanceGuard[snake]
+        return undefined
+    }
+
+    function severityAccentColor(severity) {
+        if (!severity)
+            return "#2c3e50"
+        switch (severity.toLowerCase()) {
+        case "critical":
+            return "#c0392b"
+        case "error":
+            return "#d35400"
+        case "warning":
+            return "#f39c12"
+        case "info":
+            return "#2980b9"
+        default:
+            return "#34495e"
+        }
+    }
+
+    function severityBackgroundColor(severity) {
+        if (!severity)
+            return Qt.darker(palette.window, 1.1)
+        switch (severity.toLowerCase()) {
+        case "critical":
+            return "#3b1a1a"
+        case "error":
+            return "#422412"
+        case "warning":
+            return "#3f3216"
+        case "info":
+            return "#1a273b"
+        default:
+            return Qt.darker(palette.window, 1.08)
+        }
+    }
+
+    function severityLabel(severity) {
+        if (!severity)
+            return qsTr("informacja")
+        switch (severity.toLowerCase()) {
+        case "critical":
+            return qsTr("krytyczny")
+        case "error":
+            return qsTr("błąd")
+        case "warning":
+            return qsTr("ostrzeżenie")
+        case "info":
+            return qsTr("informacja")
+        default:
+            return severity
+        }
+    }
+
+    function pushBanner(id, severity, title, message, durationMs) {
+        var expiresAt = Date.now() + (durationMs || 9000)
+        for (var i = 0; i < bannerModel.count; ++i) {
+            var existing = bannerModel.get(i)
+            if (existing.id === id) {
+                bannerModel.set(i, {
+                                    id: id,
+                                    severity: severity,
+                                    title: title,
+                                    message: message,
+                                    expiresAt: expiresAt
+                                })
+                return
+            }
+        }
+        bannerModel.append({
+                               id: id,
+                               severity: severity,
+                               title: title,
+                               message: message,
+                               expiresAt: expiresAt
+                           })
+    }
+
+    function trimExpiredBanners() {
+        var now = Date.now()
+        for (var i = bannerModel.count - 1; i >= 0; --i) {
+            var entry = bannerModel.get(i)
+            if (entry.expiresAt !== undefined && entry.expiresAt <= now)
+                bannerModel.remove(i)
+        }
+    }
+
+    function logOperationalAlert(source, severity, title, message, extra) {
+        if (typeof reportController === "undefined" || !reportController || !reportController.logOperationalAlert)
+            return
+        var payload = {
+            source: source,
+            severity: severity,
+            title: title,
+            message: message
+        }
+        if (extra) {
+            for (var key in extra) {
+                if (Object.prototype.hasOwnProperty.call(extra, key))
+                    payload[key] = extra[key]
+            }
+        }
+        reportController.logOperationalAlert(source, payload)
+    }
+
+    function showAutomationBanner(running) {
+        var severity = running ? "info" : "warning"
+        var title = running ? qsTr("Automatyzacja włączona") : qsTr("Automatyzacja zatrzymana")
+        var message = running
+                ? qsTr("Pętla auto-tradingu została aktywowana i oczekuje na decyzje.")
+                : qsTr("Automatyzacja została wyłączona – sprawdź alerty guardrail przed ponownym startem.")
+        pushBanner("automation:" + (running ? "running" : "stopped"), severity, title, message, running ? 6500 : 9000)
+        logOperationalAlert("automation", severity, title, message, {
+                                enabled: automation.enabled,
+                                running: running
+                            })
+    }
+
+    function syncRiskAlertBanners(alerts) {
+        var previous = riskAlertCache || {}
+        var next = {}
+        if (!alerts)
+            alerts = []
+        for (var i = 0; i < alerts.length; ++i) {
+            var alert = alerts[i] || {}
+            var key = String(alert.code || alert.id || i)
+            next[key] = {
+                severity: alert.severity || "info",
+                message: alert.message || ""
+            }
+            var prev = previous[key]
+            if (!prev || prev.severity !== next[key].severity || prev.message !== next[key].message) {
+                var severity = (alert.severity || "info").toLowerCase()
+                var title
+                if (severity === "critical" || severity === "error")
+                    title = qsTr("Krytyczny alert guardrail")
+                else if (severity === "warning")
+                    title = qsTr("Alert guardrail")
+                else
+                    title = qsTr("Powiadomienie guardrail")
+                var message = alert.message || qsTr("Zmieniono stan guardrail %1").arg(key)
+                pushBanner("guardrail:" + key, severity, title, message, severity === "critical" ? 16000 : 10000)
+                logOperationalAlert("guardrail", severity, title, message, {
+                                       code: alert.code || key,
+                                       value: alert.value,
+                                       threshold: alert.threshold
+                                   })
+            }
+        }
+        riskAlertCache = next
+        trimExpiredBanners()
+    }
+
+    function killSwitchActive() {
+        if (!riskAlerts || riskAlerts.length === 0)
+            return false
+        for (var i = 0; i < riskAlerts.length; ++i) {
+            var alert = riskAlerts[i]
+            if (!alert)
+                continue
+            var code = String(alert.code || "")
+            if (code === "kill_switch")
+                return true
+        }
+        return false
     }
 
     function objectEntriesOrdered(obj) {
@@ -232,13 +436,24 @@ Frame {
         }
     }
 
+    Timer {
+        id: bannerTrimTimer
+        interval: 2500
+        repeat: true
+        running: bannerModel.count > 0
+        onTriggered: trimExpiredBanners()
+    }
+
     Component.onCompleted: refreshSnapshot()
     onRuntimeServiceChanged: refreshSnapshot()
 
     Connections {
         target: root.runtimeService
         function onAutomationStateChanged(running) {
+            var changed = automation.running !== running
             automation = Object.assign({}, automation, { running: running })
+            if (changed)
+                showAutomationBanner(running)
         }
         function onAlertPreferencesChanged(preferences) {
             if (!preferences)
@@ -288,6 +503,66 @@ Frame {
             Button {
                 text: qsTr("Odśwież")
                 onClicked: refreshSnapshot()
+            }
+        }
+
+        ColumnLayout {
+            Layout.fillWidth: true
+            visible: bannerModel.count > 0
+            spacing: 6
+
+            Repeater {
+                model: bannerModel
+                delegate: Frame {
+                    Layout.fillWidth: true
+                    padding: 10
+                    background: Rectangle {
+                        radius: 6
+                        color: severityBackgroundColor(severity)
+                        border.color: severityAccentColor(severity)
+                        border.width: 1
+                    }
+
+                    RowLayout {
+                        anchors.fill: parent
+                        spacing: 10
+
+                        Rectangle {
+                            width: 12
+                            height: 12
+                            radius: 6
+                            color: severityAccentColor(severity)
+                            Layout.alignment: Qt.AlignTop
+                        }
+
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            spacing: 4
+
+                            Label {
+                                text: title
+                                font.bold: true
+                                color: "#f6f8fa"
+                            }
+
+                            Label {
+                                text: message
+                                wrapMode: Text.WordWrap
+                                color: "#f0f0f0"
+                            }
+
+                            Label {
+                                text: qsTr("Poziom: %1").arg(severityLabel(severity))
+                                color: "#d0d8e0"
+                            }
+                        }
+
+                        Button {
+                            text: qsTr("Ukryj")
+                            onClicked: bannerModel.remove(index)
+                        }
+                    }
+                }
             }
         }
 
@@ -347,6 +622,117 @@ Frame {
             Item { Layout.fillWidth: true }
         }
 
+        GroupBox {
+            title: qsTr("Alerty guardraili i limity ekspozycji")
+            Layout.fillWidth: true
+
+            ColumnLayout {
+                anchors.fill: parent
+                anchors.margins: 12
+                spacing: 8
+
+                Repeater {
+                    model: riskAlerts
+                    delegate: Frame {
+                        Layout.fillWidth: true
+                        padding: 10
+                        background: Rectangle {
+                            radius: 6
+                            color: severityBackgroundColor(modelData && modelData.severity ? modelData.severity : "info")
+                            border.color: severityAccentColor(modelData && modelData.severity ? modelData.severity : "info")
+                            border.width: 1
+                        }
+
+                        ColumnLayout {
+                            anchors.fill: parent
+                            spacing: 4
+
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: 6
+
+                                Rectangle {
+                                    width: 10
+                                    height: 10
+                                    radius: 5
+                                    color: severityAccentColor(modelData && modelData.severity ? modelData.severity : "info")
+                                }
+
+                                Label {
+                                    Layout.fillWidth: true
+                                    text: modelData && modelData.message ? modelData.message : qsTr("Alert guardrail")
+                                    wrapMode: Text.WordWrap
+                                    color: "#f8f9fa"
+                                }
+                            }
+
+                            Label {
+                                visible: modelData && modelData.code
+                                text: qsTr("Kod: %1").arg(modelData && modelData.code ? modelData.code : "")
+                                color: "#d0d8e0"
+                            }
+
+                            Label {
+                                visible: modelData && modelData.threshold !== undefined && modelData.value !== undefined
+                                text: qsTr("Wykorzystanie: %1 / %2")
+                                          .arg(formatNumber(modelData.value, 2))
+                                          .arg(formatNumber(modelData.threshold, 2))
+                                color: "#d0d8e0"
+                            }
+                        }
+                    }
+                }
+
+                Label {
+                    visible: (!riskAlerts || riskAlerts.length === 0)
+                    text: qsTr("Brak aktywnych alertów guardrail.")
+                    color: palette.mid
+                }
+
+                GridLayout {
+                    columns: 2
+                    columnSpacing: 12
+                    rowSpacing: 6
+
+                    Label { text: qsTr("Kill switch"); font.bold: true }
+                    Label {
+                        text: killSwitchActive() ? qsTr("aktywny") : qsTr("nieaktywny")
+                        color: killSwitchActive() ? "#e74c3c" : palette.mid
+                    }
+
+                    Label { text: qsTr("Docelowe FPS"); font.bold: true }
+                    Label {
+                        text: guardValue("fpsTarget") !== undefined ? guardValue("fpsTarget") : qsTr("—")
+                        color: palette.mid
+                    }
+
+                    Label { text: qsTr("Limit jank (ms)"); font.bold: true }
+                    Label {
+                        text: guardValue("jankThresholdMs") !== undefined ? formatNumber(guardValue("jankThresholdMs"), 1) : qsTr("—")
+                        color: palette.mid
+                    }
+
+                    Label { text: qsTr("Ograniczenie nakładek"); font.bold: true }
+                    Label {
+                        text: guardValue("maxOverlayCount") !== undefined ? guardValue("maxOverlayCount") : qsTr("—")
+                        color: palette.mid
+                    }
+
+                    Label { text: qsTr("Redukcja animacji (s)"); font.bold: true }
+                    Label {
+                        text: guardValue("reduceMotionAfter") !== undefined ? formatNumber(guardValue("reduceMotionAfter"), 2) : qsTr("—")
+                        color: palette.mid
+                    }
+
+                    Label { text: qsTr("Wyłącz nakładki poniżej FPS"); font.bold: true }
+                    Label {
+                        text: guardValue("disableSecondaryWhenBelow") !== undefined ? guardValue("disableSecondaryWhenBelow") : qsTr("—")
+                        color: palette.mid
+                    }
+                }
+            }
+        }
+
         RowLayout {
             Layout.fillWidth: true
             spacing: 16
@@ -365,6 +751,135 @@ Frame {
                 Layout.fillHeight: true
                 cells: heatmapCells
                 title: qsTr("Heatmapa ryzyka (offline)")
+            }
+        }
+
+        GroupBox {
+            title: qsTr("Rekomendacje trybów działania")
+            Layout.fillWidth: true
+
+            ColumnLayout {
+                anchors.fill: parent
+                anchors.margins: 12
+                spacing: 8
+
+                Repeater {
+                    model: recommendations
+                    delegate: Frame {
+                        Layout.fillWidth: true
+                        background: Rectangle {
+                            color: Qt.darker(palette.window, 1.08)
+                            radius: 6
+                        }
+                        ColumnLayout {
+                            anchors.fill: parent
+                            anchors.margins: 10
+                            spacing: 4
+
+                            Label {
+                                text: {
+                                    var modeName = modelData.mode || qsTr("profil")
+                                    var confidence = modelData.confidence !== undefined ? Math.round(modelData.confidence * 100) : 0
+                                    return qsTr("Tryb: %1 (%2%%)").arg(modeName).arg(confidence)
+                                }
+                                font.bold: true
+                            }
+
+                            Label {
+                                text: modelData.reason || qsTr("Brak uzasadnienia")
+                                wrapMode: Text.WordWrap
+                                color: palette.mid
+                            }
+
+                            ColumnLayout {
+                                visible: modelData.suggested_actions && modelData.suggested_actions.length > 0
+                                spacing: 2
+
+                                Label {
+                                    text: qsTr("Sugestie:")
+                                    font.pointSize: font.pointSize - 1
+                                }
+
+                                Repeater {
+                                    model: modelData.suggested_actions || []
+                                    delegate: Label {
+                                        text: "• " + modelData
+                                        wrapMode: Text.WordWrap
+                                        color: palette.text
+                                    }
+                                }
+                            }
+
+                            Label {
+                                visible: modelData.blocked === true
+                                text: qsTr("Tryb tymczasowo zablokowany przez kill-switch")
+                                color: palette.highlight
+                            }
+                        }
+                    }
+                }
+
+                Label {
+                    visible: (!recommendations || recommendations.length === 0)
+                    text: qsTr("Brak nowych rekomendacji – utrzymaj bieżący profil.")
+                    color: palette.mid
+                }
+            }
+        }
+
+        GroupBox {
+            title: qsTr("Alerty ryzyka")
+            Layout.fillWidth: true
+
+            ColumnLayout {
+                anchors.fill: parent
+                anchors.margins: 12
+                spacing: 6
+
+                Repeater {
+                    model: riskAlerts
+                    delegate: Frame {
+                        Layout.fillWidth: true
+                        background: Rectangle {
+                            color: Qt.darker(palette.window, modelData.severity === "critical" ? 1.3 : 1.1)
+                            radius: 6
+                        }
+                        ColumnLayout {
+                            anchors.fill: parent
+                            anchors.margins: 10
+                            spacing: 4
+
+                            Label {
+                                text: {
+                                    var code = modelData.code || qsTr("alert")
+                                    var severity = modelData.severity || "info"
+                                    return qsTr("%1 (%2)").arg(code).arg(severity)
+                                }
+                                font.bold: true
+                                color: modelData.severity === "critical" ? palette.highlight : palette.text
+                            }
+
+                            Label {
+                                text: modelData.message || qsTr("Monitoruj wskaźnik ryzyka")
+                                wrapMode: Text.WordWrap
+                            }
+
+                            Label {
+                                visible: modelData.value !== undefined && modelData.threshold !== undefined
+                                text: qsTr("Wartość: %1%% / Próg: %2%%")
+                                    .arg(Number(modelData.value * 100).toLocaleString(Qt.locale(), "f", 1))
+                                    .arg(Number(modelData.threshold * 100).toLocaleString(Qt.locale(), "f", 1))
+                                color: palette.mid
+                            }
+                        }
+                    }
+                }
+
+                Label {
+                    visible: (!riskAlerts || riskAlerts.length === 0)
+                    text: qsTr("Brak aktywnych alertów ryzyka")
+                    color: palette.mid
+                }
             }
         }
 

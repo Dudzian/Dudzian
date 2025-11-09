@@ -10,6 +10,11 @@ paper:
     simulator:
       leverage_limit: 3.0
       maintenance_margin_ratio: 0.15
+    rate_limit_rules:
+      - rate: 20
+        per: 1
+      - rate: 120
+        per: 60
   credentials:
     api_key: null
     secret: null
@@ -23,6 +28,15 @@ testnet:
       retry_policy:
         max_attempts: 5
         base_delay: 0.75
+    rate_limit_rules:
+      - rate: 20
+        per: 1
+      - rate: 120
+        per: 60
+    failover:
+      enabled: true
+      failure_threshold: 2
+      cooldown_seconds: 45
   credentials:
     api_key: ${KRAKEN_TESTNET_KEY}
     secret: ${KRAKEN_TESTNET_SECRET}
@@ -39,6 +53,15 @@ live:
     native_adapter:
       settings:
         margin_mode: cross
+    rate_limit_rules:
+      - rate: 20
+        per: 1
+      - rate: 120
+        per: 60
+    failover:
+      enabled: true
+      failure_threshold: 3
+      cooldown_seconds: 60
   credentials:
     api_key: ${KRAKEN_LIVE_KEY}
     secret: ${KRAKEN_LIVE_SECRET}

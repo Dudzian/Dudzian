@@ -7,6 +7,11 @@ paper:
     paper_variant: spot
     paper_initial_cash: 30000
     paper_cash_asset: USDT
+    rate_limit_rules:
+      - rate: 40
+        per: 1
+      - rate: 600
+        per: 60
   credentials:
     api_key: null
     secret: null
@@ -16,10 +21,19 @@ testnet:
   exchange_manager:
     mode: futures
     testnet: true
+    rate_limit_rules:
+      - rate: 40
+        per: 1
+      - rate: 600
+        per: 60
     watchdog:
       retry_policy:
         max_attempts: 5
         base_delay: 0.5
+    failover:
+      enabled: true
+      failure_threshold: 2
+      cooldown_seconds: 45
   credentials:
     api_key: ${BYBIT_TESTNET_KEY}
     secret: ${BYBIT_TESTNET_SECRET}
@@ -39,6 +53,15 @@ live:
     native_adapter:
       settings:
         account_type: unified
+    rate_limit_rules:
+      - rate: 40
+        per: 1
+      - rate: 600
+        per: 60
+    failover:
+      enabled: true
+      failure_threshold: 3
+      cooldown_seconds: 60
   credentials:
     api_key: ${BYBIT_LIVE_KEY}
     secret: ${BYBIT_LIVE_SECRET}

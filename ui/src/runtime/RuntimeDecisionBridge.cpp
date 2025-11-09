@@ -71,6 +71,8 @@ void RuntimeDecisionBridge::setOfflineBridge(OfflineRuntimeBridge* bridge)
         QObject::disconnect(m_offlineBridge.data(), nullptr, this, nullptr);
 
     m_offlineBridge = bridge;
+    m_presetCacheValid = false;
+    m_cachedPresets.clear();
 
     if (!m_offlineBridge.isNull()) {
         QObject::connect(m_offlineBridge.data(), &OfflineRuntimeBridge::automationStateChanged,
@@ -96,6 +98,8 @@ void RuntimeDecisionBridge::setLocalService(BotCoreLocalService* service)
         QObject::disconnect(m_localService.data(), nullptr, this, nullptr);
 
     m_localService = service;
+    m_presetCacheValid = false;
+    m_cachedPresets.clear();
 
     if (!m_localService.isNull()) {
         QObject::connect(m_localService.data(), &QObject::destroyed, this, [this]() {
@@ -214,6 +218,8 @@ void RuntimeDecisionBridge::updateAlertPreferences(const QVariantMap& preference
 
 QVariantMap RuntimeDecisionBridge::saveStrategyPreset(const QVariantMap& preset)
 {
+    m_presetCacheValid = false;
+    m_cachedPresets.clear();
     if (!m_localService.isNull()) {
         const QVariantMap response = m_localService->saveStrategyPreset(preset);
         if (!response.isEmpty())
@@ -240,14 +246,24 @@ QVariantMap RuntimeDecisionBridge::saveStrategyPreset(const QVariantMap& preset)
 
 QVariantList RuntimeDecisionBridge::listStrategyPresets()
 {
-    if (!m_localService.isNull())
-        return m_localService->listStrategyPresets();
+    if (m_presetCacheValid)
+        return m_cachedPresets;
+
+    if (!m_localService.isNull()) {
+        m_cachedPresets = m_localService->listStrategyPresets();
+        m_presetCacheValid = true;
+        return m_cachedPresets;
+    }
     if (!m_offlineBridge.isNull()) {
         qCWarning(lcRuntimeBridge) << "listStrategyPresets not supported by offline bridge";
+        m_cachedPresets.clear();
+        m_presetCacheValid = false;
         return {};
     }
 
     qCWarning(lcRuntimeBridge) << "listStrategyPresets called without runtime bridge";
+    m_cachedPresets.clear();
+    m_presetCacheValid = false;
     return {};
 }
 
@@ -279,6 +295,8 @@ QVariantMap RuntimeDecisionBridge::loadStrategyPreset(const QVariantMap& selecto
 
 QVariantMap RuntimeDecisionBridge::deleteStrategyPreset(const QVariantMap& selector)
 {
+    m_presetCacheValid = false;
+    m_cachedPresets.clear();
     if (!m_localService.isNull()) {
         const QVariantMap response = m_localService->deleteStrategyPreset(selector);
         if (!response.isEmpty())
@@ -300,6 +318,25 @@ QVariantMap RuntimeDecisionBridge::deleteStrategyPreset(const QVariantMap& selec
     return {
         {QStringLiteral("ok"), false},
         {QStringLiteral("error"), tr("Brak aktywnego mostka runtime")}
+    };
+}
+
+QVariantMap RuntimeDecisionBridge::previewStrategyPreset(const QVariantMap& selector)
+{
+    if (!m_localService.isNull()) {
+        qCWarning(lcRuntimeBridge) << "previewStrategyPreset not supported by local runtime service";
+        return {
+            {QStringLiteral("ok"), false},
+            {QStringLiteral("error"), tr("Mostek runtime nie obsługuje podglądu presetów")},
+        };
+    }
+    if (!m_offlineBridge.isNull())
+        return m_offlineBridge->previewPreset(selector);
+
+    qCWarning(lcRuntimeBridge) << "previewStrategyPreset called without runtime bridge";
+    return {
+        {QStringLiteral("ok"), false},
+        {QStringLiteral("error"), tr("Brak aktywnego mostka runtime")},
     };
 }
 

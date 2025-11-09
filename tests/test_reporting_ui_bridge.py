@@ -6,19 +6,32 @@ import json
 import os
 import tarfile
 import zipfile
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from types import SimpleNamespace
 from pathlib import Path
 
 import pytest
 
+from bot_core.ai.validation import ModelQualityReport, record_model_quality_report
 from bot_core.reporting import ui_bridge
+from bot_core.reporting.model_quality import load_champion_overview
 
 
 def test_package_exports_ui_bridge():
     import bot_core.reporting as reporting
 
     assert reporting.ui_bridge is ui_bridge
+
+
+def _quality_report(version: str, directional: float, mae: float, status: str = "improved") -> ModelQualityReport:
+    metrics = {"summary": {"directional_accuracy": directional, "mae": mae}}
+    return ModelQualityReport(
+        model_name="demo",
+        version=version,
+        evaluated_at=datetime.now(timezone.utc),
+        metrics=metrics,
+        status=status,
+    )
 
 
 def test_cmd_overview_empty_directory(tmp_path, capsys):
@@ -359,6 +372,8 @@ def _build_purge_args(
     limit: int | None = None,
     offset: int | None = None,
     categories: list[str] | None = None,
+    signal_quality_dir: Path | None = None,
+    retention_days: int = 30,
 ) -> SimpleNamespace:
     return SimpleNamespace(
         base_dir=str(base_dir),
@@ -373,6 +388,8 @@ def _build_purge_args(
         query=None,
         has_exports="any",
         dry_run=dry_run,
+        signal_quality_dir=str(signal_quality_dir) if signal_quality_dir is not None else None,
+        signal_quality_retention_days=retention_days,
     )
 
 
@@ -429,7 +446,14 @@ def test_cmd_purge_dry_run_collects_metrics(tmp_path, capsys):
         + second_export.stat().st_size
     )
 
-    args = _build_purge_args(base_dir, dry_run=True)
+    signal_quality_dir = tmp_path / "signal_quality"
+    signal_quality_dir.mkdir(parents=True)
+    stale_quality = signal_quality_dir / "binance.json"
+    stale_quality.write_text("{}", encoding="utf-8")
+    old_ts = (datetime.now(timezone.utc) - timedelta(days=60)).timestamp()
+    os.utime(stale_quality, (old_ts, old_ts))
+
+    args = _build_purge_args(base_dir, dry_run=True, signal_quality_dir=signal_quality_dir)
 
     return_code = ui_bridge.cmd_purge(args)
 
@@ -448,6 +472,12 @@ def test_cmd_purge_dry_run_collects_metrics(tmp_path, capsys):
     assert first_report.exists()
     assert second_report.exists()
 
+    cleanup = payload.get("signal_quality_cleanup")
+    assert cleanup["status"] == "preview"
+    assert cleanup["removed"] == 1
+    assert cleanup["targets"]
+    assert cleanup["targets"][0]["status"] == "preview"
+
 
 def test_cmd_purge_deletes_reports(tmp_path, capsys):
     base_dir = tmp_path / "reports"
@@ -464,7 +494,14 @@ def test_cmd_purge_deletes_reports(tmp_path, capsys):
     (report_b / "summary.json").write_text("{}", encoding="utf-8")
     (report_b_exports / "data.csv").write_text("id,value\n1,3\n", encoding="utf-8")
 
-    args = _build_purge_args(base_dir)
+    signal_quality_dir = tmp_path / "signal_quality"
+    signal_quality_dir.mkdir(parents=True)
+    stale_quality = signal_quality_dir / "binance.json"
+    stale_quality.write_text("{}", encoding="utf-8")
+    old_ts = (datetime.now(timezone.utc) - timedelta(days=90)).timestamp()
+    os.utime(stale_quality, (old_ts, old_ts))
+
+    args = _build_purge_args(base_dir, signal_quality_dir=signal_quality_dir)
 
     return_code = ui_bridge.cmd_purge(args)
 
@@ -479,6 +516,11 @@ def test_cmd_purge_deletes_reports(tmp_path, capsys):
     assert payload["removed_directories"] == 4
     assert not report_a.exists()
     assert not report_b.exists()
+
+    cleanup = payload.get("signal_quality_cleanup")
+    assert cleanup["status"] == "completed"
+    assert cleanup["removed"] == 1
+    assert not stale_quality.exists()
 
 
 def test_cmd_purge_honors_limit_and_filters(tmp_path, capsys):
@@ -501,7 +543,16 @@ def test_cmd_purge_honors_limit_and_filters(tmp_path, capsys):
     report_c_exports.mkdir(parents=True)
     (report_c_exports / "data.csv").write_text("1", encoding="utf-8")
 
-    args = _build_purge_args(base_dir, limit=1, categories=["diagnostics"], summary_status="missing")
+    signal_quality_dir = tmp_path / "signal_quality"
+    signal_quality_dir.mkdir(parents=True)
+
+    args = _build_purge_args(
+        base_dir,
+        limit=1,
+        categories=["diagnostics"],
+        summary_status="missing",
+        signal_quality_dir=signal_quality_dir,
+    )
 
     return_code = ui_bridge.cmd_purge(args)
 
@@ -516,13 +567,18 @@ def test_cmd_purge_honors_limit_and_filters(tmp_path, capsys):
     assert not report_c.exists()
     assert report_a.exists()
     assert report_b.exists()
+    cleanup = payload.get("signal_quality_cleanup")
+    assert cleanup["status"] in {"empty", "missing"}
 
 
 def test_cmd_purge_empty_returns_status(tmp_path, capsys):
     base_dir = tmp_path / "reports"
     base_dir.mkdir(parents=True)
 
-    args = _build_purge_args(base_dir)
+    signal_quality_dir = tmp_path / "signal_quality"
+    signal_quality_dir.mkdir(parents=True)
+
+    args = _build_purge_args(base_dir, signal_quality_dir=signal_quality_dir)
 
     return_code = ui_bridge.cmd_purge(args)
 
@@ -536,6 +592,8 @@ def test_cmd_purge_empty_returns_status(tmp_path, capsys):
     assert payload["removed_files"] == 0
     assert payload["removed_directories"] == 0
     assert payload["removed_size"] == 0
+    cleanup = payload.get("signal_quality_cleanup")
+    assert cleanup["status"] in {"empty", "missing"}
 
 
 def test_cmd_archive_dry_run_collects_metrics(tmp_path, capsys):
@@ -1466,6 +1524,44 @@ def test_list_reports_includes_relative_paths(tmp_path: Path) -> None:
     assert entry["type"] == "directory"
     assert entry["size_bytes"] > 0
     assert entry["path"].endswith("report-list")
+
+
+def test_cmd_promote_creates_audit_entry(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    quality_dir = tmp_path / "quality"
+    audit_dir = tmp_path / "audit"
+
+    record_model_quality_report(_quality_report("v1", directional=0.61, mae=15.0), history_root=quality_dir)
+    record_model_quality_report(_quality_report("v2", directional=0.6, mae=14.5, status="ok"), history_root=quality_dir)
+
+    args = SimpleNamespace(
+        model="demo",
+        version="v2",
+        quality_dir=str(quality_dir),
+        audit_dir=str(audit_dir),
+        reason="Manual override",
+    )
+
+    return_code = ui_bridge.cmd_promote(args)
+    captured = capsys.readouterr()
+
+    assert return_code == 0
+    payload = json.loads(captured.out)
+    assert payload["status"] == "ok"
+    assert payload["model"] == "demo"
+    assert payload["version"] == "v2"
+
+    summary_path = Path(payload["audit_entry"]["summary_path"])
+    assert summary_path.exists()
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    assert summary["status"] == "promoted"
+    assert summary["candidate"]["version"] == "v2"
+    assert summary["reason"] == "Manual override"
+
+    overview = load_champion_overview("demo", base_dir=quality_dir)
+    assert overview is not None
+    assert overview["champion"]["version"] == "v2"
+    assert overview["challengers"], "Challengers list should contain previous champion"
+    assert overview["challengers"][0]["report"]["version"] == "v1"
 
 
 if __name__ == "__main__":  # pragma: no cover

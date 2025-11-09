@@ -372,6 +372,17 @@ ApplicationWindow {
                 }
 
                 Tab {
+                    title: qsTr("Strategie – zarządzanie")
+                    enabled: licenseController.licenseActive
+
+                    Views.StrategyManagement {
+                        anchors.fill: parent
+                        runtimeService: runtimeService
+                        reportController: reportController
+                    }
+                }
+
+                Tab {
                     title: qsTr("Strategie – kreator")
                     enabled: licenseController.licenseActive
 
@@ -491,6 +502,15 @@ ApplicationWindow {
             if (!appController || !appController.alertToastsEnabled)
                 return
             alertToastOverlay.showToast(id, severity, title, description)
+            if (typeof reportController !== "undefined" && reportController && reportController.logOperationalAlert) {
+                var level = severity === 2 ? "critical" : (severity === 1 ? "warning" : "info")
+                reportController.logOperationalAlert("watchdog", {
+                    id: id,
+                    severity: level,
+                    title: title,
+                    message: description
+                })
+            }
         }
     }
 

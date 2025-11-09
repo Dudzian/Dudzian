@@ -25,6 +25,7 @@ public:
     QVariantMap alertPreferences() const { return m_alertPreferences; }
     void setAlertPreferences(const QVariantMap& preferences);
     QVariantMap buildAutoModeSnapshot() const;
+    Q_INVOKABLE QVariantMap previewPreset(const QVariantMap& selector);
 
 public slots:
     void start();
@@ -49,11 +50,19 @@ private:
     void applyAutomationPreference();
     void buildSyntheticDataset(QList<OhlcvPoint>& out) const;
     QVariantList buildEquityCurveSeries() const;
-    QVariantList buildRiskHeatmapCells() const;
-    QVariantMap buildAutomationMetrics() const;
+    QVariantList buildRiskHeatmapCells(const RiskSnapshotData& risk) const;
+    QVariantMap buildAutomationMetrics(const RiskSnapshotData& risk) const;
+    QVariantList buildAutomationRecommendations(const QVariantMap& metrics, const RiskSnapshotData& risk) const;
+    QVariantList buildRiskAlerts(const RiskSnapshotData& risk) const;
     QVariantMap buildPerformanceSummary() const;
     QVariantMap buildRecentPerformanceSummary(int hours = 24) const;
     QVariantMap buildPerformanceSummaryFor(const QList<OhlcvPoint>& candles) const;
+    QVariantMap loadDecisionSnapshotFromBackend() const;
+    QString resolvePresetPath(const QVariantMap& selector) const;
+    static QString presetsDirectory();
+    static QString normalisePresetKey(const QString& value);
+    QVariantList buildRiskDiff(const QVariantMap& presetRisk,
+                               const QVariantMap& championRisk) const;
 
     TradingClient::InstrumentConfig m_instrument{};
     QVariantMap                    m_strategyConfig;
