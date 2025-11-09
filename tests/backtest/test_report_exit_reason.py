@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from KryptoLowca.backtest import report
+from bot_core.backtest import trade_loader
 
 
 def _write_trades(tmp_path: Path, rows: list[dict[str, object]]) -> Path:
@@ -52,7 +52,7 @@ def test_load_trades_normalizes_supported_exit_reasons(tmp_path: Path) -> None:
     ]
     _write_trades(tmp_path, rows)
 
-    frame, _ = report.load_trades(tmp_path)
+    frame, _ = trade_loader.load_trades(tmp_path)
 
     assert frame.loc[0, "exit_reason"] == "stop_loss"
     assert frame.loc[1, "exit_reason"] == "take_profit"
@@ -76,6 +76,6 @@ def test_load_trades_preserves_unknown_tags(tmp_path: Path) -> None:
     ]
     _write_trades(tmp_path, rows)
 
-    frame, _ = report.load_trades(tmp_path)
+    frame, _ = trade_loader.load_trades(tmp_path)
 
     assert frame.loc[0, "exit_reason"] == "manual_exit"

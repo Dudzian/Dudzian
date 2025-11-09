@@ -7,9 +7,9 @@ jako warstwa zgodności wstecznej.** Nowe funkcje i integracje należy budować 
 `bot_core.*`, natomiast moduły takie jak `KryptoLowca.ai_models` pozostały tylko
 w formie shimów kierujących do `bot_core.ai.legacy_models`.
 
-> **Important:** Legacy source code that previously lived under
-> `KryptoLowca/bot` is archived in `archive/legacy_bot/` and kept for reference
-> only. Modern development must target the packages described below.
+> **Important:** Legacy source code, które dawniej znajdowało się pod
+> `KryptoLowca/bot`, zostało usunięte. Współczesny rozwój musi koncentrować się
+> na pakietach opisanych poniżej.
 
 ## Architecture Overview
 

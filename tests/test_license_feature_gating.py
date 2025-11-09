@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import sys
-from importlib import import_module
 from types import ModuleType, SimpleNamespace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -9,6 +8,7 @@ from typing import Any
 
 import pytest
 
+from bot_core.auto_trader.paper_app import PaperAutoTradeApp
 from bot_core.reporting.paper import generate_daily_paper_report
 from bot_core.runtime.bootstrap import build_alert_channels
 from bot_core.security.capabilities import build_capabilities_from_payload
@@ -120,7 +120,6 @@ def test_paper_auto_trade_app_requires_auto_trader_runtime(monkeypatch: pytest.M
     monkeypatch.setitem(sys.modules, "nacl.exceptions", fake_exceptions)
     monkeypatch.setitem(sys.modules, "nacl.signing", fake_signing)
 
-    PaperAutoTradeApp = import_module("KryptoLowca.auto_trader.paper").PaperAutoTradeApp
     with pytest.raises(LicenseCapabilityError):
         PaperAutoTradeApp(enable_gui=False, use_dummy_feed=False)
 

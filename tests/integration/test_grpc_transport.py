@@ -14,11 +14,10 @@ import pytest
 import yaml
 
 from bot_core.api.server import LocalRuntimeContext, LocalRuntimeGateway
-from bot_core.exchanges import streaming as core_streaming
+from bot_core.exchanges import interfaces as exchange_interfaces
+from bot_core.exchanges import streaming as exchange_streaming
 from bot_core.exchanges.base import AccountSnapshot
 from bot_core.execution.paper import MarketMetadata
-from KryptoLowca.exchanges import interfaces as exchange_interfaces
-from KryptoLowca.exchanges import streaming as exchange_streaming
 
 
 def _build_stub_context(*, preset_dir: Path | None = None):
@@ -216,6 +215,8 @@ def test_streaming_layer_exposes_long_poll_only() -> None:
     exported = {name for name in dir(exchange_interfaces) if "WebSocket" in name}
     assert not exported
     assert hasattr(exchange_interfaces, "MarketStreamHandle")
-    assert "websocket" not in (exchange_streaming.LongPollSubscription.__doc__ or "").lower()
-    assert not hasattr(core_streaming, "LocalWebSocketBridge")
-    assert not hasattr(core_streaming.LocalLongPollStream, "websocket_bridge")
+    assert "websocket" not in (
+        exchange_streaming.LocalLongPollStream.__doc__ or ""
+    ).lower()
+    assert not hasattr(exchange_streaming, "LocalWebSocketBridge")
+    assert not hasattr(exchange_streaming.LocalLongPollStream, "websocket_bridge")

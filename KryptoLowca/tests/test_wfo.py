@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from KryptoLowca.ai_manager import AIManager
+from bot_core.ai.manager import AIManager
 from KryptoLowca.services.wfo import WalkForwardOptimizer
 
 

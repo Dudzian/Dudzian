@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from .app import AutoTrader, EmitterLike
+from .paper_app import PaperAutoTradeApp
 from .audit import DecisionAuditLog, DecisionAuditRecord
 from .decision_scheduler import AutoTraderDecisionScheduler
 from .risk_bridge import GuardrailTrigger, RiskDecision
@@ -19,4 +20,5 @@ __all__ = [
     "TradingSchedule",
     "ScheduleWindow",
     "ScheduleState",
+    "PaperAutoTradeApp",
 ]

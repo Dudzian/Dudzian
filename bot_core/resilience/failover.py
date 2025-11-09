@@ -14,6 +14,11 @@ from bot_core.config.models import (
     ResilienceDrillConfig,
     ResilienceDrillThresholdsConfig,
 )
+from bot_core.resilience.drill import (
+    FailoverDrillPlan,
+    FailoverServicePlan,
+    evaluate_failover_drill,
+)
 from bot_core.security.signing import HmacSignedReportMixin
 
 _LOGGER = logging.getLogger(__name__)
@@ -65,6 +70,11 @@ class FailoverDrillResult:
             "status": self.status,
             "metrics": self.metrics.to_mapping(),
             "thresholds": asdict(self.thresholds),
+            "counts": {
+                "critical": len(self.failures),
+                "warning": 0,
+                "info": 0,
+            },
         }
         if self.failures:
             payload["failures"] = list(self.failures)
@@ -213,4 +223,7 @@ __all__ = [
     "FailoverDrillResult",
     "FailoverDrillReport",
     "ResilienceFailoverDrill",
+    "FailoverDrillPlan",
+    "FailoverServicePlan",
+    "evaluate_failover_drill",
 ]

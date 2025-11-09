@@ -95,7 +95,7 @@ from bot_core.exchanges.core import PositionDTO
 from KryptoLowca.config_manager import ConfigManager
 from KryptoLowca.exchange_manager import ExchangeManager
 from KryptoLowca.security_manager import SecurityManager
-from KryptoLowca.ai_manager import AIManager
+from bot_core.ai.manager import AIManager
 from KryptoLowca.report_manager import ReportManager
 from KryptoLowca.risk_manager import RiskManager
 from KryptoLowca.core.trading_engine import TradingEngine

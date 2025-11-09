@@ -12,6 +12,7 @@ from .ma import Bar as MABar, Trade as MATrade, param_grid_fast_slow, simulate_t
 from .metrics import MetricsResult, compute_metrics, to_dict
 from .reporting import export_report, render_html_report
 from .simulation import BacktestFill, MatchingConfig, MatchingEngine
+from .trade_loader import load_trades
 from .trend_following import (
     DEFAULT_FEE,
     MIN_SL_PCT,
@@ -36,6 +37,7 @@ __all__ = [
     "EntryParams",
     "ExchangeLike",
     "HistoricalDataProvider",
+    "load_trades",
     "MABar",
     "MATrade",
     "MetricsResult",

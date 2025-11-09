@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from KryptoLowca.ai_manager import AIManager
+from bot_core.ai.manager import AIManager
 
 
 def _build_dataframe(rows: int) -> pd.DataFrame:

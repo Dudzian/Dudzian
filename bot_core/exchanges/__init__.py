@@ -62,6 +62,13 @@ from bot_core.exchanges.errors import (
     ExchangeNetworkError,
     ExchangeThrottlingError,
 )
+from bot_core.exchanges.interfaces import (
+    MarketStreamHandle,
+    MarketSubscription,
+    PrivateStreamSubscription,
+    PublicStreamSubscription,
+    StreamSubscription,
+)
 from bot_core.exchanges.kucoin.spot import KuCoinSpotAdapter
 from bot_core.exchanges.kraken.futures import KrakenFuturesAdapter
 from bot_core.exchanges.kraken.margin import KrakenMarginAdapter
@@ -94,6 +101,11 @@ __all__ = [
     "ExchangeAuthError",
     "ExchangeThrottlingError",
     "ExchangeNetworkError",
+    "MarketStreamHandle",
+    "MarketSubscription",
+    "StreamSubscription",
+    "PublicStreamSubscription",
+    "PrivateStreamSubscription",
     "KrakenFuturesAdapter",
     "KrakenSpotAdapter",
     "KrakenMarginAdapter",
