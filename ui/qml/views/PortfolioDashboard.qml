@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import "../components" as Components
+import "../dashboard" as Dashboard
 
 Item {
     id: root
@@ -12,6 +13,11 @@ Item {
     property var riskModel: appController ? appController.riskModel : (typeof riskModel !== "undefined" ? riskModel : null)
     property var riskHistoryModel: appController ? appController.riskHistoryModel : (typeof riskHistoryModel !== "undefined" ? riskHistoryModel : null)
     property var alertsModel: (typeof alertsModel !== "undefined" ? alertsModel : null)
+    property var alertsFilterModel: (typeof alertsFilterModel !== "undefined" ? alertsFilterModel : null)
+    property var strategyController: (typeof strategyController !== "undefined" ? strategyController : null)
+    property var decisionLogModel: (typeof decisionLogModel !== "undefined" ? decisionLogModel : null)
+    property var decisionFilterModel: (typeof decisionFilterModel !== "undefined" ? decisionFilterModel : null)
+    property var runtimeService: (typeof runtimeService !== "undefined" ? runtimeService : null)
 
     property var exchangeExposureItems: []
     property var strategyExposureItems: []
@@ -103,51 +109,11 @@ Item {
                 accentColor: palette.highlight
             }
 
-            Frame {
+            Dashboard.StrategyManagementPanel {
                 Layout.preferredWidth: parent.width * 0.35
                 Layout.fillHeight: true
-                background: Rectangle { color: Qt.darker(palette.base, 1.05); radius: 10 }
-
-                ColumnLayout {
-                    anchors.fill: parent
-                    spacing: 10
-                    padding: 14
-
-                    Label {
-                        text: qsTr("Ekspozycja per giełda")
-                        font.pixelSize: 18
-                        font.bold: true
-                    }
-
-                    ListView {
-                        objectName: "exchangeExposureList"
-                        Layout.fillWidth: true
-                        Layout.fillHeight: true
-                        clip: true
-                        model: exchangeExposureItems
-                        delegate: Frame {
-                            width: ListView.view.width
-                            padding: 8
-                            background: Rectangle { radius: 8; color: Qt.darker(palette.base, 1.02) }
-                            ColumnLayout {
-                                anchors.fill: parent
-                                spacing: 4
-                                Label { text: model.name ? model.name.toUpperCase() : qsTr("Giełda") ; font.bold: true }
-                                Label {
-                                    Layout.fillWidth: true
-                                    color: palette.mid
-                                    text: qsTr("Ekspozycja: %1").arg(Number(model.current || 0).toLocaleString(Qt.locale(), "f", 2))
-                                }
-                                Label {
-                                    Layout.fillWidth: true
-                                    color: palette.mid
-                                    text: model.threshold ? qsTr("Próg ostrzegawczy: %1").arg(Number(model.threshold).toLocaleString(Qt.locale(), "f", 2)) : qsTr("Brak progu")
-                                }
-                            }
-                        }
-                        placeholderText: qsTr("Brak danych ekspozycji")
-                    }
-                }
+                strategyController: root.strategyController
+                appController: root.appController
             }
         }
 
@@ -214,52 +180,68 @@ Item {
                     padding: 14
 
                     Label {
-                        text: qsTr("Aktywne alerty")
+                        text: qsTr("Ekspozycja per giełda")
                         font.pixelSize: 18
                         font.bold: true
                     }
 
                     ListView {
-                        objectName: "alertsListView"
+                        objectName: "exchangeExposureList"
                         Layout.fillWidth: true
                         Layout.fillHeight: true
                         clip: true
-                        model: alertsModel ? alertsModel : []
+                        model: exchangeExposureItems
                         delegate: Frame {
                             width: ListView.view.width
-                            padding: 10
-                            background: Rectangle {
-                                radius: 8
-                                color: model.severity === 2 ? Qt.rgba(0.58, 0.16, 0.2, 0.45)
-                                                           : (model.severity === 1 ? Qt.rgba(0.96, 0.67, 0.17, 0.35)
-                                                                                : Qt.darker(palette.base, 1.02))
-                            }
+                            padding: 8
+                            background: Rectangle { radius: 8; color: Qt.darker(palette.base, 1.02) }
                             ColumnLayout {
                                 anchors.fill: parent
                                 spacing: 4
-                                Label { text: model.title || qsTr("Alert"); font.bold: true }
-                                Label { Layout.fillWidth: true; wrapMode: Text.WordWrap; text: model.description || "" }
-                                Label { text: Qt.formatDateTime(model.timestamp || new Date(), Qt.DefaultLocaleShortDate); color: palette.mid; font.pixelSize: 12 }
+                                Label { text: model.name ? model.name.toUpperCase() : qsTr("Giełda"); font.bold: true }
+                                Label {
+                                    Layout.fillWidth: true
+                                    color: palette.mid
+                                    text: qsTr("Ekspozycja: %1").arg(Number(model.current || 0).toLocaleString(Qt.locale(), "f", 2))
+                                }
+                                Label {
+                                    Layout.fillWidth: true
+                                    color: palette.mid
+                                    text: model.threshold ? qsTr("Próg ostrzegawczy: %1").arg(Number(model.threshold).toLocaleString(Qt.locale(), "f", 2)) : qsTr("Brak progu")
+                                }
                             }
                         }
-                        placeholderText: qsTr("Brak alertów")
-                    }
-
-                    RowLayout {
-                        Layout.fillWidth: true
-                        spacing: 8
-                        Button {
-                            text: qsTr("Potwierdź wszystkie")
-                            enabled: alertsModel && alertsModel.unacknowledgedCount > 0
-                            onClicked: { if (alertsModel) alertsModel.acknowledgeAll() }
-                        }
-                        Item { Layout.fillWidth: true }
-                        Label {
-                            color: palette.mid
-                            text: alertsModel ? qsTr("Łącznie: %1").arg(alertsModel.count || alertsModel.rowCount()) : ""
-                        }
+                        placeholderText: qsTr("Brak danych ekspozycji")
                     }
                 }
+            }
+        }
+
+        RowLayout {
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            spacing: 18
+
+            Frame {
+                Layout.preferredWidth: parent.width * 0.35
+                Layout.fillHeight: true
+                background: Rectangle { color: Qt.darker(palette.base, 1.05); radius: 10 }
+
+                Components.AlertCenterPanel {
+                    anchors.fill: parent
+                    anchors.margins: 16
+                    summaryModel: root.alertsModel
+                    listModel: root.alertsFilterModel
+                }
+            }
+
+            Dashboard.DecisionLogPanel {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                decisionModel: root.decisionLogModel
+                decisionFilterModel: root.decisionFilterModel
+                runtimeService: root.runtimeService
+                appController: root.appController
             }
         }
     }

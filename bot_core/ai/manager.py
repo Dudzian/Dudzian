@@ -81,7 +81,7 @@ from .health import ModelHealthMonitor, ModelHealthStatus
 from .inference import DecisionModelInference, ModelRepository
 from .meta import select_meta_confidence
 from .models import ModelArtifact, ModelArtifactIntegrityError, ModelScore, load_model_artifact_bundle
-from .validation import ModelArtifactValidationError
+from .validation import ModelArtifactValidationError, validate_model_artifact_schema
 from .regime import (
     MarketRegimeAssessment,
     MarketRegimeClassifier,
@@ -96,6 +96,7 @@ from .scheduler import (
     WalkForwardResult,
     WalkForwardValidator,
 )
+from bot_core.alerts.dispatcher import AlertSeverity, emit_alert
 from .training import ModelTrainer
 
 from bot_core.observability.dashboard_sync import save_dashboard_annotations
@@ -1139,6 +1140,7 @@ class AIManager:
         self._decision_journal_context: Mapping[str, Any] | None = (
             dict(decision_journal_context) if decision_journal_context is not None else None
         )
+        self._quality_alert_state: Dict[str, bool] = {}
         if _AI_IMPORT_ERROR is not None:
             self._degraded = True
             messages = _collect_exception_messages(_AI_IMPORT_ERROR)
@@ -2113,7 +2115,10 @@ class AIManager:
                     return self._normalize_symbol(first)
             return None
 
+        destination: Path | None = None
+
         def _on_completed(artifact: ModelArtifact, validation: WalkForwardResult | None) -> None:
+            nonlocal destination
             inferred_symbol = _resolve_symbol()
             timestamp = artifact.trained_at.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
             filename = repository_filename or f"{(inferred_symbol or 'model')}_{normalized_model_type}_{timestamp}.json"
@@ -2156,8 +2161,32 @@ class AIManager:
                 raise
             destination = repository.save(enriched, filename)
 
+            if destination is None:
+                raise RuntimeError("repository.save() did not return destination path")
+
             inference = DecisionModelInference(repository)
             inference.load_weights(destination)
+            quality_ok, quality_details = self._evaluate_decision_model_quality(
+                inference,
+                normalized_model_type,
+                context={
+                    "job": name,
+                    "artifact_path": str(destination),
+                },
+                alert_source="ai/retraining",
+            )
+            if not quality_ok:
+                message = f"Decision model {normalized_model_type} failed quality thresholds"
+                details_tuple = tuple(quality_details) if quality_details else (message,)
+                error = RuntimeError(message)
+                self._degraded = True
+                self._degradation_reason = message
+                self._degradation_details = details_tuple
+                self._degradation_exceptions = (error,)
+                self._degradation_exception_types = (
+                    f"{error.__class__.__module__}.{error.__class__.__qualname__}",
+                )
+                self._degradation_exception_diagnostics = _build_exception_diagnostics(error)
             self._job_artifact_paths[key] = destination
 
             if inferred_symbol is not None:
@@ -2172,40 +2201,40 @@ class AIManager:
                         inference=inference,
                         metadata=artifact_meta,
                     )
-            self._mark_backend_ready(inference)
+                self._mark_backend_ready(inference)
 
-            performance_name = normalized_model_type
-            if attach_to_decision:
-                try:
-                    self._ensure_compliance_activation_gate()
-                except ComplianceSignOffError:
-                    logger.exception(
-                        "Brak wymaganych podpisów compliance blokuje aktywację inference %s",
-                        decision_name or normalized_model_type,
-                    )
-                    raise
-                decision_label = decision_name or normalized_model_type
-                performance_name = decision_label
-                try:
-                    self.load_decision_artifact(
-                        decision_label,
-                        destination,
-                        repository_root=repository.base_path,
-                        set_default=set_default_decision,
-                    )
-                except Exception:
-                    logger.exception(
-                        "Nie udało się zarejestrować artefaktu Decision Engine %s",
-                        decision_label,
-                    )
+                performance_name = normalized_model_type
+                if attach_to_decision:
+                    try:
+                        self._ensure_compliance_activation_gate()
+                    except ComplianceSignOffError:
+                        logger.exception(
+                            "Brak wymaganych podpisów compliance blokuje aktywację inference %s",
+                            decision_name or normalized_model_type,
+                        )
+                        raise
+                    decision_label = decision_name or normalized_model_type
+                    performance_name = decision_label
+                    try:
+                        self.load_decision_artifact(
+                            decision_label,
+                            destination,
+                            repository_root=repository.base_path,
+                            set_default=set_default_decision,
+                        )
+                    except Exception:
+                        logger.exception(
+                            "Nie udało się zarejestrować artefaktu Decision Engine %s",
+                            decision_label,
+                        )
 
-            self._update_decision_orchestrator_performance(
-                performance_name,
-                artifact=enriched,
-                metadata=metadata,
-                validation=validation,
-                strategy=normalized_model_type,
-            )
+                self._update_decision_orchestrator_performance(
+                    performance_name,
+                    artifact=enriched,
+                    metadata=metadata,
+                    validation=validation,
+                    strategy=normalized_model_type,
+                )
 
         job = ScheduledTrainingJob(
             name=name,
@@ -2218,6 +2247,54 @@ class AIManager:
         scheduler.register(job)
         self._scheduled_training_jobs[key] = job
         return job
+
+    def schedule_walk_forward_retraining(
+        self,
+        name: str,
+        *,
+        interval: timedelta,
+        dataset_provider: Callable[[], FeatureDataset],
+        trainer_factory: Callable[[], ModelTrainer] | None = None,
+        validator_factory: Callable[[FeatureDataset], WalkForwardValidator] | None = None,
+        quality_thresholds: Mapping[str, float] | None = None,
+        model_type: str | None = None,
+        symbol: str | None = None,
+        attach_to_decision: bool = False,
+        decision_name: str | None = None,
+        decision_repository_root: PathInput | None = None,
+        repository_base: PathInput | None = None,
+        repository_filename: str | None = None,
+        set_default_decision: bool = False,
+    ) -> ScheduledTrainingJob:
+        """Zarejestruj zadanie retrainingu z domyślną konfiguracją walk-forward."""
+
+        schedule = RetrainingScheduler(interval=interval)
+        artifact_metadata: Dict[str, object] | None = None
+        if quality_thresholds:
+            normalized_thresholds: Dict[str, float] = {}
+            for key, value in quality_thresholds.items():
+                try:
+                    normalized_thresholds[str(key)] = float(value)  # type: ignore[arg-type]
+                except (TypeError, ValueError):
+                    continue
+            if normalized_thresholds:
+                artifact_metadata = {"quality_thresholds": normalized_thresholds}
+        return self.register_training_job(
+            name,
+            schedule,
+            dataset_provider,
+            trainer_factory=trainer_factory,
+            validator_factory=validator_factory,
+            artifact_metadata=artifact_metadata,
+            repository_base=repository_base,
+            repository_filename=repository_filename,
+            symbol=symbol,
+            model_type=model_type,
+            attach_to_decision=attach_to_decision,
+            decision_name=decision_name,
+            decision_repository_root=decision_repository_root,
+            set_default_decision=set_default_decision,
+        )
 
     def run_due_training_jobs(
         self, now: datetime | None = None
@@ -2327,7 +2404,12 @@ class AIManager:
         self._decision_inferences[normalized_name] = inference
         if set_default or self._decision_default_name is None:
             self._decision_default_name = normalized_name
-        quality_ok, quality_details = self._evaluate_decision_model_quality(inference, normalized_name)
+        quality_ok, quality_details = self._evaluate_decision_model_quality(
+            inference,
+            normalized_name,
+            context={"artifact_path": str(load_target)},
+            alert_source="ai/decision_repository",
+        )
         if self._decision_orchestrator is not None:
             try:
                 self._decision_orchestrator.attach_named_inference(
@@ -3130,17 +3212,75 @@ class AIManager:
                 self._degradation_exception_diagnostics = ()
                 self._health_monitor.resolve_backend_recovery()
 
+    def _handle_health_status(
+        self,
+        status: ModelHealthStatus,
+        *,
+        model_name: str,
+        source: str,
+        context: Mapping[str, object] | None = None,
+    ) -> None:
+        observation = status.last_observation
+        if observation is None:
+            return
+        payload: Dict[str, str] = {
+            "model": model_name,
+            "updated_at": status.updated_at.isoformat(),
+        }
+        if context:
+            for key, value in context.items():
+                payload[str(key)] = str(value)
+        if observation.reason:
+            payload.setdefault("reason", observation.reason)
+        if observation.metrics:
+            for key, value in observation.metrics.items():
+                payload[f"metric_{key}"] = f"{value:.6f}"
+        if observation.thresholds:
+            for key, value in observation.thresholds.items():
+                payload[f"threshold_{key}"] = f"{value:.6f}"
+        is_failure = bool(status.degraded or not observation.ok)
+        previously_degraded = self._quality_alert_state.get(model_name, False)
+        if is_failure:
+            if not previously_degraded:
+                emit_alert(
+                    f"Degradacja jakości modelu {model_name}",
+                    severity=AlertSeverity.ERROR,
+                    source=source,
+                    context=payload,
+                )
+            self._quality_alert_state[model_name] = True
+        else:
+            if previously_degraded:
+                emit_alert(
+                    f"Model {model_name} powrócił do normy jakościowej",
+                    severity=AlertSeverity.INFO,
+                    source=source,
+                    context=payload,
+                )
+            self._quality_alert_state.pop(model_name, None)
+
     def _evaluate_decision_model_quality(
-        self, inference: DecisionModelInference, name: str
+        self,
+        inference: DecisionModelInference,
+        name: str,
+        *,
+        context: Mapping[str, object] | None = None,
+        alert_source: str = "ai/quality_thresholds",
     ) -> Tuple[bool, Tuple[str, ...]]:
         artifact = getattr(inference, "_artifact", None)
         if artifact is None:
-            self._health_monitor.record_quality(
+            status = self._health_monitor.record_quality(
                 model_name=name,
                 ok=True,
                 metrics={},
                 thresholds={},
                 source="quality_thresholds",
+            )
+            self._handle_health_status(
+                status,
+                model_name=name,
+                source=alert_source,
+                context=context,
             )
             return True, ()
         metadata = getattr(artifact, "metadata", {}) or {}
@@ -3177,7 +3317,7 @@ class AIManager:
                 )
             if mae > max_mae:
                 details.append(f"mae={mae:.3f} > max {max_mae:.3f}")
-            self._health_monitor.record_quality(
+            status = self._health_monitor.record_quality(
                 model_name=name,
                 ok=False,
                 metrics=metrics_summary,
@@ -3185,13 +3325,25 @@ class AIManager:
                 reason="quality_thresholds_failed",
                 source="quality_thresholds",
             )
+            self._handle_health_status(
+                status,
+                model_name=name,
+                source=alert_source,
+                context=context,
+            )
             return False, tuple(details)
-        self._health_monitor.record_quality(
+        status = self._health_monitor.record_quality(
             model_name=name,
             ok=True,
             metrics=metrics_summary,
             thresholds=thresholds_payload,
             source="quality_thresholds",
+        )
+        self._handle_health_status(
+            status,
+            model_name=name,
+            source=alert_source,
+            context=context,
         )
         return True, ()
 

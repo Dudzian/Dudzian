@@ -38,6 +38,8 @@
         <file>dashboard/RunbookPanel.qml</file>
         <file>dashboard/CompliancePanel.qml</file>
         <file>dashboard/StrategyOverviewPanel.qml</file>
+        <file>dashboard/StrategyManagementPanel.qml</file>
+        <file>dashboard/DecisionLogPanel.qml</file>
         <file>support/SupportCenter.qml</file>
         <file>support/TicketDialog.qml</file>
         <file>settings/DashboardSettings.qml</file>
