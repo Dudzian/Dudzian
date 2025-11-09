@@ -13,6 +13,24 @@ Proces przejścia z trybu paper trading do środowiska live wymaga potwierdzenia
 | Dostęp do danych | Upewnij się, że źródła danych (OHLCV, risk snapshot) są kompletne dla rynku live. | Raporty data-quality, `var/data/<env>/` | Data |
 | Walidacja modeli AI | Sprawdź najnowsze raporty `audit/ai_decision/walk_forward/<timestamp>.json` (`job_name`, `walk_forward.average_mae`, `dataset.rows`, `walk_forward.windows[*].mae`). Upewnij się, że katalog audytu zawiera również sekcje `data_quality/` (pola: `issues[*]`, `summary.total_gaps`, `summary.status`, `source`, `tags`) i `drift/` (`metrics.feature_drift.{score,psi,ks,threshold}`, `metrics.distribution_summary.triggered_features`, `metrics.features[*]`, `baseline_window`, `production_window`, `detector`, `threshold`) na przyszłe kontrole. W razie potrzeby użyj helperów `load_latest_walk_forward_report`, `load_latest_data_quality_report`, `load_latest_drift_report`, aby szybko zweryfikować zawartość artefaktów. | Repozytorium `audit/ai_decision/{walk_forward,data_quality,drift}/` | AI + Compliance |
 
+### 1.1 Walidacja scenariuszy testowych
+
+Przed zamrożeniem konfiguracji uruchom lokalnie zestaw szybkich testów jakościowych:
+
+```bash
+python scripts/lint_paths.py
+mypy
+pytest -m e2e_demo_paper --maxfail=1 --disable-warnings
+pytest tests/test_paper_execution.py
+pytest tests/integration/test_execution_router_failover.py
+```
+
+* `pytest -m e2e_demo_paper` – weryfikuje ścieżkę demo→paper zgodnie z checklistą operacyjną.
+* `tests/test_paper_execution.py` – potwierdza kluczowe reguły symulatora paper trading.
+* `tests/integration/test_execution_router_failover.py` – integracyjnie sprawdza router live z mockami CCXT (failover + limity) oraz księgowanie w symulatorze paper.
+
+> **Uwaga:** jeżeli repozytorium zawiera jeszcze dziedziczone katalogi `KryptoLowca`/`archive`, uruchom `LINT_PATHS_ALLOW_LEGACY=1 python scripts/lint_paths.py`, aby potraktować ostrzeżenia jako informacyjne.
+
 ## 2. Procedura aktywacji
 
 1. **Freeze konfiguracji** – zatwierdź commit konfiguracyjny (core.yaml, sekcja runtime) i archiwizuj w `var/audit/stage6/` wraz z sumami SHA-256.

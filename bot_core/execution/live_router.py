@@ -881,6 +881,9 @@ class LiveExecutionRouter(ExecutionService):
         route_meta = plan.route_metadata
         latency_budget_ms = plan.latency_budget_ms
         exchanges_and_retries = list(plan.exchanges_and_retries)
+        request = order.request
+        context = order.context
+        allowed_fallback_categories = self._resolve_allowed_fallback_categories(context)
 
         attempts_rec: list[dict[str, str]] = []
         attempts_counter = 0

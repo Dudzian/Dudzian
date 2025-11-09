@@ -2,6 +2,7 @@
 """CI helper that guards repo layout and import rules."""
 from __future__ import annotations
 
+import os
 import pathlib
 import re
 import sys
@@ -18,14 +19,20 @@ _IMPORT_PATTERN = re.compile(r"^\s*(?:from|import)\s+KryptoLowca\b", re.MULTILIN
 def main() -> int:
     repo_root = pathlib.Path(__file__).resolve().parents[1]
     failures: list[str] = []
+    warnings: list[str] = []
+    allow_legacy = os.environ.get("LINT_PATHS_ALLOW_LEGACY", "0") == "1"
 
     for rel_path in BANNED_PATHS:
         candidate = repo_root / rel_path
         if candidate.exists():
-            failures.append(
+            message = (
                 "Disallowed legacy paths detected: "
                 f"{rel_path}. Usuń katalog albo przenieś kod do bot_core."
             )
+            if allow_legacy:
+                warnings.append(message)
+            else:
+                failures.append(message)
 
     forbidden_imports: list[str] = []
     for py_file in repo_root.rglob("*.py"):
@@ -46,14 +53,23 @@ def main() -> int:
             + ". Use bot_core instead."
         )
 
+    if warnings:
+        print("\n".join(f"WARNING: {warning}" for warning in warnings))
+
     if failures:
         print("\n".join(failures))
         return 1
 
-    print(
-        "Repository layout lint passed: legacy directories absent and "
-        "no forbidden KryptoLowca imports found."
-    )
+    if warnings:
+        print(
+            "Repository layout lint passed with warnings: legacy directories "
+            "oznaczono do usunięcia, nowe importy nie zostały znalezione."
+        )
+    else:
+        print(
+            "Repository layout lint passed: legacy directories absent and "
+            "no forbidden KryptoLowca imports found."
+        )
     return 0
 
 

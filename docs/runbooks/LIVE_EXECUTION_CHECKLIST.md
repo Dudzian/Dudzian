@@ -15,6 +15,22 @@ Zapewnienie bezpiecznego startu trybu live (daemon + UI) po spełnieniu wymogów
 | [ ] Zweryfikuj wpis decision logu (podpis HMAC, identyfikator operatora, latencja < progu) | Compliance | `audit/decision_logs/live_execution.jsonl` | [ ] |
 | [ ] Potwierdź gotowość komunikacją do zespołu incident-response (kanał `#oem-live`) | L2 On-Call | `communications/go_live_announcement.md` | [ ] |
 
+### Szybkie testy regresyjne
+
+Przed finalnym uruchomieniem wykonaj lokalnie następujące polecenia (w katalogu repozytorium):
+
+```bash
+python scripts/lint_paths.py
+mypy
+pytest -m e2e_demo_paper --maxfail=1 --disable-warnings
+pytest tests/test_paper_execution.py
+pytest tests/integration/test_execution_router_failover.py
+```
+
+Zwróć uwagę na metryki `live_orders_fallback_total` oraz limitowanie per giełda – test integracyjny routera potwierdza, że fallback CCXT działa, a rate limit wymusza sekwencyjność.
+
+> **Uwaga:** w przypadku obecności historycznych katalogów `KryptoLowca`/`archive` użyj `LINT_PATHS_ALLOW_LEGACY=1 python scripts/lint_paths.py`, aby potraktować ostrzeżenia jako informacyjne.
+
 ## Artefakty / Akceptacja
 - Podpisany decision log (`audit/decision_logs/live_execution.jsonl`) z wpisami: przygotowanie mTLS, wyniki Paper Labs, start demona, start UI.
 - Raport Paper Labs oraz stres testów zarchiwizowany w `reports/paper_labs/` i dołączony do ticketu compliance.

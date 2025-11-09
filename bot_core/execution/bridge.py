@@ -15,11 +15,14 @@ from bot_core.runtime.journal import TradingDecisionJournal, log_decision_event
 try:  # pragma: no cover - moduł może nie istnieć w każdej gałęzi
     from bot_core.exchanges.errors import ExchangeNetworkError, ExchangeThrottlingError
 except Exception:  # pragma: no cover
-    class ExchangeNetworkError(Exception):
+    class _FallbackExchangeNetworkError(Exception):
         """Fallback when giełdowe wyjątki nie są dostępne."""
 
-    class ExchangeThrottlingError(Exception):
+    class _FallbackExchangeThrottlingError(Exception):
         """Fallback when giełdowe wyjątki nie są dostępne."""
+
+    ExchangeNetworkError = _FallbackExchangeNetworkError
+    ExchangeThrottlingError = _FallbackExchangeThrottlingError
 
 
 _RETRYABLE_EXCEPTIONS = (ExchangeNetworkError, ExchangeThrottlingError, TimeoutError)

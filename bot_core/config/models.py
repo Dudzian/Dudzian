@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Mapping, Sequence
+from typing import Any, Mapping, Sequence, SupportsInt, cast
 
 from bot_core.exchanges.base import Environment
 from bot_core.exchanges.core import Mode
@@ -926,11 +926,14 @@ class StrategyOptimizationBoundConfig:
     def __post_init__(self) -> None:
         object.__setattr__(self, "lower", float(self.lower))
         object.__setattr__(self, "upper", float(self.upper))
-        step = self.step
-        if step in (None, ""):
-            object.__setattr__(self, "step", None)
+        step_raw = self.step
+        if step_raw is None:
+            normalized_step: float | None = None
+        elif isinstance(step_raw, str) and not step_raw.strip():
+            normalized_step = None
         else:
-            object.__setattr__(self, "step", abs(float(step)))
+            normalized_step = abs(float(step_raw))
+        object.__setattr__(self, "step", normalized_step)
 
 
 @dataclass(slots=True)
@@ -955,10 +958,14 @@ class StrategyOptimizationObjectiveConfig:
         if goal not in {"maximize", "minimize"}:
             goal = "maximize"
         object.__setattr__(self, "goal", goal)
-        if self.min_improvement not in (None, ""):
-            object.__setattr__(self, "min_improvement", float(self.min_improvement))
+        improvement_raw = self.min_improvement
+        if improvement_raw is None:
+            normalized_improvement: float | None = None
+        elif isinstance(improvement_raw, str) and not improvement_raw.strip():
+            normalized_improvement = None
         else:
-            object.__setattr__(self, "min_improvement", None)
+            normalized_improvement = float(improvement_raw)
+        object.__setattr__(self, "min_improvement", normalized_improvement)
 
 
 @dataclass(slots=True)
@@ -1021,10 +1028,14 @@ class StrategyOptimizationTaskConfig:
             algorithm = "grid"
         object.__setattr__(self, "algorithm", algorithm)
         object.__setattr__(self, "max_trials", max(1, int(self.max_trials or 0)))
-        if self.random_seed in (None, ""):
-            object.__setattr__(self, "random_seed", None)
+        seed_raw = self.random_seed
+        if seed_raw is None:
+            normalized_seed: int | None = None
+        elif isinstance(seed_raw, str) and not seed_raw.strip():
+            normalized_seed = None
         else:
-            object.__setattr__(self, "random_seed", int(self.random_seed))
+            normalized_seed = int(seed_raw)
+        object.__setattr__(self, "random_seed", normalized_seed)
         normalized_tags = [str(tag).strip() for tag in self.tags if str(tag).strip()]
         object.__setattr__(self, "tags", tuple(dict.fromkeys(normalized_tags)))
 
@@ -1582,6 +1593,15 @@ class RuntimeIOQueueSettings:
     log_directory: str | None = "logs/guardrails"
     exchanges: Mapping[str, RuntimeIOQueueLimit | Mapping[str, object]] = field(default_factory=dict)
 
+    @staticmethod
+    def _coerce_int(value: object, default: int) -> int:
+        if value in (None, ""):
+            return default
+        try:
+            return int(cast(SupportsInt | str, value))
+        except (TypeError, ValueError):
+            return default
+
     def __post_init__(self) -> None:
         if self.max_concurrency <= 0:
             raise ValueError("max_concurrency musi być dodatnie")
@@ -1611,10 +1631,9 @@ class RuntimeIOQueueSettings:
             if isinstance(raw, RuntimeIOQueueLimit):
                 limit = raw
             elif isinstance(raw, Mapping):
-                limit = RuntimeIOQueueLimit(
-                    max_concurrency=int(raw.get("max_concurrency", self.max_concurrency)),
-                    burst=int(raw.get("burst", self.burst)),
-                )
+                max_value = self._coerce_int(raw.get("max_concurrency"), int(self.max_concurrency))
+                burst_value = self._coerce_int(raw.get("burst"), int(self.burst))
+                limit = RuntimeIOQueueLimit(max_concurrency=max_value, burst=burst_value)
             else:
                 continue
             normalized[key] = limit

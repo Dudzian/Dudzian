@@ -5,7 +5,7 @@ import abc
 import asyncio
 import types
 from dataclasses import dataclass
-from typing import Callable, Mapping, Optional, Protocol, TypeVar
+from typing import Callable, Literal, Mapping, Optional, Protocol, TypeVar
 
 from bot_core.exchanges.base import OrderRequest, OrderResult
 
@@ -44,7 +44,7 @@ class ExecutionService(abc.ABC):
         exc_type: type[BaseException] | None,
         exc: BaseException | None,
         tb: Optional[types.TracebackType],
-    ) -> bool:
+    ) -> Literal[False]:
         """Zapewnia automatyczne domknięcie zasobów w kontekście synchronicznym."""
 
         self.close()
@@ -60,7 +60,7 @@ class ExecutionService(abc.ABC):
         exc_type: type[BaseException] | None,
         exc: BaseException | None,
         tb: Optional[types.TracebackType],
-    ) -> bool:
+    ) -> Literal[False]:
         """Zapewnia asynchroniczne domknięcie zasobów po wyjściu z kontekstu."""
 
         await self.close_async()

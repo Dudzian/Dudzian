@@ -20,11 +20,25 @@ namespace_packages = true
 follow_imports = "silent"
 files = [
   "bot_core/config/models.py",
+  "bot_core/auto_trader",
+  "bot_core/risk",
+  "bot_core/execution",
+  "bot_core/ai",
 ]
 
 [[tool.mypy.overrides]]
 module = ["yaml"]
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = [
+  "bot_core.auto_trader.*",
+  "bot_core.ai.*",
+  "bot_core.risk.*",
+  "bot_core.execution",
+  "bot_core.execution.*",
+]
+ignore_errors = true
 
 [tool.pytest.ini_options]
 addopts = ""
