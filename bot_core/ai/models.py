@@ -9,7 +9,20 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from types import MappingProxyType
-from typing import Iterator, Mapping, MutableMapping, Sequence, TYPE_CHECKING
+from typing import (
+    Any,
+    Callable,
+    Iterable,
+    Iterator,
+    Mapping,
+    MutableMapping,
+    Optional,
+    Sequence,
+    TYPE_CHECKING,
+)
+
+import numpy as np
+import pandas as pd
 
 from bot_core.security.signing import build_hmac_signature, validate_hmac_signature
 
@@ -338,6 +351,222 @@ def _normalize_metrics(raw: Mapping[str, object] | None) -> ModelMetrics:
     if isinstance(raw, ModelMetrics):
         return raw
     return ModelMetrics.from_raw(raw)
+
+
+class AIModels:
+    """Prosta implementacja modeli AI oparta na regresji liniowej z obsługą okien."""
+
+    _SUPPORTED_TYPES: frozenset[str] = frozenset(
+        {
+            "linear",
+            "ridge",
+            "momentum",
+            "mean_reversion",
+        }
+    )
+
+    def __init__(
+        self,
+        *,
+        input_size: int,
+        seq_len: int,
+        model_type: str,
+        model_dir: str | Path | None = None,
+        random_state: Optional[int] = None,
+    ) -> None:
+        if input_size <= 0:
+            raise ValueError("input_size musi być dodatnie")
+        if seq_len <= 0:
+            raise ValueError("seq_len musi być dodatnie")
+
+        self.input_size = int(input_size)
+        self.seq_len = int(seq_len)
+        self.model_type = str(model_type or "linear").lower()
+        self.model_dir = Path(model_dir) if model_dir is not None else None
+        self.random_state = random_state
+
+        self.feature_names: list[str] = [f"feature_{idx}" for idx in range(self.input_size)]
+        self._weights: np.ndarray | None = None
+        self._bias: float = 0.0
+        self._fitted: bool = False
+        self._trained_at: datetime | None = None
+        self.training_rows: int = 0
+
+    # -- narzędzia ---------------------------------------------------------
+    @staticmethod
+    def _flatten_samples(payload: Any) -> np.ndarray:
+        array = np.asarray(payload, dtype=float)
+        if array.ndim == 3:
+            samples = array.reshape(array.shape[0], -1)
+        elif array.ndim == 2:
+            samples = array
+        else:
+            raise ValueError("Oczekiwano macierzy 2D lub 3D do trenowania/predykcji")
+        return samples
+
+    @staticmethod
+    def _normalize_target(target: Any) -> np.ndarray:
+        array = np.asarray(target, dtype=float)
+        if array.ndim == 0:
+            array = array.reshape(1)
+        if array.ndim != 1:
+            array = array.reshape(array.shape[0], -1)[:, 0]
+        return array
+
+    def _ensure_ready(self) -> None:
+        if not self._fitted or self._weights is None:
+            raise RuntimeError("Model nie został jeszcze wytrenowany")
+
+    def _design_matrix(self, samples: np.ndarray) -> np.ndarray:
+        return np.hstack([np.ones((samples.shape[0], 1)), samples])
+
+    # -- API zgodne z managerem -------------------------------------------
+    def train(
+        self,
+        X: Any,
+        y: Any,
+        *,
+        epochs: int = 1,
+        batch_size: int = 32,
+        progress_callback: Optional[Callable[[float], None]] = None,
+        model_out: str | Path | None = None,
+        verbose: bool = False,
+        feature_names: Optional[Sequence[str]] = None,
+        **_: Any,
+    ) -> Mapping[str, float]:
+        del epochs, batch_size, verbose
+
+        samples = self._flatten_samples(X)
+        target = self._normalize_target(y)
+
+        if samples.size == 0 or target.size == 0:
+            raise ValueError("Zbiór treningowy nie może być pusty")
+        if samples.shape[0] != target.shape[0]:
+            raise ValueError("Liczba próbek i etykiet musi się zgadzać")
+
+        if feature_names is not None:
+            self.feature_names = [str(name) for name in feature_names]
+        elif len(self.feature_names) != samples.shape[1]:
+            self.feature_names = [f"feature_{idx}" for idx in range(samples.shape[1])]
+
+        design = self._design_matrix(samples)
+        solution, *_ = np.linalg.lstsq(design, target, rcond=None)
+
+        self._bias = float(solution[0])
+        self._weights = solution[1:].astype(float)
+        self._fitted = True
+        self._trained_at = datetime.now(timezone.utc)
+        self.training_rows = int(samples.shape[0])
+
+        predictions = design @ solution
+        with np.errstate(divide="ignore", invalid="ignore"):
+            hit_rate = float(np.mean(np.sign(predictions) == np.sign(target)))
+        mse = float(np.mean((predictions - target) ** 2))
+
+        if progress_callback is not None:
+            try:
+                progress_callback(1.0)
+            except Exception:  # pragma: no cover - callback jest opcjonalny
+                logger.debug("Progress callback failure", exc_info=True)
+
+        if model_out is not None:
+            self.save_model(model_out)
+
+        return MappingProxyType({"directional_accuracy": hit_rate, "mse": mse})
+
+    def predict(self, X: Any) -> np.ndarray:
+        samples = self._flatten_samples(X)
+        self._ensure_ready()
+        weights = np.concatenate(([self._bias], self._weights))  # type: ignore[arg-type]
+        design = self._design_matrix(samples)
+        return (design @ weights).astype(float)
+
+    def predict_series(
+        self,
+        df: pd.DataFrame,
+        feature_cols: Sequence[str] | None = None,
+    ) -> pd.Series:
+        if not isinstance(df, pd.DataFrame):
+            raise TypeError("Oczekiwano DataFrame jako wejścia predict_series")
+
+        features = list(feature_cols or df.columns[: self.input_size])
+        if not features:
+            raise ValueError("Brak kolumn cech do predykcji")
+
+        frame = df.loc[:, features].apply(pd.to_numeric, errors="coerce")
+        if frame.shape[1] < self.input_size:
+            raise ValueError("Niewystarczająca liczba cech względem input_size")
+        if frame.shape[1] > self.input_size:
+            frame = frame.iloc[:, : self.input_size]
+
+        values = frame.to_numpy(dtype=float)
+        if len(values) < self.seq_len:
+            raise ValueError("Za mało wierszy do utworzenia sekwencji predykcji")
+
+        windows: list[np.ndarray] = []
+        window_index: list[pd.Timestamp] = []
+        for idx in range(self.seq_len, len(values) + 1):
+            window = values[idx - self.seq_len : idx]
+            if window.shape[0] != self.seq_len:
+                continue
+            windows.append(window)
+            window_index.append(df.index[idx - 1])
+
+        predictions = self.predict(np.asarray(windows, dtype=float))
+        series = pd.Series(predictions, index=window_index, dtype=float)
+        series = series.reindex(df.index, method="bfill")
+        series = series.reindex(df.index, method="ffill")
+        return series.fillna(0.0)
+
+    # -- serializacja ------------------------------------------------------
+    def _export_state(self) -> Mapping[str, object]:
+        self._ensure_ready()
+        return MappingProxyType(
+            {
+                "input_size": self.input_size,
+                "seq_len": self.seq_len,
+                "model_type": self.model_type,
+                "feature_names": list(self.feature_names),
+                "weights": self._weights.tolist() if self._weights is not None else [],
+                "bias": self._bias,
+                "trained_at": (
+                    self._trained_at.replace(tzinfo=timezone.utc).isoformat()
+                    if self._trained_at
+                    else datetime.now(timezone.utc).isoformat()
+                ),
+                "training_rows": self.training_rows,
+            }
+        )
+
+    def save_model(self, path: str | Path) -> Path:
+        target = Path(path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        payload = dict(self._export_state())
+        target.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        return target
+
+    @classmethod
+    def load_model(cls, path: str | Path) -> "AIModels":
+        source = Path(path)
+        payload = json.loads(source.read_text(encoding="utf-8"))
+
+        model = cls(
+            input_size=int(payload.get("input_size", 0)),
+            seq_len=int(payload.get("seq_len", 1)),
+            model_type=str(payload.get("model_type", "linear")),
+            model_dir=source.parent,
+        )
+
+        weights = np.asarray(payload.get("weights", ()), dtype=float)
+        model._weights = weights
+        model._bias = float(payload.get("bias", 0.0))
+        model._fitted = True
+        model._trained_at = _parse_trained_at(payload.get("trained_at"))
+        model.training_rows = int(payload.get("training_rows", weights.shape[0]))
+        feature_names = payload.get("feature_names")
+        if isinstance(feature_names, Iterable):
+            model.feature_names = [str(name) for name in feature_names]
+        return model
 
 
 @dataclass(slots=True)

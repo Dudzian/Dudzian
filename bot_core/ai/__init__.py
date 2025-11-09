@@ -23,6 +23,7 @@ _EXPORTS: Dict[str, Tuple[str, str]] = {
     "ModelArtifactBundle": (".models", "ModelArtifactBundle"),
     "ModelMetrics": (".models", "ModelMetrics"),
     "ModelScore": (".models", "ModelScore"),
+    "AIModels": (".models", "AIModels"),
     "generate_model_artifact_bundle": (".models", "generate_model_artifact_bundle"),
     "ModelArtifactValidationError": (".validation", "ModelArtifactValidationError"),
     "validate_model_artifact_schema": (".validation", "validate_model_artifact_schema"),
