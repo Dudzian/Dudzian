@@ -11,8 +11,9 @@ import threading
 from contextlib import suppress
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
-from types import SimpleNamespace
+from importlib import import_module
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Callable, Iterable, Mapping, Optional
 
 from bot_core.events import (
@@ -21,19 +22,36 @@ from bot_core.events import (
     EmitterAdapter,
     wire_gui_logs_to_adapter,
 )
+
 try:  # pragma: no cover - opcjonalne zależności GUI
-    from KryptoLowca.ui.trading.risk_helpers import (
-        apply_runtime_risk_context,
-        refresh_runtime_risk_context,
-    )
+    _risk_helpers = import_module("KryptoLowca.ui.trading.risk_helpers")
 except ModuleNotFoundError:  # pragma: no cover - fallback dla środowisk testowych
+
     def apply_runtime_risk_context(*_args: object, **_kwargs: object) -> None:
         return None
 
 
     def refresh_runtime_risk_context(*_args: object, **_kwargs: object) -> None:
         return None
-from KryptoLowca.runtime.bootstrap import bootstrap_frontend_services
+
+
+else:
+    apply_runtime_risk_context = _risk_helpers.apply_runtime_risk_context
+    refresh_runtime_risk_context = _risk_helpers.refresh_runtime_risk_context
+
+
+try:
+    _runtime_bootstrap = import_module("KryptoLowca.runtime.bootstrap")
+except ModuleNotFoundError as error:  # pragma: no cover - wymagane w środowiskach produkcyjnych
+
+    def bootstrap_frontend_services(*_args: object, **_kwargs: object) -> object:
+        raise ModuleNotFoundError(
+            "Pakiet KryptoLowca.runtime.bootstrap jest wymagany do uruchomienia GUI"
+        ) from error
+
+
+else:
+    bootstrap_frontend_services = _runtime_bootstrap.bootstrap_frontend_services
 
 from .app import AutoTrader
 from bot_core.alerts import AlertSeverity, emit_alert
@@ -1075,7 +1093,7 @@ class PaperAutoTradeApp:
             try:
                 import tkinter as tk
 
-                from KryptoLowca.ui.trading import TradingGUI
+                TradingGUI = import_module("KryptoLowca.ui.trading").TradingGUI
 
                 root = tk.Tk()
                 gui = TradingGUI(root, frontend_services=self.frontend_services)

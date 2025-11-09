@@ -7,15 +7,11 @@ import re
 import sys
 
 # Paths are relative to repository root.
-BANNED_PATHS = [
-    pathlib.Path("KryptoLowca/bot"),
-]
-
-# Python files inside these directories may still import ``KryptoLowca``
-# because they implement the legacy surface itself.
-_ALLOWED_KRYPTLOWCA_IMPORT_ROOTS = {
+_BANNED_ROOTS = {
     pathlib.Path("KryptoLowca"),
+    pathlib.Path("archive"),
 }
+BANNED_PATHS = sorted(_BANNED_ROOTS)
 
 _IMPORT_PATTERN = re.compile(r"^\s*(?:from|import)\s+KryptoLowca\b", re.MULTILINE)
 
@@ -35,7 +31,8 @@ def main() -> int:
     forbidden_imports: list[str] = []
     for py_file in repo_root.rglob("*.py"):
         rel_file = py_file.relative_to(repo_root)
-        if rel_file.parts and pathlib.Path(rel_file.parts[0]) in _ALLOWED_KRYPTLOWCA_IMPORT_ROOTS:
+        if rel_file.parts and pathlib.Path(rel_file.parts[0]) in _BANNED_ROOTS:
+            # Presence of these directories is already reported separately. Skip redundant import checks.
             continue
         if any(part.startswith(".") for part in rel_file.parts):
             continue
