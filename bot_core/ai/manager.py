@@ -9,11 +9,14 @@ API znany z pierwszych iteracji projektu.
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
 import importlib
 import inspect
 import json
 import logging
 import math
+import os
 import sys
 from collections import deque
 from copy import deepcopy
@@ -21,7 +24,22 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
 from os import PathLike
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple, Union, cast
+from types import MappingProxyType, ModuleType
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Awaitable,
+    Callable,
+    Dict,
+    Iterable,
+    List,
+    Mapping,
+    Optional,
+    Sequence,
+    Tuple,
+    Union,
+    cast,
+)
 
 try:  # pragma: no cover - środowisko testowe może nie mieć joblib
     import joblib
@@ -62,8 +80,8 @@ from .explainability import build_explainability_report, serialize_explainabilit
 from .health import ModelHealthMonitor, ModelHealthStatus
 from .inference import DecisionModelInference, ModelRepository
 from .meta import select_meta_confidence
-from .models import ModelArtifact, ModelScore
-from .validation import ModelArtifactValidationError, validate_model_artifact_schema
+from .models import ModelArtifact, ModelArtifactIntegrityError, ModelScore, load_model_artifact_bundle
+from .validation import ModelArtifactValidationError
 from .regime import (
     MarketRegimeAssessment,
     MarketRegimeClassifier,
@@ -437,6 +455,235 @@ def _build_fallback_ai_models() -> type:
 
 _DefaultAIModels: type | None = None
 _import_failures: list[BaseException] = []
+_PACKAGED_MODEL_REPOSITORY: Path | None = None
+
+
+def _resolve_packaged_repository(module: ModuleType) -> Path | None:
+    """Wyszukuje zapakowane repozytorium modeli w module OEM."""
+
+    candidate = getattr(module, "OEM_MODEL_REPOSITORY", None)
+    if candidate:
+        try:
+            path = Path(candidate).expanduser().resolve()
+        except TypeError:
+            path = None
+        else:
+            if path.exists():
+                return path
+
+    module_file = getattr(module, "__file__", None)
+    if module_file:
+        base_path = Path(module_file).resolve()
+        possible = (
+            base_path.with_name("ai_models_packaged"),
+            base_path.with_name("packaged"),
+            base_path.parent / "packaged",
+        )
+        for candidate in possible:
+            manifest_path = candidate / "manifest.json"
+            if manifest_path.exists():
+                return candidate
+    return None
+
+
+def _decode_hmac_key_material(raw: str, *, context: str) -> bytes:
+    payload = raw.strip()
+    if not payload:
+        raise ValueError(f"Pusty materiał klucza w {context}")
+    try:
+        return base64.b64decode(payload, validate=True)
+    except (binascii.Error, ValueError):
+        pass
+    try:
+        return bytes.fromhex(payload)
+    except ValueError:
+        return payload.encode("utf-8")
+
+
+def _load_signing_keys_from_directory(directory: Path) -> Mapping[str, bytes]:
+    keys: dict[str, bytes] = {}
+    if not directory.exists() or not directory.is_dir():
+        return keys
+
+    for candidate in sorted(directory.iterdir()):
+        if candidate.is_dir():
+            continue
+        try:
+            raw = candidate.read_text(encoding="utf-8")
+        except OSError as exc:
+            logger.warning("Nie można odczytać pliku klucza OEM %s: %s", candidate, exc)
+            continue
+
+        if candidate.suffix.lower() == ".json":
+            try:
+                payload = json.loads(raw)
+            except json.JSONDecodeError as exc:
+                logger.warning("Plik %s zawiera niepoprawny JSON kluczy OEM: %s", candidate, exc)
+                continue
+            if not isinstance(payload, Mapping):
+                logger.warning("Plik %s nie zawiera mapowania kluczy OEM", candidate)
+                continue
+            for key_id, material in payload.items():
+                if not isinstance(material, str):
+                    logger.warning(
+                        "Pomijam wpis klucza OEM %r w %s – oczekiwano ciągu znaków",
+                        key_id,
+                        candidate,
+                    )
+                    continue
+                try:
+                    keys[str(key_id)] = _decode_hmac_key_material(material, context=str(candidate))
+                except ValueError as exc:
+                    logger.warning("Nie można zdekodować klucza OEM %r w %s: %s", key_id, candidate, exc)
+            continue
+
+        key_id = candidate.stem
+        try:
+            keys[key_id] = _decode_hmac_key_material(raw, context=str(candidate))
+        except ValueError as exc:
+            logger.warning("Nie można zdekodować klucza OEM z %s: %s", candidate, exc)
+
+    if keys:
+        logger.debug("Załadowano %d kluczy OEM z katalogu %s", len(keys), directory)
+    return keys
+
+
+def _load_packaged_repository_signing_keys(base_path: Path) -> Mapping[str, bytes]:
+    keys: dict[str, bytes] = {}
+
+    env_dir = os.getenv("BOT_CORE_AI_MODEL_SIGNING_KEYS_DIR")
+    if env_dir:
+        directory = Path(env_dir).expanduser()
+        keys.update(_load_signing_keys_from_directory(directory))
+
+    sibling_dir = base_path.parent / "keys"
+    keys.update(_load_signing_keys_from_directory(sibling_dir))
+
+    bundled_dir = base_path / "keys"
+    keys.update(_load_signing_keys_from_directory(bundled_dir))
+
+    env_json = os.getenv("BOT_CORE_AI_MODEL_SIGNING_KEYS_JSON")
+    if env_json:
+        try:
+            payload = json.loads(env_json)
+        except json.JSONDecodeError as exc:
+            logger.warning("Niepoprawny JSON w BOT_CORE_AI_MODEL_SIGNING_KEYS_JSON: %s", exc)
+        else:
+            if isinstance(payload, Mapping):
+                for key_id, material in payload.items():
+                    if not isinstance(material, str):
+                        logger.warning(
+                            "Pomijam wpis klucza OEM %r z konfiguracji – oczekiwano ciągu znaków",
+                            key_id,
+                        )
+                        continue
+                    try:
+                        keys[str(key_id)] = _decode_hmac_key_material(material, context="BOT_CORE_AI_MODEL_SIGNING_KEYS_JSON")
+                    except ValueError as exc:
+                        logger.warning(
+                            "Nie można zdekodować klucza OEM %r z konfiguracji JSON: %s",
+                            key_id,
+                            exc,
+                        )
+            else:
+                logger.warning("BOT_CORE_AI_MODEL_SIGNING_KEYS_JSON musi być mapowaniem kluczy OEM")
+
+    env_key_path = os.getenv("BOT_CORE_AI_MODEL_SIGNING_KEY_PATH")
+    if env_key_path:
+        key_path = Path(env_key_path).expanduser()
+        try:
+            raw = key_path.read_text(encoding="utf-8")
+        except OSError as exc:
+            logger.warning("Nie można odczytać klucza OEM z %s: %s", key_path, exc)
+        else:
+            key_id = os.getenv("BOT_CORE_AI_MODEL_SIGNING_KEY_ID") or key_path.stem or "default"
+            try:
+                keys[key_id] = _decode_hmac_key_material(raw, context=str(key_path))
+            except ValueError as exc:
+                logger.warning("Nie można zdekodować klucza OEM %s: %s", key_path, exc)
+
+    env_inline_key = os.getenv("BOT_CORE_AI_MODEL_SIGNING_KEY")
+    if env_inline_key:
+        key_id = os.getenv("BOT_CORE_AI_MODEL_SIGNING_KEY_ID") or "default"
+        try:
+            keys[key_id] = _decode_hmac_key_material(env_inline_key, context="BOT_CORE_AI_MODEL_SIGNING_KEY")
+        except ValueError as exc:
+            logger.warning("Nie można zdekodować klucza OEM z BOT_CORE_AI_MODEL_SIGNING_KEY: %s", exc)
+
+    if keys:
+        logger.debug("Łącznie załadowano %d kluczy OEM do walidacji pakietów", len(keys))
+    else:
+        logger.warning(
+            "Nie odnaleziono żadnych kluczy podpisu OEM (oczekiwano katalogu keys obok %s lub konfiguracji)",
+            base_path,
+        )
+
+    return MappingProxyType(dict(keys))
+
+
+def _validate_packaged_model_repository(base_path: Path) -> None:
+    """Sprawdza, czy katalog zawiera kompletne, podpisane modele OEM."""
+
+    manifest_path = base_path / "manifest.json"
+    if not manifest_path.exists():
+        raise ModelArtifactIntegrityError(
+            f"Pakiet modeli OEM nie zawiera manifest.json ({manifest_path})"
+        )
+    try:
+        manifest_payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ModelArtifactIntegrityError("manifest.json ma niepoprawny format JSON") from exc
+
+    versions_obj = manifest_payload.get("versions")
+    if not isinstance(versions_obj, Mapping) or not versions_obj:
+        raise ModelArtifactIntegrityError("manifest.json nie zawiera żadnych wersji modeli")
+
+    signing_keys = _load_packaged_repository_signing_keys(base_path)
+
+    for version, entry in versions_obj.items():
+        if not isinstance(entry, Mapping):
+            raise ModelArtifactIntegrityError(
+                f"Wpis manifestu dla wersji {version!r} ma niepoprawny format"
+            )
+        file_name = entry.get("file")
+        if not isinstance(file_name, str) or not file_name.strip():
+            raise ModelArtifactIntegrityError(
+                f"Wpis manifestu {version!r} nie zawiera pola 'file'"
+            )
+        artifact_path = base_path / file_name
+        if not artifact_path.exists():
+            raise ModelArtifactIntegrityError(
+                f"Brak pliku artefaktu {artifact_path} dla wersji {version!r}"
+            )
+        bundle_root = artifact_path.parent
+        try:
+            load_model_artifact_bundle(
+                bundle_root,
+                expected_artifact=artifact_path.name,
+                signing_keys=signing_keys,
+            )
+        except ModelArtifactValidationError as exc:
+            logger.error(
+                "Walidacja schematu pakietu modelu %s z manifestu %s nie powiodła się: %s",
+                version,
+                manifest_path,
+                exc,
+            )
+            raise ModelArtifactIntegrityError(
+                f"Pakiet modelu {version!r} narusza schemat artefaktu: {exc}"
+            ) from exc
+        except ModelArtifactIntegrityError as exc:
+            logger.error(
+                "Integralność pakietu modelu %s (plik %s) została naruszona: %s",
+                version,
+                artifact_path,
+                exc,
+            )
+            raise ModelArtifactIntegrityError(
+                f"Pakiet modelu {version!r} narusza integralność: {exc}"
+            ) from exc
+
+    logger.debug("Packaged OEM model repository at %s validated successfully", base_path)
 
 try:  # preferowany backend OEM
     _kryptolowca_ai_models = importlib.import_module("KryptoLowca.ai_models")
@@ -449,10 +696,14 @@ else:
         _import_failures.append(attr_exc)
     else:
         _import_failures.clear()
+        _PACKAGED_MODEL_REPOSITORY = _resolve_packaged_repository(_kryptolowca_ai_models)
 
 if _DefaultAIModels is None:
     try:  # płaski moduł zbudowany podczas bundlowania pakietu
-        from ai_models import AIModels as _DefaultAIModels  # type: ignore
+        import ai_models as _ai_models_module  # type: ignore
+
+        _DefaultAIModels = getattr(_ai_models_module, "AIModels")  # type: ignore[attr-defined]
+        _PACKAGED_MODEL_REPOSITORY = _resolve_packaged_repository(_ai_models_module)
     except Exception as flat_exc:  # pragma: no cover - brak legacy wheel
         _import_failures.append(flat_exc)
     else:
@@ -693,6 +944,28 @@ class BackendStatus:
         }
 
 
+@dataclass(frozen=True, slots=True)
+class DegradationEvent:
+    """Zdarzenie degradacji backendu przechowywane w historii menedżera."""
+
+    reason: str
+    details: Tuple[str, ...]
+    exception_types: Tuple[str, ...]
+    exception_diagnostics: Tuple[ExceptionDiagnostics, ...]
+    started_at: datetime
+    ended_at: datetime | None = None
+
+    def resolve(self, *, ended_at: datetime | None = None) -> "DegradationEvent":
+        return DegradationEvent(
+            reason=self.reason,
+            details=self.details,
+            exception_types=self.exception_types,
+            exception_diagnostics=self.exception_diagnostics,
+            started_at=self.started_at,
+            ended_at=ended_at or datetime.now(timezone.utc),
+        )
+
+
 @dataclass(slots=True)
 class DriftReport:
     """Raport detekcji dryfu danych wejściowych."""
@@ -858,6 +1131,9 @@ class AIManager:
         self._compliance_sign_off_roles: tuple[str, ...] | None = None
         self._decision_journal = decision_journal
         self._health_monitor = ModelHealthMonitor()
+        self._packaged_repository: Path | None = _PACKAGED_MODEL_REPOSITORY
+        self._packaged_repository_verified: bool = False
+        self._degradation_history: list[DegradationEvent] = []
         if decision_journal_context is not None and not isinstance(decision_journal_context, Mapping):
             raise TypeError("decision_journal_context musi być mapowaniem lub None")
         self._decision_journal_context: Mapping[str, Any] | None = (
@@ -887,6 +1163,23 @@ class AIManager:
                 reason=self._degradation_reason or "ai_backend_degraded",
                 details=self._degradation_details,
             )
+        elif self._packaged_repository is not None:
+            try:
+                _validate_packaged_model_repository(self._packaged_repository)
+            except ModelArtifactIntegrityError as exc:
+                details = (str(exc),)
+                diagnostics = _build_exception_diagnostics(exc)
+                self._activate_degradation(
+                    "backend_validation_failed: packaged_model_repository",
+                    details=details,
+                    exceptions=(exc,),
+                    exception_types=(
+                        f"{exc.__class__.__module__}.{exc.__class__.__qualname__}",
+                    ),
+                    exception_diagnostics=diagnostics,
+                )
+            else:
+                self._packaged_repository_verified = True
         try:
             init_signature = inspect.signature(_AIModels.__init__)  # type: ignore[attr-defined]
         except (TypeError, ValueError, AttributeError):

@@ -3584,6 +3584,18 @@ def _load_stress_lab_config(
     datasets_raw = section.get("datasets") or {}
     if not isinstance(datasets_raw, Mapping):
         raise ValueError("stress_lab.datasets musi być mapą")
+
+    def _coerce_allow_synthetic(value: object | None) -> bool:
+        if value in (None, "", False):
+            return False
+        if isinstance(value, str):
+            text = value.strip().lower()
+            if text in {"true", "1", "yes", "y", "on"}:
+                return True
+            if text in {"false", "0", "no", "n", "off"}:
+                return False
+        return bool(value)
+
     datasets: dict[str, StressLabDatasetConfig] = {}
     for symbol, entry in datasets_raw.items():
         if not isinstance(entry, Mapping):
@@ -3598,7 +3610,7 @@ def _load_stress_lab_config(
         except (TypeError, ValueError) as exc:
             raise ValueError(f"Dataset Stress Lab '{symbol}' posiada niepoprawną wagę") from exc
         dataset_symbol = str(entry.get("symbol", symbol)).strip() or str(symbol)
-        allow_synthetic = bool(entry.get("allow_synthetic", False))
+        allow_synthetic = _coerce_allow_synthetic(entry.get("allow_synthetic"))
         datasets[str(symbol)] = StressLabDatasetConfig(
             symbol=dataset_symbol,
             metrics_path=str(metrics_path),

@@ -56,9 +56,12 @@ Zweryfikowanie odporności portfela wielostrate-gicznego przy użyciu modułu `b
 ## Lista kontrolna
 1. **Przygotowanie danych**
    - [ ] Zweryfikowano dostępność plików metryk w `data/stage6/metrics/` (BTCUSDT, ETHUSDT lub inne wymagane rynki).
+   - [ ] Zasilono `market_metrics.sqlite` używając buildera Stage6:
+         `python scripts/build_market_intel_metrics.py --config config/core.yaml --sqlite-path var/stage6/market_intel/market_metrics.sqlite --output-dir var/audit/stage6/market_intel --manifest var/audit/stage6/market_intel/manifest.json --populate-sqlite --sqlite-provider <module:callable>` (provider korzysta z adapterów `bot_core.exchanges/*`).
+         Po wykonaniu polecenia sprawdzono komunikat o weryfikacji sum kontrolnych.
    - [ ] Uruchomiono `python scripts/build_market_intel_metrics.py --config config/core.yaml` lub workflow CI publikujący metryki
          Market Intelligence (weryfikacja manifestu `var/audit/stage6/market_intel/manifest.json`).
-   - [ ] W razie braku danych – potwierdzono w runbooku dopuszczalność trybu syntetycznego i zapisano wpis w decision logu.
+   - [ ] Brak danych traktowany jest jako błąd blokujący – potwierdzono, że wszystkie wymagane JSON-y Stage6 istnieją. Tryb syntetyczny dostępny jest wyłącznie w środowiskach testowych po ustawieniu zmiennej `STRESS_LAB_ALLOW_SYNTHETIC_FALLBACK`; każdorazowe użycie zostało odnotowane w decision logu.
 2. **Uruchomienie Stress Lab**
    - [ ] Ustawiono zmienną środowiskową `STRESS_LAB_SIGNING_KEY` (lub przekazano ścieżkę klucza przez CLI).
    - [ ] Uruchomiono `python scripts/run_stress_lab.py --config config/core.yaml` (subkomendę `run` można pominąć) lub pipeline CI `Stage6 stress lab`.

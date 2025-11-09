@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import json
 import runpy
+import sys
 from pathlib import Path
 from typing import Any, Mapping
 
 import pytest
+import yaml
 
 
 class _StubResult:
@@ -21,7 +23,14 @@ class _StubResult:
 class _FakeCoreConfig:
     def __init__(self) -> None:
         self.environments = {"binance_paper": {}}
-        self.portfolio_governors = {"stage6_core": {}}
+        self.portfolio_governors = {
+            "stage6_core": {
+                "portfolio_id": "stage6_core",
+                "assets": [
+                    {"symbol": "BTC_USDT", "target_weight": 1.0},
+                ],
+            }
+        }
 
 
 class _FakePortfolioDecisionLog:
@@ -79,7 +88,6 @@ def test_stage6_hypercare_cycle_runtime(
     _touch("config/stage6/resilience_self_heal.json", tmp_path)
     _touch("data/stage6/resilience/failover_plan.json", tmp_path)
     _touch("var/audit/stage6/market_intel.json", tmp_path)
-    _touch("var/audit/portfolio/allocations_stage6.yaml", tmp_path)
 
     # Minimal core configuration so the loader succeeds.
     _touch(
@@ -227,8 +235,15 @@ def test_stage6_hypercare_cycle_runtime(
 
     assert isinstance(captured["portfolio_governor"], _FakePortfolioGovernor)
 
+    allocations_path = Path("var/audit/portfolio/allocations_stage6.yaml")
+    assert allocations_path.exists()
+    allocations_payload = yaml.safe_load(allocations_path.read_text(encoding="utf-8"))
+    assert allocations_payload == {"BTC_USDT": 1.0}
+
     summary_path.unlink()
     signature_path.unlink()
+    allocations_path.unlink()
     assert not summary_path.exists()
     assert not signature_path.exists()
+    assert not allocations_path.exists()
 

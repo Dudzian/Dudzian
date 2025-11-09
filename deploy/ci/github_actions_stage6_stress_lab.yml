@@ -30,6 +30,20 @@ jobs:
       - name: Prepare directories
         run: |
           mkdir -p "$STRESS_LAB_OUTPUT"
+          mkdir -p var/audit/stage6/market_intel
+          mkdir -p var/stage6/market_intel
+
+      - name: Populate Market Intel dataset
+        env:
+          MARKET_INTEL_SQLITE_PROVIDER: stage6_samples.market_intel:build_provider
+        run: |
+          python scripts/build_market_intel_metrics.py \
+            --mode sqlite \
+            --config config/core.yaml \
+            --populate-sqlite \
+            --sqlite-path var/stage6/market_intel/market_metrics.sqlite \
+            --output-dir var/audit/stage6/market_intel \
+            --manifest var/audit/stage6/market_intel/manifest.json
 
       - name: Generate signing key
         id: signing
@@ -54,6 +68,15 @@ PY
           name: stage6-stress-lab-${{ github.run_number }}
           path: |
             ${{ env.STRESS_LAB_OUTPUT }}/
+
+      - name: Upload Market Intel baselines
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage6-market-intel-${{ github.run_number }}
+          path: |
+            var/audit/stage6/market_intel/manifest.json
+            var/audit/stage6/market_intel/*.json
 
       - name: Publish summary
         if: always()

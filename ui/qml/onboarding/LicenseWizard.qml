@@ -13,15 +13,17 @@ Item {
     property var licensingController: (typeof licensingController !== "undefined" ? licensingController : null)
     property var onboardingService: (typeof onboardingService !== "undefined" ? onboardingService : null)
     property int currentStep: 0
-    readonly property int totalSteps: 5
+    readonly property int totalSteps: 6
     property bool summarySuccess: false
     property string summaryStatusId: "licenseWizard.status.pending"
     property string summaryDetails: ""
     property bool strategySetupReady: false
+    property bool decisionLogReady: false
     property string selectedStrategyTitle: ""
     property string onboardingStatusMessageId: ""
     property string onboardingStatusDetails: ""
     property string lastConfiguredExchangeId: ""
+    property string decisionLogPath: ""
 
     signal wizardCompleted(bool success)
 
@@ -34,6 +36,8 @@ Item {
         if (step === 2)
             return licensingController && licensingController.licenseAccepted
         if (step === 3)
+            return decisionLogReady
+        if (step === 4)
             return strategySetupReady
         return true
     }
@@ -70,6 +74,11 @@ Item {
             summaryStatusId = licensingController
                 ? (licensingController.statusMessageId || "licenseWizard.status.pending")
                 : "licenseWizard.status.pending"
+            return
+        }
+        if (!decisionLogReady) {
+            summarySuccess = false
+            summaryStatusId = "licenseWizard.status.decisionLogPending"
             return
         }
         if (!strategySetupReady) {
@@ -142,6 +151,8 @@ Item {
         onboardingStatusMessageId = onboardingService ? onboardingService.statusMessageId : ""
         onboardingStatusDetails = onboardingService ? onboardingService.statusDetails : ""
         lastConfiguredExchangeId = onboardingService ? onboardingService.lastSavedExchange : ""
+        decisionLogReady = decisionLogStep ? decisionLogStep.ready : false
+        decisionLogPath = decisionLogStep ? decisionLogStep.selectedPath : ""
         updateSummaryState()
     }
 
@@ -410,6 +421,21 @@ Item {
                     }
                 }
 
+                DecisionLogSetupStep {
+                    id: decisionLogStep
+                    objectName: "licenseWizardDecisionLogStep"
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    appController: (typeof appController !== "undefined" ? appController : null)
+                    onCompletionStateChanged: function(ready) {
+                        decisionLogReady = ready
+                        updateSummaryState()
+                    }
+                    onLogPathApplied: function(path) {
+                        decisionLogPath = path
+                    }
+                }
+
                 StrategySetupStep {
                     id: strategySetupStep
                     objectName: "licenseWizardStrategyStep"
@@ -511,6 +537,21 @@ Item {
                                     wrapMode: Text.WordWrap
                                     text: root.trId("licenseWizard.summary.strategy", "Wybrana strategia: %1").arg(selectedStrategyTitle || root.trId("licenseWizard.strategy.selected.none", "nie wybrano"))
                                     color: Styles.AppTheme.textSecondary
+                                }
+
+                                Label {
+                                    objectName: "licenseWizardSummaryDecisionLog"
+                                    Layout.fillWidth: true
+                                    wrapMode: Text.WordWrap
+                                    text: decisionLogReady
+                                          ? root.trId(
+                                              "licenseWizard.summary.decisionLog",
+                                              "Decision log: %1",
+                                          ).arg(decisionLogPath.length > 0
+                                              ? decisionLogPath
+                                              : root.trId("licenseWizard.summary.decisionLog.demo", "dziennik demonstracyjny"))
+                                          : root.trId("licenseWizard.summary.decisionLogPending", "Decision log nie został skonfigurowany")
+                                    color: decisionLogReady ? Styles.AppTheme.textSecondary : Styles.AppTheme.warning
                                 }
 
                                 Label {

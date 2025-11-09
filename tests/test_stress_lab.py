@@ -390,12 +390,64 @@ def test_stress_lab_threshold_breach(tmp_path: Path) -> None:
 
 
 @pytest.mark.skipif(not _HAVE_CONFIG_STRESSLAB, reason="Config-driven StressLab API not available")
-def test_stress_lab_synthetic_dataset(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+def test_stress_lab_missing_metrics_requires_real_dataset(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("STRESS_LAB_ALLOW_SYNTHETIC_FALLBACK", raising=False)
+    missing_path = tmp_path / "missing.json"
     config = StressLabConfig(  # type: ignore[call-arg]
         enabled=True,
         require_success=False,
         report_directory=str(tmp_path / "reports"),
-        datasets={},
+        datasets={
+            "MISSINGUSDT": StressLabDatasetConfig(  # type: ignore[call-arg]
+                symbol="MISSINGUSDT",
+                metrics_path=str(missing_path),
+                weight=1.0,
+                allow_synthetic=False,
+            )
+        },
+        scenarios=(
+            StressLabScenarioConfig(  # type: ignore[call-arg]
+                name="missing_dataset",
+                severity="high",
+                markets=("MISSINGUSDT",),
+                shocks=(StressLabShockConfig(type="blackout", intensity=0.8, duration_minutes=30),),  # type: ignore[call-arg]
+            ),
+        ),
+        thresholds=StressLabThresholdsConfig(),  # type: ignore[call-arg]
+    )
+
+    with caplog.at_level("ERROR"):
+        with pytest.raises(FileNotFoundError):
+            StressLab(config)  # type: ignore[call-arg]
+
+    messages = " ".join(message.lower() for message in caplog.messages)
+    assert "brak metryk stage6" in messages or "expected file" in messages
+
+
+@pytest.mark.skipif(not _HAVE_CONFIG_STRESSLAB, reason="Config-driven StressLab API not available")
+def test_stress_lab_synthetic_dataset_requires_override(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("STRESS_LAB_ALLOW_SYNTHETIC_FALLBACK", "1")
+    missing_path = tmp_path / "missing.json"
+    config = StressLabConfig(  # type: ignore[call-arg]
+        enabled=True,
+        require_success=False,
+        report_directory=str(tmp_path / "reports"),
+        datasets={
+            "MISSINGUSDT": StressLabDatasetConfig(  # type: ignore[call-arg]
+                symbol="MISSINGUSDT",
+                metrics_path=str(missing_path),
+                weight=1.0,
+                allow_synthetic=False,
+            )
+        },
         scenarios=(
             StressLabScenarioConfig(  # type: ignore[call-arg]
                 name="synthetic_market",
@@ -411,10 +463,6 @@ def test_stress_lab_synthetic_dataset(tmp_path: Path, caplog: pytest.LogCaptureF
     with caplog.at_level("WARNING"):
         report = lab.run()
 
-    # Accept either Polish or English wording in logs
     messages = " ".join(m.lower() for m in caplog.messages)
-    assert ("brak datasetu" in messages) or ("missing dataset" in messages) or caplog.records, \
-        "Expected a warning about missing dataset"
-
-    # Even without a dataset, StressLab should synthesize a baseline for the requested market
+    assert "syntetycz" in messages or "synthetic" in messages
     assert report.scenarios[0].markets[0].baseline.symbol == "MISSINGUSDT"

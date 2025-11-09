@@ -45,6 +45,14 @@ jobs:
           mkdir -p "$HYPERCARE_AUDIT_DIR"
           mkdir -p secrets/hmac
 
+      - name: Export Stage6 portfolio allocations
+        run: |
+          python scripts/export_portfolio_allocations.py \
+            --core-config config/core.yaml \
+            --governor stage6_core \
+            --environment binance_paper \
+            --output var/audit/portfolio/allocations_stage6.yaml
+
       - name: Run Stage6 hypercare cycle
         run: |
           python scripts/run_stage6_hypercare_cycle.py --config config/core.yaml

@@ -118,6 +118,13 @@ void OfflineRuntimeBridge::refreshRiskNow()
     m_service->refreshRisk();
 }
 
+bool OfflineRuntimeBridge::attachToLiveDecisionLog(const QString& profile)
+{
+    Q_UNUSED(profile);
+    qCInfo(lcOfflineBridge) << "attachToLiveDecisionLog() nie jest wspierane w trybie offline";
+    return false;
+}
+
 void OfflineRuntimeBridge::startAutomation()
 {
     ensureService();
