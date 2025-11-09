@@ -80,7 +80,13 @@ from .explainability import build_explainability_report, serialize_explainabilit
 from .health import ModelHealthMonitor, ModelHealthStatus
 from .inference import DecisionModelInference, ModelRepository
 from .meta import select_meta_confidence
-from .models import ModelArtifact, ModelArtifactIntegrityError, ModelScore, load_model_artifact_bundle
+from .models import (
+    AIModels,
+    ModelArtifact,
+    ModelArtifactIntegrityError,
+    ModelScore,
+    load_model_artifact_bundle,
+)
 from .validation import ModelArtifactValidationError
 from .regime import (
     MarketRegimeAssessment,
@@ -709,19 +715,13 @@ def _validate_packaged_model_repository(base_path: Path) -> None:
     logger.debug("Packaged OEM model repository at %s validated successfully", base_path)
 
 if not _attempt_load_ai_models_module("ai_models"):
-    try:  # lokalny fallback z repozytorium
-        from bot_core.ai.legacy_models import AIModels as _DefaultAIModels  # type: ignore
-    except Exception as legacy_exc:  # pragma: no cover - środowisko minimalne
-        _import_failures.append(legacy_exc)
-        _DefaultAIModels = _build_fallback_ai_models()
-        _FALLBACK_ACTIVE = True
-    else:
-        _FALLBACK_ACTIVE = True
+    _DefaultAIModels = AIModels
+    _FALLBACK_ACTIVE = True
 else:
     _FALLBACK_ACTIVE = False
 
 if _DefaultAIModels is None:
-    _DefaultAIModels = _build_fallback_ai_models()
+    _DefaultAIModels = AIModels
     _FALLBACK_ACTIVE = True
 
 if _import_failures:
