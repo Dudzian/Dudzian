@@ -458,6 +458,29 @@ _import_failures: list[BaseException] = []
 _PACKAGED_MODEL_REPOSITORY: Path | None = None
 
 
+def _attempt_load_ai_models_module(module_name: str) -> bool:
+    """Próbuje załadować klasę ``AIModels`` z modułu o podanej nazwie."""
+
+    global _DefaultAIModels, _PACKAGED_MODEL_REPOSITORY
+
+    try:
+        module = importlib.import_module(module_name)
+    except Exception as exc:  # pragma: no cover - środowiska bez pakietu OEM
+        _import_failures.append(exc)
+        return False
+
+    try:
+        candidate = getattr(module, "AIModels")  # type: ignore[attr-defined]
+    except AttributeError as exc:  # pragma: no cover - uszkodzona dystrybucja OEM
+        _import_failures.append(exc)
+        return False
+
+    _DefaultAIModels = candidate
+    _PACKAGED_MODEL_REPOSITORY = _resolve_packaged_repository(module)
+    _import_failures.clear()
+    return True
+
+
 def _resolve_packaged_repository(module: ModuleType) -> Path | None:
     """Wyszukuje zapakowane repozytorium modeli w module OEM."""
 
@@ -685,31 +708,7 @@ def _validate_packaged_model_repository(base_path: Path) -> None:
 
     logger.debug("Packaged OEM model repository at %s validated successfully", base_path)
 
-try:  # preferowany backend OEM
-    _kryptolowca_ai_models = importlib.import_module("KryptoLowca.ai_models")
-except Exception as kryptolowca_exc:  # pragma: no cover - środowiska bez OEM
-    _import_failures.append(kryptolowca_exc)
-else:
-    try:
-        _DefaultAIModels = getattr(_kryptolowca_ai_models, "AIModels")  # type: ignore[attr-defined]
-    except AttributeError as attr_exc:  # pragma: no cover - niepełna instalacja OEM
-        _import_failures.append(attr_exc)
-    else:
-        _import_failures.clear()
-        _PACKAGED_MODEL_REPOSITORY = _resolve_packaged_repository(_kryptolowca_ai_models)
-
-if _DefaultAIModels is None:
-    try:  # płaski moduł zbudowany podczas bundlowania pakietu
-        import ai_models as _ai_models_module  # type: ignore
-
-        _DefaultAIModels = getattr(_ai_models_module, "AIModels")  # type: ignore[attr-defined]
-        _PACKAGED_MODEL_REPOSITORY = _resolve_packaged_repository(_ai_models_module)
-    except Exception as flat_exc:  # pragma: no cover - brak legacy wheel
-        _import_failures.append(flat_exc)
-    else:
-        _import_failures.clear()
-
-if _DefaultAIModels is None:
+if not _attempt_load_ai_models_module("ai_models"):
     try:  # lokalny fallback z repozytorium
         from bot_core.ai.legacy_models import AIModels as _DefaultAIModels  # type: ignore
     except Exception as legacy_exc:  # pragma: no cover - środowisko minimalne
@@ -718,6 +717,8 @@ if _DefaultAIModels is None:
         _FALLBACK_ACTIVE = True
     else:
         _FALLBACK_ACTIVE = True
+else:
+    _FALLBACK_ACTIVE = False
 
 if _DefaultAIModels is None:
     _DefaultAIModels = _build_fallback_ai_models()

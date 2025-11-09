@@ -1,5 +1,5 @@
 # backtest/report.py
-import argparse, json, pathlib
+import argparse, pathlib
 import pandas as pd
 
 try:
@@ -8,61 +8,13 @@ try:
 except Exception:
     MATPLOT = False
 
-from bot_core.trading.exit_reasons import ExitReason
+from bot_core.backtest.trade_loader import load_trades
 
 def find_latest(parent: pathlib.Path, name: str):
     paths = list(parent.glob(f"*/{name}"))
     if not paths:
         raise FileNotFoundError(f"Nie znaleziono żadnego pliku {name} w {parent}")
     return max(paths, key=lambda p: p.stat().st_mtime)
-
-def ts_to_dt(s: pd.Series):
-    s = pd.to_numeric(s, errors="coerce")
-    if s.max() > 1e12:
-        return pd.to_datetime(s, unit="ms", utc=True)
-    return pd.to_datetime(s, unit="s", utc=True)
-
-def load_trades(input_dir: pathlib.Path):
-    csv = input_dir / "trades.csv"
-    if not csv.exists():
-        raise FileNotFoundError(f"Brak pliku: {csv}")
-    df = pd.read_csv(csv)
-
-    # kolumny, które mamy w runnerze
-    # symbol, timeframe, entry_ts, entry_price, entry_qty,
-    # exit_ts, exit_price_wap, pnl_usdt, pnl_pct, r_multiple, fills_json
-    if "entry_ts" in df: df["entry_time_utc"] = ts_to_dt(df["entry_ts"])
-    if "exit_ts"  in df: df["exit_time_utc"]  = ts_to_dt(df["exit_ts"])
-    if "entry_time_utc" in df and "exit_time_utc" in df:
-        df["hold_minutes"] = ((df["exit_time_utc"] - df["entry_time_utc"]).dt.total_seconds()/60).round(1)
-    else:
-        df["hold_minutes"] = None
-
-    # heurystyka „powodu wyjścia” na bazie fills_json
-    def exit_reason(row):
-        try:
-            if "fills_json" not in row or pd.isna(row["fills_json"]):
-                return None
-            fills = json.loads(row["fills_json"])
-            for f in reversed(fills):
-                t = f.get("tag")
-                if t and t != "ENTRY":
-                    normalized = ExitReason.normalize(t, allow_unknown=True)
-                    if normalized:
-                        return normalized
-        except Exception:
-            pass
-        return None
-
-    if "fills_json" in df:
-        df["exit_reason"] = df.apply(exit_reason, axis=1)
-    else:
-        df["exit_reason"] = None
-
-    if "exit_reason" in df:
-        df["exit_reason"] = df["exit_reason"].astype("string")
-
-    return df, csv
 
 def summaries(df: pd.DataFrame):
     out = {}

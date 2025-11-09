@@ -48,7 +48,7 @@ from KryptoLowca.security_manager import SecurityManager
 from KryptoLowca.config_manager import ConfigManager
 from KryptoLowca.report_manager import ReportManager
 from KryptoLowca.risk_manager import RiskManager
-from KryptoLowca.ai_manager import AIManager
+from bot_core.ai.manager import AIManager
 from KryptoLowca.exchange_manager import ExchangeManager
 from KryptoLowca.exchanges import AdapterError, MarketDataPoller, create_exchange_adapter
 from KryptoLowca.exchanges.zonda import ZondaAdapter

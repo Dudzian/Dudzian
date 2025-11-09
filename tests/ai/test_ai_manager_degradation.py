@@ -51,12 +51,12 @@ from bot_core.ai.pipeline import train_gradient_boosting_model
 def test_ai_manager_flags_degradation_on_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
     original_import_module = importlib.import_module
 
-    def _raise_for_kryptolowca(name: str, package: str | None = None):
-        if name == "KryptoLowca.ai_models":
+    def _raise_for_ai_models(name: str, package: str | None = None):
+        if name == "ai_models":
             raise ModuleNotFoundError(name)
         return original_import_module(name, package)
 
-    monkeypatch.setattr(importlib, "import_module", _raise_for_kryptolowca)
+    monkeypatch.setattr(importlib, "import_module", _raise_for_ai_models)
     monkeypatch.setitem(sys.modules, "ai_models", None)
     try:
         reloaded = importlib.reload(manager_module)
@@ -64,7 +64,6 @@ def test_ai_manager_flags_degradation_on_fallback(monkeypatch: pytest.MonkeyPatc
         error = reloaded._AI_IMPORT_ERROR  # type: ignore[attr-defined]
         assert error is not None
         if hasattr(error, "exceptions"):
-            assert len(error.exceptions) == 2  # type: ignore[attr-defined]
             assert any(isinstance(exc, ModuleNotFoundError) for exc in error.exceptions)  # type: ignore[attr-defined]
 
         manager = reloaded.AIManager()
@@ -78,11 +77,10 @@ def test_ai_manager_flags_degradation_on_fallback(monkeypatch: pytest.MonkeyPatc
         importlib.reload(manager_module)
 
 
-def test_ai_manager_uses_kryptolowca_backend_when_available(
+def test_ai_manager_uses_ai_models_backend_when_available(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    kryptolowca_pkg = types.ModuleType("KryptoLowca")
-    kryptolowca_ai_models = types.ModuleType("KryptoLowca.ai_models")
+    ai_models_module = types.ModuleType("ai_models")
 
     class _StubAIModels:
         def __init__(self, *args: object, **kwargs: object) -> None:
@@ -92,11 +90,9 @@ def test_ai_manager_uses_kryptolowca_backend_when_available(
         def load_model(path: object) -> object:
             return object()
 
-    kryptolowca_ai_models.AIModels = _StubAIModels  # type: ignore[attr-defined]
+    ai_models_module.AIModels = _StubAIModels  # type: ignore[attr-defined]
 
-    monkeypatch.setitem(sys.modules, "KryptoLowca", kryptolowca_pkg)
-    monkeypatch.setitem(sys.modules, "KryptoLowca.ai_models", kryptolowca_ai_models)
-    monkeypatch.setitem(sys.modules, "ai_models", None)
+    monkeypatch.setitem(sys.modules, "ai_models", ai_models_module)
 
     try:
         reloaded_module = importlib.reload(manager_module)
@@ -106,6 +102,7 @@ def test_ai_manager_uses_kryptolowca_backend_when_available(
         manager._decision_inferences["stub"] = object()  # type: ignore[attr-defined]
         manager.require_real_models()
     finally:
+        sys.modules.pop("ai_models", None)
         importlib.reload(manager_module)
 
 

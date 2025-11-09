@@ -14,7 +14,7 @@ import pytest
 def test_packaged_models_present() -> None:
     """Zapewnia, że pakiet zawiera realne modele, gdy CI tego wymaga."""
 
-    searched_modules = ("KryptoLowca.ai_models", "ai_models")
+    searched_modules = ("ai_models",)
     for module_name in searched_modules:
         try:
             module = importlib.import_module(module_name)

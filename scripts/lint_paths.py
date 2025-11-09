@@ -15,7 +15,6 @@ BANNED_PATHS = [
 # because they implement the legacy surface itself.
 _ALLOWED_KRYPTLOWCA_IMPORT_ROOTS = {
     pathlib.Path("KryptoLowca"),
-    pathlib.Path("archive"),
 }
 
 _IMPORT_PATTERN = re.compile(r"^\s*(?:from|import)\s+KryptoLowca\b", re.MULTILINE)
@@ -30,7 +29,7 @@ def main() -> int:
         if candidate.exists():
             failures.append(
                 "Disallowed legacy paths detected: "
-                f"{rel_path}. Move files to archive/legacy_bot or delete them."
+                f"{rel_path}. Usuń katalog albo przenieś kod do bot_core."
             )
 
     forbidden_imports: list[str] = []

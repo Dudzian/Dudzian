@@ -1,1 +1,0 @@
-(.venv) python -m backtest.report --last --html --plots

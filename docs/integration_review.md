@@ -1,17 +1,17 @@
 # Exchange Integration Review
 
-> **Legacy notice:** Historical sources once kept in `KryptoLowca/bot` now live under
-> `archive/legacy_bot/` and are excluded from the supported runtime. All integration
-> work must target the main `KryptoLowca` package. The legacy module
-> The legacy `KryptoLowca.managers` package has been removed; new code must rely on
-> the top-level `KryptoLowca.*` modules together with
-> `bot_core.execution.live_router.LiveExecutionRouter` and
-> `bot_core.exchanges.ccxt_adapter.CCXTSpotAdapter` (or higher-level helpers in
+> **Legacy notice:** Historyczne źródła, które dawniej znajdowały się w
+> `KryptoLowca/bot`, zostały całkowicie usunięte z repozytorium. Wszelkie prace
+> integracyjne muszą koncentrować się na aktywnie wspieranych pakietach
+> `bot_core.*` i cienkich shimach `KryptoLowca.*`. Pakiet
+> `KryptoLowca.managers` pozostaje usunięty; nowy kod powinien korzystać z
+> `bot_core.execution.live_router.LiveExecutionRouter` oraz
+> `bot_core.exchanges.ccxt_adapter.CCXTSpotAdapter` (lub wyższych helperów w
 > `KryptoLowca.exchange_adapter`).
 >
-> **2025-02 sanity sweep:** Legacy compatibility layers now re-export the canonical
-> implementations from `bot_core`.  Modules such as `KryptoLowca.ai_manager` and
-> `archive.legacy_bot.managers.exchange_core` only proxy to the modern runtime.  Use
+> **2025-02 sanity sweep:** Warstwa zgodności re-eksportuje kanoniczne
+> implementacje z `bot_core`.  Moduły takie jak `bot_core.ai.manager`
+> delegują bezpośrednio do nowego runtime.  Użyj
 > `python scripts/find_duplicates.py --json` to verify that no redundant
 > implementations reappear when touching this area.
 

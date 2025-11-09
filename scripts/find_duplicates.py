@@ -9,7 +9,7 @@ definitions.
 
 The script focuses on the directories that matter for the new runtime
 implementation (``bot_core/``, ``core/``, ``scripts/``, ``tests/``) and compares
-them with the legacy sources (``KryptoLowca/`` and ``archive/legacy_bot``).
+them with historycznymi źródłami w pakiecie ``KryptoLowca/``.
 Whenever the same implementation appears in several locations the script
 marks the preferred (canonical) location using a deterministic priority order.
 
@@ -55,11 +55,9 @@ CANONICAL_ROOTS = [
     REPO_ROOT / "tests",
 ]
 
-# Locations that may still contain historical sources copied from the legacy
-# repository.
+# Locations that may still contain historical sources copied z legacy namespace.
 LEGACY_ROOTS = [
     REPO_ROOT / "KryptoLowca",
-    REPO_ROOT / "archive" / "legacy_bot",
 ]
 
 SCAN_ROOTS = CANONICAL_ROOTS + LEGACY_ROOTS

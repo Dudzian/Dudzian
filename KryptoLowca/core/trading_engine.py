@@ -24,7 +24,7 @@ import pandas as pd
 from bot_core.alerts import AlertEvent, AlertSeverity, get_alert_dispatcher
 
 from KryptoLowca.core.order_executor import ExecutionResult, OrderExecutor  # type: ignore
-from KryptoLowca.ai_manager import AIManager  # type: ignore
+from bot_core.ai.manager import AIManager
 from KryptoLowca.database_manager import DatabaseManager  # type: ignore
 from KryptoLowca.exchange_manager import ExchangeManager  # type: ignore
 from KryptoLowca.risk_manager import RiskManager  # type: ignore
