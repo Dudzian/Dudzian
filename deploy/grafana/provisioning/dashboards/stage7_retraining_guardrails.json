@@ -1,0 +1,148 @@
+{
+  "id": null,
+  "uid": "stage7-retraining",
+  "title": "Stage7 – Retraining vs Guardrail Correlation",
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "1m",
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": "-- Grafana --",
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Anotacje",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "panels": [
+    {
+      "type": "timeseries",
+      "title": "Zmiany modelu (15m)",
+      "description": "Liczba zmian championa/challengera w ostatnich 15 minutach",
+      "gridPos": {"x": 0, "y": 0, "w": 12, "h": 9},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "mappings": [],
+          "thresholds": {"mode": "absolute", "steps": [{"value": null, "color": "green"}]}
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "increase(auto_trader_model_changes_total{model=~\"$model\"}[15m])",
+          "legendFormat": "{{model}}",
+          "range": true,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Zmiany z aktywnym guardrailem (15m)",
+      "description": "Liczba zmian modelu wykonanych podczas aktywnych guardrail/killswitch",
+      "gridPos": {"x": 12, "y": 0, "w": 12, "h": 9},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "mappings": [],
+          "thresholds": {"mode": "absolute", "steps": [{"value": null, "color": "orange"}]}
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "increase(auto_trader_model_change_guardrail_blocks_total{model=~\"$model\"}[15m])",
+          "legendFormat": "{{model}}",
+          "range": true,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Udział zmian z guardrailem (60m)",
+      "description": "Procent zmian modelu, które nastąpiły przy aktywnych guardrailach w ostatniej godzinie",
+      "gridPos": {"x": 0, "y": 9, "w": 8, "h": 8},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [],
+          "thresholds": {
+            "mode": "percentage",
+            "steps": [
+              {"value": null, "color": "green"},
+              {"value": 0.3, "color": "orange"},
+              {"value": 0.6, "color": "red"}
+            ]
+          },
+          "unit": "percentunit",
+          "decimals": 2
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "orientation": "horizontal",
+        "textMode": "value_and_name"
+      },
+      "targets": [
+        {
+          "expr": "sum(increase(auto_trader_model_change_guardrail_blocks_total{model=~\"$model\"}[1h])) / clamp_min(sum(increase(auto_trader_model_changes_total{model=~\"$model\"}[1h])), 1)",
+          "legendFormat": "Udział",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "table",
+      "title": "Ostatnie zmiany modelu",
+      "gridPos": {"x": 8, "y": 9, "w": 16, "h": 8},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {}, "overrides": []},
+      "options": {
+        "showHeader": true
+      },
+      "targets": [
+        {
+          "expr": "auto_trader_model_change_timestamp_seconds{model=~\"$model\"}",
+          "format": "table",
+          "instant": true,
+          "refId": "A"
+        }
+      ]
+    }
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "model",
+        "type": "query",
+        "datasource": {"type": "prometheus", "uid": "prometheus"},
+        "definition": "label_values(auto_trader_model_changes_total, model)",
+        "query": "label_values(auto_trader_model_changes_total, model)",
+        "refresh": 1,
+        "hide": 0,
+        "label": "Model",
+        "current": {"text": "decision_engine", "value": "decision_engine", "selected": false}
+      }
+    ]
+  },
+  "timepicker": {
+    "refresh_intervals": ["30s", "1m", "5m", "15m", "30m", "1h"],
+    "time_options": ["6h", "12h", "24h", "2d", "7d"]
+  },
+  "tags": ["autotrader", "retraining"],
+  "style": "dark"
+}

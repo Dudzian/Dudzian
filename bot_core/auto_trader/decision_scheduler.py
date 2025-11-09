@@ -64,6 +64,8 @@ class AutoTraderDecisionScheduler:
                     self.trader.run_cycle_once()
                 except Exception:  # pragma: no cover - defensive guard
                     LOGGER.exception("AutoTraderDecisionScheduler cycle failed")
+                else:
+                    self._drain_model_change_events()
                 if stop_event.wait(max(0.0, float(self.interval_s))):
                     break
 
@@ -87,6 +89,26 @@ class AutoTraderDecisionScheduler:
         self._thread = None
         self._thread_stop = None
 
+    def _drain_model_change_events(self) -> None:
+        poll = getattr(self.trader, "poll_model_change_event", None)
+        emitter = getattr(self.trader, "emitter", None)
+        emit = getattr(emitter, "emit", None) if emitter is not None else None
+        if not callable(poll) or not callable(emit):
+            return
+        while True:
+            try:
+                event = poll()
+            except Exception:  # pragma: no cover - defensywne logowanie
+                LOGGER.debug("Nie udało się pobrać zdarzenia model_changed", exc_info=True)
+                break
+            if not event:
+                break
+            try:
+                emit("auto_trader.model_changed", **dict(event))
+            except Exception:  # pragma: no cover - zdarzenie nie powinno zatrzymać pętli
+                LOGGER.exception("AutoTraderDecisionScheduler nie mógł wyemitować zdarzenia model_changed")
+                break
+
     async def _run_async(self) -> None:
         assert self._stop_event is not None
         stop_event = self._stop_event
@@ -96,6 +118,8 @@ class AutoTraderDecisionScheduler:
                 await asyncio.to_thread(self.trader.run_cycle_once)
             except Exception:  # pragma: no cover - defensive guard
                 LOGGER.exception("AutoTraderDecisionScheduler async cycle failed")
+            else:
+                self._drain_model_change_events()
             try:
                 await asyncio.wait_for(stop_event.wait(), timeout=interval)
             except asyncio.TimeoutError:

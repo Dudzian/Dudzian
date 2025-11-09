@@ -38,6 +38,8 @@ public slots:
     void startAutomation();
     void stopAutomation();
 
+    Q_INVOKABLE QVariantMap previewPreset(const QVariantMap& selector);
+
 signals:
     void connectionStateChanged(const QString& state);
     void historyReceived(const QList<OhlcvPoint>& candles);

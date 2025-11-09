@@ -1,9 +1,12 @@
 from datetime import datetime, timedelta, timezone
 
+import json
+
 from bot_core.runtime.journal import (
     InMemoryTradingDecisionJournal,
     aggregate_decision_statistics,
     log_decision_event,
+    log_model_change_event,
 )
 
 
@@ -59,3 +62,42 @@ def test_log_and_aggregate_decisions() -> None:
     )
     assert window_summary["total"] == 1
     assert window_summary["by_symbol"] == {"ETHUSDT": 1}
+
+
+def test_log_model_change_event_records_metrics() -> None:
+    journal = InMemoryTradingDecisionJournal()
+    timestamp = datetime(2024, 5, 1, 12, 0, tzinfo=timezone.utc)
+
+    log_model_change_event(
+        journal,
+        environment="paper",
+        portfolio="demo",
+        risk_profile="default",
+        model_name="decision_engine",
+        new_version="v2",
+        previous_version="v1",
+        source="champion",
+        fallback=False,
+        decided_at=timestamp,
+        retraining_id="decision_engine:20240501T120000Z",
+        metrics_current={"mae": 0.5, "directional_accuracy": 0.7},
+        metrics_previous={"mae": 0.8},
+        metrics_delta={"mae": -0.3},
+        metadata={"promotion_reason": "auto"},
+    )
+
+    exported = list(journal.export())
+    assert len(exported) == 1
+    entry = exported[0]
+    assert entry["event"] == "model_change"
+    assert entry["strategy"] == "decision_engine"
+    assert entry["model_version"] == "v2"
+    assert entry["model_previous_version"] == "v1"
+    assert entry["retraining_id"] == "decision_engine:20240501T120000Z"
+    assert entry["metric_mae_current"] == "0.5"
+    assert entry["metric_mae_previous"] == "0.8"
+    assert entry["metric_mae_delta"] == "-0.3"
+    assert entry["promotion_reason"] == "auto"
+    assert json.loads(entry["metrics_current_json"]) == {"mae": 0.5, "directional_accuracy": 0.7}
+    assert json.loads(entry["metrics_previous_json"]) == {"mae": 0.8}
+    assert json.loads(entry["metrics_delta_json"]) == {"mae": -0.3}

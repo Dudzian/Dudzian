@@ -1,0 +1,9 @@
+{
+  "model": "sample_model",
+  "decision": "champion",
+  "decided_at": "2024-02-10T12:00:00Z",
+  "metrics": {
+    "accuracy": 0.78,
+    "expected_pnl": 0.12
+  }
+}

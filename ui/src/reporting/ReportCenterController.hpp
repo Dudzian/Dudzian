@@ -35,6 +35,7 @@ class ReportCenterController : public QObject {
     Q_PROPERTY(QString sortDirection READ sortDirection WRITE setSortDirection NOTIFY sortDirectionChanged)
     Q_PROPERTY(QVariantList equityCurve READ equityCurve NOTIFY equityCurveChanged)
     Q_PROPERTY(QVariantList assetHeatmap READ assetHeatmap NOTIFY assetHeatmapChanged)
+    Q_PROPERTY(QVariantMap championOverview READ championOverview NOTIFY championOverviewChanged)
 
 public:
     explicit ReportCenterController(QObject* parent = nullptr);
@@ -60,11 +61,14 @@ public:
     QString sortDirection() const { return m_sortDirection; }
     QVariantList equityCurve() const { return m_equityCurve; }
     QVariantList assetHeatmap() const { return m_assetHeatmap; }
+    QVariantMap championOverview() const { return m_championOverview; }
 
     Q_INVOKABLE bool refresh();
+    Q_INVOKABLE bool refreshChampionOverview();
     Q_INVOKABLE QVariantMap findReport(const QString& relativePath) const;
     Q_INVOKABLE bool saveReportAs(const QString& relativePath, const QUrl& destinationUrl);
     Q_INVOKABLE bool revealReport(const QString& relativePath);
+    Q_INVOKABLE bool openReportLocation(const QString& relativePath);
     Q_INVOKABLE bool openExport(const QString& relativePath);
     Q_INVOKABLE bool deleteReport(const QString& relativePath);
     Q_INVOKABLE bool previewDeleteReport(const QString& relativePath);
@@ -73,6 +77,8 @@ public:
     Q_INVOKABLE bool previewArchiveReports(const QString& destination = QString(), bool overwrite = false, const QString& format = QString());
     Q_INVOKABLE bool archiveReports(const QString& destination = QString(), bool overwrite = false, const QString& format = QString());
     Q_INVOKABLE QString defaultArchiveDestination() const;
+    Q_INVOKABLE bool promoteChampion(const QString& modelName, const QString& version, const QString& reason = QString());
+    Q_INVOKABLE void logOperationalAlert(const QString& source, const QVariantMap& payload = {});
 
     void setPythonExecutable(const QString& executable);
     void setReportsDirectory(const QString& path);
@@ -120,6 +126,7 @@ signals:
     void archiveFinished(bool success);
     void equityCurveChanged();
     void assetHeatmapChanged();
+    void championOverviewChanged();
 
 private:
     struct BridgeResult {
@@ -136,6 +143,7 @@ private:
     void beginTask();
     void endTask();
     bool loadOverview(const QByteArray& data);
+    bool loadChampionOverviewPayload(const QByteArray& data);
     QString resolveReportsDirectory() const;
     static QString expandPath(const QString& path);
     void appendFilterArguments(QStringList& args, bool includePagination = true) const;
@@ -146,6 +154,7 @@ private:
     void clearLastErrorMessage();
     void setLastNotificationMessage(const QString& message);
     void clearLastNotificationMessage();
+    void appendOperationalLog(const QString& level, const QString& message, const QVariantMap& details = {}) const;
 
     QString m_pythonExecutable = QStringLiteral("python3");
     QString m_reportsDirectory;
@@ -174,4 +183,5 @@ private:
     int m_pendingTasks = 0;
     QVariantList m_equityCurve;
     QVariantList m_assetHeatmap;
+    QVariantMap m_championOverview;
 };

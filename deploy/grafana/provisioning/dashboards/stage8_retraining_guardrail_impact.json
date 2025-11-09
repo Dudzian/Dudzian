@@ -1,0 +1,191 @@
+{
+  "id": null,
+  "uid": "stage8-retraining-impact",
+  "title": "Stage8 – Retraining Guardrail Impact",
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "1m",
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": "-- Grafana --",
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Anotacje",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "panels": [
+    {
+      "type": "timeseries",
+      "title": "Cykle retrainingu (30m)",
+      "description": "Liczba cykli retrainingu obsłużonych przez AutoTradera w ciągu ostatnich 30 minut",
+      "gridPos": {"x": 0, "y": 0, "w": 12, "h": 8},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "mappings": [],
+          "thresholds": {"mode": "absolute", "steps": [{"value": null, "color": "green"}]}
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "increase(auto_trader_retraining_cycles_total{model=~\"$model\"}[30m])",
+          "legendFormat": "{{model}}",
+          "range": true,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Retraining z blokadą guardrail (30m)",
+      "description": "Ile cykli retrainingu przypadło na okres aktywnych guardrail lub kill switch",
+      "gridPos": {"x": 12, "y": 0, "w": 12, "h": 8},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "mappings": [],
+          "thresholds": {"mode": "absolute", "steps": [{"value": null, "color": "orange"}]}
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "increase(auto_trader_retraining_guardrail_blocks_total{model=~\"$model\",state=~\"$state\"}[30m])",
+          "legendFormat": "{{model}} – {{state}}",
+          "range": true,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Udział retrainingu z guardrail (2h)",
+      "description": "Procent cykli retrainingu, które przypadły na aktywne guardraile lub kill switch w ostatnich 2 godzinach",
+      "gridPos": {"x": 0, "y": 8, "w": 8, "h": 8},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [],
+          "thresholds": {
+            "mode": "percentage",
+            "steps": [
+              {"value": null, "color": "green"},
+              {"value": 0.2, "color": "orange"},
+              {"value": 0.5, "color": "red"}
+            ]
+          },
+          "unit": "percentunit",
+          "decimals": 2
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "orientation": "horizontal",
+        "textMode": "value_and_name"
+      },
+      "targets": [
+        {
+          "expr": "sum(increase(auto_trader_retraining_guardrail_blocks_total{model=~\"$model\",state=~\"$state\"}[2h])) / clamp_min(sum(increase(auto_trader_retraining_cycles_total{model=~\"$model\"}[2h])), 1)",
+          "legendFormat": "Guardrail share",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Guardrail blocks (15m)",
+      "description": "Porównanie globalnych blokad guardrail z cyklami retrainingu",
+      "gridPos": {"x": 8, "y": 8, "w": 8, "h": 8},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "mappings": [],
+          "thresholds": {"mode": "absolute", "steps": [{"value": null, "color": "blue"}]}
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "increase(auto_trader_guardrail_blocks_total{environment=~\"$environment\"}[15m])",
+          "legendFormat": "Guardrail {{guardrail}}",
+          "range": true,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "table",
+      "title": "Ostatnie cykle retrainingu",
+      "gridPos": {"x": 16, "y": 8, "w": 8, "h": 8},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {}, "overrides": []},
+      "options": {"showHeader": true},
+      "targets": [
+        {
+          "expr": "auto_trader_retraining_timestamp_seconds{model=~\"$model\"}",
+          "format": "table",
+          "instant": true,
+          "refId": "A"
+        }
+      ]
+    }
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "model",
+        "type": "query",
+        "datasource": {"type": "prometheus", "uid": "prometheus"},
+        "definition": "label_values(auto_trader_retraining_cycles_total, model)",
+        "query": "label_values(auto_trader_retraining_cycles_total, model)",
+        "refresh": 1,
+        "hide": 0,
+        "label": "Model",
+        "current": {"text": "decision_engine", "value": "decision_engine", "selected": false}
+      },
+      {
+        "name": "state",
+        "type": "query",
+        "datasource": {"type": "prometheus", "uid": "prometheus"},
+        "definition": "label_values(auto_trader_retraining_guardrail_blocks_total, state)",
+        "query": "label_values(auto_trader_retraining_guardrail_blocks_total, state)",
+        "refresh": 1,
+        "hide": 0,
+        "label": "Guardrail state",
+        "current": {"text": "guardrail", "value": "guardrail", "selected": false}
+      },
+      {
+        "name": "environment",
+        "type": "query",
+        "datasource": {"type": "prometheus", "uid": "prometheus"},
+        "definition": "label_values(auto_trader_guardrail_blocks_total, environment)",
+        "query": "label_values(auto_trader_guardrail_blocks_total, environment)",
+        "refresh": 1,
+        "hide": 0,
+        "label": "Środowisko",
+        "current": {"text": "paper", "value": "paper", "selected": false}
+      }
+    ]
+  },
+  "timepicker": {
+    "refresh_intervals": ["30s", "1m", "5m", "15m", "30m", "1h"],
+    "time_options": ["6h", "12h", "24h", "2d", "7d"]
+  },
+  "tags": ["autotrader", "retraining", "guardrail"],
+  "style": "dark"
+}

@@ -10,6 +10,7 @@ from typing import Callable, Iterable, Mapping, Sequence, TypeVar
 
 from bot_core.exchanges.errors import ExchangeError, ExchangeNetworkError, ExchangeThrottlingError
 from bot_core.monitoring import record_retry_event
+from bot_core.observability.metrics import MetricsRegistry, get_global_metrics_registry
 
 
 _LOGGER = logging.getLogger(__name__)
@@ -201,9 +202,24 @@ class HealthMonitor:
         checks: Sequence[HealthCheck],
         *,
         watchdog: Watchdog | None = None,
+        metrics_registry: MetricsRegistry | None = None,
+        metric_labels: Mapping[str, str] | None = None,
     ) -> None:
         self._checks = tuple(checks)
         self._watchdog = watchdog or Watchdog()
+        self._metrics = metrics_registry or get_global_metrics_registry()
+        labels = dict(metric_labels or {})
+        labels.setdefault("component", "exchange_health_check")
+        self._metric_labels = labels
+        self._latency_hist = self._metrics.histogram(
+            "exchange_healthcheck_latency_seconds",
+            "Czas wykonania pojedynczego testu zdrowia giełdy.",
+            buckets=(0.0, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0),
+        )
+        self._status_counter = self._metrics.counter(
+            "exchange_healthcheck_status_total",
+            "Liczba wyników health-checków według statusu.",
+        )
 
     def run(self) -> list[HealthCheckResult]:
         results: list[HealthCheckResult] = []
@@ -213,46 +229,51 @@ class HealthMonitor:
                 self._watchdog.execute(check.name, check.check)
             except CircuitOpenError as exc:
                 latency = time.monotonic() - start
-                results.append(
-                    HealthCheckResult(
-                        name=check.name,
-                        status=HealthStatus.UNAVAILABLE,
-                        latency=latency,
-                        details={"error": str(exc)},
-                    )
+                result = HealthCheckResult(
+                    name=check.name,
+                    status=HealthStatus.UNAVAILABLE,
+                    latency=latency,
+                    details={"error": str(exc)},
                 )
+                results.append(result)
             except ExchangeError as exc:
                 latency = time.monotonic() - start
                 status = HealthStatus.DEGRADED if not check.critical else HealthStatus.UNAVAILABLE
-                results.append(
-                    HealthCheckResult(
-                        name=check.name,
-                        status=status,
-                        latency=latency,
-                        details={"error": str(exc)},
-                    )
+                result = HealthCheckResult(
+                    name=check.name,
+                    status=status,
+                    latency=latency,
+                    details={"error": str(exc)},
                 )
+                results.append(result)
             except Exception as exc:  # pragma: no cover - defensywne logowanie
                 latency = time.monotonic() - start
                 _LOGGER.exception("Unexpected error during health check %s", check.name)
-                results.append(
-                    HealthCheckResult(
-                        name=check.name,
-                        status=HealthStatus.UNAVAILABLE,
-                        latency=latency,
-                        details={"error": str(exc)},
-                    )
+                result = HealthCheckResult(
+                    name=check.name,
+                    status=HealthStatus.UNAVAILABLE,
+                    latency=latency,
+                    details={"error": str(exc)},
                 )
+                results.append(result)
             else:
                 latency = time.monotonic() - start
-                results.append(
-                    HealthCheckResult(
-                        name=check.name,
-                        status=HealthStatus.HEALTHY,
-                        latency=latency,
-                        details={},
-                    )
+                result = HealthCheckResult(
+                    name=check.name,
+                    status=HealthStatus.HEALTHY,
+                    latency=latency,
+                    details={},
                 )
+                results.append(result)
+            finally:
+                if results:
+                    latest = results[-1]
+                    labels = {**self._metric_labels, "check": check.name, "status": latest.status.value}
+                    try:
+                        self._latency_hist.observe(latest.latency, labels=labels)
+                        self._status_counter.inc(labels=labels)
+                    except Exception:  # pragma: no cover - metryki nie powinny przerywać health-checku
+                        _LOGGER.debug("health metrics update failed", exc_info=True)
         return results
 
     @staticmethod
