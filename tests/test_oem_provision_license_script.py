@@ -132,3 +132,69 @@ def test_oem_provision_license_rejects_invalid_fingerprint(tmp_path, fingerprint
     ])
 
     assert exit_code != 0
+
+
+def test_oem_provision_license_verify_mode(tmp_path):
+    fingerprint_key = b"f" * 48
+    fingerprint_payload = {
+        "fingerprint": "OEM-FP-1234567890",
+        "generated_at": "2025-01-01T00:00:00Z",
+        "components": {
+            "cpu": {"normalized": "intel xeon"},
+            "mac": {"addresses": ["aa:bb:cc:dd:ee:ff"]},
+            "tpm": {"serial": "TPM-123"},
+            "dongle": {"serial": "DONGLE-XYZ"},
+        },
+    }
+    fingerprint_signature = base64.b64encode(
+        hmac.new(fingerprint_key, canonical_json_bytes(fingerprint_payload), hashlib.sha384).digest()
+    ).decode("ascii")
+    fingerprint_path = tmp_path / "fingerprint.expected.json"
+    fingerprint_path.write_text(
+        json.dumps(
+            {
+                "payload": fingerprint_payload,
+                "signature": {
+                    "algorithm": "HMAC-SHA384",
+                    "value": fingerprint_signature,
+                    "key_id": "fp-key",
+                },
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    registry_path = tmp_path / "registry.jsonl"
+    license_key = base64.b64encode(b"l" * 48).decode("ascii")
+    payload = oem_provision_license.build_license_payload_simple(
+        fingerprint_text="ABCD-1234",
+        issuer="VERIFIER",
+        profile="paper",
+        bundle_version="9.9.9",
+        features=["daemon"],
+        notes=None,
+        valid_days=30,
+    )
+    record = oem_provision_license.sign_with_single_key(
+        payload,
+        key_bytes=base64.b64decode(license_key),
+        key_id="lic-key",
+    )
+    registry_path.write_text(json.dumps(record, ensure_ascii=False) + "\n", encoding="utf-8")
+
+    exit_code = oem_provision_license.main(
+        [
+            "--verify",
+            "--fingerprint",
+            str(fingerprint_path),
+            "--fingerprint-key",
+            f"fp-key=base64:{base64.b64encode(fingerprint_key).decode('ascii')}",
+            "--license-key",
+            f"lic-key=base64:{license_key}",
+            "--output",
+            str(registry_path),
+        ]
+    )
+
+    assert exit_code == 0

@@ -14,11 +14,11 @@ Dokument opisuje proces przygotowania kompletu artefaktów OEM dla środowisk
   środowisku (`pip install pyinstaller briefcase`).
 * Zbudowana w trybie `Release` aplikacja Qt (`ui/`) – katalog z binarką i
   zasobami QML (`build/ui/Release` lub analogiczny).
-* Pakiet `bot_core` z zainstalowanymi komponentami AI (`pip install -e .[dev,desktop,compression]`,
+* Pakiety rdzeniowe (`bot_core`, `core`) z zainstalowanymi komponentami AI (`pip install -e .[dev,desktop,compression]`,
   gdzie extras `compression` doinstaluje `brotli` lub `brotlicffi` oraz `zstandard` w zależności od platformy), aby
-  moduł `bot_core.ai.legacy_models` był dostępny na ścieżce importu.  Wydanie
+  moduły `bot_core.ai.legacy_models` oraz `core.*` były dostępne na ścieżce importu.  Wydanie
   utrzymuje również shim `KryptoLowca.ai_models` dla starszych integracji,
-  jednak nowy kod powinien odwoływać się bezpośrednio do modułu w `bot_core`.
+  jednak nowy kod powinien odwoływać się bezpośrednio do modułów w `bot_core` i `core`.
 * Plik konfiguracyjny `config/core.yaml` oraz tajemnice potrzebne do walidacji
   licencji OEM.
 * Klucz HMAC (BASE64 lub plaintext) używany do podpisywania manifestów.

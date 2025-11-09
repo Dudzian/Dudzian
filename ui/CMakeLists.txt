@@ -87,6 +87,7 @@ set(UI_SOURCES
     src/app/Application.cpp
     src/app/MarketplaceController.cpp
     src/app/PortfolioManagerController.cpp
+    src/app/HypercareController.cpp
     src/app/UiModuleManager.cpp
     src/app/UiModuleViewsModel.cpp
     src/app/ActivationController.cpp
@@ -133,6 +134,7 @@ set(UI_HEADERS
     src/app/Application.hpp
     src/app/MarketplaceController.hpp
     src/app/PortfolioManagerController.hpp
+    src/app/HypercareController.hpp
     src/app/UiModuleManager.hpp
     src/app/UiModuleInterface.hpp
     src/app/UiModuleViewsModel.hpp

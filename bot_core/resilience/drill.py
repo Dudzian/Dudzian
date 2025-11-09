@@ -220,35 +220,94 @@ def _match_patterns(patterns: Iterable[str], files: Sequence[str]) -> tuple[str,
     return tuple(sorted(set(matches)))
 
 
-def _evaluate_service(plan: FailoverServicePlan, files: Sequence[str]) -> FailoverServiceResult:
+def _coerce_multiplier(metadata: Mapping[str, object], key: str, default: float) -> float:
+    value = metadata.get(key)
+    if value is None:
+        return default
+    try:
+        number = float(value)
+    except (TypeError, ValueError):  # noqa: BLE001 - walidacja konfiguracji
+        return default
+    if number <= 0:
+        return default
+    return number
+
+
+def _evaluate_service(
+    plan: FailoverServicePlan,
+    files: Sequence[str],
+    *,
+    defaults: Mapping[str, object] | None = None,
+) -> FailoverServiceResult:
     missing: list[str] = []
     issues: list[str] = []
+    warnings: list[str] = []
+    critical_flags: list[str] = []
+
+    metadata: dict[str, object] = {}
+    if defaults:
+        metadata.update(defaults)
+    metadata.update(plan.metadata)
+
+    critical_on_missing = bool(metadata.get("critical_on_missing_artifacts", False))
+    critical_rto_multiplier = _coerce_multiplier(metadata, "critical_rto_multiplier", 1.5)
+    critical_rpo_multiplier = _coerce_multiplier(metadata, "critical_rpo_multiplier", 1.5)
+
+    status_level = 0  # 0-ok,1-warning,2-failed,3-critical
+
+    def escalate(level: int) -> None:
+        nonlocal status_level
+        if level > status_level:
+            status_level = level
+
+    def mark_critical(reason: str) -> None:
+        escalate(3)
+        if reason not in critical_flags:
+            critical_flags.append(reason)
+
     matched = _match_patterns(plan.required_artifacts, files)
     for pattern in plan.required_artifacts:
         if not any(fnmatch(item, pattern) for item in files):
             missing.append(pattern)
-    status = "ok"
     if missing:
-        status = "failed"
+        escalate(2)
         issues.append("Brak wymaganych artefaktów")
+        if critical_on_missing:
+            mark_critical("missing_artifacts")
     if plan.observed_rto_minutes is None:
-        if status == "ok":
-            status = "warning"
-        issues.append("Brak pomiaru RTO")
+        warnings.append("Brak pomiaru RTO")
+        escalate(1)
     elif plan.observed_rto_minutes > plan.max_rto_minutes:
-        status = "failed"
+        escalate(2)
         issues.append(
             f"RTO {plan.observed_rto_minutes} min przekracza limit {plan.max_rto_minutes} min"
         )
+        if plan.observed_rto_minutes > plan.max_rto_minutes * critical_rto_multiplier:
+            mark_critical("rto")
     if plan.observed_rpo_minutes is None:
-        if status == "ok":
-            status = "warning"
-        issues.append("Brak pomiaru RPO")
+        warnings.append("Brak pomiaru RPO")
+        escalate(1)
     elif plan.observed_rpo_minutes > plan.max_rpo_minutes:
-        status = "failed"
+        escalate(2)
         issues.append(
             f"RPO {plan.observed_rpo_minutes} min przekracza limit {plan.max_rpo_minutes} min"
         )
+        if plan.observed_rpo_minutes > plan.max_rpo_minutes * critical_rpo_multiplier:
+            mark_critical("rpo")
+
+    if status_level >= 3:
+        status = "critical"
+    elif status_level == 2:
+        status = "failed"
+    elif status_level == 1:
+        status = "warning"
+    else:
+        status = "ok"
+
+    combined_issues = tuple(dict.fromkeys((*warnings, *issues)))
+    final_metadata: dict[str, object] = dict(plan.metadata)
+    if critical_flags:
+        final_metadata["critical_reasons"] = tuple(critical_flags)
     return FailoverServiceResult(
         name=plan.name,
         status=status,
@@ -258,8 +317,8 @@ def _evaluate_service(plan: FailoverServicePlan, files: Sequence[str]) -> Failov
         observed_rpo_minutes=plan.observed_rpo_minutes,
         missing_artifacts=tuple(sorted(missing)),
         matched_artifacts=matched,
-        issues=tuple(issues),
-        metadata=plan.metadata,
+        issues=combined_issues,
+        metadata=final_metadata,
     )
 
 
@@ -270,15 +329,21 @@ def evaluate_failover_drill(
     bundle_audit: BundleAuditResult | None = None,
 ) -> FailoverDrillSummary:
     files = _manifest_files(manifest)
-    services = tuple(_evaluate_service(service, files) for service in plan.services)
+    services = tuple(
+        _evaluate_service(service, files, defaults=plan.metadata)
+        for service in plan.services
+    )
     counts = {
         "total": len(services),
         "ok": sum(1 for service in services if service.status == "ok"),
         "warning": sum(1 for service in services if service.status == "warning"),
         "failed": sum(1 for service in services if service.status == "failed"),
+        "critical": sum(1 for service in services if service.status == "critical"),
     }
     status = "ok"
-    if counts["failed"]:
+    if counts.get("critical"):
+        status = "critical"
+    elif counts["failed"]:
         status = "failed"
     elif counts["warning"]:
         status = "warning"

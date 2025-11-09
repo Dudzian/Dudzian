@@ -709,6 +709,49 @@ def get_alert_policies(name: str) -> Mapping[str, Any]:
     return deepcopy(policies)
 
 
+def get_observability_composite_expectations(name: str) -> Mapping[str, Any]:
+    """Zwraca oczekiwane kompozyty SLO2 dla profilu obserwowalności."""
+
+    profile = get_risk_profile(name)
+    observability = profile.get("observability", {})
+
+    scheduler_metrics: list[str] = []
+    strategy_metrics: dict[str, list[str]] = {}
+    alert_policies: list[str] = []
+    composites: list[str] = []
+
+    if isinstance(observability, Mapping):
+        scheduler_section = observability.get("scheduler_metrics", {})
+        if isinstance(scheduler_section, Mapping):
+            scheduler_metrics = sorted(str(metric) for metric in scheduler_section.keys())
+            composites.extend(f"scheduler::{metric}" for metric in scheduler_metrics)
+
+        strategy_section = observability.get("strategy_metrics", {})
+        if isinstance(strategy_section, Mapping):
+            for strategy_name, metrics in strategy_section.items():
+                if not isinstance(metrics, Mapping):
+                    continue
+                names = sorted(str(metric_name) for metric_name in metrics.keys())
+                normalized_name = str(strategy_name)
+                strategy_metrics[normalized_name] = names
+                composites.extend(
+                    f"strategy::{normalized_name}.{metric_name}" for metric_name in names
+                )
+
+        alerts_section = observability.get("alert_policies", {})
+        if isinstance(alerts_section, Mapping):
+            alert_policies = sorted(str(name) for name in alerts_section.keys())
+            composites.extend(f"alert::{policy}" for policy in alert_policies)
+
+    deduplicated = sorted(dict.fromkeys(composites))
+    return {
+        "scheduler": scheduler_metrics,
+        "strategy": strategy_metrics,
+        "alert_policies": alert_policies,
+        "composites": deduplicated,
+    }
+
+
 def get_decision_log_requirements(name: str) -> Mapping[str, Any]:
     """Zwraca wymagania dot. decision logu dla profilu ryzyka."""
 
@@ -963,6 +1006,7 @@ __all__ = [
     "get_scheduler_metrics",
     "get_strategy_metrics",
     "get_alert_policies",
+    "get_observability_composite_expectations",
     "get_decision_log_requirements",
     "get_data_quality_expectations",
     "load_risk_profiles_with_metadata",

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+import os
+import time
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 import pytest
@@ -62,6 +64,13 @@ except Exception:  # pragma: no cover - environment without config-based API
     StressLab = None  # type: ignore[assignment]
     _HAVE_CONFIG_STRESSLAB = False
 
+try:
+    from bot_core.runtime.pipeline import _load_stress_overrides_from_reports  # type: ignore[attr-defined]
+    _HAVE_PIPELINE_HELPERS = True
+except Exception:  # pragma: no cover - pipeline helpers unavailable
+    _load_stress_overrides_from_reports = None  # type: ignore[assignment]
+    _HAVE_PIPELINE_HELPERS = False
+
 
 # =============================================================================
 #                          Variant A — Evaluator-based tests
@@ -107,6 +116,27 @@ def _build_report() -> RiskSimulationReport:  # type: ignore[valid-type]
     )
 
 
+def _create_stress_report(path: Path, *, reason: str = "drawdown") -> None:
+    payload = {
+        "generated_at": "2024-06-01T12:00:00Z",
+        "overrides": [
+            {
+                "severity": "critical",
+                "reason": reason,
+                "symbol": "BTCUSDT",
+                "risk_budget": "core",
+                "weight_multiplier": 0.5,
+                "min_weight": 0.1,
+                "max_weight": 0.6,
+                "force_rebalance": True,
+                "tags": ["stage6"],
+            }
+        ],
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+
 @pytest.mark.skipif(not _HAVE_EVALUATOR, reason="Evaluator-based Stress Lab API not available")
 def test_stress_lab_evaluator_generates_overrides() -> None:
     evaluator = StressLabEvaluator(clock=lambda: datetime(2024, 6, 2, tzinfo=timezone.utc))  # type: ignore[call-arg]
@@ -145,6 +175,25 @@ def test_stress_lab_evaluator_generates_overrides() -> None:
     assert "metric:latency" in latency_insight.tags
 
 
+def test_stress_lab_fallback_respects_max_age(tmp_path: Path) -> None:
+    if not _HAVE_PIPELINE_HELPERS:
+        pytest.skip("Runtime pipeline helpers not available")
+
+    stage_dir = tmp_path / "reports"
+    report_path = stage_dir / "stress_lab_core_governor_20240101.json"
+    _create_stress_report(report_path)
+
+    now = time.time()
+    os.utime(report_path, (now - 10_800, now - 10_800))  # 3h ago
+
+    overrides = _load_stress_overrides_from_reports(  # type: ignore[misc]
+        "Core Governor",
+        (stage_dir,),
+        max_age=timedelta(hours=2),
+    )
+    assert overrides == ()
+
+
 @pytest.mark.skipif(not _HAVE_EVALUATOR, reason="Evaluator-based Stress Lab API not available")
 def test_stress_lab_report_writers(tmp_path: Path) -> None:
     evaluator = StressLabEvaluator(clock=lambda: datetime(2024, 6, 2, 12, 0, tzinfo=timezone.utc))  # type: ignore[call-arg]
@@ -178,6 +227,32 @@ def test_stress_lab_report_writers(tmp_path: Path) -> None:
 
     assert signature["schema"] == "stage6.risk.stress_lab.report.signature"
     assert signature["signature"]["algorithm"] == "HMAC-SHA256"
+
+
+def test_stress_lab_fallback_overrides(tmp_path: Path) -> None:
+    if not _HAVE_PIPELINE_HELPERS:
+        pytest.skip("Runtime pipeline helpers not available")
+
+    stage_dir = tmp_path / "var" / "stage6" / "stress"
+    fallback_dir = tmp_path / "audit" / "stage6"
+    stale_report = fallback_dir / "stress_lab_core_governor_20240101.json"
+    fresh_report = stage_dir / "stress_lab_core_governor_20240102.json"
+
+    _create_stress_report(stale_report, reason="stale_override")
+    _create_stress_report(fresh_report, reason="fresh_override")
+
+    now = time.time()
+    os.utime(stale_report, (now - 7200, now - 7200))
+    os.utime(fresh_report, (now, now))
+
+    overrides = _load_stress_overrides_from_reports(  # type: ignore[misc]
+        "Core Governor",
+        (fallback_dir, stage_dir),
+        max_age=timedelta(hours=4),
+    )
+    assert overrides
+    assert overrides[0].reason == "fresh_override"
+    assert overrides[0].force_rebalance is True
 
 
 @pytest.mark.skipif(not _HAVE_EVALUATOR, reason="Evaluator-based Stress Lab API not available")

@@ -31,8 +31,9 @@ from bot_core.resilience.drill import (
 )
 from bot_core.resilience.policy import ResiliencePolicy
 from bot_core.resilience.self_healing import (
-    SubprocessSelfHealingExecutor,
+    CompositeSelfHealingExecutor,
     build_self_healing_plan,
+    default_self_healing_executor,
     execute_self_healing_plan,
     load_self_healing_rules,
     summarize_self_healing_plan,
@@ -295,7 +296,7 @@ class ResilienceHypercareCycle:
         rules = load_self_healing_rules(self._config.self_healing.rules_path)
         plan = build_self_healing_plan(summary, rules)
         if self._config.self_healing.mode == "execute":
-            executor = SubprocessSelfHealingExecutor()
+            executor: CompositeSelfHealingExecutor = default_self_healing_executor()
             report = execute_self_healing_plan(plan, executor)
         else:
             report = summarize_self_healing_plan(plan)

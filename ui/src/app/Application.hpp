@@ -60,6 +60,7 @@ class ConfigurationWizardController;   // forward decl (app/ConfigurationWizardC
 class OfflineUpdateManager;            // forward decl (update/OfflineUpdateManager.hpp)
 class ResultsDashboardModel;           // forward decl (models/ResultsDashboardModel.hpp)
 class UserProfileController;           // forward decl (app/UserProfileController.hpp)
+class HypercareController;             // forward decl (app/HypercareController.hpp)
 
 class Application : public QObject {
     Q_OBJECT
@@ -88,6 +89,7 @@ class Application : public QObject {
     Q_PROPERTY(QObject*         moduleViewsModel READ moduleViewsModel CONSTANT)
     Q_PROPERTY(QObject*         marketplaceController READ marketplaceController CONSTANT)
     Q_PROPERTY(QObject*         portfolioController READ portfolioController CONSTANT)
+    Q_PROPERTY(QObject*         hypercareController READ hypercareController CONSTANT)
     Q_PROPERTY(QObject*         configurationWizard READ configurationWizard CONSTANT)
     Q_PROPERTY(QObject*         updateManager READ updateManager CONSTANT)
     Q_PROPERTY(QObject*         resultsDashboard READ resultsDashboard CONSTANT)
@@ -152,6 +154,7 @@ public:
     QObject*         moduleViewsModel() const;
     QObject*         marketplaceController() const;
     QObject*         portfolioController() const;
+    QObject*         hypercareController() const;
     QObject*         configurationWizard() const;
     QObject*         updateManager() const;
     QObject*         resultsDashboard() const;
@@ -497,6 +500,7 @@ private:
     std::unique_ptr<HealthStatusController>    m_healthController;
     std::unique_ptr<MarketplaceController>     m_marketplaceController;
     std::unique_ptr<PortfolioManagerController> m_portfolioController;
+    std::unique_ptr<HypercareController>        m_hypercareController;
     std::unique_ptr<ConfigurationWizardController> m_configurationWizard;
     std::unique_ptr<OfflineUpdateManager>      m_updateManager;
     std::unique_ptr<ResultsDashboardModel>     m_resultsDashboard;

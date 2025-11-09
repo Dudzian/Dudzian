@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import sqlite3
 import statistics
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Mapping, MutableMapping, Sequence
@@ -28,6 +30,17 @@ except Exception:  # pragma: no cover - environment without config API
     MarketIntelConfig = None  # type: ignore[assignment]
     MarketIntelSqliteConfig = None  # type: ignore[assignment]
     _HAVE_MARKET_INTEL_CONFIG = False
+
+try:
+    from bot_core.runtime.pipeline import (  # type: ignore[attr-defined]
+        _load_market_intel_snapshots_from_reports,
+        _resolve_latest_report,
+    )
+    _HAVE_PIPELINE_HELPERS = True
+except Exception:  # pragma: no cover - pipeline helpers unavailable
+    _load_market_intel_snapshots_from_reports = None  # type: ignore[assignment]
+    _resolve_latest_report = None  # type: ignore[assignment]
+    _HAVE_PIPELINE_HELPERS = False
 
 
 # =============================================================================
@@ -209,6 +222,30 @@ def _write_outputs_compat(
     raise AttributeError("Aggregator exposes neither write_outputs() nor build()")
 
 
+def _create_market_intel_report(path: Path, *, symbol: str = "BTCUSDT") -> None:
+    payload = {
+        "interval": "1h",
+        "generated_at": "2024-06-01T00:00:00Z",
+        "snapshots": {
+            symbol: {
+                "interval": "1h",
+                "start": "2024-05-31T23:00:00Z",
+                "end": "2024-06-01T00:00:00Z",
+                "bar_count": 24,
+                "price_change_pct": 1.5,
+                "volatility_pct": 12.5,
+                "max_drawdown_pct": 4.2,
+                "average_volume": 1500.0,
+                "liquidity_usd": 850000.0,
+                "momentum_score": 0.8,
+                "metadata": {"bars_used": 24.0},
+            }
+        },
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+
 def test_market_intel_aggregator_writes_metrics(tmp_path: Path) -> None:
     if not _supports_sqlite_mode():
         pytest.skip("SQLite/config-driven MarketIntelAggregator API not available")
@@ -272,3 +309,56 @@ def test_market_intel_missing_symbol_raises(tmp_path: Path) -> None:
             aggregator.build()  # type: ignore[attr-defined]
         else:
             _write_outputs_compat(aggregator, tmp_path / "out", None)
+
+
+def test_market_intel_fallback_loads_latest_report(tmp_path: Path) -> None:
+    if not _HAVE_PIPELINE_HELPERS:
+        pytest.skip("Runtime pipeline helpers not available")
+
+    primary_dir = tmp_path / "stage6" / "market_intel"
+    fallback_dir = tmp_path / "fallback"
+    old_report = fallback_dir / "market_intel_core_portfolio_20240101.json"
+    new_report = primary_dir / "market_intel_core_portfolio_20240201.json"
+    _create_market_intel_report(old_report, symbol="ETHUSDT")
+    _create_market_intel_report(new_report, symbol="BTCUSDT")
+
+    now = time.time()
+    os.utime(old_report, (now - 3600, now - 3600))
+    os.utime(new_report, (now, now))
+
+    class _Cfg:
+        output_directory = str(primary_dir)
+
+    resolved = _resolve_latest_report(  # type: ignore[misc]
+        [primary_dir, fallback_dir],
+        prefix="market_intel_core_portfolio_",
+    )
+    assert resolved == new_report
+
+    snapshots = _load_market_intel_snapshots_from_reports(  # type: ignore[misc]
+        "Core Portfolio",
+        _Cfg(),
+        (fallback_dir,),
+    )
+    assert "BTCUSDT" in snapshots
+    snapshot = snapshots["BTCUSDT"]
+    assert snapshot.interval == "1h"
+    assert snapshot.bar_count == 24
+
+
+def test_market_intel_fallback_respects_missing_reports(tmp_path: Path) -> None:
+    if not _HAVE_PIPELINE_HELPERS:
+        pytest.skip("Runtime pipeline helpers not available")
+
+    stage_dir = tmp_path / "stage6"
+    stage_dir.mkdir(parents=True)
+
+    class _Cfg:
+        output_directory = str(stage_dir)
+
+    snapshots = _load_market_intel_snapshots_from_reports(  # type: ignore[misc]
+        "Unconfigured Governor",
+        _Cfg(),
+        (),
+    )
+    assert snapshots == {}

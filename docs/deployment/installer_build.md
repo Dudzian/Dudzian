@@ -54,6 +54,69 @@ W środowiskach bez dostępu do internetu najprościej jest przygotować lokalne
 mirrorowanie paczek (`pip download ccxt aiodns pycares lightgbm`) i wskazać je w
 profilu PyInstaller/Briefcase za pomocą pola `bundle.wheels_extra`.
 
+Wheel budowany z `pyproject.toml` zawiera obecnie zarówno pakiet `bot_core`, jak i
+`core`, dzięki czemu moduły OEM są dostępne także poza repozytorium. Przy budowie
+bundla upewnij się, że oba pakiety trafiają do katalogu `wheels/` (np. poprzez
+`bundle.wheels_extra` lub lokalne mirrory), aby instalator mógł je zainstalować na
+docelowym sprzęcie.
+
+## Automatyczna weryfikacja fingerprintu i podpisów
+
+Po zbudowaniu bundla uruchom jednorazowo komendę weryfikującą fingerprint oraz
+rejestr licencji. Nowy przełącznik `--verify` w skrypcie
+`scripts/oem_provision_license.py` sprawdza podpis HMAC pliku
+`config/fingerprint.expected.json`, reguły polityki OEM oraz integralność wpisów
+w `var/licenses/registry.jsonl`.
+
+```bash
+python scripts/oem_provision_license.py \
+  --verify \
+  --fingerprint var/dist/installers/linux/config/fingerprint.expected.json \
+  --fingerprint-key fp-prod=base64:${OEM_FINGERPRINT_HMAC} \
+  --license-key lic-prod=base64:${OEM_LICENSE_HMAC} \
+  --output var/licenses/registry.jsonl
+```
+
+Skrypt kończy się kodem 0 tylko wtedy, gdy oba podpisy są prawidłowe i fingerprint
+spełnia politykę OEM (np. wymóg TPM/dongle dla trybu USB). Każde ostrzeżenie jest
+wypisywane na stdout (`[WARN] …`) i powinno zostać udokumentowane w logu releasu.
+
+Parametry `--verify-fingerprint`, `--verify-fingerprint-key`, `--verify-license-key`
+oraz `--verify-registry` są również dostępne w
+`scripts/build_installer_from_profile.py`, dzięki czemu pipeline CI może
+wykonać powyższą weryfikację bez dodatkowych kroków shellowych.
+
+## Regeneracja kluczy HMAC/fingerprint w środowisku build
+
+1. Zaplanuj rotację kluczy HMAC przy pomocy `scripts/rotate_keys.py` – np.:
+
+   ```bash
+   python scripts/rotate_keys.py plan \
+     --config config/core.yaml \
+     --environment paper \
+     --bundle core-oem \
+     --interval-days 90 \
+     --output var/audit/stage5/key_rotation/plan.json
+   ```
+
+   Raport Stage5 wskaże klucze wymagające odnowienia.
+
+2. Wygeneruj nowy fingerprint sprzętowy (`scripts/oem_provision_license.py` z
+   flagą `--verify` pozwala potwierdzić podpis) i zaktualizuj pliki
+   `config/fingerprint.expected.json` oraz `var/licenses/registry.jsonl`.
+
+3. W tym samym środowisku uruchom test regresyjny fingerprintu:
+
+   ```bash
+   pytest tests/test_security_fingerprint.py
+   ```
+
+   Test potwierdza deterministyczne działanie generatora fingerprintu, poprawne
+   podpisy HMAC i obsługę rejestru rotacji.
+
+4. Po pozytywnych testach zaktualizuj rejestry rotacji (`var/licenses/key_rotation.json`)
+   i dołącz raport z kroku 3 do `var/audit/acceptance/<TS>/metadata.json`.
+
 ## Walidacja hooka HWID i keyring
 
 Skrypt `deploy/packaging/desktop_installer.py` przyjmuje przełącznik

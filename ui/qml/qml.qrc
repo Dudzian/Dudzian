@@ -51,6 +51,7 @@
         <file>views/StrategyConfigurator.qml</file>
         <file>views/SetupWizard.qml</file>
         <file>views/PortfolioDashboard.qml</file>
+        <file>views/HypercareDashboard.qml</file>
         <file>views/LicenseAuditView.qml</file>
         <file>views/OperationsCenter.qml</file>
         <file>views/StrategyExperience.qml</file>
