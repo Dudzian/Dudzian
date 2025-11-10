@@ -25,6 +25,7 @@ from google.protobuf import empty_pb2, timestamp_pb2
 from google.protobuf.json_format import MessageToDict
 
 from bot_core.alerts import DefaultAlertRouter
+from bot_core.ai import AdaptiveStrategyLearner, ModelRepository
 from bot_core.alerts.dispatcher import (
     AlertSeverity,
     ensure_offline_logging_sink,
@@ -82,7 +83,11 @@ _ensure_trading_engine_available()
 
 _LOGGER = logging.getLogger(__name__)
 
-from bot_core.runtime.journal import aggregate_decision_statistics  # noqa: E402
+from bot_core.runtime.ai_retrain import LocalRetrainScheduler  # noqa: E402
+from bot_core.runtime.journal import (  # noqa: E402
+    AdaptiveDecisionJournal,
+    aggregate_decision_statistics,
+)
 from bot_core.runtime.pipeline import (  # noqa: E402
     DailyTrendPipeline,
     build_daily_trend_pipeline,
@@ -542,6 +547,8 @@ class LocalRuntimeContext:
     marketplace_allow_unsigned: bool = False
     marketplace_enabled: bool = True
     auto_mode_alerts: MutableMapping[str, Any] = field(default_factory=dict)
+    adaptive_learner: AdaptiveStrategyLearner | None = None
+    retrain_scheduler: LocalRetrainScheduler | None = None
     _started: bool = field(default=False, init=False, repr=False)
 
     def start(self, *, auto_confirm: bool = True) -> None:
@@ -610,6 +617,12 @@ class LocalRuntimeContext:
                 )
             finally:
                 self.alert_sink_token = None
+        learner = self.adaptive_learner
+        if learner is not None:
+            try:
+                learner.persist()
+            except Exception:  # pragma: no cover - diagnostyka zapisu stanu
+                _LOGGER.debug("Nie udało się zapisać stanu adaptive learnera", exc_info=True)
         self._started = False
 
     def close(self) -> None:
@@ -1958,6 +1971,83 @@ def build_local_runtime_context(
         controller_runner=runner,
         trusted_auto_confirm=True,
     )
+    adaptive_learner: AdaptiveStrategyLearner | None = None
+    orchestrator_instance = getattr(pipeline.bootstrap, "decision_orchestrator", None)
+    model_registry_path = getattr(runtime_config.ai, "model_registry_path", None)
+    if orchestrator_instance is not None and model_registry_path:
+        try:
+            repository = ModelRepository(Path(model_registry_path))
+            adaptive_learner = AdaptiveStrategyLearner(
+                repository=repository,
+                orchestrator=orchestrator_instance,
+            )
+        except Exception:  # pragma: no cover - diagnostyka inicjalizacji
+            adaptive_learner = None
+            _LOGGER.debug("Nie udało się zainicjalizować AdaptiveStrategyLearnera", exc_info=True)
+        else:
+            try:
+                catalog = getattr(pipeline.controller, "strategy_catalog", None)
+                available = None
+                if hasattr(catalog, "available") and callable(catalog.available):
+                    available = catalog.available()  # type: ignore[call-arg]
+                elif hasattr(DEFAULT_STRATEGY_CATALOG, "describe_engines"):
+                    available = [entry["name"] for entry in DEFAULT_STRATEGY_CATALOG.describe_engines()]
+                if available:
+                    adaptive_learner.register_strategies("trend", available)
+                if hasattr(catalog, "attach_adaptive_learner"):
+                    catalog.attach_adaptive_learner(adaptive_learner)  # type: ignore[call-arg]
+                journal = getattr(pipeline.bootstrap, "decision_journal", None)
+                if journal is not None:
+                    pipeline.bootstrap.decision_journal = AdaptiveDecisionJournal(
+                        journal=journal,
+                        learner=adaptive_learner,
+                    )
+            except Exception:  # pragma: no cover - defensywne logowanie
+                _LOGGER.debug("Nie udało się zarejestrować strategii w AdaptiveStrategyLearner", exc_info=True)
+    retrain_scheduler: LocalRetrainScheduler | None = None
+    retrain_cfg = getattr(runtime_config.ai, "retrain", None)
+    if retrain_cfg and getattr(retrain_cfg, "enabled", False):
+        schedule_expr = getattr(retrain_cfg, "schedule", None) or runtime_config.ai.retrain_schedule or "0 3 * * *"
+        manifest_value = getattr(retrain_cfg, "manifest_path", None) or getattr(
+            retrain_cfg, "manifest", None
+        )
+        if manifest_value:
+            manifest_path = Path(manifest_value)
+        else:
+            manifest_path = None
+        if manifest_path is not None and not manifest_path.is_absolute():
+            manifest_path = (config_file.parent / manifest_path).resolve()
+        output_value = getattr(retrain_cfg, "output_dir", None)
+        if output_value:
+            output_dir = Path(output_value)
+        else:
+            output_dir = (config_file.parent / "var/runtime/retraining").resolve()
+        if manifest_path is not None and manifest_path.exists():
+            output_dir = output_dir.expanduser().resolve()
+            try:
+                scheduler_candidate = LocalRetrainScheduler.build(
+                    cron_expression=schedule_expr,
+                    manifest_path=manifest_path,
+                    output_dir=output_dir,
+                    ai_manager=getattr(pipeline.bootstrap, "ai_manager", None),
+                    journal=getattr(pipeline.bootstrap, "decision_journal", None),
+                )
+            except Exception:  # pragma: no cover - diagnostyka
+                _LOGGER.debug("Nie udało się zbudować harmonogramu retrainingu", exc_info=True)
+            else:
+                retrain_scheduler = scheduler_candidate
+                if retrain_scheduler is not None:
+                    previous_handler = runner.on_cycle_complete
+
+                    def _invoke_scheduler(results: Sequence[Any]) -> None:
+                        try:
+                            retrain_scheduler.maybe_run()
+                        except Exception:  # pragma: no cover - defensywne logowanie
+                            _LOGGER.debug("Błąd podczas uruchamiania retrainingu", exc_info=True)
+                        if callable(previous_handler):
+                            previous_handler(results)
+
+                    runner.on_cycle_complete = _invoke_scheduler
     risk_store: RiskSnapshotStore | None = None
     risk_builder: RiskSnapshotBuilder | None = None
     risk_publisher: RiskSnapshotPublisher | None = None
@@ -2073,6 +2163,8 @@ def build_local_runtime_context(
         marketplace_allow_unsigned=marketplace_allow_unsigned,
         marketplace_enabled=marketplace_enabled,
         strategy_presets_dir=strategy_presets_dir,
+        adaptive_learner=adaptive_learner,
+        retrain_scheduler=retrain_scheduler,
     )
     if marketplace_repository is not None and marketplace_enabled:
         try:

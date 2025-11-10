@@ -43,6 +43,7 @@ from bot_core.config.models import (
     RuntimeResourceLimitsConfig,
     RuntimeAppConfig,
     RuntimeAISettings,
+    RuntimeAIRetrainSettings,
     RuntimeTradingSettings,
     RuntimeExecutionLiveSettings,
     RuntimeExecutionSettings,
@@ -4366,11 +4367,26 @@ def load_runtime_app_config(path: str | Path) -> RuntimeAppConfig:
     ai_section = raw.get("ai") or {}
     registry_raw = ai_section.get("model_registry_path", "models")
     registry_path = _normalize_path(registry_raw) or str(registry_raw)
+    retrain_section = ai_section.get("retrain") or {}
+    retrain_settings: RuntimeAIRetrainSettings | None = None
+    if isinstance(retrain_section, Mapping) and retrain_section:
+        manifest_key = retrain_section.get("manifest_path") or retrain_section.get("manifest")
+        retrain_settings = RuntimeAIRetrainSettings(
+            enabled=bool(retrain_section.get("enabled", False)),
+            schedule=_as_optional_str(retrain_section.get("schedule")),
+            manifest_path=_normalize_path(manifest_key),
+            profiles=_as_tuple(retrain_section.get("profiles")),
+            output_dir=_normalize_path(retrain_section.get("output_dir")),
+        )
+        if retrain_settings.schedule is None:
+            retrain_settings.schedule = _as_optional_str(ai_section.get("retrain_schedule"))
+
     ai_settings = RuntimeAISettings(
         model_registry_path=registry_path,
         retrain_schedule=_as_optional_str(ai_section.get("retrain_schedule")),
         drift_monitor_enabled=bool(ai_section.get("drift_monitor_enabled", True)),
         auto_activate_best_model=bool(ai_section.get("auto_activate_best_model", True)),
+        retrain=retrain_settings,
     )
 
     trading_section = raw.get("trading") or {}

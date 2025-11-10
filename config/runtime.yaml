@@ -6,6 +6,12 @@ ai:
   retrain_schedule: "0 3 * * *"
   drift_monitor_enabled: true
   auto_activate_best_model: true
+  retrain:
+    enabled: false
+    schedule: null
+    manifest_path: null
+    output_dir: var/runtime/retraining
+    profiles: []
 
 trading:
   default_entrypoint: trading_gui

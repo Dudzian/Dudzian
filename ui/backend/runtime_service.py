@@ -6,8 +6,9 @@ import logging
 import os
 from collections.abc import Iterable, Mapping, MutableMapping
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable
+from typing import TYPE_CHECKING, Callable
 
 from PySide6.QtCore import QObject, Property, Signal, Slot
 
@@ -15,6 +16,24 @@ from bot_core.config import load_core_config
 from bot_core.portfolio import resolve_decision_log_config
 from bot_core.runtime.journal import TradingDecisionJournal
 from .demo_data import load_demo_decisions
+
+try:  # pragma: no cover - moduł może nie być dostępny w wersjach light
+    from bot_core.ai import ModelRepository
+except Exception:  # pragma: no cover - fallback dla dystrybucji bez komponentu AI
+    ModelRepository = None  # type: ignore[assignment]
+
+try:  # pragma: no cover - harmonogram retrainingu jest opcjonalny
+    from bot_core.runtime.ai_retrain import CronSchedule
+except Exception:  # pragma: no cover - fallback dla środowisk bez retrainingu
+    CronSchedule = None  # type: ignore[assignment]
+
+try:  # pragma: no cover - funkcja ładowania runtime może nie być dostępna w starszych gałęziach
+    from bot_core.config.loader import load_runtime_app_config
+except Exception:  # pragma: no cover - fallback gdy brak unified loadera
+    load_runtime_app_config = None  # type: ignore[assignment]
+
+if TYPE_CHECKING:  # pragma: no cover - adnotacje tylko w czasie statycznym
+    from bot_core.config.models import RuntimeAppConfig
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -209,6 +228,8 @@ class RuntimeService(QObject):
     decisionsChanged = Signal()
     errorMessageChanged = Signal()
     liveSourceChanged = Signal()
+    retrainNextRunChanged = Signal()
+    adaptiveStrategySummaryChanged = Signal()
 
     def __init__(
         self,
@@ -218,6 +239,7 @@ class RuntimeService(QObject):
         parent: QObject | None = None,
         default_limit: int = 20,
         core_config_path: str | os.PathLike[str] | None = None,
+        runtime_config_path: str | os.PathLike[str] | None = None,
     ) -> None:
         super().__init__(parent)
         if decision_loader is not None:
@@ -233,6 +255,14 @@ class RuntimeService(QObject):
         self._cached_core_config = None
         self._active_profile: str | None = None
         self._active_log_path: Path | None = None
+        self._runtime_config_path = Path(runtime_config_path).expanduser() if runtime_config_path else None
+        self._runtime_config_cache: "RuntimeAppConfig | None" = None
+        self._retrain_next_run: str = ""
+        self._adaptive_summary: str = ""
+        try:
+            self._update_runtime_metadata(invalidate_cache=False)
+        except Exception:  # pragma: no cover - defensywna inicjalizacja
+            _LOGGER.debug("Nie udało się zainicjalizować metadanych runtime", exc_info=True)
 
     # ------------------------------------------------------------------
     @Property("QVariantList", notify=decisionsChanged)
@@ -242,6 +272,14 @@ class RuntimeService(QObject):
     @Property(str, notify=errorMessageChanged)
     def errorMessage(self) -> str:  # type: ignore[override]
         return self._error_message
+
+    @Property(str, notify=retrainNextRunChanged)
+    def retrainNextRun(self) -> str:  # type: ignore[override]
+        return self._retrain_next_run
+
+    @Property(str, notify=adaptiveStrategySummaryChanged)
+    def adaptiveStrategySummary(self) -> str:  # type: ignore[override]
+        return self._adaptive_summary
 
     # ------------------------------------------------------------------
     @Slot(int, result="QVariantList")
@@ -268,7 +306,14 @@ class RuntimeService(QObject):
             parsed.append(payload)
         self._decisions = parsed
         self.decisionsChanged.emit()
+        self._update_runtime_metadata(invalidate_cache=False)
         return list(self._decisions)
+
+    @Slot()
+    def refreshRuntimeMetadata(self) -> None:  # type: ignore[override]
+        """Wymusza ponowne wczytanie metadanych retrainingu i presetów adaptacyjnych."""
+
+        self._update_runtime_metadata(invalidate_cache=True)
 
     # ------------------------------------------------------------------
     @Property(str, notify=liveSourceChanged)
@@ -390,6 +435,152 @@ class RuntimeService(QObject):
         default = Path("config/core.yaml")
         self._core_config_path = default
         return default
+
+    # ------------------------------------------------------------------ runtime metadata helpers --
+    def _update_runtime_metadata(self, *, invalidate_cache: bool) -> None:
+        if invalidate_cache:
+            self._runtime_config_cache = None
+        next_run = self._compute_next_retrain()
+        if next_run != self._retrain_next_run:
+            self._retrain_next_run = next_run
+            self.retrainNextRunChanged.emit()
+        summary = self._build_adaptive_summary()
+        if summary != self._adaptive_summary:
+            self._adaptive_summary = summary
+            self.adaptiveStrategySummaryChanged.emit()
+
+    def _load_runtime_config(self) -> "RuntimeAppConfig":
+        if load_runtime_app_config is None:
+            raise RuntimeError("Ładowanie konfiguracji runtime nie jest dostępne w tej dystrybucji")
+        if self._runtime_config_cache is not None:
+            return self._runtime_config_cache
+        config_path = self._resolve_runtime_config_path()
+        if config_path is None:
+            raise FileNotFoundError(
+                "Nie znaleziono pliku runtime.yaml – ustaw zmienną BOT_CORE_UI_RUNTIME_CONFIG_PATH"
+            )
+        self._runtime_config_cache = load_runtime_app_config(config_path)
+        return self._runtime_config_cache
+
+    def _resolve_runtime_config_path(self) -> Path | None:
+        if self._runtime_config_path is not None:
+            return self._runtime_config_path
+
+        candidates = (
+            os.environ.get("BOT_CORE_UI_RUNTIME_CONFIG_PATH"),
+            os.environ.get("BOT_CORE_RUNTIME_CONFIG_PATH"),
+            os.environ.get("BOT_CORE_RUNTIME_CONFIG"),
+            os.environ.get("DUDZIAN_RUNTIME_CONFIG"),
+        )
+        for candidate in candidates:
+            if candidate:
+                path = Path(candidate).expanduser()
+                self._runtime_config_path = path
+                return path
+
+        default = Path("config/runtime.yaml")
+        self._runtime_config_path = default
+        return default
+
+    def _compute_next_retrain(self) -> str:
+        if CronSchedule is None:
+            return ""
+        try:
+            runtime_config = self._load_runtime_config()
+        except FileNotFoundError:
+            return ""
+        except Exception:  # pragma: no cover - diagnostyka środowiska
+            _LOGGER.debug("Nie udało się wczytać konfiguracji runtime", exc_info=True)
+            return ""
+
+        schedule: str | None = None
+        retrain_cfg = getattr(runtime_config.ai, "retrain", None)
+        if retrain_cfg and getattr(retrain_cfg, "enabled", False):
+            schedule = getattr(retrain_cfg, "schedule", None) or getattr(runtime_config.ai, "retrain_schedule", None)
+        else:
+            schedule = getattr(runtime_config.ai, "retrain_schedule", None)
+        if not schedule:
+            return ""
+        try:
+            cron = CronSchedule(schedule)
+            next_run = cron.next_after(datetime.now(timezone.utc))
+        except Exception:  # pragma: no cover - niepoprawna składnia lub błąd obliczeń
+            _LOGGER.debug("Nie udało się obliczyć najbliższego retrainingu", exc_info=True)
+            return ""
+        return next_run.astimezone().isoformat(timespec="minutes")
+
+    def _build_adaptive_summary(self) -> str:
+        if ModelRepository is None:
+            return ""
+        try:
+            runtime_config = self._load_runtime_config()
+        except FileNotFoundError:
+            return ""
+        except Exception:  # pragma: no cover - diagnostyka środowiska
+            _LOGGER.debug("Nie udało się wczytać konfiguracji runtime dla presetów adaptacyjnych", exc_info=True)
+            return ""
+
+        registry_path = getattr(runtime_config.ai, "model_registry_path", None)
+        if not registry_path:
+            return ""
+        try:
+            repository = ModelRepository(Path(registry_path))  # type: ignore[abstract]
+        except Exception:  # pragma: no cover - repozytorium może być nieosiągalne
+            _LOGGER.debug("Nie udało się zainicjalizować ModelRepository", exc_info=True)
+            return ""
+        try:
+            artifact = repository.load("adaptive_strategy_policy.json")
+        except FileNotFoundError:
+            return ""
+        except Exception:  # pragma: no cover - uszkodzony plik lub brak dostępu
+            _LOGGER.debug("Nie udało się wczytać stanu adaptive learnera", exc_info=True)
+            return ""
+
+        state = getattr(artifact, "model_state", None)
+        policies = state.get("policies") if isinstance(state, Mapping) else None
+        if not isinstance(policies, Mapping) or not policies:
+            return ""
+
+        fragments: list[str] = []
+        for regime_key, payload in policies.items():
+            if not isinstance(payload, Mapping):
+                continue
+            strategies = payload.get("strategies")
+            if not isinstance(strategies, Iterable):
+                continue
+            best_name: str | None = None
+            best_score: float | None = None
+            best_plays = 0
+            for entry in strategies:
+                if not isinstance(entry, Mapping):
+                    continue
+                name = str(entry.get("name") or "").strip()
+                if not name:
+                    continue
+                plays = int(entry.get("plays", 0) or 0)
+                total_reward = float(entry.get("total_reward", 0.0) or 0.0)
+                mean_reward = total_reward / plays if plays > 0 else float(entry.get("last_reward", 0.0) or 0.0)
+                if best_score is None or mean_reward > best_score:
+                    best_name = name
+                    best_score = mean_reward
+                    best_plays = plays
+            if best_name is None or best_score is None:
+                continue
+            regime_label = str(regime_key).replace("_", " ")
+            fragments.append(f"{regime_label}: {best_name} (μ={best_score:.2f}, n={best_plays})")
+
+        if not fragments:
+            return ""
+
+        updated_at = ""
+        try:
+            updated_at = str(artifact.metadata.get("updated_at", "")).strip()
+        except Exception:
+            updated_at = ""
+        summary = "; ".join(fragments)
+        if updated_at:
+            summary = f"{summary} — aktualizacja {updated_at}"
+        return summary
 
 
 __all__ = ["RuntimeService"]

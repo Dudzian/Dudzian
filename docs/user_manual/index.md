@@ -51,6 +51,17 @@ Zakładka **Dashboard** udostępnia:
 - Ekspozycję per giełda, para handlowa i strategia.
 - Stan portfela oraz aktywne zlecenia.
 - Ostatnie alerty i rekomendacje zarządzania ryzykiem.
+- Panel **Monitoring modeli AI**, który przedstawia ostatnią decyzję modeli wraz z wykrytym reżimem rynku,
+  informacją o planowanym najbliższym retrainingu oraz krótkim podsumowaniem aktywnych presetów adaptacyjnych.
+  Dane pochodzą z nowego modułu uczenia adaptacyjnego, który selekcjonuje strategie zależnie od reżimu oraz metryk jakości.
+
+### Monitoring modeli AI
+- W górnej części panelu prezentowana jest ostatnia decyzja Decision Engine wraz z identyfikatorem modelu i reżimem rynku.
+- Aplikacja oblicza kolejny termin retrainingu na podstawie harmonogramu z `config/runtime.yaml` i wyświetla go w panelu.
+- Sekcja „presety adaptacyjne” pokazuje, która strategia została obecnie wybrana dla dominującego reżimu wraz ze źródłem danych.
+- Przy braku danych lub nieaktywnej automatyzacji panel informuje o oczekiwaniu na pierwsze decyzje/model.
+- Wagi presetów adaptacyjnych są dynamicznie skalowane z uwzględnieniem pewności klasyfikatora reżimu i bieżącego poziomu ryzyka,
+  dzięki czemu strategie defensywne zyskują większy udział przy podwyższonej zmienności.
 
 Wykresy i dane pochodzą z lokalnego serwera gRPC oraz eksportera Prometheus.
 

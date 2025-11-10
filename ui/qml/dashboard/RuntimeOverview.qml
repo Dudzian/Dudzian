@@ -16,6 +16,12 @@ Item {
     readonly property var defaultCardOrder: ["io_queue", "guardrails", "retraining", "compliance", "ai_decisions"]
     property var aiDecisions: []
     property string aiDecisionError: ""
+    property string retrainSchedulerNextRun: runtimeService && runtimeService.retrainNextRun
+                                            ? runtimeService.retrainNextRun
+                                            : ""
+    property string adaptiveStrategySummary: runtimeService && runtimeService.adaptiveStrategySummary
+                                              ? runtimeService.adaptiveStrategySummary
+                                              : ""
 
     function componentForCard(cardId) {
         switch (cardId) {
@@ -445,6 +451,45 @@ Item {
                         text: root.aiDecisionError
                         color: "white"
                         font.pointSize: 11
+                    }
+                }
+
+                GroupBox {
+                    title: qsTr("Monitoring modeli AI")
+                    Layout.fillWidth: true
+
+                    ColumnLayout {
+                        spacing: 6
+
+                        Text {
+                            text: root.aiDecisions.length > 0
+                                  ? qsTr("Ostatnia decyzja: %1 (%2)")
+                                        .arg(root.aiDecisions[0].decision && root.aiDecisions[0].decision.model
+                                                ? root.aiDecisions[0].decision.model
+                                                : qsTr("n/d"))
+                                        .arg(root.aiDecisions[0].marketRegime && root.aiDecisions[0].marketRegime.regime
+                                                ? root.aiDecisions[0].marketRegime.regime
+                                                : qsTr("n/d"))
+                                  : qsTr("Brak zarejestrowanych decyzji modeli")
+                            color: Styles.AppTheme.textSecondary
+                            wrapMode: Text.WordWrap
+                        }
+
+                        Text {
+                            text: root.retrainSchedulerNextRun
+                                  ? qsTr("Następny retraining: %1").arg(root.retrainSchedulerNextRun)
+                                  : qsTr("Harmonogram retrainingu: nieaktywny")
+                            color: Styles.AppTheme.textSecondary
+                            wrapMode: Text.WordWrap
+                        }
+
+                        Text {
+                            text: root.adaptiveStrategySummary
+                                  ? root.adaptiveStrategySummary
+                                  : qsTr("Brak aktywnych presetów adaptacyjnych")
+                            color: Styles.AppTheme.textSecondary
+                            wrapMode: Text.WordWrap
+                        }
                     }
                 }
 

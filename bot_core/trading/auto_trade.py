@@ -459,6 +459,7 @@ class AutoTradeEngine:
         self._last_inference_score: ModelScore | None = None
         self._last_inference_metadata: Dict[str, object] | None = None
         self._last_inference_scored_at: dt.datetime | None = None
+        self._last_dynamic_preset: Dict[str, object] | None = None
 
         batch_rule = DebounceRule(window=0.1, max_batch=1)
         self.bus.subscribe(EventType.MARKET_TICK, self._on_ticks_batch, rule=batch_rule)
@@ -1098,6 +1099,80 @@ class AutoTradeEngine:
                     weights[str(name)] = float(value)
                 except (TypeError, ValueError):
                     continue
+        dynamic_candidate: Mapping[str, object] | None = None
+        metrics_payload: Dict[str, float] | None = None
+        assessment_obj = activation.assessment
+        if isinstance(assessment_obj, MarketRegimeAssessment):
+            metrics_payload = {}
+            raw_metrics = getattr(assessment_obj, "metrics", {})
+            if isinstance(raw_metrics, Mapping):
+                for key, value in raw_metrics.items():
+                    try:
+                        metrics_payload[str(key)] = float(value)
+                    except (TypeError, ValueError):
+                        continue
+            try:
+                metrics_payload["confidence"] = float(assessment_obj.confidence)
+            except (TypeError, ValueError):
+                pass
+            try:
+                metrics_payload["risk_score"] = float(assessment_obj.risk_score)
+            except (TypeError, ValueError):
+                pass
+            if not metrics_payload:
+                metrics_payload = None
+        catalog = getattr(self, "_strategy_catalog", None)
+        if catalog is not None and hasattr(catalog, "dynamic_preset_for"):
+            try:
+                dynamic_candidate = catalog.dynamic_preset_for(
+                    activation.regime.value,
+                    metrics=metrics_payload,
+                )
+            except Exception:  # pragma: no cover - defensywna degradacja
+                dynamic_candidate = None
+        if dynamic_candidate:
+            dynamic_weights: Dict[str, float] = {}
+            strategies_payload = dynamic_candidate.get("strategies")
+            if isinstance(strategies_payload, TypingIterable):
+                for entry in strategies_payload:
+                    if not isinstance(entry, Mapping):
+                        continue
+                    name = str(entry.get("name") or "").strip()
+                    if not name:
+                        continue
+                    try:
+                        weight_value = float(entry.get("weight", 1.0) or 0.0)
+                    except (TypeError, ValueError):
+                        continue
+                    dynamic_weights[name] = weight_value
+            if dynamic_weights:
+                weights = dynamic_weights
+                preset_metadata = dynamic_candidate.get("metadata")
+                preset_metrics = dynamic_candidate.get("metrics")
+                stored_preset: Dict[str, object] = {
+                    "name": dynamic_candidate.get("name"),
+                    "regime": dynamic_candidate.get("regime"),
+                    "strategies": [
+                        {"name": key, "weight": value}
+                        for key, value in dynamic_weights.items()
+                    ],
+                }
+                generated_at = dynamic_candidate.get("generated_at")
+                if isinstance(generated_at, str) and generated_at.strip():
+                    stored_preset["generated_at"] = generated_at
+                if isinstance(preset_metadata, Mapping):
+                    stored_preset["metadata"] = {
+                        str(key): value for key, value in preset_metadata.items()
+                    }
+                if isinstance(preset_metrics, Mapping):
+                    stored_preset["metrics"] = {
+                        str(key): value for key, value in preset_metrics.items()
+                    }
+                self._last_dynamic_preset = stored_preset
+            else:
+                self._last_dynamic_preset = None
+        else:
+            self._last_dynamic_preset = None
         if not weights:
             fallback = self._strategy_weights.weights_for(activation.regime)
             weights = {str(name): float(value) for name, value in fallback.items()}
@@ -2743,6 +2818,11 @@ class AutoTradeEngine:
             }
         if ai_metadata is not None:
             metadata_container["ai_inference"] = dict(ai_metadata)
+        if self._last_dynamic_preset is not None:
+            metadata_container.setdefault(
+                "adaptive_preset",
+                {key: value for key, value in self._last_dynamic_preset.items()},
+            )
         if summary_payload is not None:
             metadata_container["regime_summary"] = summary_payload
         signal_thresholds_metadata: dict[str, object] = {
