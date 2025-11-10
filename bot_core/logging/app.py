@@ -20,10 +20,15 @@ except Exception:  # pragma: no cover - json logging is optional in tests/CI
     jsonlogger = None  # type: ignore
 
 
-def _env(name: str) -> str | None:
-    """Read an environment variable for the logging module."""
+def _env(name: str, *, legacy: str | None = None) -> str | None:
+    """Read an environment variable with optional legacy fallback."""
 
-    return os.getenv(name)
+    value = os.getenv(name)
+    if value is not None:
+        return value
+    if legacy:
+        return os.getenv(legacy)
+    return None
 
 
 _PACKAGE_ROOT = Path(__file__).resolve().parents[1]

@@ -421,6 +421,19 @@ class _ChampionSnapshot:
     challengers: tuple[Mapping[str, object], ...]
 
 
+@dataclass(slots=True)
+class DecisionCycleReport:
+    """Structured summary returned after a synchronous decision cycle.
+
+    Jeśli harmonogram blokuje wykonanie pętli, pola ``decision`` oraz
+    ``metadata`` pozostają puste, aby odzwierciedlić brak nowej decyzji.
+    """
+
+    decision: RiskDecision | None
+    metadata: Mapping[str, str]
+    metrics: Mapping[str, float]
+
+
 class AutoTrader:
     """Small cooperative wrapper around an auto-trading loop.
 
@@ -437,6 +450,7 @@ class AutoTrader:
     }
     _ALIAS_RESOLVER: StrategyAliasResolver | None = None
     _DEFAULT_CHAMPION_KEY = "__default__"
+    _risk_service: Any | None = None
 
     @classmethod
     def _alias_resolver(cls) -> StrategyAliasResolver:
@@ -452,6 +466,18 @@ class AutoTrader:
             )
             cls._ALIAS_RESOLVER = resolver
         return resolver
+
+    @property
+    def risk_service(self) -> Any | None:
+        """Return the risk service injected into the trader."""
+
+        return self._risk_service
+
+    @risk_service.setter
+    def risk_service(self, service: Any | None) -> None:
+        """Inject or clear the risk service dependency."""
+
+        self._risk_service = service
 
     def _profile_section(self, name: str):
         return profile_block(
@@ -551,6 +577,9 @@ class AutoTrader:
         signal_service: Optional[Any] = None,
         risk_service: Optional[Any] = None,
         execution_service: Optional[Any] = None,
+        execution_context: ExecutionContext
+        | Callable[[], ExecutionContext]
+        | None = None,
         data_provider: Optional[Any] = None,
         bootstrap_context: Any | None = None,
         core_risk_engine: Any | None = None,
@@ -693,6 +722,13 @@ class AutoTrader:
         self._default_execution_service: ExecutionService | None = None
         self._default_execution_symbol: str | None = None
         self._execution_context: ExecutionContext | None = None
+        self._execution_context_factory: Callable[[], ExecutionContext] | None = None
+        if callable(execution_context):
+            self._execution_context_factory = execution_context
+        else:
+            self._execution_context = execution_context
+        if self._execution_context is None and self._execution_context_factory is None:
+            self._execution_context_factory = self._default_execution_context_factory
         self.ai_connector = ai_connector
         self.ai_manager: Any | None = getattr(gui, "ai_mgr", None)
         if self.ai_manager is None and bootstrap_context is not None:
@@ -856,6 +892,7 @@ class AutoTrader:
         self._last_signal: str | None = None
         self._last_regime: MarketRegimeAssessment | None = None
         self._last_risk_decision: RiskDecision | None = None
+        self._last_decision_revision: int = 0
         self._controller_cycle_signals: tuple[Any, ...] | None = None
         self._controller_cycle_results: tuple[Any, ...] | None = None
         self._controller_cycle_started_at: float | None = None
@@ -872,6 +909,7 @@ class AutoTrader:
         )
         self._last_ai_context: Mapping[str, Any] | None = None
         self._decision_cycle_metadata: Mapping[str, str] = {}
+        self._decision_cycle_metadata_revision: int = 0
         self._strategy_recommendations: list[dict[str, object]] = []
         self._strategy_adaptation_log: list[dict[str, Any]] = []
         self._cooldown_until: float = 0.0
@@ -1760,7 +1798,7 @@ class AutoTrader:
 
         if last_signal_label:
             self._last_signal = last_signal_label
-        self._last_risk_decision = None
+        self._set_last_risk_decision(None)
 
         emitter_emit = getattr(self.emitter, "emit", None)
         if callable(emitter_emit):
@@ -2617,6 +2655,7 @@ class AutoTrader:
             if regime_rec:
                 cycle_metadata.setdefault("strategy_recommendation_regime", str(regime_rec))
         self._decision_cycle_metadata = cycle_metadata
+        self._decision_cycle_metadata_revision += 1
 
         decision_signal_label = str(decision_side or signal or "hold")
         signal_labels = dict(
@@ -2640,6 +2679,12 @@ class AutoTrader:
             confidence_value,
             labels=self._metric_label_payload(),
         )
+
+    def _set_last_risk_decision(self, decision: RiskDecision | None) -> None:
+        """Zapisz ostatnią decyzję i zwiększ jej rewizję."""
+
+        self._last_risk_decision = decision
+        self._last_decision_revision += 1
 
     def _emit_alert(
         self,
@@ -3413,16 +3458,26 @@ class AutoTrader:
             return normalized[:-3], normalized[-3:]
         return normalized or "ASSET", "USDT"
 
+    def _default_execution_context_factory(self) -> ExecutionContext:
+        return ExecutionContext(
+            portfolio_id=self._portfolio_id,
+            risk_profile=self._risk_profile_name,
+            environment=self._environment_name,
+            metadata=dict(self._execution_metadata),
+        )
+
     def _resolve_execution_context(self) -> ExecutionContext:
         if self._execution_context is None:
-            metadata = dict(self._execution_metadata)
-            self._execution_context = ExecutionContext(
-                portfolio_id=self._portfolio_id,
-                risk_profile=self._risk_profile_name,
-                environment=self._environment_name,
-                metadata=metadata,
-            )
-        return self._execution_context
+            factory = self._execution_context_factory or self._default_execution_context_factory
+            self._execution_context = factory()
+        context = self._execution_context
+        metadata: dict[str, str] = {}
+        existing_metadata = getattr(context, "metadata", None)
+        if isinstance(existing_metadata, Mapping):
+            metadata.update(existing_metadata)
+        metadata.update(self._execution_metadata)
+        context.metadata = metadata
+        return context
 
     def _enforce_work_schedule(self) -> bool:
         schedule = getattr(self, "_work_schedule", None)
@@ -7832,7 +7887,7 @@ class AutoTrader:
         returns = market_data.get("close")
         last_return = 0.0
         if isinstance(returns, pd.Series):
-            changes = returns.pct_change().dropna()
+            changes = returns.pct_change(fill_method=None).dropna()
             if not changes.empty:
                 last_return = float(changes.iloc[-1])
 
@@ -8366,7 +8421,7 @@ class AutoTrader:
         )
         self._last_signal = signal
         self._last_regime = assessment
-        self._last_risk_decision = decision
+        self._set_last_risk_decision(decision)
 
         risk_service = self._resolve_risk_service()
         risk_invoked = risk_service is not None
@@ -8517,22 +8572,64 @@ class AutoTrader:
                 metadata={"reason": "risk_rejected"},
             )
 
-    def run_cycle_once(self) -> None:
-        """Execute a single auto-trading cycle synchronously.
+    def _snapshot_decision_metrics(
+        self, labels: Mapping[str, str]
+    ) -> dict[str, float]:
+        guardrail_total = 0.0
+        guardrail_values = getattr(self._metric_guardrail_blocks_total, "_values", {})
+        for label_tuple, value in getattr(guardrail_values, "items", lambda: [])():
+            label_mapping = dict(label_tuple)
+            if all(label_mapping.get(key) == val for key, val in labels.items()):
+                guardrail_total += float(value)
+        return {
+            "cycles_total": float(self._metric_cycle_total.value(labels=labels)),
+            "strategy_switch_total": float(
+                self._metric_strategy_switch_total.value(labels=labels)
+            ),
+            "guardrail_blocks_total": guardrail_total,
+        }
 
-        The helper is primarily used by lightweight schedulers and tests.  It
-        reuses the same internal routine as the background worker, ensuring the
-        full pipeline – data fetch, AIManager evaluation and
-        DecisionOrchestrator integration – is exercised deterministically.
-        """
+    def run_decision_cycle(self) -> DecisionCycleReport:
+        """Execute a single decision cycle and return a structured report."""
 
+        metadata_revision_before = getattr(
+            self, "_decision_cycle_metadata_revision", 0
+        )
+        decision_revision_before = getattr(self, "_last_decision_revision", 0)
+        label_snapshot = dict(self._base_metric_labels)
         with self._profile_section("cycle") as profiler:
             self._auto_trade_loop()
         if profiler is not None:
             self._store_profile(profiler.report)
+        metadata_source = getattr(self, "_decision_cycle_metadata", None)
+        if (
+            metadata_source
+            and getattr(self, "_decision_cycle_metadata_revision", metadata_revision_before)
+            != metadata_revision_before
+        ):
+            metadata = dict(metadata_source)
+        else:
+            metadata = {}
+        metrics = self._snapshot_decision_metrics(label_snapshot)
+        decision = (
+            self._last_risk_decision
+            if getattr(self, "_last_decision_revision", decision_revision_before)
+            != decision_revision_before
+            else None
+        )
+        return DecisionCycleReport(
+            decision=decision,
+            metadata=metadata,
+            metrics=metrics,
+        )
+
+    def run_cycle_once(self) -> DecisionCycleReport:
+        """Backward compatible wrapper around :meth:`run_decision_cycle`."""
+
+        return self.run_decision_cycle()
 
     def _resolve_risk_service(self) -> Any | None:
-        risk_service = getattr(self, "risk_service", None)
+        risk_service = self.risk_service
         if risk_service is None:
             risk_service = getattr(self, "core_risk_engine", None)
         return risk_service
@@ -8778,7 +8875,7 @@ class AutoTrader:
         self._notify_risk_evaluation_listeners(payload)
 
     def _resolve_risk_service(self) -> Any | None:
-        risk_service = getattr(self, "risk_service", None)
+        risk_service = self.risk_service
         if risk_service is None:
             risk_service = getattr(self, "core_risk_engine", None)
         return risk_service
@@ -15900,6 +15997,7 @@ __all__ = [
     "AutoTrader",
     "AutoTraderDecisionScheduler",
     "RiskDecision",
+    "DecisionCycleReport",
     "EmitterLike",
     "GuardrailTrigger",
 ]
