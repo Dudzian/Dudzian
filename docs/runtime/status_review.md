@@ -2,13 +2,13 @@
 
 ## Co już działa
 - **Strumieniowanie long-poll** – adaptery giełdowe korzystają z neutralnego interfejsu `MarketStreamHandle` i klas bazowych REST, dzięki czemu eliminują zależności po WebSocketach i zachowują zgodność z menedżerem giełd.【F:bot_core/exchanges/interfaces.py†L1-L105】【F:bot_core/exchanges/streaming.py†L1-L168】
-- **Autonomiczny AutoTrader** – pętla `_auto_trade_loop` integruje klasyfikator reżimów, orkiestrator decyzji, dziennik audytu i usługę egzekucji, a nowe testy E2E pokrywają scenariusze paper/live z udaną i nieudaną egzekucją.【F:bot_core/auto_trader/app.py†L1-L120】【F:tests/e2e/test_autotrader_autonomy.py†L1-L140】【F:tests/e2e/fixtures/execution.py†L1-L80】
+- **Autonomiczny AutoTrader** – publiczne API `run_decision_cycle()` deleguje do pętli decyzyjnej, integrując klasyfikator reżimów, orkiestrator decyzji, dziennik audytu i usługę egzekucji, a nowe testy E2E korzystają z raportu metryk w scenariuszach paper/live z udaną i nieudaną egzekucją.【F:bot_core/auto_trader/app.py†L8400-L8610】【F:tests/e2e/test_autotrader_autonomy.py†L1-L200】【F:tests/e2e/fixtures/execution.py†L1-L80】
 - **UI runtime** – `RuntimeService` udostępnia QML-owi znormalizowane wpisy `TradingDecisionJournal`, agreguje metryki ryzyka (`riskMetrics`, `riskTimeline`, `lastOperatorAction`) i zasila karty „Decyzje AI” oraz nowy panel „Risk Journal” z drill-downem, akcjami operatora, podsumowaniem ostatniej interwencji i histogramami najczęstszych flag/stress failure.【F:ui/backend/runtime_service.py†L1-L460】【F:ui/qml/dashboard/RuntimeOverview.qml†L1-L200】
 
 ## Najważniejsze luki
 - **Brak integracji runtime_service ↔ gRPC** – `RuntimeService` ładuje dane bezpośrednio z lokalnego dziennika i nie korzysta z transportu gRPC, więc w środowiskach produkcyjnych UI wciąż nie zobaczy decyzji z procesu backendowego.【F:ui/backend/runtime_service.py†L200-L260】
 - **Testy UI zależne od PySide6** – regresyjne testy QML są domyślnie pomijane, bo środowisko nie zapewnia PySide6, co utrudnia automatyczną weryfikację nowych kart dashboardu.【F:tests/ui/test_runtime_overview.py†L1-L40】
-- **AutoTrader nadal bazuje na prywatnych metodach** – scenariusze E2E wywołują `_auto_trade_loop` zamiast publicznych API, a wykonywanie decyzji wymaga dalszego czyszczenia zależności (np. `RiskService`, `ExecutionContext`).【F:tests/e2e/test_autotrader_autonomy.py†L60-L140】
+- **Brak konsumpcji metryk w UI** – mimo że `run_decision_cycle()` raportuje metryki cyklu, warstwa runtime nie publikuje ich jeszcze do paneli QML, więc dashboard wciąż opiera się na historycznych snapshotach z dziennika decyzji.【F:bot_core/auto_trader/app.py†L8400-L8610】【F:ui/backend/runtime_service.py†L200-L460】
 - **Monitorowanie strumieni** – `LocalLongPollStream` nie raportuje metryk ani statystyk błędów, przez co brak widoczności kondycji połączeń w telemetryce runtime.【F:bot_core/exchanges/streaming.py†L131-L200】
 
 ### Wymagania danych dla Risk Journal

@@ -7,7 +7,7 @@ import pandas as pd
 from bot_core.ai.regime import MarketRegime, MarketRegimeAssessment
 from bot_core.auto_trader import AutoTrader
 from bot_core.auto_trader.audit import DecisionAuditLog
-from bot_core.execution import ExecutionService
+from bot_core.execution import ExecutionContext, ExecutionService
 from bot_core.runtime.journal import InMemoryTradingDecisionJournal
 
 from tests.e2e.fixtures import FakeExecutionService
@@ -71,6 +71,12 @@ def _build_trader(
         (),
         {"ai_mgr": ai_manager, "portfolio_manager": None, "decision_journal": journal},
     )()
+    context = ExecutionContext(
+        portfolio_id="autotrader",
+        risk_profile="paper" if environment == "paper" else "live",
+        environment=environment,
+        metadata={},
+    )
     trader = AutoTrader(
         emitter=emitter,
         gui=gui,
@@ -81,11 +87,15 @@ def _build_trader(
         decision_audit_log=audit_log,
         decision_journal=journal,
         execution_service=execution_service,
+        execution_context=context,
     )
     trader.risk_service = None
     trader.core_risk_engine = None
     trader._environment_name = environment
-    trader._execution_context = None
+    trader._base_metric_labels = {
+        **trader._base_metric_labels,
+        "environment": environment,
+    }
     return trader, journal, emitter, audit_log
 
 
@@ -100,13 +110,14 @@ def test_autotrader_paper_switches_to_growth_profile() -> None:
     ai_manager = _StaticAIManager(assessment=assessment, prediction=0.015, probability=0.71)
     trader, journal, emitter, _ = _build_trader(ai_manager)
 
-    trader._auto_trade_loop()
+    report = trader.run_decision_cycle()
 
     assert trader._risk_profile_name == "aggressive"
     assert trader.current_strategy == "trend_following"
-    assert trader._decision_cycle_metadata.get("decision_state") == "trade"
+    assert report.metadata.get("decision_state") == "trade"
     assert journal.export(), "journal should capture decision events"
     assert any(event[0] == "auto_trader.decision_audit" for event in emitter.events)
+    assert report.metrics["cycles_total"] >= 1
 
 
 def test_autotrader_live_enforces_conservative_profile_on_high_risk() -> None:
@@ -120,17 +131,18 @@ def test_autotrader_live_enforces_conservative_profile_on_high_risk() -> None:
     ai_manager = _StaticAIManager(assessment=assessment, prediction=0.0, probability=0.4)
     trader, journal, emitter, _ = _build_trader(ai_manager)
 
-    trader._auto_trade_loop()
+    report = trader.run_decision_cycle()
 
     assert trader._risk_profile_name == "conservative"
     assert trader.current_strategy == "capital_preservation"
-    assert trader._decision_cycle_metadata.get("decision_state") == "hold"
+    assert report.metadata.get("decision_state") == "hold"
     decision_events = [event for event in journal.export() if event.get("event") == "decision_composed"]
     assert decision_events and decision_events[0].get("risk_profile") == "conservative"
     assert any(
         event[0] == "auto_trader.decision_audit" and event[1].get("stage") == "risk_profile_transition"
         for event in emitter.events
     )
+    assert report.metrics["cycles_total"] >= 1
 
 
 def test_autotrader_paper_executes_order_and_records_audit() -> None:
@@ -145,7 +157,7 @@ def test_autotrader_paper_executes_order_and_records_audit() -> None:
     service = FakeExecutionService()
     trader, _, _, audit_log = _build_trader(ai_manager, execution_service=service)
 
-    trader._auto_trade_loop()
+    report = trader.run_decision_cycle()
 
     assert service.executed, "usługa egzekucji powinna zostać wywołana"
     recorded = service.executed[0]
@@ -154,6 +166,8 @@ def test_autotrader_paper_executes_order_and_records_audit() -> None:
     assert recorded.context.environment == "paper"
     assert recorded.request.metadata is not None
     assert recorded.request.metadata.get("mode") == trader._schedule_mode
+    assert report.decision is not None and report.decision.should_trade
+    assert report.metrics["cycles_total"] >= 1
 
     stages = audit_log.to_dicts(limit=10)
     assert any(entry["stage"] == "execution_submitted" for entry in stages)
@@ -181,12 +195,14 @@ def test_autotrader_live_execution_failure_records_audit() -> None:
         symbol="ETHUSDT",
     )
 
-    trader._auto_trade_loop()
+    report = trader.run_decision_cycle()
 
     assert service.executed, "nawet w przypadku błędu powinien wystąpić jeden attempt"
     recorded = service.executed[0]
     assert recorded.request.symbol == "ETHUSDT"
     assert recorded.context.environment == "live"
+    assert report.decision is not None
+    assert report.metrics["cycles_total"] >= 1
 
     stages = audit_log.to_dicts(limit=10)
     assert any(entry["stage"] == "execution_failed" for entry in stages)
@@ -195,4 +211,25 @@ def test_autotrader_live_execution_failure_records_audit() -> None:
         and entry["payload"].get("order", {}).get("symbol") == "ETHUSDT"
         for entry in stages
     )
+
+
+def test_autotrader_cycle_report_without_new_decision() -> None:
+    assessment = MarketRegimeAssessment(
+        regime=MarketRegime.TREND,
+        confidence=0.92,
+        risk_score=0.22,
+        metrics={"trend_strength": 0.88},
+        symbol="BTCUSDT",
+    )
+    ai_manager = _StaticAIManager(assessment=assessment, prediction=0.02, probability=0.8)
+    trader, _, _, _ = _build_trader(ai_manager)
+
+    trader._enforce_work_schedule = lambda: False  # type: ignore[assignment]
+    before_cycles = trader._metric_cycle_total.value(labels=trader._base_metric_labels)
+
+    report = trader.run_decision_cycle()
+
+    assert report.decision is None
+    assert report.metadata == {}
+    assert report.metrics["cycles_total"] == before_cycles
 
