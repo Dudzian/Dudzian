@@ -280,9 +280,16 @@ def test_runtime_service_consumes_grpc_stream(
             assert payload["status"] == "connected"
             assert "reconnects" in payload and payload["reconnects"] >= 0
             assert "downtime_ms" in payload and payload["downtime_ms"] >= 0.0
+            assert "downtimeMs" in payload and payload["downtimeMs"] >= 0.0
             assert "last_latency_ms" in payload
             assert "p50_ms" in payload and payload["p50_ms"] >= 0.0
             assert "p95_ms" in payload and payload["p95_ms"] >= 0.0
+            assert "latency_p95_ms" in payload and payload["latency_p95_ms"] == pytest.approx(payload["p95_ms"])
+            assert "p95_seconds" in payload and payload["p95_seconds"] == pytest.approx(payload["p95_ms"] / 1000.0)
+            assert payload["p95_ms"] <= 3000.0
+            assert "nextRetrySeconds" in payload
+            if payload["nextRetrySeconds"] is not None:
+                assert payload["nextRetrySeconds"] >= 0.0
             health = service.feedHealth
             assert health["status"] == "connected"
             assert health["reconnects"] == payload["reconnects"]
@@ -291,6 +298,8 @@ def test_runtime_service_consumes_grpc_stream(
             assert metrics["cycles_total"] >= 1.0
             assert metrics["strategy_switch_total"] >= 0.0
             assert metrics["guardrail_blocks_total"] >= 0.0
+            assert metrics.get("cycle_latency_p95_ms", 0.0) <= 3000.0
+            assert metrics.get("cycle_latency_p50_ms", 0.0) <= metrics.get("cycle_latency_p95_ms", 0.0)
         finally:
             service._stop_grpc_stream()
             app.quit()
@@ -496,6 +505,8 @@ def test_grpc_decision_feed_snapshot_and_reconnect(
             metrics_payload = json.loads(ci_decision_feed_metrics.read_text(encoding="utf-8"))
             assert metrics_payload["reconnects"] >= 1
             assert metrics_payload["p95_ms"] >= metrics_payload["p50_ms"] >= 0.0
+            assert metrics_payload.get("latency_p95_ms", 0.0) == pytest.approx(metrics_payload["p95_ms"])
+            assert metrics_payload["p95_ms"] <= 3000.0
     finally:
         service._stop_grpc_stream()
         app.quit()

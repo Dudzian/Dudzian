@@ -1556,8 +1556,19 @@ class _RuntimeServicer(trading_pb2_grpc.RuntimeServiceServicer):
         if not metrics:
             return None
         message = trading_pb2.DecisionCycleMetrics()
+        latency_fields = {
+            "cycle_latency_p50_ms": "cycle_latency_p50_ms",
+            "cycle_latency_p95_ms": "cycle_latency_p95_ms",
+        }
         for key, value in metrics.items():
-            message.values[key] = float(value)
+            try:
+                numeric = float(value)
+            except (TypeError, ValueError):
+                continue
+            message.values[key] = numeric
+            attr = latency_fields.get(key)
+            if attr is not None and hasattr(message, attr):
+                setattr(message, attr, numeric)
         return message
 
     def _attach_cycle_metrics(

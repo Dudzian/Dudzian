@@ -44,6 +44,14 @@ from ui.backend.runtime_service import RuntimeService
 from ui.backend.telemetry_provider import TelemetryProvider
 
 
+@pytest.fixture
+def decision_feed_degradation_samples() -> list[dict[str, float | None]]:
+    return [
+        {"status": "connected", "p95_ms": 2100.0, "downtimeMs": 0.0, "nextRetrySeconds": None},
+        {"status": "retrying", "p95_ms": 2950.0, "downtimeMs": 480.0, "nextRetrySeconds": 1.5},
+    ]
+
+
 class _StubTelemetryProvider(QObject):
     """Minimalny provider emitujący zmiany dla testów live."""
 
@@ -629,6 +637,8 @@ def test_runtime_overview_cards_react_to_live_signals() -> None:
             "cycles_total": 42.0,
             "strategy_switch_total": 6.0,
             "guardrail_blocks_total": 2.0,
+            "cycle_latency_p50_ms": 1250.0,
+            "cycle_latency_p95_ms": 2450.0,
         }
     )
     app.processEvents()
@@ -643,6 +653,10 @@ def test_runtime_overview_cards_react_to_live_signals() -> None:
     assert guardrail_blocks is not None and "2" in guardrail_blocks.property("text")
     guardrail_alert = cycle_group.findChild(QObject, "runtimeOverviewGuardrailAlert")
     assert guardrail_alert is not None and guardrail_alert.property("visible") is True
+    latency_label = cycle_group.findChild(QObject, "runtimeOverviewCycleLatency")
+    assert latency_label is not None
+    latency_text = latency_label.property("text")
+    assert "2450" in latency_text
 
     runtime_service.push_longpoll_metrics(
         [
@@ -725,3 +739,16 @@ def test_runtime_service_attach_reports_missing_log(tmp_path: Path, monkeypatch:
     service = RuntimeService()
     assert service.attachToLiveDecisionLog("stage6") is False
     assert "nie istnieje" in service.errorMessage.lower()
+
+
+def test_decision_feed_latency_slo(decision_feed_degradation_samples: list[dict[str, float | None]]) -> None:
+    for sample in decision_feed_degradation_samples:
+        p95_ms = sample.get("p95_ms")
+        assert p95_ms is not None
+        assert float(p95_ms) <= 3000.0
+        downtime_ms = sample.get("downtimeMs")
+        if downtime_ms is not None:
+            assert float(downtime_ms) >= 0.0
+        next_retry = sample.get("nextRetrySeconds")
+        if next_retry is not None:
+            assert float(next_retry) >= 0.0

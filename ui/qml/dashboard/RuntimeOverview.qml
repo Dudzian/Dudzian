@@ -636,6 +636,25 @@ Item {
                             font.bold: true
                             wrapMode: Text.WordWrap
                         }
+
+                        Text {
+                            objectName: "runtimeOverviewCycleLatency"
+                            visible: root.cycleMetrics && (root.cycleMetrics.cycle_latency_p50_ms !== undefined || root.cycleMetrics.cycle_latency_p95_ms !== undefined)
+                            text: {
+                                const metrics = root.cycleMetrics || {}
+                                const p50 = metrics.cycle_latency_p50_ms
+                                const p95 = metrics.cycle_latency_p95_ms
+                                const hasP50 = typeof p50 === "number" && !isNaN(p50)
+                                const hasP95 = typeof p95 === "number" && !isNaN(p95)
+                                if (!hasP50 && !hasP95)
+                                    return qsTr("Brak próbek latencji cyklu decyzyjnego")
+                                const p50Label = hasP50 ? Number(p50).toLocaleString(Qt.locale(), "f", 0) : qsTr("n/d")
+                                const p95Label = hasP95 ? Number(p95).toLocaleString(Qt.locale(), "f", 0) : qsTr("n/d")
+                                return qsTr("Opóźnienie cyklu p50: %1 ms • p95: %2 ms").arg(p50Label).arg(p95Label)
+                            }
+                            color: Styles.AppTheme.textSecondary
+                            wrapMode: Text.WordWrap
+                        }
                     }
                 }
 
