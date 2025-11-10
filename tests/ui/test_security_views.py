@@ -6,6 +6,8 @@ from typing import Callable, Iterator, Tuple
 
 import pytest
 
+pytestmark = pytest.mark.qml
+
 from tests.utils.libgl import ensure_libgl_available
 
 try:

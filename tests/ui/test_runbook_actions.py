@@ -3,6 +3,8 @@ from pathlib import Path
 
 import pytest
 
+pytestmark = pytest.mark.qml
+
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 try:  # pragma: no cover - zależne od środowiska CI

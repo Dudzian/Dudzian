@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import sys
+import importlib.util
 from pathlib import Path
 from types import ModuleType
 from typing import Iterable
@@ -14,6 +15,9 @@ from scripts import generate_trading_stubs
 
 
 os.environ.setdefault("DUDZIAN_SECURITY_SKIP", "1")
+
+_REQUIRE_QML_ENV = "PYTEST_REQUIRE_QML"
+_QML_REQUIRED = os.getenv(_REQUIRE_QML_ENV, "").lower() in {"1", "true", "yes", "on"}
 
 
 if "nacl" not in sys.modules:
@@ -151,6 +155,12 @@ def pytest_configure(config: pytest.Config) -> None:
 
     config.trading_stubs_available = _HAS_TRADING_STUBS  # type: ignore[attr-defined]
 
+    config._require_qml = _QML_REQUIRED  # type: ignore[attr-defined]
+    if _QML_REQUIRED and importlib.util.find_spec("PySide6") is None:
+        raise pytest.UsageError(
+            "Ustawiono PYTEST_REQUIRE_QML=1, ale moduł PySide6 nie jest dostępny w środowisku testowym.",
+        )
+
     if fast_mode:
         global _FAST_MODE_ENABLED
         if not _FAST_MODE_ENABLED:
@@ -160,6 +170,13 @@ def pytest_configure(config: pytest.Config) -> None:
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    if getattr(config, "_require_qml", False):  # type: ignore[attr-defined]
+        qml_items = [item for item in items if "qml" in item.keywords]
+        if not qml_items:
+            raise pytest.UsageError(
+                "Brak zebranych testów oznaczonych markerem 'qml' przy włączonym wymaganiu PYTEST_REQUIRE_QML=1.",
+            )
+
     if getattr(config, "fast_mode", False):  # type: ignore[attr-defined]
         skip_marker = pytest.mark.skip(reason="pomijam test integracyjny w trybie fast")
         for item in items:
