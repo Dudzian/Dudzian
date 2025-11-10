@@ -76,6 +76,8 @@ service = MarketplaceService(installer, repository)
   wskazując dla których presetów portfel posiada licencję, gdzie brakuje miejsc
   lub oczekuje na zatwierdzenie, oraz udostępnia dedykowane kody i komunikaty
   ostrzegawcze.
+* `service.preferences_payload()` udostępnia surowy stan preferencji i
+  nadpisanych parametrów (wykorzystywany zarówno przez UI, jak i workflow CLI).
 
 Każda instalacja zwraca `MarketplaceInstallResult`, który informuje o statusie
 podpisu (`signature_verified`), wyniku dopasowania fingerprintu oraz liście
@@ -89,6 +91,33 @@ zapełniona pula seatów, pauza w subskrypcji). Bezpośrednio poniżej znajduje 
 panel **Licencja** z podsumowaniem przydzielonych urządzeń, dostępnych miejsc
 oraz statusem subskrypcji – dane te pochodzą z `license.validation` oraz
 sekcji `seat_summary`/`subscription_summary` wygenerowanych przez backend.
+
+### Workflow CLI i personalizacja
+
+Warstwa CLI (`scripts/ui_marketplace_bridge.py install`) korzysta z tych samych
+store'ów co UI (`assignments.json`, `preferences.json`, `marketplace_licenses.json`).
+Pozwala to operatorowi wykonać instalację offline i natychmiast odświeżyć panel
+Marketplace bez restartu aplikacji.
+
+```bash
+python scripts/ui_marketplace_bridge.py \
+    --presets-dir data/strategies \
+    --licenses-path var/marketplace_licenses.json \
+    --fingerprint DEVICE-XYZ \
+    --signing-key=catalog=$(cat config/marketplace/keys/catalog.hex) \
+    install \
+    --preset-id automation-ai \
+    --portfolio-id master-1 \
+    --license-json /mnt/offline/licenses/automation-ai.json \
+    --licenses-dir var/licenses/presets \
+    --catalog-path /mnt/offline/catalog \
+    --preferences-json docs/samples/preferences_balanced.json
+```
+
+Parametr `--preferences-json` przyjmuje budżet, target ryzyka oraz (opcjonalnie)
+limit liczby pozycji. Backend mapuje te wartości na konkretne parametry strategii
+z wykorzystaniem modułu `bot_core.strategies.personalization.preferences`,
+zapisując wynik w `.meta/preferences.json`.
 
 ## Integracja z QML
 
@@ -113,11 +142,27 @@ Po każdej operacji instalacji lub usunięcia warto ponownie wywołać
 
 ## Testy
 
-Zestaw testów jednostkowych obejmuje zarówno moduł instalatora, jak i warstwę
-UI:
+Zaktualizowany zestaw testów pokrywa pełny workflow Marketplace – od przechowywania
+preferencji po scenariusz end-to-end instalacji:
 
-* `tests/strategies/test_marketplace_installer.py`
-* `tests/ui/test_marketplace_flow.py`
+* `tests/test_marketplace_preferences_store.py` – weryfikuje magazyn
+  `PresetPreferenceStore`, w tym walidację nadpisań i serializację.
+* `tests/strategies/test_preset_personalization.py` – sprawdza mapowanie
+  `UserPreferenceConfig` oraz `PresetPreferencePersonalizer` na parametry presetów.
+* `tests/test_ui_marketplace_bridge.py` – testuje ścieżki CLI oraz obsługę błędów
+  licencyjnych i przypisań portfeli.
+* `tests/e2e/test_marketplace_install_workflow.py` – symuluje proces zakupu
+  licencji, fingerprint, instalację i przypisanie do portfela.
+
+Komplet można uruchomić komendą:
+
+```bash
+pytest \
+    tests/test_marketplace_preferences_store.py \
+    tests/strategies/test_preset_personalization.py \
+    tests/test_ui_marketplace_bridge.py \
+    tests/e2e/test_marketplace_install_workflow.py
+```
 
 Przed uruchomieniem testów należy zainstalować zależności developerskie i
 wygenerować stuby gRPC zgodnie z instrukcją w `README.md`.

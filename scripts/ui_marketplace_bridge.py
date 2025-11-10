@@ -17,9 +17,15 @@ from bot_core.marketplace import (
     parse_preset_document,
 )
 from bot_core.marketplace.assignments import PresetAssignmentStore
+from bot_core.marketplace.preferences import PresetPreferenceStore
 from bot_core.strategies.catalog import (
     StrategyCatalog,
     StrategyPresetProfile,
+)
+from bot_core.strategies.installer import MarketplacePresetInstaller
+from bot_core.strategies.personalization.preferences import (
+    PresetPreferencePersonalizer,
+    UserPreferenceConfig,
 )
 from bot_core.security.hwid import HwIdProvider
 from bot_core.security.license import summarize_license_payload
@@ -331,9 +337,28 @@ def _write_license_store(path: Path, store: Mapping[str, Any]) -> None:
     path.write_text(serialized, encoding="utf-8")
 
 
+def _sanitize_identifier(value: str) -> str:
+    cleaned = [ch if ch.isalnum() or ch in {"-", "_"} else "-" for ch in str(value or "")]
+    normalized = "".join(cleaned).strip("-")
+    return normalized or "preset"
+
+
+def _write_license_payload(directory: Path, preset_id: str, payload: Mapping[str, Any]) -> Path:
+    directory.mkdir(parents=True, exist_ok=True)
+    target = directory / f"{_sanitize_identifier(preset_id)}.json"
+    serialized = json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    target.write_text(serialized, encoding="utf-8")
+    return target
+
+
 def _assignment_store(presets_dir: Path) -> PresetAssignmentStore:
     repository = PresetRepository(presets_dir)
     return PresetAssignmentStore(repository.root / ".meta" / "assignments.json")
+
+
+def _preference_store(presets_dir: Path) -> PresetPreferenceStore:
+    repository = PresetRepository(presets_dir)
+    return PresetPreferenceStore(repository.root / ".meta" / "preferences.json")
 
 
 def _build_hwid_provider(override: str | None) -> HwIdProvider | None:
@@ -342,6 +367,26 @@ def _build_hwid_provider(override: str | None) -> HwIdProvider | None:
     if not override:
         return None
     return HwIdProvider(fingerprint_reader=lambda: override)
+
+
+def _build_installer(
+    repository: PresetRepository,
+    *,
+    catalog_path: Path | None,
+    licenses_dir: Path | None,
+    signing_keys: Mapping[str, bytes] | None,
+    hwid_provider: HwIdProvider | None,
+) -> MarketplacePresetInstaller:
+    kwargs: dict[str, object] = {}
+    if catalog_path is not None:
+        kwargs["catalog_path"] = catalog_path
+    if licenses_dir is not None:
+        kwargs["licenses_dir"] = licenses_dir
+    if signing_keys:
+        kwargs["signing_keys"] = signing_keys
+    if hwid_provider is not None:
+        kwargs["hwid_provider"] = hwid_provider
+    return MarketplacePresetInstaller(repository, **kwargs)
 
 
 def _load_catalog(
@@ -605,6 +650,108 @@ def _command_activate(args: argparse.Namespace) -> None:
     sys.stdout.write("\n")
 
 
+def _command_install_workflow(args: argparse.Namespace) -> None:
+    presets_dir = Path(args.presets_dir)
+    licenses_path = Path(args.licenses_path)
+    license_dir = Path(args.licenses_dir).expanduser()
+    repository = PresetRepository(presets_dir)
+    assignments_store = PresetAssignmentStore(repository.root / ".meta" / "assignments.json")
+    preferences_store = PresetPreferenceStore(repository.root / ".meta" / "preferences.json")
+
+    signing_keys = _load_signing_keys(args.signing_key or [], args.signing_key_file or [])
+    hwid_provider = _build_hwid_provider(args.fingerprint)
+    catalog_path = Path(args.catalog_path).expanduser() if args.catalog_path else None
+    installer = _build_installer(
+        repository,
+        catalog_path=catalog_path,
+        licenses_dir=license_dir,
+        signing_keys=signing_keys or None,
+        hwid_provider=hwid_provider,
+    )
+
+    license_store = _read_license_store(licenses_path)
+    license_payload: Mapping[str, Any] | None = None
+    license_file_path: Path | None = None
+    if args.license_json:
+        license_payload = _read_license_payload(args)
+        license_store.setdefault("licenses", {})[args.preset_id] = dict(license_payload)
+        _write_license_store(licenses_path, license_store)
+        license_file_path = _write_license_payload(license_dir, args.preset_id, license_payload)
+    else:
+        existing = license_store.get("licenses") if isinstance(license_store, Mapping) else None
+        candidate = existing.get(args.preset_id) if isinstance(existing, Mapping) else None
+        if isinstance(candidate, Mapping):
+            license_payload = dict(candidate)
+        candidate_path = license_dir / f"{_sanitize_identifier(args.preset_id)}.json"
+        if candidate_path.exists():
+            license_file_path = candidate_path
+
+    result = installer.install_from_catalog(args.preset_id)
+
+    portfolio_ids = [value.strip() for value in (args.portfolio_id or []) if isinstance(value, str) and value.strip()]
+    assignments: dict[str, list[str]] = {}
+    if result.success:
+        for portfolio_id in portfolio_ids:
+            assigned = assignments_store.assign(args.preset_id, portfolio_id)
+            assignments[portfolio_id] = list(assigned)
+    else:
+        for portfolio_id in portfolio_ids:
+            assignments[portfolio_id] = list(assignments_store.assigned_portfolios(args.preset_id))
+
+    preference_entries: dict[str, Mapping[str, Any]] = {}
+    if args.preferences_json and result.success:
+        raw_preferences = _load_json(Path(args.preferences_json), stdin_fallback=True)
+        if not isinstance(raw_preferences, Mapping):
+            raise SystemExit("Payload preferencji musi być obiektem JSON.")
+        preference_config = UserPreferenceConfig.from_mapping(raw_preferences)
+        personalizer = PresetPreferencePersonalizer()
+        overrides: Mapping[str, Mapping[str, Any]] = {}
+        try:
+            document, _ = repository.export_preset(args.preset_id)
+        except FileNotFoundError:
+            document = None
+        if document is not None:
+            overrides = personalizer.build_overrides(document, preference_config)
+        for portfolio_id in portfolio_ids:
+            entry = preferences_store.set_entry(
+                args.preset_id,
+                portfolio_id,
+                preferences=preference_config.as_payload(),
+                overrides=overrides,
+            )
+            preference_entries[portfolio_id] = entry
+
+    install_payload = {
+        "success": result.success,
+        "issues": list(result.issues),
+        "warnings": list(result.warnings),
+        "signatureVerified": result.signature_verified,
+        "fingerprintVerified": result.fingerprint_verified,
+    }
+
+    output: dict[str, Any] = {
+        "presetId": args.preset_id,
+        "install": install_payload,
+        "assignments": assignments,
+        "stores": {
+            "assignments": str(assignments_store.path),
+            "preferences": str(preferences_store.path),
+            "licenseIndex": str(licenses_path),
+        },
+    }
+    if license_payload is not None:
+        output["license"] = license_payload
+    if license_file_path is not None:
+        output["licenseFile"] = str(license_file_path)
+    if result.installed_path is not None:
+        output["installedPath"] = str(result.installed_path)
+    if preference_entries:
+        output["preferences"] = preference_entries
+
+    json.dump(output, sys.stdout, ensure_ascii=False, indent=2, sort_keys=True)
+    sys.stdout.write("\n")
+
+
 def _command_deactivate(args: argparse.Namespace) -> None:
     presets_dir = Path(args.presets_dir)
     licenses_path = Path(args.licenses_path)
@@ -681,6 +828,35 @@ def _build_parser() -> argparse.ArgumentParser:
     activate_parser.add_argument("--preset-id", required=True, help="Identyfikator presetu")
     activate_parser.add_argument("--license-json", help="Ścieżka do pliku JSON z licencją (domyślnie stdin)")
 
+    install_parser = subparsers.add_parser(
+        "install",
+        help="Instaluje preset z katalogu i przypisuje go do portfeli.",
+    )
+    install_parser.add_argument("--preset-id", required=True, help="Identyfikator presetu")
+    install_parser.add_argument(
+        "--portfolio-id",
+        action="append",
+        required=True,
+        help="Id portfela docelowego (można podać wielokrotnie)",
+    )
+    install_parser.add_argument(
+        "--license-json",
+        help="Ścieżka do pliku licencji Marketplace (opcjonalnie)",
+    )
+    install_parser.add_argument(
+        "--licenses-dir",
+        default="var/licenses/presets",
+        help="Katalog z indywidualnymi plikami licencji",
+    )
+    install_parser.add_argument(
+        "--catalog-path",
+        help="Katalog manifestu Marketplace (domyślnie wbudowany)",
+    )
+    install_parser.add_argument(
+        "--preferences-json",
+        help="Plik JSON z preferencjami użytkownika (budżet, target ryzyka)",
+    )
+
     deactivate_parser = subparsers.add_parser("deactivate", help="Dezaktywacja licencji presetu")
     deactivate_parser.add_argument("--preset-id", required=True, help="Identyfikator presetu")
 
@@ -713,6 +889,8 @@ def main(argv: list[str] | None = None) -> None:
         _command_list(args)
     elif args.command == "activate":
         _command_activate(args)
+    elif args.command == "install":
+        _command_install_workflow(args)
     elif args.command == "deactivate":
         _command_deactivate(args)
     elif args.command == "assign":

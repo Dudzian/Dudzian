@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 import pytest
@@ -183,3 +184,97 @@ def test_plan_command_outputs_installation_plan(capsys, preset_dir, signing_key)
     assert portfolio_summaries["portfolio-a"]["assignedPresets"] == ["primary"]
     assert portfolio_summaries["portfolio-a"]["unlicensedPresets"] == ["primary"]
     assert "portfolio-assignment-unlicensed" in portfolio_summaries["portfolio-a"]["warningCodes"]
+
+
+def test_install_workflow_assigns_and_stores_preferences(capsys, preset_dir, signing_key):
+    preset_file = preset_dir / "automation.json"
+    _write_preset(
+        preset_file,
+        preset_id="automation-ai",
+        fingerprint="device-001",
+        signing_key=signing_key,
+    )
+
+    catalog_dir = preset_dir.parent / "catalog"
+    catalog_dir.mkdir()
+    catalog_manifest = catalog_dir / "catalog.yaml"
+    catalog_manifest.write_text(
+        """
+schema_version: "1.0"
+generated_at: "2024-01-01T00:00:00Z"
+presets:
+  - id: automation-ai
+    name: Automation AI
+    version: "1.0.0"
+    author:
+      name: QA Bot
+    artifact: "../presets/automation.json"
+""".strip(),
+        encoding="utf-8",
+    )
+
+    licenses_path = preset_dir.parent / "licenses_index.json"
+    license_payload_path = preset_dir.parent / "license_payload.json"
+    license_payload_path.write_text(
+        json.dumps(
+            {
+                "preset_id": "automation-ai",
+                "allowed_fingerprints": ["device-001"],
+                "expires_at": "2099-01-01T00:00:00Z",
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    preferences_path = preset_dir.parent / "preferences.json"
+    preferences_path.write_text(
+        json.dumps(
+            {"risk_target": "balanced", "budget": 1250, "max_positions": 4},
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    licenses_dir = preset_dir.parent / "licenses"
+
+    args = [
+        f"--presets-dir={preset_dir}",
+        f"--licenses-path={licenses_path}",
+        "--fingerprint",
+        "device-001",
+        f"--signing-key=catalog={signing_key.hex()}",
+        "install",
+        "--preset-id",
+        "automation-ai",
+        "--portfolio-id",
+        "master-1",
+        "--license-json",
+        str(license_payload_path),
+        "--licenses-dir",
+        str(licenses_dir),
+        "--catalog-path",
+        str(catalog_dir),
+        "--preferences-json",
+        str(preferences_path),
+    ]
+
+    bridge.main(args)
+    output = json.loads(capsys.readouterr().out)
+
+    assert output["install"]["success"] is True
+    assert output["assignments"]["master-1"] == ["master-1"]
+
+    license_file = Path(output["licenseFile"])
+    assert license_file.exists()
+    stored_license = json.loads(license_file.read_text(encoding="utf-8"))
+    assert stored_license["allowed_fingerprints"] == ["device-001"]
+
+    preferences_store = Path(output["stores"]["preferences"])
+    stored_preferences = json.loads(preferences_store.read_text(encoding="utf-8"))
+    pref_entry = stored_preferences["preferences"]["automation-ai"]["master-1"]
+    assert pref_entry["preferences"]["budget"] == 1250
+
+    license_index = json.loads(licenses_path.read_text(encoding="utf-8"))
+    stored_entry = license_index["licenses"]["automation-ai"]
+    assert stored_entry["allowed_fingerprints"] == ["device-001"]
