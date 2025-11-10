@@ -14,7 +14,7 @@
 ## Skrót statusu obszarów
 - **Strategia:** funkcje core pokrywają scenariusze CryptoHopper, wymaga dopracowania publicznego marketplace’u presetów i komunikacji Stress Labs.
 - **Automatyzacja:** Stage6 utrzymuje przewagę dzięki Hypercare Orchestratorowi (podpisy HMAC, resilience/offline) i nowym fallbackom CCXT dla KuCoin/Huobi/Gemini.
-- **UI:** wciąż luka – integracja feedu gRPC „Decyzje AI” oraz telemetrii live to priorytet przed release Stage6.
+- **UI:** feed gRPC spełnia SLO (p95 ≤3 s), telemetria decyzji jest kompletna, a testy PySide6 w CI pilnują regresji; kolejnym krokiem jest utrzymanie monitoringu SLA i alertów HyperCare.
 - **Compliance:** przewaga dzięki offline-first journalingowi i podpisom HMAC. Konieczne regularne audyty bundli i aktualizacja materiałów produktowych.
 
 ### Tablica wyników Stage6
@@ -23,7 +23,7 @@
 | --- | --- | --- | --- | --- |
 | Strategia | 🟡 Parzystość z luką marketplace | liczba presetów publicznych (≥15), SLA publikacji (≤48 h), pokrycie Stress Labs w marketingu (100% kampanii) | Zespół Strategii i AI | Udostępnić katalog presetów beta, zsynchronizować komunikację Stress Labs z marketingiem productowym |
 | Automatyzacja | 🟢 Przewaga Stage6 | liczba pełnych cykli hypercare/miesiąc (≥4), odsetek podpisanych raportów (100%), średni czas self-healingu (≤5 min) | Zespół Hypercare | Włączyć regresję adapterów do nightly, raportować czasy self-healingu w status_review |
-| UI | 🔴 Luka krytyczna | opóźnienie feedu gRPC p95 (≤3 s), pokrycie telemetrii decyzji (100%), testy UI gRPC w CI (zielone) | Zespół UI Runtime | Dostarczyć endpoint gRPC, dodać test PySide6 do pipeline’u, utrzymać artefakt `decision-feed-metrics` i zorganizować demo L2 |
+| UI | 🟢 SLO spełnione | opóźnienie feedu gRPC p95 (≤3 s), pokrycie telemetrii decyzji (100%), testy UI gRPC w CI (zielone) | Zespół UI Runtime | Utrzymać monitoring SLA (artefakt `decision-feed-metrics`), zautomatyzować alerty HyperCare i raportować compliance p95 |
 | Compliance | 🟢 Przewaga | pokrycie podpisów HMAC (100%), audyty kwartalne bez zastrzeżeń (100%), kompletność TradingDecisionJournal (≥99%) | Zespół Compliance & Audyt | Zestawić wyniki audytu Q2, odświeżyć materiały produktowe i checklisty |
 
 ## Stress Lab i materiały marketingowe
@@ -54,10 +54,10 @@
    - Cel: publiczny katalog presetów z recenzjami i kontrolą wersji offline.
    - Metryki: liczba presetów, liczba aktywnych użytkowników marketplace, czas publikacji nowego presetu.
    - Wymagane działania: rozszerzenie pipeline AI i packaging presetów do dystrybucji OEM.
-3. **Integracja UI ↔ runtime**
-   - Cel: pełna telemetria decyzji w UI w czasie rzeczywistym poprzez gRPC.
-   - Metryki: opóźnienie aktualizacji widoku (p95), liczba błędów feedu na cykl hypercare.
-   - Wymagane działania: implementacja endpointu gRPC i stabilizacja testów UI (PySide6 w CI).
+3. **Alerty SLA feedu UI**
+   - Cel: utrzymać zielony status SLO (p95 ≤3 s) i eskalacje degradacji do HyperCare.
+   - Metryki: opóźnienie aktualizacji widoku (p95), liczba alertów SLA, czas reakcji operatora.
+   - Wymagane działania: zautomatyzować alerty SLA na podstawie `decision-feed-metrics`, rozszerzyć dashboard o p50/p95 cyklu oraz logować eskalacje HyperCare.
 4. **Komunikacja przewag compliance**
    - Cel: zachowanie przewagi offline-first (HMAC, journale) w materiałach produktowych.
    - Metryki: pokrycie podpisów HMAC w raportach, liczba audytów zaliczonych bez zastrzeżeń.

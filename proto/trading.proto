@@ -233,6 +233,9 @@ message DecisionJournalFilters {
 message DecisionCycleMetrics {
   // Numeryczne metryki ostatniego cyklu decyzyjnego.
   map<string, double> values = 1;
+  // Opcjonalne metryki opóźnień pętli decyzyjnej w milisekundach.
+  optional double cycle_latency_p50_ms = 2;
+  optional double cycle_latency_p95_ms = 3;
 }
 
 message ListDecisionsRequest {

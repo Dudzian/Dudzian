@@ -395,6 +395,27 @@ jobs:
           pytest tests/integration/test_grpc_transport.py -k "grpc" --maxfail=1 --disable-warnings \
             --junitxml=test-results/grpc/pytest.xml
 
+      - name: Assert gRPC decision feed SLO
+        run: |
+          python - <<'PY'
+          import json
+          import pathlib
+          metrics_path = pathlib.Path("reports/ci/decision_feed_metrics.json")
+          if not metrics_path.exists():
+              raise SystemExit("Brak pliku decision_feed_metrics.json")
+          payload = json.loads(metrics_path.read_text(encoding="utf-8"))
+          p95_ms = float(payload.get("p95_ms", 0.0))
+          if p95_ms > 3000.0:
+              raise SystemExit(f"p95_ms przekracza limit 3 s: {p95_ms} ms")
+          downtime_ms = float(payload.get("downtimeMs", payload.get("downtime_ms", 0.0)))
+          if downtime_ms < 0.0:
+              raise SystemExit(f"downtimeMs ujemne: {downtime_ms}")
+          next_retry = payload.get("nextRetrySeconds", payload.get("next_retry_seconds"))
+          if next_retry is not None and float(next_retry) < 0.0:
+              raise SystemExit(f"nextRetrySeconds ujemne: {next_retry}")
+          print(f"decision-feed-metrics OK: p95_ms={p95_ms} <= 3000 ms")
+          PY
+
       - name: Upload pytest results
         if: always()
         uses: actions/upload-artifact@v4

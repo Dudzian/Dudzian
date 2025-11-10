@@ -1,12 +1,14 @@
 """Serwis runtime dostarczający dane dziennika decyzji do QML."""
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
-import os
 import math
+import os
 import queue
 import statistics
+import tempfile
 import threading
 import time
 from collections import Counter, deque
@@ -642,6 +644,8 @@ class RuntimeService(QObject):
             float(os.environ.get("BOT_CORE_UI_GRPC_RETRY_MAX_SECONDS", "15.0")),
         )
         self._grpc_ready_timeout = max(1.0, float(os.environ.get("BOT_CORE_UI_GRPC_READY_TIMEOUT", "5.0")))
+        self._grpc_idle_timeout = max(1.0, float(os.environ.get("BOT_CORE_UI_GRPC_IDLE_TIMEOUT", "3.0")))
+        self._grpc_reconnect_timer: QTimer | None = None
         self._feed_reconnects = 0
         self._feed_downtime_started: float | None = None
         self._feed_downtime_total = 0.0
@@ -733,6 +737,8 @@ class RuntimeService(QObject):
         next_retry: float | None = None,
         latest_latency: float | None = None,
     ) -> None:
+        previous_status = self._feed_health.get("status")
+        previous_reconnects = int(self._feed_health.get("reconnects", 0))
         payload = dict(self._feed_health)
         if status is not None:
             payload["status"] = status
@@ -1075,6 +1081,7 @@ class RuntimeService(QObject):
             self._feed_downtime_total += max(0.0, time.monotonic() - self._feed_downtime_started)
             self._feed_downtime_started = None
         self._grpc_retry_attempts = 0
+        self._cancel_grpc_reconnect()
         self._update_feed_health(status="connected", reconnects=self._feed_reconnects, last_error="")
 
     # ------------------------------------------------------------------
@@ -1357,7 +1364,7 @@ class RuntimeService(QObject):
                 reconnects=self._feed_reconnects,
                 last_error=message,
             )
-            self._write_feed_metrics()
+            self._schedule_grpc_reconnect(profile)
             return True
         self._use_demo_loader(message if not silent else None, profile=profile, silent=silent)
         self._update_feed_health(
@@ -1365,7 +1372,7 @@ class RuntimeService(QObject):
             reconnects=self._feed_reconnects,
             last_error=message if not silent else self._feed_last_error,
         )
-        self._write_feed_metrics()
+        self._schedule_grpc_reconnect(profile)
         return True
 
     def _ensure_grpc_timer(self) -> None:
@@ -1389,7 +1396,7 @@ class RuntimeService(QObject):
             ) from exc
 
         self._grpc_stop_event = threading.Event()
-        self._grpc_queue = queue.Queue()
+        self._grpc_queue = queue.Queue(maxsize=64)
         self._grpc_target = target
         self._grpc_stream_active = True
         self._grpc_limit = max(1, int(limit))
@@ -1459,7 +1466,9 @@ class RuntimeService(QObject):
                     if stop_event is not None and stop_event.is_set():
                         terminated_normally = False
                         break
-                    metrics_payload = dict(getattr(update.cycle_metrics, "values", {}))
+                    metrics_payload = RuntimeService._serialize_cycle_metrics(
+                        getattr(update, "cycle_metrics", None)
+                    )
                     if update.HasField("snapshot"):
                         payload = {
                             "records": [dict(entry.fields) for entry in update.snapshot.records],
@@ -1608,6 +1617,8 @@ class RuntimeService(QObject):
                 continue
             queue_obj.task_done()
 
+        self._maybe_handle_grpc_idle()
+
         if fallback_reason:
             self._handle_grpc_error(fallback_reason, profile=self._active_profile, silent=False)
             return
@@ -1619,6 +1630,27 @@ class RuntimeService(QObject):
             self._error_message = ""
             self.errorMessageChanged.emit()
             self._write_feed_metrics()
+
+    def _maybe_handle_grpc_idle(self) -> None:
+        if not self._grpc_stream_active:
+            self._grpc_idle_flag = False
+            return
+        now = time.monotonic()
+        if now - self._last_grpc_update <= self._grpc_idle_timeout:
+            self._grpc_idle_flag = False
+            return
+        if self._grpc_idle_flag:
+            return
+        self._grpc_idle_flag = True
+        message = "Brak aktualizacji strumienia gRPC"
+        self._feed_last_error = message
+        self._mark_feed_disconnected()
+        self._update_feed_health(
+            status="retrying",
+            reconnects=self._feed_reconnects,
+            last_error=message,
+        )
+        self._handle_grpc_error(message, profile=self._active_profile, silent=True)
 
     def _apply_grpc_snapshot(
         self,
@@ -1663,35 +1695,57 @@ class RuntimeService(QObject):
         self._update_cycle_metrics(cycle_metrics)
 
     def _record_feed_latency(self, record: Mapping[str, str]) -> None:
-        timestamp_raw = record.get("timestamp")
-        if not timestamp_raw:
+        latency_value: float | None = None
+        latency_field = record.get("latency_ms") or record.get("latencyMs")
+        if latency_field is not None:
+            try:
+                latency_value = float(latency_field)
+            except (TypeError, ValueError):
+                latency_value = None
+        if latency_value is None:
+            timestamp_raw = record.get("timestamp")
+            if not timestamp_raw:
+                return
+            text = str(timestamp_raw).strip()
+            if not text:
+                return
+            try:
+                parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+            except ValueError:
+                return
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            latency_ms = (datetime.now(timezone.utc) - parsed.astimezone(timezone.utc)).total_seconds() * 1000.0
+            if latency_ms < 0:
+                latency_ms = 0.0
+            latency_value = float(latency_ms)
+        if not math.isfinite(latency_value):
             return
-        text = str(timestamp_raw).strip()
-        if not text:
-            return
-        try:
-            parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
-        except ValueError:
-            return
-        if parsed.tzinfo is None:
-            parsed = parsed.replace(tzinfo=timezone.utc)
-        latency_ms = (datetime.now(timezone.utc) - parsed.astimezone(timezone.utc)).total_seconds() * 1000.0
-        if latency_ms < 0:
-            latency_ms = 0.0
-        latency_value = float(latency_ms)
+        if latency_value < 0.0:
+            latency_value = 0.0
+        self._last_grpc_update = time.monotonic()
+        self._grpc_idle_flag = False
         self._feed_latencies.append(latency_value)
         self._mark_feed_connected()
         self._update_feed_health(latest_latency=latency_value, reconnects=self._feed_reconnects, last_error="")
 
-    def _write_feed_metrics(self) -> None:
+    def _write_feed_metrics(self, *, force: bool = False) -> None:
         latencies = list(self._feed_latencies)
+        downtime_value = float(self._feed_health.get("downtimeMs", 0.0))
+        next_retry_value = self._feed_health.get("nextRetrySeconds")
+        status_value = self._feed_health.get("status", "unknown")
+        last_error_value = self._feed_health.get("lastError", "")
         stats_payload = {
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "count": len(latencies),
             "reconnects": self._feed_reconnects,
-            "downtime_ms": float(self._feed_health.get("downtimeMs", 0.0)),
-            "status": self._feed_health.get("status", "unknown"),
-            "last_error": self._feed_health.get("lastError", ""),
+            "downtime_ms": downtime_value,
+            "downtimeMs": downtime_value,
+            "status": status_value,
+            "last_error": last_error_value,
+            "lastError": last_error_value,
+            "next_retry_seconds": float(next_retry_value) if next_retry_value is not None else None,
+            "nextRetrySeconds": float(next_retry_value) if next_retry_value is not None else None,
         }
         if latencies:
             stats_payload.update(
@@ -1715,16 +1769,115 @@ class RuntimeService(QObject):
             )
         if "lastLatencyMs" in self._feed_health:
             stats_payload["last_latency_ms"] = float(self._feed_health["lastLatencyMs"])
-        if "nextRetrySeconds" in self._feed_health:
-            stats_payload["next_retry_seconds"] = float(self._feed_health["nextRetrySeconds"])
+            stats_payload["lastLatencyMs"] = float(self._feed_health["lastLatencyMs"])
+        latency_p95 = stats_payload.get("p95_ms", 0.0)
+        stats_payload["latency_p95_ms"] = latency_p95
+        stats_payload["p95_seconds"] = float(latency_p95) / 1000.0
+        stats_payload["p95"] = float(latency_p95) / 1000.0
+        now = time.monotonic()
+        reconnects_value = self._feed_reconnects
+        status_changed = status_value != self._metrics_last_status
+        reconnects_changed = reconnects_value != self._metrics_last_reconnects
+        if not force and not status_changed and not reconnects_changed and now < self._metrics_next_write:
+            return
         try:
             self._feed_metrics_path.parent.mkdir(parents=True, exist_ok=True)
-            self._feed_metrics_path.write_text(
-                json.dumps(stats_payload, ensure_ascii=False, indent=2),
+            serialized = json.dumps(stats_payload, ensure_ascii=False, indent=2)
+            tmp_path: Path | None = None
+            with tempfile.NamedTemporaryFile(
+                mode="w",
                 encoding="utf-8",
-            )
+                delete=False,
+                dir=str(self._feed_metrics_path.parent),
+            ) as handle:
+                handle.write(serialized)
+                handle.flush()
+                try:
+                    os.fsync(handle.fileno())
+                except OSError:
+                    pass
+                tmp_path = Path(handle.name)
+            if tmp_path is None:
+                raise RuntimeError("Nie udało się zapisać metryk feedu – brak ścieżki tymczasowej")
+            try:
+                tmp_path.replace(self._feed_metrics_path)
+            except Exception:
+                with contextlib.suppress(OSError):
+                    tmp_path.unlink()
+                raise
         except Exception:  # pragma: no cover - zapisy metryk nie powinny blokować UI
             _LOGGER.debug("Nie udało się zapisać metryk latencji feedu", exc_info=True)
+        else:
+            self._metrics_last_write = now
+            self._metrics_next_write = now + 0.25
+            self._metrics_last_status = str(status_value)
+            self._metrics_last_reconnects = reconnects_value
+
+    @staticmethod
+    def _serialize_cycle_metrics(cycle_metrics_message) -> dict[str, float]:
+        if cycle_metrics_message is None:
+            return {}
+        payload: dict[str, float] = {}
+        values_container = getattr(cycle_metrics_message, "values", None)
+        if isinstance(values_container, Mapping):
+            for key, value in values_container.items():
+                try:
+                    payload[str(key)] = float(value)
+                except (TypeError, ValueError):
+                    continue
+        has_field = getattr(cycle_metrics_message, "HasField", None)
+        for field_name in ("cycle_latency_p50_ms", "cycle_latency_p95_ms"):
+            include_field = False
+            if callable(has_field):
+                try:
+                    include_field = bool(has_field(field_name))
+                except ValueError:
+                    include_field = True
+            else:
+                include_field = True
+            if not include_field:
+                continue
+            field_value = getattr(cycle_metrics_message, field_name, None)
+            if field_value is None:
+                continue
+            try:
+                payload[field_name] = float(field_value)
+            except (TypeError, ValueError):
+                continue
+        return payload
+
+    def _cancel_grpc_reconnect(self) -> None:
+        timer = self._grpc_reconnect_timer
+        if timer is None:
+            return
+        try:
+            timer.stop()
+        except RuntimeError:
+            pass
+        try:
+            timer.deleteLater()
+        except RuntimeError:
+            pass
+        self._grpc_reconnect_timer = None
+
+    def _schedule_grpc_reconnect(self, profile: str | None) -> None:
+        target = self._resolve_grpc_target(profile)
+        if not target:
+            return
+        timer = self._grpc_reconnect_timer
+        if timer is not None and timer.isActive():
+            return
+        interval_ms = max(500, int(self._grpc_retry_base * 1000.0))
+
+        def _attempt() -> None:
+            self._grpc_reconnect_timer = None
+            self._auto_connect_grpc()
+
+        reconnect_timer = QTimer(self)
+        reconnect_timer.setSingleShot(True)
+        reconnect_timer.timeout.connect(_attempt)
+        reconnect_timer.start(interval_ms)
+        self._grpc_reconnect_timer = reconnect_timer
 
     @staticmethod
     def _percentile(values: Iterable[float], percentile: float) -> float:
@@ -1757,6 +1910,7 @@ class RuntimeService(QObject):
             self._grpc_timer = None
         self._grpc_stream_active = False
         self._active_stream_label = None
+        self._cancel_grpc_reconnect()
 
     def _apply_risk_context(self, entries: Iterable[Mapping[str, object]]) -> None:
         metrics, timeline = _build_risk_context(entries)

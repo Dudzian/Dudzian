@@ -217,18 +217,39 @@ def _decision_increments(dataset: InMemoryTradingDataset) -> List[Any]:
 def _apply_cycle_metrics(message: Any, metrics: Mapping[str, float]) -> None:
     if not isinstance(metrics, Mapping):
         return
-    container = getattr(getattr(message, "cycle_metrics", None), "values", None)
+    metrics_message = getattr(message, "cycle_metrics", None)
+    if metrics_message is None:
+        return
+    container = getattr(metrics_message, "values", None)
     if container is None:
         return
     try:
         container.clear()
     except AttributeError:
         pass
+    clear_field = getattr(metrics_message, "ClearField", None)
+    for field_name in ("cycle_latency_p50_ms", "cycle_latency_p95_ms"):
+        if clear_field is not None:
+            try:
+                clear_field(field_name)
+                continue
+            except ValueError:
+                pass
+        if hasattr(metrics_message, field_name):
+            setattr(metrics_message, field_name, 0.0)
     for key, value in metrics.items():
         try:
-            container[str(key)] = float(value)
+            numeric = float(value)
         except (TypeError, ValueError):
             continue
+        str_key = str(key)
+        try:
+            container[str_key] = numeric
+        except (TypeError, ValueError):
+            continue
+        if str_key in {"cycle_latency_p50_ms", "cycle_latency_p95_ms"}:
+            if hasattr(metrics_message, str_key):
+                setattr(metrics_message, str_key, numeric)
 
 
 def _parse_journal_timestamp(value: str | None) -> datetime | None:
@@ -704,7 +725,9 @@ def build_default_dataset() -> InMemoryTradingDataset:
         base_currency="BTC",
     )
     granularity = trading_pb2.CandleGranularity(iso8601_duration="PT1M")
-    base_ts = _make_timestamp("2024-01-01T00:00:00Z")
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    base_iso = now.isoformat().replace("+00:00", "Z")
+    base_ts = _make_timestamp(base_iso)
     candles = [
         trading_pb2.OhlcvCandle(
             instrument=instrument,
@@ -728,6 +751,7 @@ def build_default_dataset() -> InMemoryTradingDataset:
         increments=[candles[-1]],
     )
 
+    risk_generated_at = (now + timedelta(minutes=5)).isoformat().replace("+00:00", "Z")
     dataset.add_risk_states(
         None,
         [
@@ -757,15 +781,16 @@ def build_default_dataset() -> InMemoryTradingDataset:
                         threshold_value=90_000.0,
                     )
                 ],
-                generated_at=_make_timestamp("2024-01-01T00:05:00Z"),
+                generated_at=_make_timestamp(risk_generated_at),
             )
         ],
     )
 
+    metrics_generated_at = (now + timedelta(minutes=5)).isoformat().replace("+00:00", "Z")
     dataset.set_metrics(
         [
             trading_pb2.MetricsSnapshot(
-                generated_at=_make_timestamp("2024-01-01T00:05:00Z"),
+                generated_at=_make_timestamp(metrics_generated_at),
                 event_to_frame_p95_ms=110.0,
                 fps=60.0,
                 cpu_utilization=12.0,
@@ -778,12 +803,15 @@ def build_default_dataset() -> InMemoryTradingDataset:
         ]
     )
 
+    snapshot_ts_0 = now.isoformat()
+    snapshot_ts_1 = (now + timedelta(seconds=2)).isoformat()
+    increment_ts = (now + timedelta(minutes=5)).isoformat()
     dataset.set_decision_stream(
         snapshot=[
             trading_pb2.DecisionRecordEntry(
                 fields={
                     "event": "order_submitted",
-                    "timestamp": "2024-01-01T00:00:00+00:00",
+                    "timestamp": snapshot_ts_0,
                     "environment": "stub",
                     "portfolio": "alpha",
                     "risk_profile": "balanced",
@@ -807,7 +835,7 @@ def build_default_dataset() -> InMemoryTradingDataset:
             trading_pb2.DecisionRecordEntry(
                 fields={
                     "event": "order_filled",
-                    "timestamp": "2024-01-01T00:00:02+00:00",
+                    "timestamp": snapshot_ts_1,
                     "environment": "stub",
                     "portfolio": "alpha",
                     "risk_profile": "balanced",
@@ -833,7 +861,7 @@ def build_default_dataset() -> InMemoryTradingDataset:
             trading_pb2.DecisionRecordEntry(
                 fields={
                     "event": "risk_update",
-                    "timestamp": "2024-01-01T00:05:00+00:00",
+                    "timestamp": increment_ts,
                     "environment": "stub",
                     "portfolio": "alpha",
                     "risk_profile": "balanced",
@@ -854,13 +882,15 @@ def build_default_dataset() -> InMemoryTradingDataset:
             "cycles_total": 128.0,
             "strategy_switch_total": 7.0,
             "guardrail_blocks_total": 2.0,
+            "cycle_latency_p50_ms": 1450.0,
+            "cycle_latency_p95_ms": 2650.0,
         }
     )
 
     dataset.health = trading_pb2.HealthCheckResponse(
         version="stub-1.0",
         git_commit="0000000",
-        started_at=_make_timestamp("2024-01-01T00:00:00Z"),
+        started_at=_make_timestamp(base_iso),
     )
 
     dataset.performance_guard.update(
