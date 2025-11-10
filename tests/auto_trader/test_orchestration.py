@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from collections import deque
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from types import SimpleNamespace
-from typing import Any
+from datetime import datetime, timezone, tzinfo
+from types import MethodType, SimpleNamespace
+from typing import Any, Mapping, Sequence
 
 import pandas as pd
 
@@ -196,6 +196,512 @@ def test_guardrail_blocks_trade_and_logs() -> None:
     guardrail_events = [event for event in events if event["event"] == "decision_guardrail"]
     assert guardrail_events, "Powinno zostać zapisane zdarzenie guardrail"
     assert "reasons" in guardrail_events[0] and "effective" in guardrail_events[0]["reasons"]
+
+
+def test_auto_mode_snapshot_without_signal_quality_provider() -> None:
+    trader = AutoTrader(
+        emitter=DummyEmitter(),
+        gui=SimpleNamespace(),
+        symbol_getter=lambda: "ETHUSDT",
+        enable_auto_trade=False,
+        auto_trade_interval_s=0.0,
+    )
+
+    snapshot = trader.build_auto_mode_snapshot(include_history=False)
+
+    guardrail_state = snapshot["guardrail_state"]
+    assert guardrail_state["exchange_degradation"]["score"] == 0.0
+    assert guardrail_state["exchange_degradation"]["payload"] == {}
+
+    failover_snapshot = snapshot["failover"]
+    assert failover_snapshot["guardrail_active"] is False
+    assert failover_snapshot["kill_switch"] is False
+    assert failover_snapshot["degradation"] == {}
+
+    assert snapshot["signal_quality"] == {}
+
+
+def test_auto_mode_snapshot_enriches_retraining_cycles_with_decisions() -> None:
+    class JournalStub:
+        def __init__(self) -> None:
+            self._records: list[dict[str, object]] = []
+
+        def record(self, event: object) -> None:  # pragma: no cover - zgodność z kontraktem
+            self._records.append(dict(event) if isinstance(event, Mapping) else {"event": event})
+
+        def export(self) -> list[dict[str, object]]:
+            return list(self._records)
+
+    journal = JournalStub()
+    journal._records.extend(  # noqa: SLF001 - dane testowe
+        [
+            {
+                "event": "order_submitted",
+                "timestamp": "2025-01-01T10:00:00+00:00",
+                "decision_id": "DEC-1",
+                "status": "submitted",
+            },
+            {
+                "event": "order_filled",
+                "timestamp": "2025-01-01T11:00:00+00:00",
+                "decision_id": "DEC-2",
+                "status": "filled",
+            },
+            {
+                "event": "order_cancelled",
+                "timestamp": "2025-01-01T12:00:00+00:00",
+                "decision_id": "DEC-3",
+                "status": "cancelled",
+            },
+        ]
+    )
+
+    trader = AutoTrader(
+        emitter=DummyEmitter(),
+        gui=SimpleNamespace(),
+        symbol_getter=lambda: "BTCUSDT",
+        enable_auto_trade=False,
+        auto_trade_interval_s=0.0,
+        decision_journal=journal,
+    )
+
+    @dataclass
+    class CycleRecord:
+        cycle_id: str
+        decisions: list[Any]
+
+    trader._retraining_cycle_log = [  # noqa: SLF001 - ustawienie stanu testowego
+        {
+            "cycle_id": "cycle-1",
+            "status": "completed",
+            "decision_ids": ["DEC-1", "DEC-2"],
+        },
+        CycleRecord(
+            cycle_id="cycle-2",
+            decisions=[
+                SimpleNamespace(
+                    decision_id="DEC-3",
+                    timestamp=datetime(2025, 1, 1, 12, 30, tzinfo=timezone.utc),
+                    state="aborted",
+                )
+            ],
+        ),
+        "unexpected",
+    ]
+
+    snapshot = trader.build_auto_mode_snapshot(include_history=False)
+
+    cycles = snapshot["retraining_cycles"]
+    assert len(cycles) == 3
+
+    first_cycle = cycles[0]
+    assert first_cycle["decision_ids"] == ["DEC-1", "DEC-2"]
+    assert {entry["decision_id"] for entry in first_cycle["decisions"]} == {"DEC-1", "DEC-2"}
+
+    second_cycle = cycles[1]
+    assert second_cycle["decisions"][0]["decision_id"] == "DEC-3"
+    assert isinstance(second_cycle["decisions"][0]["timestamp"], str)
+
+    assert cycles[2]["decisions"] == []
+
+
+def test_auto_mode_snapshot_exposes_decision_lookup_and_guardrail_details() -> None:
+    class JournalStub:
+        def __init__(self, records: Sequence[Mapping[str, Any]]) -> None:
+            self._records = [dict(record) for record in records]
+
+        def record(self, event: Mapping[str, Any] | Any) -> None:  # pragma: no cover - zgodność z kontraktem
+            if isinstance(event, Mapping):
+                self._records.append(dict(event))
+            else:
+                self._records.append({"event": event})
+
+        def export(self) -> list[Mapping[str, Any]]:
+            return [dict(record) for record in self._records]
+
+    journal = JournalStub(
+        [
+            {
+                "event": "order_submitted",
+                "timestamp": "2025-01-01T09:00:00+00:00",
+                "decision_id": "DEC-1",
+                "status": "submitted",
+            },
+            {
+                "event": "order_filled",
+                "timestamp": "2025-01-01T10:00:00+00:00",
+                "decision_id": "DEC-2",
+                "status": "filled",
+            },
+        ]
+    )
+
+    trader = AutoTrader(
+        emitter=DummyEmitter(),
+        gui=SimpleNamespace(),
+        symbol_getter=lambda: "BTCUSDT",
+        enable_auto_trade=False,
+        auto_trade_interval_s=0.0,
+        decision_journal=journal,
+    )
+
+    last_decision_dt = datetime(2025, 1, 1, 12, 0, tzinfo=timezone.utc)
+    lifecycle_snapshot = {
+        "timestamp": last_decision_dt.isoformat(),
+        "symbol": "BTCUSDT",
+        "environment": "test",
+        "portfolio": "alpha",
+        "risk_profile": "balanced",
+        "controller": {
+            "auto_trade": {
+                "user_confirmed": False,
+                "active": False,
+                "trusted_auto_confirm": False,
+                "started": False,
+            },
+            "schedule_last_alert": None,
+            "history": [],
+        },
+        "guardrails": {
+            "last_triggers": [],
+            "last_reasons": [],
+            "summary": {},
+        },
+        "risk_decisions": {
+            "summary": {},
+            "last_decision": {
+                "decision_id": "DEC-LAST",
+                "timestamp": last_decision_dt,
+                "decision_reason": "guardrail-block",
+                "decision_mode": "auto",
+                "approved": False,
+            },
+        },
+        "cooldown": {},
+        "strategy": {},
+        "metrics": {},
+        "schedule": {},
+    }
+
+    def fake_lifecycle(
+        _self: AutoTrader,
+        *,
+        bucket_s: float = 3600.0,
+        tz: tzinfo | None = timezone.utc,
+    ) -> Mapping[str, Any]:
+        assert bucket_s == 3600.0
+        assert tz is None or isinstance(tz, tzinfo)
+        return lifecycle_snapshot
+
+    trader.build_lifecycle_snapshot = MethodType(fake_lifecycle, trader)
+
+    def fake_guardrail_trace(
+        _self: AutoTrader,
+        _decision_id: Any,
+        **_kwargs: Any,
+    ) -> Sequence[Mapping[str, Any]]:
+        return [
+            {
+                "timestamp": pd.Timestamp(datetime(2025, 1, 1, 11, 0, tzinfo=timezone.utc)),
+                "decision_id": " DEC-GUARD ",
+                "decision": SimpleNamespace(
+                    decision_id="DEC-GUARD",
+                    timestamp=datetime(2025, 1, 1, 11, 5, tzinfo=timezone.utc),
+                    state="blocked",
+                ),
+                "service": "risk",
+            }
+        ]
+
+    trader.get_guardrail_event_trace = MethodType(fake_guardrail_trace, trader)
+
+    trader._model_change_log = [  # noqa: SLF001 - ustawienie stanu testowego
+        {
+            "event": "retrain",
+            "decision": SimpleNamespace(
+                decision_id="DEC-MODEL",
+                timestamp=datetime(2025, 1, 1, 8, 0, tzinfo=timezone.utc),
+                status="trained",
+            ),
+        }
+    ]
+    trader._retraining_cycle_log = [  # noqa: SLF001 - ustawienie stanu testowego
+        {
+            "cycle_id": "cycle-1",
+            "decisions": [
+                SimpleNamespace(
+                    decision_id="DEC-CYCLE-1",
+                    timestamp=datetime(2025, 1, 1, 7, 30, tzinfo=timezone.utc),
+                    status="completed",
+                )
+            ],
+        },
+        {
+            "cycle_id": "cycle-2",
+            "decision_ids": ["DEC-CYCLE-REF"],
+        },
+    ]
+
+    snapshot = trader.build_auto_mode_snapshot(include_history=False)
+
+    lookup = snapshot["decision_lookup"]
+    assert lookup["DEC-1"]["decision_id"] == "DEC-1"
+    assert lookup["DEC-LAST"]["timestamp"].startswith("2025-01-01T12:00:00")
+    assert lookup["DEC-GUARD"]["state"] == "blocked"
+    assert lookup["DEC-MODEL"]["status"] == "trained"
+    assert lookup["DEC-CYCLE-REF"] == {"decision_id": "DEC-CYCLE-REF"}
+
+    guardrail_trace = snapshot["guardrail_trace"]
+    assert guardrail_trace[0]["decision_id"] == "DEC-GUARD"
+    assert guardrail_trace[0]["timestamp"].startswith("2025-01-01T11:00:00")
+    assert guardrail_trace[0]["decision"]["timestamp"].startswith("2025-01-01T11:05:00")
+
+    cycles = snapshot["retraining_cycles"]
+    assert cycles[0]["decisions"][0]["timestamp"].startswith("2025-01-01T07:30:00")
+    assert cycles[1]["decisions"][0] == {"decision_id": "DEC-CYCLE-REF"}
+
+    assert snapshot["guardrail_state"]["last_decision_id"] == "DEC-LAST"
+
+
+def test_auto_mode_snapshot_normalizes_decision_history_entries() -> None:
+    @dataclass
+    class DecisionRecord:
+        decision_id: str
+        timestamp: datetime
+        state: str
+
+        def to_dict(self) -> dict[str, Any]:
+            return {
+                "decision_id": self.decision_id,
+                "timestamp": self.timestamp,
+                "state": self.state,
+            }
+
+    class JournalStub:
+        def __init__(self, records: Sequence[Mapping[str, Any]]) -> None:
+            self._records = [dict(record) for record in records]
+
+        def record(self, event: Mapping[str, Any] | Any) -> None:  # pragma: no cover - zgodność z kontraktem
+            if isinstance(event, Mapping):
+                self._records.append(dict(event))
+            else:
+                self._records.append({"event": event})
+
+        def export(self) -> list[Mapping[str, Any]]:
+            return [dict(record) for record in self._records]
+
+    history_records = [
+        {
+            "event": "decision_executed",
+            "timestamp": pd.Timestamp("2025-01-01T13:00:00"),
+            "decision_id": " DEC-HISTORY-1 ",
+            "decision": DecisionRecord(
+                decision_id="DEC-HISTORY-1",
+                timestamp=datetime(2025, 1, 1, 13, 5, tzinfo=timezone.utc),
+                state="executed",
+            ),
+            "service": "execution",
+        },
+        {
+            "event": "schedule_blocked",
+            "timestamp": datetime(2025, 1, 1, 12, 0),
+            "status": "blocked",
+        },
+    ]
+
+    journal = JournalStub(history_records)
+
+    trader = AutoTrader(
+        emitter=DummyEmitter(),
+        gui=SimpleNamespace(),
+        symbol_getter=lambda: "BTCUSDT",
+        enable_auto_trade=False,
+        auto_trade_interval_s=0.0,
+        decision_journal=journal,
+    )
+
+    lifecycle_snapshot = {
+        "timestamp": datetime(2025, 1, 1, 13, 30, tzinfo=timezone.utc).isoformat(),
+        "symbol": "BTCUSDT",
+        "environment": "test",
+        "portfolio": "alpha",
+        "risk_profile": "balanced",
+        "controller": {
+            "auto_trade": {
+                "user_confirmed": True,
+                "active": False,
+                "trusted_auto_confirm": False,
+                "started": False,
+            }
+        },
+        "schedule": {},
+        "strategy": {},
+        "metrics": {},
+        "risk_decisions": {
+            "last_decision": {
+                "decision_id": "DEC-HISTORY-1",
+                "timestamp": datetime(2025, 1, 1, 13, 5, tzinfo=timezone.utc),
+                "decision_mode": "auto",
+                "decision_reason": "executed",
+                "approved": True,
+            }
+        },
+        "guardrails": {
+            "last_triggers": [],
+            "last_reasons": [],
+            "summary": {},
+        },
+        "metrics_summary": {},
+        "decision_summary": {},
+        "controller_history": [],
+        "guardrail_summary": {},
+        "reasons": {},
+    }
+
+    def fake_lifecycle(
+        _self: AutoTrader,
+        *,
+        bucket_s: float = 3600.0,
+        tz: tzinfo | None = timezone.utc,
+    ) -> Mapping[str, Any]:
+        assert bucket_s == 3600.0
+        assert tz is None or isinstance(tz, tzinfo)
+        return lifecycle_snapshot
+
+    trader.build_lifecycle_snapshot = MethodType(fake_lifecycle, trader)
+    trader.get_guardrail_event_trace = MethodType(lambda *_args, **_kwargs: [], trader)
+    trader._model_change_log = []  # noqa: SLF001 - ustawienie stanu testowego
+    trader._retraining_cycle_log = []  # noqa: SLF001 - ustawienie stanu testowego
+
+    snapshot = trader.build_auto_mode_snapshot(include_history=True)
+
+    history = snapshot["decision_history"]
+    assert history[0]["decision_id"] == "DEC-HISTORY-1"
+    assert history[0]["timestamp"].startswith("2025-01-01T13:00:00")
+    assert history[0]["decision"]["state"] == "executed"
+    assert history[0]["decision"]["timestamp"].startswith("2025-01-01T13:05:00")
+    assert history[1]["event"] == "schedule_blocked"
+    assert "decision_id" not in history[1]
+    assert history[1]["timestamp"].startswith("2025-01-01T12:00:00")
+
+    lookup = snapshot["decision_lookup"]
+    assert lookup["DEC-HISTORY-1"]["decision"]["state"] == "executed"
+    assert lookup["DEC-HISTORY-1"]["timestamp"].startswith("2025-01-01T13:00:00")
+
+
+def test_auto_mode_snapshot_normalizes_model_events() -> None:
+    class JournalStub:
+        def __init__(self, records: Sequence[Mapping[str, Any]]) -> None:
+            self._records = [dict(record) for record in records]
+
+        def record(self, event: Mapping[str, Any] | Any) -> None:  # pragma: no cover - zgodność z kontraktem
+            if isinstance(event, Mapping):
+                self._records.append(dict(event))
+            else:
+                self._records.append({"event": event})
+
+        def export(self) -> list[Mapping[str, Any]]:
+            return [dict(record) for record in self._records]
+
+    journal = JournalStub(
+        [
+            {
+                "event": "decision_executed",
+                "timestamp": datetime(2025, 1, 1, 8, 30, tzinfo=timezone.utc),
+                "decision_id": "DEC-MODEL-REF",
+            }
+        ]
+    )
+
+    trader = AutoTrader(
+        emitter=DummyEmitter(),
+        gui=SimpleNamespace(),
+        symbol_getter=lambda: "BTCUSDT",
+        enable_auto_trade=False,
+        auto_trade_interval_s=0.0,
+        decision_journal=journal,
+    )
+
+    lifecycle_snapshot = {
+        "timestamp": datetime(2025, 1, 1, 9, 30, tzinfo=timezone.utc).isoformat(),
+        "symbol": "BTCUSDT",
+        "environment": "test",
+        "portfolio": "alpha",
+        "risk_profile": "balanced",
+        "controller": {"auto_trade": {"user_confirmed": True, "active": False}},
+        "schedule": {},
+        "strategy": {},
+        "metrics": {},
+        "risk_decisions": {
+            "last_decision": {
+                "decision_id": "DEC-MODEL-1",
+                "timestamp": datetime(2025, 1, 1, 9, 15, tzinfo=timezone.utc),
+                "decision_mode": "auto",
+                "decision_reason": "executed",
+                "approved": True,
+            }
+        },
+        "guardrails": {"last_triggers": [], "last_reasons": [], "summary": {}},
+        "metrics_summary": {},
+        "decision_summary": {},
+        "controller_history": [],
+        "guardrail_summary": {},
+        "reasons": {},
+    }
+
+    def fake_lifecycle(
+        _self: AutoTrader,
+        *,
+        bucket_s: float = 3600.0,
+        tz: tzinfo | None = timezone.utc,
+    ) -> Mapping[str, Any]:
+        assert bucket_s == 3600.0
+        assert tz is None or isinstance(tz, tzinfo)
+        return lifecycle_snapshot
+
+    trader.build_lifecycle_snapshot = MethodType(fake_lifecycle, trader)
+    trader.get_guardrail_event_trace = MethodType(lambda *_args, **_kwargs: [], trader)
+
+    trader._model_change_log = [  # noqa: SLF001 - ustawienie stanu testowego
+        {
+            "event": "trained",
+            "timestamp": datetime(2025, 1, 1, 9, 0, tzinfo=timezone.utc),
+            "decision": SimpleNamespace(
+                decision_id="DEC-MODEL-1",
+                timestamp=datetime(2025, 1, 1, 9, 5, tzinfo=timezone.utc),
+                state="completed",
+            ),
+        },
+        {
+            "event": "promoted",
+            "timestamp": pd.Timestamp(datetime(2025, 1, 1, 8, 45, tzinfo=timezone.utc)),
+            "decision_id": " DEC-MODEL-REF ",
+        },
+        "unexpected-entry",
+    ]
+
+    trader._retraining_cycle_log = []  # noqa: SLF001 - ustawienie stanu testowego
+
+    snapshot = trader.build_auto_mode_snapshot(include_history=False)
+
+    events = snapshot["model_events"]
+    assert events[0]["event"] == "trained"
+    assert events[0]["timestamp"].startswith("2025-01-01T09:00:00")
+    assert events[0]["decision"]["decision_id"] == "DEC-MODEL-1"
+    assert events[0]["decision"]["timestamp"].startswith("2025-01-01T09:05:00")
+
+    second_event = events[1]
+    assert second_event["event"] == "promoted"
+    assert second_event["decision_id"] == "DEC-MODEL-REF"
+    assert second_event["decision"]["decision_id"] == "DEC-MODEL-REF"
+    assert second_event["decision"]["timestamp"].startswith("2025-01-01T08:30:00")
+
+    assert events[2] == {"event": "unexpected-entry"}
+
+    lookup = snapshot["decision_lookup"]
+    assert lookup["DEC-MODEL-1"]["state"] == "completed"
+    assert lookup["DEC-MODEL-REF"]["decision_id"] == "DEC-MODEL-REF"
+    assert lookup["DEC-MODEL-REF"]["timestamp"].startswith("2025-01-01T08:30:00")
 
 
 def test_ai_scoring_failure_triggers_fallback() -> None:

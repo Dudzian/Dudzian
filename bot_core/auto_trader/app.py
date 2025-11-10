@@ -873,12 +873,32 @@ class AutoTrader:
         self._last_ai_context: Mapping[str, Any] | None = None
         self._decision_cycle_metadata: Mapping[str, str] = {}
         self._strategy_recommendations: list[dict[str, object]] = []
+        self._strategy_adaptation_log: list[dict[str, Any]] = []
         self._cooldown_until: float = 0.0
         self._cooldown_reason: str | None = None
         self._last_guardrail_reasons: list[str] = []
         self._last_guardrail_triggers: list[GuardrailTrigger] = []
         self._ai_degraded = False
         self._active_decision_id: str | None = None
+
+        # Domyślne wartości dla providerów jakości sygnału giełdowego.
+        # Testy jednostkowe mogą od razu wywołać guardraile, dlatego
+        # zapewniamy bezpieczne wartości początkowe zanim pojawi się
+        # jakiekolwiek jawne wywołanie ``set_signal_quality_provider``.
+        self._signal_quality_provider: Callable[[], Mapping[str, object] | None] | None = None
+        self._signal_quality_cache: tuple[float, Mapping[str, object]] | None = None
+        self._exchange_degradation_guardrail_active = False
+        self._exchange_degradation_kill_switch = False
+        self._exchange_degradation_alert_active = False
+        self._exchange_degradation_score = 0.0
+        self._exchange_degradation_payload: Mapping[str, object] = {}
+        self._exchange_weight_providers: dict[tuple[str, str], Callable[[], Mapping[str, object] | None]] = {}
+        self._exchange_key_registry: dict[tuple[str, str], tuple[str, str]] = {}
+        self._exchange_preference_weights: dict[tuple[str, str], float] = {}
+        self._exchange_preference_defaults: dict[str, float] = {}
+        self._exchange_weight_cache: tuple[float, dict[tuple[str, str], dict[str, Any]]] | None = None
+        self._exchange_selection_log: deque[dict[str, Any]] = deque()
+        self._last_exchange_selection: Mapping[str, Any] | None = None
 
         self._stop = threading.Event()
         self._auto_trade_stop = threading.Event()
@@ -4313,6 +4333,552 @@ class AutoTrader:
                 return pd.Timestamp(dt.replace(tzinfo=None))
             return pd.Timestamp(dt)
         return dt.timestamp()
+
+    # ------------------------------------------------------------------
+    def _normalize_decision_entry(
+        self,
+        value: Any,
+        *,
+        decision_lookup: Mapping[str, Mapping[str, Any]] | None = None,
+    ) -> dict[str, Any] | None:
+        """Normalizuje pojedynczą reprezentację decyzji do formatu przyjaznego UI."""
+
+        if value is None:
+            return None
+        if is_dataclass(value):
+            return self._normalize_decision_entry(asdict(value), decision_lookup=decision_lookup)
+        if isinstance(value, Mapping):
+            record = {
+                str(key): copy.deepcopy(val)
+                for key, val in value.items()
+            }
+            normalized_id = self._normalize_decision_id(record.get("decision_id"))
+            if not normalized_id:
+                return None
+            record["decision_id"] = normalized_id
+            timestamp_value = record.get("timestamp")
+            dt_value = self._ensure_datetime(timestamp_value, timezone.utc)
+            if dt_value is not None:
+                record["timestamp"] = dt_value.astimezone(timezone.utc).isoformat()
+            elif hasattr(timestamp_value, "isoformat") and not isinstance(timestamp_value, str):
+                try:
+                    record["timestamp"] = timestamp_value.isoformat()
+                except Exception:  # pragma: no cover - defensywne formatowanie
+                    pass
+            if "decision" in record:
+                nested_decision = record.get("decision")
+                if nested_decision is record:
+                    record.pop("decision", None)
+                else:
+                    normalized_decision = self._normalize_decision_entry(
+                        nested_decision,
+                        decision_lookup=decision_lookup,
+                    )
+                    if normalized_decision:
+                        record["decision"] = normalized_decision
+                    else:
+                        fallback = None
+                        if decision_lookup and normalized_id:
+                            fallback = decision_lookup.get(normalized_id)
+                        if fallback:
+                            record["decision"] = {
+                                str(key): copy.deepcopy(val)
+                                for key, val in fallback.items()
+                            }
+                        else:
+                            record.pop("decision", None)
+            if "decisions" in record:
+                normalized_decisions = self._normalize_decision_sequence(
+                    record["decisions"],
+                    decision_lookup=decision_lookup,
+                )
+                record["decisions"] = normalized_decisions
+            if "decision_ids" in record:
+                normalized_ids: list[str] = []
+                candidates = record.get("decision_ids")
+                if isinstance(candidates, Mapping):
+                    iterable: Iterable[Any] = candidates.keys()
+                elif isinstance(candidates, Iterable) and not isinstance(candidates, (str, bytes)):
+                    iterable = candidates
+                else:
+                    iterable = (candidates,)
+                for candidate in iterable:
+                    normalized_candidate = self._normalize_decision_id(candidate)
+                    if normalized_candidate and normalized_candidate not in normalized_ids:
+                        normalized_ids.append(normalized_candidate)
+                record["decision_ids"] = normalized_ids
+            return record
+        if isinstance(value, (str, bytes, int, float)):
+            normalized_id = self._normalize_decision_id(value)
+            if not normalized_id:
+                return None
+            if decision_lookup:
+                payload = decision_lookup.get(normalized_id)
+                if payload:
+                    return {
+                        str(key): copy.deepcopy(val)
+                        for key, val in payload.items()
+                    }
+            return {"decision_id": normalized_id}
+        if hasattr(value, "to_dict"):
+            try:
+                payload = value.to_dict()
+            except Exception:  # pragma: no cover - defensywne odczytanie
+                payload = None
+            if isinstance(payload, Mapping):
+                return self._normalize_decision_entry(payload, decision_lookup=decision_lookup)
+        if hasattr(value, "__dict__"):
+            return self._normalize_decision_entry(vars(value), decision_lookup=decision_lookup)
+        return None
+
+    def _normalize_decision_sequence(
+        self,
+        value: Any,
+        *,
+        decision_lookup: Mapping[str, Mapping[str, Any]] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Zamienia wejście na uporządkowaną listę decyzji."""
+
+        if value is None:
+            return []
+        if is_dataclass(value):
+            return self._normalize_decision_sequence(asdict(value), decision_lookup=decision_lookup)
+        if isinstance(value, Mapping):
+            items: Iterable[Any] = (value,)
+        elif isinstance(value, (str, bytes, int, float)):
+            items = (value,)
+        elif isinstance(value, Iterable):
+            items = value
+        else:
+            items = (value,)
+        normalised: list[dict[str, Any]] = []
+        for item in items:
+            entry = self._normalize_decision_entry(item, decision_lookup=decision_lookup)
+            if entry:
+                normalised.append(entry)
+        if normalised:
+            normalised.sort(key=lambda entry: entry.get("timestamp") or "", reverse=True)
+        return normalised
+
+    def _normalize_decision_history_entry(
+        self,
+        entry: Any,
+        *,
+        decision_lookup: Mapping[str, Mapping[str, Any]] | None = None,
+    ) -> dict[str, Any] | None:
+        if entry is None:
+            return None
+        if is_dataclass(entry):
+            return self._normalize_decision_history_entry(
+                asdict(entry),
+                decision_lookup=decision_lookup,
+            )
+        if isinstance(entry, Mapping):
+            record = {
+                str(key): copy.deepcopy(value)
+                for key, value in entry.items()
+            }
+        elif hasattr(entry, "to_dict"):
+            try:
+                payload = entry.to_dict()
+            except Exception:  # pragma: no cover - defensywne odczytanie
+                payload = None
+            if not isinstance(payload, Mapping):
+                return None
+            return self._normalize_decision_history_entry(
+                payload,
+                decision_lookup=decision_lookup,
+            )
+        elif hasattr(entry, "__dict__"):
+            return self._normalize_decision_history_entry(
+                vars(entry),
+                decision_lookup=decision_lookup,
+            )
+        else:
+            return None
+
+        timestamp_value = record.get("timestamp")
+        dt_value = self._ensure_datetime(timestamp_value, timezone.utc)
+        if dt_value is not None:
+            record["timestamp"] = dt_value.astimezone(timezone.utc).isoformat()
+        elif hasattr(timestamp_value, "isoformat") and not isinstance(timestamp_value, str):
+            try:
+                record["timestamp"] = timestamp_value.isoformat()
+            except Exception:  # pragma: no cover - defensywne formatowanie
+                pass
+
+        normalized_id = self._normalize_decision_id(record.get("decision_id"))
+        if normalized_id:
+            record["decision_id"] = normalized_id
+        elif "decision_id" in record:
+            record.pop("decision_id")
+
+        if "decision" in record:
+            nested_decision = record.get("decision")
+            if nested_decision is record:
+                record.pop("decision", None)
+            else:
+                normalized_decision = self._normalize_decision_entry(
+                    nested_decision,
+                    decision_lookup=decision_lookup,
+                )
+                if normalized_decision:
+                    record["decision"] = normalized_decision
+                elif normalized_id:
+                    fallback = self._normalize_decision_entry(
+                        normalized_id,
+                        decision_lookup=decision_lookup,
+                    )
+                    if fallback:
+                        record["decision"] = fallback
+                    else:
+                        record.pop("decision", None)
+                else:
+                    record.pop("decision", None)
+
+        if "decisions" in record:
+            normalized_decisions = self._normalize_decision_sequence(
+                record["decisions"],
+                decision_lookup=decision_lookup,
+            )
+            record["decisions"] = normalized_decisions
+
+        if "decision_ids" in record:
+            normalized_ids: list[str] = []
+            candidates = record.get("decision_ids")
+            if isinstance(candidates, Mapping):
+                iterable: Iterable[Any] = candidates.keys()
+            elif isinstance(candidates, Iterable) and not isinstance(candidates, (str, bytes)):
+                iterable = candidates
+            else:
+                iterable = (candidates,)
+            for candidate in iterable:
+                normalized_candidate = self._normalize_decision_id(candidate)
+                if normalized_candidate and normalized_candidate not in normalized_ids:
+                    normalized_ids.append(normalized_candidate)
+            record["decision_ids"] = normalized_ids
+
+        return record
+
+    def _normalize_decision_history(
+        self,
+        entries: Sequence[Any],
+        *,
+        decision_lookup: Mapping[str, Mapping[str, Any]] | None = None,
+    ) -> list[dict[str, Any]]:
+        if not entries:
+            return []
+
+        normalized: list[dict[str, Any]] = []
+        for entry in entries:
+            normalized_entry = self._normalize_decision_history_entry(
+                entry,
+                decision_lookup=decision_lookup,
+            )
+            if normalized_entry is not None:
+                normalized.append(normalized_entry)
+
+        if normalized:
+            normalized.sort(
+                key=lambda record: record.get("timestamp") or "",
+                reverse=True,
+            )
+        return normalized
+
+    def _normalize_model_event_entry(
+        self,
+        entry: Any,
+        *,
+        decision_lookup: Mapping[str, Mapping[str, Any]] | None = None,
+    ) -> dict[str, Any] | None:
+        if entry is None:
+            return None
+        if is_dataclass(entry):
+            return self._normalize_model_event_entry(
+                asdict(entry),
+                decision_lookup=decision_lookup,
+            )
+        if isinstance(entry, Mapping):
+            record = {
+                str(key): copy.deepcopy(value)
+                for key, value in entry.items()
+            }
+        elif hasattr(entry, "to_dict"):
+            try:
+                payload = entry.to_dict()
+            except Exception:  # pragma: no cover - defensywne odczytanie
+                payload = None
+            if not isinstance(payload, Mapping):
+                return None
+            return self._normalize_model_event_entry(
+                payload,
+                decision_lookup=decision_lookup,
+            )
+        elif hasattr(entry, "__dict__"):
+            return self._normalize_model_event_entry(
+                vars(entry),
+                decision_lookup=decision_lookup,
+            )
+        else:
+            if isinstance(entry, (str, bytes)):
+                return {"event": str(entry)}
+            return None
+
+        if "event" in record and record.get("event") is not None:
+            record["event"] = str(record.get("event"))
+
+        timestamp_value = record.get("timestamp")
+        dt_value = self._ensure_datetime(timestamp_value, timezone.utc)
+        if dt_value is not None:
+            record["timestamp"] = dt_value.astimezone(timezone.utc).isoformat()
+        elif hasattr(timestamp_value, "isoformat") and not isinstance(timestamp_value, str):
+            try:
+                record["timestamp"] = timestamp_value.isoformat()
+            except Exception:  # pragma: no cover - defensywne formatowanie
+                pass
+
+        normalized_id = self._normalize_decision_id(record.get("decision_id"))
+        if normalized_id:
+            record["decision_id"] = normalized_id
+        elif "decision_id" in record:
+            record.pop("decision_id")
+
+        if "decision" in record:
+            normalized_decision = self._normalize_decision_entry(
+                record.get("decision"),
+                decision_lookup=decision_lookup,
+            )
+            if normalized_decision:
+                record["decision"] = normalized_decision
+            elif normalized_id:
+                fallback = self._normalize_decision_entry(
+                    normalized_id,
+                    decision_lookup=decision_lookup,
+                )
+                if fallback:
+                    record["decision"] = fallback
+                else:
+                    record.pop("decision", None)
+            else:
+                record.pop("decision", None)
+        elif normalized_id:
+            fallback = self._normalize_decision_entry(
+                normalized_id,
+                decision_lookup=decision_lookup,
+            )
+            if fallback:
+                record["decision"] = fallback
+
+        return record
+
+    def _normalize_model_events(
+        self,
+        events: Sequence[Mapping[str, Any]] | Sequence[Any] | None,
+        *,
+        decision_lookup: Mapping[str, Mapping[str, Any]] | None = None,
+    ) -> list[dict[str, Any]]:
+        if not events:
+            return []
+
+        normalized: list[dict[str, Any]] = []
+        for entry in events:
+            normalized_entry = self._normalize_model_event_entry(
+                entry,
+                decision_lookup=decision_lookup,
+            )
+            if normalized_entry is None:
+                continue
+            normalized.append(normalized_entry)
+
+        if normalized:
+            normalized.sort(
+                key=lambda record: record.get("timestamp") or "",
+                reverse=True,
+            )
+        return normalized
+
+    def _build_decision_lookup(
+        self,
+        records: Sequence[Mapping[str, Any]] | Sequence[Any],
+    ) -> dict[str, dict[str, Any]]:
+        """Tworzy mapę decyzji indeksowaną po ``decision_id`` dla szybkich odwołań."""
+
+        lookup: dict[str, dict[str, Any]] = {}
+        for record in records:
+            for entry in self._normalize_decision_sequence(record):
+                decision_id = entry.get("decision_id")
+                if not decision_id:
+                    continue
+                normalized_entry = {
+                    str(key): copy.deepcopy(value)
+                    for key, value in entry.items()
+                }
+                existing = lookup.get(decision_id)
+                if existing is None:
+                    lookup[decision_id] = normalized_entry
+                    continue
+                if len(normalized_entry) > len(existing):
+                    merged = dict(normalized_entry)
+                    for key, value in existing.items():
+                        if key not in merged or merged[key] in (None, "", [], {}):
+                            merged[key] = copy.deepcopy(value)
+                    lookup[decision_id] = merged
+                    continue
+                merged = {
+                    str(key): copy.deepcopy(value)
+                    for key, value in existing.items()
+                }
+                for key, value in normalized_entry.items():
+                    if key not in merged or merged[key] in (None, "", [], {}):
+                        merged[key] = copy.deepcopy(value)
+                lookup[decision_id] = merged
+        return lookup
+
+    def _enrich_retraining_cycles_with_decisions(
+        self,
+        cycles: Sequence[Mapping[str, Any]] | Sequence[Any],
+        *,
+        decision_lookup: Mapping[str, Mapping[str, Any]] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Zapewnia bezpieczną reprezentację cykli retrainingu dla UI."""
+
+        if not cycles:
+            return []
+
+        lookup: dict[str, dict[str, Any]] = {}
+        if decision_lookup:
+            for key, value in decision_lookup.items():
+                if not key:
+                    continue
+                lookup[key] = {
+                    str(k): copy.deepcopy(v)
+                    for k, v in value.items()
+                }
+
+        def _coerce_cycle(entry: Any) -> dict[str, Any]:
+            if isinstance(entry, Mapping):
+                return {str(key): copy.deepcopy(value) for key, value in entry.items()}
+            if is_dataclass(entry):
+                return _coerce_cycle(asdict(entry))
+            if hasattr(entry, "to_dict"):
+                try:
+                    payload = entry.to_dict()
+                except Exception:  # pragma: no cover - defensywne odczytanie
+                    payload = None
+                if isinstance(payload, Mapping):
+                    return _coerce_cycle(payload)
+            if hasattr(entry, "__dict__"):
+                return _coerce_cycle(vars(entry))
+            return {"entry": entry}
+
+        def _normalize_decision_ids(value: Any) -> list[str]:
+            if value is None:
+                return []
+            if isinstance(value, Mapping):
+                candidates = value.keys()
+            elif isinstance(value, (str, bytes)):
+                candidates = [value]
+            elif isinstance(value, Iterable):
+                candidates = value
+            else:
+                candidates = [value]
+            normalised: list[str] = []
+            for candidate in candidates:
+                normalized_id = self._normalize_decision_id(candidate)
+                if normalized_id and normalized_id not in normalised:
+                    normalised.append(normalized_id)
+            return normalised
+
+        def _resolve_decision(reference: Any) -> dict[str, Any] | None:
+            normalized = self._normalize_decision_id(reference)
+            if not normalized:
+                return None
+            payload = lookup.get(normalized)
+            if payload:
+                return {str(key): copy.deepcopy(value) for key, value in payload.items()}
+            return {"decision_id": normalized}
+
+        def _normalize_decision_entry(value: Any) -> dict[str, Any] | None:
+            if value is None:
+                return None
+            if is_dataclass(value):
+                return _normalize_decision_entry(asdict(value))
+            if isinstance(value, Mapping):
+                record = {
+                    str(key): copy.deepcopy(val)
+                    for key, val in value.items()
+                }
+                normalized_id = self._normalize_decision_id(record.get("decision_id"))
+                if normalized_id:
+                    record["decision_id"] = normalized_id
+                timestamp_value = record.get("timestamp")
+                if isinstance(timestamp_value, datetime):
+                    record["timestamp"] = timestamp_value.astimezone(timezone.utc).isoformat()
+                elif hasattr(timestamp_value, "isoformat") and not isinstance(timestamp_value, str):
+                    try:
+                        record["timestamp"] = timestamp_value.isoformat()
+                    except Exception:  # pragma: no cover - defensywne formatowanie
+                        pass
+                return record
+            if isinstance(value, (str, bytes, int, float)):
+                return _resolve_decision(value)
+            if hasattr(value, "to_dict"):
+                try:
+                    payload = value.to_dict()
+                except Exception:  # pragma: no cover - defensywne odczytanie
+                    payload = None
+                if isinstance(payload, Mapping):
+                    return _normalize_decision_entry(payload)
+            if hasattr(value, "__dict__"):
+                return _normalize_decision_entry(vars(value))
+            return None
+
+        def _normalize_decision_sequence(value: Any) -> list[dict[str, Any]]:
+            if value is None:
+                return []
+            if is_dataclass(value):
+                value = asdict(value)
+            if isinstance(value, Mapping):
+                items: Iterable[Any] = (value,)
+            elif isinstance(value, (str, bytes)):
+                items = (value,)
+            elif isinstance(value, Iterable):
+                items = value
+            else:
+                items = (value,)
+            normalised: list[dict[str, Any]] = []
+            for item in items:
+                normalised_entry = _normalize_decision_entry(item)
+                if normalised_entry:
+                    normalised.append(normalised_entry)
+            if normalised:
+                normalised.sort(key=lambda entry: entry.get("timestamp") or "", reverse=True)
+            return normalised
+
+        enriched: list[dict[str, Any]] = []
+        for entry in cycles:
+            record = _coerce_cycle(entry)
+            decision_ids = _normalize_decision_ids(record.get("decision_ids"))
+            if decision_ids:
+                record["decision_ids"] = decision_ids
+            elif "decision_ids" in record:
+                record["decision_ids"] = []
+            decisions = self._normalize_decision_sequence(
+                record.get("decisions"),
+                decision_lookup=lookup,
+            )
+            if not decisions and decision_ids:
+                decisions = []
+                for identifier in decision_ids:
+                    resolved = self._normalize_decision_entry(
+                        identifier,
+                        decision_lookup=lookup,
+                    )
+                    if resolved:
+                        decisions.append(resolved)
+            record["decisions"] = decisions
+            enriched.append(record)
+        return enriched
 
     def _normalize_approval_flag(self, value: Any) -> str:
         token = self._coerce_optional_bool(value)
@@ -13843,7 +14409,7 @@ class AutoTrader:
 
         performance_summary: dict[str, Any] = {}
         performance_window: dict[str, Any] = {}
-        decision_history: list[dict[str, Any]] = []
+        decision_history_raw: list[dict[str, Any]] = []
         journal = getattr(self, "_decision_journal", None)
         now_utc = datetime.now(timezone.utc)
         window_start = now_utc - timedelta(hours=24)
@@ -13885,9 +14451,9 @@ class AutoTrader:
             else:
                 for record in exported_records[-64:]:
                     if isinstance(record, Mapping):
-                        decision_history.append(dict(record))
-                if decision_history:
-                    decision_history.sort(
+                        decision_history_raw.append(dict(record))
+                if decision_history_raw:
+                    decision_history_raw.sort(
                         key=lambda entry: entry.get("timestamp") or "",
                         reverse=True,
                     )
@@ -13913,12 +14479,7 @@ class AutoTrader:
                 self._last_journal_analytics.to_mapping()
             )
         result["journal_performance"] = analytics_snapshot
-
-        if decision_history:
-            result["decision_history"] = decision_history
-        else:
-            result["decision_history"] = []
-        guardrail_trace: list[dict[str, Any]] = []
+        guardrail_trace_raw: list[dict[str, Any]] = []
         decision_id = (
             last_decision.get("decision_id")
             if isinstance(last_decision, Mapping)
@@ -13941,12 +14502,12 @@ class AutoTrader:
                     exc_info=True,
                 )
             else:
-                guardrail_trace = [
+                guardrail_trace_raw = [
                     dict(entry)
                     for entry in trace_records
                     if isinstance(entry, Mapping)
                 ]
-        guardrail_state["last_decision_id"] = decision_id
+        guardrail_state["last_decision_id"] = self._normalize_decision_id(decision_id)
 
         risk_alerts: list[dict[str, Any]] = []
         severity_base = (
@@ -14057,17 +14618,111 @@ class AutoTrader:
         failover_snapshot.setdefault("last_execution", {})
 
         with self._lock:
-            model_events = [dict(entry) for entry in getattr(self, "_model_change_log", tuple())]
-            retraining_cycles_raw = [
-                dict(entry)
-                for entry in getattr(self, "_retraining_cycle_log", tuple())
-            ]
-        retraining_cycles = self._enrich_retraining_cycles_with_decisions(retraining_cycles_raw)
+            raw_model_events = list(getattr(self, "_model_change_log", tuple()))
+            model_events_raw = []
+            for entry in raw_model_events:
+                if isinstance(entry, Mapping):
+                    model_events_raw.append({str(key): copy.deepcopy(value) for key, value in entry.items()})
+                else:
+                    model_events_raw.append(entry)
+            retraining_cycles_raw = list(getattr(self, "_retraining_cycle_log", tuple()))
+
+        decision_lookup_seed: list[dict[str, Any]] = []
+
+        def _collect_decision_reference(reference: Any) -> None:
+            for entry in self._normalize_decision_sequence(reference):
+                decision_lookup_seed.append(entry)
+
+        for record in decision_history_raw:
+            _collect_decision_reference(record)
+        _collect_decision_reference(last_decision)
+        for entry in guardrail_trace_raw:
+            if not isinstance(entry, Mapping):
+                continue
+            _collect_decision_reference(entry.get("decision"))
+            _collect_decision_reference(entry.get("decision_id"))
+        for event in model_events_raw:
+            if not isinstance(event, Mapping):
+                continue
+            _collect_decision_reference(event.get("decision"))
+            _collect_decision_reference(event.get("decision_id"))
+        for cycle_entry in retraining_cycles_raw:
+            if is_dataclass(cycle_entry):
+                cycle_mapping: Mapping[str, Any] | None = asdict(cycle_entry)
+            elif isinstance(cycle_entry, Mapping):
+                cycle_mapping = cycle_entry
+            else:
+                cycle_mapping = None
+            if cycle_mapping is None:
+                continue
+            _collect_decision_reference(cycle_mapping.get("decisions"))
+            _collect_decision_reference(cycle_mapping.get("decision_ids"))
+
+        decision_lookup = self._build_decision_lookup(decision_lookup_seed)
+
+        decision_history = self._normalize_decision_history(
+            decision_history_raw,
+            decision_lookup=decision_lookup,
+        )
+
+        if decision_history:
+            result["decision_history"] = decision_history
+        else:
+            result["decision_history"] = []
+        result["decision_lookup"] = {
+            key: {str(field): copy.deepcopy(value) for field, value in payload.items()}
+            for key, payload in decision_lookup.items()
+        }
+
+        model_events = self._normalize_model_events(
+            model_events_raw,
+            decision_lookup=decision_lookup,
+        )
+
+        normalized_guardrail_trace: list[dict[str, Any]] = []
+        for entry in guardrail_trace_raw:
+            if not isinstance(entry, Mapping):
+                continue
+            record = {str(key): copy.deepcopy(value) for key, value in entry.items()}
+            timestamp_value = record.get("timestamp")
+            if isinstance(timestamp_value, datetime):
+                record["timestamp"] = timestamp_value.astimezone(timezone.utc).isoformat()
+            elif hasattr(timestamp_value, "isoformat") and not isinstance(timestamp_value, str):
+                try:
+                    record["timestamp"] = timestamp_value.isoformat()
+                except Exception:  # pragma: no cover - defensywne formatowanie
+                    pass
+            normalized_id = self._normalize_decision_id(record.get("decision_id"))
+            if normalized_id:
+                record["decision_id"] = normalized_id
+            else:
+                record.pop("decision_id", None)
+            normalized_decision = self._normalize_decision_entry(
+                record.get("decision"),
+                decision_lookup=decision_lookup,
+            )
+            if normalized_decision:
+                record["decision"] = normalized_decision
+            elif normalized_id:
+                fallback_decision = self._normalize_decision_entry(
+                    normalized_id,
+                    decision_lookup=decision_lookup,
+                )
+                if fallback_decision:
+                    record["decision"] = fallback_decision
+            else:
+                record.pop("decision", None)
+            normalized_guardrail_trace.append(record)
+
+        retraining_cycles = self._enrich_retraining_cycles_with_decisions(
+            retraining_cycles_raw,
+            decision_lookup=decision_lookup,
+        )
         result["model_events"] = model_events
         result["retraining_cycles"] = retraining_cycles
 
         result["guardrail_state"] = guardrail_state
-        result["guardrail_trace"] = guardrail_trace
+        result["guardrail_trace"] = normalized_guardrail_trace
         result["risk_alerts"] = risk_alerts
         result["signal_quality"] = signal_quality_snapshot
         result["failover"] = failover_snapshot
