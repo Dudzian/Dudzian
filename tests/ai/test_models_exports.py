@@ -5,6 +5,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from bot_core.ai.models import AIModels, ModelArtifact, ModelMetrics
 
@@ -61,12 +62,33 @@ def test_model_artifact_uses_model_metrics() -> None:
     assert artifact.metrics is metrics_instance
 
 
-def test_model_metrics_accepts_flat_summary() -> None:
-    metrics = ModelMetrics({"mae": 2.0, "directional_accuracy": "0.75"})
+def test_model_metrics_accepts_stage6_payload() -> None:
+    payload = {
+        "summary": {"mae": 2.0, "directional_accuracy": "0.75"},
+        "train": {"mae": 1.8},
+        "validation": {},
+        "test": {},
+    }
+    metrics = ModelMetrics(payload)
 
     assert metrics.summary()["mae"] == 2.0
     assert metrics["directional_accuracy"] == 0.75
+    assert metrics.splits()["train"]["mae"] == 1.8
     assert set(metrics.splits().keys()) == {"summary", "train", "validation", "test"}
+
+
+def test_model_metrics_rejects_legacy_payload() -> None:
+    payload = {
+        "mae": 1.5,
+        "validation": {"mae": 1.4},
+    }
+
+    with pytest.raises(ValueError) as excinfo:
+        ModelMetrics(payload)
+
+    message = str(excinfo.value)
+    assert "Stage6" in message
+    assert "mae" in message
 
 
 def test_ai_models_train_predict_save(tmp_path: Path) -> None:
