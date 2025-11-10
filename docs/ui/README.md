@@ -33,7 +33,7 @@
 ## Personalizacja interfejsu
 
 * Preferencje motywu (`dark`, `light`, `midnight`), układu (`classic`, `compact`, `advanced`) i powiadomień są budowane przez `Application::buildPersonalizationPayload()` i zapisywane w `~/.dudzian/ui_settings.json` (lub w ścieżce nadpisanej zmienną `BOT_CORE_UI_SETTINGS_PATH`).
-* `Application::loadUiSettings()` wymaga, aby ustawienia były dostępne w aktualnym magazynie (domyślnie `~/.dudzian/ui_settings.json` lub ścieżka z `BOT_CORE_UI_SETTINGS_PATH`). Pliki `var/state/ui_settings.json` nie są już ładowane – aplikacja loguje komunikat o koniecznej migracji opisanej w [docs/migrations/2024-legacy-storage-removal.md](../migrations/2024-legacy-storage-removal.md).
+* `Application::loadUiSettings()` wymaga, aby ustawienia były dostępne w aktualnym magazynie (domyślnie `~/.dudzian/ui_settings.json` lub ścieżka z `BOT_CORE_UI_SETTINGS_PATH`). Pliki `var/state/ui_settings.json` nie są już ładowane – aplikacja loguje komunikat o koniecznej migracji opisanej w [docs/migrations/2024-stage5-storage-removal.md](../migrations/2024-stage5-storage-removal.md).
 
 ## Panel Strategy Management
 

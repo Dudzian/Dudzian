@@ -5,7 +5,7 @@ Krakenem i Zondą. W pierwszym etapie budujemy szkielet umożliwiający bezpiecz
 zewnętrznych, z jasnym podziałem na warstwy i środowiska.
 
 > **Zasada etapu 1:** wszystkie nowe moduły aplikacji korzystają wyłącznie z
-> przestrzeni nazw `bot_core`. Wcześniejszy mostek `legacy_bridge/` został
+> przestrzeni nazw `bot_core`. Wcześniejszy mostek `archive_bridge/` został
 > zarchiwizowany – zgodność wsteczna zapewniana jest bezpośrednio przez pakiet
 > Warstwa wykonawcza koncentruje się na modułach `bot_core`.
 

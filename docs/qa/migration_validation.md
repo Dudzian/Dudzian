@@ -2,11 +2,11 @@
 
 Ten dokument opisuje procedurę porównania wyników strategii przed i po migracji do asynchronicznej kolejki I/O.
 
-## 1. Przygotowanie snapshotów legacy
+## 1. Przygotowanie snapshotów bazowych
 
 1. Upewnij się, że środowisko działa w wersji _przed_ migracją async.
 2. Uruchom scenariusz `scripts/run_local_bot.py --mode demo --report-dir logs/e2e --report-markdown-dir reports/e2e`.
-3. Po zakończeniu scenariusza skopiuj wygenerowane logi i raporty KPI do katalogu `data/snapshots/legacy/` (domyślne pliki `summary.json`).
+3. Po zakończeniu scenariusza skopiuj wygenerowane logi i raporty KPI do katalogu `data/snapshots/baseline/` (domyślne pliki `summary.json`).
 
 ## 2. Wykonanie migracji i zebranie snapshotów async
 

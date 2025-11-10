@@ -26,7 +26,7 @@ class _DummyScheduler:
         self.resume_schedule_calls: list[str] = []
         self.resume_tag_calls: list[str] = []
         self._active_schedules: set[str] = {"existing"}
-        self._active_tags: set[str] = {"legacy"}
+        self._active_tags: set[str] = {"sunset"}
         self.configure_signal_limit_calls: list[dict[str, object]] = []
         self._signal_limit_overrides: dict[tuple[str, str], dict[str, object]] = {
             ("trend_following", "balanced"): {"limit": 2, "active": True}
@@ -299,7 +299,7 @@ def test_management_actions_suspend_and_resume(
         "--resume-schedule",
         "existing",
         "--resume-tag",
-        "legacy",
+        "sunset",
         "--suspension-reason",
         "maintenance",
         "--suspension-duration",
@@ -313,7 +313,7 @@ def test_management_actions_suspend_and_resume(
     assert scheduler.run_once_called is False
     assert scheduler.run_forever_called is False
     assert scheduler.resume_schedule_calls == ["existing"]
-    assert scheduler.resume_tag_calls == ["legacy"]
+    assert scheduler.resume_tag_calls == ["sunset"]
     assert scheduler.suspend_schedule_calls == [
         {
             "name": "alpha",
@@ -333,7 +333,7 @@ def test_management_actions_suspend_and_resume(
 
     out = capsys.readouterr().out
     assert "Wznowiono harmonogram: existing" in out
-    assert "Wznowiono tag: legacy" in out
+    assert "Wznowiono tag: sunset" in out
     assert "Zawieszono harmonogram: alpha" in out
     assert "Zawieszenia harmonogramów:" in out
     assert "alpha" in out
@@ -363,7 +363,7 @@ def test_export_suspensions_snapshot(
 
     payload = json.loads(target.read_text(encoding="utf-8"))
     assert payload["schedules"]["existing"]["reason"] == "manual"
-    assert payload["tags"]["legacy"]["reason"] == "manual"
+    assert payload["tags"]["sunset"]["reason"] == "manual"
 
 
 def test_management_actions_run_after(monkeypatch: pytest.MonkeyPatch) -> None:

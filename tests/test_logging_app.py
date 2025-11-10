@@ -32,7 +32,7 @@ def _reload_logging_app() -> None:
     importlib.import_module(module_name)
 
 
-def test_logging_env_ignores_legacy_variables(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_logging_env_ignores_archival_variables(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.delenv("BOT_CORE_LOG_DIR", raising=False)
     monkeypatch.delenv("BOT_CORE_LOG_FILE", raising=False)
     monkeypatch.delenv("BOT_CORE_LOGGER_NAME", raising=False)
@@ -40,12 +40,12 @@ def test_logging_env_ignores_legacy_variables(monkeypatch: pytest.MonkeyPatch, t
     monkeypatch.delenv("BOT_CORE_LOG_FORMAT", raising=False)
     monkeypatch.delenv("BOT_CORE_LOG_SHIP_VECTOR", raising=False)
 
-    monkeypatch.setenv("KRYPT_LOWCA_LOG_DIR", str(tmp_path / "legacy_dir"))
-    monkeypatch.setenv("KRYPT_LOWCA_LOG_FILE", str(tmp_path / "legacy.log"))
-    monkeypatch.setenv("KRYPT_LOWCA_LOGGER_NAME", "legacy.logger")
+    monkeypatch.setenv("KRYPT_LOWCA_LOG_DIR", str(tmp_path / "sunset_dir"))
+    monkeypatch.setenv("KRYPT_LOWCA_LOG_FILE", str(tmp_path / "sunset.log"))
+    monkeypatch.setenv("KRYPT_LOWCA_LOGGER_NAME", "sunset.logger")
     monkeypatch.setenv("KRYPT_LOWCA_LOG_LEVEL", "debug")
     monkeypatch.setenv("KRYPT_LOWCA_LOG_FORMAT", "text")
-    monkeypatch.setenv("KRYPT_LOWCA_LOG_SHIP_VECTOR", "https://legacy.invalid")
+    monkeypatch.setenv("KRYPT_LOWCA_LOG_SHIP_VECTOR", "https://sunset.invalid")
 
     _reload_logging_app()
     module = sys.modules["bot_core.logging.app"]

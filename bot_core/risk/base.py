@@ -92,7 +92,7 @@ class RiskProfile(abc.ABC):
 class StaticRiskProfile(RiskProfile):
     """Profil ryzyka zdefiniowany stałymi parametrami.
 
-    Podczas migracji z gałęzi legacy wiele profili kopiowało identyczne metody
+    Podczas migracji z gałęzi archiwalnej wiele profili kopiowało identyczne metody
     zwracające wartości stałych atrybutów.  Ta klasa zapewnia wspólne
     implementacje bazujące na nazwanych atrybutach klasy, dzięki czemu
     poszczególne profile mogą definiować jedynie wartości graniczne, bez

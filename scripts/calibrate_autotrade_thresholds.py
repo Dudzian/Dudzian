@@ -3655,7 +3655,7 @@ def _resolve_freeze_event_limit(
     raw_freeze_events_mode: str | None,
     raw_freeze_events_limit: int | None,
 ) -> int | None:
-    """Wybiera limit blokad na podstawie nowych i legacyjnych flag CLI."""
+    """Wybiera limit blokad na podstawie nowych i archiwalnych flag CLI."""
 
     if limit_freeze_events is not None:
         return int(limit_freeze_events)

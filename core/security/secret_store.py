@@ -45,7 +45,7 @@ class SecretStore:
         *,
         storage: KeyringSecretStorage | None = None,
         service_name: str | None = None,
-        legacy_path: str | Path | None = None,
+        deprecated_path: str | Path | None = None,
         index_path: str | Path | None = None,
         data_dir: str | Path | None = None,
     ) -> None:
@@ -61,10 +61,10 @@ class SecretStore:
                 index_path=derived_index,
             )
 
-        if legacy_path:
-            self._legacy_hint_path = Path(legacy_path).expanduser()
+        if deprecated_path:
+            self._deprecated_hint_path = Path(deprecated_path).expanduser()
         else:
-            self._legacy_hint_path = _default_legacy_path()
+            self._deprecated_hint_path = _default_deprecated_path()
 
         self._lock = RLock()
         self._migration_checked = False
@@ -155,12 +155,12 @@ class SecretStore:
             return
         self._migration_checked = True
 
-        if self._legacy_hint_path and self._legacy_hint_path.exists():
+        if self._deprecated_hint_path and self._deprecated_hint_path.exists():
             raise SecretStoreError(
-                "Wykryto legacy magazyn kluczy API w {path}. Migracja automatyczna została usunięta – "
-                "uruchom narzędzie z pakietu 'dudzian-migrate' opisane w docs/migrations/2024-legacy-storage-removal.md "
+                "Wykryto archiwalny magazyn kluczy API w {path}. Migracja automatyczna została usunięta – "
+                "uruchom narzędzie z pakietu 'dudzian-migrate' opisane w docs/migrations/2024-stage5-storage-removal.md "
                 "i usuń plik przed dalszym korzystaniem z aplikacji."
-                .format(path=self._legacy_hint_path)
+                .format(path=self._deprecated_hint_path)
             )
 
     def _storage_key(self, exchange_id: str) -> str:
@@ -207,7 +207,7 @@ def _default_data_dir() -> Path:
     return Path.home() / ".dudzian"
 
 
-def _default_legacy_path() -> Path:
+def _default_deprecated_path() -> Path:
     return (Path.home() / ".kryptolowca" / "api_credentials.json").expanduser()
 
 

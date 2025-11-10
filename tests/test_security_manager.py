@@ -261,7 +261,7 @@ def test_load_exchange_credentials_missing_secret_raises_error() -> None:
     assert "secret" in str(cause)
 
 
-def test_load_exchange_credentials_rejects_legacy_api_fields() -> None:
+def test_load_exchange_credentials_rejects_archival_api_fields() -> None:
     storage = _StaticSecretStorage(
         '{"api_key": "API123", "api_secret": "SECRET456", "environment": "paper"}'
     )

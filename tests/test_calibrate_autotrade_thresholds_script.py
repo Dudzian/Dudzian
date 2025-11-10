@@ -1895,7 +1895,7 @@ def test_load_current_thresholds_supports_nested_structures(tmp_path: Path) -> N
             {"metric": "signal_after_adjustment", "value": 0.85},
             {"name": "signal_after_clamp", "current": "0.74"},
         ],
-        "legacy_signal_after_adjustment_threshold": 0.83,
+        "historic_signal_after_adjustment_threshold": 0.83,
     }
 
     thresholds_path = tmp_path / "nested_thresholds.json"
@@ -5614,7 +5614,7 @@ def test_main_rejects_negative_max_raw_freeze_events(
     assert "--max-raw-freeze-events" in message
 
 
-def test_main_rejects_negative_legacy_freeze_limit(
+def test_main_rejects_negative_sample_freeze_limit(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     module, base_args = _prepare_minimal_cli_environment(monkeypatch, tmp_path)
@@ -5635,7 +5635,7 @@ def test_resolve_freeze_event_limit_prefers_new_flag() -> None:
     assert result == 5
 
 
-def test_resolve_freeze_event_limit_legacy_sample_default() -> None:
+def test_resolve_freeze_event_limit_sample_default() -> None:
     result = _resolve_freeze_event_limit(
         limit_freeze_events=None,
         raw_freeze_events_mode="sample",
@@ -5644,7 +5644,7 @@ def test_resolve_freeze_event_limit_legacy_sample_default() -> None:
     assert result == 7
 
 
-def test_resolve_freeze_event_limit_legacy_omit() -> None:
+def test_resolve_freeze_event_limit_non_sample_returns_none() -> None:
     result = _resolve_freeze_event_limit(
         limit_freeze_events=None,
         raw_freeze_events_mode="omit",

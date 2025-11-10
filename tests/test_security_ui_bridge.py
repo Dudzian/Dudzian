@@ -159,22 +159,22 @@ def test_dump_state_reads_profiles_and_license(monkeypatch, tmp_path):
     assert {p["user_id"] for p in state["profiles"]} == {"ops", "qa"}
 
 
-def test_dump_state_rejects_legacy_bundle_format(monkeypatch, tmp_path):
+def test_dump_state_rejects_archive_bundle_format(monkeypatch, tmp_path):
     monkeypatch.setenv("BOT_CORE_LICENSE_PUBLIC_KEY", "22" * 32)
 
     license_path = tmp_path / "license.json"
-    legacy_payload = {
+    archive_payload = {
         "schema": "core.oem.license",
         "schema_version": "1.0",
         "issued_at": "2024-01-01T00:00:00Z",
         "expires_at": "2040-12-31T23:59:59Z",
         "issuer": "qa",
         "profile": "paper",
-        "license_id": "legacy",
-        "fingerprint": {"algorithm": "sha256", "value": "LEGACY"},
+        "license_id": "archive",
+        "fingerprint": {"algorithm": "sha256", "value": "ARCHIVE"},
     }
     bundle = {
-        "payload": legacy_payload,
+        "payload": archive_payload,
         "signature": {"algorithm": "HMAC-SHA384", "value": "dummy", "key_id": "lic"},
     }
     license_path.write_text(json.dumps(bundle, ensure_ascii=False), encoding="utf-8")

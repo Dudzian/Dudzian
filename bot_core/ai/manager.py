@@ -3333,7 +3333,7 @@ class AIManager:
         return model
 
     def _safe_pct_change(self, frame: pd.DataFrame, feats: Iterable[str]) -> pd.DataFrame:
-        """Oblicz zmiany procentowe z obsługą awaryjnego trybu dla ramek legacy."""
+        """Oblicz zmiany procentowe z obsługą awaryjnego trybu dla ramek archiwalnych."""
 
         columns = list(feats)
         try:

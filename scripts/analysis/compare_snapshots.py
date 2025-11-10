@@ -16,7 +16,7 @@ class MetricDeviation:
 
     strategy: str
     metric: str
-    legacy_value: Number | None
+    baseline_value: Number | None
     async_value: Number | None
     absolute_delta: float
     relative_delta: float | None
@@ -28,11 +28,11 @@ class SnapshotComparison:
 
     deviations: tuple[MetricDeviation, ...]
     missing_in_async: tuple[str, ...]
-    missing_in_legacy: tuple[str, ...]
+    missing_in_baseline: tuple[str, ...]
 
     @property
     def is_within_tolerance(self) -> bool:
-        return not self.deviations and not self.missing_in_async and not self.missing_in_legacy
+        return not self.deviations and not self.missing_in_async and not self.missing_in_baseline
 
 
 def _load_snapshot(path: Path) -> Mapping[str, Mapping[str, Number]]:
@@ -67,32 +67,32 @@ def _aggregate_directory(directory: Path) -> Mapping[str, Mapping[str, Number]]:
 
 
 def compare_snapshots(
-    legacy_directory: Path,
+    baseline_directory: Path,
     async_directory: Path,
     *,
     relative_tolerance: float,
     absolute_tolerance: float,
 ) -> SnapshotComparison:
-    legacy_snapshots = _aggregate_directory(legacy_directory)
+    baseline_snapshots = _aggregate_directory(baseline_directory)
     async_snapshots = _aggregate_directory(async_directory)
 
     deviations: list[MetricDeviation] = []
     missing_in_async: list[str] = []
-    missing_in_legacy: list[str] = []
+    missing_in_baseline: list[str] = []
 
-    for strategy, legacy_metrics in legacy_snapshots.items():
+    for strategy, baseline_metrics in baseline_snapshots.items():
         async_metrics = async_snapshots.get(strategy)
         if async_metrics is None:
             missing_in_async.append(strategy)
             continue
-        for metric, legacy_value in legacy_metrics.items():
+        for metric, baseline_value in baseline_metrics.items():
             async_value = async_metrics.get(metric)
             if async_value is None:
                 missing_in_async.append(f"{strategy}:{metric}")
                 continue
-            delta = float(async_value) - float(legacy_value)
+            delta = float(async_value) - float(baseline_value)
             abs_delta = abs(delta)
-            rel_base = max(abs(float(legacy_value)), 1e-12)
+            rel_base = max(abs(float(baseline_value)), 1e-12)
             rel_delta = abs_delta / rel_base if rel_base > 0 else None
             allowed = max(absolute_tolerance, relative_tolerance * rel_base)
             if abs_delta > allowed:
@@ -100,24 +100,24 @@ def compare_snapshots(
                     MetricDeviation(
                         strategy=strategy,
                         metric=metric,
-                        legacy_value=float(legacy_value),
+                        baseline_value=float(baseline_value),
                         async_value=float(async_value),
                         absolute_delta=abs_delta,
                         relative_delta=rel_delta,
                     )
                 )
 
-    for strategy in async_snapshots.keys() - legacy_snapshots.keys():
-        missing_in_legacy.append(strategy)
+    for strategy in async_snapshots.keys() - baseline_snapshots.keys():
+        missing_in_baseline.append(strategy)
 
     deviations.sort(key=lambda item: (item.strategy, item.metric))
     missing_in_async = sorted(set(missing_in_async))
-    missing_in_legacy = sorted(set(missing_in_legacy))
+    missing_in_baseline = sorted(set(missing_in_baseline))
 
     return SnapshotComparison(
         deviations=tuple(deviations),
         missing_in_async=tuple(missing_in_async),
-        missing_in_legacy=tuple(missing_in_legacy),
+        missing_in_baseline=tuple(missing_in_baseline),
     )
 
 
@@ -129,7 +129,7 @@ def _format_deviation(deviation: MetricDeviation) -> str:
     )
     return (
         f"- Strategia '{deviation.strategy}', metryka '{deviation.metric}': "
-        f"legacy={deviation.legacy_value:.6f}, async={deviation.async_value:.6f}, "
+        f"baseline={deviation.baseline_value:.6f}, async={deviation.async_value:.6f}, "
         f"Δ={deviation.absolute_delta:.6f}{rel}"
     )
 
@@ -137,8 +137,8 @@ def _format_deviation(deviation: MetricDeviation) -> str:
 def _parse_args(argv: Iterable[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--legacy-dir",
-        default="data/snapshots/legacy",
+        "--baseline-dir",
+        default="data/snapshots/baseline",
         help="Katalog ze snapshotami przed migracją.",
     )
     parser.add_argument(
@@ -164,7 +164,7 @@ def _parse_args(argv: Iterable[str] | None) -> argparse.Namespace:
 def main(argv: Iterable[str] | None = None) -> int:
     args = _parse_args(argv)
     comparison = compare_snapshots(
-        Path(args.legacy_dir),
+        Path(args.baseline_dir),
         Path(args.async_dir),
         relative_tolerance=args.relative_tolerance,
         absolute_tolerance=args.absolute_tolerance,
@@ -178,9 +178,9 @@ def main(argv: Iterable[str] | None = None) -> int:
         print("Brakujące elementy po migracji:")
         for item in comparison.missing_in_async:
             print(f"  - {item}")
-    if comparison.missing_in_legacy:
-        print("Nowe elementy po migracji (brak w legacy):")
-        for item in comparison.missing_in_legacy:
+    if comparison.missing_in_baseline:
+        print("Nowe elementy po migracji (brak w zbiorze bazowym):")
+        for item in comparison.missing_in_baseline:
             print(f"  - {item}")
     if comparison.deviations:
         print("Metryki przekraczające tolerancję:")

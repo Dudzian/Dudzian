@@ -754,7 +754,7 @@ class PaperAutoTradeApp:
         self._listeners.append(listener)
 
         # Zapewniamy natychmiastową synchronizację nowego słuchacza z aktualnym
-        # stanem profilu, aby komponenty dziedziczące z legacy API nie musiały
+        # stanem profilu, aby komponenty dziedziczące z archiwalnego API nie musiały
         # inicjować dodatkowego przeładowania tylko po to, by uzyskać bieżące
         # ustawienia limitów.
         try:
@@ -1249,7 +1249,7 @@ class PaperAutoTradeApp:
         self._update_watch_aliases()
 
     def handle_cli_command(self, command: str) -> bool:
-        """Obsługuje uproszczone polecenia CLI kompatybilne z legacy."""
+        """Obsługuje uproszczone polecenia CLI kompatybilne z archiwalnym API."""
 
         raw = command.strip()
         if not raw:
@@ -1495,7 +1495,7 @@ class PaperAutoTradeApp:
         )
 
     def _update_watch_aliases(self) -> None:
-        """Synchronizuje aliasy kompatybilne z legacy API."""
+        """Synchronizuje aliasy kompatybilne z archiwalnym API."""
 
         self._watch_thread = self._risk_watch_thread
         self._watch_stop_event = self._risk_watch_stop

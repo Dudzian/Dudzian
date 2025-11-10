@@ -216,14 +216,14 @@ class ModelMetrics(_MetricsView):
                     if isinstance(payload, Mapping):
                         structured[str(split)] = _coerce_block(payload)
             else:
-                legacy: dict[str, float] = {}
+                archival_block: dict[str, float] = {}
                 for key, value in raw.items():
                     try:
-                        legacy[str(key)] = float(value)  # type: ignore[arg-type]
+                        archival_block[str(key)] = float(value)  # type: ignore[arg-type]
                     except (TypeError, ValueError):
                         continue
-                if legacy:
-                    structured["summary"] = legacy
+                if archival_block:
+                    structured["summary"] = archival_block
 
         for key in required_keys:
             structured.setdefault(key, {})
@@ -1022,7 +1022,7 @@ _TRAINING_METADATA_SOURCE = "bot_core.ai.models.AIModels"
 
 
 class AIModels:
-    """Minimal high-level wrapper compatible with legacy API built on ``ModelArtifact``.
+    """Minimal high-level wrapper compatible with archival API built on ``ModelArtifact``.
 
     The class translates numpy-style training arrays into :class:`FeatureDataset`
     instances, delegates learning to :class:`bot_core.ai.training.ModelTrainer`

@@ -80,7 +80,7 @@ def test_collect_pipeline_compliance_summary_flags_missing_sign_offs(tmp_path, m
     assert len(pending["compliance"]) == 3
 
 
-def test_collect_pipeline_compliance_summary_ignores_legacy_alert_without_policy(
+def test_collect_pipeline_compliance_summary_ignores_archive_alert_without_policy(
     tmp_path, monkeypatch
 ) -> None:
     audit_root = tmp_path / "audit"

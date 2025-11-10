@@ -25,10 +25,10 @@ def sample_payload() -> dict[str, object]:
 
 
 def test_compare_snapshots_within_tolerance(tmp_path: Path, sample_payload: dict[str, object]) -> None:
-    legacy_dir = tmp_path / "legacy"
+    baseline_dir = tmp_path / "baseline"
     async_dir = tmp_path / "async"
 
-    _write_snapshot(legacy_dir, sample_payload)
+    _write_snapshot(baseline_dir, sample_payload)
 
     async_payload = {
         "strategies": {
@@ -39,7 +39,7 @@ def test_compare_snapshots_within_tolerance(tmp_path: Path, sample_payload: dict
     _write_snapshot(async_dir, async_payload)
 
     result = compare_snapshots(
-        legacy_dir,
+        baseline_dir,
         async_dir,
         relative_tolerance=0.05,
         absolute_tolerance=1e-4,
@@ -50,10 +50,10 @@ def test_compare_snapshots_within_tolerance(tmp_path: Path, sample_payload: dict
 
 
 def test_compare_snapshots_detects_large_deviation(tmp_path: Path, sample_payload: dict[str, object]) -> None:
-    legacy_dir = tmp_path / "legacy"
+    baseline_dir = tmp_path / "baseline"
     async_dir = tmp_path / "async"
 
-    _write_snapshot(legacy_dir, sample_payload)
+    _write_snapshot(baseline_dir, sample_payload)
 
     async_payload = {
         "strategies": {
@@ -64,7 +64,7 @@ def test_compare_snapshots_detects_large_deviation(tmp_path: Path, sample_payloa
     _write_snapshot(async_dir, async_payload)
 
     result = compare_snapshots(
-        legacy_dir,
+        baseline_dir,
         async_dir,
         relative_tolerance=0.05,
         absolute_tolerance=1e-4,

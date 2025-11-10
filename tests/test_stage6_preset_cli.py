@@ -124,7 +124,6 @@ def test_stage6_cli_accepts_passphrase_file(tmp_path: Path) -> None:
         "used": True,
         "rotated": False,
     }
-    assert "legacy_security_passphrase" not in payload["secrets"]
     tool = payload["tool"]
     expected_python = platform.python_version()
     assert tool["module"] == "bot_core.runtime.stage6_preset_cli"
@@ -174,7 +173,7 @@ def test_stage6_cli_requires_matching_secret_flags(tmp_path: Path, capsys) -> No
     assert "--secrets-output" in stderr
 
 
-def test_stage6_cli_rejects_legacy_security_flags(tmp_path: Path, capsys) -> None:
+def test_stage6_cli_rejects_unknown_security_flags(tmp_path: Path, capsys) -> None:
     core_copy = _copy_core_config(tmp_path)
     preset_path = tmp_path / "preset.json"
     preset_path.write_text(json.dumps({"fraction": 0.2}), encoding="utf-8")
@@ -187,23 +186,23 @@ def test_stage6_cli_rejects_legacy_security_flags(tmp_path: Path, capsys) -> Non
                 "--preset",
                 str(preset_path),
                 "--profile-name",
-                "legacy-security",
-                "--legacy-security-file",
+                "sunset-security",
+                "--unsupported-security-file",
                 str(tmp_path / "api_keys.enc"),
             ]
         )
 
     assert excinfo.value.code == 2
     stderr = capsys.readouterr().err
-    assert "unrecognized arguments: --legacy-security-file" in stderr
+    assert "unrecognized arguments: --unsupported-security-file" in stderr
 
 
-def test_stage6_cli_help_hides_legacy_security_options() -> None:
+def test_stage6_cli_help_lists_supported_security_options() -> None:
     parser = preset_editor_cli._configure_migration_parser()
     help_text = parser.format_help()
 
-    assert "--legacy-security-file" not in help_text
     assert "--secret-passphrase" in help_text
+    assert "--preset" in help_text
 
 
 def test_stage6_cli_defaults_desktop_vault(tmp_path: Path, capsys) -> None:
@@ -725,8 +724,6 @@ def test_stage6_cli_writes_summary_file(tmp_path: Path) -> None:
     assert payload["secrets"]["output_checksum"] == hashlib.sha256(
         vault_path.read_bytes()
     ).hexdigest()
-    assert "legacy_security_salt_path" not in payload["secrets"]
-    assert "legacy_security_salt_checksum" not in payload["secrets"]
     assert payload["secrets"]["output_passphrase"] == {
         "provided": True,
         "source": "inline",
@@ -741,7 +738,6 @@ def test_stage6_cli_writes_summary_file(tmp_path: Path) -> None:
         "used": False,
         "rotated": False,
     }
-    assert "legacy_security_passphrase" not in payload["secrets"]
     invocation = payload["cli_invocation"]
     assert isinstance(invocation["argv"], list)
     assert "***REDACTED***" in invocation["argv"]
@@ -802,7 +798,6 @@ def test_stage6_cli_summary_tracks_secret_passphrase_env(
         "used": False,
         "rotated": False,
     }
-    assert "legacy_security_passphrase" not in payload["secrets"]
 
 
 def test_stage6_cli_summary_records_original_checksum(tmp_path: Path) -> None:
@@ -873,8 +868,6 @@ def test_stage6_cli_summary_records_security_source_checksums(tmp_path: Path) ->
     assert secrets["source_checksum"] == hashlib.sha256(secrets_input.read_bytes()).hexdigest()
     assert secrets["output_path"] == str(vault_path)
     assert secrets["output_checksum"] == hashlib.sha256(vault_path.read_bytes()).hexdigest()
-    assert "legacy_security_salt_path" not in secrets
-    assert "legacy_security_passphrase" not in secrets
 
 
 def test_stage6_cli_summary_redacts_inline_passphrases(tmp_path: Path) -> None:

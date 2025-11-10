@@ -63,7 +63,7 @@ def test_install_release_creates_backups(tmp_path: Path) -> None:
     target_models = tmp_path / "models"
     target_strategies = tmp_path / "strategies"
     _write_file(target_models / "model.bin", "OLD")
-    _write_file(target_strategies / "legacy.json", json.dumps({"name": "legacy"}))
+    _write_file(target_strategies / "sunset.json", json.dumps({"name": "sunset"}))
 
     backup_dir = tmp_path / "backups"
     result = install_release_archive(

@@ -1272,10 +1272,10 @@ def _load_secret_from_disk(path: Path) -> tuple[bytes, str] | None:
         try:
             secret = base64.b64decode(raw.encode("ascii"))
         except Exception as exc:
-            raise FingerprintError("Sekret licencji ma niepoprawny format (legacy).") from exc
+            raise FingerprintError("Sekret licencji ma niepoprawny format (archiwalny).") from exc
         if len(secret) < 32:
-            raise FingerprintError("Sekret licencji ma niepoprawną długość (legacy).")
-        return secret, "legacy"
+            raise FingerprintError("Sekret licencji ma niepoprawną długość (archiwalny).")
+        return secret, "archival"
 
     if not isinstance(document, Mapping):
         raise FingerprintError("Zaszyfrowany sekret licencji ma niepoprawną strukturę.")

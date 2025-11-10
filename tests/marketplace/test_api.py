@@ -36,7 +36,7 @@ def test_build_marketplace_preset_parses_dependencies_and_updates() -> None:
                 {"name": "stable", "version": "2.0.0", "released_at": "2025-01-10T00:00:00Z"},
                 {"name": "beta", "version": "2.1.0-beta1", "severity": "preview"},
             ],
-            "replaces": ["alpha-legacy"],
+            "replaces": ["alpha-archive"],
             "requires_approval": True,
             "default_channel": "stable",
         },
@@ -50,7 +50,7 @@ def test_build_marketplace_preset_parses_dependencies_and_updates() -> None:
     assert preset.dependencies[1].constraints == (">=1.0", "<2.0")
     assert preset.update_channels[0].name == "stable"
     assert preset.update_channels[0].version == "2.0.0"
-    assert preset.update_directive.replaces == ("alpha-legacy",)
+    assert preset.update_directive.replaces == ("alpha-archive",)
     assert preset.update_directive.requires_approval is True
 
 

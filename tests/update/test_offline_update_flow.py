@@ -26,7 +26,7 @@ def test_install_and_rollback_offline_release(tmp_path: Path) -> None:
     strategies_target = app_root / "strategies"
 
     _write_file(models_target / "model.bin", "MODEL-ORIGINAL")
-    _write_file(strategies_target / "grid.json", json.dumps({"name": "legacy"}))
+    _write_file(strategies_target / "grid.json", json.dumps({"name": "sunset"}))
 
     staging_root = tmp_path / "staging"
     models_source = staging_root / "models"
@@ -73,7 +73,7 @@ def test_install_and_rollback_offline_release(tmp_path: Path) -> None:
     shutil.copytree(backups["strategies"], strategies_target)
 
     assert models_target.joinpath("model.bin").read_text(encoding="utf-8") == "MODEL-ORIGINAL"
-    assert json.loads(strategies_target.joinpath("grid.json").read_text(encoding="utf-8"))["name"] == "legacy"
+    assert json.loads(strategies_target.joinpath("grid.json").read_text(encoding="utf-8"))["name"] == "sunset"
 
 
 @pytest.mark.timeout(5)
@@ -134,7 +134,7 @@ def test_install_release_archive_partial_failure_allows_manual_rollback(
     backup_dir = tmp_path / "backups"
 
     _write_file(models_target / "model.bin", "LEGACY")
-    _write_file(strategies_target / "grid.json", json.dumps({"name": "legacy"}))
+    _write_file(strategies_target / "grid.json", json.dumps({"name": "sunset"}))
 
     staging_root = tmp_path / "staging"
     models_source = staging_root / "models"

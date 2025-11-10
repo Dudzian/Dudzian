@@ -1,6 +1,6 @@
 # StrategyRegimeWorkflow – zarządzanie presetami strategii
 
-`StrategyRegimeWorkflow` zastępuje legacy `RegimeSwitchWorkflow`, rozszerzając go o
+`StrategyRegimeWorkflow` zastępuje archiwalny `RegimeSwitchWorkflow`, rozszerzając go o
 rejestrację wersjonowanych presetów, awaryjne fallbacki, wymuszanie licencji
 oraz raporty statystyczne z historii aktywacji. Workflow bazuje na
 `StrategyPresetWizard`, dzięki czemu podpisuje presety HMAC zgodnie z katalogiem

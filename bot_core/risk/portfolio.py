@@ -1,4 +1,4 @@
-"""Zaawansowane narzędzia zarządzania ryzykiem niezależne od warstwy legacy."""
+"""Zaawansowane narzędzia zarządzania ryzykiem niezależne od warstwy archiwalnej."""
 
 from __future__ import annotations
 

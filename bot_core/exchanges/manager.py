@@ -425,7 +425,7 @@ def _validate_exchange_profiles(
             )
         if "key" in credentials_cfg:
             raise ValueError(
-                "Profil '%s' w konfiguracji %s musi używać pola credentials.key_id zamiast legacy credentials.key"
+                "Profil '%s' w konfiguracji %s musi używać pola credentials.key_id zamiast archiwalnego credentials.key"
                 % (name, path),
             )
         if "api_key" in credentials_cfg:
@@ -1655,7 +1655,7 @@ class ExchangeManager:
         if isinstance(credentials_cfg, Mapping):
             if "key" in credentials_cfg:
                 raise ValueError(
-                    "Profil '%s' w konfiguracji %s musi używać pola credentials.key_id zamiast legacy credentials.key"
+                    "Profil '%s' w konfiguracji %s musi używać pola credentials.key_id zamiast archiwalnego credentials.key"
                     % (name, config_path),
                 )
             if "api_key" in credentials_cfg:

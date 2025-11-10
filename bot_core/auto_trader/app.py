@@ -1,6 +1,6 @@
 """Lightweight auto-trading controller used by tests and runtime scaffolding.
 
-This module re-implements the bare minimum of the legacy ``AutoTrader``
+This module re-implements the bare minimum of the archival ``AutoTrader``
 behaviour in a dependency-free manner so that it can operate without the
 monolithic application package.  The original implementation pulled a large
 amount of infrastructure (event emitters, Prometheus exporters, runtime
@@ -439,7 +439,7 @@ class AutoTrader:
     """Small cooperative wrapper around an auto-trading loop.
 
     The class is intentionally tiny – it exists so that unit tests can exercise
-    manual confirmation logic without pulling in the whole legacy runtime.  It
+    manual confirmation logic without pulling in the whole archival runtime.  It
     exposes the same public attributes that the tests rely on (``enable_auto_trade``
     and ``_auto_trade_user_confirmed``) and uses an overridable ``_auto_trade_loop``
     method executed inside a worker thread when the user confirms auto-trading.
@@ -1395,7 +1395,7 @@ class AutoTrader:
             if isinstance(metadata, Mapping):
                 for key, value in metadata.items():
                     combined[str(key)] = value
-            else:  # pragma: no cover - defensive fallback for legacy payloads
+            else:  # pragma: no cover - defensive fallback for archival payloads
                 combined["metadata"] = metadata
         return combined or None
 
