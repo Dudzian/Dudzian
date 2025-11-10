@@ -60,10 +60,35 @@ service = MarketplaceService(installer, repository)
 * `service.remove_preset(preset_id)` – usuwa preset z lokalnego repozytorium.
 * `service.export_preset(preset_id, format="yaml")` – eksportuje zainstalowany
   preset do formatu JSON/YAML (przydatne przy backupach lub diagnostyce).
+* `service.plan_installation(preset_ids)` – oblicza plan instalacji dla
+  wskazanych presetów, uwzględniając zależności oraz sugerowane aktualizacje.
+  Wariant `plan_installation_payload()` zwraca gotowy do serializacji słownik z
+  polami `installOrder`, `requiredDependencies`, `issues`, `upgrades`,
+  `licenseSummaries`, `assignmentSummaries`, `portfolioSummaries` oraz
+  `selection`. Sekcja `licenseSummaries` zawiera znormalizowane informacje o
+  stanie licencji dla każdego presetu w planie (np. `warningMessages`, szczegóły
+  `seatSummary` czy status subskrypcji), dzięki czemu UI może podświetlić
+  potencjalne ryzyka przed instalacją. Równoległa sekcja `assignmentSummaries`
+  raportuje lokalne przydziały portfeli w zestawieniu z licencjonowanymi
+  stanowiskami oraz wylicza braki (`seatShortfall`) i rozbieżności
+  (`unlicensedAssignments`), generując dodatkowe ostrzeżenia o niedopasowanych
+  przydziałach. Nowa sekcja `portfolioSummaries` agreguje dane według portfela,
+  wskazując dla których presetów portfel posiada licencję, gdzie brakuje miejsc
+  lub oczekuje na zatwierdzenie, oraz udostępnia dedykowane kody i komunikaty
+  ostrzegawcze.
 
 Każda instalacja zwraca `MarketplaceInstallResult`, który informuje o statusie
 podpisu (`signature_verified`), wyniku dopasowania fingerprintu oraz liście
-problemów (`issues`). UI może wykorzystać te informacje do prezentacji alertów.
+problemów (`issues`) i ostrzeżeń (`warnings`). UI może wykorzystać te informacje
+do prezentacji alertów i komunikatów doradczych (np. wygasająca subskrypcja
+czy brak przydziału stanowiska).
+
+Widok kart presetu prezentuje również sekcję **Ostrzeżenia licencji**, w której
+wyświetlane są znormalizowane komunikaty wygenerowane przez walidator (np.
+zapełniona pula seatów, pauza w subskrypcji). Bezpośrednio poniżej znajduje się
+panel **Licencja** z podsumowaniem przydzielonych urządzeń, dostępnych miejsc
+oraz statusem subskrypcji – dane te pochodzą z `license.validation` oraz
+sekcji `seat_summary`/`subscription_summary` wygenerowanych przez backend.
 
 ## Integracja z QML
 
@@ -79,6 +104,7 @@ def marketplaceImportPreset(self, url):
     return {
         "success": result.success,
         "issues": list(result.issues),
+        "warnings": list(result.warnings),
     }
 ```
 

@@ -437,3 +437,97 @@ bool MarketplaceController::deactivatePreset(const QString& presetId)
 
     return true;
 }
+
+bool MarketplaceController::assignPresetToPortfolio(const QString& presetId, const QString& portfolioId)
+{
+    QString message;
+    if (!ensureReady(&message)) {
+        m_lastError = message;
+        Q_EMIT lastErrorChanged();
+        return false;
+    }
+    if (presetId.trimmed().isEmpty() || portfolioId.trimmed().isEmpty()) {
+        m_lastError = tr("Wymagane są identyfikatory presetu i portfela.");
+        Q_EMIT lastErrorChanged();
+        return false;
+    }
+
+    if (!m_busy) {
+        m_busy = true;
+        Q_EMIT busyChanged();
+    }
+
+    QStringList args = buildCommonArguments();
+    args << QStringLiteral("assign");
+    args << QStringLiteral("--preset-id");
+    args << presetId;
+    args << QStringLiteral("--portfolio-id");
+    args << portfolioId;
+
+    const BridgeResult result = runBridge(args);
+
+    m_busy = false;
+    Q_EMIT busyChanged();
+
+    if (!result.ok) {
+        m_lastError = result.errorMessage;
+        Q_EMIT lastErrorChanged();
+        return false;
+    }
+
+    refreshPresets();
+
+    if (!m_lastError.isEmpty()) {
+        m_lastError.clear();
+        Q_EMIT lastErrorChanged();
+    }
+
+    return true;
+}
+
+bool MarketplaceController::unassignPresetFromPortfolio(const QString& presetId, const QString& portfolioId)
+{
+    QString message;
+    if (!ensureReady(&message)) {
+        m_lastError = message;
+        Q_EMIT lastErrorChanged();
+        return false;
+    }
+    if (presetId.trimmed().isEmpty() || portfolioId.trimmed().isEmpty()) {
+        m_lastError = tr("Wymagane są identyfikatory presetu i portfela.");
+        Q_EMIT lastErrorChanged();
+        return false;
+    }
+
+    if (!m_busy) {
+        m_busy = true;
+        Q_EMIT busyChanged();
+    }
+
+    QStringList args = buildCommonArguments();
+    args << QStringLiteral("unassign");
+    args << QStringLiteral("--preset-id");
+    args << presetId;
+    args << QStringLiteral("--portfolio-id");
+    args << portfolioId;
+
+    const BridgeResult result = runBridge(args);
+
+    m_busy = false;
+    Q_EMIT busyChanged();
+
+    if (!result.ok) {
+        m_lastError = result.errorMessage;
+        Q_EMIT lastErrorChanged();
+        return false;
+    }
+
+    refreshPresets();
+
+    if (!m_lastError.isEmpty()) {
+        m_lastError.clear();
+        Q_EMIT lastErrorChanged();
+    }
+
+    return true;
+}

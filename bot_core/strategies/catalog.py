@@ -20,7 +20,13 @@ from bot_core.marketplace import (
 from bot_core.security.hwid import HwIdProvider, HwIdProviderError
 from bot_core.security.guards import get_capability_guard
 from bot_core.security.signing import build_hmac_signature
-from bot_core.security.license import _emit_license_telemetry, _coerce_license_identifier
+from bot_core.security.license import (
+    _coerce_license_identifier,
+    _emit_license_telemetry,
+    _parse_seat_policy,
+    _parse_subscription_section,
+)
+from bot_core.security.messages import ValidationMessage
 
 if TYPE_CHECKING:
     from bot_core.backtest.walk_forward import TransactionCostModel
@@ -552,6 +558,7 @@ class StrategyCatalog:
         fingerprint_verified = False
         status = PresetLicenseState.UNLICENSED
         payload: Mapping[str, Any] = license_payload or {}
+        normalized_metadata: dict[str, Any] = dict(payload) if isinstance(payload, Mapping) else {}
         license_identifier: str | None = None
         if payload:
             license_identifier = _coerce_license_identifier(payload.get("license_id"))
@@ -662,6 +669,85 @@ class StrategyCatalog:
                 status = PresetLicenseState.PENDING
                 fingerprint_verified = hwid_value is None or bool(hwid_value)
 
+            validation_errors: list[ValidationMessage] = []
+            validation_warnings: list[ValidationMessage] = []
+
+            seat_errors: list[ValidationMessage] = []
+            seat_warnings: list[ValidationMessage] = []
+            (
+                seats_total,
+                seats_in_use,
+                seats_available,
+                seat_assignments,
+                seat_pending,
+                seat_enforcement,
+                seat_auto_assign,
+            ) = _parse_seat_policy(
+                payload,
+                fingerprint_value=hwid_value,
+                errors=seat_errors,
+                warnings=seat_warnings,
+            )
+
+            subscription_errors: list[ValidationMessage] = []
+            subscription_warnings: list[ValidationMessage] = []
+            (
+                subscription_status,
+                subscription_renews_at,
+                subscription_period_start,
+                subscription_period_end,
+                subscription_grace_expires_at,
+            ) = _parse_subscription_section(
+                payload,
+                current_time=datetime.now(timezone.utc),
+                errors=subscription_errors,
+                warnings=subscription_warnings,
+            )
+
+            validation_errors.extend(seat_errors)
+            validation_errors.extend(subscription_errors)
+            validation_warnings.extend(seat_warnings)
+            validation_warnings.extend(subscription_warnings)
+
+            if validation_errors:
+                issues.extend(message.code for message in validation_errors)
+
+            if normalized_metadata is not None:
+                normalized_metadata["seat_summary"] = {
+                    "total": seats_total,
+                    "in_use": seats_in_use,
+                    "available": seats_available,
+                    "assignments": seat_assignments,
+                    "pending": seat_pending,
+                    "enforcement": seat_enforcement,
+                    "auto_assign": seat_auto_assign,
+                }
+                normalized_metadata["subscription_summary"] = {
+                    "status": subscription_status,
+                    "renews_at": subscription_renews_at,
+                    "period_start": subscription_period_start,
+                    "period_end": subscription_period_end,
+                    "grace_expires_at": subscription_grace_expires_at,
+                }
+
+                validation_payload: dict[str, Any] = {}
+                if validation_errors:
+                    validation_payload["errors"] = [entry.to_dict() for entry in validation_errors]
+                    validation_payload["error_messages"] = [entry.message for entry in validation_errors]
+                    validation_payload["error_codes"] = [entry.code for entry in validation_errors]
+                if validation_warnings:
+                    validation_payload["warnings"] = [entry.to_dict() for entry in validation_warnings]
+                    validation_payload["warning_messages"] = [entry.message for entry in validation_warnings]
+                    validation_payload["warning_codes"] = [entry.code for entry in validation_warnings]
+                if validation_payload:
+                    existing_validation = normalized_metadata.get("validation")
+                    if isinstance(existing_validation, Mapping):
+                        merged_validation = dict(existing_validation)
+                        merged_validation.update(validation_payload)
+                    else:
+                        merged_validation = validation_payload
+                    normalized_metadata["validation"] = merged_validation
+
             if payload.get("disabled") or payload.get("revoked"):
                 status = PresetLicenseState.DEACTIVATED
 
@@ -678,8 +764,6 @@ class StrategyCatalog:
                 status = PresetLicenseState.PENDING
 
         fingerprint_primary = fingerprint_candidates[0] if fingerprint_candidates else None
-
-        normalized_metadata = dict(payload) if isinstance(payload, Mapping) and payload else {}
 
         return PresetLicenseStatus(
             preset_id=preset_id,

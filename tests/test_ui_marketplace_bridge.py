@@ -2,14 +2,24 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
+from typing import Any, Mapping, Sequence
 
 import pytest
 
+from bot_core.marketplace.assignments import PresetAssignmentStore
 from bot_core.security.signing import build_hmac_signature
 from scripts import ui_marketplace_bridge as bridge
 
 
-def _write_preset(path, *, preset_id: str, fingerprint: str, signing_key: bytes) -> None:
+def _write_preset(
+    path,
+    *,
+    preset_id: str,
+    fingerprint: str,
+    signing_key: bytes,
+    version: str = "1.0.0",
+    dependencies: Sequence[Mapping[str, Any]] | None = None,
+) -> None:
     payload = {
         "name": "Automation Pack",
         "strategies": [
@@ -32,6 +42,9 @@ def _write_preset(path, *, preset_id: str, fingerprint: str, signing_key: bytes)
             },
         },
     }
+    payload["metadata"]["version"] = version
+    if dependencies is not None:
+        payload["metadata"]["dependencies"] = list(dependencies)
     signature = build_hmac_signature(payload, key=signing_key, key_id="catalog")
     path.write_text(json.dumps({"preset": payload, "signature": signature}, ensure_ascii=False, indent=2), encoding="utf-8")
 
@@ -70,6 +83,12 @@ def test_list_activate_deactivate_flow(capsys, preset_dir, signing_key):
     bridge.main(list_args)
     output = json.loads(capsys.readouterr().out)
     assert output["presets"][0]["license"]["status"] in {"pending", "fingerprint_mismatch"}
+    license_meta = output["presets"][0]["license"].get("metadata")
+    assert isinstance(license_meta, dict)
+    assert "seat_summary" in license_meta
+    assert "subscription_summary" in license_meta
+    assert "warning_messages" in output["presets"][0]
+    assert "warnings" in output["presets"][0]
 
     license_payload = preset_dir.parent / "license_payload.json"
     license_payload.write_text(
@@ -113,3 +132,54 @@ def test_list_activate_deactivate_flow(capsys, preset_dir, signing_key):
     )
     deactivate_output = json.loads(capsys.readouterr().out)
     assert deactivate_output["preset"]["license"]["status"] in {"pending", "fingerprint_mismatch"}
+
+
+def test_plan_command_outputs_installation_plan(capsys, preset_dir, signing_key):
+    dependency_file = preset_dir / "dependency.json"
+    _write_preset(
+        dependency_file,
+        preset_id="dependency",
+        fingerprint="stack",
+        signing_key=signing_key,
+        version="1.0.0",
+    )
+    primary_file = preset_dir / "primary.json"
+    _write_preset(
+        primary_file,
+        preset_id="primary",
+        fingerprint="stack",
+        signing_key=signing_key,
+        version="2.0.0",
+        dependencies=[{"preset_id": "dependency"}],
+    )
+
+    assignments_store = PresetAssignmentStore(preset_dir / ".meta" / "assignments.json")
+    assignments_store.assign("primary", "portfolio-a")
+
+    args = [
+        f"--presets-dir={preset_dir}",
+        f"--licenses-path={preset_dir.parent / 'licenses.json'}",
+        "--fingerprint",
+        "stack",
+        f"--signing-key=catalog={signing_key.hex()}",
+        "plan",
+        "--preset-id",
+        "primary",
+    ]
+    bridge.main(args)
+    output = json.loads(capsys.readouterr().out)
+
+    assert output["selection"] == ["primary"]
+    assert output["installOrder"] == ["dependency", "primary"]
+    dependencies_payload = output["requiredDependencies"].get("primary")
+    assert dependencies_payload and dependencies_payload[0]["presetId"] == "dependency"
+    license_summaries = output["licenseSummaries"]
+    assert license_summaries["primary"]["licenseMissing"] is True
+    assignment_summaries = output["assignmentSummaries"]
+    assert assignment_summaries["primary"]["assignedPortfolios"] == ["portfolio-a"]
+    assert "pendingAssignments" not in assignment_summaries["primary"]
+
+    portfolio_summaries = output["portfolioSummaries"]
+    assert portfolio_summaries["portfolio-a"]["assignedPresets"] == ["primary"]
+    assert portfolio_summaries["portfolio-a"]["unlicensedPresets"] == ["primary"]
+    assert "portfolio-assignment-unlicensed" in portfolio_summaries["portfolio-a"]["warningCodes"]
