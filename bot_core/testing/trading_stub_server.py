@@ -57,6 +57,8 @@ class InMemoryTradingDataset:
     health: Any | None = None
     performance_guard: Dict[str, Any] = field(default_factory=dict)
     tradable_instruments: Dict[str, List[Any]] = field(default_factory=dict)
+    decision_snapshot: List[Any] = field(default_factory=list)
+    decision_increments: List[Any] = field(default_factory=list)
 
     def add_history(self, instrument: Any, granularity: Any, candles: Sequence[Any]) -> None:
         self.history[_instrument_key(instrument, granularity)] = list(candles)
@@ -93,6 +95,16 @@ class InMemoryTradingDataset:
         if not items:
             return []
         return [_clone_message(item) for item in items]
+
+    def set_decision_stream(
+        self,
+        snapshot: Sequence[Any] | None = None,
+        increments: Sequence[Any] | None = None,
+    ) -> None:
+        if snapshot is not None:
+            self.decision_snapshot = [_clone_message(item) for item in snapshot]
+        if increments is not None:
+            self.decision_increments = [_clone_message(item) for item in increments]
 
 
 def merge_datasets(
@@ -178,6 +190,18 @@ def _snapshot_for(dataset: InMemoryTradingDataset, request: Any) -> List[Any]:
 def _increments_for(dataset: InMemoryTradingDataset, request: Any) -> List[Any]:
     key = _instrument_key(request.instrument, request.granularity)
     return list(dataset.stream_increments.get(key, []))
+
+
+def _decision_snapshot(dataset: InMemoryTradingDataset, request: Any) -> List[Any]:
+    snapshot = list(dataset.decision_snapshot)
+    limit = getattr(request, "limit", 0) or 0
+    if limit > 0 and len(snapshot) > limit:
+        return snapshot[-limit:]
+    return snapshot
+
+
+def _decision_increments(dataset: InMemoryTradingDataset) -> List[Any]:
+    return list(dataset.decision_increments)
 
 
 def _clone_message(message: Any) -> Any:
@@ -371,6 +395,49 @@ class _MetricsService:
         return self._ack_cls(accepted=True)
 
 
+class _RuntimeService:
+    def __init__(
+        self,
+        dataset: InMemoryTradingDataset,
+        *,
+        repeat_streams: bool = False,
+        stream_interval: float = 0.0,
+    ) -> None:
+        trading_pb2, _ = _ensure_stubs_loaded()
+        self._dataset = dataset
+        self._snapshot_cls = trading_pb2.StreamDecisionsSnapshot
+        self._increment_cls = trading_pb2.StreamDecisionsIncrement
+        self._update_cls = trading_pb2.StreamDecisionsUpdate
+        self._repeat_streams = repeat_streams
+        self._stream_interval = max(0.0, stream_interval)
+
+    def StreamDecisions(self, request, context):  # noqa: N802
+        if not request.skip_snapshot:
+            snapshot = _decision_snapshot(self._dataset, request)
+            if snapshot:
+                cloned = [_clone_message(entry) for entry in snapshot]
+                yield self._update_cls(
+                    snapshot=self._snapshot_cls(records=cloned)
+                )
+
+        increments = _decision_increments(self._dataset)
+        if increments:
+            for entry in increments:
+                increment = self._increment_cls(record=_clone_message(entry))
+                yield self._update_cls(increment=increment)
+        if not self._repeat_streams or not increments:
+            return
+
+        while _context_is_active(context):
+            for entry in increments:
+                if self._stream_interval:
+                    _sleep_with_context(self._stream_interval, context)
+                    if not _context_is_active(context):
+                        return
+                increment = self._increment_cls(record=_clone_message(entry))
+                yield self._update_cls(increment=increment)
+
+
 class _HealthService:
     def __init__(self, dataset: InMemoryTradingDataset) -> None:
         trading_pb2, _ = _ensure_stubs_loaded()
@@ -415,6 +482,14 @@ class TradingStubServer(GrpcServerLifecycleMixin):
         )
         trading_pb2_grpc.add_MetricsServiceServicer_to_server(
             _MetricsService(self._dataset), self._server
+        )
+        trading_pb2_grpc.add_RuntimeServiceServicer_to_server(
+            _RuntimeService(
+                self._dataset,
+                repeat_streams=stream_repeat,
+                stream_interval=stream_interval,
+            ),
+            self._server,
         )
         trading_pb2_grpc.add_HealthServiceServicer_to_server(
             _HealthService(self._dataset), self._server
@@ -533,6 +608,77 @@ def build_default_dataset() -> InMemoryTradingDataset:
                 notes="default dataset",
             )
         ]
+    )
+
+    dataset.set_decision_stream(
+        snapshot=[
+            trading_pb2.DecisionRecordEntry(
+                fields={
+                    "event": "order_submitted",
+                    "timestamp": "2024-01-01T00:00:00+00:00",
+                    "environment": "stub",
+                    "portfolio": "alpha",
+                    "risk_profile": "balanced",
+                    "strategy": "trend_follow",
+                    "schedule": "auto",
+                    "symbol": "BTC/USDT",
+                    "side": "buy",
+                    "status": "submitted",
+                    "quantity": "0.10",
+                    "price": "42000.0",
+                    "decision_state": "trade",
+                    "decision_should_trade": "true",
+                    "decision_confidence": "0.82",
+                    "ai_model": "stub-transformer",
+                    "ai_version": "1.0",
+                    "market_regime_state": "bull",
+                    "market_regime_risk_level": "moderate",
+                    "latency_ms": "45.0",
+                }
+            ),
+            trading_pb2.DecisionRecordEntry(
+                fields={
+                    "event": "order_filled",
+                    "timestamp": "2024-01-01T00:00:02+00:00",
+                    "environment": "stub",
+                    "portfolio": "alpha",
+                    "risk_profile": "balanced",
+                    "strategy": "trend_follow",
+                    "schedule": "auto",
+                    "symbol": "BTC/USDT",
+                    "side": "buy",
+                    "status": "filled",
+                    "quantity": "0.10",
+                    "price": "42001.5",
+                    "decision_state": "trade",
+                    "decision_should_trade": "true",
+                    "decision_signal_strength": "0.74",
+                    "ai_model": "stub-transformer",
+                    "ai_version": "1.0",
+                    "market_regime_state": "bull",
+                    "market_regime_risk_level": "moderate",
+                    "latency_ms": "38.0",
+                }
+            ),
+        ],
+        increments=[
+            trading_pb2.DecisionRecordEntry(
+                fields={
+                    "event": "risk_update",
+                    "timestamp": "2024-01-01T00:05:00+00:00",
+                    "environment": "stub",
+                    "portfolio": "alpha",
+                    "risk_profile": "balanced",
+                    "strategy": "trend_follow",
+                    "schedule": "auto",
+                    "status": "ok",
+                    "decision_state": "monitor",
+                    "decision_should_trade": "false",
+                    "risk_flags": "latency_watch",
+                    "latency_ms": "52.0",
+                }
+            )
+        ],
     )
 
     dataset.health = trading_pb2.HealthCheckResponse(

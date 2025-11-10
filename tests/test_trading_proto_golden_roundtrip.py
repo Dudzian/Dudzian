@@ -192,3 +192,24 @@ def test_stream_updates_match_golden_frames() -> None:
 
     assert snapshot_update.SerializeToString().hex() == EXPECTED_STREAM_SNAPSHOT_HEX
     assert increment_update.SerializeToString().hex() == EXPECTED_STREAM_INCREMENT_HEX
+
+
+def test_decision_stream_roundtrip() -> None:
+    pool = _make_pool()
+    record_cls = _get_cls(pool, "botcore.trading.v1.DecisionRecordEntry")
+    snapshot_cls = _get_cls(pool, "botcore.trading.v1.StreamDecisionsSnapshot")
+    update_cls = _get_cls(pool, "botcore.trading.v1.StreamDecisionsUpdate")
+
+    record = record_cls(
+        fields={
+            "event": "order_submitted",
+            "timestamp": "2024-01-01T00:00:00+00:00",
+            "environment": "stub",
+        }
+    )
+    update = update_cls(snapshot=snapshot_cls(records=[record]))
+    serialized = update.SerializeToString()
+    parsed = update_cls()
+    parsed.ParseFromString(serialized)
+    assert parsed.snapshot.records[0].fields["event"] == "order_submitted"
+    assert parsed.snapshot.records[0].fields["environment"] == "stub"

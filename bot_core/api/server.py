@@ -1298,6 +1298,114 @@ class _MetricsServicer(trading_pb2_grpc.MetricsServiceServicer):
         return trading_pb2.MetricsAck(accepted=True)
 
 
+class _RuntimeServicer(trading_pb2_grpc.RuntimeServiceServicer):
+    def __init__(self, context: LocalRuntimeContext) -> None:
+        self._context = context
+
+    def _export_records(self) -> list[Mapping[str, Any]]:
+        journal = getattr(self._context.auto_trader, "_decision_journal", None)
+        if journal is None:
+            return []
+        try:
+            exported = list(journal.export())
+        except Exception:  # pragma: no cover - diagnostyka dziennika
+            _LOGGER.debug("Nie udało się wyeksportować decision journal", exc_info=True)
+            return []
+        normalized: list[Mapping[str, Any]] = []
+        for entry in exported:
+            if isinstance(entry, Mapping):
+                normalized.append(entry)
+        return normalized
+
+    @staticmethod
+    def _record_from_mapping(entry: Mapping[str, Any]) -> trading_pb2.DecisionRecordEntry:
+        record = trading_pb2.DecisionRecordEntry()
+        for key, value in entry.items():
+            if value is None:
+                continue
+            text: str
+            if isinstance(value, bytes):
+                try:
+                    text = value.decode("utf-8")
+                except Exception:
+                    text = value.hex()
+            elif isinstance(value, str):
+                text = value
+            else:
+                text = str(value)
+            record.fields[str(key)] = text
+        return record
+
+    @staticmethod
+    def _sleep_with_context(duration: float, context) -> None:
+        if duration <= 0.0:
+            return
+        deadline = time.monotonic() + duration
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return
+            if context is not None and hasattr(context, "is_active"):
+                try:
+                    if not context.is_active():
+                        return
+                except Exception:  # pragma: no cover - defensywne
+                    return
+            time.sleep(min(0.25, remaining))
+
+    def StreamDecisions(self, request, context):  # noqa: N802
+        self._context.authorize(context)
+        poll_interval = request.poll_interval_seconds
+        if poll_interval <= 0.0:
+            poll_interval = 1.0
+        poll_interval = max(0.25, min(poll_interval, 5.0))
+        limit = int(request.limit or 0)
+        cursor = 0
+        skip_snapshot = bool(request.skip_snapshot)
+        first_iteration = True
+
+        while True:
+            if context is not None and hasattr(context, "is_active"):
+                try:
+                    if not context.is_active():
+                        return
+                except Exception:  # pragma: no cover - defensywne
+                    return
+
+            records = self._export_records()
+            total = len(records)
+            if first_iteration and skip_snapshot:
+                cursor = total
+            if total < cursor:
+                cursor = 0
+                skip_snapshot = False
+                first_iteration = False
+                continue
+
+            if not skip_snapshot:
+                snapshot_records = records
+                if limit > 0 and total > limit:
+                    snapshot_records = records[-limit:]
+                if snapshot_records:
+                    snapshot_msg = trading_pb2.StreamDecisionsSnapshot()
+                    for entry in snapshot_records:
+                        snapshot_msg.records.append(self._record_from_mapping(entry))
+                    yield trading_pb2.StreamDecisionsUpdate(snapshot=snapshot_msg)
+                skip_snapshot = True
+                cursor = total
+            else:
+                if total > cursor:
+                    for entry in records[cursor:]:
+                        increment = trading_pb2.StreamDecisionsIncrement(
+                            record=self._record_from_mapping(entry)
+                        )
+                        yield trading_pb2.StreamDecisionsUpdate(increment=increment)
+                    cursor = total
+
+            first_iteration = False
+            self._sleep_with_context(poll_interval, context)
+
+
 class _HealthServicer(trading_pb2_grpc.HealthServiceServicer):
     def __init__(self, context: LocalRuntimeContext) -> None:
         self._context = context
@@ -1786,6 +1894,7 @@ class LocalRuntimeServer:
         if context.risk_store is not None:
             trading_pb2_grpc.add_RiskServiceServicer_to_server(_RiskServicer(context), self._server)
         trading_pb2_grpc.add_MetricsServiceServicer_to_server(_MetricsServicer(context), self._server)
+        trading_pb2_grpc.add_RuntimeServiceServicer_to_server(_RuntimeServicer(context), self._server)
         trading_pb2_grpc.add_HealthServiceServicer_to_server(_HealthServicer(context), self._server)
         if context.marketplace_repository is not None and context.marketplace_enabled:
             trading_pb2_grpc.add_MarketplaceServiceServicer_to_server(

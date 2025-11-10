@@ -4,7 +4,7 @@ import grpc
 import warnings
 
 from google.protobuf import empty_pb2 as google_dot_protobuf_dot_empty__pb2
-import trading_pb2 as trading__pb2
+from . import trading_pb2 as trading__pb2
 
 GRPC_GENERATED_VERSION = '1.76.0'
 GRPC_VERSION = grpc.__version__
@@ -518,6 +518,78 @@ class MetricsService(object):
             '/botcore.trading.v1.MetricsService/PushMetrics',
             trading__pb2.MetricsSnapshot.SerializeToString,
             trading__pb2.MetricsAck.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+
+class RuntimeServiceStub(object):
+    """Missing associated documentation comment in .proto file."""
+
+    def __init__(self, channel):
+        """Constructor.
+
+        Args:
+            channel: A grpc.Channel.
+        """
+        self.StreamDecisions = channel.unary_stream(
+                '/botcore.trading.v1.RuntimeService/StreamDecisions',
+                request_serializer=trading__pb2.StreamDecisionsRequest.SerializeToString,
+                response_deserializer=trading__pb2.StreamDecisionsUpdate.FromString,
+                _registered_method=True)
+
+
+class RuntimeServiceServicer(object):
+    """Missing associated documentation comment in .proto file."""
+
+    def StreamDecisions(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+
+def add_RuntimeServiceServicer_to_server(servicer, server):
+    rpc_method_handlers = {
+            'StreamDecisions': grpc.unary_stream_rpc_method_handler(
+                    servicer.StreamDecisions,
+                    request_deserializer=trading__pb2.StreamDecisionsRequest.FromString,
+                    response_serializer=trading__pb2.StreamDecisionsUpdate.SerializeToString,
+            ),
+    }
+    generic_handler = grpc.method_handlers_generic_handler(
+            'botcore.trading.v1.RuntimeService', rpc_method_handlers)
+    server.add_generic_rpc_handlers((generic_handler,))
+    server.add_registered_method_handlers('botcore.trading.v1.RuntimeService', rpc_method_handlers)
+
+
+ # This class is part of an EXPERIMENTAL API.
+class RuntimeService(object):
+    """Missing associated documentation comment in .proto file."""
+
+    @staticmethod
+    def StreamDecisions(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_stream(
+            request,
+            target,
+            '/botcore.trading.v1.RuntimeService/StreamDecisions',
+            trading__pb2.StreamDecisionsRequest.SerializeToString,
+            trading__pb2.StreamDecisionsUpdate.FromString,
             options,
             channel_credentials,
             insecure,

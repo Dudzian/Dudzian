@@ -18,6 +18,8 @@ from bot_core.exchanges import interfaces as exchange_interfaces
 from bot_core.exchanges import streaming as exchange_streaming
 from bot_core.exchanges.base import AccountSnapshot
 from bot_core.execution.paper import MarketMetadata
+from bot_core.testing import TradingStubServer, build_default_dataset
+from ui.backend.runtime_service import RuntimeService
 
 
 def _build_stub_context(*, preset_dir: Path | None = None):
@@ -220,3 +222,40 @@ def test_streaming_layer_exposes_long_poll_only() -> None:
     ).lower()
     assert not hasattr(exchange_streaming, "LocalWebSocketBridge")
     assert not hasattr(exchange_streaming.LocalLongPollStream, "websocket_bridge")
+
+
+@pytest.mark.integration
+def test_runtime_service_consumes_grpc_stream(tmp_path: Path) -> None:
+    pytest.importorskip("PySide6")
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtCore import QCoreApplication  # type: ignore[attr-defined]
+
+    dataset = build_default_dataset()
+    metrics_path = tmp_path / "latency.json"
+
+    with TradingStubServer(dataset, port=0, stream_repeat=True, stream_interval=0.0) as server:
+        os.environ["BOT_CORE_UI_GRPC_ENDPOINT"] = server.address
+        os.environ["BOT_CORE_UI_FEED_LATENCY_PATH"] = str(metrics_path)
+        app = QCoreApplication.instance() or QCoreApplication([])
+        service = RuntimeService(default_limit=5)
+        try:
+            assert service.attachToLiveDecisionLog("") is True
+            deadline = time.time() + 5.0
+            while time.time() < deadline and not service.decisions:
+                app.processEvents()
+                time.sleep(0.05)
+            assert service.decisions, "Brak decyzji z gRPC"
+
+            deadline = time.time() + 5.0
+            while time.time() < deadline and not metrics_path.exists():
+                app.processEvents()
+                time.sleep(0.05)
+            assert metrics_path.exists()
+            payload = json.loads(metrics_path.read_text(encoding="utf-8"))
+            assert payload["count"] >= 1
+            assert payload["max_ms"] >= payload["min_ms"] >= 0.0
+        finally:
+            service._stop_grpc_stream()
+            app.quit()
+        os.environ.pop("BOT_CORE_UI_GRPC_ENDPOINT", None)
+        os.environ.pop("BOT_CORE_UI_FEED_LATENCY_PATH", None)
