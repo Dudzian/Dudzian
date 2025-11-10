@@ -9,7 +9,7 @@ from typing import Iterable, List, Optional
 import numpy as np
 import pandas as pd
 
-from bot_core.ai_manager import AIManager
+from bot_core.ai.manager import AIManager
 
 logger = logging.getLogger(__name__)
 if not logger.handlers:

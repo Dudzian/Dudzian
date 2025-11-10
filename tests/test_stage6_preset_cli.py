@@ -22,7 +22,7 @@ def _copy_core_config(tmp_path: Path) -> Path:
 
 def test_stage6_cli_migrates_preset_and_secrets(tmp_path: Path, capsys) -> None:
     core_copy = _copy_core_config(tmp_path)
-    preset_path = tmp_path / "legacy.json"
+    preset_path = tmp_path / "preset.json"
     preset_payload = {
         "fraction": 0.25,
         "risk": {
@@ -34,7 +34,7 @@ def test_stage6_cli_migrates_preset_and_secrets(tmp_path: Path, capsys) -> None:
     }
     preset_path.write_text(json.dumps(preset_payload, ensure_ascii=False), encoding="utf-8")
 
-    secrets_input = tmp_path / "legacy_secrets.yaml"
+    secrets_input = tmp_path / "preset_secrets.yaml"
     secrets_input.write_text(
         "api:\n  key: secret_key\n  meta:\n    account: primary\n", encoding="utf-8"
     )
@@ -45,7 +45,7 @@ def test_stage6_cli_migrates_preset_and_secrets(tmp_path: Path, capsys) -> None:
         [
             "--core-config",
             str(core_copy),
-            "--legacy-preset",
+            "--preset",
             str(preset_path),
             "--profile-name",
             "CLI Stage6",
@@ -82,10 +82,10 @@ def test_stage6_cli_migrates_preset_and_secrets(tmp_path: Path, capsys) -> None:
 
 def test_stage6_cli_accepts_passphrase_file(tmp_path: Path) -> None:
     core_copy = _copy_core_config(tmp_path)
-    preset_path = tmp_path / "legacy.json"
+    preset_path = tmp_path / "preset.json"
     preset_path.write_text(json.dumps({"fraction": 0.1}), encoding="utf-8")
 
-    secrets_input = tmp_path / "legacy_secrets.yaml"
+    secrets_input = tmp_path / "preset_secrets.yaml"
     secrets_input.write_text("exchange:\n  api_key: k\n", encoding="utf-8")
     secrets_output = tmp_path / "vault.json"
     pass_file = tmp_path / "pass.txt"
@@ -96,7 +96,7 @@ def test_stage6_cli_accepts_passphrase_file(tmp_path: Path) -> None:
         [
             "--core-config",
             str(core_copy),
-            "--legacy-preset",
+            "--preset",
             str(preset_path),
             "--profile-name",
             "file-pass",  # sprawdzamy tylko przebieg migracji
@@ -149,10 +149,10 @@ def test_stage6_cli_accepts_passphrase_file(tmp_path: Path) -> None:
 
 def test_stage6_cli_requires_matching_secret_flags(tmp_path: Path, capsys) -> None:
     core_copy = _copy_core_config(tmp_path)
-    preset_path = tmp_path / "legacy.json"
+    preset_path = tmp_path / "preset.json"
     preset_path.write_text(json.dumps({"fraction": 0.1}), encoding="utf-8")
 
-    secrets_input = tmp_path / "legacy_secrets.yaml"
+    secrets_input = tmp_path / "preset_secrets.yaml"
     secrets_input.write_text("api:\n  key: value\n", encoding="utf-8")
 
     with pytest.raises(SystemExit) as excinfo:
@@ -160,7 +160,7 @@ def test_stage6_cli_requires_matching_secret_flags(tmp_path: Path, capsys) -> No
             [
                 "--core-config",
                 str(core_copy),
-                "--legacy-preset",
+                "--preset",
                 str(preset_path),
                 "--secrets-input",
                 str(secrets_input),
@@ -174,9 +174,9 @@ def test_stage6_cli_requires_matching_secret_flags(tmp_path: Path, capsys) -> No
     assert "--secrets-output" in stderr
 
 
-def test_stage6_cli_rejects_legacy_security_flags(tmp_path: Path) -> None:
+def test_stage6_cli_rejects_legacy_security_flags(tmp_path: Path, capsys) -> None:
     core_copy = _copy_core_config(tmp_path)
-    preset_path = tmp_path / "legacy.json"
+    preset_path = tmp_path / "preset.json"
     preset_path.write_text(json.dumps({"fraction": 0.2}), encoding="utf-8")
 
     with pytest.raises(SystemExit) as excinfo:
@@ -184,7 +184,7 @@ def test_stage6_cli_rejects_legacy_security_flags(tmp_path: Path) -> None:
             [
                 "--core-config",
                 str(core_copy),
-                "--legacy-preset",
+                "--preset",
                 str(preset_path),
                 "--profile-name",
                 "legacy-security",
@@ -193,17 +193,17 @@ def test_stage6_cli_rejects_legacy_security_flags(tmp_path: Path) -> None:
             ]
         )
 
-    message = str(excinfo.value)
-    assert "SecurityManager" in message
-    assert "dudzian-migrate" in message
+    assert excinfo.value.code == 2
+    stderr = capsys.readouterr().err
+    assert "unrecognized arguments: --legacy-security-file" in stderr
 
 
 def test_stage6_cli_defaults_desktop_vault(tmp_path: Path, capsys) -> None:
     core_copy = _copy_core_config(tmp_path)
-    preset_path = tmp_path / "legacy.yaml"
+    preset_path = tmp_path / "preset.yaml"
     preset_path.write_text("fraction: 0.15\n", encoding="utf-8")
 
-    secrets_input = tmp_path / "legacy_secrets.yaml"
+    secrets_input = tmp_path / "preset_secrets.yaml"
     secrets_input.write_text("api:\n  token: abc123\n", encoding="utf-8")
 
     desktop_root = tmp_path / "desktop"
@@ -212,7 +212,7 @@ def test_stage6_cli_defaults_desktop_vault(tmp_path: Path, capsys) -> None:
         [
             "--core-config",
             str(core_copy),
-            "--legacy-preset",
+            "--preset",
             str(preset_path),
             "--profile-name",
             "auto-vault",
@@ -236,7 +236,7 @@ def test_stage6_cli_defaults_desktop_vault(tmp_path: Path, capsys) -> None:
 
 def test_stage6_cli_allows_desktop_root_without_secrets(tmp_path: Path, capsys) -> None:
     core_copy = _copy_core_config(tmp_path)
-    preset_path = tmp_path / "legacy.json"
+    preset_path = tmp_path / "preset.json"
     preset_path.write_text(json.dumps({"fraction": 0.2}), encoding="utf-8")
 
     desktop_root = tmp_path / "desktop"
@@ -245,7 +245,7 @@ def test_stage6_cli_allows_desktop_root_without_secrets(tmp_path: Path, capsys) 
         [
             "--core-config",
             str(core_copy),
-            "--legacy-preset",
+            "--preset",
             str(preset_path),
             "--profile-name",
             "desktop-only",
@@ -265,7 +265,7 @@ def test_stage6_cli_dry_run_skips_writes(tmp_path: Path, capsys) -> None:
     core_copy = _copy_core_config(tmp_path)
     before = core_copy.read_text(encoding="utf-8")
 
-    preset_path = tmp_path / "legacy.json"
+    preset_path = tmp_path / "preset.json"
     preset_path.write_text(
         json.dumps(
             {
@@ -276,7 +276,7 @@ def test_stage6_cli_dry_run_skips_writes(tmp_path: Path, capsys) -> None:
         encoding="utf-8",
     )
 
-    secrets_input = tmp_path / "legacy_secrets.yaml"
+    secrets_input = tmp_path / "preset_secrets.yaml"
     secrets_input.write_text("api:\n  token: dry\n", encoding="utf-8")
     secrets_output = tmp_path / "stage6.vault"
 
@@ -284,7 +284,7 @@ def test_stage6_cli_dry_run_skips_writes(tmp_path: Path, capsys) -> None:
         [
             "--core-config",
             str(core_copy),
-            "--legacy-preset",
+            "--preset",
             str(preset_path),
             "--profile-name",
             "dry-run-check",
@@ -307,10 +307,10 @@ def test_stage6_cli_dry_run_skips_writes(tmp_path: Path, capsys) -> None:
 
 def test_stage6_cli_filters_secret_keys(tmp_path: Path, capsys) -> None:
     core_copy = _copy_core_config(tmp_path)
-    preset_path = tmp_path / "legacy.json"
+    preset_path = tmp_path / "preset.json"
     preset_path.write_text(json.dumps({"fraction": 0.42}), encoding="utf-8")
 
-    secrets_input = tmp_path / "legacy_secrets.yaml"
+    secrets_input = tmp_path / "preset_secrets.yaml"
     secrets_input.write_text(
         "api:\n  key: keep\nslack:\n  token: drop\nops:\n  alert: excluded\n",
         encoding="utf-8",
@@ -322,7 +322,7 @@ def test_stage6_cli_filters_secret_keys(tmp_path: Path, capsys) -> None:
         [
             "--core-config",
             str(core_copy),
-            "--legacy-preset",
+            "--preset",
             str(preset_path),
             "--profile-name",
             "filters",  # tylko sprawdzamy filtrację sekretów
@@ -357,10 +357,10 @@ def test_stage6_cli_filters_secret_keys(tmp_path: Path, capsys) -> None:
 
 def test_stage6_cli_previews_secret_keys(tmp_path: Path, capsys) -> None:
     core_copy = _copy_core_config(tmp_path)
-    preset_path = tmp_path / "legacy.json"
+    preset_path = tmp_path / "preset.json"
     preset_path.write_text(json.dumps({"fraction": 0.5}), encoding="utf-8")
 
-    secrets_input = tmp_path / "legacy_secrets.yaml"
+    secrets_input = tmp_path / "preset_secrets.yaml"
     secrets_input.write_text(
         "api:\n  key: preview\nslack:\n  token: keep-private\n",
         encoding="utf-8",
@@ -372,7 +372,7 @@ def test_stage6_cli_previews_secret_keys(tmp_path: Path, capsys) -> None:
         [
             "--core-config",
             str(core_copy),
-            "--legacy-preset",
+            "--preset",
             str(preset_path),
             "--profile-name",
             "preview",
@@ -396,10 +396,10 @@ def test_stage6_cli_previews_secret_keys(tmp_path: Path, capsys) -> None:
 
 def test_stage6_cli_preview_without_output_path(tmp_path: Path, capsys) -> None:
     core_copy = _copy_core_config(tmp_path)
-    preset_path = tmp_path / "legacy.json"
+    preset_path = tmp_path / "preset.json"
     preset_path.write_text(json.dumps({"fraction": 0.22}), encoding="utf-8")
 
-    secrets_input = tmp_path / "legacy_secrets.yaml"
+    secrets_input = tmp_path / "preset_secrets.yaml"
     secrets_input.write_text(
         "api:\n  key: preview\nslack:\n  token: dry-run\n",
         encoding="utf-8",
@@ -409,7 +409,7 @@ def test_stage6_cli_preview_without_output_path(tmp_path: Path, capsys) -> None:
         [
             "--core-config",
             str(core_copy),
-            "--legacy-preset",
+            "--preset",
             str(preset_path),
             "--profile-name",
             "preview-only",
@@ -430,10 +430,10 @@ def test_stage6_cli_preview_without_output_path(tmp_path: Path, capsys) -> None:
 
 def test_stage6_cli_secret_filters_support_glob_patterns(tmp_path: Path, capsys) -> None:
     core_copy = _copy_core_config(tmp_path)
-    preset_path = tmp_path / "legacy.json"
+    preset_path = tmp_path / "preset.json"
     preset_path.write_text(json.dumps({"fraction": 0.37}), encoding="utf-8")
 
-    secrets_input = tmp_path / "legacy_secrets.yaml"
+    secrets_input = tmp_path / "preset_secrets.yaml"
     secrets_input.write_text(
         (
             "binance_api_key: keep\n"
@@ -449,7 +449,7 @@ def test_stage6_cli_secret_filters_support_glob_patterns(tmp_path: Path, capsys)
         [
             "--core-config",
             str(core_copy),
-            "--legacy-preset",
+            "--preset",
             str(preset_path),
             "--profile-name",
             "glob-filters",
@@ -484,10 +484,10 @@ def test_stage6_cli_secret_filters_support_glob_patterns(tmp_path: Path, capsys)
 
 def test_stage6_cli_secret_filters_can_skip_all(tmp_path: Path, capsys) -> None:
     core_copy = _copy_core_config(tmp_path)
-    preset_path = tmp_path / "legacy.json"
+    preset_path = tmp_path / "preset.json"
     preset_path.write_text(json.dumps({"fraction": 0.13}), encoding="utf-8")
 
-    secrets_input = tmp_path / "legacy_secrets.yaml"
+    secrets_input = tmp_path / "preset_secrets.yaml"
     secrets_input.write_text("api:\n  key: keep\n", encoding="utf-8")
     secrets_output = tmp_path / "stage6.vault"
 
@@ -495,7 +495,7 @@ def test_stage6_cli_secret_filters_can_skip_all(tmp_path: Path, capsys) -> None:
         [
             "--core-config",
             str(core_copy),
-            "--legacy-preset",
+            "--preset",
             str(preset_path),
             "--profile-name",
             "filters-empty",
@@ -521,14 +521,14 @@ def test_stage6_cli_secret_filters_can_skip_all(tmp_path: Path, capsys) -> None:
 def test_stage6_cli_can_create_backup(tmp_path: Path, capsys) -> None:
     core_copy = _copy_core_config(tmp_path)
     original_payload = core_copy.read_text(encoding="utf-8")
-    preset_path = tmp_path / "legacy.json"
+    preset_path = tmp_path / "preset.json"
     preset_path.write_text(json.dumps({"fraction": 0.55}), encoding="utf-8")
 
     exit_code = preset_editor_cli.main(
         [
             "--core-config",
             str(core_copy),
-            "--legacy-preset",
+            "--preset",
             str(preset_path),
             "--profile-name",
             "backup-test",
@@ -549,14 +549,14 @@ def test_stage6_cli_can_create_backup(tmp_path: Path, capsys) -> None:
 
 def test_stage6_cli_skips_backup_in_dry_run(tmp_path: Path, capsys) -> None:
     core_copy = _copy_core_config(tmp_path)
-    preset_path = tmp_path / "legacy.json"
+    preset_path = tmp_path / "preset.json"
     preset_path.write_text(json.dumps({"fraction": 0.61}), encoding="utf-8")
 
     exit_code = preset_editor_cli.main(
         [
             "--core-config",
             str(core_copy),
-            "--legacy-preset",
+            "--preset",
             str(preset_path),
             "--profile-name",
             "backup-dry-run",
@@ -576,7 +576,7 @@ def test_stage6_cli_skips_backup_in_dry_run(tmp_path: Path, capsys) -> None:
 def test_stage6_cli_rejects_backup_same_path(tmp_path: Path) -> None:
     core_copy = _copy_core_config(tmp_path)
     original_payload = core_copy.read_text(encoding="utf-8")
-    preset_path = tmp_path / "legacy.json"
+    preset_path = tmp_path / "preset.json"
     preset_path.write_text(json.dumps({"fraction": 0.72}), encoding="utf-8")
 
     with pytest.raises(SystemExit) as excinfo:
@@ -584,7 +584,7 @@ def test_stage6_cli_rejects_backup_same_path(tmp_path: Path) -> None:
             [
                 "--core-config",
                 str(core_copy),
-                "--legacy-preset",
+                "--preset",
                 str(preset_path),
                 "--profile-name",
                 "backup-same",
@@ -599,14 +599,14 @@ def test_stage6_cli_rejects_backup_same_path(tmp_path: Path) -> None:
 
 def test_stage6_cli_prints_core_diff(tmp_path: Path, capsys) -> None:
     core_copy = _copy_core_config(tmp_path)
-    preset_path = tmp_path / "legacy.json"
+    preset_path = tmp_path / "preset.json"
     preset_path.write_text(json.dumps({"fraction": 0.42}), encoding="utf-8")
 
     exit_code = preset_editor_cli.main(
         [
             "--core-config",
             str(core_copy),
-            "--legacy-preset",
+            "--preset",
             str(preset_path),
             "--profile-name",
             "diff-check",
@@ -624,7 +624,7 @@ def test_stage6_cli_prints_core_diff(tmp_path: Path, capsys) -> None:
 
 def test_stage6_cli_core_diff_for_new_output(tmp_path: Path, capsys) -> None:
     core_copy = _copy_core_config(tmp_path)
-    preset_path = tmp_path / "legacy.json"
+    preset_path = tmp_path / "preset.json"
     preset_path.write_text(json.dumps({"fraction": 0.33}), encoding="utf-8")
     destination = tmp_path / "fresh_core.yaml"
 
@@ -632,7 +632,7 @@ def test_stage6_cli_core_diff_for_new_output(tmp_path: Path, capsys) -> None:
         [
             "--core-config",
             str(core_copy),
-            "--legacy-preset",
+            "--preset",
             str(preset_path),
             "--profile-name",
             "diff-new-output",
@@ -652,10 +652,10 @@ def test_stage6_cli_core_diff_for_new_output(tmp_path: Path, capsys) -> None:
 
 def test_stage6_cli_writes_summary_file(tmp_path: Path) -> None:
     core_copy = _copy_core_config(tmp_path)
-    preset_path = tmp_path / "legacy.json"
+    preset_path = tmp_path / "preset.json"
     preset_path.write_text(json.dumps({"fraction": 0.3}), encoding="utf-8")
 
-    secrets_input = tmp_path / "legacy_secrets.yaml"
+    secrets_input = tmp_path / "preset_secrets.yaml"
     secrets_input.write_text("exchange:\n  api_key: k\n", encoding="utf-8")
 
     destination = tmp_path / "stage6.yaml"
@@ -667,7 +667,7 @@ def test_stage6_cli_writes_summary_file(tmp_path: Path) -> None:
         [
             "--core-config",
             str(core_copy),
-            "--legacy-preset",
+            "--preset",
             str(preset_path),
             "--profile-name",
             "summary-profile",
@@ -726,6 +726,13 @@ def test_stage6_cli_writes_summary_file(tmp_path: Path) -> None:
         "used": True,
         "rotated": False,
     }
+    assert payload["secrets"]["rotation_passphrase"] == {
+        "provided": False,
+        "source": None,
+        "identifier": None,
+        "used": False,
+        "rotated": False,
+    }
     assert "legacy_security_passphrase" not in payload["secrets"]
     invocation = payload["cli_invocation"]
     assert isinstance(invocation["argv"], list)
@@ -738,10 +745,10 @@ def test_stage6_cli_summary_tracks_secret_passphrase_env(
     tmp_path: Path, monkeypatch
 ) -> None:
     core_copy = _copy_core_config(tmp_path)
-    preset_path = tmp_path / "legacy.json"
+    preset_path = tmp_path / "preset.json"
     preset_path.write_text(json.dumps({"fraction": 0.33}), encoding="utf-8")
 
-    secrets_input = tmp_path / "legacy_secrets.yaml"
+    secrets_input = tmp_path / "preset_secrets.yaml"
     secrets_input.write_text("exchange:\n  api_key: token\n", encoding="utf-8")
     vault_path = tmp_path / "stage6.vault"
     summary_path = tmp_path / "summary.json"
@@ -752,7 +759,7 @@ def test_stage6_cli_summary_tracks_secret_passphrase_env(
         [
             "--core-config",
             str(core_copy),
-            "--legacy-preset",
+            "--preset",
             str(preset_path),
             "--profile-name",
             "env-secret-profile",
@@ -780,12 +787,19 @@ def test_stage6_cli_summary_tracks_secret_passphrase_env(
         "used": True,
         "rotated": False,
     }
+    assert payload["secrets"]["rotation_passphrase"] == {
+        "provided": False,
+        "source": None,
+        "identifier": None,
+        "used": False,
+        "rotated": False,
+    }
     assert "legacy_security_passphrase" not in payload["secrets"]
 
 
 def test_stage6_cli_summary_records_original_checksum(tmp_path: Path) -> None:
     core_copy = _copy_core_config(tmp_path)
-    preset_path = tmp_path / "legacy.json"
+    preset_path = tmp_path / "preset.json"
     preset_path.write_text(json.dumps({"fraction": 0.35}), encoding="utf-8")
 
     original_bytes = core_copy.read_bytes()
@@ -794,7 +808,7 @@ def test_stage6_cli_summary_records_original_checksum(tmp_path: Path) -> None:
         [
             "--core-config",
             str(core_copy),
-            "--legacy-preset",
+            "--preset",
             str(preset_path),
             "--profile-name",
             "checksum-profile",
@@ -814,10 +828,10 @@ def test_stage6_cli_summary_records_original_checksum(tmp_path: Path) -> None:
 
 def test_stage6_cli_summary_records_security_source_checksums(tmp_path: Path) -> None:
     core_copy = _copy_core_config(tmp_path)
-    preset_path = tmp_path / "legacy.json"
+    preset_path = tmp_path / "preset.json"
     preset_path.write_text(json.dumps({"fraction": 0.41}), encoding="utf-8")
 
-    secrets_input = tmp_path / "legacy_secrets.yaml"
+    secrets_input = tmp_path / "preset_secrets.yaml"
     secrets_input.write_text("binance:\n  api_key: AAA\n  secret_key: BBB\n", encoding="utf-8")
 
     summary_path = tmp_path / "summary.json"
@@ -827,7 +841,7 @@ def test_stage6_cli_summary_records_security_source_checksums(tmp_path: Path) ->
         [
             "--core-config",
             str(core_copy),
-            "--legacy-preset",
+            "--preset",
             str(preset_path),
             "--profile-name",
             "checksum-security",
@@ -857,10 +871,10 @@ def test_stage6_cli_summary_records_security_source_checksums(tmp_path: Path) ->
 
 def test_stage6_cli_summary_redacts_inline_passphrases(tmp_path: Path) -> None:
     core_copy = _copy_core_config(tmp_path)
-    preset_path = tmp_path / "legacy.json"
+    preset_path = tmp_path / "preset.json"
     preset_path.write_text(json.dumps({"fraction": 0.27}), encoding="utf-8")
 
-    secrets_input = tmp_path / "legacy_secrets.yaml"
+    secrets_input = tmp_path / "preset_secrets.yaml"
     secrets_input.write_text("binance:\n  api_key: AAA\n", encoding="utf-8")
 
     summary_path = tmp_path / "summary.json"
@@ -870,7 +884,7 @@ def test_stage6_cli_summary_redacts_inline_passphrases(tmp_path: Path) -> None:
         [
             "--core-config",
             str(core_copy),
-            "--legacy-preset",
+            "--preset",
             str(preset_path),
             "--profile-name",
             "redacted-profile",
@@ -895,13 +909,62 @@ def test_stage6_cli_summary_redacts_inline_passphrases(tmp_path: Path) -> None:
     assert "inline-pass" not in summary_text
 
 
+def test_stage6_cli_summary_redacts_rotation_passphrase(tmp_path: Path) -> None:
+    core_copy = _copy_core_config(tmp_path)
+    preset_path = tmp_path / "preset.json"
+    preset_path.write_text(json.dumps({"fraction": 0.18}), encoding="utf-8")
+
+    secrets_input = tmp_path / "preset_secrets.yaml"
+    secrets_input.write_text("api:\n  key: rotate\n", encoding="utf-8")
+    vault_path = tmp_path / "stage6.vault"
+    summary_path = tmp_path / "summary.json"
+
+    exit_code = preset_editor_cli.main(
+        [
+            "--core-config",
+            str(core_copy),
+            "--preset",
+            str(preset_path),
+            "--profile-name",
+            "rotation-profile",
+            "--secrets-input",
+            str(secrets_input),
+            "--secrets-output",
+            str(vault_path),
+            "--secret-passphrase",
+            "initial-pass",
+            "--secrets-rotate-passphrase",
+            "rotated-pass",
+            "--summary-json",
+            str(summary_path),
+        ]
+    )
+
+    assert exit_code == 0
+    payload = json.loads(summary_path.read_text(encoding="utf-8"))
+    rotation_info = payload["secrets"]["rotation_passphrase"]
+    assert rotation_info == {
+        "provided": True,
+        "source": "inline",
+        "identifier": None,
+        "used": True,
+        "rotated": True,
+    }
+    output_info = payload["secrets"]["output_passphrase"]
+    assert output_info["rotated"] is True
+    invocation = payload["cli_invocation"]
+    assert any(token == "***REDACTED***" for token in invocation["argv"])
+    assert "rotated-pass" not in invocation["command"]
+    assert all("rotated-pass" not in token for token in invocation["argv"])
+
+
 def test_stage6_cli_summary_includes_checksum_warnings(
     tmp_path: Path,
     monkeypatch,
     capsys,
 ) -> None:
     core_copy = _copy_core_config(tmp_path)
-    preset_path = tmp_path / "legacy.json"
+    preset_path = tmp_path / "preset.json"
     preset_path.write_text(json.dumps({"fraction": 0.4}), encoding="utf-8")
     summary_path = tmp_path / "summary.json"
     backup_path = tmp_path / "core.backup.yaml"
@@ -915,7 +978,7 @@ def test_stage6_cli_summary_includes_checksum_warnings(
         [
             "--core-config",
             str(core_copy),
-            "--legacy-preset",
+            "--preset",
             str(preset_path),
             "--profile-name",
             "warnings-profile",
