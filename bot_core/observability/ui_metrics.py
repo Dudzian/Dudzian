@@ -39,6 +39,102 @@ _LONG_POLL_CACHE_LOCK = threading.Lock()
 _LONG_POLL_CACHE: "LongPollStreamMetricsCache | None" = None
 
 
+class FeedHealthMetricsExporter:
+    """Aktualizuje metryki Prometheus dla feedHealth i udostępnia dashboard adapterów."""
+
+    _STATUS_TO_VALUE: dict[str, float] = {
+        "unknown": 0.0,
+        "initializing": 0.0,
+        "connecting": 0.5,
+        "connected": 1.0,
+        "degraded": 2.0,
+        "retrying": 3.0,
+        "fallback": 4.0,
+    }
+
+    def __init__(self, *, registry: MetricsRegistry | None = None) -> None:
+        self._registry = registry or get_global_metrics_registry()
+        self._latency_p95_ms = self._registry.gauge(
+            "bot_ui_feed_latency_p95_ms",
+            "Latencja p95 decision feedu w milisekundach",
+        )
+        self._reconnects_total = self._registry.gauge(
+            "bot_ui_feed_reconnects_total",
+            "Liczba reconnectów decision feedu",
+        )
+        self._downtime_seconds = self._registry.gauge(
+            "bot_ui_feed_downtime_seconds",
+            "Łączny czas niedostępności decision feedu w sekundach",
+        )
+        self._status_metric = self._registry.gauge(
+            "bot_ui_feed_status",
+            "Status decision feedu (0=unknown,1=connected,2=degraded,3=retrying,4=fallback)",
+        )
+        self._lock = threading.Lock()
+        self._dashboard: dict[str, dict[str, object]] = {}
+
+    def record(
+        self,
+        *,
+        adapter: str,
+        status: str,
+        latency_p95_ms: float | None,
+        reconnects: int,
+        downtime_ms: float,
+        last_error: str | None = None,
+    ) -> None:
+        adapter_label = adapter or "unknown"
+        labels = {"adapter": adapter_label}
+        if latency_p95_ms is not None:
+            self._latency_p95_ms.set(float(latency_p95_ms), labels=labels)
+        else:
+            self._latency_p95_ms.set(0.0, labels=labels)
+        self._reconnects_total.set(float(max(0, reconnects)), labels=labels)
+        downtime_seconds = max(0.0, float(downtime_ms) / 1000.0)
+        self._downtime_seconds.set(downtime_seconds, labels=labels)
+        status_value = self._STATUS_TO_VALUE.get(status, self._STATUS_TO_VALUE["unknown"])
+        self._status_metric.set(status_value, labels=labels)
+
+        dashboard_entry: dict[str, object] = {
+            "adapter": adapter_label,
+            "status": status,
+            "status_value": status_value,
+            "latency_p95_ms": float(latency_p95_ms) if latency_p95_ms is not None else None,
+            "reconnects": int(max(0, reconnects)),
+            "downtime_seconds": downtime_seconds,
+            "last_error": str(last_error or ""),
+        }
+        with self._lock:
+            self._dashboard[adapter_label] = dashboard_entry
+
+    def dashboard(self) -> list[dict[str, object]]:
+        with self._lock:
+            entries = [dict(entry) for entry in self._dashboard.values()]
+        return sorted(entries, key=lambda item: item.get("adapter", ""))
+
+
+_FEED_HEALTH_METRICS_LOCK = threading.Lock()
+_FEED_HEALTH_METRICS_EXPORTER: "FeedHealthMetricsExporter | None" = None
+
+
+def get_feed_health_metrics_exporter() -> FeedHealthMetricsExporter:
+    """Zwraca globalny eksporter metryk feedHealth."""
+
+    global _FEED_HEALTH_METRICS_EXPORTER
+    with _FEED_HEALTH_METRICS_LOCK:
+        if _FEED_HEALTH_METRICS_EXPORTER is None:
+            _FEED_HEALTH_METRICS_EXPORTER = FeedHealthMetricsExporter()
+        return _FEED_HEALTH_METRICS_EXPORTER
+
+
+def reset_feed_health_metrics_exporter() -> None:
+    """Czyści globalny eksporter feedHealth (wykorzystywane w testach)."""
+
+    global _FEED_HEALTH_METRICS_EXPORTER
+    with _FEED_HEALTH_METRICS_LOCK:
+        _FEED_HEALTH_METRICS_EXPORTER = None
+
+
 def _safe_json_loads(payload: str) -> Mapping[str, Any]:
     if not payload:
         return {}
@@ -1700,8 +1796,11 @@ def get_long_poll_metrics_cache() -> LongPollStreamMetricsCache:
 
 
 __all__ = [
+    "FeedHealthMetricsExporter",
     "UiTelemetryPrometheusExporter",
     "LongPollStreamMetricsCache",
+    "get_feed_health_metrics_exporter",
+    "reset_feed_health_metrics_exporter",
     "get_long_poll_metrics_cache",
 ]
 

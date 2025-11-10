@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import time
 from collections.abc import Mapping
 from copy import deepcopy
@@ -13,13 +14,191 @@ from pathlib import Path
 from threading import Lock
 from typing import Any
 
-from bot_core.alerts import AlertMessage, DefaultAlertRouter
+from bot_core.alerts import AlertMessage, DefaultAlertRouter, InMemoryAlertAuditLog
 from bot_core.observability._tag_utils import extract_tag
 from bot_core.security.guards import get_capability_guard
 
 DEFAULT_UI_ALERTS_JSONL_PATH = Path("logs/ui_telemetry_alerts.jsonl")
 
 _LOGGER = logging.getLogger(__name__)
+
+_FEED_HEALTH_SINK_LOCK = Lock()
+_FEED_HEALTH_SINK = None
+
+try:  # pragma: no cover - moduły konfiguracji mogą być opcjonalne w dystrybucjach light
+    from bot_core.config import load_core_config  # type: ignore
+except Exception:  # pragma: no cover
+    load_core_config = None  # type: ignore
+
+try:  # pragma: no cover - runtime.yaml może nie być dostępny
+    from bot_core.config.loader import load_runtime_app_config  # type: ignore
+except Exception:  # pragma: no cover
+    load_runtime_app_config = None  # type: ignore
+
+try:  # pragma: no cover - bootstrap alertów może być nieosiągalny
+    from bot_core.runtime.bootstrap import build_alert_channels  # type: ignore
+except Exception:  # pragma: no cover
+    build_alert_channels = None  # type: ignore
+
+try:  # pragma: no cover - magazyn sekretów nie jest wymagany w trybie demo
+    from bot_core.security import SecretManager, create_default_secret_storage, SecretStorageError  # type: ignore
+except Exception:  # pragma: no cover
+    SecretManager = None  # type: ignore
+
+    def create_default_secret_storage(*_args: object, **_kwargs: object) -> None:
+        return None
+
+    class SecretStorageError(Exception):  # type: ignore[override]
+        """Fallback gdy biblioteka bezpieczeństwa nie jest dostępna."""
+
+
+def _resolve_runtime_config_path() -> Path | None:
+    candidates = (
+        os.environ.get("BOT_CORE_UI_RUNTIME_CONFIG_PATH"),
+        os.environ.get("BOT_CORE_RUNTIME_CONFIG_PATH"),
+        os.environ.get("BOT_CORE_RUNTIME_CONFIG"),
+        os.environ.get("DUDZIAN_RUNTIME_CONFIG"),
+    )
+    for raw in candidates:
+        if raw and str(raw).strip():
+            return Path(raw).expanduser()
+    return Path("config/runtime.yaml")
+
+
+def _resolve_core_config_path(runtime_config: Any, runtime_path: Path | None) -> Path | None:
+    candidates = (
+        os.environ.get("BOT_CORE_UI_CORE_CONFIG_PATH"),
+        os.environ.get("BOT_CORE_CORE_CONFIG"),
+        os.environ.get("BOT_CORE_CONFIG"),
+        os.environ.get("DUDZIAN_CORE_CONFIG"),
+    )
+    for raw in candidates:
+        if raw and str(raw).strip():
+            return Path(raw).expanduser()
+
+    core_reference = getattr(runtime_config, "core", None)
+    core_path_value = getattr(core_reference, "path", None)
+    if core_path_value:
+        core_path = Path(str(core_path_value))
+        if not core_path.is_absolute():
+            base = runtime_path.parent if runtime_path is not None else Path.cwd()
+            return (base / core_path).resolve()
+        return core_path.expanduser()
+
+    return Path("config/core.yaml")
+
+
+def _select_feed_alert_environment(runtime_config: Any, core_config: Any) -> str | None:
+    override = os.environ.get("BOT_CORE_UI_FEED_ALERT_ENVIRONMENT")
+    if override and override.strip():
+        return override.strip()
+
+    trading_cfg = getattr(runtime_config, "trading", None)
+    default_entry = getattr(trading_cfg, "default_entrypoint", None)
+    entrypoints = getattr(trading_cfg, "entrypoints", None)
+    if default_entry and entrypoints:
+        try:
+            entry_cfg = entrypoints.get(default_entry)  # type: ignore[call-arg]
+        except AttributeError:
+            entry_cfg = entrypoints[default_entry] if default_entry in entrypoints else None
+        environment_name = getattr(entry_cfg, "environment", None)
+        if isinstance(environment_name, str) and environment_name.strip():
+            return environment_name.strip()
+
+    environments = getattr(core_config, "environments", {}) or {}
+    if isinstance(environments, Mapping) and len(environments) == 1:
+        return next(iter(environments))
+
+    return None
+
+
+def _build_secret_manager() -> SecretManager | None:
+    if SecretManager is None or create_default_secret_storage is None:
+        return None
+    namespace = os.environ.get("BOT_CORE_UI_SECRET_NAMESPACE", "dudzian.trading")
+    passphrase = os.environ.get("BOT_CORE_UI_SECRET_PASSPHRASE")
+    storage_path = os.environ.get("BOT_CORE_UI_SECRET_PATH")
+    try:
+        storage = create_default_secret_storage(
+            namespace=namespace,
+            headless_passphrase=passphrase,
+            headless_path=storage_path,
+        )
+    except SecretStorageError:
+        _LOGGER.warning("Nie udało się zainicjalizować magazynu sekretów dla kanałów alertów HyperCare.")
+        return None
+    except Exception:  # pragma: no cover - diagnostyka środowisk niestandardowych
+        _LOGGER.exception("Błąd inicjalizacji magazynu sekretów dla kanałów alertów HyperCare")
+        return None
+    if storage is None:
+        return None
+    try:
+        return SecretManager(storage, namespace=namespace)
+    except Exception:  # pragma: no cover - obrona przed błędnymi implementacjami storage
+        _LOGGER.exception("Nie udało się utworzyć SecretManagera dla kanałów alertów HyperCare")
+        return None
+
+
+def _build_feed_alert_router() -> DefaultAlertRouter | None:
+    if build_alert_channels is None or load_core_config is None:
+        return None
+
+    runtime_path: Path | None = None
+    runtime_config: Any | None = None
+    if load_runtime_app_config is not None:
+        runtime_path = _resolve_runtime_config_path()
+        try:
+            runtime_config = load_runtime_app_config(runtime_path)
+        except Exception:  # pragma: no cover - brak runtime.yaml nie blokuje inicjalizacji
+            _LOGGER.debug(
+                "Nie udało się wczytać runtime.yaml podczas konfiguracji alertów feedu",
+                exc_info=True,
+            )
+            runtime_config = None
+    core_path = _resolve_core_config_path(runtime_config, runtime_path)
+    if core_path is None:
+        return None
+
+    try:
+        core_config = load_core_config(core_path)
+    except Exception:  # pragma: no cover - brak core.yaml lub błędny format
+        _LOGGER.debug("Nie udało się wczytać core.yaml podczas konfiguracji alertów feedu", exc_info=True)
+        return None
+
+    environment_name = _select_feed_alert_environment(runtime_config, core_config)
+    if not environment_name:
+        _LOGGER.debug("Brak środowiska HyperCare do konfiguracji kanałów alertów feedu")
+        return None
+
+    environments = getattr(core_config, "environments", {}) or {}
+    environment = environments.get(environment_name)
+    if environment is None:
+        _LOGGER.warning(
+            "Środowisko '%s' nie jest zdefiniowane w core.yaml – alerty feedu będą działać w trybie lokalnym.",
+            environment_name,
+        )
+        return None
+
+    secret_manager = _build_secret_manager()
+    if secret_manager is None:
+        return None
+
+    try:
+        _channels, router, _audit = build_alert_channels(
+            core_config=core_config,
+            environment=environment,
+            secret_manager=secret_manager,
+        )
+    except SecretStorageError:
+        _LOGGER.warning(
+            "Brak sekretów wymaganych do kanałów HyperCare – feedHealth użyje lokalnego routera alertów."
+        )
+        return None
+    except Exception:  # pragma: no cover - zależne od konfiguracji środowiska
+        _LOGGER.exception("Nie udało się zbudować kanałów HyperCare dla alertów feedu")
+        return None
+
+    return router
 
 
 def _require_observability_module(message: str) -> None:
@@ -421,6 +600,7 @@ class UiTelemetryAlertSink:
                 self._risk_profile_origin = origin.strip()
 
         self._performance_states: dict[str, dict[str, _MetricState]] = {}
+        self._feed_health_category = self._category_with_suffix("ui.feed", "health")
 
     @property
     def jsonl_path(self) -> Path:
@@ -1772,8 +1952,11 @@ class UiTelemetryAlertSink:
         snapshot,
         *,
         context: Mapping[str, Any] | None = None,
+        force: bool = False,
     ) -> None:
-        if not (self._jsonl_path and self._should_write_jsonl):
+        if not self._jsonl_path:
+            return
+        if not self._should_write_jsonl and not force:
             return
         self._jsonl_path.parent.mkdir(parents=True, exist_ok=True)
         generated_at = _timestamp_to_iso(snapshot) if snapshot is not None else None
@@ -1796,6 +1979,47 @@ class UiTelemetryAlertSink:
         with self._lock:
             with self._jsonl_path.open("a", encoding="utf-8") as handle:
                 handle.write(line + "\n")
+
+    def emit_feed_health_event(
+        self,
+        *,
+        severity: str,
+        title: str,
+        body: str,
+        context: Mapping[str, Any] | None = None,
+        payload: Mapping[str, Any] | None = None,
+    ) -> None:
+        """Publikuje zdarzenia degradacji feedu decision logu."""
+
+        message_context: dict[str, str] = {}
+        if context:
+            message_context.update({str(key): str(value) for key, value in context.items()})
+        if self._risk_profile_name and "risk_profile" not in message_context:
+            message_context["risk_profile"] = self._risk_profile_name
+        if self._risk_profile_origin and "risk_profile_origin" not in message_context:
+            message_context["risk_profile_origin"] = self._risk_profile_origin
+
+        log_payload: dict[str, Any] = {"event": "feed_health"}
+        if payload:
+            log_payload.update({str(key): value for key, value in payload.items()})
+
+        self._append_jsonl(
+            self._feed_health_category,
+            severity,
+            log_payload,
+            None,
+            context=message_context,
+            force=True,
+        )
+
+        message = AlertMessage(
+            category=self._feed_health_category,
+            title=title,
+            body=body,
+            severity=severity,
+            context=message_context,
+        )
+        self._router.dispatch(message)
 
     def _process_performance_metric(
         self,
@@ -2044,4 +2268,46 @@ class UiTelemetryAlertSink:
         return result
 
 
-__all__ = ["UiTelemetryAlertSink", "DEFAULT_UI_ALERTS_JSONL_PATH"]
+def get_feed_health_alert_sink(
+    *,
+    router: DefaultAlertRouter | None = None,
+    jsonl_path: str | Path | None = None,
+) -> UiTelemetryAlertSink | None:
+    """Zwraca globalny sink alertów feedu decision logu."""
+
+    if UiTelemetryAlertSink is None or DefaultAlertRouter is None:
+        return None
+
+    with _FEED_HEALTH_SINK_LOCK:
+        global _FEED_HEALTH_SINK
+        if _FEED_HEALTH_SINK is not None:
+            return _FEED_HEALTH_SINK
+
+        try:
+            sink_router = router or _build_feed_alert_router()
+            if sink_router is None:
+                sink_router = DefaultAlertRouter(audit_log=InMemoryAlertAuditLog())
+            path = Path(jsonl_path).expanduser() if jsonl_path else DEFAULT_UI_ALERTS_JSONL_PATH
+            sink = UiTelemetryAlertSink(sink_router, jsonl_path=path)
+        except Exception:  # pragma: no cover - środowiska bez alertów
+            _LOGGER.exception("Nie udało się zainicjalizować sinka alertów feedu")
+            return None
+
+        _FEED_HEALTH_SINK = sink
+        return sink
+
+
+def reset_feed_health_alert_sink() -> None:
+    """Czyści globalny sink alertów feedu (używane w testach)."""
+
+    with _FEED_HEALTH_SINK_LOCK:
+        global _FEED_HEALTH_SINK
+        _FEED_HEALTH_SINK = None
+
+
+__all__ = [
+    "UiTelemetryAlertSink",
+    "DEFAULT_UI_ALERTS_JSONL_PATH",
+    "get_feed_health_alert_sink",
+    "reset_feed_health_alert_sink",
+]
