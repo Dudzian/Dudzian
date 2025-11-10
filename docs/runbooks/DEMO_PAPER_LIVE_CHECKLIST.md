@@ -48,6 +48,10 @@ Zapewnienie, że każda promocja środowiska tradingowego spełnia wymagania tec
 > --secret-passphrase{,-env,-file}
 >                                Dostarczenie hasła magazynu sekretów
 > --summary-json PATH            Raport audytowy migracji (JSON)
+>
+> Te przełączniki CLI pozostają wyłącznie jako migration fallback na potrzeby
+> operatorów kończących migrację – nowe wdrożenia powinny korzystać z docelowych
+> presetów i magazynów sekretów Stage6.
 > ```
 
 ## Artefakty/Akceptacja

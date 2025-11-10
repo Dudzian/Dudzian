@@ -99,15 +99,15 @@ def test_auto_trader_strategy_alias_overrides_extend_candidates() -> None:
         gui,
         lambda: "BTCUSDT",
         strategy_catalog=_Catalog(),
-        strategy_alias_map={"Legacy Breakout": "day_trading"},
-        strategy_alias_suffixes=("_legacy",),
+        strategy_alias_map={"Day Trading Classic": "day_trading"},
+        strategy_alias_suffixes=("_migration_fallback",),
     )
 
-    candidates = trader._strategy_metadata_candidates("Legacy Breakout_Legacy")
+    candidates = trader._strategy_metadata_candidates("Day Trading Classic_migration_fallback")
     assert "day_trading" in candidates
     resolver = trader._alias_resolver_instance()
     assert "_probing" in resolver.suffixes
-    assert "_legacy" in resolver.suffixes
+    assert "_migration_fallback" in resolver.suffixes
 
 
 def test_auto_trader_strategy_alias_overrides_accept_canonical_collections() -> None:
@@ -124,11 +124,14 @@ def test_auto_trader_strategy_alias_overrides_accept_canonical_collections() -> 
         lambda: "BTCUSDT",
         strategy_catalog=_Catalog(),
         strategy_alias_map={
-            "day_trading": ["Legacy Breakout", {"more": ["LegacyLegacy"]}]
+            "day_trading": [
+                "Day Trading Classic",
+                {"more": ["DayTradingClassic"]},
+            ]
         },
     )
 
-    candidates = trader._strategy_metadata_candidates("LegacyLegacy")
+    candidates = trader._strategy_metadata_candidates("DayTradingClassic")
     assert "day_trading" in candidates
 
 
@@ -147,17 +150,19 @@ def test_auto_trader_configure_aliases_updates_candidates() -> None:
         strategy_catalog=_Catalog(),
     )
 
-    baseline = trader._strategy_metadata_candidates("Legacy Breakout")
+    baseline = trader._strategy_metadata_candidates("Day Trading Classic")
     assert "day_trading" not in baseline
 
     trader.configure_strategy_aliases(
-        {"Legacy Breakout": "day_trading"}, suffixes=("_legacy",)
+        {"Day Trading Classic": "day_trading"}, suffixes=("_migration_fallback",)
     )
 
-    candidates = trader._strategy_metadata_candidates("Legacy Breakout_Legacy")
+    candidates = trader._strategy_metadata_candidates(
+        "Day Trading Classic_migration_fallback"
+    )
     assert "day_trading" in candidates
     suffixes = trader._alias_resolver_instance().suffixes
-    assert "_legacy" in suffixes
+    assert "_migration_fallback" in suffixes
 
 
 def test_auto_mode_snapshot_includes_guardrail_trace_and_failover() -> None:

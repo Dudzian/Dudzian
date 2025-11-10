@@ -19,6 +19,7 @@ from bot_core.ai.regime import (
 from bot_core.trading.engine import TradingParameters
 from bot_core.trading.strategies import StrategyCatalog
 from bot_core.trading.strategy_aliasing import (
+    MIGRATION_FALLBACK_SUFFIX,
     StrategyAliasResolver,
     strategy_key_aliases,
     strategy_name_candidates,
@@ -69,7 +70,7 @@ class RegimeSwitchActivation(RegimeSwitchDecision):
 class RegimeSwitchWorkflow:
     """High-level controller combining classifier outputs with strategy plugins."""
 
-    _STRATEGY_SUFFIXES: tuple[str, ...] = ("_probing",)
+    _STRATEGY_SUFFIXES: tuple[str, ...] = ("_probing", MIGRATION_FALLBACK_SUFFIX)
     _STRATEGY_ALIAS_MAP: Mapping[str, str] = MappingProxyType(
         {
             "intraday_breakout": "day_trading",

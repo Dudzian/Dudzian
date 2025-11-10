@@ -1,11 +1,12 @@
 # Exchange Integration Review
 
-> **Legacy notice:** Historyczne źródła, które dawniej znajdowały się w
-> warstwie legacy, zostały całkowicie usunięte z repozytorium. Wszelkie prace
-> integracyjne muszą koncentrować się na aktywnie wspieranych pakietach
-> `bot_core.*` oraz ich oficjalnych helperach CLI. Warstwa zgodności została
-> zredukowana do cienkich wrapperów – nowy kod powinien korzystać z
-> `bot_core.execution.live_router.LiveExecutionRouter` oraz
+> **Migration history notice:** Pakiet `KryptoLowca` funkcjonuje już tylko jako
+> punkt odniesienia w dokumentacji migracyjnej – dawne moduły kompatybilności
+> zostały usunięte z repozytorium. Wszelkie prace integracyjne muszą
+> koncentrować się na
+> aktywnie wspieranych pakietach `bot_core.*` oraz ich oficjalnych helperach CLI.
+> Warstwa zgodności została zredukowana do cienkich wrapperów – nowy kod powinien
+> korzystać z `bot_core.execution.live_router.LiveExecutionRouter` oraz
 > `bot_core.exchanges.ccxt_adapter.CCXTSpotAdapter` (lub wyższych helperów w
 > przestrzeni `bot_core`).
 >

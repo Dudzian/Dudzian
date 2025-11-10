@@ -72,6 +72,7 @@ from bot_core.risk.engine import ThresholdRiskEngine
 from bot_core.observability import MetricsRegistry, get_global_metrics_registry
 from bot_core.trading.strategies import StrategyCatalog
 from bot_core.trading.strategy_aliasing import (
+    MIGRATION_FALLBACK_SUFFIX,
     StrategyAliasResolver,
     canonical_alias_map,
     normalise_suffixes,
@@ -444,7 +445,7 @@ class AutoTrader:
     method executed inside a worker thread when the user confirms auto-trading.
     """
 
-    _STRATEGY_SUFFIXES: tuple[str, ...] = ("_probing",)
+    _STRATEGY_SUFFIXES: tuple[str, ...] = ("_probing", MIGRATION_FALLBACK_SUFFIX)
     _STRATEGY_ALIAS_MAP: Mapping[str, str] = {
         "intraday_breakout": "day_trading",
     }

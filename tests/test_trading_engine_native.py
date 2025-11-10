@@ -1241,7 +1241,10 @@ class TestNativeTradingEngine(unittest.TestCase):
                 validated_data: pd.DataFrame,
                 raw_signals: pd.Series,
             ) -> pd.Series:
-                warnings.warn("legacy fusion drift", pd.errors.PerformanceWarning)
+                warnings.warn(
+                    "migration fallback fusion drift",
+                    pd.errors.PerformanceWarning,
+                )
                 return raw_signals
 
         bridges_pkg = types.ModuleType("bridges")
@@ -1275,13 +1278,13 @@ class TestNativeTradingEngine(unittest.TestCase):
         kwargs = observe_warning.call_args.kwargs
         self.assertEqual(kwargs["component"], "trading_engine.pipeline")
         self.assertEqual(kwargs["category"], "PerformanceWarning")
-        self.assertEqual(kwargs["message"], "legacy fusion drift")
+        self.assertEqual(kwargs["message"], "migration fallback fusion drift")
         self.assertTrue(
             any(
                 "Pandas warning captured in trading_engine.pipeline" in message
                 for message in log_cm.output
             ),
-            "Legacy shim should surface pandas warnings through pipeline observability.",
+            "Migration fallback shim should surface pandas warnings through pipeline observability.",
         )
 
 
