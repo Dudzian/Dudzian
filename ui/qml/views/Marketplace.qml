@@ -178,6 +178,76 @@ Item {
         busy = false
     }
 
+    function assignPresetToPortfolio(preset, portfolioId) {
+        const ctrl = resolvedController()
+        if (!ctrl || !ctrl.assignPresetToPortfolio) {
+            statusError = qsTr("Backend marketplace nie obsługuje przydziału portfeli.")
+            statusMessage = ""
+            return false
+        }
+        const normalizedPortfolio = (portfolioId || "").trim()
+        if (normalizedPortfolio.length === 0)
+            return false
+        const presetId = preset && (preset.presetId || preset.preset_id || "")
+        if (!presetId) {
+            statusError = qsTr("Niepoprawny identyfikator presetu.")
+            statusMessage = ""
+            return false
+        }
+        busy = true
+        let success = false
+        try {
+            success = ctrl.assignPresetToPortfolio(presetId, normalizedPortfolio)
+        } catch (error) {
+            statusError = error ? error.toString() : qsTr("Przydzielenie portfela nie powiodło się.")
+            statusMessage = ""
+        }
+        busy = false
+        if (success) {
+            statusError = ""
+            refreshPresets()
+            return true
+        }
+        if (!statusError || statusError.length === 0)
+            statusError = ctrl.lastError || qsTr("Przydzielenie portfela nie powiodło się.")
+        return false
+    }
+
+    function unassignPresetFromPortfolio(preset, portfolioId) {
+        const ctrl = resolvedController()
+        if (!ctrl || !ctrl.unassignPresetFromPortfolio) {
+            statusError = qsTr("Backend marketplace nie obsługuje usuwania przydziałów.")
+            statusMessage = ""
+            return false
+        }
+        const normalizedPortfolio = (portfolioId || "").trim()
+        if (normalizedPortfolio.length === 0)
+            return false
+        const presetId = preset && (preset.presetId || preset.preset_id || "")
+        if (!presetId) {
+            statusError = qsTr("Niepoprawny identyfikator presetu.")
+            statusMessage = ""
+            return false
+        }
+        busy = true
+        let success = false
+        try {
+            success = ctrl.unassignPresetFromPortfolio(presetId, normalizedPortfolio)
+        } catch (error) {
+            statusError = error ? error.toString() : qsTr("Usunięcie przydziału nie powiodło się.")
+            statusMessage = ""
+        }
+        busy = false
+        if (success) {
+            statusError = ""
+            refreshPresets()
+            return true
+        }
+        if (!statusError || statusError.length === 0)
+            statusError = ctrl.lastError || qsTr("Usunięcie przydziału nie powiodło się.")
+        return false
+    }
+
     function triggerImport() {
         importDialog.open()
     }
@@ -387,6 +457,28 @@ Item {
                             }
                         }
 
+                        ColumnLayout {
+                            visible: preset.warningMessages && preset.warningMessages.length > 0
+                            Layout.fillWidth: true
+                            spacing: 4
+
+                            Label {
+                                text: qsTr("Ostrzeżenia licencji:")
+                                color: "#e67e22"
+                                font.bold: true
+                            }
+
+                            Repeater {
+                                model: preset.warningMessages || []
+                                delegate: Label {
+                                    Layout.fillWidth: true
+                                    text: String.fromUtf8("\u2022 ") + modelData
+                                    color: "#e67e22"
+                                    wrapMode: Text.WordWrap
+                                }
+                            }
+                        }
+
                         RowLayout {
                             Layout.fillWidth: true
                             spacing: 8
@@ -411,10 +503,220 @@ Item {
                             }
 
                             Item { Layout.fillWidth: true }
+                                    }
+                                }
+                            }
                         }
-                    }
-                }
-            }
+
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            spacing: 8
+
+                            GroupBox {
+                                Layout.fillWidth: true
+                                title: qsTr("Zależności")
+                                visible: preset.dependencies && preset.dependencies.length > 0
+
+                                ColumnLayout {
+                                    Layout.fillWidth: true
+                                    spacing: 2
+                                    Repeater {
+                                        model: preset.dependencies || []
+                                        delegate: Label {
+                                            Layout.fillWidth: true
+                                            wrapMode: Text.WordWrap
+                                            text: {
+                                                const item = modelData || {}
+                                                const name = item.presetId || item.preset_id || item.name || ""
+                                                const constraints = item.constraints && item.constraints.length ? " (" + item.constraints.join(", ") + ")" : ""
+                                                const optional = item.optional ? qsTr(" [opcjonalne]") : ""
+                                                const capability = item.capability ? qsTr(" – wymaga %1").arg(item.capability) : ""
+                                                const note = item.notes ? qsTr(": %1").arg(item.notes) : ""
+                                                return String.fromUtf8("\u2022 ") + name + constraints + optional + capability + note
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            GroupBox {
+                                Layout.fillWidth: true
+                                title: qsTr("Licencja")
+                                visible: preset.license && preset.license.seat_summary
+
+                                ColumnLayout {
+                                    property var seatSummary: preset.license ? preset.license.seat_summary || {} : {}
+                                    property var subscriptionSummary: preset.license ? preset.license.subscription_summary || {} : {}
+                                    Layout.fillWidth: true
+                                    spacing: 4
+
+                                    Label {
+                                        Layout.fillWidth: true
+                                        wrapMode: Text.WordWrap
+                                        text: {
+                                            const seat = parent.seatSummary || {}
+                                            const total = seat.total !== undefined && seat.total !== null ? seat.total : qsTr("brak")
+                                            const inUse = seat.in_use !== undefined && seat.in_use !== null ? seat.in_use : qsTr("brak")
+                                            const available = seat.available !== undefined && seat.available !== null ? seat.available : qsTr("brak")
+                                            return qsTr("Stanowiska: %1 zajętych z %2 (dostępne: %3)").arg(inUse).arg(total).arg(available)
+                                        }
+                                    }
+
+                                    Flow {
+                                        Layout.fillWidth: true
+                                        spacing: 6
+                                        Repeater {
+                                            model: (parent.seatSummary && parent.seatSummary.assignments) || []
+                                            delegate: Rectangle {
+                                                radius: 4
+                                                border.color: palette.mid
+                                                color: Qt.darker(palette.base, 1.05)
+                                                height: 22
+                                                width: implicitWidth
+                                                Text {
+                                                    anchors.centerIn: parent
+                                                    text: modelData
+                                                    font.pixelSize: 12
+                                                }
+                                            }
+                                        }
+                                        Label {
+                                            visible: !(parent.seatSummary && parent.seatSummary.assignments && parent.seatSummary.assignments.length > 0)
+                                            text: qsTr("Brak przypisanych urządzeń")
+                                            color: palette.mid
+                                            font.pixelSize: 12
+                                        }
+                                    }
+
+                                    Label {
+                                        Layout.fillWidth: true
+                                        wrapMode: Text.WordWrap
+                                        visible: subscriptionSummary && (subscriptionSummary.status || subscriptionSummary.renews_at)
+                                        text: {
+                                            const sub = subscriptionSummary || {}
+                                            const status = sub.status || qsTr("nieznany")
+                                            const renews = sub.renews_at || qsTr("brak")
+                                            return qsTr("Subskrypcja: %1 (odnowienie: %2)").arg(status).arg(renews)
+                                        }
+                                    }
+
+                                    Label {
+                                        Layout.fillWidth: true
+                                        wrapMode: Text.WordWrap
+                                        visible: subscriptionSummary && (subscriptionSummary.period_start || subscriptionSummary.period_end)
+                                        text: {
+                                            const sub = subscriptionSummary || {}
+                                            const start = sub.period_start || qsTr("brak")
+                                            const end = sub.period_end || qsTr("brak")
+                                            return qsTr("Okres rozliczeniowy: %1 – %2").arg(start).arg(end)
+                                        }
+                                    }
+                                }
+                            }
+
+                            GroupBox {
+                                Layout.fillWidth: true
+                                title: qsTr("Aktualizacje")
+                                visible: preset.updateChannels && preset.updateChannels.length > 0
+
+                                ColumnLayout {
+                                    Layout.fillWidth: true
+                                    spacing: 2
+
+                                    Label {
+                                        visible: preset.upgradeAvailable === true
+                                        color: "#c0392b"
+                                        font.bold: true
+                                        wrapMode: Text.WordWrap
+                                        text: qsTr("Dostępna aktualizacja do wersji %1 (kanał %2)")
+                                            .arg(preset.upgradeVersion || preset.version || "")
+                                            .arg(preset.preferredChannel || qsTr("domyślny"))
+                                    }
+
+                                    Repeater {
+                                        model: preset.updateChannels || []
+                                        delegate: Label {
+                                            Layout.fillWidth: true
+                                            wrapMode: Text.WordWrap
+                                            text: {
+                                                const entry = modelData || {}
+                                                const name = entry.name || entry.channel || qsTr("kanał")
+                                                const version = entry.version ? qsTr(" wersja %1").arg(entry.version) : ""
+                                                const severity = entry.severity ? qsTr(" (%1)").arg(entry.severity) : ""
+                                                const notes = entry.notes ? qsTr(": %1").arg(entry.notes) : ""
+                                                return String.fromUtf8("\u2022 ") + name + version + severity + notes
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            GroupBox {
+                                Layout.fillWidth: true
+                                title: qsTr("Przydziały do portfeli")
+
+                                ColumnLayout {
+                                    Layout.fillWidth: true
+                                    spacing: 6
+
+                                    Flow {
+                                        Layout.fillWidth: true
+                                        spacing: 6
+                                        Repeater {
+                                            model: preset.assignedPortfolios || []
+                                            delegate: Rectangle {
+                                                radius: 4
+                                                border.color: palette.mid
+                                                color: Qt.darker(palette.base, 1.05)
+                                                height: 28
+                                                RowLayout {
+                                                    anchors.fill: parent
+                                                    anchors.margins: 6
+                                                    spacing: 6
+                                                    Label {
+                                                        text: modelData
+                                                        font.pixelSize: 12
+                                                    }
+                                                    Button {
+                                                        text: qsTr("Usuń")
+                                                        icon.name: "list-remove"
+                                                        onClicked: unassignPresetFromPortfolio(preset, modelData)
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        Label {
+                                            visible: !preset.assignedPortfolios || preset.assignedPortfolios.length === 0
+                                            text: qsTr("Brak przydzielonych portfeli")
+                                            color: palette.mid
+                                            font.pixelSize: 12
+                                        }
+                                    }
+
+                                    RowLayout {
+                                        Layout.fillWidth: true
+                                        spacing: 6
+                                        TextField {
+                                            id: portfolioInput
+                                            Layout.fillWidth: true
+                                            placeholderText: qsTr("Identyfikator portfela")
+                                            onAccepted: {
+                                                if (assignPresetToPortfolio(preset, text))
+                                                    text = ""
+                                            }
+                                        }
+                                        Button {
+                                            text: qsTr("Dodaj")
+                                            enabled: (portfolioInput.text || "").trim().length > 0
+                                            onClicked: {
+                                                if (assignPresetToPortfolio(preset, portfolioInput.text))
+                                                    portfolioInput.text = ""
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
         }
     }
 

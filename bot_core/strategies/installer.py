@@ -5,12 +5,17 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from bot_core.marketplace import PresetDocument, PresetRepository, parse_preset_document
 from bot_core.security.hwid import HwIdProvider, HwIdProviderError
+from bot_core.security.license import (
+    _parse_seat_policy,
+    _parse_subscription_section,
+)
+from bot_core.security.messages import ValidationMessage
 
 from .marketplace import MarketplaceCatalog, MarketplaceCatalogError, MarketplacePreset, load_catalog
 
@@ -28,6 +33,7 @@ class MarketplaceInstallResult:
     signature_verified: bool
     fingerprint_verified: bool | None
     issues: tuple[str, ...] = field(default_factory=tuple)
+    warnings: tuple[str, ...] = field(default_factory=tuple)
     license_payload: Mapping[str, Any] | None = None
 
 
@@ -37,6 +43,7 @@ class _EvaluationResult:
     signature_verified: bool
     fingerprint_verified: bool | None
     issues: tuple[str, ...]
+    warnings: tuple[str, ...]
     license_payload: Mapping[str, Any] | None
 
 
@@ -119,6 +126,7 @@ class MarketplacePresetInstaller:
             signature_verified=evaluation.signature_verified,
             fingerprint_verified=evaluation.fingerprint_verified,
             issues=evaluation.issues,
+            warnings=evaluation.warnings,
             license_payload=evaluation.license_payload,
         )
 
@@ -141,8 +149,21 @@ class MarketplacePresetInstaller:
             signature_verified=evaluation.signature_verified,
             fingerprint_verified=evaluation.fingerprint_verified,
             issues=evaluation.issues,
+            warnings=evaluation.warnings,
             license_payload=evaluation.license_payload,
         )
+
+    # ------------------------------------------------------------------
+    def load_catalog_document(self, preset_id: str) -> PresetDocument:
+        """Zwraca dokument presetu z katalogu (do prezentacji w UI)."""
+
+        preset = self._catalog.find(preset_id)
+        if preset is None:
+            raise MarketplaceCatalogError(
+                f"Preset {preset_id!r} nie istnieje w katalogu Marketplace."
+            )
+        payload = preset.artifact_path.read_bytes()
+        return parse_preset_document(payload, source=preset.artifact_path, signing_keys=self._signing_keys)
 
     # ------------------------------------------------------------------
     def _evaluate_document(self, document: PresetDocument) -> _EvaluationResult:
@@ -152,20 +173,27 @@ class MarketplacePresetInstaller:
             issues.append("signature-unverified")
 
         license_payload = self._load_license_payload(document.preset_id)
-        license_ok, fingerprint_verified, license_issues = self._validate_license(
+        (
+            license_ok,
+            fingerprint_verified,
+            license_errors,
+            license_warnings,
+            normalized_license,
+        ) = self._validate_license(
             document.preset_id,
             document.version,
             license_payload,
         )
-        issues.extend(license_issues)
+        issues.extend(license_errors)
 
-        success = signature_verified and license_ok and not license_issues
+        success = signature_verified and license_ok and not license_errors
         return _EvaluationResult(
             success=success,
             signature_verified=signature_verified,
             fingerprint_verified=fingerprint_verified,
             issues=tuple(dict.fromkeys(issues)),
-            license_payload=license_payload,
+            warnings=tuple(dict.fromkeys(license_warnings)),
+            license_payload=normalized_license,
         )
 
     # ------------------------------------------------------------------
@@ -196,11 +224,13 @@ class MarketplacePresetInstaller:
         preset_id: str,
         version: str | None,
         license_payload: Mapping[str, Any] | None,
-    ) -> tuple[bool, bool | None, list[str]]:
+    ) -> tuple[bool, bool | None, list[str], list[str], Mapping[str, Any] | None]:
         if license_payload is None:
-            return False, None, ["license-missing"]
+            return False, None, ["license-missing"], [], None
 
         issues: list[str] = []
+        warnings: list[str] = []
+        normalized: Mapping[str, Any] | None = dict(license_payload)
 
         license_preset = str(license_payload.get("preset_id") or license_payload.get("id") or "").strip()
         if license_preset and license_preset != preset_id:
@@ -216,29 +246,115 @@ class MarketplacePresetInstaller:
                 issues.append("license-version-invalid")
 
         expires_at = license_payload.get("expires_at")
+        expiry: datetime | None = None
         if isinstance(expires_at, str) and expires_at.strip():
             try:
                 expiry = datetime.fromisoformat(expires_at.strip().replace("Z", "+00:00"))
             except ValueError:
                 issues.append("license-expiry-invalid")
             else:
-                if expiry < datetime.now(timezone.utc):
+                now = datetime.now(timezone.utc)
+                if expiry < now:
                     issues.append("license-expired")
+                elif expiry - now <= timedelta(days=30):
+                    warnings.append("license-expiring-soon")
 
         fingerprint_verified: bool | None = None
+        device_fingerprint: str | None = None
         fingerprints = self._normalize_fingerprints(license_payload.get("allowed_fingerprints"))
         if fingerprints:
             try:
-                hwid = self._hwid_provider.read()
+                device_fingerprint = self._hwid_provider.read()
             except HwIdProviderError:
                 issues.append("fingerprint-unavailable")
                 fingerprint_verified = False
             else:
-                fingerprint_verified = any(self._match_fingerprint(hwid, candidate) for candidate in fingerprints)
+                fingerprint_verified = any(
+                    self._match_fingerprint(device_fingerprint, candidate) for candidate in fingerprints
+                )
                 if not fingerprint_verified:
                     issues.append("fingerprint-mismatch")
 
-        return (len(issues) == 0), fingerprint_verified, issues
+        seat_errors: list[ValidationMessage] = []
+        seat_warnings: list[ValidationMessage] = []
+        (
+            seats_total,
+            seats_in_use,
+            seats_available,
+            seat_assignments,
+            seat_pending,
+            seat_enforcement,
+            seat_auto_assign,
+        ) = _parse_seat_policy(
+            license_payload,
+            fingerprint_value=device_fingerprint,
+            errors=seat_errors,
+            warnings=seat_warnings,
+        )
+
+        subscription_errors: list[ValidationMessage] = []
+        subscription_warnings: list[ValidationMessage] = []
+        (
+            subscription_status,
+            subscription_renews_at,
+            subscription_period_start,
+            subscription_period_end,
+            subscription_grace_expires_at,
+        ) = _parse_subscription_section(
+            license_payload,
+            current_time=datetime.now(timezone.utc),
+            errors=subscription_errors,
+            warnings=subscription_warnings,
+        )
+
+        validation_errors = [*seat_errors, *subscription_errors]
+        validation_warnings = [*seat_warnings, *subscription_warnings]
+
+        if validation_errors:
+            issues.extend(message.code for message in validation_errors)
+        if validation_warnings:
+            warnings.extend(message.code for message in validation_warnings)
+
+        if normalized is not None:
+            payload_copy: dict[str, Any] = dict(normalized)
+            payload_copy["seat_summary"] = {
+                "total": seats_total,
+                "in_use": seats_in_use,
+                "available": seats_available,
+                "assignments": seat_assignments,
+                "pending": seat_pending,
+                "enforcement": seat_enforcement,
+                "auto_assign": seat_auto_assign,
+            }
+            payload_copy["subscription_summary"] = {
+                "status": subscription_status,
+                "renews_at": subscription_renews_at,
+                "period_start": subscription_period_start,
+                "period_end": subscription_period_end,
+                "grace_expires_at": subscription_grace_expires_at,
+            }
+
+            validation_payload: dict[str, Any] = {}
+            if validation_errors:
+                validation_payload["errors"] = [entry.to_dict() for entry in validation_errors]
+                validation_payload["error_messages"] = [entry.message for entry in validation_errors]
+                validation_payload["error_codes"] = [entry.code for entry in validation_errors]
+            if validation_warnings:
+                validation_payload["warnings"] = [entry.to_dict() for entry in validation_warnings]
+                validation_payload["warning_messages"] = [entry.message for entry in validation_warnings]
+                validation_payload["warning_codes"] = [entry.code for entry in validation_warnings]
+            if validation_payload:
+                existing_validation = payload_copy.get("validation")
+                if isinstance(existing_validation, Mapping):
+                    merged_validation = dict(existing_validation)
+                    merged_validation.update(validation_payload)
+                else:
+                    merged_validation = validation_payload
+                payload_copy["validation"] = merged_validation
+            normalized = payload_copy
+
+        success = len(issues) == 0
+        return success, fingerprint_verified, issues, warnings, normalized
 
     # ------------------------------------------------------------------
     @staticmethod

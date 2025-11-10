@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 import hashlib
 import os
@@ -82,6 +82,187 @@ def _emit_license_telemetry(
     _write_license_telemetry(payload)
 
 
+def _normalize_int(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return None
+        try:
+            return int(text)
+        except ValueError:
+            return None
+    return None
+
+
+def _normalize_sequence_of_str(values: Any) -> tuple[str, ...]:
+    if isinstance(values, (str, bytes)):
+        text = str(values).strip()
+        if not text:
+            return tuple()
+        return (text,)
+    if not isinstance(values, Sequence):
+        return tuple()
+    collected: list[str] = []
+    for item in values:
+        if isinstance(item, str):
+            text = item.strip()
+            if text:
+                collected.append(text)
+    return tuple(dict.fromkeys(collected))
+
+
+def _parse_seat_policy(
+    payload: Mapping[str, Any],
+    *,
+    fingerprint_value: str | None,
+    errors: list[ValidationMessage],
+    warnings: list[ValidationMessage],
+) -> tuple[int | None, int | None, int | None, tuple[str, ...], tuple[str, ...], str | None, bool | None]:
+    section = payload.get("seat_policy")
+    if not isinstance(section, Mapping):
+        section = payload.get("multi_seat") if isinstance(payload.get("multi_seat"), Mapping) else None
+    if not isinstance(section, Mapping):
+        return None, None, None, tuple(), tuple(), None, None
+
+    total = _normalize_int(section.get("total") or section.get("seats") or section.get("limit"))
+    if total is not None and total < 0:
+        _append_error(
+            errors,
+            "license.seats.invalid_total",
+            "Łączna liczba stanowisk w licencji musi być dodatnia.",
+            hint="Zaktualizuj pole seat_policy.total na wartość dodatnią.",
+        )
+        total = None
+
+    assignments = _normalize_sequence_of_str(section.get("assignments") or section.get("allocated") or section.get("devices"))
+    pending = _normalize_sequence_of_str(section.get("pending") or section.get("requests"))
+    in_use = len(assignments)
+    available: int | None = None
+    if total is not None:
+        available = max(total - in_use, 0)
+        if in_use > total:
+            _append_warning(
+                warnings,
+                "license.seats.overallocated",
+                "Liczba przydzielonych urządzeń przekracza limit licencji.",
+                hint="Usuń zbędne przydziały lub zwiększ limit stanowisk.",
+            )
+
+    enforcement = _normalize_text(section.get("enforcement") or section.get("mode"))
+    auto_assign = bool(section.get("auto_assign")) if section.get("auto_assign") is not None else None
+
+    if fingerprint_value and total not in (None, 0):
+        if fingerprint_value not in assignments:
+            if enforcement and enforcement.lower() in {"hard", "strict"} and not auto_assign:
+                _append_error(
+                    errors,
+                    "license.seats.fingerprint_not_assigned",
+                    "Fingerprint urządzenia nie znajduje się na liście przydzielonych stanowisk.",
+                    hint="Dodaj fingerprint do listy seat_policy.assignments lub zwiększ pulę stanowisk.",
+                )
+            else:
+                _append_warning(
+                    warnings,
+                    "license.seats.fingerprint_not_assigned",
+                    "Fingerprint urządzenia nie znajduje się na liście przydzielonych stanowisk.",
+                    hint="Przydziel to urządzenie do licencji lub potwierdź, że auto-assign jest dozwolone.",
+                )
+
+    if pending and available is not None and available <= 0:
+        _append_warning(
+            warnings,
+            "license.seats.pending_without_capacity",
+            "Występują oczekujące przydziały portfeli przy braku wolnych stanowisk.",
+            hint="Zwiększ limit stanowisk lub usuń oczekujące zgłoszenia.",
+        )
+
+    return total, in_use, available, assignments, pending, enforcement, auto_assign
+
+
+def _parse_subscription_section(
+    payload: Mapping[str, Any],
+    *,
+    current_time: datetime,
+    errors: list[ValidationMessage],
+    warnings: list[ValidationMessage],
+) -> tuple[str | None, str | None, str | None, str | None, str | None]:
+    section = payload.get("subscription")
+    if not isinstance(section, Mapping):
+        return None, None, None, None, None
+
+    status = _normalize_text(section.get("status")) or "active"
+    period = section.get("current_period") if isinstance(section.get("current_period"), Mapping) else {}
+    period_start = _normalize_text(
+        period.get("start")
+        or period.get("from")
+        or section.get("period_start")
+        or section.get("start")
+    )
+    period_end = _normalize_text(
+        period.get("end")
+        or period.get("to")
+        or section.get("period_end")
+        or section.get("end")
+    )
+    renews_at = _normalize_text(section.get("renews_at") or section.get("renews_on"))
+    grace_days_raw = section.get("grace_period_days") or section.get("grace_days")
+    grace_days = _normalize_int(grace_days_raw)
+    grace_expires_at: str | None = None
+
+    start_dt = _parse_timestamp(period_start, label="subscription.start", errors=errors, warnings=warnings)
+    end_dt = _parse_timestamp(period_end, label="subscription.end", errors=errors, warnings=warnings)
+    renew_dt = _parse_timestamp(renews_at, label="subscription.renews_at", errors=errors, warnings=warnings)
+
+    if grace_days is not None and end_dt is not None:
+        grace_dt = end_dt + timedelta(days=grace_days)
+        grace_expires_at = grace_dt.isoformat().replace("+00:00", "Z")
+        if grace_dt <= current_time:
+            _append_warning(
+                warnings,
+                "license.subscription.grace_expired",
+                "Okres karencji subskrypcji wygasł – wymagana odnowa licencji.",
+                hint="Skontaktuj się z dostawcą w celu odnowienia subskrypcji.",
+            )
+
+    if end_dt and end_dt <= current_time:
+        _append_warning(
+            warnings,
+            "license.subscription.period_expired",
+            "Bieżący okres subskrypcji zakończył się.",
+            hint="Odnowienie subskrypcji zapewni ciągłość działania licencji.",
+        )
+
+    if renew_dt and renew_dt <= current_time:
+        _append_warning(
+            warnings,
+            "license.subscription.renewal_due",
+            "Subskrypcja wymaga odnowienia lub potwierdzenia płatności.",
+            hint="Sprawdź status rozliczeń subskrypcji OEM.",
+        )
+
+    if status and status.lower() not in {"active", "trial"}:
+        _append_warning(
+            warnings,
+            "license.subscription.status",
+            f"Subskrypcja jest w stanie '{status}'.",
+            hint="Zweryfikuj w portalu producenta stan subskrypcji.",
+        )
+
+    return (
+        status,
+        renew_dt.isoformat().replace("+00:00", "Z") if renew_dt else renews_at,
+        start_dt.isoformat().replace("+00:00", "Z") if start_dt else period_start,
+        end_dt.isoformat().replace("+00:00", "Z") if end_dt else period_end,
+        grace_expires_at,
+    )
+
 @dataclass(slots=True)
 class LicenseValidationResult:
     """Zbiorcze informacje o stanie licencji po weryfikacji."""
@@ -111,6 +292,18 @@ class LicenseValidationResult:
     fingerprint_signature_key: str | None
     capabilities: "LicenseCapabilities | None" = None
     capability_guard: "CapabilityGuard | None" = None
+    seats_total: int | None = None
+    seats_in_use: int | None = None
+    seats_available: int | None = None
+    seat_assignments: tuple[str, ...] = field(default_factory=tuple)
+    seat_pending: tuple[str, ...] = field(default_factory=tuple)
+    seat_enforcement: str | None = None
+    seat_auto_assign: bool | None = None
+    subscription_status: str | None = None
+    subscription_renews_at: str | None = None
+    subscription_period_start: str | None = None
+    subscription_period_end: str | None = None
+    subscription_grace_expires_at: str | None = None
 
     @property
     def is_valid(self) -> bool:
@@ -157,6 +350,30 @@ class LicenseValidationResult:
             context["license_key_id"] = self.license_signature_key
         if self.fingerprint_signature_key:
             context["fingerprint_key_id"] = self.fingerprint_signature_key
+        if self.seats_total is not None:
+            context["seats_total"] = self.seats_total
+        if self.seats_in_use is not None:
+            context["seats_in_use"] = self.seats_in_use
+        if self.seats_available is not None:
+            context["seats_available"] = self.seats_available
+        if self.seat_assignments:
+            context["seat_assignments"] = list(self.seat_assignments)
+        if self.seat_pending:
+            context["seat_pending"] = list(self.seat_pending)
+        if self.seat_enforcement:
+            context["seat_enforcement"] = self.seat_enforcement
+        if self.seat_auto_assign is not None:
+            context["seat_auto_assign"] = self.seat_auto_assign
+        if self.subscription_status:
+            context["subscription_status"] = self.subscription_status
+        if self.subscription_renews_at:
+            context["subscription_renews_at"] = self.subscription_renews_at
+        if self.subscription_period_start:
+            context["subscription_period_start"] = self.subscription_period_start
+        if self.subscription_period_end:
+            context["subscription_period_end"] = self.subscription_period_end
+        if self.subscription_grace_expires_at:
+            context["subscription_grace_expires_at"] = self.subscription_grace_expires_at
         if self.errors:
             context["errors"] = [entry.to_dict() for entry in self.errors]
             context["error_messages"] = [entry.message for entry in self.errors]
@@ -546,6 +763,18 @@ def validate_license(
         for value in (allowed_issuers or ())
         if str(value).strip()
     }
+    seats_total: int | None = None
+    seats_in_use: int | None = None
+    seats_available: int | None = None
+    seat_assignments: tuple[str, ...] = tuple()
+    seat_pending: tuple[str, ...] = tuple()
+    seat_enforcement: str | None = None
+    seat_auto_assign: bool | None = None
+    subscription_status: str | None = None
+    subscription_renews_at: str | None = None
+    subscription_period_start: str | None = None
+    subscription_period_end: str | None = None
+    subscription_grace_expires_at: str | None = None
     allowed_schema_versions_set = {
         str(value).strip()
         for value in (allowed_schema_versions or ())
@@ -583,6 +812,18 @@ def validate_license(
             payload=None,
             license_signature_key=None,
             fingerprint_signature_key=None,
+            seats_total=None,
+            seats_in_use=None,
+            seats_available=None,
+            seat_assignments=tuple(),
+            seat_pending=tuple(),
+            seat_enforcement=None,
+            seat_auto_assign=None,
+            subscription_status=None,
+            subscription_renews_at=None,
+            subscription_period_start=None,
+            subscription_period_end=None,
+            subscription_grace_expires_at=None,
         )
 
     try:
@@ -618,6 +859,18 @@ def validate_license(
             payload=None,
             license_signature_key=None,
             fingerprint_signature_key=None,
+            seats_total=None,
+            seats_in_use=None,
+            seats_available=None,
+            seat_assignments=tuple(),
+            seat_pending=tuple(),
+            seat_enforcement=None,
+            seat_auto_assign=None,
+            subscription_status=None,
+            subscription_renews_at=None,
+            subscription_period_start=None,
+            subscription_period_end=None,
+            subscription_grace_expires_at=None,
         )
 
     payload = document.get("payload") if isinstance(document, Mapping) else None
@@ -661,6 +914,18 @@ def validate_license(
             payload=payload if isinstance(payload, Mapping) else None,
             license_signature_key=None,
             fingerprint_signature_key=None,
+            seats_total=None,
+            seats_in_use=None,
+            seats_available=None,
+            seat_assignments=tuple(),
+            seat_pending=tuple(),
+            seat_enforcement=None,
+            seat_auto_assign=None,
+            subscription_status=None,
+            subscription_renews_at=None,
+            subscription_period_start=None,
+            subscription_period_end=None,
+            subscription_grace_expires_at=None,
         )
 
     issued_at = _normalize_text(payload.get("issued_at"))
@@ -884,6 +1149,33 @@ def validate_license(
                         "Plik fingerprintu ma nieoczekiwaną strukturę JSON.",
                         hint="Otwórz plik fingerprintu i sprawdź, czy zawiera sekcje payload/signature.",
                     )
+
+    (
+        seats_total,
+        seats_in_use,
+        seats_available,
+        seat_assignments,
+        seat_pending,
+        seat_enforcement,
+        seat_auto_assign,
+    ) = _parse_seat_policy(
+        payload,
+        fingerprint_value=fingerprint_value,
+        errors=errors,
+        warnings=warnings,
+    )
+    (
+        subscription_status,
+        subscription_renews_at,
+        subscription_period_start,
+        subscription_period_end,
+        subscription_grace_expires_at,
+    ) = _parse_subscription_section(
+        payload,
+        current_time=now,
+        errors=errors,
+        warnings=warnings,
+    )
 
     revocation_keys = revocation_keys or {}
 
@@ -1256,6 +1548,18 @@ def validate_license(
         payload=payload,
         license_signature_key=license_signature_key,
         fingerprint_signature_key=fingerprint_signature_key,
+        seats_total=seats_total,
+        seats_in_use=seats_in_use,
+        seats_available=seats_available,
+        seat_assignments=seat_assignments,
+        seat_pending=seat_pending,
+        seat_enforcement=seat_enforcement,
+        seat_auto_assign=seat_auto_assign,
+        subscription_status=subscription_status,
+        subscription_renews_at=subscription_renews_at,
+        subscription_period_start=subscription_period_start,
+        subscription_period_end=subscription_period_end,
+        subscription_grace_expires_at=subscription_grace_expires_at,
     )
 
 
@@ -1327,10 +1631,123 @@ def validate_license_from_config(config: LicenseValidationConfig) -> LicenseVali
     return result
 
 
+def summarize_license_payload(payload: Mapping[str, Any] | None) -> dict[str, Any]:
+    """Buduje znormalizowane podsumowanie licencji dla UI/raportów."""
+
+    if not isinstance(payload, Mapping):
+        return {}
+
+    summary: dict[str, Any] = {}
+
+    status = _normalize_text(payload.get("status"))
+    if status:
+        summary["status"] = status
+
+    expires_at = _normalize_text(payload.get("expires_at") or payload.get("expiry"))
+    if expires_at:
+        summary["expiresAt"] = expires_at
+
+    def _seat_section(data: Mapping[str, Any]) -> dict[str, Any]:
+        seat_summary: dict[str, Any] = {}
+        total = _normalize_int(data.get("total"))
+        if total is not None:
+            seat_summary["total"] = total
+        in_use = _normalize_int(data.get("in_use") or data.get("inUse"))
+        if in_use is not None:
+            seat_summary["inUse"] = in_use
+        available = _normalize_int(data.get("available"))
+        if available is not None:
+            seat_summary["available"] = available
+        assignments = _normalize_sequence_of_str(data.get("assignments"))
+        if assignments:
+            seat_summary["assignments"] = list(assignments)
+        pending = _normalize_sequence_of_str(data.get("pending"))
+        if pending:
+            seat_summary["pending"] = list(pending)
+        enforcement = _normalize_text(data.get("enforcement"))
+        if enforcement:
+            seat_summary["enforcement"] = enforcement
+        auto_assign = data.get("auto_assign")
+        if isinstance(auto_assign, bool):
+            seat_summary["autoAssign"] = auto_assign
+        elif auto_assign is not None:
+            seat_summary["autoAssign"] = bool(auto_assign)
+        return seat_summary
+
+    seat_summary_raw = payload.get("seat_summary") or payload.get("seatSummary")
+    if isinstance(seat_summary_raw, Mapping):
+        seat_summary = _seat_section(seat_summary_raw)
+        if seat_summary:
+            summary["seatSummary"] = seat_summary
+
+    def _subscription_section(data: Mapping[str, Any]) -> dict[str, Any]:
+        subscription: dict[str, Any] = {}
+        status_value = _normalize_text(data.get("status"))
+        if status_value:
+            subscription["status"] = status_value
+        renews_at = _normalize_text(data.get("renews_at") or data.get("renewsAt"))
+        if renews_at:
+            subscription["renewsAt"] = renews_at
+        period_start = _normalize_text(
+            data.get("period_start")
+            or data.get("start")
+            or (data.get("current_period") or {}).get("start")
+        )
+        if period_start:
+            subscription["periodStart"] = period_start
+        period_end = _normalize_text(
+            data.get("period_end")
+            or data.get("end")
+            or (data.get("current_period") or {}).get("end")
+        )
+        if period_end:
+            subscription["periodEnd"] = period_end
+        grace_expires_at = _normalize_text(
+            data.get("grace_expires_at")
+            or data.get("grace_period_expires_at")
+            or data.get("graceExpiresAt")
+        )
+        if grace_expires_at:
+            subscription["graceExpiresAt"] = grace_expires_at
+        return subscription
+
+    subscription_raw = payload.get("subscription_summary") or payload.get("subscriptionSummary")
+    if isinstance(subscription_raw, Mapping):
+        subscription = _subscription_section(subscription_raw)
+        if subscription:
+            summary["subscriptionSummary"] = subscription
+
+    validation = payload.get("validation")
+    if isinstance(validation, Mapping):
+        warning_codes = _normalize_sequence_of_str(
+            validation.get("warning_codes") or validation.get("warningCodes")
+        )
+        if warning_codes:
+            summary["warningCodes"] = list(warning_codes)
+        warning_messages = _normalize_sequence_of_str(
+            validation.get("warning_messages") or validation.get("warningMessages")
+        )
+        if warning_messages:
+            summary["warningMessages"] = list(warning_messages)
+        error_codes = _normalize_sequence_of_str(
+            validation.get("error_codes") or validation.get("errorCodes")
+        )
+        if error_codes:
+            summary["errorCodes"] = list(error_codes)
+        error_messages = _normalize_sequence_of_str(
+            validation.get("error_messages") or validation.get("errorMessages")
+        )
+        if error_messages:
+            summary["errorMessages"] = list(error_messages)
+
+    return summary
+
+
 __all__ = [
     "LicenseValidationResult",
     "LicenseValidationError",
     "validate_license",
     "validate_license_from_config",
     "load_hmac_keys_file",
+    "summarize_license_payload",
 ]
