@@ -8,7 +8,13 @@ from typing import Any, Mapping
 
 import pandas as pd
 
-from bot_core.auto_trader import AutoTrader, AutoTraderDecisionScheduler
+from bot_core.auto_trader import (
+    AutoTrader,
+    AutoTraderDecisionScheduler,
+    AutoTraderLifecycleManager,
+    DecisionAuditLog,
+    GuardrailTrigger,
+)
 from bot_core.ai.regime import MarketRegime, MarketRegimeAssessment
 from bot_core.config.models import DecisionEngineConfig, DecisionOrchestratorThresholds
 from bot_core.decision.orchestrator import DecisionOrchestrator
@@ -160,6 +166,25 @@ class _StubExchangeAdapter(ExchangeAdapter):
             raw_response={"fee": 0.0, "fee_asset": "USDT"},
         )
 
+    def cancel_order(self, *_args: Any, **_kwargs: Any) -> bool:  # pragma: no cover - not used in test
+        return True
+
+    def stream_public_data(self, *_args: Any, **_kwargs: Any):  # pragma: no cover - not used
+        if False:
+            yield None
+
+    def stream_private_data(self, *_args: Any, **_kwargs: Any):  # pragma: no cover - not used
+        if False:
+            yield None
+
+
+class _AlertRouterStub:
+    def __init__(self) -> None:
+        self.messages: list[Any] = []
+
+    def dispatch(self, message: Any) -> None:
+        self.messages.append(message)
+
     def cancel_order(self, order_id: str, *, symbol=None) -> None:  # pragma: no cover - not used
         return None
 
@@ -254,3 +279,85 @@ def test_auto_trader_scheduler_with_exchange_bridge() -> None:
     events = list(journal.export())
     assert any(entry.get("event") == "decision_composed" for entry in events)
     assert any(entry.get("event") == "risk_evaluated" for entry in events)
+
+
+def test_autonomous_lifecycle_runs_247_flow() -> None:
+    emitter = _Emitter()
+    gui = _GUI()
+    ai_manager = _AIManagerStub()
+    gui.ai_mgr = ai_manager
+    market_provider = _MarketDataProvider(_market_frame())
+    orchestrator = DecisionOrchestrator(_decision_engine_config())
+    risk_service = _RiskServiceStub()
+    adapter = _StubExchangeAdapter()
+    journal = InMemoryTradingDecisionJournal()
+    audit_log = DecisionAuditLog()
+    alert_router = _AlertRouterStub()
+    execution_service = ExchangeAdapterExecutionService(
+        adapter=lambda: adapter,
+        journal=journal,
+        backoff_base=0.0,
+    )
+
+    bootstrap = SimpleNamespace(
+        decision_orchestrator=orchestrator,
+        risk_engine=risk_service,
+        decision_engine_config=_decision_engine_config(),
+        risk_profile_name="paper",
+        portfolio_id="demo",
+        alert_router=alert_router,
+    )
+
+    trader = AutoTrader(
+        emitter,
+        gui,
+        lambda: "BTCUSDT",
+        market_data_provider=market_provider,
+        risk_service=risk_service,
+        execution_service=execution_service,
+        bootstrap_context=bootstrap,
+        decision_journal=journal,
+        decision_audit_log=audit_log,
+        auto_trade_interval_s=0.0,
+    )
+    trader.ai_manager = ai_manager
+    trader.alert_router = alert_router
+
+    guardrail_counter = {"count": 0}
+
+    def _inject_guardrail(self: AutoTrader, signal: str, *_args: object, **_kwargs: object) -> str:
+        if signal in {"buy", "sell"} and guardrail_counter["count"] == 0:
+            guardrail_counter["count"] += 1
+            self._last_guardrail_reasons = ["exchange degradation"]  # type: ignore[attr-defined]
+            self._last_guardrail_triggers = [  # type: ignore[attr-defined]
+                GuardrailTrigger(
+                    name="exchange_degradation",
+                    label="Exchange degradation",
+                    comparator=">=",
+                    threshold=0.5,
+                    unit="score",
+                    value=0.9,
+                )
+            ]
+            return "hold"
+        return signal
+
+    trader._apply_signal_guardrails = _inject_guardrail.__get__(trader, AutoTrader)  # type: ignore[assignment]
+
+    scheduler = AutoTraderDecisionScheduler(trader, interval_s=0.01)
+    lifecycle = AutoTraderLifecycleManager(trader, scheduler=scheduler)
+    lifecycle.start()
+    time.sleep(0.15)
+    lifecycle.stop()
+
+    events = list(journal.export())
+    assert any(entry.get("event") == "scheduler_bootstrap" for entry in events)
+    assert any(entry.get("event") == "decision_guardrail" for entry in events)
+    assert any(entry.get("event") == "order_filled" for entry in events)
+    assert adapter.orders, "expected trade execution after guardrail release"
+
+    audit_entries = audit_log.query_dicts(stage="lifecycle_bootstrap")
+    assert audit_entries, "expected lifecycle bootstrap audit entry"
+
+    assert any(message.category == "auto_trader.guardrail" for message in alert_router.messages)
+    assert getattr(trader, "_auto_trade_user_confirmed", False)
