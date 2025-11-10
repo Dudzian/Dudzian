@@ -1429,10 +1429,22 @@ class RuntimeAISettings:
     retrain_schedule: str | None = None
     drift_monitor_enabled: bool = True
     auto_activate_best_model: bool = True
+    retrain: "RuntimeAIRetrainSettings | None" = None
 
     def __post_init__(self) -> None:
         if not self.model_registry_path:
             raise ValueError("model_registry_path nie może być puste")
+
+
+@dataclass(slots=True)
+class RuntimeAIRetrainSettings:
+    """Konfiguracja lokalnego harmonogramu retrainingu."""
+
+    enabled: bool = False
+    schedule: str | None = None
+    manifest_path: str | None = None
+    profiles: Sequence[str] = field(default_factory=tuple)
+    output_dir: str | None = None
 
 
 @dataclass(slots=True)

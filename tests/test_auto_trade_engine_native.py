@@ -1879,3 +1879,74 @@ def test_auto_trade_engine_uses_ai_inference(monkeypatch) -> None:
     assert negative_event_scored_at.tzinfo == timezone.utc
     assert any(key.startswith("price_") for key in inference.calls[-1])
     assert inference.contexts[-1]["regime"] == regime_key
+
+
+def test_auto_trade_engine_uses_adaptive_preset(monkeypatch) -> None:
+    adapter = _make_sync_adapter()
+    journal = InMemoryTradingDecisionJournal()
+    cfg = AutoTradeConfig(
+        symbol="BTCUSDT",
+        qty=0.1,
+        regime_window=6,
+        activation_threshold=0.0,
+        breakout_window=3,
+        mean_reversion_window=4,
+        mean_reversion_z=0.5,
+    )
+    engine = AutoTradeEngine(
+        adapter,
+        lambda *_: None,
+        cfg,
+        decision_journal=journal,
+    )
+
+    assessment = MarketRegimeAssessment(
+        regime=MarketRegime.TREND,
+        confidence=0.7,
+        risk_score=0.2,
+        metrics={},
+        symbol="BTCUSDT",
+    )
+    decision_params = engine._build_base_trading_parameters()
+    decision = RegimeSwitchDecision(
+        regime=assessment.regime,
+        assessment=assessment,
+        summary=None,
+        weights={"trend_following": 0.6, "day_trading": 0.4},
+        parameters=decision_params,
+        timestamp=pd.Timestamp.utcnow(),
+        strategy_metadata=MappingProxyType({}),
+        license_tiers=(),
+        risk_classes=(),
+        required_data=(),
+        capabilities=(),
+        tags=(),
+    )
+    activation = _activation_from_decision(decision)
+
+    captured_metrics: dict[str, float] = {}
+
+    def _adaptive_stub(
+        regime: str, *, metrics: Mapping[str, float] | None = None
+    ) -> Mapping[str, object]:
+        captured_metrics.update(dict(metrics or {}))
+        return {
+            "name": f"adaptive::{regime}",
+            "regime": regime,
+            "strategies": [{"name": "mean_reversion", "weight": 1.0}],
+        }
+
+    monkeypatch.setattr(
+        engine._strategy_catalog,
+        "dynamic_preset_for",
+        lambda regime, *, metrics=None: _adaptive_stub(regime, metrics=metrics),
+    )
+
+    weights = engine._activation_weights(activation)
+    assert set(weights.keys()) == {"mean_reversion"}
+    assert engine._last_dynamic_preset is not None
+    strategy_entries = engine._last_dynamic_preset.get("strategies")
+    assert isinstance(strategy_entries, list)
+    assert strategy_entries[0]["name"] == "mean_reversion"
+    assert "confidence" in captured_metrics
+    assert "risk_score" in captured_metrics

@@ -1,7 +1,9 @@
 """Strategy plugin implementations using :class:`TradingParameters`."""
 from __future__ import annotations
 
+import logging
 from abc import ABC, abstractmethod
+from datetime import datetime, timezone
 from types import MappingProxyType
 from typing import (
     TYPE_CHECKING,
@@ -20,7 +22,13 @@ from typing import (
 import numpy as np
 import pandas as pd
 
+try:  # pragma: no cover - optional import for regime helpers
+    from bot_core.ai.regime import MarketRegime
+except Exception:  # pragma: no cover - fallback for stripped builds
+    MarketRegime = None  # type: ignore[misc, assignment]
+
 if TYPE_CHECKING:  # pragma: no cover - hints only
+    from bot_core.ai.adaptive import AdaptiveStrategyLearner
     from bot_core.trading.engine import TechnicalIndicators, TradingParameters
 
 from bot_core.strategies.catalog import DEFAULT_STRATEGY_CATALOG
@@ -40,6 +48,7 @@ _REGISTERED_ENGINE_KEYS: set[str] = set()
 
 TStrategy = TypeVar("TStrategy", bound="StrategyPlugin")
 
+_LOGGER = logging.getLogger(__name__)
 
 def _normalize_text(value: str | None) -> str | None:
     if value is None:
@@ -60,6 +69,33 @@ def _normalize_sequence(values: Iterable[str] | None) -> Tuple[str, ...]:
         seen[text] = None
         result.append(text)
     return tuple(result)
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _normalize_metrics_map(metrics: Mapping[str, float] | None) -> Dict[str, float]:
+    normalized: Dict[str, float] = {}
+    if not metrics:
+        return normalized
+    for key, value in metrics.items():
+        try:
+            normalized[str(key)] = float(value)
+        except (TypeError, ValueError):
+            continue
+    return normalized
+
+
+def _regime_key(value: object) -> str:
+    if MarketRegime is not None:
+        try:
+            return MarketRegime(value).value  # type: ignore[arg-type]
+        except Exception:
+            pass
+    if isinstance(value, str) and value:
+        return value.lower()
+    return "trend"
 
 
 class StrategyPlugin(ABC):
@@ -184,6 +220,8 @@ class StrategyCatalog:
         self, plugins: Optional[Iterable[Union[StrategyPlugin, Type[TStrategy]]]] = None
     ) -> None:
         self._registry: Dict[str, Callable[[], StrategyPlugin]] = {}
+        self._adaptive: "AdaptiveStrategyLearner | None" = None
+        self._dynamic_presets: MutableMapping[str, Mapping[str, object]] = {}
         if plugins:
             for plugin in plugins:
                 self.register(plugin)
@@ -212,6 +250,12 @@ class StrategyCatalog:
         if key in self._registry:
             raise ValueError(f"Strategy plugin '{key}' is already registered")
         self._registry[key] = instance_factory
+        adaptive = self._adaptive
+        if adaptive is not None:
+            try:
+                adaptive.register_strategies("trend", (key,))
+            except Exception:  # pragma: no cover - defensywne logowanie
+                _LOGGER.debug("Adaptive learner rejected strategy registration", exc_info=True)
 
     def create(self, name: str) -> StrategyPlugin | None:
         factory = self._registry.get(name)
@@ -247,6 +291,48 @@ class StrategyCatalog:
         metadata = dict(plugin.metadata())
         metadata.setdefault("name", name)
         return MappingProxyType(metadata)
+
+    def attach_adaptive_learner(self, learner: "AdaptiveStrategyLearner | None") -> None:
+        """Connect runtime adaptive learner providing dynamic presets."""
+
+        self._adaptive = learner
+        self._dynamic_presets.clear()
+
+    def dynamic_preset_for(
+        self,
+        regime: object,
+        *,
+        metrics: Mapping[str, float] | None = None,
+    ) -> Mapping[str, object] | None:
+        learner = self._adaptive
+        if learner is None:
+            return None
+        metrics_map = _normalize_metrics_map(metrics)
+        regime_key = _regime_key(regime)
+        try:
+            preset = learner.build_dynamic_preset(
+                regime_key, metrics=metrics_map or None
+            )
+        except Exception:  # pragma: no cover - defensywne logowanie
+            _LOGGER.debug("Adaptive learner failed to build preset", exc_info=True)
+            return None
+        if preset is None:
+            return None
+        key = regime_key
+        payload = dict(preset)
+        if metrics_map and "metrics" not in payload:
+            payload["metrics"] = dict(metrics_map)
+        generated_at = payload.get("generated_at")
+        if not isinstance(generated_at, str) or not generated_at.strip():
+            payload["generated_at"] = _now_iso()
+        self._dynamic_presets[key] = MappingProxyType(payload)
+        return self._dynamic_presets[key]
+
+    def last_dynamic_preset(self, regime: object) -> Mapping[str, object] | None:
+        return self._dynamic_presets.get(_regime_key(regime))
+
+    def dynamic_presets_snapshot(self) -> Mapping[str, Mapping[str, object]]:
+        return {key: dict(value) for key, value in self._dynamic_presets.items()}
 
     @classmethod
     def default(cls) -> "StrategyCatalog":

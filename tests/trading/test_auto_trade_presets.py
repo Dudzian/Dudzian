@@ -2,9 +2,13 @@ from __future__ import annotations
 
 import math
 
+import pytest
+from typing import Mapping
+
 from bot_core.ai.regime import MarketRegime
 from bot_core.events import EmitterAdapter, Event
 from bot_core.trading.auto_trade import AutoTradeConfig, AutoTradeEngine
+from bot_core.trading.strategies import StrategyCatalog
 
 
 _NEW_STRATEGIES = {
@@ -82,3 +86,44 @@ def test_autotrade_engine_registers_extended_strategies() -> None:
                 weights_meta[name],
                 rel_tol=1e-9,
             )
+
+
+def test_strategy_catalog_dynamic_preset_records_metrics() -> None:
+    catalog = StrategyCatalog()
+
+    class _Learner:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, Mapping[str, float] | None]] = []
+
+        def build_dynamic_preset(
+            self,
+            regime: str,
+            *,
+            metrics: Mapping[str, float] | None = None,
+        ) -> Mapping[str, object]:
+            self.calls.append((regime, metrics))
+            return {
+                "name": f"adaptive::{regime}",
+                "regime": regime,
+                "strategies": [{"name": "trend_following", "weight": 1.0}],
+                "generated_at": "2024-01-01T00:00:00+00:00",
+            }
+
+    learner = _Learner()
+    catalog.attach_adaptive_learner(learner)
+
+    metrics = {"confidence": 0.72, "risk_score": 0.15}
+    preset = catalog.dynamic_preset_for(MarketRegime.TREND, metrics=metrics)
+
+    assert preset is not None
+    assert learner.calls
+    regime_key, passed_metrics = learner.calls[0]
+    assert regime_key == MarketRegime.TREND.value
+    assert passed_metrics is not None
+    assert pytest.approx(passed_metrics["confidence"], rel=1e-6) == 0.72
+    snapshot = catalog.dynamic_presets_snapshot()
+    assert "trend" in snapshot
+    stored = snapshot["trend"]
+    assert "metrics" in stored
+    assert pytest.approx(stored["metrics"]["confidence"], rel=1e-6) == 0.72
+    assert "generated_at" in stored

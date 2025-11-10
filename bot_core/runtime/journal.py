@@ -2,15 +2,24 @@
 from __future__ import annotations
 
 import json
+import logging
+import math
 import os
 import threading
-import math
 from collections import Counter
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Mapping, MutableMapping, Optional, Protocol
+
+try:  # pragma: no cover - adaptive learner jest opcjonalny
+    from bot_core.ai import AdaptiveStrategyLearner
+except Exception:  # pragma: no cover - fallback dla dystrybucji light
+    AdaptiveStrategyLearner = None  # type: ignore[assignment]
+
+
+_LOGGER = logging.getLogger(__name__)
 
 
 def _ensure_utc(timestamp: datetime) -> datetime:
@@ -208,6 +217,133 @@ class JsonlTradingDecisionJournal(TradingDecisionJournal):
                     file_path.unlink()
                 except OSError:
                     continue
+
+
+@dataclass(slots=True)
+class AdaptiveDecisionJournal(TradingDecisionJournal):
+    """Dekorator aktualizujący :class:`AdaptiveStrategyLearner` na podstawie dziennika."""
+
+    journal: TradingDecisionJournal
+    learner: AdaptiveStrategyLearner  # type: ignore[misc]
+    persist_interval: int = 25
+    _updates: int = field(default=0, init=False, repr=False)
+
+    def record(self, event: TradingDecisionEvent) -> None:
+        self.journal.record(event)
+        if AdaptiveStrategyLearner is None:
+            return
+        try:
+            self._process_event(event)
+        except Exception:  # pragma: no cover - diagnostyka nie powinna blokować runtime
+            _LOGGER.debug("AdaptiveDecisionJournal failed to process event", exc_info=True)
+
+    def export(self) -> Iterable[Mapping[str, str]]:
+        return self.journal.export()
+
+    def _process_event(self, event: TradingDecisionEvent) -> None:
+        strategy = getattr(event, "strategy", None)
+        if not strategy:
+            return
+        metadata = getattr(event, "metadata", {}) or {}
+        regime = self._resolve_regime(event, metadata)
+        if not regime:
+            regime = event.risk_profile or "trend"
+        metrics = self._extract_metrics(metadata)
+        if not metrics:
+            return
+        self.learner.register_strategies(regime, (strategy,))
+        self.learner.observe(
+            regime=regime,
+            strategy=strategy,
+            metrics=metrics,
+            timestamp=event.timestamp,
+        )
+        self._updates += 1
+        if self._updates % max(1, int(self.persist_interval)) == 0:
+            self.learner.persist()
+
+    @staticmethod
+    def _resolve_regime(
+        event: TradingDecisionEvent, metadata: Mapping[str, str]
+    ) -> str | None:
+        activation_raw = metadata.get("activation")
+        if activation_raw:
+            try:
+                activation = json.loads(activation_raw)
+            except json.JSONDecodeError:
+                activation = None
+            if isinstance(activation, Mapping):
+                candidate = activation.get("regime") or activation.get("preset_regime")
+                if isinstance(candidate, str) and candidate:
+                    return candidate.lower()
+        regime_value = metadata.get("regime") or metadata.get("market_regime")
+        if regime_value:
+            return str(regime_value).lower()
+        if event.risk_profile:
+            return str(event.risk_profile).lower()
+        return None
+
+    @staticmethod
+    def _extract_metrics(metadata: Mapping[str, str]) -> Mapping[str, float]:
+        metrics: dict[str, float] = {}
+
+        def _to_float(value: object | None) -> float | None:
+            if value is None:
+                return None
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                try:
+                    return float(str(value))
+                except (TypeError, ValueError):
+                    return None
+
+        ai_meta: Mapping[str, object] | None = None
+        raw_ai = metadata.get("ai_inference")
+        if raw_ai:
+            try:
+                parsed = json.loads(raw_ai)
+            except json.JSONDecodeError:
+                parsed = None
+            if isinstance(parsed, Mapping):
+                ai_meta = parsed
+
+        if ai_meta is None:
+            extracted: dict[str, object] = {}
+            for key in (
+                "success_probability",
+                "expected_return_bps",
+                "signal_after_adjustment",
+                "signal_after_clamp",
+            ):
+                if key in metadata:
+                    extracted[key] = metadata[key]
+            if extracted:
+                ai_meta = extracted
+
+        if ai_meta:
+            hit_rate = _to_float(ai_meta.get("success_probability"))
+            if hit_rate is not None:
+                metrics["hit_rate"] = max(0.0, min(1.0, hit_rate))
+            pnl = _to_float(ai_meta.get("expected_return_bps"))
+            if pnl is not None:
+                metrics["pnl"] = pnl / 100.0
+            sharpe = _to_float(
+                ai_meta.get("normalized_signal")
+                or ai_meta.get("signal_after_adjustment")
+                or ai_meta.get("signal_after_clamp")
+            )
+            if sharpe is not None:
+                metrics["sharpe"] = sharpe
+
+        if "sharpe" not in metrics:
+            fallback = _to_float(metadata.get("signal_after_adjustment"))
+            if fallback is None:
+                fallback = _to_float(metadata.get("signal_after_clamp"))
+            if fallback is not None:
+                metrics["sharpe"] = fallback
+
+        return metrics
 
 
 def log_decision_event(
@@ -469,6 +605,7 @@ __all__ = [
     "TradingDecisionJournal",
     "InMemoryTradingDecisionJournal",
     "JsonlTradingDecisionJournal",
+    "AdaptiveDecisionJournal",
     "log_decision_event",
     "log_model_change_event",
     "aggregate_decision_statistics",

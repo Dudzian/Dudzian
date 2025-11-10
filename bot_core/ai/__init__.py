@@ -78,6 +78,10 @@ _EXPORTS: Dict[str, Tuple[str, str]] = {
     "RegimeSummary": (".regime", "RegimeSummary"),
     "RegimeStrategyWeights": (".regime", "RegimeStrategyWeights"),
     "RiskLevel": (".regime", "RiskLevel"),
+    # adaptive learning
+    "AdaptiveStrategyLearner": (".adaptive", "AdaptiveStrategyLearner"),
+    "AdaptiveRegimePolicy": (".adaptive", "AdaptiveRegimePolicy"),
+    "AdaptiveStrategyStats": (".adaptive", "AdaptiveStrategyStats"),
     # sequential AI
     "BUILTIN_HEURISTICS": (".sequential", "BUILTIN_HEURISTICS"),
     "HistoricalFeatureRepository": (".sequential", "HistoricalFeatureRepository"),
