@@ -26,7 +26,6 @@ from bot_core.runtime.preset_service import (
     load_legacy_preset,
 )
 from bot_core.security.file_storage import EncryptedFileSecretStorage
-from bot_core.security.legacy import SecurityError, SecurityManager
 
 
 def _parse_overrides(items: Iterable[str]) -> Dict[str, Dict[str, object]]:
@@ -63,6 +62,13 @@ _STAGE6_SENSITIVE_FLAGS = {
 }
 
 
+_LEGACY_SECURITY_REMOVAL_MESSAGE = (
+    "Obsługa zaszyfrowanych plików SecurityManager została przeniesiona do pakietu "
+    "'dudzian-migrate'. Uruchom narzędzie migracyjne z pakietu pomocniczego lub skorzystaj "
+    "z instrukcji w docs/migrations/2024-legacy-storage-removal.md."
+)
+
+
 def _sanitise_stage6_invocation(argv: Sequence[str]) -> Dict[str, object]:
     """Zwraca zanonimizowaną reprezentację wywołania CLI migratora Stage6."""
 
@@ -94,6 +100,19 @@ def _sanitise_stage6_invocation(argv: Sequence[str]) -> Dict[str, object]:
 
     command = " ".join(shlex.quote(item) for item in sanitised)
     return {"argv": sanitised, "command": command}
+
+
+def _ensure_legacy_security_not_requested(args: argparse.Namespace) -> None:
+    if any(
+        (
+            args.legacy_security_file,
+            args.legacy_security_salt,
+            args.legacy_security_passphrase,
+            args.legacy_security_passphrase_file,
+            args.legacy_security_passphrase_env,
+        )
+    ):
+        raise SystemExit(_LEGACY_SECURITY_REMOVAL_MESSAGE)
 
 
 def _collect_stage6_tool_metadata() -> tuple[Dict[str, object], list[str]]:
@@ -580,56 +599,6 @@ def _resolve_rotation_passphrase(args: argparse.Namespace, current: str) -> str:
     return current
 
 
-def _resolve_legacy_passphrase(args: argparse.Namespace) -> str:
-    provided = [
-        bool(args.legacy_security_passphrase),
-        bool(args.legacy_security_passphrase_file),
-        bool(args.legacy_security_passphrase_env),
-    ]
-    if sum(provided) > 1:
-        raise SystemExit(
-            "Hasło pliku SecurityManager może pochodzić tylko z jednego źródła (parametr, plik lub zmienna środowiskowa)."
-        )
-
-    if args.legacy_security_passphrase:
-        return args.legacy_security_passphrase
-    if args.legacy_security_passphrase_file:
-        path = Path(args.legacy_security_passphrase_file).expanduser()
-        try:
-            return path.read_text(encoding="utf-8").strip()
-        except OSError as exc:
-            raise SystemExit(f"Nie można odczytać pliku z hasłem SecurityManager: {exc}") from exc
-    if args.legacy_security_passphrase_env:
-        value = os.environ.get(args.legacy_security_passphrase_env)
-        if value:
-            return value
-        raise SystemExit(
-            f"Zmienna środowiskowa {args.legacy_security_passphrase_env} nie została ustawiona lub jest pusta."
-        )
-
-    raise SystemExit(
-        (
-            "Brak hasła do pliku SecurityManager. Podaj --legacy-security-passphrase, "
-            "--legacy-security-passphrase-file lub --legacy-security-passphrase-env."
-        )
-    )
-
-
-def _load_legacy_security_payload(
-    *, file_path: Path, salt_path: Path | None, password: str
-) -> Mapping[str, Any]:
-    manager = SecurityManager(key_file=str(file_path), salt_file=str(salt_path) if salt_path else None)
-    try:
-        payload = manager.load_encrypted_keys(password)
-    except SecurityError as exc:
-        raise SystemExit(f"Nie udało się odczytać pliku SecurityManager: {exc}") from exc
-
-    if not isinstance(payload, Mapping):
-        raise SystemExit("SecurityManager zwrócił niepoprawną strukturę sekretów (oczekiwano mapowania klucz→wartość).")
-
-    return payload
-
-
 def _apply_secret_filters(
     entries: Mapping[str, str],
     *,
@@ -766,23 +735,26 @@ def _configure_migration_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--legacy-security-file",
-        help="Zaszyfrowany plik SecurityManager (np. api_keys.enc) do migracji do Stage6",
+        help=(
+            "(wyłączone) Obsługa plików SecurityManager została przeniesiona do pakietu "
+            "'dudzian-migrate' – użycie flagi zakończy się błędem"
+        ),
     )
     parser.add_argument(
         "--legacy-security-salt",
-        help="Opcjonalny plik z solą SecurityManager (jeśli inny niż domyślny obok kluczy)",
+        help="(wyłączone) patrz docs/migrations/2024-legacy-storage-removal.md",
     )
     parser.add_argument(
         "--legacy-security-passphrase",
-        help="Hasło do odszyfrowania pliku SecurityManager",
+        help="(wyłączone) patrz docs/migrations/2024-legacy-storage-removal.md",
     )
     parser.add_argument(
         "--legacy-security-passphrase-file",
-        help="Plik z hasłem do odszyfrowania pliku SecurityManager",
+        help="(wyłączone) patrz docs/migrations/2024-legacy-storage-removal.md",
     )
     parser.add_argument(
         "--legacy-security-passphrase-env",
-        help="Nazwa zmiennej środowiskowej z hasłem do pliku SecurityManager",
+        help="(wyłączone) patrz docs/migrations/2024-legacy-storage-removal.md",
     )
     parser.add_argument(
         "--desktop-root",
@@ -801,6 +773,8 @@ def _run_stage6_migration(argv: Sequence[str]) -> int:
     parser = _configure_migration_parser()
     provided_args = list(argv)
     args = parser.parse_args(provided_args)
+
+    _ensure_legacy_security_not_requested(args)
 
     core_path = Path(args.core_config)
     if not core_path.exists():
@@ -883,20 +857,11 @@ def _run_stage6_migration(argv: Sequence[str]) -> int:
         original_checksum = _compute_text_checksum(original_text)
 
     secrets_input_path = Path(args.secrets_input).expanduser() if args.secrets_input else None
-    legacy_security_path = (
-        Path(args.legacy_security_file).expanduser() if args.legacy_security_file else None
-    )
-    legacy_security_salt_path: Path | None = None
-    if secrets_input_path and legacy_security_path:
-        parser.error(
-            "Wybierz jedno źródło sekretów: --secrets-input lub --legacy-security-file"
-        )
-
     secrets_output_path: Path | None = None
     used_default_vault = False
     if args.secrets_output:
         secrets_output_path = Path(args.secrets_output).expanduser()
-    elif (secrets_input_path or legacy_security_path) and desktop_paths is not None:
+    elif secrets_input_path and desktop_paths is not None:
         secrets_output_path = desktop_paths.secret_vault_file
         used_default_vault = True
         if not args.dry_run:
@@ -922,20 +887,6 @@ def _run_stage6_migration(argv: Sequence[str]) -> int:
         secrets_payload = _load_secret_payload(secrets_input_path)
         secrets_source_label = f"plik {secrets_input_path}"
         secrets_source_path = secrets_input_path
-    elif legacy_security_path:
-        legacy_security_salt_path = (
-            Path(args.legacy_security_salt).expanduser()
-            if args.legacy_security_salt
-            else None
-        )
-        legacy_passphrase = _resolve_legacy_passphrase(args)
-        secrets_payload = _load_legacy_security_payload(
-            file_path=legacy_security_path,
-            salt_path=legacy_security_salt_path,
-            password=legacy_passphrase,
-        )
-        secrets_source_label = f"legacy SecurityManager ({legacy_security_path})"
-        secrets_source_path = legacy_security_path
 
     if (
         secrets_output_path is None
@@ -994,7 +945,7 @@ def _run_stage6_migration(argv: Sequence[str]) -> int:
         parser.error(
             (
                 "Do migracji sekretów wymagane są oba parametry: "
-                "źródło (--secrets-input lub --legacy-security-file) oraz --secrets-output"
+                "źródło (--secrets-input) oraz --secrets-output"
             )
         )
 
@@ -1129,7 +1080,7 @@ def _run_stage6_migration(argv: Sequence[str]) -> int:
                 parser.error(
                     (
                         "Do migracji sekretów wymagane są oba parametry: "
-                        "źródło (--secrets-input lub --legacy-security-file) oraz --secrets-output"
+                        "źródło (--secrets-input) oraz --secrets-output"
                     )
                 )
         elif secret_entries is None and secrets_output_path is not None and not recover_requested:
@@ -1200,17 +1151,6 @@ def _run_stage6_migration(argv: Sequence[str]) -> int:
         if warning:
             warnings.append(warning)
 
-    legacy_security_salt_checksum: str | None = None
-    if (
-        legacy_security_salt_path is not None
-        and legacy_security_salt_path.exists()
-    ):
-        legacy_security_salt_checksum, warning = _safe_file_checksum(
-            legacy_security_salt_path
-        )
-        if warning:
-            warnings.append(warning)
-
     output_passphrase_info = _describe_passphrase_args(
         inline=getattr(args, "secret_passphrase", None),
         file=getattr(args, "secret_passphrase_file", None),
@@ -1218,13 +1158,6 @@ def _run_stage6_migration(argv: Sequence[str]) -> int:
     )
     output_passphrase_info["used"] = bool(secrets_written or rotation_performed or recovered_from_backup)
     output_passphrase_info["rotated"] = bool(rotation_performed)
-
-    legacy_passphrase_info = _describe_passphrase_args(
-        inline=getattr(args, "legacy_security_passphrase", None),
-        file=getattr(args, "legacy_security_passphrase_file", None),
-        env=getattr(args, "legacy_security_passphrase_env", None),
-    )
-    legacy_passphrase_info["used"] = bool(legacy_security_path)
 
     tool_metadata, metadata_warnings = _collect_stage6_tool_metadata()
     warnings.extend(metadata_warnings)
@@ -1271,14 +1204,7 @@ def _run_stage6_migration(argv: Sequence[str]) -> int:
                 "backup_file_path": str(backup_path_written) if backup_path_written else None,
                 "backup_file_checksum": secrets_backup_file_checksum,
                 "backup_stdout_checksum": secrets_backup_inline_checksum,
-                "legacy_security_salt_path": (
-                    str(legacy_security_salt_path)
-                    if legacy_security_salt_path is not None
-                    else None
-                ),
-                "legacy_security_salt_checksum": legacy_security_salt_checksum,
                 "output_passphrase": output_passphrase_info,
-                "legacy_security_passphrase": legacy_passphrase_info,
                 "recovered_from_backup": bool(recovered_from_backup),
             },
         }

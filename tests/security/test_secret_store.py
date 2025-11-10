@@ -41,8 +41,8 @@ class _StaticHwIdProvider(HwIdProvider):
 
 
 @pytest.fixture
-def secret_store_factory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Callable[[dict | None], Tuple[SecretStore, _InMemoryKeyring, Path]]:
-    def factory(legacy_payload: dict | None = None) -> Tuple[SecretStore, _InMemoryKeyring, Path]:
+def secret_store_factory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Callable[[], Tuple[SecretStore, _InMemoryKeyring, Path]]:
+    def factory() -> Tuple[SecretStore, _InMemoryKeyring, Path]:
         backend = _InMemoryKeyring()
         module = types.ModuleType("keyring")
         module.get_password = backend.get_password  # type: ignore[assignment]
@@ -60,10 +60,10 @@ def secret_store_factory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Cal
             raising=False,
         )
 
+        data_dir = tmp_path / "dudzian-home"
+        monkeypatch.setenv("DUDZIAN_HOME", str(data_dir))
+
         index_path = tmp_path / "secret_index.json"
-        legacy_path = tmp_path / "api_credentials.json"
-        if legacy_payload is not None:
-            legacy_path.write_text(json.dumps(legacy_payload), encoding="utf-8")
 
         storage = KeyringSecretStorage(
             service_name="tests.desktop",
@@ -71,14 +71,14 @@ def secret_store_factory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Cal
             index_path=index_path,
         )
 
-        store = SecretStore(storage=storage, legacy_path=legacy_path)
-        return store, backend, legacy_path
+        store = SecretStore(storage=storage, data_dir=data_dir)
+        return store, backend, data_dir
 
     return factory
 
 
-def test_secret_store_saves_and_loads_credentials(secret_store_factory: Callable[[dict | None], Tuple[SecretStore, _InMemoryKeyring, Path]]) -> None:
-    store, backend, _legacy = secret_store_factory()
+def test_secret_store_saves_and_loads_credentials(secret_store_factory: Callable[[], Tuple[SecretStore, _InMemoryKeyring, Path]]) -> None:
+    store, backend, _data_dir = secret_store_factory()
 
     credentials = ExchangeCredentials(
         exchange="Binance",
@@ -101,29 +101,32 @@ def test_secret_store_saves_and_loads_credentials(secret_store_factory: Callable
     assert "desktop.exchange:binance" in stored_keys
 
 
-def test_secret_store_migrates_plaintext_file(secret_store_factory: Callable[[dict | None], Tuple[SecretStore, _InMemoryKeyring, Path]]) -> None:
-    legacy_payload = {
-        "binance": {"api_key": "LEGACY", "api_secret": "SECRET", "api_passphrase": ""},
-        "  ": {"api_key": "", "api_secret": ""},
-    }
-    store, backend, legacy_path = secret_store_factory(legacy_payload)
+def test_secret_store_rejects_plaintext_legacy_file(
+    secret_store_factory: Callable[[], Tuple[SecretStore, _InMemoryKeyring, Path]],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    existing_store, _, data_dir = secret_store_factory()
+    legacy_path = tmp_path / "api_credentials.json"
+    legacy_path.write_text(
+        json.dumps({"binance": {"api_key": "LEGACY", "api_secret": "SECRET"}}),
+        encoding="utf-8",
+    )
 
-    exchanges = store.list_exchanges()
-    assert exchanges == ("binance",)
+    with pytest.raises(SecretStoreError) as excinfo:
+        subject = SecretStore(
+            storage=existing_store._storage,  # type: ignore[arg-type]
+            legacy_path=legacy_path,
+            data_dir=data_dir,
+        )
+        subject.list_exchanges()
 
-    loaded = store.load_exchange_credentials("binance")
-    assert loaded.api_key == "LEGACY"
-    assert loaded.api_secret == "SECRET"
-    assert loaded.api_passphrase is None
-
-    assert not legacy_path.exists()
-    assert legacy_path.with_suffix(".legacy").exists()
-
-    stored_keys = {key for (service, key) in backend._store.keys() if service == "tests.desktop"}
-    assert "desktop.exchange:binance" in stored_keys
+    message = str(excinfo.value)
+    assert "legacy magazyn" in message
+    assert "dudzian-migrate" in message
 
 
-def test_secret_store_rotate_master_key_delegates(secret_store_factory: Callable[[dict | None], Tuple[SecretStore, _InMemoryKeyring, Path]]) -> None:
+def test_secret_store_rotate_master_key_delegates(secret_store_factory: Callable[[], Tuple[SecretStore, _InMemoryKeyring, Path]]) -> None:
     store, _, _ = secret_store_factory()
 
     called = {"value": False}
@@ -159,7 +162,11 @@ def test_secret_store_errors_are_wrapped(monkeypatch: pytest.MonkeyPatch, tmp_pa
             raise SecretStorageError("błąd rotacji")
 
     monkeypatch.setenv("HOME", str(tmp_path))
-    store = SecretStore(storage=_FailingStorage(), legacy_path=tmp_path / "api_credentials.json")
+    store = SecretStore(
+        storage=_FailingStorage(),
+        legacy_path=tmp_path / "api_credentials.json",
+        data_dir=tmp_path / "dudzian-home",
+    )
 
     with pytest.raises(SecretStoreError) as excinfo:
         store.save_exchange_credentials(ExchangeCredentials(exchange="binance", api_key="k", api_secret="s"))
@@ -178,6 +185,6 @@ def test_secret_store_errors_are_wrapped(monkeypatch: pytest.MonkeyPatch, tmp_pa
     assert "błąd odczytu" in str(excinfo.value)
 
 
-def test_security_details_token_is_exposed(secret_store_factory: Callable[[dict | None], Tuple[SecretStore, _InMemoryKeyring, Path]]) -> None:
+def test_security_details_token_is_exposed(secret_store_factory: Callable[[], Tuple[SecretStore, _InMemoryKeyring, Path]]) -> None:
     store, _, _ = secret_store_factory()
     assert store.security_details_token() == "onboarding.strategy.credentials.secured"

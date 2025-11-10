@@ -19,7 +19,14 @@ __all__ = [
     "AnonymousTelemetryCollector",
 ]
 
-DEFAULT_TELEMETRY_DIR = Path("~/.kryptolowca/telemetry").expanduser()
+def _default_telemetry_dir() -> Path:
+    base_override = os.environ.get("DUDZIAN_HOME")
+    if base_override:
+        return (Path(base_override).expanduser() / "telemetry").expanduser()
+    return (Path.home() / ".dudzian" / "telemetry").expanduser()
+
+
+DEFAULT_TELEMETRY_DIR = _default_telemetry_dir()
 _SETTINGS_FILE = "settings.json"
 _QUEUE_FILE = "queue.jsonl"
 _EXPORT_DIR = "exports"

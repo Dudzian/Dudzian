@@ -136,6 +136,24 @@ _REQUIRED_PROFILE_NAMES: tuple[str, ...] = ("paper", "testnet", "live")
 _SUPPORTED_MANAGER_MODES: frozenset[str] = frozenset({"paper", "spot", "margin", "futures"})
 
 
+def _update_native_adapter_cache(
+    key: tuple[Mode, str],
+    registration: _NativeAdapterRegistration | None,
+) -> None:
+    mode, exchange_id = key
+    target: dict[str, NativeAdapterFactory]
+    if mode == Mode.MARGIN:
+        target = _NATIVE_MARGIN_ADAPTERS
+    elif mode == Mode.FUTURES:
+        target = _NATIVE_FUTURES_ADAPTERS
+    else:  # pragma: no cover - safeguard for unsupported modes
+        return
+    if registration is None:
+        target.pop(exchange_id, None)
+    else:
+        target[exchange_id] = cast(NativeAdapterFactory, registration.factory)
+
+
 @dataclass(slots=True)
 class _StrategyBinding:
     """Aktualna konfiguracja strategii przypięta do danego kontekstu giełdowego."""
@@ -184,41 +202,10 @@ class _StrategyContextSnapshot:
         }
 
 
-class _LegacyAdapterMapping(MutableMapping[str, Any]):
-    """Compatybilna z wcześniejszym API mapa natywnych adapterów."""
+NativeAdapterFactory = Callable[..., BaseBackend]
 
-    def __init__(self, mode: Mode) -> None:
-        self._mode = mode
-
-    def __getitem__(self, key: str) -> Any:
-        normalized = (key or "").strip().lower()
-        entry = _NATIVE_ADAPTER_REGISTRY.get((self._mode, normalized))
-        if entry is None:
-            raise KeyError(normalized)
-        return entry.factory
-
-    def __setitem__(self, key: str, value: Any) -> None:
-        register_native_adapter(
-            exchange_id=str(key).strip().lower(),
-            mode=self._mode,
-            factory=value,
-        )
-
-    def __delitem__(self, key: str) -> None:
-        normalized = (key or "").strip().lower()
-        _NATIVE_ADAPTER_REGISTRY.pop((self._mode, normalized), None)
-
-    def __iter__(self):
-        for (mode, exchange_id), _ in _NATIVE_ADAPTER_REGISTRY.items():
-            if mode == self._mode:
-                yield exchange_id
-
-    def __len__(self) -> int:
-        return sum(1 for mode, _ in _NATIVE_ADAPTER_REGISTRY if mode == self._mode)
-
-
-_NATIVE_MARGIN_ADAPTERS: MutableMapping[str, Any] = _LegacyAdapterMapping(Mode.MARGIN)
-_NATIVE_FUTURES_ADAPTERS: MutableMapping[str, Any] = _LegacyAdapterMapping(Mode.FUTURES)
+_NATIVE_MARGIN_ADAPTERS: dict[str, NativeAdapterFactory] = {}
+_NATIVE_FUTURES_ADAPTERS: dict[str, NativeAdapterFactory] = {}
 
 
 _DYNAMIC_ADAPTERS_INITIALIZED = False
@@ -269,6 +256,7 @@ def register_native_adapter(
         dynamic=bool(dynamic),
     )
     _NATIVE_ADAPTER_REGISTRY[key] = registration
+    _update_native_adapter_cache(key, registration)
     if registration.dynamic:
         _DYNAMIC_ADAPTER_KEYS.add(key)
     else:
@@ -326,6 +314,7 @@ def _clear_dynamic_native_adapters() -> None:
         if registration is None or not registration.dynamic:
             continue
         _NATIVE_ADAPTER_REGISTRY.pop(key, None)
+        _update_native_adapter_cache(key, None)
     _DYNAMIC_ADAPTER_KEYS.clear()
 
 
@@ -694,6 +683,7 @@ def unregister_native_adapter(
         return False
 
     _NATIVE_ADAPTER_REGISTRY.pop(key, None)
+    _update_native_adapter_cache(key, None)
     _DYNAMIC_ADAPTER_KEYS.discard(key)
     return True
 

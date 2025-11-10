@@ -1,6 +1,6 @@
 # Ustawienia interfejsu i dashboardu
 
-Plik `core/config/ui_settings.py` wprowadza zunifikowany model ustawień interfejsu użytkownika, który jest przechowywany lokalnie w katalogu `~/.kryptolowca/ui_settings.json`. W pliku przechowywane są m.in. kolejność kart telemetry, ukryte widoki, interwał odświeżania danych oraz preferowany motyw kolorystyczny.
+Plik `core/config/ui_settings.py` wprowadza zunifikowany model ustawień interfejsu użytkownika, który jest przechowywany lokalnie w katalogu `~/.dudzian/ui_settings.json` (lub w katalogu wskazanym przez zmienną `DUDZIAN_HOME`). W pliku przechowywane są m.in. kolejność kart telemetry, ukryte widoki, interwał odświeżania danych oraz preferowany motyw kolorystyczny.
 
 ## Najważniejsze elementy
 
@@ -11,7 +11,7 @@ Plik `core/config/ui_settings.py` wprowadza zunifikowany model ustawień interfe
 
 ## Ścieżka pliku ustawień
 
-Domyślnie ustawienia są zapisywane w `~/.kryptolowca/ui_settings.json`. Ścieżka może być nadpisana przy tworzeniu `UISettingsStore`, co jest wykorzystywane w testach UI.
+Domyślnie ustawienia są zapisywane w `~/.dudzian/ui_settings.json` (lub w katalogu `DUDZIAN_HOME`). Ścieżka może być nadpisana przy tworzeniu `UISettingsStore`, co jest wykorzystywane w testach UI.
 
 Plik JSON ma następującą strukturę:
 
