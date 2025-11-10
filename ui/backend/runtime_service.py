@@ -624,6 +624,7 @@ class RuntimeService(QObject):
             self._update_runtime_metadata(invalidate_cache=False)
         except Exception:  # pragma: no cover - defensywna inicjalizacja
             _LOGGER.debug("Nie udało się zainicjalizować metadanych runtime", exc_info=True)
+        self._auto_connect_grpc()
 
     # ------------------------------------------------------------------
     @Property("QVariantList", notify=decisionsChanged)
@@ -713,17 +714,18 @@ class RuntimeService(QObject):
 
         self._stop_grpc_stream()
         sanitized_profile = profile.strip()
-        target = self._resolve_grpc_target(sanitized_profile or None)
+        profile_value = sanitized_profile or None
+        target = self._resolve_grpc_target(profile_value)
         if target:
             try:
                 self._start_grpc_stream(target, self._default_limit)
             except Exception as exc:  # pragma: no cover - diagnostyka
                 _LOGGER.debug("attachToLiveDecisionLog gRPC failed", exc_info=True)
-                self._error_message = str(exc)
-                self.errorMessageChanged.emit()
+                self._active_profile = profile_value
+                return self._handle_grpc_error(str(exc), profile=profile_value, silent=False)
             else:
                 self._loader = lambda limit: []
-                self._active_profile = sanitized_profile or None
+                self._active_profile = profile_value
                 self._active_log_path = None
                 self._active_stream_label = f"grpc://{target}"
                 self._error_message = ""
@@ -731,23 +733,9 @@ class RuntimeService(QObject):
                 self.liveSourceChanged.emit()
                 return True
 
-        try:
-            loader, log_path = self._build_live_loader(sanitized_profile or None)
-        except Exception as exc:  # pragma: no cover - diagnostyka
-            _LOGGER.debug("attachToLiveDecisionLog failed", exc_info=True)
-            self._error_message = str(exc)
-            self.errorMessageChanged.emit()
-            return False
-
-        self._loader = loader
-        self._active_profile = sanitized_profile or None
-        self._active_log_path = log_path
-        self._active_stream_label = None
-        self._error_message = ""
-        self.errorMessageChanged.emit()
-        self.liveSourceChanged.emit()
-        self.loadRecentDecisions(self._default_limit)
-        return True
+        if self._activate_jsonl_loader(profile_value, silent=False):
+            return True
+        return False
 
     # ------------------------------------------------------------------ operator actions --
     @Slot("QVariantMap", result=bool)
@@ -853,6 +841,65 @@ class RuntimeService(QObject):
                 metadata.append((key, value))
         return metadata
 
+    def _auto_connect_grpc(self) -> None:
+        target = self._resolve_grpc_target(self._active_profile)
+        if not target:
+            return
+        try:
+            self._start_grpc_stream(target, self._default_limit)
+        except Exception as exc:  # pragma: no cover - defensywne logowanie
+            _LOGGER.debug("Auto gRPC bootstrap failed", exc_info=True)
+            self._handle_grpc_error(str(exc), profile=self._active_profile, silent=True)
+        else:
+            self._active_log_path = None
+            self._active_stream_label = f"grpc://{target}"
+            self._error_message = ""
+            self.errorMessageChanged.emit()
+            self.liveSourceChanged.emit()
+
+    def _activate_jsonl_loader(self, profile: str | None, *, silent: bool) -> bool:
+        try:
+            loader, log_path = self._build_live_loader(profile)
+        except Exception as exc:
+            if not silent:
+                self._error_message = str(exc)
+                self.errorMessageChanged.emit()
+            return False
+
+        self._loader = loader
+        self._active_profile = profile
+        self._active_log_path = log_path
+        self._active_stream_label = None
+        self._grpc_stream_active = False
+        self.liveSourceChanged.emit()
+        self.loadRecentDecisions(self._default_limit)
+        if not silent:
+            self._error_message = ""
+            self.errorMessageChanged.emit()
+        return True
+
+    def _use_demo_loader(self, message: str | None, *, profile: str | None, silent: bool) -> None:
+        self._loader = _default_loader
+        self._active_profile = profile
+        self._active_log_path = None
+        self._active_stream_label = "offline-demo"
+        self._grpc_stream_active = False
+        self.liveSourceChanged.emit()
+        self.loadRecentDecisions(self._default_limit)
+        if not silent:
+            self._error_message = message or ""
+            self.errorMessageChanged.emit()
+
+    def _handle_grpc_error(self, message: str, *, profile: str | None, silent: bool) -> bool:
+        self._stop_grpc_stream()
+        if self._activate_jsonl_loader(profile, silent=True):
+            if not silent:
+                self._error_message = message
+                self.errorMessageChanged.emit()
+            return True
+        self._use_demo_loader(message if not silent else None, profile=profile, silent=silent)
+        return True
+
     def _ensure_grpc_timer(self) -> None:
         if self._grpc_timer is not None:
             return
@@ -947,16 +994,23 @@ class RuntimeService(QObject):
                 if isinstance(payload, list):
                     self._apply_grpc_snapshot(payload)
                     updated = True
-            elif kind == "increment":
+                queue_obj.task_done()
+                continue
+            if kind == "increment":
                 if isinstance(payload, Mapping):
                     self._append_grpc_record(payload)
                     updated = True
-            elif kind == "error":
-                self._error_message = str(payload)
-                self.errorMessageChanged.emit()
-            elif kind == "done":
+                queue_obj.task_done()
+                continue
+            if kind == "error":
+                self._handle_grpc_error(str(payload), profile=self._active_profile, silent=False)
+                queue_obj.task_done()
+                return
+            if kind == "done":
                 if self._grpc_stop_event is None or not self._grpc_stop_event.is_set():
                     self._grpc_stream_active = False
+                queue_obj.task_done()
+                continue
             queue_obj.task_done()
 
         if updated:

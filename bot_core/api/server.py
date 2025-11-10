@@ -11,6 +11,7 @@ import subprocess
 import threading
 import time
 import uuid
+from collections.abc import Iterable as IterableABC
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -157,6 +158,144 @@ def _interval_from_iso(granularity: Optional[trading_pb2.CandleGranularity], def
     if normalized is None:
         return default
     return _ISO_TO_INTERVAL.get(normalized, default)
+
+
+def _export_decision_records(journal: Any) -> list[Mapping[str, Any]]:
+    if journal is None:
+        return []
+    try:
+        exported = list(journal.export())
+    except Exception:  # pragma: no cover - diagnostyka dziennika
+        _LOGGER.debug("Nie udało się wyeksportować decision journal", exc_info=True)
+        return []
+    normalized: list[Mapping[str, Any]] = []
+    for entry in exported:
+        if isinstance(entry, Mapping):
+            normalized.append(entry)
+    return normalized
+
+
+def _serialize_decision_mapping(entry: Mapping[str, Any]) -> dict[str, str]:
+    serialized: dict[str, str] = {}
+    for key, value in entry.items():
+        if value is None:
+            continue
+        text: str
+        if isinstance(value, bytes):
+            try:
+                text = value.decode("utf-8")
+            except Exception:
+                text = value.hex()
+        elif isinstance(value, bool):
+            text = "true" if value else "false"
+        else:
+            text = str(value)
+        serialized[str(key)] = text
+    return serialized
+
+
+def _parse_iso_timestamp_safe(value: Any) -> datetime | None:
+    """Konwertuje różne reprezentacje czasu na obiekt :class:`datetime`."""
+
+    if value is None:
+        return None
+
+    if isinstance(value, datetime):
+        parsed = value
+    elif isinstance(value, (int, float)):
+        if value <= 0:
+            return None
+        # Dopuszczamy zarówno sekundy jak i milisekundy od epoch.
+        if value > 10_000_000_000:  # ~Sat, 20 Nov 2286 17:46:40 GMT w sekundach
+            seconds = float(value) / 1000.0
+        else:
+            seconds = float(value)
+        parsed = datetime.fromtimestamp(seconds, tz=timezone.utc)
+    else:
+        text = str(value).strip()
+        if not text:
+            return None
+        try:
+            parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _normalize_filter_values(value: Any) -> set[str]:
+    if value is None:
+        return set()
+    if isinstance(value, str):
+        candidates = [value]
+    elif isinstance(value, IterableABC) and not isinstance(value, (bytes, bytearray, Mapping)):
+        candidates = [str(item) for item in value]
+    else:
+        candidates = [str(value)]
+    normalized: set[str] = set()
+    for candidate in candidates:
+        text = str(candidate).strip()
+        if text:
+            normalized.add(text.lower())
+    return normalized
+
+
+def _filter_decision_records(
+    records: Iterable[Mapping[str, Any]],
+    filters: Mapping[str, Any] | None,
+) -> list[Mapping[str, Any]]:
+    if not records:
+        return []
+    filters = filters or {}
+    event_filter = _normalize_filter_values(filters.get("event") or filters.get("events"))
+    strategy_filter = _normalize_filter_values(filters.get("strategy") or filters.get("strategies"))
+    symbol_filter = _normalize_filter_values(filters.get("symbol") or filters.get("symbols"))
+    status_filter = _normalize_filter_values(filters.get("status") or filters.get("statuses"))
+    side_filter = _normalize_filter_values(filters.get("side") or filters.get("sides"))
+    environment_filter = _normalize_filter_values(filters.get("environment"))
+    portfolio_filter = _normalize_filter_values(filters.get("portfolio"))
+    risk_filter = _normalize_filter_values(filters.get("risk_profile") or filters.get("riskProfile"))
+    since_filter = _parse_iso_timestamp_safe(filters.get("since"))
+    until_filter = _parse_iso_timestamp_safe(filters.get("until"))
+
+    filtered: list[Mapping[str, Any]] = []
+    for entry in records:
+        if since_filter or until_filter:
+            timestamp = _parse_iso_timestamp_safe(entry.get("timestamp"))
+            if since_filter and (timestamp is None or timestamp < since_filter):
+                continue
+            if until_filter and (timestamp is None or timestamp >= until_filter):
+                continue
+
+        def _value_matches(candidate: Any, expected: set[str]) -> bool:
+            if not expected:
+                return True
+            if candidate is None:
+                return False
+            return str(candidate).strip().lower() in expected
+
+        if not _value_matches(entry.get("event"), event_filter):
+            continue
+        if not _value_matches(entry.get("strategy"), strategy_filter):
+            continue
+        if not _value_matches(entry.get("symbol"), symbol_filter):
+            continue
+        if not _value_matches(entry.get("status"), status_filter):
+            continue
+        if not _value_matches(entry.get("side"), side_filter):
+            continue
+        if not _value_matches(entry.get("environment"), environment_filter):
+            continue
+        if not _value_matches(entry.get("portfolio"), portfolio_filter):
+            continue
+        if not _value_matches(entry.get("risk_profile"), risk_filter):
+            continue
+
+        filtered.append(entry)
+
+    return filtered
 
 
 class _InMemorySecretStorage(SecretStorage):
@@ -1304,36 +1443,13 @@ class _RuntimeServicer(trading_pb2_grpc.RuntimeServiceServicer):
 
     def _export_records(self) -> list[Mapping[str, Any]]:
         journal = getattr(self._context.auto_trader, "_decision_journal", None)
-        if journal is None:
-            return []
-        try:
-            exported = list(journal.export())
-        except Exception:  # pragma: no cover - diagnostyka dziennika
-            _LOGGER.debug("Nie udało się wyeksportować decision journal", exc_info=True)
-            return []
-        normalized: list[Mapping[str, Any]] = []
-        for entry in exported:
-            if isinstance(entry, Mapping):
-                normalized.append(entry)
-        return normalized
+        return _export_decision_records(journal)
 
     @staticmethod
     def _record_from_mapping(entry: Mapping[str, Any]) -> trading_pb2.DecisionRecordEntry:
         record = trading_pb2.DecisionRecordEntry()
-        for key, value in entry.items():
-            if value is None:
-                continue
-            text: str
-            if isinstance(value, bytes):
-                try:
-                    text = value.decode("utf-8")
-                except Exception:
-                    text = value.hex()
-            elif isinstance(value, str):
-                text = value
-            else:
-                text = str(value)
-            record.fields[str(key)] = text
+        for key, value in _serialize_decision_mapping(entry).items():
+            record.fields[key] = value
         return record
 
     @staticmethod
@@ -1593,6 +1709,7 @@ class LocalRuntimeGateway:
             "autotrader.list_strategy_presets": self._list_strategy_presets,
             "autotrader.load_strategy_preset": self._load_strategy_preset,
             "autotrader.delete_strategy_preset": self._delete_strategy_preset,
+            "autotrader.stream_decision_journal": self._stream_decision_journal,
         }
         handler = handlers.get(method)
         if handler is None:
@@ -1813,6 +1930,37 @@ class LocalRuntimeGateway:
         del params
         presets = [dict(entry) for entry in self._context.list_strategy_presets()]
         return {"presets": presets}
+
+    def _stream_decision_journal(self, params: Mapping[str, Any]) -> Mapping[str, Any]:
+        auto_trader = self._auto_trader
+        journal = getattr(auto_trader, "_decision_journal", None) if auto_trader is not None else None
+        def _to_int(value: Any) -> int:
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                return 0
+
+        limit = _to_int(params.get("limit")) if isinstance(params, Mapping) else 0
+        cursor = _to_int(params.get("cursor")) if isinstance(params, Mapping) else 0
+        filters = params.get("filters") if isinstance(params, Mapping) else None
+        if cursor < 0:
+            cursor = 0
+        records = _export_decision_records(journal)
+        filtered = _filter_decision_records(records, filters if isinstance(filters, Mapping) else None)
+        total = len(filtered)
+        start_index = min(cursor, total)
+        if limit and limit > 0:
+            end_index = min(total, start_index + int(limit))
+        else:
+            end_index = total
+        window = filtered[start_index:end_index]
+        payload = [_serialize_decision_mapping(entry) for entry in window]
+        return {
+            "records": payload,
+            "cursor": end_index,
+            "total": total,
+            "has_more": end_index < total,
+        }
 
     def _load_strategy_preset(self, params: Mapping[str, Any]) -> Mapping[str, Any]:
         selector = params if isinstance(params, Mapping) else {}
